@@ -21,8 +21,15 @@ This file contains copy-pastable code patterns for common tasks. Use these as te
 6. [Add Authentication Middleware](#add-authentication-middleware)
 7. [Add Error Handling](#add-error-handling)
 8. [Add Request Timing Middleware](#add-request-timing-middleware)
-9. [Add Express Request Type Extensions](#add-express-request-type-extensions)
-10. [Add Environment Variable](#add-environment-variable)
+9. [Add Request Logging Middleware](#add-request-logging-middleware)
+10. [Add Express Request Type Extensions](#add-express-request-type-extensions)
+11. [Add Environment Variable](#add-environment-variable)
+12. [Add Security Headers (Helmet)](#add-security-headers-helmet)
+13. [Add Rate Limiting](#add-rate-limiting)
+14. [Configure CORS](#configure-cors)
+15. [Add 404 Handler](#add-404-handler)
+16. [Add Graceful Shutdown](#add-graceful-shutdown)
+17. [Configure Request Body Size Limits](#configure-request-body-size-limits)
 
 ---
 
@@ -481,41 +488,48 @@ export function asyncHandler(
 ```typescript
 // middleware/error-handler.ts
 import { Request, Response, NextFunction } from 'express';
-import { AppError, formatError } from '../utils/errors';
-import { logger } from '../config/logger';
+import { ZodError } from 'zod';
+import { AppError, formatError, ValidationError } from '../utils/errors';
+import { logger, createLogContext } from '../config/logger';
+import { env } from '../config/env';
 
 /**
  * Global error handling middleware
  * MUST be last middleware in the chain
+ * MUST: Map ZodError to ValidationError (400) per STANDARDS.md
  */
 export function errorHandler(
-  err: Error | AppError,
+  err: Error | AppError | ZodError,
   req: Request,
   res: Response,
   _next: NextFunction
 ): void {
+  // Map ZodError to ValidationError (MUST per STANDARDS.md)
+  if (err instanceof ZodError) {
+    const validationError = new ValidationError(
+      `Validation failed: ${err.issues.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`
+    );
+    err = validationError;
+  }
+  
   // Format error for response
-  const formatted = formatError(err, process.env.NODE_ENV === 'development');
+  const formatted = formatError(err, env.NODE_ENV === 'development');
   
   // Log error (without PII) - includes all standard fields
-  const durationMs = req.startTime ? Date.now() - req.startTime : undefined;
-  
-  logger.error('Request error', {
-    correlationId: req.correlationId,  // MUST: Standard field
-    path: req.path,                     // MUST: Standard field
-    method: req.method,                 // MUST: Standard field
-    statusCode: formatted.statusCode,  // MUST: Standard field
-    durationMs,                         // MUST: Standard field
+  const logContext = createLogContext(req, {
+    statusCode: formatted.statusCode,
     error: formatted.error,
     message: formatted.message,
-    // ❌ NEVER log req.body for healthcare routes
+    ...(env.NODE_ENV === 'development' && formatted.stack ? { stack: formatted.stack } : {}),
   });
+  
+  logger.error(logContext, 'Error occurred');
   
   // Send error response
   res.status(formatted.statusCode || 500).json({
     error: formatted.error,
     message: formatted.message,
-    ...(process.env.NODE_ENV === 'development' && formatted.stack ? { stack: formatted.stack } : {}),
+    ...(env.NODE_ENV === 'development' && formatted.stack ? { stack: formatted.stack } : {}),
   });
 }
 ```
@@ -601,7 +615,80 @@ logger.info('Appointment created', {
 
 ---
 
-## 9. Add Express Request Type Extensions
+## 9. Add Request Logging Middleware
+
+**When:** You need to log all HTTP requests with standard fields
+
+**Steps:**
+1. Create `middleware/request-logger.ts`
+2. Listen for `res.on('finish')` event
+3. Calculate request duration from `req.startTime`
+4. Log with standard fields using `createLogContext`
+5. Use appropriate log levels (info/warn/error based on status code)
+
+**Pattern:**
+```typescript
+// middleware/request-logger.ts
+import { Request, Response, NextFunction } from 'express';
+import { logger, createLogContext } from '../config/logger';
+
+/**
+ * Request logging middleware
+ * 
+ * Logs all HTTP requests with standard fields (correlationId, path, method, statusCode, durationMs)
+ * MUST: Include standard log fields per STANDARDS.md
+ */
+export function requestLogger(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  // Log when response finishes (after response is sent)
+  res.on('finish', () => {
+    // Calculate duration
+    const durationMs = req.startTime ? Date.now() - req.startTime : undefined;
+    
+    // Create log context with standard fields (MUST per STANDARDS.md)
+    const logContext = createLogContext(req, {
+      statusCode: res.statusCode,
+      durationMs,
+    });
+    
+    // Log based on status code (MUST per STANDARDS.md log levels)
+    if (res.statusCode >= 500) {
+      // Server errors (500+) - log as error
+      logger.error(logContext, 'Request completed with server error');
+    } else if (res.statusCode >= 400) {
+      // Client errors (400-499) - log as warn
+      logger.warn(logContext, 'Request completed with client error');
+    } else {
+      // Success (200-399) - log as info
+      logger.info(logContext, 'Request completed');
+    }
+  });
+  
+  next();
+}
+```
+
+```typescript
+// index.ts - Mount after request-timing middleware
+import { correlationId } from './middleware/correlation-id';
+import { requestTiming } from './middleware/request-timing';
+import { requestLogger } from './middleware/request-logger';
+
+// Middleware order: correlation → timing → logging → ...
+app.use(correlationId);   // First - adds correlationId
+app.use(requestTiming);    // Second - adds startTime
+app.use(requestLogger);    // Third - logs requests (needs correlationId and startTime)
+// ... rest of middleware
+```
+
+**Note:** This middleware must be mounted after `requestTiming` middleware, as it depends on `req.startTime` for duration calculation.
+
+---
+
+## 10. Add Express Request Type Extensions
 
 **When:** You need to add custom properties to Express Request (user, correlationId, etc.)
 
@@ -658,7 +745,7 @@ const correlationId = (req as any).correlationId;
 
 ---
 
-## 10. Add Environment Variable
+## 11. Add Environment Variable
 
 **When:** You need a new environment variable
 
@@ -706,6 +793,370 @@ const value = process.env.NEW_VARIABLE;
 
 ---
 
+## 12. Add Security Headers (Helmet)
+
+**When:** You need to add security headers to HTTP responses
+
+**Steps:**
+1. Install: `npm install helmet`
+2. Install types: `npm install --save-dev @types/helmet`
+3. Import and mount in `index.ts`
+4. Configure for production vs development
+
+**Pattern:**
+```typescript
+// index.ts
+import helmet from 'helmet';
+import { env } from './config/env';
+
+// Mount after CORS but before routes
+app.use(helmet({
+  contentSecurityPolicy: env.NODE_ENV === 'production',
+  crossOriginEmbedderPolicy: false, // May need to be false for some APIs
+  crossOriginResourcePolicy: { policy: 'cross-origin' }, // Allow cross-origin resources
+}));
+```
+
+**Configuration Options:**
+```typescript
+app.use(helmet({
+  // Enable CSP in production only (can break APIs in dev)
+  contentSecurityPolicy: env.NODE_ENV === 'production',
+  
+  // Disable COEP (may interfere with API responses)
+  crossOriginEmbedderPolicy: false,
+  
+  // Allow cross-origin resources (needed for APIs)
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  
+  // Other headers (Helmet enables these by default):
+  // - X-Content-Type-Options: nosniff
+  // - X-Frame-Options: SAMEORIGIN
+  // - X-XSS-Protection: 0 (disabled, modern browsers handle XSS)
+  // - Strict-Transport-Security (HSTS) - set by reverse proxy in production
+}));
+```
+
+**Note:** Helmet adds security headers automatically. In production, you may need to adjust `contentSecurityPolicy` based on your frontend requirements.
+
+---
+
+## 13. Add Rate Limiting
+
+**When:** You need to prevent abuse and DDoS attacks
+
+**Steps:**
+1. Install: `npm install express-rate-limit`
+2. Install types: `npm install --save-dev @types/express-rate-limit`
+3. Create rate limiters (general + strict for auth)
+4. Mount in middleware chain (after request logging, before routes)
+
+**Pattern:**
+```typescript
+// index.ts
+import rateLimit from 'express-rate-limit';
+import { env } from './config/env';
+
+// General API rate limiter (applies to all routes)
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: {
+    error: 'TooManyRequestsError',
+    message: 'Too many requests from this IP, please try again later.',
+  },
+  standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
+  legacyHeaders: false,
+  // Skip successful requests (optional - only count failures)
+  skipSuccessfulRequests: false,
+});
+
+// Strict rate limiter for authentication endpoints
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 requests per 15 minutes (prevents brute force)
+  message: {
+    error: 'TooManyRequestsError',
+    message: 'Too many authentication attempts, please try again later.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true, // Only count failed auth attempts
+});
+
+// Mount general rate limiter (applies to all routes by default)
+app.use(apiLimiter);
+
+// Skip rate limiting for health checks (optional)
+app.use('/health', (req, res, next) => {
+  // Health check should not be rate limited
+  next();
+});
+```
+
+**Usage on Specific Routes:**
+```typescript
+// routes/auth.ts
+import { authLimiter } from '../middleware/rate-limit';
+
+router.post('/login', authLimiter, loginController);
+router.post('/register', authLimiter, registerController);
+```
+
+**Environment-Based Configuration:**
+```typescript
+// More lenient in development
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: env.NODE_ENV === 'production' ? 100 : 1000, // 10x more in dev
+  // ... other options
+});
+```
+
+---
+
+## 14. Configure CORS
+
+**When:** You need to restrict cross-origin requests in production
+
+**Steps:**
+1. Create CORS configuration object
+2. Allow specific origins in production
+3. Allow all origins in development (or specific dev origins)
+4. Mount in middleware chain (after security, before parsers)
+
+**Pattern:**
+```typescript
+// index.ts
+import cors from 'cors';
+import { env } from './config/env';
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // List of allowed origins
+    const allowedOrigins = env.NODE_ENV === 'production'
+      ? [
+          'https://clariva.com',
+          'https://www.clariva.com',
+          'https://app.clariva.com',
+        ]
+      : [
+          'http://localhost:3000',
+          'http://localhost:3001',
+          'http://127.0.0.1:3000',
+        ];
+    
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) {
+      return callback(null, true);
+    }
+    
+    // Check if origin is allowed
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true, // Allow cookies/credentials
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-ID'],
+  exposedHeaders: ['X-Correlation-ID'], // Expose custom headers
+  maxAge: 86400, // Cache preflight for 24 hours
+};
+
+// Use different CORS config for development vs production
+app.use(cors(env.NODE_ENV === 'production' ? corsOptions : {}));
+```
+
+**Simple Configuration (Development Only):**
+```typescript
+// For development - allows all origins
+app.use(cors());
+
+// For production - restrict to specific origins (use corsOptions above)
+```
+
+---
+
+## 15. Add 404 Handler
+
+**When:** You need to handle unmatched routes with proper JSON responses
+
+**Steps:**
+1. Add middleware after all routes
+2. Before error handler
+3. Throw `NotFoundError`
+4. Pass to error handler via `next()`
+
+**Pattern:**
+```typescript
+// index.ts
+import { Request, Response, NextFunction } from 'express';
+import { NotFoundError } from './utils/errors';
+
+// ... routes ...
+app.use('/', routes);
+
+// 404 Handler - Must be AFTER all routes but BEFORE error handler
+// Catches all unmatched routes and returns proper JSON 404 response
+// MUST: Use NotFoundError (typed error class) per STANDARDS.md
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  const notFoundError = new NotFoundError(`Route ${req.method} ${req.path} not found`);
+  next(notFoundError); // Pass to error handler middleware
+});
+
+// Error handling middleware (goes LAST, after all routes and 404 handler)
+app.use((err, req, res, next) => {
+  // Error handler processes NotFoundError
+});
+```
+
+**Why This Pattern:**
+- Returns JSON (not plain text "Cannot GET /path")
+- Uses typed error class (`NotFoundError`)
+- Consistent error format with other errors
+- Passes through error handler (proper logging, formatting)
+
+---
+
+## 16. Add Graceful Shutdown
+
+**When:** You need to handle server shutdown cleanly (production requirement)
+
+**Steps:**
+1. Store server instance from `app.listen()`
+2. Listen for SIGTERM and SIGINT signals
+3. Close HTTP server gracefully
+4. Close database connections
+5. Exit process
+
+**Pattern:**
+```typescript
+// index.ts
+import { initializeDatabase } from './config/database';
+import { logger } from './config/logger';
+
+let server: ReturnType<typeof app.listen>;
+
+// Initialize database and start server
+initializeDatabase()
+  .then(() => {
+    server = app.listen(PORT, () => {
+      logger.info({ port: PORT, environment: env.NODE_ENV }, '🚀 Server is running...');
+    });
+  })
+  .catch((error: Error) => {
+    logger.error({ error: error.message, stack: error.stack }, '❌ Failed to start server');
+    process.exit(1);
+  });
+
+// Graceful shutdown handler
+const gracefulShutdown = (signal: string) => {
+  logger.info(`Received ${signal}, shutting down gracefully...`);
+  
+  // Close HTTP server (stop accepting new requests)
+  server.close(() => {
+    logger.info('HTTP server closed');
+    
+    // Close database connections if needed
+    // Example: await supabase.disconnect();
+    
+    logger.info('Graceful shutdown complete');
+    process.exit(0);
+  });
+  
+  // Force close after 10 seconds
+  setTimeout(() => {
+    logger.error('Forcing shutdown after timeout...');
+    process.exit(1);
+  }, 10000);
+};
+
+// Listen for termination signals
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM')); // Docker/K8s sends this
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));   // Ctrl+C sends this
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
+  logger.error({
+    reason: reason instanceof Error ? reason.message : String(reason),
+    stack: reason instanceof Error ? reason.stack : undefined,
+  }, 'Unhandled Promise Rejection');
+  
+  // In production, exit on unhandled rejections
+  if (env.NODE_ENV === 'production') {
+    gracefulShutdown('unhandledRejection');
+  }
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error: Error) => {
+  logger.error({
+    error: error.message,
+    stack: error.stack,
+  }, 'Uncaught Exception');
+  
+  // Always exit on uncaught exceptions
+  process.exit(1);
+});
+```
+
+**Why This Matters:**
+- Prevents dropped requests during deployment
+- Closes connections cleanly
+- Prevents data corruption
+- Required for production deployments (Docker, Kubernetes)
+
+---
+
+## 17. Configure Request Body Size Limits
+
+**When:** You need to prevent DoS attacks via large payloads
+
+**Steps:**
+1. Set limit in `express.json()`
+2. Set limit in `express.urlencoded()`
+3. Configure appropriate size (typically 10mb for APIs)
+
+**Pattern:**
+```typescript
+// index.ts
+import express from 'express';
+
+// Configure body size limits
+const BODY_SIZE_LIMIT = '10mb'; // Adjust based on your needs
+
+app.use(express.json({ limit: BODY_SIZE_LIMIT })); // Limit JSON body size
+app.use(express.urlencoded({ 
+  extended: true,
+  limit: BODY_SIZE_LIMIT  // Limit form data size
+}));
+```
+
+**Size Recommendations:**
+- `10mb` - Standard for most APIs
+- `1mb` - Strict (prevents large uploads)
+- `50mb` - If you need file uploads
+
+**Error Handling:**
+When limit is exceeded, Express returns `413 Payload Too Large`. You can handle this:
+
+```typescript
+// Custom error for payload too large
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({
+      error: 'PayloadTooLargeError',
+      message: 'Request entity too large',
+    });
+  }
+  next(err);
+});
+```
+
+---
+
 ## 🎯 Quick Reference
 
 ### File Naming Convention
@@ -732,5 +1183,5 @@ const value = process.env.NEW_VARIABLE;
 
 ---
 
-**Last Updated:** January 11, 2025  
+**Last Updated:** January 16, 2025  
 **See Also:** [`STANDARDS.md`](./STANDARDS.md), [`ARCHITECTURE.md`](./ARCHITECTURE.md)

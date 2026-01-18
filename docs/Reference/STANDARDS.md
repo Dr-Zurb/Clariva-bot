@@ -240,7 +240,12 @@ logger.info('Request body', req.body); // DANGEROUS - contains patient data
 **MUST: Security headers**
 - Helmet middleware MUST be configured
 - Rate limiting MUST be on all endpoints
-- CORS MUST be properly configured
+- CORS MUST be properly configured (restrict origins in production)
+
+**MUST: Request body size limits**
+- JSON body size MUST be limited (e.g., 10mb) to prevent DoS attacks
+- Form data size MUST be limited (e.g., 10mb)
+- Limits MUST be configured in `express.json()` and `express.urlencoded()`
 
 **MUST: API Documentation**
 - OpenAPI spec generation OR

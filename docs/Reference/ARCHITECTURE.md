@@ -38,8 +38,10 @@ backend/src/
 │
 ├── middleware/          ← Custom middleware
 │   ├── auth.ts          ← Authentication middleware
-│   ├── correlation-id.ts ← Request ID middleware
-│   └── error-handler.ts ← Error handling middleware
+│   ├── correlation-id.ts ← Request correlation ID middleware
+│   ├── request-timing.ts ← Request timing middleware
+│   ├── request-logger.ts ← Request logging middleware
+│   └── error-handler.ts ← Error handling middleware (in index.ts)
 │
 └── index.ts             ← Server entry point
 ```
@@ -285,8 +287,87 @@ import { AppointmentData, Appointment } from '../types';
 - **What goes here:**
   - Authentication middleware
   - Request ID/correlation ID middleware
+  - Request timing middleware
+  - Request logging middleware
   - Error handling middleware
-  - Logging middleware
+
+---
+
+## 🔄 Middleware Order
+
+**CRITICAL:** The order of middleware in `index.ts` matters. Middleware executes top-to-bottom:
+
+### Standard Middleware Order
+
+```typescript
+// 1. Type extensions (loaded via import, not middleware)
+import './types/setup';
+
+// 2. Core request tracking (must be first)
+app.use(correlationId);     // First - adds req.correlationId
+app.use(requestTiming);      // Second - adds req.startTime
+app.use(requestLogger);      // Third - logs requests (needs correlationId and startTime)
+
+// 3. Security
+app.use(cors());             // CORS configuration
+app.use(helmet());           // Security headers (if installed)
+
+// 4. Body parsing (must be before routes)
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// 5. Rate limiting (before routes, after logging)
+app.use(rateLimit({ ... }));
+
+// 6. Routes
+app.use('/', routes);
+
+// 7. 404 Handler (after all routes, before error handler)
+app.use((req, res, next) => {
+  next(new NotFoundError(`Route ${req.method} ${req.path} not found`));
+});
+
+// 8. Error handler (MUST be last)
+app.use((err, req, res, next) => {
+  // Error handling
+});
+```
+
+### Why Order Matters
+
+1. **correlationId first** - All subsequent middleware can use `req.correlationId`
+2. **requestTiming second** - Needed by `requestLogger` for duration calculation
+3. **requestLogger third** - Needs both `correlationId` and `startTime`
+4. **CORS before body parsers** - Handles preflight OPTIONS requests
+5. **Body parsers before routes** - Controllers need `req.body`
+6. **Routes before 404 handler** - 404 handler catches unmatched routes
+7. **Error handler last** - Catches all errors from routes and 404 handler
+
+### Common Mistakes
+
+❌ **Putting requestLogger before requestTiming:**
+```typescript
+app.use(requestLogger);  // ❌ No req.startTime yet!
+app.use(requestTiming);
+```
+
+✅ **Correct order:**
+```typescript
+app.use(requestTiming);   // ✅ Sets req.startTime
+app.use(requestLogger);   // ✅ Can use req.startTime
+```
+
+❌ **Putting 404 handler before routes:**
+```typescript
+app.use((req, res, next) => next(new NotFoundError())); // ❌ Catches all routes!
+app.use('/', routes);
+```
+
+✅ **Correct order:**
+```typescript
+app.use('/', routes);      // ✅ Routes handled first
+app.use((req, res, next) => next(new NotFoundError())); // ✅ Only unmatched routes
+```
 
 ---
 
@@ -371,5 +452,5 @@ const port = process.env.PORT; // Should use config/env.ts
 
 ---
 
-**Last Updated:** January 11, 2025  
+**Last Updated:** January 16, 2025  
 **See Also:** [`STANDARDS.md`](./STANDARDS.md), [`RECIPES.md`](./RECIPES.md)

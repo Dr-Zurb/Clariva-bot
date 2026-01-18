@@ -69,56 +69,67 @@ export async function testConnection(): Promise<boolean> {
     const { error } = await supabase.from('_connection_test').select('*').limit(0);
     
     if (error) {
+      const errorMessage = error.message?.toLowerCase() || '';
+      const errorCode = (error as any).code;
+      
       // Network/connection errors indicate connection failure
-      if (error.message.includes('Failed to fetch') || 
-          error.message.includes('Network') ||
-          error.message.includes('ECONNREFUSED') ||
-          error.message.includes('timeout') ||
-          error.message.includes('getaddrinfo')) {
-        logger.error({ error: error.message }, 'Database connection test failed - cannot reach database');
+      // MUST: Check for various network error patterns (case-insensitive)
+      if (errorMessage.includes('failed to fetch') || 
+          errorMessage.includes('fetch failed') ||
+          errorMessage.includes('network') ||
+          errorMessage.includes('econnrefused') ||
+          errorMessage.includes('timeout') ||
+          errorMessage.includes('getaddrinfo') ||
+          errorMessage.includes('typeerror') ||
+          errorCode === 'ENOTFOUND' ||
+          errorCode === 'ECONNREFUSED') {
+        logger.error({ error: error.message, code: errorCode }, 'Database connection test failed - cannot reach database');
         return false;
       }
       
       // Authentication errors indicate wrong credentials
-      if (error.message.includes('JWT') || 
-          error.message.includes('invalid') ||
-          error.message.includes('unauthorized') ||
-          error.message.includes('Invalid API key')) {
-        logger.error({ error: error.message }, 'Database connection test failed - authentication error');
+      if (errorMessage.includes('jwt') || 
+          errorMessage.includes('invalid') ||
+          errorMessage.includes('unauthorized') ||
+          errorMessage.includes('invalid api key') ||
+          errorCode === 'PGRST301') {
+        logger.error({ error: error.message, code: errorCode }, 'Database connection test failed - authentication error');
         return false;
       }
       
       // "Relation does not exist" error is OK - connection works, just no tables yet
       // This means the database is reachable and authentication works
-      if (error.message.includes('relation') || 
-          error.message.includes('does not exist') ||
-          error.message.includes('permission denied for schema')) {
+      if (errorMessage.includes('relation') || 
+          errorMessage.includes('does not exist') ||
+          errorMessage.includes('permission denied for schema') ||
+          errorCode === 'PGRST116') {
         // Connection successful - table just doesn't exist yet (this is expected)
         return true;
       }
       
       // For any other error, log it but assume connection works (to be safe)
-      logger.warn({ error: error.message }, 'Database connection test - unexpected error (assuming connection OK)');
+      logger.warn({ error: error.message, code: errorCode }, 'Database connection test - unexpected error (assuming connection OK)');
       return true;
     }
     
     // No error means connection is successful
     return true;
   } catch (error) {
-    // Catch any unexpected errors
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    // Catch any unexpected errors (exceptions thrown, not error objects)
+    const errorMessage = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
     
     // Network errors mean connection failed
     if (errorMessage.includes('fetch') || 
         errorMessage.includes('network') ||
-        errorMessage.includes('ECONNREFUSED') ||
-        errorMessage.includes('timeout')) {
-      logger.error({ error: errorMessage }, 'Database connection test failed - network error');
+        errorMessage.includes('econnrefused') ||
+        errorMessage.includes('timeout') ||
+        errorMessage.includes('typeerror')) {
+      logger.error({ error: error instanceof Error ? error.message : String(error) }, 'Database connection test failed - network error');
       return false;
     }
     
     // Other errors - log but don't fail (might be environment-specific)
-    logger.error({ error: errorMessage }, 'Database connection test - unexpected error');
+    logger.error({ error: error instanceof Error ? error.message : String(error) }, 'Database connection test - unexpected error');
     return false;
   }
 }
