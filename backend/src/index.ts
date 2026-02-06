@@ -75,7 +75,7 @@ const corsOptions: cors.CorsOptions = {
   credentials: true, // Allow cookies/credentials
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-ID'],
-  exposedHeaders: ['X-Correlation-ID'], // Expose custom headers
+  exposedHeaders: ['X-Correlation-ID', 'Location'], // Location needed for Instagram connect redirect
   maxAge: 86400, // Cache preflight for 24 hours
 };
 
@@ -85,7 +85,7 @@ const corsOptionsDev: cors.CorsOptions = {
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-ID'],
-  exposedHeaders: ['X-Correlation-ID'],
+  exposedHeaders: ['X-Correlation-ID', 'Location'],
   maxAge: 86400,
 };
 
