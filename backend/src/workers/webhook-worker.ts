@@ -24,6 +24,7 @@ import { logAuditEvent } from '../utils/audit-logger';
 import { markWebhookProcessed, markWebhookFailed } from '../services/webhook-idempotency-service';
 import { storeDeadLetterWebhook } from '../services/dead-letter-service';
 import { sendInstagramMessage } from '../services/instagram-service';
+import { getDoctorIdByPageId } from '../services/instagram-connect-service';
 import { findOrCreatePlaceholderPatient, findPatientByIdWithAdmin } from '../services/patient-service';
 import { getAvailableSlots } from '../services/availability-service';
 import { bookAppointment, getAppointmentByIdForWorker } from '../services/appointment-service';
@@ -58,6 +59,7 @@ import {
 } from '../services/notification-service';
 import { razorpayAdapter } from '../adapters/razorpay-adapter';
 import { paypalAdapter } from '../adapters/paypal-adapter';
+import { getInstagramPageId } from '../utils/webhook-event-id';
 import type { WebhookJobData } from '../types/queue';
 import type { InstagramWebhookPayload } from '../types/webhook';
 
@@ -288,41 +290,47 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
 
   const { senderId, text, mid } = parsed;
 
-  const doctorId = env.DEFAULT_DOCTOR_ID;
-  if (!doctorId) {
+  const pageId = getInstagramPageId(instagramPayload);
+  if (!pageId) {
     logger.info(
       { eventId, provider, correlationId },
-      'DEFAULT_DOCTOR_ID not set; sending fallback reply'
+      'Instagram webhook missing page ID; marking failed'
     );
-    try {
-      await sendInstagramMessage(senderId, FALLBACK_REPLY, correlationId);
-    } catch (error) {
-      await markWebhookFailed(
-        eventId,
-        provider,
-        error instanceof Error ? error.message : 'Send message failed'
-      );
-      await logAuditEvent({
-        correlationId,
-        userId: undefined,
-        action: 'webhook_processed',
-        resourceType: 'webhook',
-        resourceId: eventId,
-        status: 'failure',
-        errorMessage: error instanceof Error ? error.message : 'Unknown error',
-        metadata: { event_id: eventId, provider },
-      });
-      throw error;
-    }
-    await markWebhookProcessed(eventId, provider);
+    await markWebhookFailed(eventId, provider, 'Missing page ID in payload');
     await logAuditEvent({
       correlationId,
       userId: undefined,
       action: 'webhook_processed',
       resourceType: 'webhook',
       resourceId: eventId,
-      status: 'success',
-      metadata: { event_id: eventId, provider, recipient_id: senderId },
+      status: 'failure',
+      errorMessage: 'Missing page ID in payload',
+      metadata: { event_id: eventId, provider },
+    });
+    return;
+  }
+
+  const doctorId = await getDoctorIdByPageId(pageId, correlationId);
+  if (!doctorId) {
+    logger.info(
+      { eventId, provider, correlationId, pageId },
+      'Unknown Instagram page (no linked doctor); marking failed'
+    );
+    try {
+      await sendInstagramMessage(senderId, FALLBACK_REPLY, correlationId);
+    } catch {
+      // Optional fallback reply best-effort; continue to mark failed and audit
+    }
+    await markWebhookFailed(eventId, provider, 'No doctor linked for page');
+    await logAuditEvent({
+      correlationId,
+      userId: undefined,
+      action: 'webhook_processed',
+      resourceType: 'webhook',
+      resourceId: eventId,
+      status: 'failure',
+      errorMessage: 'No doctor linked for page',
+      metadata: { event_id: eventId, provider, page_id: pageId },
     });
     return;
   }

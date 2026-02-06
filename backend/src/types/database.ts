@@ -334,6 +334,28 @@ export interface BlockedTime {
   created_at: Date;
 }
 
+/**
+ * Doctor Instagram link record (e-task-1, MVP Connect Instagram)
+ *
+ * Per-doctor Instagram or Facebook Page connection for webhook resolution.
+ * No PHI. Token must never be logged (COMPLIANCE).
+ *
+ * @property doctor_id - Doctor who owns this link (UUID, references auth.users)
+ * @property instagram_page_id - Meta page/IG account ID (unique)
+ * @property instagram_access_token - Access token (never log; encrypt at rest per platform)
+ * @property instagram_username - Optional handle for display (e.g. "Connected as @handle")
+ * @property created_at - When link was created
+ * @property updated_at - When link was last updated
+ */
+export interface DoctorInstagram {
+  doctor_id: string;
+  instagram_page_id: string;
+  instagram_access_token: string;
+  instagram_username: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
 // ============================================================================
 // Insert Types (Omit auto-generated fields)
 // ============================================================================
@@ -391,6 +413,15 @@ export type InsertAvailability = Omit<Availability, 'id' | 'created_at' | 'updat
  * (Omits auto-generated fields: id, created_at)
  */
 export type InsertBlockedTime = Omit<BlockedTime, 'id' | 'created_at'>;
+
+/**
+ * Data required to create a doctor Instagram link
+ * (Omits auto-generated fields: created_at, updated_at)
+ */
+export type InsertDoctorInstagram = Omit<
+  DoctorInstagram,
+  'created_at' | 'updated_at'
+>;
 
 // ============================================================================
 // Update Types (All fields optional except id)
@@ -454,4 +485,14 @@ export type UpdateAvailability = Partial<Omit<Availability, 'id' | 'created_at' 
  */
 export type UpdateBlockedTime = Partial<Omit<BlockedTime, 'id' | 'created_at'>> & {
   id: string;
+};
+
+/**
+ * Data for updating an existing doctor Instagram link
+ * (All fields optional except doctor_id; used for token refresh, username, disconnect)
+ */
+export type UpdateDoctorInstagram = Partial<
+  Omit<DoctorInstagram, 'doctor_id' | 'created_at' | 'updated_at'>
+> & {
+  doctor_id: string;
 };

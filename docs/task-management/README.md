@@ -72,6 +72,15 @@ This folder contains task management documentation and templates.
 - **Monthly Plans:** `docs/Development/Monthly-plans/`
 - **Learning Tasks:** `docs/Learning/YYYY-MM-DD/`
 
+### Current active plan: MVP completion (2026-02-06)
+
+Detailed implementation tasks for the two MVP must-haves (Connect Instagram + Doctor Setup) live in:
+
+- **Daily plan:** [docs/Development/Daily-plans/2026-02-06/README.md](../Development/Daily-plans/2026-02-06/README.md)
+- **Scope and acceptance criteria:** [docs/Development/Future Planning/MVP completion planning.md](../Development/Future%20Planning/MVP%20completion%20planning.md)
+
+Tasks: e-task-1 through e-task-6 (Connect Instagram), e-task-7 through e-task-12 (Doctor Setup). Use [TASK_TEMPLATE.md](./TASK_TEMPLATE.md) and [TASK_MANAGEMENT_GUIDE.md](./TASK_MANAGEMENT_GUIDE.md) when executing them.
+
 ---
 
 ## 🔗 Related Documentation

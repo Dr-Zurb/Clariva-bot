@@ -1,15 +1,16 @@
-# Pending: RLS Policies Testing Tasks
+# Deferred: RLS Policies Testing Tasks
 ## Task 2: RLS Policies Setup - Testing & Verification
 
-**Status:** ⏳ **PENDING**  
+**Status:** ⏸️ **DEFERRED**  
 **Reason:** No frontend or user creation system available yet  
+**Defer until:** Frontend with auth and doctor user creation is available  
 **Original Task:** [e-task-2-rls-policies.md](../Daily-plans/2026-01-20/e-task-2-rls-policies.md)  
 **Date Created:** 2026-01-20  
 **Task Date:** 2026-01-20
 
 ---
 
-## 📋 Pending Tasks
+## 📋 Deferred Tasks
 
 ### 5.1.3 Test with authenticated user (should see own data only)
 
@@ -100,4 +101,4 @@
 
 ---
 
-**Last Updated:** 2026-01-20
+**Last Updated:** 2026-02-07 (moved from pending to deferred)

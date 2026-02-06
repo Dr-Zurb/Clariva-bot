@@ -31,6 +31,23 @@ const TIMESTAMP_BUCKET_MS = 300000; // 5 minutes in milliseconds
 // ============================================================================
 
 /**
+ * Extract Instagram page/object ID from webhook payload.
+ *
+ * For Instagram, entry[0].id is the page (object) ID that receives the message.
+ * This value is stored in doctor_instagram.instagram_page_id when a doctor
+ * connects their account. Used by webhook worker to resolve doctor_id.
+ *
+ * @see WEBHOOKS.md - Instagram idempotency uses entry[0].id
+ * @see docs/Development/Daily-plans/2026-02-06/e-task-2-webhook-resolution-page-id-to-doctor-id.md
+ */
+export function getInstagramPageId(
+  payload: InstagramWebhookPayload
+): string | null {
+  const id = payload.entry?.[0]?.id;
+  return id != null ? String(id) : null;
+}
+
+/**
  * Extract Instagram event ID from webhook payload
  *
  * Instagram uses `entry[0].id` as the primary event identifier.

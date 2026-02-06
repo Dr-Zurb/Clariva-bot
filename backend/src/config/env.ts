@@ -48,6 +48,10 @@ const envSchema = z.object({
   INSTAGRAM_ACCESS_TOKEN: z.string().optional(),
   INSTAGRAM_WEBHOOK_VERIFY_TOKEN: z.string().optional(), // Should be at least 32 characters when provided
   INSTAGRAM_PAGE_ID: z.string().optional(), // Optional, for reference
+  // OAuth connect flow (e-task-3): redirect URI for Meta callback; required when using connect endpoint
+  INSTAGRAM_REDIRECT_URI: z.string().url().optional(),
+  // After successful connect, redirect browser here (e.g. https://app.example.com/dashboard/settings/instagram); if unset, callback returns JSON
+  INSTAGRAM_FRONTEND_REDIRECT_URI: z.string().url().optional(),
 
   // Encryption Configuration (required for dead letter queue payload encryption)
   ENCRYPTION_KEY: z.string().min(32, 'Encryption key must be at least 32 characters').optional(), // Base64-encoded 32-byte key (256 bits for AES-256)

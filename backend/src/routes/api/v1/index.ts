@@ -3,6 +3,7 @@ import healthRoutes from '../../health';
 import appointmentRoutes from './appointments';
 import paymentRoutes from './payments';
 import patientRoutes from './patients';
+import instagramSettingsRoutes from './settings/instagram';
 
 const router = Router();
 
@@ -28,5 +29,8 @@ router.use('/payments', paymentRoutes);
 // Patient endpoints (e-task-5)
 // GET /api/v1/patients/:id
 router.use('/patients', patientRoutes);
+
+// Instagram connect (e-task-3): GET /connect (auth), GET /callback
+router.use('/settings/instagram', instagramSettingsRoutes);
 
 export default router;

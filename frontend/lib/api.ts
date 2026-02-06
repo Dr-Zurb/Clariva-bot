@@ -111,3 +111,81 @@ export async function getPatientById(
 ): Promise<ApiSuccess<PatientDetailData>> {
   return request<PatientDetailData>(`/api/v1/patients/${id}`, { token });
 }
+
+// =============================================================================
+// Instagram settings (e-task-5)
+// =============================================================================
+
+export interface InstagramStatusData {
+  connected: boolean;
+  username: string | null;
+}
+
+/**
+ * Fetch Instagram connection status for the current doctor. Requires auth token.
+ */
+export async function getInstagramStatus(
+  token: string
+): Promise<ApiSuccess<InstagramStatusData>> {
+  return request<InstagramStatusData>("/api/v1/settings/instagram/status", {
+    token,
+  });
+}
+
+/**
+ * Start Instagram connect flow: fetch backend connect endpoint with auth;
+ * backend responds with 302 to Meta. Use redirect: 'manual', then set
+ * window.location to the Location header so the user is sent to Meta.
+ * Call from client only (browser navigation).
+ */
+export async function redirectToInstagramConnect(token: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/v1/settings/instagram/connect`,
+    {
+      method: "GET",
+      redirect: "manual",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    }
+  );
+  if (res.status === 302) {
+    const location = res.headers.get("Location");
+    if (location) {
+      window.location.href = location;
+      return;
+    }
+  }
+  throw new Error("Could not start Instagram connect");
+}
+
+/**
+ * Disconnect Instagram for the current doctor. Requires auth token.
+ * Backend returns 204 No Content on success.
+ */
+export async function disconnectInstagram(token: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/v1/settings/instagram/disconnect`,
+    {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    }
+  );
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as ApiError | unknown;
+    const message =
+      typeof json === "object" &&
+      json !== null &&
+      "error" in json &&
+      typeof (json as ApiError).error?.message === "string"
+        ? (json as ApiError).error.message
+        : "Disconnect failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+}

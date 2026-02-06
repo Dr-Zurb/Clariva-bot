@@ -89,15 +89,15 @@ Create SQL file with Row Level Security (RLS) policies for all database tables a
 - [x] 5.1 Test policies in Supabase
   - [x] 5.1.1 Execute RLS policies SQL file
   - [x] 5.1.2 Verify policies created successfully
-  - [ ] 5.1.3 Test with authenticated user (should see own data only) - **DEFERRED** (See [../../pending/pending-rls-testing-2026-01-20.md](../../pending/pending-rls-testing-2026-01-20.md))
-  - [ ] 5.1.4 Test with service role (should see all data) - **DEFERRED** (See [../../pending/pending-rls-testing-2026-01-20.md](../../pending/pending-rls-testing-2026-01-20.md))
-  - [ ] 5.1.5 Test with different user (should NOT see other user's data) - **DEFERRED** (See [../../pending/pending-rls-testing-2026-01-20.md](../../pending/pending-rls-testing-2026-01-20.md))
+  - [ ] 5.1.3 Test with authenticated user (should see own data only) - **DEFERRED** (See [../../deferred/deferred-rls-testing-2026-01-20.md](../../deferred/deferred-rls-testing-2026-01-20.md))
+  - [ ] 5.1.4 Test with service role (should see all data) - **DEFERRED** (See [../../deferred/deferred-rls-testing-2026-01-20.md](../../deferred/deferred-rls-testing-2026-01-20.md))
+  - [ ] 5.1.5 Test with different user (should NOT see other user's data) - **DEFERRED** (See [../../deferred/deferred-rls-testing-2026-01-20.md](../../deferred/deferred-rls-testing-2026-01-20.md))
 - [ ] 5.2 Verify compliance
   - [ ] 5.2.1 Verify least privilege access (doctors see only their data) - **DEFERRED** (Requires user testing - will be done when frontend/user creation system is available)
-  - [ ] 5.2.2 Verify service role restrictions - **DEFERRED** (See [../../pending/pending-rls-testing-2026-01-20.md](../../pending/pending-rls-testing-2026-01-20.md))
+  - [ ] 5.2.2 Verify service role restrictions - **DEFERRED** (See [../../deferred/deferred-rls-testing-2026-01-20.md](../../deferred/deferred-rls-testing-2026-01-20.md))
   - [ ] 5.2.3 Verify audit log immutability - **DEFERRED** (Requires user testing - will be done when frontend/user creation system is available)
 
-**Note:** Testing tasks 5.1.3, 5.1.4, 5.1.5, and 5.2 are deferred until frontend/user creation system is available. RLS policies have been executed in Supabase and are active. See [../../pending/pending-rls-testing-2026-01-20.md](../../pending/pending-rls-testing-2026-01-20.md) for detailed testing steps when ready.
+**Note:** Testing tasks 5.1.3, 5.1.4, 5.1.5, and 5.2 are deferred until frontend/user creation system is available. RLS policies have been executed in Supabase and are active. See [../../deferred/deferred-rls-testing-2026-01-20.md](../../deferred/deferred-rls-testing-2026-01-20.md) for detailed testing steps when ready.
 
 ---
 

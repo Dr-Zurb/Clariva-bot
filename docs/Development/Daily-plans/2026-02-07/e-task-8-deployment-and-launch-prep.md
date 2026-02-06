@@ -8,8 +8,8 @@
 Set up production (or staging) environment, deploy backend and frontend, configure monitoring and compliance checks, secrets management, environment separation, and data retention automation per [COMPLIANCE.md](../../Reference/COMPLIANCE.md) and the [Monthly Plan](../../Monthly-plans/2025-01-09_1month_dev_plan.md) Day 8–12.
 
 **Estimated Time:** 4–8 hours  
-**Status:** 🟡 **IN PROGRESS**  
-**Completed:** _Docs and deploy config done; actual deploy and Sentry setup by operator._
+**Status:** 🟢 **MOSTLY DONE**  
+**Completed:** _Docs and deploy config; backend (Render) and frontend (Vercel) deployed; env vars set. Optional: Sentry, smoke test, custom domain._
 
 **Change Type:**
 - [x] **New feature** — Deployment pipeline, monitoring, docs
@@ -18,7 +18,7 @@ Set up production (or staging) environment, deploy backend and frontend, configu
 **Current State:**
 - ✅ **What exists:** Backend (Node/Express), frontend (Next.js); local dev and build working; Dockerfile, deployment runbook, compliance monitoring doc, secrets/env doc, data retention doc.
 - ✅ **Done:** Backend Dockerfile + .dockerignore; LOG_LEVEL in backend .env.example; docs/setup/deployment-runbook.md (env matrix, production checklist, smoke test); docs/setup/compliance-monitoring.md (§J); docs/setup/secrets-and-environments.md (§H, §I); docs/setup/data-retention.md (§F, phased); DEPLOYMENT.md links to new docs.
-- ⏳ **Operator:** Deploy backend/frontend to host (Render/Vercel etc.); configure Sentry; run migrations; set production env vars; complete smoke test.
+- ✅ **Deployed:** Backend on Render (https://clariva-bot.onrender.com), frontend on Vercel; env vars set; migrations run in Supabase. Optional next: Sentry, smoke test, custom domain.
 
 **Scope Guard:**
 - Expected: deploy configs, env docs, monitoring setup, compliance checklist; may phase retention automation if out of scope.
@@ -34,13 +34,13 @@ Set up production (or staging) environment, deploy backend and frontend, configu
 ## ✅ Task Breakdown (Hierarchical)
 
 ### 1. Production / Staging Environment
-- [ ] 1.1 Set up production environment (e.g. Render, Railway, or other for backend). **Config ready:** `backend/Dockerfile`; see [deployment-runbook.md](../../../setup/deployment-runbook.md).
-- [ ] 1.2 Deploy frontend (e.g. Vercel) with `NEXT_PUBLIC_API_URL` pointing to backend. **Doc:** runbook §4.
+- [x] 1.1 Set up production environment (e.g. Render, Railway, or other for backend). **Done:** Backend on Render; `backend/Dockerfile`; see [deployment-runbook.md](../../../setup/deployment-runbook.md).
+- [x] 1.2 Deploy frontend (e.g. Vercel) with `NEXT_PUBLIC_API_URL` pointing to backend. **Done:** Frontend on Vercel; runbook §4.
 - [x] 1.3 Configure production environment variables; document in deployment doc or `.env.example` (no secrets in repo). **Done:** runbook §2 + §6 env matrix; `backend/.env.example` includes `LOG_LEVEL`.
-- [ ] 1.4 SSL and domain (if needed); database backups configured. **Doc:** runbook §4 (Vercel/backend SSL); backups via Supabase/provider.
+- [x] 1.4 SSL and domain (if needed); database backups configured. **Done:** Default HTTPS on Render and Vercel; backups via Supabase. Custom domain optional.
 
 ### 2. Monitoring & Error Tracking
-- [ ] 2.1 Set up error tracking (e.g. Sentry) for backend and frontend. **Doc:** [compliance-monitoring.md](../../../setup/compliance-monitoring.md) §3; implement when ready.
+- [ ] 2.1 Set up error tracking (e.g. Sentry) for backend and frontend. **Doc:** [compliance-monitoring.md](../../../setup/compliance-monitoring.md) §3. **Deferred** until production/launch (see [deferred-sentry-e-task-8.md](../../deferred/deferred-sentry-e-task-8.md)).
 - [x] 2.2 **Compliance monitoring (COMPLIANCE.md §J):** Configure or document alerts for: auth failures (spike), rate-limit violations, error rate >5%, suspicious access patterns, PHI-in-logs checks, DB health. **Done:** [compliance-monitoring.md](../../../setup/compliance-monitoring.md).
 - [x] 2.3 Create or update deployment/runbook documentation. **Done:** [deployment-runbook.md](../../../setup/deployment-runbook.md).
 
@@ -53,8 +53,8 @@ Set up production (or staging) environment, deploy backend and frontend, configu
 - [x] 4.2 If phased: document retention policy and target date for automation. **Done:** data-retention.md §4.
 
 ### 5. Production Readiness Checklist
-- [ ] 5.1 All env vars configured for target env; DB backups automated. **Checklist:** runbook §7.
-- [ ] 5.2 Monitoring (including compliance) and error tracking in place. **Checklist:** runbook §7 + compliance-monitoring.md.
+- [x] 5.1 All env vars configured for target env; DB backups automated. **Done:** Render + Vercel env set; Supabase backups.
+- [ ] 5.2 Monitoring (including compliance) and error tracking in place. **Checklist:** runbook §7 + compliance-monitoring.md (Sentry optional).
 - [ ] 5.3 Rate limiting and auth middleware verified in deployed env. **Checklist:** runbook §7.
 - [x] 5.4 Security/compliance audit completed; secrets and env separation documented. **Done:** secrets-and-environments.md; compliance-monitoring.md.
 - [ ] 5.5 Final smoke test in production (or staging); ready for first test customers. **Steps:** runbook §8.
@@ -89,13 +89,13 @@ frontend/                        (no change; Vercel works with Next.js default)
 
 ## ✅ Acceptance Criteria
 
-- [ ] Backend and frontend deployed and reachable. _(Operator: use runbook to deploy.)_
+- [x] Backend and frontend deployed and reachable. **Done:** Render (backend), Vercel (frontend).
 - [x] Monitoring and compliance monitoring configured or documented. **Done:** compliance-monitoring.md.
 - [x] Secrets rotation and environment separation documented. **Done:** secrets-and-environments.md.
 - [x] Data retention automation or phased plan documented. **Done:** data-retention.md.
-- [ ] Production readiness checklist completed; ready for first customers. _(Checklist in runbook §7; operator completes when deploying.)_
+- [ ] Production readiness checklist completed; ready for first customers. _(Remaining: 5.2 Sentry, 5.3 verify auth/rate-limit, 5.5 smoke test.)_
 
 ---
 
-**Last Updated:** 2026-02-07  
+**Last Updated:** 2026-02-07 (deploy completed 2026-02-06)  
 **Reference:** [TASK_MANAGEMENT_GUIDE.md](../../task-management/TASK_MANAGEMENT_GUIDE.md)

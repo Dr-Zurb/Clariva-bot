@@ -8,6 +8,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/dashboard/appointments", label: "Appointments" },
   { href: "/dashboard/patients", label: "Patients" },
+  { href: "/dashboard/settings", label: "Settings" },
 ] as const;
 
 interface SidebarProps {

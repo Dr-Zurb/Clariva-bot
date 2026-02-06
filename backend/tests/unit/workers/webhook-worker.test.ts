@@ -21,7 +21,12 @@ import {
 import * as idempotencyService from '../../../src/services/webhook-idempotency-service';
 import * as auditLogger from '../../../src/utils/audit-logger';
 import * as instagramService from '../../../src/services/instagram-service';
+import * as instagramConnectService from '../../../src/services/instagram-connect-service';
 import * as deadLetterService from '../../../src/services/dead-letter-service';
+import * as patientService from '../../../src/services/patient-service';
+import * as conversationService from '../../../src/services/conversation-service';
+import * as messageService from '../../../src/services/message-service';
+import * as aiService from '../../../src/services/ai-service';
 
 jest.mock('../../../src/config/env', () => ({
   env: {
@@ -52,6 +57,9 @@ jest.mock('../../../src/services/dead-letter-service', () => ({
 }));
 jest.mock('../../../src/services/instagram-service', () => ({
   sendInstagramMessage: jest.fn(),
+}));
+jest.mock('../../../src/services/instagram-connect-service', () => ({
+  getDoctorIdByPageId: jest.fn(),
 }));
 jest.mock('../../../src/services/patient-service', () => ({
   findOrCreatePlaceholderPatient: jest.fn(),
@@ -105,9 +113,39 @@ function fakeJob(data: WebhookJobData, attemptsMade = 0, maxAttempts = 3): Job<W
   } as unknown as Job<WebhookJobData>;
 }
 
+const TEST_DOCTOR_ID = '550e8400-e29b-41d4-a716-446655440000';
+const TEST_PATIENT_ID = 'patient-test-id';
+const TEST_CONV_ID = 'conv-test-id';
+
 describe('Webhook Worker', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest
+      .mocked(instagramConnectService.getDoctorIdByPageId)
+      .mockResolvedValue(TEST_DOCTOR_ID);
+    jest.mocked(patientService.findOrCreatePlaceholderPatient).mockResolvedValue({
+      id: TEST_PATIENT_ID,
+    } as never);
+    jest.mocked(conversationService.findConversationByPlatformId).mockResolvedValue(null as never);
+    jest.mocked(conversationService.createConversation).mockResolvedValue({
+      id: TEST_CONV_ID,
+      patient_id: TEST_PATIENT_ID,
+      doctor_id: TEST_DOCTOR_ID,
+      platform: 'instagram',
+      platform_conversation_id: '987654321',
+      status: 'active',
+    } as never);
+    jest.mocked(conversationService.getConversationState).mockResolvedValue({
+      step: 'responded',
+      lastIntent: undefined,
+      collectedFields: [],
+      updatedAt: new Date().toISOString(),
+    } as never);
+    jest.mocked(conversationService.updateConversationState).mockResolvedValue(undefined as never);
+    jest.mocked(messageService.getRecentMessages).mockResolvedValue([] as never);
+    jest.mocked(messageService.createMessage).mockResolvedValue(undefined as never);
+    jest.mocked(aiService.classifyIntent).mockResolvedValue({ intent: 'other' } as never);
+    jest.mocked(aiService.generateResponse).mockResolvedValue('Reply text' as never);
   });
 
   describe('5.1.3 Worker lifecycle when REDIS_URL unset', () => {
@@ -259,6 +297,43 @@ describe('Webhook Worker', () => {
           status: 'success',
         })
       );
+    });
+
+    it('unknown page (no doctor linked): markWebhookFailed, audit failure, optional fallback reply, no conversation', async () => {
+      jest.mocked(instagramConnectService.getDoctorIdByPageId).mockResolvedValue(null);
+      const job = fakeJob({
+        eventId: 'evt_unknown_page',
+        provider: 'instagram',
+        payload: validPayload,
+        correlationId: 'corr-unknown',
+      });
+      mockSendMessage.mockResolvedValue(undefined as never);
+      mockMarkFailed.mockResolvedValue(undefined as never);
+      mockLogAudit.mockResolvedValue(undefined as never);
+
+      await processWebhookJob(job);
+
+      expect(mockMarkFailed).toHaveBeenCalledWith(
+        'evt_unknown_page',
+        'instagram',
+        'No doctor linked for page'
+      );
+      expect(mockLogAudit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'webhook_processed',
+          resourceType: 'webhook',
+          resourceId: 'evt_unknown_page',
+          status: 'failure',
+          errorMessage: 'No doctor linked for page',
+          metadata: expect.objectContaining({
+            event_id: 'evt_unknown_page',
+            provider: 'instagram',
+            page_id: 'evt_3_3',
+          }),
+        })
+      );
+      expect(mockMarkProcessed).not.toHaveBeenCalled();
+      expect(patientService.findOrCreatePlaceholderPatient).not.toHaveBeenCalled();
     });
   });
 
