@@ -107,15 +107,17 @@ export async function testConnection(): Promise<boolean> {
         return false;
       }
 
-      // "Relation does not exist" error is OK - connection works, just no tables yet
-      // This means the database is reachable and authentication works
+      // "Relation does not exist" / "table not in schema cache" - connection works
+      // PGRST205 = Supabase: table not in schema cache (we use a dummy table name)
+      // PGRST116 = relation does not exist
       if (
         errorMessage.includes('relation') ||
         errorMessage.includes('does not exist') ||
         errorMessage.includes('permission denied for schema') ||
-        errorCode === 'PGRST116'
+        errorMessage.includes('schema cache') ||
+        errorCode === 'PGRST116' ||
+        errorCode === 'PGRST205'
       ) {
-        // Connection successful - table just doesn't exist yet (this is expected)
         return true;
       }
 
