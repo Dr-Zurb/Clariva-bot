@@ -57,6 +57,7 @@ const corsOptions: cors.CorsOptions = {
       'https://clariva.com',
       'https://www.clariva.com',
       'https://app.clariva.com',
+      'https://clariva-bot.vercel.app',
     ];
 
     // Allow requests with no origin (mobile apps, Postman, etc.)
