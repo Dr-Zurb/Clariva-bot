@@ -1,6 +1,6 @@
 /**
  * Error Utilities
- * 
+ *
  * This file contains custom error classes and error handling utilities
  * following production-grade error handling patterns.
  */
@@ -82,6 +82,16 @@ export class ConflictError extends AppError {
 }
 
 /**
+ * Too many requests error (429)
+ * Used when rate limit is exceeded
+ */
+export class TooManyRequestsError extends AppError {
+  constructor(message: string = 'Too many requests') {
+    super(message, 429);
+  }
+}
+
+/**
  * Internal server error (500)
  * Used for unexpected errors, database failures, etc.
  * This is the default error class for operational errors that don't fit other categories
@@ -92,18 +102,31 @@ export class InternalError extends AppError {
   }
 }
 
+/**
+ * Service unavailable error (503)
+ * Used when external services are unavailable (network errors, timeouts, etc.)
+ */
+export class ServiceUnavailableError extends AppError {
+  constructor(message: string = 'Service unavailable') {
+    super(message, 503);
+  }
+}
+
 // ============================================================================
 // Error Formatting Functions
 // ============================================================================
 
 /**
  * Format error for API response
- * 
+ *
  * @param error - Error object
  * @param includeStack - Whether to include stack trace (only in development)
  * @returns Formatted error object
  */
-export function formatError(error: Error | AppError, includeStack: boolean = false): {
+export function formatError(
+  error: Error | AppError,
+  includeStack: boolean = false
+): {
   error: string;
   message: string;
   statusCode?: number;
@@ -112,13 +135,15 @@ export function formatError(error: Error | AppError, includeStack: boolean = fal
   const isAppError = error instanceof AppError;
   const statusCode = isAppError ? error.statusCode : 500;
 
+  // Use stable code per ERROR_CATALOG/CONTRACTS: AppError subclass name, or InternalServerError for untyped errors
+  const code = isAppError ? error.name : 'InternalServerError';
   const formatted: {
     error: string;
     message: string;
     statusCode?: number;
     stack?: string;
   } = {
-    error: error.name || 'Error',
+    error: code,
     message: error.message || 'An unexpected error occurred',
     statusCode,
   };
@@ -128,33 +153,6 @@ export function formatError(error: Error | AppError, includeStack: boolean = fal
   }
 
   return formatted;
-}
-
-/**
- * Log error with context
- * 
- * NOTE: This function is deprecated. Use structured logger from config/logger.ts instead.
- * This function is kept for backward compatibility but should not be used in new code.
- * 
- * @param error - Error object
- * @param context - Additional context information
- * @deprecated Use logger from config/logger.ts instead
- */
-export function logError(error: Error | AppError, context?: Record<string, unknown>): void {
-  const isAppError = error instanceof AppError;
-  const logData = {
-    name: error.name,
-    message: error.message,
-    statusCode: isAppError ? error.statusCode : 500,
-    stack: error.stack,
-    ...context,
-  };
-
-  // Use structured logger (imported dynamically to avoid circular dependency)
-  // In practice, prefer importing logger directly in calling code
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { logger } = require('../config/logger');
-  logger.error(logData, 'Error occurred');
 }
 
 // ============================================================================

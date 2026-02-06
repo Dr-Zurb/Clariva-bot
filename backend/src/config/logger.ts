@@ -3,13 +3,13 @@ import { env } from './env';
 
 /**
  * Structured Logger Configuration
- * 
+ *
  * Uses Pino for fast, structured JSON logging
  * MUST: Include standard log fields (correlationId, path, method, statusCode, durationMs) - see STANDARDS.md
- * 
+ *
  * In development: Pretty logs for readability
  * In production: JSON logs for log aggregation tools
- * 
+ *
  * MUST: Use validated env from config/env.ts (not raw process.env) - see STANDARDS.md
  */
 
@@ -31,9 +31,9 @@ export const logger = pino({
 
 /**
  * Helper function to create log context with standard fields
- * 
+ *
  * MUST: Include correlationId, path, method, statusCode, durationMs in all logs
- * 
+ *
  * @param req - Express request object (optional)
  * @param additionalFields - Additional fields to include in log
  * @returns Log context object with standard fields

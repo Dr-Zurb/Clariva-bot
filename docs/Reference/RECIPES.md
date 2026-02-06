@@ -3,11 +3,102 @@
 
 ---
 
+## ⚠️ AI AGENT WARNING
+
+**These recipes are CANONICAL.**
+
+**AI agents MUST copy them verbatim unless explicitly instructed otherwise by the user.**
+
+**DO NOT:**
+- Modify recipes without explicit user request
+- "Optimize" or "improve" recipes
+- Change naming conventions or patterns
+- Add additional functionality not specified
+- Combine multiple recipes unless explicitly requested
+
+**DO:**
+- Use recipes exactly as written
+- Reference recipe IDs when possible
+- Inform user if a recipe needs modification
+- Check if a recipe exists before creating new patterns
+
+**CRITICAL: Recipe Compatibility Rule**
+
+**If a recipe conflicts with STANDARDS.md:**
+- **STANDARDS.md wins** (STANDARDS.md is the source of truth)
+- **Recipe must be updated** to match STANDARDS.md
+- **Do NOT follow a recipe** that violates STANDARDS.md
+- **Inform the user** if you find a conflict
+
+**This override prevents agents from blindly following broken recipes.**
+
+---
+
+## ⚠️ DO NOT Violate Response Contracts
+
+**AI Agents MUST NOT:**
+- ❌ Return `{ data: ... }` manually - **MUST** use `successResponse(data, req)` helper
+- ❌ Return `{ error, message, stack }` - **MUST** use error middleware (canonical format)
+- ❌ Invent error fields like `error.details`, `error.errors` - **MUST** follow STANDARDS.md contract
+- ❌ Skip `meta` object with `timestamp` and `requestId` - **MUST** include in all responses
+
+**ALWAYS:**
+- ✅ Use `successResponse(data, req)` for success responses
+- ✅ Throw typed errors (error middleware formats automatically)
+- ✅ Follow canonical contract: `{ success: true, data: {...}, meta: {...} }`
+
+**See:** [STANDARDS.md](./STANDARDS.md) "Canonical Contracts" section for exact format.
+
+---
+
+## 📌 Rule vs Example Policy
+
+**CRITICAL FOR AI AGENTS:**
+
+- **Text outside code blocks** = **ENFORCEMENT RULES** (recipes are canonical)
+- **Code blocks** = **COPY-PASTABLE PATTERNS** (use exactly as written)
+- **Recipe patterns MUST match STANDARDS.md** (if conflict, STANDARDS wins)
+
+**Rationale:**
+- Recipes are canonical patterns (not examples)
+- Code blocks are meant to be copied exactly
+- But recipes must still comply with STANDARDS.md rules
+
+**AI Agents:** 
+- Copy recipe code blocks exactly as written
+- Follow recipe instructions (text) exactly
+- If recipe conflicts with STANDARDS.md → follow STANDARDS.md and update recipe
+
+---
+
+## 📦 Recipe Completeness Policy
+
+**CRITICAL FOR AI AGENTS:**
+
+**If a requested pattern is NOT documented here:**
+- AI **MUST STOP** and ask before inventing one
+- AI **MUST NOT** extrapolate from partial examples
+- AI **MUST NOT** copy patterns from external sources without checking compliance
+
+**RECIPES.md is the ONLY allowed source of implementation patterns.**
+
+**Rationale:**
+- Prevents "pattern drift"
+- Makes RECIPES a hard gate, not a suggestion
+- Ensures all patterns comply with STANDARDS.md and COMPLIANCE.md
+
+**AI Agents:**
+- If pattern doesn't exist in RECIPES.md → **STOP** and ask user
+- If pattern exists but needs modification → **STOP** and ask user
+- Do not invent new patterns "similar to" existing ones
+
+---
+
 ## 🎯 Purpose
 
 This file contains copy-pastable code patterns for common tasks. Use these as templates when implementing new features.
 
-**See Also:** [`STANDARDS.md`](./STANDARDS.md) for rules, [`ARCHITECTURE.md`](./ARCHITECTURE.md) for structure.
+**See Also:** [`STANDARDS.md`](./STANDARDS.md) for rules, [`API_DESIGN.md`](./API_DESIGN.md) for API design, [`TESTING.md`](./TESTING.md) for testing patterns, [`ARCHITECTURE.md`](./ARCHITECTURE.md) for structure, [`CODING_WORKFLOW.md`](./CODING_WORKFLOW.md) for step-by-step coding process.
 
 ---
 
@@ -34,6 +125,8 @@ This file contains copy-pastable code patterns for common tasks. Use these as te
 ---
 
 ## 1. Add a New Route
+
+**Recipe ID:** `R-ROUTE-001`
 
 **When:** You need a new HTTP endpoint
 
@@ -119,9 +212,10 @@ export default router;
 **Pattern:**
 ```typescript
 // controllers/appointment-controller.ts
-import { Request, Response, NextFunction } from 'express';
+import { Request, Response } from 'express';
 import { asyncHandler } from '../utils/async-handler';
-import { ValidationError } from '../utils/errors';
+import { NotFoundError } from '../utils/errors';
+import { successResponse } from '../utils/response';
 import { createAppointmentSchema } from '../utils/validation';
 import { createAppointment, getAppointment, listAppointments } from '../services/booking-service';
 
@@ -136,8 +230,8 @@ export const createAppointmentController = asyncHandler(async (req: Request, res
   // 2. Call service (business logic)
   const appointment = await createAppointment(validated);
   
-  // 3. Return response
-  res.status(201).json({ data: appointment });
+  // 3. Return standardized response
+  return res.status(201).json(successResponse(appointment, req));
 });
 
 /**
@@ -153,7 +247,7 @@ export const getAppointmentController = asyncHandler(async (req: Request, res: R
     throw new NotFoundError('Appointment not found');
   }
   
-  res.json({ data: appointment });
+  return res.json(successResponse(appointment, req));
 });
 
 /**
@@ -165,13 +259,15 @@ export const listAppointmentsController = asyncHandler(async (req: Request, res:
   
   const appointments = await listAppointments({ doctorId: doctorId as string });
   
-  res.json({ data: appointments });
+  return res.json(successResponse(appointments, req));
 });
 ```
 
 ---
 
 ## 3. Add a New Service
+
+**Recipe ID:** `R-SERVICE-001`
 
 **When:** You need business logic
 
@@ -260,6 +356,8 @@ export async function listAppointments(filters: { doctorId?: string }): Promise<
 
 ## 4. Add Input Validation (Zod)
 
+**Recipe ID:** `R-VALIDATION-001`
+
 **When:** You need to validate request data
 
 **Steps:**
@@ -322,13 +420,27 @@ export const createAppointmentController = asyncHandler(async (req, res) => {
 
 ## 5. Add a Webhook Endpoint
 
+**Recipe ID:** `R-WEBHOOK-001`
+
 **When:** You need to handle webhooks from external services
 
 **Steps:**
 1. Verify signature (MUST)
-2. Check idempotency (MUST)
-3. Enqueue for async processing
-4. Return 200 immediately
+2. Extract event ID per platform (see STANDARDS.md Canonical Contracts)
+3. Check idempotency (MUST) - use idempotency table
+4. Mark as processing (prevent duplicates)
+5. Enqueue for async processing (don't block)
+6. Return 200 immediately
+
+**Idempotency Storage:**
+- Table: `webhook_idempotency`
+- Fields: `event_id` (string, primary), `provider` (string), `received_at` (timestamp), `status` (enum), `processed_at` (timestamp, nullable)
+- Check before processing, mark as 'processing' immediately
+
+**⚠️ CRITICAL PII RULE:**
+- **NEVER log `req.body` for webhooks** - platform payloads may contain patient identifiers (PII)
+- Only log metadata: `correlationId`, `eventId`, `provider`, `status`
+- See STANDARDS.md "PII Redaction Rule" for details
 
 **Pattern:**
 ```typescript
@@ -350,23 +462,53 @@ import { logger } from '../config/logger';
 export const facebookWebhookController = asyncHandler(async (req: Request, res: Response) => {
   // 1. MUST: Verify signature FIRST
   if (!verifyFacebookSignature(req)) {
-    logger.warn('Invalid webhook signature', { ip: req.ip });
+    // NEVER log req.body - may contain patient identifiers (PII)
+    logger.warn('Invalid webhook signature', { 
+      ip: req.ip,
+      correlationId: req.correlationId,
+      // NEVER include: req.body, req.headers with PHI
+    });
     throw new UnauthorizedError('Invalid webhook signature');
   }
   
+  // ⚠️ CRITICAL: NEVER log req.body for webhooks
+  // Platform payloads may contain patient identifiers (PII)
+  // Only log metadata: correlationId, eventId, provider, status
+  
   // 2. MUST: Check idempotency
-  const eventId = req.body.entry?.[0]?.id;
+  // Platform-specific ID extraction (see STANDARDS.md Canonical Contracts)
+  let eventId: string | undefined;
+  
+  // Facebook/Meta: message events use entry[0].id, messaging uses entry[0].messaging[0].message.mid
+  if (req.body.entry?.[0]?.messaging?.[0]?.message?.mid) {
+    eventId = req.body.entry[0].messaging[0].message.mid; // Message ID (most reliable)
+  } else if (req.body.entry?.[0]?.id) {
+    eventId = req.body.entry[0].id; // Fallback to entry ID
+  }
+  
+  // Instagram: uses entry[0].id
+  // WhatsApp: uses entry[0].changes[0].value.messages[0].id
+  
   if (!eventId) {
-    throw new ValidationError('Missing event ID');
+    // Fallback: hash normalized payload + timestamp bucket (5-minute window)
+    // Only use if platform doesn't provide stable ID
+    const normalizedPayload = JSON.stringify(req.body).replace(/\s/g, '');
+    const timestampBucket = Math.floor(Date.now() / 300000); // 5-minute buckets
+    const crypto = require('crypto');
+    eventId = crypto.createHash('sha256')
+      .update(normalizedPayload + timestampBucket)
+      .digest('hex');
   }
   
-  if (await isWebhookProcessed(eventId)) {
-    logger.info('Webhook already processed', { eventId });
-    return res.status(200).json({ message: 'OK' }); // Already processed
+  // Check idempotency table before processing
+  const existing = await isWebhookProcessed(eventId, 'facebook');
+  if (existing && existing.status === 'completed') {
+    logger.info('Webhook already processed', { eventId, correlationId: req.correlationId });
+    return res.status(200).json(successResponse({ message: 'OK' }, req)); // Idempotent response
   }
   
-  // 3. MUST: Mark as processing (prevent duplicates)
-  await markWebhookProcessing(eventId);
+  // 3. MUST: Mark as processing immediately (prevent race conditions)
+  await markWebhookProcessing(eventId, 'facebook');
   
   // 4. MUST: Enqueue for async processing (don't block)
   await webhookQueue.add('processFacebookWebhook', {
@@ -377,7 +519,7 @@ export const facebookWebhookController = asyncHandler(async (req: Request, res: 
   });
   
   // 5. MUST: Respond immediately (< 20 seconds for Facebook)
-  res.status(200).json({ message: 'OK' });
+  return res.status(200).json(successResponse({ message: 'OK' }, req));
 });
 ```
 
@@ -396,6 +538,8 @@ export default router;
 ---
 
 ## 6. Add Authentication Middleware
+
+**Recipe ID:** `R-AUTH-001`
 
 **When:** You need to protect routes
 
@@ -453,6 +597,8 @@ export async function authenticateToken(
 
 ## 7. Add Error Handling
 
+**Recipe ID:** `R-ERROR-001`
+
 **When:** You need to handle errors consistently
 
 **Steps:**
@@ -477,10 +623,10 @@ import { Request, Response, NextFunction } from 'express';
  * });
  */
 export function asyncHandler(
-  fn: (req: Request, res: Response, next: NextFunction) => Promise<void>
-) {
+  fn: (req: Request, res: Response, next: NextFunction) => Promise<unknown>
+): (req: Request, res: Response, next: NextFunction) => Promise<unknown> {
   return (req: Request, res: Response, next: NextFunction) => {
-    Promise.resolve(fn(req, res, next)).catch(next);
+    return Promise.resolve(fn(req, res, next)).catch(next);
   };
 }
 ```
@@ -489,14 +635,16 @@ export function asyncHandler(
 // middleware/error-handler.ts
 import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
-import { AppError, formatError, ValidationError } from '../utils/errors';
-import { logger, createLogContext } from '../config/logger';
+import { AppError, ValidationError } from '../utils/errors';
+import { errorResponse } from '../utils/response';
+import { logger } from '../config/logger';
 import { env } from '../config/env';
 
 /**
  * Global error handling middleware
  * MUST be last middleware in the chain
  * MUST: Map ZodError to ValidationError (400) per STANDARDS.md
+ * MUST: Use canonical error response format from STANDARDS.md
  */
 export function errorHandler(
   err: Error | AppError | ZodError,
@@ -512,25 +660,34 @@ export function errorHandler(
     err = validationError;
   }
   
-  // Format error for response
-  const formatted = formatError(err, env.NODE_ENV === 'development');
+  // Ensure error is AppError (has statusCode, isOperational)
+  const appError = err instanceof AppError 
+    ? err 
+    : new AppError(err.message || 'Internal server error', 500);
   
-  // Log error (without PII) - includes all standard fields
-  const logContext = createLogContext(req, {
-    statusCode: formatted.statusCode,
-    error: formatted.error,
-    message: formatted.message,
-    ...(env.NODE_ENV === 'development' && formatted.stack ? { stack: formatted.stack } : {}),
-  });
+  // Log error (without PII) - only IDs and metadata
+  logger.error({
+    correlationId: req.correlationId,
+    error: {
+      code: appError.constructor.name,
+      message: appError.message,
+      statusCode: appError.statusCode,
+    },
+    ...(env.NODE_ENV === 'development' && err.stack ? { stack: err.stack } : {}),
+  }, 'Error occurred');
   
-  logger.error(logContext, 'Error occurred');
+  // Send canonical error response (STANDARDS.md contract)
+  const response = errorResponse(
+    {
+      code: appError.constructor.name,
+      message: appError.message,
+      statusCode: appError.statusCode,
+      ...(env.NODE_ENV === 'development' && err.stack ? { stack: err.stack } : {}),
+    },
+    req
+  );
   
-  // Send error response
-  res.status(formatted.statusCode || 500).json({
-    error: formatted.error,
-    message: formatted.message,
-    ...(env.NODE_ENV === 'development' && formatted.stack ? { stack: formatted.stack } : {}),
-  });
+  res.status(appError.statusCode).json(response);
 }
 ```
 
@@ -547,6 +704,8 @@ app.use(errorHandler);
 ---
 
 ## 8. Add Request Timing Middleware
+
+**Recipe ID:** `R-MIDDLEWARE-TIMING-001`
 
 **When:** You need to track request duration for logging
 
@@ -617,6 +776,8 @@ logger.info('Appointment created', {
 
 ## 9. Add Request Logging Middleware
 
+**Recipe ID:** `R-MIDDLEWARE-LOGGING-001`
+
 **When:** You need to log all HTTP requests with standard fields
 
 **Steps:**
@@ -677,6 +838,8 @@ import { correlationId } from './middleware/correlation-id';
 import { requestTiming } from './middleware/request-timing';
 import { requestLogger } from './middleware/request-logger';
 
+// ⚠️ CRITICAL: Middleware order MUST match STANDARDS.md exactly. Do not reorder.
+// See STANDARDS.md "Non-Negotiable Middleware Order" section for canonical order.
 // Middleware order: correlation → timing → logging → ...
 app.use(correlationId);   // First - adds correlationId
 app.use(requestTiming);    // Second - adds startTime
@@ -689,6 +852,8 @@ app.use(requestLogger);    // Third - logs requests (needs correlationId and sta
 ---
 
 ## 10. Add Express Request Type Extensions
+
+**Recipe ID:** `R-TYPES-001`
 
 **When:** You need to add custom properties to Express Request (user, correlationId, etc.)
 
@@ -747,6 +912,8 @@ const correlationId = (req as any).correlationId;
 
 ## 11. Add Environment Variable
 
+**Recipe ID:** `R-ENV-001`
+
 **When:** You need a new environment variable
 
 **Steps:**
@@ -794,6 +961,8 @@ const value = process.env.NEW_VARIABLE;
 ---
 
 ## 12. Add Security Headers (Helmet)
+
+**Recipe ID:** `R-SECURITY-001`
 
 **When:** You need to add security headers to HTTP responses
 
@@ -843,6 +1012,8 @@ app.use(helmet({
 
 ## 13. Add Rate Limiting
 
+**Recipe ID:** `R-RATE-LIMIT-001`
+
 **When:** You need to prevent abuse and DDoS attacks
 
 **Steps:**
@@ -857,13 +1028,22 @@ app.use(helmet({
 import rateLimit from 'express-rate-limit';
 import { env } from './config/env';
 
+import { TooManyRequestsError } from '../utils/errors';
+import { errorResponse } from '../utils/response';
+
 // General API rate limiter (applies to all routes)
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // Limit each IP to 100 requests per windowMs
-  message: {
-    error: 'TooManyRequestsError',
-    message: 'Too many requests from this IP, please try again later.',
+  // ✅ MUST use canonical error format via handler (not message)
+  handler: (req: Request, res: Response) => {
+    const error = new TooManyRequestsError('Too many requests from this IP, please try again later.');
+    // errorResponse returns object with canonical format: { success: false, error: {...}, meta: {...} }
+    return res.status(429).json(errorResponse({
+      code: 'TooManyRequestsError',
+      message: error.message,
+      statusCode: 429,
+    }, req));
   },
   standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
   legacyHeaders: false,
@@ -875,9 +1055,15 @@ const apiLimiter = rateLimit({
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 5, // 5 requests per 15 minutes (prevents brute force)
-  message: {
-    error: 'TooManyRequestsError',
-    message: 'Too many authentication attempts, please try again later.',
+  // ✅ MUST use canonical error format via handler (not message)
+  handler: (req: Request, res: Response) => {
+    const error = new TooManyRequestsError('Too many authentication attempts, please try again later.');
+    // errorResponse returns object with canonical format: { success: false, error: {...}, meta: {...} }
+    return res.status(429).json(errorResponse({
+      code: 'TooManyRequestsError',
+      message: error.message,
+      statusCode: 429,
+    }, req));
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -917,6 +1103,8 @@ const apiLimiter = rateLimit({
 
 ## 14. Configure CORS
 
+**Recipe ID:** `R-CORS-001`
+
 **When:** You need to restrict cross-origin requests in production
 
 **Steps:**
@@ -928,10 +1116,11 @@ const apiLimiter = rateLimit({
 **Pattern:**
 ```typescript
 // index.ts
-import cors from 'cors';
+import cors, { CorsOptions } from 'cors';
 import { env } from './config/env';
 
-const corsOptions = {
+// ✅ Production CORS config (explicit, strict)
+const corsOptions: CorsOptions = {
   origin: (origin, callback) => {
     // List of allowed origins
     const allowedOrigins = env.NODE_ENV === 'production'
@@ -965,21 +1154,27 @@ const corsOptions = {
   maxAge: 86400, // Cache preflight for 24 hours
 };
 
-// Use different CORS config for development vs production
-app.use(cors(env.NODE_ENV === 'production' ? corsOptions : {}));
+// ✅ Development CORS config (explicit, never use {} in production)
+const corsOptionsDev: CorsOptions = {
+  origin: ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-ID'],
+  exposedHeaders: ['X-Correlation-ID'],
+  maxAge: 86400,
+};
+
+// ✅ Always use explicit config (prevents accidental {} in production)
+app.use(cors(env.NODE_ENV === 'production' ? corsOptions : corsOptionsDev));
 ```
 
-**Simple Configuration (Development Only):**
-```typescript
-// For development - allows all origins
-app.use(cors());
-
-// For production - restrict to specific origins (use corsOptions above)
-```
+**⚠️ DO NOT use `cors()` without options in production** - Always use explicit config above.
 
 ---
 
 ## 15. Add 404 Handler
+
+**Recipe ID:** `R-404-001`
 
 **When:** You need to handle unmatched routes with proper JSON responses
 
@@ -1021,6 +1216,8 @@ app.use((err, req, res, next) => {
 ---
 
 ## 16. Add Graceful Shutdown
+
+**Recipe ID:** `R-SHUTDOWN-001`
 
 **When:** You need to handle server shutdown cleanly (production requirement)
 
@@ -1112,7 +1309,105 @@ process.on('uncaughtException', (error: Error) => {
 
 ## 17. Configure Request Body Size Limits
 
+**Recipe ID:** `R-BODY-LIMIT-001`
+
 **When:** You need to prevent DoS attacks via large payloads
+
+---
+
+## 18. Standard Controller Skeleton (Canonical Template)
+
+**Recipe ID:** `R-CONTROLLER-SKELETON-001`
+
+**When:** Creating any new controller (use this as the default template)
+
+**This is the canonical controller pattern. AI agents MUST use this template.**
+
+**Complete Template:**
+```typescript
+// controllers/resource-controller.ts
+import { Request, Response } from 'express';
+import { asyncHandler } from '../utils/async-handler';
+import { successResponse } from '../utils/response';
+import { NotFoundError } from '../utils/errors';
+import { logger } from '../config/logger';
+import { z } from 'zod';
+import { myService } from '../services/my-service';
+// If route is protected, router MUST use authenticateToken before controller
+
+// 1. Define Zod validation schema
+const createResourceSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  // Add other fields with validation
+});
+
+const getResourceParamsSchema = z.object({
+  id: z.string().uuid('Invalid ID format'),
+});
+
+/**
+ * Create resource controller
+ * POST /resources
+ */
+export const createResource = asyncHandler(async (req: Request, res: Response) => {
+  // 1. Validate input with Zod (MUST)
+  const validated = createResourceSchema.parse(req.body);
+  
+  // 2. Call service (business logic)
+  const result = await myService.create(validated);
+  
+  // 3. Log action (IDs and metadata ONLY - no PII)
+  logger.info('Resource created', {
+    correlationId: req.correlationId,
+    userId: req.user?.id,
+    resourceId: result.id,
+    action: 'create_resource',
+    // NEVER log: req.body, patient names, phones, DOBs
+  });
+  
+  // 4. Return standardized response (MUST use successResponse)
+  return res.status(201).json(successResponse(result, req));
+});
+
+/**
+ * Get resource by ID
+ * GET /resources/:id
+ */
+export const getResource = asyncHandler(async (req: Request, res: Response) => {
+  // 1. Validate params with Zod
+  const { id } = getResourceParamsSchema.parse(req.params);
+  
+  // 2. Call service
+  const resource = await myService.getById(id);
+  
+  // 3. Handle not found
+  if (!resource) {
+    throw new NotFoundError('Resource not found');
+  }
+  
+  // 4. Log action (metadata only)
+  logger.info('Resource retrieved', {
+    correlationId: req.correlationId,
+    userId: req.user?.id,
+    resourceId: id,
+    action: 'get_resource',
+  });
+  
+  // 5. Return standardized response
+  return res.json(successResponse(resource, req));
+});
+```
+
+**Key Requirements (MUST Follow):**
+1. ✅ Use `asyncHandler` wrapper (never try-catch)
+2. ✅ Validate with Zod schemas (req.body, req.params, req.query)
+3. ✅ Call service functions (no business logic in controller)
+4. ✅ Log with structured format (IDs + metadata only, no PII)
+5. ✅ Use `successResponse()` helper (never manual `res.json({ data: ... })`)
+6. ✅ Throw typed errors (NotFoundError, ValidationError, etc.)
+7. ✅ Return response (explicit return statement)
+
+**AI Agents:** Use this template for ALL new controllers. Do not invent variations.
 
 **Steps:**
 1. Set limit in `express.json()`
@@ -1183,5 +1478,6 @@ app.use((err, req, res, next) => {
 
 ---
 
-**Last Updated:** January 16, 2025  
-**See Also:** [`STANDARDS.md`](./STANDARDS.md), [`ARCHITECTURE.md`](./ARCHITECTURE.md)
+**Last Updated:** 2026-01-17  
+**Version:** 1.0.0  
+**See Also:** [`STANDARDS.md`](./STANDARDS.md), [`ARCHITECTURE.md`](./ARCHITECTURE.md), [`EXTERNAL_SERVICES.md`](./EXTERNAL_SERVICES.md)

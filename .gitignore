@@ -1,0 +1,15 @@
+# Env and secrets (root level)
+.env
+.env.local
+.env.*.local
+
+# OS and IDE
+.DS_Store
+Thumbs.db
+.idea
+.vscode
+*.swp
+*.swo
+
+# Logs
+*.log

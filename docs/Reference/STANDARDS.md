@@ -7,7 +7,83 @@
 
 **IMPORTANT: If there is any conflict between documents, STANDARDS.md overrides everything else.**
 
-This file is the authoritative source for all coding standards. Other documentation files (ARCHITECTURE.md, RECIPES.md) should align with these rules.
+This file is the authoritative source for all coding standards. Other documentation files (ARCHITECTURE.md, RECIPES.md, CODING_WORKFLOW.md) should align with these rules.
+
+---
+
+## ⚠️ DO NOT Violate Response Contracts
+
+**AI Agents MUST NOT:**
+- ❌ Return `{ data: ... }` manually - **MUST** use `successResponse(data, req)` helper
+- ❌ Return `{ error, message, stack }` - **MUST** use error middleware (canonical format)
+- ❌ Invent error fields like `error.details`, `error.errors` - **MUST** follow canonical contract below
+- ❌ Skip `meta` object with `timestamp` and `requestId` - **MUST** include in all responses
+
+**ALWAYS:**
+- ✅ Use `successResponse(data, req)` for success responses
+- ✅ Throw typed errors (error middleware formats automatically)
+- ✅ Follow canonical contract: `{ success: true, data: {...}, meta: {...} }`
+
+---
+
+## 📌 Rule vs Example Policy
+
+**CRITICAL FOR AI AGENTS:**
+
+- **Text outside code blocks** = **ENFORCEMENT RULES** (must be followed)
+- **Code blocks** = **ILLUSTRATIVE EXAMPLES ONLY** (show intent, not mandatory implementation)
+- **If an example conflicts with rules, the rule always wins**
+
+**Rationale:**
+- Prevents AI from treating examples as mandatory implementation
+- Keeps STANDARDS from turning into RECIPES-lite
+- Clarifies that examples are illustrative, not prescriptive
+
+**AI Agents:** 
+- Follow rules (text) exactly
+- Use examples (code blocks) as guidance, but adapt to your specific context
+- If an example shows a pattern that violates a rule, follow the rule instead
+
+---
+
+**Related Files:**
+- [AI_AGENT_RULES.md](./AI_AGENT_RULES.md) - AI behavior rules (READ FIRST)
+- [CONTRACTS.md](./CONTRACTS.md) - API response contracts (locked shapes)
+- [CODING_WORKFLOW.md](./CODING_WORKFLOW.md) - Step-by-step coding process and pre-flight checklist
+- [API_DESIGN.md](./API_DESIGN.md) - API design principles and conventions
+- [TESTING.md](./TESTING.md) - Testing strategy, patterns, and best practices
+- [ARCHITECTURE.md](./ARCHITECTURE.md) - Project structure and layer boundaries
+- [RECIPES.md](./RECIPES.md) - Copy-pastable code patterns
+- [COMPLIANCE.md](./COMPLIANCE.md) - Regulatory requirements
+- [ERROR_CATALOG.md](./ERROR_CATALOG.md) - Error classes catalog
+- [OBSERVABILITY.md](./OBSERVABILITY.md) - Logging, metrics, tracing
+- [DB_SCHEMA.md](./DB_SCHEMA.md) - Database schema
+- [RLS_POLICIES.md](./RLS_POLICIES.md) - Row-level security policies
+- [WEBHOOKS.md](./WEBHOOKS.md) - Webhook handling
+- [EXTERNAL_SERVICES.md](./EXTERNAL_SERVICES.md) - External service integration patterns
+
+---
+
+## 🤖 AI AGENT ENFORCEMENT (MANDATORY)
+
+**⚠️ IMPORTANT: See [AI_AGENT_RULES.md](./AI_AGENT_RULES.md) for complete AI behavior rules (READ FIRST).**
+
+**Quick Reference:**
+- **MUST NOT** invent new patterns - use RECIPES.md
+- **MUST NOT** refactor existing code unless explicitly asked
+- **MUST NOT** access `process.env` directly - always use `config/env.ts`
+- **MUST NOT** log PII or raw request objects
+- **MUST** use `asyncHandler` for all async controllers - never use try-catch
+- **MUST** use Zod validation for all external inputs
+- **MUST** throw typed errors (AppError subclasses) - never raw Error
+- **MUST** use standardized response helpers (`successResponse`, `errorResponse`)
+
+**Error Mapping Rule:**
+- `ZodError` → `ValidationError` mapping **MUST** occur in the global error middleware
+- Controllers and services **MUST NOT** handle `ZodError` explicitly (no try-catch around `.parse()`)
+- Let `asyncHandler` catch and forward to error middleware for centralized mapping
+
+**See:** [AI_AGENT_RULES.md](./AI_AGENT_RULES.md) for complete AI behavior rules.
 
 ---
 
@@ -54,7 +130,9 @@ export const createAppointment = asyncHandler(async (req: Request, res: Response
   
   // Process validated data
   const appointment = await createAppointmentService(validated);
-  res.status(201).json({ data: appointment });
+  
+  // ✅ MUST use successResponse helper (canonical format)
+  return res.status(201).json(successResponse(appointment, req));
 });
 
 // Error middleware automatically maps ZodError → ValidationError (400)
@@ -104,7 +182,9 @@ export const createAppointment = asyncHandler(async (req, res) => {
   // No try-catch needed - asyncHandler handles errors automatically
   // ZodError is automatically caught and mapped to ValidationError by error middleware
   const appointment = await createAppointmentService(validated);
-  res.status(201).json({ data: appointment });
+  
+  // ✅ MUST use successResponse helper (canonical format)
+  return res.status(201).json(successResponse(appointment, req));
 });
 
 // ❌ BAD - Using Function type
@@ -409,10 +489,225 @@ router.post('/webhooks/facebook', async (req, res) => {
 - SHOULD have integration tests for critical paths
 - SHOULD test error cases
 
-### Performance (SHOULD)
-- SHOULD cache frequently accessed data (Redis)
-- SHOULD use database indexes
-- SHOULD implement connection pooling
+---
+
+## ⚡ Performance Baseline (Global)
+
+**MUST:**
+- Avoid N+1 queries (use joins or batch queries)
+- Explicitly select required fields (no `select *`)
+- Paginate all list endpoints
+- Use composite indexes matching query patterns
+
+**SHOULD:**
+- P95 response time < 500ms for standard API endpoints
+- P95 response time < 1000ms for analytics endpoints
+- Cache frequently accessed data (Redis) with invalidation strategy
+- Use database indexes for frequently queried columns
+- Implement connection pooling
+
+**DO NOT:**
+- Optimize prematurely without evidence
+- Introduce caching without invalidation strategy
+- Use `select *` in database queries
+- Skip pagination on list endpoints
+
+**Rationale:**
+- Performance issues compound over time
+- N+1 queries cause exponential slowdown
+- Pagination prevents memory exhaustion
+- Composite indexes match real query patterns
+
+**AI Agents:** Follow these baselines. Optimize further only when metrics show issues.
+
+---
+
+## 🔄 Non-Negotiable Middleware Order (MANDATORY)
+
+**AI Agents MUST mount middleware in this exact order. No exceptions.**
+
+```
+1. dotenv.config()                    // Load environment variables
+2. correlationId                      // Generate correlation ID FIRST (before body parsers)
+3. requestTiming                      // Track request start time (depends on correlationId)
+4. express.json() / express.urlencoded()  // Body parsers (after correlation ID for error logging)
+5. sanitizeInput                      // Input sanitization (after body parsing, before routes)
+6. compression                        // Response compression
+7. helmet                             // Security headers
+8. cors                               // CORS configuration
+9. requestLogger                      // Log requests (depends on timing and correlation ID)
+10. requestTimeout                    // Request timeout (prevents hanging requests, after logging)
+11. rateLimit                         // Rate limiting (after logging and timeout)
+12. routes                            // All application routes
+13. 404 handler                       // Catch unmatched routes
+14. errorMiddleware                   // Error handling (MUST BE LAST)
+```
+
+**Critical Dependencies:**
+- `correlationId` MUST come FIRST (before body parsers) - ensures correlation ID exists even if body parsing fails
+- `requestTiming` MUST come after `correlationId` (needs correlation ID for logging)
+- `body parsers` MUST come after `correlationId` - if parsing fails, correlation ID already exists for error logging
+- `requestLogger` MUST come after `requestTiming` (needs `req.startTime`) and after `correlationId` (needs `req.correlationId`)
+- `requestTimeout` MUST come after `requestLogger` (prevents hanging requests, needs logging for timeout events)
+- `rateLimit` placement depends on route type:
+  - **Public routes (before auth)**: IP-based rate limiting (prevents brute force)
+  - **Authenticated routes (after auth middleware)**: User-ID-based rate limiting (per-user limits)
+- `errorMiddleware` MUST be last (catches all errors)
+
+**Rate Limiting Rule:**
+- **Public routes**: Apply IP-based rate limiting globally (before auth) - prevents shared NAT IP issues
+- **Authenticated routes**: Apply user-ID-based rate limiting after auth middleware - ensures per-user limits work correctly
+- Never apply user-ID-based limiting before auth (user is not yet available)
+
+**Why This Order Matters:**
+- If body parsing throws (bad JSON, too large), `correlationId` already exists for error logging
+- Error responses will always include `X-Correlation-ID` header
+- Request logging will always have correlation ID even for parsing failures
+
+**AI Agents:** If middleware order is incorrect, fix it immediately. Incorrect order causes missing correlation IDs, broken timing, and unhandled errors.
+
+---
+
+## 📋 Canonical Contracts (Single Source of Truth)
+
+**⚠️ IMPORTANT: See [CONTRACTS.md](./CONTRACTS.md) for complete API contracts (locked shapes).**
+
+**Quick Reference:**
+- Success responses: `{ success: true, data: {...}, meta: { timestamp, requestId } }`
+- Error responses: `{ success: false, error: { code, message, statusCode }, meta: { timestamp, requestId } }`
+- DELETE endpoints: Return `200 OK` with canonical format (never `204 No Content`)
+- Use `successResponse(data, req)` helper for success
+- Throw typed errors for failures (error middleware formats automatically)
+
+**See:** [CONTRACTS.md](./CONTRACTS.md) for complete API contracts, headers, and idempotency rules.
+
+**Storage Schema:**
+```typescript
+interface WebhookIdempotency {
+  event_id: string;        // Platform ID or hash
+  provider: string;        // 'facebook', 'instagram', 'whatsapp', 'razorpay', 'paypal'
+  received_at: Date;       // When webhook received
+  status: 'processing' | 'completed' | 'failed';
+  processed_at?: Date;
+}
+```
+
+---
+
+## 📊 Decision Matrix: Controller vs Service vs DB
+
+**AI Agents MUST follow this decision matrix. No exceptions.**
+
+| Responsibility | Layer | What Goes Here |
+|---------------|-------|----------------|
+| **Input Validation** | Controller | Zod schema parsing (`req.body`, `req.params`, `req.query`) |
+| **Orchestration** | Controller | Call services, format HTTP responses |
+| **Business Rules** | Service | Validation logic, business calculations, data transformations |
+| **Permissions/Authorization** | Service | Check user permissions, role-based access control |
+| **Database Queries** | Service | All database operations (SELECT, INSERT, UPDATE, DELETE) |
+| **Audit Events** | Service | Log audit events (who did what, when) |
+| **Ownership Enforcement** | DB (RLS) | Row-level security policies (who can access which rows) |
+| **Least Privilege** | DB (RLS) | Database-level access control |
+
+**Examples:**
+
+**✅ CORRECT:**
+```typescript
+// Controller: Validate input, orchestrate, return response
+export const createAppointment = asyncHandler(async (req, res) => {
+  const validated = schema.parse(req.body); // Validation
+  const result = await createAppointmentService(validated); // Business logic in service
+  return res.status(201).json(successResponse(result, req)); // Response
+});
+
+// Service: Business rules, permissions, DB queries
+export async function createAppointmentService(data: ValidatedData) {
+  // Check permissions (business rule)
+  if (!hasPermission(data.doctorId)) {
+    throw new ForbiddenError('No permission');
+  }
+  
+  // Business logic
+  if (isPastDate(data.date)) {
+    throw new ValidationError('Cannot book past dates');
+  }
+  
+  // Database query (in service, not controller)
+  const appointment = await supabase.from('appointments').insert(data).select().single();
+  
+  // Audit log (in service)
+  await logAuditEvent({ action: 'create_appointment', resourceId: appointment.id });
+  
+  return appointment;
+}
+```
+
+**❌ WRONG:**
+```typescript
+// ❌ Controller doing business logic
+export const createAppointment = asyncHandler(async (req, res) => {
+  if (isPastDate(req.body.date)) { // Business rule in controller - WRONG
+    throw new ValidationError('Cannot book past dates');
+  }
+  const appointment = await supabase.from('appointments').insert(...); // DB in controller - WRONG
+});
+
+// ❌ Service importing Express types
+import { Request } from 'express'; // WRONG - services must be framework-agnostic
+```
+
+**AI Agents:** Use this matrix to determine where code belongs. When in doubt, prefer service layer for business logic.
+
+---
+
+## 🚨 PII Redaction Rule (MANDATORY)
+
+**CRITICAL FOR AI AGENTS:**
+
+**If any payload may contain PHI/PII:**
+- **MUST NOT** log request bodies or raw payloads
+- **MUST NOT** log patient names, phones, DOBs, or other PHI
+- **MUST** log only IDs + metadata (correlationId, userId, resourceId, action)
+- **MUST** redact PHI from AI prompts before sending to external AI services
+- **MUST** use `redactPHI()` utility (when implemented) before external AI calls
+- **MUST NOT** persist raw AI prompts/responses if they may contain PHI
+
+**Logging Rules:**
+```typescript
+// ❌ NEVER - Contains PII
+logger.info('Appointment created', { 
+  patientName: req.body.patientName,  // NEVER
+  phone: req.body.phone,              // NEVER
+  body: req.body                      // NEVER
+});
+
+// ✅ CORRECT - IDs and metadata only
+logger.info('Appointment created', {
+  correlationId: req.correlationId,
+  userId: req.user?.id,
+  appointmentId: appointment.id,
+  action: 'create_appointment'
+  // NO patient names, phones, or raw body
+});
+```
+
+**AI Prompt Redaction:**
+```typescript
+// ❌ NEVER - PHI in prompt
+const prompt = `Patient ${patient.name} with phone ${patient.phone} needs appointment`;
+
+// ✅ CORRECT - Redact PHI before external AI call
+import { redactPHI } from '../utils/phi-redaction'; // When implemented
+const prompt = redactPHI(`Patient ${patient.name} with phone ${patient.phone} needs appointment`);
+// Returns: "Patient [REDACTED] with phone [REDACTED] needs appointment"
+```
+
+**For Now (Before redactPHI() is implemented):**
+- **MUST NOT** send PHI to external AI services
+- **MUST** use only IDs and metadata in AI prompts
+- **MUST** inform user if PHI redaction is needed for feature
+
+**AI Agents:** If unsure whether data contains PHI, treat it as PHI and redact it.
 
 ---
 
@@ -471,12 +766,16 @@ These rules are enforced through:
 1. [TASK_MANAGEMENT_GUIDE.md](../../task-management/TASK_MANAGEMENT_GUIDE.md)
 2. [TASK_TEMPLATE.md](../../task-management/TASK_TEMPLATE.md)
 3. This STANDARDS.md file
-4. [ARCHITECTURE.md](./ARCHITECTURE.md)
-5. [RECIPES.md](./RECIPES.md)
-6. [COMPLIANCE.md](./COMPLIANCE.md)
+4. [CODING_WORKFLOW.md](./CODING_WORKFLOW.md) - Step-by-step coding process
+5. [API_DESIGN.md](./API_DESIGN.md) - API design principles
+6. [TESTING.md](./TESTING.md) - Testing strategies
+7. [ARCHITECTURE.md](./ARCHITECTURE.md)
+8. [RECIPES.md](./RECIPES.md)
+9. [COMPLIANCE.md](./COMPLIANCE.md)
 
 ---
 
-**Last Updated:** 2025-01-12  
+**Last Updated:** 2026-01-17  
+**Version:** 1.0.0  
 **Status:** ✅ Production-Enforced  
-**See Also:** [`ARCHITECTURE.md`](./ARCHITECTURE.md), [`RECIPES.md`](./RECIPES.md), [`COMPLIANCE.md`](./COMPLIANCE.md), [`TASK_MANAGEMENT_GUIDE.md`](../../task-management/TASK_MANAGEMENT_GUIDE.md)
+**See Also:** [`CODING_WORKFLOW.md`](./CODING_WORKFLOW.md) for step-by-step coding process, [`API_DESIGN.md`](./API_DESIGN.md) for API design principles, [`TESTING.md`](./TESTING.md) for testing strategies, [`ARCHITECTURE.md`](./ARCHITECTURE.md), [`RECIPES.md`](./RECIPES.md), [`COMPLIANCE.md`](./COMPLIANCE.md), [`TASK_MANAGEMENT_GUIDE.md`](../../task-management/TASK_MANAGEMENT_GUIDE.md)

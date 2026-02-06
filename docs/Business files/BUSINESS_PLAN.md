@@ -13,23 +13,27 @@
 
 **The Solution:** An AI-powered receptionist bot specifically designed for doctors that handles patient inquiries 24/7 on Facebook, Instagram, and WhatsApp, collects basic patient information, and books appointments automatically—all while maintaining professional, compliant communication.
 
+**Launch Strategy: Global from Day 1** — Clariva launches worldwide simultaneously, not India-first. Doctors in India, US, UK, EU, and other markets can onboard and accept payments from day one via region-appropriate gateways (Razorpay for India, PayPal for international). Gateway abstraction enables future Stripe migration when Stripe opens in India.
+
 **Market Opportunity:** 
-- India: ~390,000 doctors active on social media
-- Serviceable market: ~200,000 solo/small clinics
-- Target Year 1: 100-500 customers
-- Revenue potential: ₹15L-30L in Year 1
+- **India:** ~390,000 doctors active on social media; ~200,000 solo/small clinics
+- **US:** ~1M+ doctors; ~300,000+ solo/small practices on social media
+- **UK/EU:** ~500,000+ doctors; growing social media adoption
+- **Global TAM:** ~2M+ doctors on social media
+- Target Year 1: 100-500 customers (multi-region)
+- Revenue potential: ₹15L-30L (INR) + $15K-50K (USD/EUR) in Year 1
 
-**Business Model:** SaaS subscription
-- Free tier: ₹0/month (50 appointments)
-- Pro tier: ₹999/month (unlimited)
-- Enterprise: Custom pricing (₹5K-20K/month)
+**Business Model:** SaaS subscription (multi-currency)
+- **India:** Free ₹0/month | Pro ₹999/month | Enterprise ₹5K-20K/month
+- **International (USD):** Free $0/month | Pro ~$12/month | Enterprise $60-240/month
+- **International (EUR/GBP):** Region-equivalent pricing
 
-**Financial Projections:**
-- Month 1-3: 10-20 customers, ₹10K-20K MRR
-- Month 4-6: 50-100 customers, ₹50K-1L MRR
-- Month 7-9: 150-250 customers, ₹1.5L-2.5L MRR
-- Month 10-12: 300-500 customers, ₹3L-5L MRR
-- Year 1 Total Revenue: ₹15L-30L
+**Financial Projections (Consolidated):**
+- Month 1-3: 10-20 customers, ~₹10K-20K MRR (mix INR + USD/EUR)
+- Month 4-6: 50-100 customers, ~₹50K-1L MRR
+- Month 7-9: 150-250 customers, ~₹1.5L-2.5L MRR
+- Month 10-12: 300-500 customers, ~₹3L-5L MRR
+- Year 1 Total Revenue: ₹15L-30L + international (USD/EUR)
 
 **Funding:** Bootstrapped initially, may consider seed funding in Month 6-9 if needed for scaling.
 
@@ -51,7 +55,7 @@
 "To empower doctors to focus on patient care by automating social media patient engagement through intelligent AI, ensuring no patient inquiry is ever missed."
 
 ### 1.3 Vision Statement
-"To become the leading AI receptionist platform for healthcare professionals, helping doctors grow their practice while maintaining the highest standards of patient care and professional communication."
+"To become the leading AI receptionist platform for healthcare professionals worldwide, helping doctors grow their practice—in India, the US, UK, EU, and beyond—while maintaining the highest standards of patient care and professional communication."
 
 ### 1.4 Core Values
 1. **Doctor-First:** Everything we build prioritizes doctors' needs and workflow
@@ -86,7 +90,7 @@ Doctors who are active on social media to grow their practice face a critical ch
 
 **Professional Challenges:**
 - Maintaining professional boundaries on social media
-- Privacy and compliance concerns (HIPAA, DPDPA)
+- Privacy and compliance concerns (HIPAA in US, GDPR in EU, DPDPA in India)
 - Risk of saying wrong thing or violating regulations
 
 ### 2.3 Market Evidence
@@ -156,6 +160,11 @@ Doctors who are active on social media to grow their practice face a critical ch
 - **Frontend:** Next.js, React
 - **Database:** Supabase (PostgreSQL)
 - **AI:** OpenAI GPT-4o
+- **Payments (Global Day 1 — Best Customer Experience):**
+  - **India (INR):** Razorpay — UPI, cards, netbanking (region-native, trusted)
+  - **International (USD/EUR/GBP):** PayPal — cards, Apple Pay, PayPal balance (trusted globally)
+  - **Architecture:** Gateway abstraction layer (createPaymentLink, verifyWebhook) — enables future Stripe migration
+  - **Stripe:** Preferred for international (lower fees, better API) but invite-only in India; migrate PayPal → Stripe when Stripe opens up or US entity exists
 - **Notifications:** Twilio (SMS), SendGrid (Email)
 - **Hosting:** Render (bot), Vercel (dashboard)
 - **Monitoring:** Sentry, LogRocket
@@ -164,19 +173,20 @@ Doctors who are active on social media to grow their practice face a critical ch
 
 ## 4. Market Analysis
 
-### 4.1 Target Market
+### 4.1 Target Market (Global from Day 1)
 
-**Primary Market: Solo Practitioners & Small Clinics**
-- **Size:** ~200,000 doctors in India
-- **Characteristics:**
-  - 1-3 doctors per practice
-  - Active on social media (Instagram/Facebook)
+**Primary Market: Solo Practitioners & Small Clinics (All Regions)**
+- **India:** ~200,000 doctors; 1-3 per practice; UPI/cards; price-sensitive
+- **US:** ~300,000+ solo/small practices on social media; cards, ACH; willing to pay
+- **UK/EU:** ~200,000+ doctors; cards, SEPA; growing social media adoption
+- **Characteristics (Universal):**
+  - Active on social media (Instagram/Facebook/WhatsApp)
   - Limited staff (no dedicated receptionist)
   - Tech-savvy, growth-oriented
-  - Price-sensitive but value-focused
+  - Want automation and time-saving
 
 **Secondary Market: Social Media-Focused Doctors**
-- **Size:** ~50,000 doctors
+- **Size (Global):** ~100,000+ doctors
 - **Characteristics:**
   - Building personal brand
   - High social media engagement
@@ -185,7 +195,7 @@ Doctors who are active on social media to grow their practice face a critical ch
   - Willing to pay for solutions
 
 **Tertiary Market: Multi-Location Clinics**
-- **Size:** ~10,000 clinics
+- **Size:** ~20,000+ clinics globally
 - **Characteristics:**
   - 5+ doctors, multiple locations
   - Business-focused
@@ -196,19 +206,21 @@ Doctors who are active on social media to grow their practice face a critical ch
 ### 4.2 Market Size
 
 **Total Addressable Market (TAM):**
-- India: ~1.3M doctors
-- Active on social media: ~30% = 390,000 doctors
-- Global: ~10M+ doctors, ~20% on social media = 2M+ doctors
+- **India:** ~1.3M doctors; ~30% on social media = 390,000
+- **US:** ~1M+ doctors; ~30% on social media = 300,000+
+- **UK/EU:** ~1M+ doctors; ~20% on social media = 200,000+
+- **Global:** ~10M+ doctors; ~20% on social media = **2M+ doctors**
 
 **Serviceable Addressable Market (SAM):**
-- India: Solo/small clinics = ~200,000 doctors
-- Willing to pay: ~50% = 100,000 doctors
-- Serviceable: ~100,000 doctors
+- India: ~100,000 doctors (solo/small, willing to pay)
+- US: ~150,000 doctors
+- UK/EU: ~80,000 doctors
+- **Total SAM: ~330,000+ doctors**
 
 **Serviceable Obtainable Market (SOM):**
-- Year 1: 100-500 doctors (0.1-0.5% of SAM)
-- Year 2: 1,000-2,000 doctors (1-2% of SAM)
-- Year 3: 5,000-10,000 doctors (5-10% of SAM)
+- Year 1: 100-500 doctors (multi-region)
+- Year 2: 1,000-2,000 doctors
+- Year 3: 5,000-10,000 doctors
 
 ### 4.3 Market Trends
 
@@ -277,89 +289,97 @@ Doctors who are active on social media to grow their practice face a critical ch
 ### 6.1 Revenue Model
 **SaaS Subscription Model** - Recurring monthly/annual revenue
 
-### 6.2 Pricing Tiers
+### 6.2 Pricing Tiers (Multi-Currency, Global Day 1)
 
-**Free Tier: ₹0/month**
+**Free Tier: ₹0 / $0 / €0 per month**
 - 50 appointments/month
 - 1 platform (choose FB, IG, or WA)
 - Basic features
 - Community support
-- **Purpose:** Get doctors started, show value, viral growth
+- **Purpose:** Get doctors started, show value, viral growth (all regions)
 
-**Pro Tier: ₹999/month** (or ₹9,990/year - save 17%)
-- Unlimited appointments
-- All platforms (FB, IG, WhatsApp)
-- Advanced features
-- Analytics dashboard
-- SMS notifications
-- Priority support
-- **Purpose:** Main revenue stream, best value
+**Pro Tier:**
+- **India:** ₹999/month (or ₹9,990/year - save 17%)
+- **US/International:** ~$12/month (or ~$120/year)
+- **UK/EU:** ~£10 / ~€11 per month (region-equivalent)
+- Unlimited appointments, all platforms, advanced features, analytics, SMS, priority support
+- **Purpose:** Main revenue stream, best value (global)
 
-**Enterprise Tier: Custom Pricing (₹5,000-20,000/month)**
-- Multiple doctors
-- Custom integrations
-- White-label option
-- Dedicated support
-- Custom features
-- SLA guarantee
-- **Purpose:** High-value customers, larger practices
+**Enterprise Tier: Custom Pricing**
+- **India:** ₹5,000-20,000/month
+- **International:** $60-240/month (or equivalent)
+- Multiple doctors, custom integrations, white-label, dedicated support, SLA
+- **Purpose:** High-value customers, larger practices (global)
 
-### 6.3 Revenue Projections
+### 6.3 Revenue Projections (Multi-Region)
 
-**Conservative Scenario:**
-- Month 1-3: 10 customers × ₹999 = ₹9,990 MRR
-- Month 4-6: 50 customers × ₹999 = ₹49,950 MRR
-- Month 7-9: 150 customers × ₹999 = ₹149,850 MRR
-- Month 10-12: 300 customers × ₹999 = ₹299,700 MRR
-- **Year 1 Total Revenue: ~₹15L**
+**Conservative Scenario (India-heavy mix):**
+- Month 1-3: 10 customers (8 India + 2 intl) ≈ ₹9,990 MRR + ~$24
+- Month 4-6: 50 customers (40 India + 10 intl) ≈ ₹49,950 MRR + ~$120
+- Month 7-9: 150 customers (120 India + 30 intl) ≈ ₹1.5L MRR + ~$360
+- Month 10-12: 300 customers (240 India + 60 intl) ≈ ₹3L MRR + ~$720
+- **Year 1 Total Revenue: ~₹15L + ~$5K (international)**
 
-**Optimistic Scenario:**
-- Month 1-3: 20 customers × ₹999 = ₹19,980 MRR
-- Month 4-6: 100 customers × ₹999 = ₹99,900 MRR
-- Month 7-9: 250 customers × ₹999 = ₹249,750 MRR
-- Month 10-12: 500 customers × ₹999 = ₹499,500 MRR
-- **Year 1 Total Revenue: ~₹30L**
+**Optimistic Scenario (Balanced global mix):**
+- Month 1-3: 20 customers (12 India + 8 intl) ≈ ₹12K + ~$96 MRR
+- Month 4-6: 100 customers (60 India + 40 intl) ≈ ₹60K + ~$480 MRR
+- Month 7-9: 250 customers (150 India + 100 intl) ≈ ₹1.5L + ~$1,200 MRR
+- Month 10-12: 500 customers (300 India + 200 intl) ≈ ₹3L + ~$2,400 MRR
+- **Year 1 Total Revenue: ~₹30L + ~$20K (international)**
 
 ### 6.4 Unit Economics
 
-**Per Customer (Pro Tier):**
+**Per Customer (Pro Tier) — India:**
 - **Revenue:** ₹999/month
-- **Costs:**
-  - Infrastructure: ₹100/month
-  - AI API: ₹200/month (scales with usage)
-  - SMS: ₹50/month (scales with usage)
-  - Support: ₹50/month
-  - **Total Cost:** ₹400/month
-- **Gross Margin:** 60% (₹599/month)
-- **CAC (Customer Acquisition Cost):** ₹3,000
-- **LTV (Lifetime Value):** ₹24,000 (24 months average retention)
-- **LTV:CAC Ratio:** 8:1 (target: 3:1+)
-- **Payback Period:** 3 months
+- **Costs:** ~₹400/month (infra, AI, SMS, support)
+- **Gross Margin:** ~60%
+- **CAC:** ₹3,000 | **LTV:** ₹24,000 | **LTV:CAC:** 8:1
+
+**Per Customer (Pro Tier) — International:**
+- **Revenue:** ~$12/month
+- **Costs:** ~$4/month (equivalent)
+- **Gross Margin:** ~65%
+- **CAC:** ~$35 | **LTV:** ~$288 | **LTV:CAC:** 8:1
+
+### 6.5 Payment Strategy (Best Customer Experience)
+
+**Dual Gateway — Region-Specific Checkout:**
+- **India doctors:** Razorpay — patients pay in INR via UPI, cards, netbanking (familiar, trusted locally)
+- **US/UK/EU doctors:** PayPal — patients pay in USD/EUR/GBP via cards, Apple Pay, PayPal (familiar, trusted globally)
+
+**Why not Razorpay-only for international?** US/EU patients trust PayPal more; region-specific checkout maximizes conversion.
+
+**Why not Stripe?** Stripe is invite-only in India; preferred for international (lower fees ~2.9%, better API) but unavailable today.
+
+**Future Migration Path:**
+- Build gateway abstraction (createPaymentLink, verifyWebhook) from day 1
+- When Stripe opens in India (H2 2025 target) or US entity exists → swap PayPal for Stripe for international
+- Single adapter swap; no rewrite
 
 ---
 
-## 7. Go-to-Market Strategy
+## 7. Go-to-Market Strategy (Global from Day 1)
 
 ### 7.1 Phase 1: Validation (Month 1-3)
 
-**Goal:** Get 10-20 pilot customers, validate product-market fit
+**Goal:** Get 10-20 pilot customers across India + international, validate product-market fit globally
 
-**Tactics:**
+**Tactics (Multi-Region):**
 1. **Social Media Presence**
    - Daily Instagram posts (@clarivacare)
-   - Engage with doctors
+   - Engage with doctors in India, US, UK, EU
    - Build credibility
-   - Target: 500+ followers
+   - Target: 500+ followers (global audience)
 
 2. **Direct Outreach**
-   - DM 50-100 doctors on Instagram
-   - Personalized messages
+   - DM 50-100 doctors on Instagram (India + US/EU)
+   - Personalized messages by region
    - Offer free pilot
-   - Target: 10-20 signups
+   - Target: 10-20 signups (mix India + international)
 
 3. **Content Marketing**
-   - Blog posts (healthcare + AI)
-   - Case studies
+   - Blog posts (healthcare + AI, multi-region)
+   - Case studies (India, US, UK)
    - Video tutorials
    - Target: 1000+ views
 
@@ -369,89 +389,94 @@ Doctors who are active on social media to grow their practice face a critical ch
    - Target: 5+ referrals
 
 **Budget:** ₹50,000  
-**Target:** 20 customers
+**Target:** 20 customers (India + international)
 
 ### 7.2 Phase 2: Early Growth (Month 4-6)
 
-**Goal:** Scale to 50-100 customers, optimize acquisition
+**Goal:** Scale to 50-100 customers across regions, optimize acquisition
 
 **Tactics:**
 1. **Paid Advertising**
-   - Facebook/Instagram ads
-   - Target: Doctors on social media
+   - Facebook/Instagram ads (target by country: India, US, UK, EU)
    - Budget: ₹50,000/month
-   - Target: 30-50 signups/month
+   - Target: 30-50 signups/month (multi-region)
 
 2. **Content Marketing**
    - Weekly blog posts
-   - Case studies
-   - Webinars
+   - Case studies (per region)
+   - Webinars (timezone-friendly for US/EU)
    - Target: 5000+ views/month
 
 3. **Partnerships**
-   - Medical associations
-   - Healthcare influencers
+   - Medical associations (India, US, UK)
+   - Healthcare influencers (per region)
    - Target: 2-3 partnerships
 
 4. **Referral Program**
    - Incentivize referrals
-   - Track referrals
+   - Track referrals by region
    - Target: 20% of new customers
 
 **Budget:** ₹1,50,000  
-**Target:** 100 customers
+**Target:** 100 customers (global mix)
 
 ### 7.3 Phase 3: Scale (Month 7-12)
 
-**Goal:** Scale to 300-500 customers, multiple channels
+**Goal:** Scale to 300-500 customers across regions, multiple channels
 
 **Tactics:**
 1. **Multi-channel Marketing**
-   - Paid ads (₹1L/month)
+   - Paid ads (₹1L/month) — geo-target India, US, UK, EU
    - Content marketing
    - Partnerships
-   - Direct sales
+   - Direct sales (per region)
    - Target: 50+ signups/month
 
 2. **Optimization**
-   - A/B test messaging
+   - A/B test messaging by region
    - Optimize conversion
    - Reduce CAC
-   - Target: <₹3000 CAC
+   - Target: <₹3000 (India) / <$35 (international)
 
 3. **Expansion**
    - New features
    - Upsell existing
-   - Enterprise sales
+   - Enterprise sales (global)
    - Target: 20% expansion revenue
 
 **Budget:** ₹6,00,000  
-**Target:** 500 customers
+**Target:** 500 customers (global)
 
 ---
 
 ## 8. Operations Plan
 
-### 8.1 Development Process
+### 8.1 Development Process (Global Day 1)
 
 **Phase 1: MVP (Weeks 1-4)**
 - Basic bot functionality
 - Multi-platform support
 - Appointment booking
+- **Payment integration:** Razorpay (India) + PayPal (International) — dual gateway for best customer experience
+- **Gateway abstraction layer** — createPaymentLink(), verifyWebhook() interface; enables future Stripe swap
 - Simple dashboard
-- Test with 3-5 pilots
+- Test with 3-5 pilots (India + international)
 
 **Phase 2: Core Features (Weeks 5-8)**
 - Enhanced conversation
 - Patient history
 - Notifications
 - Analytics
+- **Multi-region support:** doctor country, currency, gateway routing (Razorpay vs PayPal)
 
 **Phase 3: Polish (Weeks 9-12)**
-- Security & compliance
+- Security & compliance (HIPAA, GDPR, DPDPA)
 - Performance optimization
 - UX improvements
 - Documentation
+
+**Phase 4 (Future): Stripe Migration**
+- When Stripe opens in India or US entity exists → add Stripe adapter, route international traffic to Stripe instead of PayPal
 
 ### 8.2 Customer Onboarding
 
@@ -528,7 +553,8 @@ Doctors who are active on social media to grow their practice face a critical ch
 - AI API (OpenAI): ₹10,000 (scales with usage)
 - SMS (Twilio): ₹5,000 (scales with usage)
 - Email service: ₹500
-- **Subtotal:** ₹15,500
+- **Payments (Razorpay + PayPal):** Transaction-based fees (Razorpay ~2% India; PayPal ~4.4% international). Future: Stripe ~2.9% when migrated.
+- **Subtotal:** ₹15,500 + payment gateway fees
 
 **Tools:**
 - Monitoring: ₹1,000
@@ -543,26 +569,26 @@ Doctors who are active on social media to grow their practice face a critical ch
 
 **Total Monthly Costs: ₹49,000** (early stage, scales with customers)
 
-### 10.3 Revenue Projections
+### 10.3 Revenue Projections (Multi-Region)
 
 **Month 1-3:**
-- Customers: 10
-- MRR: ₹9,990
+- Customers: 10 (India + international)
+- MRR: ~₹9,990 + ~$24
 - Status: Loss-making (building)
 
 **Month 4-6:**
-- Customers: 50
-- MRR: ₹49,950
+- Customers: 50 (India + international)
+- MRR: ~₹49,950 + ~$120
 - Status: Break-even
 
 **Month 7-9:**
-- Customers: 150
-- MRR: ₹149,850
+- Customers: 150 (India + international)
+- MRR: ~₹1.5L + ~$360
 - Status: Profitable
 
 **Month 10-12:**
-- Customers: 300
-- MRR: ₹299,700
+- Customers: 300 (India + international)
+- MRR: ~₹3L + ~$720
 - Status: Highly profitable
 
 ### 10.4 Break-even Analysis
@@ -606,18 +632,24 @@ Doctors who are active on social media to grow their practice face a critical ch
 - **Mitigation:** Thorough testing, monitoring, quick response
 - **Contingency:** Backup systems
 
+**Risk:** Multi-region payment/compliance complexity
+- **Probability:** Medium
+- **Impact:** Medium
+- **Mitigation:** Dual gateway (Razorpay + PayPal) from day 1; gateway abstraction for future Stripe migration; compliance by region (HIPAA, GDPR, DPDPA)
+- **Contingency:** Focus on single region if needed; gateway abstraction allows swapping PayPal → Stripe when available
+
 ### 11.2 Market Risks
 
 **Risk:** Low demand
 - **Probability:** Low
 - **Impact:** High
-- **Mitigation:** Validate with research, test with pilots
-- **Contingency:** Adjust target market
+- **Mitigation:** Validate with research, test with pilots across regions
+- **Contingency:** Adjust target market or region mix
 
 **Risk:** Competition
 - **Probability:** Medium
 - **Impact:** Medium
-- **Mitigation:** Differentiate, focus on niche, build brand
+- **Mitigation:** Differentiate, focus on niche, build brand (global)
 - **Contingency:** Compete on quality/price
 
 ### 11.3 Financial Risks
@@ -632,30 +664,30 @@ Doctors who are active on social media to grow their practice face a critical ch
 
 ## 12. Milestones & Timeline
 
-### 12.1 Key Milestones
+### 12.1 Key Milestones (Global Day 1)
 
 **Q1 2025 (Month 1-3):**
-- ✅ MVP completed
-- ✅ 20 pilot customers
-- ✅ Product-market fit validated
-- ✅ ₹10K MRR
+- ✅ MVP completed (Razorpay + PayPal dual gateway)
+- ✅ 20 pilot customers (India + international)
+- ✅ Product-market fit validated (multi-region)
+- ✅ ~₹10K MRR + international
 
 **Q2 2025 (Month 4-6):**
-- ✅ 100 customers
+- ✅ 100 customers (global mix)
 - ✅ Break-even achieved
-- ✅ ₹50K MRR
+- ✅ ~₹50K MRR + international
 - ✅ Team expansion (1-2 people)
 
 **Q3 2025 (Month 7-9):**
 - ✅ 250 customers
 - ✅ Profitable
-- ✅ ₹2.5L MRR
+- ✅ ~₹2.5L MRR + international
 - ✅ Advanced features launched
 
 **Q4 2025 (Month 10-12):**
-- ✅ 500 customers
-- ✅ ₹5L MRR
-- ✅ Market leadership
+- ✅ 500 customers (global)
+- ✅ ~₹5L MRR + international
+- ✅ Market leadership (India + early international)
 - ✅ Expansion planning
 
 ### 12.2 Success Metrics
@@ -678,12 +710,14 @@ Doctors who are active on social media to grow their practice face a critical ch
 ## 13. Exit Strategy (Long-term)
 
 **Options:**
-1. **Acquisition:** By larger healthcare tech company
-2. **IPO:** If scale to significant size
-3. **Continue Operating:** As profitable business
-4. **Franchise/License:** Technology to other markets
+1. **Acquisition:** By larger healthcare tech company (global acquirer)
+2. **IPO:** If scale to significant size (multi-region)
+3. **Continue Operating:** As profitable global business
+4. **Franchise/License:** Technology to other markets (regional licensing)
 
 **Timeline:** 5-10 years (if applicable)
+
+**Global Day 1 Advantage:** Early international presence increases acquisition interest and valuation.
 
 ---
 
@@ -707,7 +741,11 @@ Doctors who are active on social media to grow their practice face a critical ch
 
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** [Date]  
-**Next Review:** [Date + 1 month]
+**Document Version:** 1.2  
+**Last Updated:** 2026-01-30  
+**Next Review:** [Date + 1 month]  
+
+**Changelog (v1.2):** Payment strategy refined: dual gateway (Razorpay India + PayPal International) for best customer experience; gateway abstraction for future Stripe migration; Stripe preferred for international but unavailable in India (invite-only) — migrate when Stripe opens or US entity exists.
+
+**Changelog (v1.1):** Global Day 1 launch strategy; dual payment gateways (Razorpay + PayPal); multi-region market (India, US, UK, EU); multi-currency pricing; updated GTM, milestones, and risk analysis.
 

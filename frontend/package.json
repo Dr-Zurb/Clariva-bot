@@ -1,0 +1,44 @@
+{
+  "name": "clariva-bot-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Clariva Doctor Dashboard - Next.js frontend",
+  "scripts": {
+    "dev": "next dev",
+    "dev:e2e": "node scripts/start-dev-with-env.js",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:existing-server": "node scripts/run-e2e-existing-server.js",
+    "test:e2e:existing-server:headed": "node scripts/run-e2e-existing-server.js -- --headed",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,css,md}\""
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.8.0",
+    "clsx": "^2.1.1",
+    "next": "14.2.18",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwind-merge": "^2.5.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.1",
+    "@types/node": "^22.9.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "autoprefixer": "^10.4.20",
+    "dotenv": "^17.2.3",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "14.2.18",
+    "postcss": "^8.4.49",
+    "prettier": "^3.3.3",
+    "tailwindcss": "^3.4.15",
+    "typescript": "^5.6.3"
+  }
+}

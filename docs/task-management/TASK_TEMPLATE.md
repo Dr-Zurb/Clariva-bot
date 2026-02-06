@@ -11,7 +11,21 @@
 **Status:** ⏳ **PENDING**  
 **Completed:** {YYYY-MM-DD} (when completed)
 
+**Change Type:** (Choose one)
+- [ ] **New feature** — Add code only (no change to existing behavior)
+- [ ] **Update existing** — Change or remove existing code; follow [CODE_CHANGE_RULES.md](./CODE_CHANGE_RULES.md)
+
+**Current State:** (MANDATORY - Check existing code first!)
+- ✅ **What exists:** {List existing files, functions, or implementations}
+- ❌ **What's missing:** {List what needs to be created or implemented}
+- ⚠️ **Notes:** {Any important notes about existing code, naming differences, etc.}
+
+**Scope Guard:**
+- Expected files touched: ≤ 5
+- Any expansion requires explicit approval
+
 **Reference Documentation:**
+- [CODE_CHANGE_RULES.md](./CODE_CHANGE_RULES.md) - Rules when changing existing code (audit, impact, remove obsolete)
 - [STANDARDS.md](../../Reference/STANDARDS.md) - Coding rules and requirements
 - [ARCHITECTURE.md](../../Reference/ARCHITECTURE.md) - Project structure
 - [RECIPES.md](../../Reference/RECIPES.md) - Implementation patterns
@@ -61,29 +75,70 @@
 {File structure or list of files}
 ```
 
+**Existing Code Status:** (MANDATORY - Document what already exists)
+- ✅ `{file-path}` - EXISTS ({status: complete, partial, placeholder})
+- ❌ `{file-path}` - MISSING (needs to be created)
+- ⚠️ `{file-path}` - EXISTS but needs updates ({what needs updating})
+
+**When updating existing code:** (MANDATORY if Change Type = "Update existing")
+- [ ] Audit current implementation (files, callers, config/env) — see [CODE_CHANGE_RULES.md](./CODE_CHANGE_RULES.md)
+- [ ] Map desired change to concrete code changes (what to add, change, remove)
+- [ ] Remove obsolete code and config (env, defaults, dead branches)
+- [ ] Update tests and docs/env per CODE_CHANGE_RULES
+
+**When creating a migration:** (MANDATORY if task adds or changes DB schema)
+- [ ] Read all previous migrations (in numeric order) to understand schema, naming, RLS, triggers, and how the project connects to the database — see [MIGRATIONS_AND_CHANGE.md](../../Reference/MIGRATIONS_AND_CHANGE.md) and [CODE_CHANGE_RULES.md](./CODE_CHANGE_RULES.md) §4
+
 ---
 
-## 🏗️ Technical Details
+## 🧠 Design Constraints (NO IMPLEMENTATION)
 
-{Technical implementation details, architecture decisions, etc.}
+Describe constraints only:
+- Rules from [STANDARDS.md](../../Reference/STANDARDS.md) that apply
+- Architectural boundaries (what layer is affected)
+- Compliance or security considerations
+- Performance or observability expectations
+
+**DO NOT include:**
+- Code or pseudo-code
+- Logic or step-by-step implementation
+- Function signatures or schemas
+
+**Example:**
+- "Controller must use `successResponse` helper (STANDARDS.md)"
+- "Service layer must not import Express types (ARCHITECTURE.md)"
+- "No PHI in logs (COMPLIANCE.md)"
 
 ---
 
-## 🔧 Implementation Steps
+## 🌍 Global Safety Gate (MANDATORY)
 
-1. Step 1
-2. Step 2
-3. Step 3
+Task **CANNOT proceed** unless this section is completed:
+
+- [ ] **Data touched?** (Y / N)
+  - If Yes → [ ] **RLS verified?** (Y / N)
+- [ ] **Any PHI in logs?** (MUST be No)
+- [ ] **External API or AI call?** (Y / N)
+  - If Yes → [ ] **Consent + redaction confirmed?** (Y / N)
+- [ ] **Retention / deletion impact?** (Y / N)
+
+**Rationale:**
+- Ensures global compliance (US, EU, Japan, Middle East)
+- Prevents silent violations
+- Provides audit trail
 
 ---
 
-## ✅ Verification Steps
+## ✅ Acceptance & Verification Criteria
 
-After implementation:
-- [ ] Run type-check
-- [ ] Test functionality
-- [ ] Verify against standards
-- [ ] Update documentation
+Task is complete **ONLY when:**
+- [ ] Functional behavior matches task overview
+- [ ] Response contracts are respected (see [CONTRACTS.md](../../Reference/CONTRACTS.md))
+- [ ] Required tests are added or updated (see [TESTING.md](../../Reference/TESTING.md))
+- [ ] Logs contain no PHI (see [COMPLIANCE.md](../../Reference/COMPLIANCE.md))
+- [ ] Relevant docs are updated if patterns changed (see [AI_AGENT_RULES.md](../../Reference/AI_AGENT_RULES.md) "Doc Drift Guard")
+
+**See also:** [DEFINITION_OF_DONE.md](../../Reference/DEFINITION_OF_DONE.md) for comprehensive completion checklist.
 
 ---
 
@@ -112,3 +167,7 @@ After implementation:
 **Related Learning:** `docs/learning/{date}/l-task-{number}-{description}.md`  
 **Pattern:** {Pattern or architecture used}  
 **Reference:** [TASK_MANAGEMENT_GUIDE.md](./TASK_MANAGEMENT_GUIDE.md)
+
+---
+
+**Version:** 2.2.0 (Change type and CODE_CHANGE_RULES checklist for updating existing code)

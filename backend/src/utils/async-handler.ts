@@ -3,10 +3,10 @@ import { Request, Response, NextFunction } from 'express';
 /**
  * Wrapper for async route handlers
  * Automatically catches errors and passes them to error middleware
- * 
+ *
  * This eliminates the need for try-catch blocks in controllers
  * and ensures all errors are properly handled.
- * 
+ *
  * Usage:
  * ```typescript
  * export const myController = asyncHandler(async (req, res) => {
@@ -15,7 +15,7 @@ import { Request, Response, NextFunction } from 'express';
  *   res.json({ data: result });
  * });
  * ```
- * 
+ *
  * @param fn - Async route handler function
  * @returns Wrapped route handler that catches errors
  */

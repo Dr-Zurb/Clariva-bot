@@ -2,7 +2,158 @@
 
 **Source of Truth:** This document governs compliance posture, data handling, and security requirements for Clariva. `STANDARDS.md` governs code quality and patterns. If conflicts exist, `STANDARDS.md` remains the code source of truth, but `COMPLIANCE.md` defines system constraints that code must satisfy.
 
+---
+
+## ⚠️ DO NOT Violate Response Contracts
+
+**This section duplicates STANDARDS.md intentionally for emphasis. If mismatch, STANDARDS.md wins.**
+
+**AI Agents MUST NOT:**
+- ❌ Return `{ data: ... }` manually - **MUST** use `successResponse(data, req)` helper
+- ❌ Return `{ error, message, stack }` - **MUST** use error middleware (canonical format)
+- ❌ Invent error fields like `error.details`, `error.errors` - **MUST** follow STANDARDS.md contract
+- ❌ Skip `meta` object with `timestamp` and `requestId` - **MUST** include in all responses
+
+**ALWAYS:**
+- ✅ Use `res.status(XXX).json(successResponse(data, req))` for success responses (canonical signature: `successResponse(data, req, meta?)` returns object)
+- ✅ Throw typed errors (error middleware formats automatically)
+- ✅ Follow canonical contract: `{ success: true, data: {...}, meta: {...} }`
+
+**See:** [STANDARDS.md](./STANDARDS.md) "Canonical Contracts" section for exact format.
+
+---
+
 **Product Scope:** Clariva is digital infrastructure for doctors operating on social media. MVP focuses on administrative workflows (appointment booking, patient intake via DMs). Future evolution includes deeper clinical workflows and EHR-like capabilities. We are global-first from day 1.
+
+---
+
+## ⚠️ Compliance Overrules Features
+
+**CRITICAL RULE FOR AI AGENTS:**
+
+**If a feature conflicts with compliance requirements:**
+- **Compliance wins** - Feature must be redesigned or dropped
+- **AI agents MUST refuse** non-compliant implementations
+- **Inform the user** why the feature conflicts with compliance
+- **Suggest compliant alternatives** when possible
+
+**Examples:**
+- User requests: "Log all request bodies for debugging"
+  - **AI MUST refuse:** "Cannot log request bodies for healthcare routes per COMPLIANCE.md (PII protection)"
+  - **AI MUST suggest:** "Log only IDs and metadata instead"
+
+- User requests: "Skip validation for admin users"
+  - **AI MUST refuse:** "Cannot skip validation per STANDARDS.md and COMPLIANCE.md"
+  - **AI MUST suggest:** "Use role-based validation rules instead"
+
+**AI agents MUST prioritize compliance over user convenience or feature requests.**
+
+---
+
+## 🌍 Global Privacy Baseline (Applies Everywhere)
+
+**This baseline applies globally (US, EU, Japan, Middle East, etc.). Jurisdiction-specific requirements (HIPAA, GDPR) are addenda to this baseline.**
+
+### Data Principles
+
+**Data Minimization:**
+- Store only what is required for the stated purpose
+- Do not collect data "just in case"
+- Remove data when no longer needed
+
+**Purpose Limitation:**
+- Use data only for the stated purpose
+- Do not repurpose data without explicit consent
+- Document data usage purposes
+
+**Least Privilege Access:**
+- Enforced via RLS (Row-Level Security)
+- Users can only access data they need
+- Admin access is time-limited and audited
+
+**Full Audit Trail:**
+- All sensitive data access must be logged
+- Audit logs are immutable and retained per retention policy
+- Audit logs include: who, what, when, why (if applicable)
+
+### Retention (Default)
+
+**Appointments:**
+- Configurable retention period
+- Default: 7 years (medical/legal requirement)
+- Can be extended per jurisdiction requirements
+
+**Audit Logs:**
+- Immutable (append-only)
+- Minimum retention: 6 years
+- Maximum retention: 7 years (or per jurisdiction)
+
+**Webhook Metadata:**
+- Processed webhooks: 30 days
+- Failed webhooks: 90 days
+- **Never store webhook payloads** (may contain PHI)
+
+### Deletion
+
+**User-Initiated Deletion:**
+- Removes identifiable data (patient names, phones, etc.)
+- Audit logs remain but are anonymized (user_id → null, but action preserved)
+- Medical/legal retention overrides deletion (appointments retained per retention policy)
+
+**Anonymization:**
+- When data is deleted, replace identifiers with null or anonymized values
+- Preserve audit trail structure (who did what, when)
+- Remove PII/PHI from data but keep metadata
+
+### Export
+
+**User Data Export:**
+- Users may request structured export of their data
+- Export format: JSON or CSV
+- Export includes: appointments, profile data, consent records
+- Export excludes: internal logs, security metadata, audit logs (unless required by law)
+
+**Export Process:**
+- Must be authenticated (user requesting their own data)
+- Must be logged in audit trail
+- Must be delivered securely (encrypted)
+
+### External AI
+
+**Explicit Consent Required:**
+- Users must explicitly consent to data being sent to external AI services
+- Consent must be granular (per service, per purpose)
+- Consent can be revoked at any time
+
+**Data Minimization:**
+- Send only minimum data required for AI processing
+- Redact PHI before sending (unless explicitly approved)
+- Use anonymized identifiers when possible
+
+**No PHI Unless Explicitly Approved:**
+- Default: Do not send PHI to external AI services
+- Exception: Only if user explicitly consents and purpose is documented
+- All AI interactions must be logged (without PHI in logs)
+
+**AI Agents:** When integrating external AI services, always check COMPLIANCE.md first and ensure consent mechanisms are in place.
+
+---
+
+## 🇺🇸 HIPAA Addendum (US-Specific Requirements)
+
+**Note:** HIPAA requirements are in addition to the Global Privacy Baseline above. If there's a conflict, the stricter requirement applies.
+
+### HIPAA Alignment
+
+**MUST:** Document alignment with HIPAA (US), GDPR (EU), DPDPA (India).
+
+**MUST NOT:** Overclaim "HIPAA certified" or "certified compliant."
+
+**MUST:** Use phrasing: "designed to be HIPAA-aligned" or "supports DPDPA/GDPR principles."
+
+**MUST:** Document which frameworks we align with (HIPAA, GDPR, DPDPA) without certification claims.
+
+**SHOULD:** Maintain alignment posture that enables future certification if needed.
 
 ---
 
@@ -99,7 +250,7 @@
 | **Doctor** | Full access to own data, configure consent, manage staff | Owns all data; cannot access other doctors' data |
 | **Staff** | Manage appointments, view intake forms (doctor-assigned) | Least privilege; doctor can revoke access |
 | **Clinic Admin** | Manage clinic settings, operational workflows, limited patient index | Operational + limited patient index (no clinical notes by default); PHI access must be explicitly granted |
-| **Platform Admin** | System administration, support access | Audit logged; requires justification; time-limited |
+| **Platform Admin** | System administration, support access | **Audit logged; requires justification; MUST be time-limited** |
 
 ### Access Control Rules
 - **MUST:** Implement least privilege (grant minimum required access).
@@ -107,7 +258,12 @@
 - **MUST:** Doctor owns all data; staff access is delegated.
 - **MUST:** Support role-based access control (RBAC) with Supabase RLS policies.
 - **MUST:** Log all access attempts (success and failure).
-- **SHOULD:** Support time-limited access tokens for support scenarios.
+- **MUST:** Admin access MUST be time-limited (e.g., 24-hour access window)
+- **MUST:** Justification for admin access MUST be recorded in audit logs
+- **MUST:** Admin access MUST be server-side verified (never client-controlled)
+- **SHOULD:** Support time-limited access tokens for support scenarios
+
+**AI Agents:** Even if not implemented now, this rule prevents "forever admin god-mode" and ensures future implementations follow least-privilege principle.
 
 ### Authentication
 - **MUST:** Use Supabase Auth for authentication.
@@ -157,6 +313,18 @@
 - **MUST:** Log all AI interactions (metadata only: model, tokens, redaction applied, conversation ID).
 - **MUST NOT:** Store raw PHI in AI service logs or training data.
 - **MUST:** Support human override for all AI actions.
+
+**PII Redaction Rule (AI Agents - MANDATORY):**
+
+**If any payload may contain PHI/PII:**
+- **MUST NOT** log request bodies or raw payloads
+- **MUST NOT** log patient names, phones, DOBs, or other PHI
+- **MUST** log only IDs + metadata (correlationId, userId, resourceId, action)
+- **MUST** redact PHI from AI prompts before sending to external AI services
+- **MUST** use `redactPHI()` utility (when implemented) before external AI calls
+- **MUST NOT** persist raw AI prompts/responses if they may contain PHI
+
+**For AI Agents:** See STANDARDS.md "PII Redaction Rule" section for implementation details and code examples.
 
 ### AI Audit Requirements
 - **MUST:** Audit all AI interactions (see Audit Logging section).

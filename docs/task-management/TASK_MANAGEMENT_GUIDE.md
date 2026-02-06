@@ -6,6 +6,54 @@
 
 ---
 
+## 🛑 Task Planning vs Execution Boundary (MANDATORY)
+
+Task files exist for **PLANNING** and **TRACKING** only.
+
+**Tasks MUST:**
+- Describe **WHAT** needs to be done
+- Define acceptance and verification criteria
+
+**Tasks MUST NOT:**
+- Contain code or pseudo-code
+- Define function signatures or schemas
+- Specify exact implementation logic
+
+**All implementation decisions belong in:**
+- [RECIPES.md](../Reference/RECIPES.md) - Implementation patterns
+- [STANDARDS.md](../Reference/STANDARDS.md) - Coding rules
+- [ARCHITECTURE.md](../Reference/ARCHITECTURE.md) - Project structure
+- Actual code files
+
+**Rationale:**
+- Prevents AI agents from inventing architecture in task files
+- Keeps planning high-level and safe
+- Maintains separation between "what" (tasks) and "how" (code/docs)
+
+---
+
+## ⛔ Cursor Stop Rules (MANDATORY)
+
+If any of the following are unclear, task creation **MUST STOP** and ask:
+
+- **Data sensitivity:** Is PHI involved? (Y/N)
+- **RLS requirement:** Is Row-Level Security required? (Y/N)
+- **External services:** Are external AI or APIs involved? (Y/N)
+- **Schema/contract changes:** Will database schema or API contracts change? (Y/N)
+
+**Default behavior:**
+- Assume **STRICTEST** rules until clarified
+- If PHI is possible → treat as PHI
+- If RLS is unclear → assume RLS required
+- If external service → assume consent + redaction required
+
+**Rationale:**
+- Prevents silent compliance violations
+- Ensures global-ready task planning (US, EU, Japan, Middle East)
+- Provides audit-friendly process proof
+
+---
+
 ## 📋 Core Rules
 
 ### Rule 1: Date of Completion Tracking (MANDATORY)
@@ -159,6 +207,55 @@ docs/Development/Daily-plans/
 
 ## ✅ Before Creating a New Task
 
+**MANDATORY:** Follow these steps in order before creating any task:
+
+### Step 0: Code Review (MANDATORY - NEW)
+
+**MUST:** Check existing codebase before creating task file to identify:
+- ✅ What's already implemented
+- ✅ What files already exist
+- ✅ What functions/services are already available
+- ✅ What patterns are already in use
+
+**How to Check:**
+1. **Search codebase** for related files, functions, or patterns
+2. **Read existing code** in relevant directories (controllers, services, routes, etc.)
+3. **Check for similar implementations** that might already exist
+4. **Identify gaps** between what exists and what's needed
+
+**Why This Matters:**
+- Prevents creating tasks for already-completed work
+- Avoids missing existing implementations
+- Reduces duplicate work
+- Ensures accurate task scope
+
+**Example:**
+```bash
+# Before creating "webhook controller" task:
+# 1. Search for webhook-related files
+find . -name "*webhook*" -type f
+
+# 2. Check if controller already exists
+ls backend/src/controllers/webhook-controller.ts
+
+# 3. Check if routes already exist
+ls backend/src/routes/webhooks.ts
+
+# 4. Review existing implementation
+cat backend/src/controllers/webhook-controller.ts
+```
+
+**If Code Already Exists:**
+- Mark existing items as ✅ **EXISTS** or ✅ **COMPLETE** in task file
+- Only create tasks for missing functionality
+- Update task scope to reflect actual work needed
+
+**If the task changes existing behavior or code (not only adds new):**
+- **MUST:** Follow [CODE_CHANGE_RULES.md](./CODE_CHANGE_RULES.md) during planning and execution
+- Use the "Change type: Update existing" option in the task file and complete the CODE_CHANGE_RULES checklist (audit → impact → implement → remove obsolete → tests → docs)
+
+### Step 1: Review Documentation
+
 **MUST:** Review these documents before creating any task:
 
 1. **[TASK_TEMPLATE.md](./TASK_TEMPLATE.md)** - Use this template
@@ -173,20 +270,27 @@ docs/Development/Daily-plans/
 
 ### 1. Task Creation
 
-1. Review [TASK_TEMPLATE.md](./TASK_TEMPLATE.md)
-2. Check existing tasks in daily plans folder
-3. Create task file using template
-4. Set initial status: `⏳ PENDING`
-5. Add to daily plan README.md
+1. **MANDATORY:** Review existing codebase (see "Before Creating a New Task" → Step 0)
+   - Search for related files, functions, patterns
+   - Identify what's already implemented
+   - Document existing code status in task file
+2. Review [TASK_TEMPLATE.md](./TASK_TEMPLATE.md)
+3. Check existing tasks in daily plans folder (avoid duplicates)
+4. Create task file using template
+5. **MUST:** Include "Current State" section documenting existing code
+6. Set initial status: `⏳ PENDING` (or `⏳ PENDING (Partially Complete)` if code exists)
+7. Add to daily plan README.md
 
 ### 2. Task Execution
 
 1. Update status to `🚧 IN PROGRESS` when starting
-2. Work through hierarchical subtasks (1.1, 1.1.1, etc.)
-3. Check off items as you complete them (at any level)
-4. **MUST:** Add completion date when checking items
-5. **SHOULD:** Mark parent task complete when all children are done
-6. Document any issues or learnings in Notes section
+2. **If the task changes existing code:** Complete the [CODE_CHANGE_RULES.md](./CODE_CHANGE_RULES.md) checklist (audit → impact → implement → remove obsolete → tests → docs)
+3. **If the task involves creating a new migration:** Read all previous migrations (in numeric order) before writing the migration to understand schema, naming, RLS, triggers, and how the project connects to the database — see [MIGRATIONS_AND_CHANGE.md](../Reference/MIGRATIONS_AND_CHANGE.md) and [CODE_CHANGE_RULES.md](./CODE_CHANGE_RULES.md) §4
+4. Work through hierarchical subtasks (1.1, 1.1.1, etc.)
+5. Check off items as you complete them (at any level)
+6. **MUST:** Add completion date when checking items
+7. **SHOULD:** Mark parent task complete when all children are done
+8. Document any issues or learnings in Notes section
 
 ### 3. Task Completion
 
@@ -293,6 +397,7 @@ At the end of each week:
 ## 🔗 Related Documentation
 
 - **[TASK_TEMPLATE.md](./TASK_TEMPLATE.md)** - Template for creating new tasks
+- **[CODE_CHANGE_RULES.md](./CODE_CHANGE_RULES.md)** - Rules for tasks that change existing code (audit, impact, remove obsolete, tests, docs)
 - **[../Reference/STANDARDS.md](../Reference/STANDARDS.md)** - Coding standards
 - **[../Reference/ARCHITECTURE.md](../Reference/ARCHITECTURE.md)** - Project structure
 - **[../Reference/RECIPES.md](../Reference/RECIPES.md)** - Implementation patterns
@@ -303,15 +408,19 @@ At the end of each week:
 
 ## ⚠️ Important Reminders
 
-1. **ALWAYS** add completion date when checking off items (at any hierarchical level)
-2. **ALWAYS** use hierarchical numbering (1.1, 1.1.1, 1.2, etc.) for task breakdown
-3. **ALWAYS** update task status when state changes
-4. **ALWAYS** review task template before creating new tasks
-5. **ALWAYS** reference STANDARDS.md, ARCHITECTURE.md, RECIPES.md, and COMPLIANCE.md
-6. **NEVER** mark a task complete without recording the date
-7. **SHOULD** mark parent tasks complete when all children are done
+1. **ALWAYS** check existing codebase before creating task files (MANDATORY)
+2. **ALWAYS** document existing code status in "Current State" section
+3. **ALWAYS** add completion date when checking off items (at any hierarchical level)
+4. **ALWAYS** use hierarchical numbering (1.1, 1.1.1, 1.2, etc.) for task breakdown
+5. **ALWAYS** update task status when state changes
+6. **ALWAYS** review task template before creating new tasks
+7. **ALWAYS** reference STANDARDS.md, ARCHITECTURE.md, RECIPES.md, and COMPLIANCE.md
+8. **When a task changes existing code:** ALWAYS follow [CODE_CHANGE_RULES.md](./CODE_CHANGE_RULES.md)
+9. **NEVER** mark a task complete without recording the date
+10. **NEVER** create tasks for already-implemented functionality without documenting it
+11. **SHOULD** mark parent tasks complete when all children are done
 
 ---
 
-**Last Updated:** 2025-01-12  
-**Version:** 2.0.0 (Added hierarchical task structure)
+**Last Updated:** 2026-01-30  
+**Version:** 2.3.0 (Added CODE_CHANGE_RULES for tasks that change existing code)

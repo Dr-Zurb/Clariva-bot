@@ -9,7 +9,7 @@ Clariva is a healthcare SaaS platform that helps doctors manage patient interact
 ```
 clariva-bot/
 ├── backend/          # Express.js + TypeScript backend API
-├── frontend/         # Frontend application (to be implemented)
+├── frontend/         # Next.js Doctor Dashboard (TypeScript, Tailwind)
 └── docs/             # Project documentation
     ├── Reference/    # Coding standards, architecture, recipes, compliance
     ├── Development/  # Development plans and task tracking
@@ -28,14 +28,40 @@ cp .env.example .env
 npm run dev
 ```
 
+### Frontend Setup
+
+The Doctor Dashboard runs as a separate app in `frontend/`:
+
+```bash
+cd frontend
+npm install
+cp .env.example .env.local
+# Edit .env.local with NEXT_PUBLIC_API_URL, NEXT_PUBLIC_SUPABASE_* (see frontend/README.md)
+npm run dev
+```
+
+Frontend dev server: [http://localhost:3000](http://localhost:3000). Backend runs separately (e.g. port 3001); see `frontend/README.md` for env vars and run instructions.
+
 ### Environment Variables
 
-Required environment variables (see `.env.example`):
+Required environment variables (see `backend/.env.example`):
 - `SUPABASE_URL` - Your Supabase project URL
 - `SUPABASE_ANON_KEY` - Supabase anonymous key
 - `SUPABASE_SERVICE_ROLE_KEY` - Supabase service role key
 - `PORT` - Server port (default: 3000)
 - `NODE_ENV` - Environment (development/production)
+
+**For AI features (intent detection, response generation):**
+- `OPENAI_API_KEY` - OpenAI API key (required for AI features)
+
+**For webhook queue (async processing):**
+- `REDIS_URL` - Redis connection URL (e.g. `redis://localhost:6379`); omit to use placeholder queue
+
+**For full conversation flow (e-task-3):**
+- `DEFAULT_DOCTOR_ID` - UUID of the doctor for MVP single-tenant; omit to send fallback reply only
+
+**For dead letter queue (failed webhook storage):**
+- `ENCRYPTION_KEY` - Base64-encoded 32-byte key for payload encryption at rest
 
 ## 📚 Documentation
 
@@ -72,15 +98,16 @@ Required environment variables (see `.env.example`):
 
 ## ✅ Current Status
 
-### Completed (Tasks 1-5)
+### Completed (Tasks 1-6, Week 2)
 - ✅ Project setup and configuration
 - ✅ Express server with TypeScript
 - ✅ Supabase database integration
 - ✅ Project structure (Controller Pattern)
-- ✅ Testing and verification
-
-### In Progress
-- 🚧 Additional features and endpoints
+- ✅ Instagram webhook integration
+- ✅ AI intent detection and conversation flow
+- ✅ Patient information collection (Zod validation)
+- ✅ Consent and patient storage (consent before PHI persist, revocation)
+- ✅ Testing and verification (102 unit tests)
 
 ## 📋 Development Workflow
 
