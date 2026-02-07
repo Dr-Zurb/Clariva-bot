@@ -67,7 +67,7 @@ import type { InstagramWebhookPayload } from '../types/webhook';
 // Constants
 // ============================================================================
 
-/** Fallback when DEFAULT_DOCTOR_ID is not set or AI/conversation flow is skipped */
+/** Fallback when resolution returns null (no doctor linked for page) or AI/conversation flow is skipped */
 const FALLBACK_REPLY = "Thanks for your message. We'll get back to you soon.";
 
 // ============================================================================

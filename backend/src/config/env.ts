@@ -38,16 +38,12 @@ const envSchema = z.object({
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_PHONE_NUMBER: z.string().optional(),
 
-  // Doctor/Conversation (MVP single-tenant: one doctor for all webhook conversations)
-  DEFAULT_DOCTOR_ID: z.string().uuid().optional(),
-
   // Instagram Configuration (optional - only required when Instagram webhook integration is active)
   // Made optional to allow server startup during setup phase
   INSTAGRAM_APP_ID: z.string().optional(),
   INSTAGRAM_APP_SECRET: z.string().optional(),
   INSTAGRAM_ACCESS_TOKEN: z.string().optional(),
   INSTAGRAM_WEBHOOK_VERIFY_TOKEN: z.string().optional(), // Should be at least 32 characters when provided
-  INSTAGRAM_PAGE_ID: z.string().optional(), // Optional, for reference
   // OAuth connect flow (e-task-3): redirect URI for Meta callback; required when using connect endpoint
   INSTAGRAM_REDIRECT_URI: z.string().url().optional(),
   // After successful connect, redirect browser here (e.g. https://app.example.com/dashboard/settings/instagram); if unset, callback returns JSON

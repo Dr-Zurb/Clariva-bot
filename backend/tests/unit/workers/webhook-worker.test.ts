@@ -32,7 +32,6 @@ jest.mock('../../../src/config/env', () => ({
   env: {
     REDIS_URL: '',
     WEBHOOK_WORKER_CONCURRENCY: 5,
-    DEFAULT_DOCTOR_ID: undefined as string | undefined,
     SUPABASE_URL: 'https://test.supabase.co',
     SUPABASE_ANON_KEY: 'test-anon-key',
     SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
