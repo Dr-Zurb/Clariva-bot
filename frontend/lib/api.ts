@@ -134,8 +134,8 @@ export async function getInstagramStatus(
 
 /**
  * Start Instagram connect flow: fetch backend connect endpoint with auth;
- * backend responds with 302 to Meta. Use redirect: 'manual', then set
- * window.location to the Location header so the user is sent to Meta.
+ * backend returns 200 with JSON { redirectUrl } (avoids opaqueredirect when
+ * cross-origin fetch would get 302). Then navigate to redirectUrl for Meta OAuth.
  * Call from client only (browser navigation).
  */
 export async function redirectToInstagramConnect(token: string): Promise<void> {
@@ -143,19 +143,19 @@ export async function redirectToInstagramConnect(token: string): Promise<void> {
     `${API_BASE}/api/v1/settings/instagram/connect`,
     {
       method: "GET",
-      redirect: "manual",
       headers: {
         Authorization: `Bearer ${token}`,
       },
       cache: "no-store",
     }
   );
-  if (res.status === 302) {
-    const location = res.headers.get("Location");
-    if (location) {
-      window.location.href = location;
-      return;
-    }
+  if (!res.ok) {
+    throw new Error("Could not start Instagram connect");
+  }
+  const json = (await res.json()) as { redirectUrl?: string };
+  if (json?.redirectUrl) {
+    window.location.href = json.redirectUrl;
+    return;
   }
   throw new Error("Could not start Instagram connect");
 }

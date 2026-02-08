@@ -59,7 +59,7 @@ export const connectHandler = asyncHandler(async (req: Request, res: Response) =
 
   const state = createState(userId);
   const url = buildMetaOAuthUrl(state);
-  res.redirect(302, url);
+  res.status(200).json({ redirectUrl: url });
 });
 
 /**
