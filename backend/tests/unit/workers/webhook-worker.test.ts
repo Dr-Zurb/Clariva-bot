@@ -59,6 +59,7 @@ jest.mock('../../../src/services/instagram-service', () => ({
 }));
 jest.mock('../../../src/services/instagram-connect-service', () => ({
   getDoctorIdByPageId: jest.fn(),
+  getInstagramAccessTokenForDoctor: jest.fn(),
 }));
 jest.mock('../../../src/services/patient-service', () => ({
   findOrCreatePlaceholderPatient: jest.fn(),
@@ -122,6 +123,9 @@ describe('Webhook Worker', () => {
     jest
       .mocked(instagramConnectService.getDoctorIdByPageId)
       .mockResolvedValue(TEST_DOCTOR_ID);
+    jest
+      .mocked(instagramConnectService.getInstagramAccessTokenForDoctor)
+      .mockResolvedValue('test-doctor-access-token');
     jest.mocked(patientService.findOrCreatePlaceholderPatient).mockResolvedValue({
       id: TEST_PATIENT_ID,
     } as never);
@@ -198,9 +202,8 @@ describe('Webhook Worker', () => {
       expect(mockLogAudit).toHaveBeenCalledWith(
         expect.objectContaining({
           action: 'webhook_processed',
-          resourceId: 'evt_no_msg',
           status: 'success',
-          metadata: expect.objectContaining({ status: 'no_message' }),
+          metadata: expect.objectContaining({ status: 'no_message', event_id: 'evt_no_msg' }),
         })
       );
       expect(mockSendMessage).not.toHaveBeenCalled();
@@ -224,9 +227,9 @@ describe('Webhook Worker', () => {
       expect(mockLogAudit).toHaveBeenCalledWith(
         expect.objectContaining({
           action: 'webhook_processed',
-          resourceId: 'evt_api_err',
           status: 'failure',
           errorMessage: 'Instagram API 429',
+          metadata: expect.objectContaining({ event_id: 'evt_api_err' }),
         })
       );
       expect(mockMarkProcessed).not.toHaveBeenCalled();
@@ -287,13 +290,18 @@ describe('Webhook Worker', () => {
 
       await processWebhookJob(job);
 
-      expect(mockSendMessage).toHaveBeenCalledWith('987654321', expect.any(String), 'corr-ok');
+      expect(mockSendMessage).toHaveBeenCalledWith(
+        '987654321',
+        expect.any(String),
+        'corr-ok',
+        'test-doctor-access-token'
+      );
       expect(mockMarkProcessed).toHaveBeenCalledWith('evt_ok', 'instagram');
       expect(mockLogAudit).toHaveBeenCalledWith(
         expect.objectContaining({
           action: 'webhook_processed',
-          resourceId: 'evt_ok',
           status: 'success',
+          metadata: expect.objectContaining({ event_id: 'evt_ok' }),
         })
       );
     });
@@ -321,7 +329,6 @@ describe('Webhook Worker', () => {
         expect.objectContaining({
           action: 'webhook_processed',
           resourceType: 'webhook',
-          resourceId: 'evt_unknown_page',
           status: 'failure',
           errorMessage: 'No doctor linked for page',
           metadata: expect.objectContaining({
@@ -379,8 +386,8 @@ describe('Webhook Worker', () => {
       expect(mockLogAudit).toHaveBeenLastCalledWith(
         expect.objectContaining({
           action: 'webhook_processed',
-          resourceId: 'evt_retry_ok',
           status: 'success',
+          metadata: expect.objectContaining({ event_id: 'evt_retry_ok' }),
         })
       );
     });
@@ -401,10 +408,10 @@ describe('Webhook Worker', () => {
       expect(mockLogAudit).toHaveBeenCalledWith(
         expect.objectContaining({
           action: 'webhook_processed',
-          resourceId: 'evt_fail_audit',
           resourceType: 'webhook',
           status: 'failure',
           errorMessage: 'Instagram API 500',
+          metadata: expect.objectContaining({ event_id: 'evt_fail_audit' }),
         })
       );
     });
@@ -476,11 +483,16 @@ describe('Webhook Worker', () => {
       expect(mockMarkProcessed).toHaveBeenCalledWith('evt_race_a', 'instagram');
       expect(mockMarkProcessed).toHaveBeenCalledWith('evt_race_b', 'instagram');
       const auditCalls = mockLogAudit.mock.calls as unknown[];
-      const resourceIds = auditCalls
-        .map((c: unknown) => (c as [Record<string, unknown>])[0]?.resourceId as string | undefined)
+      const eventIds = auditCalls
+        .map(
+          (c: unknown) =>
+            (c as [Record<string, unknown>])[0]?.metadata as Record<string, unknown> | undefined
+        )
+        .filter(Boolean)
+        .map((m) => m?.event_id as string | undefined)
         .filter(Boolean);
-      expect(resourceIds).toContain('evt_race_a');
-      expect(resourceIds).toContain('evt_race_b');
+      expect(eventIds).toContain('evt_race_a');
+      expect(eventIds).toContain('evt_race_b');
     });
   });
 });
