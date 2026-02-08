@@ -23,8 +23,7 @@ import {
   buildMetaOAuthUrl,
   exchangeCodeForShortLivedToken,
   exchangeForLongLivedToken,
-  getPageList,
-  getInstagramUsername,
+  getInstagramUserInfo,
   saveDoctorInstagram,
   disconnectInstagram,
   getConnectionStatus,
@@ -64,14 +63,14 @@ export const connectHandler = asyncHandler(async (req: Request, res: Response) =
 
 /**
  * GET /api/v1/settings/instagram/callback
- * No auth. Query: code, state. Optionally page_id if multiple pages.
- * Verifies state, exchanges code, fetches page list, saves doctor_instagram, redirects or returns JSON.
+ * No auth. Query: code, state.
+ * Verifies state, exchanges code (Instagram API), obtains user_id and long-lived token,
+ * fetches username from /me, saves doctor_instagram, redirects or returns JSON.
  */
 export const callbackHandler = asyncHandler(async (req: Request, res: Response) => {
   const correlationId = req.correlationId || 'unknown';
   const code = typeof req.query.code === 'string' ? req.query.code : undefined;
   const stateParam = typeof req.query.state === 'string' ? req.query.state : undefined;
-  const pageIdQuery = typeof req.query.page_id === 'string' ? req.query.page_id : undefined;
 
   if (!code || !stateParam) {
     const redirectUri = env.INSTAGRAM_FRONTEND_REDIRECT_URI;
@@ -92,39 +91,18 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
 
   const doctorId = verifyState(stateParam);
 
-  const shortLived = await exchangeCodeForShortLivedToken(code, correlationId);
+  const { accessToken: shortLived, userId } = await exchangeCodeForShortLivedToken(code, correlationId);
   const longLived = await exchangeForLongLivedToken(shortLived, correlationId);
-  const pages = await getPageList(longLived, correlationId);
-
-  if (pages.length === 0) {
-    const redirectUri = env.INSTAGRAM_FRONTEND_REDIRECT_URI;
-    if (redirectUri) {
-      const errUrl = new URL(redirectUri);
-      errUrl.searchParams.set('connected', '0');
-      errUrl.searchParams.set('error', 'no_pages');
-      res.redirect(302, errUrl.toString());
-      return;
-    }
-    res.status(400).json({
-      success: false,
-      error: { code: 'ValidationError', message: 'No Facebook Pages found', statusCode: 400 },
-      meta: { timestamp: new Date().toISOString(), requestId: correlationId },
-    });
-    return;
-  }
-
-  const page = pageIdQuery
-    ? pages.find((p) => p.id === pageIdQuery) ?? pages[0]
-    : pages[0];
-
-  const username = await getInstagramUsername(page.id, page.access_token, correlationId);
+  const userInfo = await getInstagramUserInfo(longLived, correlationId);
+  const username = userInfo.username;
+  const instagramUserId = userInfo.user_id || userId;
 
   try {
     await saveDoctorInstagram(
       doctorId,
       {
-        instagram_page_id: page.id,
-        instagram_access_token: page.access_token,
+        instagram_page_id: instagramUserId,
+        instagram_access_token: longLived,
         instagram_username: username ?? null,
       },
       correlationId

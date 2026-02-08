@@ -1,38 +1,35 @@
 /**
  * Instagram Connect (OAuth) Types
  *
- * Types for Meta OAuth token exchange and page list responses.
- * Used by instagram-connect-service (e-task-3). No PHI; no tokens in logs.
+ * Types for Instagram API with Instagram Login OAuth token exchange and user info.
+ * Used by instagram-connect-service. No PHI; no tokens in logs.
  *
  * @see docs/Development/Daily-plans/2026-02-06/e-task-3-instagram-connect-flow-oauth.md
+ * @see docs/Development/Daily-plans/2026-02-06/e-task-13-instagram-api-instagram-login-migration.md
  */
 
-/** Meta token endpoint response (short-lived or long-lived exchange) */
-export interface MetaTokenResponse {
+/** Instagram API code exchange response (POST api.instagram.com/oauth/access_token) */
+export interface InstagramApiTokenResponse {
+  data: Array<{
+    access_token: string;
+    user_id: string;
+    permissions?: string;
+  }>;
+}
+
+/** Long-lived token exchange response (GET graph.instagram.com/access_token) */
+export interface InstagramLongLivedTokenResponse {
   access_token: string;
   token_type?: string;
   expires_in?: number;
 }
 
-/** Single page from GET /me/accounts */
-export interface MetaPage {
-  id: string;
-  access_token: string;
-  name?: string;
-}
-
-/** Meta /me/accounts response */
-export interface MetaPageListResponse {
-  data: MetaPage[];
-  paging?: { cursors?: { before?: string; after?: string } };
-}
-
-/** Instagram Business Account fields from page (GET /{page-id}?fields=instagram_business_account) */
-export interface MetaPageWithIgAccount {
-  instagram_business_account?: {
-    id: string;
+/** Instagram API /me response (GET graph.instagram.com/me) - data is array */
+export interface InstagramMeResponse {
+  data?: Array<{
+    user_id?: string;
     username?: string;
-  };
+  }>;
 }
 
 /** Parsed state payload (CSRF-safe; contains nonce and doctor_id) */

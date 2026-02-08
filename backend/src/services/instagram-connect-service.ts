@@ -26,25 +26,25 @@ import {
 } from '../utils/errors';
 import { handleSupabaseError } from '../utils/db-helpers';
 import type {
-  MetaTokenResponse,
-  MetaPageListResponse,
-  MetaPageWithIgAccount,
+  InstagramApiTokenResponse,
+  InstagramLongLivedTokenResponse,
+  InstagramMeResponse,
   InstagramConnectStatePayload,
 } from '../types/instagram-connect';
 import type { InsertDoctorInstagram } from '../types/database';
 
 // ============================================================================
-// Constants
+// Constants (Instagram API with Instagram Login - e-task-13)
 // ============================================================================
 
-const META_GRAPH_BASE = 'https://graph.facebook.com/v18.0';
-const META_OAUTH_DIALOG = 'https://www.facebook.com/v18.0/dialog/oauth';
-/** Scopes for Instagram messaging and page access (Meta docs) */
+const INSTAGRAM_OAUTH_AUTHORIZE = 'https://www.instagram.com/oauth/authorize';
+const INSTAGRAM_OAUTH_ACCESS_TOKEN = 'https://api.instagram.com/oauth/access_token';
+const INSTAGRAM_GRAPH_BASE = 'https://graph.instagram.com/v18.0';
+/** Scopes for Instagram API with Instagram Login (Business login) */
 const INSTAGRAM_SCOPES = [
-  'pages_show_list',
-  'pages_read_engagement',
-  'instagram_basic',
-  'instagram_manage_messages',
+  'instagram_business_basic',
+  'instagram_business_manage_messages',
+  'instagram_business_manage_comments',
 ];
 const META_HTTP_TIMEOUT_MS = 10000;
 
@@ -221,7 +221,8 @@ export function verifyState(state: string): string {
 // ============================================================================
 
 /**
- * Build Meta OAuth URL for redirect (connect start).
+ * Build Instagram OAuth URL for redirect (connect start).
+ * Uses Instagram API with Instagram Login (www.instagram.com/oauth/authorize).
  *
  * @param state - Signed state from createState(doctorId)
  * @returns Full URL to redirect the user to
@@ -239,47 +240,60 @@ export function buildMetaOAuthUrl(state: string): string {
     state,
     response_type: 'code',
   });
-  return `${META_OAUTH_DIALOG}?${params.toString()}`;
+  return `${INSTAGRAM_OAUTH_AUTHORIZE}?${params.toString()}`;
+}
+
+export interface ExchangeCodeResult {
+  accessToken: string;
+  userId: string;
 }
 
 /**
  * Exchange authorization code for short-lived user access token.
+ * Instagram API: POST to api.instagram.com/oauth/access_token.
  *
- * @param code - Authorization code from Meta callback
+ * @param code - Authorization code from Instagram callback
  * @param correlationId - For logs only (no code in logs)
  */
 export async function exchangeCodeForShortLivedToken(
   code: string,
   correlationId: string
-): Promise<string> {
+): Promise<ExchangeCodeResult> {
   const appId = env.INSTAGRAM_APP_ID;
   const appSecret = env.INSTAGRAM_APP_SECRET;
   const redirectUri = env.INSTAGRAM_REDIRECT_URI;
   if (!appId || !appSecret || !redirectUri) {
     throw new InternalError('Instagram OAuth not configured');
   }
-  const url = `${META_GRAPH_BASE}/oauth/access_token`;
-  const params = new URLSearchParams({
+  const form = new URLSearchParams({
     client_id: appId,
     client_secret: appSecret,
+    grant_type: 'authorization_code',
     redirect_uri: redirectUri,
     code,
   });
   try {
-    const res = await axios.get<MetaTokenResponse>(`${url}?${params.toString()}`, {
-      timeout: META_HTTP_TIMEOUT_MS,
-    });
-    const token = res.data?.access_token;
-    if (!token) {
-      logger.warn({ correlationId }, 'Meta token response missing access_token');
-      throw new UnauthorizedError('Failed to get access token from Meta');
+    const res = await axios.post<InstagramApiTokenResponse>(
+      INSTAGRAM_OAUTH_ACCESS_TOKEN,
+      form.toString(),
+      {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        timeout: META_HTTP_TIMEOUT_MS,
+      }
+    );
+    const first = res.data?.data?.[0];
+    const token = first?.access_token;
+    const userId = first?.user_id;
+    if (!token || !userId) {
+      logger.warn({ correlationId }, 'Instagram token response missing access_token or user_id');
+      throw new UnauthorizedError('Failed to get access token from Instagram');
     }
-    return token;
+    return { accessToken: token, userId };
   } catch (err: unknown) {
     const status = axios.isAxiosError(err) ? err.response?.status : undefined;
     logger.warn(
       { correlationId, status, message: axios.isAxiosError(err) ? err.message : 'Token exchange failed' },
-      'Meta code exchange failed'
+      'Instagram code exchange failed'
     );
     throw new UnauthorizedError('Failed to exchange code for access token');
   }
@@ -287,94 +301,66 @@ export async function exchangeCodeForShortLivedToken(
 
 /**
  * Exchange short-lived user token for long-lived (≈60 days).
+ * Instagram API: GET graph.instagram.com/access_token with grant_type=ig_exchange_token.
  */
 export async function exchangeForLongLivedToken(
   shortLivedToken: string,
   correlationId: string
 ): Promise<string> {
-  const appId = env.INSTAGRAM_APP_ID;
   const appSecret = env.INSTAGRAM_APP_SECRET;
-  if (!appId || !appSecret) {
+  if (!appSecret) {
     throw new InternalError('Instagram OAuth not configured');
   }
-  const url = `${META_GRAPH_BASE}/oauth/access_token`;
+  const url = 'https://graph.instagram.com/access_token';
   const params = new URLSearchParams({
-    grant_type: 'fb_exchange_token',
-    client_id: appId,
+    grant_type: 'ig_exchange_token',
     client_secret: appSecret,
-    fb_exchange_token: shortLivedToken,
+    access_token: shortLivedToken,
   });
   try {
-    const res = await axios.get<MetaTokenResponse>(`${url}?${params.toString()}`, {
+    const res = await axios.get<InstagramLongLivedTokenResponse>(`${url}?${params.toString()}`, {
       timeout: META_HTTP_TIMEOUT_MS,
     });
     const token = res.data?.access_token;
     if (!token) {
-      logger.warn({ correlationId }, 'Meta long-lived response missing access_token');
-      throw new UnauthorizedError('Failed to get long-lived token from Meta');
+      logger.warn({ correlationId }, 'Instagram long-lived response missing access_token');
+      throw new UnauthorizedError('Failed to get long-lived token from Instagram');
     }
     return token;
   } catch (err: unknown) {
     logger.warn(
       { correlationId, message: axios.isAxiosError(err) ? err.message : 'Long-lived exchange failed' },
-      'Meta long-lived token exchange failed'
+      'Instagram long-lived token exchange failed'
     );
     throw new UnauthorizedError('Failed to get long-lived access token');
   }
 }
 
 /**
- * Fetch Facebook Pages for the user (with page access tokens).
+ * Fetch Instagram user info (user_id, username) from /me.
+ * Instagram API: GET graph.instagram.com/me with fields=user_id,username.
  */
-export async function getPageList(
-  userAccessToken: string,
+export async function getInstagramUserInfo(
+  accessToken: string,
   correlationId: string
-): Promise<{ id: string; access_token: string; name?: string }[]> {
-  const url = `${META_GRAPH_BASE}/me/accounts`;
+): Promise<{ user_id: string; username: string | null }> {
+  const url = `${INSTAGRAM_GRAPH_BASE}/me`;
   try {
-    const res = await axios.get<MetaPageListResponse>(url, {
-      params: { access_token: userAccessToken, fields: 'id,access_token,name' },
+    const res = await axios.get<InstagramMeResponse>(url, {
+      params: { fields: 'user_id,username', access_token: accessToken },
       timeout: META_HTTP_TIMEOUT_MS,
     });
-    const data = res.data?.data;
-    if (!Array.isArray(data)) {
-      logger.warn({ correlationId }, 'Meta page list missing data array');
-      return [];
-    }
-    return data.map((p) => ({ id: p.id, access_token: p.access_token, name: p.name }));
+    const arr = res.data?.data;
+    const first = Array.isArray(arr) ? arr[0] : undefined;
+    const user_id = first?.user_id ?? '';
+    const username = first?.username ?? null;
+    return { user_id, username };
   } catch (err: unknown) {
-    logger.warn(
-      { correlationId, message: axios.isAxiosError(err) ? err.message : 'Page list failed' },
-      'Meta page list failed'
+    logger.debug(
+      { correlationId, message: axios.isAxiosError(err) ? err.message : 'Me request failed' },
+      'Could not fetch Instagram user info'
     );
-    throw new UnauthorizedError('Failed to fetch connected pages');
-  }
-}
-
-/**
- * Fetch Instagram Business Account username for a page (optional display).
- */
-export async function getInstagramUsername(
-  pageId: string,
-  pageAccessToken: string,
-  correlationId: string
-): Promise<string | null> {
-  const url = `${META_GRAPH_BASE}/${pageId}`;
-  try {
-    const res = await axios.get<MetaPageWithIgAccount>(url, {
-      params: {
-        access_token: pageAccessToken,
-        fields: 'instagram_business_account{username}',
-      },
-      timeout: META_HTTP_TIMEOUT_MS,
-    });
-    const ig = res.data?.instagram_business_account;
-    if (!ig?.username) return null;
-    return ig.username;
-  } catch {
-    // Non-fatal; return null and continue without username
-    logger.debug({ correlationId, pageId }, 'Could not fetch Instagram username for page');
-    return null;
+    return { user_id: '', username: null };
   }
 }
 
