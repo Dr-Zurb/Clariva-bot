@@ -91,8 +91,7 @@ export default function InstagramConnect() {
     setMessage(null);
     try {
       await redirectToInstagramConnect(token);
-      // Redirect will happen; if we get here, redirect failed
-      setError("Could not start connect. Please try again.");
+      // Redirect initiated; do not set error — navigation may complete shortly.
     } catch {
       setError("Could not start connect. Please try again.");
     } finally {
