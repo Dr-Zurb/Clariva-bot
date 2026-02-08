@@ -24,7 +24,7 @@ import { logAuditEvent } from '../utils/audit-logger';
 import { markWebhookProcessed, markWebhookFailed } from '../services/webhook-idempotency-service';
 import { storeDeadLetterWebhook } from '../services/dead-letter-service';
 import { sendInstagramMessage } from '../services/instagram-service';
-import { getDoctorIdByPageId } from '../services/instagram-connect-service';
+import { getDoctorIdByPageId, getInstagramAccessTokenForDoctor } from '../services/instagram-connect-service';
 import { findOrCreatePlaceholderPatient, findPatientByIdWithAdmin } from '../services/patient-service';
 import { getAvailableSlots } from '../services/availability-service';
 import { bookAppointment, getAppointmentByIdForWorker } from '../services/appointment-service';
@@ -319,7 +319,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     try {
       await sendInstagramMessage(senderId, FALLBACK_REPLY, correlationId);
     } catch {
-      // Optional fallback reply best-effort; continue to mark failed and audit
+      // Optional fallback reply best-effort (uses env token if set); continue to mark failed and audit
     }
     await markWebhookFailed(eventId, provider, 'No doctor linked for page');
     await logAuditEvent({
@@ -331,6 +331,26 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       status: 'failure',
       errorMessage: 'No doctor linked for page',
       metadata: { event_id: eventId, provider, page_id: pageId },
+    });
+    return;
+  }
+
+  const doctorToken = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
+  if (!doctorToken) {
+    logger.warn(
+      { correlationId, doctorId, eventId, provider },
+      'Doctor has no Instagram token; marking webhook failed'
+    );
+    await markWebhookFailed(eventId, provider, 'No Instagram token for doctor');
+    await logAuditEvent({
+      correlationId,
+      userId: doctorId,
+      action: 'webhook_processed',
+      resourceType: 'webhook',
+      resourceId: eventId,
+      status: 'failure',
+      errorMessage: 'No Instagram token for doctor',
+      metadata: { event_id: eventId, provider },
     });
     return;
   }
@@ -676,7 +696,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           };
     await updateConversationState(conversation.id, stateToPersist, correlationId);
 
-    await sendInstagramMessage(senderId, replyText, correlationId);
+    await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
   } catch (error) {
     await markWebhookFailed(
       eventId,

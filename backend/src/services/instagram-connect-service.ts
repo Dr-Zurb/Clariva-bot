@@ -366,6 +366,41 @@ export async function getInstagramUserInfo(
 }
 
 // ============================================================================
+// Get doctor token for sending (e-task-14)
+// ============================================================================
+
+/**
+ * Get the Instagram access token for a doctor (for sending replies).
+ * Used by webhook worker; token is never logged (COMPLIANCE).
+ *
+ * @param doctorId - Doctor UUID (from getDoctorIdByPageId)
+ * @param correlationId - Optional for audit
+ * @returns access token or null if no row
+ */
+export async function getInstagramAccessTokenForDoctor(
+  doctorId: string,
+  correlationId?: string
+): Promise<string | null> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) {
+    throw new InternalError('Service role client not available for token lookup');
+  }
+
+  const { data, error } = await supabase
+    .from('doctor_instagram')
+    .select('instagram_access_token')
+    .eq('doctor_id', doctorId)
+    .maybeSingle();
+
+  if (error) {
+    handleSupabaseError(error, correlationId ?? '');
+  }
+
+  const token = data?.instagram_access_token;
+  return typeof token === 'string' && token.length > 0 ? token : null;
+}
+
+// ============================================================================
 // Persist connection (upsert doctor_instagram)
 // ============================================================================
 

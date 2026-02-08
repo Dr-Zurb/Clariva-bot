@@ -79,17 +79,20 @@ const MAX_RETRY_DELAY = 4000; // 4 seconds
  * const response = await sendInstagramMessage(
  *   'instagram_user_id',
  *   'Hello, this is a message',
- *   'correlation-123'
+ *   'correlation-123',
+ *   optionalDoctorToken
  * );
- * console.log(response.messageId); // 'mid.1234567890'
  * ```
+ *
+ * @param accessToken - Optional. When provided (e.g. from doctor_instagram), used for the API call. When omitted, uses env.INSTAGRAM_ACCESS_TOKEN (e-task-14).
  *
  * Reference: [EXTERNAL_SERVICES.md](../../docs/Reference/EXTERNAL_SERVICES.md) - Meta platform patterns
  */
 export async function sendInstagramMessage(
   recipientId: string,
   message: string,
-  correlationId: string
+  correlationId: string,
+  accessToken?: string
 ): Promise<InstagramSendMessageResponse> {
   // Validate input
   if (!recipientId || typeof recipientId !== 'string') {
@@ -105,13 +108,12 @@ export async function sendInstagramMessage(
     throw new AppError('Message too long (max 2000 characters)', 400);
   }
 
-  // Validate access token
-  if (!env.INSTAGRAM_ACCESS_TOKEN) {
-    throw new InternalError('Instagram access token not configured');
+  const token = accessToken ?? env.INSTAGRAM_ACCESS_TOKEN ?? null;
+  if (!token) {
+    throw new InternalError('Instagram access token not configured (no token passed and INSTAGRAM_ACCESS_TOKEN unset)');
   }
 
-  // Send with retry logic
-  return sendWithRetry(recipientId, message, correlationId);
+  return sendWithRetry(recipientId, message, correlationId, token);
 }
 
 /**
@@ -120,21 +122,19 @@ export async function sendInstagramMessage(
  * Implements exponential backoff for retryable errors (429, 5xx).
  * Does not retry on client errors (4xx except 429).
  *
- * @param recipientId - Instagram user ID
- * @param message - Text message to send
- * @param correlationId - Request correlation ID
- * @returns Message ID and recipient ID
+ * @param token - Access token for the Instagram account (never logged)
  */
 async function sendWithRetry(
   recipientId: string,
   message: string,
-  correlationId: string
+  correlationId: string,
+  token: string
 ): Promise<InstagramSendMessageResponse> {
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const response = await sendMessageAPI(recipientId, message, correlationId);
+      const response = await sendMessageAPI(recipientId, message, correlationId, token);
 
       // Log success (metadata only - NEVER log message content)
       await logAuditEvent({
@@ -298,19 +298,17 @@ async function sendWithRetry(
  *
  * Performs the actual HTTP request to Instagram Graph API.
  *
- * @param recipientId - Instagram user ID
- * @param message - Text message to send
- * @param correlationId - Request correlation ID
- * @returns Message ID and recipient ID
+ * @param token - Access token (never logged)
  */
 async function sendMessageAPI(
   recipientId: string,
   message: string,
-  correlationId: string
+  correlationId: string,
+  token: string
 ): Promise<InstagramSendMessageResponse> {
   const url = `${GRAPH_API_BASE}/me/messages`;
   const params = {
-    access_token: env.INSTAGRAM_ACCESS_TOKEN!,
+    access_token: token,
   };
   const payload: InstagramSendMessageRequest = {
     recipient: { id: recipientId },
