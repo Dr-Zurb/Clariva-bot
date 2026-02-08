@@ -8,13 +8,16 @@
  * @see docs/Development/Daily-plans/2026-02-06/e-task-13-instagram-api-instagram-login-migration.md
  */
 
-/** Instagram API code exchange response (POST api.instagram.com/oauth/access_token) */
+/** Instagram API code exchange response (POST api.instagram.com/oauth/access_token)
+ * May be { data: [{ access_token, user_id }] } or { access_token, user_id } at top level */
 export interface InstagramApiTokenResponse {
-  data: Array<{
-    access_token: string;
-    user_id: string;
+  data?: Array<{
+    access_token?: string;
+    user_id?: string;
     permissions?: string;
   }>;
+  access_token?: string;
+  user_id?: string;
 }
 
 /** Long-lived token exchange response (GET graph.instagram.com/access_token) */

@@ -281,9 +281,10 @@ export async function exchangeCodeForShortLivedToken(
         timeout: META_HTTP_TIMEOUT_MS,
       }
     );
-    const first = res.data?.data?.[0];
-    const token = first?.access_token;
-    const userId = first?.user_id;
+    const d = res.data;
+    const fromArray = d?.data?.[0];
+    const token = fromArray?.access_token ?? d?.access_token;
+    const userId = fromArray?.user_id ?? d?.user_id;
     if (!token || !userId) {
       logger.warn({ correlationId }, 'Instagram token response missing access_token or user_id');
       throw new UnauthorizedError('Failed to get access token from Instagram');
