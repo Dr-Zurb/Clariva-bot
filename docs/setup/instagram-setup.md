@@ -349,11 +349,24 @@ Work through the checklist below in order. Mark each item when verified or fixed
 #### Where to see logs on Render
 
 - Use **Logs** (under **Monitor** in the left sidebar), not **Events**. Events shows deployments; Logs shows runtime output (requests, worker, errors).
-- After sending a DM, search the log stream for:
-  - **`Instagram webhook queued`** — webhook was received and queued (added in app so you can confirm receipt).
-  - **`/webhooks/instagram`** or **`Request completed`** — any request to the webhook endpoint (check the `path` field in the log line).
+- After sending a DM, search the log stream for (in order of when they appear):
+  - **`Instagram webhook POST received (verifying signature)`** — every POST to `/webhooks/instagram` logs this first, before signature check. If you see this, the request reached your server.
+  - **`Instagram webhook queued for processing`** — signature passed and job queued.
+  - **`Request completed`** with `path: "/webhooks/instagram"` — request finished (200 or 4xx/5xx).
   - **`Webhook queue connected`** / **`Webhook worker started`** — at startup, confirms Redis and worker are running.
-- If you see **no** line containing `webhooks/instagram` or `Instagram webhook queued` when you send a message, Meta is not sending webhooks (or they’re not reaching your server).
+- If you see **no** line containing `Instagram webhook POST received` or `webhooks/instagram` when you send a message, the request is **not reaching your backend** (Meta not sending, wrong URL, or app not subscribed for that account).
+
+#### Backend audit (when nothing appears in logs)
+
+The backend flow has been verified end-to-end:
+
+- **Routes:** `POST /webhooks/instagram` is registered; body parser stores `rawBody` for signature verification.
+- **Controller:** Signature (X-Hub-Signature-256 + INSTAGRAM_APP_SECRET), eventId extraction, idempotency, queue add, then 200 OK. A log runs at the very start of the handler so any POST to this path is visible.
+- **Signature:** Uses HMAC-SHA256 with `INSTAGRAM_APP_SECRET`. On Render, this must match the Meta app’s **App Secret** exactly (no extra spaces).
+- **Worker:** Resolves page ID from `entry[0].id`, looks up doctor via `doctor_instagram.instagram_page_id`, gets token from `doctor_instagram.instagram_access_token`, sends reply. Page ID stored at connect is the same value Meta sends in webhooks.
+- **Connect flow:** Saves `instagram_page_id` from the token exchange /me (Instagram Business Account ID), which matches webhook `entry[0].id`.
+
+If **no** webhook log appears when you send a DM, the request is not hitting your server. Double-check in Meta: Callback URL is exactly `https://clariva-bot.onrender.com/webhooks/instagram`, Step 2 token generated for the receiver account, and `messages` subscribed. After the next deploy, search logs for **`Instagram webhook POST received`**; if that never appears, the problem is on Meta’s side (subscription/delivery), not the backend code.
 
 #### Log quick reference (after sending a DM)
 

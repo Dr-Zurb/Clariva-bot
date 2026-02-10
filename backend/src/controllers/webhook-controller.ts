@@ -139,6 +139,12 @@ export const handleInstagramWebhook = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {
     const correlationId = req.correlationId || 'unknown';
 
+    // Log immediately so Render shows every POST to this endpoint (even if signature fails later)
+    logger.info(
+      { correlationId, path: req.path, method: req.method },
+      'Instagram webhook POST received (verifying signature)'
+    );
+
     // ⚠️ CRITICAL: NEVER log req.body for webhooks
     // Platform payloads may contain patient identifiers (PII/PHI)
     // Only log metadata: correlationId, eventId, provider, status
