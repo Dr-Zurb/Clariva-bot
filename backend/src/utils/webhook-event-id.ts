@@ -50,8 +50,10 @@ export function getInstagramPageId(
 /**
  * Extract Instagram event ID from webhook payload (for idempotency).
  *
- * Uses message ID (mid) when present so each DM is a distinct event. Otherwise
- * uses entry[0].id for non-message events (e.g. delivery, read).
+ * Uses message ID (`mid`) when present so each DM is a distinct event. Supports
+ * message sends, reactions, postbacks, and read receipts by checking the
+ * corresponding `*.mid` fields in the messaging payload. Falls back to
+ * `entry[0].id` only when no message-level ID is available.
  *
  * @param payload - Instagram webhook payload
  * @returns Event ID if found, null otherwise
@@ -74,13 +76,26 @@ export function extractInstagramEventId(
     return null;
   }
 
-  // Prefer message ID so each DM is unique (idempotency per message, not per page)
-  const mid = entry.messaging?.[0]?.message?.mid;
+  // Prefer message-level IDs so each DM is unique (idempotency per message, not per page).
+  // Instagram messaging webhooks can carry the message ID in different fields:
+  // - messages:      messaging[0].message.mid
+  // - reactions:     messaging[0].reaction.mid
+  // - postbacks:     messaging[0].postback.mid
+  // - read receipts: messaging[0].read.mid
+  //
+  // To avoid brittle typing here (the official payload includes more shapes than
+  // our local TypeScript interface), we treat `messaging` as `any`.
+  const messaging = (entry as any)?.messaging?.[0];
+  const mid =
+    messaging?.message?.mid ??
+    messaging?.reaction?.mid ??
+    messaging?.postback?.mid ??
+    messaging?.read?.mid;
   if (mid) {
     return String(mid);
   }
 
-  // Non-message events (delivery, read, etc.): use entry id
+  // No message-level ID available: fall back to entry id
   return String(entry.id);
 }
 
