@@ -37,7 +37,7 @@ const TIMESTAMP_BUCKET_MS = 300000; // 5 minutes in milliseconds
  * This value is stored in doctor_instagram.instagram_page_id when a doctor
  * connects their account. Used by webhook worker to resolve doctor_id.
  *
- * @see WEBHOOKS.md - Instagram idempotency uses entry[0].id
+ * @see WEBHOOKS.md - Instagram idempotency uses message mid when present
  * @see docs/Development/Daily-plans/2026-02-06/e-task-2-webhook-resolution-page-id-to-doctor-id.md
  */
 export function getInstagramPageId(
@@ -48,20 +48,13 @@ export function getInstagramPageId(
 }
 
 /**
- * Extract Instagram event ID from webhook payload
+ * Extract Instagram event ID from webhook payload (for idempotency).
  *
- * Instagram uses `entry[0].id` as the primary event identifier.
+ * Uses message ID (mid) when present so each DM is a distinct event. Otherwise
+ * uses entry[0].id for non-message events (e.g. delivery, read).
  *
  * @param payload - Instagram webhook payload
  * @returns Event ID if found, null otherwise
- *
- * @example
- * ```typescript
- * const eventId = extractInstagramEventId(req.body);
- * if (!eventId) {
- *   eventId = generateFallbackEventId(req.body);
- * }
- * ```
  */
 export function extractInstagramEventId(
   payload: unknown
@@ -72,22 +65,23 @@ export function extractInstagramEventId(
 
   const instagramPayload = payload as InstagramWebhookPayload;
 
-  // Check if this is an Instagram payload
   if (instagramPayload.object !== 'instagram') {
     return null;
   }
 
-  // Extract entry ID (primary identifier for Instagram)
-  if (
-    instagramPayload.entry &&
-    Array.isArray(instagramPayload.entry) &&
-    instagramPayload.entry.length > 0 &&
-    instagramPayload.entry[0]?.id
-  ) {
-    return String(instagramPayload.entry[0].id);
+  const entry = instagramPayload.entry?.[0];
+  if (!entry?.id) {
+    return null;
   }
 
-  return null;
+  // Prefer message ID so each DM is unique (idempotency per message, not per page)
+  const mid = entry.messaging?.[0]?.message?.mid;
+  if (mid) {
+    return String(mid);
+  }
+
+  // Non-message events (delivery, read, etc.): use entry id
+  return String(entry.id);
 }
 
 /**

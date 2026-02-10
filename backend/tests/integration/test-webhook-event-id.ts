@@ -95,17 +95,17 @@ async function runTests(): Promise<void> {
   let failedTests = 0;
 
   // ============================================================================
-  // Test 5.2.1: Instagram event ID extraction (with entry ID)
+  // Test 5.2.1: Instagram event ID extraction (message mid when present)
   // ============================================================================
-  console.log('📋 Test 5.2.1: Instagram event ID extraction (with entry ID)');
+  console.log('📋 Test 5.2.1: Instagram event ID extraction (message mid when present)');
   try {
     const eventId = extractInstagramEventId(instagramPayloadWithId);
     
-    if (eventId === '123456789') {
-      console.log('   ✅ PASS: Correctly extracted Instagram entry ID\n');
+    if (eventId === 'mid.test.123') {
+      console.log('   ✅ PASS: Correctly extracted Instagram message ID (mid)\n');
       passedTests++;
     } else {
-      console.log(`   ❌ FAIL: Expected '123456789', got '${eventId}'\n`);
+      console.log(`   ❌ FAIL: Expected 'mid.test.123', got '${eventId}'\n`);
       failedTests++;
     }
   } catch (error) {
