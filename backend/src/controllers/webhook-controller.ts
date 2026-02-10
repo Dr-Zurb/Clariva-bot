@@ -266,7 +266,12 @@ export const handleInstagramWebhook = asyncHandler(
       return;
     }
 
-    // Log webhook received (metadata only - NEVER log req.body)
+    // Log so Render/runtime logs show webhook receipt (search for "Instagram webhook queued")
+    logger.info(
+      { correlationId, eventId, provider: 'instagram' },
+      'Instagram webhook queued for processing'
+    );
+    // Audit log (metadata only - NEVER log req.body)
     // resourceId omitted: eventId is Instagram entry ID (numeric string), audit_logs.resource_id is UUID
     await logAuditEvent({
       correlationId,

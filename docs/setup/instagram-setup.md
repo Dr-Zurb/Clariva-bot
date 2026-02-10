@@ -293,37 +293,77 @@ Once webhook controller is implemented (Task 4):
 
 **Problem:** User sends messages (e.g. "hello") but receives no reply from the bot.
 
-**Check in this order:**
+Work through the checklist below in order. Mark each item when verified or fixed.
 
-1. **Queue and worker are running (production)**  
-   - Open `https://your-backend-url/health` (e.g. your Render URL).
-   - In the response, check:
-     - `services.queue.enabled` must be `true`. If `false`, **REDIS_URL** is not set on the server; webhooks are accepted but never processed, so no replies.
-     - `services.webhookWorker.running` must be `true`. If `false`, the worker did not start (usually because REDIS_URL is missing or invalid).
-   - **Fix:** Set **REDIS_URL** in your hosting env (e.g. Render) to a valid Redis URL (e.g. from Upstash or Redis Cloud). Redeploy so the worker starts.
+---
 
-2. **Webhook is receiving events**  
-   - In your server logs (e.g. Render logs), when you send a DM you should see entries like "Webhook queued for processing" or "Webhook received" (and no 401 from signature failure).
-   - If you see "placeholder - REDIS_URL not set", the job is not actually queued; fix REDIS_URL as above.
-   - If you see no log at all when you send a message, the webhook URL in Meta may be wrong or the app may not be in Live mode / subscriptions not enabled.
+#### Troubleshooting checklist (no auto-replies)
 
-3. **Page is linked to a doctor**  
-   - The backend resolves the Instagram **page ID** (from the webhook) to a **doctor** via `doctor_instagram`. If no row exists for that page, the bot marks the webhook as failed and does not reply (unless a fallback env token is set).
-   - **Fix:** Use the app’s “Connect Instagram” flow so the doctor connects their account; that inserts a row in `doctor_instagram` with the page ID and token.
+- [x] **1. Queue and worker are running** — *checked; no issue.*  
+  - **Verify:** Open `https://<your-backend>/health` (e.g. `https://clariva-bot.onrender.com/health`). Not the root URL — that returns API info only; use the path that ends with `/health`.
+  - **Check in response:** `data.services.queue.enabled` is `true` and `data.services.webhookWorker.running` is `true`.
+  - **If not:** Set **REDIS_URL** in your host env (e.g. Render) to a valid Redis URL (Upstash, Redis Cloud, etc.). Redeploy.
 
-4. **Doctor has an Instagram token**  
-   - For the linked doctor, the backend needs an Instagram access token (stored in `doctor_instagram` after connect). If the token is missing or expired, the bot will not send replies.
-   - **Fix:** Reconnect Instagram for that doctor so a new token is saved.
+- [ ] **2. Webhook is receiving events**
+  - **Verify:** In server logs (e.g. Render), when you send a DM you see "Webhook queued for processing" or "webhook_received" (and no 401).
+  - **If you see:** "placeholder - REDIS_URL not set" → fix step 1 (REDIS_URL).
+  - **If you see nothing when you send a message** (no webhook logs at all), Meta is not sending events. Check the following in your Meta app:
 
-5. **Latest code is deployed**  
-   - Ensure the fix for audit log UUID (no longer passing Instagram event ID as `resource_id`) is deployed. Without it, webhook processing can fail on DB insert and no reply is sent.
-   - Redeploy after setting REDIS_URL and any env changes.
+    1. **Complete Meta "API setup" Step 2: Generate access tokens**
+       - In Meta Developer Console → your app → Instagram API setup, Step 2 must be **complete** (green check), not "in progress" (half-blue). If it turns green on reload then back to in progress, a token has not been successfully generated yet.
+       - **Adding the account and turning "Webhook subscription" On is not enough.** You must **click "Generate token"** for the **receiver** account (e.g. `clariva_care`) and complete the authorization flow (log in with that account, click Allow). Until a token is generated, Step 2 stays in progress and Meta may not deliver message webhooks.
+       - Ensure the **receiver** (e.g. `clariva_care`) is an Instagram Tester (Roles tab). For **receiving** webhooks, only the **receiver** account needs "Generate token" completed; the sender (e.g. `dr_abhishek_sahil`) can be added for testing but the critical one is the receiver’s token.
+       - If you added both sender and receiver but Step 2 still shows "in progress" after refresh, complete **"Generate token"** for **clariva_care** (the DM receiver) in Step 2; that is what flips the step to complete and allows webhook delivery.
 
-**Quick check:** After sending a DM, check Render (or your host) logs for:
-- `"Webhook queued"` or `"webhook_received"` → request reached the server.
-- `"Webhook queue connected"` / `"Worker started"` at startup → queue and worker are active.
-- `"No doctor linked for page"` → connect the Instagram account for the doctor.
-- `"No Instagram token for doctor"` → reconnect Instagram to refresh the token.
+    2. **Messaging permission still shows "0" users**
+       - In Meta app → **Permissions and features**, **`instagram_business_manage_messages`** (or **`instagram_manage_messages`**) may show **"0"** even after you clicked Allow in your app’s **Connect Instagram** flow. Meta’s count often reflects accounts that completed **Meta’s** token flow (Step 2 "Generate token" in the Developer Console), not only your app’s OAuth.
+       - **Fix:** (1) Keep using your app’s Connect Instagram with the receiver account (so your backend has a token for sending replies). (2) In addition, in Meta Step 2 click **"Generate token"** for the receiver (e.g. `clariva_care`) and complete the flow. After that, the permission count should show 1 and Step 2 should stay green; Meta will then deliver message webhooks.
+
+    3. **Webhook URL and subscription**
+       - **Callback URL:** Must be exactly your backend base URL + `/webhooks/instagram`, e.g. `https://clariva-bot.onrender.com/webhooks/instagram`. No trailing slash. Verify token must match **INSTAGRAM_WEBHOOK_VERIFY_TOKEN** in your env.
+       - **Subscribe:** Under the webhook, ensure **`messages`** is **Subscribed** (toggle On). You can leave other messaging fields (e.g. `message_edit`, `message_reactions`) as desired.
+       - **"App must be in published state" warning:** In **development** mode, testers can still receive webhooks; that warning applies to non-tester/live usage. You do not need to complete app review for testers to get message webhooks.
+
+    4. **Step 2 keeps reverting to "in progress" (half-blue)**
+       - Meta's UI sometimes shows Step 2 as complete after you generate a token, then flips back to "in progress" on refresh. Tokens generated in the console can be short-lived or the UI may not persist the "complete" state reliably.
+       - **First check:** When you send a DM to the receiver account, do you see **any** webhook request in Render logs (e.g. "Webhook queued" or a POST to `/webhooks/instagram`)? If **yes**, then Meta is sending webhooks and the Step 2 badge is a cosmetic issue — focus on steps 3–5 (doctor linked, token in DB, code deployed). If **no**, Meta is not sending; try the steps below.
+       - **Try:** (1) Generate token again for **only** the **receiver** (`clariva_care`) in Step 2 — use a normal (non-incognito) browser and the same Facebook/Instagram account. (2) In **Roles** → **Instagram Testers**, ensure `clariva_care` is listed. (3) In **Permissions and features**, confirm **`instagram_business_manage_messages`** is "Ready for testing" and, if possible, shows 1+ user after you complete "Generate token". (4) Send a test DM and check Render logs immediately; if still nothing, wait a few minutes and try again (Meta can delay subscription activation).
+       - **Note:** Your app uses the token in **Supabase** (from Connect Instagram) for **sending** replies. The Meta Console token is for Meta's side (webhook delivery). So even if Step 2 stays half-blue, if webhooks start appearing in logs, the rest of your pipeline (doctor link, Supabase token) will determine whether replies are sent.
+
+  - **Development mode:** Using tester accounts (e.g. `clariva_care` as DM receiver, `dr_abhishek_sahil` as sender) is correct. The **receiver** account is the one that must have granted the app messaging permission and be the one you used to "Connect Instagram" in your app’s settings.
+
+- [x] **3. Page is linked to a doctor**
+  - **Verify:** Backend looks up the Instagram page ID in `doctor_instagram`. If no row exists, logs show "No doctor linked for page".
+  - **Fix:** Use the app’s “Connect Instagram” flow so the doctor connects their account (creates row in `doctor_instagram` with page ID and token).
+
+- [x] **4. Doctor has an Instagram token**  
+  - **Verify:** For the linked doctor, a valid token exists in `doctor_instagram`. If missing/expired, logs show "No Instagram token for doctor".
+  - **Fix:** Reconnect Instagram for that doctor in the app to save a new token.
+
+- [x] **5. Latest code is deployed**  
+  - **Verify:** Audit log fix (no Instagram event ID as `resource_id`) and any REDIS_URL change are deployed.
+  - **Fix:** Push to GitHub and redeploy (e.g. Render auto-deploy from `main`), or trigger deploy after env changes.
+
+---
+
+#### Where to see logs on Render
+
+- Use **Logs** (under **Monitor** in the left sidebar), not **Events**. Events shows deployments; Logs shows runtime output (requests, worker, errors).
+- After sending a DM, search the log stream for:
+  - **`Instagram webhook queued`** — webhook was received and queued (added in app so you can confirm receipt).
+  - **`/webhooks/instagram`** or **`Request completed`** — any request to the webhook endpoint (check the `path` field in the log line).
+  - **`Webhook queue connected`** / **`Webhook worker started`** — at startup, confirms Redis and worker are running.
+- If you see **no** line containing `webhooks/instagram` or `Instagram webhook queued` when you send a message, Meta is not sending webhooks (or they’re not reaching your server).
+
+#### Log quick reference (after sending a DM)
+
+| Log message | Meaning |
+|-------------|--------|
+| `Instagram webhook queued for processing` | Meta sent an event; request reached the server and was queued. |
+| `Webhook queued` (placeholder) | REDIS_URL not set; webhook logged but not processed (no replies). |
+| `Webhook queue connected` / `Worker started` (at startup) | Queue and worker are active. |
+| `No doctor linked for page` | Connect the Instagram account for the doctor (step 3). |
+| `No Instagram token for doctor` | Reconnect Instagram to refresh the token (step 4). |
 
 ---
 
