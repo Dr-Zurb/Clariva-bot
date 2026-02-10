@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '../utils/async-handler';
 import { checkDatabaseConnection } from '../services/health-service';
 import { successResponse } from '../utils/response';
+import { isQueueEnabled } from '../config/queue';
+import { getWebhookWorker } from '../workers/webhook-worker';
 
 /**
  * Health check controller
@@ -63,7 +65,19 @@ export const getHealth = asyncHandler(async (_req: Request, res: Response) => {
         connected: dbConnected,
         responseTimeMs: dbResponseTime,
       },
-      // Future: Add other services here (e.g., openai, etc.)
+      queue: {
+        enabled: isQueueEnabled(),
+        description: isQueueEnabled()
+          ? 'Redis connected; webhook jobs will be processed'
+          : 'REDIS_URL not set; webhooks are logged but not processed (no auto-replies)',
+      },
+      webhookWorker: {
+        running: getWebhookWorker() !== null,
+        description:
+          getWebhookWorker() !== null
+            ? 'Worker is processing Instagram webhook jobs'
+            : 'Worker not started (set REDIS_URL to enable)',
+      },
     },
     uptime: uptimeFormatted,
     memory: {

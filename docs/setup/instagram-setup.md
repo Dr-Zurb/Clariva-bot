@@ -289,6 +289,42 @@ Once webhook controller is implemented (Task 4):
 - Regenerate access token with permissions
 - Verify permissions in App Dashboard
 
+### Issue: No automated replies when someone DMs the Instagram account
+
+**Problem:** User sends messages (e.g. "hello") but receives no reply from the bot.
+
+**Check in this order:**
+
+1. **Queue and worker are running (production)**  
+   - Open `https://your-backend-url/health` (e.g. your Render URL).
+   - In the response, check:
+     - `services.queue.enabled` must be `true`. If `false`, **REDIS_URL** is not set on the server; webhooks are accepted but never processed, so no replies.
+     - `services.webhookWorker.running` must be `true`. If `false`, the worker did not start (usually because REDIS_URL is missing or invalid).
+   - **Fix:** Set **REDIS_URL** in your hosting env (e.g. Render) to a valid Redis URL (e.g. from Upstash or Redis Cloud). Redeploy so the worker starts.
+
+2. **Webhook is receiving events**  
+   - In your server logs (e.g. Render logs), when you send a DM you should see entries like "Webhook queued for processing" or "Webhook received" (and no 401 from signature failure).
+   - If you see "placeholder - REDIS_URL not set", the job is not actually queued; fix REDIS_URL as above.
+   - If you see no log at all when you send a message, the webhook URL in Meta may be wrong or the app may not be in Live mode / subscriptions not enabled.
+
+3. **Page is linked to a doctor**  
+   - The backend resolves the Instagram **page ID** (from the webhook) to a **doctor** via `doctor_instagram`. If no row exists for that page, the bot marks the webhook as failed and does not reply (unless a fallback env token is set).
+   - **Fix:** Use the app’s “Connect Instagram” flow so the doctor connects their account; that inserts a row in `doctor_instagram` with the page ID and token.
+
+4. **Doctor has an Instagram token**  
+   - For the linked doctor, the backend needs an Instagram access token (stored in `doctor_instagram` after connect). If the token is missing or expired, the bot will not send replies.
+   - **Fix:** Reconnect Instagram for that doctor so a new token is saved.
+
+5. **Latest code is deployed**  
+   - Ensure the fix for audit log UUID (no longer passing Instagram event ID as `resource_id`) is deployed. Without it, webhook processing can fail on DB insert and no reply is sent.
+   - Redeploy after setting REDIS_URL and any env changes.
+
+**Quick check:** After sending a DM, check Render (or your host) logs for:
+- `"Webhook queued"` or `"webhook_received"` → request reached the server.
+- `"Webhook queue connected"` / `"Worker started"` at startup → queue and worker are active.
+- `"No doctor linked for page"` → connect the Instagram account for the doctor.
+- `"No Instagram token for doctor"` → reconnect Instagram to refresh the token.
+
 ---
 
 ## 📚 Reference Documentation
