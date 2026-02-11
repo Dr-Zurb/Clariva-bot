@@ -95,13 +95,14 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
   const longLived = await exchangeForLongLivedToken(shortLived, correlationId);
   const userInfo = await getInstagramUserInfo(longLived, correlationId);
   const username = userInfo.username;
-  const instagramUserId = userInfo.user_id || userId;
+  // Prefer id from /me (often matches webhook entry.id); fallback to user_id then token userId
+  const instagramPageId = userInfo.id || userInfo.user_id || userId;
 
   try {
     await saveDoctorInstagram(
       doctorId,
       {
-        instagram_page_id: instagramUserId,
+        instagram_page_id: instagramPageId,
         instagram_access_token: longLived,
         instagram_username: username ?? null,
       },

@@ -24,7 +24,7 @@ import { logAuditEvent } from '../utils/audit-logger';
 import { markWebhookProcessed, markWebhookFailed } from '../services/webhook-idempotency-service';
 import { storeDeadLetterWebhook } from '../services/dead-letter-service';
 import { sendInstagramMessage } from '../services/instagram-service';
-import { getDoctorIdByPageId, getInstagramAccessTokenForDoctor } from '../services/instagram-connect-service';
+import { getDoctorIdByPageIds, getInstagramAccessTokenForDoctor } from '../services/instagram-connect-service';
 import { findOrCreatePlaceholderPatient, findPatientByIdWithAdmin } from '../services/patient-service';
 import { getAvailableSlots } from '../services/availability-service';
 import { bookAppointment, getAppointmentByIdForWorker } from '../services/appointment-service';
@@ -59,7 +59,7 @@ import {
 } from '../services/notification-service';
 import { razorpayAdapter } from '../adapters/razorpay-adapter';
 import { paypalAdapter } from '../adapters/paypal-adapter';
-import { getInstagramPageId } from '../utils/webhook-event-id';
+import { getInstagramPageId, getInstagramPageIds } from '../utils/webhook-event-id';
 import type { WebhookJobData } from '../types/queue';
 import type { InstagramWebhookPayload } from '../types/webhook';
 
@@ -210,9 +210,9 @@ async function tryResolveSenderFromMessageEdit(
   payload: InstagramWebhookPayload,
   correlationId: string
 ): Promise<{ senderId: string; text: string; mid?: string } | null> {
-  const pageId = getInstagramPageId(payload);
-  if (!pageId) return null;
-  const doctorId = await getDoctorIdByPageId(pageId, correlationId);
+  const pageIds = getInstagramPageIds(payload);
+  if (!pageIds.length) return null;
+  const doctorId = await getDoctorIdByPageIds(pageIds, correlationId);
   if (!doctorId) return null;
   const edit = getFirstMessageEdit(payload);
   if (!edit?.mid) return null;
@@ -432,8 +432,9 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
 
   const { senderId, text, mid } = parsed;
 
-  const pageId = getInstagramPageId(instagramPayload);
-  if (!pageId) {
+  const pageIds = getInstagramPageIds(instagramPayload);
+  const pageId = getInstagramPageId(instagramPayload); // for logging
+  if (!pageIds.length) {
     logger.info(
       { eventId, provider, correlationId },
       'Instagram webhook missing page ID; marking failed'
@@ -451,10 +452,10 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     return;
   }
 
-  const doctorId = await getDoctorIdByPageId(pageId, correlationId);
+  const doctorId = await getDoctorIdByPageIds(pageIds, correlationId);
   if (!doctorId) {
     logger.info(
-      { eventId, provider, correlationId, pageId },
+      { eventId, provider, correlationId, pageIds },
       'Unknown Instagram page (no linked doctor); marking failed'
     );
     try {

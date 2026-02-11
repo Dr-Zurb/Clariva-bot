@@ -335,6 +335,7 @@ Work through the checklist below in order. Mark each item when verified or fixed
 - [x] **3. Page is linked to a doctor**
   - **Verify:** Backend looks up the Instagram page ID in `doctor_instagram`. If no row exists, logs show "No doctor linked for page".
   - **Fix:** Use the app’s “Connect Instagram” flow so the doctor connects their account (creates row in `doctor_instagram` with page ID and token).
+  - **Note:** There is no separate `doctors` table. The app uses **Supabase Auth**: "doctor" = logged-in user; `doctor_id` is `auth.users.id`. Connect Instagram while logged in so that user is stored as doctor_id.
 
 - [x] **4. Doctor has an Instagram token**  
   - **Verify:** For the linked doctor, a valid token exists in `doctor_instagram`. If missing/expired, logs show "No Instagram token for doctor".
@@ -376,7 +377,8 @@ If **no** webhook log appears when you send a DM, the request is not hitting you
 | `Webhook has no message to reply to` with `firstMessagingKeys: ["timestamp","message_edit"]` | Event is a **message_edit** (user edited a message). Meta sometimes omits **sender** in these payloads. The backend now has a **fallback**: if we already stored the original message (from a **message** webhook), we resolve the sender from the DB by `message_edit.mid` and still reply. So **subscribe to `messages`** so the first DM triggers a webhook with `message` + sender; then edits can be resolved and replied to. If you only ever receive message_edit and never a prior message for that conversation, the fallback cannot find a sender. |
 | `Webhook queued` (placeholder) | REDIS_URL not set; webhook logged but not processed (no replies). |
 | `Webhook queue connected` / `Worker started` (at startup) | Queue and worker are active. |
-| `No doctor linked for page` | Connect the Instagram account for the doctor (step 3). |
+| `No doctor linked for Instagram page ID` (with `pageId: ...`) | **The Instagram account receiving DMs is not linked to any doctor.** Log in to the app as a doctor, go to **Settings → Instagram**, and complete **Connect Instagram** with the same account (e.g. clariva_care). That saves the page ID so the backend can send replies. |
+| `No doctor linked for page` | Same as above — connect the Instagram account for the doctor (step 3). |
 | `No Instagram token for doctor` | Reconnect Instagram to refresh the token (step 4). |
 
 ---

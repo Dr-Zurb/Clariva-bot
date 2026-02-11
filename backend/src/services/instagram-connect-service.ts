@@ -97,9 +97,55 @@ export async function getDoctorIdByPageId(
     return data.doctor_id as string;
   }
 
-  logger.debug(
+  logger.warn(
     { correlationId, pageId },
-    'No doctor linked for Instagram page ID'
+    'No doctor linked for Instagram page ID. Connect this Instagram account in the app (Settings → Instagram) so DMs receive replies.'
+  );
+  return null;
+}
+
+/**
+ * Resolve doctor by trying multiple page IDs (e.g. from all webhook entries).
+ * If none match and there is exactly one connected doctor, return that doctor (single-tenant fallback).
+ * Logs "No doctor linked" only once when all lookups fail.
+ */
+export async function getDoctorIdByPageIds(
+  pageIds: string[],
+  correlationId?: string
+): Promise<string | null> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) {
+    throw new InternalError('Service role client not available for doctor resolution');
+  }
+  for (const pageId of pageIds) {
+    if (!pageId || typeof pageId !== 'string') continue;
+    const { data, error } = await supabase
+      .from('doctor_instagram')
+      .select('doctor_id')
+      .eq('instagram_page_id', pageId)
+      .maybeSingle();
+    if (error) handleSupabaseError(error, correlationId ?? '');
+    if (data?.doctor_id) {
+      logger.debug({ correlationId, pageId }, 'Resolved doctor from Instagram page ID');
+      return data.doctor_id as string;
+    }
+  }
+  if (pageIds.length === 0) return null;
+  const { data: allRows, error: listError } = await supabase
+    .from('doctor_instagram')
+    .select('doctor_id')
+    .limit(2);
+  if (listError) handleSupabaseError(listError, correlationId ?? '');
+  if (allRows?.length === 1) {
+    logger.info(
+      { correlationId, pageIds },
+      'Single doctor_instagram row: using it for webhook (page ID mismatch fallback)'
+    );
+    return allRows[0].doctor_id as string;
+  }
+  logger.warn(
+    { correlationId, pageIds },
+    'No doctor linked for Instagram page ID(s). Connect this Instagram account in the app (Settings → Instagram) so DMs receive replies.'
   );
   return null;
 }
@@ -338,24 +384,25 @@ export async function exchangeForLongLivedToken(
 }
 
 /**
- * Fetch Instagram user info (user_id, username) from /me.
- * Instagram API: GET graph.instagram.com/me with fields=user_id,username.
+ * Fetch Instagram user info (id, user_id, username) from /me.
+ * Prefer id when present — it often matches webhook entry[].id (Meta can send different IDs).
  */
 export async function getInstagramUserInfo(
   accessToken: string,
   correlationId: string
-): Promise<{ user_id: string; username: string | null }> {
+): Promise<{ id?: string; user_id: string; username: string | null }> {
   const url = `${INSTAGRAM_GRAPH_BASE}/me`;
   try {
     const res = await axios.get<InstagramMeResponse>(url, {
-      params: { fields: 'user_id,username', access_token: accessToken },
+      params: { fields: 'id,user_id,username', access_token: accessToken },
       timeout: META_HTTP_TIMEOUT_MS,
     });
     const arr = res.data?.data;
     const first = Array.isArray(arr) ? arr[0] : undefined;
+    const id = first?.id;
     const user_id = first?.user_id ?? '';
     const username = first?.username ?? null;
-    return { user_id, username };
+    return { id, user_id, username };
   } catch (err: unknown) {
     logger.debug(
       { correlationId, message: axios.isAxiosError(err) ? err.message : 'Me request failed' },

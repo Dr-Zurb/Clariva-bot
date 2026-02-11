@@ -27,9 +27,10 @@ export interface InstagramLongLivedTokenResponse {
   expires_in?: number;
 }
 
-/** Instagram API /me response (GET graph.instagram.com/me) - data is array */
+/** Instagram API /me response (GET graph.instagram.com/me) - data is array. id often matches webhook entry.id */
 export interface InstagramMeResponse {
   data?: Array<{
+    id?: string;
     user_id?: string;
     username?: string;
   }>;

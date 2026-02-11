@@ -31,7 +31,7 @@ const TIMESTAMP_BUCKET_MS = 300000; // 5 minutes in milliseconds
 // ============================================================================
 
 /**
- * Extract Instagram page/object ID from webhook payload.
+ * Extract Instagram page/object ID from webhook payload (first entry only).
  *
  * For Instagram, entry[0].id is the page (object) ID that receives the message.
  * This value is stored in doctor_instagram.instagram_page_id when a doctor
@@ -45,6 +45,22 @@ export function getInstagramPageId(
 ): string | null {
   const id = payload.entry?.[0]?.id;
   return id != null ? String(id) : null;
+}
+
+/**
+ * Extract all Instagram entry IDs from webhook payload.
+ * Meta sometimes sends different IDs per entry or per request; trying each
+ * improves lookup when stored ID matches one of them.
+ */
+export function getInstagramPageIds(payload: InstagramWebhookPayload): string[] {
+  const entries = payload.entry;
+  if (!Array.isArray(entries)) return [];
+  const ids: string[] = [];
+  for (const e of entries) {
+    const id = (e as { id?: unknown })?.id;
+    if (id != null && String(id).length > 0) ids.push(String(id));
+  }
+  return [...new Set(ids)];
 }
 
 /**
