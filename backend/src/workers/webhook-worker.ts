@@ -36,7 +36,7 @@ import {
   getConversationState,
   updateConversationState,
 } from '../services/conversation-service';
-import { createMessage, getRecentMessages } from '../services/message-service';
+import { createMessage, getRecentMessages, getSenderIdByPlatformMessageId } from '../services/message-service';
 import { classifyIntent, generateResponse } from '../services/ai-service';
 import {
   getNextCollectionField,
@@ -183,6 +183,42 @@ function parseInstagramMessage(
   }
 
   return null;
+}
+
+/**
+ * Extract first message_edit mid/text from Instagram payload (entry[].messaging[]).
+ * Used when Meta sends message_edit without sender so we can try DB fallback.
+ */
+function getFirstMessageEdit(
+  payload: InstagramWebhookPayload
+): { mid: string; text: string } | null {
+  const entries = payload.entry;
+  if (!entries?.length) return null;
+  const list = (entries[0] as { messaging?: unknown[] }).messaging;
+  if (!Array.isArray(list) || list.length === 0) return null;
+  const item = list[0] as { message_edit?: { mid?: string; text?: string } };
+  const me = item?.message_edit;
+  if (!me || me.mid == null || String(me.mid).length === 0) return null;
+  return { mid: String(me.mid), text: me.text ?? '' };
+}
+
+/**
+ * When payload has message_edit but no sender (Meta bug/omission), resolve sender from DB
+ * using the message mid from a previously stored "message" webhook.
+ */
+async function tryResolveSenderFromMessageEdit(
+  payload: InstagramWebhookPayload,
+  correlationId: string
+): Promise<{ senderId: string; text: string; mid?: string } | null> {
+  const pageId = getInstagramPageId(payload);
+  if (!pageId) return null;
+  const doctorId = await getDoctorIdByPageId(pageId, correlationId);
+  if (!doctorId) return null;
+  const edit = getFirstMessageEdit(payload);
+  if (!edit?.mid) return null;
+  const senderId = await getSenderIdByPlatformMessageId(doctorId, edit.mid, correlationId);
+  if (!senderId) return null;
+  return { senderId, text: edit.text, mid: edit.mid };
 }
 
 /** Get tomorrow's date in YYYY-MM-DD format */
@@ -339,7 +375,20 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
   }
 
   const instagramPayload = payload as InstagramWebhookPayload;
-  const parsed = parseInstagramMessage(instagramPayload);
+  let parsed = parseInstagramMessage(instagramPayload);
+
+  // Fallback: Meta sometimes sends message_edit without sender/recipient; resolve sender from DB
+  // using the message mid from a previously stored "message" webhook.
+  if (!parsed) {
+    const fallback = await tryResolveSenderFromMessageEdit(instagramPayload, correlationId);
+    if (fallback) {
+      parsed = fallback;
+      logger.info(
+        { eventId, provider, correlationId, mid: fallback.mid },
+        'Instagram message_edit: resolved sender from DB (payload had no sender)'
+      );
+    }
+  }
 
   if (!parsed) {
     // No message (e.g. delivery, read, or message in unexpected shape) - mark processed and skip reply

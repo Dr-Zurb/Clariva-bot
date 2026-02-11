@@ -129,3 +129,49 @@ export async function getRecentMessages(
   await logDataAccess(correlationId, undefined as any, 'message', conversationId);
   return list;
 }
+
+/**
+ * Resolve Instagram sender ID from a stored message (by platform_message_id).
+ * Used when Meta sends message_edit webhooks without sender/recipient so we can
+ * still reply using the conversation we created from the original message.
+ *
+ * @param doctorId - Doctor ID (scope to this doctor's conversations)
+ * @param platformMessageId - Platform message ID (e.g. message_edit.mid)
+ * @param correlationId - Request correlation ID
+ * @returns Sender ID (platform_conversation_id) or null if not found
+ */
+export async function getSenderIdByPlatformMessageId(
+  doctorId: string,
+  platformMessageId: string,
+  correlationId: string
+): Promise<string | null> {
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const { data: message, error: msgError } = await supabaseAdmin
+    .from('messages')
+    .select('conversation_id')
+    .eq('platform_message_id', platformMessageId)
+    .limit(1)
+    .maybeSingle();
+
+  if (msgError || !message?.conversation_id) {
+    return null;
+  }
+
+  const { data: conv, error: convError } = await supabaseAdmin
+    .from('conversations')
+    .select('platform_conversation_id')
+    .eq('id', message.conversation_id)
+    .eq('doctor_id', doctorId)
+    .maybeSingle();
+
+  if (convError || !conv?.platform_conversation_id) {
+    return null;
+  }
+
+  await logDataAccess(correlationId, undefined as any, 'message', message.conversation_id);
+  return conv.platform_conversation_id;
+}
