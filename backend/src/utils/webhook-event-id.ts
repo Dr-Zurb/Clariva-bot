@@ -117,6 +117,18 @@ export function extractInstagramEventId(
     }
   }
 
+  // Instagram Graph API: entry[].changes[] with field "messages" and value.message.mid
+  for (let e = 0; e < entries.length; e++) {
+    const ent = entries[e] as Record<string, unknown> | undefined;
+    const changeList = Array.isArray(ent?.changes) ? ent.changes : [];
+    for (let i = 0; i < changeList.length; i++) {
+      const c = changeList[i] as { field?: string; value?: { message?: { mid?: string } } } | undefined;
+      if (c?.field !== 'messages' || c?.value?.message?.mid == null) continue;
+      const mid = c.value.message.mid;
+      if (String(mid).length > 0) return String(mid);
+    }
+  }
+
   // No message-level ID available: fall back to entry id
   return String(entry.id);
 }

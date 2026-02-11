@@ -95,8 +95,10 @@ function createWorkerConnection(): IORedis {
 /**
  * Parse Instagram webhook payload: sender ID, message text, and optional message ID.
  * Returns null if payload has no incoming user message.
- * Scans all entry[].messaging[] items so we don't miss the message when Meta sends
- * read/delivery first and then the message in the same batch.
+ *
+ * Supports two formats (see docs/Reference/WEBHOOKS.md, docs/setup/instagram-setup.md):
+ * 1. entry[].messaging[] - Business Login / Messenger Platform style
+ * 2. entry[].changes[] with field "messages" - Instagram Graph API webhooks
  */
 function parseInstagramMessage(
   payload: InstagramWebhookPayload
@@ -104,6 +106,7 @@ function parseInstagramMessage(
   const entries = payload.entry;
   if (!entries?.length) return null;
 
+  // Format 1: entry[].messaging[] (Business Login / Messenger Platform)
   for (const entry of entries) {
     const list = (entry as { messaging?: unknown[] }).messaging;
     if (!Array.isArray(list)) continue;
@@ -115,7 +118,6 @@ function parseInstagramMessage(
         is_self?: boolean;
       };
       if (!m?.sender?.id) continue;
-      // Skip echoes (sent by business) and self-test messages
       if (m.is_echo === true || m.is_self === true) continue;
       if (!m.message) continue;
       const text = m.message.text ?? '';
@@ -123,6 +125,26 @@ function parseInstagramMessage(
       return { senderId: String(m.sender.id), text, mid };
     }
   }
+
+  // Format 2: entry[].changes[] with field "messages" (Instagram Graph API)
+  for (const entry of entries) {
+    const changes = (entry as { changes?: Array<{ field?: string; value?: unknown }> }).changes;
+    if (!Array.isArray(changes)) continue;
+    for (const c of changes) {
+      if (c?.field !== 'messages' || c?.value == null || typeof c.value !== 'object') continue;
+      const v = c.value as {
+        sender?: { id?: string };
+        message?: { mid?: string; text?: string; is_self?: boolean };
+        is_self?: boolean;
+      };
+      if (!v?.sender?.id || !v?.message) continue;
+      if (v.is_self === true || v.message.is_self === true) continue;
+      const text = v.message.text ?? '';
+      const mid = v.message.mid;
+      return { senderId: String(v.sender.id), text, mid };
+    }
+  }
+
   return null;
 }
 
@@ -287,8 +309,25 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     const entry0 = instagramPayload.entry?.[0] as Record<string, unknown> | undefined;
     const hasMessaging = Array.isArray(entry0?.messaging);
     const messagingLen = hasMessaging ? (entry0!.messaging as unknown[]).length : 0;
+    const changes = Array.isArray(entry0?.changes) ? (entry0.changes as unknown[]) : [];
+    const firstMessagingKeys =
+      hasMessaging && messagingLen > 0 && typeof (entry0!.messaging as unknown[])[0] === 'object' && (entry0!.messaging as unknown[])[0] !== null
+        ? Object.keys((entry0!.messaging as unknown[])[0] as object)
+        : [];
+    const firstChangeField = changes.length > 0 && typeof changes[0] === 'object' && changes[0] !== null
+      ? (changes[0] as { field?: string }).field
+      : undefined;
     logger.info(
-      { eventId, provider, correlationId, hasEntry: !!entry0, messagingLength: messagingLen },
+      {
+        eventId,
+        provider,
+        correlationId,
+        hasEntry: !!entry0,
+        messagingLength: messagingLen,
+        firstMessagingKeys,
+        changesLength: changes.length,
+        firstChangeField,
+      },
       'Webhook has no message to reply to (marked processed)'
     );
     await markWebhookProcessed(eventId, provider);

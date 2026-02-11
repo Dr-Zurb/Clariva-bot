@@ -97,7 +97,9 @@ logger.info('Webhook received', {
 - **Fallback:** `req.body.entry?.[0]?.id` (entry ID)
 
 **Instagram:**
-- **Primary:** `req.body.entry?.[0]?.id` (entry ID)
+- **Primary (Messenger/Business Login):** `entry[].messaging[].message.mid` or reaction/postback/read/message_edit `.mid`
+- **Primary (Graph API):** `entry[].changes[]` where `field === "messages"` → `value.message.mid`
+- **Fallback:** `req.body.entry?.[0]?.id` (entry ID)
 
 **WhatsApp:**
 - **Primary:** `req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.id` (message ID)
