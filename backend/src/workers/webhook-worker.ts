@@ -94,23 +94,36 @@ function createWorkerConnection(): IORedis {
 
 /**
  * Parse Instagram webhook payload: sender ID, message text, and optional message ID.
- * Returns null if payload is not a valid Instagram message event.
+ * Returns null if payload has no incoming user message.
+ * Scans all entry[].messaging[] items so we don't miss the message when Meta sends
+ * read/delivery first and then the message in the same batch.
  */
 function parseInstagramMessage(
   payload: InstagramWebhookPayload
 ): { senderId: string; text: string; mid?: string } | null {
-  const entry = payload.entry?.[0];
-  const messaging = entry?.messaging?.[0];
-  if (!entry || !messaging) {
-    return null;
+  const entries = payload.entry;
+  if (!entries?.length) return null;
+
+  for (const entry of entries) {
+    const list = (entry as { messaging?: unknown[] }).messaging;
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      const m = item as {
+        sender?: { id?: string };
+        message?: { mid?: string; text?: string };
+        is_echo?: boolean;
+        is_self?: boolean;
+      };
+      if (!m?.sender?.id) continue;
+      // Skip echoes (sent by business) and self-test messages
+      if (m.is_echo === true || m.is_self === true) continue;
+      if (!m.message) continue;
+      const text = m.message.text ?? '';
+      const mid = m.message.mid;
+      return { senderId: String(m.sender.id), text, mid };
+    }
   }
-  const senderId = messaging.sender?.id;
-  const text = messaging.message?.text ?? '';
-  const mid = messaging.message?.mid;
-  if (!senderId) {
-    return null;
-  }
-  return { senderId, text, mid };
+  return null;
 }
 
 /** Get tomorrow's date in YYYY-MM-DD format */
@@ -270,9 +283,12 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
   const parsed = parseInstagramMessage(instagramPayload);
 
   if (!parsed) {
-    // No message (e.g. delivery, read) - mark processed and skip reply
+    // No message (e.g. delivery, read, or message in unexpected shape) - mark processed and skip reply
+    const entry0 = instagramPayload.entry?.[0] as Record<string, unknown> | undefined;
+    const hasMessaging = Array.isArray(entry0?.messaging);
+    const messagingLen = hasMessaging ? (entry0!.messaging as unknown[]).length : 0;
     logger.info(
-      { eventId, provider, correlationId },
+      { eventId, provider, correlationId, hasEntry: !!entry0, messagingLength: messagingLen },
       'Webhook has no message to reply to (marked processed)'
     );
     await markWebhookProcessed(eventId, provider);
