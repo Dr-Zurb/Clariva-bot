@@ -321,7 +321,7 @@ Work through the checklist below in order. Mark each item when verified or fixed
 
     3. **Webhook URL and subscription**
        - **Callback URL:** Must be exactly your backend base URL + `/webhooks/instagram`, e.g. `https://clariva-bot.onrender.com/webhooks/instagram`. No trailing slash. Verify token must match **INSTAGRAM_WEBHOOK_VERIFY_TOKEN** in your env.
-       - **Subscribe:** Under the webhook, ensure **`messages`** is **Subscribed** (toggle On). You can leave other messaging fields (e.g. `message_edit`, `message_reactions`) as desired.
+       - **Subscribe:** Under the webhook, ensure **`messages`** is **Subscribed** (toggle On). This is required for **new DMs** — they use the `message` event with sender/recipient. If you only receive `message_edit` (e.g. when editing a message), the backend will try to resolve the sender from the conversation API. You can leave other fields (e.g. `message_edit`, `message_reactions`) as desired.
        - **"App must be in published state" warning:** In **development** mode, testers can still receive webhooks; that warning applies to non-tester/live usage. You do not need to complete app review for testers to get message webhooks.
 
     4. **Step 2 keeps reverting to "in progress" (half-blue)**
