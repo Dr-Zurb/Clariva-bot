@@ -108,22 +108,35 @@ function parseInstagramMessage(
 
   // Format 1: entry[].messaging[] (Business Login / Messenger Platform)
   for (const entry of entries) {
-    const entryAny = entry as { messaging?: unknown[]; from?: { id?: string }; id?: string };
+    const entryAny = entry as {
+      messaging?: unknown[];
+      from?: { id?: string };
+      sender?: { id?: string };
+      id?: string;
+    };
     const list = entryAny.messaging;
     if (!Array.isArray(list)) continue;
     for (const item of list) {
-      const m = item as {
-        sender?: { id?: string };
-        from?: { id?: string };
-        recipient?: { id?: string };
+      const m = item as Record<string, unknown> & {
         message?: { mid?: string; text?: string };
         message_edit?: { mid?: string; text?: string; num_edit?: number };
         is_echo?: boolean;
         is_self?: boolean;
       };
-      let senderId = m?.sender?.id ?? m?.from?.id;
-      if (!senderId && m.message_edit && entryAny.from?.id) {
-        senderId = entryAny.from.id;
+      let senderId: string | undefined =
+        (m.sender as { id?: string } | undefined)?.id ??
+        (m.from as { id?: string } | undefined)?.id ??
+        (typeof m.sender_id === 'string' ? m.sender_id : undefined) ??
+        (typeof m.from_id === 'string' ? m.from_id : undefined);
+      if (!senderId && m.message_edit) {
+        senderId = entryAny.from?.id ?? entryAny.sender?.id;
+      }
+      if (!senderId && m.message_edit) {
+        const me = m.message_edit as Record<string, unknown> | undefined;
+        senderId =
+          (me?.sender as { id?: string } | undefined)?.id ??
+          (me?.from as { id?: string } | undefined)?.id ??
+          (typeof me?.sender_id === 'string' ? me.sender_id : undefined);
       }
       if (!senderId) continue;
       if (m.is_echo === true || m.is_self === true) continue;
@@ -341,12 +354,14 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     const firstChangeField = changes.length > 0 && typeof changes[0] === 'object' && changes[0] !== null
       ? (changes[0] as { field?: string }).field
       : undefined;
+    const entry0Keys = entry0 && typeof entry0 === 'object' ? Object.keys(entry0) : [];
     logger.info(
       {
         eventId,
         provider,
         correlationId,
         hasEntry: !!entry0,
+        entry0Keys,
         messagingLength: messagingLen,
         firstMessagingKeys,
         changesLength: changes.length,

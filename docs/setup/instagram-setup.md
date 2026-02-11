@@ -373,7 +373,7 @@ If **no** webhook log appears when you send a DM, the request is not hitting you
 | Log message | Meaning |
 |-------------|--------|
 | `Instagram webhook queued for processing` | Meta sent an event; request reached the server and was queued. |
-| `Webhook has no message to reply to` with `firstMessagingKeys: ["timestamp","message_edit"]` | Event is a **message_edit** (user edited a message). The backend replies to **messages** (new DMs) and to **message_edit** when the payload includes **sender** (or **from**). If Meta sends message_edit without sender/from, we cannot reply. Ensure **messages** is subscribed; new (non-edit) DMs should send a webhook with `message` and sender so replies work. |
+| `Webhook has no message to reply to` with `firstMessagingKeys: ["timestamp","message_edit"]` | Event is a **message_edit** (user edited a message). The backend replies when the payload includes **sender** (or **from**, or entry-level **from**/**sender**, or **message_edit.sender**). If Meta sends message_edit without any of these, we cannot reply. Check **entry0Keys** in the same log line: if you see `sender` or `from` there, the next deploy may pick them up; if not, ensure **messages** is subscribed so **new** DMs send a webhook with `message` and sender. |
 | `Webhook queued` (placeholder) | REDIS_URL not set; webhook logged but not processed (no replies). |
 | `Webhook queue connected` / `Worker started` (at startup) | Queue and worker are active. |
 | `No doctor linked for page` | Connect the Instagram account for the doctor (step 3). |
