@@ -23,7 +23,11 @@ import { logger } from '../config/logger';
 import { logAuditEvent } from '../utils/audit-logger';
 import { markWebhookProcessed, markWebhookFailed } from '../services/webhook-idempotency-service';
 import { storeDeadLetterWebhook } from '../services/dead-letter-service';
-import { sendInstagramMessage, getInstagramMessageSender } from '../services/instagram-service';
+import {
+  sendInstagramMessage,
+  getInstagramMessageSender,
+  getSenderFromMostRecentConversation,
+} from '../services/instagram-service';
 import { getDoctorIdByPageIds, getInstagramAccessTokenForDoctor } from '../services/instagram-connect-service';
 import { findOrCreatePlaceholderPatient, findPatientByIdWithAdmin } from '../services/patient-service';
 import { getAvailableSlots } from '../services/availability-service';
@@ -227,6 +231,15 @@ async function tryResolveSenderFromMessageEdit(
     const token = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
     if (token) {
       senderId = await getInstagramMessageSender(edit.mid, token, correlationId);
+      if (!senderId) {
+        senderId = await getSenderFromMostRecentConversation(token, correlationId);
+        if (senderId) {
+          logger.info(
+            { eventId: edit.mid, correlationId },
+            'Instagram message_edit: resolved sender from most recent conversation'
+          );
+        }
+      }
     }
   }
   if (!senderId) return null;

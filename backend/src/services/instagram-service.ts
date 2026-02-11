@@ -175,6 +175,62 @@ export async function getInstagramMessageSender(
 }
 
 /**
+ * Fallback: get sender from the most recent conversation when message lookup fails.
+ * Used when message_edit.mid returns 500 (ID format not supported). For single-doctor
+ * setups, the most recent conversation is likely from the person who just messaged.
+ *
+ * @param accessToken - Instagram User access token
+ * @param correlationId - For logging only
+ * @returns Sender ID (IGSID) from the most recent customer message, or null
+ */
+export async function getSenderFromMostRecentConversation(
+  accessToken: string,
+  correlationId: string
+): Promise<string | null> {
+  const token = accessToken.trim();
+  if (!token) return null;
+  try {
+    const base = INSTAGRAM_GRAPH_BASE;
+    const params = { access_token: token };
+
+    const meRes = await axios.get<{ id?: string }>(`${base}/me`, {
+      params: { fields: 'id', ...params },
+      timeout: 8000,
+    });
+    const ourId = meRes.data?.id;
+    if (!ourId) return null;
+
+    const convRes = await axios.get<{ data?: Array<{ id?: string }> }>(
+      `${base}/me/conversations`,
+      { params: { platform: 'instagram', ...params }, timeout: 8000 }
+    );
+    const convId = convRes.data?.data?.[0]?.id;
+    if (!convId) return null;
+
+    const msgRes = await axios.get<{
+      data?: Array<{ from?: { id?: string }; id?: string }>;
+    }>(`${base}/${convId}/messages`, {
+      params: { fields: 'from,id', ...params },
+      timeout: 8000,
+    });
+    const messages = msgRes.data?.data ?? [];
+    for (const m of messages) {
+      const fromId = m.from?.id;
+      if (fromId && String(fromId) !== String(ourId)) {
+        return String(fromId);
+      }
+    }
+    return null;
+  } catch (err) {
+    logger.debug(
+      { correlationId, message: axios.isAxiosError(err) ? err.message : 'Request failed' },
+      'Could not get sender from most recent conversation'
+    );
+    return null;
+  }
+}
+
+/**
  * Send message with retry logic
  *
  * Implements exponential backoff for retryable errors (429, 5xx).
