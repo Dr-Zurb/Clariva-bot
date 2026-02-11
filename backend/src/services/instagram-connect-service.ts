@@ -443,8 +443,10 @@ export async function getInstagramAccessTokenForDoctor(
     handleSupabaseError(error, correlationId ?? '');
   }
 
-  const token = data?.instagram_access_token;
-  return typeof token === 'string' && token.length > 0 ? token : null;
+  const raw = data?.instagram_access_token;
+  if (typeof raw !== 'string') return null;
+  const token = raw.trim();
+  return token.length > 0 ? token : null;
 }
 
 // ============================================================================
@@ -478,7 +480,7 @@ export async function saveDoctorInstagram(
   const row: InsertDoctorInstagram = {
     doctor_id: doctorId,
     instagram_page_id: input.instagram_page_id,
-    instagram_access_token: input.instagram_access_token,
+    instagram_access_token: input.instagram_access_token.trim(),
     instagram_username: input.instagram_username ?? null,
   };
 
