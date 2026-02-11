@@ -141,14 +141,32 @@ export async function getInstagramMessageSender(
     const fromId = res.data?.from?.id;
     return fromId && String(fromId).length > 0 ? String(fromId) : null;
   } catch (err) {
-    if (axios.isAxiosError(err) && err.response?.status === 404) {
-      logger.debug({ correlationId, messageId }, 'Instagram message not found (may be too old)');
-      return null;
+    if (axios.isAxiosError(err)) {
+      const status = err.response?.status;
+      const errorBody = err.response?.data as { error?: { message?: string; code?: number; type?: string } } | undefined;
+      const metaError = errorBody?.error?.message ?? err.message;
+      if (status === 404) {
+        logger.debug({ correlationId, messageId }, 'Instagram message not found (may be too old)');
+        return null;
+      }
+      // Log 400 with Meta's error so we can debug message ID format issues
+      logger.warn(
+        {
+          correlationId,
+          messageId,
+          messageIdLength: messageId?.length,
+          status,
+          metaError,
+          metaCode: errorBody?.error?.code,
+        },
+        'Could not fetch Instagram message sender'
+      );
+    } else {
+      logger.debug(
+        { correlationId, messageId, message: err instanceof Error ? err.message : 'Request failed' },
+        'Could not fetch Instagram message sender'
+      );
     }
-    logger.debug(
-      { correlationId, messageId, message: axios.isAxiosError(err) ? err.message : 'Request failed' },
-      'Could not fetch Instagram message sender'
-    );
     return null;
   }
 }
