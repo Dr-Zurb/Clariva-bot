@@ -173,6 +173,22 @@ export const handleInstagramWebhook = asyncHandler(
       eventId = generateFallbackEventId(req.body);
     }
 
+    // Debug: when idempotency uses entry id (page ID), log payload shape to troubleshoot missing mid
+    const body = req.body as { object?: string; entry?: unknown[] };
+    const entry0 = body?.entry?.[0] as Record<string, unknown> | undefined;
+    const entryId = entry0?.id != null ? String(entry0.id) : null;
+    if (entryId && eventId === entryId) {
+      const messaging = entry0?.messaging;
+      const hasMessaging = Array.isArray(messaging) && messaging.length > 0;
+      const firstItemKeys = hasMessaging && typeof messaging[0] === 'object' && messaging[0] !== null
+        ? Object.keys(messaging[0] as object)
+        : [];
+      logger.debug(
+        { correlationId, entryId, hasMessaging, messagingLength: hasMessaging ? (messaging as unknown[]).length : 0, firstMessagingKeys: firstItemKeys },
+        'Instagram webhook: eventId is entry id (no mid found); payload shape logged for debugging'
+      );
+    }
+
     // Step 3: Check idempotency (prevent duplicates)
     try {
       const existing = await isWebhookProcessed(eventId, 'instagram');

@@ -71,28 +71,50 @@ export function extractInstagramEventId(
     return null;
   }
 
-  const entry = instagramPayload.entry?.[0];
-  if (!entry?.id) {
+  const entries = instagramPayload.entry;
+  if (!entries?.length || !entries[0]?.id) {
     return null;
   }
 
   // Prefer message-level IDs so each DM is unique (idempotency per message, not per page).
-  // Instagram messaging webhooks can carry the message ID in different fields:
-  // - messages:      messaging[0].message.mid
-  // - reactions:     messaging[0].reaction.mid
-  // - postbacks:     messaging[0].postback.mid
-  // - read receipts: messaging[0].read.mid
-  //
-  // To avoid brittle typing here (the official payload includes more shapes than
-  // our local TypeScript interface), we treat `messaging` as `any`.
-  const messaging = (entry as any)?.messaging?.[0];
-  const mid =
-    messaging?.message?.mid ??
-    messaging?.reaction?.mid ??
-    messaging?.postback?.mid ??
-    messaging?.read?.mid;
-  if (mid) {
-    return String(mid);
+  // Scan all entries and all messaging items; Meta may send multiple items per POST or put
+  // the message in a different index. Supported shapes: message.mid, reaction.mid,
+  // postback.mid, read.mid, message_edit.mid.
+  const entry = entries[0];
+  const entryAny = entry as Record<string, unknown>;
+  const messagingList = Array.isArray(entryAny?.messaging) ? entryAny.messaging : [];
+
+  for (let i = 0; i < messagingList.length; i++) {
+    const m = messagingList[i] as Record<string, unknown> | undefined;
+    if (!m || typeof m !== 'object') continue;
+    const mid =
+      (m.message as { mid?: string } | undefined)?.mid ??
+      (m.reaction as { mid?: string } | undefined)?.mid ??
+      (m.postback as { mid?: string } | undefined)?.mid ??
+      (m.read as { mid?: string } | undefined)?.mid ??
+      (m.message_edit as { mid?: string } | undefined)?.mid;
+    if (mid != null && String(mid).length > 0) {
+      return String(mid);
+    }
+  }
+
+  // No message-level ID in first entry; try other entries (batched webhooks)
+  for (let e = 1; e < entries.length; e++) {
+    const ent = entries[e] as Record<string, unknown> | undefined;
+    const list = Array.isArray(ent?.messaging) ? ent.messaging : [];
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i] as Record<string, unknown> | undefined;
+      if (!m || typeof m !== 'object') continue;
+      const mid =
+        (m.message as { mid?: string } | undefined)?.mid ??
+        (m.reaction as { mid?: string } | undefined)?.mid ??
+        (m.postback as { mid?: string } | undefined)?.mid ??
+        (m.read as { mid?: string } | undefined)?.mid ??
+        (m.message_edit as { mid?: string } | undefined)?.mid;
+      if (mid != null && String(mid).length > 0) {
+        return String(mid);
+      }
+    }
   }
 
   // No message-level ID available: fall back to entry id
