@@ -232,12 +232,15 @@ async function tryResolveSenderFromMessageEdit(
     if (token) {
       senderId = await getInstagramMessageSender(edit.mid, token, correlationId);
       if (!senderId) {
+        logger.info({ correlationId }, 'Instagram message_edit: trying conversation fallback');
         senderId = await getSenderFromMostRecentConversation(token, correlationId);
         if (senderId) {
           logger.info(
             { eventId: edit.mid, correlationId },
             'Instagram message_edit: resolved sender from most recent conversation'
           );
+        } else {
+          logger.info({ correlationId }, 'Instagram message_edit: conversation fallback returned no sender');
         }
       }
     }

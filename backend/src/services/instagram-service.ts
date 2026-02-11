@@ -193,11 +193,11 @@ export async function getSenderFromMostRecentConversation(
     const base = INSTAGRAM_GRAPH_BASE;
     const params = { access_token: token };
 
-    const meRes = await axios.get<{ id?: string }>(`${base}/me`, {
+    const meRes = await axios.get<{ data?: Array<{ id?: string }>; id?: string }>(`${base}/me`, {
       params: { fields: 'id', ...params },
       timeout: 8000,
     });
-    const ourId = meRes.data?.id;
+    const ourId = meRes.data?.data?.[0]?.id ?? meRes.data?.id;
     if (!ourId) return null;
 
     const convRes = await axios.get<{ data?: Array<{ id?: string }> }>(
@@ -205,7 +205,10 @@ export async function getSenderFromMostRecentConversation(
       { params: { platform: 'instagram', ...params }, timeout: 8000 }
     );
     const convId = convRes.data?.data?.[0]?.id;
-    if (!convId) return null;
+    if (!convId) {
+      logger.info({ correlationId }, 'Conversation fallback: no conversations found');
+      return null;
+    }
 
     const msgRes = await axios.get<{
       data?: Array<{ from?: { id?: string }; id?: string }>;
@@ -220,10 +223,16 @@ export async function getSenderFromMostRecentConversation(
         return String(fromId);
       }
     }
+    logger.info(
+      { correlationId, messageCount: messages.length },
+      'Conversation fallback: no customer message found in most recent conversation'
+    );
     return null;
   } catch (err) {
-    logger.debug(
-      { correlationId, message: axios.isAxiosError(err) ? err.message : 'Request failed' },
+    const msg = axios.isAxiosError(err) ? err.message : 'Request failed';
+    const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+    logger.warn(
+      { correlationId, message: msg, status },
       'Could not get sender from most recent conversation'
     );
     return null;
