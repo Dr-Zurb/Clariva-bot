@@ -380,7 +380,7 @@ If **no** webhook log appears when you send a DM, the request is not hitting you
 | `No doctor linked for Instagram page ID` (with `pageId: ...`) | **The Instagram account receiving DMs is not linked to any doctor.** Log in to the app as a doctor, go to **Settings → Instagram**, and complete **Connect Instagram** with the same account (e.g. clariva_care). That saves the page ID so the backend can send replies. |
 | `No doctor linked for page` | Same as above — connect the Instagram account for the doctor (step 3). |
 | `No Instagram token for doctor` | Reconnect Instagram to refresh the token (step 4). |
-| `Could not fetch Instagram message sender` with `metaError: "Invalid OAuth access token - Cannot parse access token"` (`metaCode: 190`) | **Token invalid or malformed.** Go to **Settings → Instagram** and **Disconnect**, then **Connect Instagram** again. This stores a fresh token. If it persists, the token may be expired (long-lived tokens last ~60 days). |
+| `Could not fetch Instagram message sender` with `metaError: "Invalid OAuth access token - Cannot parse access token"` (`metaCode: 190`) | **Token/API mismatch.** The app uses Instagram API with Instagram Login (graph.instagram.com + Bearer). Ensure you use the app's Connect Instagram flow—**not** a Page token from Meta's Developer Console. Reconnect via **Settings → Instagram** if needed. |
 
 ---
 

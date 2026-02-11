@@ -39,10 +39,11 @@ import type {
 // ============================================================================
 
 /**
- * Instagram Graph API base URL
- * Using v18.0 as specified in task requirements
+ * Instagram API base URL (graph.instagram.com for Instagram Login tokens).
+ * Instagram API with Instagram Login uses graph.instagram.com + Bearer auth;
+ * graph.facebook.com expects Page tokens and causes "Cannot parse access token" (190).
  */
-const GRAPH_API_BASE = 'https://graph.facebook.com/v18.0';
+const INSTAGRAM_GRAPH_BASE = 'https://graph.instagram.com/v18.0';
 
 /**
  * Retry configuration
@@ -132,10 +133,11 @@ export async function getInstagramMessageSender(
   correlationId: string
 ): Promise<string | null> {
   if (!messageId || !accessToken) return null;
-  const url = `${GRAPH_API_BASE}/${encodeURIComponent(messageId)}`;
+  const url = `${INSTAGRAM_GRAPH_BASE}/${encodeURIComponent(messageId)}`;
   try {
     const res = await axios.get<{ from?: { id?: string } }>(url, {
-      params: { fields: 'from', access_token: accessToken },
+      params: { fields: 'from' },
+      headers: { Authorization: `Bearer ${accessToken.trim()}` },
       timeout: 8000,
     });
     const fromId = res.data?.from?.id;
@@ -361,10 +363,7 @@ async function sendMessageAPI(
   correlationId: string,
   token: string
 ): Promise<InstagramSendMessageResponse> {
-  const url = `${GRAPH_API_BASE}/me/messages`;
-  const params = {
-    access_token: token,
-  };
+  const url = `${INSTAGRAM_GRAPH_BASE}/me/messages`;
   const payload: InstagramSendMessageRequest = {
     recipient: { id: recipientId },
     message: { text: message },
@@ -375,7 +374,7 @@ async function sendMessageAPI(
       url,
       payload,
       {
-        params,
+        headers: { Authorization: `Bearer ${token.trim()}` },
         timeout: 10000, // 10 second timeout (from SAFE_DEFAULTS.md)
       }
     );
