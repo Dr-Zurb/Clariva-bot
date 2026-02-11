@@ -134,10 +134,11 @@ export async function getInstagramMessageSender(
 ): Promise<string | null> {
   if (!messageId || !accessToken) return null;
   const url = `${INSTAGRAM_GRAPH_BASE}/${encodeURIComponent(messageId)}`;
+  const token = accessToken.trim();
   try {
+    // Conversations API uses access_token query param; Bearer can cause 500 on some endpoints
     const res = await axios.get<{ from?: { id?: string } }>(url, {
-      params: { fields: 'from' },
-      headers: { Authorization: `Bearer ${accessToken.trim()}` },
+      params: { fields: 'from', access_token: token },
       timeout: 8000,
     });
     const fromId = res.data?.from?.id;
