@@ -240,11 +240,22 @@ export const handleInstagramWebhook = asyncHandler(
     }
 
     // Step 5: Queue for async processing (don't block)
+    // Use raw body as payload when available so worker gets exact JSON from Meta (avoids any
+    // sanitization or body-parser changes that might drop fields like sender/recipient).
+    let payloadForQueue: unknown = req.body;
+    const rawBodyBuf = (req as { rawBody?: Buffer }).rawBody;
+    if (rawBodyBuf && Buffer.isBuffer(rawBodyBuf)) {
+      try {
+        payloadForQueue = JSON.parse(rawBodyBuf.toString('utf8'));
+      } catch {
+        // Fallback to parsed body if raw parse fails
+      }
+    }
     try {
       await webhookQueue.add(WEBHOOK_JOB_NAME, {
         eventId,
         provider: 'instagram',
-        payload: req.body as any, // Type assertion - payload is validated by signature
+        payload: payloadForQueue as any,
         correlationId,
         timestamp: new Date().toISOString(),
       });
@@ -264,7 +275,7 @@ export const handleInstagramWebhook = asyncHandler(
         await storeDeadLetterWebhook(
           eventId,
           'instagram',
-          req.body,
+          payloadForQueue,
           `Queue error: ${error instanceof Error ? error.message : 'Unknown error'}`,
           0, // No retries (failed immediately)
           correlationId
