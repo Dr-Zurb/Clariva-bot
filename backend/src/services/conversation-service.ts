@@ -61,6 +61,35 @@ export async function findConversationByPlatformId(
 }
 
 /**
+ * When the doctor has exactly one Instagram conversation, return its platform_conversation_id (sender ID).
+ * Used as fallback for message_edit webhooks that have no sender in payload and no stored message with the given mid.
+ *
+ * @param doctorId - Doctor UUID
+ * @param correlationId - For audit
+ * @returns Sender ID (platform_conversation_id) or null if 0 or 2+ conversations
+ */
+export async function getOnlyInstagramConversationSenderId(
+  doctorId: string,
+  correlationId: string
+): Promise<string | null> {
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    throw new InternalError('Service role client not available');
+  }
+  const { data, error } = await supabaseAdmin
+    .from('conversations')
+    .select('platform_conversation_id')
+    .eq('doctor_id', doctorId)
+    .eq('platform', 'instagram')
+    .limit(2);
+  if (error) {
+    handleSupabaseError(error, correlationId);
+  }
+  if (!data || data.length !== 1) return null;
+  return (data[0] as { platform_conversation_id: string }).platform_conversation_id ?? null;
+}
+
+/**
  * Create a new conversation
  * 
  * Creates conversation record when processing webhooks.

@@ -35,6 +35,7 @@ import {
   createConversation,
   getConversationState,
   updateConversationState,
+  getOnlyInstagramConversationSenderId,
 } from '../services/conversation-service';
 import { createMessage, getRecentMessages, getSenderIdByPlatformMessageId } from '../services/message-service';
 import { classifyIntent, generateResponse } from '../services/ai-service';
@@ -203,8 +204,9 @@ function getFirstMessageEdit(
 }
 
 /**
- * When payload has message_edit but no sender (Meta bug/omission), resolve sender from DB
- * using the message mid from a previously stored "message" webhook.
+ * When payload has message_edit but no sender (Meta bug/omission), resolve sender from DB:
+ * 1) by message mid (from a previously stored "message" webhook), or
+ * 2) when doctor has exactly one Instagram conversation, use that conversation's sender.
  */
 async function tryResolveSenderFromMessageEdit(
   payload: InstagramWebhookPayload,
@@ -216,7 +218,10 @@ async function tryResolveSenderFromMessageEdit(
   if (!doctorId) return null;
   const edit = getFirstMessageEdit(payload);
   if (!edit?.mid) return null;
-  const senderId = await getSenderIdByPlatformMessageId(doctorId, edit.mid, correlationId);
+  let senderId = await getSenderIdByPlatformMessageId(doctorId, edit.mid, correlationId);
+  if (!senderId) {
+    senderId = await getOnlyInstagramConversationSenderId(doctorId, correlationId);
+  }
   if (!senderId) return null;
   return { senderId, text: edit.text, mid: edit.mid };
 }
@@ -404,6 +409,10 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       ? (changes[0] as { field?: string }).field
       : undefined;
     const entry0Keys = entry0 && typeof entry0 === 'object' ? Object.keys(entry0) : [];
+    const hint =
+      firstMessagingKeys.includes('message_edit') && !firstMessagingKeys.includes('message')
+        ? ' Only message_edit received (no sender in payload). Subscribe to "messages" in Meta and send a new DM (not edit) so we can create the conversation and reply.'
+        : '';
     logger.info(
       {
         eventId,
@@ -416,7 +425,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         changesLength: changes.length,
         firstChangeField,
       },
-      'Webhook has no message to reply to (marked processed)'
+      `Webhook has no message to reply to (marked processed).${hint}`
     );
     await markWebhookProcessed(eventId, provider);
     await logAuditEvent({
