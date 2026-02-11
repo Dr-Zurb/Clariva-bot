@@ -23,7 +23,7 @@ import { logger } from '../config/logger';
 import { logAuditEvent } from '../utils/audit-logger';
 import { markWebhookProcessed, markWebhookFailed } from '../services/webhook-idempotency-service';
 import { storeDeadLetterWebhook } from '../services/dead-letter-service';
-import { sendInstagramMessage } from '../services/instagram-service';
+import { sendInstagramMessage, getInstagramMessageSender } from '../services/instagram-service';
 import { getDoctorIdByPageIds, getInstagramAccessTokenForDoctor } from '../services/instagram-connect-service';
 import { findOrCreatePlaceholderPatient, findPatientByIdWithAdmin } from '../services/patient-service';
 import { getAvailableSlots } from '../services/availability-service';
@@ -204,9 +204,10 @@ function getFirstMessageEdit(
 }
 
 /**
- * When payload has message_edit but no sender (Meta bug/omission), resolve sender from DB:
- * 1) by message mid (from a previously stored "message" webhook), or
- * 2) when doctor has exactly one Instagram conversation, use that conversation's sender.
+ * When payload has message_edit but no sender (Meta bug/omission), resolve sender:
+ * 1) by message mid from DB (previously stored "message" webhook), or
+ * 2) when doctor has exactly one Instagram conversation, use that sender, or
+ * 3) fetch message by mid via Graph API to get from.id (sender).
  */
 async function tryResolveSenderFromMessageEdit(
   payload: InstagramWebhookPayload,
@@ -221,6 +222,12 @@ async function tryResolveSenderFromMessageEdit(
   let senderId = await getSenderIdByPlatformMessageId(doctorId, edit.mid, correlationId);
   if (!senderId) {
     senderId = await getOnlyInstagramConversationSenderId(doctorId, correlationId);
+  }
+  if (!senderId) {
+    const token = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
+    if (token) {
+      senderId = await getInstagramMessageSender(edit.mid, token, correlationId);
+    }
   }
   if (!senderId) return null;
   return { senderId, text: edit.text, mid: edit.mid };
@@ -380,6 +387,30 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
   }
 
   const instagramPayload = payload as InstagramWebhookPayload;
+  // Debug: log payload structure for every Instagram webhook (no PII) to diagnose message vs message_edit
+  const entry0 = instagramPayload.entry?.[0] as Record<string, unknown> | undefined;
+  const messagingList = Array.isArray(entry0?.messaging) ? (entry0!.messaging as unknown[]) : [];
+  const changesList = Array.isArray(entry0?.changes) ? (entry0.changes as unknown[]) : [];
+  const structure: Record<string, unknown> = {
+    entry0Keys: entry0 && typeof entry0 === 'object' ? Object.keys(entry0) : [],
+    changesLength: changesList.length,
+    firstChangeField: changesList.length > 0 && typeof changesList[0] === 'object' && changesList[0] !== null
+      ? (changesList[0] as { field?: string }).field
+      : undefined,
+    messagingLength: messagingList.length,
+  };
+  if (messagingList.length > 0) {
+    const first = messagingList[0] as Record<string, unknown> | undefined;
+    structure.firstItemKeys = first && typeof first === 'object' ? Object.keys(first) : [];
+    structure.hasMessage = first && 'message' in first && first.message != null;
+    structure.hasMessageEdit = first && 'message_edit' in first && first.message_edit != null;
+    structure.hasSender = first && ((first.sender as { id?: string })?.id ?? first.sender_id) != null;
+    structure.hasRecipient = first && ((first.recipient as { id?: string })?.id ?? first.recipient_id) != null;
+  }
+  logger.info(
+    { eventId, provider, correlationId, payloadStructure: structure },
+    'Instagram webhook payload structure (for debugging message vs message_edit)'
+  );
   let parsed = parseInstagramMessage(instagramPayload);
 
   // Fallback: Meta sometimes sends message_edit without sender/recipient; resolve sender from DB
@@ -390,14 +421,13 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       parsed = fallback;
       logger.info(
         { eventId, provider, correlationId, mid: fallback.mid },
-        'Instagram message_edit: resolved sender from DB (payload had no sender)'
+        'Instagram message_edit: resolved sender (payload had no sender)'
       );
     }
   }
 
   if (!parsed) {
     // No message (e.g. delivery, read, or message in unexpected shape) - mark processed and skip reply
-    const entry0 = instagramPayload.entry?.[0] as Record<string, unknown> | undefined;
     const hasMessaging = Array.isArray(entry0?.messaging);
     const messagingLen = hasMessaging ? (entry0!.messaging as unknown[]).length : 0;
     const changes = Array.isArray(entry0?.changes) ? (entry0.changes as unknown[]) : [];
@@ -411,7 +441,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     const entry0Keys = entry0 && typeof entry0 === 'object' ? Object.keys(entry0) : [];
     const hint =
       firstMessagingKeys.includes('message_edit') && !firstMessagingKeys.includes('message')
-        ? ' Only message_edit received (no sender in payload). Subscribe to "messages" in Meta and send a new DM (not edit) so we can create the conversation and reply.'
+        ? ' Only message_edit received (no sender in payload). If you subscribe to "messages" and send a new DM (not edit), we expect a "message" event. Check payloadStructure logs to see what Meta sends.'
         : '';
     logger.info(
       {

@@ -117,6 +117,43 @@ export async function sendInstagramMessage(
 }
 
 /**
+ * Fetch sender ID for a message by its ID (Graph API).
+ * Used when the webhook sends message_edit without sender/recipient; we can fetch
+ * the message details to get the sender (from.id).
+ *
+ * @param messageId - Message ID (mid from webhook)
+ * @param accessToken - Page/Instagram access token
+ * @param correlationId - For logging only
+ * @returns Sender ID (Instagram-scoped) or null if not found
+ */
+export async function getInstagramMessageSender(
+  messageId: string,
+  accessToken: string,
+  correlationId: string
+): Promise<string | null> {
+  if (!messageId || !accessToken) return null;
+  const url = `${GRAPH_API_BASE}/${encodeURIComponent(messageId)}`;
+  try {
+    const res = await axios.get<{ from?: { id?: string } }>(url, {
+      params: { fields: 'from', access_token: accessToken },
+      timeout: 8000,
+    });
+    const fromId = res.data?.from?.id;
+    return fromId && String(fromId).length > 0 ? String(fromId) : null;
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 404) {
+      logger.debug({ correlationId, messageId }, 'Instagram message not found (may be too old)');
+      return null;
+    }
+    logger.debug(
+      { correlationId, messageId, message: axios.isAxiosError(err) ? err.message : 'Request failed' },
+      'Could not fetch Instagram message sender'
+    );
+    return null;
+  }
+}
+
+/**
  * Send message with retry logic
  *
  * Implements exponential backoff for retryable errors (429, 5xx).
