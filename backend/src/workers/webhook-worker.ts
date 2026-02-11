@@ -108,40 +108,64 @@ function parseInstagramMessage(
 
   // Format 1: entry[].messaging[] (Business Login / Messenger Platform)
   for (const entry of entries) {
-    const list = (entry as { messaging?: unknown[] }).messaging;
+    const entryAny = entry as { messaging?: unknown[]; from?: { id?: string }; id?: string };
+    const list = entryAny.messaging;
     if (!Array.isArray(list)) continue;
     for (const item of list) {
       const m = item as {
         sender?: { id?: string };
+        from?: { id?: string };
+        recipient?: { id?: string };
         message?: { mid?: string; text?: string };
+        message_edit?: { mid?: string; text?: string; num_edit?: number };
         is_echo?: boolean;
         is_self?: boolean;
       };
-      if (!m?.sender?.id) continue;
+      let senderId = m?.sender?.id ?? m?.from?.id;
+      if (!senderId && m.message_edit && entryAny.from?.id) {
+        senderId = entryAny.from.id;
+      }
+      if (!senderId) continue;
       if (m.is_echo === true || m.is_self === true) continue;
-      if (!m.message) continue;
-      const text = m.message.text ?? '';
-      const mid = m.message.mid;
-      return { senderId: String(m.sender.id), text, mid };
+      // Incoming message (new or edited)
+      if (m.message) {
+        const text = m.message.text ?? '';
+        const mid = m.message.mid;
+        return { senderId: String(senderId), text, mid };
+      }
+      if (m.message_edit) {
+        const text = m.message_edit.text ?? '';
+        const mid = m.message_edit.mid;
+        return { senderId: String(senderId), text, mid };
+      }
     }
   }
 
-  // Format 2: entry[].changes[] with field "messages" (Instagram Graph API)
+  // Format 2: entry[].changes[] (Instagram Graph API: "messages" or "message_edit")
   for (const entry of entries) {
     const changes = (entry as { changes?: Array<{ field?: string; value?: unknown }> }).changes;
     if (!Array.isArray(changes)) continue;
     for (const c of changes) {
-      if (c?.field !== 'messages' || c?.value == null || typeof c.value !== 'object') continue;
+      if (c?.value == null || typeof c.value !== 'object') continue;
       const v = c.value as {
         sender?: { id?: string };
         message?: { mid?: string; text?: string; is_self?: boolean };
+        message_edit?: { mid?: string; text?: string; num_edit?: number };
         is_self?: boolean;
       };
-      if (!v?.sender?.id || !v?.message) continue;
-      if (v.is_self === true || v.message.is_self === true) continue;
-      const text = v.message.text ?? '';
-      const mid = v.message.mid;
-      return { senderId: String(v.sender.id), text, mid };
+      if (!v?.sender?.id) continue;
+      if (v.is_self === true) continue;
+      if (c.field === 'messages' && v.message) {
+        if (v.message.is_self === true) continue;
+        const text = v.message.text ?? '';
+        const mid = v.message.mid;
+        return { senderId: String(v.sender.id), text, mid };
+      }
+      if (c.field === 'message_edit' && v.message_edit) {
+        const text = v.message_edit.text ?? '';
+        const mid = v.message_edit.mid;
+        return { senderId: String(v.sender.id), text, mid };
+      }
     }
   }
 
