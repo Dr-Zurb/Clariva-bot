@@ -565,16 +565,30 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       correlationId
     );
     if (!conversation) {
-      conversation = await createConversation(
-        {
-          doctor_id: doctorId,
-          patient_id: patient.id,
-          platform: 'instagram',
-          platform_conversation_id: senderId,
-          status: 'active',
-        },
-        correlationId
-      );
+      try {
+        conversation = await createConversation(
+          {
+            doctor_id: doctorId,
+            patient_id: patient.id,
+            platform: 'instagram',
+            platform_conversation_id: senderId,
+            status: 'active',
+          },
+          correlationId
+        );
+      } catch (err) {
+        if (err instanceof ConflictError) {
+          conversation = await findConversationByPlatformId(
+            doctorId,
+            'instagram',
+            senderId,
+            correlationId
+          );
+          if (!conversation) throw err;
+        } else {
+          throw err;
+        }
+      }
     }
 
     const intentResult = await classifyIntent(text, correlationId);
