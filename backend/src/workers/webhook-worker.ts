@@ -919,6 +919,15 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
 
     await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
   } catch (error) {
+    // Duplicate webhook (same event_id retried or re-sent): treat as idempotent
+    if (error instanceof ConflictError) {
+      logger.info(
+        { eventId, provider, correlationId, errorMessage: error.message },
+        'Webhook duplicate (Resource already exists); marking processed'
+      );
+      await markWebhookProcessed(eventId, provider);
+      return;
+    }
     await markWebhookFailed(
       eventId,
       provider,

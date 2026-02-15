@@ -343,7 +343,11 @@ export async function findOrCreatePlaceholderPatient(
 
   if (error || !patient) {
     // Race: another webhook created the same placeholder; fetch and return it
-    if (error?.code === '23505') {
+    const isUniqueViolation =
+      error?.code === '23505' ||
+      (typeof error?.message === 'string' &&
+        /duplicate|unique|already exists/i.test(error.message));
+    if (isUniqueViolation) {
       const existing = await findPatientByPlatformExternalId(
         platform,
         platformExternalId,
