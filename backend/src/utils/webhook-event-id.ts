@@ -133,15 +133,20 @@ export function extractInstagramEventId(
     }
   }
 
-  // Instagram Graph API: entry[].changes[] with field "messages" and value.message.mid
+  // Instagram Graph API: entry[].changes[] with field "messages" or "message_edit"
   for (let e = 0; e < entries.length; e++) {
     const ent = entries[e] as Record<string, unknown> | undefined;
     const changeList = Array.isArray(ent?.changes) ? ent.changes : [];
     for (let i = 0; i < changeList.length; i++) {
-      const c = changeList[i] as { field?: string; value?: { message?: { mid?: string } } } | undefined;
-      if (c?.field !== 'messages' || c?.value?.message?.mid == null) continue;
-      const mid = c.value.message.mid;
-      if (String(mid).length > 0) return String(mid);
+      const c = changeList[i] as {
+        field?: string;
+        value?: { message?: { mid?: string }; message_edit?: { mid?: string } };
+      } | undefined;
+      const v = c?.value;
+      const mid =
+        (c?.field === 'messages' && v?.message?.mid) ??
+        (c?.field === 'message_edit' && v?.message_edit?.mid);
+      if (mid != null && String(mid).length > 0) return String(mid);
     }
   }
 

@@ -580,16 +580,28 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     const intentResult = await classifyIntent(text, correlationId);
 
     const platformMessageId = mid ?? `evt-${eventId}`;
-    await createMessage(
-      {
-        conversation_id: conversation.id,
-        platform_message_id: platformMessageId,
-        sender_type: 'patient',
-        content: text,
-        intent: intentResult.intent,
-      },
-      correlationId
-    );
+    try {
+      await createMessage(
+        {
+          conversation_id: conversation.id,
+          platform_message_id: platformMessageId,
+          sender_type: 'patient',
+          content: text,
+          intent: intentResult.intent,
+        },
+        correlationId
+      );
+    } catch (err) {
+      if (err instanceof ConflictError) {
+        logger.info(
+          { eventId, correlationId, platformMessageId },
+          'Message already stored (idempotent); marking processed'
+        );
+        await markWebhookProcessed(eventId, provider);
+        return;
+      }
+      throw err;
+    }
 
     let state = await getConversationState(conversation.id, correlationId);
     const recentMessages = await getRecentMessages(conversation.id, 10, correlationId);
