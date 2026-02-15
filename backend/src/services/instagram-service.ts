@@ -212,13 +212,14 @@ export async function getSenderFromMostRecentConversation(
     try {
       convList = await fetchConvs(convTarget);
     } catch (firstErr) {
-      if (axios.isAxiosError(firstErr) && firstErr.response?.status === 400 && igId) {
+      // Fall back to /me when igId returns 400 or 500 (page/ID format issues on graph.instagram.com)
+      const status = axios.isAxiosError(firstErr) ? firstErr.response?.status : undefined;
+      if (igId && (status === 400 || status === 500)) {
         try {
           convList = await fetchConvs('me');
           convTarget = 'me';
         } catch {
           const msg = axios.isAxiosError(firstErr) ? firstErr.message : 'Request failed';
-          const status = axios.isAxiosError(firstErr) ? firstErr.response?.status : undefined;
           logger.warn({ correlationId, message: msg, status }, 'Could not get sender from most recent conversation');
           return null;
         }
