@@ -214,8 +214,8 @@ function getFirstMessageEdit(
 /**
  * When payload has message_edit but no sender (Meta bug/omission), resolve sender:
  * 1) by message mid from DB (previously stored "message" webhook), or
- * 2) when doctor has exactly one Instagram conversation, use that sender, or
- * 3) fetch message by mid via Graph API to get from.id (sender).
+ * 2) fetch from Graph API (most recent conversation or message lookup) - preferred for real DMs, or
+ * 3) when doctor has exactly one Instagram conversation, use that sender (fallback; can be wrong if test conv exists).
  */
 async function tryResolveSenderFromMessageEdit(
   payload: InstagramWebhookPayload,
@@ -229,12 +229,9 @@ async function tryResolveSenderFromMessageEdit(
   if (!edit?.mid) return null;
   let senderId = await getSenderIdByPlatformMessageId(doctorId, edit.mid, correlationId);
   if (!senderId) {
-    senderId = await getOnlyInstagramConversationSenderId(doctorId, correlationId);
-  }
-  if (!senderId) {
+    // Prefer API over DB: getOnlyInstagramConversationSenderId can return wrong sender (e.g. test conv)
     const token = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
     if (token) {
-      // Use stored instagram_page_id (from connect) - webhook entry.id can be a different ID
       const igId = await getStoredInstagramPageIdForDoctor(doctorId, correlationId) ?? undefined;
       senderId = await getSenderFromMostRecentConversation(token, correlationId, igId);
       if (!senderId) {
@@ -244,6 +241,9 @@ async function tryResolveSenderFromMessageEdit(
         logger.info({ correlationId }, 'Instagram message_edit: resolved sender');
       }
     }
+  }
+  if (!senderId) {
+    senderId = await getOnlyInstagramConversationSenderId(doctorId, correlationId);
   }
   if (!senderId) return null;
   return { senderId, text: edit.text, mid: edit.mid };
@@ -607,14 +607,15 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       );
     } catch (err) {
       if (err instanceof ConflictError) {
+        // Message already stored (duplicate webhook or retry). Continue to send reply -
+        // a previous attempt may have failed before sending.
         logger.info(
           { eventId, correlationId, platformMessageId },
-          'Message already stored (idempotent); marking processed'
+          'Message already stored (idempotent); continuing to send reply'
         );
-        await markWebhookProcessed(eventId, provider);
-        return;
+      } else {
+        throw err;
       }
-      throw err;
     }
 
     let state = await getConversationState(conversation.id, correlationId);
