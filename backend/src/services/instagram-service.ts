@@ -197,13 +197,36 @@ export async function getSenderFromMostRecentConversation(
     const base = INSTAGRAM_GRAPH_BASE;
     const params = { access_token: token, platform: 'instagram' as const };
 
-    // Use igId (webhook entry.id) when provided; otherwise /me
-    const convTarget = igId ? `${igId}` : 'me';
-    const convRes = await axios.get<{ data?: Array<{ id?: string }> }>(
-      `${base}/${convTarget}/conversations`,
-      { params: { ...params }, timeout: 8000 }
-    );
-    const convList = convRes.data?.data ?? [];
+    // Try igId (webhook entry.id) first; fall back to /me if 400 (page IDs not valid on graph.instagram.com)
+    let convList: Array<{ id?: string }> = [];
+    let convTarget = igId ? `${igId}` : 'me';
+
+    const fetchConvs = async (target: string) => {
+      const res = await axios.get<{ data?: Array<{ id?: string }> }>(
+        `${base}/${target}/conversations`,
+        { params: { ...params }, timeout: 8000 }
+      );
+      return res.data?.data ?? [];
+    };
+
+    try {
+      convList = await fetchConvs(convTarget);
+    } catch (firstErr) {
+      if (axios.isAxiosError(firstErr) && firstErr.response?.status === 400 && igId) {
+        try {
+          convList = await fetchConvs('me');
+          convTarget = 'me';
+        } catch {
+          const msg = axios.isAxiosError(firstErr) ? firstErr.message : 'Request failed';
+          const status = axios.isAxiosError(firstErr) ? firstErr.response?.status : undefined;
+          logger.warn({ correlationId, message: msg, status }, 'Could not get sender from most recent conversation');
+          return null;
+        }
+      } else {
+        throw firstErr;
+      }
+    }
+
     const convId = convList[0]?.id;
     if (!convId) {
       logger.info({ correlationId, convTarget }, 'Conversation fallback: no conversations found');
@@ -211,14 +234,12 @@ export async function getSenderFromMostRecentConversation(
     }
 
     // ourId: the IG account that owns the token (us). Customer messages have from.id !== ourId.
-    let ourId: string | undefined = igId;
-    if (!ourId) {
-      const meRes = await axios.get<{ data?: Array<{ id?: string }>; id?: string }>(`${base}/me`, {
-        params: { fields: 'id', access_token: token },
-        timeout: 8000,
-      });
-      ourId = meRes.data?.data?.[0]?.id ?? meRes.data?.id ?? undefined;
-    }
+    // Always use /me for ourId - igId from webhook can be a page ID, not the IG account ID.
+    const meRes = await axios.get<{ data?: Array<{ id?: string }>; id?: string }>(`${base}/me`, {
+      params: { fields: 'id', access_token: token },
+      timeout: 8000,
+    });
+    const ourId = meRes.data?.data?.[0]?.id ?? meRes.data?.id;
     if (!ourId) return null;
 
     const msgRes = await axios.get<{
