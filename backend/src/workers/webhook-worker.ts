@@ -924,8 +924,20 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     if (error instanceof ConflictError) {
       logger.info(
         { eventId, provider, correlationId, errorMessage: error.message },
-        'Webhook duplicate (Resource already exists); marking processed'
+        'Webhook duplicate (Resource already exists); attempting fallback reply'
       );
+      // Still try to send reply - a previous attempt may have failed before sending
+      try {
+        if (typeof senderId === 'string' && senderId.length > 0 && doctorToken) {
+          await sendInstagramMessage(senderId, FALLBACK_REPLY, correlationId, doctorToken);
+          logger.info({ eventId, correlationId }, 'Fallback reply sent after ConflictError');
+        }
+      } catch (sendErr) {
+        logger.warn(
+          { eventId, correlationId, sendError: sendErr instanceof Error ? sendErr.message : String(sendErr) },
+          'Fallback reply failed (non-blocking)'
+        );
+      }
       await markWebhookProcessed(eventId, provider);
       return;
     }

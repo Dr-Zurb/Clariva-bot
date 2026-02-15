@@ -44,6 +44,7 @@ import type {
  * graph.facebook.com expects Page tokens and causes "Cannot parse access token" (190).
  */
 const INSTAGRAM_GRAPH_BASE = 'https://graph.instagram.com/v18.0';
+const FACEBOOK_GRAPH_BASE = 'https://graph.facebook.com/v18.0';
 
 /**
  * Retry configuration
@@ -133,16 +134,18 @@ export async function getInstagramMessageSender(
   correlationId: string
 ): Promise<string | null> {
   if (!messageId || !accessToken) return null;
-  const url = `${INSTAGRAM_GRAPH_BASE}/${encodeURIComponent(messageId)}`;
   const token = accessToken.trim();
-  try {
-    // Conversations API uses access_token query param; Bearer can cause 500 on some endpoints
+  const fetchMessage = async (base: string) => {
+    const url = `${base}/${encodeURIComponent(messageId)}`;
     const res = await axios.get<{ from?: { id?: string } }>(url, {
       params: { fields: 'from', access_token: token },
       timeout: 8000,
     });
     const fromId = res.data?.from?.id;
     return fromId && String(fromId).length > 0 ? String(fromId) : null;
+  };
+  try {
+    return await fetchMessage(INSTAGRAM_GRAPH_BASE);
   } catch (err) {
     if (axios.isAxiosError(err)) {
       const status = err.response?.status;
@@ -152,7 +155,21 @@ export async function getInstagramMessageSender(
         logger.debug({ correlationId, messageId }, 'Instagram message not found (may be too old)');
         return null;
       }
-      // Log 400 with Meta's error so we can debug message ID format issues
+      // graph.instagram.com can return 500 for message IDs; try graph.facebook.com as fallback
+      if (status === 500 || status === 502 || status === 503) {
+        try {
+          const fromId = await fetchMessage(FACEBOOK_GRAPH_BASE);
+          if (fromId) {
+            logger.info({ correlationId }, 'Instagram message sender resolved via graph.facebook.com fallback');
+            return fromId;
+          }
+        } catch (fbErr) {
+          logger.debug(
+            { correlationId, fbStatus: axios.isAxiosError(fbErr) ? fbErr.response?.status : undefined },
+            'graph.facebook.com message lookup also failed'
+          );
+        }
+      }
       logger.warn(
         {
           correlationId,
