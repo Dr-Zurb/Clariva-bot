@@ -342,6 +342,15 @@ export async function findOrCreatePlaceholderPatient(
     .single();
 
   if (error || !patient) {
+    // Race: another webhook created the same placeholder; fetch and return it
+    if (error?.code === '23505') {
+      const existing = await findPatientByPlatformExternalId(
+        platform,
+        platformExternalId,
+        correlationId
+      );
+      if (existing) return existing;
+    }
     handleSupabaseError(error, correlationId);
   }
 
