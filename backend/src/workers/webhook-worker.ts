@@ -28,7 +28,11 @@ import {
   getInstagramMessageSender,
   getSenderFromMostRecentConversation,
 } from '../services/instagram-service';
-import { getDoctorIdByPageIds, getInstagramAccessTokenForDoctor } from '../services/instagram-connect-service';
+import {
+  getDoctorIdByPageIds,
+  getInstagramAccessTokenForDoctor,
+  getStoredInstagramPageIdForDoctor,
+} from '../services/instagram-connect-service';
 import { findOrCreatePlaceholderPatient, findPatientByIdWithAdmin } from '../services/patient-service';
 import { getAvailableSlots } from '../services/availability-service';
 import { bookAppointment, getAppointmentByIdForWorker } from '../services/appointment-service';
@@ -230,8 +234,8 @@ async function tryResolveSenderFromMessageEdit(
   if (!senderId) {
     const token = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
     if (token) {
-      // Try conversation API first (using webhook entry.id) - message lookup often returns 500 for edit mids
-      const igId = pageIds[0] ?? undefined;
+      // Use stored instagram_page_id (from connect) - webhook entry.id can be a different ID
+      const igId = await getStoredInstagramPageIdForDoctor(doctorId, correlationId) ?? undefined;
       senderId = await getSenderFromMostRecentConversation(token, correlationId, igId);
       if (!senderId) {
         senderId = await getInstagramMessageSender(edit.mid, token, correlationId);

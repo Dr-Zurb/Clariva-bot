@@ -424,6 +424,33 @@ export async function getInstagramUserInfo(
  * @param correlationId - Optional for audit
  * @returns access token or null if no row
  */
+/**
+ * Get the stored Instagram page ID for a doctor (from connect flow).
+ * Use this for Conversations API calls; webhook entry.id can be a different ID
+ * (e.g. Facebook Page ID) that graph.instagram.com does not accept.
+ *
+ * @param doctorId - Doctor UUID
+ * @param correlationId - Optional for audit
+ * @returns instagram_page_id or null
+ */
+export async function getStoredInstagramPageIdForDoctor(
+  doctorId: string,
+  correlationId?: string
+): Promise<string | null> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) {
+    throw new InternalError('Service role client not available for page ID lookup');
+  }
+  const { data, error } = await supabase
+    .from('doctor_instagram')
+    .select('instagram_page_id')
+    .eq('doctor_id', doctorId)
+    .maybeSingle();
+  if (error) handleSupabaseError(error, correlationId ?? '');
+  const id = data?.instagram_page_id;
+  return id != null && String(id).length > 0 ? String(id) : null;
+}
+
 export async function getInstagramAccessTokenForDoctor(
   doctorId: string,
   correlationId?: string
