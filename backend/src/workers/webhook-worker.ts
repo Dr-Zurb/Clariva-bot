@@ -211,11 +211,16 @@ function getFirstMessageEdit(
   return { mid: String(me.mid), text: me.text ?? '' };
 }
 
+/** Reject sender IDs that look like test placeholders (e.g. "12334" from Meta test). Real IG IDs are 15+ digits. */
+function isValidInstagramSenderId(senderId: string): boolean {
+  return !!senderId && senderId.length >= 15;
+}
+
 /**
  * When payload has message_edit but no sender (Meta bug/omission), resolve sender:
  * 1) by message mid from DB (previously stored "message" webhook), or
  * 2) fetch from Graph API (most recent conversation or message lookup) - preferred for real DMs, or
- * 3) when doctor has exactly one Instagram conversation, use that sender (fallback; can be wrong if test conv exists).
+ * 3) when doctor has exactly one Instagram conversation, use that sender (only if it looks like a real ID).
  */
 async function tryResolveSenderFromMessageEdit(
   payload: InstagramWebhookPayload,
@@ -229,7 +234,6 @@ async function tryResolveSenderFromMessageEdit(
   if (!edit?.mid) return null;
   let senderId = await getSenderIdByPlatformMessageId(doctorId, edit.mid, correlationId);
   if (!senderId) {
-    // Prefer API over DB: getOnlyInstagramConversationSenderId can return wrong sender (e.g. test conv)
     const token = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
     if (token) {
       const igId = await getStoredInstagramPageIdForDoctor(doctorId, correlationId) ?? undefined;
@@ -243,9 +247,17 @@ async function tryResolveSenderFromMessageEdit(
     }
   }
   if (!senderId) {
-    senderId = await getOnlyInstagramConversationSenderId(doctorId, correlationId);
+    const fallback = await getOnlyInstagramConversationSenderId(doctorId, correlationId);
+    if (fallback && isValidInstagramSenderId(fallback)) {
+      senderId = fallback;
+    } else if (fallback) {
+      logger.info(
+        { correlationId, senderIdLength: fallback.length },
+        'Ignoring getOnlyInstagramConversationSenderId result (looks like test placeholder)'
+      );
+    }
   }
-  if (!senderId) return null;
+  if (!senderId || !isValidInstagramSenderId(senderId)) return null;
   return { senderId, text: edit.text, mid: edit.mid };
 }
 
@@ -928,7 +940,11 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       );
       // Still try to send reply - a previous attempt may have failed before sending
       try {
-        if (typeof senderId === 'string' && senderId.length > 0 && doctorToken) {
+        if (
+          typeof senderId === 'string' &&
+          isValidInstagramSenderId(senderId) &&
+          doctorToken
+        ) {
           await sendInstagramMessage(senderId, FALLBACK_REPLY, correlationId, doctorToken);
           logger.info({ eventId, correlationId }, 'Fallback reply sent after ConflictError');
         }
