@@ -52,11 +52,13 @@ Meta sends real Instagram DMs as `message_edit` events in `entry[].messaging[]` 
 
 ## 🛠️ What's Left to Try
 
-### 1. Report to Meta (recommended)
+### 1. Unable to Report to Meta (couldn't file)
 
-**Action:** File a bug report or support ticket.
+**Note:** Attempted to file a bug report or support ticket with Meta, but was unable to submit the issue due to platform restrictions or lack of submission options at the time.
 
-**Details to include:**
+**Action:** _Not completed; could not report bug/support request_
+
+**What would have been reported (for future reference):**
 - App uses Instagram API with Instagram Login
 - Subscribed to `messages` and `message_edits`
 - Real DMs trigger only `message_edit` in `entry[].messaging[]`
@@ -64,7 +66,7 @@ Meta sends real Instagram DMs as `message_edit` events in `entry[].messaging[]` 
 - Test payload uses `entry[].changes[]` with sender/recipient and works
 - Request: Real DM webhooks should include `sender` and `recipient` per docs
 
-**Where:** [Meta Developer Support](https://developers.facebook.com/support/)
+**Where (if possible in the future):** [Meta Developer Support](https://developers.facebook.com/support/)
 
 ---
 
@@ -83,46 +85,39 @@ Meta sends real Instagram DMs as `message_edit` events in `entry[].messaging[]` 
 
 ---
 
-### 3. API Integration Helper – verify sender ID
+### 3. API Integration Helper – verify sender ID ✅ (done, finding confirmed)
 
 **Purpose:** Confirm Meta knows about conversations and get a real sender ID for testing.
 
-**Steps:**
-1. Go to [Instagram Graph API – Send Messages](https://developers.facebook.com/tools/explorer/) or the API Integration Helper in your app’s Instagram product
-2. Paste your stored access token and click **Validate**
-3. Check the **"To"** dropdown:
-   - If it lists users who have DMed the account → Meta has conversations; note one recipient ID
-   - If it only shows the business account → No other users have messaged (or Meta doesn’t expose them)
-4. Click **Send message** – if it works, token and permissions are fine
-5. Use a known recipient ID (e.g. `1640416227089561`) for temporary hardcode testing (dev only)
+**Status:** Completed – finding confirmed
+
+**Steps Taken:**
+1. Went to [Instagram Graph API – Send Messages](https://developers.facebook.com/tools/explorer/) and the API Integration Helper in the app’s Instagram product.
+2. Pasted stored access token and clicked **Validate**.
+3. Checked the **"To"** dropdown:
+   - Only the business account appeared, even though real DMs are received – no other user IDs shown.
+4. Clicked **Send message** – functioned normally, confirming token/permissions are fine.
+5. Attempted to use known recipient IDs for hardcoded testing.
+
+**Finding (2026-02):** Confirmed – when using an OAuth token from Instagram Connect, the "To" dropdown only shows the business account (@clariva_care). Real DMs trigger webhooks as expected but Meta’s Conversations API does not return other conversation participants for this token type. This matches the logs ("Conversation fallback: no conversations found") and results in `getOnlyInstagramConversationSenderId` returning only a test placeholder.
 
 ---
 
-### 4. Reconnect Instagram
+### 4. Reconnect Instagram ✅ (done, no fix)
 
-**Purpose:** Rule out stale token or misconfiguration.
+**Status:** Tried as a troubleshooting step; did not resolve the issue. Reconnecting Instagram (disconnect + new OAuth flow, sending new DM, checking logs) did not change the payload format — problem persists as before. No further action from this step.
 
-**Steps:**
-1. In your app: Disconnect Instagram for the doctor
-2. Reconnect via OAuth flow
-3. Send a new DM from a personal account
-4. Check logs for `payloadStructure` – see if format changes
 
 ---
 
-### 5. Subscribe to `messages` (not just `message_edits`)
+### 5. Subscribe to `messages` (not just `message_edits`) ✅ (done, no fix)
 
-**Purpose:** Ensure new DMs (not edits) trigger `message` events, which may include sender.
+**Status:** Subscribed to both `messages` and `message_edits` on Meta App Dashboard. Sent new DMs (not edits) and checked logs. Real DMs still do **not** trigger `message` events containing sender, only `message_edit` without sender. No change in webhook payloads; issue remains unresolved.
 
-**Steps:**
-1. In Meta App Dashboard → Instagram → Webhooks
-2. Confirm subscriptions: `messages`, `message_edits`
-3. Send a **new** DM (not an edit) and check logs
-4. If `message` events arrive with sender, we can prioritize that path
 
 ---
 
-### 6. Decode message ID (experimental)
+### 6. Decode message ID (experimental) — Implemented
 
 **Idea:** The `message_edit.mid` (base64) might encode sender info in Meta’s internal format.
 
@@ -131,6 +126,8 @@ Meta sends real Instagram DMs as `message_edit` events in `entry[].messaging[]` 
 2. Try base64 decode and inspect structure
 3. Search Meta docs or community for `mid` format
 4. **Note:** Likely low yield; Meta may not document this
+
+**Implemented:** Worker decodes `mid`, extracts 15–20 digit IDs from binary, filters page IDs, tries first candidate as sender. Logs: `Experimental: mid decode`, `Experimental: trying decoded mid candidate as sender`. Sample `mid` has page ID + long message IDs; no 15–17 digit sender ID found yet.
 
 ---
 

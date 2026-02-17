@@ -217,6 +217,32 @@ function isValidInstagramSenderId(senderId: string): boolean {
 }
 
 /**
+ * Experimental: Decode message_edit.mid (base64) to inspect structure.
+ * Meta may encode sender/recipient in internal format. The mid is binary with embedded ASCII IDs.
+ * Extract digit sequences from hex (pairs 30-39 = ASCII '0'-'9') since binary layout varies.
+ * @returns Decoded prefix and any candidate numeric IDs (15+ digits) that could be sender IDs
+ */
+function decodeMidExperimental(mid: string): { decoded: string; candidateIds: string[] } | null {
+  if (!mid || typeof mid !== 'string' || mid.length < 10) return null;
+  try {
+    const buf = Buffer.from(mid, 'base64');
+    if (buf.length === 0) return null;
+    const hex = buf.toString('hex');
+    // Hex pairs 31-39 (0x31-0x39) = ASCII '1'-'9'; 30 = '0'. Find runs of 15+ digit-hex-pairs.
+    const digitHexPairs = hex.match(/(3[0-9]){15,}/g);
+    const allIds = (digitHexPairs ?? []).map((run) =>
+      run.replace(/(..)/g, (_, pair) => String.fromCharCode(parseInt(pair, 16)))
+    );
+    // Only consider 15-17 digit IDs (typical Instagram user ID length); exclude 30+ digit (message/snowflake IDs)
+    const candidateIds = allIds.filter((id) => id.length >= 15 && id.length <= 20);
+    const decoded = buf.toString('utf8').slice(0, 80).replace(/[^\x20-\x7e]/g, '.');
+    return { decoded, candidateIds };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * When payload has message_edit but no sender (Meta bug/omission), resolve sender:
  * 1) by message mid from DB (previously stored "message" webhook), or
  * 2) fetch from Graph API (most recent conversation or message lookup) - preferred for real DMs, or
@@ -257,6 +283,35 @@ async function tryResolveSenderFromMessageEdit(
       );
     }
   }
+
+  // Experimental: try decoding mid to extract sender (see troubleshooting doc option 6)
+  if (!senderId && edit.mid) {
+    const decoded = decodeMidExperimental(edit.mid);
+    if (decoded) {
+      const pageIds = getInstagramPageIds(payload);
+      const candidateIds = decoded.candidateIds.filter((id) => !pageIds.includes(id));
+      logger.info(
+        {
+          correlationId,
+          midLength: edit.mid.length,
+          decodedLength: decoded.decoded.length,
+          decodedPrefix: decoded.decoded.slice(0, 80),
+          candidateIdsCount: candidateIds.length,
+          candidateIds: candidateIds.slice(0, 5),
+        },
+        'Experimental: mid decode (check if any candidateId is sender)'
+      );
+      const firstCandidate = candidateIds.find((id) => isValidInstagramSenderId(id));
+      if (firstCandidate) {
+        logger.info(
+          { correlationId, candidateId: firstCandidate },
+          'Experimental: trying decoded mid candidate as sender'
+        );
+        senderId = firstCandidate;
+      }
+    }
+  }
+
   if (!senderId || !isValidInstagramSenderId(senderId)) return null;
   return { senderId, text: edit.text, mid: edit.mid };
 }
