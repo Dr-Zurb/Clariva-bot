@@ -434,6 +434,13 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     structure.hasMessageEdit = first && 'message_edit' in first && first.message_edit != null;
     structure.hasSender = first && ((first.sender as { id?: string })?.id ?? first.sender_id) != null;
     structure.hasRecipient = first && ((first.recipient as { id?: string })?.id ?? first.recipient_id) != null;
+    // Debug: also check if sender/recipient are nested inside message_edit (Meta may use different structure)
+    const me = first?.message_edit as Record<string, unknown> | undefined;
+    if (me && typeof me === 'object') {
+      structure.messageEditKeys = Object.keys(me);
+      structure.messageEditHasSender = ((me.sender as { id?: string })?.id ?? me.sender_id) != null;
+      structure.messageEditHasRecipient = ((me.recipient as { id?: string })?.id ?? me.recipient_id) != null;
+    }
   }
   logger.info(
     { eventId, provider, correlationId, payloadStructure: structure },
