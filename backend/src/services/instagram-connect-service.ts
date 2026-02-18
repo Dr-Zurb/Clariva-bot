@@ -431,6 +431,11 @@ export async function getPageTokenAndInstagramAccount(
       timeout: META_HTTP_TIMEOUT_MS,
     });
     const pages = res.data?.data ?? [];
+    const pageIds = pages.map((p) => p.id).filter(Boolean);
+    logger.info(
+      { correlationId, pageCount: pages.length, pageIds },
+      'Facebook me/accounts: pages returned'
+    );
 
     // First pass: use instagram_business_account from me/accounts if present
     for (const page of pages) {
@@ -471,7 +476,17 @@ export async function getPageTokenAndInstagramAccount(
             instagramUsername: ig.username ?? null,
           };
         }
-      } catch {
+        logger.debug(
+          { correlationId, pageId: page.id, hasIg: !!ig },
+          'Page lookup: no instagram_business_account'
+        );
+      } catch (pageErr: unknown) {
+        const status = axios.isAxiosError(pageErr) ? pageErr.response?.status : undefined;
+        const errMsg = axios.isAxiosError(pageErr) ? pageErr.message : String(pageErr);
+        logger.warn(
+          { correlationId, pageId: page.id, status, message: errMsg },
+          'Page lookup for instagram_business_account failed'
+        );
         continue;
       }
     }
