@@ -25,26 +25,24 @@ import {
   ValidationError,
 } from '../utils/errors';
 import { handleSupabaseError } from '../utils/db-helpers';
-import type {
-  InstagramApiTokenResponse,
-  InstagramLongLivedTokenResponse,
-  InstagramMeResponse,
-  InstagramConnectStatePayload,
-} from '../types/instagram-connect';
+import type { InstagramConnectStatePayload } from '../types/instagram-connect';
 import type { InsertDoctorInstagram } from '../types/database';
 
 // ============================================================================
-// Constants (Instagram API with Instagram Login - e-task-13)
+// Constants (Facebook Login / Page-linked path - e-task-1 Week 3)
 // ============================================================================
+// Uses Facebook OAuth to obtain Page access token; Instagram must be linked to Page.
+// Goal: test whether Messenger Platform webhook includes sender/recipient for real DMs.
 
-const INSTAGRAM_OAUTH_AUTHORIZE = 'https://www.instagram.com/oauth/authorize';
-const INSTAGRAM_OAUTH_ACCESS_TOKEN = 'https://api.instagram.com/oauth/access_token';
-const INSTAGRAM_GRAPH_BASE = 'https://graph.instagram.com/v18.0';
-/** Scopes for Instagram API with Instagram Login (Business login) */
-const INSTAGRAM_SCOPES = [
-  'instagram_business_basic',
-  'instagram_business_manage_messages',
-  'instagram_business_manage_comments',
+const FACEBOOK_OAUTH_AUTHORIZE = 'https://www.facebook.com/v18.0/dialog/oauth';
+const FACEBOOK_OAUTH_ACCESS_TOKEN = 'https://graph.facebook.com/v18.0/oauth/access_token';
+const FACEBOOK_GRAPH_BASE = 'https://graph.facebook.com/v18.0';
+/** Scopes for Page-linked Instagram (Messenger Platform) */
+const FACEBOOK_SCOPES = [
+  'pages_manage_metadata',
+  'pages_messaging',
+  'instagram_basic',
+  'instagram_manage_messages',
 ];
 const META_HTTP_TIMEOUT_MS = 10000;
 
@@ -208,7 +206,7 @@ export async function getConnectionStatus(
 export function createState(doctorId: string): string {
   const secret = env.INSTAGRAM_APP_SECRET;
   if (!secret) {
-    throw new InternalError('Instagram OAuth not configured');
+    throw new InternalError('Facebook OAuth not configured');
   }
   const nonce = crypto.randomBytes(16).toString('hex');
   const payload: InstagramConnectStatePayload = { n: nonce, d: doctorId };
@@ -233,7 +231,7 @@ export function verifyState(state: string): string {
   }
   const secret = env.INSTAGRAM_APP_SECRET;
   if (!secret) {
-    throw new InternalError('Instagram OAuth not configured');
+    throw new InternalError('Facebook OAuth not configured');
   }
   const parts = state.split('.');
   if (parts.length !== 2) {
@@ -267,8 +265,8 @@ export function verifyState(state: string): string {
 // ============================================================================
 
 /**
- * Build Instagram OAuth URL for redirect (connect start).
- * Uses Instagram API with Instagram Login (www.instagram.com/oauth/authorize).
+ * Build Facebook OAuth URL for redirect (connect start).
+ * Uses Facebook Login (facebook.com/dialog/oauth) for Page-linked Instagram.
  *
  * @param state - Signed state from createState(doctorId)
  * @returns Full URL to redirect the user to
@@ -277,16 +275,16 @@ export function buildMetaOAuthUrl(state: string): string {
   const appId = env.INSTAGRAM_APP_ID;
   const redirectUri = env.INSTAGRAM_REDIRECT_URI;
   if (!appId || !redirectUri) {
-    throw new InternalError('Instagram OAuth not configured (missing app id or redirect URI)');
+    throw new InternalError('Facebook OAuth not configured (missing app id or redirect URI)');
   }
   const params = new URLSearchParams({
     client_id: appId,
     redirect_uri: redirectUri,
-    scope: INSTAGRAM_SCOPES.join(','),
+    scope: FACEBOOK_SCOPES.join(','),
     state,
     response_type: 'code',
   });
-  return `${INSTAGRAM_OAUTH_AUTHORIZE}?${params.toString()}`;
+  return `${FACEBOOK_OAUTH_AUTHORIZE}?${params.toString()}`;
 }
 
 export interface ExchangeCodeResult {
@@ -294,11 +292,25 @@ export interface ExchangeCodeResult {
   userId: string;
 }
 
+/** Facebook OAuth token response */
+interface FacebookTokenResponse {
+  access_token?: string;
+  token_type?: string;
+  expires_in?: number;
+}
+
+/** Facebook Page with Instagram Business Account */
+interface FacebookPageWithIg {
+  id: string;
+  access_token: string;
+  instagram_business_account?: { id: string; username?: string };
+}
+
 /**
  * Exchange authorization code for short-lived user access token.
- * Instagram API: POST to api.instagram.com/oauth/access_token.
+ * Facebook OAuth: GET graph.facebook.com/oauth/access_token.
  *
- * @param code - Authorization code from Instagram callback
+ * @param code - Authorization code from Facebook callback
  * @param correlationId - For logs only (no code in logs)
  */
 export async function exchangeCodeForShortLivedToken(
@@ -309,106 +321,137 @@ export async function exchangeCodeForShortLivedToken(
   const appSecret = env.INSTAGRAM_APP_SECRET;
   const redirectUri = env.INSTAGRAM_REDIRECT_URI;
   if (!appId || !appSecret || !redirectUri) {
-    throw new InternalError('Instagram OAuth not configured');
+    throw new InternalError('Facebook OAuth not configured');
   }
-  const form = new URLSearchParams({
+  const params = new URLSearchParams({
     client_id: appId,
     client_secret: appSecret,
-    grant_type: 'authorization_code',
     redirect_uri: redirectUri,
     code,
   });
   try {
-    const res = await axios.post<InstagramApiTokenResponse>(
-      INSTAGRAM_OAUTH_ACCESS_TOKEN,
-      form.toString(),
-      {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: META_HTTP_TIMEOUT_MS,
-      }
+    const res = await axios.get<FacebookTokenResponse>(
+      `${FACEBOOK_OAUTH_ACCESS_TOKEN}?${params.toString()}`,
+      { timeout: META_HTTP_TIMEOUT_MS }
     );
-    const d = res.data;
-    const fromArray = d?.data?.[0];
-    const token = fromArray?.access_token ?? d?.access_token;
-    const userId = fromArray?.user_id ?? d?.user_id;
-    if (!token || !userId) {
-      logger.warn({ correlationId }, 'Instagram token response missing access_token or user_id');
-      throw new UnauthorizedError('Failed to get access token from Instagram');
+    const token = res.data?.access_token;
+    if (!token) {
+      logger.warn({ correlationId }, 'Facebook token response missing access_token');
+      throw new UnauthorizedError('Failed to get access token from Facebook');
     }
+    const userId = await getFacebookUserId(token, correlationId);
     return { accessToken: token, userId };
   } catch (err: unknown) {
     const status = axios.isAxiosError(err) ? err.response?.status : undefined;
     logger.warn(
       { correlationId, status, message: axios.isAxiosError(err) ? err.message : 'Token exchange failed' },
-      'Instagram code exchange failed'
+      'Facebook code exchange failed'
     );
     throw new UnauthorizedError('Failed to exchange code for access token');
   }
 }
 
+async function getFacebookUserId(accessToken: string, _correlationId: string): Promise<string> {
+  const res = await axios.get<{ id?: string }>(`${FACEBOOK_GRAPH_BASE}/me`, {
+    params: { fields: 'id', access_token: accessToken },
+    timeout: META_HTTP_TIMEOUT_MS,
+  });
+  const id = res.data?.id;
+  if (!id) {
+    throw new UnauthorizedError('Could not get Facebook user ID');
+  }
+  return id;
+}
+
 /**
  * Exchange short-lived user token for long-lived (≈60 days).
- * Instagram API: GET graph.instagram.com/access_token with grant_type=ig_exchange_token.
+ * Facebook: GET graph.facebook.com/oauth/access_token with grant_type=fb_exchange_token.
  */
 export async function exchangeForLongLivedToken(
   shortLivedToken: string,
   correlationId: string
 ): Promise<string> {
+  const appId = env.INSTAGRAM_APP_ID;
   const appSecret = env.INSTAGRAM_APP_SECRET;
-  if (!appSecret) {
-    throw new InternalError('Instagram OAuth not configured');
+  if (!appId || !appSecret) {
+    throw new InternalError('Facebook OAuth not configured');
   }
-  const url = 'https://graph.instagram.com/access_token';
   const params = new URLSearchParams({
-    grant_type: 'ig_exchange_token',
+    grant_type: 'fb_exchange_token',
+    client_id: appId,
     client_secret: appSecret,
-    access_token: shortLivedToken,
+    fb_exchange_token: shortLivedToken,
   });
   try {
-    const res = await axios.get<InstagramLongLivedTokenResponse>(`${url}?${params.toString()}`, {
-      timeout: META_HTTP_TIMEOUT_MS,
-    });
+    const res = await axios.get<FacebookTokenResponse>(
+      `${FACEBOOK_OAUTH_ACCESS_TOKEN}?${params.toString()}`,
+      { timeout: META_HTTP_TIMEOUT_MS }
+    );
     const token = res.data?.access_token;
     if (!token) {
-      logger.warn({ correlationId }, 'Instagram long-lived response missing access_token');
-      throw new UnauthorizedError('Failed to get long-lived token from Instagram');
+      logger.warn({ correlationId }, 'Facebook long-lived response missing access_token');
+      throw new UnauthorizedError('Failed to get long-lived token from Facebook');
     }
     return token;
   } catch (err: unknown) {
     logger.warn(
       { correlationId, message: axios.isAxiosError(err) ? err.message : 'Long-lived exchange failed' },
-      'Instagram long-lived token exchange failed'
+      'Facebook long-lived token exchange failed'
     );
     throw new UnauthorizedError('Failed to get long-lived access token');
   }
 }
 
 /**
- * Fetch Instagram user info (id, user_id, username) from /me.
- * Prefer id when present — it often matches webhook entry[].id (Meta can send different IDs).
+ * Fetch user's Pages and get Page token + Instagram Business Account.
+ * Returns first Page that has instagram_business_account linked.
+ *
+ * @param userAccessToken - Long-lived user access token
+ * @param correlationId - For logs only
  */
-export async function getInstagramUserInfo(
-  accessToken: string,
+export async function getPageTokenAndInstagramAccount(
+  userAccessToken: string,
   correlationId: string
-): Promise<{ id?: string; user_id: string; username: string | null }> {
-  const url = `${INSTAGRAM_GRAPH_BASE}/me`;
+): Promise<{
+  pageAccessToken: string;
+  instagramPageId: string;
+  instagramUsername: string | null;
+}> {
+  const url = `${FACEBOOK_GRAPH_BASE}/me/accounts`;
+  const params = {
+    fields: 'id,access_token,instagram_business_account{id,username}',
+    access_token: userAccessToken,
+  };
   try {
-    const res = await axios.get<InstagramMeResponse>(url, {
-      params: { fields: 'id,user_id,username', access_token: accessToken },
+    const res = await axios.get<{ data?: FacebookPageWithIg[] }>(url, {
+      params,
       timeout: META_HTTP_TIMEOUT_MS,
     });
-    const arr = res.data?.data;
-    const first = Array.isArray(arr) ? arr[0] : undefined;
-    const id = first?.id;
-    const user_id = first?.user_id ?? '';
-    const username = first?.username ?? null;
-    return { id, user_id, username };
-  } catch (err: unknown) {
-    logger.debug(
-      { correlationId, message: axios.isAxiosError(err) ? err.message : 'Me request failed' },
-      'Could not fetch Instagram user info'
+    const pages = res.data?.data ?? [];
+    for (const page of pages) {
+      const ig = page.instagram_business_account;
+      if (ig?.id && page.access_token) {
+        return {
+          pageAccessToken: page.access_token,
+          instagramPageId: ig.id,
+          instagramUsername: ig.username ?? null,
+        };
+      }
+    }
+    logger.warn(
+      { correlationId, pageCount: pages.length },
+      'No Facebook Page with linked Instagram Business Account found'
     );
-    return { user_id: '', username: null };
+    throw new UnauthorizedError(
+      'No Facebook Page with linked Instagram account found. Please link your Instagram Professional account to a Facebook Page in Meta Business Settings.'
+    );
+  } catch (err: unknown) {
+    if (err instanceof UnauthorizedError) throw err;
+    logger.warn(
+      { correlationId, message: axios.isAxiosError(err) ? err.message : 'Pages request failed' },
+      'Could not fetch Facebook Pages'
+    );
+    throw new UnauthorizedError('Failed to get Page and Instagram account from Facebook');
   }
 }
 

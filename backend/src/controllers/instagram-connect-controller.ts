@@ -23,7 +23,7 @@ import {
   buildMetaOAuthUrl,
   exchangeCodeForShortLivedToken,
   exchangeForLongLivedToken,
-  getInstagramUserInfo,
+  getPageTokenAndInstagramAccount,
   saveDoctorInstagram,
   disconnectInstagram,
   getConnectionStatus,
@@ -91,20 +91,20 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
 
   const doctorId = verifyState(stateParam);
 
-  const { accessToken: shortLived, userId } = await exchangeCodeForShortLivedToken(code, correlationId);
-  const longLived = await exchangeForLongLivedToken(shortLived, correlationId);
-  const userInfo = await getInstagramUserInfo(longLived, correlationId);
-  const username = userInfo.username;
-  // Prefer id from /me (often matches webhook entry.id); fallback to user_id then token userId
-  const instagramPageId = userInfo.id || userInfo.user_id || userId;
+  const { accessToken: shortLived } = await exchangeCodeForShortLivedToken(code, correlationId);
+  const longLivedUserToken = await exchangeForLongLivedToken(shortLived, correlationId);
+  const { pageAccessToken, instagramPageId, instagramUsername } = await getPageTokenAndInstagramAccount(
+    longLivedUserToken,
+    correlationId
+  );
 
   try {
     await saveDoctorInstagram(
       doctorId,
       {
         instagram_page_id: instagramPageId,
-        instagram_access_token: longLived,
-        instagram_username: username ?? null,
+        instagram_access_token: pageAccessToken,
+        instagram_username: instagramUsername ?? null,
       },
       correlationId
     );

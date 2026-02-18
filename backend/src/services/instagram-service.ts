@@ -145,6 +145,12 @@ export async function getInstagramMessageSender(
     return fromId && String(fromId).length > 0 ? String(fromId) : null;
   };
   try {
+    const fromId = await fetchMessage(FACEBOOK_GRAPH_BASE);
+    if (fromId) return fromId;
+  } catch {
+    // Fall through to try Instagram
+  }
+  try {
     return await fetchMessage(INSTAGRAM_GRAPH_BASE);
   } catch (err) {
     if (axios.isAxiosError(err)) {
@@ -154,21 +160,6 @@ export async function getInstagramMessageSender(
       if (status === 404) {
         logger.debug({ correlationId, messageId }, 'Instagram message not found (may be too old)');
         return null;
-      }
-      // graph.instagram.com can return 500 for message IDs; try graph.facebook.com as fallback
-      if (status === 500 || status === 502 || status === 503) {
-        try {
-          const fromId = await fetchMessage(FACEBOOK_GRAPH_BASE);
-          if (fromId) {
-            logger.info({ correlationId }, 'Instagram message sender resolved via graph.facebook.com fallback');
-            return fromId;
-          }
-        } catch (fbErr) {
-          logger.debug(
-            { correlationId, fbStatus: axios.isAxiosError(fbErr) ? fbErr.response?.status : undefined },
-            'graph.facebook.com message lookup also failed'
-          );
-        }
       }
       logger.warn(
         {
@@ -470,6 +461,8 @@ async function sendWithRetry(
  * Make Instagram API call
  *
  * Performs the actual HTTP request to Instagram Graph API.
+ * Tries graph.facebook.com first (Page token - Messenger Platform); on 401/190
+ * falls back to graph.instagram.com (Instagram user token - backward compat).
  *
  * @param token - Access token (never logged)
  */
@@ -479,25 +472,38 @@ async function sendMessageAPI(
   correlationId: string,
   token: string
 ): Promise<InstagramSendMessageResponse> {
-  const url = `${INSTAGRAM_GRAPH_BASE}/me/messages`;
   const payload: InstagramSendMessageRequest = {
     recipient: { id: recipientId },
     message: { text: message },
   };
+  const opts = {
+    headers: { Authorization: `Bearer ${token.trim()}` },
+    timeout: 10000,
+  };
 
   try {
     const response = await axios.post<InstagramSendMessageResponse>(
-      url,
+      `${FACEBOOK_GRAPH_BASE}/me/messages`,
       payload,
-      {
-        headers: { Authorization: `Bearer ${token.trim()}` },
-        timeout: 10000, // 10 second timeout (from SAFE_DEFAULTS.md)
-      }
+      opts
     );
-
-    // Instagram API returns snake_case, return as-is
     return response.data;
   } catch (error) {
+    const errData = axios.isAxiosError(error) ? error.response?.data : undefined;
+    const code = (errData as { error?: { code?: number } })?.error?.code;
+    if (code === 190) {
+      logger.debug({ correlationId }, 'Page token invalid for graph.facebook.com; trying graph.instagram.com');
+      try {
+        const fallback = await axios.post<InstagramSendMessageResponse>(
+          `${INSTAGRAM_GRAPH_BASE}/me/messages`,
+          payload,
+          opts
+        );
+        return fallback.data;
+      } catch {
+        throw mapInstagramError(error, correlationId);
+      }
+    }
     throw mapInstagramError(error, correlationId);
   }
 }
