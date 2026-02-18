@@ -406,6 +406,8 @@ export async function exchangeForLongLivedToken(
 /**
  * Fetch user's Pages and get Page token + Instagram Business Account.
  * Returns first Page that has instagram_business_account linked.
+ * Fallback: if me/accounts omits instagram_business_account (Business Manager linking),
+ * query each Page separately with its token.
  *
  * @param userAccessToken - Long-lived user access token
  * @param correlationId - For logs only
@@ -429,6 +431,8 @@ export async function getPageTokenAndInstagramAccount(
       timeout: META_HTTP_TIMEOUT_MS,
     });
     const pages = res.data?.data ?? [];
+
+    // First pass: use instagram_business_account from me/accounts if present
     for (const page of pages) {
       const ig = page.instagram_business_account;
       if (ig?.id && page.access_token) {
@@ -439,6 +443,39 @@ export async function getPageTokenAndInstagramAccount(
         };
       }
     }
+
+    // Fallback: me/accounts sometimes omits instagram_business_account for Business-linked assets.
+    // Query each Page with its token to get instagram_business_account.
+    for (const page of pages) {
+      if (!page.access_token || !page.id) continue;
+      try {
+        const pageRes = await axios.get<{ instagram_business_account?: { id: string; username?: string } }>(
+          `${FACEBOOK_GRAPH_BASE}/${page.id}`,
+          {
+            params: {
+              fields: 'instagram_business_account{id,username}',
+              access_token: page.access_token,
+            },
+            timeout: META_HTTP_TIMEOUT_MS,
+          }
+        );
+        const ig = pageRes.data?.instagram_business_account;
+        if (ig?.id) {
+          logger.info(
+            { correlationId, pageId: page.id },
+            'Resolved Instagram via Page lookup fallback (me/accounts omitted it)'
+          );
+          return {
+            pageAccessToken: page.access_token,
+            instagramPageId: ig.id,
+            instagramUsername: ig.username ?? null,
+          };
+        }
+      } catch {
+        continue;
+      }
+    }
+
     logger.warn(
       { correlationId, pageCount: pages.length },
       'No Facebook Page with linked Instagram Business Account found'
