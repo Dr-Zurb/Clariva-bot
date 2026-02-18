@@ -37,11 +37,12 @@ import type { InsertDoctorInstagram } from '../types/database';
 const FACEBOOK_OAUTH_AUTHORIZE = 'https://www.facebook.com/v18.0/dialog/oauth';
 const FACEBOOK_OAUTH_ACCESS_TOKEN = 'https://graph.facebook.com/v18.0/oauth/access_token';
 const FACEBOOK_GRAPH_BASE = 'https://graph.facebook.com/v18.0';
-/** Scopes for Page-linked Instagram (Messenger Platform) */
+/** Scopes for Page-linked Instagram (Messenger Platform).
+ * Note: instagram_basic is invalid for Facebook Login; pages_messaging + pages_manage_metadata
+ * suffice for Page token; instagram_manage_messages may require App Review. */
 const FACEBOOK_SCOPES = [
   'pages_manage_metadata',
   'pages_messaging',
-  'instagram_basic',
   'instagram_manage_messages',
 ];
 const META_HTTP_TIMEOUT_MS = 10000;
