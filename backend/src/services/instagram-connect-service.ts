@@ -39,13 +39,12 @@ const FACEBOOK_OAUTH_ACCESS_TOKEN = 'https://graph.facebook.com/v18.0/oauth/acce
 const FACEBOOK_GRAPH_BASE = 'https://graph.facebook.com/v18.0';
 /** Scopes for Page-linked Instagram (Messenger Platform).
  * pages_show_list + business_management: required for me/accounts to return Pages (incl. business-owned).
- * pages_read_engagement: required for GET /{page-id}?fields=instagram_business_account (Meta error #100).
  * ads_management: when Page/Instagram linked via Business Manager.
- * pages_manage_metadata, pages_messaging, instagram_manage_messages: for Page token and Instagram DMs. */
+ * pages_manage_metadata, pages_messaging, instagram_manage_messages: for Page token and Instagram DMs.
+ * Note: pages_read_engagement fixes Page lookup but causes "Invalid Scopes" in Messenger use case OAuth. */
 const FACEBOOK_SCOPES = [
   'pages_show_list',
   'business_management',
-  'pages_read_engagement',
   'ads_management',
   'pages_manage_metadata',
   'pages_messaging',
@@ -456,45 +455,50 @@ export async function getPageTokenAndInstagramAccount(
     }
 
     // Fallback: me/accounts sometimes omits instagram_business_account for Business-linked assets.
-    // Query each Page with USER token only (Page token returns 400 per Meta docs).
-    // ads_read scope required when Page/Instagram linked via Business Manager.
+    // Try Page token first (can work with ads_management); then user token (needs pages_read_engagement).
     for (const page of pages) {
       if (!page.access_token || !page.id) continue;
-      try {
-        const pageRes = await axios.get<{ instagram_business_account?: { id: string; username?: string } }>(
-          `${FACEBOOK_GRAPH_BASE}/${page.id}`,
-          {
-            params: {
-              fields: 'instagram_business_account',
-              access_token: userAccessToken,
-            },
-            timeout: META_HTTP_TIMEOUT_MS,
-          }
-        );
-        const ig = pageRes.data?.instagram_business_account;
-        if (ig?.id) {
-          logger.info(
-            { correlationId, pageId: page.id },
-            'Resolved Instagram via Page lookup fallback (me/accounts omitted it)'
+      const tokensToTry = [page.access_token, userAccessToken];
+      for (const token of tokensToTry) {
+        try {
+          const pageRes = await axios.get<{ instagram_business_account?: { id: string; username?: string } }>(
+            `${FACEBOOK_GRAPH_BASE}/${page.id}`,
+            {
+              params: {
+                fields: 'instagram_business_account',
+                access_token: token,
+              },
+              timeout: META_HTTP_TIMEOUT_MS,
+            }
           );
-          return {
-            pageAccessToken: page.access_token,
-            instagramPageId: ig.id,
-            instagramUsername: ig.username ?? null,
-          };
+          const ig = pageRes.data?.instagram_business_account;
+          if (ig?.id) {
+            logger.info(
+              { correlationId, pageId: page.id },
+              'Resolved Instagram via Page lookup fallback (me/accounts omitted it)'
+            );
+            return {
+              pageAccessToken: page.access_token,
+              instagramPageId: ig.id,
+              instagramUsername: ig.username ?? null,
+            };
+          }
+          logger.debug(
+            { correlationId, pageId: page.id, hasIg: !!ig },
+            'Page lookup: no instagram_business_account'
+          );
+          break; // Got response but no ig; try next page
+        } catch (pageErr: unknown) {
+          const status = axios.isAxiosError(pageErr) ? pageErr.response?.status : undefined;
+          const errMsg = axios.isAxiosError(pageErr) ? pageErr.message : String(pageErr);
+          const metaBody = axios.isAxiosError(pageErr) ? pageErr.response?.data : undefined;
+          const usedPageToken = token === page.access_token;
+          logger.warn(
+            { correlationId, pageId: page.id, status, message: errMsg, metaBody, usedPageToken },
+            'Page lookup for instagram_business_account failed'
+          );
+          if (token === tokensToTry[tokensToTry.length - 1]) break;
         }
-        logger.debug(
-          { correlationId, pageId: page.id, hasIg: !!ig },
-          'Page lookup: no instagram_business_account'
-        );
-      } catch (pageErr: unknown) {
-        const status = axios.isAxiosError(pageErr) ? pageErr.response?.status : undefined;
-        const errMsg = axios.isAxiosError(pageErr) ? pageErr.message : String(pageErr);
-        const metaBody = axios.isAxiosError(pageErr) ? pageErr.response?.data : undefined;
-        logger.warn(
-          { correlationId, pageId: page.id, status, message: errMsg, metaBody },
-          'Page lookup for instagram_business_account failed'
-        );
       }
     }
 

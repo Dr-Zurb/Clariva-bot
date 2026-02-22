@@ -289,6 +289,23 @@ Once webhook controller is implemented (Task 4):
 - Regenerate access token with permissions
 - Verify permissions in App Dashboard
 
+### Issue: "Invalid Scopes: pages_read_engagement" during Connect
+
+**Problem:** Facebook OAuth shows "Invalid Scopes: pages_read_engagement" when starting Connect Instagram.
+
+**Solution:** The Messenger from Meta use case does not support `pages_read_engagement` as a valid OAuth scope. The app uses alternative tokens for the Page lookup. Ensure `ads_management` is added (Use cases → Messenger from Meta → Permissions and features → + Add on ads_management).
+
+### Issue: "Can't load URL - The domain of this URL isn't included in the app's domains"
+
+**Problem:** Facebook shows "Can't load URL" or "domain not in App Domains" during or after OAuth.
+
+**Solution:**
+1. Go to [Meta for Developers](https://developers.facebook.com/) → your app (e.g. Clariva-Receptionist-Bot)
+2. **App settings** → **Basic**
+3. In **App Domains**, add your backend domain (e.g. `clariva-bot.onrender.com`) and any frontend domain (e.g. your doctor dashboard URL)
+4. Save changes
+5. Retry the Connect Instagram flow
+
 ### Issue: No automated replies when someone DMs the Instagram account
 
 **Problem:** User sends messages (e.g. "hello") but receives no reply from the bot.
