@@ -39,12 +39,13 @@ const FACEBOOK_OAUTH_ACCESS_TOKEN = 'https://graph.facebook.com/v18.0/oauth/acce
 const FACEBOOK_GRAPH_BASE = 'https://graph.facebook.com/v18.0';
 /** Scopes for Page-linked Instagram (Messenger Platform).
  * pages_show_list + business_management: required for me/accounts to return Pages (incl. business-owned).
- * ads_management: required when Page/Instagram linked via Business Manager (for instagram_business_account field).
- *   (ads_read not available in Messenger use case; ads_management includes read access.)
+ * pages_read_engagement: required for GET /{page-id}?fields=instagram_business_account (Meta error #100).
+ * ads_management: when Page/Instagram linked via Business Manager.
  * pages_manage_metadata, pages_messaging, instagram_manage_messages: for Page token and Instagram DMs. */
 const FACEBOOK_SCOPES = [
   'pages_show_list',
   'business_management',
+  'pages_read_engagement',
   'ads_management',
   'pages_manage_metadata',
   'pages_messaging',
