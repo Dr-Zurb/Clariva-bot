@@ -39,10 +39,13 @@ const FACEBOOK_OAUTH_ACCESS_TOKEN = 'https://graph.facebook.com/v18.0/oauth/acce
 const FACEBOOK_GRAPH_BASE = 'https://graph.facebook.com/v18.0';
 /** Scopes for Page-linked Instagram (Messenger Platform).
  * pages_show_list + business_management: required for me/accounts to return Pages (incl. business-owned).
+ * ads_management: required when Page/Instagram linked via Business Manager (for instagram_business_account field).
+ *   (ads_read not available in Messenger use case; ads_management includes read access.)
  * pages_manage_metadata, pages_messaging, instagram_manage_messages: for Page token and Instagram DMs. */
 const FACEBOOK_SCOPES = [
   'pages_show_list',
   'business_management',
+  'ads_management',
   'pages_manage_metadata',
   'pages_messaging',
   'instagram_manage_messages',
@@ -452,7 +455,8 @@ export async function getPageTokenAndInstagramAccount(
     }
 
     // Fallback: me/accounts sometimes omits instagram_business_account for Business-linked assets.
-    // Query each Page with its token to get instagram_business_account.
+    // Query each Page with USER token only (Page token returns 400 per Meta docs).
+    // ads_read scope required when Page/Instagram linked via Business Manager.
     for (const page of pages) {
       if (!page.access_token || !page.id) continue;
       try {
@@ -460,8 +464,8 @@ export async function getPageTokenAndInstagramAccount(
           `${FACEBOOK_GRAPH_BASE}/${page.id}`,
           {
             params: {
-              fields: 'instagram_business_account{id,username}',
-              access_token: page.access_token,
+              fields: 'instagram_business_account',
+              access_token: userAccessToken,
             },
             timeout: META_HTTP_TIMEOUT_MS,
           }
@@ -485,11 +489,11 @@ export async function getPageTokenAndInstagramAccount(
       } catch (pageErr: unknown) {
         const status = axios.isAxiosError(pageErr) ? pageErr.response?.status : undefined;
         const errMsg = axios.isAxiosError(pageErr) ? pageErr.message : String(pageErr);
+        const metaBody = axios.isAxiosError(pageErr) ? pageErr.response?.data : undefined;
         logger.warn(
-          { correlationId, pageId: page.id, status, message: errMsg },
+          { correlationId, pageId: page.id, status, message: errMsg, metaBody },
           'Page lookup for instagram_business_account failed'
         );
-        continue;
       }
     }
 
