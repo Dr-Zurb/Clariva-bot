@@ -293,7 +293,15 @@ Once webhook controller is implemented (Task 4):
 
 **Problem:** Facebook OAuth shows "Invalid Scopes: pages_read_engagement" when starting Connect Instagram.
 
-**Solution:** The Messenger from Meta use case does not support `pages_read_engagement` as a valid OAuth scope. The app uses alternative tokens for the Page lookup. Ensure `ads_management` is added (Use cases → Messenger from Meta → Permissions and features → + Add on ads_management).
+**Solution:** Add `pages_read_engagement` to your app **before** using Connect:
+1. Meta for Developers → your app → **Use cases** → **Messenger from Meta** (or **Manage messaging & content on Instagram**)
+2. **Permissions and features** → find **pages_read_engagement**
+3. Click **+ Add** (must show "Ready for testing" before OAuth will accept it)
+4. Redeploy and retry Connect Instagram
+
+Without this permission, the Page lookup for `instagram_business_account` fails with error #100.
+
+**Alternative:** If you cannot add `pages_read_engagement`, try linking Instagram **directly** to the Facebook Page (not only via Business Manager): Instagram app → Settings → Account → Linked accounts → Facebook Page → connect to your Page. This may make `me/accounts` return `instagram_business_account` without needing the Page lookup fallback.
 
 ### Issue: "Can't load URL - The domain of this URL isn't included in the app's domains"
 
