@@ -485,6 +485,35 @@ export async function getPageTokenAndInstagramAccount(
               instagramUsername: ig.username ?? null,
             };
           }
+          // instagram_business_account empty (common with Business Manager linking).
+          // Try /{page-id}/instagram_accounts - returns IG accounts for Page.
+          try {
+            const igAccountsRes = await axios.get<{ data?: Array<{ id: string; username?: string }> }>(
+              `${FACEBOOK_GRAPH_BASE}/${page.id}/instagram_accounts`,
+              {
+                params: { fields: 'id,username', access_token: page.access_token },
+                timeout: META_HTTP_TIMEOUT_MS,
+              }
+            );
+            const firstIg = igAccountsRes.data?.data?.[0];
+            if (firstIg?.id) {
+              logger.info(
+                { correlationId, pageId: page.id },
+                'Resolved Instagram via instagram_accounts fallback (Business Manager linking)'
+              );
+              return {
+                pageAccessToken: page.access_token,
+                instagramPageId: firstIg.id,
+                instagramUsername: firstIg.username ?? null,
+              };
+            }
+          } catch (igAccErr: unknown) {
+            const status = axios.isAxiosError(igAccErr) ? igAccErr.response?.status : undefined;
+            logger.debug(
+              { correlationId, pageId: page.id, status },
+              'instagram_accounts fallback failed'
+            );
+          }
           logger.debug(
             { correlationId, pageId: page.id, hasIg: !!ig },
             'Page lookup: no instagram_business_account'

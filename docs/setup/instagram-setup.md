@@ -303,6 +303,20 @@ Without this permission, the Page lookup for `instagram_business_account` fails 
 
 **Alternative:** If you cannot add `pages_read_engagement`, try linking Instagram **directly** to the Facebook Page (not only via Business Manager): Instagram app → Settings → Account → Linked accounts → Facebook Page → connect to your Page. This may make `me/accounts` return `instagram_business_account` without needing the Page lookup fallback.
 
+### Issue: Page lookup succeeds but "no instagram_business_account" (hasIg: false)
+
+**Problem:** Logs show `Page lookup: no instagram_business_account` with `hasIg: false`. The API returns 200 but the Page has no linked Instagram in the response.
+
+**Solution:** Link Instagram **directly** to the Facebook Page (not only via Business Manager):
+
+1. **Instagram app** (mobile) → **Settings** (gear icon) → **Account** → **Linked accounts** → **Facebook Page**
+2. Select or connect to your **Clariva Care** Page
+3. Confirm the link
+
+Business Manager "Connected assets" alone may not populate `instagram_business_account` for the API. A direct Page link from Instagram settings usually does.
+
+**Also verify:** Meta Business Suite → your Page → **Instagram** section shows the connected account.
+
 ### Issue: "Can't load URL - The domain of this URL isn't included in the app's domains"
 
 **Problem:** Facebook shows "Can't load URL" or "domain not in App Domains" during or after OAuth.
