@@ -151,9 +151,33 @@ export const handleInstagramWebhook = asyncHandler(
 
     // Step 1: Verify signature FIRST (MANDATORY - before any processing)
     const signature = req.headers['x-hub-signature-256'] as string | undefined;
-    // Use raw body if available (from express.json verify callback), otherwise reconstruct
-    // Note: Reconstructed body may have different formatting, but signature should still verify
-    const rawBody = req.rawBody || Buffer.from(JSON.stringify(req.body));
+    // CRITICAL: Must use raw body - JSON.stringify(req.body) produces DIFFERENT bytes than Meta sent (key order, whitespace)
+    // and will ALWAYS fail verification. If rawBody is missing, verification cannot succeed.
+    const rawBody = req.rawBody;
+
+    // Diagnostic logging (no PII) - helps debug signature failures
+    logger.info(
+      {
+        correlationId,
+        hasRawBody: !!rawBody,
+        rawBodyLength: rawBody?.length ?? 0,
+        hasSignature: !!signature,
+        secretConfigured: !!env.INSTAGRAM_APP_SECRET,
+        secretLength: env.INSTAGRAM_APP_SECRET?.length ?? 0,
+        contentType: req.headers['content-type'],
+      },
+      'Webhook signature verification diagnostics'
+    );
+
+    if (!rawBody) {
+      logger.error(
+        { correlationId, contentType: req.headers['content-type'] },
+        'Raw body not captured - express.json verify callback may not run for this request. ' +
+          'Check middleware order and Content-Type. Signature verification cannot succeed without raw body.'
+      );
+      await logSecurityEvent(correlationId, undefined, 'webhook_raw_body_missing', 'high', req.ip);
+      throw new UnauthorizedError('Invalid webhook signature');
+    }
 
     if (!verifyInstagramSignature(signature, rawBody, correlationId)) {
       // Log security event (never log req.body or signature)

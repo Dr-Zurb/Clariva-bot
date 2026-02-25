@@ -207,14 +207,40 @@ app.use(requestTiming);
 // Parse JSON and URL-encoded bodies with size limits to prevent DoS attacks
 // MUST: Come after correlationId - if parsing fails, correlation ID already exists for error logging
 // CRITICAL: Capture raw body for webhook signature verification (required for security)
-app.use(express.json({
+
+// 3a. Webhook raw body capture - MUST run before express.json for POST /webhooks/instagram
+// Meta signs the exact raw bytes; express.json verify can miss requests (e.g. proxy/Content-Type).
+// This ensures we always have rawBody for webhook signature verification.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.method !== 'POST' || !req.originalUrl?.includes('/webhooks/instagram')) {
+    return next();
+  }
+  express.raw({ type: () => true, limit: BODY_SIZE_LIMIT })(req, res, (err: Error) => {
+    if (err) return next(err);
+    const buf = req.body as Buffer;
+    (req as any).rawBody = buf;
+    try {
+      req.body = buf.length > 0 ? JSON.parse(buf.toString('utf8')) : {};
+    } catch (e) {
+      return next(e);
+    }
+    next();
+  });
+});
+
+// 3b. Skip express.json when body already parsed by webhook middleware above
+const jsonParser = express.json({
   limit: BODY_SIZE_LIMIT,
   verify: (req: Request, _res: Response, buf: Buffer) => {
-    // Store raw body for webhook signature verification
-    // Signature verification requires exact raw bytes, not parsed JSON
     (req as any).rawBody = buf;
   },
-})); // Parse JSON bodies (max 10mb)
+});
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if ((req as any).rawBody && (req as any).body !== undefined) {
+    return next(); // Webhook middleware already parsed
+  }
+  return jsonParser(req, res, next);
+});
 app.use(
   express.urlencoded({
     // Parse form data (max 10mb)

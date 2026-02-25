@@ -280,6 +280,19 @@ Once webhook controller is implemented (Task 4):
 - Verify URL is publicly accessible
 - Check HTTPS is enabled (required in production)
 
+### Issue: "Invalid webhook signature" / "Webhook signature verification failed" (no auto-replies)
+
+**Problem:** Logs show "Webhook signature verification failed" or "Invalid webhook signature". Meta sends webhooks but your backend rejects them, so no replies are sent.
+
+**Solution:** `INSTAGRAM_APP_SECRET` in your deployment (e.g. Render) must **exactly match** the App Secret from Meta:
+
+1. **Meta Developer Console** → your app (Clariva-Receptionist-Bot) → **Settings** → **Basic**
+2. Find **App Secret** → click **Show** → copy the full value (no extra spaces)
+3. **Render** (or your host) → Service → **Environment** → set `INSTAGRAM_APP_SECRET` to that exact value
+4. **Redeploy** (env changes require a redeploy)
+
+If you ever reset the App Secret in Meta, you must update the env var and redeploy.
+
 ### Issue: Missing Permissions
 
 **Problem:** API calls failing with 403 Forbidden
