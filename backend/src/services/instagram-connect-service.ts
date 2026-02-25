@@ -40,13 +40,14 @@ const FACEBOOK_GRAPH_BASE = 'https://graph.facebook.com/v18.0';
 /** Scopes for Page-linked Instagram (Messenger Platform).
  * pages_show_list + business_management: required for me/accounts to return Pages (incl. business-owned).
  * pages_read_engagement: required for GET /{page-id}?fields=instagram_business_account (Meta error #100).
- *   Must be added in Meta: Use cases → Messenger from Meta → Permissions → + Add on pages_read_engagement.
+ * instagram_basic: required for /{page-id}/instagram_accounts fallback (Business Manager linking).
  * ads_management: when Page/Instagram linked via Business Manager.
  * pages_manage_metadata, pages_messaging, instagram_manage_messages: for Page token and Instagram DMs. */
 const FACEBOOK_SCOPES = [
   'pages_show_list',
   'business_management',
   'pages_read_engagement',
+  'instagram_basic',
   'ads_management',
   'pages_manage_metadata',
   'pages_messaging',
@@ -486,33 +487,44 @@ export async function getPageTokenAndInstagramAccount(
             };
           }
           // instagram_business_account empty (common with Business Manager linking).
-          // Try /{page-id}/instagram_accounts - returns IG accounts for Page.
-          try {
-            const igAccountsRes = await axios.get<{ data?: Array<{ id: string; username?: string }> }>(
-              `${FACEBOOK_GRAPH_BASE}/${page.id}/instagram_accounts`,
-              {
-                params: { fields: 'id,username', access_token: page.access_token },
-                timeout: META_HTTP_TIMEOUT_MS,
-              }
-            );
-            const firstIg = igAccountsRes.data?.data?.[0];
-            if (firstIg?.id) {
-              logger.info(
-                { correlationId, pageId: page.id },
-                'Resolved Instagram via instagram_accounts fallback (Business Manager linking)'
+          // Try /{page-id}/instagram_accounts - requires instagram_basic. Try both tokens.
+          const tokensForIgAccounts = [page.access_token, userAccessToken];
+          for (const igToken of tokensForIgAccounts) {
+            try {
+              const igAccountsRes = await axios.get<{ data?: Array<{ id: string; username?: string }> }>(
+                `${FACEBOOK_GRAPH_BASE}/${page.id}/instagram_accounts`,
+                {
+                  params: { fields: 'id,username', access_token: igToken },
+                  timeout: META_HTTP_TIMEOUT_MS,
+                }
               );
-              return {
-                pageAccessToken: page.access_token,
-                instagramPageId: firstIg.id,
-                instagramUsername: firstIg.username ?? null,
-              };
+              const firstIg = igAccountsRes.data?.data?.[0];
+              if (firstIg?.id) {
+                logger.info(
+                  { correlationId, pageId: page.id },
+                  'Resolved Instagram via instagram_accounts fallback (Business Manager linking)'
+                );
+                return {
+                  pageAccessToken: page.access_token,
+                  instagramPageId: firstIg.id,
+                  instagramUsername: firstIg.username ?? null,
+                };
+              }
+              const count = igAccountsRes.data?.data?.length ?? 0;
+              logger.info(
+                { correlationId, pageId: page.id, igAccountCount: count },
+                'instagram_accounts returned empty or no matching account'
+              );
+              break; // Don't retry with other token if we got a response
+            } catch (igAccErr: unknown) {
+              const status = axios.isAxiosError(igAccErr) ? igAccErr.response?.status : undefined;
+              const metaBody = axios.isAxiosError(igAccErr) ? igAccErr.response?.data : undefined;
+              logger.warn(
+                { correlationId, pageId: page.id, status, metaBody },
+                'instagram_accounts fallback failed'
+              );
+              if (igToken === tokensForIgAccounts[tokensForIgAccounts.length - 1]) break;
             }
-          } catch (igAccErr: unknown) {
-            const status = axios.isAxiosError(igAccErr) ? igAccErr.response?.status : undefined;
-            logger.debug(
-              { correlationId, pageId: page.id, status },
-              'instagram_accounts fallback failed'
-            );
           }
           logger.debug(
             { correlationId, pageId: page.id, hasIg: !!ig },

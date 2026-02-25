@@ -301,6 +301,8 @@ Once webhook controller is implemented (Task 4):
 
 Without this permission, the Page lookup for `instagram_business_account` fails with error #100.
 
+**Also add `instagram_basic`** (Use cases → Messenger from Meta → Permissions → + Add) — required for the `/{page-id}/instagram_accounts` fallback when the Page–Instagram link is via Business Manager.
+
 **Alternative:** If you cannot add `pages_read_engagement`, try linking Instagram **directly** to the Facebook Page (not only via Business Manager): Instagram app → Settings → Account → Linked accounts → Facebook Page → connect to your Page. This may make `me/accounts` return `instagram_business_account` without needing the Page lookup fallback.
 
 ### Issue: Page lookup succeeds but "no instagram_business_account" (hasIg: false)
