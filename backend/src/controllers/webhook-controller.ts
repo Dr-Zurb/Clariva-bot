@@ -156,8 +156,8 @@ export const handleInstagramWebhook = asyncHandler(
     const rawBody = req.rawBody;
 
     // Diagnostic logging (no PII) - helps debug signature failures and messages vs message_edit
-    const body = req.body as { entry?: Array<{ messaging?: Array<{ message?: unknown; message_edit?: unknown }> }> } | undefined;
-    const firstMsg = body?.entry?.[0]?.messaging?.[0];
+    const payloadBody = req.body as { entry?: Array<{ messaging?: Array<{ message?: unknown; message_edit?: unknown }> }> } | undefined;
+    const firstMsg = payloadBody?.entry?.[0]?.messaging?.[0];
     const payloadType = firstMsg?.message ? 'message' : firstMsg?.message_edit ? 'message_edit' : 'unknown';
     logger.info(
       {
