@@ -155,12 +155,16 @@ export const handleInstagramWebhook = asyncHandler(
     // and will ALWAYS fail verification. If rawBody is missing, verification cannot succeed.
     const rawBody = req.rawBody;
 
-    // Diagnostic logging (no PII) - helps debug signature failures
+    // Diagnostic logging (no PII) - helps debug signature failures and messages vs message_edit
+    const body = req.body as { entry?: Array<{ messaging?: Array<{ message?: unknown; message_edit?: unknown }> }> } | undefined;
+    const firstMsg = body?.entry?.[0]?.messaging?.[0];
+    const payloadType = firstMsg?.message ? 'message' : firstMsg?.message_edit ? 'message_edit' : 'unknown';
     logger.info(
       {
         correlationId,
         hasRawBody: !!rawBody,
         rawBodyLength: rawBody?.length ?? 0,
+        payloadType,
         hasSignature: !!signature,
         secretConfigured: !!env.INSTAGRAM_APP_SECRET,
         secretLength: env.INSTAGRAM_APP_SECRET?.length ?? 0,

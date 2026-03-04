@@ -212,6 +212,18 @@ app.use(requestTiming);
 // Meta signs the exact raw bytes; express.json verify can miss requests (e.g. proxy/Content-Type).
 // This ensures we always have rawBody for webhook signature verification.
 app.use((req: Request, res: Response, next: NextFunction) => {
+  // Diagnostic: log ALL POSTs to /webhooks/* to debug messages vs message_edits delivery
+  if (req.method === 'POST' && req.originalUrl?.includes('/webhooks')) {
+    logger.info(
+      {
+        path: req.path,
+        originalUrl: req.originalUrl,
+        contentLength: req.headers['content-length'],
+        contentType: req.headers['content-type'],
+      },
+      'Webhook POST received (any /webhooks path)'
+    );
+  }
   if (req.method !== 'POST' || !req.originalUrl?.includes('/webhooks/instagram')) {
     return next();
   }

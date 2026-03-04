@@ -117,7 +117,7 @@ Meta sends real Instagram DMs as `message_edit` events in `entry[].messaging[]` 
 
 ---
 
-### 6. Decode message ID (experimental) — Implemented
+### 6. Decode message ID (experimental) ✅ (done, no fix)
 
 **Idea:** The `message_edit.mid` (base64) might encode sender info in Meta’s internal format.
 
