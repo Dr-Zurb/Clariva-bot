@@ -115,6 +115,8 @@ function parseInstagramMessage(
   const entries = payload.entry;
   if (!entries?.length) return null;
 
+  const pageIds = getInstagramPageIds(payload);
+
   // Format 1: entry[].messaging[] (Business Login / Messenger Platform)
   for (const entry of entries) {
     const entryAny = entry as {
@@ -129,6 +131,7 @@ function parseInstagramMessage(
       const m = item as Record<string, unknown> & {
         message?: { mid?: string; text?: string };
         message_edit?: { mid?: string; text?: string; num_edit?: number };
+        recipient?: { id?: string };
         is_echo?: boolean;
         is_self?: boolean;
       };
@@ -147,8 +150,19 @@ function parseInstagramMessage(
           (me?.from as { id?: string } | undefined)?.id ??
           (typeof me?.sender_id === 'string' ? me.sender_id : undefined);
       }
+      // When sender is the page (e.g. business edited message), use recipient as reply target
+      if (senderId && pageIds.includes(senderId) && m.recipient) {
+        const recipientId = (m.recipient as { id?: string })?.id ?? (typeof m.recipient_id === 'string' ? m.recipient_id : undefined);
+        if (recipientId && !pageIds.includes(recipientId)) {
+          senderId = recipientId;
+        } else {
+          continue; // cannot determine customer
+        }
+      }
       if (!senderId) continue;
       if (m.is_echo === true || m.is_self === true) continue;
+      // Never use page ID as recipient (Meta returns "No matching user found")
+      if (pageIds.includes(senderId)) continue;
       // Incoming message (new or edited)
       if (m.message) {
         const text = m.message.text ?? '';
@@ -259,13 +273,16 @@ async function tryResolveSenderFromMessageEdit(
   const edit = getFirstMessageEdit(payload);
   if (!edit?.mid) return null;
   let senderId = await getSenderIdByPlatformMessageId(doctorId, edit.mid, correlationId);
+  if (senderId && pageIds.includes(senderId)) senderId = null; // DB may have stored page ID by mistake
   if (!senderId) {
     const token = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
     if (token) {
       const igId = await getStoredInstagramPageIdForDoctor(doctorId, correlationId) ?? undefined;
       senderId = await getSenderFromMostRecentConversation(token, correlationId, igId);
+      if (senderId && pageIds.includes(senderId)) senderId = null;
       if (!senderId) {
         senderId = await getInstagramMessageSender(edit.mid, token, correlationId);
+        if (senderId && pageIds.includes(senderId)) senderId = null;
       }
       if (senderId) {
         logger.info({ correlationId }, 'Instagram message_edit: resolved sender');
@@ -274,12 +291,12 @@ async function tryResolveSenderFromMessageEdit(
   }
   if (!senderId) {
     const fallback = await getOnlyInstagramConversationSenderId(doctorId, correlationId);
-    if (fallback && isValidInstagramSenderId(fallback)) {
+    if (fallback && isValidInstagramSenderId(fallback) && !pageIds.includes(fallback)) {
       senderId = fallback;
     } else if (fallback) {
       logger.info(
-        { correlationId, senderIdLength: fallback.length },
-        'Ignoring getOnlyInstagramConversationSenderId result (looks like test placeholder)'
+        { correlationId, senderIdLength: fallback.length, isPageId: pageIds.includes(fallback) },
+        'Ignoring getOnlyInstagramConversationSenderId result (looks like test placeholder or page ID)'
       );
     }
   }
@@ -288,7 +305,6 @@ async function tryResolveSenderFromMessageEdit(
   if (!senderId && edit.mid) {
     const decoded = decodeMidExperimental(edit.mid);
     if (decoded) {
-      const pageIds = getInstagramPageIds(payload);
       const candidateIds = decoded.candidateIds.filter((id) => !pageIds.includes(id));
       logger.info(
         {
@@ -312,6 +328,11 @@ async function tryResolveSenderFromMessageEdit(
     }
   }
 
+  // Never return page ID as sender (Meta returns "No matching user found" when sending to page)
+  if (senderId && pageIds.includes(senderId)) {
+    logger.info({ correlationId, senderId }, 'Rejecting resolved sender (is page ID, cannot send to self)');
+    return null;
+  }
   if (!senderId || !isValidInstagramSenderId(senderId)) return null;
   return { senderId, text: edit.text, mid: edit.mid };
 }
@@ -563,6 +584,25 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
 
   const pageIds = getInstagramPageIds(instagramPayload);
   const pageId = getInstagramPageId(instagramPayload); // for logging
+
+  // Never send to page ID (Meta returns "No matching user found"); prevents duplicate fallback spam
+  if (pageIds.includes(senderId)) {
+    logger.warn(
+      { eventId, provider, correlationId, senderId },
+      'Skipping send: senderId is page ID (cannot reply to self); marking processed'
+    );
+    await markWebhookProcessed(eventId, provider);
+    await logAuditEvent({
+      correlationId,
+      userId: undefined,
+      action: 'webhook_processed',
+      resourceType: 'webhook',
+      status: 'success',
+      metadata: { event_id: eventId, provider, status: 'skipped_page_id_recipient' },
+    });
+    return;
+  }
+
   if (!pageIds.length) {
     logger.info(
       { eventId, provider, correlationId },
@@ -1006,6 +1046,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         if (
           typeof senderId === 'string' &&
           isValidInstagramSenderId(senderId) &&
+          !pageIds.includes(senderId) &&
           doctorToken
         ) {
           await sendInstagramMessage(senderId, FALLBACK_REPLY, correlationId, doctorToken);
