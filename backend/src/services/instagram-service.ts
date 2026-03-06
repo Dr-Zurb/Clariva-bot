@@ -301,12 +301,12 @@ async function sendWithRetry(
       const response = await sendMessageAPI(recipientId, message, correlationId, token);
 
       // Log success (metadata only - NEVER log message content)
+      // resourceId omitted: Instagram message_id is not UUID, audit_logs.resource_id expects UUID
       await logAuditEvent({
         correlationId,
         userId: undefined, // System operation
         action: 'send_message',
         resourceType: 'instagram_message',
-        resourceId: response.message_id,
         status: 'success',
         metadata: {
           recipient_id: recipientId,
@@ -474,6 +474,7 @@ async function sendMessageAPI(
 ): Promise<InstagramSendMessageResponse> {
   const payload: InstagramSendMessageRequest = {
     recipient: { id: recipientId },
+    messaging_type: 'RESPONSE',
     message: { text: message },
   };
   const opts = {
@@ -587,15 +588,31 @@ export function mapInstagramError(error: unknown, correlationId: string): AppErr
     }
   }
 
-  // Unknown error
-  logger.error(
-    {
-      error,
-      correlationId,
-      error_name: error instanceof Error ? error.name : 'Unknown',
-      error_message: error instanceof Error ? error.message : 'Unknown error',
-    },
-    'Unknown Instagram API error'
-  );
+  // Unknown error - log full Meta response for 400 debugging
+  if (axios.isAxiosError(error) && error.response?.status === 400) {
+    const errData = error.response?.data as { error?: { message?: string; code?: number; error_subcode?: number; type?: string } } | undefined;
+    logger.error(
+      {
+        correlationId,
+        status: 400,
+        metaError: errData?.error?.message,
+        metaCode: errData?.error?.code,
+        metaSubcode: errData?.error?.error_subcode,
+        metaType: errData?.error?.type,
+        metaResponse: errData,
+      },
+      'Instagram API 400 - check Meta error for recipient/token/messaging_type'
+    );
+  } else {
+    logger.error(
+      {
+        error,
+        correlationId,
+        error_name: error instanceof Error ? error.name : 'Unknown',
+        error_message: error instanceof Error ? error.message : 'Unknown error',
+      },
+      'Unknown Instagram API error'
+    );
+  }
   return new InternalError('Failed to send Instagram message');
 }

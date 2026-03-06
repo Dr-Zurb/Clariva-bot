@@ -135,13 +135,17 @@ export async function logAuditEvent(params: {
     return; // Don't throw - audit logging shouldn't break main flow
   }
 
+  // resource_id must be UUID - omit if not valid (e.g. Instagram message_id, Meta eventId)
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const resourceId = params.resourceId && uuidRegex.test(params.resourceId) ? params.resourceId : undefined;
+
   // Prepare audit log data
   const auditLogData: InsertAuditLog = {
     correlation_id: params.correlationId,
     user_id: params.userId || undefined,
     action: params.action,
     resource_type: params.resourceType,
-    resource_id: params.resourceId || undefined,
+    resource_id: resourceId,
     status: params.status,
     error_message: params.errorMessage || undefined,
     metadata: params.metadata || undefined,

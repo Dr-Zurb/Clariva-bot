@@ -17,11 +17,13 @@
 /**
  * Instagram send message request payload
  * Used for POST /{page-id}/messages endpoint
+ * messaging_type RESPONSE is required for replies (Meta Send API)
  */
 export interface InstagramSendMessageRequest {
   recipient: {
-    id: string; // Instagram user ID (recipient)
+    id: string; // Instagram user ID (recipient = customer who sent the message)
   };
+  messaging_type: 'RESPONSE'; // Required: reply to received message
   message: {
     text: string; // Message text (may contain PHI)
   };
