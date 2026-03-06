@@ -721,12 +721,13 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       );
     } catch (err) {
       if (err instanceof ConflictError) {
-        // Message already stored (duplicate webhook or retry). Continue to send reply -
-        // a previous attempt may have failed before sending.
+        // Message already stored (duplicate webhook: message + message_edit). Do NOT send again.
         logger.info(
           { eventId, correlationId, platformMessageId },
-          'Message already stored (idempotent); continuing to send reply'
+          'Message already stored (idempotent); skipping reply to prevent duplicate'
         );
+        await markWebhookProcessed(eventId, provider);
+        return;
       } else {
         throw err;
       }
@@ -1034,30 +1035,14 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
 
     await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
   } catch (error) {
-    // Duplicate/race (e.g. message + message_edit same event): try fallback once
-    // ConflictError can mean: (a) we already sent → fallback no-op or duplicate, or
-    // (b) race between jobs, neither sent → fallback is the only reply. Try once.
+    // Duplicate/race (e.g. message + message_edit same event): do NOT send fallback.
+    // ConflictError means another job already processed (or is processing). Sending fallback
+    // causes spam (many "Thanks for your message" replies). Mark processed and exit.
     if (error instanceof ConflictError) {
       logger.info(
         { eventId, provider, correlationId, errorMessage: error.message },
-        'Webhook duplicate (Resource already exists); attempting fallback reply'
+        'Webhook duplicate (Resource already exists); marking processed, no fallback send'
       );
-      try {
-        if (
-          typeof senderId === 'string' &&
-          isValidInstagramSenderId(senderId) &&
-          !pageIds.includes(senderId) &&
-          doctorToken
-        ) {
-          await sendInstagramMessage(senderId, FALLBACK_REPLY, correlationId, doctorToken);
-          logger.info({ eventId, correlationId }, 'Fallback reply sent after ConflictError');
-        }
-      } catch (sendErr) {
-        logger.warn(
-          { eventId, correlationId, sendError: sendErr instanceof Error ? sendErr.message : String(sendErr) },
-          'Fallback reply failed (non-blocking)'
-        );
-      }
       await markWebhookProcessed(eventId, provider);
       return;
     }
