@@ -6,7 +6,12 @@ import { logger } from '../config/logger';
 import { successResponse } from '../utils/response';
 import { verifyInstagramSignature } from '../utils/webhook-verification';
 import { verifyRazorpaySignature } from '../utils/razorpay-verification';
-import { extractInstagramEventId, generateFallbackEventId } from '../utils/webhook-event-id';
+import {
+  extractInstagramEventId,
+  generateFallbackEventId,
+  getInstagramPayloadStructure,
+  isNonActionableInstagramEvent,
+} from '../utils/webhook-event-id';
 import {
   isWebhookProcessed,
   markWebhookProcessing,
@@ -184,6 +189,21 @@ export const handleInstagramWebhook = asyncHandler(
     }
 
     if (!verifyInstagramSignature(signature, rawBody, correlationId)) {
+      // Diagnostic: for 304-byte payloads (read receipts, typing, etc.), log structure to identify event type
+      const len = rawBody?.length ?? 0;
+      if (len >= 300 && len <= 320) {
+        const structure = getInstagramPayloadStructure(req.body);
+        logger.warn(
+          {
+            correlationId,
+            rawBodyLength: len,
+            payloadStructure: structure,
+            contentEncoding: req.headers['content-encoding'],
+            contentLengthHeader: req.headers['content-length'],
+          },
+          'Webhook signature failed for ~304-byte payload; structure logged for debugging (no PHI)'
+        );
+      }
       // Log security event (never log req.body or signature)
       await logSecurityEvent(
         correlationId,
@@ -193,6 +213,16 @@ export const handleInstagramWebhook = asyncHandler(
         req.ip
       );
       throw new UnauthorizedError('Invalid webhook signature');
+    }
+
+    // Early return for known non-actionable events (read receipts, delivery) - no processing needed
+    if (isNonActionableInstagramEvent(req.body)) {
+      logger.info(
+        { correlationId, payloadStructure: getInstagramPayloadStructure(req.body) },
+        'Instagram webhook: non-actionable event (read/delivery), returning 200'
+      );
+      res.status(200).json(successResponse({ message: 'OK' }, req));
+      return;
     }
 
     // Step 2: Extract event ID (platform-specific or fallback hash)

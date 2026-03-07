@@ -27,6 +27,8 @@ import {
   extractWhatsAppEventId,
   generateFallbackEventId,
   extractEventId,
+  getInstagramPayloadStructure,
+  isNonActionableInstagramEvent,
 } from '../../src/utils/webhook-event-id';
 import type { InstagramWebhookPayload } from '../../src/types/webhook';
 
@@ -137,6 +139,44 @@ async function runTests(): Promise<void> {
       passedTests++;
     } else {
       console.log(`   ❌ FAIL: Expected null for non-Instagram payload, got '${eventId}'\n`);
+      failedTests++;
+    }
+  } catch (error) {
+    console.log(`   ❌ FAIL: Unexpected error: ${error}\n`);
+    failedTests++;
+  }
+
+  // ============================================================================
+  // Test 5.2.1b: Payload structure and non-actionable detection (e-task-1 304-byte)
+  // ============================================================================
+  console.log('📋 Test 5.2.1b: Payload structure and non-actionable detection');
+  try {
+    const readReceiptPayload = {
+      object: 'instagram',
+      entry: [
+        {
+          id: '17841479659492101',
+          time: 1569262486134,
+          messaging: [{ sender: { id: '1' }, recipient: { id: '2' }, timestamp: 1, read: { mid: 'm1' } }],
+        },
+      ],
+    };
+    const struct = getInstagramPayloadStructure(readReceiptPayload);
+    const isRead = isNonActionableInstagramEvent(readReceiptPayload);
+    const isReadFromMsg = isNonActionableInstagramEvent(instagramPayloadWithId);
+
+    if (
+      struct.object === 'instagram' &&
+      struct.firstMessagingKeys.includes('read') &&
+      isRead === true &&
+      isReadFromMsg === false
+    ) {
+      console.log('   ✅ PASS: Structure and non-actionable detection correct\n');
+      passedTests++;
+    } else {
+      console.log(
+        `   ❌ FAIL: struct=${JSON.stringify(struct)} isRead=${isRead} isReadFromMsg=${isReadFromMsg}\n`
+      );
       failedTests++;
     }
   } catch (error) {

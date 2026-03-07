@@ -79,6 +79,7 @@ const mockRazorpayExtractEventId = razorpayAdapterModule.extractEventId as jest.
 const mockPayPalVerifyWebhook = paypalAdapterModule.verifyWebhook as jest.Mock;
 const mockPayPalExtractEventId = paypalAdapterModule.extractEventId as jest.Mock;
 const mockExtractEventId = webhookEventId.extractInstagramEventId as jest.Mock;
+const mockIsNonActionable = webhookEventId.isNonActionableInstagramEvent as jest.Mock;
 const mockIsProcessed = idempotencyService.isWebhookProcessed as jest.Mock;
 const mockMarkProcessing = idempotencyService.markWebhookProcessing as jest.Mock;
 const mockAdd = (queue.webhookQueue as { add: jest.Mock }).add;
@@ -103,6 +104,8 @@ describe('Webhook Controller', () => {
     // Re-apply resolved implementations so controller success path completes (queue.add, logAuditEvent)
     mockAdd.mockResolvedValue(undefined as never);
     (auditLogger.logAuditEvent as jest.Mock).mockResolvedValue(undefined as never);
+    // Default: non-actionable check returns false so normal flow runs (overridden in 1.4 test)
+    mockIsNonActionable.mockReturnValue(false);
   });
 
   describe('1.2 GET /webhooks/instagram - Verification', () => {
@@ -282,6 +285,55 @@ describe('Webhook Controller', () => {
 
       expect(mockVerify).toHaveBeenCalledWith(undefined, expect.any(Buffer), 'test-corr-post-3');
       expect(mockAdd).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('1.4 Non-actionable events (read/delivery)', () => {
+    const readReceiptPayload = {
+      object: 'instagram',
+      entry: [
+        {
+          id: '17841479659492101',
+          time: 1569262486134,
+          messaging: [
+            {
+              sender: { id: 'IGSID' },
+              recipient: { id: 'IGID' },
+              timestamp: 1569262485349,
+              read: { mid: 'MESSAGE-ID' },
+            },
+          ],
+        },
+      ],
+    };
+
+    it('returns 200 without queueing when payload is read receipt (non-actionable)', async () => {
+      mockVerify.mockReturnValue(true);
+      mockIsNonActionable.mockReturnValue(true);
+
+      const rawBody = Buffer.from(JSON.stringify(readReceiptPayload));
+      const req = {
+        body: readReceiptPayload,
+        rawBody,
+        headers: { 'x-hub-signature-256': 'sha256=ok' },
+        correlationId: 'test-corr-read',
+        ip: '127.0.0.1',
+      } as unknown as Request;
+      const res = mockRes();
+      const next = mockNext();
+
+      await (handleInstagramWebhook as (req: Request, res: Response, next: (err: unknown) => void) => Promise<void>)(
+        req,
+        res,
+        next
+      );
+
+      expect(mockVerify).toHaveBeenCalled();
+      expect(mockAdd).not.toHaveBeenCalled();
+      expect(mockIsProcessed).not.toHaveBeenCalled();
+      expect(mockMarkProcessing).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(next).not.toHaveBeenCalled();
     });
   });
 

@@ -48,6 +48,47 @@ export function getInstagramPageId(
 }
 
 /**
+ * Extract payload structure for diagnostic logging (no PHI).
+ * Returns only key names to identify event type (read, message, message_edit, etc.)
+ * without logging any values. Safe for COMPLIANCE.md (no PII/PHI).
+ *
+ * @param payload - Parsed webhook body
+ * @returns Structure object with object, firstMessagingKeys, entry0Keys
+ */
+export function getInstagramPayloadStructure(payload: unknown): {
+  object?: string;
+  firstMessagingKeys: string[];
+  entry0Keys: string[];
+} {
+  const result: { object?: string; firstMessagingKeys: string[]; entry0Keys: string[] } = {
+    firstMessagingKeys: [],
+    entry0Keys: [],
+  };
+  if (!payload || typeof payload !== 'object') return result;
+  const p = payload as Record<string, unknown>;
+  result.object = typeof p.object === 'string' ? p.object : undefined;
+  const entries = Array.isArray(p.entry) ? p.entry : [];
+  const entry0 = entries[0] as Record<string, unknown> | undefined;
+  if (entry0 && typeof entry0 === 'object') {
+    result.entry0Keys = Object.keys(entry0);
+    const messaging = entry0.messaging;
+    if (Array.isArray(messaging) && messaging.length > 0 && typeof messaging[0] === 'object' && messaging[0] !== null) {
+      result.firstMessagingKeys = Object.keys(messaging[0] as object);
+    }
+  }
+  return result;
+}
+
+/**
+ * Check if payload is a known non-actionable Instagram event (read receipt, delivery).
+ * These events do not require bot reply; returning 200 early reduces load.
+ */
+export function isNonActionableInstagramEvent(payload: unknown): boolean {
+  const { firstMessagingKeys } = getInstagramPayloadStructure(payload);
+  return firstMessagingKeys.includes('read') || firstMessagingKeys.includes('delivery');
+}
+
+/**
  * Extract all Instagram entry IDs from webhook payload.
  * Meta sometimes sends different IDs per entry or per request; trying each
  * improves lookup when stored ID matches one of them.
