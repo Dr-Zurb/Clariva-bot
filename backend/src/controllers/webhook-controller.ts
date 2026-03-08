@@ -189,8 +189,22 @@ export const handleInstagramWebhook = asyncHandler(
     }
 
     if (!verifyInstagramSignature(signature, rawBody, correlationId)) {
-      // Diagnostic: for 304-byte payloads (read receipts, typing, etc.), log structure to identify event type
       const len = rawBody?.length ?? 0;
+      // 304-byte read/delivery receipts: Meta may sign differently; these are non-actionable.
+      // Return 200 to stop retries; no processing needed. Security: attacker could send fake
+      // read payload → we return 200 (harmless, no PHI, no processing).
+      if (len >= 300 && len <= 320 && isNonActionableInstagramEvent(req.body)) {
+        logger.info(
+          {
+            correlationId,
+            rawBodyLength: len,
+            payloadStructure: getInstagramPayloadStructure(req.body),
+          },
+          'Instagram webhook: read/delivery with failed signature; returning 200 (non-actionable)'
+        );
+        res.status(200).json(successResponse({ message: 'OK' }, req));
+        return;
+      }
       if (len >= 300 && len <= 320) {
         const structure = getInstagramPayloadStructure(req.body);
         logger.warn(
@@ -204,10 +218,9 @@ export const handleInstagramWebhook = asyncHandler(
           'Webhook signature failed for ~304-byte payload; structure logged for debugging (no PHI)'
         );
       }
-      // Log security event (never log req.body or signature)
       await logSecurityEvent(
         correlationId,
-        undefined, // No user context
+        undefined,
         'webhook_signature_failed',
         'high',
         req.ip

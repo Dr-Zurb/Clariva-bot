@@ -721,13 +721,13 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       );
     } catch (err) {
       if (err instanceof ConflictError) {
-        // Message already stored (duplicate webhook or retry). Do NOT send fallback - causes spam.
+        // Message already stored (e.g. BullMQ retry after prior attempt created it but failed before send).
+        // Continue flow: getRecentMessages will include it; we still need to generate and send reply.
         logger.info(
           { eventId, correlationId, platformMessageId },
-          'Message already stored (idempotent); skipping reply to prevent duplicate'
+          'Message already stored (idempotent); continuing to generate and send reply'
         );
-        await markWebhookProcessed(eventId, provider);
-        return;
+        // Do NOT return - fall through to reply logic below
       } else {
         throw err;
       }
