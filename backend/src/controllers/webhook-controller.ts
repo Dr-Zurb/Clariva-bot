@@ -277,16 +277,17 @@ export const handleInstagramWebhook = asyncHandler(
     try {
       const existing = await isWebhookProcessed(eventId, 'instagram');
 
-      if (existing && existing.status === 'processed') {
-        // Already processed - return 200 OK immediately (idempotent response)
+      if (existing && (existing.status === 'processed' || existing.status === 'pending')) {
+        // Already processed or in-flight - return 200 OK (idempotent). Skipping 'pending'
+        // prevents multiple jobs for same message when Meta retries before we finish.
         logger.info(
           {
             eventId,
             correlationId,
             provider: 'instagram',
-            status: 'idempotent',
+            status: existing.status,
           },
-          'Webhook already processed (idempotent response)'
+          'Webhook already processed or in-flight (idempotent response)'
         );
         res.status(200).json(successResponse({ message: 'OK' }, req));
         return;

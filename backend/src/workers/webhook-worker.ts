@@ -721,13 +721,13 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       );
     } catch (err) {
       if (err instanceof ConflictError) {
-        // Message already stored (e.g. BullMQ retry after prior attempt created it but failed before send).
-        // Continue flow: getRecentMessages will include it; we still need to generate and send reply.
+        // Message already stored - another job processed this. Exit without sending to avoid duplicate replies.
         logger.info(
           { eventId, correlationId, platformMessageId },
-          'Message already stored (idempotent); continuing to generate and send reply'
+          'Message already stored (duplicate job); marking processed, no reply'
         );
-        // Do NOT return - fall through to reply logic below
+        await markWebhookProcessed(eventId, provider);
+        return;
       } else {
         throw err;
       }
@@ -1035,21 +1035,13 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
 
     await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
   } catch (error) {
-    // ConflictError: resource already exists (e.g. message, conversation). Send fallback so user gets a reply.
-    // Spam avoided: we only queue one job per message (message_edit not queued).
+    // ConflictError: resource already exists. Do NOT send fallback - causes spam when
+    // multiple jobs run (idempotency gap). Mark processed and return.
     if (error instanceof ConflictError) {
       logger.info(
         { eventId, provider, correlationId, errorMessage: error.message },
-        'Webhook duplicate (Resource already exists); sending fallback reply'
+        'Webhook duplicate (Resource already exists); marking processed, no fallback send'
       );
-      try {
-        await sendInstagramMessage(senderId, FALLBACK_REPLY, correlationId, doctorToken);
-      } catch (sendErr) {
-        logger.warn(
-          { eventId, correlationId, error: sendErr instanceof Error ? sendErr.message : String(sendErr) },
-          'Fallback send failed (non-blocking)'
-        );
-      }
       await markWebhookProcessed(eventId, provider);
       return;
     }
