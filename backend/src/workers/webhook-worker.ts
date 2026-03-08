@@ -68,7 +68,7 @@ import {
 } from '../services/notification-service';
 import { razorpayAdapter } from '../adapters/razorpay-adapter';
 import { paypalAdapter } from '../adapters/paypal-adapter';
-import { getInstagramPageId, getInstagramPageIds, extractInstagramMessageForDedup } from '../utils/webhook-event-id';
+import { getInstagramPageId, getInstagramPageIds } from '../utils/webhook-event-id';
 import { tryAcquireInstagramSendLock } from '../config/queue';
 import type { WebhookJobData } from '../types/queue';
 import type { InstagramWebhookPayload } from '../types/webhook';
@@ -1006,14 +1006,14 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           };
     await updateConversationState(conversation.id, stateToPersist, correlationId);
 
-    // Send dedup: only first job to acquire sends; prevents spam when Meta sends many webhooks for same message
-    const dedup = extractInstagramMessageForDedup(instagramPayload);
-    if (dedup) {
-      const acquired = await tryAcquireInstagramSendLock(dedup.pageId, dedup.senderId, dedup.textHash);
+    // Send throttle: one reply per (pageId, senderId) per 90s. Stops spam when Meta sends many webhooks with varying content.
+    const pageId = pageIds[0] ?? getInstagramPageId(instagramPayload);
+    if (pageId) {
+      const acquired = await tryAcquireInstagramSendLock(pageId, senderId);
       if (!acquired) {
         logger.info(
           { correlationId, eventId, provider },
-          'Skipping send: already replied to this message (send dedup)'
+          'Skipping send: already replied to this user recently (send throttle)'
         );
         await markWebhookProcessed(eventId, provider);
         await logAuditEvent({
@@ -1022,7 +1022,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           action: 'webhook_processed',
           resourceType: 'webhook',
           status: 'success',
-          metadata: { event_id: eventId, provider, recipient_id: senderId, skipped_send_dedup: true },
+          metadata: { event_id: eventId, provider, recipient_id: senderId, skipped_send_throttle: true },
         });
         return;
       }
@@ -1065,9 +1065,9 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             },
             correlationId
           );
-          const dedup = extractInstagramMessageForDedup(instagramPayload);
-          if (dedup) {
-            const acquired = await tryAcquireInstagramSendLock(dedup.pageId, dedup.senderId, dedup.textHash);
+          const pageIdForSend = pageIds[0] ?? getInstagramPageId(instagramPayload);
+          if (pageIdForSend) {
+            const acquired = await tryAcquireInstagramSendLock(pageIdForSend, senderId);
             if (!acquired) {
               logger.info({ correlationId, eventId, provider }, 'Conflict recovery: skipping send (already replied)');
               await markWebhookProcessed(eventId, provider);
@@ -1077,7 +1077,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
                 action: 'webhook_processed',
                 resourceType: 'webhook',
                 status: 'success',
-                metadata: { event_id: eventId, provider, recipient_id: senderId, recovered: true, skipped_send_dedup: true },
+                metadata: { event_id: eventId, provider, recipient_id: senderId, recovered: true, skipped_send_throttle: true },
               });
               return;
             }

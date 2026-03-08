@@ -175,25 +175,27 @@ export async function tryAcquireInstagramDedupLock(
   }
 }
 
+/** Send throttle: max one reply per (pageId, senderId) per window. Stops spam when Meta sends many webhooks with different content. */
+const SEND_THROTTLE_SEC = 90;
+
 /**
  * Try to acquire a send lock before sending a reply. Prevents spam when multiple jobs
- * run for the same user message (e.g. Redis eviction, different eventIds).
- * Key = ig:send:{pageId}:{senderId}:{textHash}. TTL 120s.
+ * run (Meta sends many webhooks with different mids/content; textHash varies so content dedup fails).
+ * Key = ig:send:{pageId}:{senderId}. TTL 90s. One reply per user per 90 seconds.
  * Returns true if we acquired (first to send), false if another job already sent.
  * Fail-open: returns true if Redis unavailable (allow send).
  */
 export async function tryAcquireInstagramSendLock(
   pageId: string,
-  senderId: string,
-  textHash: string
+  senderId: string
 ): Promise<boolean> {
   if (!isQueueEnabled()) return true; // fail-open when queue disabled
   getWebhookQueue();
   const conn = getQueueConnection();
   if (!conn) return true; // fail-open
-  const key = `ig:send:${pageId}:${senderId}:${textHash}`;
+  const key = `ig:send:${pageId}:${senderId}`;
   try {
-    const result = await conn.set(key, '1', 'EX', 120, 'NX');
+    const result = await conn.set(key, '1', 'EX', SEND_THROTTLE_SEC, 'NX');
     return result === 'OK';
   } catch {
     return true; // fail-open on Redis error
