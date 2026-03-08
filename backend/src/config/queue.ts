@@ -147,6 +147,32 @@ export const webhookQueue = {
 };
 
 /**
+ * Try to acquire a content-based dedup lock for Instagram messages.
+ * Meta sends multiple "message" webhooks with different mids for the same user message.
+ * Key = ig:dedup:{pageId}:{senderId}:{textHash}:{minuteBucket}. TTL 120s.
+ * Returns true if we acquired (first to process), false if duplicate (skip queueing).
+ * Fail-open: returns true if Redis unavailable (allow through).
+ */
+export async function tryAcquireInstagramDedupLock(
+  pageId: string,
+  senderId: string,
+  textHash: string
+): Promise<boolean> {
+  if (!isQueueEnabled()) return true; // fail-open when queue disabled
+  getWebhookQueue(); // ensure Redis connection exists
+  const conn = getQueueConnection();
+  if (!conn) return true; // fail-open
+  const minuteBucket = Math.floor(Date.now() / 60_000);
+  const key = `ig:dedup:${pageId}:${senderId}:${textHash}:${minuteBucket}`;
+  try {
+    const result = await conn.set(key, '1', 'EX', 120, 'NX');
+    return result === 'OK'; // true if we set it, false if key existed
+  } catch {
+    return true; // fail-open on Redis error
+  }
+}
+
+/**
  * Close queue and Redis connection (for graceful shutdown).
  */
 export async function closeQueue(): Promise<void> {

@@ -8,6 +8,7 @@ import { verifyInstagramSignature } from '../utils/webhook-verification';
 import { verifyRazorpaySignature } from '../utils/razorpay-verification';
 import {
   extractInstagramEventId,
+  extractInstagramMessageForDedup,
   generateFallbackEventId,
   getInstagramPayloadStructure,
   isNonActionableInstagramEvent,
@@ -16,7 +17,7 @@ import {
   isWebhookProcessed,
   markWebhookProcessing,
 } from '../services/webhook-idempotency-service';
-import { webhookQueue } from '../config/queue';
+import { webhookQueue, tryAcquireInstagramDedupLock } from '../config/queue';
 import { WEBHOOK_JOB_NAME } from '../types/queue';
 import { logAuditEvent, logSecurityEvent } from '../utils/audit-logger';
 import { storeDeadLetterWebhook } from '../services/dead-letter-service';
@@ -249,6 +250,21 @@ export const handleInstagramWebhook = asyncHandler(
       );
       res.status(200).json(successResponse({ message: 'OK' }, req));
       return;
+    }
+
+    // Content-based dedup: Meta sends multiple "message" webhooks with different mids for same user message.
+    // Deduplicate by (pageId, senderId, text) within 1-min window to prevent spam.
+    const dedup = extractInstagramMessageForDedup(req.body);
+    if (dedup) {
+      const acquired = await tryAcquireInstagramDedupLock(dedup.pageId, dedup.senderId, dedup.textHash);
+      if (!acquired) {
+        logger.info(
+          { correlationId, provider: 'instagram', pageId: dedup.pageId },
+          'Instagram webhook: content-based duplicate (same message in window); returning 200'
+        );
+        res.status(200).json(successResponse({ message: 'OK' }, req));
+        return;
+      }
     }
 
     // Step 2: Extract event ID (platform-specific or fallback hash)

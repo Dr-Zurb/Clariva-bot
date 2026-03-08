@@ -721,23 +721,13 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       );
     } catch (err) {
       if (err instanceof ConflictError) {
-        // Message already stored - check if we've already replied. If not, continue to send.
-        const recent = await getRecentMessages(conversation.id, 5, correlationId);
-        const lastMsg = recent[recent.length - 1];
-        const alreadyReplied = lastMsg?.sender_type === 'system';
-        if (alreadyReplied) {
-          logger.info(
-            { eventId, correlationId, platformMessageId },
-            'Message already stored and replied (duplicate job); marking processed, no reply'
-          );
-          await markWebhookProcessed(eventId, provider);
-          return;
-        }
+        // Message already stored - duplicate job (content dedup should prevent this; defensive).
         logger.info(
           { eventId, correlationId, platformMessageId },
-          'Message already stored (e.g. prior run); continuing to generate and send reply'
+          'Message already stored (duplicate); marking processed, no reply'
         );
-        // Fall through to reply logic below
+        await markWebhookProcessed(eventId, provider);
+        return;
       } else {
         throw err;
       }
@@ -1045,21 +1035,13 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
 
     await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
   } catch (error) {
-    // ConflictError: resource already exists. With idempotency (pending=skip) we should have
-    // at most one job per message. Send one fallback so user gets a reply.
+    // ConflictError: resource already exists. Content dedup should prevent multiple jobs.
+    // Do NOT send fallback - causes spam when dedup misses. Mark processed and return.
     if (error instanceof ConflictError) {
       logger.info(
         { eventId, provider, correlationId, errorMessage: error.message },
-        'Webhook duplicate (Resource already exists); sending fallback reply'
+        'Webhook duplicate (Resource already exists); marking processed, no fallback'
       );
-      try {
-        await sendInstagramMessage(senderId, FALLBACK_REPLY, correlationId, doctorToken);
-      } catch (sendErr) {
-        logger.warn(
-          { eventId, correlationId, error: sendErr instanceof Error ? sendErr.message : String(sendErr) },
-          'Fallback send failed (non-blocking)'
-        );
-      }
       await markWebhookProcessed(eventId, provider);
       return;
     }

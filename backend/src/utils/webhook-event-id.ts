@@ -89,6 +89,41 @@ export function isNonActionableInstagramEvent(payload: unknown): boolean {
 }
 
 /**
+ * Extract (pageId, senderId, textHash) from Instagram message payload for content-based dedup.
+ * Meta sends multiple "message" webhooks with different mids for the same user message.
+ * We deduplicate by (pageId, senderId, text) within a 1-minute window.
+ * Returns null if payload is not a message or missing required fields.
+ * textHash is SHA-256 of text (first 16 hex chars) - no PHI in key.
+ */
+export function extractInstagramMessageForDedup(payload: unknown): {
+  pageId: string;
+  senderId: string;
+  textHash: string;
+} | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const p = payload as InstagramWebhookPayload;
+  if (p.object !== 'instagram' || !p.entry?.length) return null;
+  const entry0 = p.entry[0] as Record<string, unknown> | undefined;
+  if (!entry0) return null;
+  const pageId = entry0.id != null ? String(entry0.id) : null;
+  if (!pageId) return null;
+  const messaging = entry0.messaging;
+  if (!Array.isArray(messaging) || messaging.length === 0) return null;
+  const m = messaging[0] as Record<string, unknown> | undefined;
+  if (!m || typeof m !== 'object') return null;
+  const senderId =
+    (m.sender as { id?: string } | undefined)?.id ??
+    (typeof m.sender_id === 'string' ? m.sender_id : undefined);
+  if (!senderId) return null;
+  const text =
+    (m.message as { text?: string } | undefined)?.text ??
+    (m.message_edit as { text?: string } | undefined)?.text ??
+    '';
+  const textHash = createHash('sha256').update(text).digest('hex').slice(0, 16);
+  return { pageId, senderId, textHash };
+}
+
+/**
  * Extract all Instagram entry IDs from webhook payload.
  * Meta sometimes sends different IDs per entry or per request; trying each
  * improves lookup when stored ID matches one of them.
