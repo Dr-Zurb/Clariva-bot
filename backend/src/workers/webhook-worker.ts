@@ -751,16 +751,20 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       if (state.step === 'consent') {
         const consentResult = parseConsentReply(text);
         if (consentResult === 'granted') {
-          replyText = await persistPatientAfterConsent(
+          await persistPatientAfterConsent(
             conversation.id,
             conversation.patient_id,
             'instagram_dm',
             correlationId
           );
+          const slotDate = getTomorrowDate();
+          const slots = await getAvailableSlots(doctorId, slotDate, correlationId);
+          replyText = "Thanks! I've saved your details. " + formatSlotsForDisplay(slots, slotDate);
           state = {
             ...state,
             lastIntent: intentResult.intent,
-            step: 'responded',
+            step: 'selecting_slot',
+            slotSelectionDate: slotDate,
             updatedAt: new Date().toISOString(),
           };
           await updateConversationState(conversation.id, state, correlationId);
