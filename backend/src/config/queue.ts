@@ -175,8 +175,8 @@ export async function tryAcquireInstagramDedupLock(
   }
 }
 
-/** Send throttle: max one reply per (pageId, senderId) per window. Stops spam when Meta sends many webhooks with different content. */
-const SEND_THROTTLE_SEC = 90;
+/** Send throttle: max one reply per (pageId, senderId) per window. Stops spam when Meta sends many webhooks with different content. 20s allows follow-up replies (e.g. "hello" then "book appointment"). */
+const SEND_THROTTLE_SEC = 20;
 
 /**
  * Try to acquire a send lock before sending a reply. Prevents spam when multiple jobs
