@@ -225,6 +225,19 @@ export const handleInstagramWebhook = asyncHandler(
       return;
     }
 
+    // Skip queueing message_edit: Meta sends both message + message_edit for the same user message.
+    // Queueing both causes a race: one creates the message, the other hits ConflictError and exits
+    // without sending. If message_edit runs first, we can end up with zero replies. Only process
+    // "message" events so we reliably get one create + one send per user message.
+    if (payloadType === 'message_edit') {
+      logger.info(
+        { correlationId, payloadType },
+        'Instagram webhook: message_edit only - returning 200 without queueing (message event will be processed)'
+      );
+      res.status(200).json(successResponse({ message: 'OK' }, req));
+      return;
+    }
+
     // Step 2: Extract event ID (platform-specific or fallback hash)
     let eventId = extractInstagramEventId(req.body);
     if (!eventId) {

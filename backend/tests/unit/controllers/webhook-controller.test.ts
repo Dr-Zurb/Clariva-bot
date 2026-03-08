@@ -337,6 +337,53 @@ describe('Webhook Controller', () => {
     });
   });
 
+  describe('1.5 message_edit only (skip queueing)', () => {
+    const messageEditPayload = {
+      object: 'instagram',
+      entry: [
+        {
+          id: '17841479659492101',
+          time: 1569262486134,
+          messaging: [
+            {
+              sender: { id: 'user123' },
+              recipient: { id: '17841479659492101' },
+              timestamp: 1569262485349,
+              message_edit: { mid: 'm1', text: 'edited', num_edit: 1 },
+            },
+          ],
+        },
+      ],
+    };
+
+    it('returns 200 without queueing when payload is message_edit only', async () => {
+      mockVerify.mockReturnValue(true);
+      mockIsNonActionable.mockReturnValue(false);
+
+      const rawBody = Buffer.from(JSON.stringify(messageEditPayload));
+      const req = {
+        body: messageEditPayload,
+        rawBody,
+        headers: { 'x-hub-signature-256': 'sha256=ok' },
+        correlationId: 'test-corr-edit',
+        ip: '127.0.0.1',
+      } as unknown as Request;
+      const res = mockRes();
+      const next = mockNext();
+
+      await (handleInstagramWebhook as (req: Request, res: Response, next: (err: unknown) => void) => Promise<void>)(
+        req,
+        res,
+        next
+      );
+
+      expect(mockVerify).toHaveBeenCalled();
+      expect(mockAdd).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(next).not.toHaveBeenCalled();
+    });
+  });
+
   describe('1.3 Duplicate webhook (idempotency)', () => {
     const validPayload = {
       object: 'instagram',
