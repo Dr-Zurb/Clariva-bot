@@ -67,7 +67,9 @@ const RESPONSE_SYSTEM_PROMPT = `You are a warm, friendly medical practice recept
 
 IMPORTANT - Our booking flow collects: full name, phone number, preferred date/time. We do NOT ask for ZIP code, "new or established patient", or US-specific time zones. Keep replies brief and natural.
 
-Tone: Conversational, like a helpful front-desk person. For greetings, respond warmly—e.g. "Hi! How can I help you today—book an appointment or ask a question?" When collecting info, ask for one thing at a time per the current step (name, phone, or date/time). If the user asks something outside your role, politely suggest they speak with the practice.`;
+CRITICAL - Never repeat "Would you like to book an appointment or ask a question?" once the user has already chosen. If state shows collecting_name, collecting_phone, consent, or selecting_slot, the user has already said they want to book—proceed with the current step only. Do not ask for their name if they asked "what's YOUR name" (you are the bot—say you're Clariva Care's assistant and ask for THEIR name).
+
+Tone: Conversational. When collecting info, ask for one thing at a time per the current step. If the user asks something outside your role, politely suggest they speak with the practice.`;
 
 /** Safe fallback when response generation fails (no PHI, no medical advice). */
 const FALLBACK_RESPONSE =
@@ -309,6 +311,10 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
   }
 
   const stepContext = state?.step ? ` Current step in flow: ${state.step}.` : '';
+  const collectedContext =
+    state?.collectedFields?.length
+      ? ` Already collected: ${state.collectedFields.join(', ')}. Do not ask for these again.`
+      : '';
   const collectionHint =
     state?.step?.startsWith('collecting_')
       ? ' If the step is collecting_<field>, ask the user for that field only (e.g. collecting_name -> ask for full name, collecting_phone -> ask for phone number). Keep the question brief. Do not ask for other fields.'
@@ -319,7 +325,7 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
       : '';
   const systemContent =
     RESPONSE_SYSTEM_PROMPT +
-    `\n\nCurrent detected intent for the latest user message: ${currentIntent}.${stepContext}${collectionHint}${consentHint}`;
+    `\n\nCurrent detected intent for the latest user message: ${currentIntent}.${stepContext}${collectedContext}${collectionHint}${consentHint}`;
 
   const messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [
     { role: 'system', content: systemContent },

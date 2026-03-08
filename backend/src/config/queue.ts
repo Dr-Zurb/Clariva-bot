@@ -175,6 +175,48 @@ export async function tryAcquireInstagramDedupLock(
   }
 }
 
+/** Conversation lock TTL: max time one job holds the lock (processing + AI + send). */
+const CONVERSATION_LOCK_TTL_SEC = 120;
+
+/**
+ * Acquire a per-conversation lock so only one job processes (pageId, senderId) at a time.
+ * Prevents concurrent jobs from reading stale state and sending conflicting/repeated replies.
+ * Key = ig:conv:{pageId}:{senderId}. Call releaseConversationLock when done.
+ * Returns true if acquired, false if another job holds it. Fail-open: true if Redis unavailable.
+ */
+export async function tryAcquireConversationLock(
+  pageId: string,
+  senderId: string
+): Promise<boolean> {
+  if (!isQueueEnabled()) return true;
+  getWebhookQueue();
+  const conn = getQueueConnection();
+  if (!conn) return true;
+  const key = `ig:conv:${pageId}:${senderId}`;
+  try {
+    const result = await conn.set(key, '1', 'EX', CONVERSATION_LOCK_TTL_SEC, 'NX');
+    return result === 'OK';
+  } catch {
+    return true;
+  }
+}
+
+/** Release conversation lock. Call in finally after processing. */
+export async function releaseConversationLock(
+  pageId: string,
+  senderId: string
+): Promise<void> {
+  if (!isQueueEnabled()) return;
+  const conn = getQueueConnection();
+  if (!conn) return;
+  const key = `ig:conv:${pageId}:${senderId}`;
+  try {
+    await conn.del(key);
+  } catch {
+    // best-effort; lock will expire via TTL
+  }
+}
+
 /** Send throttle: one reply per (user, message content) per window. New messages get replies; duplicates for same content are skipped. */
 const SEND_THROTTLE_SEC = 90;
 

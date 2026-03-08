@@ -70,7 +70,11 @@ import {
 import { razorpayAdapter } from '../adapters/razorpay-adapter';
 import { paypalAdapter } from '../adapters/paypal-adapter';
 import { getInstagramPageId, getInstagramPageIds } from '../utils/webhook-event-id';
-import { tryAcquireInstagramSendLock } from '../config/queue';
+import {
+  tryAcquireConversationLock,
+  releaseConversationLock,
+  tryAcquireInstagramSendLock,
+} from '../config/queue';
 import type { WebhookJobData } from '../types/queue';
 import type { InstagramWebhookPayload } from '../types/webhook';
 
@@ -672,6 +676,12 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     return;
   }
 
+  const lockPageId = pageIds[0]!;
+  const lockAcquired = await tryAcquireConversationLock(lockPageId, senderId);
+  if (!lockAcquired) {
+    throw new Error('Conversation locked by another job - retrying');
+  }
+
   try {
     const patient = await findOrCreatePlaceholderPatient(
       doctorId,
@@ -1130,6 +1140,8 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       metadata: { event_id: eventId, provider },
     });
     throw error;
+  } finally {
+    await releaseConversationLock(lockPageId, senderId);
   }
 
   await markWebhookProcessed(eventId, provider);
