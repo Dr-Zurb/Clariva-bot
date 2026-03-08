@@ -132,13 +132,17 @@ export async function createConversation(
 
   if (error) {
     if (error.code === '23505') {
-      const existing = await findConversationByPlatformId(
-        data.doctor_id,
-        data.platform,
-        data.platform_conversation_id,
-        correlationId
-      );
-      if (existing) return existing;
+      // Row exists (duplicate insert); fetch it. Retry once after 150ms for replication lag.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const existing = await findConversationByPlatformId(
+          data.doctor_id,
+          data.platform,
+          data.platform_conversation_id,
+          correlationId
+        );
+        if (existing) return existing;
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 150));
+      }
     }
     handleSupabaseError(error, correlationId);
   }

@@ -1007,6 +1007,66 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
 
     await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
   } catch (error) {
+    const isConflict =
+      error instanceof ConflictError ||
+      (error instanceof Error && /Resource already exists|23505|duplicate/i.test(error.message));
+
+    if (isConflict) {
+      // Resource already exists (e.g. retry, duplicate webhook). Continue flow: find conversation,
+      // generate reply, send. Ensures user gets a reply even when idempotency hits a conflict.
+      const conversation = await findConversationByPlatformId(
+        doctorId,
+        'instagram',
+        senderId,
+        correlationId
+      );
+      if (conversation && doctorToken) {
+        try {
+          const intentResult = await classifyIntent(text, correlationId);
+          const state = await getConversationState(conversation.id, correlationId);
+          const recentMessages = await getRecentMessages(conversation.id, 10, correlationId);
+          const replyText =
+            (await generateResponse({
+              conversationId: conversation.id,
+              currentIntent: intentResult.intent,
+              state,
+              recentMessages,
+              currentUserMessage: text,
+              correlationId,
+            })) || FALLBACK_REPLY;
+          await createMessage(
+            {
+              conversation_id: conversation.id,
+              platform_message_id: `sys-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+              sender_type: 'system',
+              content: replyText,
+            },
+            correlationId
+          );
+          await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
+          await markWebhookProcessed(eventId, provider);
+          await logAuditEvent({
+            correlationId,
+            userId: undefined,
+            action: 'webhook_processed',
+            resourceType: 'webhook',
+            status: 'success',
+            metadata: { event_id: eventId, provider, recipient_id: senderId, recovered: true },
+          });
+          return;
+        } catch (recoveryErr) {
+          logger.warn(
+            {
+              correlationId,
+              eventId,
+              error: recoveryErr instanceof Error ? recoveryErr.message : String(recoveryErr),
+            },
+            'Conflict recovery failed; marking webhook failed'
+          );
+        }
+      }
+    }
+
     await markWebhookFailed(
       eventId,
       provider,
