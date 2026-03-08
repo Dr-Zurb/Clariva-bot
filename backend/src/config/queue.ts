@@ -146,10 +146,13 @@ export const webhookQueue = {
   },
 };
 
+/** Bucket window (ms) for content dedup. Webhooks within this window share the same key. */
+const DEDUP_BUCKET_MS = 5 * 60 * 1000; // 5 minutes (was 1 min - caused spam when webhooks crossed minute boundary)
+
 /**
  * Try to acquire a content-based dedup lock for Instagram messages.
  * Meta sends multiple "message" webhooks with different mids for the same user message.
- * Key = ig:dedup:{pageId}:{senderId}:{textHash}:{minuteBucket}. TTL 120s.
+ * Key = ig:dedup:{pageId}:{senderId}:{textHash}:{bucket}. TTL 120s.
  * Returns true if we acquired (first to process), false if duplicate (skip queueing).
  * Fail-open: returns true if Redis unavailable (allow through).
  */
@@ -162,11 +165,36 @@ export async function tryAcquireInstagramDedupLock(
   getWebhookQueue(); // ensure Redis connection exists
   const conn = getQueueConnection();
   if (!conn) return true; // fail-open
-  const minuteBucket = Math.floor(Date.now() / 60_000);
-  const key = `ig:dedup:${pageId}:${senderId}:${textHash}:${minuteBucket}`;
+  const bucket = Math.floor(Date.now() / DEDUP_BUCKET_MS);
+  const key = `ig:dedup:${pageId}:${senderId}:${textHash}:${bucket}`;
   try {
     const result = await conn.set(key, '1', 'EX', 120, 'NX');
     return result === 'OK'; // true if we set it, false if key existed
+  } catch {
+    return true; // fail-open on Redis error
+  }
+}
+
+/**
+ * Try to acquire a send lock before sending a reply. Prevents spam when multiple jobs
+ * run for the same user message (e.g. Redis eviction, different eventIds).
+ * Key = ig:send:{pageId}:{senderId}:{textHash}. TTL 120s.
+ * Returns true if we acquired (first to send), false if another job already sent.
+ * Fail-open: returns true if Redis unavailable (allow send).
+ */
+export async function tryAcquireInstagramSendLock(
+  pageId: string,
+  senderId: string,
+  textHash: string
+): Promise<boolean> {
+  if (!isQueueEnabled()) return true; // fail-open when queue disabled
+  getWebhookQueue();
+  const conn = getQueueConnection();
+  if (!conn) return true; // fail-open
+  const key = `ig:send:${pageId}:${senderId}:${textHash}`;
+  try {
+    const result = await conn.set(key, '1', 'EX', 120, 'NX');
+    return result === 'OK';
   } catch {
     return true; // fail-open on Redis error
   }

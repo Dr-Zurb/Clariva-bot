@@ -68,7 +68,8 @@ import {
 } from '../services/notification-service';
 import { razorpayAdapter } from '../adapters/razorpay-adapter';
 import { paypalAdapter } from '../adapters/paypal-adapter';
-import { getInstagramPageId, getInstagramPageIds } from '../utils/webhook-event-id';
+import { getInstagramPageId, getInstagramPageIds, extractInstagramMessageForDedup } from '../utils/webhook-event-id';
+import { tryAcquireInstagramSendLock } from '../config/queue';
 import type { WebhookJobData } from '../types/queue';
 import type { InstagramWebhookPayload } from '../types/webhook';
 
@@ -1005,6 +1006,27 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           };
     await updateConversationState(conversation.id, stateToPersist, correlationId);
 
+    // Send dedup: only first job to acquire sends; prevents spam when Meta sends many webhooks for same message
+    const dedup = extractInstagramMessageForDedup(instagramPayload);
+    if (dedup) {
+      const acquired = await tryAcquireInstagramSendLock(dedup.pageId, dedup.senderId, dedup.textHash);
+      if (!acquired) {
+        logger.info(
+          { correlationId, eventId, provider },
+          'Skipping send: already replied to this message (send dedup)'
+        );
+        await markWebhookProcessed(eventId, provider);
+        await logAuditEvent({
+          correlationId,
+          userId: undefined,
+          action: 'webhook_processed',
+          resourceType: 'webhook',
+          status: 'success',
+          metadata: { event_id: eventId, provider, recipient_id: senderId, skipped_send_dedup: true },
+        });
+        return;
+      }
+    }
     await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
   } catch (error) {
     const isConflict =
@@ -1043,6 +1065,23 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             },
             correlationId
           );
+          const dedup = extractInstagramMessageForDedup(instagramPayload);
+          if (dedup) {
+            const acquired = await tryAcquireInstagramSendLock(dedup.pageId, dedup.senderId, dedup.textHash);
+            if (!acquired) {
+              logger.info({ correlationId, eventId, provider }, 'Conflict recovery: skipping send (already replied)');
+              await markWebhookProcessed(eventId, provider);
+              await logAuditEvent({
+                correlationId,
+                userId: undefined,
+                action: 'webhook_processed',
+                resourceType: 'webhook',
+                status: 'success',
+                metadata: { event_id: eventId, provider, recipient_id: senderId, recovered: true, skipped_send_dedup: true },
+              });
+              return;
+            }
+          }
           await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
           await markWebhookProcessed(eventId, provider);
           await logAuditEvent({
