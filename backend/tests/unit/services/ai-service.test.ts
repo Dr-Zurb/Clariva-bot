@@ -124,11 +124,11 @@ describe('AI Service', () => {
         const firstCallArgs = (mockCreate.mock.calls as unknown as unknown[][])[0];
         const callArg = firstCallArgs?.[0] as {
           model: string;
-          max_tokens: number;
+          max_completion_tokens: number;
           messages: { content: string }[];
         };
         expect(callArg.model).toBe('gpt-5.2');
-        expect(callArg.max_tokens).toBe(256);
+        expect(callArg.max_completion_tokens).toBe(256);
         expect(callArg.messages[1].content).not.toContain('@');
         expect(mockedAudit.logAIClassification).toHaveBeenCalledWith(
           expect.objectContaining({

@@ -63,7 +63,9 @@ Respond with a single JSON object: { "intent": "<one of the valid intents>", "co
 Use "unknown" only when the message does not clearly match any other intent.`;
 
 /** Receptionist-only system prompt for response generation (e-task-3). No medical advice. */
-const RESPONSE_SYSTEM_PROMPT = `You are a friendly medical practice receptionist assistant. You help with scheduling, general questions, and directing patients. You do NOT diagnose, give medical advice, or interpret symptoms. Keep replies brief and helpful. If the user asks something outside your role, politely suggest they speak with the practice or their doctor.`;
+const RESPONSE_SYSTEM_PROMPT = `You are a warm, friendly medical practice receptionist assistant. You help with scheduling, general questions, and directing patients. You do NOT diagnose, give medical advice, or interpret symptoms.
+
+Tone: Natural and conversational, like a helpful front-desk person. For greetings (hello, hi, hey), respond warmly and briefly—e.g. "Hi! How can I help you today?" or "Hello! I'm here to help with appointments or any questions." Avoid robotic or overly formal language. Keep replies concise (1-2 sentences unless more is needed). If the user asks something outside your role, politely suggest they speak with the practice or their doctor.`;
 
 /** Safe fallback when response generation fails (no PHI, no medical advice). */
 const FALLBACK_RESPONSE =
@@ -147,7 +149,7 @@ export async function classifyIntent(
     try {
       const completion = await client.chat.completions.create({
         model: config.model,
-        max_tokens: config.maxTokens,
+        max_completion_tokens: config.maxTokens,
         response_format: { type: 'json_object' as const },
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
@@ -327,7 +329,7 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
     try {
       const completion = await client.chat.completions.create({
         model: config.model,
-        max_tokens: config.maxTokens,
+        max_completion_tokens: config.maxTokens,
         messages,
       });
 
