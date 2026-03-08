@@ -721,13 +721,13 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       );
     } catch (err) {
       if (err instanceof ConflictError) {
-        // Message already stored - duplicate job (content dedup should prevent this; defensive).
+        // Message already stored - always continue to reply. Content dedup ensures one job per message.
+        // Prior run may have created the message but failed before sending to Instagram.
         logger.info(
           { eventId, correlationId, platformMessageId },
-          'Message already stored (duplicate); marking processed, no reply'
+          'Message already stored; continuing to generate and send reply'
         );
-        await markWebhookProcessed(eventId, provider);
-        return;
+        // Fall through to reply logic
       } else {
         throw err;
       }
@@ -1012,15 +1012,26 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     }
 
     const botMessageId = `sys-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    await createMessage(
-      {
-        conversation_id: conversation.id,
-        platform_message_id: botMessageId,
-        sender_type: 'system',
-        content: replyText,
-      },
-      correlationId
-    );
+    try {
+      await createMessage(
+        {
+          conversation_id: conversation.id,
+          platform_message_id: botMessageId,
+          sender_type: 'system',
+          content: replyText,
+        },
+        correlationId
+      );
+    } catch (botErr) {
+      if (botErr instanceof ConflictError) {
+        logger.info(
+          { eventId, correlationId, botMessageId },
+          'Bot message already stored; continuing to send to Instagram'
+        );
+      } else {
+        throw botErr;
+      }
+    }
 
     const stateToPersist =
       (isBookIntent && (justStartingCollection || inCollection)) || state.step === 'selecting_slot'
