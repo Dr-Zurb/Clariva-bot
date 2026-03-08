@@ -115,10 +115,12 @@ export function extractInstagramMessageForDedup(payload: unknown): {
     (m.sender as { id?: string } | undefined)?.id ??
     (typeof m.sender_id === 'string' ? m.sender_id : undefined);
   if (!senderId) return null;
-  const text =
+  const rawText =
     (m.message as { text?: string } | undefined)?.text ??
     (m.message_edit as { text?: string } | undefined)?.text ??
     '';
+  // Normalize so "Hello" and "hello" dedup correctly (Meta may send both)
+  const text = (rawText ?? '').trim().toLowerCase();
   const textHash = createHash('sha256').update(text).digest('hex').slice(0, 16);
   return { pageId, senderId, textHash };
 }

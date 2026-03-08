@@ -242,6 +242,17 @@ function isValidInstagramSenderId(senderId: string): boolean {
   return !!senderId && senderId.length >= 15;
 }
 
+/** User is asking about the bot's name (e.g. "what's your name", "your name?"). Use deterministic reply. */
+function isAskingAboutBotName(text: string): boolean {
+  const t = (text ?? '').trim().toLowerCase();
+  return (
+    /what'?s?\s+(is\s+)?(your|ur)\s+name/i.test(t) ||
+    /(your|ur)\s+name\s*\??/i.test(t) ||
+    /who\s+are\s+you/i.test(t) ||
+    /what\s+is\s+your\s+name/i.test(t)
+  );
+}
+
 /**
  * Experimental: Decode message_edit.mid (base64) to inspect structure.
  * Meta may encode sender/recipient in internal format. The mid is binary with embedded ASCII IDs.
@@ -848,7 +859,11 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
               correlationId,
             });
           } else {
-            replyText = result.replyOverride ?? FALLBACK_REPLY;
+            // When user asks about the bot's name, use deterministic reply (avoids AI repetition)
+            replyText =
+              nextField === 'name' && isAskingAboutBotName(text)
+                ? "I'm Clariva Care's scheduling assistant. To book your appointment, what's your full name?"
+                : (result.replyOverride ?? FALLBACK_REPLY);
           }
         } else {
           replyText = await generateResponse({
