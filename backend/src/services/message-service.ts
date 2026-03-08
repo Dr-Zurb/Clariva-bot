@@ -12,23 +12,18 @@ import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataModification, logDataAccess } from '../utils/audit-logger';
 
 /**
- * Create a new message
- * 
- * Creates message record when processing webhooks from platforms.
- * 
+ * Create a message or return existing if already stored (idempotent).
+ * Used for webhooks: duplicate events or retries may try to insert the same message.
+ * On unique violation (23505), fetches and returns the existing row.
+ *
  * @param data - Message data to insert
  * @param correlationId - Request correlation ID
- * @returns Created message
- * 
- * @throws InternalError if database operation fails
- * 
- * Note: Uses service role client (webhook processing has no user context)
+ * @returns Created or existing message
  */
 export async function createMessage(
   data: InsertMessage,
   correlationId: string
 ): Promise<Message> {
-  // Create message (service role - webhook processing)
   const supabaseAdmin = getSupabaseAdminClient();
   if (!supabaseAdmin) {
     throw new InternalError('Service role client not available');
@@ -40,14 +35,24 @@ export async function createMessage(
     .select()
     .single();
 
-  if (error || !message) {
+  if (error) {
+    if (error.code === '23505') {
+      const { data: existing } = await supabaseAdmin
+        .from('messages')
+        .select('*')
+        .eq('conversation_id', data.conversation_id)
+        .eq('platform_message_id', data.platform_message_id)
+        .single();
+      if (existing) return existing as Message;
+    }
     handleSupabaseError(error, correlationId);
   }
 
-  // Audit log (system operation - no user)
+  if (!message) throw new InternalError('Message create returned no data');
+
   await logDataModification(
     correlationId,
-    undefined as any, // System operation
+    undefined as any,
     'create',
     'message',
     message.id

@@ -119,7 +119,6 @@ export async function createConversation(
     return existing; // Return existing instead of creating duplicate
   }
 
-  // Create conversation (service role - webhook processing)
   const supabaseAdmin = getSupabaseAdminClient();
   if (!supabaseAdmin) {
     throw new InternalError('Service role client not available');
@@ -131,14 +130,24 @@ export async function createConversation(
     .select()
     .single();
 
-  if (error || !conversation) {
+  if (error) {
+    if (error.code === '23505') {
+      const existing = await findConversationByPlatformId(
+        data.doctor_id,
+        data.platform,
+        data.platform_conversation_id,
+        correlationId
+      );
+      if (existing) return existing;
+    }
     handleSupabaseError(error, correlationId);
   }
 
-  // Audit log (system operation - no user)
+  if (!conversation) throw new InternalError('Conversation create returned no data');
+
   await logDataModification(
     correlationId,
-    undefined as any, // System operation
+    undefined as any,
     'create',
     'conversation',
     conversation.id

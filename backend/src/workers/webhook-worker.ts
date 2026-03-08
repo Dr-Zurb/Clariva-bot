@@ -679,59 +679,31 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       correlationId
     );
     if (!conversation) {
-      try {
-        conversation = await createConversation(
-          {
-            doctor_id: doctorId,
-            patient_id: patient.id,
-            platform: 'instagram',
-            platform_conversation_id: senderId,
-            status: 'active',
-          },
-          correlationId
-        );
-      } catch (err) {
-        if (err instanceof ConflictError) {
-          conversation = await findConversationByPlatformId(
-            doctorId,
-            'instagram',
-            senderId,
-            correlationId
-          );
-          if (!conversation) throw err;
-        } else {
-          throw err;
-        }
-      }
+      conversation = await createConversation(
+        {
+          doctor_id: doctorId,
+          patient_id: patient.id,
+          platform: 'instagram',
+          platform_conversation_id: senderId,
+          status: 'active',
+        },
+        correlationId
+      );
     }
 
     const intentResult = await classifyIntent(text, correlationId);
 
     const platformMessageId = mid ?? `evt-${eventId}`;
-    try {
-      await createMessage(
-        {
-          conversation_id: conversation.id,
-          platform_message_id: platformMessageId,
-          sender_type: 'patient',
-          content: text,
-          intent: intentResult.intent,
-        },
-        correlationId
-      );
-    } catch (err) {
-      if (err instanceof ConflictError) {
-        // Message already stored - always continue to reply. Content dedup ensures one job per message.
-        // Prior run may have created the message but failed before sending to Instagram.
-        logger.info(
-          { eventId, correlationId, platformMessageId },
-          'Message already stored; continuing to generate and send reply'
-        );
-        // Fall through to reply logic
-      } else {
-        throw err;
-      }
-    }
+    await createMessage(
+      {
+        conversation_id: conversation.id,
+        platform_message_id: platformMessageId,
+        sender_type: 'patient',
+        content: text,
+        intent: intentResult.intent,
+      },
+      correlationId
+    );
 
     let state = await getConversationState(conversation.id, correlationId);
     const recentMessages = await getRecentMessages(conversation.id, 10, correlationId);
@@ -1012,26 +984,15 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     }
 
     const botMessageId = `sys-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    try {
-      await createMessage(
-        {
-          conversation_id: conversation.id,
-          platform_message_id: botMessageId,
-          sender_type: 'system',
-          content: replyText,
-        },
-        correlationId
-      );
-    } catch (botErr) {
-      if (botErr instanceof ConflictError) {
-        logger.info(
-          { eventId, correlationId, botMessageId },
-          'Bot message already stored; continuing to send to Instagram'
-        );
-      } else {
-        throw botErr;
-      }
-    }
+    await createMessage(
+      {
+        conversation_id: conversation.id,
+        platform_message_id: botMessageId,
+        sender_type: 'system',
+        content: replyText,
+      },
+      correlationId
+    );
 
     const stateToPersist =
       (isBookIntent && (justStartingCollection || inCollection)) || state.step === 'selecting_slot'
@@ -1046,16 +1007,6 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
 
     await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
   } catch (error) {
-    // ConflictError: resource already exists. Content dedup should prevent multiple jobs.
-    // Do NOT send fallback - causes spam when dedup misses. Mark processed and return.
-    if (error instanceof ConflictError) {
-      logger.info(
-        { eventId, provider, correlationId, errorMessage: error.message },
-        'Webhook duplicate (Resource already exists); marking processed, no fallback'
-      );
-      await markWebhookProcessed(eventId, provider);
-      return;
-    }
     await markWebhookFailed(
       eventId,
       provider,
