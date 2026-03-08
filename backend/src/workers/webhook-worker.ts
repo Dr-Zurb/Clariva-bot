@@ -1035,12 +1035,21 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
 
     await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
   } catch (error) {
-    // ConflictError: message/conversation already exists. Do NOT send fallback - causes spam.
+    // ConflictError: resource already exists (e.g. message, conversation). Send fallback so user gets a reply.
+    // Spam avoided: we only queue one job per message (message_edit not queued).
     if (error instanceof ConflictError) {
       logger.info(
         { eventId, provider, correlationId, errorMessage: error.message },
-        'Webhook duplicate (Resource already exists); marking processed, no fallback send'
+        'Webhook duplicate (Resource already exists); sending fallback reply'
       );
+      try {
+        await sendInstagramMessage(senderId, FALLBACK_REPLY, correlationId, doctorToken);
+      } catch (sendErr) {
+        logger.warn(
+          { eventId, correlationId, error: sendErr instanceof Error ? sendErr.message : String(sendErr) },
+          'Fallback send failed (non-blocking)'
+        );
+      }
       await markWebhookProcessed(eventId, provider);
       return;
     }
