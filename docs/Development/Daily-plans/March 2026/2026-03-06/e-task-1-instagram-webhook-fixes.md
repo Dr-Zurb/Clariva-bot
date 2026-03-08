@@ -126,7 +126,7 @@ backend/
 
 - 304-byte payloads: `payloadType: "unknown"` suggests different structure (e.g. read, typing). Meta may compute signature differently or payload may be altered before verification.
 - **Implemented:** When signature fails for 300–320 byte payloads, we log `payloadStructure` (keys only, no PHI) to identify event type. For read/delivery events that pass verification, we return 200 early without processing.
-- **Fix for zero replies:** Skip queueing `message_edit` entirely. Meta sends both message + message_edit; queueing both caused a race where one created and the other hit ConflictError. If message_edit ran first, we could get zero replies. Now only `message` is queued → one job, one reply.
+- **Fix for zero replies:** (1) Skip queueing `message_edit` entirely. (2) On ConflictError (message already stored, e.g. retry after partial failure), send fallback reply so user gets a response instead of silence.
 - Consider unsubscribing from `message_edit` in Meta Webhooks if edits are not needed; would reduce duplicate processing.
 
 ---

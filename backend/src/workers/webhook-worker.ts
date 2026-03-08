@@ -721,11 +721,21 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       );
     } catch (err) {
       if (err instanceof ConflictError) {
-        // Message already stored (duplicate webhook: message + message_edit). Do NOT send again.
+        // Message already stored (retry after partial failure, or rare duplicate). Since we no longer
+        // queue message_edit, the only source of ConflictError is retries. Send fallback so user
+        // gets a reply instead of silence.
         logger.info(
           { eventId, correlationId, platformMessageId },
-          'Message already stored (idempotent); skipping reply to prevent duplicate'
+          'Message already stored; sending fallback (retry or idempotent)'
         );
+        try {
+          await sendInstagramMessage(senderId, FALLBACK_REPLY, correlationId, doctorToken);
+        } catch (sendErr) {
+          logger.warn(
+            { eventId, correlationId, error: sendErr instanceof Error ? sendErr.message : String(sendErr) },
+            'Fallback send failed on ConflictError path'
+          );
+        }
         await markWebhookProcessed(eventId, provider);
         return;
       } else {
