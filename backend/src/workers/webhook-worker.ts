@@ -15,6 +15,7 @@
  * @see COMPLIANCE.md - Audit, no PHI in logs
  */
 
+import { createHash } from 'crypto';
 import { Worker, Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { env } from '../config/env';
@@ -79,6 +80,12 @@ import type { InstagramWebhookPayload } from '../types/webhook';
 
 /** Fallback when resolution returns null (no doctor linked for page) or AI/conversation flow is skipped */
 const FALLBACK_REPLY = "Thanks for your message. We'll get back to you soon.";
+
+/** Hash user message for send lock (per-content throttle). Normalized: trim + lowercase. */
+function contentHashForSendLock(text: string): string {
+  const normalized = (text ?? '').trim().toLowerCase();
+  return createHash('sha256').update(normalized).digest('hex').slice(0, 16);
+}
 
 // ============================================================================
 // Connection & Worker Instance
@@ -1006,14 +1013,15 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           };
     await updateConversationState(conversation.id, stateToPersist, correlationId);
 
-    // Send throttle: one reply per (pageId, senderId) per 90s. Stops spam when Meta sends many webhooks with varying content.
+    // Send throttle: one reply per (user, message content). New messages get replies; duplicates skipped.
     const pageId = pageIds[0] ?? getInstagramPageId(instagramPayload);
     if (pageId) {
-      const acquired = await tryAcquireInstagramSendLock(pageId, senderId);
+      const contentHash = contentHashForSendLock(text);
+      const acquired = await tryAcquireInstagramSendLock(pageId, senderId, contentHash);
       if (!acquired) {
         logger.info(
           { correlationId, eventId, provider },
-          'Skipping send: already replied to this user recently (send throttle)'
+          'Skipping send: already replied to this message (send throttle)'
         );
         await markWebhookProcessed(eventId, provider);
         await logAuditEvent({
@@ -1067,9 +1075,10 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           );
           const pageIdForSend = pageIds[0] ?? getInstagramPageId(instagramPayload);
           if (pageIdForSend) {
-            const acquired = await tryAcquireInstagramSendLock(pageIdForSend, senderId);
+            const contentHash = contentHashForSendLock(text);
+            const acquired = await tryAcquireInstagramSendLock(pageIdForSend, senderId, contentHash);
             if (!acquired) {
-              logger.info({ correlationId, eventId, provider }, 'Conflict recovery: skipping send (already replied)');
+              logger.info({ correlationId, eventId, provider }, 'Conflict recovery: skipping send (already replied to this message)');
               await markWebhookProcessed(eventId, provider);
               await logAuditEvent({
                 correlationId,

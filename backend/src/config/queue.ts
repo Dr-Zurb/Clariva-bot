@@ -175,25 +175,27 @@ export async function tryAcquireInstagramDedupLock(
   }
 }
 
-/** Send throttle: max one reply per (pageId, senderId) per window. Stops spam when Meta sends many webhooks with different content. 20s allows follow-up replies (e.g. "hello" then "book appointment"). */
-const SEND_THROTTLE_SEC = 20;
+/** Send throttle: one reply per (user, message content) per window. New messages get replies; duplicates for same content are skipped. */
+const SEND_THROTTLE_SEC = 90;
 
 /**
  * Try to acquire a send lock before sending a reply. Prevents spam when multiple jobs
- * run (Meta sends many webhooks with different mids/content; textHash varies so content dedup fails).
- * Key = ig:send:{pageId}:{senderId}. TTL 90s. One reply per user per 90 seconds.
- * Returns true if we acquired (first to send), false if another job already sent.
+ * run for the SAME user message (Meta sends message + message_edit with different mids).
+ * Key = ig:send:{pageId}:{senderId}:{contentHash}. One reply per (user, content) per window.
+ * NEW messages (different content) can send—fixes "no reply" when user sends follow-up.
+ * Returns true if we acquired (first to send for this content), false if already sent.
  * Fail-open: returns true if Redis unavailable (allow send).
  */
 export async function tryAcquireInstagramSendLock(
   pageId: string,
-  senderId: string
+  senderId: string,
+  contentHash: string
 ): Promise<boolean> {
   if (!isQueueEnabled()) return true; // fail-open when queue disabled
   getWebhookQueue();
   const conn = getQueueConnection();
   if (!conn) return true; // fail-open
-  const key = `ig:send:${pageId}:${senderId}`;
+  const key = `ig:send:${pageId}:${senderId}:${contentHash}`;
   try {
     const result = await conn.set(key, '1', 'EX', SEND_THROTTLE_SEC, 'NX');
     return result === 'OK';
