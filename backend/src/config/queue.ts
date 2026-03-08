@@ -220,6 +220,32 @@ export async function releaseConversationLock(
 /** Send throttle: one reply per (user, message content) per window. New messages get replies; duplicates for same content are skipped. */
 const SEND_THROTTLE_SEC = 90;
 
+/** Per-user reply throttle: max 1 send per (pageId, senderId) per window. Stops spam when Meta sends multiple webhooks for same user message. */
+const REPLY_THROTTLE_SEC = 5;
+
+/**
+ * Per-user reply throttle: only allow one send per user per REPLY_THROTTLE_SEC.
+ * Safety net when content dedup fails—stops multiple replies for same logical message.
+ * Key = ig:reply:{pageId}:{senderId}. Returns true if we can send, false if we recently sent.
+ * Fail-open: returns true if Redis unavailable.
+ */
+export async function tryAcquireReplyThrottle(
+  pageId: string,
+  senderId: string
+): Promise<boolean> {
+  if (!isQueueEnabled()) return true;
+  getWebhookQueue();
+  const conn = getQueueConnection();
+  if (!conn) return true;
+  const key = `ig:reply:${pageId}:${senderId}`;
+  try {
+    const result = await conn.set(key, '1', 'EX', REPLY_THROTTLE_SEC, 'NX');
+    return result === 'OK';
+  } catch {
+    return true;
+  }
+}
+
 /**
  * Try to acquire a send lock before sending a reply. Prevents spam when multiple jobs
  * run for the SAME user message (Meta sends message + message_edit with different mids).

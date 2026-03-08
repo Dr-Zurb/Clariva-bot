@@ -253,11 +253,10 @@ export const handleInstagramWebhook = asyncHandler(
     }
 
     // Content-based dedup: Meta sends multiple "message" webhooks with different mids for same user message.
-    // Deduplicate by (pageId, senderId, text) within 1-min window to prevent spam.
     const dedup = extractInstagramMessageForDedup(req.body);
     if (dedup) {
-      const acquired = await tryAcquireInstagramDedupLock(dedup.pageId, dedup.senderId, dedup.textHash);
-      if (!acquired) {
+      const contentAcquired = await tryAcquireInstagramDedupLock(dedup.pageId, dedup.senderId, dedup.textHash);
+      if (!contentAcquired) {
         logger.info(
           { correlationId, provider: 'instagram', pageId: dedup.pageId },
           'Instagram webhook: content-based duplicate (same message in window); returning 200'

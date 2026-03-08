@@ -74,6 +74,7 @@ import {
   tryAcquireConversationLock,
   releaseConversationLock,
   tryAcquireInstagramSendLock,
+  tryAcquireReplyThrottle,
 } from '../config/queue';
 import type { WebhookJobData } from '../types/queue';
 import type { InstagramWebhookPayload } from '../types/webhook';
@@ -1042,12 +1043,12 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           };
     await updateConversationState(conversation.id, stateToPersist, correlationId);
 
-    // Send throttle: one reply per (user, message content). New messages get replies; duplicates skipped.
+    // Send throttle: one reply per (user, message content). Per-user throttle: max 1 send per 12 sec (stops Meta duplicate webhook spam).
     const pageId = pageIds[0] ?? getInstagramPageId(instagramPayload);
     if (pageId) {
       const contentHash = contentHashForSendLock(text);
-      const acquired = await tryAcquireInstagramSendLock(pageId, senderId, contentHash);
-      if (!acquired) {
+      const sendLockAcquired = await tryAcquireInstagramSendLock(pageId, senderId, contentHash);
+      if (!sendLockAcquired) {
         logger.info(
           { correlationId, eventId, provider },
           'Skipping send: already replied to this message (send throttle)'
@@ -1060,6 +1061,23 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           resourceType: 'webhook',
           status: 'success',
           metadata: { event_id: eventId, provider, recipient_id: senderId, skipped_send_throttle: true },
+        });
+        return;
+      }
+      const replyThrottleAcquired = await tryAcquireReplyThrottle(pageId, senderId);
+      if (!replyThrottleAcquired) {
+        logger.info(
+          { correlationId, eventId, provider },
+          'Skipping send: reply throttle (already sent to this user recently)'
+        );
+        await markWebhookProcessed(eventId, provider);
+        await logAuditEvent({
+          correlationId,
+          userId: undefined,
+          action: 'webhook_processed',
+          resourceType: 'webhook',
+          status: 'success',
+          metadata: { event_id: eventId, provider, recipient_id: senderId, skipped_reply_throttle: true },
         });
         return;
       }
@@ -1105,8 +1123,8 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           const pageIdForSend = pageIds[0] ?? getInstagramPageId(instagramPayload);
           if (pageIdForSend) {
             const contentHash = contentHashForSendLock(text);
-            const acquired = await tryAcquireInstagramSendLock(pageIdForSend, senderId, contentHash);
-            if (!acquired) {
+            const sendAcquired = await tryAcquireInstagramSendLock(pageIdForSend, senderId, contentHash);
+            if (!sendAcquired) {
               logger.info({ correlationId, eventId, provider }, 'Conflict recovery: skipping send (already replied to this message)');
               await markWebhookProcessed(eventId, provider);
               await logAuditEvent({
@@ -1117,6 +1135,12 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
                 status: 'success',
                 metadata: { event_id: eventId, provider, recipient_id: senderId, recovered: true, skipped_send_throttle: true },
               });
+              return;
+            }
+            const replyAcquired = await tryAcquireReplyThrottle(pageIdForSend, senderId);
+            if (!replyAcquired) {
+              logger.info({ correlationId, eventId, provider }, 'Conflict recovery: skipping send (reply throttle)');
+              await markWebhookProcessed(eventId, provider);
               return;
             }
           }
