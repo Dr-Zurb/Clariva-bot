@@ -4,6 +4,9 @@ import appointmentRoutes from './appointments';
 import paymentRoutes from './payments';
 import patientRoutes from './patients';
 import instagramSettingsRoutes from './settings/instagram';
+import doctorSettingsRoutes from './settings/doctor';
+import availabilityRoutes from './availability';
+import blockedTimesRoutes from './blocked-times';
 
 const router = Router();
 
@@ -32,5 +35,14 @@ router.use('/patients', patientRoutes);
 
 // Instagram connect (e-task-3): GET /connect (auth), GET /callback
 router.use('/settings/instagram', instagramSettingsRoutes);
+
+// Doctor settings (e-task-2): GET/PATCH /settings/doctor (auth required)
+router.use('/settings/doctor', doctorSettingsRoutes);
+
+// Availability (e-task-3): GET/PUT /availability (auth required)
+router.use('/availability', availabilityRoutes);
+
+// Blocked times (e-task-3): GET/POST/DELETE /blocked-times (auth required)
+router.use('/blocked-times', blockedTimesRoutes);
 
 export default router;

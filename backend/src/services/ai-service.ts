@@ -62,12 +62,12 @@ revoke_consent: User wants to delete their data or revoke consent (e.g. "delete 
 Respond with a single JSON object: { "intent": "<one of the valid intents>", "confidence": <number 0.0 to 1.0> }.
 Use "unknown" only when the message does not clearly match any other intent.`;
 
-/** Receptionist-only system prompt for response generation (e-task-3). No medical advice. */
-const RESPONSE_SYSTEM_PROMPT = `You are a warm, friendly medical practice receptionist for Clariva Care. You help with scheduling and general questions. You do NOT diagnose or give medical advice.
+/** Base receptionist system prompt (e-task-3). Practice name injected dynamically (e-task-4). */
+const RESPONSE_SYSTEM_PROMPT_BASE = `You are a warm, friendly medical practice receptionist. You help with scheduling and general questions. You do NOT diagnose or give medical advice.
 
 IMPORTANT - Our booking flow collects: full name, phone number; then we show numbered slots for date/time (user picks 1, 2, 3). We do NOT ask for ZIP code, "new or established patient", or free-text "what date/time?". Keep replies brief and natural.
 
-CRITICAL - When currentIntent is book_appointment, the user has ALREADY chosen to book. NEVER ask "would you like to book or ask a question?"—go straight to the current step (e.g. ask for full name). Never repeat that choice prompt. If state shows collecting_name, collecting_phone, consent, or selecting_slot, proceed with the current step only. If the user asks "what's YOUR name" (to the bot), say you're Clariva Care's assistant and ask for THEIR name—one brief reply only.
+CRITICAL - When currentIntent is book_appointment, the user has ALREADY chosen to book. NEVER ask "would you like to book or ask a question?"—go straight to the current step (e.g. ask for full name). Never repeat that choice prompt. If state shows collecting_name, collecting_phone, consent, or selecting_slot, proceed with the current step only. If the user asks "what's YOUR name" (to the bot), say you're the practice's assistant and ask for THEIR name—one brief reply only.
 
 NEVER ask "what date/time?" or "share two date/time options"—we use a slot-selection flow. When we need date/time, the system shows numbered slots; the user picks 1, 2, 3. Your job is only to collect name, phone, or handle consent/other questions.
 
@@ -253,6 +253,16 @@ export async function classifyIntent(
 // Response Generation (e-task-3)
 // ============================================================================
 
+/** Optional doctor context for personalized AI responses (e-task-4) */
+export interface DoctorContext {
+  practice_name?: string | null;
+  business_hours_summary?: string | null;
+  welcome_message?: string | null;
+  specialty?: string | null;
+  address_summary?: string | null;
+  cancellation_policy_hours?: number | null;
+}
+
 export interface GenerateResponseInput {
   conversationId: string;
   currentIntent: Intent;
@@ -260,6 +270,7 @@ export interface GenerateResponseInput {
   recentMessages: Message[];
   currentUserMessage: string;
   correlationId: string;
+  doctorContext?: DoctorContext;
 }
 
 /**
@@ -272,6 +283,31 @@ export interface GenerateResponseInput {
  * @param input - Conversation context and current user message
  * @returns Generated reply text or fallback
  */
+function buildResponseSystemPrompt(doctorContext?: DoctorContext): string {
+  const practiceName = doctorContext?.practice_name?.trim() || 'Clariva Care';
+  let prompt = RESPONSE_SYSTEM_PROMPT_BASE.replace(
+    /practice's assistant/g,
+    `${practiceName}'s assistant`
+  );
+  const parts: string[] = [];
+  if (doctorContext?.business_hours_summary?.trim()) {
+    parts.push(`We're open: ${doctorContext.business_hours_summary.trim()}.`);
+  }
+  if (doctorContext?.specialty?.trim()) {
+    parts.push(`Our specialty: ${doctorContext.specialty.trim()}.`);
+  }
+  if (doctorContext?.address_summary?.trim()) {
+    parts.push(`Location: ${doctorContext.address_summary.trim()}.`);
+  }
+  if (doctorContext?.cancellation_policy_hours != null && doctorContext.cancellation_policy_hours > 0) {
+    parts.push(`Please cancel at least ${doctorContext.cancellation_policy_hours} hours in advance if you need to reschedule.`);
+  }
+  if (parts.length > 0) {
+    prompt += `\n\nPractice info (use when relevant): ${parts.join(' ')}`;
+  }
+  return prompt;
+}
+
 export async function generateResponse(input: GenerateResponseInput): Promise<string> {
   const {
     conversationId,
@@ -280,6 +316,7 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
     recentMessages,
     currentUserMessage,
     correlationId,
+    doctorContext,
   } = input;
 
   const config = getOpenAIConfig();
@@ -325,8 +362,9 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
     state?.step === 'consent'
       ? ' The user has provided their details. Ask for consent in plain language: explain we will store their name, phone, and other info for booking and care, per our privacy policy. Ask if they agree (yes/no).'
       : '';
+  const systemPrompt = buildResponseSystemPrompt(doctorContext);
   const systemContent =
-    RESPONSE_SYSTEM_PROMPT +
+    systemPrompt +
     `\n\nCurrent detected intent for the latest user message: ${currentIntent}.${stepContext}${collectedContext}${collectionHint}${consentHint}`;
 
   const messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [

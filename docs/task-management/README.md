@@ -81,6 +81,15 @@ Detailed implementation tasks for the two MVP must-haves (Connect Instagram + Do
 
 Tasks: e-task-1 through e-task-6 (Connect Instagram), e-task-7 through e-task-12 (Doctor Setup). Use [TASK_TEMPLATE.md](./TASK_TEMPLATE.md) and [TASK_MANAGEMENT_GUIDE.md](./TASK_MANAGEMENT_GUIDE.md) when executing them.
 
+### Doctor Settings Feature (2026-03-09)
+
+Phased rollout for per-doctor practice settings, availability, and bot integration:
+
+- **Reference:** [DOCTOR_SETTINGS_PHASES.md](../Reference/DOCTOR_SETTINGS_PHASES.md)
+- **Daily plan:** [docs/Development/Daily-plans/March 2026/2026-03-09/README.md](../Development/Daily-plans/March%202026/2026-03-09/README.md)
+
+Tasks: e-task-1 (migration), e-task-2 (settings API), e-task-3 (availability/blocked-times API), e-task-4 (bot integration), e-task-5 (frontend dashboard).
+
 ---
 
 ## 🔗 Related Documentation

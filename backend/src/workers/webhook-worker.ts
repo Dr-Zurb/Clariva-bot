@@ -62,6 +62,9 @@ import {
 } from '../services/consent-service';
 import { processPaymentSuccess, createPaymentLink } from '../services/payment-service';
 import { getDoctorSettings } from '../services/doctor-settings-service';
+import type { DoctorSettingsRow } from '../types/doctor-settings';
+import type { GetAvailableSlotsOptions } from '../services/availability-service';
+import type { DoctorContext } from '../services/ai-service';
 import {
   sendNewAppointmentToDoctor,
   sendPaymentConfirmationToPatient,
@@ -369,25 +372,86 @@ function getTomorrowDate(): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Format slots for display: "1. 2:00 PM\n2. 2:30 PM" */
-function formatSlotsForDisplay(slots: AvailableSlot[], dateStr: string): string {
-  if (slots.length === 0) {
-    return `No available slots for ${dateStr}. Please try another day.`;
+/** Build slot options from doctor settings (e-task-4) */
+function getSlotOptionsFromSettings(settings: DoctorSettingsRow | null): GetAvailableSlotsOptions {
+  return {
+    slotIntervalMinutes: settings?.slot_interval_minutes ?? env.SLOT_INTERVAL_MINUTES,
+    minAdvanceHours: settings?.min_advance_hours ?? 0,
+  };
+}
+
+/** Build doctor context for AI (e-task-4) */
+function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): DoctorContext | undefined {
+  if (!settings) return undefined;
+  const hasAny =
+    settings.practice_name ||
+    settings.business_hours_summary ||
+    settings.welcome_message ||
+    settings.specialty ||
+    settings.address_summary ||
+    (settings.cancellation_policy_hours != null && settings.cancellation_policy_hours > 0);
+  if (!hasAny) return undefined;
+  return {
+    practice_name: settings.practice_name,
+    business_hours_summary: settings.business_hours_summary,
+    welcome_message: settings.welcome_message,
+    specialty: settings.specialty,
+    address_summary: settings.address_summary,
+    cancellation_policy_hours: settings.cancellation_policy_hours,
+  };
+}
+
+/** Multi-day slot search: try startDate, then next days until slots found or maxDays reached (e-task-4) */
+async function getSlotsWithMultiDaySearch(
+  doctorId: string,
+  startDate: string,
+  options: GetAvailableSlotsOptions,
+  maxAdvanceDays: number,
+  correlationId: string
+): Promise<{ slots: AvailableSlot[]; dateUsed: string }> {
+  const today = new Date().toISOString().slice(0, 10);
+  let current = startDate;
+  for (let i = 0; i < maxAdvanceDays; i++) {
+    const slots = await getAvailableSlots(doctorId, current, correlationId, options);
+    if (slots.length > 0) {
+      return { slots, dateUsed: current };
+    }
+    const nextDate = new Date(current + 'T12:00:00Z');
+    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+    current = nextDate.toISOString().slice(0, 10);
+    if (current <= today) continue;
   }
+  return { slots: [], dateUsed: startDate };
+}
+
+/** Format slots for display: "1. 2:00 PM\n2. 2:30 PM" (e-task-4: optional timezone, noSlotsMessage) */
+function formatSlotsForDisplay(
+  slots: AvailableSlot[],
+  dateStr: string,
+  timezone?: string,
+  noSlotsMessage?: string
+): string {
+  if (slots.length === 0) {
+    return noSlotsMessage ?? `No available slots for ${dateStr}. Please try another day.`;
+  }
+  const opts: Intl.DateTimeFormatOptions = {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    ...(timezone ? { timeZone: timezone } : {}),
+  };
   const lines = slots.map((slot, i) => {
     const start = new Date(slot.start);
-    const timeStr = start.toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    });
+    const timeStr = start.toLocaleTimeString('en-US', opts);
     return `${i + 1}. ${timeStr}`;
   });
-  const dateFormatted = new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', {
+  const dateOpts: Intl.DateTimeFormatOptions = {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
-  });
+    ...(timezone ? { timeZone: timezone } : {}),
+  };
+  const dateFormatted = new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', dateOpts);
   return `Here are available slots for ${dateFormatted}:\n${lines.join('\n')}\n\nReply with the number (1, 2, 3...) to book.`;
 }
 
@@ -739,6 +803,13 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     let state = await getConversationState(conversation.id, correlationId);
     const recentMessages = await getRecentMessages(conversation.id, 10, correlationId);
 
+    const doctorSettings = await getDoctorSettings(doctorId);
+    const slotOptions = getSlotOptionsFromSettings(doctorSettings);
+    const doctorContext = getDoctorContextFromSettings(doctorSettings);
+    const maxAdvanceDays = doctorSettings?.max_advance_booking_days ?? 90;
+    const timezone = doctorSettings?.timezone ?? 'Asia/Kolkata';
+    const practiceName = doctorSettings?.practice_name?.trim() || 'Clariva Care';
+
     let replyText: string;
     const isBookIntent = intentResult.intent === 'book_appointment';
     const isRevokeIntent = intentResult.intent === 'revoke_consent';
@@ -770,14 +841,26 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             'instagram_dm',
             correlationId
           );
-          const slotDate = getTomorrowDate();
-          const slots = await getAvailableSlots(doctorId, slotDate, correlationId);
-          replyText = "Thanks! I've saved your details. " + formatSlotsForDisplay(slots, slotDate);
+          const startDate = getTomorrowDate();
+          const { slots, dateUsed } = await getSlotsWithMultiDaySearch(
+            doctorId,
+            startDate,
+            slotOptions,
+            maxAdvanceDays,
+            correlationId
+          );
+          const noSlotsMsg =
+            slots.length === 0
+              ? `No slots available in the next ${maxAdvanceDays} days. Please check back later.`
+              : undefined;
+          replyText =
+            "Thanks! I've saved your details. " +
+            formatSlotsForDisplay(slots, dateUsed, timezone, noSlotsMsg);
           state = {
             ...state,
             lastIntent: intentResult.intent,
-            step: 'selecting_slot',
-            slotSelectionDate: slotDate,
+            step: slots.length > 0 ? 'selecting_slot' : 'responded',
+            slotSelectionDate: slots.length > 0 ? dateUsed : undefined,
             updatedAt: new Date().toISOString(),
           };
           await updateConversationState(conversation.id, state, correlationId);
@@ -802,6 +885,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             recentMessages,
             currentUserMessage: text,
             correlationId,
+            doctorContext,
           });
         }
       } else if (justStartingCollection) {
@@ -820,6 +904,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           recentMessages,
           currentUserMessage: text,
           correlationId,
+          doctorContext,
         });
       } else {
         const nextField = getNextCollectionField(state.collectedFields ?? []);
@@ -840,6 +925,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             recentMessages,
             currentUserMessage: text,
             correlationId,
+            doctorContext,
           });
         } else if (nextField) {
           const result = validateAndApply(
@@ -859,12 +945,13 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
               recentMessages,
               currentUserMessage: text,
               correlationId,
+              doctorContext,
             });
           } else {
             // When user asks about the bot's name, use deterministic reply (avoids AI repetition)
             replyText =
               nextField === 'name' && isAskingAboutBotName(text)
-                ? "I'm Clariva Care's scheduling assistant. To book your appointment, what's your full name?"
+                ? `I'm ${practiceName}'s scheduling assistant. To book your appointment, what's your full name?`
                 : (result.replyOverride ?? FALLBACK_REPLY);
           }
         } else {
@@ -875,6 +962,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             recentMessages,
             currentUserMessage: text,
             correlationId,
+            doctorContext,
           });
         }
       }
@@ -883,7 +971,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       const choiceIndex = parseSlotChoice(text);
 
       if (choiceIndex !== null) {
-        const slots = await getAvailableSlots(doctorId, slotDate, correlationId);
+        const slots = await getAvailableSlots(doctorId, slotDate, correlationId, slotOptions);
         const slotIndex = choiceIndex - 1;
         if (slotIndex >= 0 && slotIndex < slots.length) {
           const slot = slots[slotIndex];
@@ -903,7 +991,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
                   patientName: patient.name,
                   patientPhone: patient.phone,
                   appointmentDate: slot.start,
-                  notes: undefined,
+                  notes: doctorSettings?.default_notes ?? undefined,
                 },
                 correlationId
               );
@@ -979,8 +1067,15 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
               };
             } catch (err) {
               if (err instanceof ConflictError) {
-                const freshSlots = await getAvailableSlots(doctorId, slotDate, correlationId);
-                replyText = "That slot was just taken. " + formatSlotsForDisplay(freshSlots, slotDate);
+                const freshSlots = await getAvailableSlots(
+                  doctorId,
+                  slotDate,
+                  correlationId,
+                  slotOptions
+                );
+                replyText =
+                  "That slot was just taken. " +
+                  formatSlotsForDisplay(freshSlots, slotDate, timezone);
                 state = { ...state, slotSelectionDate: slotDate, updatedAt: new Date().toISOString() };
               } else {
                 replyText = "Sorry, we couldn't complete the booking. Please try again or choose another slot.";
@@ -989,25 +1084,49 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             }
           }
         } else {
-          const slots = await getAvailableSlots(doctorId, slotDate, correlationId);
-          replyText = `Please choose a number between 1 and ${slots.length}.\n\n` + formatSlotsForDisplay(slots, slotDate);
+          const slots = await getAvailableSlots(
+            doctorId,
+            slotDate,
+            correlationId,
+            slotOptions
+          );
+          replyText =
+            `Please choose a number between 1 and ${slots.length}.\n\n` +
+            formatSlotsForDisplay(slots, slotDate, timezone);
           state = { ...state, slotSelectionDate: slotDate, updatedAt: new Date().toISOString() };
         }
       } else {
-        const slots = await getAvailableSlots(doctorId, slotDate, correlationId);
-        replyText = "Please reply with the number of your preferred slot (1, 2, 3...).\n\n" + formatSlotsForDisplay(slots, slotDate);
+        const slots = await getAvailableSlots(
+          doctorId,
+          slotDate,
+          correlationId,
+          slotOptions
+        );
+        replyText =
+          "Please reply with the number of your preferred slot (1, 2, 3...).\n\n" +
+          formatSlotsForDisplay(slots, slotDate, timezone);
         state = { ...state, slotSelectionDate: slotDate, updatedAt: new Date().toISOString() };
       }
       await updateConversationState(conversation.id, state, correlationId);
     } else if (isBookIntent && state.step === 'responded') {
-      const slotDate = getTomorrowDate();
-      const slots = await getAvailableSlots(doctorId, slotDate, correlationId);
-      replyText = formatSlotsForDisplay(slots, slotDate);
+      const startDate = getTomorrowDate();
+      const { slots, dateUsed } = await getSlotsWithMultiDaySearch(
+        doctorId,
+        startDate,
+        slotOptions,
+        maxAdvanceDays,
+        correlationId
+      );
+      const noSlotsMsg =
+        slots.length === 0
+          ? `No slots available in the next ${maxAdvanceDays} days. Please check back later.`
+          : undefined;
+      replyText = formatSlotsForDisplay(slots, dateUsed, timezone, noSlotsMsg);
       state = {
         ...state,
         lastIntent: intentResult.intent,
-        step: 'selecting_slot',
-        slotSelectionDate: slotDate,
+        step: slots.length > 0 ? 'selecting_slot' : 'responded',
+        slotSelectionDate: slots.length > 0 ? dateUsed : undefined,
         updatedAt: new Date().toISOString(),
       };
       await updateConversationState(conversation.id, state, correlationId);
@@ -1019,6 +1138,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         recentMessages,
         currentUserMessage: text,
         correlationId,
+        doctorContext,
       });
     }
 
@@ -1111,6 +1231,9 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
               recentMessages,
               currentUserMessage: text,
               correlationId,
+              doctorContext: getDoctorContextFromSettings(
+                await getDoctorSettings(doctorId)
+              ),
             })) || FALLBACK_REPLY;
           await createMessage(
             {

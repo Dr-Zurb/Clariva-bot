@@ -11,7 +11,7 @@ import { env } from '../config/env';
 import { Availability, InsertAvailability, UpdateAvailability, BlockedTime } from '../types';
 import { handleSupabaseError, validateOwnership } from '../utils/db-helpers';
 import { logDataModification, logDataAccess, logAuditEvent } from '../utils/audit-logger';
-import { InternalError } from '../utils/errors';
+import { InternalError, NotFoundError } from '../utils/errors';
 
 /** Slot interval in minutes (default 30) */
 const SLOT_INTERVAL_MINUTES = env.SLOT_INTERVAL_MINUTES;
@@ -61,6 +61,12 @@ export async function getDoctorAvailability(
   return (availability || []) as Availability[];
 }
 
+/** Options for getAvailableSlots (per-doctor overrides) */
+export interface GetAvailableSlotsOptions {
+  slotIntervalMinutes?: number;
+  minAdvanceHours?: number;
+}
+
 /**
  * Get available time slots for a doctor on a date
  *
@@ -71,18 +77,23 @@ export async function getDoctorAvailability(
  * @param doctorId - Doctor ID
  * @param date - Date string YYYY-MM-DD
  * @param correlationId - Request correlation ID
+ * @param options - Optional slotIntervalMinutes (default env), minAdvanceHours (default 0)
  * @returns Array of available slots { start, end, durationMinutes }; empty array if no availability
  * @throws InternalError if service role client not available or database fails
  */
 export async function getAvailableSlots(
   doctorId: string,
   date: string,
-  correlationId: string
+  correlationId: string,
+  options?: GetAvailableSlotsOptions
 ): Promise<AvailableSlot[]> {
   const supabaseAdmin = getSupabaseAdminClient();
   if (!supabaseAdmin) {
     throw new InternalError('Service role client not available for slot lookup');
   }
+
+  const slotInterval = options?.slotIntervalMinutes ?? SLOT_INTERVAL_MINUTES;
+  const minAdvanceHours = options?.minAdvanceHours ?? 0;
 
   const dayOfWeek = getDayOfWeek(date);
   const { dayStart, dayEnd } = getDayBounds(date);
@@ -96,12 +107,12 @@ export async function getAvailableSlots(
   const slots = generateSlotsFromAvailability(
     date,
     availabilityRows as Availability[],
-    SLOT_INTERVAL_MINUTES
+    slotInterval
   );
 
   const blockedList = blockedRows as BlockedTime[];
   const appointmentList = appointmentRows as { appointment_date: Date | string }[];
-  const filtered = slots.filter((slot) => {
+  let filtered = slots.filter((slot) => {
     const slotStart = new Date(slot.start);
     const slotEnd = new Date(slot.end);
     const blocked = blockedList.some((b) =>
@@ -109,11 +120,17 @@ export async function getAvailableSlots(
     );
     const booked = appointmentList.some((a) => {
       const appStart = new Date(a.appointment_date);
-      const appEnd = new Date(appStart.getTime() + SLOT_INTERVAL_MINUTES * 60 * 1000);
+      const appEnd = new Date(appStart.getTime() + slotInterval * 60 * 1000);
       return overlaps(slotStart, slotEnd, appStart, appEnd);
     });
     return !blocked && !booked;
   });
+
+  if (minAdvanceHours > 0) {
+    const now = new Date();
+    const cutoff = new Date(now.getTime() + minAdvanceHours * 60 * 60 * 1000);
+    filtered = filtered.filter((slot) => new Date(slot.start) >= cutoff);
+  }
 
   await logAuditEvent({
     correlationId,
@@ -351,4 +368,213 @@ export async function updateAvailability(
   );
 
   return updated as Availability;
+}
+
+/**
+ * Replace entire availability for a doctor (delete all, insert new).
+ * Used by PUT /api/v1/availability.
+ *
+ * @param doctorId - Doctor ID (must match userId)
+ * @param slots - Array of { day_of_week, start_time, end_time }
+ * @param correlationId - Request correlation ID
+ * @param userId - Authenticated user ID
+ * @returns Array of created availability records
+ */
+export async function replaceDoctorAvailability(
+  doctorId: string,
+  slots: Array<{ day_of_week: number; start_time: string; end_time: string }>,
+  correlationId: string,
+  userId: string
+): Promise<Availability[]> {
+  validateOwnership(doctorId, userId);
+
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const { error: deleteError } = await admin
+    .from('availability')
+    .delete()
+    .eq('doctor_id', doctorId);
+
+  if (deleteError) {
+    handleSupabaseError(deleteError, correlationId);
+  }
+
+  if (slots.length === 0) {
+    await logDataModification(correlationId, userId, 'update', 'availability', doctorId);
+    return [];
+  }
+
+  const normalizeTime = (t: string): string => {
+    const parts = t.split(':');
+    const h = parts[0]?.padStart(2, '0') ?? '00';
+    const m = (parts[1] ?? '00').padStart(2, '0');
+    const s = (parts[2] ?? '00').padStart(2, '0');
+    return `${h}:${m}:${s}`;
+  };
+
+  const insertRows = slots.map((s) => ({
+    doctor_id: doctorId,
+    day_of_week: s.day_of_week,
+    start_time: normalizeTime(s.start_time),
+    end_time: normalizeTime(s.end_time),
+    is_available: true,
+  }));
+
+  const { data: inserted, error: insertError } = await admin
+    .from('availability')
+    .insert(insertRows)
+    .select();
+
+  if (insertError) {
+    handleSupabaseError(insertError, correlationId);
+  }
+
+  await logDataModification(correlationId, userId, 'update', 'availability', doctorId);
+
+  return (inserted || []) as Availability[];
+}
+
+/**
+ * Get blocked times for a doctor (API).
+ * Optionally filter by start_date and end_date (YYYY-MM-DD).
+ *
+ * @param doctorId - Doctor ID (must match userId)
+ * @param correlationId - Request correlation ID
+ * @param userId - Authenticated user ID
+ * @param filters - Optional { startDate, endDate } for date range
+ * @returns Array of blocked times
+ */
+export async function getBlockedTimesForDoctor(
+  doctorId: string,
+  correlationId: string,
+  userId: string,
+  filters?: { startDate?: string; endDate?: string }
+): Promise<BlockedTime[]> {
+  validateOwnership(doctorId, userId);
+
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  let query = admin
+    .from('blocked_times')
+    .select('*')
+    .eq('doctor_id', doctorId)
+    .order('start_time', { ascending: true });
+
+  if (filters?.startDate) {
+    const dayStart = `${filters.startDate}T00:00:00.000Z`;
+    query = query.gte('end_time', dayStart);
+  }
+  if (filters?.endDate) {
+    const dayEnd = `${filters.endDate}T23:59:59.999Z`;
+    query = query.lte('start_time', dayEnd);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    handleSupabaseError(error, correlationId);
+  }
+
+  await logDataAccess(correlationId, userId, 'blocked_times', undefined);
+
+  return (data || []) as BlockedTime[];
+}
+
+/**
+ * Create blocked time for a doctor.
+ *
+ * @param doctorId - Doctor ID (must match userId)
+ * @param data - { start_time, end_time, reason? } (ISO datetime strings)
+ * @param correlationId - Request correlation ID
+ * @param userId - Authenticated user ID
+ * @returns Created blocked time
+ */
+export async function createBlockedTimeForDoctor(
+  doctorId: string,
+  data: { start_time: string; end_time: string; reason?: string },
+  correlationId: string,
+  userId: string
+): Promise<BlockedTime> {
+  validateOwnership(doctorId, userId);
+
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const insertData = {
+    doctor_id: doctorId,
+    start_time: data.start_time,
+    end_time: data.end_time,
+    reason: data.reason ?? null,
+  };
+
+  const { data: created, error } = await admin
+    .from('blocked_times')
+    .insert(insertData)
+    .select()
+    .single();
+
+  if (error || !created) {
+    handleSupabaseError(error, correlationId);
+  }
+
+  await logDataModification(correlationId, userId, 'create', 'blocked_times', created.id);
+
+  return created as unknown as BlockedTime;
+}
+
+/**
+ * Delete blocked time by ID.
+ * Validates ownership (blocked time must belong to doctor).
+ *
+ * @param id - Blocked time ID
+ * @param doctorId - Doctor ID (must match userId)
+ * @param correlationId - Request correlation ID
+ * @param userId - Authenticated user ID
+ */
+export async function deleteBlockedTimeForDoctor(
+  id: string,
+  doctorId: string,
+  correlationId: string,
+  userId: string
+): Promise<void> {
+  validateOwnership(doctorId, userId);
+
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const { data: existing, error: fetchError } = await admin
+    .from('blocked_times')
+    .select('id, doctor_id')
+    .eq('id', id)
+    .single();
+
+  if (fetchError || !existing) {
+    handleSupabaseError(fetchError, correlationId);
+  }
+
+  if (existing.doctor_id !== doctorId) {
+    throw new NotFoundError('Blocked time not found');
+  }
+
+  const { error: deleteError } = await admin
+    .from('blocked_times')
+    .delete()
+    .eq('id', id)
+    .eq('doctor_id', doctorId);
+
+  if (deleteError) {
+    handleSupabaseError(deleteError, correlationId);
+  }
+
+  await logDataModification(correlationId, userId, 'delete', 'blocked_times', id);
 }

@@ -313,3 +313,161 @@ export function validateGetPatientParams(params: unknown): GetPatientParams {
   }
   return result.data;
 }
+
+// ============================================================================
+// Doctor Settings PATCH (e-task-2)
+// ============================================================================
+
+const SLOT_INTERVAL_VALUES = [15, 20, 30, 45, 60] as const;
+
+export const patchDoctorSettingsSchema = z
+  .object({
+    practice_name: z.string().max(200).trim().nullable().optional(),
+    timezone: z.string().max(100).trim().optional(),
+    slot_interval_minutes: z
+      .number()
+      .int()
+      .refine(
+        (v): v is (typeof SLOT_INTERVAL_VALUES)[number] => SLOT_INTERVAL_VALUES.includes(v as (typeof SLOT_INTERVAL_VALUES)[number]),
+        'slot_interval_minutes must be 15, 20, 30, 45, or 60'
+      )
+      .optional(),
+    max_advance_booking_days: z.number().int().min(1).max(365).optional(),
+    min_advance_hours: z.number().int().min(0).optional(),
+    business_hours_summary: z.string().max(500).trim().nullable().optional(),
+    cancellation_policy_hours: z.number().int().min(0).nullable().optional(),
+    max_appointments_per_day: z.number().int().min(1).nullable().optional(),
+    booking_buffer_minutes: z.number().int().min(0).nullable().optional(),
+    welcome_message: z.string().max(1000).trim().nullable().optional(),
+    specialty: z.string().max(200).trim().nullable().optional(),
+    address_summary: z.string().max(500).trim().nullable().optional(),
+    consultation_types: z.string().max(200).trim().nullable().optional(),
+    default_notes: z.string().max(1000).trim().nullable().optional(),
+  })
+  .strict();
+
+export type PatchDoctorSettingsBody = z.infer<typeof patchDoctorSettingsSchema>;
+
+export function validatePatchDoctorSettings(body: unknown): PatchDoctorSettingsBody {
+  const result = patchDoctorSettingsSchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+// ============================================================================
+// Availability PUT (e-task-3)
+// ============================================================================
+
+const TIME_REGEX = /^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
+
+function parseTimeToMinutes(t: string): number {
+  const parts = t.split(':');
+  const h = parseInt(parts[0] || '0', 10);
+  const m = parseInt(parts[1] || '0', 10);
+  const s = parseInt(parts[2] || '0', 10);
+  return h * 3600 + m * 60 + s;
+}
+
+export const putAvailabilitySchema = z.object({
+  slots: z.array(
+    z
+      .object({
+        day_of_week: z.number().int().min(0).max(6, 'day_of_week must be 0-6 (Sunday-Saturday)'),
+        start_time: z
+          .string()
+          .regex(TIME_REGEX, 'start_time must be HH:MM or HH:MM:SS'),
+        end_time: z
+          .string()
+          .regex(TIME_REGEX, 'end_time must be HH:MM or HH:MM:SS'),
+      })
+      .refine(
+        (s) => parseTimeToMinutes(s.start_time) < parseTimeToMinutes(s.end_time),
+        'start_time must be before end_time'
+      )
+  ),
+});
+
+export type PutAvailabilityBody = z.infer<typeof putAvailabilitySchema>;
+
+export function validatePutAvailability(body: unknown): PutAvailabilityBody {
+  const result = putAvailabilitySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+// ============================================================================
+// Blocked Times (e-task-3)
+// ============================================================================
+
+export const postBlockedTimeSchema = z
+  .object({
+    start_time: z.string().datetime({ message: 'start_time must be ISO 8601 datetime' }),
+    end_time: z.string().datetime({ message: 'end_time must be ISO 8601 datetime' }),
+    reason: z.string().max(500).trim().optional(),
+  })
+  .refine((s) => new Date(s.start_time) < new Date(s.end_time), 'start_time must be before end_time');
+
+export type PostBlockedTimeBody = z.infer<typeof postBlockedTimeSchema>;
+
+export function validatePostBlockedTime(body: unknown): PostBlockedTimeBody {
+  const result = postBlockedTimeSchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+export const getBlockedTimesQuerySchema = z.object({
+  start_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'start_date must be YYYY-MM-DD')
+    .optional(),
+  end_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'end_date must be YYYY-MM-DD')
+    .optional(),
+});
+
+export type GetBlockedTimesQuery = z.infer<typeof getBlockedTimesQuerySchema>;
+
+export function validateGetBlockedTimesQuery(
+  query: Record<string, string | string[] | undefined>
+): GetBlockedTimesQuery {
+  const normalized: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(query)) {
+    normalized[k] = typeof v === 'string' ? v : Array.isArray(v) ? String(v[0]) : undefined;
+  }
+  const result = getBlockedTimesQuerySchema.safeParse(normalized);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid query';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+export const deleteBlockedTimeParamsSchema = z.object({
+  id: z.string().uuid('Invalid blocked time ID'),
+});
+
+export type DeleteBlockedTimeParams = z.infer<typeof deleteBlockedTimeParamsSchema>;
+
+export function validateDeleteBlockedTimeParams(params: unknown): DeleteBlockedTimeParams {
+  const result = deleteBlockedTimeParamsSchema.safeParse(params);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid blocked time ID';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
