@@ -89,6 +89,29 @@ export function isNonActionableInstagramEvent(payload: unknown): boolean {
 }
 
 /**
+ * Check if payload is a message echo (our own sent message).
+ * Meta sends our sent messages back as "message" webhooks; processing them causes reply loops.
+ * Echo has: message.is_echo === true, or sender.id === pageId (we are the sender).
+ */
+export function isInstagramMessageEcho(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') return false;
+  const p = payload as { object?: string; entry?: Array<{ id?: string; messaging?: Array<{ sender?: { id?: string }; message?: { is_echo?: boolean } }> }> };
+  if (p.object !== 'instagram' || !p.entry?.length) return false;
+  const entry0 = p.entry[0];
+  if (!entry0) return false;
+  const pageId = entry0.id != null ? String(entry0.id) : null;
+  const messaging = entry0.messaging;
+  if (!Array.isArray(messaging) || messaging.length === 0) return false;
+  const m = messaging[0];
+  if (!m || typeof m !== 'object') return false;
+  const msg = m.message as { is_echo?: boolean } | undefined;
+  if (msg?.is_echo === true) return true;
+  const senderId = (m.sender as { id?: string } | undefined)?.id;
+  if (senderId && pageId && senderId === pageId) return true;
+  return false;
+}
+
+/**
  * Extract (pageId, senderId, textHash) from Instagram message payload for content-based dedup.
  * Meta sends multiple "message" webhooks with different mids for the same user message.
  * We deduplicate by (pageId, senderId, text) within a 1-minute window.
@@ -101,6 +124,7 @@ export function extractInstagramMessageForDedup(payload: unknown): {
   textHash: string;
 } | null {
   if (!payload || typeof payload !== 'object') return null;
+  if (isInstagramMessageEcho(payload)) return null;
   const p = payload as InstagramWebhookPayload;
   if (p.object !== 'instagram' || !p.entry?.length) return null;
   const entry0 = p.entry[0] as Record<string, unknown> | undefined;

@@ -142,7 +142,7 @@ function parseInstagramMessage(
     if (!Array.isArray(list)) continue;
     for (const item of list) {
       const m = item as Record<string, unknown> & {
-        message?: { mid?: string; text?: string };
+        message?: { mid?: string; text?: string; is_echo?: boolean };
         message_edit?: { mid?: string; text?: string; num_edit?: number };
         recipient?: { id?: string };
         is_echo?: boolean;
@@ -174,6 +174,7 @@ function parseInstagramMessage(
       }
       if (!senderId) continue;
       if (m.is_echo === true || m.is_self === true) continue;
+      if ((m.message as { is_echo?: boolean } | undefined)?.is_echo === true) continue;
       // Never use page ID as recipient (Meta returns "No matching user found")
       if (pageIds.includes(senderId)) continue;
       // Incoming message (new or edited)

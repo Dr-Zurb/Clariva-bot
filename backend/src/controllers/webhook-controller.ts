@@ -12,6 +12,7 @@ import {
   generateFallbackEventId,
   getInstagramPayloadStructure,
   isNonActionableInstagramEvent,
+  isInstagramMessageEcho,
 } from '../utils/webhook-event-id';
 import {
   isWebhookProcessed,
@@ -247,6 +248,16 @@ export const handleInstagramWebhook = asyncHandler(
       logger.info(
         { correlationId, payloadType },
         'Instagram webhook: message_edit only - returning 200 without queueing (message event will be processed)'
+      );
+      res.status(200).json(successResponse({ message: 'OK' }, req));
+      return;
+    }
+
+    // Skip message echo: Meta sends our own sent messages back as "message" webhooks. Processing them causes reply loops.
+    if (isInstagramMessageEcho(req.body)) {
+      logger.info(
+        { correlationId },
+        'Instagram webhook: message echo (our sent message) - returning 200 without queueing'
       );
       res.status(200).json(successResponse({ message: 'OK' }, req));
       return;
