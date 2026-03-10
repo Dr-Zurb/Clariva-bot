@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
   getAvailability,
@@ -55,7 +54,6 @@ function isWholeDay(bt: BlockedTime): boolean {
  * Availability page: Weekly calendar + Blocked Times (e-task-9).
  */
 export default function AvailabilityPage() {
-  const pathname = usePathname();
   const [slots, setSlots] = useState<AvailabilitySlot[]>([]);
   const [blockedTimes, setBlockedTimes] = useState<BlockedTime[]>([]);
   const [loading, setLoading] = useState(true);
@@ -81,7 +79,6 @@ export default function AvailabilityPage() {
   const copySelectedRef = useRef<HTMLDivElement>(null);
   const isInitialLoad = useRef(true);
   const saveImmediatelyRef = useRef(false);
-  const slotsRef = useRef<AvailabilitySlot[]>([]);
   const saveInProgressRef = useRef(false);
   const pendingSlotsRef = useRef<AvailabilitySlot[] | null>(null);
   const fetchAll = useCallback(async () => {
@@ -118,21 +115,7 @@ export default function AvailabilityPage() {
   }, []);
 
   useEffect(() => {
-    if (pathname?.endsWith("/availability")) {
-      setLoading(true);
-      fetchAll();
-    }
-  }, [pathname, fetchAll]);
-
-  useEffect(() => {
-    const onPageShow = (e: PageTransitionEvent) => {
-      if (e.persisted && typeof window !== "undefined" && window.location.pathname.endsWith("/availability")) {
-        setLoading(true);
-        fetchAll();
-      }
-    };
-    window.addEventListener("pageshow", onPageShow);
-    return () => window.removeEventListener("pageshow", onPageShow);
+    fetchAll();
   }, [fetchAll]);
 
   const performSave = useCallback(async (slotsToSave: AvailabilitySlot[]) => {
@@ -178,8 +161,6 @@ export default function AvailabilityPage() {
     performSave(slotsToSave);
   }, [performSave]);
 
-  slotsRef.current = slots;
-
   useEffect(() => {
     if (isInitialLoad.current) {
       isInitialLoad.current = false;
@@ -190,7 +171,8 @@ export default function AvailabilityPage() {
       saveAvailability(slots);
       return;
     }
-    const timer = setTimeout(() => saveAvailability(slots), 200);
+    if (slots.length === 0) return;
+    const timer = setTimeout(() => saveAvailability(slots), 300);
     return () => clearTimeout(timer);
   }, [slots, saveAvailability]);
 
