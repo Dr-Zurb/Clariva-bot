@@ -59,8 +59,7 @@ export default function AvailabilityPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [availabilitySaving, setAvailabilitySaving] = useState(false);
-  const [availabilityMessage, setAvailabilityMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [availabilityMessage, setAvailabilityMessage] = useState<{ type: "error"; text: string } | null>(null);
   const [blockedMessage, setBlockedMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const [blockedWholeDay, setBlockedWholeDay] = useState(true);
@@ -79,6 +78,8 @@ export default function AvailabilityPage() {
   const copyMenuRefs = useRef<Map<DayOfWeek, HTMLDivElement>>(new Map());
   const copySelectedRef = useRef<HTMLDivElement>(null);
   const isInitialLoad = useRef(true);
+  const saveImmediatelyRef = useRef(false);
+  const slotsRef = useRef<AvailabilitySlot[]>([]);
 
   const fetchAll = useCallback(async () => {
     const supabase = createClient();
@@ -130,7 +131,6 @@ export default function AvailabilityPage() {
         return;
       }
     }
-    setAvailabilitySaving(true);
     setAvailabilityMessage(null);
     try {
       const payload = slotsToSave.map((s) => ({
@@ -139,23 +139,29 @@ export default function AvailabilityPage() {
         end_time: s.end_time.length === 5 ? `${s.end_time}:00` : s.end_time,
       }));
       await putAvailability(token, payload);
-      setAvailabilityMessage({ type: "success", text: "Saved" });
-      setTimeout(() => setAvailabilityMessage(null), 2500);
     } catch (err) {
       const status = err && typeof err === "object" && "status" in err ? (err as { status?: number }).status : 500;
       setAvailabilityMessage({ type: "error", text: status === 401 ? "Session expired." : "Failed to save." });
-    } finally {
-      setAvailabilitySaving(false);
     }
   }, []);
+
+  slotsRef.current = slots;
 
   useEffect(() => {
     if (isInitialLoad.current) {
       isInitialLoad.current = false;
       return;
     }
-    const timer = setTimeout(() => saveAvailability(slots), 500);
-    return () => clearTimeout(timer);
+    if (saveImmediatelyRef.current) {
+      saveImmediatelyRef.current = false;
+      saveAvailability(slots);
+      return;
+    }
+    const timer = setTimeout(() => saveAvailability(slots), 400);
+    return () => {
+      clearTimeout(timer);
+      saveAvailability(slotsRef.current);
+    };
   }, [slots, saveAvailability]);
 
   useEffect(() => {
@@ -193,6 +199,7 @@ export default function AvailabilityPage() {
   };
 
   const addSlot = (day: DayOfWeek) => {
+    saveImmediatelyRef.current = true;
     setSlots((prev) => [...prev, { day_of_week: day, start_time: "09:00", end_time: "17:00" }]);
     setAvailabilityMessage(null);
   };
@@ -207,12 +214,14 @@ export default function AvailabilityPage() {
   };
 
   const removeSlot = (flatIndex: number) => {
+    saveImmediatelyRef.current = true;
     setSlots((prev) => prev.filter((_, i) => i !== flatIndex));
     setAvailabilityMessage(null);
   };
 
   const copySlotsToDays = (sourceDay: DayOfWeek, targetDays: DayOfWeek[]) => {
     if (targetDays.length === 0) return;
+    saveImmediatelyRef.current = true;
     setSlots((prev) => {
       const sourceSlots = prev.filter((s) => s.day_of_week === sourceDay);
       if (sourceSlots.length === 0) return prev;
@@ -349,12 +358,9 @@ export default function AvailabilityPage() {
         <h2 id="slots-heading" className="text-lg font-semibold text-gray-900">Weekly Slots</h2>
         <p className="mt-1 text-sm text-gray-600">Set your weekly availability. Patients can book within these slots.</p>
         {availabilityMessage && (
-          <div role="alert" className={`mt-3 rounded-md p-2 text-sm ${availabilityMessage.type === "success" ? "bg-green-50 text-green-800" : "bg-red-50 text-red-800"}`}>
+          <div role="alert" className="mt-3 rounded-md bg-red-50 p-2 text-sm text-red-800">
             {availabilityMessage.text}
           </div>
-        )}
-        {availabilitySaving && (
-          <p className="mt-2 text-sm text-gray-500">Saving…</p>
         )}
         <div className="mt-4 space-y-3">
             {DAY_ORDER.map((day) => {

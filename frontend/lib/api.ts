@@ -281,6 +281,7 @@ export async function putAvailability(
     },
     body: JSON.stringify({ slots }),
     cache: "no-store",
+    keepalive: true,
   });
   const json = (await res.json().catch(() => ({}))) as
     | ApiSuccess<AvailabilityData>
