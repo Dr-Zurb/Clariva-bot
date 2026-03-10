@@ -30,18 +30,19 @@ export interface AvailableSlot {
 
 /**
  * Get doctor availability
- * 
+ *
  * Retrieves all availability records for a specific doctor.
- * 
+ *
  * @param doctorId - Doctor ID
  * @param correlationId - Request correlation ID
  * @param userId - Authenticated user ID (must match doctorId)
  * @returns Array of availability records
- * 
+ *
  * @throws ForbiddenError if doctor_id doesn't match userId
  * @throws InternalError if database operation fails
- * 
- * Note: Uses user role client (respects RLS)
+ *
+ * Note: Uses service role client. Ownership is validated before query; RLS would
+ * require auth.uid() but the backend anon client has no user JWT, so we use admin.
  */
 export async function getDoctorAvailability(
   doctorId: string,
@@ -51,7 +52,12 @@ export async function getDoctorAvailability(
   // Validate ownership (defense in depth)
   validateOwnership(doctorId, userId);
 
-  const { data: availability, error } = await supabase
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available for availability fetch');
+  }
+
+  const { data: availability, error } = await admin
     .from('availability')
     .select('*')
     .eq('doctor_id', doctorId)
