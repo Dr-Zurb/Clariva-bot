@@ -80,6 +80,8 @@ export default function AvailabilityPage() {
   const isInitialLoad = useRef(true);
   const saveImmediatelyRef = useRef(false);
   const slotsRef = useRef<AvailabilitySlot[]>([]);
+  const saveInProgressRef = useRef(false);
+  const pendingSlotsRef = useRef<AvailabilitySlot[] | null>(null);
 
   const fetchAll = useCallback(async () => {
     const supabase = createClient();
@@ -118,7 +120,11 @@ export default function AvailabilityPage() {
     fetchAll();
   }, [fetchAll]);
 
-  const saveAvailability = useCallback(async (slotsToSave: AvailabilitySlot[]) => {
+  const performSave = useCallback(async (slotsToSave: AvailabilitySlot[]) => {
+    if (saveInProgressRef.current) {
+      pendingSlotsRef.current = slotsToSave;
+      return;
+    }
     const supabase = createClient();
     const { data: { session } } = await supabase.auth.getSession();
     const token = session?.access_token;
@@ -132,6 +138,7 @@ export default function AvailabilityPage() {
       }
     }
     setAvailabilityMessage(null);
+    saveInProgressRef.current = true;
     try {
       const payload = slotsToSave.map((s) => ({
         day_of_week: s.day_of_week,
@@ -142,8 +149,19 @@ export default function AvailabilityPage() {
     } catch (err) {
       const status = err && typeof err === "object" && "status" in err ? (err as { status?: number }).status : 500;
       setAvailabilityMessage({ type: "error", text: status === 401 ? "Session expired." : "Failed to save." });
+    } finally {
+      saveInProgressRef.current = false;
+      const next = pendingSlotsRef.current;
+      pendingSlotsRef.current = null;
+      if (next !== null) {
+        performSave(next);
+      }
     }
   }, []);
+
+  const saveAvailability = useCallback((slotsToSave: AvailabilitySlot[]) => {
+    performSave(slotsToSave);
+  }, [performSave]);
 
   slotsRef.current = slots;
 
