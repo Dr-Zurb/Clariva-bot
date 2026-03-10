@@ -1,6 +1,6 @@
 # Practice Setup UI – Reference
 
-**Purpose:** Canonical reference for the consolidated Practice Setup page. Defines structure, sections, and terminology. Created as part of e-task-6 (Practice Setup consolidation).
+**Purpose:** Canonical reference for the Practice Setup UI structure. Defines sidebar hierarchy, routes, and section layout. Updated by e-task-7 (Practice Setup UI refinement).
 
 **Status:** Reference for implementation. Frontend MUST align with this structure.
 
@@ -8,63 +8,83 @@
 
 ## 1. Overview
 
-The **Practice Setup** page consolidates all doctor-to-bot configuration into a single place. The doctor configures how the bot communicates with patients: practice info, availability, blocked times, booking rules, and bot messages.
+The **Practice Setup** consolidates doctor-to-bot configuration. Settings is collapsible in the sidebar; Practice Setup is expandable with 4 sub-items. Practice Setup landing shows 4 icon+label cards; each section has its own page.
 
-**Route:** `/dashboard/settings/practice-setup`  
-**Nav:** Settings (parent) → Practice Setup (sub-tab)
-
-**Related task:** [e-task-6-practice-setup-consolidation.md](../Development/Daily-plans/March%202026/2026-03-09/e-task-6-practice-setup-consolidation.md)
+**Related tasks:** [e-task-6](../Development/Daily-plans/March%202026/2026-03-09/e-task-6-practice-setup-consolidation.md), [e-task-7](../Development/Daily-plans/March%202026/2026-03-09/e-task-7-practice-setup-ui-refinement.md)
 
 ---
 
-## 2. Section Structure
+## 2. Sidebar Structure (Nested)
 
-| Section        | Fields / Content                                                                 | API                    |
-|----------------|------------------------------------------------------------------------------------|------------------------|
-| **Practice Info** | practice_name, specialty, address_summary, consultation_types, timezone          | PATCH /api/v1/settings/doctor |
-| **Availability** | Weekly slots (day, start, end)                                                     | GET/PUT /api/v1/availability |
-| **Blocked Times** | Add/list/remove blocked periods (start, end, reason)                              | GET/POST/DELETE /api/v1/blocked-times |
+```
+Settings (collapsible)
+├── Practice Setup (expandable) → /dashboard/settings/practice-setup
+│   ├── Practice Info → /dashboard/settings/practice-setup/practice-info
+│   ├── Booking Rules → /dashboard/settings/practice-setup/booking-rules
+│   ├── Bot Messages → /dashboard/settings/practice-setup/bot-messages
+│   └── Availability → /dashboard/settings/practice-setup/availability
+└── Integrations → /dashboard/settings/integrations
+```
+
+- **Settings:** Click toggles expand/collapse; shows Practice Setup and Integrations when expanded
+- **Practice Setup:** Click toggles expand/collapse; shows 4 sub-items when expanded
+- **No main-screen tabs:** Practice Setup | Integrations tab bar removed; navigation via sidebar only
+
+---
+
+## 3. Route Structure
+
+| Route | Content |
+|-------|---------|
+| `/dashboard/settings` | Redirects to Practice Setup |
+| `/dashboard/settings/practice-setup` | Landing page with 4 icon+label cards |
+| `/dashboard/settings/practice-setup/practice-info` | Practice Info form |
+| `/dashboard/settings/practice-setup/booking-rules` | Booking Rules form |
+| `/dashboard/settings/practice-setup/bot-messages` | Bot Messages form |
+| `/dashboard/settings/practice-setup/availability` | Weekly Slots + Blocked Times (two sections, single scroll) |
+| `/dashboard/settings/integrations` | Instagram (and future integrations) |
+
+---
+
+## 4. Landing Page Cards
+
+| Card | Label | Short description |
+|------|-------|-------------------|
+| Practice Info | Practice Info | Practice name, location, specialty, and consultation types |
+| Booking Rules | Booking Rules | Slot length, advance booking limits, cancellation policy |
+| Bot Messages | Bot Messages | Welcome message and default appointment notes |
+| Availability | Availability | Weekly schedule and blocked times when you're unavailable |
+
+Style: icon + label + short description; each card links to its section page.
+
+---
+
+## 5. Section Structure
+
+| Section | Fields / Content | API |
+|---------|------------------|-----|
+| **Practice Info** | practice_name, timezone, specialty, address_summary, consultation_types | PATCH /api/v1/settings/doctor |
 | **Booking Rules** | slot_interval_minutes, max_advance_booking_days, min_advance_hours, business_hours_summary, cancellation_policy_hours, max_appointments_per_day, booking_buffer_minutes | PATCH /api/v1/settings/doctor |
-| **Bot Messages** | welcome_message, default_notes                                                     | PATCH /api/v1/settings/doctor |
+| **Bot Messages** | welcome_message, default_notes | PATCH /api/v1/settings/doctor |
+| **Availability** | Weekly slots (GET/PUT) + Blocked times (GET/POST/DELETE) | /api/v1/availability, /api/v1/blocked-times |
+
+**Availability page:** Two sections on one page (single scroll): (1) Weekly Slots, (2) Blocked Times.
 
 ---
 
-## 3. Layout Options
+## 6. Navigation Aids
 
-- **Option A:** Single long page with clear section headings (h2) and visual separators
-- **Option B:** Collapsible/accordion sections for each area
-- **Option C:** Tabs within the page (Practice Info | Availability | Blocked Times | Booking Rules | Bot Messages)
-
-Recommendation: Option A or B for simplicity; Option C if sections become large.
+- **Breadcrumb:** e.g. "Settings > Practice Setup" or "Settings > Practice Setup > Practice Info"
+- **Back button:** On each section page; navigates to Practice Setup landing
 
 ---
 
-## 4. Save Behavior
+## 7. Save Behavior
 
-- **Per-section save:** Each section has its own "Save" button; only that section's data is submitted
-- **Single save:** One "Save all" at bottom; submit settings + availability in sequence (blocked times are add/delete per item, not bulk)
-
----
-
-## 5. Integrations (Instagram)
-
-- **Option A:** Keep Instagram in separate Settings page
-- **Option B:** Add "Integrations" section to Practice Setup; Settings becomes minimal or is removed
-
----
-
-## 6. Route Structure
-
-- **Settings** (parent): `/dashboard/settings` → redirects to Practice Setup
-- **Practice Setup:** `/dashboard/settings/practice-setup`
-- **Integrations:** `/dashboard/settings/integrations` (Instagram)
-
-Removed:
-- `/dashboard/schedule` — content moved to Practice Setup
-- `/dashboard/blocked-times` — content moved to Practice Setup
-- `/dashboard/practice-setup` — moved under Settings
+- **Per-section save:** Each section page has its own Save button
+- **Availability:** Weekly slots: Save; Blocked times: add/delete per item
 
 ---
 
 **Last Updated:** 2026-03-09  
-**Version:** 1.0.0
+**Version:** 2.0.0 (e-task-7 refinement)

@@ -18,6 +18,7 @@ This folder contains task files for the doctor settings feature rollout. Tasks a
 | [e-task-4](./e-task-4-bot-uses-doctor-settings.md) | Bot uses doctor settings | e-task-1, e-task-2 |
 | [e-task-5](./e-task-5-frontend-dashboard.md) | Frontend dashboard | e-task-2, e-task-3 |
 | [e-task-6](./e-task-6-practice-setup-consolidation.md) | Practice Setup UI consolidation | e-task-5 |
+| [e-task-7](./e-task-7-practice-setup-ui-refinement.md) | Practice Setup UI refinement (cards, nested sidebar, breadcrumb) | e-task-6 |
 
 ---
 
@@ -29,6 +30,7 @@ This folder contains task files for the doctor settings feature rollout. Tasks a
 4. **e-task-4** — Bot integration (after 1 and 2)
 5. **e-task-5** — Frontend (after 2 and 3)
 6. **e-task-6** — Practice Setup consolidation (after 5)
+7. **e-task-7** — Practice Setup UI refinement (after 6)
 
 ---
 

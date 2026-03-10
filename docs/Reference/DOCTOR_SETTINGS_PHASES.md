@@ -103,6 +103,20 @@ Tables `availability` and `blocked_times` already exist (001_initial_schema.sql)
 
 ---
 
+## 6.6 Phase 4.2 – Practice Setup UI Refinement
+
+- Collapsible Settings and expandable Practice Setup in sidebar
+- Remove Practice Setup | Integrations tabs from main screen
+- Practice Setup landing: 4 icon+label cards with short descriptions
+- Separate pages: Practice Info, Booking Rules, Bot Messages, Availability
+- Availability page: Weekly Slots + Blocked Times (two sections, single scroll)
+- Breadcrumb and Back button on section pages
+
+**Reference:** [PRACTICE_SETUP_UI.md](./PRACTICE_SETUP_UI.md)  
+**Task:** [e-task-7-practice-setup-ui-refinement.md](../Development/Daily-plans/March%202026/2026-03-09/e-task-7-practice-setup-ui-refinement.md)
+
+---
+
 ## 7. Relevant Code Paths
 
 | Area | Path |
