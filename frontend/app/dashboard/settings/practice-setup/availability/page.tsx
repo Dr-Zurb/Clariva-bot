@@ -168,10 +168,11 @@ export default function AvailabilityPage() {
   };
 
   const copySlotsToDays = (sourceDay: DayOfWeek, targetDays: DayOfWeek[]) => {
-    const sourceSlots = getSlotsForDay(sourceDay);
-    if (sourceSlots.length === 0) return;
-    const excludeDays = new Set([sourceDay, ...targetDays]);
+    if (targetDays.length === 0) return;
     setSlots((prev) => {
+      const sourceSlots = prev.filter((s) => s.day_of_week === sourceDay);
+      if (sourceSlots.length === 0) return prev;
+      // Remove all slots for target days, then add copied slots (override)
       const keep = prev.filter((s) => !targetDays.includes(s.day_of_week));
       const newSlots = targetDays.flatMap((d) =>
         sourceSlots.map((s) => ({ ...s, day_of_week: d }))
