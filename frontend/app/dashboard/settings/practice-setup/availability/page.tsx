@@ -125,6 +125,17 @@ export default function AvailabilityPage() {
     }
   }, [pathname, fetchAll]);
 
+  useEffect(() => {
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted && typeof window !== "undefined" && window.location.pathname.endsWith("/availability")) {
+        setLoading(true);
+        fetchAll();
+      }
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, [fetchAll]);
+
   const performSave = useCallback(async (slotsToSave: AvailabilitySlot[]) => {
     if (saveInProgressRef.current) {
       pendingSlotsRef.current = slotsToSave;
