@@ -91,6 +91,18 @@ Tables `availability` and `blocked_times` already exist (001_initial_schema.sql)
 
 ---
 
+## 6.5 Phase 4.1 – Practice Setup UI Consolidation
+
+- Consolidate Schedule, Blocked Times, and Doctor Settings into a single **Practice Setup** page
+- Single nav item; remove separate Schedule and Blocked Times routes
+- Sections: Practice Info, Availability, Blocked Times, Booking Rules, Bot Messages
+- Improves discoverability; aligns with "doctor configures bot" mental model
+
+**Reference:** [PRACTICE_SETUP_UI.md](./PRACTICE_SETUP_UI.md)  
+**Task:** [e-task-6-practice-setup-consolidation.md](../Development/Daily-plans/March%202026/2026-03-09/e-task-6-practice-setup-consolidation.md)
+
+---
+
 ## 7. Relevant Code Paths
 
 | Area | Path |

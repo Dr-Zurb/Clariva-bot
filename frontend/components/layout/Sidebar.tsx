@@ -4,13 +4,15 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
-const navItems = [
+const topLevelNav = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/dashboard/appointments", label: "Appointments" },
   { href: "/dashboard/patients", label: "Patients" },
-  { href: "/dashboard/schedule", label: "Schedule" },
-  { href: "/dashboard/blocked-times", label: "Blocked Times" },
-  { href: "/dashboard/settings", label: "Settings" },
+] as const;
+
+const settingsSubNav = [
+  { href: "/dashboard/settings/practice-setup", label: "Practice Setup" },
+  { href: "/dashboard/settings/integrations", label: "Integrations" },
 ] as const;
 
 interface SidebarProps {
@@ -19,12 +21,12 @@ interface SidebarProps {
 }
 
 /**
- * Dashboard sidebar navigation. Uses aria-current="page" for active route.
- * Mobile: overlay drawer; desktop: static sidebar.
- * @see e-task-3; FRONTEND_STANDARDS (semantic nav, aria-label)
+ * Dashboard sidebar navigation. Settings has sub-tabs: Practice Setup, Integrations.
+ * @see e-task-6; FRONTEND_STANDARDS (semantic nav, aria-label)
  */
 export function Sidebar({ isMobileOpen = false, onClose }: SidebarProps) {
   const pathname = usePathname();
+  const isInSettings = pathname.startsWith("/dashboard/settings");
 
   return (
     <>
@@ -46,11 +48,11 @@ export function Sidebar({ isMobileOpen = false, onClose }: SidebarProps) {
         )}
       >
         <nav className="flex flex-col gap-1 p-4" aria-label="Main navigation">
-          {navItems.map(({ href, label }) => {
+          {topLevelNav.map(({ href, label }) => {
             const isActive =
               href === "/dashboard"
                 ? pathname === "/dashboard"
-                : pathname.startsWith(href);
+                : pathname.startsWith(href) && !pathname.startsWith("/dashboard/settings");
             return (
               <Link
                 key={href}
@@ -69,6 +71,36 @@ export function Sidebar({ isMobileOpen = false, onClose }: SidebarProps) {
               </Link>
             );
           })}
+
+          {/* Settings (parent) with sub-tabs */}
+          <div className="pt-2">
+            <p
+              className="px-3 py-1 text-xs font-semibold uppercase tracking-wider text-gray-500"
+              aria-hidden
+            >
+              Settings
+            </p>
+            {settingsSubNav.map(({ href, label }) => {
+              const isActive = pathname === href || pathname.startsWith(href + "/");
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  onClick={onClose}
+                  aria-current={isActive ? "page" : undefined}
+                  className={cn(
+                    "mt-1 flex rounded-md px-3 py-2 pl-5 text-sm font-medium transition-colors",
+                    "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-white",
+                    isActive
+                      ? "bg-blue-50 text-blue-700"
+                      : "text-gray-700 hover:bg-gray-100 hover:text-gray-900"
+                  )}
+                >
+                  {label}
+                </Link>
+              );
+            })}
+          </div>
         </nav>
       </aside>
     </>

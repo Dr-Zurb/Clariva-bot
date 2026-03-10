@@ -85,10 +85,10 @@ Tasks: e-task-1 through e-task-6 (Connect Instagram), e-task-7 through e-task-12
 
 Phased rollout for per-doctor practice settings, availability, and bot integration:
 
-- **Reference:** [DOCTOR_SETTINGS_PHASES.md](../Reference/DOCTOR_SETTINGS_PHASES.md)
+- **Reference:** [DOCTOR_SETTINGS_PHASES.md](../Reference/DOCTOR_SETTINGS_PHASES.md), [PRACTICE_SETUP_UI.md](../Reference/PRACTICE_SETUP_UI.md)
 - **Daily plan:** [docs/Development/Daily-plans/March 2026/2026-03-09/README.md](../Development/Daily-plans/March%202026/2026-03-09/README.md)
 
-Tasks: e-task-1 (migration), e-task-2 (settings API), e-task-3 (availability/blocked-times API), e-task-4 (bot integration), e-task-5 (frontend dashboard).
+Tasks: e-task-1 (migration), e-task-2 (settings API), e-task-3 (availability/blocked-times API), e-task-4 (bot integration), e-task-5 (frontend dashboard), e-task-6 (Practice Setup UI consolidation).
 
 ---
 
