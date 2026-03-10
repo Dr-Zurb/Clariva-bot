@@ -84,8 +84,6 @@ export default function AvailabilityPage() {
   const slotsRef = useRef<AvailabilitySlot[]>([]);
   const saveInProgressRef = useRef(false);
   const pendingSlotsRef = useRef<AvailabilitySlot[] | null>(null);
-  const hasLoadedRef = useRef(false);
-
   const fetchAll = useCallback(async () => {
     const supabase = createClient();
     const { data: { session } } = await supabase.auth.getSession();
@@ -105,7 +103,6 @@ export default function AvailabilityPage() {
         }),
       ]);
       const avail = availRes.data.availability;
-      hasLoadedRef.current = true;
       setSlots(avail.map((a) => ({
         day_of_week: a.day_of_week,
         start_time: a.start_time.slice(0, 5),
@@ -193,13 +190,8 @@ export default function AvailabilityPage() {
       saveAvailability(slots);
       return;
     }
-    const timer = setTimeout(() => saveAvailability(slots), 400);
-    return () => {
-      clearTimeout(timer);
-      if (hasLoadedRef.current) {
-        saveAvailability(slotsRef.current);
-      }
-    };
+    const timer = setTimeout(() => saveAvailability(slots), 200);
+    return () => clearTimeout(timer);
   }, [slots, saveAvailability]);
 
   useEffect(() => {
