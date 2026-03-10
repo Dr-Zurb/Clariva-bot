@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { getDoctorSettings, patchDoctorSettings } from "@/lib/api";
@@ -88,12 +87,6 @@ export default function BotMessagesPage() {
 
   return (
     <div>
-      <Link
-        href="/dashboard/settings/practice-setup"
-        className="mb-4 inline-flex items-center text-sm text-gray-600 hover:text-blue-600"
-      >
-        ← Back to Practice Setup
-      </Link>
       <h1 className="text-2xl font-semibold text-gray-900">Bot Messages</h1>
       <p className="mt-1 text-gray-600">
         Welcome message and default appointment notes.

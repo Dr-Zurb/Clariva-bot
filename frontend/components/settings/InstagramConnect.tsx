@@ -132,10 +132,16 @@ export default function InstagramConnect() {
     }
   };
 
+  const cardBase = "rounded-lg border border-gray-200 bg-white p-5 shadow-sm";
+
   if (loading) {
     return (
-      <div className="rounded-lg border border-gray-200 bg-white p-4" aria-busy="true" aria-live="polite">
-        <p className="text-sm text-gray-600">Loading Instagram status…</p>
+      <div className={cardBase} aria-busy="true" aria-live="polite">
+        <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+          <InstagramIcon />
+        </div>
+        <h2 className="font-semibold text-gray-900">Instagram</h2>
+        <p className="mt-1 text-sm text-gray-600">Loading Instagram status…</p>
       </div>
     );
   }
@@ -143,24 +149,37 @@ export default function InstagramConnect() {
   if (error && !status) {
     return (
       <div
-        className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-800"
+        className={cardBase}
         role="alert"
         aria-live="polite"
       >
-        <p className="font-medium">Error</p>
-        <p className="mt-1 text-sm">{error}</p>
+        <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+          <InstagramIcon />
+        </div>
+        <h2 className="font-semibold text-gray-900">Instagram</h2>
+        <p className="mt-1 text-sm text-gray-600">Connect Instagram to receive patient messages.</p>
+        <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-red-800">
+          <p className="font-medium">Error</p>
+          <p className="mt-1 text-sm">{error}</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
-      <h2 className="text-lg font-semibold text-gray-900">Instagram</h2>
+    <div className={cardBase}>
+      <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+        <InstagramIcon />
+      </div>
+      <h2 className="font-semibold text-gray-900">Instagram</h2>
+      <p className="mt-1 text-sm text-gray-600">
+        Connect Instagram to receive patient messages and manage appointments.
+      </p>
       {message && (
         <div
           role="alert"
           aria-live="polite"
-          className={`mt-2 rounded-md p-2 text-sm ${message.type === "success" ? "bg-green-50 text-green-800" : "bg-red-50 text-red-800"}`}
+          className={`mt-3 rounded-md p-2 text-sm ${message.type === "success" ? "bg-green-50 text-green-800" : "bg-red-50 text-red-800"}`}
         >
           {message.text}
         </div>
@@ -204,5 +223,15 @@ export default function InstagramConnect() {
         </p>
       )}
     </div>
+  );
+}
+
+function InstagramIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="2" y="2" width="20" height="20" rx="5" ry="5" />
+      <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
+      <line x1="17.5" y1="6.5" x2="17.51" y2="6.5" />
+    </svg>
   );
 }

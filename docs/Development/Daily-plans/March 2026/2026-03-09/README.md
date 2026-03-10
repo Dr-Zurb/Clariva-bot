@@ -19,6 +19,7 @@ This folder contains task files for the doctor settings feature rollout. Tasks a
 | [e-task-5](./e-task-5-frontend-dashboard.md) | Frontend dashboard | e-task-2, e-task-3 |
 | [e-task-6](./e-task-6-practice-setup-consolidation.md) | Practice Setup UI consolidation | e-task-5 |
 | [e-task-7](./e-task-7-practice-setup-ui-refinement.md) | Practice Setup UI refinement (cards, nested sidebar, breadcrumb) | e-task-6 |
+| [e-task-8](./e-task-8-settings-ui-consistency-refinement.md) | Settings UI consistency (flat sidebar, remove back buttons, match integrations cards) | e-task-7 |
 
 ---
 
@@ -31,6 +32,7 @@ This folder contains task files for the doctor settings feature rollout. Tasks a
 5. **e-task-5** — Frontend (after 2 and 3)
 6. **e-task-6** — Practice Setup consolidation (after 5)
 7. **e-task-7** — Practice Setup UI refinement (after 6)
+8. **e-task-8** — Settings UI consistency (flat sidebar, remove back buttons, match integrations cards) (after 7)
 
 ---
 
