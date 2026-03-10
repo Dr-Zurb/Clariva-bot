@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
   getAvailability,
@@ -54,6 +55,7 @@ function isWholeDay(bt: BlockedTime): boolean {
  * Availability page: Weekly calendar + Blocked Times (e-task-9).
  */
 export default function AvailabilityPage() {
+  const pathname = usePathname();
   const [slots, setSlots] = useState<AvailabilitySlot[]>([]);
   const [blockedTimes, setBlockedTimes] = useState<BlockedTime[]>([]);
   const [loading, setLoading] = useState(true);
@@ -117,8 +119,11 @@ export default function AvailabilityPage() {
   }, []);
 
   useEffect(() => {
-    fetchAll();
-  }, [fetchAll]);
+    if (pathname?.endsWith("/availability")) {
+      setLoading(true);
+      fetchAll();
+    }
+  }, [pathname, fetchAll]);
 
   const performSave = useCallback(async (slotsToSave: AvailabilitySlot[]) => {
     if (saveInProgressRef.current) {
