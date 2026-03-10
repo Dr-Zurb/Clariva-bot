@@ -88,7 +88,7 @@ Phased rollout for per-doctor practice settings, availability, and bot integrati
 - **Reference:** [DOCTOR_SETTINGS_PHASES.md](../Reference/DOCTOR_SETTINGS_PHASES.md), [PRACTICE_SETUP_UI.md](../Reference/PRACTICE_SETUP_UI.md)
 - **Daily plan:** [docs/Development/Daily-plans/March 2026/2026-03-09/README.md](../Development/Daily-plans/March%202026/2026-03-09/README.md)
 
-Tasks: e-task-1 (migration), e-task-2 (settings API), e-task-3 (availability/blocked-times API), e-task-4 (bot integration), e-task-5 (frontend dashboard), e-task-6 (Practice Setup UI consolidation), e-task-7 (Practice Setup UI refinement: cards, nested sidebar, breadcrumb), e-task-8 (Settings UI consistency: flat sidebar, remove back buttons, match integrations cards).
+Tasks: e-task-1 (migration), e-task-2 (settings API), e-task-3 (availability/blocked-times API), e-task-4 (bot integration), e-task-5 (frontend dashboard), e-task-6 (Practice Setup UI consolidation), e-task-7 (Practice Setup UI refinement: cards, nested sidebar, breadcrumb), e-task-8 (Settings UI consistency: flat sidebar, remove back buttons, match integrations cards), e-task-9 (Availability page redesign: weekly calendar, copy to days, blocked times).
 
 ---
 
