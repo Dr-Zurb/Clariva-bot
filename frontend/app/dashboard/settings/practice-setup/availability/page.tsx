@@ -169,21 +169,21 @@ export default function AvailabilityPage() {
 
   const copySlotsToDays = (sourceDay: DayOfWeek, targetDays: DayOfWeek[]) => {
     if (targetDays.length === 0) return;
+    setCopyMenuDay(null);
+    setCopySelectedModalOpen(false);
+    setCopySelectedDays(new Set());
+    setCopySourceDay(null);
+    setAvailabilityMessage(null);
     setSlots((prev) => {
       const sourceSlots = prev.filter((s) => s.day_of_week === sourceDay);
       if (sourceSlots.length === 0) return prev;
-      // Remove all slots for target days, then add copied slots (override)
+      // Override: remove all slots for target days, then add copied slots
       const keep = prev.filter((s) => !targetDays.includes(s.day_of_week));
       const newSlots = targetDays.flatMap((d) =>
         sourceSlots.map((s) => ({ ...s, day_of_week: d }))
       );
       return [...keep, ...newSlots];
     });
-    setCopyMenuDay(null);
-    setCopySelectedModalOpen(false);
-    setCopySelectedDays(new Set());
-    setCopySourceDay(null);
-    setAvailabilityMessage(null);
   };
 
   const handleCopyToAll = (sourceDay: DayOfWeek) => {
@@ -419,6 +419,7 @@ export default function AvailabilityPage() {
                           <div
                             className="absolute right-0 top-full z-10 mt-1 w-48 rounded-md border border-gray-200 bg-white py-1 shadow-lg"
                             role="menu"
+                            onMouseDown={(e) => e.stopPropagation()}
                           >
                             <button
                               type="button"
