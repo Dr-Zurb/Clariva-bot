@@ -76,7 +76,7 @@ export default function AvailabilityPage() {
   const [copySelectedModalOpen, setCopySelectedModalOpen] = useState(false);
   const [copySelectedDays, setCopySelectedDays] = useState<Set<DayOfWeek>>(new Set());
   const [copySourceDay, setCopySourceDay] = useState<DayOfWeek | null>(null);
-  const copyMenuRef = useRef<HTMLDivElement>(null);
+  const copyMenuRefs = useRef<Map<DayOfWeek, HTMLDivElement>>(new Map());
   const copySelectedRef = useRef<HTMLDivElement>(null);
 
   const fetchAll = useCallback(async () => {
@@ -125,10 +125,12 @@ export default function AvailabilityPage() {
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (copyMenuDay !== null && copyMenuRef.current && !copyMenuRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const isInsideCopyMenu = Array.from(copyMenuRefs.current.values()).some((el) => el.contains(target));
+      if (copyMenuDay !== null && !isInsideCopyMenu) {
         setCopyMenuDay(null);
       }
-      if (copySelectedModalOpen && copySelectedRef.current && !copySelectedRef.current.contains(e.target as Node)) {
+      if (copySelectedModalOpen && copySelectedRef.current && !copySelectedRef.current.contains(target)) {
         setCopySelectedModalOpen(false);
       }
     }
@@ -169,11 +171,6 @@ export default function AvailabilityPage() {
 
   const copySlotsToDays = (sourceDay: DayOfWeek, targetDays: DayOfWeek[]) => {
     if (targetDays.length === 0) return;
-    setCopyMenuDay(null);
-    setCopySelectedModalOpen(false);
-    setCopySelectedDays(new Set());
-    setCopySourceDay(null);
-    setAvailabilityMessage(null);
     setSlots((prev) => {
       const sourceSlots = prev.filter((s) => s.day_of_week === sourceDay);
       if (sourceSlots.length === 0) return prev;
@@ -184,6 +181,11 @@ export default function AvailabilityPage() {
       );
       return [...keep, ...newSlots];
     });
+    setCopyMenuDay(null);
+    setCopySelectedModalOpen(false);
+    setCopySelectedDays(new Set());
+    setCopySourceDay(null);
+    setAvailabilityMessage(null);
   };
 
   const handleCopyToAll = (sourceDay: DayOfWeek) => {
@@ -404,7 +406,13 @@ export default function AvailabilityPage() {
                       + Add slot
                     </button>
                     {hasSlots && (
-                      <div className="relative" ref={copyMenuRef}>
+                      <div
+                        className="relative"
+                        ref={(el) => {
+                          if (el) copyMenuRefs.current.set(day, el);
+                          else copyMenuRefs.current.delete(day);
+                        }}
+                      >
                         <button
                           type="button"
                           onClick={() => setCopyMenuDay(copyMenuDay === day ? null : day)}
@@ -419,7 +427,6 @@ export default function AvailabilityPage() {
                           <div
                             className="absolute right-0 top-full z-10 mt-1 w-48 rounded-md border border-gray-200 bg-white py-1 shadow-lg"
                             role="menu"
-                            onMouseDown={(e) => e.stopPropagation()}
                           >
                             <button
                               type="button"
