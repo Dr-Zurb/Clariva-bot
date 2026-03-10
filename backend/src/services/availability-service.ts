@@ -16,6 +16,12 @@ import { InternalError, NotFoundError } from '../utils/errors';
 /** Slot interval in minutes (default 30) */
 const SLOT_INTERVAL_MINUTES = env.SLOT_INTERVAL_MINUTES;
 
+/**
+ * Per-doctor mutex to serialize PUT availability.
+ * Prevents concurrent delete+insert from racing and causing 409 unique violation.
+ */
+const doctorAvailabilityLocks = new Map<string, Promise<unknown>>();
+
 export interface AvailableSlot {
   start: string;
   end: string;
@@ -373,6 +379,7 @@ export async function updateAvailability(
 /**
  * Replace entire availability for a doctor (delete all, insert new).
  * Used by PUT /api/v1/availability.
+ * Serialized per doctor to prevent concurrent delete+insert from causing 409 unique violation.
  *
  * @param doctorId - Doctor ID (must match userId)
  * @param slots - Array of { day_of_week, start_time, end_time }
@@ -388,6 +395,24 @@ export async function replaceDoctorAvailability(
 ): Promise<Availability[]> {
   validateOwnership(doctorId, userId);
 
+  const prev = doctorAvailabilityLocks.get(doctorId) ?? Promise.resolve();
+  const work = prev
+    .then(() => doReplaceDoctorAvailability(doctorId, slots, correlationId, userId))
+    .finally(() => {
+      if (doctorAvailabilityLocks.get(doctorId) === work) {
+        doctorAvailabilityLocks.delete(doctorId);
+      }
+    });
+  doctorAvailabilityLocks.set(doctorId, work);
+  return work;
+}
+
+async function doReplaceDoctorAvailability(
+  doctorId: string,
+  slots: Array<{ day_of_week: number; start_time: string; end_time: string }>,
+  correlationId: string,
+  userId: string
+): Promise<Availability[]> {
   const admin = getSupabaseAdminClient();
   if (!admin) {
     throw new InternalError('Service role client not available');
