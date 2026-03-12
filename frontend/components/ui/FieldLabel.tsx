@@ -49,7 +49,7 @@ export function FieldLabel({
           {visible && (
             <div
               role="tooltip"
-              className="absolute left-1/2 top-full z-50 mt-2 max-w-xs -translate-x-1/2 rounded-lg border border-gray-200 bg-gray-900 px-3 py-2 text-sm font-normal text-white shadow-xl"
+              className="absolute left-1/2 top-full z-50 mt-2 min-w-[240px] max-w-sm -translate-x-1/2 rounded-lg border border-gray-200 bg-gray-900 px-3 py-2 text-sm font-normal leading-snug text-white shadow-xl"
             >
               {tooltip}
             </div>
