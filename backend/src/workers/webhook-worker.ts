@@ -1011,15 +1011,12 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             updatedAt: now,
           };
           await updateConversationState(conversation.id, state, correlationId);
-          replyText = await generateResponse({
-            conversationId: conversation.id,
-            currentIntent: intentResult.intent,
-            state,
-            recentMessages,
-            currentUserMessage: text,
-            correlationId,
-            doctorContext,
-          });
+          // e-task-2: Deterministic combined consent (no "Do I have your permission?")
+          const collected = getCollectedData(conversation.id);
+          const name = collected?.name?.trim() || 'there';
+          const phone = collected?.phone?.trim() || '';
+          const phoneDisplay = phone ? `**${phone}**` : 'your number';
+          replyText = `Thanks, ${name}. We'll use ${phoneDisplay} to confirm your appointment by call or text. Ready to pick a time?`;
         } else if (nextField) {
           // e-task-2.2.3: Auto-skip consultation_type when doctor only offers one
           const ctRaw = doctorSettings?.consultation_types?.trim().toLowerCase();
@@ -1441,26 +1438,71 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       }
       await updateConversationState(conversation.id, state, correlationId);
     } else if (isBookIntent && state.step === 'responded') {
-      const startDate = getTomorrowDate();
-      const { slots, dateUsed } = await getSlotsWithMultiDaySearch(
-        doctorId,
-        startDate,
-        slotOptions,
-        maxAdvanceDays,
-        correlationId
-      );
-      const noSlotsMsg =
-        slots.length === 0
-          ? `No slots available in the next ${maxAdvanceDays} days. Please check back later.`
-          : undefined;
-      replyText = formatSlotsForDisplay(slots, dateUsed, timezone, noSlotsMsg);
-      state = {
-        ...state,
-        lastIntent: intentResult.intent,
-        step: slots.length > 0 ? 'selecting_slot' : 'responded',
-        slotSelectionDate: slots.length > 0 ? dateUsed : undefined,
-        updatedAt: new Date().toISOString(),
-      };
+      // e-task-2: Show weekly availability + "When would you like to come?" — never random first-available slots
+      const patient = await findPatientByIdWithAdmin(conversation.patient_id, correlationId);
+      const hasPatientReady =
+        patient?.name?.trim() &&
+        patient?.phone?.trim() &&
+        patient?.consent_status === 'granted';
+      if (hasPatientReady) {
+        const weeklySummary = await getWeeklyAvailabilitySummary(
+          doctorId,
+          correlationId,
+          timezone
+        );
+        if (weeklySummary) {
+          replyText =
+            `Our doctor is usually available: ${weeklySummary}. ` +
+            "When would you like to come? (e.g. Tuesday 2pm, or Mar 14 at 10am)";
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'awaiting_date_time',
+            consultationType: state.consultationType,
+            updatedAt: new Date().toISOString(),
+          };
+        } else {
+          // Fallback when no weekly availability configured
+          const { slots, dateUsed } = await getSlotsWithMultiDaySearch(
+            doctorId,
+            getTomorrowDate(),
+            slotOptions,
+            maxAdvanceDays,
+            correlationId
+          );
+          const noSlotsMsg =
+            slots.length === 0
+              ? `No slots available in the next ${maxAdvanceDays} days. Please check back later.`
+              : undefined;
+          replyText = formatSlotsForDisplay(slots, dateUsed, timezone, noSlotsMsg);
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: slots.length > 0 ? 'selecting_slot' : 'responded',
+            slotSelectionDate: slots.length > 0 ? dateUsed : undefined,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+      } else {
+        // No patient data — start collection
+        state = {
+          ...state,
+          lastIntent: intentResult.intent,
+          step: getInitialCollectionStep(),
+          collectedFields: [],
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+        replyText = await generateResponse({
+          conversationId: conversation.id,
+          currentIntent: intentResult.intent,
+          state,
+          recentMessages,
+          currentUserMessage: text,
+          correlationId,
+          doctorContext,
+        });
+      }
       await updateConversationState(conversation.id, state, correlationId);
     } else {
       replyText = await generateResponse({
