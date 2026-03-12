@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   getAvailability,
@@ -11,6 +11,7 @@ import {
 } from "@/lib/api";
 import type { AvailabilitySlot, DayOfWeek } from "@/types/availability";
 import type { BlockedTime } from "@/types/blocked-time";
+import { SaveButton } from "@/components/ui/SaveButton";
 
 const DAY_ORDER: DayOfWeek[] = [1, 2, 3, 4, 5, 6, 0]; // Mon–Sun
 const DAY_NAMES: Record<DayOfWeek, string> = {
@@ -75,12 +76,18 @@ export default function AvailabilityPage() {
   const [copySelectedModalOpen, setCopySelectedModalOpen] = useState(false);
   const [copySelectedDays, setCopySelectedDays] = useState<Set<DayOfWeek>>(new Set());
   const [copySourceDay, setCopySourceDay] = useState<DayOfWeek | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [lastSavedSlots, setLastSavedSlots] = useState<string>("");
   const copyMenuRefs = useRef<Map<DayOfWeek, HTMLDivElement>>(new Map());
   const copySelectedRef = useRef<HTMLDivElement>(null);
-  const isInitialLoad = useRef(true);
-  const saveImmediatelyRef = useRef(false);
   const saveInProgressRef = useRef(false);
   const pendingSlotsRef = useRef<AvailabilitySlot[] | null>(null);
+
+  const isDirty = useMemo(
+    () => lastSavedSlots !== "" && JSON.stringify(slots) !== lastSavedSlots,
+    [slots, lastSavedSlots]
+  );
   const fetchAll = useCallback(async () => {
     const supabase = createClient();
     const { data: { session } } = await supabase.auth.getSession();
@@ -100,11 +107,14 @@ export default function AvailabilityPage() {
         }),
       ]);
       const avail = availRes.data.availability;
-      setSlots(avail.map((a) => ({
+      const mapped = avail.map((a) => ({
         day_of_week: a.day_of_week,
         start_time: a.start_time.slice(0, 5),
         end_time: a.end_time.slice(0, 5),
-      })));
+      }));
+      setSlots(mapped);
+      setLastSavedSlots(JSON.stringify(mapped));
+      setSaveSuccess(false);
       setBlockedTimes(blockedRes.data.blockedTimes);
     } catch (err) {
       const status = err && typeof err === "object" && "status" in err ? (err as { status?: number }).status : 500;
@@ -137,6 +147,8 @@ export default function AvailabilityPage() {
     }
     setAvailabilityMessage(null);
     saveInProgressRef.current = true;
+    setSaving(true);
+    setSaveSuccess(false);
     try {
       const payload = slotsToSave.map((s) => ({
         day_of_week: s.day_of_week,
@@ -144,11 +156,14 @@ export default function AvailabilityPage() {
         end_time: s.end_time.length === 5 ? `${s.end_time}:00` : s.end_time,
       }));
       await putAvailability(token, payload);
+      setLastSavedSlots(JSON.stringify(slotsToSave));
+      setSaveSuccess(true);
     } catch (err) {
       const status = err && typeof err === "object" && "status" in err ? (err as { status?: number }).status : 500;
       setAvailabilityMessage({ type: "error", text: status === 401 ? "Session expired." : "Failed to save." });
     } finally {
       saveInProgressRef.current = false;
+      setSaving(false);
       const next = pendingSlotsRef.current;
       pendingSlotsRef.current = null;
       if (next !== null) {
@@ -157,24 +172,14 @@ export default function AvailabilityPage() {
     }
   }, []);
 
-  const saveAvailability = useCallback((slotsToSave: AvailabilitySlot[]) => {
-    performSave(slotsToSave);
-  }, [performSave]);
-
-  useEffect(() => {
-    if (isInitialLoad.current) {
-      isInitialLoad.current = false;
-      return;
-    }
-    if (saveImmediatelyRef.current) {
-      saveImmediatelyRef.current = false;
-      saveAvailability(slots);
-      return;
-    }
-    if (slots.length === 0) return;
-    const timer = setTimeout(() => saveAvailability(slots), 300);
-    return () => clearTimeout(timer);
-  }, [slots, saveAvailability]);
+  const handleSaveClick = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!isDirty || saving) return;
+      performSave(slots);
+    },
+    [isDirty, saving, performSave, slots]
+  );
 
   useEffect(() => {
     if (!blockedDate) {
@@ -211,12 +216,13 @@ export default function AvailabilityPage() {
   };
 
   const addSlot = (day: DayOfWeek) => {
-    saveImmediatelyRef.current = true;
+    setSaveSuccess(false);
     setSlots((prev) => [...prev, { day_of_week: day, start_time: "09:00", end_time: "17:00" }]);
     setAvailabilityMessage(null);
   };
 
   const updateSlot = (flatIndex: number, field: keyof AvailabilitySlot, value: string | number) => {
+    setSaveSuccess(false);
     setSlots((prev) => {
       const next = [...prev];
       next[flatIndex] = { ...next[flatIndex], [field]: value };
@@ -226,14 +232,14 @@ export default function AvailabilityPage() {
   };
 
   const removeSlot = (flatIndex: number) => {
-    saveImmediatelyRef.current = true;
+    setSaveSuccess(false);
     setSlots((prev) => prev.filter((_, i) => i !== flatIndex));
     setAvailabilityMessage(null);
   };
 
   const copySlotsToDays = (sourceDay: DayOfWeek, targetDays: DayOfWeek[]) => {
     if (targetDays.length === 0) return;
-    saveImmediatelyRef.current = true;
+    setSaveSuccess(false);
     setSlots((prev) => {
       const sourceSlots = prev.filter((s) => s.day_of_week === sourceDay);
       if (sourceSlots.length === 0) return prev;
@@ -367,14 +373,15 @@ export default function AvailabilityPage() {
 
       {/* Section 1: Weekly Slots */}
       <section className="mt-6 rounded-lg border border-gray-200 bg-white p-4" aria-labelledby="slots-heading">
-        <h2 id="slots-heading" className="text-lg font-semibold text-gray-900">Weekly Slots</h2>
-        <p className="mt-1 text-sm text-gray-600">Set your weekly availability. Patients can book within these slots.</p>
-        {availabilityMessage && (
-          <div role="alert" className="mt-3 rounded-md bg-red-50 p-2 text-sm text-red-800">
-            {availabilityMessage.text}
-          </div>
-        )}
-        <div className="mt-4 space-y-3">
+        <form onSubmit={handleSaveClick}>
+          <h2 id="slots-heading" className="text-lg font-semibold text-gray-900">Weekly Slots</h2>
+          <p className="mt-1 text-sm text-gray-600">Set your weekly availability. Patients can book within these slots.</p>
+          {availabilityMessage && (
+            <div role="alert" className="mt-3 rounded-md bg-red-50 p-2 text-sm text-red-800">
+              {availabilityMessage.text}
+            </div>
+          )}
+          <div className="mt-4 space-y-3">
             {DAY_ORDER.map((day) => {
               const daySlots = getSlotsForDay(day);
               const hasSlots = daySlots.length > 0;
@@ -488,6 +495,10 @@ export default function AvailabilityPage() {
               );
             })}
           </div>
+          <div className="mt-4">
+            <SaveButton isDirty={isDirty} saving={saving} saveSuccess={saveSuccess} />
+          </div>
+        </form>
       </section>
 
       {/* Copy to selected days modal */}

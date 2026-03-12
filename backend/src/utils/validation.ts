@@ -318,20 +318,11 @@ export function validateGetPatientParams(params: unknown): GetPatientParams {
 // Doctor Settings PATCH (e-task-2)
 // ============================================================================
 
-const SLOT_INTERVAL_VALUES = [5, 10, 15, 20, 25] as const;
-
 export const patchDoctorSettingsSchema = z
   .object({
     practice_name: z.string().max(200).trim().nullable().optional(),
     timezone: z.string().max(100).trim().optional(),
-    slot_interval_minutes: z
-      .number()
-      .int()
-      .refine(
-        (v): v is (typeof SLOT_INTERVAL_VALUES)[number] => SLOT_INTERVAL_VALUES.includes(v as (typeof SLOT_INTERVAL_VALUES)[number]),
-        'slot_interval_minutes must be 5, 10, 15, 20, or 25'
-      )
-      .optional(),
+    slot_interval_minutes: z.number().int().min(1).max(60).optional(),
     max_advance_booking_days: z.number().int().min(1).max(365).optional(),
     min_advance_hours: z.number().int().min(0).optional(),
     business_hours_summary: z.string().max(500).trim().nullable().optional(),

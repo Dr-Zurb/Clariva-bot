@@ -7,7 +7,7 @@ import type { DoctorSettings, PatchDoctorSettingsPayload } from "@/types/doctor-
 import { FieldLabel } from "@/components/ui/FieldLabel";
 import { SaveButton } from "@/components/ui/SaveButton";
 
-const SLOT_INTERVAL_OPTIONS = [5, 10, 15, 20, 25] as const;
+const SLOT_INTERVAL_OPTIONS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60] as const;
 
 function toFormValue<T>(v: T | null | undefined): string {
   if (v === null || v === undefined) return "";
@@ -22,9 +22,7 @@ function toNum(v: string): number | null {
 function toForm(s: DoctorSettings | null): Record<string, string> {
   if (!s) return {};
   const slotVal = s.slot_interval_minutes;
-  const slotStr = SLOT_INTERVAL_OPTIONS.includes(slotVal as (typeof SLOT_INTERVAL_OPTIONS)[number])
-    ? String(slotVal)
-    : "15";
+  const slotStr = slotVal >= 1 && slotVal <= 60 ? String(slotVal) : "15";
   return {
     slot_interval_minutes: slotStr,
     max_advance_booking_days: toFormValue(s.max_advance_booking_days) || "30",
@@ -88,7 +86,7 @@ export default function BookingRulesPage() {
     if (!token) return;
 
     const slotInt = toNum(form.slot_interval_minutes);
-    if (slotInt !== null && !SLOT_INTERVAL_OPTIONS.includes(slotInt as (typeof SLOT_INTERVAL_OPTIONS)[number])) return;
+    if (slotInt !== null && (slotInt < 1 || slotInt > 60)) return;
 
     const payload: PatchDoctorSettingsPayload = {
       slot_interval_minutes: slotInt ?? 15,
@@ -150,9 +148,21 @@ export default function BookingRulesPage() {
           <FieldLabel htmlFor="slot_interval_minutes" tooltip="Length of each bookable appointment slot (e.g. 15 min = 4 slots per hour).">
             Slot interval (minutes)
           </FieldLabel>
-          <select id="slot_interval_minutes" value={form.slot_interval_minutes ?? "15"} onChange={(e) => handleFormChange((p) => ({ ...p, slot_interval_minutes: e.target.value }))} className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">
-            {SLOT_INTERVAL_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
-          </select>
+          <input
+            id="slot_interval_minutes"
+            type="number"
+            min={1}
+            max={60}
+            value={form.slot_interval_minutes ?? "15"}
+            onChange={(e) => handleFormChange((p) => ({ ...p, slot_interval_minutes: e.target.value }))}
+            list="slot_interval_presets"
+            className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <datalist id="slot_interval_presets">
+            {SLOT_INTERVAL_OPTIONS.map((n) => (
+              <option key={n} value={n} />
+            ))}
+          </datalist>
         </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>

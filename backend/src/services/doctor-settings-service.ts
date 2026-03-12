@@ -110,8 +110,9 @@ export async function getDoctorSettingsForUser(
   return data as unknown as DoctorSettingsRow;
 }
 
-/** Valid slot interval values. */
-const VALID_SLOT_INTERVALS = [5, 10, 15, 20, 25] as const;
+/** Valid slot interval range: 1–60 minutes. */
+const SLOT_INTERVAL_MIN = 1;
+const SLOT_INTERVAL_MAX = 60;
 
 /** Payload for partial update of doctor settings. */
 export interface UpdateDoctorSettingsPayload {
@@ -151,9 +152,9 @@ export async function updateDoctorSettings(
 
   if (
     payload.slot_interval_minutes !== undefined &&
-    !VALID_SLOT_INTERVALS.includes(payload.slot_interval_minutes as (typeof VALID_SLOT_INTERVALS)[number])
+    (payload.slot_interval_minutes < SLOT_INTERVAL_MIN || payload.slot_interval_minutes > SLOT_INTERVAL_MAX)
   ) {
-    throw new ValidationError('slot_interval_minutes must be 5, 10, 15, 20, or 25');
+    throw new ValidationError('slot_interval_minutes must be between 1 and 60');
   }
 
   const supabase = getSupabaseAdminClient();
