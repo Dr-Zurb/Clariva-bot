@@ -35,9 +35,10 @@ import {
   getStoredInstagramPageIdForDoctor,
 } from '../services/instagram-connect-service';
 import { findOrCreatePlaceholderPatient, findPatientByIdWithAdmin } from '../services/patient-service';
-import { getAvailableSlots } from '../services/availability-service';
+import { getAvailableSlots, getWeeklyAvailabilitySummary } from '../services/availability-service';
 import { bookAppointment, getAppointmentByIdForWorker } from '../services/appointment-service';
 import type { AvailableSlot } from '../services/availability-service';
+import { parseDateTimeFromMessage } from '../utils/date-time-parser';
 import { ConflictError } from '../utils/errors';
 import {
   findConversationByPlatformId,
@@ -59,6 +60,7 @@ import {
   getInitialCollectionStep,
   hasAllRequiredFields,
   getCollectedData,
+  setCollectedData,
 } from '../services/collection-service';
 import {
   parseConsentReply,
@@ -411,7 +413,7 @@ function getSlotOptionsFromSettings(settings: DoctorSettingsRow | null): GetAvai
   };
 }
 
-/** Build doctor context for AI (e-task-4) */
+/** Build doctor context for AI (e-task-4, e-task-2 consultation_types) */
 function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): DoctorContext | undefined {
   if (!settings) return undefined;
   const hasAny =
@@ -420,6 +422,7 @@ function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): Docto
     settings.welcome_message ||
     settings.specialty ||
     settings.address_summary ||
+    settings.consultation_types ||
     (settings.cancellation_policy_hours != null && settings.cancellation_policy_hours > 0);
   if (!hasAny) return undefined;
   return {
@@ -429,6 +432,7 @@ function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): Docto
     specialty: settings.specialty,
     address_summary: settings.address_summary,
     cancellation_policy_hours: settings.cancellation_policy_hours,
+    consultation_types: settings.consultation_types,
   };
 }
 
@@ -934,26 +938,22 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             'instagram_dm',
             correlationId
           );
-          const startDate = getTomorrowDate();
-          const { slots, dateUsed } = await getSlotsWithMultiDaySearch(
+          const weeklySummary = await getWeeklyAvailabilitySummary(
             doctorId,
-            startDate,
-            slotOptions,
-            maxAdvanceDays,
-            correlationId
+            correlationId,
+            timezone
           );
-          const noSlotsMsg =
-            slots.length === 0
-              ? `No slots available in the next ${maxAdvanceDays} days. Please check back later.`
-              : undefined;
+          const summaryText = weeklySummary
+            ? `Our doctor is usually available: ${weeklySummary}. `
+            : '';
           replyText =
             "Thanks! I've saved your details. " +
-            formatSlotsForDisplay(slots, dateUsed, timezone, noSlotsMsg);
+            summaryText +
+            "When would you like to come? (e.g. Tuesday 2pm, or Mar 14 at 10am)";
           state = {
             ...state,
             lastIntent: intentResult.intent,
-            step: slots.length > 0 ? 'selecting_slot' : 'responded',
-            slotSelectionDate: slots.length > 0 ? dateUsed : undefined,
+            step: 'awaiting_date_time',
             updatedAt: new Date().toISOString(),
           };
           await updateConversationState(conversation.id, state, correlationId);
@@ -1021,6 +1021,35 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             doctorContext,
           });
         } else if (nextField) {
+          // e-task-2.2.3: Auto-skip consultation_type when doctor only offers one
+          const ctRaw = doctorSettings?.consultation_types?.trim().toLowerCase();
+          const onlyVideo = ctRaw && /^video\s*$|^video\s*[,;]|video/.test(ctRaw) && !/in[- ]?clinic|in[- ]?person|clinic/.test(ctRaw);
+          const onlyInClinic = ctRaw && /in[- ]?clinic|in[- ]?person|clinic/.test(ctRaw) && !/video/.test(ctRaw);
+          if (nextField === 'consultation_type' && (onlyVideo || onlyInClinic)) {
+            const autoType = onlyVideo ? ('video' as const) : ('in_clinic' as const);
+            const existing = getCollectedData(conversation.id) ?? {};
+            setCollectedData(conversation.id, { ...existing, consultation_type: autoType });
+            const newCollected = [...(state.collectedFields ?? []), 'consultation_type'];
+            const nextAfter = getNextCollectionField(newCollected);
+            state = {
+              ...state,
+              lastIntent: intentResult.intent,
+              collectedFields: newCollected,
+              step: nextAfter === null && hasAllRequiredFields(newCollected) ? 'consent' : (nextAfter ? `collecting_${nextAfter}` : state.step),
+              consultationType: autoType,
+              updatedAt: new Date().toISOString(),
+            };
+            await updateConversationState(conversation.id, state, correlationId);
+            replyText = await generateResponse({
+              conversationId: conversation.id,
+              currentIntent: intentResult.intent,
+              state,
+              recentMessages,
+              currentUserMessage: text,
+              correlationId,
+              doctorContext,
+            });
+          } else {
           const result = validateAndApply(
             conversation.id,
             nextField,
@@ -1047,6 +1076,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
                 ? `I'm ${practiceName}'s scheduling assistant. To book your appointment, what's your full name?`
                 : (result.replyOverride ?? FALLBACK_REPLY);
           }
+          }
         } else {
           replyText = await generateResponse({
             conversationId: conversation.id,
@@ -1059,6 +1089,214 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           });
         }
       }
+    } else if (state.step === 'awaiting_date_time') {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const parsed = parseDateTimeFromMessage(text, todayStr);
+      if (parsed) {
+        const slots = await getAvailableSlots(
+          doctorId,
+          parsed.date,
+          correlationId,
+          slotOptions
+        );
+        const [targetH, targetM] = parsed.time.split(':').map((x) => parseInt(x, 10));
+        const slotIndex = slots.findIndex((s) => {
+          const start = new Date(s.start);
+          const parts = start.toLocaleTimeString('en-CA', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+            ...(timezone ? { timeZone: timezone } : {}),
+          }).split(':');
+          const slotH = parseInt(parts[0] ?? '0', 10);
+          const slotM = parseInt(parts[1] ?? '0', 10);
+          return slotH === targetH && slotM === targetM;
+        });
+        if (slotIndex >= 0) {
+          const slot = slots[slotIndex]!;
+          const dateOpts: Intl.DateTimeFormatOptions = {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true,
+            ...(timezone ? { timeZone: timezone } : {}),
+          };
+          const formatted = new Date(slot.start).toLocaleString('en-US', dateOpts);
+          replyText = `${formatted} is available. Confirm? (Reply yes or 1 to book)`;
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'confirming_slot',
+            slotToConfirm: { start: slot.start, end: slot.end, dateStr: parsed.date },
+            slotSelectionDate: parsed.date,
+            updatedAt: new Date().toISOString(),
+          };
+        } else {
+          replyText =
+            `${parsed.time} is taken on that day. ` +
+            formatSlotsForDisplay(slots, parsed.date, timezone);
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: slots.length > 0 ? 'selecting_slot' : 'awaiting_date_time',
+            slotSelectionDate: parsed.date,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+      } else {
+        const weeklySummary = await getWeeklyAvailabilitySummary(
+          doctorId,
+          correlationId,
+          timezone
+        );
+        const hint = weeklySummary
+          ? `Our doctor is usually available: ${weeklySummary}. `
+          : '';
+        replyText =
+          `I didn't catch that. ${hint}When would you like to come? (e.g. Tuesday 2pm, or Mar 14 at 10am)`;
+        state = { ...state, updatedAt: new Date().toISOString() };
+      }
+      await updateConversationState(conversation.id, state, correlationId);
+    } else if (state.step === 'confirming_slot') {
+      const confirmTrimmed = text.trim().toLowerCase();
+      const isConfirm =
+        /^(yes|yeah|yep|ok|okay|1|confirm|confirmed|book\s+it|please)$/.test(confirmTrimmed);
+      if (isConfirm && state.slotToConfirm) {
+        const slot = state.slotToConfirm;
+        const patient = await findPatientByIdWithAdmin(conversation.patient_id, correlationId);
+        if (!patient || !patient.name || !patient.phone) {
+          replyText = "We couldn't find your contact details. Please start over with 'book appointment'.";
+          state = { ...state, step: 'responded', slotToConfirm: undefined, updatedAt: new Date().toISOString() };
+        } else if (patient.consent_status !== 'granted') {
+          replyText = "Please complete the consent step first.";
+          state = { ...state, step: 'responded', slotToConfirm: undefined, updatedAt: new Date().toISOString() };
+        } else {
+          try {
+            const appointment = await bookAppointment(
+              {
+                doctorId,
+                patientId: patient.id,
+                patientName: patient.name,
+                patientPhone: patient.phone,
+                appointmentDate: slot.start,
+                notes: doctorSettings?.default_notes ?? undefined,
+                consultationType: state.consultationType,
+              },
+              correlationId
+            );
+            const settings = await getDoctorSettings(doctorId);
+            const doctorCountry = settings?.country ?? env.DEFAULT_DOCTOR_COUNTRY ?? 'IN';
+            const amountMinor = settings?.appointment_fee_minor ?? env.APPOINTMENT_FEE_MINOR ?? 50000;
+            const currency = settings?.appointment_fee_currency ?? env.APPOINTMENT_FEE_CURRENCY ?? 'INR';
+            try {
+              const paymentResult = await createPaymentLink(
+                {
+                  appointmentId: appointment.id,
+                  amountMinor,
+                  currency,
+                  doctorCountry,
+                  doctorId,
+                  patientId: patient.id,
+                  patientName: patient.name,
+                  patientPhone: patient.phone,
+                  description: `Appointment - ${new Date(slot.start).toLocaleString()}`,
+                },
+                correlationId
+              );
+              const amountDisplay = formatAmountForDisplay(amountMinor, currency);
+              replyText = formatPaymentLinkMessage(
+                typeof appointment.appointment_date === 'string'
+                  ? appointment.appointment_date
+                  : (appointment.appointment_date as Date).toISOString(),
+                paymentResult.url,
+                amountDisplay
+              );
+            } catch (payErr) {
+              replyText = formatConfirmationMessage(
+                typeof appointment.appointment_date === 'string'
+                  ? appointment.appointment_date
+                  : (appointment.appointment_date as Date).toISOString()
+              );
+              logger.warn(
+                { error: payErr instanceof Error ? payErr.message : String(payErr), correlationId },
+                'Payment link creation failed - sending confirmation without payment'
+              );
+            }
+            await logAuditEvent({
+              correlationId,
+              action: 'appointment_booked',
+              resourceType: 'appointment',
+              resourceId: appointment.id,
+              status: 'success',
+              metadata: { doctorId, appointmentId: appointment.id },
+            });
+            sendNewAppointmentToDoctor(
+              doctorId,
+              appointment.id,
+              typeof appointment.appointment_date === 'string'
+                ? appointment.appointment_date
+                : (appointment.appointment_date as Date).toISOString(),
+              correlationId
+            ).catch((err) => {
+              logger.warn(
+                {
+                  correlationId,
+                  appointmentId: appointment.id,
+                  error: err instanceof Error ? err.message : String(err),
+                },
+                'New appointment email failed (non-blocking)'
+              );
+            });
+            state = {
+              ...state,
+              lastIntent: intentResult.intent,
+              step: 'responded',
+              slotToConfirm: undefined,
+              slotSelectionDate: undefined,
+              updatedAt: new Date().toISOString(),
+            };
+          } catch (err) {
+            if (err instanceof ConflictError) {
+              const weeklySummary = await getWeeklyAvailabilitySummary(
+                doctorId,
+                correlationId,
+                timezone
+              );
+              replyText =
+                "That slot was just taken. " +
+                (weeklySummary ? `Our doctor is usually available: ${weeklySummary}. ` : '') +
+                "When would you like to come? (e.g. Tuesday 2pm)";
+              state = {
+                ...state,
+                step: 'awaiting_date_time',
+                slotToConfirm: undefined,
+                updatedAt: new Date().toISOString(),
+              };
+            } else {
+              replyText = "Sorry, we couldn't complete the booking. Please try again.";
+              state = { ...state, step: 'awaiting_date_time', slotToConfirm: undefined, updatedAt: new Date().toISOString() };
+            }
+          }
+        }
+      } else {
+        const weeklySummary = await getWeeklyAvailabilitySummary(
+          doctorId,
+          correlationId,
+          timezone
+        );
+        const hint = weeklySummary ? `Our doctor is usually available: ${weeklySummary}. ` : '';
+        replyText =
+          `No problem. ${hint}When would you like to come? (e.g. Tuesday 2pm, or Mar 14 at 10am)`;
+        state = {
+          ...state,
+          step: 'awaiting_date_time',
+          slotToConfirm: undefined,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      await updateConversationState(conversation.id, state, correlationId);
     } else if (state.step === 'selecting_slot') {
       const slotDate = state.slotSelectionDate ?? getTomorrowDate();
       const choiceIndex = parseSlotChoice(text);
@@ -1248,7 +1486,10 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     );
 
     const stateToPersist =
-      (isBookIntent && (justStartingCollection || inCollection)) || state.step === 'selecting_slot'
+      (isBookIntent && (justStartingCollection || inCollection)) ||
+      state.step === 'selecting_slot' ||
+      state.step === 'awaiting_date_time' ||
+      state.step === 'confirming_slot'
         ? state
         : {
             ...state,

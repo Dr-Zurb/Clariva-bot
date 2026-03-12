@@ -18,6 +18,8 @@ export type PatientCollectionStep =
   | 'collecting_gender'
   | 'collecting_reason_for_visit'
   | 'consent'
+  | 'awaiting_date_time'
+  | 'confirming_slot'
   | 'selecting_slot'
   | string;
 
@@ -40,4 +42,6 @@ export interface ConversationState {
   slotSelectionDate?: string;
   /** Consultation type chosen: video or in_clinic (e-task-2); used at booking */
   consultationType?: 'video' | 'in_clinic';
+  /** Slot offered for confirmation (e-task-2); when step is confirming_slot */
+  slotToConfirm?: { start: string; end: string; dateStr: string };
 }

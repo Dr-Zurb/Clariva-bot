@@ -334,6 +334,88 @@ function overlaps(
   return aStart < bEnd && aEnd > bStart;
 }
 
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * Get weekly availability summary for display (e-task-2).
+ * Aggregates availability by day_of_week; returns human-readable string (e.g. "Mon 9–5, Tue 12–5, Wed 9–12").
+ * Uses doctor timezone when formatting times.
+ *
+ * @param doctorId - Doctor ID
+ * @param correlationId - Request correlation ID
+ * @param timezone - IANA timezone (e.g. Asia/Kolkata) for formatting
+ * @returns Human-readable summary or empty string if no availability
+ */
+export async function getWeeklyAvailabilitySummary(
+  doctorId: string,
+  _correlationId: string,
+  timezone?: string
+): Promise<string> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) return '';
+
+  const { data: rows, error } = await admin
+    .from('availability')
+    .select('day_of_week, start_time, end_time')
+    .eq('doctor_id', doctorId)
+    .eq('is_available', true)
+    .order('day_of_week', { ascending: true });
+
+  if (error || !rows?.length) return '';
+
+  // Group by day_of_week: merge overlapping windows, keep min start and max end per day
+  const byDay = new Map<number, { start: number; end: number }[]>();
+  for (const row of rows as { day_of_week: number; start_time: string; end_time: string }[]) {
+    const [sh, sm] = parseTime(row.start_time);
+    const [eh, em] = parseTime(row.end_time);
+    const startMins = sh * 60 + sm;
+    const endMins = eh * 60 + em;
+    const list = byDay.get(row.day_of_week) ?? [];
+    list.push({ start: startMins, end: endMins });
+    byDay.set(row.day_of_week, list);
+  }
+
+  // Merge overlapping intervals per day
+  const merged: { day: number; start: number; end: number }[] = [];
+  for (const [day, intervals] of byDay) {
+    intervals.sort((a, b) => a.start - b.start);
+    let cur = intervals[0]!;
+    for (let i = 1; i < intervals.length; i++) {
+      const next = intervals[i]!;
+      if (next.start <= cur.end) {
+        cur = { start: cur.start, end: Math.max(cur.end, next.end) };
+      } else {
+        merged.push({ day, ...cur });
+        cur = next;
+      }
+    }
+    merged.push({ day, ...cur });
+  }
+  merged.sort((a, b) => a.day - b.day);
+
+  const parts: string[] = [];
+  for (const { day, start, end } of merged) {
+    const startH = Math.floor(start / 60);
+    const startM = start % 60;
+    const endH = Math.floor(end / 60);
+    const endM = end % 60;
+    const startStr = formatTimeForSummary(startH, startM, timezone);
+    const endStr = formatTimeForSummary(endH, endM, timezone);
+    parts.push(`${DAY_NAMES[day]} ${startStr}–${endStr}`);
+  }
+  return parts.join(', ');
+}
+
+function formatTimeForSummary(hour: number, minute: number, _timezone?: string): string {
+  if (minute === 0) {
+    return hour <= 12 ? `${hour}` : `${hour - 12}`;
+  }
+  const m = minute < 10 ? `0${minute}` : String(minute);
+  if (hour === 0) return `12:${m}`;
+  if (hour <= 12) return `${hour}:${m}`;
+  return `${hour - 12}:${m}`;
+}
+
 /**
  * Create availability record
  * 

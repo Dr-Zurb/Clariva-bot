@@ -322,6 +322,8 @@ export interface DoctorContext {
   specialty?: string | null;
   address_summary?: string | null;
   cancellation_policy_hours?: number | null;
+  /** e-task-2: e.g. "Video, In-clinic" — drives consultation type options */
+  consultation_types?: string | null;
 }
 
 export interface GenerateResponseInput {
@@ -415,9 +417,20 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
     state?.collectedFields?.length
       ? ` Already collected: ${state.collectedFields.join(', ')}. Do not ask for these again.`
       : '';
+  const consultationTypesRaw = doctorContext?.consultation_types?.trim().toLowerCase();
+  const hasVideo = !consultationTypesRaw || /video/.test(consultationTypesRaw);
+  const hasInClinic = !consultationTypesRaw || /in[- ]?clinic|in[- ]?person|clinic/.test(consultationTypesRaw);
+  const consultationOptions =
+    hasVideo && hasInClinic
+      ? 'Video or In-clinic'
+      : hasVideo
+        ? 'Video only'
+        : hasInClinic
+          ? 'In-clinic only'
+          : 'Video or In-clinic';
   const collectionHint =
     state?.step?.startsWith('collecting_')
-      ? ' If the step is collecting_<field>, ask the user for that field only (e.g. collecting_name -> ask for full name, collecting_phone -> ask for phone number, collecting_consultation_type -> ask "Would you prefer Video or In-clinic consultation?"). Keep the question brief. Do not ask for other fields.'
+      ? ` If the step is collecting_<field>, ask the user for that field only (e.g. collecting_name -> ask for full name, collecting_phone -> ask for phone number, collecting_consultation_type -> ask "Would you prefer ${consultationOptions} consultation?"). Keep the question brief. Do not ask for other fields.`
       : '';
   const consentHint =
     state?.step === 'consent'
