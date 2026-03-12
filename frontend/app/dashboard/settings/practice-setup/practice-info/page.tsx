@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { getDoctorSettings, patchDoctorSettings } from "@/lib/api";
 import type { DoctorSettings, PatchDoctorSettingsPayload } from "@/types/doctor-settings";
+import { FieldLabel } from "@/components/ui/FieldLabel";
+import { SaveButton } from "@/components/ui/SaveButton";
 
 const COMMON_TIMEZONES = [
   "America/New_York",
@@ -25,12 +27,30 @@ function toFormValue<T>(v: T | null | undefined): string {
   return String(v);
 }
 
+function toForm(s: DoctorSettings | null): Record<string, string> {
+  if (!s) return {};
+  return {
+    practice_name: toFormValue(s.practice_name),
+    timezone: toFormValue(s.timezone) || "UTC",
+    specialty: toFormValue(s.specialty),
+    address_summary: toFormValue(s.address_summary),
+    consultation_types: toFormValue(s.consultation_types),
+  };
+}
+
 export default function PracticeInfoPage() {
   const [settings, setSettings] = useState<DoctorSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
+  const [lastSavedForm, setLastSavedForm] = useState<string>("");
+
+  const isDirty = useMemo(
+    () => lastSavedForm !== "" && JSON.stringify(form) !== lastSavedForm,
+    [form, lastSavedForm]
+  );
 
   const fetchSettings = useCallback(async () => {
     const supabase = createClient();
@@ -46,13 +66,10 @@ export default function PracticeInfoPage() {
       const res = await getDoctorSettings(token);
       const s = res.data.settings;
       setSettings(s);
-      setForm({
-        practice_name: toFormValue(s.practice_name),
-        timezone: toFormValue(s.timezone) || "UTC",
-        specialty: toFormValue(s.specialty),
-        address_summary: toFormValue(s.address_summary),
-        consultation_types: toFormValue(s.consultation_types),
-      });
+      const f = toForm(s);
+      setForm(f);
+      setLastSavedForm(JSON.stringify(f));
+      setSaveSuccess(false);
     } catch (err) {
       const status = err && typeof err === "object" && "status" in err ? (err as { status?: number }).status : 500;
       setError(status === 401 ? "Session expired." : "Unable to load.");
@@ -81,13 +98,26 @@ export default function PracticeInfoPage() {
     };
 
     setSaving(true);
+    setSaveSuccess(false);
     try {
       const res = await patchDoctorSettings(token, payload);
       setSettings(res.data.settings);
+      const f = toForm(res.data.settings);
+      setForm(f);
+      setLastSavedForm(JSON.stringify(f));
+      setSaveSuccess(true);
     } finally {
       setSaving(false);
     }
   };
+
+  const handleFormChange = useCallback(
+    (updater: (p: Record<string, string>) => Record<string, string>) => {
+      setSaveSuccess(false);
+      setForm(updater);
+    },
+    []
+  );
 
   if (loading) {
     return (
@@ -114,30 +144,38 @@ export default function PracticeInfoPage() {
       </p>
       <form onSubmit={handleSubmit} className="mt-6 space-y-4 rounded-lg border border-gray-200 bg-white p-4">
         <div>
-          <label htmlFor="practice_name" className="block text-sm font-medium text-gray-700">Practice name</label>
-          <input id="practice_name" type="text" value={form.practice_name ?? ""} onChange={(e) => setForm((p) => ({ ...p, practice_name: e.target.value }))} maxLength={200} className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          <FieldLabel htmlFor="practice_name" tooltip="Name of your practice or clinic as shown to patients.">
+            Practice name
+          </FieldLabel>
+          <input id="practice_name" type="text" value={form.practice_name ?? ""} onChange={(e) => handleFormChange((p) => ({ ...p, practice_name: e.target.value }))} maxLength={200} className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
         </div>
         <div>
-          <label htmlFor="timezone" className="block text-sm font-medium text-gray-700">Timezone</label>
-          <select id="timezone" value={form.timezone ?? "UTC"} onChange={(e) => setForm((p) => ({ ...p, timezone: e.target.value }))} className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">
+          <FieldLabel htmlFor="timezone" tooltip="Your local timezone for scheduling and appointment times.">
+            Timezone
+          </FieldLabel>
+          <select id="timezone" value={form.timezone ?? "UTC"} onChange={(e) => handleFormChange((p) => ({ ...p, timezone: e.target.value }))} className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">
             {COMMON_TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
           </select>
         </div>
         <div>
-          <label htmlFor="specialty" className="block text-sm font-medium text-gray-700">Specialty</label>
-          <input id="specialty" type="text" value={form.specialty ?? ""} onChange={(e) => setForm((p) => ({ ...p, specialty: e.target.value }))} maxLength={200} placeholder="e.g. General Practice" className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          <FieldLabel htmlFor="specialty" tooltip="Medical specialty or focus area (e.g. General Practice, Dermatology).">
+            Specialty
+          </FieldLabel>
+          <input id="specialty" type="text" value={form.specialty ?? ""} onChange={(e) => handleFormChange((p) => ({ ...p, specialty: e.target.value }))} maxLength={200} placeholder="e.g. General Practice" className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
         </div>
         <div>
-          <label htmlFor="address_summary" className="block text-sm font-medium text-gray-700">Address summary</label>
-          <input id="address_summary" type="text" value={form.address_summary ?? ""} onChange={(e) => setForm((p) => ({ ...p, address_summary: e.target.value }))} maxLength={500} placeholder="e.g. 123 Main St, City" className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          <FieldLabel htmlFor="address_summary" tooltip="Short address or location description for patients.">
+            Address summary
+          </FieldLabel>
+          <input id="address_summary" type="text" value={form.address_summary ?? ""} onChange={(e) => handleFormChange((p) => ({ ...p, address_summary: e.target.value }))} maxLength={500} placeholder="e.g. 123 Main St, City" className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
         </div>
         <div>
-          <label htmlFor="consultation_types" className="block text-sm font-medium text-gray-700">Consultation types</label>
-          <input id="consultation_types" type="text" value={form.consultation_types ?? ""} onChange={(e) => setForm((p) => ({ ...p, consultation_types: e.target.value }))} maxLength={200} placeholder="e.g. In-person, Video" className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          <FieldLabel htmlFor="consultation_types" tooltip="Types of consultation offered (e.g. In-person, Video).">
+            Consultation types
+          </FieldLabel>
+          <input id="consultation_types" type="text" value={form.consultation_types ?? ""} onChange={(e) => handleFormChange((p) => ({ ...p, consultation_types: e.target.value }))} maxLength={200} placeholder="e.g. In-person, Video" className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
         </div>
-        <button type="submit" disabled={saving} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50">
-          {saving ? "Saving…" : "Save"}
-        </button>
+        <SaveButton isDirty={isDirty} saving={saving} saveSuccess={saveSuccess} />
       </form>
     </div>
   );

@@ -1,21 +1,38 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { getDoctorSettings, patchDoctorSettings } from "@/lib/api";
 import type { DoctorSettings, PatchDoctorSettingsPayload } from "@/types/doctor-settings";
+import { FieldLabel } from "@/components/ui/FieldLabel";
+import { SaveButton } from "@/components/ui/SaveButton";
 
 function toFormValue<T>(v: T | null | undefined): string {
   if (v === null || v === undefined) return "";
   return String(v);
 }
 
+function toForm(s: DoctorSettings | null): Record<string, string> {
+  if (!s) return {};
+  return {
+    welcome_message: toFormValue(s.welcome_message),
+    default_notes: toFormValue(s.default_notes),
+  };
+}
+
 export default function BotMessagesPage() {
   const [settings, setSettings] = useState<DoctorSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
+  const [lastSavedForm, setLastSavedForm] = useState<string>("");
+
+  const isDirty = useMemo(
+    () => lastSavedForm !== "" && JSON.stringify(form) !== lastSavedForm,
+    [form, lastSavedForm]
+  );
 
   const fetchSettings = useCallback(async () => {
     const supabase = createClient();
@@ -31,10 +48,10 @@ export default function BotMessagesPage() {
       const res = await getDoctorSettings(token);
       const s = res.data.settings;
       setSettings(s);
-      setForm({
-        welcome_message: toFormValue(s.welcome_message),
-        default_notes: toFormValue(s.default_notes),
-      });
+      const f = toForm(s);
+      setForm(f);
+      setLastSavedForm(JSON.stringify(f));
+      setSaveSuccess(false);
     } catch (err) {
       const status = err && typeof err === "object" && "status" in err ? (err as { status?: number }).status : 500;
       setError(status === 401 ? "Session expired." : "Unable to load.");
@@ -60,13 +77,26 @@ export default function BotMessagesPage() {
     };
 
     setSaving(true);
+    setSaveSuccess(false);
     try {
       const res = await patchDoctorSettings(token, payload);
       setSettings(res.data.settings);
+      const f = toForm(res.data.settings);
+      setForm(f);
+      setLastSavedForm(JSON.stringify(f));
+      setSaveSuccess(true);
     } finally {
       setSaving(false);
     }
   };
+
+  const handleFormChange = useCallback(
+    (updater: (p: Record<string, string>) => Record<string, string>) => {
+      setSaveSuccess(false);
+      setForm(updater);
+    },
+    []
+  );
 
   if (loading) {
     return (
@@ -93,16 +123,18 @@ export default function BotMessagesPage() {
       </p>
       <form onSubmit={handleSubmit} className="mt-6 space-y-4 rounded-lg border border-gray-200 bg-white p-4">
         <div>
-          <label htmlFor="welcome_message" className="block text-sm font-medium text-gray-700">Welcome message (AI context)</label>
-          <textarea id="welcome_message" rows={3} value={form.welcome_message ?? ""} onChange={(e) => setForm((p) => ({ ...p, welcome_message: e.target.value }))} maxLength={1000} placeholder="Optional greeting for the bot" className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          <FieldLabel htmlFor="welcome_message" tooltip="Greeting or context the AI bot uses when starting a conversation.">
+            Welcome message (AI context)
+          </FieldLabel>
+          <textarea id="welcome_message" rows={3} value={form.welcome_message ?? ""} onChange={(e) => handleFormChange((p) => ({ ...p, welcome_message: e.target.value }))} maxLength={1000} placeholder="Optional greeting for the bot" className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
         </div>
         <div>
-          <label htmlFor="default_notes" className="block text-sm font-medium text-gray-700">Default appointment notes</label>
-          <textarea id="default_notes" rows={2} value={form.default_notes ?? ""} onChange={(e) => setForm((p) => ({ ...p, default_notes: e.target.value }))} maxLength={1000} placeholder="Optional default notes for new appointments" className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          <FieldLabel htmlFor="default_notes" tooltip="Notes pre-filled when creating new appointments.">
+            Default appointment notes
+          </FieldLabel>
+          <textarea id="default_notes" rows={2} value={form.default_notes ?? ""} onChange={(e) => handleFormChange((p) => ({ ...p, default_notes: e.target.value }))} maxLength={1000} placeholder="Optional default notes for new appointments" className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
         </div>
-        <button type="submit" disabled={saving} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50">
-          {saving ? "Saving…" : "Save"}
-        </button>
+        <SaveButton isDirty={isDirty} saving={saving} saveSuccess={saveSuccess} />
       </form>
     </div>
   );
