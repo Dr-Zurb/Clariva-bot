@@ -397,11 +397,48 @@ async function tryResolveSenderFromMessageEdit(
   return { senderId, text: edit.text, mid: edit.mid };
 }
 
-/** Get tomorrow's date in YYYY-MM-DD format */
+/** Get tomorrow's date in YYYY-MM-DD format (UTC) for slot search. Avoids timezone skew (e.g. IST late night returning wrong date). */
 function getTomorrowDate(): string {
   const d = new Date();
-  d.setDate(d.getDate() + 1);
+  d.setUTCDate(d.getUTCDate() + 1);
   return d.toISOString().slice(0, 10);
+}
+
+/** Get today's date in YYYY-MM-DD format (UTC). */
+function getTodayDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** Get today's date in doctor's timezone for "today"/"tomorrow" parsing. */
+function getTodayInTimezone(timezone: string): string {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    return formatter.format(new Date());
+  } catch {
+    return getTodayDate();
+  }
+}
+
+/** Get tomorrow's date in doctor's timezone. */
+function getTomorrowInTimezone(timezone: string): string {
+  try {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    return formatter.format(d);
+  } catch {
+    return getTomorrowDate();
+  }
 }
 
 /** Build slot options from doctor settings (e-task-4, e-task-2 timezone) */
@@ -444,7 +481,7 @@ async function getSlotsWithMultiDaySearch(
   maxAdvanceDays: number,
   correlationId: string
 ): Promise<{ slots: AvailableSlot[]; dateUsed: string }> {
-  const today = new Date().toISOString().slice(0, 10);
+  const todayUtc = getTodayDate();
   let current = startDate;
   for (let i = 0; i < maxAdvanceDays; i++) {
     const slots = await getAvailableSlots(doctorId, current, correlationId, options);
@@ -454,17 +491,19 @@ async function getSlotsWithMultiDaySearch(
     const nextDate = new Date(current + 'T12:00:00Z');
     nextDate.setUTCDate(nextDate.getUTCDate() + 1);
     current = nextDate.toISOString().slice(0, 10);
-    if (current <= today) continue;
+    if (current <= todayUtc) continue;
   }
   return { slots: [], dateUsed: startDate };
 }
 
-/** Format slots for display: "1. 2:00 PM\n2. 2:30 PM" (e-task-4: optional timezone, noSlotsMessage) */
+/** Format slots for display: "1. 2:00 PM\n2. 2:30 PM" (e-task-4: optional timezone, noSlotsMessage, todayStr/tomorrowStr for labels) */
 function formatSlotsForDisplay(
   slots: AvailableSlot[],
   dateStr: string,
   timezone?: string,
-  noSlotsMessage?: string
+  noSlotsMessage?: string,
+  todayStr?: string,
+  tomorrowStr?: string
 ): string {
   if (slots.length === 0) {
     return noSlotsMessage ?? `No available slots for ${dateStr}. Please try another day.`;
@@ -487,7 +526,10 @@ function formatSlotsForDisplay(
     ...(timezone ? { timeZone: timezone } : {}),
   };
   const dateFormatted = new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', dateOpts);
-  return `Here are available slots for ${dateFormatted}:\n${lines.join('\n')}\n\nReply with the number (1, 2, 3...) to book.`;
+  let dateLabel = dateFormatted;
+  if (todayStr && dateStr === todayStr) dateLabel = `Today (${dateFormatted})`;
+  else if (tomorrowStr && dateStr === tomorrowStr) dateLabel = `Tomorrow (${dateFormatted})`;
+  return `Here are available slots for ${dateLabel}:\n${lines.join('\n')}\n\nReply with **1**, **2**, or **3** to book.`;
 }
 
 /**
@@ -862,6 +904,8 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     const maxAdvanceDays = doctorSettings?.max_advance_booking_days ?? 90;
     const timezone = doctorSettings?.timezone ?? 'Asia/Kolkata';
     const practiceName = doctorSettings?.practice_name?.trim() || 'Clariva Care';
+    const todayStrTz = getTodayInTimezone(timezone);
+    const tomorrowStrTz = getTomorrowInTimezone(timezone);
 
     let replyText: string;
     const isBookIntent = intentResult.intent === 'book_appointment';
@@ -1098,8 +1142,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         }
       }
     } else if (state.step === 'awaiting_date_time') {
-      const todayStr = new Date().toISOString().slice(0, 10);
-      const parsed = parseDateTimeFromMessage(text, todayStr);
+      const parsed = parseDateTimeFromMessage(text, todayStrTz);
       if (parsed) {
         const slots = await getAvailableSlots(
           doctorId,
@@ -1144,7 +1187,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         } else {
           replyText =
             `${parsed.time} is taken on that day. ` +
-            formatSlotsForDisplay(slots, parsed.date, timezone);
+            formatSlotsForDisplay(slots, parsed.date, timezone, undefined, todayStrTz, tomorrowStrTz);
           state = {
             ...state,
             lastIntent: intentResult.intent,
@@ -1415,7 +1458,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
                 );
                 replyText =
                   "That slot was just taken. " +
-                  formatSlotsForDisplay(freshSlots, slotDate, timezone);
+                  formatSlotsForDisplay(freshSlots, slotDate, timezone, undefined, todayStrTz, tomorrowStrTz);
                 state = { ...state, slotSelectionDate: slotDate, updatedAt: new Date().toISOString() };
               } else {
                 replyText = "Sorry, we couldn't complete the booking. Please try again or choose another slot.";
@@ -1432,10 +1475,11 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           );
           replyText =
             `Please choose a number between 1 and ${slots.length}.\n\n` +
-            formatSlotsForDisplay(slots, slotDate, timezone);
+            formatSlotsForDisplay(slots, slotDate, timezone, undefined, todayStrTz, tomorrowStrTz);
           state = { ...state, slotSelectionDate: slotDate, updatedAt: new Date().toISOString() };
         }
       } else {
+        // User said something other than 1/2/3 (e.g. "anything else?") — prompt without repeating full list
         const slots = await getAvailableSlots(
           doctorId,
           slotDate,
@@ -1443,8 +1487,8 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           slotOptions
         );
         replyText =
-          "Please reply with the number of your preferred slot (1, 2, 3...).\n\n" +
-          formatSlotsForDisplay(slots, slotDate, timezone);
+          "To book, please reply with **1**, **2**, or **3** from the slots above. " +
+          "Or say a different day (e.g. Friday 2pm) if you'd prefer another time.";
         state = { ...state, slotSelectionDate: slotDate, updatedAt: new Date().toISOString() };
       }
       await updateConversationState(conversation.id, state, correlationId);
@@ -1473,10 +1517,10 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             updatedAt: new Date().toISOString(),
           };
         } else {
-          // Fallback when no weekly availability configured
+          // Fallback when no weekly availability configured: search from today
           const { slots, dateUsed } = await getSlotsWithMultiDaySearch(
             doctorId,
-            getTomorrowDate(),
+            getTodayDate(),
             slotOptions,
             maxAdvanceDays,
             correlationId
@@ -1485,7 +1529,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             slots.length === 0
               ? `No slots available in the next ${maxAdvanceDays} days. Please check back later.`
               : undefined;
-          replyText = formatSlotsForDisplay(slots, dateUsed, timezone, noSlotsMsg);
+          replyText = formatSlotsForDisplay(slots, dateUsed, timezone, noSlotsMsg, todayStrTz, tomorrowStrTz);
           state = {
             ...state,
             lastIntent: intentResult.intent,

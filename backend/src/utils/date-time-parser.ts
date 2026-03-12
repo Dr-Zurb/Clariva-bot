@@ -98,6 +98,17 @@ export function parseDateTimeFromMessage(
     }
   }
 
+  // "today" or "today 2pm"
+  if (/\btoday\b/.test(trimmed)) {
+    resolvedDate = today;
+    if (!resolvedTime && timeMatch) resolvedTime = parseTimeFromText(timeMatch[1]!);
+    if (!resolvedTime) resolvedTime = '09:00';
+    return {
+      date: resolvedDate.toISOString().slice(0, 10),
+      time: resolvedTime,
+    };
+  }
+
   // "tomorrow" or "tomorrow 2pm"
   if (/\btomorrow\b/.test(trimmed)) {
     const d = new Date(today);
