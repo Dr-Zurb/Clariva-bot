@@ -270,6 +270,7 @@ export async function updatePatient(
 /**
  * Find patient by platform and platform external ID (e.g. Instagram PSID).
  * Used to look up placeholder patients when processing webhooks.
+ * Uses admin client to bypass RLS (webhook has no auth context; anon would see no rows).
  *
  * @param platform - Platform name (e.g. 'instagram')
  * @param platformExternalId - Platform user ID (e.g. sender PSID)
@@ -281,7 +282,12 @@ export async function findPatientByPlatformExternalId(
   platformExternalId: string,
   correlationId: string
 ): Promise<Patient | null> {
-  const { data, error } = await supabase
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const { data, error } = await supabaseAdmin
     .from('patients')
     .select('*')
     .eq('platform', platform)
