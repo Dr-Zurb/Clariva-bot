@@ -94,6 +94,7 @@ export const patientReasonForVisitSchema = z
 export const PATIENT_COLLECTION_FIELDS = [
   'name',
   'phone',
+  'consultation_type',
   'date_of_birth',
   'gender',
   'reason_for_visit',
@@ -101,9 +102,25 @@ export const PATIENT_COLLECTION_FIELDS = [
 
 export type PatientCollectionField = (typeof PATIENT_COLLECTION_FIELDS)[number];
 
-const fieldSchemas: Record<PatientCollectionField, z.ZodType<string | undefined>> = {
+/** Consultation type: accepts "video", "1", "in-clinic", "2", "clinic", "in person" etc. */
+const consultationTypeSchema = z
+  .string()
+  .transform((s) => s.trim().toLowerCase())
+  .refine((s) => s.length > 0, 'Please choose Video or In-clinic')
+  .transform((s) => {
+    if (/^(video|1)$/.test(s)) return 'video' as const;
+    if (/^(in[- ]?clinic|clinic|in[- ]?person|2)$/.test(s)) return 'in_clinic' as const;
+    return null;
+  })
+  .refine((v): v is 'video' | 'in_clinic' => v === 'video' || v === 'in_clinic', 'Please choose Video or In-clinic');
+
+const fieldSchemas: Record<
+  PatientCollectionField,
+  z.ZodType<string | undefined | 'video' | 'in_clinic'>
+> = {
   name: patientNameSchema,
   phone: patientPhoneSchema,
+  consultation_type: consultationTypeSchema,
   date_of_birth: patientDobSchema,
   gender: patientGenderSchema,
   reason_for_visit: patientReasonForVisitSchema,
@@ -116,6 +133,7 @@ const fieldSchemas: Record<PatientCollectionField, z.ZodType<string | undefined>
 export interface CollectedPatientData {
   name?: string;
   phone?: string;
+  consultation_type?: 'video' | 'in_clinic';
   date_of_birth?: string;
   gender?: string;
   reason_for_visit?: string;
@@ -214,6 +232,9 @@ export const bookAppointmentSchema = z.object({
     .string()
     .max(NOTES_MAX_LEN, `Notes must be at most ${NOTES_MAX_LEN} characters`)
     .transform((s) => s.trim() || undefined)
+    .optional(),
+  consultationType: z
+    .enum(['video', 'in_clinic'])
     .optional(),
 });
 

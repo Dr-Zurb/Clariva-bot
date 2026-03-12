@@ -14,6 +14,7 @@ export type PatientCollectionStep =
   | 'collecting_name'
   | 'collecting_phone'
   | 'collecting_date_of_birth'
+  | 'collecting_consultation_type'
   | 'collecting_gender'
   | 'collecting_reason_for_visit'
   | 'consent'
@@ -37,4 +38,6 @@ export interface ConversationState {
   consent_requested_at?: string;
   /** Date (YYYY-MM-DD) for slot selection; set when entering selecting_slot (e-task-3) */
   slotSelectionDate?: string;
+  /** Consultation type chosen: video or in_clinic (e-task-2); used at booking */
+  consultationType?: 'video' | 'in_clinic';
 }

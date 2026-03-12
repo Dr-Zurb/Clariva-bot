@@ -77,6 +77,8 @@ export async function getDoctorAvailability(
 export interface GetAvailableSlotsOptions {
   slotIntervalMinutes?: number;
   minAdvanceHours?: number;
+  /** IANA timezone (e.g. Asia/Kolkata) for slot timestamps; availability times are local to this TZ (e-task-2) */
+  timezone?: string;
 }
 
 /**
@@ -106,9 +108,10 @@ export async function getAvailableSlots(
 
   const slotInterval = options?.slotIntervalMinutes ?? SLOT_INTERVAL_MINUTES;
   const minAdvanceHours = options?.minAdvanceHours ?? 0;
+  const timezone = options?.timezone;
 
-  const dayOfWeek = getDayOfWeek(date);
-  const { dayStart, dayEnd } = getDayBounds(date);
+  const dayOfWeek = getDayOfWeek(date, timezone);
+  const { dayStart, dayEnd } = getDayBounds(date, timezone);
 
   const [availabilityRows, blockedRows, appointmentRows] = await Promise.all([
     fetchAvailabilityForDay(supabaseAdmin, doctorId, dayOfWeek),
@@ -119,7 +122,8 @@ export async function getAvailableSlots(
   const slots = generateSlotsFromAvailability(
     date,
     availabilityRows as Availability[],
-    slotInterval
+    slotInterval,
+    timezone
   );
 
   const blockedList = blockedRows as BlockedTime[];
@@ -158,15 +162,66 @@ export async function getAvailableSlots(
   return filtered;
 }
 
-function getDayOfWeek(dateStr: string): number {
+function getDayOfWeek(dateStr: string, timezone?: string): number {
+  if (!timezone) {
+    const d = new Date(dateStr + 'T12:00:00Z');
+    return d.getUTCDay();
+  }
   const d = new Date(dateStr + 'T12:00:00Z');
-  return d.getUTCDay();
+  const localDay = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    weekday: 'long',
+  }).format(d);
+  const dayMap: Record<string, number> = {
+    Sunday: 0,
+    Monday: 1,
+    Tuesday: 2,
+    Wednesday: 3,
+    Thursday: 4,
+    Friday: 5,
+    Saturday: 6,
+  };
+  return dayMap[localDay] ?? d.getUTCDay();
 }
 
-function getDayBounds(dateStr: string): { dayStart: Date; dayEnd: Date } {
-  const dayStart = new Date(dateStr + 'T00:00:00.000Z');
-  const dayEnd = new Date(dateStr + 'T23:59:59.999Z');
+function getDayBounds(dateStr: string, timezone?: string): { dayStart: Date; dayEnd: Date } {
+  if (!timezone) {
+    return {
+      dayStart: new Date(dateStr + 'T00:00:00.000Z'),
+      dayEnd: new Date(dateStr + 'T23:59:59.999Z'),
+    };
+  }
+  const dayStart = localTimeToUtc(dateStr, 0, 0, timezone);
+  const dayEnd = localTimeToUtc(dateStr, 23, 59, timezone);
+  dayEnd.setSeconds(59, 999);
   return { dayStart, dayEnd };
+}
+
+/** Convert local time (dateStr HH:MM in timezone) to UTC Date (e-task-2). local = UTC + offset, so UTC = local - offset. */
+function localTimeToUtc(
+  dateStr: string,
+  hour: number,
+  minute: number,
+  timezone: string
+): Date {
+  const localAsUtc = new Date(dateStr + 'T' + pad(hour) + ':' + pad(minute) + ':00.000Z');
+  const offsetMs = getTimezoneOffsetMs(dateStr, timezone);
+  return new Date(localAsUtc.getTime() - offsetMs);
+}
+
+function getTimezoneOffsetMs(dateStr: string, timezone: string): number {
+  const utcNoon = new Date(dateStr + 'T12:00:00.000Z');
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    timeZoneName: 'longOffset',
+  });
+  const str = formatter.format(utcNoon);
+  const match = str.match(/GMT([+-])(\d{1,2}):?(\d{2})?/);
+  if (!match) return 0;
+  const sign = match[1] === '+' ? 1 : -1;
+  const h = parseInt(match[2] || '0', 10);
+  const m = parseInt(match[3] || '0', 10);
+  return sign * (h * 60 + m) * 60 * 1000;
 }
 
 async function fetchAvailabilityForDay(
@@ -224,7 +279,8 @@ async function fetchBookedAppointmentsForDay(
 function generateSlotsFromAvailability(
   dateStr: string,
   availability: Availability[],
-  intervalMinutes: number
+  intervalMinutes: number,
+  timezone?: string
 ): AvailableSlot[] {
   const slots: AvailableSlot[] = [];
 
@@ -239,8 +295,13 @@ function generateSlotsFromAvailability(
       const sm = current % 60;
       const eh = Math.floor((current + intervalMinutes) / 60);
       const em = (current + intervalMinutes) % 60;
-      const start = `${dateStr}T${pad(sh)}:${pad(sm)}:00.000Z`;
-      const endIso = `${dateStr}T${pad(eh)}:${pad(em)}:00.000Z`;
+      const start = timezone
+        ? localTimeToUtc(dateStr, sh, sm, timezone).toISOString()
+        : `${dateStr}T${pad(sh)}:${pad(sm)}:00.000Z`;
+      const endDate = timezone
+        ? localTimeToUtc(dateStr, eh, em, timezone)
+        : new Date(`${dateStr}T${pad(eh)}:${pad(em)}:00.000Z`);
+      const endIso = timezone ? endDate.toISOString() : `${dateStr}T${pad(eh)}:${pad(em)}:00.000Z`;
       slots.push({
         start,
         end: endIso,

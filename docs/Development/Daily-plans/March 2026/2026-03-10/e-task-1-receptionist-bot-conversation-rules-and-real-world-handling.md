@@ -10,8 +10,8 @@ Improve the receptionist bot to behave like a proper online receptionist: (1) **
 **Rationale:** Current bot misclassifies "hello" as book_appointment and immediately asks for name. It offers past slots, misinterprets "ok" as "message didn't come through", and responds only in English. Users expect a receptionist that greets, offers help, answers questions, and adapts to their language.
 
 **Estimated Time:** 12–16 hours  
-**Status:** ⏳ **PENDING**  
-**Completed:** —
+**Status:** ✅ **COMPLETED**  
+**Completed:** 2026-03-10
 
 **Change Type:**
 - [ ] **New feature** — New intents, language matching, deterministic rules

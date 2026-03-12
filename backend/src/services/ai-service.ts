@@ -417,11 +417,11 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
       : '';
   const collectionHint =
     state?.step?.startsWith('collecting_')
-      ? ' If the step is collecting_<field>, ask the user for that field only (e.g. collecting_name -> ask for full name, collecting_phone -> ask for phone number). Keep the question brief. Do not ask for other fields.'
+      ? ' If the step is collecting_<field>, ask the user for that field only (e.g. collecting_name -> ask for full name, collecting_phone -> ask for phone number, collecting_consultation_type -> ask "Would you prefer Video or In-clinic consultation?"). Keep the question brief. Do not ask for other fields.'
       : '';
   const consentHint =
     state?.step === 'consent'
-      ? ' The user has provided their details. Ask for consent in plain language: explain we will store their name, phone, and other info for booking and care, per our privacy policy. Ask if they agree (yes/no).'
+      ? ' The user has provided their details. Use a combined consent message: thank them by name, say we\'ll use their phone number to confirm the appointment by call or text, and ask "Ready to pick a time?" (e.g. "Thanks, [Name]. We\'ll use [phone] to confirm your appointment. Ready to pick a time?"). Do NOT ask "Do I have your permission to use this number?"—providing the number implies consent.'
       : '';
   const systemPrompt = buildResponseSystemPrompt(doctorContext);
   const systemContent =

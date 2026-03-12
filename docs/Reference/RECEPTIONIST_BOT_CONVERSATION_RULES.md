@@ -2,7 +2,10 @@
 
 **Purpose:** Reference for how the receptionist bot should handle real-world user messages. Used by ai-service, webhook-worker, and related code.
 
-**Related:** [e-task-1: Receptionist bot conversation rules](../../Development/Daily-plans/March%202026/2026-03-10/e-task-1-receptionist-bot-conversation-rules-and-real-world-handling.md)
+**Related:**
+- [e-task-1: Receptionist bot conversation rules](../../Development/Daily-plans/March%202026/2026-03-10/e-task-1-receptionist-bot-conversation-rules-and-real-world-handling.md) — completed
+- [e-task-2: Appointment booking flow refinements](../../Development/Daily-plans/March%202026/2026-03-10/e-task-2-appointment-booking-flow-refinements.md)
+- [APPOINTMENT_BOOKING_FLOW.md](./APPOINTMENT_BOOKING_FLOW.md) — booking flow design
 
 ---
 

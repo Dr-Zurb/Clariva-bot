@@ -98,6 +98,7 @@ export async function bookAppointment(
     appointment_date: appointmentDate,
     status: 'pending',
     notes: data.notes,
+    ...(data.consultationType && { consultation_type: data.consultationType }),
   };
 
   if (appointmentDate < new Date()) {

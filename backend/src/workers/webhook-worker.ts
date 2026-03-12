@@ -58,6 +58,7 @@ import {
   validateAndApply,
   getInitialCollectionStep,
   hasAllRequiredFields,
+  getCollectedData,
 } from '../services/collection-service';
 import {
   parseConsentReply,
@@ -264,7 +265,8 @@ function isAskingAboutBotName(text: string): boolean {
 }
 
 /** User sent acknowledgment after booking (ok, thanks, all set, etc.). No "message didn't come through". */
-const ACKNOWLEDGMENT_REGEX = /^(ok|all\s+set|thanks|thank\s+you|confirmed|done|got\s+it)[\s!?.]*$/i;
+const ACKNOWLEDGMENT_REGEX =
+  /^(ok|all\s+set|thanks|thank\s+you|confirmed|done|got\s+it|ok\s+thanks|thanks\s+ok|ok\s+thank\s+you)[\s!?.]*$/i;
 
 function isPostBookingAcknowledgment(
   text: string,
@@ -400,11 +402,12 @@ function getTomorrowDate(): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Build slot options from doctor settings (e-task-4) */
+/** Build slot options from doctor settings (e-task-4, e-task-2 timezone) */
 function getSlotOptionsFromSettings(settings: DoctorSettingsRow | null): GetAvailableSlotsOptions {
   return {
     slotIntervalMinutes: settings?.slot_interval_minutes ?? env.SLOT_INTERVAL_MINUTES,
     minAdvanceHours: settings?.min_advance_hours ?? 0,
+    timezone: settings?.timezone ?? 'Asia/Kolkata',
   };
 }
 
@@ -699,6 +702,24 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
 
   const { senderId, text, mid } = parsed;
 
+  // Skip blank messages (e-task-2): prevents "message came through blank" from duplicate/empty webhooks
+  if (!text?.trim()) {
+    logger.info(
+      { eventId, provider, correlationId },
+      'Skipping blank message; marking processed'
+    );
+    await markWebhookProcessed(eventId, provider);
+    await logAuditEvent({
+      correlationId,
+      userId: undefined,
+      action: 'webhook_processed',
+      resourceType: 'webhook',
+      status: 'success',
+      metadata: { event_id: eventId, provider, status: 'skipped_blank_message' },
+    });
+    return;
+  }
+
   const pageIds = getInstagramPageIds(instagramPayload);
   const pageId = getInstagramPageId(instagramPayload); // for logging
 
@@ -903,6 +924,10 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       if (state.step === 'consent') {
         const consentResult = parseConsentReply(text);
         if (consentResult === 'granted') {
+          const collected = getCollectedData(conversation.id);
+          if (collected?.consultation_type) {
+            state = { ...state, consultationType: collected.consultation_type };
+          }
           await persistPatientAfterConsent(
             conversation.id,
             conversation.patient_id,
@@ -1060,6 +1085,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
                   patientPhone: patient.phone,
                   appointmentDate: slot.start,
                   notes: doctorSettings?.default_notes ?? undefined,
+                  consultationType: state.consultationType,
                 },
                 correlationId
               );

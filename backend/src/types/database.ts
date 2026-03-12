@@ -82,6 +82,7 @@ export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6;
  * @property appointment_date - Scheduled date and time for appointment
  * @property status - Current appointment status
  * @property notes - Optional notes about the appointment
+ * @property consultation_type - Video or in-clinic (e.g. 'video', 'in_clinic') (e-task-2)
  * @property created_at - Timestamp when appointment was created
  * @property updated_at - Timestamp when appointment was last updated
  */
@@ -94,6 +95,7 @@ export interface Appointment {
   appointment_date: Date;
   status: AppointmentStatus;
   notes?: string;
+  consultation_type?: string | null;  // e.g. 'video', 'in_clinic' (e-task-2)
   created_at: Date;
   updated_at: Date;
 }

@@ -31,6 +31,7 @@ export const REQUIRED_COLLECTION_FIELDS: readonly PatientCollectionField[] = [
 const STEP_BY_FIELD: Record<PatientCollectionField, string> = {
   name: 'collecting_name',
   phone: 'collecting_phone',
+  consultation_type: 'collecting_consultation_type',
   date_of_birth: 'collecting_date_of_birth',
   gender: 'collecting_gender',
   reason_for_visit: 'collecting_reason_for_visit',
@@ -40,6 +41,7 @@ const STEP_BY_FIELD: Record<PatientCollectionField, string> = {
 const FIELD_LABELS: Record<PatientCollectionField, string> = {
   name: 'full name',
   phone: 'phone number',
+  consultation_type: 'consultation type (Video or In-clinic)',
   date_of_birth: 'date of birth',
   gender: 'gender',
   reason_for_visit: 'reason for visit',
@@ -111,6 +113,13 @@ export function parseMessageForField(
   if (field === 'phone' && lower.startsWith('my phone is ')) {
     return trimmed.replace(/^my phone is /i, '').trim();
   }
+  if (field === 'consultation_type') {
+    const after = trimmed
+      .replace(/^(i'?d?\s+)?(prefer|want|like|choose)\s+/i, '')
+      .replace(/\s+(please|thanks|thank you)\.?$/i, '')
+      .trim();
+    return after || trimmed;
+  }
   return trimmed;
 }
 
@@ -157,6 +166,7 @@ export function validateAndApply(
     const updates: Partial<CollectedPatientData> = {};
     if (field === 'name') updates.name = validated as string;
     if (field === 'phone') updates.phone = validated as string;
+    if (field === 'consultation_type') updates.consultation_type = validated as 'video' | 'in_clinic';
     if (field === 'date_of_birth') updates.date_of_birth = validated as string;
     if (field === 'gender') updates.gender = validated;
     if (field === 'reason_for_visit') updates.reason_for_visit = validated as string;
