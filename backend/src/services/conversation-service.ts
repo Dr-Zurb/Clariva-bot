@@ -93,7 +93,7 @@ export async function getOnlyInstagramConversationSenderId(
  * Create a new conversation
  *
  * Creates conversation record when processing webhooks.
- * Uses upsert so we get the row back on conflict (no fetch race / replication lag).
+ * On 23505 (race), fetches existing with retries for replication lag.
  *
  * @param data - Conversation data to insert
  * @param correlationId - Request correlation ID
@@ -112,18 +112,28 @@ export async function createConversation(
 
   const { data: rows, error } = await supabaseAdmin
     .from('conversations')
-    .upsert(data, {
-      onConflict: 'doctor_id,platform,platform_conversation_id',
-      ignoreDuplicates: false,
-    })
+    .insert(data)
     .select()
     .single();
 
   if (error) {
+    if (error.code === '23505') {
+      const delays = [100, 300, 700, 1500];
+      for (let i = 0; i <= delays.length; i++) {
+        const existing = await findConversationByPlatformId(
+          data.doctor_id,
+          data.platform,
+          data.platform_conversation_id,
+          correlationId
+        );
+        if (existing) return existing;
+        if (i < delays.length) await new Promise((r) => setTimeout(r, delays[i]));
+      }
+    }
     handleSupabaseError(error, correlationId);
   }
 
-  if (!rows) throw new InternalError('Conversation upsert returned no data');
+  if (!rows) throw new InternalError('Conversation create returned no data');
 
   await logDataModification(
     correlationId,

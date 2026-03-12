@@ -13,7 +13,7 @@ import { logDataModification, logDataAccess } from '../utils/audit-logger';
 
 /**
  * Create a message or return existing if already stored (idempotent).
- * Uses upsert so we get the row back on conflict (no fetch race / replication lag).
+ * On 23505 (race), fetches existing with retries for replication lag.
  *
  * @param data - Message data to insert
  * @param correlationId - Request correlation ID
@@ -30,18 +30,28 @@ export async function createMessage(
 
   const { data: message, error } = await supabaseAdmin
     .from('messages')
-    .upsert(data, {
-      onConflict: 'conversation_id,platform_message_id',
-      ignoreDuplicates: false,
-    })
+    .insert(data)
     .select()
     .single();
 
   if (error) {
+    if (error.code === '23505') {
+      const delays = [100, 300, 700, 1500];
+      for (let i = 0; i <= delays.length; i++) {
+        const { data: existing } = await supabaseAdmin
+          .from('messages')
+          .select('*')
+          .eq('conversation_id', data.conversation_id)
+          .eq('platform_message_id', data.platform_message_id)
+          .maybeSingle();
+        if (existing) return existing as Message;
+        if (i < delays.length) await new Promise((r) => setTimeout(r, delays[i]));
+      }
+    }
     handleSupabaseError(error, correlationId);
   }
 
-  if (!message) throw new InternalError('Message upsert returned no data');
+  if (!message) throw new InternalError('Message create returned no data');
 
   await logDataModification(
     correlationId,
