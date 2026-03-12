@@ -42,31 +42,42 @@ export function parseConsentReply(text: string): ConsentParseResult {
   return 'unclear';
 }
 
+export interface PersistPatientResult {
+  success: boolean;
+  reply: string;
+}
+
 /**
  * Persist collected patient data to database after consent granted.
  * Updates placeholder patient with name, phone, date_of_birth, gender.
  * reason_for_visit is not a patients column—omitted here; hold for appointment.notes at booking.
  * Calls clearCollectedData after persist. Idempotent: safe to call multiple times.
  *
- * @returns Reply text to send to user
+ * @returns { success, reply } — when success is false, caller must use reply as the bot response.
  */
 export async function persistPatientAfterConsent(
   conversationId: string,
   patientId: string,
   consentMethod: string,
   correlationId: string
-): Promise<string> {
-  const collected = getCollectedData(conversationId);
+): Promise<PersistPatientResult> {
+  const collected = await getCollectedData(conversationId);
   if (!collected || (!collected.name && !collected.phone)) {
-    clearCollectedData(conversationId);
-    return "I didn't receive your information. Please start over with 'book appointment' if you'd like to schedule.";
+    await clearCollectedData(conversationId);
+    return {
+      success: false,
+      reply: "I didn't receive your information. Please start over with 'book appointment' if you'd like to schedule.",
+    };
   }
 
   const name = collected.name ?? 'Unknown';
   const phone = collected.phone ?? '';
   if (!phone) {
-    clearCollectedData(conversationId);
-    return "We need your phone number to complete registration. Please start over with 'book appointment'.";
+    await clearCollectedData(conversationId);
+    return {
+      success: false,
+      reply: "We need your phone number to complete registration. Please start over with 'book appointment'.",
+    };
   }
 
   const now = new Date();
@@ -89,9 +100,12 @@ export async function persistPatientAfterConsent(
     method: consentMethod,
   });
 
-  clearCollectedData(conversationId);
+  await clearCollectedData(conversationId);
 
-  return "Thanks! I've saved your details. How can I help you next—would you like to book an appointment or check availability?";
+  return {
+    success: true,
+    reply: "Thanks! I've saved your details. How can I help you next—would you like to book an appointment or check availability?",
+  };
 }
 
 /**
@@ -102,7 +116,7 @@ export async function handleConsentDenied(
   patientId: string,
   correlationId: string
 ): Promise<string> {
-  clearCollectedData(conversationId);
+  await clearCollectedData(conversationId);
 
   void logConsentEvent({
     correlationId,
@@ -125,7 +139,7 @@ export async function handleRevocation(
   patientId: string,
   correlationId: string
 ): Promise<string> {
-  clearCollectedData(conversationId);
+  await clearCollectedData(conversationId);
 
   const patient = await findPatientById(patientId, correlationId);
   if (!patient) {

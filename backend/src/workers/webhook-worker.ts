@@ -928,35 +928,46 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       if (state.step === 'consent') {
         const consentResult = parseConsentReply(text);
         if (consentResult === 'granted') {
-          const collected = getCollectedData(conversation.id);
+          const collected = await getCollectedData(conversation.id);
           if (collected?.consultation_type) {
             state = { ...state, consultationType: collected.consultation_type };
           }
-          await persistPatientAfterConsent(
+          const persistResult = await persistPatientAfterConsent(
             conversation.id,
             conversation.patient_id,
             'instagram_dm',
             correlationId
           );
-          const weeklySummary = await getWeeklyAvailabilitySummary(
-            doctorId,
-            correlationId,
-            timezone
-          );
-          const summaryText = weeklySummary
-            ? `Our doctor is usually available: ${weeklySummary}. `
-            : '';
-          replyText =
-            "Thanks! I've saved your details. " +
-            summaryText +
-            "When would you like to come? (e.g. Tuesday 2pm, or Mar 14 at 10am)";
-          state = {
-            ...state,
-            lastIntent: intentResult.intent,
-            step: 'awaiting_date_time',
-            updatedAt: new Date().toISOString(),
-          };
-          await updateConversationState(conversation.id, state, correlationId);
+          if (!persistResult.success) {
+            replyText = persistResult.reply;
+            state = {
+              ...state,
+              lastIntent: intentResult.intent,
+              step: 'responded',
+              updatedAt: new Date().toISOString(),
+            };
+            await updateConversationState(conversation.id, state, correlationId);
+          } else {
+            const weeklySummary = await getWeeklyAvailabilitySummary(
+              doctorId,
+              correlationId,
+              timezone
+            );
+            const summaryText = weeklySummary
+              ? `Our doctor is usually available: ${weeklySummary}. `
+              : '';
+            replyText =
+              "Thanks! I've saved your details. " +
+              summaryText +
+              "When would you like to come? (e.g. Tuesday 2pm, or Mar 14 at 10am)";
+            state = {
+              ...state,
+              lastIntent: intentResult.intent,
+              step: 'awaiting_date_time',
+              updatedAt: new Date().toISOString(),
+            };
+            await updateConversationState(conversation.id, state, correlationId);
+          }
         } else if (consentResult === 'denied') {
           replyText = await handleConsentDenied(
             conversation.id,
@@ -1012,7 +1023,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           };
           await updateConversationState(conversation.id, state, correlationId);
           // e-task-2: Deterministic combined consent (no "Do I have your permission?")
-          const collected = getCollectedData(conversation.id);
+          const collected = await getCollectedData(conversation.id);
           const name = collected?.name?.trim() || 'there';
           const phone = collected?.phone?.trim() || '';
           const phoneDisplay = phone ? `**${phone}**` : 'your number';
@@ -1024,8 +1035,8 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           const onlyInClinic = ctRaw && /in[- ]?clinic|in[- ]?person|clinic/.test(ctRaw) && !/video/.test(ctRaw);
           if (nextField === 'consultation_type' && (onlyVideo || onlyInClinic)) {
             const autoType = onlyVideo ? ('video' as const) : ('in_clinic' as const);
-            const existing = getCollectedData(conversation.id) ?? {};
-            setCollectedData(conversation.id, { ...existing, consultation_type: autoType });
+            const existing = (await getCollectedData(conversation.id)) ?? {};
+            await setCollectedData(conversation.id, { ...existing, consultation_type: autoType });
             const newCollected = [...(state.collectedFields ?? []), 'consultation_type'];
             const nextAfter = getNextCollectionField(newCollected);
             state = {
@@ -1047,7 +1058,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
               doctorContext,
             });
           } else {
-          const result = validateAndApply(
+          const result = await validateAndApply(
             conversation.id,
             nextField,
             text,

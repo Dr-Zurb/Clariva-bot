@@ -2,8 +2,10 @@
  * Patient Collection Service (e-task-4)
  *
  * Field-by-field collection flow: name, phone, DOB (optional), gender (optional), reason_for_visit.
- * Collected values live in memory (keyed by conversation_id); metadata (collectedFields, step) only in DB.
+ * Collected values live in Redis (when available) + in-memory fallback; metadata (collectedFields, step) only in DB.
  * No PHI in conversations.metadata (COMPLIANCE C). No persistence to patients table until Task 5 consent.
+ *
+ * Redis-backed store ensures all workers (multi-instance) can access collected data when consent is processed.
  */
 
 import type { ConversationState } from '../types/conversation';
@@ -13,6 +15,7 @@ import {
   validatePatientField,
 } from '../utils/validation';
 import { logPatientDataCollection } from '../utils/audit-logger';
+import { getWebhookQueue, getQueueConnection, isQueueEnabled } from '../config/queue';
 
 // ============================================================================
 // Constants (collection order and required fields)
@@ -48,27 +51,67 @@ const FIELD_LABELS: Record<PatientCollectionField, string> = {
 };
 
 // ============================================================================
-// In-memory store (pre-consent PHI; single-worker). Key = conversation_id.
+// Pre-consent store: Redis (multi-worker) + in-memory fallback
 // ============================================================================
 
 const preConsentStore = new Map<string, CollectedPatientData>();
+const REDIS_KEY_PREFIX = 'preconsent:';
+const PRE_CONSENT_TTL_SEC = 3600; // 1 hour
 
-/** TTL not implemented for in-memory MVP; document Redis + TTL for multi-worker (e-task-4 Notes). */
-
-export function setCollectedData(
-  conversationId: string,
-  data: Partial<CollectedPatientData>
-): void {
-  const existing = preConsentStore.get(conversationId) ?? {};
-  preConsentStore.set(conversationId, { ...existing, ...data });
+/** Ensure queue/Redis is initialized (call before getQueueConnection). */
+function ensureRedis(): ReturnType<typeof getQueueConnection> {
+  if (!isQueueEnabled()) return null;
+  getWebhookQueue();
+  return getQueueConnection();
 }
 
-export function getCollectedData(conversationId: string): CollectedPatientData | null {
+export async function setCollectedData(
+  conversationId: string,
+  data: Partial<CollectedPatientData>
+): Promise<void> {
+  const existing = (await getCollectedData(conversationId)) ?? {};
+  const merged = { ...existing, ...data };
+  preConsentStore.set(conversationId, merged);
+
+  const conn = ensureRedis();
+  if (conn) {
+    try {
+      const key = REDIS_KEY_PREFIX + conversationId;
+      await conn.set(key, JSON.stringify(merged), 'EX', PRE_CONSENT_TTL_SEC);
+    } catch {
+      // Fail-open: in-memory still has data
+    }
+  }
+}
+
+export async function getCollectedData(conversationId: string): Promise<CollectedPatientData | null> {
+  const conn = ensureRedis();
+  if (conn) {
+    try {
+      const key = REDIS_KEY_PREFIX + conversationId;
+      const raw = await conn.get(key);
+      if (raw) {
+        const parsed = JSON.parse(raw) as CollectedPatientData;
+        preConsentStore.set(conversationId, parsed);
+        return parsed;
+      }
+    } catch {
+      // Fall through to in-memory
+    }
+  }
   return preConsentStore.get(conversationId) ?? null;
 }
 
-export function clearCollectedData(conversationId: string): void {
+export async function clearCollectedData(conversationId: string): Promise<void> {
   preConsentStore.delete(conversationId);
+  const conn = ensureRedis();
+  if (conn) {
+    try {
+      await conn.del(REDIS_KEY_PREFIX + conversationId);
+    } catch {
+      // Best-effort
+    }
+  }
 }
 
 // ============================================================================
@@ -130,18 +173,18 @@ export interface ValidateAndApplyResult {
 }
 
 /**
- * Validate value for field, update in-memory store and return new state (metadata only).
+ * Validate value for field, update store and return new state (metadata only).
  * On success: updates store, returns newState with collectedFields and step.
  * On failure: returns replyOverride (deterministic prompt); no store update.
  * When all required collected, newState.step = 'consent'.
  */
-export function validateAndApply(
+export async function validateAndApply(
   conversationId: string,
   field: PatientCollectionField,
   value: string,
   currentState: ConversationState,
   correlationId: string
-): ValidateAndApplyResult {
+): Promise<ValidateAndApplyResult> {
   const collected = currentState.collectedFields ?? [];
   const normalized = parseMessageForField(value, field);
   if (!normalized) {
@@ -162,7 +205,7 @@ export function validateAndApply(
       };
     }
 
-    const existing = getCollectedData(conversationId) ?? {};
+    const existing = (await getCollectedData(conversationId)) ?? {};
     const updates: Partial<CollectedPatientData> = {};
     if (field === 'name') updates.name = validated as string;
     if (field === 'phone') updates.phone = validated as string;
@@ -170,7 +213,7 @@ export function validateAndApply(
     if (field === 'date_of_birth') updates.date_of_birth = validated as string;
     if (field === 'gender') updates.gender = validated;
     if (field === 'reason_for_visit') updates.reason_for_visit = validated as string;
-    setCollectedData(conversationId, { ...existing, ...updates });
+    await setCollectedData(conversationId, { ...existing, ...updates });
 
     const newCollected = [...collected, field];
     const nextField = getNextCollectionField(newCollected);

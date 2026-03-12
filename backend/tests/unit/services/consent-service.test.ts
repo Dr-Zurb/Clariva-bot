@@ -58,17 +58,18 @@ describe('Consent Service', () => {
 
   describe('persistPatientAfterConsent', () => {
     beforeEach(() => {
-      mockedCollection.getCollectedData.mockReturnValue({
+      mockedCollection.getCollectedData.mockResolvedValue({
         name: 'PATIENT_TEST',
         phone: '+10000000000',
         date_of_birth: '1990-01-15',
         gender: 'female',
       });
+      mockedCollection.clearCollectedData.mockResolvedValue(undefined);
       mockedPatient.updatePatient.mockResolvedValue({} as any);
     });
 
     it('updates patient and clears collected data on success', async () => {
-      const reply = await persistPatientAfterConsent(
+      const result = await persistPatientAfterConsent(
         conversationId,
         patientId,
         'instagram_dm',
@@ -93,13 +94,14 @@ describe('Consent Service', () => {
         status: 'granted',
         method: 'instagram_dm',
       });
-      expect(reply).toContain('saved your details');
+      expect(result.success).toBe(true);
+      expect(result.reply).toContain('saved your details');
     });
 
     it('returns fallback when no collected data', async () => {
-      mockedCollection.getCollectedData.mockReturnValue(null);
+      mockedCollection.getCollectedData.mockResolvedValue(null);
 
-      const reply = await persistPatientAfterConsent(
+      const result = await persistPatientAfterConsent(
         conversationId,
         patientId,
         'instagram_dm',
@@ -108,11 +110,16 @@ describe('Consent Service', () => {
 
       expect(mockedPatient.updatePatient).not.toHaveBeenCalled();
       expect(mockedCollection.clearCollectedData).toHaveBeenCalledWith(conversationId);
-      expect(reply).toContain('start over');
+      expect(result.success).toBe(false);
+      expect(result.reply).toContain('start over');
     });
   });
 
   describe('handleConsentDenied', () => {
+    beforeEach(() => {
+      mockedCollection.clearCollectedData.mockResolvedValue(undefined);
+    });
+
     it('clears collected data and audits', async () => {
       const reply = await handleConsentDenied(conversationId, patientId, correlationId);
 
@@ -128,6 +135,10 @@ describe('Consent Service', () => {
   });
 
   describe('handleRevocation', () => {
+    beforeEach(() => {
+      mockedCollection.clearCollectedData.mockResolvedValue(undefined);
+    });
+
     it('anonymizes PHI and updates consent status when patient had granted consent', async () => {
       mockedPatient.findPatientById.mockResolvedValue({
         id: patientId,

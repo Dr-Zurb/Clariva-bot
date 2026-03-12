@@ -21,6 +21,11 @@ import {
 import * as auditLogger from '../../../src/utils/audit-logger';
 
 jest.mock('../../../src/utils/audit-logger');
+jest.mock('../../../src/config/queue', () => ({
+  isQueueEnabled: () => false,
+  getWebhookQueue: () => ({}),
+  getQueueConnection: () => null,
+}));
 
 const mockedAudit = auditLogger as jest.Mocked<typeof auditLogger>;
 
@@ -28,9 +33,9 @@ describe('Collection Service', () => {
   const conversationId = 'conv-123';
   const correlationId = 'corr-456';
 
-  beforeEach(() => {
+  beforeEach(async () => {
     jest.resetAllMocks();
-    clearCollectedData(conversationId);
+    await clearCollectedData(conversationId);
     (mockedAudit.logPatientDataCollection as jest.Mock) = jest
       .fn()
       .mockImplementation(() => Promise.resolve());
@@ -41,6 +46,7 @@ describe('Collection Service', () => {
       expect(COLLECTION_ORDER).toEqual([
         'name',
         'phone',
+        'consultation_type',
         'date_of_birth',
         'gender',
         'reason_for_visit',
@@ -57,12 +63,13 @@ describe('Collection Service', () => {
 
     it('returns next field when some collected', () => {
       expect(getNextCollectionField(['name'])).toBe('phone');
-      expect(getNextCollectionField(['name', 'phone'])).toBe('date_of_birth');
-      expect(getNextCollectionField(['name', 'phone', 'date_of_birth'])).toBe(
-        'gender'
-      );
+      expect(getNextCollectionField(['name', 'phone'])).toBe('consultation_type');
+      expect(getNextCollectionField(['name', 'phone', 'consultation_type'])).toBe('date_of_birth');
       expect(
-        getNextCollectionField(['name', 'phone', 'date_of_birth', 'gender'])
+        getNextCollectionField(['name', 'phone', 'consultation_type', 'date_of_birth'])
+      ).toBe('gender');
+      expect(
+        getNextCollectionField(['name', 'phone', 'consultation_type', 'date_of_birth', 'gender'])
       ).toBe('reason_for_visit');
     });
 
@@ -71,6 +78,7 @@ describe('Collection Service', () => {
         getNextCollectionField([
           'name',
           'phone',
+          'consultation_type',
           'date_of_birth',
           'gender',
           'reason_for_visit',
@@ -111,12 +119,12 @@ describe('Collection Service', () => {
   });
 
   describe('validateAndApply', () => {
-    it('on success updates store and returns newState with next step', () => {
+    it('on success updates store and returns newState with next step', async () => {
       const state: { collectedFields: string[]; step?: string } = {
         collectedFields: [],
         step: 'collecting_name',
       };
-      const result = validateAndApply(
+      const result = await validateAndApply(
         conversationId,
         'name',
         'PATIENT_TEST',
@@ -126,7 +134,7 @@ describe('Collection Service', () => {
       expect(result.success).toBe(true);
       expect(result.newState.collectedFields).toEqual(['name']);
       expect(result.newState.step).toBe('collecting_phone');
-      expect(getCollectedData(conversationId)).toEqual({ name: 'PATIENT_TEST' });
+      expect(await getCollectedData(conversationId)).toEqual({ name: 'PATIENT_TEST' });
       expect(mockedAudit.logPatientDataCollection).toHaveBeenCalledWith({
         correlationId,
         conversationId,
@@ -135,12 +143,12 @@ describe('Collection Service', () => {
       });
     });
 
-    it('on validation failure returns replyOverride and does not update store', () => {
+    it('on validation failure returns replyOverride and does not update store', async () => {
       const state = {
         collectedFields: [] as string[],
         step: 'collecting_phone',
       };
-      const result = validateAndApply(
+      const result = await validateAndApply(
         conversationId,
         'phone',
         'not-a-phone',
@@ -151,7 +159,7 @@ describe('Collection Service', () => {
       expect(result.replyOverride).toContain('valid');
       expect(result.replyOverride).toContain('phone');
       expect(result.newState).toEqual(state);
-      expect(getCollectedData(conversationId)).toBeNull();
+      expect(await getCollectedData(conversationId)).toBeNull();
       expect(mockedAudit.logPatientDataCollection).toHaveBeenCalledWith({
         correlationId,
         conversationId,
@@ -160,13 +168,13 @@ describe('Collection Service', () => {
       });
     });
 
-    it('when all required collected sets step to consent', () => {
-      setCollectedData(conversationId, { name: 'A', phone: '+10000000000' });
+    it('when all required collected sets step to consent', async () => {
+      await setCollectedData(conversationId, { name: 'A', phone: '+10000000000' });
       const state = {
-        collectedFields: ['name', 'phone'],
+        collectedFields: ['name', 'phone', 'consultation_type'],
         step: 'collecting_date_of_birth',
       };
-      const result = validateAndApply(
+      const result = await validateAndApply(
         conversationId,
         'date_of_birth',
         '1990-01-15',
@@ -177,23 +185,25 @@ describe('Collection Service', () => {
       expect(result.newState.collectedFields).toEqual([
         'name',
         'phone',
+        'consultation_type',
         'date_of_birth',
       ]);
       expect(result.newState.step).toBe('collecting_gender');
     });
 
-    it('after last optional field sets step to consent', () => {
-      setCollectedData(conversationId, {
+    it('after last optional field sets step to consent', async () => {
+      await setCollectedData(conversationId, {
         name: 'A',
         phone: '+10000000000',
+        consultation_type: 'video',
         date_of_birth: '1990-01-15',
         gender: 'other',
       });
       const state = {
-        collectedFields: ['name', 'phone', 'date_of_birth', 'gender'],
+        collectedFields: ['name', 'phone', 'consultation_type', 'date_of_birth', 'gender'],
         step: 'collecting_reason_for_visit',
       };
-      const result = validateAndApply(
+      const result = await validateAndApply(
         conversationId,
         'reason_for_visit',
         'Checkup',
@@ -206,22 +216,22 @@ describe('Collection Service', () => {
   });
 
   describe('getCollectedData / setCollectedData / clearCollectedData', () => {
-    it('returns null when no data', () => {
-      expect(getCollectedData(conversationId)).toBeNull();
+    it('returns null when no data', async () => {
+      expect(await getCollectedData(conversationId)).toBeNull();
     });
 
-    it('stores and retrieves partial data', () => {
-      setCollectedData(conversationId, { name: 'PATIENT_TEST', phone: '+10000000000' });
-      expect(getCollectedData(conversationId)).toEqual({
+    it('stores and retrieves partial data', async () => {
+      await setCollectedData(conversationId, { name: 'PATIENT_TEST', phone: '+10000000000' });
+      expect(await getCollectedData(conversationId)).toEqual({
         name: 'PATIENT_TEST',
         phone: '+10000000000',
       });
     });
 
-    it('clearCollectedData removes data', () => {
-      setCollectedData(conversationId, { name: 'PATIENT_TEST' });
-      clearCollectedData(conversationId);
-      expect(getCollectedData(conversationId)).toBeNull();
+    it('clearCollectedData removes data', async () => {
+      await setCollectedData(conversationId, { name: 'PATIENT_TEST' });
+      await clearCollectedData(conversationId);
+      expect(await getCollectedData(conversationId)).toBeNull();
     });
   });
 
