@@ -1587,14 +1587,23 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       (error instanceof Error && /Resource already exists|23505|duplicate/i.test(error.message));
 
     if (isConflict) {
-      // Resource already exists (e.g. retry, duplicate webhook). Continue flow: find conversation,
-      // generate reply, send. Ensures user gets a reply even when idempotency hits a conflict.
-      const conversation = await findConversationByPlatformId(
+      // Resource already exists (e.g. retry, duplicate webhook, race). Find conversation;
+      // may need retries for replication lag after createConversation race.
+      let conversation = await findConversationByPlatformId(
         doctorId,
         'instagram',
         senderId,
         correlationId
       );
+      for (let r = 0; !conversation && r < 3; r++) {
+        await new Promise((resolve) => setTimeout(resolve, 300 * (r + 1)));
+        conversation = await findConversationByPlatformId(
+          doctorId,
+          'instagram',
+          senderId,
+          correlationId
+        );
+      }
       if (conversation && doctorToken) {
         try {
           const intentResult = await classifyIntent(text, correlationId);

@@ -37,9 +37,9 @@ export async function createMessage(
 
   if (error) {
     if (error.code === '23505') {
-      // Row exists (duplicate insert); fetch it. Use maybeSingle() to avoid error on 0 rows.
-      // Retry once after 150ms to handle replication lag (e.g. Supabase read replica).
-      for (let attempt = 0; attempt < 2; attempt++) {
+      // Row exists (duplicate insert); fetch it. Retry with backoff for replication lag.
+      const delays = [200, 400, 800];
+      for (let attempt = 0; attempt <= delays.length; attempt++) {
         const { data: existing } = await supabaseAdmin
           .from('messages')
           .select('*')
@@ -47,7 +47,7 @@ export async function createMessage(
           .eq('platform_message_id', data.platform_message_id)
           .maybeSingle();
         if (existing) return existing as Message;
-        if (attempt === 0) await new Promise((r) => setTimeout(r, 150));
+        if (attempt < delays.length) await new Promise((r) => setTimeout(r, delays[attempt]));
       }
     }
     handleSupabaseError(error, correlationId);

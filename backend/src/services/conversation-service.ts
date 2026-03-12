@@ -132,8 +132,9 @@ export async function createConversation(
 
   if (error) {
     if (error.code === '23505') {
-      // Row exists (duplicate insert); fetch it. Retry once after 150ms for replication lag.
-      for (let attempt = 0; attempt < 2; attempt++) {
+      // Row exists (duplicate insert); fetch it. Retry with backoff for replication lag.
+      const delays = [200, 400, 800];
+      for (let attempt = 0; attempt <= delays.length; attempt++) {
         const existing = await findConversationByPlatformId(
           data.doctor_id,
           data.platform,
@@ -141,7 +142,7 @@ export async function createConversation(
           correlationId
         );
         if (existing) return existing;
-        if (attempt === 0) await new Promise((r) => setTimeout(r, 150));
+        if (attempt < delays.length) await new Promise((r) => setTimeout(r, delays[attempt]));
       }
     }
     handleSupabaseError(error, correlationId);
