@@ -13,8 +13,7 @@ import { logDataModification, logDataAccess } from '../utils/audit-logger';
 
 /**
  * Create a message or return existing if already stored (idempotent).
- * Used for webhooks: duplicate events or retries may try to insert the same message.
- * On unique violation (23505), fetches and returns the existing row.
+ * Uses upsert so we get the row back on conflict (no fetch race / replication lag).
  *
  * @param data - Message data to insert
  * @param correlationId - Request correlation ID
@@ -31,29 +30,18 @@ export async function createMessage(
 
   const { data: message, error } = await supabaseAdmin
     .from('messages')
-    .insert(data)
+    .upsert(data, {
+      onConflict: 'conversation_id,platform_message_id',
+      ignoreDuplicates: false,
+    })
     .select()
     .single();
 
   if (error) {
-    if (error.code === '23505') {
-      // Row exists (duplicate insert); fetch it. Retry with backoff for replication lag.
-      const delays = [200, 400, 800];
-      for (let attempt = 0; attempt <= delays.length; attempt++) {
-        const { data: existing } = await supabaseAdmin
-          .from('messages')
-          .select('*')
-          .eq('conversation_id', data.conversation_id)
-          .eq('platform_message_id', data.platform_message_id)
-          .maybeSingle();
-        if (existing) return existing as Message;
-        if (attempt < delays.length) await new Promise((r) => setTimeout(r, delays[attempt]));
-      }
-    }
     handleSupabaseError(error, correlationId);
   }
 
-  if (!message) throw new InternalError('Message create returned no data');
+  if (!message) throw new InternalError('Message upsert returned no data');
 
   await logDataModification(
     correlationId,

@@ -328,7 +328,6 @@ export async function findOrCreatePlaceholderPatient(
     throw new InternalError('Service role client not available');
   }
 
-  // Placeholder phone is unique and never matches real patients
   const placeholderPhone = `placeholder-${platform}-${platformExternalId}`;
   const { data: patient, error } = await supabaseAdmin
     .from('patients')
@@ -341,8 +340,7 @@ export async function findOrCreatePlaceholderPatient(
     .select()
     .single();
 
-  if (error || !patient) {
-    // Race: another webhook created the same placeholder; fetch and return it
+  if (error) {
     const isUniqueViolation =
       error?.code === '23505' ||
       (typeof error?.message === 'string' &&
@@ -350,24 +348,26 @@ export async function findOrCreatePlaceholderPatient(
     if (isUniqueViolation) {
       const delays = [200, 400, 800];
       for (let attempt = 0; attempt <= delays.length; attempt++) {
-        const existing = await findPatientByPlatformExternalId(
+        const existingPatient = await findPatientByPlatformExternalId(
           platform,
           platformExternalId,
           correlationId
         );
-        if (existing) return existing;
+        if (existingPatient) return existingPatient;
         if (attempt < delays.length) await new Promise((r) => setTimeout(r, delays[attempt]));
       }
     }
     handleSupabaseError(error, correlationId);
   }
 
+  if (!patient) throw new InternalError('Patient create returned no data');
+
   await logDataModification(
     correlationId,
     undefined as any,
     'create',
     'patient',
-    (patient as Patient).id
+    patient.id
   );
 
   return patient as Patient;

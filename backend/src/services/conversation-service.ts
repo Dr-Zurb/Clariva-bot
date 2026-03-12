@@ -91,74 +91,49 @@ export async function getOnlyInstagramConversationSenderId(
 
 /**
  * Create a new conversation
- * 
+ *
  * Creates conversation record when processing webhooks.
- * Returns existing conversation if one already exists with the same platform conversation ID.
- * 
+ * Uses upsert so we get the row back on conflict (no fetch race / replication lag).
+ *
  * @param data - Conversation data to insert
  * @param correlationId - Request correlation ID
  * @returns Created or existing conversation
- * 
+ *
  * @throws InternalError if database operation fails
- * 
- * Note: Uses service role client (webhook processing has no user context)
  */
 export async function createConversation(
   data: InsertConversation,
   correlationId: string
 ): Promise<Conversation> {
-  // Check if conversation already exists
-  const existing = await findConversationByPlatformId(
-    data.doctor_id,
-    data.platform,
-    data.platform_conversation_id,
-    correlationId
-  );
-
-  if (existing) {
-    return existing; // Return existing instead of creating duplicate
-  }
-
   const supabaseAdmin = getSupabaseAdminClient();
   if (!supabaseAdmin) {
     throw new InternalError('Service role client not available');
   }
 
-  const { data: conversation, error } = await supabaseAdmin
+  const { data: rows, error } = await supabaseAdmin
     .from('conversations')
-    .insert(data)
+    .upsert(data, {
+      onConflict: 'doctor_id,platform,platform_conversation_id',
+      ignoreDuplicates: false,
+    })
     .select()
     .single();
 
   if (error) {
-    if (error.code === '23505') {
-      // Row exists (duplicate insert); fetch it. Retry with backoff for replication lag.
-      const delays = [200, 400, 800];
-      for (let attempt = 0; attempt <= delays.length; attempt++) {
-        const existing = await findConversationByPlatformId(
-          data.doctor_id,
-          data.platform,
-          data.platform_conversation_id,
-          correlationId
-        );
-        if (existing) return existing;
-        if (attempt < delays.length) await new Promise((r) => setTimeout(r, delays[attempt]));
-      }
-    }
     handleSupabaseError(error, correlationId);
   }
 
-  if (!conversation) throw new InternalError('Conversation create returned no data');
+  if (!rows) throw new InternalError('Conversation upsert returned no data');
 
   await logDataModification(
     correlationId,
     undefined as any,
     'create',
     'conversation',
-    conversation.id
+    rows.id
   );
 
-  return conversation as Conversation;
+  return rows as Conversation;
 }
 
 /**
