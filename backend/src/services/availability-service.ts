@@ -138,8 +138,11 @@ export async function getAvailableSlots(
     return !blocked && !booked;
   });
 
+  // Always filter past slots (e-task-1): even when minAdvanceHours=0, exclude slots that have already started
+  const now = new Date();
+  filtered = filtered.filter((slot) => new Date(slot.start) >= now);
+
   if (minAdvanceHours > 0) {
-    const now = new Date();
     const cutoff = new Date(now.getTime() + minAdvanceHours * 60 * 60 * 1000);
     filtered = filtered.filter((slot) => new Date(slot.start) >= cutoff);
   }

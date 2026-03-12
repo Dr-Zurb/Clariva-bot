@@ -47,7 +47,12 @@ import {
   getOnlyInstagramConversationSenderId,
 } from '../services/conversation-service';
 import { createMessage, getRecentMessages, getSenderIdByPlatformMessageId } from '../services/message-service';
-import { classifyIntent, generateResponse } from '../services/ai-service';
+import {
+  classifyIntent,
+  generateResponse,
+  MEDICAL_QUERY_RESPONSE,
+  EMERGENCY_RESPONSE,
+} from '../services/ai-service';
 import {
   getNextCollectionField,
   validateAndApply,
@@ -256,6 +261,29 @@ function isAskingAboutBotName(text: string): boolean {
     /who\s+are\s+you/i.test(t) ||
     /what\s+is\s+your\s+name/i.test(t)
   );
+}
+
+/** User sent acknowledgment after booking (ok, thanks, all set, etc.). No "message didn't come through". */
+const ACKNOWLEDGMENT_REGEX = /^(ok|all\s+set|thanks|thank\s+you|confirmed|done|got\s+it)[\s!?.]*$/i;
+
+function isPostBookingAcknowledgment(
+  text: string,
+  recentMessages: { sender_type: string; content: string }[]
+): boolean {
+  const trimmed = (text ?? '').trim();
+  if (trimmed.length > 30) return false;
+  if (!ACKNOWLEDGMENT_REGEX.test(trimmed)) return false;
+  // Last system message should be a booking confirmation (appointment confirmed, payment link, etc.)
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    if (recentMessages[i].sender_type === 'system') {
+      const c = (recentMessages[i].content ?? '').toLowerCase();
+      return (
+        (c.includes('appointment') && (c.includes('confirmed') || c.includes('booked') || c.includes('pay'))) ||
+        c.includes('please pay here')
+      );
+    }
+  }
+  return false;
 }
 
 /**
@@ -824,6 +852,46 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         conversation.patient_id,
         correlationId
       );
+      state = {
+        ...state,
+        lastIntent: intentResult.intent,
+        step: 'responded',
+        updatedAt: new Date().toISOString(),
+      };
+      await updateConversationState(conversation.id, state, correlationId);
+    } else if (intentResult.intent === 'medical_query') {
+      replyText = MEDICAL_QUERY_RESPONSE;
+      state = {
+        ...state,
+        lastIntent: intentResult.intent,
+        step: 'responded',
+        updatedAt: new Date().toISOString(),
+      };
+      await updateConversationState(conversation.id, state, correlationId);
+    } else if (intentResult.intent === 'emergency') {
+      replyText = EMERGENCY_RESPONSE;
+      state = {
+        ...state,
+        lastIntent: intentResult.intent,
+        step: 'responded',
+        updatedAt: new Date().toISOString(),
+      };
+      await updateConversationState(conversation.id, state, correlationId);
+    } else if (intentResult.intent === 'check_appointment_status') {
+      replyText =
+        "For your appointment status, please check your confirmation message or contact the clinic directly.";
+      state = {
+        ...state,
+        lastIntent: intentResult.intent,
+        step: 'responded',
+        updatedAt: new Date().toISOString(),
+      };
+      await updateConversationState(conversation.id, state, correlationId);
+    } else if (
+      state.step === 'responded' &&
+      isPostBookingAcknowledgment(text, recentMessages)
+    ) {
+      replyText = "Great—you're all set. Let us know if you need anything else.";
       state = {
         ...state,
         lastIntent: intentResult.intent,

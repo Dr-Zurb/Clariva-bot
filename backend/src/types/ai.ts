@@ -21,6 +21,9 @@
  * - greeting: User said hello / small talk
  * - cancel_appointment: User wants to cancel (basic)
  * - revoke_consent: User wants to delete data or revoke consent (e-task-5)
+ * - medical_query: User presents symptoms, chief complaints, asks for advice (redirect to doctor)
+ * - emergency: Urgent/emergency language (redirect to emergency services)
+ * - check_appointment_status: User asks if appointment is confirmed, when is visit
  * - unknown: Could not classify or fallback
  */
 export type Intent =
@@ -30,6 +33,9 @@ export type Intent =
   | 'greeting'
   | 'cancel_appointment'
   | 'revoke_consent'
+  | 'medical_query'
+  | 'emergency'
+  | 'check_appointment_status'
   | 'unknown';
 
 /**
@@ -44,6 +50,9 @@ export const INTENT_VALUES: readonly Intent[] = [
   'greeting',
   'cancel_appointment',
   'revoke_consent',
+  'medical_query',
+  'emergency',
+  'check_appointment_status',
   'unknown',
 ] as const;
 

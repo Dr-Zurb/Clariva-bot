@@ -54,16 +54,69 @@ function setCachedIntent(redactedText: string, result: IntentDetectionResult): v
   });
 }
 
-const SYSTEM_PROMPT = `You are a medical receptionist intent classifier. Classify the user message into exactly one intent. Do not diagnose or give clinical advice.
+// ============================================================================
+// Deterministic Intent Rules (before AI) - e-task-1 receptionist conversation rules
+// ============================================================================
 
-Valid intents: book_appointment, ask_question, check_availability, greeting, cancel_appointment, revoke_consent, unknown.
-revoke_consent: User wants to delete their data or revoke consent (e.g. "delete my data", "revoke consent", "remove my info").
+/** Simple greetings only (no mixed content). Match → greeting, skip AI. */
+const SIMPLE_GREETING_REGEX = /^(hi|hello|hey|hiya|howdy|namaste|नमस्ते|good\s*morning|good\s*afternoon|good\s*evening|good\s*day)[\s!?.]*$/i;
+
+/** Emergency keywords/phrases. Match → emergency, skip AI. */
+const EMERGENCY_PATTERNS = [
+  /\b(chest\s+pain|can'?t\s+breathe|cannot\s+breathe|difficulty\s+breathing)\b/i,
+  /\b(heart\s+attack|stroke|unconscious)\b/i,
+  /\b(emergency|urgent|accident|bleeding)\b/i,
+  /\b(severe\s+pain|critical)\b/i,
+];
+
+function isSimpleGreeting(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length > 50) return false; // Long messages are not simple greetings
+  return SIMPLE_GREETING_REGEX.test(trimmed);
+}
+
+function isEmergency(text: string): boolean {
+  return EMERGENCY_PATTERNS.some((p) => p.test(text));
+}
+
+/** Fixed response for medical_query intent. No AI-generated medical advice. */
+export const MEDICAL_QUERY_RESPONSE =
+  "I'm the scheduling assistant. For medical questions, please speak with the doctor during your appointment or call the clinic directly.";
+
+/** Fixed response for emergency intent. */
+export const EMERGENCY_RESPONSE =
+  "Please call emergency services or go to the nearest hospital immediately.";
+
+// ============================================================================
+// AI Prompts
+// ============================================================================
+
+const SYSTEM_PROMPT = `You are a medical receptionist intent classifier. Classify the user message into exactly one intent. Do not diagnose or give clinical advice.
+Classify intent regardless of language. User may write in English, Hindi, Hinglish, or transliterated Hindi.
+
+Valid intents: book_appointment, ask_question, check_availability, greeting, cancel_appointment, revoke_consent, medical_query, emergency, check_appointment_status, unknown.
+
+Intent rules:
+- greeting: Use when message is ONLY a greeting with no explicit request (e.g. "hello", "hi", "good morning"). NEVER classify simple greetings as book_appointment.
+- book_appointment: Use ONLY when user explicitly asks to book, schedule, or make an appointment (e.g. "book", "schedule", "I want an appointment", "can I book").
+- medical_query: User describes symptoms, chief complaints, or asks for medical advice/prescription. Redirect to doctor/clinic; never diagnose.
+- emergency: Urgent/emergency language (chest pain, can't breathe, accident). Redirect to emergency services.
+- ask_question: General questions (price, timings, location, consultation type). Answer from practice info.
+- revoke_consent: User wants to delete data or revoke consent (e.g. "delete my data", "revoke consent").
+- check_appointment_status: User asks if appointment is confirmed, when is visit.
+- unknown: Spam, vulgar, meaningless, or unclear. Polite deflection.
+
+Examples: "hello" → greeting; "book appointment" → book_appointment; "I have fever" → medical_query; "chest pain" → emergency.
 
 Respond with a single JSON object: { "intent": "<one of the valid intents>", "confidence": <number 0.0 to 1.0> }.
 Use "unknown" only when the message does not clearly match any other intent.`;
 
 /** Base receptionist system prompt (e-task-3). Practice name injected dynamically (e-task-4). */
 const RESPONSE_SYSTEM_PROMPT_BASE = `You are a warm, friendly medical practice receptionist. You help with scheduling and general questions. You do NOT diagnose or give medical advice.
+
+LANGUAGE: Respond in the SAME language the user writes in. If they write in Hindi, Hinglish, or Hindi written in English (e.g. "kya aap available ho"), respond in that style. If they write in English, respond in English. Match their tone and script.
+
+GREETING: When currentIntent is greeting, greet back warmly, introduce yourself as the practice's assistant, and ask how you can help (e.g. book appointment, check availability, ask a question). Do NOT start collecting name, phone, or other booking details on greeting alone.
 
 IMPORTANT - Our booking flow collects: full name, phone number; then we show numbered slots for date/time (user picks 1, 2, 3). We do NOT ask for ZIP code, "new or established patient", or free-text "what date/time?". Keep replies brief and natural.
 
@@ -145,6 +198,14 @@ export async function classifyIntent(
   }
 
   const redactedText = redactPhiForAI(messageText);
+
+  // Deterministic rules (e-task-1): run before AI to avoid misclassification
+  if (isEmergency(redactedText)) {
+    return { intent: 'emergency', confidence: 1 };
+  }
+  if (isSimpleGreeting(redactedText)) {
+    return { intent: 'greeting', confidence: 1 };
+  }
 
   const cached = getCachedIntent(redactedText);
   if (cached !== null) {
