@@ -139,7 +139,11 @@ export const webhookQueue = {
   async add(jobName: string, jobData: WebhookJobData): Promise<void> {
     const queue = getWebhookQueue();
     if (queue instanceof Queue) {
-      await queue.add(jobName, jobData, DEFAULT_JOB_OPTIONS);
+      // Deduplication: same eventId = one job (prevents duplicate processing when Meta retries)
+      await queue.add(jobName, jobData, {
+        ...DEFAULT_JOB_OPTIONS,
+        deduplication: { id: jobData.eventId },
+      });
     } else {
       await queue.add(jobName, jobData);
     }

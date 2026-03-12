@@ -1595,8 +1595,8 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         senderId,
         correlationId
       );
-      for (let r = 0; !conversation && r < 3; r++) {
-        await new Promise((resolve) => setTimeout(resolve, 300 * (r + 1)));
+      for (let r = 0; !conversation && r < 5; r++) {
+        await new Promise((resolve) => setTimeout(resolve, [500, 1000, 2000, 4000, 6000][r]));
         conversation = await findConversationByPlatformId(
           doctorId,
           'instagram',

@@ -348,12 +348,16 @@ export async function findOrCreatePlaceholderPatient(
       (typeof error?.message === 'string' &&
         /duplicate|unique|already exists/i.test(error.message));
     if (isUniqueViolation) {
-      const existing = await findPatientByPlatformExternalId(
-        platform,
-        platformExternalId,
-        correlationId
-      );
-      if (existing) return existing;
+      const delays = [200, 400, 800];
+      for (let attempt = 0; attempt <= delays.length; attempt++) {
+        const existing = await findPatientByPlatformExternalId(
+          platform,
+          platformExternalId,
+          correlationId
+        );
+        if (existing) return existing;
+        if (attempt < delays.length) await new Promise((r) => setTimeout(r, delays[attempt]));
+      }
     }
     handleSupabaseError(error, correlationId);
   }
