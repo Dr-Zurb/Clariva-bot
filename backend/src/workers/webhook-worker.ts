@@ -1480,12 +1480,6 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         }
       } else {
         // User said something other than 1/2/3 (e.g. "anything else?") — prompt without repeating full list
-        const slots = await getAvailableSlots(
-          doctorId,
-          slotDate,
-          correlationId,
-          slotOptions
-        );
         replyText =
           "To book, please reply with **1**, **2**, or **3** from the slots above. " +
           "Or say a different day (e.g. Friday 2pm) if you'd prefer another time.";
