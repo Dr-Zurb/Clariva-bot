@@ -377,3 +377,50 @@ export async function validateAndApplyExtracted(
     missingFields,
   };
 }
+
+/**
+ * Fallback when Redis/in-memory lost collected data: try to extract from recent user messages
+ * and set it. Used when persistPatientAfterConsent fails due to empty getCollectedData.
+ *
+ * @param conversationId - Conversation ID
+ * @param recentMessages - Recent messages (sender_type, content)
+ * @param correlationId - For audit
+ * @returns true if we extracted and set name+phone (minimum for persist)
+ */
+export async function tryRecoverAndSetFromMessages(
+  conversationId: string,
+  recentMessages: { sender_type: string; content: string }[],
+  correlationId: string
+): Promise<boolean> {
+  const userTexts: string[] = [];
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    if (recentMessages[i].sender_type === 'patient') {
+      const c = (recentMessages[i].content ?? '').trim();
+      if (c.length >= 5) userTexts.push(c);
+    }
+  }
+  if (userTexts.length === 0) return false;
+
+  let merged: Partial<CollectedPatientData> = {};
+  for (const t of userTexts) {
+    const extracted = extractFieldsFromMessage(t);
+    if (extracted.name || extracted.phone || extracted.reason_for_visit) {
+      if (extracted.name) merged.name = extracted.name;
+      if (extracted.phone) merged.phone = extracted.phone;
+      if (extracted.age !== undefined) merged.age = extracted.age;
+      if (extracted.gender) merged.gender = extracted.gender;
+      if (extracted.reason_for_visit) merged.reason_for_visit = extracted.reason_for_visit;
+      if (extracted.email) merged.email = extracted.email;
+    }
+  }
+  if (!merged.name || !merged.phone) return false;
+
+  await setCollectedData(conversationId, merged);
+  void logPatientDataCollection({
+    correlationId,
+    conversationId,
+    fieldName: 'recovered',
+    status: 'collected',
+  });
+  return true;
+}

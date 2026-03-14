@@ -56,6 +56,7 @@ import {
   getCollectedData,
   validateAndApplyExtracted,
   buildConfirmDetailsMessage,
+  tryRecoverAndSetFromMessages,
 } from '../services/collection-service';
 import {
   parseConsentReply,
@@ -878,33 +879,43 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       }
       const consentResult = parseConsentReply(text);
       if (consentResult === 'granted') {
-        const persistResult = await persistPatientAfterConsent(
+        let persistResult = await persistPatientAfterConsent(
           conversation.id,
           conversation.patient_id,
           'instagram_dm',
           correlationId
         );
+        // Fallback: if Redis/in-memory lost data, try to recover from recent messages
         if (!persistResult.success) {
-          replyText = persistResult.reply;
-          state = {
-            ...state,
-            lastIntent: intentResult.intent,
-            step: 'responded',
-            updatedAt: new Date().toISOString(),
-          };
-          await updateConversationState(conversation.id, state, correlationId);
+          const recovered = await tryRecoverAndSetFromMessages(
+            conversation.id,
+            recentMessages,
+            correlationId
+          );
+          if (recovered) {
+            persistResult = await persistPatientAfterConsent(
+              conversation.id,
+              conversation.patient_id,
+              'instagram_dm',
+              correlationId
+            );
+          }
+        }
+        const slotLink = buildBookingPageUrl(conversation.id, doctorId);
+        if (!persistResult.success) {
+          replyText =
+            `I had trouble saving your details—please say 'book appointment' to re-share them if needed. Meanwhile, pick your slot: ${slotLink}\n\nYou'll be redirected back here after you choose.`;
         } else {
-          const slotLink = buildBookingPageUrl(conversation.id, doctorId);
           replyText =
             `Pick your slot: ${slotLink}\n\nYou'll be redirected back here after you choose.`;
-          state = {
-            ...state,
-            lastIntent: intentResult.intent,
-            step: 'awaiting_slot_selection',
-            updatedAt: new Date().toISOString(),
-          };
-          await updateConversationState(conversation.id, state, correlationId);
         }
+        state = {
+          ...state,
+          lastIntent: intentResult.intent,
+          step: 'awaiting_slot_selection',
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
       } else if (consentResult === 'denied') {
         replyText = await handleConsentDenied(
           conversation.id,
@@ -969,7 +980,15 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       const isYes = /^(yes|yeah|yep|ok|okay|correct|looks good|confirmed)$/.test(trimmed);
       const isCorrection = /^(no|nope|change|correct)\s*[,:]/i.test(text.trim()) || /^(actually|no,)\s+/i.test(text.trim());
       if (isYes) {
-        const collected = await getCollectedData(conversation.id);
+        let collected = await getCollectedData(conversation.id);
+        if (!collected?.name || !collected?.phone) {
+          const recovered = await tryRecoverAndSetFromMessages(
+            conversation.id,
+            recentMessages,
+            correlationId
+          );
+          if (recovered) collected = await getCollectedData(conversation.id);
+        }
         const now = new Date().toISOString();
         state = {
           ...state,
