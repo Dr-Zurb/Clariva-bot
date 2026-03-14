@@ -49,8 +49,8 @@ export interface PersistPatientResult {
 
 /**
  * Persist collected patient data to database after consent granted.
- * Updates placeholder patient with name, phone, date_of_birth, gender.
- * reason_for_visit is not a patients column—omitted here; hold for appointment.notes at booking.
+ * Updates placeholder patient with name, phone, gender, email.
+ * age and reason_for_visit are stored in conversation state for appointment.notes at booking.
  * Calls clearCollectedData after persist. Idempotent: safe to call multiple times.
  *
  * @returns { success, reply } — when success is false, caller must use reply as the bot response.
@@ -87,8 +87,8 @@ export async function persistPatientAfterConsent(
     consent_status: 'granted' as const,
     consent_granted_at: now,
     consent_method: consentMethod,
-    ...(collected.date_of_birth && { date_of_birth: new Date(collected.date_of_birth) }),
     ...(collected.gender && { gender: collected.gender }),
+    ...(collected.email && { email: collected.email }),
   };
 
   await updatePatient(patientId, updateData as UpdatePatient, correlationId);
@@ -160,6 +160,7 @@ export async function handleRevocation(
     phone: `revoked-${patientId}`,
     date_of_birth: null as Date | null,
     gender: null as string | null,
+    email: null as string | null,
     consent_status: 'revoked' as const,
     consent_revoked_at: now,
   };

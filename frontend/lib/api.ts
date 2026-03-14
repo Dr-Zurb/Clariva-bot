@@ -388,3 +388,84 @@ export async function deleteBlockedTime(
     throw err;
   }
 }
+
+// =============================================================================
+// Booking slot picker (e-task-4) — public, token-based (no Bearer auth)
+// =============================================================================
+
+export interface SlotPageInfoData {
+  doctorId: string;
+  practiceName: string;
+  conversationId: string;
+}
+
+export interface DaySlotWithStatus {
+  start: string;
+  end: string;
+  status: "available" | "booked";
+}
+
+export interface DaySlotsData {
+  slots: DaySlotWithStatus[];
+  timezone: string;
+}
+
+export interface SelectSlotData {
+  redirectUrl: string;
+}
+
+/**
+ * Fetch slot page info (practice name, etc.). Verifies token.
+ * Use on page load; if fails, token is invalid.
+ */
+export async function getSlotPageInfo(
+  bookingToken: string
+): Promise<ApiSuccess<SlotPageInfoData>> {
+  const params = new URLSearchParams({ token: bookingToken });
+  return request<SlotPageInfoData>(
+    `/api/v1/bookings/slot-page-info?${params.toString()}`
+  );
+}
+
+/**
+ * Fetch all slots for a day with status (available | booked).
+ */
+export async function getDaySlots(
+  bookingToken: string,
+  date: string
+): Promise<ApiSuccess<DaySlotsData>> {
+  const params = new URLSearchParams({ token: bookingToken, date });
+  return request<DaySlotsData>(
+    `/api/v1/bookings/day-slots?${params.toString()}`
+  );
+}
+
+/**
+ * Submit selected slot. Returns redirectUrl to Instagram.
+ */
+export async function selectSlot(
+  bookingToken: string,
+  slotStart: string
+): Promise<ApiSuccess<SelectSlotData>> {
+  const res = await fetch(`${API_BASE}/api/v1/bookings/select-slot`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: bookingToken, slotStart }),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<SelectSlotData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<SelectSlotData>;
+}

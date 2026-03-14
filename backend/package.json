@@ -14,6 +14,7 @@
     "format:check": "prettier --check \"src/**/*.ts\"",
     "test": "jest",
     "test:watch": "jest --watch",
+    "prepush": "npm run build && npm test",
     "test:coverage": "jest --coverage",
     "test:email": "node -r dotenv/config -r ts-node/register scripts/send-test-email.ts",
     "test:full-notifications": "node -r dotenv/config -r ts-node/register scripts/send-full-notification-test.ts"

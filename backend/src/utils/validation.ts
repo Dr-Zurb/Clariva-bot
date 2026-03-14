@@ -87,6 +87,24 @@ export const patientReasonForVisitSchema = z
   .max(REASON_MAX_LEN, `Reason for visit must be at most ${REASON_MAX_LEN} characters`)
   .transform((s) => s.trim());
 
+/** Age: 1-120 (required for collection). Accepts string or number. */
+export const patientAgeSchema = z
+  .union([z.string(), z.number()])
+  .transform((v) => (typeof v === 'number' ? v : parseInt(String(v).trim(), 10)))
+  .refine((n) => !Number.isNaN(n) && n >= 1 && n <= 120, 'Please provide a valid age (1-120)');
+
+/** Email: optional, valid format. Empty string → undefined. */
+export const patientEmailSchema = z
+  .string()
+  .max(254, 'Email too long')
+  .transform((s) => {
+    const t = s.trim();
+    if (!t) return undefined;
+    const email = t.toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Please provide a valid email address');
+    return email;
+  });
+
 // ============================================================================
 // Field name type and validation map
 // ============================================================================
@@ -94,36 +112,33 @@ export const patientReasonForVisitSchema = z
 export const PATIENT_COLLECTION_FIELDS = [
   'name',
   'phone',
-  'consultation_type',
-  'date_of_birth',
+  'age',
   'gender',
   'reason_for_visit',
+  'email',
 ] as const;
 
 export type PatientCollectionField = (typeof PATIENT_COLLECTION_FIELDS)[number];
 
-/** Consultation type: accepts "video", "1", "in-clinic", "2", "clinic", "in person" etc. */
-const consultationTypeSchema = z
-  .string()
-  .transform((s) => s.trim().toLowerCase())
-  .refine((s) => s.length > 0, 'Please choose Video or In-clinic')
-  .transform((s) => {
-    if (/^(video|1)$/.test(s)) return 'video' as const;
-    if (/^(in[- ]?clinic|clinic|in[- ]?person|2)$/.test(s)) return 'in_clinic' as const;
-    return null;
-  })
-  .refine((v): v is 'video' | 'in_clinic' => v === 'video' || v === 'in_clinic', 'Please choose Video or In-clinic');
+/** Required fields before transitioning to confirm_details (e-task-2). Gender required for medical context. */
+export const REQUIRED_COLLECTION_FIELDS: readonly PatientCollectionField[] = [
+  'name',
+  'phone',
+  'age',
+  'gender',
+  'reason_for_visit',
+];
 
 const fieldSchemas: Record<
   PatientCollectionField,
-  z.ZodType<string | undefined | 'video' | 'in_clinic'>
+  z.ZodType<string | number | undefined>
 > = {
   name: patientNameSchema,
   phone: patientPhoneSchema,
-  consultation_type: consultationTypeSchema,
-  date_of_birth: patientDobSchema,
+  age: patientAgeSchema,
   gender: patientGenderSchema,
   reason_for_visit: patientReasonForVisitSchema,
+  email: patientEmailSchema as z.ZodType<string | undefined>,
 };
 
 /**
@@ -133,10 +148,10 @@ const fieldSchemas: Record<
 export interface CollectedPatientData {
   name?: string;
   phone?: string;
-  consultation_type?: 'video' | 'in_clinic';
-  date_of_birth?: string;
+  age?: number;
   gender?: string;
   reason_for_visit?: string;
+  email?: string;
 }
 
 /**
@@ -151,7 +166,7 @@ export interface CollectedPatientData {
 export function validatePatientField(
   field: PatientCollectionField,
   value: string
-): string | undefined {
+): string | number | undefined {
   const schema = fieldSchemas[field];
   const result = schema.safeParse(value);
   if (!result.success) {
@@ -159,7 +174,7 @@ export function validatePatientField(
     const message = first?.message ?? 'Invalid value';
     throw new ValidationError(message);
   }
-  return result.data as string | undefined;
+  return result.data as string | number | undefined;
 }
 
 // ============================================================================
@@ -310,6 +325,77 @@ export function validateGetPaymentParams(params: unknown): GetPaymentParams {
   if (!result.success) {
     const first = result.error.issues[0];
     const message = first?.message ?? 'Invalid payment ID';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+// ============================================================================
+// Booking Slot Selection (e-task-3)
+// ============================================================================
+
+export const daySlotsQuerySchema = z.object({
+  token: z.string().min(1, 'token is required'),
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD')
+    .refine(
+      (val) => {
+        const d = new Date(val + 'T12:00:00Z');
+        return !isNaN(d.getTime());
+      },
+      'date must be valid'
+    ),
+});
+
+export type DaySlotsQuery = z.infer<typeof daySlotsQuerySchema>;
+
+export function validateDaySlotsQuery(query: Record<string, string | undefined>): DaySlotsQuery {
+  const result = daySlotsQuerySchema.safeParse(query);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid query parameters';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+export const selectSlotBodySchema = z.object({
+  token: z.string().min(1, 'token is required'),
+  slotStart: z
+    .string()
+    .datetime({ message: 'slotStart must be ISO 8601 datetime' })
+    .refine(
+      (val) => new Date(val) >= new Date(),
+      'Cannot select a slot in the past'
+    ),
+});
+
+export type SelectSlotBody = z.infer<typeof selectSlotBodySchema>;
+
+export function validateSelectSlotBody(body: unknown): SelectSlotBody {
+  const result = selectSlotBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+export const slotPageInfoQuerySchema = z.object({
+  token: z.string().min(1, 'token is required'),
+});
+
+export type SlotPageInfoQuery = z.infer<typeof slotPageInfoQuerySchema>;
+
+export function validateSlotPageInfoQuery(
+  query: Record<string, string | undefined>
+): SlotPageInfoQuery {
+  const result = slotPageInfoQuerySchema.safeParse(query);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid query parameters';
     throw new ValidationError(message);
   }
   return result.data;

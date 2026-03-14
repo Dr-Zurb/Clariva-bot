@@ -11,14 +11,17 @@ import type { Intent } from './ai';
  * Collection step values (e-task-4). No PHI; only step and field names in metadata.
  */
 export type PatientCollectionStep =
+  | 'collecting_all'
   | 'collecting_name'
   | 'collecting_phone'
-  | 'collecting_date_of_birth'
-  | 'collecting_consultation_type'
+  | 'collecting_age'
   | 'collecting_gender'
   | 'collecting_reason_for_visit'
+  | 'collecting_email'
+  | 'confirm_details'
   | 'consent'
   | 'awaiting_date_time'
+  | 'awaiting_slot_selection'
   | 'confirming_slot'
   | 'selecting_slot'
   | string;
@@ -44,4 +47,8 @@ export interface ConversationState {
   consultationType?: 'video' | 'in_clinic';
   /** Slot offered for confirmation (e-task-2); when step is confirming_slot */
   slotToConfirm?: { start: string; end: string; dateStr: string };
+  /** Reason for visit (e-task-2); preserved for appointment.notes at booking */
+  reasonForVisit?: string;
+  /** Age (e-task-2); preserved for appointment.notes at booking (patients has no age column) */
+  age?: number;
 }

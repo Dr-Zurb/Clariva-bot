@@ -90,6 +90,15 @@ Phased rollout for per-doctor practice settings, availability, and bot integrati
 
 Tasks: e-task-1 (migration), e-task-2 (settings API), e-task-3 (availability/blocked-times API), e-task-4 (bot integration), e-task-5 (frontend dashboard), e-task-6 (Practice Setup UI consolidation), e-task-7 (Practice Setup UI refinement: cards, nested sidebar, breadcrumb), e-task-8 (Settings UI consistency: flat sidebar, remove back buttons, match integrations cards), e-task-9 (Availability page redesign: weekly calendar, copy to days, blocked times).
 
+### Appointment Booking Flow V2 (2026-03-13)
+
+Complete redesign of the appointment booking flow: "all at once" collection, confirm-details step, external slot picker with proactive messaging, redirect-to-chat for compliance.
+
+- **Reference:** [APPOINTMENT_BOOKING_FLOW_V2.md](../Reference/APPOINTMENT_BOOKING_FLOW_V2.md)
+- **Daily plan:** [docs/Development/Daily-plans/March 2026/2026-03-13/README.md](../Development/Daily-plans/March%202026/2026-03-13/README.md)
+
+Tasks: e-task-1 (migrations: slot_selections, patients.email), e-task-2 (collection flow redesign: all-at-once, age, email, confirm_details), e-task-3 (slot selection API: token, POST select-slot, proactive send, redirect), e-task-4 (external slot picker page: /book), e-task-5 (webhook flow integration: slot link, reason_for_visit to notes).
+
 ---
 
 ## 🔗 Related Documentation

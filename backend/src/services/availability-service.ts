@@ -28,6 +28,13 @@ export interface AvailableSlot {
   durationMinutes?: number;
 }
 
+/** Slot with status for external picker (e-task-3); booked slots greyed out */
+export interface DaySlotWithStatus {
+  start: string;
+  end: string;
+  status: 'available' | 'booked';
+}
+
 /**
  * Get doctor availability
  *
@@ -160,6 +167,85 @@ export async function getAvailableSlots(
   });
 
   return filtered;
+}
+
+/**
+ * Get all slots for a day with status (available | booked) for external slot picker (e-task-3).
+ * Booked/blocked slots have status 'booked' (greyed out); others 'available'.
+ *
+ * @param doctorId - Doctor UUID
+ * @param date - YYYY-MM-DD
+ * @param correlationId - Request correlation ID
+ * @param options - timezone, slotIntervalMinutes, minAdvanceHours
+ * @returns { slots, timezone }
+ */
+export async function getDaySlotsWithStatus(
+  doctorId: string,
+  date: string,
+  correlationId: string,
+  options?: GetAvailableSlotsOptions
+): Promise<{ slots: DaySlotWithStatus[]; timezone: string }> {
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    throw new InternalError('Service role client not available for slot lookup');
+  }
+
+  const slotInterval = options?.slotIntervalMinutes ?? SLOT_INTERVAL_MINUTES;
+  const minAdvanceHours = options?.minAdvanceHours ?? 0;
+  const timezone = options?.timezone ?? 'Asia/Kolkata';
+
+  const dayOfWeek = getDayOfWeek(date, timezone);
+  const { dayStart, dayEnd } = getDayBounds(date, timezone);
+
+  const [availabilityRows, blockedRows, appointmentRows] = await Promise.all([
+    fetchAvailabilityForDay(supabaseAdmin, doctorId, dayOfWeek),
+    fetchBlockedTimesForDay(supabaseAdmin, doctorId, dayStart, dayEnd),
+    fetchBookedAppointmentsForDay(supabaseAdmin, doctorId, dayStart, dayEnd),
+  ]);
+
+  const allSlots = generateSlotsFromAvailability(
+    date,
+    availabilityRows as Availability[],
+    slotInterval,
+    timezone
+  );
+
+  const blockedList = blockedRows as BlockedTime[];
+  const appointmentList = appointmentRows as { appointment_date: Date | string }[];
+
+  const now = new Date();
+  const minAdvanceCutoff =
+    minAdvanceHours > 0 ? new Date(now.getTime() + minAdvanceHours * 60 * 60 * 1000) : now;
+
+  const slots: DaySlotWithStatus[] = allSlots
+    .filter((slot) => new Date(slot.start) >= minAdvanceCutoff)
+    .map((slot) => {
+      const slotStart = new Date(slot.start);
+      const slotEnd = new Date(slot.end);
+      const blocked = blockedList.some((b) =>
+        overlaps(slotStart, slotEnd, new Date(b.start_time), new Date(b.end_time))
+      );
+      const booked = appointmentList.some((a) => {
+        const appStart = new Date(a.appointment_date);
+        const appEnd = new Date(appStart.getTime() + slotInterval * 60 * 1000);
+        return overlaps(slotStart, slotEnd, appStart, appEnd);
+      });
+      return {
+        start: slot.start,
+        end: slot.end,
+        status: blocked || booked ? 'booked' : 'available',
+      };
+    });
+
+  await logAuditEvent({
+    correlationId,
+    action: 'get_day_slots_with_status',
+    resourceType: 'availability',
+    status: 'success',
+    metadata: { doctorId, date, slotCount: slots.length },
+  });
+
+  return { slots, timezone };
 }
 
 function getDayOfWeek(dateStr: string, timezone?: string): number {

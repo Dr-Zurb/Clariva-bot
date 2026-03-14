@@ -2,6 +2,8 @@
 
 **Purpose:** Canonical reference for the receptionist bot's appointment booking flow. Used by webhook-worker, collection-service, consent-service, and availability-service.
 
+**Note:** For the redesigned flow (all-at-once collection, external slot picker, proactive messaging), see [APPOINTMENT_BOOKING_FLOW_V2.md](./APPOINTMENT_BOOKING_FLOW_V2.md).
+
 **Related:** [e-task-2: Appointment booking flow refinements](../../Development/Daily-plans/March%202026/2026-03-10/e-task-2-appointment-booking-flow-refinements.md)
 
 ---

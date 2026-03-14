@@ -61,6 +61,35 @@ export async function findConversationByPlatformId(
 }
 
 /**
+ * Find conversation by ID (e-task-3 slot selection).
+ *
+ * @param conversationId - Conversation UUID
+ * @param correlationId - Request correlation ID
+ * @returns Conversation or null if not found
+ */
+export async function findConversationById(
+  conversationId: string,
+  correlationId: string
+): Promise<Conversation | null> {
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('conversations')
+    .select('*')
+    .eq('id', conversationId)
+    .maybeSingle();
+
+  if (error) {
+    handleSupabaseError(error, correlationId);
+  }
+
+  return data as Conversation | null;
+}
+
+/**
  * When the doctor has exactly one Instagram conversation, return its platform_conversation_id (sender ID).
  * Used as fallback for message_edit webhooks that have no sender in payload and no stored message with the given mid.
  *

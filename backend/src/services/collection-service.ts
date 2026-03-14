@@ -1,7 +1,7 @@
 /**
- * Patient Collection Service (e-task-4)
+ * Patient Collection Service (e-task-4, e-task-2)
  *
- * Field-by-field collection flow: name, phone, DOB (optional), gender (optional), reason_for_visit.
+ * "All at once" collection flow: name, phone, age, gender, reason_for_visit (required); email (optional).
  * Collected values live in Redis (when available) + in-memory fallback; metadata (collectedFields, step) only in DB.
  * No PHI in conversations.metadata (COMPLIANCE C). No persistence to patients table until Task 5 consent.
  *
@@ -12,42 +12,38 @@ import type { ConversationState } from '../types/conversation';
 import type { PatientCollectionField, CollectedPatientData } from '../utils/validation';
 import {
   PATIENT_COLLECTION_FIELDS,
+  REQUIRED_COLLECTION_FIELDS,
   validatePatientField,
 } from '../utils/validation';
 import { logPatientDataCollection } from '../utils/audit-logger';
 import { getWebhookQueue, getQueueConnection, isQueueEnabled } from '../config/queue';
+import { extractFieldsFromMessage, type ExtractedFields } from '../utils/extract-patient-fields';
 
 // ============================================================================
 // Constants (collection order and required fields)
 // ============================================================================
 
-/** Collection order: name → phone → date_of_birth → gender → reason_for_visit */
+/** Collection order: name → phone → age → gender → reason_for_visit → email */
 export const COLLECTION_ORDER = PATIENT_COLLECTION_FIELDS;
-
-/** Required fields before transitioning to consent (Task 5) */
-export const REQUIRED_COLLECTION_FIELDS: readonly PatientCollectionField[] = [
-  'name',
-  'phone',
-];
 
 /** Step name for each field (no PHI) */
 const STEP_BY_FIELD: Record<PatientCollectionField, string> = {
   name: 'collecting_name',
   phone: 'collecting_phone',
-  consultation_type: 'collecting_consultation_type',
-  date_of_birth: 'collecting_date_of_birth',
+  age: 'collecting_age',
   gender: 'collecting_gender',
   reason_for_visit: 'collecting_reason_for_visit',
+  email: 'collecting_email',
 };
 
 /** User-facing labels for validation error messages */
 const FIELD_LABELS: Record<PatientCollectionField, string> = {
   name: 'full name',
   phone: 'phone number',
-  consultation_type: 'consultation type (Video or In-clinic)',
-  date_of_birth: 'date of birth',
+  age: 'age',
   gender: 'gender',
   reason_for_visit: 'reason for visit',
+  email: 'email',
 };
 
 // ============================================================================
@@ -156,12 +152,12 @@ export function parseMessageForField(
   if (field === 'phone' && lower.startsWith('my phone is ')) {
     return trimmed.replace(/^my phone is /i, '').trim();
   }
-  if (field === 'consultation_type') {
-    const after = trimmed
-      .replace(/^(i'?d?\s+)?(prefer|want|like|choose)\s+/i, '')
-      .replace(/\s+(please|thanks|thank you)\.?$/i, '')
-      .trim();
-    return after || trimmed;
+  if (field === 'age') {
+    const ageMatch = trimmed.match(/(?:age|i'?m|i am)\s*:?\s*(\d{1,3})\b/i);
+    if (ageMatch) return ageMatch[1];
+  }
+  if (field === 'email' && lower.startsWith('email')) {
+    return trimmed.replace(/^email\s*:?\s*/i, '').trim();
   }
   return trimmed;
 }
@@ -209,10 +205,10 @@ export async function validateAndApply(
     const updates: Partial<CollectedPatientData> = {};
     if (field === 'name') updates.name = validated as string;
     if (field === 'phone') updates.phone = validated as string;
-    if (field === 'consultation_type') updates.consultation_type = validated as 'video' | 'in_clinic';
-    if (field === 'date_of_birth') updates.date_of_birth = validated as string;
-    if (field === 'gender') updates.gender = validated;
+    if (field === 'age') updates.age = validated as number;
+    if (field === 'gender') updates.gender = validated as string;
     if (field === 'reason_for_visit') updates.reason_for_visit = validated as string;
+    if (field === 'email') updates.email = validated as string;
     await setCollectedData(conversationId, { ...existing, ...updates });
 
     const newCollected = [...collected, field];
@@ -252,7 +248,132 @@ export async function validateAndApply(
 
 /**
  * Returns step to use when entering collection (e.g. first "book_appointment" message).
+ * e-task-2: Use collecting_all for "all at once" flow.
  */
 export function getInitialCollectionStep(): string {
-  return STEP_BY_FIELD[COLLECTION_ORDER[0]];
+  return 'collecting_all';
+}
+
+/**
+ * Build the confirm_details message (read-back summary).
+ */
+export function buildConfirmDetailsMessage(collected: CollectedPatientData): string {
+  const parts: string[] = [];
+  if (collected.name) parts.push(`**${collected.name}**`);
+  if (collected.age !== undefined) parts.push(`**${collected.age}**`);
+  if (collected.gender) parts.push(`**${collected.gender}**`);
+  if (collected.phone) parts.push(`**${collected.phone}**`);
+  const reason = collected.reason_for_visit || 'not provided';
+  parts.push(`reason: ${reason}`);
+  const email = collected.email ? collected.email : 'not provided';
+  parts.push(`Email: ${email}`);
+  return (
+    `Let me confirm: ${parts.join(', ')}. ` +
+    'Is this correct? Reply Yes to see available slots, or tell me what to change.'
+  );
+}
+
+export interface ValidateAndApplyExtractedResult {
+  success: boolean;
+  newState: ConversationState;
+  missingFields: PatientCollectionField[];
+  replyOverride?: string;
+}
+
+/**
+ * Extract fields from message, validate each, merge into store.
+ * Returns new state with collectedFields; if all required present, step = 'confirm_details'.
+ */
+export async function validateAndApplyExtracted(
+  conversationId: string,
+  text: string,
+  currentState: ConversationState,
+  correlationId: string
+): Promise<ValidateAndApplyExtractedResult> {
+  const extracted = extractFieldsFromMessage(text);
+  const existing = (await getCollectedData(conversationId)) ?? {};
+  const merged: Partial<CollectedPatientData> = { ...existing };
+  const updates: Partial<CollectedPatientData> = {};
+
+  for (const [key, value] of Object.entries(extracted)) {
+    if (value === undefined || value === '') continue;
+    const field = key as keyof ExtractedFields;
+    if (field === 'name' && typeof value === 'string') {
+      try {
+        const v = validatePatientField('name', value);
+        if (v) updates.name = v as string;
+      } catch {
+        // skip invalid
+      }
+    } else if (field === 'phone' && typeof value === 'string') {
+      try {
+        const v = validatePatientField('phone', value);
+        if (v) updates.phone = v as string;
+      } catch {
+        // skip invalid
+      }
+    } else if (field === 'age' && typeof value === 'number') {
+      try {
+        const v = validatePatientField('age', String(value));
+        if (v !== undefined) updates.age = v as number;
+      } catch {
+        // skip invalid
+      }
+    } else if (field === 'gender' && typeof value === 'string') {
+      try {
+        const v = validatePatientField('gender', value);
+        if (v !== undefined && typeof v === 'string') updates.gender = v;
+      } catch {
+        // skip invalid
+      }
+    } else if (field === 'reason_for_visit' && typeof value === 'string') {
+      try {
+        const v = validatePatientField('reason_for_visit', value);
+        if (v !== undefined && typeof v === 'string') updates.reason_for_visit = v;
+      } catch {
+        // skip invalid
+      }
+    } else if (field === 'email' && typeof value === 'string') {
+      try {
+        const v = validatePatientField('email', value);
+        if (v !== undefined && typeof v === 'string') updates.email = v;
+      } catch {
+        // skip invalid
+      }
+    }
+  }
+
+  // Merge into store
+  Object.assign(merged, updates);
+  await setCollectedData(conversationId, merged);
+
+  // Compute collectedFields
+  const collectedSet = new Set<string>();
+  for (const f of COLLECTION_ORDER) {
+    const val = merged[f as keyof CollectedPatientData];
+    if (val !== undefined && (typeof val !== 'string' || val !== '')) collectedSet.add(f);
+  }
+  const collectedFields = Array.from(collectedSet);
+
+  // Check required
+  const missingFields = REQUIRED_COLLECTION_FIELDS.filter((f) => !collectedFields.includes(f));
+  const hasAllRequired = missingFields.length === 0;
+
+  void logPatientDataCollection({
+    correlationId,
+    conversationId,
+    fieldName: 'extracted',
+    status: 'collected',
+  });
+
+  return {
+    success: true,
+    newState: {
+      ...currentState,
+      collectedFields,
+      step: hasAllRequired ? 'confirm_details' : 'collecting_all',
+      updatedAt: new Date().toISOString(),
+    },
+    missingFields,
+  };
 }

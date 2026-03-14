@@ -118,7 +118,7 @@ LANGUAGE: Respond in the SAME language the user writes in. If they write in Hind
 
 GREETING: When currentIntent is greeting, greet back warmly, introduce yourself as the practice's assistant, and ask how you can help (e.g. book appointment, check availability, ask a question). Do NOT start collecting name, phone, or other booking details on greeting alone.
 
-IMPORTANT - Our booking flow collects: full name, phone number; then we show numbered slots for date/time (user picks 1, 2, 3). We do NOT ask for ZIP code, "new or established patient", or free-text "what date/time?". Keep replies brief and natural.
+IMPORTANT - Our booking flow collects: full name, age, gender, phone number, reason for visit (required); email (optional). Then we confirm details, get consent, and show a link to pick a slot. Keep replies brief and natural.
 
 CRITICAL - When currentIntent is book_appointment, the user has ALREADY chosen to book. NEVER ask "would you like to book or ask a question?"—go straight to the current step (e.g. ask for full name). Never repeat that choice prompt. If state shows collecting_name, collecting_phone, consent, or selecting_slot, proceed with the current step only. If the user asks "what's YOUR name" (to the bot), say you're the practice's assistant and ask for THEIR name—one brief reply only.
 
@@ -417,20 +417,17 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
     state?.collectedFields?.length
       ? ` Already collected: ${state.collectedFields.join(', ')}. Do not ask for these again.`
       : '';
-  const consultationTypesRaw = doctorContext?.consultation_types?.trim().toLowerCase();
-  const hasVideo = !consultationTypesRaw || /video/.test(consultationTypesRaw);
-  const hasInClinic = !consultationTypesRaw || /in[- ]?clinic|in[- ]?person|clinic/.test(consultationTypesRaw);
-  const consultationOptions =
-    hasVideo && hasInClinic
-      ? 'Video or In-clinic'
-      : hasVideo
-        ? 'Video only'
-        : hasInClinic
-          ? 'In-clinic only'
-          : 'Video or In-clinic';
+  const collectingAllHint =
+    state?.step === 'collecting_all'
+      ? ' Ask for ALL details at once: full name, age, gender, mobile number, reason for visit. Email is optional. Example: "To book your appointment, please share: Full name, Age, Gender, Mobile number, Reason for visit. Email (optional) for receipts."'
+      : '';
   const collectionHint =
-    state?.step?.startsWith('collecting_')
-      ? ` If the step is collecting_<field>, ask the user for that field only (e.g. collecting_name -> ask for full name, collecting_phone -> ask for phone number, collecting_consultation_type -> ask "Would you prefer ${consultationOptions} consultation?"). Keep the question brief. Do not ask for other fields.`
+    state?.step?.startsWith('collecting_') && state?.step !== 'collecting_all'
+      ? ` If the step is collecting_<field>, ask the user for that field only. Keep the question brief.`
+      : '';
+  const confirmDetailsHint =
+    state?.step === 'confirm_details'
+      ? ' The user is confirming their details. The system will read back the summary. If they say Yes, proceed to consent. If they correct something, acknowledge and re-confirm.'
       : '';
   const consentHint =
     state?.step === 'consent'
@@ -439,7 +436,7 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
   const systemPrompt = buildResponseSystemPrompt(doctorContext);
   const systemContent =
     systemPrompt +
-    `\n\nCurrent detected intent for the latest user message: ${currentIntent}.${stepContext}${collectedContext}${collectionHint}${consentHint}`;
+    `\n\nCurrent detected intent for the latest user message: ${currentIntent}.${stepContext}${collectedContext}${collectingAllHint}${collectionHint}${confirmDetailsHint}${consentHint}`;
 
   const messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [
     { role: 'system', content: systemContent },

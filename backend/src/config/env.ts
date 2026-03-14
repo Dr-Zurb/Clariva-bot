@@ -78,6 +78,10 @@ const envSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   // Doctor email for notifications when not in auth (MVP fallback)
   DEFAULT_DOCTOR_EMAIL: z.string().email().optional(),
+
+  // Booking slot picker (e-task-3 - external page URL; token auth)
+  BOOKING_TOKEN_SECRET: z.string().min(16, 'At least 16 chars for HMAC').optional(),
+  BOOKING_PAGE_URL: z.string().url().optional(),
 });
 
 /**

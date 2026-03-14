@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import healthRoutes from '../../health';
 import appointmentRoutes from './appointments';
+import bookingRoutes from './bookings';
 import paymentRoutes from './payments';
 import patientRoutes from './patients';
 import instagramSettingsRoutes from './settings/instagram';
@@ -24,6 +25,9 @@ router.use('/health', healthRoutes);
 // Appointment endpoints
 // GET /api/v1/appointments/available-slots
 router.use('/appointments', appointmentRoutes);
+
+// Booking slot picker (e-task-3): day-slots, select-slot, slot-page-info
+router.use('/bookings', bookingRoutes);
 
 // Payment endpoints (e-task-4)
 // POST /api/v1/payments/create-link, GET /api/v1/payments/:id

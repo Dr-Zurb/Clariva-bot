@@ -211,6 +211,7 @@ export interface DeadLetterQueueWithDecrypted extends Omit<DeadLetterQueue, 'pay
  * @property phone - Patient's phone number (PHI - encrypted at rest)
  * @property date_of_birth - Patient's date of birth (PHI - encrypted at rest, optional)
  * @property gender - Patient's gender (optional, not PHI)
+ * @property email - Patient's email (optional, PHI - for receipts; migration 014)
  * @property platform - Platform name for placeholder lookup (e.g. instagram, optional)
  * @property platform_external_id - Platform user ID for placeholder lookup (e.g. PSID, optional)
  * @property consent_status - Consent status: pending, granted, revoked (e-task-5)
@@ -226,6 +227,7 @@ export interface Patient {
   phone: string;  // PHI
   date_of_birth?: Date;  // PHI (optional)
   gender?: string;
+  email?: string | null;  // PHI (optional; for receipts; migration 014)
   platform?: string | null;
   platform_external_id?: string | null;
   consent_status?: 'pending' | 'granted' | 'revoked';
