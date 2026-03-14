@@ -109,12 +109,17 @@ export function extractFieldsFromMessage(text: string): ExtractedFields {
     const reason = reasonLabelMatch[1].trim();
     if (reason.length >= 2) result.reason_for_visit = reason;
   } else {
-    // Heuristic: after phone/age, or last comma-separated part
-    const parts = trimmed.split(/[,;]/).map((p) => p.trim());
-    if (parts.length >= 4) {
-      const last = parts[parts.length - 1];
-      if (last && last.length >= 3 && !last.match(/^\d+$/) && !EMAIL_REGEX.test(last)) {
-        result.reason_for_visit = last;
+    // Heuristic: "i have X" (e.g. "i have pain abdomen")
+    const iHaveMatch = trimmed.match(/\bi\s+have\s+([^.@,\n]+?)(?=\s*(?:,|@|$))/i);
+    if (iHaveMatch && iHaveMatch[1].trim().length >= 3) {
+      result.reason_for_visit = iHaveMatch[1].trim();
+    } else {
+      const parts = trimmed.split(/[,;]/).map((p) => p.trim());
+      if (parts.length >= 4) {
+        const last = parts[parts.length - 1];
+        if (last && last.length >= 3 && !last.match(/^\d+$/) && !EMAIL_REGEX.test(last)) {
+          result.reason_for_visit = last;
+        }
       }
     }
   }

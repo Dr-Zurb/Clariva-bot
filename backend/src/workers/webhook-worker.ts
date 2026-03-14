@@ -254,6 +254,54 @@ function isValidInstagramSenderId(senderId: string): boolean {
 const ACKNOWLEDGMENT_REGEX =
   /^(ok|all\s+set|thanks|thank\s+you|confirmed|done|got\s+it|ok\s+thanks|thanks\s+ok|ok\s+thank\s+you)[\s!?.]*$/i;
 
+/** Last bot message asked for booking details (Full name, Age, Reason for visit, etc.). */
+function lastBotMessageAskedForDetails(
+  recentMessages: { sender_type: string; content: string }[]
+): boolean {
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    if (recentMessages[i].sender_type !== 'patient') {
+      const c = (recentMessages[i].content ?? '').toLowerCase();
+      return (
+        c.includes('reason for visit') ||
+        c.includes('full name') ||
+        (c.includes('age') && c.includes('gender')) ||
+        c.includes('mobile number')
+      );
+    }
+  }
+  return false;
+}
+
+/** Last bot message asked for consent (Ready to pick a time? Do I have your consent? etc.). */
+function lastBotMessageAskedForConsent(
+  recentMessages: { sender_type: string; content: string }[]
+): boolean {
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    if (recentMessages[i].sender_type !== 'patient') {
+      const c = (recentMessages[i].content ?? '').toLowerCase();
+      return (
+        c.includes('ready to pick a time') ||
+        c.includes('do i have your consent') ||
+        c.includes('consent to use these details')
+      );
+    }
+  }
+  return false;
+}
+
+/** Last bot message asked for confirm (Is this correct? Reply Yes to see available slots). */
+function lastBotMessageAskedForConfirm(
+  recentMessages: { sender_type: string; content: string }[]
+): boolean {
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    if (recentMessages[i].sender_type !== 'patient') {
+      const c = (recentMessages[i].content ?? '').toLowerCase();
+      return c.includes('is this correct') && c.includes('reply yes');
+    }
+  }
+  return false;
+}
+
 function isPostBookingAcknowledgment(
   text: string,
   recentMessages: { sender_type: string; content: string }[]
@@ -768,8 +816,12 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     let replyText: string;
     const isBookIntent = intentResult.intent === 'book_appointment';
     const isRevokeIntent = intentResult.intent === 'revoke_consent';
+    const lastBotAskedForDetails = lastBotMessageAskedForDetails(recentMessages);
     const inCollection =
-      state.step?.startsWith('collecting_') || state.step === 'consent' || state.step === 'confirm_details';
+      state.step?.startsWith('collecting_') ||
+      state.step === 'consent' ||
+      state.step === 'confirm_details' ||
+      lastBotAskedForDetails;
     const justStartingCollection =
       isBookIntent && !state.step && !(state.collectedFields?.length);
 
@@ -818,8 +870,12 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         updatedAt: new Date().toISOString(),
       };
       await updateConversationState(conversation.id, state, correlationId);
-    } else if (state.step === 'consent') {
-      // Handle consent reply regardless of intent (e.g. "yes" may be classified as greeting).
+    } else if (state.step === 'consent' || (lastBotMessageAskedForConsent(recentMessages) && parseConsentReply(text) === 'granted')) {
+      // Handle consent reply regardless of intent. Fallback: last bot asked for consent + user said yes.
+      if (!state.step) {
+        state = { ...state, step: 'consent', updatedAt: new Date().toISOString() };
+        await updateConversationState(conversation.id, state, correlationId);
+      }
       const consentResult = parseConsentReply(text);
       if (consentResult === 'granted') {
         const persistResult = await persistPatientAfterConsent(
@@ -873,9 +929,18 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           doctorContext,
         });
       }
-    } else if (state.step === 'collecting_all') {
-      // Process as collection data regardless of intent. E.g. "Pain Abdomen" may be classified
-      // as medical_query but we asked for reason for visit—treat it as data, not a deflection.
+    } else if (state.step === 'collecting_all' || (lastBotAskedForDetails && !state.step)) {
+      // Process as collection data. Context: we asked for details (state or last bot message).
+      // E.g. "Pain Abdomen" may be classified as medical_query but we asked—treat as data.
+      if (!state.step) {
+        state = {
+          ...state,
+          step: 'collecting_all',
+          collectedFields: [],
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+      }
       const extractResult = await validateAndApplyExtracted(
         conversation.id,
         text,
@@ -894,8 +959,12 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         });
         replyText = `Got it. Still need: ${missingLabels.join(', ')}. Please share.`;
       }
-    } else if (state.step === 'confirm_details') {
-      // Handle confirm reply regardless of intent (e.g. "yes" may be classified as greeting).
+    } else if (state.step === 'confirm_details' || (lastBotMessageAskedForConfirm(recentMessages) && /^(yes|yeah|yep|ok|okay|correct|looks good|confirmed)$/.test(text.trim().toLowerCase()))) {
+      // Handle confirm reply regardless of intent. Fallback: last bot asked for confirm + user said yes.
+      if (!state.step) {
+        state = { ...state, step: 'confirm_details', updatedAt: new Date().toISOString() };
+        await updateConversationState(conversation.id, state, correlationId);
+      }
       const trimmed = text.trim().toLowerCase();
       const isYes = /^(yes|yeah|yep|ok|okay|correct|looks good|confirmed)$/.test(trimmed);
       const isCorrection = /^(no|nope|change|correct)\s*[,:]/i.test(text.trim()) || /^(actually|no,)\s+/i.test(text.trim());
