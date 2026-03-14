@@ -23,6 +23,8 @@ function toForm(s: DoctorSettings | null): Record<string, string> {
   if (!s) return {};
   const slotVal = s.slot_interval_minutes;
   const slotStr = slotVal >= 1 && slotVal <= 60 ? String(slotVal) : "15";
+  const feeMinor = s.appointment_fee_minor;
+  const feeMain = feeMinor != null ? (feeMinor / 100).toString() : "";
   return {
     slot_interval_minutes: slotStr,
     max_advance_booking_days: toFormValue(s.max_advance_booking_days) || "30",
@@ -31,6 +33,8 @@ function toForm(s: DoctorSettings | null): Record<string, string> {
     cancellation_policy_hours: toFormValue(s.cancellation_policy_hours),
     max_appointments_per_day: toFormValue(s.max_appointments_per_day),
     booking_buffer_minutes: toFormValue(s.booking_buffer_minutes),
+    appointment_fee: feeMain,
+    appointment_fee_currency: toFormValue(s.appointment_fee_currency) || "INR",
   };
 }
 
@@ -88,6 +92,10 @@ export default function BookingRulesPage() {
     const slotInt = toNum(form.slot_interval_minutes);
     if (slotInt !== null && (slotInt < 1 || slotInt > 60)) return;
 
+    const feeMain = toNum(form.appointment_fee);
+    const feeMinor = feeMain != null ? feeMain * 100 : null;
+    const currency = (form.appointment_fee_currency?.trim() || "INR").toUpperCase().slice(0, 3);
+
     const payload: PatchDoctorSettingsPayload = {
       slot_interval_minutes: slotInt ?? 15,
       max_advance_booking_days: toNum(form.max_advance_booking_days) ?? 30,
@@ -96,6 +104,8 @@ export default function BookingRulesPage() {
       cancellation_policy_hours: toNum(form.cancellation_policy_hours) ?? null,
       max_appointments_per_day: toNum(form.max_appointments_per_day) ?? null,
       booking_buffer_minutes: toNum(form.booking_buffer_minutes) ?? null,
+      appointment_fee_minor: feeMinor,
+      appointment_fee_currency: feeMinor != null ? currency : null,
     };
 
     setSaving(true);
@@ -144,6 +154,45 @@ export default function BookingRulesPage() {
         Slot length, advance booking limits, and cancellation policy.
       </p>
       <form onSubmit={handleSubmit} className="mt-6 space-y-4 rounded-lg border border-gray-200 bg-white p-4">
+        <div className="rounded-md border border-amber-200 bg-amber-50/50 p-4">
+          <h2 className="text-sm font-medium text-amber-900">Appointment fee</h2>
+          <p className="mt-1 text-xs text-amber-800">
+            Fee charged when patients book. Stored in smallest unit (paise/cents). Leave empty to use system default (₹500).
+          </p>
+          <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <FieldLabel htmlFor="appointment_fee" tooltip="Amount in main unit (e.g. 500 = ₹500 or $500).">
+                Fee amount
+              </FieldLabel>
+              <input
+                id="appointment_fee"
+                type="number"
+                min={0}
+                step={1}
+                value={form.appointment_fee ?? ""}
+                onChange={(e) => handleFormChange((p) => ({ ...p, appointment_fee: e.target.value }))}
+                placeholder="e.g. 500"
+                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <FieldLabel htmlFor="appointment_fee_currency" tooltip="Currency code (INR, USD, etc.).">
+                Currency
+              </FieldLabel>
+              <select
+                id="appointment_fee_currency"
+                value={form.appointment_fee_currency ?? "INR"}
+                onChange={(e) => handleFormChange((p) => ({ ...p, appointment_fee_currency: e.target.value }))}
+                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="INR">INR (₹)</option>
+                <option value="USD">USD ($)</option>
+                <option value="EUR">EUR (€)</option>
+                <option value="GBP">GBP (£)</option>
+              </select>
+            </div>
+          </div>
+        </div>
         <div>
           <FieldLabel htmlFor="slot_interval_minutes" tooltip="Length of each bookable appointment slot (e.g. 15 min = 4 slots per hour).">
             Slot interval (minutes)

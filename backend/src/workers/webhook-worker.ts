@@ -471,9 +471,15 @@ function formatAmountForDisplay(amountMinor: number, currency: string): string {
 }
 
 /** Format payment-link DM: date, fee amount, and link so the patient sees the fee before paying. */
-function formatPaymentLinkMessage(isoDate: string, paymentUrl: string, amountDisplay: string): string {
+function formatPaymentLinkMessage(
+  isoDate: string,
+  paymentUrl: string,
+  amountDisplay: string,
+  timezone: string = 'Asia/Kolkata'
+): string {
   const d = new Date(isoDate);
-  const dateTimeStr = d.toLocaleString('en-US', {
+  const dateTimeStr = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
     weekday: 'short',
     month: 'short',
     day: 'numeric',
@@ -481,14 +487,15 @@ function formatPaymentLinkMessage(isoDate: string, paymentUrl: string, amountDis
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
-  });
+  }).format(d);
   return `Your appointment is booked for ${dateTimeStr}. Your appointment fee is ${amountDisplay}. Please pay here to confirm: ${paymentUrl}\n\nWe'll send a reminder before your visit.`;
 }
 
 /** Format confirmation message: "Your appointment is confirmed for Feb 5, 2026 at 2:00 PM. We'll send a reminder before your visit." */
-function formatConfirmationMessage(isoDate: string): string {
+function formatConfirmationMessage(isoDate: string, timezone: string = 'Asia/Kolkata'): string {
   const d = new Date(isoDate);
-  const dateTimeStr = d.toLocaleString('en-US', {
+  const dateTimeStr = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
     weekday: 'short',
     month: 'short',
     day: 'numeric',
@@ -496,7 +503,7 @@ function formatConfirmationMessage(isoDate: string): string {
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
-  });
+  }).format(d);
   return `Your appointment is confirmed for ${dateTimeStr}. We'll send a reminder before your visit.`;
 }
 
@@ -536,6 +543,12 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             return Promise.all([
               sendPaymentConfirmationToPatient(result.appointmentId, dateIso, correlationId),
               sendPaymentReceivedToDoctor(
+                appointment.doctor_id,
+                result.appointmentId,
+                dateIso,
+                correlationId
+              ),
+              sendNewAppointmentToDoctor(
                 appointment.doctor_id,
                 result.appointmentId,
                 dateIso,
@@ -1143,18 +1156,22 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
                 correlationId
               );
               const amountDisplay = formatAmountForDisplay(amountMinor, currency);
+              const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
               replyText = formatPaymentLinkMessage(
                 typeof appointment.appointment_date === 'string'
                   ? appointment.appointment_date
                   : (appointment.appointment_date as Date).toISOString(),
                 paymentResult.url,
-                amountDisplay
+                amountDisplay,
+                tz
               );
             } catch (payErr) {
+              const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
               replyText = formatConfirmationMessage(
                 typeof appointment.appointment_date === 'string'
                   ? appointment.appointment_date
-                  : (appointment.appointment_date as Date).toISOString()
+                  : (appointment.appointment_date as Date).toISOString(),
+                tz
               );
               logger.warn(
                 { error: payErr instanceof Error ? payErr.message : String(payErr), correlationId },
@@ -1169,23 +1186,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
               status: 'success',
               metadata: { doctorId, appointmentId: appointment.id },
             });
-            sendNewAppointmentToDoctor(
-              doctorId,
-              appointment.id,
-              typeof appointment.appointment_date === 'string'
-                ? appointment.appointment_date
-                : (appointment.appointment_date as Date).toISOString(),
-              correlationId
-            ).catch((err) => {
-              logger.warn(
-                {
-                  correlationId,
-                  appointmentId: appointment.id,
-                  error: err instanceof Error ? err.message : String(err),
-                },
-                'New appointment email failed (non-blocking)'
-              );
-            });
+            // Doctor confirmation email is sent AFTER payment (in payment webhook handler)
             state = {
               ...state,
               lastIntent: intentResult.intent,

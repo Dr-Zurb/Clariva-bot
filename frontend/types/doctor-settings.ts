@@ -42,4 +42,8 @@ export type PatchDoctorSettingsPayload = Partial<{
   address_summary: string | null;
   consultation_types: string | null;
   default_notes: string | null;
+  /** Appointment fee in smallest unit (paise INR, cents USD). e.g. 50000 = ₹500 */
+  appointment_fee_minor: number | null;
+  /** Currency code e.g. INR, USD */
+  appointment_fee_currency: string | null;
 }>;

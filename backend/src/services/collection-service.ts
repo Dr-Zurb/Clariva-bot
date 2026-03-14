@@ -378,9 +378,14 @@ export async function validateAndApplyExtracted(
   };
 }
 
+/** Greeting phrases that should not be used as patient name. */
+const GREETING_PATTERNS =
+  /^(hello|hi|hey)(\s+how are you|\s+how\s+are\s+you)?\s*[?!.]*$|^how are you\s*[?!.]*$|^howdy\s*[?!.]*$|^good (morning|afternoon|evening)\s*[?!.]*$/i;
+
 /**
  * Fallback when Redis/in-memory lost collected data: try to extract from recent user messages
  * and set it. Used when persistPatientAfterConsent fails due to empty getCollectedData.
+ * Prefers messages with name+phone (details) over greetings like "hello how are you".
  *
  * @param conversationId - Conversation ID
  * @param recentMessages - Recent messages (sender_type, content)
@@ -393,7 +398,7 @@ export async function tryRecoverAndSetFromMessages(
   correlationId: string
 ): Promise<boolean> {
   const userTexts: string[] = [];
-  for (let i = recentMessages.length - 1; i >= 0; i--) {
+  for (let i = 0; i < recentMessages.length; i++) {
     if (recentMessages[i].sender_type === 'patient') {
       const c = (recentMessages[i].content ?? '').trim();
       if (c.length >= 5) userTexts.push(c);
@@ -401,10 +406,20 @@ export async function tryRecoverAndSetFromMessages(
   }
   if (userTexts.length === 0) return false;
 
-  let merged: Partial<CollectedPatientData> = {};
+  // Prefer messages that have BOTH name and phone (details message); skip greetings
+  let best: Partial<CollectedPatientData> = {};
   for (const t of userTexts) {
+    if (GREETING_PATTERNS.test(t.trim())) continue;
     const extracted = extractFieldsFromMessage(t);
-    if (extracted.name || extracted.phone || extracted.reason_for_visit) {
+    if (!extracted.name || !extracted.phone) continue;
+    best = { ...best, ...extracted };
+  }
+  if (!best.name || !best.phone) {
+    // Fallback: merge from any message with useful data, but never use name from greeting-only
+    let merged: Partial<CollectedPatientData> = {};
+    for (const t of userTexts) {
+      if (GREETING_PATTERNS.test(t.trim())) continue;
+      const extracted = extractFieldsFromMessage(t);
       if (extracted.name) merged.name = extracted.name;
       if (extracted.phone) merged.phone = extracted.phone;
       if (extracted.age !== undefined) merged.age = extracted.age;
@@ -412,10 +427,11 @@ export async function tryRecoverAndSetFromMessages(
       if (extracted.reason_for_visit) merged.reason_for_visit = extracted.reason_for_visit;
       if (extracted.email) merged.email = extracted.email;
     }
+    if (!merged.name || !merged.phone) return false;
+    best = merged;
   }
-  if (!merged.name || !merged.phone) return false;
 
-  await setCollectedData(conversationId, merged);
+  await setCollectedData(conversationId, best);
   void logPatientDataCollection({
     correlationId,
     conversationId,

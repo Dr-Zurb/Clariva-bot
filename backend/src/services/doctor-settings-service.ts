@@ -130,6 +130,10 @@ export interface UpdateDoctorSettingsPayload {
   address_summary?: string | null;
   consultation_types?: string | null;
   default_notes?: string | null;
+  /** Appointment fee in smallest unit (paise INR, cents USD). e.g. 50000 = ₹500 */
+  appointment_fee_minor?: number | null;
+  /** Currency code e.g. INR, USD */
+  appointment_fee_currency?: string | null;
 }
 
 /**
@@ -156,6 +160,20 @@ export async function updateDoctorSettings(
   ) {
     throw new ValidationError('slot_interval_minutes must be between 1 and 60');
   }
+  if (
+    payload.appointment_fee_minor !== undefined &&
+    payload.appointment_fee_minor !== null &&
+    (payload.appointment_fee_minor < 0 || !Number.isInteger(payload.appointment_fee_minor))
+  ) {
+    throw new ValidationError('appointment_fee_minor must be a non-negative integer (paise/cents)');
+  }
+  if (
+    payload.appointment_fee_currency !== undefined &&
+    payload.appointment_fee_currency !== null &&
+    !/^[A-Z]{3}$/.test(payload.appointment_fee_currency)
+  ) {
+    throw new ValidationError('appointment_fee_currency must be a 3-letter code (e.g. INR, USD)');
+  }
 
   const supabase = getSupabaseAdminClient();
   if (!supabase) {
@@ -178,6 +196,8 @@ export async function updateDoctorSettings(
     'address_summary',
     'consultation_types',
     'default_notes',
+    'appointment_fee_minor',
+    'appointment_fee_currency',
   ];
   for (const key of allowedKeys) {
     if (key in payload) {
