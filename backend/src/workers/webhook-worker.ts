@@ -787,8 +787,10 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       };
       await updateConversationState(conversation.id, state, correlationId);
     } else if (intentResult.intent === 'medical_query' && !inCollection) {
-      // Only deflect when NOT in collection flow. If we asked for "reason for visit" and
-      // the user replied with a symptom (e.g. "Pain Abdomen"), treat it as data, not medical_query.
+      // Only deflect when NOT in collection flow. Context matters: if we asked for "reason for visit"
+      // and the patient replied "Pain Abdomen", that's their answer—not an unsolicited medical query.
+      // inCollection = we asked for details; their reply is data. No field-count heuristic (unreliable:
+      // a patient could send details + "what should I do?" without booking intent).
       replyText = MEDICAL_QUERY_RESPONSE;
       state = {
         ...state,

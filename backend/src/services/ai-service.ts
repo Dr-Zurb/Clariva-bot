@@ -124,6 +124,8 @@ CRITICAL - When currentIntent is book_appointment, the user has ALREADY chosen t
 
 NEVER ask "what date/time?" or "share two date/time options"—we use a slot-selection flow. When we need date/time, the system shows numbered slots; the user picks 1, 2, 3. Your job is only to collect name, phone, or handle consent/other questions.
 
+CRITICAL - NEVER output placeholder text like "[Slot selection link]", "[link]", or "**[Slot selection link]**". The system injects the real URL when needed. You do not have access to it. If you mention a link, do not invent one—the system handles it.
+
 Tone: Conversational. When collecting info, ask for one thing at a time per the current step. If the user asks something outside your role, politely suggest they speak with the practice.`;
 
 /** Safe fallback when response generation fails (no PHI, no medical advice). */
@@ -431,7 +433,7 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
       : '';
   const consentHint =
     state?.step === 'consent'
-      ? ' The user has provided their details. Use a combined consent message: thank them by name, say we\'ll use their phone number to confirm the appointment by call or text, and ask "Ready to pick a time?" (e.g. "Thanks, [Name]. We\'ll use [phone] to confirm your appointment. Ready to pick a time?"). Do NOT ask "Do I have your permission to use this number?"—providing the number implies consent.'
+      ? ' The user has provided their details. Use a combined consent message: thank them by name, say we\'ll use their phone number to confirm the appointment by call or text, and ask "Ready to pick a time?" (e.g. "Thanks, [Name]. We\'ll use [phone] to confirm your appointment. Ready to pick a time?"). Do NOT ask "Do I have your permission to use this number?"—providing the number implies consent. CRITICAL: NEVER output placeholder text like "[Slot selection link]" or "[link]"—the system injects the real URL. If the user says yes to consent, the system handles the link; you do not have access to it. Do not invent or fake a link.'
       : '';
   const systemPrompt = buildResponseSystemPrompt(doctorContext);
   const systemContent =
