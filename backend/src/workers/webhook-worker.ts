@@ -68,7 +68,7 @@ import {
   handleRevocation,
 } from '../services/consent-service';
 import { buildBookingPageUrl } from '../services/slot-selection-service';
-import { processPaymentSuccess } from '../services/payment-service';
+import { processPaymentSuccess, hasCapturedPaymentForAppointment } from '../services/payment-service';
 import { getDoctorSettings } from '../services/doctor-settings-service';
 import type { DoctorSettingsRow } from '../types/doctor-settings';
 import type { DoctorContext } from '../services/ai-service';
@@ -856,17 +856,24 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           new Date(a.appointment_date) >= now &&
           (a.status === 'pending' || a.status === 'confirmed')
       );
+      const resolveStatus = async (a: (typeof upcoming)[0]): Promise<string> => {
+        if (a.status === 'confirmed') return 'confirmed';
+        const paid = await hasCapturedPaymentForAppointment(a.id, correlationId);
+        return paid ? 'confirmed' : a.status;
+      };
       if (upcoming.length === 0) {
         replyText =
           "You don't have any upcoming appointments. Say 'book appointment' to schedule one.";
       } else if (upcoming.length === 1) {
         const a = upcoming[0];
         const iso = typeof a.appointment_date === 'string' ? a.appointment_date : a.appointment_date.toISOString();
-        replyText = `Your next appointment is on ${formatAppointmentStatusLine(iso, a.status, tz)}.`;
+        const displayStatus = await resolveStatus(a);
+        replyText = `Your next appointment is on ${formatAppointmentStatusLine(iso, displayStatus, tz)}.`;
       } else {
         const a = upcoming[0];
         const iso = typeof a.appointment_date === 'string' ? a.appointment_date : a.appointment_date.toISOString();
-        replyText = `You have ${upcoming.length} upcoming appointments. Next: ${formatAppointmentStatusLine(iso, a.status, tz)}.`;
+        const displayStatus = await resolveStatus(a);
+        replyText = `You have ${upcoming.length} upcoming appointments. Next: ${formatAppointmentStatusLine(iso, displayStatus, tz)}.`;
       }
       state = {
         ...state,

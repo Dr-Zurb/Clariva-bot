@@ -13,6 +13,7 @@ import { getSupabaseAdminClient } from '../config/database';
 import { env } from '../config/env';
 import { sendEmail } from '../config/email';
 import { sendInstagramMessage } from './instagram-service';
+import { getInstagramAccessTokenForDoctor } from './instagram-connect-service';
 import { logAuditEvent } from '../utils/audit-logger';
 import { logger } from '../config/logger';
 
@@ -109,7 +110,7 @@ export async function sendPaymentConfirmationToPatient(
 
   const { data: appointment, error: appError } = await admin
     .from('appointments')
-    .select('id, patient_id')
+    .select('id, patient_id, doctor_id')
     .eq('id', appointmentId)
     .single();
 
@@ -121,21 +122,32 @@ export async function sendPaymentConfirmationToPatient(
     return true; // not a failure, just no recipient
   }
 
-  const { data: patient, error: patientError } = await admin
+  // Resolve recipient: patient.platform_external_id or conversation.platform_conversation_id
+  let recipientId: string | null = null;
+  const { data: patient } = await admin
     .from('patients')
     .select('id, platform, platform_external_id')
     .eq('id', appointment.patient_id)
     .single();
 
-  if (patientError || !patient) {
-    logger.warn({ correlationId, appointmentId }, 'Patient not found for payment confirmation DM');
-    return false;
+  if (patient?.platform === 'instagram' && patient.platform_external_id) {
+    recipientId = patient.platform_external_id;
   }
-
-  if (patient.platform !== 'instagram' || !patient.platform_external_id) {
+  if (!recipientId) {
+    const { data: conv } = await admin
+      .from('conversations')
+      .select('platform_conversation_id')
+      .eq('patient_id', appointment.patient_id)
+      .eq('doctor_id', appointment.doctor_id)
+      .eq('platform', 'instagram')
+      .limit(1)
+      .maybeSingle();
+    recipientId = conv?.platform_conversation_id ?? null;
+  }
+  if (!recipientId) {
     logger.info(
       { correlationId, appointmentId },
-      'Payment confirmation DM skipped (patient not on Instagram)'
+      'Payment confirmation DM skipped (no Instagram recipient for patient)'
     );
     return true;
   }
@@ -143,8 +155,12 @@ export async function sendPaymentConfirmationToPatient(
   const dateStr = formatAppointmentDate(appointmentDateIso);
   const message = `Payment received. Your appointment on ${dateStr} is confirmed. We'll send a reminder before your visit.`;
 
+  const doctorToken = appointment.doctor_id
+    ? await getInstagramAccessTokenForDoctor(appointment.doctor_id, correlationId)
+    : null;
+
   try {
-    await sendInstagramMessage(patient.platform_external_id, message, correlationId);
+    await sendInstagramMessage(recipientId, message, correlationId, doctorToken ?? undefined);
     await auditNotificationSent(
       correlationId,
       'payment_confirmation_dm',

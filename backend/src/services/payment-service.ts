@@ -229,6 +229,29 @@ export async function getPaymentById(
   return payment as { id: string; appointment_id: string; gateway: string; status: string; amount_minor: number; currency: string };
 }
 
+/**
+ * Check if an appointment has a captured payment (webhook may have run before appointment update).
+ * Used to show "confirmed" when payment is done but appointment status is still "pending".
+ */
+export async function hasCapturedPaymentForAppointment(
+  appointmentId: string,
+  _correlationId: string
+): Promise<boolean> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return false;
+
+  const { data, error } = await supabase
+    .from('payments')
+    .select('id')
+    .eq('appointment_id', appointmentId)
+    .eq('status', 'captured')
+    .limit(1)
+    .maybeSingle();
+
+  if (error || !data) return false;
+  return true;
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
