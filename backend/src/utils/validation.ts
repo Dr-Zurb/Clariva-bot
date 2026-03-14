@@ -441,6 +441,8 @@ export const patchDoctorSettingsSchema = z
     address_summary: z.string().max(500).trim().nullable().optional(),
     consultation_types: z.string().max(200).trim().nullable().optional(),
     default_notes: z.string().max(1000).trim().nullable().optional(),
+    appointment_fee_minor: z.number().int().min(0).nullable().optional(),
+    appointment_fee_currency: z.string().length(3).nullable().optional(),
   })
   .strict();
 
