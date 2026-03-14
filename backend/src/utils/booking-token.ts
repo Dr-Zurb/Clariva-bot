@@ -84,3 +84,45 @@ export function verifyBookingToken(token: string): { conversationId: string; doc
   }
   return { conversationId: payload.conversationId, doctorId: payload.doctorId };
 }
+
+/**
+ * Verify booking token and return payload, allowing expired tokens.
+ * Used for redirect-url (success page) so user can still redirect after payment.
+ *
+ * @param token - Token from query param
+ * @returns { conversationId, doctorId }
+ * @throws UnauthorizedError if token invalid (signature mismatch)
+ */
+export function verifyBookingTokenAllowExpired(
+  token: string
+): { conversationId: string; doctorId: string } {
+  if (!token || typeof token !== 'string') {
+    throw new UnauthorizedError('Missing or invalid booking token');
+  }
+  const secret = env.BOOKING_TOKEN_SECRET;
+  if (!secret || secret.length < 16) {
+    throw new UnauthorizedError('Booking token verification not configured');
+  }
+  const parts = token.split('.');
+  if (parts.length !== 2) {
+    throw new UnauthorizedError('Invalid booking token format');
+  }
+  const [payloadB64, sigB64] = parts;
+  const expectedSig = crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');
+  const sigBuf = Buffer.from(sigB64, 'base64url');
+  const expectedBuf = Buffer.from(expectedSig, 'base64url');
+  if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+    throw new UnauthorizedError('Invalid booking token (signature mismatch)');
+  }
+  const payloadStr = Buffer.from(payloadB64, 'base64url').toString('utf8');
+  let payload: BookingTokenPayload;
+  try {
+    payload = JSON.parse(payloadStr) as BookingTokenPayload;
+  } catch {
+    throw new UnauthorizedError('Invalid booking token (malformed payload)');
+  }
+  if (!payload.conversationId || !payload.doctorId || typeof payload.exp !== 'number') {
+    throw new UnauthorizedError('Invalid booking token (missing fields)');
+  }
+  return { conversationId: payload.conversationId, doctorId: payload.doctorId };
+}

@@ -35,7 +35,10 @@ import {
   getStoredInstagramPageIdForDoctor,
 } from '../services/instagram-connect-service';
 import { findOrCreatePlaceholderPatient, findPatientByIdWithAdmin } from '../services/patient-service';
-import { bookAppointment, getAppointmentByIdForWorker } from '../services/appointment-service';
+import {
+  getAppointmentByIdForWorker,
+  listAppointmentsForPatient,
+} from '../services/appointment-service';
 import { ConflictError } from '../utils/errors';
 import {
   findConversationByPlatformId,
@@ -65,7 +68,7 @@ import {
   handleRevocation,
 } from '../services/consent-service';
 import { buildBookingPageUrl } from '../services/slot-selection-service';
-import { processPaymentSuccess, createPaymentLink } from '../services/payment-service';
+import { processPaymentSuccess } from '../services/payment-service';
 import { getDoctorSettings } from '../services/doctor-settings-service';
 import type { DoctorSettingsRow } from '../types/doctor-settings';
 import type { DoctorContext } from '../services/ai-service';
@@ -453,28 +456,10 @@ function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): Docto
   };
 }
 
-/**
- * Format amount for display in DMs (e.g. 50000 paise + INR → "₹500", 500 cents + USD → "$5.00").
- * Amount is in smallest unit (paise for INR, cents for USD/EUR/GBP).
- */
-function formatAmountForDisplay(amountMinor: number, currency: string): string {
-  const divisor = 100; // paise/cents to main unit
-  const value = amountMinor / divisor;
-  const symbols: Record<string, string> = {
-    INR: '₹',
-    USD: '$',
-    EUR: '€',
-    GBP: '£',
-  };
-  const symbol = symbols[currency.toUpperCase()] ?? currency + ' ';
-  return `${symbol}${value.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
-}
-
-/** Format payment-link DM: date, fee amount, and link so the patient sees the fee before paying. */
-function formatPaymentLinkMessage(
+/** Format appointment status for check_appointment_status: "Tue, Mar 14, 2026 at 2:00 PM (pending)" */
+function formatAppointmentStatusLine(
   isoDate: string,
-  paymentUrl: string,
-  amountDisplay: string,
+  status: string,
   timezone: string = 'Asia/Kolkata'
 ): string {
   const d = new Date(isoDate);
@@ -488,23 +473,7 @@ function formatPaymentLinkMessage(
     minute: '2-digit',
     hour12: true,
   }).format(d);
-  return `Your appointment is booked for ${dateTimeStr}. Your appointment fee is ${amountDisplay}. Please pay here to confirm: ${paymentUrl}\n\nWe'll send a reminder before your visit.`;
-}
-
-/** Format confirmation message: "Your appointment is confirmed for Feb 5, 2026 at 2:00 PM. We'll send a reminder before your visit." */
-function formatConfirmationMessage(isoDate: string, timezone: string = 'Asia/Kolkata'): string {
-  const d = new Date(isoDate);
-  const dateTimeStr = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  }).format(d);
-  return `Your appointment is confirmed for ${dateTimeStr}. We'll send a reminder before your visit.`;
+  return `${dateTimeStr} (${status})`;
 }
 
 /**
@@ -875,8 +844,30 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       };
       await updateConversationState(conversation.id, state, correlationId);
     } else if (intentResult.intent === 'check_appointment_status') {
-      replyText =
-        "For your appointment status, please check your confirmation message or contact the clinic directly.";
+      const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
+      const allAppointments = await listAppointmentsForPatient(
+        conversation.patient_id,
+        doctorId,
+        correlationId
+      );
+      const now = new Date();
+      const upcoming = allAppointments.filter(
+        (a) =>
+          new Date(a.appointment_date) >= now &&
+          (a.status === 'pending' || a.status === 'confirmed')
+      );
+      if (upcoming.length === 0) {
+        replyText =
+          "You don't have any upcoming appointments. Say 'book appointment' to schedule one.";
+      } else if (upcoming.length === 1) {
+        const a = upcoming[0];
+        const iso = typeof a.appointment_date === 'string' ? a.appointment_date : a.appointment_date.toISOString();
+        replyText = `Your next appointment is on ${formatAppointmentStatusLine(iso, a.status, tz)}.`;
+      } else {
+        const a = upcoming[0];
+        const iso = typeof a.appointment_date === 'string' ? a.appointment_date : a.appointment_date.toISOString();
+        replyText = `You have ${upcoming.length} upcoming appointments. Next: ${formatAppointmentStatusLine(iso, a.status, tz)}.`;
+      }
       state = {
         ...state,
         lastIntent: intentResult.intent,
@@ -917,10 +908,10 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         const slotLink = buildBookingPageUrl(conversation.id, doctorId);
         if (!persistResult.success) {
           replyText =
-            `I had trouble saving your details—please say 'book appointment' to re-share them if needed. Meanwhile, pick your slot: ${slotLink}\n\nYou'll be redirected back here after you choose.`;
+            `I had trouble saving your details—please say 'book appointment' to re-share them if needed. Meanwhile, pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
         } else {
           replyText =
-            `Pick your slot: ${slotLink}\n\nYou'll be redirected back here after you choose.`;
+            `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
         }
         state = {
           ...state,
@@ -1098,160 +1089,30 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       if (wantsNewLink) {
         const slotLink = buildBookingPageUrl(conversation.id, doctorId);
         replyText =
-          `Pick your slot: ${slotLink}\n\nYou'll be redirected back here after you choose.`;
+          `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
       } else {
         replyText =
-          "Pick your slot using the link above, or say 'change' to get a new link.";
+          "Pick your slot and complete payment using the link above, or say 'change' to get a new link.";
       }
       state = { ...state, updatedAt: new Date().toISOString() };
       await updateConversationState(conversation.id, state, correlationId);
     } else if (state.step === 'confirming_slot') {
-      const confirmTrimmed = text.trim().toLowerCase();
-      const isConfirm =
-        /^(yes|yeah|yep|ok|okay|1|confirm|confirmed|book\s+it|please)$/.test(confirmTrimmed);
-      if (isConfirm && state.slotToConfirm) {
-        const slot = state.slotToConfirm;
-        const patient = await findPatientByIdWithAdmin(conversation.patient_id, correlationId);
-        if (!patient || !patient.name || !patient.phone) {
-          replyText = "We couldn't find your contact details. Please start over with 'book appointment'.";
-          state = { ...state, step: 'responded', slotToConfirm: undefined, updatedAt: new Date().toISOString() };
-        } else if (patient.consent_status !== 'granted') {
-          replyText = "Please complete the consent step first.";
-          state = { ...state, step: 'responded', slotToConfirm: undefined, updatedAt: new Date().toISOString() };
-        } else {
-          try {
-            const notes =
-              state.reasonForVisit && doctorSettings?.default_notes
-                ? `Reason: ${state.reasonForVisit}. ${doctorSettings.default_notes}`
-                : state.reasonForVisit ?? doctorSettings?.default_notes ?? undefined;
-            const appointment = await bookAppointment(
-              {
-                doctorId,
-                patientId: patient.id,
-                patientName: patient.name,
-                patientPhone: patient.phone,
-                appointmentDate: slot.start,
-                notes,
-                consultationType: state.consultationType,
-              },
-              correlationId
-            );
-            const settings = await getDoctorSettings(doctorId);
-            const doctorCountry = settings?.country ?? env.DEFAULT_DOCTOR_COUNTRY ?? 'IN';
-            const amountMinor = settings?.appointment_fee_minor ?? env.APPOINTMENT_FEE_MINOR ?? 0;
-            const currency = settings?.appointment_fee_currency ?? env.APPOINTMENT_FEE_CURRENCY ?? 'INR';
-            if (!amountMinor || amountMinor <= 0) {
-                replyText =
-                  "Your appointment is booked. The clinic hasn't configured payment yet—please contact them directly to complete your booking.";
-                state = {
-                  ...state,
-                  lastIntent: intentResult.intent,
-                  step: 'responded',
-                  slotToConfirm: undefined,
-                  slotSelectionDate: undefined,
-                  updatedAt: new Date().toISOString(),
-                };
-                await updateConversationState(conversation.id, state, correlationId);
-                await logAuditEvent({
-                  correlationId,
-                  action: 'appointment_booked',
-                  resourceType: 'appointment',
-                  resourceId: appointment.id,
-                  status: 'success',
-                  metadata: { doctorId, appointmentId: appointment.id, noPaymentLink: true },
-                });
-              } else {
-                try {
-                  const paymentResult = await createPaymentLink(
-                    {
-                      appointmentId: appointment.id,
-                      amountMinor,
-                      currency,
-                      doctorCountry,
-                      doctorId,
-                      patientId: patient.id,
-                      patientName: patient.name,
-                      patientPhone: patient.phone,
-                      description: `Appointment - ${new Date(slot.start).toLocaleString()}`,
-                    },
-                    correlationId
-                  );
-                  const amountDisplay = formatAmountForDisplay(amountMinor, currency);
-                  const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
-                  replyText = formatPaymentLinkMessage(
-                    typeof appointment.appointment_date === 'string'
-                      ? appointment.appointment_date
-                      : (appointment.appointment_date as Date).toISOString(),
-                    paymentResult.url,
-                    amountDisplay,
-                    tz
-                  );
-                } catch (payErr) {
-                  const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
-                  replyText = formatConfirmationMessage(
-                    typeof appointment.appointment_date === 'string'
-                      ? appointment.appointment_date
-                      : (appointment.appointment_date as Date).toISOString(),
-                    tz
-                  );
-                  logger.warn(
-                    { error: payErr instanceof Error ? payErr.message : String(payErr), correlationId },
-                    'Payment link creation failed - sending confirmation without payment'
-                  );
-                }
-                await logAuditEvent({
-                  correlationId,
-                  action: 'appointment_booked',
-                  resourceType: 'appointment',
-                  resourceId: appointment.id,
-                  status: 'success',
-                  metadata: { doctorId, appointmentId: appointment.id },
-                });
-                // Doctor confirmation email is sent AFTER payment (in payment webhook handler)
-                state = {
-                  ...state,
-                  lastIntent: intentResult.intent,
-                  step: 'responded',
-                  slotToConfirm: undefined,
-                  slotSelectionDate: undefined,
-                  updatedAt: new Date().toISOString(),
-                };
-              }
-            } catch (err) {
-              if (err instanceof ConflictError) {
-                const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-                replyText =
-                  "That slot was just taken. Pick another: " +
-                  slotLink;
-                state = {
-                  ...state,
-                  step: 'awaiting_slot_selection',
-                  slotToConfirm: undefined,
-                  updatedAt: new Date().toISOString(),
-                };
-              } else {
-                replyText = "Sorry, we couldn't complete the booking. Please try again.";
-                state = { ...state, step: 'awaiting_slot_selection', slotToConfirm: undefined, updatedAt: new Date().toISOString() };
-              }
-            }
-        }
-      } else {
-        const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-        replyText =
-          `No problem. Pick another time: ${slotLink}`;
-        state = {
-          ...state,
-          step: 'awaiting_slot_selection',
-          slotToConfirm: undefined,
-          updatedAt: new Date().toISOString(),
-        };
-      }
+      // Unified flow: no chat confirmation. Migrate to awaiting_slot_selection with new link.
+      const slotLink = buildBookingPageUrl(conversation.id, doctorId);
+      replyText =
+        `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
+      state = {
+        ...state,
+        step: 'awaiting_slot_selection',
+        slotToConfirm: undefined,
+        updatedAt: new Date().toISOString(),
+      };
       await updateConversationState(conversation.id, state, correlationId);
     } else if (state.step === 'selecting_slot') {
       // Legacy: redirect to external slot picker (e-task-5)
       const slotLink = buildBookingPageUrl(conversation.id, doctorId);
       replyText =
-        `Pick your slot: ${slotLink}\n\nYou'll be redirected back here after you choose.`;
+        `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
       state = {
         ...state,
         step: 'awaiting_slot_selection',
@@ -1269,7 +1130,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       if (hasPatientReady) {
         const slotLink = buildBookingPageUrl(conversation.id, doctorId);
         replyText =
-          `Pick your slot: ${slotLink}\n\nYou'll be redirected back here after you choose.`;
+          `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
         state = {
           ...state,
           lastIntent: intentResult.intent,
@@ -1324,8 +1185,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     const stateToPersist =
       (isBookIntent && (justStartingCollection || inCollection)) ||
       state.step === 'selecting_slot' ||
-      state.step === 'awaiting_slot_selection' ||
-      state.step === 'confirming_slot'
+      state.step === 'awaiting_slot_selection'
         ? state
         : {
             ...state,

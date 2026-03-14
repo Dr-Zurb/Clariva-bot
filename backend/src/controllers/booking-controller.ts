@@ -8,15 +8,21 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '../utils/async-handler';
 import { successResponse } from '../utils/response';
-import { verifyBookingToken } from '../utils/booking-token';
+import { verifyBookingToken, verifyBookingTokenAllowExpired } from '../utils/booking-token';
 import {
   validateDaySlotsQuery,
   validateSelectSlotBody,
   validateSlotPageInfoQuery,
 } from '../utils/validation';
 import { getDaySlotsWithStatus } from '../services/availability-service';
-import { processSlotSelection } from '../services/slot-selection-service';
+import {
+  processSlotSelection,
+  processSlotSelectionAndPay,
+  getRedirectUrlForDoctor,
+} from '../services/slot-selection-service';
 import { getDoctorSettings } from '../services/doctor-settings-service';
+import { ConflictError } from '../utils/errors';
+import { errorResponse } from '../utils/response';
 
 /**
  * GET /api/v1/bookings/day-slots?token=X&date=YYYY-MM-DD
@@ -89,4 +95,58 @@ export const getSlotPageInfoHandler = asyncHandler(async (req: Request, res: Res
       req
     )
   );
+});
+
+/**
+ * POST /api/v1/bookings/select-slot-and-pay
+ *
+ * Body: { token, slotStart }
+ * Creates appointment + payment link in one call. Returns paymentUrl (or null when fee=0) and redirectUrl.
+ */
+export const selectSlotAndPayHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const body = validateSelectSlotBody(req.body);
+
+  try {
+    const result = await processSlotSelectionAndPay(body.token, body.slotStart, correlationId);
+    res.status(200).json(
+      successResponse(
+        {
+          paymentUrl: result.paymentUrl,
+          redirectUrl: result.redirectUrl,
+          appointmentId: result.appointmentId,
+        },
+        req
+      )
+    );
+  } catch (err) {
+    if (err instanceof ConflictError) {
+      res.status(409).json(
+        errorResponse(
+          { code: 'CONFLICT', message: 'This slot was just taken. Please pick another.', statusCode: 409 },
+          req
+        )
+      );
+      return;
+    }
+    throw err;
+  }
+});
+
+/**
+ * GET /api/v1/bookings/redirect-url?token=X
+ *
+ * Returns Instagram DM redirect URL for success page. Allows expired token (user may have paid after token expiry).
+ */
+export const getRedirectUrlHandler = asyncHandler(async (req: Request, res: Response) => {
+  const query = req.query as Record<string, string | string[] | undefined>;
+  const normalized: Record<string, string | undefined> = {
+    token: typeof query.token === 'string' ? query.token : Array.isArray(query.token) ? query.token[0] : undefined,
+  };
+
+  const { token } = validateSlotPageInfoQuery(normalized);
+  const { doctorId } = verifyBookingTokenAllowExpired(token);
+
+  const redirectUrl = await getRedirectUrlForDoctor(doctorId);
+  res.status(200).json(successResponse({ redirectUrl }, req));
 });

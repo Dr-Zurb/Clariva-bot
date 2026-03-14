@@ -313,6 +313,39 @@ export async function getDoctorAppointments(
 }
 
 /**
+ * List appointments for a patient (webhook worker context).
+ * Uses admin client; no user JWT. For check_appointment_status intent.
+ *
+ * @param patientId - Patient UUID
+ * @param doctorId - Doctor UUID
+ * @param correlationId - Request correlation ID
+ * @returns Array of appointments (patient_id + doctor_id match), ordered by appointment_date ascending
+ */
+export async function listAppointmentsForPatient(
+  patientId: string,
+  doctorId: string,
+  correlationId: string
+): Promise<Appointment[]> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available for list');
+  }
+
+  const { data: appointments, error } = await admin
+    .from('appointments')
+    .select('*')
+    .eq('patient_id', patientId)
+    .eq('doctor_id', doctorId)
+    .order('appointment_date', { ascending: true });
+
+  if (error) {
+    handleSupabaseError(error, correlationId);
+  }
+
+  return (appointments || []) as Appointment[];
+}
+
+/**
  * List appointments for the authenticated doctor (API list endpoint).
  * Uses admin client with explicit doctor_id filter; no PHI in logs.
  *

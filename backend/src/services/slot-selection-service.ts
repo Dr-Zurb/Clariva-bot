@@ -16,6 +16,9 @@ import { getConnectionStatus } from './instagram-connect-service';
 import { getInstagramAccessTokenForDoctor } from './instagram-connect-service';
 import { sendInstagramMessage } from './instagram-service';
 import { getDoctorSettings } from './doctor-settings-service';
+import { findPatientByIdWithAdmin } from './patient-service';
+import { bookAppointment } from './appointment-service';
+import { createPaymentLink } from './payment-service';
 import { verifyBookingToken, generateBookingToken } from '../utils/booking-token';
 import { InternalError, NotFoundError, UnauthorizedError, ValidationError } from '../utils/errors';
 
@@ -165,4 +168,123 @@ export async function processSlotSelection(
   }
 
   return { success: true, redirectUrl };
+}
+
+export interface ProcessSlotSelectionAndPayResult {
+  paymentUrl: string | null;
+  redirectUrl: string;
+  appointmentId: string;
+}
+
+/**
+ * Process slot selection and pay: create appointment + payment link in one call.
+ * Unified flow: no "Reply Yes to confirm" in chat.
+ *
+ * @param token - Booking token from request
+ * @param slotStart - ISO datetime string
+ * @param correlationId - Request correlation ID
+ * @returns { paymentUrl, redirectUrl, appointmentId }
+ * @throws ConflictError when slot is taken
+ */
+export async function processSlotSelectionAndPay(
+  token: string,
+  slotStart: string,
+  correlationId: string
+): Promise<ProcessSlotSelectionAndPayResult> {
+  const { conversationId, doctorId } = verifyBookingToken(token);
+
+  const slotDate = new Date(slotStart);
+  if (isNaN(slotDate.getTime())) {
+    throw new ValidationError('Invalid slotStart format (expected ISO datetime)');
+  }
+  if (slotDate < new Date()) {
+    throw new ValidationError('Cannot select a slot in the past');
+  }
+
+  const conversation = await findConversationById(conversationId, correlationId);
+  if (!conversation) {
+    throw new NotFoundError('Conversation not found');
+  }
+  if (conversation.doctor_id !== doctorId) {
+    throw new UnauthorizedError('Token does not match conversation');
+  }
+
+  const patient = await findPatientByIdWithAdmin(conversation.patient_id, correlationId);
+  if (!patient || !patient.name || !patient.phone) {
+    throw new NotFoundError('Patient details not found. Please complete the booking flow in chat first.');
+  }
+
+  const doctorSettings = await getDoctorSettings(doctorId);
+
+  const state = await getConversationState(conversationId, correlationId);
+  const notes =
+    state.reasonForVisit && doctorSettings?.default_notes
+      ? `Reason: ${state.reasonForVisit}. ${doctorSettings.default_notes}`
+      : state.reasonForVisit ?? doctorSettings?.default_notes ?? undefined;
+
+  const appointment = await bookAppointment(
+    {
+      doctorId,
+      patientId: patient.id,
+      patientName: patient.name,
+      patientPhone: patient.phone,
+      appointmentDate: slotDate.toISOString(),
+      notes,
+      consultationType: state.consultationType,
+    },
+    correlationId,
+    undefined
+  );
+
+  const amountMinor = doctorSettings?.appointment_fee_minor ?? env.APPOINTMENT_FEE_MINOR ?? 0;
+  const currency = doctorSettings?.appointment_fee_currency ?? env.APPOINTMENT_FEE_CURRENCY ?? 'INR';
+  const doctorCountry = doctorSettings?.country ?? env.DEFAULT_DOCTOR_COUNTRY ?? 'IN';
+
+  const redirectUrl = await getRedirectUrlForDoctor(doctorId);
+  const baseUrl = env.BOOKING_PAGE_URL?.trim() || 'https://example.com/book';
+  const successCallbackUrl = `${baseUrl.replace(/\/$/, '')}/success?token=${token}`;
+
+  if (!amountMinor || amountMinor <= 0) {
+    await saveSlotSelection(conversationId, doctorId, slotStart, correlationId);
+    const newState = {
+      ...state,
+      step: 'responded',
+      slotToConfirm: undefined,
+      updatedAt: new Date().toISOString(),
+    };
+    await updateConversationState(conversationId, newState, correlationId);
+    return { paymentUrl: null, redirectUrl, appointmentId: appointment.id };
+  }
+
+  const paymentResult = await createPaymentLink(
+    {
+      appointmentId: appointment.id,
+      amountMinor,
+      currency,
+      doctorCountry,
+      doctorId,
+      patientId: patient.id,
+      patientName: patient.name,
+      patientPhone: patient.phone,
+      patientEmail: patient.email ?? undefined,
+      description: `Appointment - ${new Date(slotDate).toLocaleString()}`,
+      callbackUrl: successCallbackUrl,
+    },
+    correlationId
+  );
+
+  await saveSlotSelection(conversationId, doctorId, slotStart, correlationId);
+  const newState = {
+    ...state,
+    step: 'responded',
+    slotToConfirm: undefined,
+    updatedAt: new Date().toISOString(),
+  };
+  await updateConversationState(conversationId, newState, correlationId);
+
+  return {
+    paymentUrl: paymentResult.url,
+    redirectUrl,
+    appointmentId: appointment.id,
+  };
 }

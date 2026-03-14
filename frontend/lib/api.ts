@@ -414,6 +414,16 @@ export interface SelectSlotData {
   redirectUrl: string;
 }
 
+export interface SelectSlotAndPayData {
+  paymentUrl: string | null;
+  redirectUrl: string;
+  appointmentId: string;
+}
+
+export interface RedirectUrlData {
+  redirectUrl: string;
+}
+
 /**
  * Fetch slot page info (practice name, etc.). Verifies token.
  * Use on page load; if fails, token is invalid.
@@ -468,4 +478,48 @@ export async function selectSlot(
     throw err;
   }
   return json as ApiSuccess<SelectSlotData>;
+}
+
+/**
+ * Submit selected slot and create appointment + payment link.
+ * Returns paymentUrl (Razorpay) when fee > 0, or redirectUrl only when no fee.
+ */
+export async function selectSlotAndPay(
+  bookingToken: string,
+  slotStart: string
+): Promise<ApiSuccess<SelectSlotAndPayData>> {
+  const res = await fetch(`${API_BASE}/api/v1/bookings/select-slot-and-pay`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: bookingToken, slotStart }),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<SelectSlotAndPayData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<SelectSlotAndPayData>;
+}
+
+/**
+ * Get redirect URL for success page (Instagram DM).
+ * Allows expired token so user can redirect after payment.
+ */
+export async function getBookingRedirectUrl(
+  bookingToken: string
+): Promise<ApiSuccess<RedirectUrlData>> {
+  const params = new URLSearchParams({ token: bookingToken });
+  return request<RedirectUrlData>(
+    `/api/v1/bookings/redirect-url?${params.toString()}`
+  );
 }

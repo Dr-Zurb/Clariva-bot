@@ -60,6 +60,8 @@ export interface CreatePaymentLinkInput {
   patientPhone?: string;
   patientEmail?: string;
   description?: string;
+  /** Razorpay redirect URL after payment (e.g. /book/success?token=X) */
+  callbackUrl?: string;
 }
 
 export interface CreatePaymentLinkResult {

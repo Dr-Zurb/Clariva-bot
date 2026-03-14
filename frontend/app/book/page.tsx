@@ -5,7 +5,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
   getSlotPageInfo,
   getDaySlots,
-  selectSlot,
+  selectSlotAndPay,
   type DaySlotWithStatus,
 } from "@/lib/api";
 
@@ -56,7 +56,6 @@ function BookPageContent() {
     null
   );
   const [saving, setSaving] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const dateOptions = useMemo(() => {
@@ -135,15 +134,19 @@ function BookPageContent() {
     setSaving(true);
     setSaveError(null);
     try {
-      const res = await selectSlot(token, selectedSlot.start);
-      setSaveSuccess(true);
-      const redirectUrl = res.data.redirectUrl;
-      setTimeout(() => {
-        window.location.href = redirectUrl;
-      }, 1500);
-    } catch {
+      const res = await selectSlotAndPay(token, selectedSlot.start);
+      const { paymentUrl, redirectUrl } = res.data;
+      if (paymentUrl) {
+        window.location.href = paymentUrl;
+        return;
+      }
+      window.location.href = redirectUrl;
+    } catch (err) {
+      const status = (err as Error & { status?: number }).status;
       setSaveError(
-        "Something went wrong. Please try again or return to the chat."
+        status === 409
+          ? "This slot was just taken. Please pick another."
+          : "Something went wrong. Please try again or return to the chat."
       );
     } finally {
       setSaving(false);
@@ -248,26 +251,18 @@ function BookPageContent() {
 
         {/* Save button */}
         <div className="mt-6">
-          {saveSuccess ? (
-            <p className="text-center text-sm font-medium text-green-700">
-              Slot saved! Redirecting you to the chat…
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={!selectedSlot || saving || availableCount === 0}
+            className="w-full rounded-lg bg-blue-600 px-4 py-3 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving ? "Processing…" : "Continue to payment"}
+          </button>
+          {saveError && (
+            <p className="mt-2 text-center text-sm text-red-600">
+              {saveError}
             </p>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={handleSave}
-                disabled={!selectedSlot || saving || availableCount === 0}
-                className="w-full rounded-lg bg-blue-600 px-4 py-3 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {saving ? "Saving…" : "Save & continue to chat"}
-              </button>
-              {saveError && (
-                <p className="mt-2 text-center text-sm text-red-600">
-                  {saveError}
-                </p>
-              )}
-            </>
           )}
         </div>
       </div>

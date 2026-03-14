@@ -57,6 +57,7 @@ export async function createPaymentLink(
       : undefined,
     notes: { appointment_id: input.appointmentId },
     expireBy: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
+    callbackUrl: input.callbackUrl,
   };
 
   const result = await adapter.createPaymentLink(adapterInput);
