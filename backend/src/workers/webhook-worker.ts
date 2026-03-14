@@ -786,7 +786,9 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         updatedAt: new Date().toISOString(),
       };
       await updateConversationState(conversation.id, state, correlationId);
-    } else if (intentResult.intent === 'medical_query') {
+    } else if (intentResult.intent === 'medical_query' && !inCollection) {
+      // Only deflect when NOT in collection flow. If we asked for "reason for visit" and
+      // the user replied with a symptom (e.g. "Pain Abdomen"), treat it as data, not medical_query.
       replyText = MEDICAL_QUERY_RESPONSE;
       state = {
         ...state,
@@ -814,6 +816,134 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         updatedAt: new Date().toISOString(),
       };
       await updateConversationState(conversation.id, state, correlationId);
+    } else if (state.step === 'consent') {
+      // Handle consent reply regardless of intent (e.g. "yes" may be classified as greeting).
+      const consentResult = parseConsentReply(text);
+      if (consentResult === 'granted') {
+        const persistResult = await persistPatientAfterConsent(
+          conversation.id,
+          conversation.patient_id,
+          'instagram_dm',
+          correlationId
+        );
+        if (!persistResult.success) {
+          replyText = persistResult.reply;
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'responded',
+            updatedAt: new Date().toISOString(),
+          };
+          await updateConversationState(conversation.id, state, correlationId);
+        } else {
+          const slotLink = buildBookingPageUrl(conversation.id, doctorId);
+          replyText =
+            `Pick your slot: ${slotLink}\n\nYou'll be redirected back here after you choose.`;
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'awaiting_slot_selection',
+            updatedAt: new Date().toISOString(),
+          };
+          await updateConversationState(conversation.id, state, correlationId);
+        }
+      } else if (consentResult === 'denied') {
+        replyText = await handleConsentDenied(
+          conversation.id,
+          conversation.patient_id,
+          correlationId
+        );
+        state = {
+          ...state,
+          lastIntent: intentResult.intent,
+          step: 'responded',
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+      } else {
+        replyText = await generateResponse({
+          conversationId: conversation.id,
+          currentIntent: intentResult.intent,
+          state,
+          recentMessages,
+          currentUserMessage: text,
+          correlationId,
+          doctorContext,
+        });
+      }
+    } else if (state.step === 'collecting_all') {
+      // Process as collection data regardless of intent. E.g. "Pain Abdomen" may be classified
+      // as medical_query but we asked for reason for visit—treat it as data, not a deflection.
+      const extractResult = await validateAndApplyExtracted(
+        conversation.id,
+        text,
+        { ...state, lastIntent: intentResult.intent },
+        correlationId
+      );
+      state = extractResult.newState;
+      await updateConversationState(conversation.id, state, correlationId);
+      if (extractResult.missingFields.length === 0) {
+        const collected = await getCollectedData(conversation.id);
+        replyText = buildConfirmDetailsMessage(collected ?? {});
+      } else {
+        const missingLabels = extractResult.missingFields.map((f) => {
+          const labels: Record<string, string> = { name: 'full name', phone: 'phone number', age: 'age', gender: 'gender', reason_for_visit: 'reason for visit' };
+          return labels[f] ?? f;
+        });
+        replyText = `Got it. Still need: ${missingLabels.join(', ')}. Please share.`;
+      }
+    } else if (state.step === 'confirm_details') {
+      // Handle confirm reply regardless of intent (e.g. "yes" may be classified as greeting).
+      const trimmed = text.trim().toLowerCase();
+      const isYes = /^(yes|yeah|yep|ok|okay|correct|looks good|confirmed)$/.test(trimmed);
+      const isCorrection = /^(no|nope|change|correct)\s*[,:]/i.test(text.trim()) || /^(actually|no,)\s+/i.test(text.trim());
+      if (isYes) {
+        const collected = await getCollectedData(conversation.id);
+        const now = new Date().toISOString();
+        state = {
+          ...state,
+          lastIntent: intentResult.intent,
+          step: 'consent',
+          consent_requested_at: now,
+          updatedAt: now,
+          reasonForVisit: collected?.reason_for_visit,
+          age: collected?.age,
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+        const name = collected?.name?.trim() || 'there';
+        const phone = collected?.phone?.trim() || '';
+        const phoneDisplay = phone ? `**${phone}**` : 'your number';
+        replyText = `Thanks, ${name}. We'll use ${phoneDisplay} to confirm your appointment by call or text. Ready to pick a time?`;
+      } else if (isCorrection) {
+        const extractResult = await validateAndApplyExtracted(
+          conversation.id,
+          text,
+          { ...state, lastIntent: intentResult.intent },
+          correlationId
+        );
+        state = extractResult.newState;
+        await updateConversationState(conversation.id, state, correlationId);
+        const collected = await getCollectedData(conversation.id);
+        if (extractResult.missingFields.length === 0) {
+          replyText = buildConfirmDetailsMessage(collected ?? {});
+        } else {
+          const missingLabels = extractResult.missingFields.map((f) => {
+            const labels: Record<string, string> = { name: 'full name', phone: 'phone number', age: 'age', gender: 'gender', reason_for_visit: 'reason for visit' };
+            return labels[f] ?? f;
+          });
+          replyText = `Still need: ${missingLabels.join(', ')}. Please share.`;
+        }
+      } else {
+        replyText = await generateResponse({
+          conversationId: conversation.id,
+          currentIntent: intentResult.intent,
+          state,
+          recentMessages,
+          currentUserMessage: text,
+          correlationId,
+          doctorContext,
+        });
+      }
     } else if (
       state.step === 'responded' &&
       isPostBookingAcknowledgment(text, recentMessages)
@@ -827,112 +957,8 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       };
       await updateConversationState(conversation.id, state, correlationId);
     } else if (isBookIntent && (justStartingCollection || inCollection)) {
-      if (state.step === 'confirm_details') {
-        const trimmed = text.trim().toLowerCase();
-        const isYes = /^(yes|yeah|yep|ok|okay|correct|looks good|confirmed)$/.test(trimmed);
-        const isCorrection = /^(no|nope|change|correct)\s*[,:]/i.test(text.trim()) || /^(actually|no,)\s+/i.test(text.trim());
-        if (isYes) {
-          const collected = await getCollectedData(conversation.id);
-          const now = new Date().toISOString();
-          state = {
-            ...state,
-            lastIntent: intentResult.intent,
-            step: 'consent',
-            consent_requested_at: now,
-            updatedAt: now,
-            reasonForVisit: collected?.reason_for_visit,
-            age: collected?.age,
-          };
-          await updateConversationState(conversation.id, state, correlationId);
-          const name = collected?.name?.trim() || 'there';
-          const phone = collected?.phone?.trim() || '';
-          const phoneDisplay = phone ? `**${phone}**` : 'your number';
-          replyText = `Thanks, ${name}. We'll use ${phoneDisplay} to confirm your appointment by call or text. Ready to pick a time?`;
-        } else if (isCorrection) {
-          const extractResult = await validateAndApplyExtracted(
-            conversation.id,
-            text,
-            { ...state, lastIntent: intentResult.intent },
-            correlationId
-          );
-          state = extractResult.newState;
-          await updateConversationState(conversation.id, state, correlationId);
-          const collected = await getCollectedData(conversation.id);
-          if (extractResult.missingFields.length === 0) {
-            replyText = buildConfirmDetailsMessage(collected ?? {});
-          } else {
-            const missingLabels = extractResult.missingFields.map((f) => {
-              const labels: Record<string, string> = { name: 'full name', phone: 'phone number', age: 'age', gender: 'gender', reason_for_visit: 'reason for visit' };
-              return labels[f] ?? f;
-            });
-            replyText = `Still need: ${missingLabels.join(', ')}. Please share.`;
-          }
-        } else {
-          replyText = await generateResponse({
-            conversationId: conversation.id,
-            currentIntent: intentResult.intent,
-            state,
-            recentMessages,
-            currentUserMessage: text,
-            correlationId,
-            doctorContext,
-          });
-        }
-      } else if (state.step === 'consent') {
-        const consentResult = parseConsentReply(text);
-        if (consentResult === 'granted') {
-          const persistResult = await persistPatientAfterConsent(
-            conversation.id,
-            conversation.patient_id,
-            'instagram_dm',
-            correlationId
-          );
-          if (!persistResult.success) {
-            replyText = persistResult.reply;
-            state = {
-              ...state,
-              lastIntent: intentResult.intent,
-              step: 'responded',
-              updatedAt: new Date().toISOString(),
-            };
-            await updateConversationState(conversation.id, state, correlationId);
-          } else {
-            const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-            replyText =
-              `Pick your slot: ${slotLink}\n\nYou'll be redirected back here after you choose.`;
-            state = {
-              ...state,
-              lastIntent: intentResult.intent,
-              step: 'awaiting_slot_selection',
-              updatedAt: new Date().toISOString(),
-            };
-            await updateConversationState(conversation.id, state, correlationId);
-          }
-        } else if (consentResult === 'denied') {
-          replyText = await handleConsentDenied(
-            conversation.id,
-            conversation.patient_id,
-            correlationId
-          );
-          state = {
-            ...state,
-            lastIntent: intentResult.intent,
-            step: 'responded',
-            updatedAt: new Date().toISOString(),
-          };
-          await updateConversationState(conversation.id, state, correlationId);
-        } else {
-          replyText = await generateResponse({
-            conversationId: conversation.id,
-            currentIntent: intentResult.intent,
-            state,
-            recentMessages,
-            currentUserMessage: text,
-            correlationId,
-            doctorContext,
-          });
-        }
-      } else if (justStartingCollection) {
+      // Note: consent, confirm_details, collecting_all are handled above (regardless of intent).
+      if (justStartingCollection) {
         state = {
           ...state,
           lastIntent: intentResult.intent,
@@ -950,25 +976,6 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           correlationId,
           doctorContext,
         });
-      } else if (state.step === 'collecting_all') {
-        const extractResult = await validateAndApplyExtracted(
-          conversation.id,
-          text,
-          { ...state, lastIntent: intentResult.intent },
-          correlationId
-        );
-        state = extractResult.newState;
-        await updateConversationState(conversation.id, state, correlationId);
-        if (extractResult.missingFields.length === 0) {
-          const collected = await getCollectedData(conversation.id);
-          replyText = buildConfirmDetailsMessage(collected ?? {});
-        } else {
-          const missingLabels = extractResult.missingFields.map((f) => {
-            const labels: Record<string, string> = { name: 'full name', phone: 'phone number', age: 'age', gender: 'gender', reason_for_visit: 'reason for visit' };
-            return labels[f] ?? f;
-          });
-          replyText = `Got it. Still need: ${missingLabels.join(', ')}. Please share.`;
-        }
       } else {
         replyText = await generateResponse({
           conversationId: conversation.id,
