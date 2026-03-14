@@ -1140,8 +1140,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             const doctorCountry = settings?.country ?? env.DEFAULT_DOCTOR_COUNTRY ?? 'IN';
             const amountMinor = settings?.appointment_fee_minor ?? env.APPOINTMENT_FEE_MINOR ?? 0;
             const currency = settings?.appointment_fee_currency ?? env.APPOINTMENT_FEE_CURRENCY ?? 'INR';
-            try {
-              if (!amountMinor || amountMinor <= 0) {
+            if (!amountMinor || amountMinor <= 0) {
                 replyText =
                   "Your appointment is booked. The clinic hasn't configured payment yet—please contact them directly to complete your booking.";
                 state = {
@@ -1219,22 +1218,22 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
                 };
               }
             } catch (err) {
-            if (err instanceof ConflictError) {
-              const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-              replyText =
-                "That slot was just taken. Pick another: " +
-                slotLink;
-              state = {
-                ...state,
-                step: 'awaiting_slot_selection',
-                slotToConfirm: undefined,
-                updatedAt: new Date().toISOString(),
-              };
-            } else {
-              replyText = "Sorry, we couldn't complete the booking. Please try again.";
-              state = { ...state, step: 'awaiting_slot_selection', slotToConfirm: undefined, updatedAt: new Date().toISOString() };
+              if (err instanceof ConflictError) {
+                const slotLink = buildBookingPageUrl(conversation.id, doctorId);
+                replyText =
+                  "That slot was just taken. Pick another: " +
+                  slotLink;
+                state = {
+                  ...state,
+                  step: 'awaiting_slot_selection',
+                  slotToConfirm: undefined,
+                  updatedAt: new Date().toISOString(),
+                };
+              } else {
+                replyText = "Sorry, we couldn't complete the booking. Please try again.";
+                state = { ...state, step: 'awaiting_slot_selection', slotToConfirm: undefined, updatedAt: new Date().toISOString() };
+              }
             }
-          }
         }
       } else {
         const slotLink = buildBookingPageUrl(conversation.id, doctorId);
