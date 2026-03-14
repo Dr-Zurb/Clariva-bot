@@ -70,8 +70,8 @@ const envSchema = z.object({
   PAYPAL_MODE: z.enum(['sandbox', 'live']).default('sandbox'),
   // Default doctor country for MVP (IN = India -> Razorpay; US/UK/EU -> PayPal)
   DEFAULT_DOCTOR_COUNTRY: z.string().default('IN'),
-  // Appointment fee for Phase 0 (fixed amount in smallest unit; e.g. 50000 = ₹500 or $500.00)
-  APPOINTMENT_FEE_MINOR: z.string().default('50000').transform(Number),
+  // Appointment fee fallback when doctor has no settings (optional; doctors should set fee in Booking Rules)
+  APPOINTMENT_FEE_MINOR: z.string().optional().transform((v) => (v ? parseInt(v, 10) : 0)),
   APPOINTMENT_FEE_CURRENCY: z.string().default('INR'),
 
   // Notifications (e-task-5 - email via Resend)

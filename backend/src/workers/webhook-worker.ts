@@ -1138,64 +1138,87 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             );
             const settings = await getDoctorSettings(doctorId);
             const doctorCountry = settings?.country ?? env.DEFAULT_DOCTOR_COUNTRY ?? 'IN';
-            const amountMinor = settings?.appointment_fee_minor ?? env.APPOINTMENT_FEE_MINOR ?? 50000;
+            const amountMinor = settings?.appointment_fee_minor ?? env.APPOINTMENT_FEE_MINOR ?? 0;
             const currency = settings?.appointment_fee_currency ?? env.APPOINTMENT_FEE_CURRENCY ?? 'INR';
             try {
-              const paymentResult = await createPaymentLink(
-                {
-                  appointmentId: appointment.id,
-                  amountMinor,
-                  currency,
-                  doctorCountry,
-                  doctorId,
-                  patientId: patient.id,
-                  patientName: patient.name,
-                  patientPhone: patient.phone,
-                  description: `Appointment - ${new Date(slot.start).toLocaleString()}`,
-                },
-                correlationId
-              );
-              const amountDisplay = formatAmountForDisplay(amountMinor, currency);
-              const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
-              replyText = formatPaymentLinkMessage(
-                typeof appointment.appointment_date === 'string'
-                  ? appointment.appointment_date
-                  : (appointment.appointment_date as Date).toISOString(),
-                paymentResult.url,
-                amountDisplay,
-                tz
-              );
-            } catch (payErr) {
-              const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
-              replyText = formatConfirmationMessage(
-                typeof appointment.appointment_date === 'string'
-                  ? appointment.appointment_date
-                  : (appointment.appointment_date as Date).toISOString(),
-                tz
-              );
-              logger.warn(
-                { error: payErr instanceof Error ? payErr.message : String(payErr), correlationId },
-                'Payment link creation failed - sending confirmation without payment'
-              );
-            }
-            await logAuditEvent({
-              correlationId,
-              action: 'appointment_booked',
-              resourceType: 'appointment',
-              resourceId: appointment.id,
-              status: 'success',
-              metadata: { doctorId, appointmentId: appointment.id },
-            });
-            // Doctor confirmation email is sent AFTER payment (in payment webhook handler)
-            state = {
-              ...state,
-              lastIntent: intentResult.intent,
-              step: 'responded',
-              slotToConfirm: undefined,
-              slotSelectionDate: undefined,
-              updatedAt: new Date().toISOString(),
-            };
-          } catch (err) {
+              if (!amountMinor || amountMinor <= 0) {
+                replyText =
+                  "Your appointment is booked. The clinic hasn't configured payment yet—please contact them directly to complete your booking.";
+                state = {
+                  ...state,
+                  lastIntent: intentResult.intent,
+                  step: 'responded',
+                  slotToConfirm: undefined,
+                  slotSelectionDate: undefined,
+                  updatedAt: new Date().toISOString(),
+                };
+                await updateConversationState(conversation.id, state, correlationId);
+                await logAuditEvent({
+                  correlationId,
+                  action: 'appointment_booked',
+                  resourceType: 'appointment',
+                  resourceId: appointment.id,
+                  status: 'success',
+                  metadata: { doctorId, appointmentId: appointment.id, noPaymentLink: true },
+                });
+              } else {
+                try {
+                  const paymentResult = await createPaymentLink(
+                    {
+                      appointmentId: appointment.id,
+                      amountMinor,
+                      currency,
+                      doctorCountry,
+                      doctorId,
+                      patientId: patient.id,
+                      patientName: patient.name,
+                      patientPhone: patient.phone,
+                      description: `Appointment - ${new Date(slot.start).toLocaleString()}`,
+                    },
+                    correlationId
+                  );
+                  const amountDisplay = formatAmountForDisplay(amountMinor, currency);
+                  const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
+                  replyText = formatPaymentLinkMessage(
+                    typeof appointment.appointment_date === 'string'
+                      ? appointment.appointment_date
+                      : (appointment.appointment_date as Date).toISOString(),
+                    paymentResult.url,
+                    amountDisplay,
+                    tz
+                  );
+                } catch (payErr) {
+                  const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
+                  replyText = formatConfirmationMessage(
+                    typeof appointment.appointment_date === 'string'
+                      ? appointment.appointment_date
+                      : (appointment.appointment_date as Date).toISOString(),
+                    tz
+                  );
+                  logger.warn(
+                    { error: payErr instanceof Error ? payErr.message : String(payErr), correlationId },
+                    'Payment link creation failed - sending confirmation without payment'
+                  );
+                }
+                await logAuditEvent({
+                  correlationId,
+                  action: 'appointment_booked',
+                  resourceType: 'appointment',
+                  resourceId: appointment.id,
+                  status: 'success',
+                  metadata: { doctorId, appointmentId: appointment.id },
+                });
+                // Doctor confirmation email is sent AFTER payment (in payment webhook handler)
+                state = {
+                  ...state,
+                  lastIntent: intentResult.intent,
+                  step: 'responded',
+                  slotToConfirm: undefined,
+                  slotSelectionDate: undefined,
+                  updatedAt: new Date().toISOString(),
+                };
+              }
+            } catch (err) {
             if (err instanceof ConflictError) {
               const slotLink = buildBookingPageUrl(conversation.id, doctorId);
               replyText =

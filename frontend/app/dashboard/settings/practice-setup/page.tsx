@@ -17,7 +17,7 @@ const cards = [
   {
     href: `${practiceSetupBase}/booking-rules`,
     label: "Booking Rules",
-    description: "Slot length, advance booking limits, cancellation policy",
+    description: "Slot length, advance booking limits, appointment fee, and cancellation policy",
     icon: (
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <circle cx="12" cy="12" r="10" />

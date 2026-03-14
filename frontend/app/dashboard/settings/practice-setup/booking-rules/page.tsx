@@ -151,13 +151,13 @@ export default function BookingRulesPage() {
     <div>
       <h1 className="text-2xl font-semibold text-gray-900">Booking Rules</h1>
       <p className="mt-1 text-gray-600">
-        Slot length, advance booking limits, and cancellation policy.
+        Slot length, advance booking limits, appointment fee, and cancellation policy.
       </p>
       <form onSubmit={handleSubmit} className="mt-6 space-y-4 rounded-lg border border-gray-200 bg-white p-4">
         <div className="rounded-md border border-amber-200 bg-amber-50/50 p-4">
           <h2 className="text-sm font-medium text-amber-900">Appointment fee</h2>
           <p className="mt-1 text-xs text-amber-800">
-            Fee charged when patients book. Stored in smallest unit (paise/cents). Leave empty to use system default (₹500).
+            Fee charged when patients book. Enter the amount in main units (e.g. 500 = ₹500). Required for payment links—leave empty if not yet configured; patients won&apos;t receive a payment link until you set this.
           </p>
           <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
