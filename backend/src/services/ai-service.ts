@@ -147,6 +147,8 @@ NEVER ask "what date/time?" or "share two date/time options"—we use a slot-sel
 
 CRITICAL - NEVER output placeholder text like "[Slot selection link]", "[link]", or "**[Slot selection link]**". The system injects the real URL when needed. You do not have access to it. If you mention a link, do not invent one—the system handles it.
 
+CRITICAL - When state shows collecting_all or confirm_details with collectedFields, the user has ALREADY shared details. NEVER repeat "Please share: Full name, Age, Mobile, Reason for visit". Acknowledge what they said, ask for missing fields only, or move to confirmation. If they refine the reason (e.g. "i wanna get her checked for diabetes"), treat it as updating the reason—do NOT start over.
+
 Tone: Conversational. When collecting info, ask for one thing at a time per the current step. If the user asks something outside your role, politely suggest they speak with the practice.`;
 
 /** Safe fallback when response generation fails (no PHI, no medical advice). */

@@ -876,16 +876,18 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       await updateConversationState(conversation.id, state, correlationId);
     } else if (intentResult.intent === 'check_appointment_status') {
       const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
-      const patientIds = [conversation.patient_id];
-      if (state.lastBookingPatientId && state.lastBookingPatientId !== conversation.patient_id) {
-        patientIds.push(state.lastBookingPatientId);
-      }
-      if (state.bookingForPatientId && !patientIds.includes(state.bookingForPatientId)) {
-        patientIds.push(state.bookingForPatientId);
-      }
+      const askingForSelfOnly = /\b(my\s+appointment|what\s+about\s+my\s+appointment)\b/i.test(text.trim());
+      const patientIdsList = askingForSelfOnly
+        ? [conversation.patient_id]
+        : (() => {
+            const ids = [conversation.patient_id];
+            if (state.lastBookingPatientId && state.lastBookingPatientId !== conversation.patient_id) ids.push(state.lastBookingPatientId);
+            if (state.bookingForPatientId && !ids.includes(state.bookingForPatientId)) ids.push(state.bookingForPatientId);
+            return ids;
+          })();
       const allAppointments: Awaited<ReturnType<typeof listAppointmentsForPatient>> = [];
       const seen = new Set<string>();
-      for (const pid of patientIds) {
+      for (const pid of patientIdsList) {
         const list = await listAppointmentsForPatient(pid, doctorId, correlationId);
         for (const a of list) {
           if (!seen.has(a.id)) {
@@ -910,19 +912,30 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         const paid = await hasCapturedPaymentForAppointment(a.id, correlationId);
         return paid ? 'confirmed' : a.status;
       };
+      const formatWithName = (a: (typeof upcoming)[0], displayStatus: string) => {
+        const iso = typeof a.appointment_date === 'string' ? a.appointment_date : a.appointment_date.toISOString();
+        const line = formatAppointmentStatusLine(iso, displayStatus, tz);
+        const isForSelf = a.patient_id === conversation.patient_id;
+        return isForSelf ? line : `For **${a.patient_name || 'them'}**: ${line}`;
+      };
+      const hasSelfAppointment = upcoming.some((a) => a.patient_id === conversation.patient_id);
       if (upcoming.length === 0) {
         replyText =
           "You don't have any upcoming appointments. Say 'book appointment' to schedule one.";
+      } else if (askingForSelfOnly && !hasSelfAppointment) {
+        const other = upcoming[0];
+        const iso = typeof other.appointment_date === 'string' ? other.appointment_date : other.appointment_date.toISOString();
+        const displayStatus = await resolveStatus(other);
+        const line = formatAppointmentStatusLine(iso, displayStatus, tz);
+        replyText = `You don't have an appointment for yourself yet. The appointment on ${line} is for **${other.patient_name || 'someone else'}**. Would you like to book one for yourself?`;
       } else if (upcoming.length === 1) {
         const a = upcoming[0];
-        const iso = typeof a.appointment_date === 'string' ? a.appointment_date : a.appointment_date.toISOString();
         const displayStatus = await resolveStatus(a);
-        replyText = `Your next appointment is on ${formatAppointmentStatusLine(iso, displayStatus, tz)}.`;
+        replyText = `Your next appointment is on ${formatWithName(a, displayStatus)}.`;
       } else {
         const a = upcoming[0];
-        const iso = typeof a.appointment_date === 'string' ? a.appointment_date : a.appointment_date.toISOString();
         const displayStatus = await resolveStatus(a);
-        replyText = `You have ${upcoming.length} upcoming appointments. Next: ${formatAppointmentStatusLine(iso, displayStatus, tz)}.`;
+        replyText = `You have ${upcoming.length} upcoming appointments. Next: ${formatWithName(a, displayStatus)}.`;
       }
       state = {
         ...state,
@@ -935,6 +948,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       await clearCollectedData(conversation.id);
       const relationMatch = text.match(/\b(?:my\s+)?(mother|father|mom|dad|wife|husband|son|daughter|parent|spouse)\b/i);
       const relation = relationMatch ? relationMatch[1].toLowerCase() : 'them';
+      const relationPhrase = relation === 'them' ? 'them' : `your ${relation}`;
       state = {
         ...state,
         lastIntent: intentResult.intent,
@@ -945,7 +959,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         updatedAt: new Date().toISOString(),
       };
       await updateConversationState(conversation.id, state, correlationId);
-      replyText = `I'll help you book for your ${relation}. Please share: Full name, Age, Mobile, Reason for visit for the person you're booking for. Email (optional).`;
+      replyText = `I'll help you book for ${relationPhrase}. Please share: Full name, Age, Mobile, Reason for visit for the person you're booking for. Email (optional).`;
     } else if (state.step === 'consent' || (lastBotMessageAskedForConsent(recentMessages) && parseConsentReply(text) === 'granted')) {
       // Handle consent reply regardless of intent. Fallback: last bot asked for consent + user said yes.
       if (!state.step) {
