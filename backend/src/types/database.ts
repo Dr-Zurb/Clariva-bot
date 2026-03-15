@@ -210,6 +210,7 @@ export interface DeadLetterQueueWithDecrypted extends Omit<DeadLetterQueue, 'pay
  * @property name - Patient's full name (PHI - encrypted at rest)
  * @property phone - Patient's phone number (PHI - encrypted at rest)
  * @property date_of_birth - Patient's date of birth (PHI - encrypted at rest, optional)
+ * @property age - Patient's age 1-120 (optional; migration 015)
  * @property gender - Patient's gender (optional, not PHI)
  * @property email - Patient's email (optional, PHI - for receipts; migration 014)
  * @property platform - Platform name for placeholder lookup (e.g. instagram, optional)
@@ -226,6 +227,7 @@ export interface Patient {
   name: string;  // PHI
   phone: string;  // PHI
   date_of_birth?: Date;  // PHI (optional)
+  age?: number | null;  // 1-120 (optional; migration 015)
   gender?: string;
   email?: string | null;  // PHI (optional; for receipts; migration 014)
   platform?: string | null;

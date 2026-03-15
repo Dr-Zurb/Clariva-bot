@@ -89,6 +89,7 @@ export async function persistPatientAfterConsent(
     consent_method: consentMethod,
     ...(collected.gender && { gender: collected.gender }),
     ...(collected.email && { email: collected.email }),
+    ...(collected.age !== undefined && collected.age >= 1 && collected.age <= 120 && { age: collected.age }),
   };
 
   await updatePatient(patientId, updateData as UpdatePatient, correlationId);

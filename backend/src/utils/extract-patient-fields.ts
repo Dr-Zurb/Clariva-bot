@@ -3,8 +3,8 @@
  *
  * Regex-based extraction for common formats. Handles:
  * - "Name: X", "Age: 25", "Phone: 8264602737", "Reason: fever"
- * - Comma/semicolon separated: "Abhishek, 25, 8264602737, fever"
- * - Loose: phone (10+ digits), email (pattern), age (1-120)
+ * - Comma/semicolon/newline separated: "Abhishek Sahil\n26M\n8264602737\ni have pain..."
+ * - Loose: phone (10+ digits), email (pattern), age (1-120), "26M" (age+gender)
  *
  * No PHI sent to external services. Used when step is collecting_all.
  */
@@ -32,6 +32,8 @@ const NAME_LABEL_REGEX = /(?:name|full\s*name)[:\s]+([^,\n]+?)(?=\s*(?:,|age|pho
 const REASON_LABEL_REGEX = /(?:reason|reason\s*for\s*visit|symptom|complaint)[:\s]+([^,\n]+?)(?=\s*(?:,|email|$)|$)/i;
 /** Gender: male, female, etc */
 const GENDER_REGEX = /\b(male|female|m|f|other|non-binary)\b/i;
+/** Age+gender combined: "26M", "25F" */
+const AGE_GENDER_COMBO = /^(\d{1,3})\s*[mf]$/i;
 
 function normalizePhone(s: string): string {
   const digits = s.replace(/\D/g, '');
@@ -88,18 +90,43 @@ export function extractFieldsFromMessage(text: string): ExtractedFields {
     const name = nameLabelMatch[1].trim();
     if (name.length >= 2) result.name = name;
   } else {
-    // Heuristic: comma-separated first part, or text before first long number
-    const parts = trimmed.split(/[,;]/).map((p) => p.trim());
+    // Heuristic: split by newlines, commas, semicolons — first name-like token is name
+    const parts = trimmed.split(/[\n,;]+/).map((p) => p.trim()).filter(Boolean);
     const firstPart = parts[0];
-    if (firstPart && firstPart.length >= 2 && !/^\d+$/.test(firstPart) && !firstPart.match(/^(age|phone|reason|email)/i)) {
-      const cleaned = firstPart.replace(/^my\s+name\s+is\s+/i, '').replace(/^name\s*:\s*/i, '').trim();
+    const isNameLike = (s: string) =>
+      s.length >= 2 &&
+      s.length <= 80 &&
+      !/^\d+$/.test(s) &&
+      !/^\d{10,}$/.test(s.replace(/\D/g, '')) &&
+      !EMAIL_REGEX.test(s) &&
+      !s.match(/^(age|phone|reason|email)/i) &&
+      !AGE_GENDER_COMBO.test(s);
+    if (firstPart && isNameLike(firstPart)) {
+      const cleaned = firstPart
+        .replace(/^my\s+name\s+is\s+/i, '')
+        .replace(/^name\s*:\s*/i, '')
+        .trim();
       if (cleaned.length >= 2) result.name = cleaned;
     } else {
       const beforeNumber = trimmed.split(/\d{5,}/)[0]?.trim();
       if (beforeNumber && beforeNumber.length >= 2 && !beforeNumber.match(/^(age|phone|reason|email)/i)) {
-        const cleaned = beforeNumber.replace(/^my\s+name\s+is\s+/i, '').replace(/^name\s*:\s*/i, '').trim();
-        if (cleaned.length >= 2) result.name = cleaned;
+        const cleaned = beforeNumber
+          .replace(/^my\s+name\s+is\s+/i, '')
+          .replace(/^name\s*:\s*/i, '')
+          .trim();
+        if (cleaned.length >= 2 && !AGE_GENDER_COMBO.test(cleaned)) result.name = cleaned;
       }
+    }
+  }
+
+  // Age+gender combo (e.g. "26M", "25F") — check before standalone age
+  for (const part of trimmed.split(/[\n,;]+/).map((p) => p.trim())) {
+    const combo = part.match(AGE_GENDER_COMBO);
+    if (combo) {
+      const age = parseAge(combo[1]);
+      if (age) result.age = age;
+      result.gender = combo[0].toLowerCase().endsWith('m') ? 'male' : 'female';
+      break;
     }
   }
 
@@ -110,15 +137,25 @@ export function extractFieldsFromMessage(text: string): ExtractedFields {
     if (reason.length >= 2) result.reason_for_visit = reason;
   } else {
     // Heuristic: "i have X" (e.g. "i have pain abdomen")
-    const iHaveMatch = trimmed.match(/\bi\s+have\s+([^.@,\n]+?)(?=\s*(?:,|@|$))/i);
+    const iHaveMatch = trimmed.match(/\bi\s+have\s+([^.@,\n]+?)(?=\s*(?:,|@|\n|$))/i);
     if (iHaveMatch && iHaveMatch[1].trim().length >= 3) {
       result.reason_for_visit = iHaveMatch[1].trim();
     } else {
-      const parts = trimmed.split(/[,;]/).map((p) => p.trim());
-      if (parts.length >= 4) {
-        const last = parts[parts.length - 1];
-        if (last && last.length >= 3 && !last.match(/^\d+$/) && !EMAIL_REGEX.test(last)) {
-          result.reason_for_visit = last;
+      const parts = trimmed.split(/[\n,;]+/).map((p) => p.trim()).filter(Boolean);
+      // First part that looks like reason: 3+ chars, not phone/email/age
+      for (const p of parts) {
+        const digits = p.replace(/\D/g, '');
+        const isPhone = digits.length >= 10 && /^[6-9]/.test(digits);
+        if (
+          p.length >= 3 &&
+          !/^\d+$/.test(p) &&
+          !EMAIL_REGEX.test(p) &&
+          !isPhone &&
+          !AGE_GENDER_COMBO.test(p) &&
+          (p.toLowerCase().startsWith('i have') || p.length > 10)
+        ) {
+          result.reason_for_visit = p;
+          break;
         }
       }
     }
