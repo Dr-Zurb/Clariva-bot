@@ -13,6 +13,7 @@ import {
   getInstagramPayloadStructure,
   isNonActionableInstagramEvent,
   isInstagramMessageEcho,
+  isShortFlowWord,
 } from '../utils/webhook-event-id';
 import {
   isWebhookProcessed,
@@ -263,10 +264,20 @@ export const handleInstagramWebhook = asyncHandler(
       return;
     }
 
+    // Step 2: Extract event ID (platform-specific or fallback hash) — needed before dedup for short flow words
+    let eventId = extractInstagramEventId(req.body) ?? generateFallbackEventId(req.body);
+
     // Content-based dedup: Meta sends multiple "message" webhooks with different mids for same user message.
+    // For short flow words (yes, no, ok), use eventId so we always queue—users send "yes" twice (confirm then consent).
     const dedup = extractInstagramMessageForDedup(req.body);
     if (dedup) {
-      const contentAcquired = await tryAcquireInstagramDedupLock(dedup.pageId, dedup.senderId, dedup.textHash);
+      const dedupEventId = isShortFlowWord(dedup.text) ? eventId : undefined;
+      const contentAcquired = await tryAcquireInstagramDedupLock(
+        dedup.pageId,
+        dedup.senderId,
+        dedup.textHash,
+        dedupEventId
+      );
       if (!contentAcquired) {
         logger.info(
           { correlationId, provider: 'instagram', pageId: dedup.pageId },
@@ -275,12 +286,6 @@ export const handleInstagramWebhook = asyncHandler(
         res.status(200).json(successResponse({ message: 'OK' }, req));
         return;
       }
-    }
-
-    // Step 2: Extract event ID (platform-specific or fallback hash)
-    let eventId = extractInstagramEventId(req.body);
-    if (!eventId) {
-      eventId = generateFallbackEventId(req.body);
     }
 
     // Debug: when idempotency uses entry id (page ID), log payload shape to troubleshoot missing mid

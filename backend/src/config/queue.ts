@@ -157,20 +157,25 @@ const DEDUP_BUCKET_MS = 5 * 60 * 1000; // 5 minutes (was 1 min - caused spam whe
  * Try to acquire a content-based dedup lock for Instagram messages.
  * Meta sends multiple "message" webhooks with different mids for the same user message.
  * Key = ig:dedup:{pageId}:{senderId}:{textHash}:{bucket}. TTL 120s.
+ * When eventId is provided (for short flow words like "yes"), use eventId in key so we
+ * always queue—users legitimately send "yes" twice (confirm_details then consent).
  * Returns true if we acquired (first to process), false if duplicate (skip queueing).
  * Fail-open: returns true if Redis unavailable (allow through).
  */
 export async function tryAcquireInstagramDedupLock(
   pageId: string,
   senderId: string,
-  textHash: string
+  textHash: string,
+  eventId?: string
 ): Promise<boolean> {
   if (!isQueueEnabled()) return true; // fail-open when queue disabled
   getWebhookQueue(); // ensure Redis connection exists
   const conn = getQueueConnection();
   if (!conn) return true; // fail-open
   const bucket = Math.floor(Date.now() / DEDUP_BUCKET_MS);
-  const key = `ig:dedup:${pageId}:${senderId}:${textHash}:${bucket}`;
+  const key = eventId
+    ? `ig:dedup:${pageId}:${senderId}:${eventId}`
+    : `ig:dedup:${pageId}:${senderId}:${textHash}:${bucket}`;
   try {
     const result = await conn.set(key, '1', 'EX', 120, 'NX');
     return result === 'OK'; // true if we set it, false if key existed
@@ -253,21 +258,21 @@ export async function tryAcquireReplyThrottle(
 /**
  * Try to acquire a send lock before sending a reply. Prevents spam when multiple jobs
  * run for the SAME user message (Meta sends message + message_edit with different mids).
- * Key = ig:send:{pageId}:{senderId}:{contentHash}. One reply per (user, content) per window.
- * NEW messages (different content) can send—fixes "no reply" when user sends follow-up.
- * Returns true if we acquired (first to send for this content), false if already sent.
+ * Key = ig:send:{pageId}:{senderId}:{lockId}. Pass eventId as lockId so each webhook event
+ * gets one reply—allows "yes" twice in flow (confirm_details then consent).
+ * Returns true if we acquired (first to send), false if already sent.
  * Fail-open: returns true if Redis unavailable (allow send).
  */
 export async function tryAcquireInstagramSendLock(
   pageId: string,
   senderId: string,
-  contentHash: string
+  lockId: string
 ): Promise<boolean> {
   if (!isQueueEnabled()) return true; // fail-open when queue disabled
   getWebhookQueue();
   const conn = getQueueConnection();
   if (!conn) return true; // fail-open
-  const key = `ig:send:${pageId}:${senderId}:${contentHash}`;
+  const key = `ig:send:${pageId}:${senderId}:${lockId}`;
   try {
     const result = await conn.set(key, '1', 'EX', SEND_THROTTLE_SEC, 'NX');
     return result === 'OK';

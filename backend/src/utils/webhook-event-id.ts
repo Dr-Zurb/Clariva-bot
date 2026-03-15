@@ -111,17 +111,22 @@ export function isInstagramMessageEcho(payload: unknown): boolean {
   return false;
 }
 
+/** Short flow words that users often send twice (e.g. "yes" for confirm then "yes" for consent). We don't dedup these. */
+const SHORT_FLOW_WORDS = new Set(['yes', 'yeah', 'yep', 'ok', 'okay', 'sure', 'no', 'nope', 'agree', 'correct', 'confirmed', 'looks good']);
+
 /**
- * Extract (pageId, senderId, textHash) from Instagram message payload for content-based dedup.
+ * Extract (pageId, senderId, textHash, text) from Instagram message payload for content-based dedup.
  * Meta sends multiple "message" webhooks with different mids for the same user message.
  * We deduplicate by (pageId, senderId, text) within a 1-minute window.
  * Returns null if payload is not a message or missing required fields.
  * textHash is SHA-256 of text (first 16 hex chars) - no PHI in key.
+ * text is normalized (trimmed, lowercased) for flow-word check.
  */
 export function extractInstagramMessageForDedup(payload: unknown): {
   pageId: string;
   senderId: string;
   textHash: string;
+  text: string;
 } | null {
   if (!payload || typeof payload !== 'object') return null;
   if (isInstagramMessageEcho(payload)) return null;
@@ -146,7 +151,13 @@ export function extractInstagramMessageForDedup(payload: unknown): {
   // Normalize so "Hello" and "hello" dedup correctly (Meta may send both)
   const text = (rawText ?? '').trim().toLowerCase();
   const textHash = createHash('sha256').update(text).digest('hex').slice(0, 16);
-  return { pageId, senderId, textHash };
+  return { pageId, senderId, textHash, text };
+}
+
+/** True if message is a short flow word (yes, no, ok) that users send multiple times in booking flow. */
+export function isShortFlowWord(text: string): boolean {
+  const t = (text ?? '').trim().toLowerCase();
+  return t.length <= 15 && SHORT_FLOW_WORDS.has(t);
 }
 
 /**

@@ -15,7 +15,6 @@
  * @see COMPLIANCE.md - Audit, no PHI in logs
  */
 
-import { createHash } from 'crypto';
 import { Worker, Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { env } from '../config/env';
@@ -95,12 +94,6 @@ import type { InstagramWebhookPayload } from '../types/webhook';
 
 /** Fallback when resolution returns null (no doctor linked for page) or AI/conversation flow is skipped */
 const FALLBACK_REPLY = "Thanks for your message. We'll get back to you soon.";
-
-/** Hash user message for send lock (per-content throttle). Normalized: trim + lowercase. */
-function contentHashForSendLock(text: string): string {
-  const normalized = (text ?? '').trim().toLowerCase();
-  return createHash('sha256').update(normalized).digest('hex').slice(0, 16);
-}
 
 // ============================================================================
 // Connection & Worker Instance
@@ -1202,11 +1195,10 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           };
     await updateConversationState(conversation.id, stateToPersist, correlationId);
 
-    // Send throttle: one reply per (user, message content). Per-user throttle: max 1 send per 12 sec (stops Meta duplicate webhook spam).
+    // Send lock: one reply per webhook event (eventId). Allows "yes" twice in flow (confirm then consent).
     const pageId = pageIds[0] ?? getInstagramPageId(instagramPayload);
     if (pageId) {
-      const contentHash = contentHashForSendLock(text);
-      const sendLockAcquired = await tryAcquireInstagramSendLock(pageId, senderId, contentHash);
+      const sendLockAcquired = await tryAcquireInstagramSendLock(pageId, senderId, eventId);
       if (!sendLockAcquired) {
         logger.info(
           { correlationId, eventId, provider },
@@ -1293,8 +1285,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           );
           const pageIdForSend = pageIds[0] ?? getInstagramPageId(instagramPayload);
           if (pageIdForSend) {
-            const contentHash = contentHashForSendLock(text);
-            const sendAcquired = await tryAcquireInstagramSendLock(pageIdForSend, senderId, contentHash);
+            const sendAcquired = await tryAcquireInstagramSendLock(pageIdForSend, senderId, eventId);
             if (!sendAcquired) {
               logger.info({ correlationId, eventId, provider }, 'Conflict recovery: skipping send (already replied to this message)');
               await markWebhookProcessed(eventId, provider);
