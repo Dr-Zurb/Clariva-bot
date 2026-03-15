@@ -17,7 +17,7 @@ import { getInstagramAccessTokenForDoctor } from './instagram-connect-service';
 import { sendInstagramMessage } from './instagram-service';
 import { getDoctorSettings } from './doctor-settings-service';
 import { findPatientByIdWithAdmin } from './patient-service';
-import { bookAppointment } from './appointment-service';
+import { bookAppointment, hasAppointmentOnDate } from './appointment-service';
 import { createPaymentLink } from './payment-service';
 import { verifyBookingToken, generateBookingToken } from '../utils/booking-token';
 import { InternalError, NotFoundError, UnauthorizedError, ValidationError } from '../utils/errors';
@@ -209,14 +209,36 @@ export async function processSlotSelectionAndPay(
     throw new UnauthorizedError('Token does not match conversation');
   }
 
-  const patient = await findPatientByIdWithAdmin(conversation.patient_id, correlationId);
+  const state = await getConversationState(conversationId, correlationId);
+  const patientIdToUse = state.bookingForPatientId ?? conversation.patient_id;
+  const patient = await findPatientByIdWithAdmin(patientIdToUse, correlationId);
   if (!patient || !patient.name || !patient.phone) {
     throw new NotFoundError('Patient details not found. Please complete the booking flow in chat first.');
   }
 
   const doctorSettings = await getDoctorSettings(doctorId);
+  const dateStr = slotStart.slice(0, 10);
+  const alreadyHasAppointment = await hasAppointmentOnDate(
+    doctorId,
+    patient.id,
+    patient.name,
+    patient.phone,
+    dateStr,
+    correlationId
+  );
+  if (alreadyHasAppointment) {
+    const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
+    const dateDisplay = new Date(slotDate).toLocaleDateString('en-US', {
+      timeZone: tz,
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    });
+    throw new ValidationError(
+      `You already have an appointment on ${dateDisplay}. Please choose another date or contact us if you need multiple visits.`
+    );
+  }
 
-  const state = await getConversationState(conversationId, correlationId);
   const reasonForVisit = state.reasonForVisit ?? 'Not provided';
   const parts: string[] = [];
   if (state.extraNotes?.trim()) parts.push(state.extraNotes.trim());
@@ -254,6 +276,7 @@ export async function processSlotSelectionAndPay(
       ...state,
       step: 'responded',
       slotToConfirm: undefined,
+      bookingForPatientId: undefined,
       updatedAt: new Date().toISOString(),
     };
     await updateConversationState(conversationId, newState, correlationId);
@@ -293,6 +316,7 @@ export async function processSlotSelectionAndPay(
     ...state,
     step: 'responded',
     slotToConfirm: undefined,
+    bookingForPatientId: undefined,
     updatedAt: new Date().toISOString(),
   };
   await updateConversationState(conversationId, newState, correlationId);

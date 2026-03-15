@@ -24,10 +24,12 @@
  * - medical_query: User presents symptoms, chief complaints, asks for advice (redirect to doctor)
  * - emergency: Urgent/emergency language (redirect to emergency services)
  * - check_appointment_status: User asks if appointment is confirmed, when is visit
+ * - book_for_someone_else: User wants to book for another person (e.g. "book for my mother")
  * - unknown: Could not classify or fallback
  */
 export type Intent =
   | 'book_appointment'
+  | 'book_for_someone_else'
   | 'ask_question'
   | 'check_availability'
   | 'greeting'
@@ -45,6 +47,7 @@ export type Intent =
  */
 export const INTENT_VALUES: readonly Intent[] = [
   'book_appointment',
+  'book_for_someone_else',
   'ask_question',
   'check_availability',
   'greeting',

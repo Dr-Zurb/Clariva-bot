@@ -108,6 +108,15 @@ Split appointment data into `reason_for_visit` (required, patient's main complai
 
 Tasks: e-task-1 (add reason_for_visit column + wiring), e-task-2 (collect patient extras into notes).
 
+### Booking for Others & Appointment Limits (2026-03-18)
+
+Handle "book for my mother" (collect for other person, book under their name) and enforce 1 appointment per patient per day.
+
+- **Reference:** [BOOKING_FOR_OTHERS_AND_APPOINTMENT_LIMITS.md](../Reference/BOOKING_FOR_OTHERS_AND_APPOINTMENT_LIMITS.md)
+- **Daily plan:** [docs/Development/Daily-plans/March 2026/2026-03-18/README.md](../Development/Daily-plans/March%202026/2026-03-18/README.md)
+
+Tasks: e-task-1 (booking for someone else), e-task-2 (appointment limit per person per day).
+
 ---
 
 ## 🔗 Related Documentation

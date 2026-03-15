@@ -61,6 +61,16 @@ function setCachedIntent(redactedText: string, result: IntentDetectionResult): v
 /** Simple greetings only (no mixed content). Match → greeting, skip AI. */
 const SIMPLE_GREETING_REGEX = /^(hi|hello|hey|hiya|howdy|namaste|नमस्ते|good\s*morning|good\s*afternoon|good\s*evening|good\s*day)[\s!?.]*$/i;
 
+/** Book for someone else (e.g. "book for my mother"). Match → book_for_someone_else. */
+const BOOK_FOR_SOMEONE_ELSE_REGEX =
+  /\b(book|schedule|appointment|want\s+to\s+book)\s+(?:an?\s+)?(?:appointment\s+)?(?:for\s+)?(?:my\s+)?(mother|father|mom|dad|wife|husband|son|daughter|parent|spouse|someone\s+else|them)\b/i;
+
+function isBookForSomeoneElse(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length > 120) return false;
+  return BOOK_FOR_SOMEONE_ELSE_REGEX.test(trimmed);
+}
+
 /** Emergency keywords/phrases. Match → emergency, skip AI. */
 const EMERGENCY_PATTERNS = [
   /\b(chest\s+pain|can'?t\s+breathe|cannot\s+breathe|difficulty\s+breathing)\b/i,
@@ -94,11 +104,12 @@ export const EMERGENCY_RESPONSE =
 const SYSTEM_PROMPT = `You are a medical receptionist intent classifier. Classify the user message into exactly one intent. Do not diagnose or give clinical advice.
 Classify intent regardless of language. User may write in English, Hindi, Hinglish, or transliterated Hindi.
 
-Valid intents: book_appointment, ask_question, check_availability, greeting, cancel_appointment, revoke_consent, medical_query, emergency, check_appointment_status, unknown.
+Valid intents: book_appointment, book_for_someone_else, ask_question, check_availability, greeting, cancel_appointment, revoke_consent, medical_query, emergency, check_appointment_status, unknown.
 
 Intent rules:
 - greeting: Use when message is ONLY a greeting with no explicit request (e.g. "hello", "hi", "good morning"). NEVER classify simple greetings as book_appointment.
-- book_appointment: Use ONLY when user explicitly asks to book, schedule, or make an appointment (e.g. "book", "schedule", "I want an appointment", "can I book").
+- book_for_someone_else: Use when user wants to book for ANOTHER person (e.g. "book for my mother", "schedule appointment for my wife", "I want to book for my dad", "book for someone else").
+- book_appointment: Use when user explicitly asks to book for THEMSELVES (e.g. "book", "schedule", "I want an appointment", "can I book"). NOT when they say "for my mother" etc.
 - medical_query: User describes symptoms, chief complaints, or asks for medical advice/prescription. Redirect to doctor/clinic; never diagnose.
 - emergency: Urgent/emergency language (chest pain, can't breathe, accident). Redirect to emergency services.
 - ask_question: General questions (price, timings, location, consultation type). Answer from practice info.
@@ -106,7 +117,7 @@ Intent rules:
 - check_appointment_status: User asks if appointment is confirmed, when is visit.
 - unknown: Spam, vulgar, meaningless, or unclear. Polite deflection.
 
-Examples: "hello" → greeting; "book appointment" → book_appointment; "I have fever" → medical_query; "chest pain" → emergency.
+Examples: "hello" → greeting; "book appointment" → book_appointment; "book for my mother" → book_for_someone_else; "I have fever" → medical_query; "chest pain" → emergency.
 
 Respond with a single JSON object: { "intent": "<one of the valid intents>", "confidence": <number 0.0 to 1.0> }.
 Use "unknown" only when the message does not clearly match any other intent.`;
@@ -207,6 +218,9 @@ export async function classifyIntent(
   }
   if (isSimpleGreeting(redactedText)) {
     return { intent: 'greeting', confidence: 1 };
+  }
+  if (isBookForSomeoneElse(redactedText)) {
+    return { intent: 'book_for_someone_else', confidence: 1 };
   }
 
   const cached = getCachedIntent(redactedText);

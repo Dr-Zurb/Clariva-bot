@@ -213,6 +213,61 @@ export async function createPatient(
 }
 
 /**
+ * Create a patient for "booking for someone else" flow (e-task-1 2026-03-18).
+ * Creates a standalone patient with collected details; no platform link.
+ * Used when user books for mother, father, etc. — consent implied by chat.
+ *
+ * @param doctorId - Doctor ID (for audit context; patients table has no doctor_id)
+ * @param data - Collected patient data (name, phone required; age, gender, email optional)
+ * @param correlationId - Request correlation ID
+ * @returns Created patient
+ */
+export async function createPatientForBooking(
+  _doctorId: string,
+  data: { name: string; phone: string; age?: number; gender?: string; email?: string },
+  correlationId: string
+): Promise<Patient> {
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const now = new Date();
+  const insertData: InsertPatient = {
+    name: data.name.trim(),
+    phone: data.phone.trim(),
+    age: data.age ?? undefined,
+    gender: data.gender?.trim() || undefined,
+    email: data.email?.trim() || undefined,
+    platform: null,
+    platform_external_id: null,
+    consent_status: 'granted',
+    consent_granted_at: now,
+    consent_method: 'instagram_dm_booking_for_other',
+  };
+
+  const { data: patient, error } = await supabaseAdmin
+    .from('patients')
+    .insert(insertData)
+    .select()
+    .single();
+
+  if (error || !patient) {
+    handleSupabaseError(error, correlationId);
+  }
+
+  await logDataModification(
+    correlationId,
+    undefined as any,
+    'create',
+    'patient',
+    patient.id
+  );
+
+  return patient as Patient;
+}
+
+/**
  * Update patient information
  * 
  * Updates patient record. Used when patient information changes.

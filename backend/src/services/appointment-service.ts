@@ -188,6 +188,59 @@ export async function getAppointmentByIdForWorker(
   };
 }
 
+/**
+ * Check if patient already has an appointment on the given date (e-task-2 2026-03-18).
+ * Enforces 1 appointment per patient per day limit.
+ *
+ * @param doctorId - Doctor UUID
+ * @param patientId - Patient UUID when available; null for guest bookings
+ * @param patientName - Patient name (required for guest lookup when patientId is null)
+ * @param patientPhone - Patient phone (required for guest lookup when patientId is null)
+ * @param dateStr - Date in YYYY-MM-DD format
+ * @param correlationId - Request correlation ID
+ * @returns true if patient has an appointment on that date (status pending or confirmed)
+ */
+export async function hasAppointmentOnDate(
+  doctorId: string,
+  patientId: string | null,
+  patientName: string,
+  patientPhone: string,
+  dateStr: string,
+  correlationId: string
+): Promise<boolean> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available for limit check');
+  }
+
+  const rangeStart = `${dateStr}T00:00:00.000Z`;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const nextDay = new Date(Date.UTC(y, m - 1, d + 1));
+  const rangeEnd = nextDay.toISOString();
+
+  let query = admin
+    .from('appointments')
+    .select('id')
+    .eq('doctor_id', doctorId)
+    .in('status', ['pending', 'confirmed'])
+    .gte('appointment_date', rangeStart)
+    .lt('appointment_date', rangeEnd);
+
+  if (patientId) {
+    query = query.eq('patient_id', patientId);
+  } else {
+    query = query.is('patient_id', null).eq('patient_name', patientName).eq('patient_phone', patientPhone);
+  }
+
+  const { data: existing, error } = await query.limit(1);
+
+  if (error) {
+    handleSupabaseError(error, correlationId);
+  }
+
+  return (existing?.length ?? 0) > 0;
+}
+
 async function checkSlotConflict(
   doctorId: string,
   slotStart: Date,

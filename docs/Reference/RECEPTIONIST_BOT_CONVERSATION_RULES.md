@@ -25,6 +25,7 @@
 |--------|---------------|------------|
 | `greeting` | Hi, Hello, Hey, Good morning, नमस्ते | Greet back, introduce practice, ask how to help |
 | `book_appointment` | Book, schedule, I want an appointment | Start booking flow (name, phone, consent, slots) |
+| `book_for_someone_else` | Book for my mother, schedule for my son, appointment for my wife | Collect other person's details, create patient, book under that person |
 | `check_availability` | When free?, Available slots? | Show available slots |
 | `ask_question` | Price?, Timings?, Location? | Answer from doctor settings |
 | `medical_query` | I have fever, prescribe X, chief complaint | Redirect: "Speak with doctor during appointment or call clinic" |
@@ -46,6 +47,7 @@ When multiple intents could apply: **emergency > medical_query > book_appointmen
 
 - **Simple greeting:** Regex match → `greeting` (skip AI)
 - **Emergency keywords:** Match → `emergency` (skip AI)
+- **Book for someone else:** Match "book for my X", "schedule for my X", etc. → `book_for_someone_else` (skip AI)
 - **Mixed message:** e.g. "Hi I want to book" → let AI classify (don't match greeting regex)
 
 ---
@@ -67,4 +69,4 @@ When multiple intents could apply: **emergency > medical_query > book_appointmen
 
 ---
 
-**Last Updated:** 2026-03-10
+**Last Updated:** 2026-03-18

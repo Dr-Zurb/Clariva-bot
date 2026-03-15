@@ -53,4 +53,8 @@ export interface ConversationState {
   extraNotes?: string;
   /** Age (e-task-2); preserved for patients.age at booking */
   age?: number;
+  /** When true, we're collecting for another person (e.g. mother); consent will create patient and set bookingForPatientId */
+  bookingForSomeoneElse?: boolean;
+  /** Patient ID when booking for someone else; slot selection uses this instead of conversation.patient_id */
+  bookingForPatientId?: string;
 }

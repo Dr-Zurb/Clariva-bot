@@ -33,7 +33,7 @@ import {
   getInstagramAccessTokenForDoctor,
   getStoredInstagramPageIdForDoctor,
 } from '../services/instagram-connect-service';
-import { findOrCreatePlaceholderPatient, findPatientByIdWithAdmin } from '../services/patient-service';
+import { findOrCreatePlaceholderPatient, findPatientByIdWithAdmin, createPatientForBooking } from '../services/patient-service';
 import {
   getAppointmentByIdForWorker,
   listAppointmentsForPatient,
@@ -56,6 +56,7 @@ import {
 import {
   getInitialCollectionStep,
   getCollectedData,
+  clearCollectedData,
   validateAndApplyExtracted,
   buildConfirmDetailsMessage,
   tryRecoverAndSetFromMessages,
@@ -912,6 +913,21 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         updatedAt: new Date().toISOString(),
       };
       await updateConversationState(conversation.id, state, correlationId);
+    } else if (intentResult.intent === 'book_for_someone_else' && (state.step === 'responded' || state.step === 'awaiting_slot_selection')) {
+      await clearCollectedData(conversation.id);
+      const relationMatch = text.match(/\b(?:my\s+)?(mother|father|mom|dad|wife|husband|son|daughter|parent|spouse)\b/i);
+      const relation = relationMatch ? relationMatch[1].toLowerCase() : 'them';
+      state = {
+        ...state,
+        lastIntent: intentResult.intent,
+        step: 'collecting_all',
+        collectedFields: [],
+        bookingForSomeoneElse: true,
+        bookingForPatientId: undefined,
+        updatedAt: new Date().toISOString(),
+      };
+      await updateConversationState(conversation.id, state, correlationId);
+      replyText = `I'll help you book for your ${relation}. Please share: Full name, Age, Mobile, Reason for visit for the person you're booking for. Email (optional).`;
     } else if (state.step === 'consent' || (lastBotMessageAskedForConsent(recentMessages) && parseConsentReply(text) === 'granted')) {
       // Handle consent reply regardless of intent. Fallback: last bot asked for consent + user said yes.
       if (!state.step) {
@@ -926,47 +942,91 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         const extraNotes = extractExtraNotesFromConsentReply(text, consentResult);
         let collectedBeforePersist = await getCollectedData(conversation.id);
         let reasonForVisitFromCollected = collectedBeforePersist?.reason_for_visit?.trim();
-        let persistResult = await persistPatientAfterConsent(
-          conversation.id,
-          conversation.patient_id,
-          'instagram_dm',
-          correlationId
-        );
-        // Fallback: if Redis/in-memory lost data, try to recover from recent messages
-        if (!persistResult.success) {
-          const recovered = await tryRecoverAndSetFromMessages(
-            conversation.id,
-            recentMessages,
-            correlationId
-          );
-          if (recovered) {
-            collectedBeforePersist = await getCollectedData(conversation.id);
-            reasonForVisitFromCollected = collectedBeforePersist?.reason_for_visit?.trim();
-            persistResult = await persistPatientAfterConsent(
+
+        if (state.bookingForSomeoneElse) {
+          if (!collectedBeforePersist?.name?.trim() || !collectedBeforePersist?.phone?.trim()) {
+            const recovered = await tryRecoverAndSetFromMessages(
               conversation.id,
-              conversation.patient_id,
-              'instagram_dm',
+              recentMessages,
               correlationId
             );
+            if (recovered) collectedBeforePersist = await getCollectedData(conversation.id);
           }
-        }
-        const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-        if (!persistResult.success) {
-          replyText =
-            `I had trouble saving your details—please say 'book appointment' to re-share them if needed. Meanwhile, pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
+          if (!collectedBeforePersist?.name?.trim() || !collectedBeforePersist?.phone?.trim()) {
+            replyText =
+              "I didn't receive the details for the person you're booking for. Please share: Full name, Age, Mobile, Reason for visit.";
+            state = { ...state, updatedAt: new Date().toISOString() };
+            await updateConversationState(conversation.id, state, correlationId);
+          } else {
+            const newPatient = await createPatientForBooking(
+              doctorId,
+              {
+                name: collectedBeforePersist.name.trim(),
+                phone: collectedBeforePersist.phone.trim(),
+                age: collectedBeforePersist.age,
+                gender: collectedBeforePersist.gender,
+                email: collectedBeforePersist.email,
+              },
+              correlationId
+            );
+            await clearCollectedData(conversation.id);
+            const slotLink = buildBookingPageUrl(conversation.id, doctorId);
+            replyText =
+              `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
+            state = {
+              ...state,
+              lastIntent: intentResult.intent,
+              step: 'awaiting_slot_selection',
+              reasonForVisit: state.reasonForVisit ?? reasonForVisitFromCollected,
+              extraNotes: extraNotes ?? state.extraNotes,
+              bookingForPatientId: newPatient.id,
+              bookingForSomeoneElse: false,
+              updatedAt: new Date().toISOString(),
+            };
+            await updateConversationState(conversation.id, state, correlationId);
+          }
         } else {
-          replyText =
-            `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
+          let persistResult = await persistPatientAfterConsent(
+            conversation.id,
+            conversation.patient_id,
+            'instagram_dm',
+            correlationId
+          );
+          if (!persistResult.success) {
+            const recovered = await tryRecoverAndSetFromMessages(
+              conversation.id,
+              recentMessages,
+              correlationId
+            );
+            if (recovered) {
+              collectedBeforePersist = await getCollectedData(conversation.id);
+              reasonForVisitFromCollected = collectedBeforePersist?.reason_for_visit?.trim();
+              persistResult = await persistPatientAfterConsent(
+                conversation.id,
+                conversation.patient_id,
+                'instagram_dm',
+                correlationId
+              );
+            }
+          }
+          const slotLink = buildBookingPageUrl(conversation.id, doctorId);
+          if (!persistResult.success) {
+            replyText =
+              `I had trouble saving your details—please say 'book appointment' to re-share them if needed. Meanwhile, pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
+          } else {
+            replyText =
+              `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
+          }
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'awaiting_slot_selection',
+            reasonForVisit: state.reasonForVisit ?? reasonForVisitFromCollected,
+            extraNotes: extraNotes ?? state.extraNotes,
+            updatedAt: new Date().toISOString(),
+          };
+          await updateConversationState(conversation.id, state, correlationId);
         }
-        state = {
-          ...state,
-          lastIntent: intentResult.intent,
-          step: 'awaiting_slot_selection',
-          reasonForVisit: state.reasonForVisit ?? reasonForVisitFromCollected,
-          extraNotes: extraNotes ?? state.extraNotes,
-          updatedAt: new Date().toISOString(),
-        };
-        await updateConversationState(conversation.id, state, correlationId);
       } else if (consentResult === 'denied') {
         replyText = await handleConsentDenied(
           conversation.id,
@@ -1054,7 +1114,11 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         const name = collected?.name?.trim() || 'there';
         const phone = collected?.phone?.trim() || '';
         const phoneDisplay = phone ? `**${phone}**` : 'your number';
-        replyText = `Thanks, ${name}. We'll use ${phoneDisplay} to confirm your appointment by call or text. Anything else you'd like the doctor to know before your visit? (optional) Reply with your extras, or say Yes to continue.`;
+        if (state.bookingForSomeoneElse) {
+          replyText = `Thanks. We'll use ${phoneDisplay} to confirm the appointment for **${name}**. Do I have your consent to use these details to schedule? Reply Yes to continue.`;
+        } else {
+          replyText = `Thanks, ${name}. We'll use ${phoneDisplay} to confirm your appointment by call or text. Anything else you'd like the doctor to know before your visit? (optional) Reply with your extras, or say Yes to continue.`;
+        }
       } else if (isCorrection) {
         const extractResult = await validateAndApplyExtracted(
           conversation.id,
