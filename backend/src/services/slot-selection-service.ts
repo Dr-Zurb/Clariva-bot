@@ -256,6 +256,17 @@ export async function processSlotSelectionAndPay(
     return { paymentUrl: null, redirectUrl, appointmentId: appointment.id };
   }
 
+  const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
+  const slotDisplayStr = new Date(slotDate).toLocaleString('en-US', {
+    timeZone: tz,
+    month: 'numeric',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+
   const paymentResult = await createPaymentLink(
     {
       appointmentId: appointment.id,
@@ -267,7 +278,7 @@ export async function processSlotSelectionAndPay(
       patientName: patient.name,
       patientPhone: patient.phone,
       patientEmail: patient.email ?? undefined,
-      description: `Appointment - ${new Date(slotDate).toLocaleString()}`,
+      description: `Appointment - ${slotDisplayStr}`,
       callbackUrl: successCallbackUrl,
     },
     correlationId
