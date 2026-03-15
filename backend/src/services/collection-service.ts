@@ -17,7 +17,7 @@ import {
 } from '../utils/validation';
 import { logPatientDataCollection } from '../utils/audit-logger';
 import { getWebhookQueue, getQueueConnection, isQueueEnabled } from '../config/queue';
-import { extractFieldsFromMessage, type ExtractedFields } from '../utils/extract-patient-fields';
+import { extractFieldsFromMessage, extractPhoneAndEmail, type ExtractedFields } from '../utils/extract-patient-fields';
 import { extractFieldsWithAI, redactPhiForAI, type ExtractionContext } from '../services/ai-service';
 
 // ============================================================================
@@ -281,10 +281,11 @@ export interface ValidateAndApplyExtractedResult {
   replyOverride?: string;
 }
 
-/** AI Receptionist: Message is simple structured input (gender only, phone only, etc.) — use regex, skip AI. */
-function isSimpleFastPath(text: string): boolean {
+/** Trivial single-value replies — skip AI extraction (regex is enough). */
+function isTrivialSingleValue(text: string): boolean {
   const t = text.trim();
-  if (!t) return false;
+  if (!t || t.length > 30) return false;
+  if (/^(yes|no|yeah|nope|ok|okay)$/i.test(t)) return true;
   if (/^(male|female|m|f)$/i.test(t)) return true;
   if (/^\d{10}$/.test(t.replace(/\D/g, '')) && t.replace(/\D/g, '').length === 10) return true;
   if (/^\d{1,3}$/.test(t) && parseInt(t, 10) >= 1 && parseInt(t, 10) <= 120) return true;
@@ -311,35 +312,16 @@ export async function validateAndApplyExtracted(
   const missingFields = REQUIRED_COLLECTION_FIELDS.filter(
     (f) => !currentState.collectedFields?.includes(f)
   );
-  const hasNarrowContext = missingFields.length <= 2 && missingFields.length > 0;
-  const isSimple = isSimpleFastPath(text);
+  const isTrivial = isTrivialSingleValue(text);
   const isShortReply = /^(yes|no|yeah|nope|my\s+sister\?|sister\s+first)$/i.test(text.trim());
+  const isSubstantive = text.trim().length > 15 && !isShortReply && !isTrivial;
 
-  // AI Receptionist: AI-first when narrow context (e.g. only gender missing) and message is not simple
-  const useAIFirst = !!(
-    hasNarrowContext &&
-    !isSimple &&
-    !isShortReply &&
-    text.trim().length > 15 &&
-    options?.lastBotMessage?.trim()
-  );
+  // LLM-first: Use AI for name/age/gender/reason when message is substantive. Regex only for phone/email (structured).
+  const phoneEmail = extractPhoneAndEmail(text);
 
-  // AI Receptionist: When AI-first, use fastPathOnly so regex doesn't over-extract (e.g. "he is my father" as name)
-  let extracted = extractFieldsFromMessage(text, { fastPathOnly: useAIFirst }) as Partial<CollectedPatientData>;
+  let extracted: Partial<CollectedPatientData> = { ...phoneEmail };
 
-  // e-task-6: AI fallback when regex returns empty and message looks substantive
-  const hasRegexExtracted = !!(
-    extracted.name ||
-    extracted.phone ||
-    (extracted.age !== undefined && extracted.age !== null) ||
-    extracted.gender ||
-    extracted.reason_for_visit ||
-    extracted.email
-  );
-  const useAIFallback =
-    !hasRegexExtracted && text.trim().length > 15 && !isShortReply;
-
-  if (useAIFirst || useAIFallback) {
+  if (isSubstantive) {
     const allFields = ['name', 'phone', 'age', 'gender', 'reason_for_visit', 'email'] as const;
     const collectedSummary = allFields
       .map((f) => `${f}: ${currentState.collectedFields?.includes(f) ? 'provided' : 'missing'}`)
@@ -366,14 +348,20 @@ export async function validateAndApplyExtracted(
       correlationId,
       extractionContext
     );
-    if (useAIFirst && Object.keys(aiExtracted).length > 0) {
-      // Prefer AI when we had narrow context; merge regex only for fields AI didn't extract
-      for (const [k, v] of Object.entries(aiExtracted)) {
-        if (v !== undefined && v !== '') (extracted as Record<string, unknown>)[k] = v;
-      }
+    if (Object.keys(aiExtracted).length > 0) {
+      Object.assign(extracted, aiExtracted);
     } else {
-      extracted = { ...extracted, ...aiExtracted };
+      // AI returned nothing — fallback to regex for name/age/gender/reason
+      const regexFallback = extractFieldsFromMessage(text) as Partial<CollectedPatientData>;
+      if (regexFallback.name) extracted.name = regexFallback.name;
+      if (regexFallback.age !== undefined) extracted.age = regexFallback.age;
+      if (regexFallback.gender) extracted.gender = regexFallback.gender;
+      if (regexFallback.reason_for_visit) extracted.reason_for_visit = regexFallback.reason_for_visit;
     }
+  } else {
+    // Trivial or short — regex only (phone/email already in extracted)
+    const regexResult = extractFieldsFromMessage(text) as Partial<CollectedPatientData>;
+    Object.assign(extracted, regexResult);
   }
 
   const existing = (await getCollectedData(conversationId)) ?? {};

@@ -222,20 +222,21 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** e-task-6 + AI Receptionist: Prompt for AI-assisted field extraction. No PHI in prompt. */
-const EXTRACTION_SYSTEM_PROMPT = `You extract patient booking fields from a user message. Return ONLY a JSON object with the fields you can clearly identify. Extract only what is explicitly stated; do not infer or guess.
+/** e-task-6 + AI Receptionist: Prompt for AI-assisted field extraction. No PHI in prompt.
+ * Phone/email appear as [REDACTED_PHONE]/[REDACTED_EMAIL] — we extract those separately. Focus on name, age, gender, reason. */
+const EXTRACTION_SYSTEM_PROMPT = `You are a smart extractor for patient booking. Understand context and natural language. Extract patient fields from the user's message.
 
-Valid fields: name, phone, age, gender, reason_for_visit, email.
-- reason_for_visit: chief complaint, symptom, or reason (e.g. "diabetes check", "stomach pain", "get her checked for X"). NEVER use symptom/reason as name.
-- name: person's name only. NEVER use phrases like "i have stomach pain", "she has diabetes", or "he is my father he is male" as name.
-- phone: digits only, 10+ digits
-- age: number 1-120
-- gender: male, female, or other
-- email: valid email format
+Valid fields to extract: name, age, gender, reason_for_visit.
+- name: Person's full name only. "Ramesh Masih 60 Y M" → name is "Ramesh Masih" (60 Y M = age+gender, not part of name).
+- age: Number 1-120. "60 Y M" or "60 years male" → age is 60.
+- gender: male, female, or other. "60 Y M" or "M" → male; "60 Y F" → female.
+- reason_for_visit: Chief complaint, symptom, or reason. "diabetic checkup", "stomach pain", "get her checked for diabetes" → extract as reason. NEVER use name/age/gender as reason.
 
-CRITICAL - Use conversation context: If we asked for a specific field (e.g. gender) and the user gave a long reply (e.g. "he is my father he is male obviously"), extract ONLY that field. Do NOT use relationship/gender clarifications as name or reason.
-If the message says "i wanna get her checked for diabetes" or "she has stomach pain", extract reason_for_visit, NOT name.
-Return empty object {} if nothing can be extracted. Output format: { "name": "...", "phone": "...", "age": N, "gender": "...", "reason_for_visit": "...", "email": "..." } with only the fields you found.`;
+IGNORE: [REDACTED_PHONE] and [REDACTED_EMAIL] — we extract those separately. Do not include phone or email in your output.
+
+CRITICAL - Use conversation context: If we asked for a specific field (e.g. gender) and the user said "he is my father he is male obviously", extract ONLY gender. Do NOT use relationship/gender clarifications as name or reason.
+If the message says "i wanna get her checked for diabetes", extract reason_for_visit, NOT name.
+Return empty object {} if nothing can be extracted. Output format: { "name": "...", "age": N, "gender": "...", "reason_for_visit": "..." } with only the fields you found.`;
 
 /** AI Receptionist: Context for conversation-aware extraction. No PHI. */
 export interface ExtractionContext {

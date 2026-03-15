@@ -36,6 +36,10 @@ const REASON_LABEL_REGEX = /(?:reason|reason\s*for\s*visit|symptom|complaint)[:\
 const GENDER_REGEX = /\b(male|female|m|f|other|non-binary)\b/i;
 /** Age+gender combined: "26M", "25F" */
 const AGE_GENDER_COMBO = /^(\d{1,3})\s*[mf]$/i;
+/** Age + years + gender: "60 Y M", "60 years F" */
+const AGE_YEARS_GENDER = /\b(\d{1,3})\s*(?:y|yrs?|years?)\s*[mf]\b/i;
+/** Trailing age+gender to strip from name: "60 Y M", "26M" */
+const TRAILING_AGE_GENDER = /\s+\d{1,3}\s*(?:(?:y|yrs?|years?)\s*)?[mf]\s*$/i;
 
 function normalizePhone(s: string): string {
   const digits = s.replace(/\D/g, '');
@@ -53,6 +57,21 @@ function parseAge(val: string): number | undefined {
 export interface ExtractFieldsOptions {
   /** AI Receptionist: When true, only extract labeled + phone + email + gender + age. Skip name/reason heuristics so AI can handle natural language. */
   fastPathOnly?: boolean;
+}
+
+/** Extract only phone and email from raw text. Used before redaction; LLM handles name/age/gender/reason. */
+export function extractPhoneAndEmail(text: string): Pick<ExtractedFields, 'phone' | 'email'> {
+  const trimmed = text.trim();
+  if (!trimmed) return {};
+  const result: Pick<ExtractedFields, 'phone' | 'email'> = {};
+  const phoneMatch = trimmed.match(PHONE_REGEX);
+  if (phoneMatch?.[0]) {
+    const normalized = normalizePhone(phoneMatch[0]);
+    if (normalized.length >= 10) result.phone = normalized;
+  }
+  const emailMatch = trimmed.match(EMAIL_REGEX);
+  if (emailMatch?.[0]) result.email = emailMatch[0].trim().toLowerCase();
+  return result;
 }
 
 /**
@@ -129,25 +148,34 @@ export function extractFieldsFromMessage(
       !isSymptomLike(s) &&
       !isRelationshipOrGenderLike(s);
     if (firstPart && isNameLike(firstPart)) {
-      const cleaned = firstPart
+      let cleaned = firstPart
         .replace(/^my\s+name\s+is\s+/i, '')
         .replace(/^name\s*:\s*/i, '')
+        .replace(TRAILING_AGE_GENDER, '')
         .trim();
       if (cleaned.length >= 2 && !isSymptomLike(cleaned) && !isRelationshipOrGenderLike(cleaned)) result.name = cleaned;
     } else {
-      const beforeNumber = trimmed.split(/\d{5,}/)[0]?.trim();
+      const beforeNumber = trimmed.split(/\d{5,}/)[0]?.trim().replace(/,\s*$/, '');
       if (beforeNumber && beforeNumber.length >= 2 && !beforeNumber.match(/^(age|phone|reason|email)/i) && !isSymptomLike(beforeNumber) && !isRelationshipOrGenderLike(beforeNumber)) {
         const cleaned = beforeNumber
           .replace(/^my\s+name\s+is\s+/i, '')
           .replace(/^name\s*:\s*/i, '')
+          .replace(TRAILING_AGE_GENDER, '')
           .trim();
         if (cleaned.length >= 2 && !AGE_GENDER_COMBO.test(cleaned) && !isSymptomLike(cleaned) && !isRelationshipOrGenderLike(cleaned)) result.name = cleaned;
       }
     }
   }
 
-  // Age+gender combo (e.g. "26M", "25F")
+  // Age+gender combo: "26M", "25F", or "60 Y M", "60 years F"
   for (const part of trimmed.split(/[\n,;]+/).map((p) => p.trim())) {
+    const yearsGender = part.match(AGE_YEARS_GENDER);
+    if (yearsGender) {
+      const age = parseAge(yearsGender[1]);
+      if (age) result.age = age;
+      result.gender = part.toLowerCase().endsWith('m') ? 'male' : 'female';
+      break;
+    }
     const combo = part.match(AGE_GENDER_COMBO);
     if (combo) {
       const age = parseAge(combo[1]);
@@ -179,6 +207,18 @@ export function extractFieldsFromMessage(
           result.reason_for_visit = getCheckedMatch[1].trim();
         } else {
           const parts = trimmed.split(/[\n,;]+/).map((p) => p.trim()).filter(Boolean);
+          /** Skip parts that look like name (contain age+gender, or "FirstName LastName" with no medical keywords) */
+          const isNameLikePart = (s: string) => {
+            const digits = s.replace(/\D/g, '');
+            if (digits.length >= 10 && /^[6-9]/.test(digits)) return true;
+            if (EMAIL_REGEX.test(s)) return true;
+            if (AGE_GENDER_COMBO.test(s) || AGE_YEARS_GENDER.test(s)) return true;
+            if (/\d{1,3}\s*(?:y|yrs?|years?)\s*[mf]?/i.test(s)) return true;
+            if (/^[A-Z][a-z]+\s+[A-Z][a-z]/.test(s) && !/\b(diabetic|diabetes|checkup|pain|fever|cough|stomach|consultation)\b/i.test(s)) return true;
+            return false;
+          };
+          const isReasonLike = (s: string) =>
+            /\b(diabetic|diabetes|checkup|check\s*up|pain|fever|cough|stomach|headache|consultation|follow\s*up|general)\b/i.test(s);
           for (const p of parts) {
             const digits = p.replace(/\D/g, '');
             const isPhone = digits.length >= 10 && /^[6-9]/.test(digits);
@@ -188,7 +228,8 @@ export function extractFieldsFromMessage(
               !EMAIL_REGEX.test(p) &&
               !isPhone &&
               !AGE_GENDER_COMBO.test(p) &&
-              (p.toLowerCase().startsWith('i have') || p.length > 10)
+              !isNameLikePart(p) &&
+              (p.toLowerCase().startsWith('i have') || isReasonLike(p) || p.length >= 5)
             ) {
               result.reason_for_visit = p;
               break;
