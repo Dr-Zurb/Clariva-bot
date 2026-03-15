@@ -65,10 +65,20 @@ const SIMPLE_GREETING_REGEX = /^(hi|hello|hey|hiya|howdy|namaste|नमस्त
 const BOOK_FOR_SOMEONE_ELSE_REGEX =
   /\b(book|schedule|appointment|want\s+to\s+book)\s+(?:an?\s+)?(?:appointment\s+)?(?:for\s+)?(?:my\s+)?(mother|father|mom|dad|wife|husband|son|daughter|parent|spouse|someone\s+else|them)\b/i;
 
+/** Payment done / check appointment status. Match → check_appointment_status. */
+const CHECK_APPOINTMENT_REGEX =
+  /\b(payment\s+done|paid|i\s+just\s+paid|what\s+about\s+(?:my\s+)?payment|check\s+my\s+(?:appointment|details)|is\s+it\s+confirmed|appointment\s+confirmed|did\s+payment\s+go\s+through)\b/i;
+
 function isBookForSomeoneElse(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed.length > 120) return false;
   return BOOK_FOR_SOMEONE_ELSE_REGEX.test(trimmed);
+}
+
+function isCheckAppointmentStatus(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length > 100) return false;
+  return CHECK_APPOINTMENT_REGEX.test(trimmed);
 }
 
 /** Emergency keywords/phrases. Match → emergency, skip AI. */
@@ -221,6 +231,9 @@ export async function classifyIntent(
   }
   if (isBookForSomeoneElse(redactedText)) {
     return { intent: 'book_for_someone_else', confidence: 1 };
+  }
+  if (isCheckAppointmentStatus(redactedText)) {
+    return { intent: 'check_appointment_status', confidence: 1 };
   }
 
   const cached = getCachedIntent(redactedText);

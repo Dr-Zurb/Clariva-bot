@@ -93,6 +93,10 @@ export function extractFieldsFromMessage(text: string): ExtractedFields {
     // Heuristic: split by newlines, commas, semicolons — first name-like token is name
     const parts = trimmed.split(/[\n,;]+/).map((p) => p.trim()).filter(Boolean);
     const firstPart = parts[0];
+    /** Never treat symptom/reason phrases as name (e.g. "i have stomach pain") */
+    const isSymptomLike = (s: string) =>
+      /^\s*(i\s+have|i've\s+got|i\s+got|having|suffering\s+from|pain|ache|fever|cough|headache)\b/i.test(s.trim()) ||
+      /\b(pain|ache|fever|cough|stomach|head|chest)\b/i.test(s);
     const isNameLike = (s: string) =>
       s.length >= 2 &&
       s.length <= 80 &&
@@ -100,21 +104,22 @@ export function extractFieldsFromMessage(text: string): ExtractedFields {
       !/^\d{10,}$/.test(s.replace(/\D/g, '')) &&
       !EMAIL_REGEX.test(s) &&
       !s.match(/^(age|phone|reason|email)/i) &&
-      !AGE_GENDER_COMBO.test(s);
+      !AGE_GENDER_COMBO.test(s) &&
+      !isSymptomLike(s);
     if (firstPart && isNameLike(firstPart)) {
       const cleaned = firstPart
         .replace(/^my\s+name\s+is\s+/i, '')
         .replace(/^name\s*:\s*/i, '')
         .trim();
-      if (cleaned.length >= 2) result.name = cleaned;
+      if (cleaned.length >= 2 && !isSymptomLike(cleaned)) result.name = cleaned;
     } else {
       const beforeNumber = trimmed.split(/\d{5,}/)[0]?.trim();
-      if (beforeNumber && beforeNumber.length >= 2 && !beforeNumber.match(/^(age|phone|reason|email)/i)) {
+      if (beforeNumber && beforeNumber.length >= 2 && !beforeNumber.match(/^(age|phone|reason|email)/i) && !isSymptomLike(beforeNumber)) {
         const cleaned = beforeNumber
           .replace(/^my\s+name\s+is\s+/i, '')
           .replace(/^name\s*:\s*/i, '')
           .trim();
-        if (cleaned.length >= 2 && !AGE_GENDER_COMBO.test(cleaned)) result.name = cleaned;
+        if (cleaned.length >= 2 && !AGE_GENDER_COMBO.test(cleaned) && !isSymptomLike(cleaned)) result.name = cleaned;
       }
     }
   }

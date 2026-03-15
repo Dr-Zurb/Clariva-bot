@@ -57,4 +57,6 @@ export interface ConversationState {
   bookingForSomeoneElse?: boolean;
   /** Patient ID when booking for someone else; slot selection uses this instead of conversation.patient_id */
   bookingForPatientId?: string;
+  /** Patient ID of last booked appointment (for "payment done" / status check after redirect) */
+  lastBookingPatientId?: string;
 }

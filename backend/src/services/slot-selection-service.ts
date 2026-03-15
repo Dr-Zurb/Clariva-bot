@@ -277,6 +277,7 @@ export async function processSlotSelectionAndPay(
       step: 'responded',
       slotToConfirm: undefined,
       bookingForPatientId: undefined,
+      lastBookingPatientId: patient.id,
       updatedAt: new Date().toISOString(),
     };
     await updateConversationState(conversationId, newState, correlationId);
@@ -317,6 +318,7 @@ export async function processSlotSelectionAndPay(
     step: 'responded',
     slotToConfirm: undefined,
     bookingForPatientId: undefined,
+    lastBookingPatientId: patient.id,
     updatedAt: new Date().toISOString(),
   };
   await updateConversationState(conversationId, newState, correlationId);

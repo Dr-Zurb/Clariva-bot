@@ -876,11 +876,29 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       await updateConversationState(conversation.id, state, correlationId);
     } else if (intentResult.intent === 'check_appointment_status') {
       const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
-      const allAppointments = await listAppointmentsForPatient(
-        conversation.patient_id,
-        doctorId,
-        correlationId
-      );
+      const patientIds = [conversation.patient_id];
+      if (state.lastBookingPatientId && state.lastBookingPatientId !== conversation.patient_id) {
+        patientIds.push(state.lastBookingPatientId);
+      }
+      if (state.bookingForPatientId && !patientIds.includes(state.bookingForPatientId)) {
+        patientIds.push(state.bookingForPatientId);
+      }
+      const allAppointments: Awaited<ReturnType<typeof listAppointmentsForPatient>> = [];
+      const seen = new Set<string>();
+      for (const pid of patientIds) {
+        const list = await listAppointmentsForPatient(pid, doctorId, correlationId);
+        for (const a of list) {
+          if (!seen.has(a.id)) {
+            seen.add(a.id);
+            allAppointments.push(a);
+          }
+        }
+      }
+      allAppointments.sort((a, b) => {
+        const da = new Date(a.appointment_date).getTime();
+        const db = new Date(b.appointment_date).getTime();
+        return da - db;
+      });
       const now = new Date();
       const upcoming = allAppointments.filter(
         (a) =>

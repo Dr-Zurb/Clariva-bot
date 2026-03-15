@@ -295,10 +295,16 @@ export async function validateAndApplyExtracted(
   const merged: Partial<CollectedPatientData> = { ...existing };
   const updates: Partial<CollectedPatientData> = {};
 
+  /** Never overwrite valid name with symptom-like text (e.g. "i have stomach pain") */
+  const isSymptomLike = (s: string) =>
+    /^\s*(i\s+have|i've\s+got|i\s+got|having|suffering\s+from)\b/i.test(s.trim()) ||
+    /\b(pain|ache|fever|cough|stomach|head|chest)\b/i.test(s);
+
   for (const [key, value] of Object.entries(extracted)) {
     if (value === undefined || value === '') continue;
     const field = key as keyof ExtractedFields;
     if (field === 'name' && typeof value === 'string') {
+      if (isSymptomLike(value)) continue; // Never use symptom as name
       try {
         const v = validatePatientField('name', value);
         if (v) updates.name = v as string;
@@ -406,21 +412,27 @@ export async function tryRecoverAndSetFromMessages(
   }
   if (userTexts.length === 0) return false;
 
-  // Prefer messages that have BOTH name and phone (details message); skip greetings
+  /** Never use symptom-like text as name */
+  const isSymptomLike = (s: string) =>
+    /^\s*(i\s+have|i've\s+got|i\s+got|having|suffering\s+from)\b/i.test(s.trim()) ||
+    /\b(pain|ache|fever|cough|stomach|head|chest)\b/i.test(s);
+
+  // Prefer messages that have BOTH name and phone (details message); skip greetings and symptom-as-name
   let best: Partial<CollectedPatientData> = {};
   for (const t of userTexts) {
     if (GREETING_PATTERNS.test(t.trim())) continue;
     const extracted = extractFieldsFromMessage(t);
-    if (!extracted.name || !extracted.phone) continue;
+    if (!extracted.name || !extracted.phone || isSymptomLike(extracted.name)) continue;
     best = { ...best, ...extracted };
   }
+
   if (!best.name || !best.phone) {
     // Fallback: merge from any message with useful data, but never use name from greeting-only
     let merged: Partial<CollectedPatientData> = {};
     for (const t of userTexts) {
       if (GREETING_PATTERNS.test(t.trim())) continue;
       const extracted = extractFieldsFromMessage(t);
-      if (extracted.name) merged.name = extracted.name;
+      if (extracted.name && !isSymptomLike(extracted.name)) merged.name = extracted.name;
       if (extracted.phone) merged.phone = extracted.phone;
       if (extracted.age !== undefined) merged.age = extracted.age;
       if (extracted.gender) merged.gender = extracted.gender;
