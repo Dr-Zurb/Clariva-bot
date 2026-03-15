@@ -126,6 +126,15 @@ Make the receptionist bot context-aware and conversational (ChatGPT/Gemini-like)
 
 Tasks: e-task-1 (AI context enhancement), e-task-2 (AI prompt improvements), e-task-3 (route ambiguous messages to AI), e-task-4 (multi-person booking "me and X"), e-task-5 (conversation history expansion), e-task-6 (hybrid extraction fallback).
 
+### AI Receptionist — Human-Like Bot (2026-03-26)
+
+Transform the bot from regex-heavy to AI-first: understand conversations, store data intelligently, respond like a human receptionist.
+
+- **Reference:** [AI_RECEPTIONIST_PLAN.md](./AI_RECEPTIONIST_PLAN.md)
+- **Tasks:** [docs/task-management/tasks/README.md](./tasks/README.md)
+
+Tasks: e-task-1 (AI-first extraction with context), e-task-2 (conversation-aware extraction), e-task-3 (human-like response generation), e-task-4 (simplify regex to fast-path only).
+
 ---
 
 ## 🔗 Related Documentation

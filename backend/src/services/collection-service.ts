@@ -18,7 +18,7 @@ import {
 import { logPatientDataCollection } from '../utils/audit-logger';
 import { getWebhookQueue, getQueueConnection, isQueueEnabled } from '../config/queue';
 import { extractFieldsFromMessage, type ExtractedFields } from '../utils/extract-patient-fields';
-import { extractFieldsWithAI, redactPhiForAI } from '../services/ai-service';
+import { extractFieldsWithAI, redactPhiForAI, type ExtractionContext } from '../services/ai-service';
 
 // ============================================================================
 // Constants (collection order and required fields)
@@ -281,17 +281,51 @@ export interface ValidateAndApplyExtractedResult {
   replyOverride?: string;
 }
 
+/** AI Receptionist: Message is simple structured input (gender only, phone only, etc.) — use regex, skip AI. */
+function isSimpleFastPath(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (/^(male|female|m|f)$/i.test(t)) return true;
+  if (/^\d{10}$/.test(t.replace(/\D/g, '')) && t.replace(/\D/g, '').length === 10) return true;
+  if (/^\d{1,3}$/.test(t) && parseInt(t, 10) >= 1 && parseInt(t, 10) <= 120) return true;
+  return false;
+}
+
+export interface ValidateAndApplyExtractedOptions {
+  lastBotMessage?: string;
+  recentMessages?: { sender_type: string; content: string }[];
+}
+
 /**
  * Extract fields from message, validate each, merge into store.
  * Returns new state with collectedFields; if all required present, step = 'confirm_details'.
+ * AI Receptionist: When we have narrow context (1–2 missing fields) and message is not simple, use AI-first.
  */
 export async function validateAndApplyExtracted(
   conversationId: string,
   text: string,
   currentState: ConversationState,
-  correlationId: string
+  correlationId: string,
+  options?: ValidateAndApplyExtractedOptions
 ): Promise<ValidateAndApplyExtractedResult> {
-  let extracted = extractFieldsFromMessage(text) as Partial<CollectedPatientData>;
+  const missingFields = REQUIRED_COLLECTION_FIELDS.filter(
+    (f) => !currentState.collectedFields?.includes(f)
+  );
+  const hasNarrowContext = missingFields.length <= 2 && missingFields.length > 0;
+  const isSimple = isSimpleFastPath(text);
+  const isShortReply = /^(yes|no|yeah|nope|my\s+sister\?|sister\s+first)$/i.test(text.trim());
+
+  // AI Receptionist: AI-first when narrow context (e.g. only gender missing) and message is not simple
+  const useAIFirst = !!(
+    hasNarrowContext &&
+    !isSimple &&
+    !isShortReply &&
+    text.trim().length > 15 &&
+    options?.lastBotMessage?.trim()
+  );
+
+  // AI Receptionist: When AI-first, use fastPathOnly so regex doesn't over-extract (e.g. "he is my father" as name)
+  let extracted = extractFieldsFromMessage(text, { fastPathOnly: useAIFirst }) as Partial<CollectedPatientData>;
 
   // e-task-6: AI fallback when regex returns empty and message looks substantive
   const hasRegexExtracted = !!(
@@ -302,20 +336,44 @@ export async function validateAndApplyExtracted(
     extracted.reason_for_visit ||
     extracted.email
   );
-  if (
-    !hasRegexExtracted &&
-    text.trim().length > 15 &&
-    !/^(yes|no|yeah|nope|my\s+sister\?|sister\s+first)$/i.test(text.trim())
-  ) {
-    const missingFields = REQUIRED_COLLECTION_FIELDS.filter(
-      (f) => !currentState.collectedFields?.includes(f)
-    );
+  const useAIFallback =
+    !hasRegexExtracted && text.trim().length > 15 && !isShortReply;
+
+  if (useAIFirst || useAIFallback) {
+    const allFields = ['name', 'phone', 'age', 'gender', 'reason_for_visit', 'email'] as const;
+    const collectedSummary = allFields
+      .map((f) => `${f}: ${currentState.collectedFields?.includes(f) ? 'provided' : 'missing'}`)
+      .join(', ');
+    const recentTurns = options?.recentMessages
+      ?.slice(-6)
+      .map((m) => ({
+        role: (m.sender_type === 'patient' ? 'user' : 'assistant') as 'user' | 'assistant',
+        content: redactPhiForAI(m.content ?? ''),
+      }))
+      .filter((t) => t.content.trim().length > 0);
+
+    const extractionContext: Partial<ExtractionContext> = {
+      lastBotMessage: options?.lastBotMessage?.trim(),
+      missingFields,
+      collectedSummary,
+      relation: currentState.bookingForSomeoneElse ? currentState.relation : undefined,
+      recentTurns: recentTurns && recentTurns.length > 0 ? recentTurns : undefined,
+    };
+
     const aiExtracted = await extractFieldsWithAI(
       redactPhiForAI(text),
       missingFields,
-      correlationId
+      correlationId,
+      extractionContext
     );
-    extracted = { ...extracted, ...aiExtracted };
+    if (useAIFirst && Object.keys(aiExtracted).length > 0) {
+      // Prefer AI when we had narrow context; merge regex only for fields AI didn't extract
+      for (const [k, v] of Object.entries(aiExtracted)) {
+        if (v !== undefined && v !== '') (extracted as Record<string, unknown>)[k] = v;
+      }
+    } else {
+      extracted = { ...extracted, ...aiExtracted };
+    }
   }
 
   const existing = (await getCollectedData(conversationId)) ?? {};
@@ -326,12 +384,18 @@ export async function validateAndApplyExtracted(
   const isSymptomLike = (s: string) =>
     /^\s*(i\s+have|i've\s+got|i\s+got|having|suffering\s+from)\b/i.test(s.trim()) ||
     /\b(pain|ache|fever|cough|stomach|head|chest)\b/i.test(s);
+  /** Never use relationship/gender clarifications as name or reason (e.g. "he is my father he is male obviously") */
+  const isRelationshipOrGenderLike = (s: string) =>
+    /^(?:he|she|him|her)\s+is\s+(?:my\s+)?(?:father|mother|dad|mom|brother|sister)\b/i.test(s.trim()) ||
+    /^(?:he|she|him|her)\s+is\s+(?:male|female)\b/i.test(s.trim()) ||
+    /\b(?:my\s+)?(?:father|mother|dad|mom)\s+.*\s+(?:male|female)/i.test(s.trim()) ||
+    /\b(?:male|female)\s+obviously\s*$/i.test(s.trim());
 
   for (const [key, value] of Object.entries(extracted)) {
     if (value === undefined || value === '') continue;
     const field = key as keyof ExtractedFields;
     if (field === 'name' && typeof value === 'string') {
-      if (isSymptomLike(value)) continue; // Never use symptom as name
+      if (isSymptomLike(value) || isRelationshipOrGenderLike(value)) continue;
       try {
         const v = validatePatientField('name', value);
         if (v) updates.name = v as string;
@@ -360,6 +424,7 @@ export async function validateAndApplyExtracted(
         // skip invalid
       }
     } else if (field === 'reason_for_visit' && typeof value === 'string') {
+      if (isRelationshipOrGenderLike(value)) continue; // Never use "he is my father he is male" as reason
       try {
         const v = validatePatientField('reason_for_visit', value);
         if (v !== undefined && typeof v === 'string') updates.reason_for_visit = v;
@@ -389,8 +454,8 @@ export async function validateAndApplyExtracted(
   const collectedFields = Array.from(collectedSet);
 
   // Check required
-  const missingFields = REQUIRED_COLLECTION_FIELDS.filter((f) => !collectedFields.includes(f));
-  const hasAllRequired = missingFields.length === 0;
+  const remainingMissingFields = REQUIRED_COLLECTION_FIELDS.filter((f) => !collectedFields.includes(f));
+  const hasAllRequired = remainingMissingFields.length === 0;
 
   void logPatientDataCollection({
     correlationId,
@@ -407,7 +472,7 @@ export async function validateAndApplyExtracted(
       step: hasAllRequired ? 'confirm_details' : 'collecting_all',
       updatedAt: new Date().toISOString(),
     },
-    missingFields,
+    missingFields: remainingMissingFields,
   };
 }
 

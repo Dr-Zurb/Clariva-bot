@@ -307,6 +307,19 @@ function lastBotMessageAskedForConfirm(
   return false;
 }
 
+/** AI Receptionist: Get last bot message content for extraction context. */
+function getLastBotMessage(
+  recentMessages: { sender_type: string; content: string }[]
+): string | undefined {
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    if (recentMessages[i].sender_type !== 'patient') {
+      const c = (recentMessages[i].content ?? '').trim();
+      return c || undefined;
+    }
+  }
+  return undefined;
+}
+
 /** Skip phrases for optional "Anything else?" — user declines to add extras. */
 const SKIP_EXTRAS_PHRASES = [
   'nothing', 'skip', 'nope', 'no thanks', 'no thank you', 'all good', "that's all",
@@ -1296,7 +1309,8 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             conversation.id,
             text,
             { ...state, lastIntent: intentResult.intent },
-            correlationId
+            correlationId,
+            { lastBotMessage: getLastBotMessage(recentMessages), recentMessages }
           );
           state = extractResult.newState;
           await updateConversationState(conversation.id, state, correlationId);
@@ -1317,7 +1331,8 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           conversation.id,
           text,
           { ...state, lastIntent: intentResult.intent },
-          correlationId
+          correlationId,
+          { lastBotMessage: getLastBotMessage(recentMessages), recentMessages }
         );
         state = extractResult.newState;
         await updateConversationState(conversation.id, state, correlationId);
@@ -1325,11 +1340,24 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           const collected = await getCollectedData(conversation.id);
           replyText = buildConfirmDetailsMessage(collected ?? {});
         } else {
-          const missingLabels = extractResult.missingFields.map((f) => {
-            const labels: Record<string, string> = { name: 'full name', phone: 'phone number', age: 'age', gender: 'gender', reason_for_visit: 'reason for visit' };
-            return labels[f] ?? f;
+          const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
+          const aiReply = await generateResponse({
+            conversationId: conversation.id,
+            currentIntent: intentResult.intent,
+            state,
+            recentMessages,
+            currentUserMessage: text,
+            correlationId,
+            doctorContext,
+            context: { ...aiContext, missingFields: extractResult.missingFields },
           });
-          replyText = `Got it. Still need: ${missingLabels.join(', ')}. Please share.`;
+          replyText =
+            aiReply && aiReply.length > 20 && !aiReply.includes("didn't quite get that")
+              ? aiReply
+              : (() => {
+                  const labels: Record<string, string> = { name: 'full name', phone: 'phone number', age: 'age', gender: 'gender', reason_for_visit: 'reason for visit' };
+                  return `Got it. Still need: ${extractResult.missingFields.map((f) => labels[f] ?? f).join(', ')}. Please share.`;
+                })();
         }
       }
       }
@@ -1377,7 +1405,8 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           conversation.id,
           text,
           { ...state, lastIntent: intentResult.intent },
-          correlationId
+          correlationId,
+          { lastBotMessage: getLastBotMessage(recentMessages), recentMessages }
         );
         state = extractResult.newState;
         await updateConversationState(conversation.id, state, correlationId);
@@ -1385,11 +1414,22 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         if (extractResult.missingFields.length === 0) {
           replyText = buildConfirmDetailsMessage(collected ?? {});
         } else {
-          const missingLabels = extractResult.missingFields.map((f) => {
-            const labels: Record<string, string> = { name: 'full name', phone: 'phone number', age: 'age', gender: 'gender', reason_for_visit: 'reason for visit' };
-            return labels[f] ?? f;
+          const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
+          const aiReply = await generateResponse({
+            conversationId: conversation.id,
+            currentIntent: intentResult.intent,
+            state,
+            recentMessages,
+            currentUserMessage: text,
+            correlationId,
+            doctorContext,
+            context: { ...aiContext, missingFields: extractResult.missingFields },
           });
-          replyText = `Still need: ${missingLabels.join(', ')}. Please share.`;
+          const labels: Record<string, string> = { name: 'full name', phone: 'phone number', age: 'age', gender: 'gender', reason_for_visit: 'reason for visit' };
+          replyText =
+            aiReply && aiReply.length > 20 && !aiReply.includes("didn't quite get that")
+              ? aiReply
+              : `Still need: ${extractResult.missingFields.map((f) => labels[f] ?? f).join(', ')}. Please share.`;
         }
       } else {
         const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);

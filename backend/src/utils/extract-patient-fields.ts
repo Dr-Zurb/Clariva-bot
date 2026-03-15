@@ -50,13 +50,23 @@ function parseAge(val: string): number | undefined {
   return n;
 }
 
+export interface ExtractFieldsOptions {
+  /** AI Receptionist: When true, only extract labeled + phone + email + gender + age. Skip name/reason heuristics so AI can handle natural language. */
+  fastPathOnly?: boolean;
+}
+
 /**
  * Extract patient fields from a free-form message.
  * Returns partial object with whatever could be extracted.
+ * fastPathOnly: only phone, email, gender, age, labeled name/reason — no heuristics for natural language.
  */
-export function extractFieldsFromMessage(text: string): ExtractedFields {
+export function extractFieldsFromMessage(
+  text: string,
+  options?: ExtractFieldsOptions
+): ExtractedFields {
   const trimmed = text.trim();
   if (!trimmed) return {};
+  const fastPathOnly = options?.fastPathOnly ?? false;
 
   const result: ExtractedFields = {};
   const lower = trimmed.toLowerCase();
@@ -91,19 +101,22 @@ export function extractFieldsFromMessage(text: string): ExtractedFields {
     }
   }
 
-  // Name: labeled
+  // Name: labeled only when fastPathOnly; otherwise include heuristics
   const nameLabelMatch = trimmed.match(NAME_LABEL_REGEX);
   if (nameLabelMatch) {
     const name = nameLabelMatch[1].trim();
     if (name.length >= 2) result.name = name;
-  } else {
-    // Heuristic: split by newlines, commas, semicolons — first name-like token is name
+  } else if (!fastPathOnly) {
     const parts = trimmed.split(/[\n,;]+/).map((p) => p.trim()).filter(Boolean);
     const firstPart = parts[0];
-    /** Never treat symptom/reason phrases as name (e.g. "i have stomach pain") */
     const isSymptomLike = (s: string) =>
       /^\s*(i\s+have|i've\s+got|i\s+got|having|suffering\s+from|pain|ache|fever|cough|headache)\b/i.test(s.trim()) ||
       /\b(pain|ache|fever|cough|stomach|head|chest)\b/i.test(s);
+    const isRelationshipOrGenderLike = (s: string) =>
+      /^(?:he|she|him|her)\s+is\s+(?:my\s+)?(?:father|mother|dad|mom|brother|sister|son|daughter)\b/i.test(s.trim()) ||
+      /^(?:he|she|him|her)\s+is\s+(?:male|female|m|f)\b/i.test(s.trim()) ||
+      /^(?:my\s+)?(?:father|mother|dad|mom)\s+(?:he|she)\s+is\s+(?:male|female)/i.test(s.trim()) ||
+      /\b(?:male|female)\s+obviously\s*$/i.test(s.trim());
     const isNameLike = (s: string) =>
       s.length >= 2 &&
       s.length <= 80 &&
@@ -112,26 +125,27 @@ export function extractFieldsFromMessage(text: string): ExtractedFields {
       !EMAIL_REGEX.test(s) &&
       !s.match(/^(age|phone|reason|email)/i) &&
       !AGE_GENDER_COMBO.test(s) &&
-      !isSymptomLike(s);
+      !isSymptomLike(s) &&
+      !isRelationshipOrGenderLike(s);
     if (firstPart && isNameLike(firstPart)) {
       const cleaned = firstPart
         .replace(/^my\s+name\s+is\s+/i, '')
         .replace(/^name\s*:\s*/i, '')
         .trim();
-      if (cleaned.length >= 2 && !isSymptomLike(cleaned)) result.name = cleaned;
+      if (cleaned.length >= 2 && !isSymptomLike(cleaned) && !isRelationshipOrGenderLike(cleaned)) result.name = cleaned;
     } else {
       const beforeNumber = trimmed.split(/\d{5,}/)[0]?.trim();
-      if (beforeNumber && beforeNumber.length >= 2 && !beforeNumber.match(/^(age|phone|reason|email)/i) && !isSymptomLike(beforeNumber)) {
+      if (beforeNumber && beforeNumber.length >= 2 && !beforeNumber.match(/^(age|phone|reason|email)/i) && !isSymptomLike(beforeNumber) && !isRelationshipOrGenderLike(beforeNumber)) {
         const cleaned = beforeNumber
           .replace(/^my\s+name\s+is\s+/i, '')
           .replace(/^name\s*:\s*/i, '')
           .trim();
-        if (cleaned.length >= 2 && !AGE_GENDER_COMBO.test(cleaned) && !isSymptomLike(cleaned)) result.name = cleaned;
+        if (cleaned.length >= 2 && !AGE_GENDER_COMBO.test(cleaned) && !isSymptomLike(cleaned) && !isRelationshipOrGenderLike(cleaned)) result.name = cleaned;
       }
     }
   }
 
-  // Age+gender combo (e.g. "26M", "25F") — check before standalone age
+  // Age+gender combo (e.g. "26M", "25F")
   for (const part of trimmed.split(/[\n,;]+/).map((p) => p.trim())) {
     const combo = part.match(AGE_GENDER_COMBO);
     if (combo) {
@@ -142,44 +156,45 @@ export function extractFieldsFromMessage(text: string): ExtractedFields {
     }
   }
 
-  // Reason: labeled
+  // Reason: labeled only when fastPathOnly; otherwise include heuristics
   const reasonLabelMatch = trimmed.match(REASON_LABEL_REGEX);
   if (reasonLabelMatch) {
     const reason = reasonLabelMatch[1].trim();
     if (reason.length >= 2) result.reason_for_visit = reason;
-  } else {
-    // Heuristic: "i have X", "he/she is X", "get him/her checked for X"
+  } else if (!fastPathOnly) {
     const iHaveMatch = trimmed.match(/\bi\s+have\s+([^.@,\n]+?)(?=\s*(?:,|@|\n|$))/i);
     if (iHaveMatch && iHaveMatch[1].trim().length >= 3) {
       result.reason_for_visit = iHaveMatch[1].trim();
     } else {
       const heIsMatch = trimmed.match(/\b(?:he|she|him|her)\s+is\s+([^.@,\n]+?)(?=\s*(?:,|@|\n|$|so\s))/i);
       if (heIsMatch && heIsMatch[1].trim().length >= 2) {
-        result.reason_for_visit = heIsMatch[1].trim();
+        const captured = heIsMatch[1].trim();
+        const isRelOrGender = /\b(?:my\s+)?(?:father|mother|dad|mom|brother|sister)\b/i.test(captured) ||
+          /\b(?:male|female)\b/i.test(captured) || /\bobviously\s*$/i.test(captured);
+        if (!isRelOrGender) result.reason_for_visit = captured;
       } else {
-      const getCheckedMatch = trimmed.match(/\b(?:get|want\s+to\s+get)\s+(?:him|her)\s+checked\s+(?:for\s+)?([^.@,\n]+?)(?=\s*(?:,|@|\n|$))/i);
-      if (getCheckedMatch && getCheckedMatch[1].trim().length >= 2) {
-        result.reason_for_visit = getCheckedMatch[1].trim();
-      } else {
-      const parts = trimmed.split(/[\n,;]+/).map((p) => p.trim()).filter(Boolean);
-      // First part that looks like reason: 3+ chars, not phone/email/age
-      for (const p of parts) {
-        const digits = p.replace(/\D/g, '');
-        const isPhone = digits.length >= 10 && /^[6-9]/.test(digits);
-        if (
-          p.length >= 3 &&
-          !/^\d+$/.test(p) &&
-          !EMAIL_REGEX.test(p) &&
-          !isPhone &&
-          !AGE_GENDER_COMBO.test(p) &&
-          (p.toLowerCase().startsWith('i have') || p.length > 10)
-        ) {
-          result.reason_for_visit = p;
-          break;
+        const getCheckedMatch = trimmed.match(/\b(?:get|want\s+to\s+get)\s+(?:him|her)\s+checked\s+(?:for\s+)?([^.@,\n]+?)(?=\s*(?:,|@|\n|$))/i);
+        if (getCheckedMatch && getCheckedMatch[1].trim().length >= 2) {
+          result.reason_for_visit = getCheckedMatch[1].trim();
+        } else {
+          const parts = trimmed.split(/[\n,;]+/).map((p) => p.trim()).filter(Boolean);
+          for (const p of parts) {
+            const digits = p.replace(/\D/g, '');
+            const isPhone = digits.length >= 10 && /^[6-9]/.test(digits);
+            if (
+              p.length >= 3 &&
+              !/^\d+$/.test(p) &&
+              !EMAIL_REGEX.test(p) &&
+              !isPhone &&
+              !AGE_GENDER_COMBO.test(p) &&
+              (p.toLowerCase().startsWith('i have') || p.length > 10)
+            ) {
+              result.reason_for_visit = p;
+              break;
+            }
+          }
         }
       }
-      }
-    }
     }
   }
 

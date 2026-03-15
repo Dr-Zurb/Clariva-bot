@@ -222,28 +222,40 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** e-task-6: Prompt for AI-assisted field extraction when regex fails. No PHI in prompt. */
+/** e-task-6 + AI Receptionist: Prompt for AI-assisted field extraction. No PHI in prompt. */
 const EXTRACTION_SYSTEM_PROMPT = `You extract patient booking fields from a user message. Return ONLY a JSON object with the fields you can clearly identify. Extract only what is explicitly stated; do not infer or guess.
 
 Valid fields: name, phone, age, gender, reason_for_visit, email.
 - reason_for_visit: chief complaint, symptom, or reason (e.g. "diabetes check", "stomach pain", "get her checked for X"). NEVER use symptom/reason as name.
-- name: person's name only. NEVER use phrases like "i have stomach pain" or "she has diabetes" as name.
+- name: person's name only. NEVER use phrases like "i have stomach pain", "she has diabetes", or "he is my father he is male" as name.
 - phone: digits only, 10+ digits
 - age: number 1-120
 - gender: male, female, or other
 - email: valid email format
 
-If the message says "i wanna get her checked for diabetes" or "she has stomach pain", extract reason_for_visit (e.g. "diabetes check" or "stomach pain"), NOT name.
+CRITICAL - Use conversation context: If we asked for a specific field (e.g. gender) and the user gave a long reply (e.g. "he is my father he is male obviously"), extract ONLY that field. Do NOT use relationship/gender clarifications as name or reason.
+If the message says "i wanna get her checked for diabetes" or "she has stomach pain", extract reason_for_visit, NOT name.
 Return empty object {} if nothing can be extracted. Output format: { "name": "...", "phone": "...", "age": N, "gender": "...", "reason_for_visit": "...", "email": "..." } with only the fields you found.`;
 
+/** AI Receptionist: Context for conversation-aware extraction. No PHI. */
+export interface ExtractionContext {
+  lastBotMessage?: string;
+  missingFields: string[];
+  collectedSummary?: string;
+  relation?: string;
+  recentTurns?: { role: 'user' | 'assistant'; content: string }[];
+}
+
 /**
- * e-task-6: AI-assisted extraction when regex returns empty. Redacted input only; output is PHI—store only, never log.
+ * e-task-6 + AI Receptionist: AI-assisted extraction. Redacted input only; output is PHI—store only, never log.
+ * When context is provided, AI uses it to understand (e.g. "we asked for gender" → extract only gender).
  * On failure returns {}; caller merges with existing and validates.
  */
 export async function extractFieldsWithAI(
   redactedText: string,
   missingFields: string[],
-  correlationId: string
+  correlationId: string,
+  context?: Partial<ExtractionContext>
 ): Promise<Partial<CollectedPatientData>> {
   const client = getOpenAIClient();
   const config = getOpenAIConfig();
@@ -251,9 +263,32 @@ export async function extractFieldsWithAI(
     return {};
   }
 
+  const lastBotMessage = context?.lastBotMessage?.trim();
+  const collectedSummary = context?.collectedSummary?.trim();
+  const relation = context?.relation?.trim();
+  const recentTurns = context?.recentTurns;
+
+  const parts: string[] = [];
+  if (collectedSummary) parts.push(`We have: ${collectedSummary}.`);
+  parts.push(`Still need: ${missingFields.length ? missingFields.join(', ') : 'none'}.`);
+  if (lastBotMessage && missingFields.length > 0) {
+    parts.push(`Last thing we asked: "${lastBotMessage.slice(0, 200)}".`);
+  }
+  if (relation) parts.push(`Booking for user's ${relation}.`);
+  if (recentTurns && recentTurns.length > 0) {
+    const turnsStr = recentTurns
+      .slice(-4)
+      .map((t) => `${t.role}: "${t.content.slice(0, 80)}${t.content.length > 80 ? '...' : ''}"`)
+      .join('; ');
+    parts.push(`Recent exchange: ${turnsStr}.`);
+  }
+  parts.push(`Extract only fields relevant to what we asked. If we asked for gender and they gave a long reply, extract only gender.`);
+
   const userPrompt = `Message: "${redactedText.trim()}"
-Fields we still need: ${missingFields.length ? missingFields.join(', ') : 'none'}
-Extract any of these fields from the message. Return JSON only.`;
+
+${parts.join(' ')}
+
+Return JSON only.`;
 
   try {
     const completion = await client.chat.completions.create({
@@ -624,7 +659,9 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
   const aiContextBlock = contextParts.length > 0 ? `\n\nContext: ${contextParts.join(' ')}` : '';
   const collectingAllHint =
     state?.step === 'collecting_all'
-      ? ' Ask for ALL details at once: full name, age, gender, mobile number, reason for visit. Email is optional. Example: "To book your appointment, please share: Full name, Age, Gender, Mobile number, Reason for visit. Email (optional) for receipts."'
+      ? aiContext?.missingFields?.length
+        ? ' The user just shared some details. Acknowledge what they said, then ask ONLY for the missing fields. Be brief and natural (e.g. "Got it, thanks. Just need the gender—male or female?"). Never repeat the full list of all fields.'
+        : ' Ask for ALL details at once: full name, age, gender, mobile number, reason for visit. Email is optional. Example: "To book your appointment, please share: Full name, Age, Gender, Mobile number, Reason for visit. Email (optional) for receipts."'
       : '';
   const collectionHint =
     state?.step?.startsWith('collecting_') && state?.step !== 'collecting_all'
