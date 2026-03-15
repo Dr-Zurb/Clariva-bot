@@ -924,6 +924,8 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         (consentResult === 'unclear' && !isSkipExtrasReply(text));
       if (hasExtrasOrGranted) {
         const extraNotes = extractExtraNotesFromConsentReply(text, consentResult);
+        let collectedBeforePersist = await getCollectedData(conversation.id);
+        let reasonForVisitFromCollected = collectedBeforePersist?.reason_for_visit?.trim();
         let persistResult = await persistPatientAfterConsent(
           conversation.id,
           conversation.patient_id,
@@ -938,6 +940,8 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             correlationId
           );
           if (recovered) {
+            collectedBeforePersist = await getCollectedData(conversation.id);
+            reasonForVisitFromCollected = collectedBeforePersist?.reason_for_visit?.trim();
             persistResult = await persistPatientAfterConsent(
               conversation.id,
               conversation.patient_id,
@@ -958,6 +962,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           ...state,
           lastIntent: intentResult.intent,
           step: 'awaiting_slot_selection',
+          reasonForVisit: state.reasonForVisit ?? reasonForVisitFromCollected,
           extraNotes: extraNotes ?? state.extraNotes,
           updatedAt: new Date().toISOString(),
         };
