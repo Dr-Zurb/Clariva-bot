@@ -32,6 +32,14 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => (v !== undefined && v !== '' ? parseInt(v, 10) : undefined)),
+  // e-task-5: Max message pairs (user+assistant) for AI context; trade-off: more context vs token cost
+  AI_MAX_HISTORY_PAIRS: z
+    .string()
+    .default('8')
+    .transform((v): number => {
+      const n = parseInt(v, 10);
+      return Math.min(15, Math.max(3, Number.isNaN(n) ? 8 : n));
+    }),
 
   // Twilio Configuration (optional - only if using Twilio)
   TWILIO_ACCOUNT_SID: z.string().optional(),

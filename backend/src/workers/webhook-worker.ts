@@ -50,6 +50,9 @@ import { createMessage, getRecentMessages, getSenderIdByPlatformMessageId } from
 import {
   classifyIntent,
   generateResponse,
+  redactPhiForAI,
+  parseMultiPersonBooking,
+  AI_RECENT_MESSAGES_LIMIT,
   MEDICAL_QUERY_RESPONSE,
   EMERGENCY_RESPONSE,
 } from '../services/ai-service';
@@ -61,6 +64,8 @@ import {
   buildConfirmDetailsMessage,
   tryRecoverAndSetFromMessages,
 } from '../services/collection-service';
+import { extractFieldsFromMessage, type ExtractedFields } from '../utils/extract-patient-fields';
+import { REQUIRED_COLLECTION_FIELDS } from '../utils/validation';
 import {
   parseConsentReply,
   persistPatientAfterConsent,
@@ -71,7 +76,7 @@ import { buildBookingPageUrl } from '../services/slot-selection-service';
 import { processPaymentSuccess, hasCapturedPaymentForAppointment } from '../services/payment-service';
 import { getDoctorSettings } from '../services/doctor-settings-service';
 import type { DoctorSettingsRow } from '../types/doctor-settings';
-import type { DoctorContext } from '../services/ai-service';
+import type { DoctorContext, GenerateResponseContext } from '../services/ai-service';
 import {
   sendNewAppointmentToDoctor,
   sendPaymentConfirmationToPatient,
@@ -88,6 +93,7 @@ import {
 } from '../config/queue';
 import type { WebhookJobData } from '../types/queue';
 import type { InstagramWebhookPayload } from '../types/webhook';
+import type { ConversationState } from '../types/conversation';
 
 // ============================================================================
 // Constants
@@ -464,6 +470,93 @@ async function tryResolveSenderFromMessageEdit(
   return { senderId, text: edit.text, mid: edit.mid };
 }
 
+/** Build AI context for generateResponse (e-task-1 Bot Intelligence). No PHI in output. */
+async function buildAiContextForResponse(
+  conversationId: string,
+  state: ConversationState,
+  recentMessages: { sender_type: string; content: string }[],
+  _correlationId: string
+): Promise<GenerateResponseContext> {
+  const ctx: GenerateResponseContext = {};
+  const inCollection =
+    state.step?.startsWith('collecting_') ||
+    state.step === 'consent' ||
+    state.step === 'confirm_details' ||
+    state.step === 'collecting_all';
+  if (!inCollection) return ctx;
+
+  const collected = await getCollectedData(conversationId);
+  const collectedFields = state.collectedFields ?? [];
+  const allFields = ['name', 'phone', 'age', 'gender', 'reason_for_visit', 'email'] as const;
+  const summaryParts = allFields.map((f) => {
+    const has = collectedFields.includes(f) || (collected && (collected as Record<string, unknown>)[f] != null && (collected as Record<string, unknown>)[f] !== '');
+    return `${f}: [${has ? 'provided' : 'missing'}]`;
+  });
+  ctx.collectedDataSummary = summaryParts.join(', ');
+  ctx.missingFields = REQUIRED_COLLECTION_FIELDS.filter((f) => !collectedFields.includes(f));
+  if (ctx.missingFields.length === 0) ctx.missingFields = undefined;
+
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    if (recentMessages[i].sender_type !== 'patient') {
+      const content = (recentMessages[i].content ?? '').trim();
+      if (content) {
+        ctx.lastBotMessage = redactPhiForAI(content);
+        break;
+      }
+    }
+  }
+
+  if (state.bookingForSomeoneElse) {
+    ctx.bookingForSomeoneElse = true;
+    if (state.relation) ctx.relation = state.relation;
+  }
+  return ctx;
+}
+
+/**
+ * e-task-3: Heuristic for ambiguous collection messages. Route to AI when extraction returns empty
+ * AND message looks like clarification, question, or short non-data. Don't break extraction for clear data.
+ */
+function isAmbiguousCollectionMessage(text: string, extracted: ExtractedFields): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return true;
+
+  const hasExtracted = !!(
+    extracted.name ||
+    extracted.phone ||
+    (extracted.age !== undefined && extracted.age !== null) ||
+    extracted.gender ||
+    extracted.reason_for_visit ||
+    extracted.email
+  );
+  if (hasExtracted) return false; // Clear data — use extraction path
+
+  // Clarification: relation, who we're booking for
+  const clarificationPatterns = [
+    /\b(?:my\s+)?(mother|father|mom|dad|wife|husband|son|daughter|sister|brother)\s*\??\s*$/i,
+    /\b(?:sister|mother|father)\s+first\b/i,
+    /\bfor\s+my\s+(mother|father|sister|brother|wife|husband|son|daughter)\b/i,
+    /\b(?:the\s+person\s+i'?m\s+booking\s+for|person\s+I'm\s+booking\s+for)\b/i,
+    /\bcan\s+I\s+book\s+for\s+my\s+friend\b/i,
+  ];
+  if (clarificationPatterns.some((p) => p.test(trimmed))) return true;
+
+  // Question: why, what if, can I share
+  const questionPatterns = [
+    /\bwhy\s+(do\s+you\s+need|are\s+you\s+asking)\b/i,
+    /\bwhat\s+if\s+I\s+don'?t\s+have\b/i,
+    /\bcan\s+I\s+share\b/i,
+    /\bdo\s+I\s+have\s+to\s+(provide|give)\b/i,
+    /\b(is\s+it\s+)?(really\s+)?necessary\b/i,
+  ];
+  if (questionPatterns.some((p) => p.test(trimmed))) return true;
+
+  // Short message (< 25 chars) that doesn't look like structured data
+  if (trimmed.length < 25 && !/\d{10,}/.test(trimmed) && !/@/.test(trimmed)) return true;
+
+  return false;
+}
+
 /** Build doctor context for AI (e-task-4, e-task-2 consultation_types) */
 function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): DoctorContext | undefined {
   if (!settings) return undefined;
@@ -822,7 +915,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     );
 
     let state = await getConversationState(conversation.id, correlationId);
-    const recentMessages = await getRecentMessages(conversation.id, 10, correlationId);
+    const recentMessages = await getRecentMessages(conversation.id, AI_RECENT_MESSAGES_LIMIT, correlationId);
 
     const doctorSettings = await getDoctorSettings(doctorId);
     const doctorContext = getDoctorContextFromSettings(doctorSettings);
@@ -945,21 +1038,45 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       };
       await updateConversationState(conversation.id, state, correlationId);
     } else if (intentResult.intent === 'book_for_someone_else' && (state.step === 'responded' || state.step === 'awaiting_slot_selection')) {
-      await clearCollectedData(conversation.id);
-      const relationMatch = text.match(/\b(?:my\s+)?(mother|father|mom|dad|wife|husband|son|daughter|parent|spouse)\b/i);
-      const relation = relationMatch ? relationMatch[1].toLowerCase() : 'them';
-      const relationPhrase = relation === 'them' ? 'them' : `your ${relation}`;
-      state = {
-        ...state,
-        lastIntent: intentResult.intent,
-        step: 'collecting_all',
-        collectedFields: [],
-        bookingForSomeoneElse: true,
-        bookingForPatientId: undefined,
-        updatedAt: new Date().toISOString(),
-      };
-      await updateConversationState(conversation.id, state, correlationId);
-      replyText = `I'll help you book for ${relationPhrase}. Please share: Full name, Age, Mobile, Reason for visit for the person you're booking for. Email (optional).`;
+      const multiPerson = parseMultiPersonBooking(text);
+      if (multiPerson) {
+        // e-task-4: Multi-person "me and my X" — other first, then offer self
+        await clearCollectedData(conversation.id);
+        const relation = multiPerson.relation;
+        const relationPhrase = `your ${relation}`;
+        state = {
+          ...state,
+          lastIntent: intentResult.intent,
+          step: 'collecting_all',
+          collectedFields: [],
+          bookingForSomeoneElse: true,
+          relation,
+          pendingSelfBooking: true,
+          pendingOtherBooking: undefined,
+          bookingForPatientId: undefined,
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+        replyText = `I'll help you book for both. Let's do one at a time—${relationPhrase} first, then you. Please share: Full name, Age, Mobile, Reason for visit for your ${relation}. Email (optional).`;
+      } else {
+        // Single-person book for someone else
+        await clearCollectedData(conversation.id);
+        const relationMatch = text.match(/\b(?:my\s+)?(mother|father|mom|dad|wife|husband|son|daughter|sister|brother|parent|spouse)\b/i);
+        const relation = relationMatch ? relationMatch[1].toLowerCase() : 'them';
+        const relationPhrase = relation === 'them' ? 'them' : `your ${relation}`;
+        state = {
+          ...state,
+          lastIntent: intentResult.intent,
+          step: 'collecting_all',
+          collectedFields: [],
+          bookingForSomeoneElse: true,
+          relation,
+          bookingForPatientId: undefined,
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+        replyText = `I'll help you book for ${relationPhrase}. Please share: Full name, Age, Mobile, Reason for visit for the person you're booking for. Email (optional).`;
+      }
     } else if (state.step === 'consent' || (lastBotMessageAskedForConsent(recentMessages) && parseConsentReply(text) === 'granted')) {
       // Handle consent reply regardless of intent. Fallback: last bot asked for consent + user said yes.
       if (!state.step) {
@@ -1003,8 +1120,10 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             );
             await clearCollectedData(conversation.id);
             const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-            replyText =
-              `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
+            const baseSlotMsg = `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
+            replyText = state.pendingSelfBooking
+              ? `${baseSlotMsg}\n\nWould you like to book one for yourself now?`
+              : baseSlotMsg;
             state = {
               ...state,
               lastIntent: intentResult.intent,
@@ -1042,12 +1161,14 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             }
           }
           const slotLink = buildBookingPageUrl(conversation.id, doctorId);
+          const baseSlotMsg = `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
           if (!persistResult.success) {
             replyText =
-              `I had trouble saving your details—please say 'book appointment' to re-share them if needed. Meanwhile, pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
+              `I had trouble saving your details—please say 'book appointment' to re-share them if needed. Meanwhile, ${baseSlotMsg}`;
           } else {
-            replyText =
-              `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
+            replyText = state.pendingOtherBooking
+              ? `${baseSlotMsg}\n\nWould you like to book for your ${state.pendingOtherBooking.relation} now?`
+              : baseSlotMsg;
           }
           state = {
             ...state,
@@ -1073,6 +1194,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         };
         await updateConversationState(conversation.id, state, correlationId);
       } else {
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
         replyText = await generateResponse({
           conversationId: conversation.id,
           currentIntent: intentResult.intent,
@@ -1081,6 +1203,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           currentUserMessage: text,
           correlationId,
           doctorContext,
+          context: aiContext,
         });
       }
     } else if (state.step === 'collecting_all' || (lastBotAskedForDetails && !state.step)) {
@@ -1095,23 +1218,121 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         };
         await updateConversationState(conversation.id, state, correlationId);
       }
-      const extractResult = await validateAndApplyExtracted(
-        conversation.id,
-        text,
-        { ...state, lastIntent: intentResult.intent },
-        correlationId
-      );
-      state = extractResult.newState;
-      await updateConversationState(conversation.id, state, correlationId);
-      if (extractResult.missingFields.length === 0) {
-        const collected = await getCollectedData(conversation.id);
-        replyText = buildConfirmDetailsMessage(collected ?? {});
-      } else {
-        const missingLabels = extractResult.missingFields.map((f) => {
-          const labels: Record<string, string> = { name: 'full name', phone: 'phone number', age: 'age', gender: 'gender', reason_for_visit: 'reason for visit' };
-          return labels[f] ?? f;
+      // e-task-3: Relation clarification — update state.relation when detected (for AI context)
+      if (state.bookingForSomeoneElse) {
+        const relationMatch = text.match(/\b(?:my\s+)?(mother|father|mom|dad|wife|husband|son|daughter|sister|brother|parent|spouse)\b/i);
+        if (relationMatch) {
+          const relation = relationMatch[1].toLowerCase();
+          const collected = await getCollectedData(conversation.id);
+          const hasAnyData = collected?.name || collected?.phone || collected?.age !== undefined;
+          if (!hasAnyData) {
+            state = { ...state, lastIntent: intentResult.intent, relation, updatedAt: new Date().toISOString() };
+            await updateConversationState(conversation.id, state, correlationId);
+          }
+        }
+      }
+      // e-task-4: "me first" — switch to self first when no data collected yet
+      const wantsMeFirst =
+        state.pendingSelfBooking &&
+        state.bookingForSomeoneElse &&
+        !state.collectedFields?.length &&
+        /^(me\s+first|myself\s+first|book\s+for\s+me\s+first|i\s+want\s+to\s+book\s+for\s+myself\s+first)$/i.test(text.trim());
+      if (wantsMeFirst && state.relation) {
+        await clearCollectedData(conversation.id);
+        const relation = state.relation;
+        state = {
+          ...state,
+          lastIntent: intentResult.intent,
+          step: 'collecting_all',
+          collectedFields: [],
+          bookingForSomeoneElse: false,
+          pendingSelfBooking: false,
+          pendingOtherBooking: { relation },
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
+        replyText = await generateResponse({
+          conversationId: conversation.id,
+          currentIntent: 'book_appointment',
+          state,
+          recentMessages,
+          currentUserMessage: text,
+          correlationId,
+          doctorContext,
+          context: aiContext,
         });
-        replyText = `Got it. Still need: ${missingLabels.join(', ')}. Please share.`;
+      } else {
+      // e-task-4: "actually just my sister" — cancel multi-person, single-person only
+      const wantsJustOther =
+        state.pendingSelfBooking &&
+        state.bookingForSomeoneElse &&
+        /^(actually\s+)?just\s+(my\s+)?(mother|father|mom|dad|wife|husband|son|daughter|sister|brother)$/i.test(text.trim());
+      if (wantsJustOther) {
+        const relationMatch = text.match(/\b(mother|father|mom|dad|wife|husband|son|daughter|sister|brother)\b/i);
+        const relation = relationMatch ? relationMatch[1].toLowerCase() : state.relation ?? 'them';
+        state = {
+          ...state,
+          lastIntent: intentResult.intent,
+          pendingSelfBooking: false,
+          relation,
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+        replyText = `Got it, just your ${relation} then. Please share: Full name, Age, Mobile, Reason for visit for your ${relation}. Email (optional).`;
+      } else {
+      const extracted = extractFieldsFromMessage(text);
+      if (isAmbiguousCollectionMessage(text, extracted)) {
+        // e-task-3: Route ambiguous (questions, clarifications, short non-data) to AI with full context
+        if (
+          extracted.name ||
+          extracted.phone ||
+          (extracted.age !== undefined && extracted.age !== null) ||
+          extracted.gender ||
+          extracted.reason_for_visit ||
+          extracted.email
+        ) {
+          const extractResult = await validateAndApplyExtracted(
+            conversation.id,
+            text,
+            { ...state, lastIntent: intentResult.intent },
+            correlationId
+          );
+          state = extractResult.newState;
+          await updateConversationState(conversation.id, state, correlationId);
+        }
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
+        replyText = await generateResponse({
+          conversationId: conversation.id,
+          currentIntent: intentResult.intent,
+          state,
+          recentMessages,
+          currentUserMessage: text,
+          correlationId,
+          doctorContext,
+          context: aiContext,
+        });
+      } else {
+        const extractResult = await validateAndApplyExtracted(
+          conversation.id,
+          text,
+          { ...state, lastIntent: intentResult.intent },
+          correlationId
+        );
+        state = extractResult.newState;
+        await updateConversationState(conversation.id, state, correlationId);
+        if (extractResult.missingFields.length === 0) {
+          const collected = await getCollectedData(conversation.id);
+          replyText = buildConfirmDetailsMessage(collected ?? {});
+        } else {
+          const missingLabels = extractResult.missingFields.map((f) => {
+            const labels: Record<string, string> = { name: 'full name', phone: 'phone number', age: 'age', gender: 'gender', reason_for_visit: 'reason for visit' };
+            return labels[f] ?? f;
+          });
+          replyText = `Got it. Still need: ${missingLabels.join(', ')}. Please share.`;
+        }
+      }
+      }
       }
     } else if (state.step === 'confirm_details' || (lastBotMessageAskedForConfirm(recentMessages) && /^(yes|yeah|yep|ok|okay|correct|looks good|confirmed)$/.test(text.trim().toLowerCase()))) {
       // Handle confirm reply regardless of intent. Fallback: last bot asked for confirm + user said yes.
@@ -1171,6 +1392,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           replyText = `Still need: ${missingLabels.join(', ')}. Please share.`;
         }
       } else {
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
         replyText = await generateResponse({
           conversationId: conversation.id,
           currentIntent: intentResult.intent,
@@ -1179,6 +1401,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           currentUserMessage: text,
           correlationId,
           doctorContext,
+          context: aiContext,
         });
       }
     } else if (
@@ -1204,6 +1427,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
         replyText = await generateResponse({
           conversationId: conversation.id,
           currentIntent: intentResult.intent,
@@ -1212,8 +1436,10 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           currentUserMessage: text,
           correlationId,
           doctorContext,
+          context: aiContext,
         });
       } else {
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
         replyText = await generateResponse({
           conversationId: conversation.id,
           currentIntent: intentResult.intent,
@@ -1222,6 +1448,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           currentUserMessage: text,
           correlationId,
           doctorContext,
+          context: aiContext,
         });
       }
     } else if (state.step === 'awaiting_slot_selection') {
@@ -1229,16 +1456,67 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       const wantsNewLink =
         /^(change|pick another|different time|new link|another time|different slot)$/.test(trimmed) ||
         /^(change|pick)\s+(my\s+)?(slot|time)$/i.test(text.trim());
-      if (wantsNewLink) {
+      const wantsSelfBooking =
+        state.pendingSelfBooking &&
+        (/^(yes|yeah|yep|ok|okay|sure|please|i'?d?\s+like\s+to|book\s+for\s+myself|book\s+one\s+for\s+me)$/.test(trimmed) ||
+          /^(yes|yeah|yep),?\s*(i'?d?\s+like\s+to\s+)?(book\s+for\s+myself|book\s+one\s+for\s+me)/.test(trimmed));
+      const wantsOtherBooking =
+        state.pendingOtherBooking &&
+        (/^(yes|yeah|yep|ok|okay|sure|please)$/.test(trimmed) ||
+          new RegExp(`book\\s+(for\\s+)?(my\\s+)?${state.pendingOtherBooking.relation}`, 'i').test(trimmed));
+      if (wantsOtherBooking) {
+        // e-task-4: User said yes to booking for other after self booking
+        await clearCollectedData(conversation.id);
+        const relation = state.pendingOtherBooking!.relation;
+        state = {
+          ...state,
+          lastIntent: 'book_for_someone_else',
+          step: 'collecting_all',
+          collectedFields: [],
+          bookingForSomeoneElse: true,
+          relation,
+          pendingOtherBooking: undefined,
+          bookingForPatientId: undefined,
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+        replyText = `Got it. Please share: Full name, Age, Mobile, Reason for visit for your ${relation}. Email (optional).`;
+      } else if (wantsSelfBooking) {
+        // e-task-4: User said yes to booking for self after first booking
+        await clearCollectedData(conversation.id);
+        state = {
+          ...state,
+          lastIntent: 'book_appointment',
+          step: 'collecting_all',
+          collectedFields: [],
+          pendingSelfBooking: false,
+          bookingForPatientId: undefined,
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
+        replyText = await generateResponse({
+          conversationId: conversation.id,
+          currentIntent: 'book_appointment',
+          state,
+          recentMessages,
+          currentUserMessage: text,
+          correlationId,
+          doctorContext,
+          context: aiContext,
+        });
+      } else if (wantsNewLink) {
         const slotLink = buildBookingPageUrl(conversation.id, doctorId);
         replyText =
           `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
+        state = { ...state, updatedAt: new Date().toISOString() };
+        await updateConversationState(conversation.id, state, correlationId);
       } else {
         replyText =
           "Pick your slot and complete payment using the link above, or say 'change' to get a new link.";
+        state = { ...state, updatedAt: new Date().toISOString() };
+        await updateConversationState(conversation.id, state, correlationId);
       }
-      state = { ...state, updatedAt: new Date().toISOString() };
-      await updateConversationState(conversation.id, state, correlationId);
     } else if (state.step === 'confirming_slot') {
       // Unified flow: no chat confirmation. Migrate to awaiting_slot_selection with new link.
       const slotLink = buildBookingPageUrl(conversation.id, doctorId);
@@ -1291,6 +1569,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
         replyText = await generateResponse({
           conversationId: conversation.id,
           currentIntent: intentResult.intent,
@@ -1299,10 +1578,12 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           currentUserMessage: text,
           correlationId,
           doctorContext,
+          context: aiContext,
         });
       }
       await updateConversationState(conversation.id, state, correlationId);
     } else {
+      const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
       replyText = await generateResponse({
         conversationId: conversation.id,
         currentIntent: intentResult.intent,
@@ -1311,6 +1592,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         currentUserMessage: text,
         correlationId,
         doctorContext,
+        context: aiContext,
       });
     }
 
@@ -1404,7 +1686,8 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         try {
           const intentResult = await classifyIntent(text, correlationId);
           const state = await getConversationState(conversation.id, correlationId);
-          const recentMessages = await getRecentMessages(conversation.id, 10, correlationId);
+          const recentMessages = await getRecentMessages(conversation.id, AI_RECENT_MESSAGES_LIMIT, correlationId);
+          const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
           const replyText =
             (await generateResponse({
               conversationId: conversation.id,
@@ -1416,6 +1699,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
               doctorContext: getDoctorContextFromSettings(
                 await getDoctorSettings(doctorId)
               ),
+              context: aiContext,
             })) || FALLBACK_REPLY;
           await createMessage(
             {

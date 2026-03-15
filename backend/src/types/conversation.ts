@@ -55,8 +55,14 @@ export interface ConversationState {
   age?: number;
   /** When true, we're collecting for another person (e.g. mother); consent will create patient and set bookingForPatientId */
   bookingForSomeoneElse?: boolean;
+  /** Relation when booking for someone else, e.g. "sister", "mother" (e-task-1 Bot Intelligence) */
+  relation?: string;
   /** Patient ID when booking for someone else; slot selection uses this instead of conversation.patient_id */
   bookingForPatientId?: string;
   /** Patient ID of last booked appointment (for "payment done" / status check after redirect) */
   lastBookingPatientId?: string;
+  /** e-task-4: When "me and X" — user wanted to book for self too; offer after first booking completes */
+  pendingSelfBooking?: boolean;
+  /** e-task-4: When "me first" — user wanted to book for other after self; offer after self booking completes */
+  pendingOtherBooking?: { relation: string };
 }

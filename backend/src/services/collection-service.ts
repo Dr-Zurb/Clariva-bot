@@ -18,6 +18,7 @@ import {
 import { logPatientDataCollection } from '../utils/audit-logger';
 import { getWebhookQueue, getQueueConnection, isQueueEnabled } from '../config/queue';
 import { extractFieldsFromMessage, type ExtractedFields } from '../utils/extract-patient-fields';
+import { extractFieldsWithAI, redactPhiForAI } from '../services/ai-service';
 
 // ============================================================================
 // Constants (collection order and required fields)
@@ -290,7 +291,33 @@ export async function validateAndApplyExtracted(
   currentState: ConversationState,
   correlationId: string
 ): Promise<ValidateAndApplyExtractedResult> {
-  const extracted = extractFieldsFromMessage(text);
+  let extracted = extractFieldsFromMessage(text) as Partial<CollectedPatientData>;
+
+  // e-task-6: AI fallback when regex returns empty and message looks substantive
+  const hasRegexExtracted = !!(
+    extracted.name ||
+    extracted.phone ||
+    (extracted.age !== undefined && extracted.age !== null) ||
+    extracted.gender ||
+    extracted.reason_for_visit ||
+    extracted.email
+  );
+  if (
+    !hasRegexExtracted &&
+    text.trim().length > 15 &&
+    !/^(yes|no|yeah|nope|my\s+sister\?|sister\s+first)$/i.test(text.trim())
+  ) {
+    const missingFields = REQUIRED_COLLECTION_FIELDS.filter(
+      (f) => !currentState.collectedFields?.includes(f)
+    );
+    const aiExtracted = await extractFieldsWithAI(
+      redactPhiForAI(text),
+      missingFields,
+      correlationId
+    );
+    extracted = { ...extracted, ...aiExtracted };
+  }
+
   const existing = (await getCollectedData(conversationId)) ?? {};
   const merged: Partial<CollectedPatientData> = { ...existing };
   const updates: Partial<CollectedPatientData> = {};

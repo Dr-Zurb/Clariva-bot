@@ -117,6 +117,15 @@ Handle "book for my mother" (collect for other person, book under their name) an
 
 Tasks: e-task-1 (booking for someone else), e-task-2 (appointment limit per person per day).
 
+### Bot Intelligence & Conversation UX (2026-03-25)
+
+Make the receptionist bot context-aware and conversational (ChatGPT/Gemini-like). Hybrid AI-first approach: keep handlers for clear actions; use AI for conversational turns with richer context.
+
+- **Reference:** [BOT_INTELLIGENCE_PLANNING.md](../Development/Future%20Planning/BOT_INTELLIGENCE_PLANNING.md)
+- **Daily plan:** [docs/Development/Daily-plans/March 2026/2026-03-25/README.md](../Development/Daily-plans/March%202026/2026-03-25/README.md)
+
+Tasks: e-task-1 (AI context enhancement), e-task-2 (AI prompt improvements), e-task-3 (route ambiguous messages to AI), e-task-4 (multi-person booking "me and X"), e-task-5 (conversation history expansion), e-task-6 (hybrid extraction fallback).
+
 ---
 
 ## 🔗 Related Documentation

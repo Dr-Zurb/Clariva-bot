@@ -7,12 +7,14 @@
  */
 
 import { getOpenAIClient, getOpenAIConfig } from '../config/openai';
+import { env } from '../config/env';
 import { logger } from '../config/logger';
 import type { IntentDetectionResult, Intent } from '../types/ai';
 import { toIntent } from '../types/ai';
 import type { ConversationState } from '../types/conversation';
 import type { Message } from '../types';
-import { logAIClassification, logAIResponseGeneration } from '../utils/audit-logger';
+import { logAIClassification, logAIResponseGeneration, logAuditEvent } from '../utils/audit-logger';
+import type { CollectedPatientData } from '../utils/validation';
 
 // ============================================================================
 // Constants
@@ -61,9 +63,13 @@ function setCachedIntent(redactedText: string, result: IntentDetectionResult): v
 /** Simple greetings only (no mixed content). Match → greeting, skip AI. */
 const SIMPLE_GREETING_REGEX = /^(hi|hello|hey|hiya|howdy|namaste|नमस्ते|good\s*morning|good\s*afternoon|good\s*evening|good\s*day)[\s!?.]*$/i;
 
-/** Book for someone else (e.g. "book for my mother"). Match → book_for_someone_else. */
+/** e-task-4: Multi-person "me and my X". Must run before BOOK_FOR_SOMEONE_ELSE. */
+const MULTI_PERSON_BOOKING_REGEX =
+  /\b(?:book|schedule|appointment|want\s+to\s+book)\s+(?:an?\s+)?(?:appointment\s+)?(?:for\s+)?(?:me|myself|us)\s+and\s+(?:my\s+)?(mother|father|mom|dad|wife|husband|son|daughter|sister|brother|parent|spouse)\b/i;
+
+/** Book for someone else (e.g. "book for my mother/sister"). Match → book_for_someone_else. */
 const BOOK_FOR_SOMEONE_ELSE_REGEX =
-  /\b(book|schedule|appointment|want\s+to\s+book)\s+(?:an?\s+)?(?:appointment\s+)?(?:for\s+)?(?:my\s+)?(mother|father|mom|dad|wife|husband|son|daughter|parent|spouse|someone\s+else|them)\b/i;
+  /\b(book|schedule|appointment|want\s+to\s+book)\s+(?:an?\s+)?(?:appointment\s+)?(?:for\s+)?(?:my\s+)?(mother|father|mom|dad|wife|husband|son|daughter|sister|brother|parent|spouse|someone\s+else|them)\b/i;
 
 /** Payment done / check appointment status. Match → check_appointment_status. */
 const CHECK_APPOINTMENT_REGEX =
@@ -72,7 +78,19 @@ const CHECK_APPOINTMENT_REGEX =
 function isBookForSomeoneElse(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed.length > 120) return false;
-  return BOOK_FOR_SOMEONE_ELSE_REGEX.test(trimmed);
+  return MULTI_PERSON_BOOKING_REGEX.test(trimmed) || BOOK_FOR_SOMEONE_ELSE_REGEX.test(trimmed);
+}
+
+/**
+ * e-task-4: Parse "book for me and my X" — returns relation when multi-person, null otherwise.
+ * Use in webhook to distinguish multi-person from single-person book_for_someone_else.
+ */
+export function parseMultiPersonBooking(text: string): { relation: string } | null {
+  const trimmed = text.trim();
+  if (trimmed.length > 120) return null;
+  const match = trimmed.match(MULTI_PERSON_BOOKING_REGEX);
+  if (!match) return null;
+  return { relation: match[1].toLowerCase() };
 }
 
 function isCheckAppointmentStatus(text: string): boolean {
@@ -132,7 +150,7 @@ Examples: "hello" → greeting; "book appointment" → book_appointment; "book f
 Respond with a single JSON object: { "intent": "<one of the valid intents>", "confidence": <number 0.0 to 1.0> }.
 Use "unknown" only when the message does not clearly match any other intent.`;
 
-/** Base receptionist system prompt (e-task-3). Practice name injected dynamically (e-task-4). */
+/** Base receptionist system prompt (e-task-3). Practice name injected dynamically (e-task-4). e-task-2: Acknowledge, relation, conversational tone. */
 const RESPONSE_SYSTEM_PROMPT_BASE = `You are a warm, friendly medical practice receptionist. You help with scheduling and general questions. You do NOT diagnose or give medical advice.
 
 LANGUAGE: Respond in the SAME language the user writes in. If they write in Hindi, Hinglish, or Hindi written in English (e.g. "kya aap available ho"), respond in that style. If they write in English, respond in English. Match their tone and script.
@@ -149,14 +167,21 @@ CRITICAL - NEVER output placeholder text like "[Slot selection link]", "[link]",
 
 CRITICAL - When state shows collecting_all or confirm_details with collectedFields, the user has ALREADY shared details. NEVER repeat "Please share: Full name, Age, Mobile, Reason for visit". Acknowledge what they said, ask for missing fields only, or move to confirmation. If they refine the reason (e.g. "i wanna get her checked for diabetes"), treat it as updating the reason—do NOT start over.
 
-Tone: Conversational. When collecting info, ask for one thing at a time per the current step. If the user asks something outside your role, politely suggest they speak with the practice.`;
+ACKNOWLEDGE FIRST - ALWAYS acknowledge what the user just said before asking for more. Examples: "Got it, your sister." / "Thanks for clarifying." / "Understood." Do not repeat the same prompt verbatim when the user has already responded.
+
+RELATION - When Context says "Booking for user's [relation]" (e.g. sister, mother), use the relation in your reply. Say "your sister" or "for your mother" not "them" when known. When the user clarifies (e.g. "my sister?", "sister first"), acknowledge the clarification and continue with the flow. Do not start over.
+
+TONE - Be warm and natural. Match the user's energy. Avoid robotic repetition. When collecting info, ask for one thing at a time per the current step. Do not repeat the same prompt verbatim when the user has already responded. If the user asks something outside your role, politely suggest they speak with the practice.`;
 
 /** Safe fallback when response generation fails (no PHI, no medical advice). */
 const FALLBACK_RESPONSE =
   "I didn't quite get that. Could you rephrase? Or say 'book appointment', 'check availability', or 'cancel appointment' if that's what you need.";
 
-/** Max message pairs (user+assistant) to include in history for token control. */
-const MAX_HISTORY_PAIRS = 5;
+/** e-task-5: Max message pairs (user+assistant) for AI context. Trade-off: more context vs token cost. */
+const MAX_HISTORY_PAIRS = env.AI_MAX_HISTORY_PAIRS;
+
+/** Exported for webhook: fetch at least 2 * MAX_HISTORY_PAIRS messages. */
+export const AI_RECENT_MESSAGES_LIMIT = MAX_HISTORY_PAIRS * 2;
 
 // ============================================================================
 // PHI Redaction (COMPLIANCE.md G – redact before sending to OpenAI)
@@ -195,6 +220,121 @@ function clampConfidence(n: number): number {
  */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** e-task-6: Prompt for AI-assisted field extraction when regex fails. No PHI in prompt. */
+const EXTRACTION_SYSTEM_PROMPT = `You extract patient booking fields from a user message. Return ONLY a JSON object with the fields you can clearly identify. Extract only what is explicitly stated; do not infer or guess.
+
+Valid fields: name, phone, age, gender, reason_for_visit, email.
+- reason_for_visit: chief complaint, symptom, or reason (e.g. "diabetes check", "stomach pain", "get her checked for X"). NEVER use symptom/reason as name.
+- name: person's name only. NEVER use phrases like "i have stomach pain" or "she has diabetes" as name.
+- phone: digits only, 10+ digits
+- age: number 1-120
+- gender: male, female, or other
+- email: valid email format
+
+If the message says "i wanna get her checked for diabetes" or "she has stomach pain", extract reason_for_visit (e.g. "diabetes check" or "stomach pain"), NOT name.
+Return empty object {} if nothing can be extracted. Output format: { "name": "...", "phone": "...", "age": N, "gender": "...", "reason_for_visit": "...", "email": "..." } with only the fields you found.`;
+
+/**
+ * e-task-6: AI-assisted extraction when regex returns empty. Redacted input only; output is PHI—store only, never log.
+ * On failure returns {}; caller merges with existing and validates.
+ */
+export async function extractFieldsWithAI(
+  redactedText: string,
+  missingFields: string[],
+  correlationId: string
+): Promise<Partial<CollectedPatientData>> {
+  const client = getOpenAIClient();
+  const config = getOpenAIConfig();
+  if (!client || !redactedText?.trim() || redactedText.length < 15) {
+    return {};
+  }
+
+  const userPrompt = `Message: "${redactedText.trim()}"
+Fields we still need: ${missingFields.length ? missingFields.join(', ') : 'none'}
+Extract any of these fields from the message. Return JSON only.`;
+
+  try {
+    const completion = await client.chat.completions.create({
+      model: config.model,
+      max_completion_tokens: 256,
+      response_format: { type: 'json_object' as const },
+      messages: [
+        { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
+        { role: 'user', content: userPrompt },
+      ],
+    });
+
+    const content = completion.choices[0]?.message?.content?.trim();
+    const usage = completion.usage;
+
+    if (!content) {
+      await logAuditEvent({
+        correlationId,
+        action: 'ai_extraction',
+        resourceType: 'ai',
+        status: 'failure',
+        errorMessage: 'empty_completion',
+        metadata: { model: config.model, redactionApplied: true },
+      });
+      return {};
+    }
+
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    const result: Partial<CollectedPatientData> = {};
+
+    if (typeof parsed.name === 'string' && parsed.name.trim().length >= 2) {
+      const name = parsed.name.trim();
+      if (!/^\s*(i\s+have|i've\s+got|she\s+has|he\s+has|having|suffering)\b/i.test(name)) {
+        result.name = name;
+      }
+    }
+    if (typeof parsed.phone === 'string' && /^\d{10,15}$/.test(parsed.phone.replace(/\D/g, ''))) {
+      result.phone = parsed.phone.replace(/\D/g, '').slice(-10);
+    }
+    if (typeof parsed.age === 'number' && parsed.age >= 1 && parsed.age <= 120) {
+      result.age = parsed.age;
+    }
+    if (typeof parsed.gender === 'string' && ['male', 'female', 'other'].includes(parsed.gender.toLowerCase())) {
+      result.gender = parsed.gender.toLowerCase();
+    }
+    if (typeof parsed.reason_for_visit === 'string' && parsed.reason_for_visit.trim().length >= 2) {
+      result.reason_for_visit = parsed.reason_for_visit.trim().slice(0, 500);
+    }
+    if (typeof parsed.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parsed.email.trim())) {
+      result.email = parsed.email.trim().toLowerCase();
+    }
+
+    await logAuditEvent({
+      correlationId,
+      action: 'ai_extraction',
+      resourceType: 'ai',
+      status: 'success',
+      metadata: {
+        model: config.model,
+        redactionApplied: true,
+        extractedFields: Object.keys(result),
+        tokens: usage?.total_tokens,
+      },
+    });
+
+    return result;
+  } catch (err) {
+    logger.warn(
+      { correlationId, error: err instanceof Error ? err.message : String(err) },
+      'AI extraction failed; returning empty'
+    );
+    await logAuditEvent({
+      correlationId,
+      action: 'ai_extraction',
+      resourceType: 'ai',
+      status: 'failure',
+      errorMessage: 'extraction_failed',
+      metadata: { model: config.model, redactionApplied: true },
+    });
+    return {};
+  }
 }
 
 /**
@@ -357,6 +497,20 @@ export interface DoctorContext {
   consultation_types?: string | null;
 }
 
+/** Optional context for AI response generation (e-task-1 Bot Intelligence). No PHI. */
+export interface GenerateResponseContext {
+  /** Redacted summary, e.g. "name: [provided], phone: [provided], age: [missing]" */
+  collectedDataSummary?: string;
+  /** e.g. ["age", "reason_for_visit"] */
+  missingFields?: string[];
+  /** Last assistant message (redacted if contained PHI) */
+  lastBotMessage?: string;
+  /** When booking for someone else, e.g. "sister", "mother" */
+  relation?: string;
+  /** True when collecting for another person */
+  bookingForSomeoneElse?: boolean;
+}
+
 export interface GenerateResponseInput {
   conversationId: string;
   currentIntent: Intent;
@@ -365,6 +519,8 @@ export interface GenerateResponseInput {
   currentUserMessage: string;
   correlationId: string;
   doctorContext?: DoctorContext;
+  /** e-task-1: Richer context for context-aware replies */
+  context?: GenerateResponseContext;
 }
 
 /**
@@ -411,6 +567,7 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
     currentUserMessage,
     correlationId,
     doctorContext,
+    context: aiContext,
   } = input;
 
   const config = getOpenAIConfig();
@@ -448,6 +605,23 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
     state?.collectedFields?.length
       ? ` Already collected: ${state.collectedFields.join(', ')}. Do not ask for these again.`
       : '';
+  // e-task-1: Richer context for context-aware replies (no PHI)
+  const contextParts: string[] = [];
+  if (aiContext?.collectedDataSummary?.trim()) {
+    contextParts.push(`Collected data summary: ${aiContext.collectedDataSummary.trim()}.`);
+  }
+  if (aiContext?.missingFields?.length) {
+    contextParts.push(`Still missing: ${aiContext.missingFields.join(', ')}.`);
+  }
+  if (aiContext?.lastBotMessage?.trim()) {
+    contextParts.push(`Last thing you asked: "${aiContext.lastBotMessage.trim()}".`);
+  }
+  if (aiContext?.bookingForSomeoneElse && aiContext?.relation) {
+    contextParts.push(`Booking for user's ${aiContext.relation}. Use "your ${aiContext.relation}" or "for them" in replies.`);
+  } else if (aiContext?.bookingForSomeoneElse) {
+    contextParts.push(`Booking for someone else (relation not specified). Use "for them" in replies.`);
+  }
+  const aiContextBlock = contextParts.length > 0 ? `\n\nContext: ${contextParts.join(' ')}` : '';
   const collectingAllHint =
     state?.step === 'collecting_all'
       ? ' Ask for ALL details at once: full name, age, gender, mobile number, reason for visit. Email is optional. Example: "To book your appointment, please share: Full name, Age, Gender, Mobile number, Reason for visit. Email (optional) for receipts."'
@@ -467,7 +641,7 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
   const systemPrompt = buildResponseSystemPrompt(doctorContext);
   const systemContent =
     systemPrompt +
-    `\n\nCurrent detected intent for the latest user message: ${currentIntent}.${stepContext}${collectedContext}${collectingAllHint}${collectionHint}${confirmDetailsHint}${consentHint}`;
+    `\n\nCurrent detected intent for the latest user message: ${currentIntent}.${stepContext}${collectedContext}${aiContextBlock}${collectingAllHint}${collectionHint}${confirmDetailsHint}${consentHint}`;
 
   const messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [
     { role: 'system', content: systemContent },
