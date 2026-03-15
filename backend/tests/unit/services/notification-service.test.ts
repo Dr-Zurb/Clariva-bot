@@ -25,6 +25,12 @@ jest.mock('../../../src/config/email', () => ({
 jest.mock('../../../src/services/instagram-service', () => ({
   sendInstagramMessage: jest.fn(),
 }));
+jest.mock('../../../src/services/instagram-connect-service', () => ({
+  getInstagramAccessTokenForDoctor: jest.fn().mockResolvedValue(null as never),
+}));
+jest.mock('../../../src/services/doctor-settings-service', () => ({
+  getDoctorSettings: jest.fn().mockResolvedValue({ timezone: 'Asia/Kolkata' } as never),
+}));
 jest.mock('../../../src/utils/audit-logger', () => ({
   logAuditEvent: jest.fn().mockResolvedValue(undefined as never),
 }));
@@ -76,7 +82,7 @@ describe('Notification Service (e-task-5)', () => {
   describe('sendPaymentConfirmationToPatient', () => {
     it('sends DM when appointment has patient_id and patient is on Instagram', async () => {
       const mockSupabase = createMockSupabase(
-        { data: { id: appointmentId, patient_id: patientId }, error: null },
+        { data: { id: appointmentId, patient_id: patientId, doctor_id: doctorId }, error: null },
         {
           data: {
             id: patientId,
@@ -98,7 +104,8 @@ describe('Notification Service (e-task-5)', () => {
       expect(mockedInstagram.sendInstagramMessage).toHaveBeenCalledWith(
         'ig-psid-123',
         expect.stringContaining('Payment received'),
-        correlationId
+        correlationId,
+        undefined
       );
       expect(auditLogger.logAuditEvent).toHaveBeenCalledWith(
         expect.objectContaining({

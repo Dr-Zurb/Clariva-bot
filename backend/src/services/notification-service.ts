@@ -14,6 +14,7 @@ import { env } from '../config/env';
 import { sendEmail } from '../config/email';
 import { sendInstagramMessage } from './instagram-service';
 import { getInstagramAccessTokenForDoctor } from './instagram-connect-service';
+import { getDoctorSettings } from './doctor-settings-service';
 import { logAuditEvent } from '../utils/audit-logger';
 import { logger } from '../config/logger';
 
@@ -48,11 +49,13 @@ async function getDoctorEmail(doctorId: string, _correlationId: string): Promise
 }
 
 /**
- * Format appointment date for display in messages.
+ * Format appointment date for display in messages (DM, email).
+ * Uses doctor timezone so displayed time matches payment page (e.g. 12 PM not 6:30 AM UTC).
  */
-function formatAppointmentDate(isoDate: string): string {
+function formatAppointmentDate(isoDate: string, timezone: string = 'Asia/Kolkata'): string {
   const d = new Date(isoDate);
-  return d.toLocaleString('en-US', {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
     weekday: 'short',
     month: 'short',
     day: 'numeric',
@@ -60,7 +63,7 @@ function formatAppointmentDate(isoDate: string): string {
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
-  });
+  }).format(d);
 }
 
 /**
@@ -152,7 +155,11 @@ export async function sendPaymentConfirmationToPatient(
     return true;
   }
 
-  const dateStr = formatAppointmentDate(appointmentDateIso);
+  const doctorSettings = appointment.doctor_id
+    ? await getDoctorSettings(appointment.doctor_id)
+    : null;
+  const timezone = doctorSettings?.timezone ?? 'Asia/Kolkata';
+  const dateStr = formatAppointmentDate(appointmentDateIso, timezone);
   const message = `Payment received. Your appointment on ${dateStr} is confirmed. We'll send a reminder before your visit.`;
 
   const doctorToken = appointment.doctor_id
@@ -203,7 +210,9 @@ export async function sendNewAppointmentToDoctor(
     return true;
   }
 
-  const dateStr = formatAppointmentDate(appointmentDateIso);
+  const doctorSettings = await getDoctorSettings(doctorId);
+  const timezone = doctorSettings?.timezone ?? 'Asia/Kolkata';
+  const dateStr = formatAppointmentDate(appointmentDateIso, timezone);
   const subject = 'New appointment booked';
   const text = `A new appointment has been booked for ${dateStr}. Appointment ID: ${appointmentId}.`;
 
@@ -245,7 +254,9 @@ export async function sendPaymentReceivedToDoctor(
     return true;
   }
 
-  const dateStr = formatAppointmentDate(appointmentDateIso);
+  const doctorSettings = await getDoctorSettings(doctorId);
+  const timezone = doctorSettings?.timezone ?? 'Asia/Kolkata';
+  const dateStr = formatAppointmentDate(appointmentDateIso, timezone);
   const subject = 'Payment received for appointment';
   const text = `Payment has been received for the appointment on ${dateStr}. Appointment ID: ${appointmentId}.`;
 
