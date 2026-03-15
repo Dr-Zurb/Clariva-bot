@@ -1610,7 +1610,10 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     const stateToPersist =
       (isBookIntent && (justStartingCollection || inCollection)) ||
       state.step === 'selecting_slot' ||
-      state.step === 'awaiting_slot_selection'
+      state.step === 'awaiting_slot_selection' ||
+      state.step === 'collecting_all' ||
+      state.step === 'confirm_details' ||
+      state.step === 'consent'
         ? state
         : {
             ...state,

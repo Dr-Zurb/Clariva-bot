@@ -24,6 +24,8 @@ const PHONE_REGEX = /(?:\+91[\s.-]*)?(?:0)?([6-9]\d{9})\b|(\+?[1-9]\d{9,14})\b/g
 const EMAIL_REGEX = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/;
 /** Age: 1-120, possibly with "age:" prefix */
 const AGE_REGEX = /(?:age|age:)\s*(\d{1,3})\b/i;
+/** Age with "Y" or "years" suffix (e.g. "60 Y", "60 years") */
+const AGE_YEARS_REGEX = /\b(\d{1,3})\s*(?:y|yrs?|years?)\b/i;
 /** Standalone age (1-120) - be careful not to match phone digits */
 const AGE_STANDALONE = /\b(1\d{0,2}|2[0-9]|3[0-9]|4[0-9]|5[0-9]|6[0-9]|7[0-9]|8[0-9]|9[0-9]|1[01][0-9]|120)\b/;
 /** Name: "name:" or "Name:" prefix */
@@ -70,17 +72,22 @@ export function extractFieldsFromMessage(text: string): ExtractedFields {
   const emailMatch = trimmed.match(EMAIL_REGEX);
   if (emailMatch && emailMatch[0]) result.email = emailMatch[0].trim().toLowerCase();
 
-  // Age: labeled first, then standalone number (avoid phone digits - 10 digit is phone)
+  // Age: labeled first, then "60 Y" / "60 years", then standalone number
   const ageLabelMatch = trimmed.match(AGE_REGEX);
   if (ageLabelMatch) {
     const age = parseAge(ageLabelMatch[1]);
     if (age) result.age = age;
   } else {
-    // Standalone: look for 1-3 digit number that's not part of phone
-    const ageStandMatch = trimmed.match(AGE_STANDALONE);
-    if (ageStandMatch) {
-      const age = parseAge(ageStandMatch[1]);
-      if (age && age <= 120) result.age = age;
+    const ageYearsMatch = trimmed.match(AGE_YEARS_REGEX);
+    if (ageYearsMatch) {
+      const age = parseAge(ageYearsMatch[1]);
+      if (age) result.age = age;
+    } else {
+      const ageStandMatch = trimmed.match(AGE_STANDALONE);
+      if (ageStandMatch) {
+        const age = parseAge(ageStandMatch[1]);
+        if (age && age <= 120) result.age = age;
+      }
     }
   }
 
@@ -141,11 +148,19 @@ export function extractFieldsFromMessage(text: string): ExtractedFields {
     const reason = reasonLabelMatch[1].trim();
     if (reason.length >= 2) result.reason_for_visit = reason;
   } else {
-    // Heuristic: "i have X" (e.g. "i have pain abdomen")
+    // Heuristic: "i have X", "he/she is X", "get him/her checked for X"
     const iHaveMatch = trimmed.match(/\bi\s+have\s+([^.@,\n]+?)(?=\s*(?:,|@|\n|$))/i);
     if (iHaveMatch && iHaveMatch[1].trim().length >= 3) {
       result.reason_for_visit = iHaveMatch[1].trim();
     } else {
+      const heIsMatch = trimmed.match(/\b(?:he|she|him|her)\s+is\s+([^.@,\n]+?)(?=\s*(?:,|@|\n|$|so\s))/i);
+      if (heIsMatch && heIsMatch[1].trim().length >= 2) {
+        result.reason_for_visit = heIsMatch[1].trim();
+      } else {
+      const getCheckedMatch = trimmed.match(/\b(?:get|want\s+to\s+get)\s+(?:him|her)\s+checked\s+(?:for\s+)?([^.@,\n]+?)(?=\s*(?:,|@|\n|$))/i);
+      if (getCheckedMatch && getCheckedMatch[1].trim().length >= 2) {
+        result.reason_for_visit = getCheckedMatch[1].trim();
+      } else {
       const parts = trimmed.split(/[\n,;]+/).map((p) => p.trim()).filter(Boolean);
       // First part that looks like reason: 3+ chars, not phone/email/age
       for (const p of parts) {
@@ -163,6 +178,8 @@ export function extractFieldsFromMessage(text: string): ExtractedFields {
           break;
         }
       }
+      }
+    }
     }
   }
 
