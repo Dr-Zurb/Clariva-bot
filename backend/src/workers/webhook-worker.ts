@@ -1600,7 +1600,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           updatedAt: new Date().toISOString(),
         };
       } else {
-        // No patient data — start collection
+        // No patient data — start collection. Use deterministic all-at-once prompt (never one-by-one).
         state = {
           ...state,
           lastIntent: intentResult.intent,
@@ -1609,17 +1609,8 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
-        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
-        replyText = await generateResponse({
-          conversationId: conversation.id,
-          currentIntent: intentResult.intent,
-          state,
-          recentMessages,
-          currentUserMessage: text,
-          correlationId,
-          doctorContext,
-          context: aiContext,
-        });
+        const practiceName = doctorContext?.practice_name?.trim() || 'the clinic';
+        replyText = `Sure—happy to help you book at **${practiceName}**. Please share: Full name, Age, Gender, Mobile number, Reason for visit. Email (optional) for receipts.`;
       }
       await updateConversationState(conversation.id, state, correlationId);
     } else {

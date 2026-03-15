@@ -159,7 +159,7 @@ GREETING: When currentIntent is greeting, greet back warmly, introduce yourself 
 
 IMPORTANT - Our booking flow collects: full name, age, gender, phone number, reason for visit (required); email (optional). Then we confirm details, get consent, and show a link to pick a slot. Keep replies brief and natural.
 
-CRITICAL - When currentIntent is book_appointment, the user has ALREADY chosen to book. NEVER ask "would you like to book or ask a question?"—go straight to the current step (e.g. ask for full name). Never repeat that choice prompt. If state shows collecting_name, collecting_phone, consent, or selecting_slot, proceed with the current step only. If the user asks "what's YOUR name" (to the bot), say you're the practice's assistant and ask for THEIR name—one brief reply only.
+CRITICAL - When currentIntent is book_appointment, the user has ALREADY chosen to book. NEVER ask "would you like to book or ask a question?"—go straight to the current step. Never repeat that choice prompt. If state shows collecting_all, ALWAYS ask for ALL fields at once (full name, age, gender, mobile, reason for visit; email optional). NEVER ask for one field, wait for reply, then ask for the next—that wastes time. If the user asks "what's YOUR name" (to the bot), say you're the practice's assistant and ask for THEIR details—one brief reply only.
 
 NEVER ask "what date/time?" or "share two date/time options"—we use a slot-selection flow. When we need date/time, the system shows numbered slots; the user picks 1, 2, 3. Your job is only to collect name, phone, or handle consent/other questions.
 
@@ -171,7 +171,7 @@ ACKNOWLEDGE FIRST - ALWAYS acknowledge what the user just said before asking for
 
 RELATION - When Context says "Booking for user's [relation]" (e.g. sister, mother), use the relation in your reply. Say "your sister" or "for your mother" not "them" when known. When the user clarifies (e.g. "my sister?", "sister first"), acknowledge the clarification and continue with the flow. Do not start over.
 
-TONE - Be warm and natural. Match the user's energy. Avoid robotic repetition. When collecting info, ask for one thing at a time per the current step. Do not repeat the same prompt verbatim when the user has already responded. If the user asks something outside your role, politely suggest they speak with the practice.`;
+TONE - Be warm and natural. Match the user's energy. Avoid robotic repetition. When step is collecting_all, ALWAYS ask for ALL required fields at once—never one by one. Do not repeat the same prompt verbatim when the user has already responded. If the user asks something outside your role, politely suggest they speak with the practice.`;
 
 /** Safe fallback when response generation fails (no PHI, no medical advice). */
 const FALLBACK_RESPONSE =
@@ -661,12 +661,12 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
   const collectingAllHint =
     state?.step === 'collecting_all'
       ? aiContext?.missingFields?.length
-        ? ' The user just shared some details. Acknowledge what they said, then ask ONLY for the missing fields. Be brief and natural (e.g. "Got it, thanks. Just need the gender—male or female?"). Never repeat the full list of all fields.'
-        : ' Ask for ALL details at once: full name, age, gender, mobile number, reason for visit. Email is optional. Example: "To book your appointment, please share: Full name, Age, Gender, Mobile number, Reason for visit. Email (optional) for receipts."'
+        ? ' The user just shared some details. Acknowledge briefly, then ask for ALL remaining missing fields at once. Example: "Got it. Still need: age, reason for visit. Please share." If only one missing: "Just need your age." NEVER ask for one field, wait, then ask for the next—always list all missing at once.'
+        : ' Ask for ALL details at once: Full name, Age, Gender, Mobile number, Reason for visit. Email optional. Example: "To book your appointment, please share: Full name, Age, Gender, Mobile number, Reason for visit. Email (optional) for receipts."'
       : '';
   const collectionHint =
     state?.step?.startsWith('collecting_') && state?.step !== 'collecting_all'
-      ? ` If the step is collecting_<field>, ask the user for that field only. Keep the question brief.`
+      ? ` Ask for ALL missing fields at once—never one by one.`
       : '';
   const confirmDetailsHint =
     state?.step === 'confirm_details'
