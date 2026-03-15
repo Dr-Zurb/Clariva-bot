@@ -47,8 +47,10 @@ export interface ConversationState {
   consultationType?: 'video' | 'in_clinic';
   /** Slot offered for confirmation (e-task-2); when step is confirming_slot */
   slotToConfirm?: { start: string; end: string; dateStr: string };
-  /** Reason for visit (e-task-2); preserved for appointment.notes at booking */
+  /** Reason for visit (e-task-2); preserved for appointment.reason_for_visit at booking */
   reasonForVisit?: string;
-  /** Age (e-task-2); preserved for appointment.notes at booking (patients has no age column) */
+  /** Optional patient extras for appointment.notes (e-task-2); e.g. "On blood thinners", "Allergic to X" */
+  extraNotes?: string;
+  /** Age (e-task-2); preserved for patients.age at booking */
   age?: number;
 }

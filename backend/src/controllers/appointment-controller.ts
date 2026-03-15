@@ -50,7 +50,7 @@ export const getAvailableSlotsHandler = asyncHandler(async (req: Request, res: R
  * Book appointment
  * POST /api/v1/appointments/book
  *
- * Body: doctorId, patientName, patientPhone, appointmentDate (ISO), notes (optional)
+ * Body: doctorId, patientName, patientPhone, appointmentDate (ISO), reasonForVisit (required), notes (optional)
  * Auth: Phase 0 - Unauthenticated (webhook worker or doctor dashboard). userId from req.user if present.
  */
 export const bookAppointmentHandler = asyncHandler(async (req: Request, res: Response) => {

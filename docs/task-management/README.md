@@ -99,6 +99,15 @@ Complete redesign of the appointment booking flow: "all at once" collection, con
 
 Tasks: e-task-1 (migrations: slot_selections, patients.email), e-task-2 (collection flow redesign: all-at-once, age, email, confirm_details), e-task-3 (slot selection API: token, POST select-slot, proactive send, redirect), e-task-4 (external slot picker page: /book), e-task-5 (webhook flow integration: slot link, reason_for_visit to notes).
 
+### Reason for Visit & Notes Separation (2026-03-16)
+
+Split appointment data into `reason_for_visit` (required, patient's main complaint) and `notes` (optional, patient extras).
+
+- **Reference:** [APPOINTMENT_REASON_AND_NOTES.md](../Reference/APPOINTMENT_REASON_AND_NOTES.md)
+- **Daily plan:** [docs/Development/Daily-plans/March 2026/2026-03-16/README.md](../Development/Daily-plans/March%202026/2026-03-16/README.md)
+
+Tasks: e-task-1 (add reason_for_visit column + wiring), e-task-2 (collect patient extras into notes).
+
 ---
 
 ## 🔗 Related Documentation

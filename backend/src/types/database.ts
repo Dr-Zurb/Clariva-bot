@@ -81,7 +81,8 @@ export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6;
  * @property patient_phone - Patient's phone number (PHI - encrypted at rest)
  * @property appointment_date - Scheduled date and time for appointment
  * @property status - Current appointment status
- * @property notes - Optional notes about the appointment
+ * @property reason_for_visit - Patient main complaint/symptom (required for new bookings; migration 016)
+ * @property notes - Optional patient extras + doctor default_notes (migration 016)
  * @property consultation_type - Video or in-clinic (e.g. 'video', 'in_clinic') (e-task-2)
  * @property created_at - Timestamp when appointment was created
  * @property updated_at - Timestamp when appointment was last updated
@@ -94,7 +95,8 @@ export interface Appointment {
   patient_phone: string;  // PHI
   appointment_date: Date;
   status: AppointmentStatus;
-  notes?: string;
+  reason_for_visit?: string | null;  // Patient main complaint (migration 016)
+  notes?: string | null;  // Optional patient extras + doctor default_notes (migration 016)
   consultation_type?: string | null;  // e.g. 'video', 'in_clinic' (e-task-2)
   created_at: Date;
   updated_at: Date;

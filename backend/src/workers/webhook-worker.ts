@@ -269,7 +269,7 @@ function lastBotMessageAskedForDetails(
   return false;
 }
 
-/** Last bot message asked for consent (Ready to pick a time? Do I have your consent? etc.). */
+/** Last bot message asked for consent (Ready to pick a time? Do I have your consent? Anything else? etc.). */
 function lastBotMessageAskedForConsent(
   recentMessages: { sender_type: string; content: string }[]
 ): boolean {
@@ -279,7 +279,8 @@ function lastBotMessageAskedForConsent(
       return (
         c.includes('ready to pick a time') ||
         c.includes('do i have your consent') ||
-        c.includes('consent to use these details')
+        c.includes('consent to use these details') ||
+        (c.includes('anything else') && c.includes('say yes to continue'))
       );
     }
   }
@@ -297,6 +298,42 @@ function lastBotMessageAskedForConfirm(
     }
   }
   return false;
+}
+
+/** Skip phrases for optional "Anything else?" — user declines to add extras. */
+const SKIP_EXTRAS_PHRASES = [
+  'nothing', 'skip', 'nope', 'no thanks', 'no thank you', 'all good', "that's all",
+  'thats all', 'no', 'that\'s it', 'thats it', 'none', 'no extras', 'im good', "i'm good",
+];
+
+function isSkipExtrasReply(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (!t) return true;
+  return SKIP_EXTRAS_PHRASES.some((p) => t === p || t === p + '.' || t.startsWith(p + ','));
+}
+
+/** Extract patient extras from consent reply. Returns trimmed string or undefined if none. */
+function extractExtraNotesFromConsentReply(text: string, consentResult: 'granted' | 'denied' | 'unclear'): string | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) return undefined;
+  if (consentResult === 'denied') return undefined;
+  if (isSkipExtrasReply(trimmed)) return undefined;
+
+  if (consentResult === 'granted') {
+    // "yes, on blood thinners" → "on blood thinners"
+    const lower = trimmed.toLowerCase();
+    for (const kw of ['yes', 'yeah', 'yep', 'agree', 'ok', 'okay', 'sure', 'i agree', 'i consent']) {
+      if (lower === kw) return undefined;
+      const prefix = kw + ',';
+      if (lower.startsWith(prefix)) return trimmed.slice(prefix.length).trim() || undefined;
+      const prefix2 = kw + ' ';
+      if (lower.startsWith(prefix2)) return trimmed.slice(prefix2.length).trim() || undefined;
+    }
+    return undefined;
+  }
+
+  // unclear → treat as extras (e.g. "I'm on blood thinners")
+  return trimmed;
 }
 
 function isPostBookingAcknowledgment(
@@ -882,7 +919,11 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         await updateConversationState(conversation.id, state, correlationId);
       }
       const consentResult = parseConsentReply(text);
-      if (consentResult === 'granted') {
+      const hasExtrasOrGranted =
+        consentResult === 'granted' ||
+        (consentResult === 'unclear' && !isSkipExtrasReply(text));
+      if (hasExtrasOrGranted) {
+        const extraNotes = extractExtraNotesFromConsentReply(text, consentResult);
         let persistResult = await persistPatientAfterConsent(
           conversation.id,
           conversation.patient_id,
@@ -917,6 +958,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           ...state,
           lastIntent: intentResult.intent,
           step: 'awaiting_slot_selection',
+          extraNotes: extraNotes ?? state.extraNotes,
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
@@ -1007,7 +1049,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         const name = collected?.name?.trim() || 'there';
         const phone = collected?.phone?.trim() || '';
         const phoneDisplay = phone ? `**${phone}**` : 'your number';
-        replyText = `Thanks, ${name}. We'll use ${phoneDisplay} to confirm your appointment by call or text. Ready to pick a time?`;
+        replyText = `Thanks, ${name}. We'll use ${phoneDisplay} to confirm your appointment by call or text. Anything else you'd like the doctor to know before your visit? (optional) Reply with your extras, or say Yes to continue.`;
       } else if (isCorrection) {
         const extractResult = await validateAndApplyExtracted(
           conversation.id,

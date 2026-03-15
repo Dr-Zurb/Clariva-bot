@@ -29,6 +29,7 @@ const validBookInput = {
   patientName: 'PATIENT_TEST',
   patientPhone: '+10000000000',
   appointmentDate: futureDate.toISOString(),
+  reasonForVisit: 'Follow-up consultation',
   notes: 'Follow-up',
 };
 
@@ -92,6 +93,7 @@ describe('Appointment Service (e-task-2)', () => {
         patient_phone: validBookInput.patientPhone,
         appointment_date: futureDate.toISOString(),
         status: 'pending',
+        reason_for_visit: validBookInput.reasonForVisit,
         notes: validBookInput.notes,
         created_at: new Date(),
         updated_at: new Date(),

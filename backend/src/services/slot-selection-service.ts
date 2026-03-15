@@ -217,10 +217,13 @@ export async function processSlotSelectionAndPay(
   const doctorSettings = await getDoctorSettings(doctorId);
 
   const state = await getConversationState(conversationId, correlationId);
-  const notes =
-    state.reasonForVisit && doctorSettings?.default_notes
-      ? `Reason: ${state.reasonForVisit}. ${doctorSettings.default_notes}`
-      : state.reasonForVisit ?? doctorSettings?.default_notes ?? undefined;
+  const reasonForVisit = state.reasonForVisit ?? 'Not provided';
+  const parts: string[] = [];
+  if (state.extraNotes?.trim()) parts.push(state.extraNotes.trim());
+  if (doctorSettings?.default_notes?.trim()) parts.push(doctorSettings.default_notes.trim());
+  const NOTES_MAX_LEN = 1000;
+  const combined = parts.length > 0 ? parts.join('. ') : '';
+  const notes = combined.length > NOTES_MAX_LEN ? combined.slice(0, NOTES_MAX_LEN) : (combined || undefined);
 
   const appointment = await bookAppointment(
     {
@@ -229,6 +232,7 @@ export async function processSlotSelectionAndPay(
       patientName: patient.name,
       patientPhone: patient.phone,
       appointmentDate: slotDate.toISOString(),
+      reasonForVisit,
       notes,
       consultationType: state.consultationType,
     },

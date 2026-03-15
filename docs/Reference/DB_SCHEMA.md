@@ -57,7 +57,8 @@ patient_name        TEXT NOT NULL  -- Encrypted at rest (platform-level, Supabas
 patient_phone       TEXT NOT NULL  -- Encrypted at rest (platform-level, Supabase encryption-at-rest)
 appointment_date    TIMESTAMPTZ NOT NULL
 status              TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'cancelled', 'completed'))
-notes               TEXT
+reason_for_visit    TEXT NULL  -- Patient main complaint/symptom (required for new bookings; migration 016)
+notes               TEXT NULL  -- Optional patient extras + doctor default_notes (migration 016)
 created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 ```

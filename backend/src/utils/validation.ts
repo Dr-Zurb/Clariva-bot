@@ -229,7 +229,8 @@ export function validateAvailableSlotsQuery(
 // Book Appointment Schema (e-task-2, RECIPES R-VALIDATION-001)
 // ============================================================================
 
-const NOTES_MAX_LEN = 500;
+const REASON_FOR_VISIT_MAX_LEN = 500;
+const NOTES_MAX_LEN = 1000;
 
 export const bookAppointmentSchema = z.object({
   doctorId: z.string().uuid('doctorId must be a valid UUID'),
@@ -243,6 +244,11 @@ export const bookAppointmentSchema = z.object({
       (val) => new Date(val) >= new Date(),
       'Cannot book appointments in the past'
     ),
+  reasonForVisit: z
+    .string()
+    .min(1, 'Reason for visit is required')
+    .max(REASON_FOR_VISIT_MAX_LEN, `Reason for visit must be at most ${REASON_FOR_VISIT_MAX_LEN} characters`)
+    .transform((s) => s.trim()),
   notes: z
     .string()
     .max(NOTES_MAX_LEN, `Notes must be at most ${NOTES_MAX_LEN} characters`)

@@ -97,7 +97,8 @@ export async function bookAppointment(
     patient_phone: data.patientPhone,
     appointment_date: appointmentDate,
     status: 'pending',
-    notes: data.notes,
+    reason_for_visit: data.reasonForVisit ?? 'Not provided',
+    notes: data.notes ?? null,
     ...(data.consultationType && { consultation_type: data.consultationType }),
   };
 
