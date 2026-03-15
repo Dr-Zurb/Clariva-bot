@@ -125,6 +125,7 @@ export function extractFieldsFromMessage(
       !EMAIL_REGEX.test(s) &&
       !s.match(/^(age|phone|reason|email)/i) &&
       !AGE_GENDER_COMBO.test(s) &&
+      !/^(male|female|m|f)$/i.test(s.trim()) &&
       !isSymptomLike(s) &&
       !isRelationshipOrGenderLike(s);
     if (firstPart && isNameLike(firstPart)) {

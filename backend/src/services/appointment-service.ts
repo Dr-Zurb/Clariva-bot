@@ -93,6 +93,7 @@ export async function bookAppointment(
   const insertData: InsertAppointment = {
     doctor_id: data.doctorId,
     patient_id: data.patientId ?? undefined,
+    conversation_id: data.conversationId ?? undefined,
     patient_name: data.patientName,
     patient_phone: data.patientPhone,
     appointment_date: appointmentDate,

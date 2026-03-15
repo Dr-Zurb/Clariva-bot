@@ -113,38 +113,46 @@ export async function sendPaymentConfirmationToPatient(
 
   const { data: appointment, error: appError } = await admin
     .from('appointments')
-    .select('id, patient_id, doctor_id')
+    .select('id, patient_id, doctor_id, conversation_id')
     .eq('id', appointmentId)
     .single();
 
-  if (appError || !appointment?.patient_id) {
-    logger.info(
-      { correlationId, appointmentId },
-      'Payment confirmation DM skipped (no patient_id on appointment)'
-    );
-    return true; // not a failure, just no recipient
+  if (appError || !appointment) {
+    logger.info({ correlationId, appointmentId }, 'Payment confirmation DM skipped (appointment not found)');
+    return true;
   }
 
-  // Resolve recipient: patient.platform_external_id or conversation.platform_conversation_id
+  // Resolve recipient: patient.platform_external_id, conversation by patient_id, or appointment.conversation_id (booking for someone else)
   let recipientId: string | null = null;
-  const { data: patient } = await admin
-    .from('patients')
-    .select('id, platform, platform_external_id')
-    .eq('id', appointment.patient_id)
-    .single();
+  if (appointment.patient_id) {
+    const { data: patient } = await admin
+      .from('patients')
+      .select('id, platform, platform_external_id')
+      .eq('id', appointment.patient_id)
+      .single();
 
-  if (patient?.platform === 'instagram' && patient.platform_external_id) {
-    recipientId = patient.platform_external_id;
+    if (patient?.platform === 'instagram' && patient.platform_external_id) {
+      recipientId = patient.platform_external_id;
+    }
+    if (!recipientId) {
+      const { data: conv } = await admin
+        .from('conversations')
+        .select('platform_conversation_id')
+        .eq('patient_id', appointment.patient_id)
+        .eq('doctor_id', appointment.doctor_id)
+        .eq('platform', 'instagram')
+        .limit(1)
+        .maybeSingle();
+      recipientId = conv?.platform_conversation_id ?? null;
+    }
   }
-  if (!recipientId) {
+  if (!recipientId && appointment.conversation_id) {
     const { data: conv } = await admin
       .from('conversations')
       .select('platform_conversation_id')
-      .eq('patient_id', appointment.patient_id)
-      .eq('doctor_id', appointment.doctor_id)
+      .eq('id', appointment.conversation_id)
       .eq('platform', 'instagram')
-      .limit(1)
-      .maybeSingle();
+      .single();
     recipientId = conv?.platform_conversation_id ?? null;
   }
   if (!recipientId) {

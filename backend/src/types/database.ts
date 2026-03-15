@@ -91,6 +91,7 @@ export interface Appointment {
   id: string;
   doctor_id: string;
   patient_id?: string | null;  // Optional; links to patients.id for payment confirmation DM (e-task-5)
+  conversation_id?: string | null;  // Optional; for payment confirmation DM when booking for someone else
   patient_name: string;  // PHI
   patient_phone: string;  // PHI
   appointment_date: Date;

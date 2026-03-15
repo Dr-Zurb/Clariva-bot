@@ -257,6 +257,7 @@ export const bookAppointmentSchema = z.object({
   consultationType: z
     .enum(['video', 'in_clinic'])
     .optional(),
+  conversationId: z.string().uuid().optional(),
 });
 
 export type BookAppointmentInput = z.infer<typeof bookAppointmentSchema>;

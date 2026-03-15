@@ -390,12 +390,14 @@ export async function validateAndApplyExtracted(
     /^(?:he|she|him|her)\s+is\s+(?:male|female)\b/i.test(s.trim()) ||
     /\b(?:my\s+)?(?:father|mother|dad|mom)\s+.*\s+(?:male|female)/i.test(s.trim()) ||
     /\b(?:male|female)\s+obviously\s*$/i.test(s.trim());
+  /** Never use standalone gender as name (e.g. user said "male" for gender, not name) */
+  const isGenderOnly = (s: string) => /^(male|female|m|f)$/i.test(s.trim());
 
   for (const [key, value] of Object.entries(extracted)) {
     if (value === undefined || value === '') continue;
     const field = key as keyof ExtractedFields;
     if (field === 'name' && typeof value === 'string') {
-      if (isSymptomLike(value) || isRelationshipOrGenderLike(value)) continue;
+      if (isSymptomLike(value) || isRelationshipOrGenderLike(value) || isGenderOnly(value)) continue;
       try {
         const v = validatePatientField('name', value);
         if (v) updates.name = v as string;

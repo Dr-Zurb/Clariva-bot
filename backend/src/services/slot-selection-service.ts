@@ -257,6 +257,7 @@ export async function processSlotSelectionAndPay(
       reasonForVisit,
       notes,
       consultationType: state.consultationType,
+      conversationId: conversationId,
     },
     correlationId,
     undefined
