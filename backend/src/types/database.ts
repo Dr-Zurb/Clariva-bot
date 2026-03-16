@@ -222,6 +222,7 @@ export interface DeadLetterQueueWithDecrypted extends Omit<DeadLetterQueue, 'pay
  * @property consent_granted_at - When consent was granted (optional)
  * @property consent_revoked_at - When consent was revoked (optional)
  * @property consent_method - How consent was obtained (e.g. instagram_dm, optional)
+ * @property medical_record_number - Human-readable Patient ID (e.g. P-00001) (migration 018)
  * @property created_at - Timestamp when record was created
  * @property updated_at - Timestamp when record was last updated
  */
@@ -239,6 +240,7 @@ export interface Patient {
   consent_granted_at?: Date | null;
   consent_revoked_at?: Date | null;
   consent_method?: string | null;
+  medical_record_number: string;  // Human-readable Patient ID (migration 018)
   created_at: Date;
   updated_at: Date;
 }
@@ -396,8 +398,11 @@ export type InsertAuditLog = Omit<AuditLog, 'id' | 'created_at'>;
 /**
  * Data required to create a new patient
  * (Omits auto-generated fields: id, created_at, updated_at)
+ * medical_record_number is optional; DB assigns via default when omitted (migration 018)
  */
-export type InsertPatient = Omit<Patient, 'id' | 'created_at' | 'updated_at'>;
+export type InsertPatient = Omit<Patient, 'id' | 'created_at' | 'updated_at' | 'medical_record_number'> & {
+  medical_record_number?: string;
+};
 
 /**
  * Data required to create a new conversation

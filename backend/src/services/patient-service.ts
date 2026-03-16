@@ -10,7 +10,19 @@ import { getSupabaseAdminClient, supabase } from '../config/database';
 import { Patient, InsertPatient, UpdatePatient } from '../types';
 import { ConflictError, ForbiddenError, InternalError, NotFoundError } from '../utils/errors';
 import { handleSupabaseError } from '../utils/db-helpers';
-import { logDataAccess, logDataModification } from '../utils/audit-logger';
+import { logDataAccess, logDataModification, logAuditEvent } from '../utils/audit-logger';
+
+/** Summary for list endpoint (e-task-3). No PHI in logs. */
+export interface PatientSummary {
+  id: string;
+  name: string;
+  phone: string;
+  age?: number | null;
+  gender?: string | null;
+  medical_record_number?: string;
+  last_appointment_date?: string | null;
+  created_at: string;
+}
 
 /**
  * Find patient by ID
@@ -125,6 +137,151 @@ export async function findPatientByIdWithAdmin(
   }
 
   return data as Patient | null;
+}
+
+/**
+ * Find patient by Medical Record Number (MRN).
+ * Uses admin client (webhook/API contexts).
+ *
+ * @param medicalRecordNumber - Human-readable Patient ID (e.g. P-00001)
+ * @param correlationId - Request correlation ID
+ * @returns Patient or null if not found
+ */
+export async function findPatientByMrn(
+  medicalRecordNumber: string,
+  correlationId: string
+): Promise<Patient | null> {
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const normalized = medicalRecordNumber.trim().toUpperCase();
+  if (!normalized) return null;
+
+  const { data, error } = await supabaseAdmin
+    .from('patients')
+    .select('*')
+    .eq('medical_record_number', normalized)
+    .maybeSingle();
+
+  if (error) {
+    handleSupabaseError(error, correlationId);
+  }
+
+  return data as Patient | null;
+}
+
+/**
+ * List patients for a doctor (e-task-3).
+ * Returns distinct patients linked via appointments or conversations.
+ * Ordered by last appointment date desc, then created_at desc.
+ *
+ * @param doctorId - Doctor UUID
+ * @param correlationId - Request correlation ID
+ * @returns PatientSummary[]
+ */
+export async function listPatientsForDoctor(
+  doctorId: string,
+  correlationId: string
+): Promise<PatientSummary[]> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const patientIds = new Set<string>();
+
+  const { data: aptRows, error: aptErr } = await admin
+    .from('appointments')
+    .select('patient_id')
+    .eq('doctor_id', doctorId)
+    .not('patient_id', 'is', null);
+
+  if (aptErr) handleSupabaseError(aptErr, correlationId);
+  for (const row of aptRows ?? []) {
+    const pid = (row as { patient_id: string | null }).patient_id;
+    if (pid) patientIds.add(pid);
+  }
+
+  const { data: convRows, error: convErr } = await admin
+    .from('conversations')
+    .select('patient_id')
+    .eq('doctor_id', doctorId);
+
+  if (convErr) handleSupabaseError(convErr, correlationId);
+  for (const row of convRows ?? []) {
+    patientIds.add((row as { patient_id: string }).patient_id);
+  }
+
+  if (patientIds.size === 0) return [];
+
+  const { data: patients, error: patErr } = await admin
+    .from('patients')
+    .select('id, name, phone, age, gender, medical_record_number, created_at')
+    .in('id', Array.from(patientIds));
+
+  if (patErr) handleSupabaseError(patErr, correlationId);
+
+  const ids = Array.from(patientIds);
+  const { data: lastAptRows, error: lastErr } = await admin
+    .from('appointments')
+    .select('patient_id, appointment_date')
+    .eq('doctor_id', doctorId)
+    .in('patient_id', ids)
+    .order('appointment_date', { ascending: false });
+
+  if (lastErr) handleSupabaseError(lastErr, correlationId);
+
+  const lastByPatient = new Map<string, string>();
+  for (const row of lastAptRows ?? []) {
+    const r = row as { patient_id: string; appointment_date: string };
+    if (!lastByPatient.has(r.patient_id)) {
+      lastByPatient.set(r.patient_id, r.appointment_date);
+    }
+  }
+
+  // Exclude merged patients (anonymized: name [Merged], phone merged-{id})
+  const activePatients = (patients ?? []).filter(
+    (p: { name?: string; phone?: string }) =>
+      p.name !== '[Merged]' && !(p.phone ?? '').startsWith('merged-')
+  );
+
+  const summaries: PatientSummary[] = activePatients.map((p) => {
+    const patient = p as {
+      id: string;
+      name: string;
+      phone: string;
+      age?: number | null;
+      gender?: string | null;
+      medical_record_number?: string;
+      created_at: string;
+    };
+    return {
+      id: patient.id,
+      name: patient.name,
+      phone: patient.phone,
+      age: patient.age ?? undefined,
+      gender: patient.gender ?? undefined,
+      medical_record_number: patient.medical_record_number,
+      last_appointment_date: lastByPatient.get(patient.id) ?? null,
+      created_at:
+        typeof patient.created_at === 'string'
+          ? patient.created_at
+          : (patient.created_at as Date).toISOString(),
+    };
+  });
+
+  summaries.sort((a, b) => {
+    const aDate = a.last_appointment_date ? new Date(a.last_appointment_date).getTime() : 0;
+    const bDate = b.last_appointment_date ? new Date(b.last_appointment_date).getTime() : 0;
+    if (bDate !== aDate) return bDate - aDate;
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  });
+
+  await logDataAccess(correlationId, doctorId, 'patient', undefined);
+
+  return summaries;
 }
 
 /**
@@ -320,6 +477,87 @@ export async function updatePatient(
   );
 
   return updated as Patient;
+}
+
+/**
+ * Merge source patient into target patient (e-task-6).
+ * Moves all appointments and conversations from source to target, then anonymizes source.
+ * Doctor must have access to both patients (via appointments or conversations).
+ *
+ * @param doctorId - Doctor UUID (must have access to both patients)
+ * @param sourcePatientId - Patient to merge (will be anonymized)
+ * @param targetPatientId - Patient to keep (receives all data)
+ * @param correlationId - Request correlation ID
+ * @throws ForbiddenError if doctor has no access to either patient
+ * @throws NotFoundError if either patient not found
+ */
+export async function mergePatients(
+  doctorId: string,
+  sourcePatientId: string,
+  targetPatientId: string,
+  correlationId: string
+): Promise<void> {
+  if (sourcePatientId === targetPatientId) {
+    throw new ForbiddenError('Source and target patient must be different');
+  }
+
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  // Validate doctor has access to both patients
+  await getPatientForDoctor(sourcePatientId, doctorId, correlationId);
+  await getPatientForDoctor(targetPatientId, doctorId, correlationId);
+
+  // Update appointments: move from source to target
+  const { error: aptErr } = await admin
+    .from('appointments')
+    .update({ patient_id: targetPatientId })
+    .eq('doctor_id', doctorId)
+    .eq('patient_id', sourcePatientId);
+
+  if (aptErr) handleSupabaseError(aptErr, correlationId);
+
+  // Update conversations: move from source to target
+  const { error: convErr } = await admin
+    .from('conversations')
+    .update({ patient_id: targetPatientId })
+    .eq('doctor_id', doctorId)
+    .eq('patient_id', sourcePatientId);
+
+  if (convErr) handleSupabaseError(convErr, correlationId);
+
+  // Anonymize source patient (COMPLIANCE: don't hard-delete PHI)
+  const { error: anonErr } = await admin
+    .from('patients')
+    .update({
+      name: '[Merged]',
+      phone: `merged-${sourcePatientId}`,
+      email: null,
+      date_of_birth: null,
+      age: null,
+      gender: null,
+      platform: null,
+      platform_external_id: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', sourcePatientId);
+
+  if (anonErr) handleSupabaseError(anonErr, correlationId);
+
+  await logDataModification(correlationId, doctorId, 'update', 'patient', sourcePatientId, [
+    'merge_anonymize',
+  ]);
+  await logAuditEvent({
+    correlationId,
+    userId: doctorId,
+    action: 'merge_patients',
+    resourceType: 'patient',
+    resourceId: targetPatientId,
+    status: 'success',
+    metadata: { sourcePatientId, targetPatientId },
+  });
 }
 
 /**

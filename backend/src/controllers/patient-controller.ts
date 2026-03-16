@@ -12,9 +12,30 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '../utils/async-handler';
 import { successResponse } from '../utils/response';
-import { getPatientForDoctor } from '../services/patient-service';
-import { validateGetPatientParams } from '../utils/validation';
+import { getPatientForDoctor, listPatientsForDoctor, mergePatients } from '../services/patient-service';
+import { listPossibleDuplicates } from '../services/patient-matching-service';
+import { validateGetPatientParams, validateMergePatientsBody } from '../utils/validation';
 import { UnauthorizedError } from '../utils/errors';
+
+/**
+ * List patients for authenticated doctor
+ * GET /api/v1/patients
+ *
+ * Returns patients linked via appointments or conversations.
+ * Response: { success: true, data: { patients: PatientSummary[] }, meta }
+ */
+export const listPatientsHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const userId = req.user?.id;
+
+  if (!userId) {
+    throw new UnauthorizedError('Authentication required');
+  }
+
+  const patients = await listPatientsForDoctor(userId, correlationId);
+
+  res.status(200).json(successResponse({ patients }, req));
+});
 
 /**
  * Get patient by ID
@@ -36,4 +57,45 @@ export const getPatientByIdHandler = asyncHandler(async (req: Request, res: Resp
   const patient = await getPatientForDoctor(id, userId, correlationId);
 
   res.status(200).json(successResponse({ patient }, req));
+});
+
+/**
+ * List possible duplicate patient groups
+ * GET /api/v1/patients/possible-duplicates
+ *
+ * Returns groups of patients that might be duplicates (same phone, etc.).
+ */
+export const listPossibleDuplicatesHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const userId = req.user?.id;
+
+  if (!userId) {
+    throw new UnauthorizedError('Authentication required');
+  }
+
+  const { groups } = await listPossibleDuplicates(userId, correlationId);
+
+  res.status(200).json(successResponse({ groups }, req));
+});
+
+/**
+ * Merge two patients
+ * POST /api/v1/patients/merge
+ *
+ * Body: { sourcePatientId, targetPatientId }
+ * Merges source into target; source is anonymized.
+ */
+export const mergePatientsHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const userId = req.user?.id;
+
+  if (!userId) {
+    throw new UnauthorizedError('Authentication required');
+  }
+
+  const { sourcePatientId, targetPatientId } = validateMergePatientsBody(req.body);
+
+  await mergePatients(userId, sourcePatientId, targetPatientId, correlationId);
+
+  res.status(200).json(successResponse({ merged: true }, req));
 });

@@ -135,6 +135,15 @@ Transform the bot from regex-heavy to AI-first: understand conversations, store 
 
 Tasks: e-task-1 (AI-first extraction with context), e-task-2 (conversation-aware extraction), e-task-3 (human-like response generation), e-task-4 (simplify regex to fast-path only).
 
+### Patient Identity & Matching (2026-03-27)
+
+Patient identification, matching, deduplication, and Patients tab. Phone search + confirm (no ID required); Patient ID (MRN) as optional shortcut; doctor can merge duplicates.
+
+- **Reference:** [PATIENT_IDENTITY_AND_MATCHING.md](../Development/Future%20Planning/PATIENT_IDENTITY_AND_MATCHING.md)
+- **Daily plan:** [docs/Development/Daily-plans/March 2026/2026-03-27/README.md](../Development/Daily-plans/March%202026/2026-03-27/README.md)
+
+Tasks: e-task-1 (MRN column), e-task-2 (patient matching service), e-task-3 (list patients API), e-task-4 (Patients tab UI), e-task-5 (booking match confirmation), e-task-6 (merge patients), e-task-7 (patient ID in confirmation).
+
 ---
 
 ## 🔗 Related Documentation

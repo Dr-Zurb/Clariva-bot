@@ -428,6 +428,23 @@ export function validateGetPatientParams(params: unknown): GetPatientParams {
   return result.data;
 }
 
+export const mergePatientsBodySchema = z.object({
+  sourcePatientId: z.string().uuid('Invalid source patient ID'),
+  targetPatientId: z.string().uuid('Invalid target patient ID'),
+});
+
+export type MergePatientsBody = z.infer<typeof mergePatientsBodySchema>;
+
+export function validateMergePatientsBody(body: unknown): MergePatientsBody {
+  const result = mergePatientsBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid merge request';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
 // ============================================================================
 // Doctor Settings PATCH (e-task-2)
 // ============================================================================

@@ -19,6 +19,7 @@ export type PatientCollectionStep =
   | 'collecting_reason_for_visit'
   | 'collecting_email'
   | 'confirm_details'
+  | 'awaiting_match_confirmation'
   | 'consent'
   | 'awaiting_date_time'
   | 'awaiting_slot_selection'
@@ -65,4 +66,6 @@ export interface ConversationState {
   pendingSelfBooking?: boolean;
   /** e-task-4: When "me first" — user wanted to book for other after self; offer after self booking completes */
   pendingOtherBooking?: { relation: string };
+  /** e-task-5: When awaiting_match_confirmation — possible patient match IDs (top 1–2 for "which one?") */
+  pendingMatchPatientIds?: string[];
 }

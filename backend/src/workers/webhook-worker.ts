@@ -34,6 +34,7 @@ import {
   getStoredInstagramPageIdForDoctor,
 } from '../services/instagram-connect-service';
 import { findOrCreatePlaceholderPatient, findPatientByIdWithAdmin, createPatientForBooking } from '../services/patient-service';
+import { findPossiblePatientMatches } from '../services/patient-matching-service';
 import {
   getAppointmentByIdForWorker,
   listAppointmentsForPatient,
@@ -307,6 +308,45 @@ function lastBotMessageAskedForConfirm(
   return false;
 }
 
+/** Last bot message asked for match confirmation (Same person? Reply Yes or No). */
+function lastBotMessageAskedForMatch(
+  recentMessages: { sender_type: string; content: string }[]
+): boolean {
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    if (recentMessages[i].sender_type !== 'patient') {
+      const c = (recentMessages[i].content ?? '').toLowerCase();
+      return c.includes('same person') && (c.includes('reply yes') || c.includes('yes or no'));
+    }
+  }
+  return false;
+}
+
+/** Parse match confirmation reply: 'yes' | 'no' | '1' | '2' | 'unclear'. Unclear → treat as No. */
+function parseMatchConfirmationReply(text: string, matchCount: number): 'yes' | 'no' | '1' | '2' | 'unclear' {
+  const t = text.trim().toLowerCase();
+  if (/^(yes|yeah|yep|ok|okay|sure|correct)$/.test(t)) return 'yes';
+  if (/^(no|nope|new|different)$/.test(t)) return 'no';
+  if (matchCount >= 1 && /^1$/.test(t)) return '1';
+  if (matchCount >= 2 && /^2$/.test(t)) return '2';
+  return 'unclear';
+}
+
+/** e-task-7: Build Patient ID hint when MRN available. */
+function formatPatientIdHint(mrn?: string | null): string {
+  if (!mrn?.trim()) return '';
+  return `\n\nYour patient ID: **${mrn}**. Save this for future bookings.`;
+}
+
+/** e-task-7: Fetch patient and return MRN hint for slot message. */
+async function getPatientIdHintForSlot(
+  patientId: string | undefined,
+  correlationId: string
+): Promise<string> {
+  if (!patientId) return '';
+  const patient = await findPatientByIdWithAdmin(patientId, correlationId);
+  return formatPatientIdHint(patient?.medical_record_number);
+}
+
 /** AI Receptionist: Get last bot message content for extraction context. */
 function getLastBotMessage(
   recentMessages: { sender_type: string; content: string }[]
@@ -495,6 +535,7 @@ async function buildAiContextForResponse(
     state.step?.startsWith('collecting_') ||
     state.step === 'consent' ||
     state.step === 'confirm_details' ||
+    state.step === 'awaiting_match_confirmation' ||
     state.step === 'collecting_all';
   if (!inCollection) return ctx;
 
@@ -941,6 +982,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       state.step?.startsWith('collecting_') ||
       state.step === 'consent' ||
       state.step === 'confirm_details' ||
+      state.step === 'awaiting_match_confirmation' ||
       lastBotAskedForDetails;
     const justStartingCollection =
       isBookIntent && !state.step && !(state.collectedFields?.length);
@@ -1090,6 +1132,86 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         await updateConversationState(conversation.id, state, correlationId);
         replyText = `I'll help you book for ${relationPhrase}. Please share: Full name, Age, Mobile, Reason for visit for the person you're booking for. Email (optional).`;
       }
+    } else if (state.step === 'awaiting_match_confirmation' || (lastBotMessageAskedForMatch(recentMessages) && state.pendingMatchPatientIds?.length)) {
+      // e-task-5: Handle match confirmation. Yes → use existing; No → create new; 1/2 → pick from multi-match.
+      const matchIds = state.pendingMatchPatientIds ?? [];
+      const matchCount = matchIds.length;
+      const parsed = parseMatchConfirmationReply(text, matchCount);
+      const useExisting = parsed === 'yes' || parsed === '1';
+      const useSecond = parsed === '2' && matchCount >= 2;
+      const createNew = parsed === 'no' || parsed === 'unclear';
+
+      if (useExisting || useSecond) {
+        const chosenId = useSecond ? matchIds[1]! : matchIds[0]!;
+        await clearCollectedData(conversation.id);
+        const slotLink = buildBookingPageUrl(conversation.id, doctorId);
+        const mrnHint = await getPatientIdHintForSlot(chosenId, correlationId);
+        const baseSlotMsg = `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
+        replyText = state.pendingSelfBooking
+          ? `${baseSlotMsg}\n\nWould you like to book one for yourself now?`
+          : baseSlotMsg;
+        state = {
+          ...state,
+          lastIntent: intentResult.intent,
+          step: 'awaiting_slot_selection',
+          bookingForPatientId: chosenId,
+          bookingForSomeoneElse: false,
+          pendingMatchPatientIds: undefined,
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+      } else if (createNew) {
+        let collectedBeforePersist = await getCollectedData(conversation.id);
+        if (!collectedBeforePersist?.name?.trim() || !collectedBeforePersist?.phone?.trim()) {
+          const recovered = await tryRecoverAndSetFromMessages(
+            conversation.id,
+            recentMessages,
+            correlationId
+          );
+          if (recovered) collectedBeforePersist = await getCollectedData(conversation.id);
+        }
+        if (!collectedBeforePersist?.name?.trim() || !collectedBeforePersist?.phone?.trim()) {
+          replyText =
+            "I didn't receive the details. Please share: Full name, Age, Mobile, Reason for visit.";
+          state = { ...state, updatedAt: new Date().toISOString() };
+          await updateConversationState(conversation.id, state, correlationId);
+        } else {
+          const newPatient = await createPatientForBooking(
+            doctorId,
+            {
+              name: collectedBeforePersist.name.trim(),
+              phone: collectedBeforePersist.phone.trim(),
+              age: collectedBeforePersist.age,
+              gender: collectedBeforePersist.gender,
+              email: collectedBeforePersist.email,
+            },
+            correlationId
+          );
+          await clearCollectedData(conversation.id);
+          const slotLink = buildBookingPageUrl(conversation.id, doctorId);
+          const mrnHint = formatPatientIdHint(newPatient.medical_record_number);
+          const baseSlotMsg = `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
+          replyText = state.pendingSelfBooking
+            ? `${baseSlotMsg}\n\nWould you like to book one for yourself now?`
+            : baseSlotMsg;
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'awaiting_slot_selection',
+            reasonForVisit: state.reasonForVisit ?? collectedBeforePersist.reason_for_visit,
+            bookingForPatientId: newPatient.id,
+            bookingForSomeoneElse: false,
+            pendingMatchPatientIds: undefined,
+            updatedAt: new Date().toISOString(),
+          };
+          await updateConversationState(conversation.id, state, correlationId);
+        }
+      } else {
+        replyText =
+          "Please reply Yes to use the existing record, or No to create a new patient. Reply 1 or 2 if we found multiple matches.";
+        state = { ...state, updatedAt: new Date().toISOString() };
+        await updateConversationState(conversation.id, state, correlationId);
+      }
     } else if (state.step === 'consent' || (lastBotMessageAskedForConsent(recentMessages) && parseConsentReply(text) === 'granted')) {
       // Handle consent reply regardless of intent. Fallback: last bot asked for consent + user said yes.
       if (!state.step) {
@@ -1133,7 +1255,8 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             );
             await clearCollectedData(conversation.id);
             const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-            const baseSlotMsg = `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
+            const mrnHint = formatPatientIdHint(newPatient.medical_record_number);
+            const baseSlotMsg = `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
             replyText = state.pendingSelfBooking
               ? `${baseSlotMsg}\n\nWould you like to book one for yourself now?`
               : baseSlotMsg;
@@ -1174,7 +1297,8 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             }
           }
           const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-          const baseSlotMsg = `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
+          const mrnHint = await getPatientIdHintForSlot(conversation.patient_id, correlationId);
+          const baseSlotMsg = `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
           if (!persistResult.success) {
             replyText =
               `I had trouble saving your details—please say 'book appointment' to re-share them if needed. Meanwhile, ${baseSlotMsg}`;
@@ -1381,24 +1505,69 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           );
           if (recovered) collected = await getCollectedData(conversation.id);
         }
-        const now = new Date().toISOString();
-        state = {
-          ...state,
-          lastIntent: intentResult.intent,
-          step: 'consent',
-          consent_requested_at: now,
-          updatedAt: now,
-          reasonForVisit: collected?.reason_for_visit,
-          age: collected?.age,
-        };
-        await updateConversationState(conversation.id, state, correlationId);
         const name = collected?.name?.trim() || 'there';
         const phone = collected?.phone?.trim() || '';
         const phoneDisplay = phone ? `**${phone}**` : 'your number';
-        if (state.bookingForSomeoneElse) {
-          replyText = `Thanks. We'll use ${phoneDisplay} to confirm the appointment for **${name}**. Do I have your consent to use these details to schedule? Reply Yes to continue.`;
+
+        if (state.bookingForSomeoneElse && collected?.name?.trim() && collected?.phone?.trim()) {
+          // e-task-5: Match check before consent. If matches → awaiting_match_confirmation; else → consent.
+          const matches = await findPossiblePatientMatches(
+            doctorId,
+            collected.phone.trim(),
+            collected.name.trim(),
+            collected.age,
+            collected.gender,
+            correlationId
+          );
+          if (matches.length > 0) {
+            const ids = matches.slice(0, 2).map((m) => m.patientId);
+            state = {
+              ...state,
+              lastIntent: intentResult.intent,
+              step: 'awaiting_match_confirmation',
+              pendingMatchPatientIds: ids,
+              reasonForVisit: collected?.reason_for_visit,
+              age: collected?.age,
+              updatedAt: new Date().toISOString(),
+            };
+            await updateConversationState(conversation.id, state, correlationId);
+            if (matches.length === 1) {
+              replyText = `We found a record for **${matches[0]!.name}** with this number. Same person? Reply Yes or No.`;
+            } else {
+              const list = matches.slice(0, 2).map((m, i) => `${i + 1}. ${m.name}${m.age != null ? ` (${m.age})` : ''}`).join(', ');
+              replyText = `We found ${matches.length} records: ${list}. Which one? Reply 1 or 2, or No for new patient.`;
+            }
+          } else {
+            const now = new Date().toISOString();
+            state = {
+              ...state,
+              lastIntent: intentResult.intent,
+              step: 'consent',
+              consent_requested_at: now,
+              updatedAt: now,
+              reasonForVisit: collected?.reason_for_visit,
+              age: collected?.age,
+            };
+            await updateConversationState(conversation.id, state, correlationId);
+            replyText = `Thanks. We'll use ${phoneDisplay} to confirm the appointment for **${name}**. Do I have your consent to use these details to schedule? Reply Yes to continue.`;
+          }
         } else {
-          replyText = `Thanks, ${name}. We'll use ${phoneDisplay} to confirm your appointment by call or text. Anything else you'd like the doctor to know before your visit? (optional) Reply with your extras, or say Yes to continue.`;
+          const now = new Date().toISOString();
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'consent',
+            consent_requested_at: now,
+            updatedAt: now,
+            reasonForVisit: collected?.reason_for_visit,
+            age: collected?.age,
+          };
+          await updateConversationState(conversation.id, state, correlationId);
+          if (state.bookingForSomeoneElse) {
+            replyText = `Thanks. We'll use ${phoneDisplay} to confirm the appointment for **${name}**. Do I have your consent to use these details to schedule? Reply Yes to continue.`;
+          } else {
+            replyText = `Thanks, ${name}. We'll use ${phoneDisplay} to confirm your appointment by call or text. Anything else you'd like the doctor to know before your visit? (optional) Reply with your extras, or say Yes to continue.`;
+          }
         }
       } else if (isCorrection) {
         const extractResult = await validateAndApplyExtracted(
@@ -1546,9 +1715,11 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           context: aiContext,
         });
       } else if (wantsNewLink) {
+        const patientId = state.bookingForPatientId ?? conversation.patient_id;
+        const mrnHint = await getPatientIdHintForSlot(patientId, correlationId);
         const slotLink = buildBookingPageUrl(conversation.id, doctorId);
         replyText =
-          `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
+          `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
         state = { ...state, updatedAt: new Date().toISOString() };
         await updateConversationState(conversation.id, state, correlationId);
       } else {
@@ -1559,9 +1730,11 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       }
     } else if (state.step === 'confirming_slot') {
       // Unified flow: no chat confirmation. Migrate to awaiting_slot_selection with new link.
+      const patientId = state.bookingForPatientId ?? conversation.patient_id;
+      const mrnHint = await getPatientIdHintForSlot(patientId, correlationId);
       const slotLink = buildBookingPageUrl(conversation.id, doctorId);
       replyText =
-        `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
+        `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
       state = {
         ...state,
         step: 'awaiting_slot_selection',
@@ -1571,9 +1744,11 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       await updateConversationState(conversation.id, state, correlationId);
     } else if (state.step === 'selecting_slot') {
       // Legacy: redirect to external slot picker (e-task-5)
+      const patientId = state.bookingForPatientId ?? conversation.patient_id;
+      const mrnHint = await getPatientIdHintForSlot(patientId, correlationId);
       const slotLink = buildBookingPageUrl(conversation.id, doctorId);
       replyText =
-        `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
+        `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
       state = {
         ...state,
         step: 'awaiting_slot_selection',
@@ -1590,8 +1765,9 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         patient?.consent_status === 'granted';
       if (hasPatientReady) {
         const slotLink = buildBookingPageUrl(conversation.id, doctorId);
+        const mrnHint = formatPatientIdHint(patient.medical_record_number);
         replyText =
-          `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
+          `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
         state = {
           ...state,
           lastIntent: intentResult.intent,
@@ -1644,6 +1820,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       state.step === 'awaiting_slot_selection' ||
       state.step === 'collecting_all' ||
       state.step === 'confirm_details' ||
+      state.step === 'awaiting_match_confirmation' ||
       state.step === 'consent'
         ? state
         : {

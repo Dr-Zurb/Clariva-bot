@@ -25,3 +25,33 @@ export interface Patient {
 export interface PatientDetailData {
   patient: Patient;
 }
+
+/** Summary for list endpoint (e-task-3). */
+export interface PatientSummary {
+  id: string;
+  name: string;
+  phone: string;
+  age?: number | null;
+  gender?: string | null;
+  medical_record_number?: string;
+  last_appointment_date?: string | null;
+  created_at: string;
+}
+
+export interface PatientsListData {
+  patients: PatientSummary[];
+}
+
+/** Patient in a possible-duplicate group (from GET /api/v1/patients/possible-duplicates). */
+export interface DuplicateGroupPatient {
+  id: string;
+  name: string;
+  phone: string;
+  age?: number | null;
+  gender?: string | null;
+  medicalRecordNumber?: string;
+}
+
+export interface PossibleDuplicatesData {
+  groups: DuplicateGroupPatient[][];
+}

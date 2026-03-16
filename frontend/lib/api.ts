@@ -7,7 +7,11 @@ import type {
   AppointmentsListData,
   AppointmentDetailData,
 } from "@/types/appointment";
-import type { PatientDetailData } from "@/types/patient";
+import type {
+  PatientDetailData,
+  PatientsListData,
+  PossibleDuplicatesData,
+} from "@/types/patient";
 import type {
   DoctorSettings,
   PatchDoctorSettingsPayload,
@@ -111,6 +115,15 @@ export async function getAppointmentById(
 }
 
 /**
+ * Fetch list of patients for the current doctor. Requires auth token.
+ */
+export async function getPatients(
+  token: string
+): Promise<ApiSuccess<PatientsListData>> {
+  return request<PatientsListData>("/api/v1/patients", { token });
+}
+
+/**
  * Fetch a single patient by ID. Requires auth token.
  * Throws on 404 (not found) or 403 (no access).
  */
@@ -119,6 +132,51 @@ export async function getPatientById(
   token: string
 ): Promise<ApiSuccess<PatientDetailData>> {
   return request<PatientDetailData>(`/api/v1/patients/${id}`, { token });
+}
+
+/**
+ * Fetch possible duplicate patient groups. Requires auth token.
+ */
+export async function getPossibleDuplicates(
+  token: string
+): Promise<ApiSuccess<PossibleDuplicatesData>> {
+  return request<PossibleDuplicatesData>("/api/v1/patients/possible-duplicates", {
+    token,
+  });
+}
+
+/**
+ * Merge source patient into target patient. Requires auth token.
+ * Body: { sourcePatientId, targetPatientId }
+ */
+export async function mergePatients(
+  token: string,
+  body: { sourcePatientId: string; targetPatientId: string }
+): Promise<ApiSuccess<{ merged: boolean }>> {
+  const res = await fetch(`${API_BASE}/api/v1/patients/merge`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ merged: boolean }>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<{ merged: boolean }>;
 }
 
 // =============================================================================
