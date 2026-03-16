@@ -36,7 +36,6 @@ import {
 import { findOrCreatePlaceholderPatient, findPatientByIdWithAdmin, createPatientForBooking } from '../services/patient-service';
 import { findPossiblePatientMatches } from '../services/patient-matching-service';
 import {
-  cancelAppointmentForPatient,
   getAppointmentByIdForWorker,
   listAppointmentsForPatient,
 } from '../services/appointment-service';
@@ -52,12 +51,17 @@ import { createMessage, getRecentMessages, getSenderIdByPlatformMessageId } from
 import {
   classifyIntent,
   generateResponse,
+  generateResponseWithActions,
   redactPhiForAI,
   parseMultiPersonBooking,
   AI_RECENT_MESSAGES_LIMIT,
   MEDICAL_QUERY_RESPONSE,
   EMERGENCY_RESPONSE,
 } from '../services/ai-service';
+import {
+  executeAction,
+  parseToolCallToAction,
+} from '../services/action-executor-service';
 import {
   getInitialCollectionStep,
   getCollectedData,
@@ -80,7 +84,6 @@ import { getDoctorSettings } from '../services/doctor-settings-service';
 import type { DoctorSettingsRow } from '../types/doctor-settings';
 import type { DoctorContext, GenerateResponseContext } from '../services/ai-service';
 import {
-  sendAppointmentCancelledToDoctor,
   sendNewAppointmentToDoctor,
   sendPaymentConfirmationToPatient,
   sendPaymentReceivedToDoctor,
@@ -232,8 +235,8 @@ function parseInstagramMessage(
     }
   }
 
-  return null;
-}
+    return null;
+  }
 
 /**
  * Extract first message_edit mid/text from Instagram payload (entry[].messaging[]).
@@ -771,7 +774,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     const fallback = await tryResolveSenderFromMessageEdit(instagramPayload, correlationId);
     if (fallback) {
       parsed = fallback;
-      logger.info(
+    logger.info(
         { eventId, provider, correlationId, mid: fallback.mid },
         'Instagram message_edit: resolved sender (payload had no sender)'
       );
@@ -851,11 +854,11 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       'Skipping send: senderId is page ID (cannot reply to self); marking processed'
     );
     await markWebhookProcessed(eventId, provider);
-    await logAuditEvent({
-      correlationId,
-      userId: undefined,
-      action: 'webhook_processed',
-      resourceType: 'webhook',
+      await logAuditEvent({
+        correlationId,
+        userId: undefined,
+        action: 'webhook_processed',
+        resourceType: 'webhook',
       status: 'success',
       metadata: { event_id: eventId, provider, status: 'skipped_page_id_recipient' },
     });
@@ -873,10 +876,10 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       userId: undefined,
       action: 'webhook_processed',
       resourceType: 'webhook',
-      status: 'failure',
+        status: 'failure',
       errorMessage: 'Missing page ID in payload',
-      metadata: { event_id: eventId, provider },
-    });
+        metadata: { event_id: eventId, provider },
+      });
     return;
   }
 
@@ -1034,52 +1037,44 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         await updateConversationState(conversation.id, state, correlationId);
       }
     } else if (state.step === 'awaiting_cancel_confirmation') {
-      // Cancel flow: user confirms Yes/No
-      const cancelId = state.cancelAppointmentId;
-      const lower = text.trim().toLowerCase();
-      const isYes = /^(yes|yeah|yep|ok|okay|cancel|confirm)$/.test(lower);
-      const isNo = /^(no|nope|keep|don't|dont)$/.test(lower);
-      if (cancelId && isYes) {
-        const appointment = await getAppointmentByIdForWorker(cancelId, correlationId);
-        if (!appointment || appointment.doctor_id !== doctorId || !appointment.patient_id) {
-          replyText = "That appointment wasn't found.";
-        } else {
-          await cancelAppointmentForPatient(cancelId, appointment.patient_id, doctorId, correlationId);
-          const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
-          const iso = typeof appointment.appointment_date === 'string'
-            ? appointment.appointment_date
-            : (appointment.appointment_date as Date).toISOString();
-          const dateStr = formatAppointmentStatusLine(iso, '', tz).replace(' ()', '');
-          replyText = `Your appointment on ${dateStr} has been cancelled.`;
-          sendAppointmentCancelledToDoctor(doctorId, cancelId, iso, correlationId).catch((err) => {
-            logger.warn(
-              { correlationId, appointmentId: cancelId, error: err instanceof Error ? err.message : String(err) },
-              'Appointment cancelled email failed (non-blocking)'
-            );
+      // AI-to-System: AI understands natural language (yes, 2737, go ahead, etc.) and calls confirm_cancel
+      const aiResult = await generateResponseWithActions({
+        conversationId: conversation.id,
+        currentIntent: intentResult.intent,
+        state,
+        recentMessages,
+        currentUserMessage: text,
+        correlationId,
+        doctorContext,
+        availableTools: ['confirm_cancel'],
+      });
+      let executedReply: string | undefined;
+      let executedStateUpdate: Partial<ConversationState> | undefined;
+      if (aiResult.toolCalls?.length) {
+        for (const tc of aiResult.toolCalls) {
+          if (tc.name !== 'confirm_cancel') continue;
+          const action = parseToolCallToAction(tc);
+          if (!action || action.type !== 'confirm_cancel') continue;
+          const result = await executeAction(action, {
+            conversationId: conversation.id,
+            doctorId,
+            conversation,
+            state,
+            correlationId,
+            timezone: doctorSettings?.timezone ?? undefined,
           });
+          if (result.success && result.replyOverride) {
+            executedReply = result.replyOverride;
+            executedStateUpdate = result.stateUpdate;
+            break;
+          }
         }
-        state = {
-          ...state,
-          step: 'responded',
-          cancelAppointmentId: undefined,
-          pendingCancelAppointmentIds: undefined,
-          updatedAt: new Date().toISOString(),
-        };
-        await updateConversationState(conversation.id, state, correlationId);
-      } else if (isNo) {
-        replyText = "No problem. Your appointment is still scheduled.";
-        state = {
-          ...state,
-          step: 'responded',
-          cancelAppointmentId: undefined,
-          pendingCancelAppointmentIds: undefined,
-          updatedAt: new Date().toISOString(),
-        };
-        await updateConversationState(conversation.id, state, correlationId);
-      } else {
-        replyText = "Please reply **Yes** to cancel or **No** to keep your appointment.";
-        await updateConversationState(conversation.id, state, correlationId);
       }
+      replyText = (executedReply ?? aiResult.reply) || "Please reply **Yes** to cancel or **No** to keep your appointment.";
+      if (executedStateUpdate) {
+        state = { ...state, ...executedStateUpdate };
+      }
+      await updateConversationState(conversation.id, state, correlationId);
     } else if (state.step === 'awaiting_reschedule_choice') {
       // Reschedule flow: user picks which appointment (1, 2, 3...)
       const ids = state.pendingRescheduleAppointmentIds ?? [];
@@ -1452,7 +1447,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         state = { ...state, step: 'consent', updatedAt: new Date().toISOString() };
         await updateConversationState(conversation.id, state, correlationId);
       }
-      const consentResult = parseConsentReply(text);
+        const consentResult = parseConsentReply(text);
       const hasExtrasOrGranted =
         consentResult === 'granted' ||
         (consentResult === 'unclear' && !isSkipExtrasReply(text));
@@ -1551,28 +1546,28 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           };
           await updateConversationState(conversation.id, state, correlationId);
         }
-      } else if (consentResult === 'denied') {
-        replyText = await handleConsentDenied(
-          conversation.id,
-          conversation.patient_id,
-          correlationId
-        );
-        state = {
-          ...state,
-          lastIntent: intentResult.intent,
-          step: 'responded',
-          updatedAt: new Date().toISOString(),
-        };
-        await updateConversationState(conversation.id, state, correlationId);
-      } else {
+        } else if (consentResult === 'denied') {
+          replyText = await handleConsentDenied(
+            conversation.id,
+            conversation.patient_id,
+            correlationId
+          );
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'responded',
+            updatedAt: new Date().toISOString(),
+          };
+          await updateConversationState(conversation.id, state, correlationId);
+        } else {
         const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
-        replyText = await generateResponse({
-          conversationId: conversation.id,
-          currentIntent: intentResult.intent,
-          state,
-          recentMessages,
-          currentUserMessage: text,
-          correlationId,
+          replyText = await generateResponse({
+            conversationId: conversation.id,
+            currentIntent: intentResult.intent,
+            state,
+            recentMessages,
+            currentUserMessage: text,
+            correlationId,
           doctorContext,
           context: aiContext,
         });
@@ -1642,14 +1637,14 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       if (wantsJustOther) {
         const relationMatch = text.match(/\b(mother|father|mom|dad|wife|husband|son|daughter|sister|brother)\b/i);
         const relation = relationMatch ? relationMatch[1].toLowerCase() : state.relation ?? 'them';
-        state = {
-          ...state,
-          lastIntent: intentResult.intent,
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
           pendingSelfBooking: false,
           relation,
           updatedAt: new Date().toISOString(),
-        };
-        await updateConversationState(conversation.id, state, correlationId);
+          };
+          await updateConversationState(conversation.id, state, correlationId);
         replyText = `Got it, just your ${relation} then. Please share: Full name, Age, Mobile, Reason for visit for your ${relation}. Email (optional).`;
       } else {
       const extracted = extractFieldsFromMessage(text);
@@ -1674,38 +1669,38 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           await updateConversationState(conversation.id, state, correlationId);
         }
         const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
-        replyText = await generateResponse({
-          conversationId: conversation.id,
-          currentIntent: intentResult.intent,
-          state,
-          recentMessages,
-          currentUserMessage: text,
-          correlationId,
-          doctorContext,
-          context: aiContext,
-        });
-      } else {
-        const extractResult = await validateAndApplyExtracted(
-          conversation.id,
-          text,
-          { ...state, lastIntent: intentResult.intent },
-          correlationId,
-          { lastBotMessage: getLastBotMessage(recentMessages), recentMessages }
-        );
-        state = extractResult.newState;
-        await updateConversationState(conversation.id, state, correlationId);
-        if (extractResult.missingFields.length === 0) {
-          const collected = await getCollectedData(conversation.id);
-          replyText = buildConfirmDetailsMessage(collected ?? {});
-        } else {
-          const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
-          const aiReply = await generateResponse({
+          replyText = await generateResponse({
             conversationId: conversation.id,
             currentIntent: intentResult.intent,
             state,
             recentMessages,
             currentUserMessage: text,
             correlationId,
+          doctorContext,
+          context: aiContext,
+          });
+      } else {
+        const extractResult = await validateAndApplyExtracted(
+            conversation.id,
+            text,
+            { ...state, lastIntent: intentResult.intent },
+          correlationId,
+          { lastBotMessage: getLastBotMessage(recentMessages), recentMessages }
+          );
+        state = extractResult.newState;
+            await updateConversationState(conversation.id, state, correlationId);
+        if (extractResult.missingFields.length === 0) {
+          const collected = await getCollectedData(conversation.id);
+          replyText = buildConfirmDetailsMessage(collected ?? {});
+        } else {
+          const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
+          const aiReply = await generateResponse({
+              conversationId: conversation.id,
+              currentIntent: intentResult.intent,
+              state,
+              recentMessages,
+              currentUserMessage: text,
+              correlationId,
             doctorContext,
             context: { ...aiContext, missingFields: extractResult.missingFields },
           });
@@ -1767,11 +1762,11 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             await updateConversationState(conversation.id, state, correlationId);
             if (matches.length === 1) {
               replyText = `We found a record for **${matches[0]!.name}** with this number. Same person? Reply Yes or No.`;
-            } else {
+          } else {
               const list = matches.slice(0, 2).map((m, i) => `${i + 1}. ${m.name}${m.age != null ? ` (${m.age})` : ''}`).join(', ');
               replyText = `We found ${matches.length} records: ${list}. Which one? Reply 1 or 2, or No for new patient.`;
-            }
-          } else {
+          }
+        } else {
             const now = new Date().toISOString();
             state = {
               ...state,
@@ -1834,7 +1829,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
               ? aiReply
               : `Still need: ${extractResult.missingFields.map((f) => labels[f] ?? f).join(', ')}. Please share.`;
         }
-      } else {
+          } else {
         const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
         replyText = await generateResponse({
           conversationId: conversation.id,
@@ -1842,7 +1837,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           state,
           recentMessages,
           currentUserMessage: text,
-          correlationId,
+                correlationId,
           doctorContext,
           context: aiContext,
         });
@@ -1852,11 +1847,11 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       isPostBookingAcknowledgment(text, recentMessages)
     ) {
       replyText = "Great—you're all set. Let us know if you need anything else.";
-      state = {
-        ...state,
-        lastIntent: intentResult.intent,
-        step: 'responded',
-        updatedAt: new Date().toISOString(),
+              state = {
+                ...state,
+                lastIntent: intentResult.intent,
+                step: 'responded',
+                updatedAt: new Date().toISOString(),
       };
       await updateConversationState(conversation.id, state, correlationId);
     } else if (isBookIntent && (justStartingCollection || inCollection)) {
@@ -1881,7 +1876,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           doctorContext,
           context: aiContext,
         });
-      } else {
+              } else {
         const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
         replyText = await generateResponse({
           conversationId: conversation.id,
@@ -1956,7 +1951,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
         state = { ...state, updatedAt: new Date().toISOString() };
         await updateConversationState(conversation.id, state, correlationId);
-      } else {
+        } else {
         replyText =
           "Pick your slot and complete payment using the link above, or say 'change' to get a new link.";
         state = { ...state, updatedAt: new Date().toISOString() };
@@ -2002,9 +1997,9 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         const mrnHint = formatPatientIdHint(patient.medical_record_number);
         replyText =
           `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
-        state = {
-          ...state,
-          lastIntent: intentResult.intent,
+      state = {
+        ...state,
+        lastIntent: intentResult.intent,
           step: 'awaiting_slot_selection',
           consultationType: state.consultationType,
           updatedAt: new Date().toISOString(),
@@ -2016,8 +2011,8 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           lastIntent: intentResult.intent,
           step: getInitialCollectionStep(),
           collectedFields: [],
-          updatedAt: new Date().toISOString(),
-        };
+        updatedAt: new Date().toISOString(),
+      };
         await updateConversationState(conversation.id, state, correlationId);
         const practiceName = doctorContext?.practice_name?.trim() || 'the clinic';
         replyText = `Sure—happy to help you book at **${practiceName}**. Please share: Full name, Age, Gender, Mobile number, Reason for visit. Email (optional) for receipts.`;
@@ -2055,7 +2050,11 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       state.step === 'collecting_all' ||
       state.step === 'confirm_details' ||
       state.step === 'awaiting_match_confirmation' ||
-      state.step === 'consent'
+      state.step === 'consent' ||
+      state.step === 'awaiting_cancel_choice' ||
+      state.step === 'awaiting_cancel_confirmation' ||
+      state.step === 'awaiting_reschedule_choice' ||
+      state.step === 'awaiting_reschedule_slot'
         ? state
         : {
             ...state,

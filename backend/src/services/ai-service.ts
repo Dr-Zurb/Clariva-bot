@@ -13,6 +13,7 @@ import type { IntentDetectionResult, Intent } from '../types/ai';
 import { toIntent } from '../types/ai';
 import type { ConversationState } from '../types/conversation';
 import type { Message } from '../types';
+import type { AIResponseWithActions, ToolCallFromAI } from '../types/system-actions';
 import { logAIClassification, logAIResponseGeneration, logAuditEvent } from '../utils/audit-logger';
 import type { CollectedPatientData } from '../utils/validation';
 
@@ -752,4 +753,201 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
   }
 
   return FALLBACK_RESPONSE;
+}
+
+// ============================================================================
+// AI-to-System Instruction Layer (e-task-ai-system-instruction-layer)
+// ============================================================================
+
+/** Tool definitions for cancel/reschedule flows. Minimal to reduce tokens. */
+const CONFIRM_CANCEL_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'confirm_cancel',
+    description:
+      'Call when user confirms they want to cancel (yes, yeah, go ahead, do it, 2737, etc.) or to keep (no, nope, don\'t).',
+    parameters: {
+      type: 'object',
+      properties: {
+        confirm: {
+          type: 'boolean',
+          description: 'true = cancel the appointment, false = keep it',
+        },
+      },
+      required: ['confirm'],
+    },
+  },
+};
+
+const PICK_APPOINTMENT_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'pick_appointment',
+    description:
+      'Call when user picks an appointment by number (e.g. "2" or "just #2 for me" when we listed 1, 2, 3).',
+    parameters: {
+      type: 'object',
+      properties: {
+        index: {
+          type: 'number',
+          description: '1-based index (1 = first, 2 = second, etc.)',
+        },
+      },
+      required: ['index'],
+    },
+  },
+};
+
+export interface GenerateResponseWithActionsInput extends GenerateResponseInput {
+  /** Tools to offer based on state. Empty = no tools, standard reply only. */
+  availableTools: Array<'confirm_cancel' | 'pick_appointment'>;
+}
+
+/**
+ * Generate reply with optional tool calls. When AI returns a tool call, caller
+ * executes it and uses replyOverride from action executor.
+ *
+ * @param input - Same as generateResponse + availableTools
+ * @returns { reply, toolCalls? }
+ */
+export async function generateResponseWithActions(
+  input: GenerateResponseWithActionsInput
+): Promise<AIResponseWithActions> {
+  const {
+    conversationId,
+    currentIntent,
+    state,
+    recentMessages,
+    currentUserMessage,
+    correlationId,
+    doctorContext,
+    availableTools,
+  } = input;
+
+  const config = getOpenAIConfig();
+  const client = getOpenAIClient();
+
+  if (!client) {
+    logger.warn(
+      { correlationId, conversationId },
+      'generateResponseWithActions skipped: OPENAI_API_KEY not set'
+    );
+    return { reply: FALLBACK_RESPONSE };
+  }
+
+  const redactedCurrent = redactPhiForAI(currentUserMessage);
+  const historyMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  const pairs = recentMessages.slice(-MAX_HISTORY_PAIRS * 2);
+  for (const msg of pairs) {
+    const content = redactPhiForAI(msg.content);
+    if (!content.trim()) continue;
+    const role = msg.sender_type === 'patient' ? 'user' : 'assistant';
+    historyMessages.push({ role, content });
+  }
+
+  const tools: Array<typeof CONFIRM_CANCEL_TOOL | typeof PICK_APPOINTMENT_TOOL> = [];
+  if (availableTools.includes('confirm_cancel')) tools.push(CONFIRM_CANCEL_TOOL);
+  if (availableTools.includes('pick_appointment')) tools.push(PICK_APPOINTMENT_TOOL);
+
+  const stepContext = state?.step ? ` Current step: ${state.step}.` : '';
+  const cancelContext =
+    state.step === 'awaiting_cancel_confirmation' && state.cancelAppointmentId
+      ? ' User is confirming cancel. Use confirm_cancel tool.'
+      : '';
+  const pickContext =
+    (state.step === 'awaiting_cancel_choice' && state.pendingCancelAppointmentIds?.length) ||
+    (state.step === 'awaiting_reschedule_choice' && state.pendingRescheduleAppointmentIds?.length)
+      ? ' User is picking which appointment. Use pick_appointment tool.'
+      : '';
+
+  const systemPrompt = buildResponseSystemPrompt(doctorContext);
+  const systemContent =
+    systemPrompt +
+    `\n\nIntent: ${currentIntent}.${stepContext}${cancelContext}${pickContext} If the user clearly confirms or picks, call the appropriate tool. Otherwise reply with a short clarification.`;
+
+  const messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [
+    { role: 'system', content: systemContent },
+    ...historyMessages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+    { role: 'user', content: redactedCurrent },
+  ];
+
+  const baseParams = {
+    model: config.model,
+    max_completion_tokens: config.maxTokens,
+    messages,
+    stream: false as const,
+  };
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const completion =
+        tools.length > 0
+          ? await client.chat.completions.create({
+              ...baseParams,
+              tools,
+              tool_choice: 'auto',
+            })
+          : await client.chat.completions.create(baseParams);
+
+      const msg = completion.choices[0]?.message;
+      const usage = completion.usage;
+
+      const toolCalls: ToolCallFromAI[] = [];
+      if (msg?.tool_calls?.length) {
+        for (const tc of msg.tool_calls) {
+          const fn = 'function' in tc ? tc.function : undefined;
+          if (fn?.name && typeof fn.arguments === 'string') {
+            toolCalls.push({
+              id: tc.id ?? '',
+              name: fn.name,
+              arguments: fn.arguments,
+            });
+          }
+        }
+      }
+
+      const content = msg?.content?.trim();
+      const reply = content || (toolCalls.length > 0 ? '' : FALLBACK_RESPONSE);
+
+      await logAIResponseGeneration({
+        correlationId,
+        model: config.model,
+        redactionApplied: true,
+        status: 'success',
+        resourceId: conversationId,
+        tokens: usage?.total_tokens,
+      });
+
+      return {
+        reply,
+        ...(toolCalls.length > 0 ? { toolCalls } : {}),
+      };
+    } catch (err) {
+      const isLastAttempt = attempt === MAX_RETRIES - 1;
+      logger.warn(
+        {
+          correlationId,
+          conversationId,
+          attempt: attempt + 1,
+          err: err instanceof Error ? err.message : 'unknown',
+        },
+        'generateResponseWithActions attempt failed'
+      );
+      if (isLastAttempt) {
+        await logAIResponseGeneration({
+          correlationId,
+          model: config.model,
+          redactionApplied: true,
+          status: 'failure',
+          resourceId: conversationId,
+          errorMessage: 'response_with_actions_failed_after_retries',
+        });
+        return { reply: FALLBACK_RESPONSE };
+      }
+      const delayMs = RETRY_DELAYS_MS[attempt] ?? 4000;
+      await sleep(delayMs);
+    }
+  }
+
+  return { reply: FALLBACK_RESPONSE };
 }

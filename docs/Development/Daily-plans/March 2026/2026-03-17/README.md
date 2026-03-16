@@ -14,8 +14,11 @@ Task files for development initiatives. See [TASK_MANAGEMENT_GUIDE.md](../TASK_M
 |---|------|------|------|
 | 1 | Appointment Cancellation | [e-task-cancel-appointment.md](./e-task-cancel-appointment.md) | 4–6 h |
 | 2 | Appointment Rescheduling | [e-task-reschedule-appointment.md](./e-task-reschedule-appointment.md) | 5–7 h |
+| 3 | AI-to-System Instruction Layer | [e-task-ai-system-instruction-layer.md](./e-task-ai-system-instruction-layer.md) | 12–16 h |
 
-**Dependencies:** e-task-cancel-appointment → e-task-reschedule-appointment (reschedule reuses patient-ID and list-upcoming patterns from cancel)
+**Dependencies:** e-task-cancel-appointment → e-task-reschedule-appointment → e-task-ai-system-instruction-layer
+
+**Bug fix (2026-03-17):** `stateToPersist` in webhook-worker now includes `awaiting_cancel_choice`, `awaiting_cancel_confirmation`, `awaiting_reschedule_choice`, `awaiting_reschedule_slot` so cancel/reschedule flow state is preserved between messages.
 
 ---
 
