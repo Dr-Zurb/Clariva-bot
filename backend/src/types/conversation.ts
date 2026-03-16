@@ -68,4 +68,12 @@ export interface ConversationState {
   pendingOtherBooking?: { relation: string };
   /** e-task-5: When awaiting_match_confirmation — possible patient match IDs (top 1–2 for "which one?") */
   pendingMatchPatientIds?: string[];
+  /** Cancel flow: appointment ID when user has chosen which one to cancel */
+  cancelAppointmentId?: string;
+  /** Cancel flow: when multiple appointments, store IDs for "1", "2" mapping */
+  pendingCancelAppointmentIds?: string[];
+  /** Reschedule flow: appointment ID when user has chosen which one to reschedule */
+  rescheduleAppointmentId?: string;
+  /** Reschedule flow: when multiple appointments, store IDs for "1", "2" mapping */
+  pendingRescheduleAppointmentIds?: string[];
 }

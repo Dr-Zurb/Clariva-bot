@@ -16,6 +16,7 @@ import {
 } from '../utils/validation';
 import { getDaySlotsWithStatus } from '../services/availability-service';
 import {
+  processRescheduleSlotSelection,
   processSlotSelection,
   processSlotSelectionAndPay,
   getRedirectUrlForDoctor,
@@ -84,14 +85,15 @@ export const getSlotPageInfoHandler = asyncHandler(async (req: Request, res: Res
   };
 
   const { token } = validateSlotPageInfoQuery(normalized);
-  const { conversationId, doctorId } = verifyBookingToken(token);
+  const { conversationId, doctorId, appointmentId } = verifyBookingToken(token);
 
   const doctorSettings = await getDoctorSettings(doctorId);
   const practiceName = doctorSettings?.practice_name?.trim() || 'Clariva Care';
+  const mode = appointmentId ? 'reschedule' as const : 'book' as const;
 
   res.status(200).json(
     successResponse(
-      { doctorId, practiceName, conversationId },
+      { doctorId, practiceName, conversationId, mode, appointmentId: appointmentId ?? undefined },
       req
     )
   );
@@ -106,19 +108,36 @@ export const getSlotPageInfoHandler = asyncHandler(async (req: Request, res: Res
 export const selectSlotAndPayHandler = asyncHandler(async (req: Request, res: Response) => {
   const correlationId = req.correlationId || 'unknown';
   const body = validateSelectSlotBody(req.body);
+  const { appointmentId } = verifyBookingToken(body.token);
 
   try {
-    const result = await processSlotSelectionAndPay(body.token, body.slotStart, correlationId);
-    res.status(200).json(
-      successResponse(
-        {
-          paymentUrl: result.paymentUrl,
-          redirectUrl: result.redirectUrl,
-          appointmentId: result.appointmentId,
-        },
-        req
-      )
-    );
+    if (appointmentId) {
+      const result = await processRescheduleSlotSelection(body.token, body.slotStart, correlationId);
+      res.status(200).json(
+        successResponse(
+          {
+            paymentUrl: null,
+            redirectUrl: result.redirectUrl,
+            appointmentId: result.appointmentId,
+            mode: 'reschedule',
+          },
+          req
+        )
+      );
+    } else {
+      const result = await processSlotSelectionAndPay(body.token, body.slotStart, correlationId);
+      res.status(200).json(
+        successResponse(
+          {
+            paymentUrl: result.paymentUrl,
+            redirectUrl: result.redirectUrl,
+            appointmentId: result.appointmentId,
+            mode: 'book',
+          },
+          req
+        )
+      );
+    }
   } catch (err) {
     if (err instanceof ConflictError) {
       res.status(409).json(

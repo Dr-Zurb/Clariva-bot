@@ -36,6 +36,7 @@ import {
 import { findOrCreatePlaceholderPatient, findPatientByIdWithAdmin, createPatientForBooking } from '../services/patient-service';
 import { findPossiblePatientMatches } from '../services/patient-matching-service';
 import {
+  cancelAppointmentForPatient,
   getAppointmentByIdForWorker,
   listAppointmentsForPatient,
 } from '../services/appointment-service';
@@ -73,12 +74,13 @@ import {
   handleConsentDenied,
   handleRevocation,
 } from '../services/consent-service';
-import { buildBookingPageUrl } from '../services/slot-selection-service';
+import { buildBookingPageUrl, buildReschedulePageUrl } from '../services/slot-selection-service';
 import { processPaymentSuccess, hasCapturedPaymentForAppointment } from '../services/payment-service';
 import { getDoctorSettings } from '../services/doctor-settings-service';
 import type { DoctorSettingsRow } from '../types/doctor-settings';
 import type { DoctorContext, GenerateResponseContext } from '../services/ai-service';
 import {
+  sendAppointmentCancelledToDoctor,
   sendNewAppointmentToDoctor,
   sendPaymentConfirmationToPatient,
   sendPaymentReceivedToDoctor,
@@ -1000,6 +1002,111 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         updatedAt: new Date().toISOString(),
       };
       await updateConversationState(conversation.id, state, correlationId);
+    } else if (state.step === 'awaiting_cancel_choice') {
+      // Cancel flow: user picks which appointment (1, 2, 3...)
+      const ids = state.pendingCancelAppointmentIds ?? [];
+      const trimmed = text.trim();
+      const num = parseInt(trimmed, 10);
+      if (num >= 1 && num <= ids.length) {
+        const chosenId = ids[num - 1]!;
+        const appointment = await getAppointmentByIdForWorker(chosenId, correlationId);
+        if (!appointment || appointment.doctor_id !== doctorId) {
+          replyText = "That appointment wasn't found. Please try again or say 'cancel appointment' to start over.";
+          state = { ...state, step: 'responded', updatedAt: new Date().toISOString() };
+        } else {
+          const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
+          const iso = typeof appointment.appointment_date === 'string'
+            ? appointment.appointment_date
+            : (appointment.appointment_date as Date).toISOString();
+          const dateStr = formatAppointmentStatusLine(iso, '', tz).replace(' ()', '');
+          replyText = `Cancel appointment on ${dateStr}? Reply **Yes** or **No**.`;
+          state = {
+            ...state,
+            step: 'awaiting_cancel_confirmation',
+            cancelAppointmentId: chosenId,
+            pendingCancelAppointmentIds: undefined,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        await updateConversationState(conversation.id, state, correlationId);
+      } else {
+        replyText = `Please reply 1, 2, or ${ids.length}.`;
+        await updateConversationState(conversation.id, state, correlationId);
+      }
+    } else if (state.step === 'awaiting_cancel_confirmation') {
+      // Cancel flow: user confirms Yes/No
+      const cancelId = state.cancelAppointmentId;
+      const lower = text.trim().toLowerCase();
+      const isYes = /^(yes|yeah|yep|ok|okay|cancel|confirm)$/.test(lower);
+      const isNo = /^(no|nope|keep|don't|dont)$/.test(lower);
+      if (cancelId && isYes) {
+        const appointment = await getAppointmentByIdForWorker(cancelId, correlationId);
+        if (!appointment || appointment.doctor_id !== doctorId || !appointment.patient_id) {
+          replyText = "That appointment wasn't found.";
+        } else {
+          await cancelAppointmentForPatient(cancelId, appointment.patient_id, doctorId, correlationId);
+          const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
+          const iso = typeof appointment.appointment_date === 'string'
+            ? appointment.appointment_date
+            : (appointment.appointment_date as Date).toISOString();
+          const dateStr = formatAppointmentStatusLine(iso, '', tz).replace(' ()', '');
+          replyText = `Your appointment on ${dateStr} has been cancelled.`;
+          sendAppointmentCancelledToDoctor(doctorId, cancelId, iso, correlationId).catch((err) => {
+            logger.warn(
+              { correlationId, appointmentId: cancelId, error: err instanceof Error ? err.message : String(err) },
+              'Appointment cancelled email failed (non-blocking)'
+            );
+          });
+        }
+        state = {
+          ...state,
+          step: 'responded',
+          cancelAppointmentId: undefined,
+          pendingCancelAppointmentIds: undefined,
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+      } else if (isNo) {
+        replyText = "No problem. Your appointment is still scheduled.";
+        state = {
+          ...state,
+          step: 'responded',
+          cancelAppointmentId: undefined,
+          pendingCancelAppointmentIds: undefined,
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+      } else {
+        replyText = "Please reply **Yes** to cancel or **No** to keep your appointment.";
+        await updateConversationState(conversation.id, state, correlationId);
+      }
+    } else if (state.step === 'awaiting_reschedule_choice') {
+      // Reschedule flow: user picks which appointment (1, 2, 3...)
+      const ids = state.pendingRescheduleAppointmentIds ?? [];
+      const trimmed = text.trim();
+      const num = parseInt(trimmed, 10);
+      if (num >= 1 && num <= ids.length) {
+        const chosenId = ids[num - 1]!;
+        const appointment = await getAppointmentByIdForWorker(chosenId, correlationId);
+        if (!appointment || appointment.doctor_id !== doctorId) {
+          replyText = "That appointment wasn't found. Please try again or say 'reschedule appointment' to start over.";
+          state = { ...state, step: 'responded', updatedAt: new Date().toISOString() };
+        } else {
+          const url = buildReschedulePageUrl(conversation.id, doctorId, chosenId);
+          replyText = `Pick a new date and time: [Choose new slot](${url})`;
+          state = {
+            ...state,
+            step: 'awaiting_reschedule_slot',
+            rescheduleAppointmentId: chosenId,
+            pendingRescheduleAppointmentIds: undefined,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        await updateConversationState(conversation.id, state, correlationId);
+      } else {
+        replyText = `Please reply 1, 2, or ${ids.length}.`;
+        await updateConversationState(conversation.id, state, correlationId);
+      }
     } else if (intentResult.intent === 'medical_query' && !inCollection) {
       // Only deflect when NOT in collection flow. Context matters: if we asked for "reason for visit"
       // and the patient replied "Pain Abdomen", that's their answer—not an unsolicited medical query.
@@ -1092,6 +1199,133 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         updatedAt: new Date().toISOString(),
       };
       await updateConversationState(conversation.id, state, correlationId);
+    } else if (intentResult.intent === 'cancel_appointment') {
+      const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
+      const patientIdsList = (() => {
+        const ids = [conversation.patient_id];
+        if (state.lastBookingPatientId && state.lastBookingPatientId !== conversation.patient_id) ids.push(state.lastBookingPatientId);
+        if (state.bookingForPatientId && !ids.includes(state.bookingForPatientId)) ids.push(state.bookingForPatientId);
+        return ids.filter((p): p is string => !!p);
+      })();
+      const allAppointments: Awaited<ReturnType<typeof listAppointmentsForPatient>> = [];
+      const seen = new Set<string>();
+      for (const pid of patientIdsList) {
+        const list = await listAppointmentsForPatient(pid, doctorId, correlationId);
+        for (const a of list) {
+          if (!seen.has(a.id)) {
+            seen.add(a.id);
+            allAppointments.push(a);
+          }
+        }
+      }
+      allAppointments.sort((a, b) => {
+        const da = new Date(a.appointment_date).getTime();
+        const db = new Date(b.appointment_date).getTime();
+        return da - db;
+      });
+      const now = new Date();
+      const upcoming = allAppointments.filter(
+        (a) =>
+          new Date(a.appointment_date) >= now &&
+          (a.status === 'pending' || a.status === 'confirmed')
+      );
+      if (upcoming.length === 0) {
+        replyText = "You don't have any upcoming appointments. Say 'book appointment' to schedule one.";
+        state = { ...state, lastIntent: intentResult.intent, step: 'responded', updatedAt: new Date().toISOString() };
+        await updateConversationState(conversation.id, state, correlationId);
+      } else if (upcoming.length === 1) {
+        const a = upcoming[0]!;
+        const iso = typeof a.appointment_date === 'string' ? a.appointment_date : (a.appointment_date as Date).toISOString();
+        const dateStr = formatAppointmentStatusLine(iso, '', tz).replace(' ()', '');
+        replyText = `Your appointment is on ${dateStr}. Reply **Yes** to cancel, or **No** to keep it.`;
+        state = {
+          ...state,
+          lastIntent: intentResult.intent,
+          step: 'awaiting_cancel_confirmation',
+          cancelAppointmentId: a.id,
+          pendingCancelAppointmentIds: undefined,
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+      } else {
+        const lines = upcoming.map((a, i) => {
+          const iso = typeof a.appointment_date === 'string' ? a.appointment_date : (a.appointment_date as Date).toISOString();
+          return `${i + 1}) ${formatAppointmentStatusLine(iso, '', tz).replace(' ()', '')}`;
+        });
+        replyText = `Which appointment would you like to cancel?\n\n${lines.join('\n')}\n\nReply 1, 2, or ${upcoming.length}.`;
+        state = {
+          ...state,
+          lastIntent: intentResult.intent,
+          step: 'awaiting_cancel_choice',
+          cancelAppointmentId: undefined,
+          pendingCancelAppointmentIds: upcoming.map((a) => a.id),
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+      }
+    } else if (intentResult.intent === 'reschedule_appointment') {
+      const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
+      const patientIdsList = (() => {
+        const ids = [conversation.patient_id];
+        if (state.lastBookingPatientId && state.lastBookingPatientId !== conversation.patient_id) ids.push(state.lastBookingPatientId);
+        if (state.bookingForPatientId && !ids.includes(state.bookingForPatientId)) ids.push(state.bookingForPatientId);
+        return ids.filter((p): p is string => !!p);
+      })();
+      const allAppointments: Awaited<ReturnType<typeof listAppointmentsForPatient>> = [];
+      const seen = new Set<string>();
+      for (const pid of patientIdsList) {
+        const list = await listAppointmentsForPatient(pid, doctorId, correlationId);
+        for (const a of list) {
+          if (!seen.has(a.id)) {
+            seen.add(a.id);
+            allAppointments.push(a);
+          }
+        }
+      }
+      allAppointments.sort((a, b) => {
+        const da = new Date(a.appointment_date).getTime();
+        const db = new Date(b.appointment_date).getTime();
+        return da - db;
+      });
+      const now = new Date();
+      const upcoming = allAppointments.filter(
+        (a) =>
+          new Date(a.appointment_date) >= now &&
+          (a.status === 'pending' || a.status === 'confirmed')
+      );
+      if (upcoming.length === 0) {
+        replyText = "You don't have any upcoming appointments. Say 'book appointment' to schedule one.";
+        state = { ...state, lastIntent: intentResult.intent, step: 'responded', updatedAt: new Date().toISOString() };
+        await updateConversationState(conversation.id, state, correlationId);
+      } else if (upcoming.length === 1) {
+        const a = upcoming[0]!;
+        const url = buildReschedulePageUrl(conversation.id, doctorId, a.id);
+        replyText = `Pick a new date and time: [Reschedule](${url})`;
+        state = {
+          ...state,
+          lastIntent: intentResult.intent,
+          step: 'awaiting_reschedule_slot',
+          rescheduleAppointmentId: a.id,
+          pendingRescheduleAppointmentIds: undefined,
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+      } else {
+        const lines = upcoming.map((a, i) => {
+          const iso = typeof a.appointment_date === 'string' ? a.appointment_date : (a.appointment_date as Date).toISOString();
+          return `${i + 1}) ${formatAppointmentStatusLine(iso, '', tz).replace(' ()', '')}`;
+        });
+        replyText = `Which appointment would you like to reschedule?\n\n${lines.join('\n')}\n\nReply 1, 2, or ${upcoming.length}.`;
+        state = {
+          ...state,
+          lastIntent: intentResult.intent,
+          step: 'awaiting_reschedule_choice',
+          rescheduleAppointmentId: undefined,
+          pendingRescheduleAppointmentIds: upcoming.map((a) => a.id),
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+      }
     } else if (intentResult.intent === 'book_for_someone_else' && (state.step === 'responded' || state.step === 'awaiting_slot_selection')) {
       const multiPerson = parseMultiPersonBooking(text);
       if (multiPerson) {

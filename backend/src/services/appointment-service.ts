@@ -246,20 +246,27 @@ async function checkSlotConflict(
   doctorId: string,
   slotStart: Date,
   slotEnd: Date,
-  correlationId: string
+  correlationId: string,
+  excludeAppointmentId?: string
 ): Promise<boolean> {
   const admin = getSupabaseAdminClient();
   if (!admin) return false;
 
   const rangeStart = new Date(slotStart.getTime() - SLOT_INTERVAL_MS);
 
-  const { data: existing, error } = await admin
+  let query = admin
     .from('appointments')
     .select('id')
     .eq('doctor_id', doctorId)
     .in('status', ['pending', 'confirmed'])
     .gt('appointment_date', rangeStart.toISOString())
     .lt('appointment_date', slotEnd.toISOString());
+
+  if (excludeAppointmentId) {
+    query = query.neq('id', excludeAppointmentId);
+  }
+
+  const { data: existing, error } = await query;
 
   if (error) {
     handleSupabaseError(error, correlationId);
@@ -482,6 +489,154 @@ export async function updateAppointmentStatus(
 
   // Audit log
   await logDataModification(correlationId, userId, 'update', 'appointment', id, ['status']);
+
+  return updated as Appointment;
+}
+
+/**
+ * Cancel appointment for patient (webhook worker context).
+ * Uses admin client; no user JWT. Validates appointment belongs to (doctorId, patientId).
+ *
+ * @param appointmentId - Appointment UUID
+ * @param patientId - Patient UUID (must match appointment.patient_id)
+ * @param doctorId - Doctor UUID (must match appointment.doctor_id)
+ * @param correlationId - Request correlation ID
+ * @returns Updated appointment
+ * @throws NotFoundError if appointment not found or ownership mismatch
+ * @throws ValidationError if status is already cancelled/completed
+ */
+export async function cancelAppointmentForPatient(
+  appointmentId: string,
+  patientId: string,
+  doctorId: string,
+  correlationId: string
+): Promise<Appointment> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available for cancel');
+  }
+
+  const { data: existing, error: fetchError } = await admin
+    .from('appointments')
+    .select('*')
+    .eq('id', appointmentId)
+    .single();
+
+  if (fetchError || !existing) {
+    handleSupabaseError(fetchError, correlationId);
+  }
+
+  if (existing.doctor_id !== doctorId || existing.patient_id !== patientId) {
+    throw new NotFoundError('Appointment not found');
+  }
+
+  if (existing.status === 'cancelled' || existing.status === 'completed') {
+    throw new ValidationError('Appointment is already cancelled or completed');
+  }
+
+  const { data: updated, error } = await admin
+    .from('appointments')
+    .update({ status: 'cancelled' })
+    .eq('id', appointmentId)
+    .select()
+    .single();
+
+  if (error || !updated) {
+    handleSupabaseError(error, correlationId);
+  }
+
+  await logDataModification(
+    correlationId,
+    undefined as any, // System operation (webhook processing)
+    'update',
+    'appointment',
+    appointmentId,
+    ['status']
+  );
+
+  return updated as Appointment;
+}
+
+/**
+ * Update appointment date for patient (webhook worker context).
+ * Uses admin client. Validates appointment belongs to (doctorId, patientId).
+ * Excludes current appointment from slot conflict check.
+ *
+ * @param appointmentId - Appointment UUID
+ * @param newSlotStart - New appointment date/time
+ * @param patientId - Patient UUID (must match appointment.patient_id)
+ * @param doctorId - Doctor UUID (must match appointment.doctor_id)
+ * @param correlationId - Request correlation ID
+ * @returns Updated appointment
+ * @throws NotFoundError if appointment not found or ownership mismatch
+ * @throws ValidationError if status not pending/confirmed or slot in past
+ * @throws ConflictError if new slot is already taken
+ */
+export async function updateAppointmentDateForPatient(
+  appointmentId: string,
+  newSlotStart: Date,
+  patientId: string,
+  doctorId: string,
+  correlationId: string
+): Promise<Appointment> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available for reschedule');
+  }
+
+  const { data: existing, error: fetchError } = await admin
+    .from('appointments')
+    .select('*')
+    .eq('id', appointmentId)
+    .single();
+
+  if (fetchError || !existing) {
+    handleSupabaseError(fetchError, correlationId);
+  }
+
+  if (existing.doctor_id !== doctorId || existing.patient_id !== patientId) {
+    throw new NotFoundError('Appointment not found');
+  }
+
+  if (existing.status !== 'pending' && existing.status !== 'confirmed') {
+    throw new ValidationError('Only pending or confirmed appointments can be rescheduled');
+  }
+
+  if (newSlotStart < new Date()) {
+    throw new ValidationError('Cannot reschedule to a slot in the past');
+  }
+
+  const slotEnd = new Date(newSlotStart.getTime() + SLOT_INTERVAL_MS);
+  const hasConflict = await checkSlotConflict(
+    doctorId,
+    newSlotStart,
+    slotEnd,
+    correlationId,
+    appointmentId
+  );
+  if (hasConflict) {
+    throw new ConflictError('This time slot is no longer available');
+  }
+
+  const { data: updated, error } = await admin
+    .from('appointments')
+    .update({ appointment_date: newSlotStart })
+    .eq('id', appointmentId)
+    .select()
+    .single();
+
+  if (error || !updated) {
+    handleSupabaseError(error, correlationId);
+  }
+
+  await logDataModification(
+    correlationId,
+    undefined as any, // System operation (webhook processing)
+    'update',
+    'appointment',
+    appointmentId,
+    ['appointment_date']
+  );
 
   return updated as Appointment;
 }

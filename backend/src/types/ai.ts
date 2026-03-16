@@ -25,6 +25,7 @@
  * - emergency: Urgent/emergency language (redirect to emergency services)
  * - check_appointment_status: User asks if appointment is confirmed, when is visit
  * - book_for_someone_else: User wants to book for another person (e.g. "book for my mother")
+ * - reschedule_appointment: User wants to change date/time of existing appointment
  * - unknown: Could not classify or fallback
  */
 export type Intent =
@@ -34,6 +35,7 @@ export type Intent =
   | 'check_availability'
   | 'greeting'
   | 'cancel_appointment'
+  | 'reschedule_appointment'
   | 'revoke_consent'
   | 'medical_query'
   | 'emergency'
@@ -52,6 +54,7 @@ export const INTENT_VALUES: readonly Intent[] = [
   'check_availability',
   'greeting',
   'cancel_appointment',
+  'reschedule_appointment',
   'revoke_consent',
   'medical_query',
   'emergency',

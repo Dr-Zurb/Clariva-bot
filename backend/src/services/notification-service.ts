@@ -280,3 +280,94 @@ export async function sendPaymentReceivedToDoctor(
   }
   return sent;
 }
+
+// ============================================================================
+// Doctor: Appointment rescheduled email
+// ============================================================================
+
+/**
+ * Send appointment rescheduled email to doctor when patient reschedules via bot.
+ *
+ * @param doctorId - Doctor user ID
+ * @param appointmentId - Appointment ID
+ * @param oldDateIso - Old appointment date (ISO string)
+ * @param newDateIso - New appointment date (ISO string)
+ * @param correlationId - Request correlation ID
+ * @returns true if sent or email not configured; false on failure (logged)
+ */
+export async function sendAppointmentRescheduledToDoctor(
+  doctorId: string,
+  appointmentId: string,
+  oldDateIso: string,
+  newDateIso: string,
+  correlationId: string
+): Promise<boolean> {
+  const to = await getDoctorEmail(doctorId, correlationId);
+  if (!to) {
+    logger.info({ correlationId, appointmentId }, 'Appointment rescheduled email skipped (no doctor email)');
+    return true;
+  }
+
+  const doctorSettings = await getDoctorSettings(doctorId);
+  const timezone = doctorSettings?.timezone ?? 'Asia/Kolkata';
+  const oldStr = formatAppointmentDate(oldDateIso, timezone);
+  const newStr = formatAppointmentDate(newDateIso, timezone);
+  const subject = 'Appointment rescheduled';
+  const text = `An appointment has been rescheduled from ${oldStr} to ${newStr}. Appointment ID: ${appointmentId}.`;
+
+  const sent = await sendEmail(to, subject, text, correlationId);
+  if (sent) {
+    await auditNotificationSent(
+      correlationId,
+      'appointment_rescheduled_email',
+      'doctor',
+      'appointment',
+      appointmentId
+    );
+  }
+  return sent;
+}
+
+// ============================================================================
+// Doctor: Appointment cancelled email
+// ============================================================================
+
+/**
+ * Send appointment cancelled email to doctor when patient cancels via bot.
+ *
+ * @param doctorId - Doctor user ID
+ * @param appointmentId - Appointment ID
+ * @param appointmentDateIso - Appointment date (ISO string)
+ * @param correlationId - Request correlation ID
+ * @returns true if sent or email not configured; false on failure (logged)
+ */
+export async function sendAppointmentCancelledToDoctor(
+  doctorId: string,
+  appointmentId: string,
+  appointmentDateIso: string,
+  correlationId: string
+): Promise<boolean> {
+  const to = await getDoctorEmail(doctorId, correlationId);
+  if (!to) {
+    logger.info({ correlationId, appointmentId }, 'Appointment cancelled email skipped (no doctor email)');
+    return true;
+  }
+
+  const doctorSettings = await getDoctorSettings(doctorId);
+  const timezone = doctorSettings?.timezone ?? 'Asia/Kolkata';
+  const dateStr = formatAppointmentDate(appointmentDateIso, timezone);
+  const subject = 'Appointment cancelled';
+  const text = `An appointment has been cancelled: ${dateStr}. Appointment ID: ${appointmentId}.`;
+
+  const sent = await sendEmail(to, subject, text, correlationId);
+  if (sent) {
+    await auditNotificationSent(
+      correlationId,
+      'appointment_cancelled_email',
+      'doctor',
+      'appointment',
+      appointmentId
+    );
+  }
+  return sent;
+}

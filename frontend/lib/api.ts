@@ -455,6 +455,8 @@ export interface SlotPageInfoData {
   doctorId: string;
   practiceName: string;
   conversationId: string;
+  mode?: "book" | "reschedule";
+  appointmentId?: string;
 }
 
 export interface DaySlotWithStatus {

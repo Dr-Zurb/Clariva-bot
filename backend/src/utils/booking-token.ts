@@ -15,6 +15,13 @@ export interface BookingTokenPayload {
   conversationId: string;
   doctorId: string;
   exp: number;
+  appointmentId?: string;
+}
+
+export interface VerifiedBookingToken {
+  conversationId: string;
+  doctorId: string;
+  appointmentId?: string;
 }
 
 /**
@@ -22,20 +29,22 @@ export interface BookingTokenPayload {
  *
  * @param conversationId - Conversation UUID
  * @param doctorId - Doctor UUID
- * @param expiresInSeconds - Optional; default 1 hour
+ * @param options - Optional expiresInSeconds or appointmentId (for reschedule mode)
  * @returns Base64url-encoded token (payload.signature)
  */
 export function generateBookingToken(
   conversationId: string,
   doctorId: string,
-  expiresInSeconds: number = BOOKING_TOKEN_EXPIRY_SEC
+  options?: number | { expiresInSeconds?: number; appointmentId?: string }
 ): string {
   const secret = env.BOOKING_TOKEN_SECRET;
   if (!secret || secret.length < 16) {
     throw new UnauthorizedError('BOOKING_TOKEN_SECRET must be set and at least 16 characters');
   }
+  const expiresInSeconds = typeof options === 'number' ? options : options?.expiresInSeconds ?? BOOKING_TOKEN_EXPIRY_SEC;
+  const appointmentId = typeof options === 'object' && options?.appointmentId ? options.appointmentId : undefined;
   const exp = Math.floor(Date.now() / 1000) + expiresInSeconds;
-  const payload: BookingTokenPayload = { conversationId, doctorId, exp };
+  const payload: BookingTokenPayload = { conversationId, doctorId, exp, ...(appointmentId && { appointmentId }) };
   const payloadStr = JSON.stringify(payload);
   const payloadB64 = Buffer.from(payloadStr, 'utf8').toString('base64url');
   const sig = crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');
@@ -46,10 +55,10 @@ export function generateBookingToken(
  * Verify booking token and return payload.
  *
  * @param token - Token from query param
- * @returns { conversationId, doctorId }
+ * @returns { conversationId, doctorId, appointmentId? }
  * @throws UnauthorizedError if token invalid or expired
  */
-export function verifyBookingToken(token: string): { conversationId: string; doctorId: string } {
+export function verifyBookingToken(token: string): VerifiedBookingToken {
   if (!token || typeof token !== 'string') {
     throw new UnauthorizedError('Missing or invalid booking token');
   }
@@ -82,7 +91,11 @@ export function verifyBookingToken(token: string): { conversationId: string; doc
   if (payload.exp < now) {
     throw new UnauthorizedError('Booking token has expired');
   }
-  return { conversationId: payload.conversationId, doctorId: payload.doctorId };
+  return {
+    conversationId: payload.conversationId,
+    doctorId: payload.doctorId,
+    ...(payload.appointmentId && { appointmentId: payload.appointmentId }),
+  };
 }
 
 /**
@@ -93,9 +106,7 @@ export function verifyBookingToken(token: string): { conversationId: string; doc
  * @returns { conversationId, doctorId }
  * @throws UnauthorizedError if token invalid (signature mismatch)
  */
-export function verifyBookingTokenAllowExpired(
-  token: string
-): { conversationId: string; doctorId: string } {
+export function verifyBookingTokenAllowExpired(token: string): VerifiedBookingToken {
   if (!token || typeof token !== 'string') {
     throw new UnauthorizedError('Missing or invalid booking token');
   }
@@ -124,5 +135,9 @@ export function verifyBookingTokenAllowExpired(
   if (!payload.conversationId || !payload.doctorId || typeof payload.exp !== 'number') {
     throw new UnauthorizedError('Invalid booking token (missing fields)');
   }
-  return { conversationId: payload.conversationId, doctorId: payload.doctorId };
+  return {
+    conversationId: payload.conversationId,
+    doctorId: payload.doctorId,
+    ...(payload.appointmentId && { appointmentId: payload.appointmentId }),
+  };
 }

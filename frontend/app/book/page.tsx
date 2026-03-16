@@ -45,6 +45,7 @@ function BookPageContent() {
   const token = searchParams?.get("token") ?? "";
 
   const [practiceName, setPracticeName] = useState<string>("");
+  const [mode, setMode] = useState<"book" | "reschedule">("book");
   const [pageError, setPageError] = useState<string | null>(null);
   const [pageLoading, setPageLoading] = useState(true);
 
@@ -84,6 +85,7 @@ function BookPageContent() {
       .then((res) => {
         if (cancelled) return;
         setPracticeName(res.data.practiceName || "Book Appointment");
+        setMode(res.data.mode ?? "book");
         setPageLoading(false);
         setSelectedDate(dateOptions[0] ?? null);
       })
@@ -179,10 +181,12 @@ function BookPageContent() {
     <main className="min-h-screen bg-gray-50 p-4">
       <div className="mx-auto max-w-md">
         <h1 className="text-xl font-semibold text-gray-900">
-          {practiceName || "Book Appointment"}
+          {mode === "reschedule" ? "Reschedule Appointment" : practiceName || "Book Appointment"}
         </h1>
         <p className="mt-1 text-sm text-gray-600">
-          Select a date and time for your appointment.
+          {mode === "reschedule"
+            ? "Select a new date and time for your appointment."
+            : "Select a date and time for your appointment."}
         </p>
 
         {/* Date picker */}
@@ -257,7 +261,11 @@ function BookPageContent() {
             disabled={!selectedSlot || saving || availableCount === 0}
             className="w-full rounded-lg bg-blue-600 px-4 py-3 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {saving ? "Processing…" : "Continue to payment"}
+            {saving
+              ? "Processing…"
+              : mode === "reschedule"
+                ? "Reschedule"
+                : "Continue to payment"}
           </button>
           {saveError && (
             <p className="mt-2 text-center text-sm text-red-600">

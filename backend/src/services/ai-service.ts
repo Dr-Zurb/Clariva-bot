@@ -132,7 +132,7 @@ export const EMERGENCY_RESPONSE =
 const SYSTEM_PROMPT = `You are a medical receptionist intent classifier. Classify the user message into exactly one intent. Do not diagnose or give clinical advice.
 Classify intent regardless of language. User may write in English, Hindi, Hinglish, or transliterated Hindi.
 
-Valid intents: book_appointment, book_for_someone_else, ask_question, check_availability, greeting, cancel_appointment, revoke_consent, medical_query, emergency, check_appointment_status, unknown.
+Valid intents: book_appointment, book_for_someone_else, ask_question, check_availability, greeting, cancel_appointment, reschedule_appointment, revoke_consent, medical_query, emergency, check_appointment_status, unknown.
 
 Intent rules:
 - greeting: Use when message is ONLY a greeting with no explicit request (e.g. "hello", "hi", "good morning"). NEVER classify simple greetings as book_appointment.
@@ -175,7 +175,7 @@ TONE - Be warm and natural. Match the user's energy. Avoid robotic repetition. W
 
 /** Safe fallback when response generation fails (no PHI, no medical advice). */
 const FALLBACK_RESPONSE =
-  "I didn't quite get that. Could you rephrase? Or say 'book appointment', 'check availability', or 'cancel appointment' if that's what you need.";
+  "I didn't quite get that. Could you rephrase? Or say 'book appointment', 'check availability', 'cancel appointment', or 'reschedule appointment' if that's what you need.";
 
 /** e-task-5: Max message pairs (user+assistant) for AI context. Trade-off: more context vs token cost. */
 const MAX_HISTORY_PAIRS = env.AI_MAX_HISTORY_PAIRS;

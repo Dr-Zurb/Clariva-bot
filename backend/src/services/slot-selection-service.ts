@@ -17,9 +17,16 @@ import { getInstagramAccessTokenForDoctor } from './instagram-connect-service';
 import { sendInstagramMessage } from './instagram-service';
 import { getDoctorSettings } from './doctor-settings-service';
 import { findPatientByIdWithAdmin } from './patient-service';
-import { bookAppointment, hasAppointmentOnDate } from './appointment-service';
+import {
+  bookAppointment,
+  getAppointmentByIdForWorker,
+  hasAppointmentOnDate,
+  updateAppointmentDateForPatient,
+} from './appointment-service';
 import { createPaymentLink } from './payment-service';
 import { verifyBookingToken, generateBookingToken } from '../utils/booking-token';
+import { sendAppointmentRescheduledToDoctor } from './notification-service';
+import { logger } from '../config/logger';
 import { InternalError, NotFoundError, UnauthorizedError, ValidationError } from '../utils/errors';
 
 /**
@@ -89,6 +96,20 @@ function formatSlotForDisplay(slotStart: string, timezone: string): string {
 export function buildBookingPageUrl(conversationId: string, doctorId: string): string {
   const baseUrl = env.BOOKING_PAGE_URL?.trim() || 'https://example.com/book';
   const token = generateBookingToken(conversationId, doctorId);
+  return `${baseUrl.replace(/\/$/, '')}?token=${token}`;
+}
+
+/**
+ * Build reschedule page URL with token including appointmentId.
+ * Same base URL as booking; token encodes reschedule mode.
+ */
+export function buildReschedulePageUrl(
+  conversationId: string,
+  doctorId: string,
+  appointmentId: string
+): string {
+  const baseUrl = env.BOOKING_PAGE_URL?.trim() || 'https://example.com/book';
+  const token = generateBookingToken(conversationId, doctorId, { appointmentId });
   return `${baseUrl.replace(/\/$/, '')}?token=${token}`;
 }
 
@@ -329,4 +350,101 @@ export async function processSlotSelectionAndPay(
     redirectUrl,
     appointmentId: appointment.id,
   };
+}
+
+export interface ProcessRescheduleSlotResult {
+  success: boolean;
+  redirectUrl: string;
+  appointmentId: string;
+}
+
+/**
+ * Process reschedule slot selection: update appointment date, send confirmation DM.
+ *
+ * @param token - Booking token with appointmentId (from buildReschedulePageUrl)
+ * @param slotStart - ISO datetime string for new slot
+ * @param correlationId - Request correlation ID
+ * @returns { success, redirectUrl, appointmentId }
+ * @throws ConflictError when slot is taken
+ */
+export async function processRescheduleSlotSelection(
+  token: string,
+  slotStart: string,
+  correlationId: string
+): Promise<ProcessRescheduleSlotResult> {
+  const { conversationId, doctorId, appointmentId } = verifyBookingToken(token);
+
+  if (!appointmentId) {
+    throw new ValidationError('Invalid reschedule token (missing appointment)');
+  }
+
+  const slotDate = new Date(slotStart);
+  if (isNaN(slotDate.getTime())) {
+    throw new ValidationError('Invalid slotStart format (expected ISO datetime)');
+  }
+  if (slotDate < new Date()) {
+    throw new ValidationError('Cannot reschedule to a slot in the past');
+  }
+
+  const conversation = await findConversationById(conversationId, correlationId);
+  if (!conversation) {
+    throw new NotFoundError('Conversation not found');
+  }
+  if (conversation.doctor_id !== doctorId) {
+    throw new UnauthorizedError('Token does not match conversation');
+  }
+
+  const appointment = await getAppointmentByIdForWorker(appointmentId, correlationId);
+  if (!appointment || !appointment.patient_id || appointment.doctor_id !== doctorId) {
+    throw new NotFoundError('Appointment not found');
+  }
+
+  const updated = await updateAppointmentDateForPatient(
+    appointmentId,
+    slotDate,
+    appointment.patient_id,
+    doctorId,
+    correlationId
+  );
+
+  const doctorSettings = await getDoctorSettings(doctorId);
+  const timezone = doctorSettings?.timezone ?? 'Asia/Kolkata';
+  const dateStr = formatSlotForDisplay(slotStart, timezone);
+
+  const redirectUrl = await getRedirectUrlForDoctor(doctorId);
+
+  const recipientId = conversation.platform_conversation_id;
+  if (recipientId && conversation.platform === 'instagram') {
+    const accessToken = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
+    if (accessToken) {
+      try {
+        await sendInstagramMessage(
+          recipientId,
+          `Your appointment has been rescheduled to **${dateStr}**.`,
+          correlationId,
+          accessToken
+        );
+      } catch (err) {
+        logger.warn(
+          { correlationId, appointmentId, error: err instanceof Error ? err.message : String(err) },
+          'Reschedule confirmation DM failed (non-blocking)'
+        );
+      }
+    }
+  }
+
+  const oldIso =
+    typeof appointment.appointment_date === 'string'
+      ? appointment.appointment_date
+      : (appointment.appointment_date as Date).toISOString();
+  sendAppointmentRescheduledToDoctor(doctorId, appointmentId, oldIso, slotStart, correlationId).catch(
+    (err) => {
+      logger.warn(
+        { correlationId, appointmentId, error: err instanceof Error ? err.message : String(err) },
+        'Appointment rescheduled email failed (non-blocking)'
+      );
+    }
+  );
+
+  return { success: true, redirectUrl, appointmentId: updated.id };
 }
