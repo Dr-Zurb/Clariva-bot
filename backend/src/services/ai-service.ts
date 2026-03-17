@@ -852,7 +852,7 @@ export async function generateResponseWithActions(
   const stepContext = state?.step ? ` Current step: ${state.step}.` : '';
   const cancelContext =
     state.step === 'awaiting_cancel_confirmation' && state.cancelAppointmentId
-      ? ' User is confirming cancel. Use confirm_cancel tool.'
+      ? ' User is confirming cancel. You MUST call confirm_cancel with confirm=true (yes/yeah/go ahead/etc.) or confirm=false (no/nope/keep). Never reply with text only—always call the tool.'
       : '';
   const pickContext =
     (state.step === 'awaiting_cancel_choice' && state.pendingCancelAppointmentIds?.length) ||
@@ -878,6 +878,15 @@ export async function generateResponseWithActions(
     stream: false as const,
   };
 
+  // Force tool call when only confirm_cancel—API guarantees a tool call, no text-only reply
+  const forceConfirmCancel =
+    availableTools.length === 1 &&
+    availableTools[0] === 'confirm_cancel' &&
+    state.step === 'awaiting_cancel_confirmation';
+  const toolChoice = forceConfirmCancel
+    ? ({ type: 'function' as const, function: { name: 'confirm_cancel' } })
+    : 'auto';
+
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       const completion =
@@ -885,7 +894,7 @@ export async function generateResponseWithActions(
           ? await client.chat.completions.create({
               ...baseParams,
               tools,
-              tool_choice: 'auto',
+              tool_choice: toolChoice,
             })
           : await client.chat.completions.create(baseParams);
 
