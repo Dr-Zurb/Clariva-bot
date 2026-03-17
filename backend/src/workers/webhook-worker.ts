@@ -1037,40 +1037,67 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         await updateConversationState(conversation.id, state, correlationId);
       }
     } else if (state.step === 'awaiting_cancel_confirmation') {
-      // AI-to-System: AI understands natural language (yes, 2737, go ahead, etc.) and calls confirm_cancel
-      const aiResult = await generateResponseWithActions({
-        conversationId: conversation.id,
-        currentIntent: intentResult.intent,
-        state,
-        recentMessages,
-        currentUserMessage: text,
-        correlationId,
-        doctorContext,
-        availableTools: ['confirm_cancel'],
-      });
+      // Fast-path: clear yes/no executes immediately (no AI). Prevents AI returning text without tool call.
+      const lower = text.trim().toLowerCase();
+      const isYes = /^(yes|yeah|yep|ok|okay|cancel|confirm)$/.test(lower);
+      const isNo = /^(no|nope|keep|don't|dont)$/.test(lower);
       let executedReply: string | undefined;
       let executedStateUpdate: Partial<ConversationState> | undefined;
-      if (aiResult.toolCalls?.length) {
-        for (const tc of aiResult.toolCalls) {
-          if (tc.name !== 'confirm_cancel') continue;
-          const action = parseToolCallToAction(tc);
-          if (!action || action.type !== 'confirm_cancel') continue;
-          const result = await executeAction(action, {
-            conversationId: conversation.id,
-            doctorId,
-            conversation,
-            state,
-            correlationId,
-            timezone: doctorSettings?.timezone ?? undefined,
-          });
-          if (result.success && result.replyOverride) {
-            executedReply = result.replyOverride;
-            executedStateUpdate = result.stateUpdate;
-            break;
-          }
+
+      if (state.cancelAppointmentId && (isYes || isNo)) {
+        const action = { type: 'confirm_cancel' as const, confirm: isYes };
+        const result = await executeAction(action, {
+          conversationId: conversation.id,
+          doctorId,
+          conversation,
+          state,
+          correlationId,
+          timezone: doctorSettings?.timezone ?? undefined,
+        });
+        if (result.success && result.replyOverride) {
+          executedReply = result.replyOverride;
+          executedStateUpdate = result.stateUpdate;
         }
       }
-      replyText = (executedReply ?? aiResult.reply) || "Please reply **Yes** to cancel or **No** to keep your appointment.";
+
+      if (!executedReply) {
+        // AI path: natural language (2737, go ahead, etc.)
+        const aiResult = await generateResponseWithActions({
+          conversationId: conversation.id,
+          currentIntent: intentResult.intent,
+          state,
+          recentMessages,
+          currentUserMessage: text,
+          correlationId,
+          doctorContext,
+          availableTools: ['confirm_cancel'],
+        });
+        if (aiResult.toolCalls?.length) {
+          for (const tc of aiResult.toolCalls) {
+            if (tc.name !== 'confirm_cancel') continue;
+            const action = parseToolCallToAction(tc);
+            if (!action || action.type !== 'confirm_cancel') continue;
+            const result = await executeAction(action, {
+              conversationId: conversation.id,
+              doctorId,
+              conversation,
+              state,
+              correlationId,
+              timezone: doctorSettings?.timezone ?? undefined,
+            });
+            if (result.success && result.replyOverride) {
+              executedReply = result.replyOverride;
+              executedStateUpdate = result.stateUpdate;
+              break;
+            }
+          }
+        }
+        if (!executedReply) {
+          executedReply = aiResult.reply;
+        }
+      }
+
+      replyText = executedReply || "Please reply **Yes** to cancel or **No** to keep your appointment.";
       if (executedStateUpdate) {
         state = { ...state, ...executedStateUpdate };
       }
