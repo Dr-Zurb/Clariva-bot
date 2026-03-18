@@ -44,6 +44,29 @@ export interface InstagramWebhookPayload {
 }
 
 /**
+ * Instagram comment webhook payload structure
+ * Uses entry[].changes[] with field: "comments" (different from DM entry[].messaging[]).
+ * @see https://developers.facebook.com/docs/graph-api/webhooks/reference/instagram/
+ */
+export interface InstagramCommentWebhookPayload {
+  object: 'instagram';
+  entry: Array<{
+    id: string; // Instagram account / object ID
+    time: number;
+    changes?: Array<{
+      field: string;
+      value?: {
+        from?: { id: string; username?: string };
+        media?: { id: string };
+        id?: string; // comment_id
+        parent_id?: string;
+        text?: string;
+      };
+    }>;
+  }>;
+}
+
+/**
  * Facebook webhook payload structure
  * Based on Meta Platform webhook format
  */
@@ -113,6 +136,7 @@ export interface PaymentWebhookPayload {
  */
 export type WebhookPayload =
   | InstagramWebhookPayload
+  | InstagramCommentWebhookPayload
   | FacebookWebhookPayload
   | WhatsAppWebhookPayload
   | PaymentWebhookPayload;

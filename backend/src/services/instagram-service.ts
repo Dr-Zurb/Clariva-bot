@@ -280,6 +280,95 @@ export async function getSenderFromMostRecentConversation(
   }
 }
 
+/** Public reply text for comment outreach (fixed, no solicitation per COMMENTS_MANAGEMENT_PLAN). */
+export const COMMENT_PUBLIC_REPLY_TEXT = 'Check your DM for more information.';
+
+/**
+ * Reply to an Instagram comment (public reply).
+ * POST /{ig-comment-id}/replies per Instagram Graph API.
+ *
+ * @param commentId - Instagram comment ID (from webhook value.id)
+ * @param message - Reply text (use COMMENT_PUBLIC_REPLY_TEXT for outreach)
+ * @param accessToken - Doctor's Instagram access token (from doctor_instagram)
+ * @param correlationId - For logging (no PHI)
+ * @returns Reply comment ID or null on non-retryable failure
+ */
+export async function replyToInstagramComment(
+  commentId: string,
+  message: string,
+  accessToken: string,
+  correlationId: string
+): Promise<{ replyId: string } | null> {
+  if (!commentId || !message?.trim() || !accessToken) {
+    return null;
+  }
+
+  const token = accessToken.trim();
+  const url = `${FACEBOOK_GRAPH_BASE}/${encodeURIComponent(commentId)}/replies`;
+
+  try {
+    const res = await axios.post<{ id?: string }>(
+      url,
+      null,
+      {
+        params: { message: message.trim(), access_token: token },
+        timeout: 10000,
+      }
+    );
+
+    const replyId = res.data?.id;
+    if (replyId) {
+      await logAuditEvent({
+        correlationId,
+        userId: undefined,
+        action: 'comment_reply',
+        resourceType: 'instagram_comment',
+        status: 'success',
+        metadata: { comment_id: commentId, reply_id: replyId },
+      });
+      return { replyId };
+    }
+    return null;
+  } catch (err) {
+    const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+    const code = (err as AxiosError)?.response?.data as { error?: { code?: number } } | undefined;
+    const metaCode = code?.error?.code;
+
+    if (status === 403 || status === 404 || metaCode === 100) {
+      logger.warn(
+        { correlationId, commentId, status, metaCode },
+        'Comment reply failed (user blocked, comment deleted, or permission denied)'
+      );
+      return null;
+    }
+
+    if (status === 429) {
+      logger.warn({ correlationId, commentId }, 'Comment reply: Instagram API rate limit (429)');
+      throw new TooManyRequestsError('Instagram API rate limit exceeded');
+    }
+
+    logger.warn(
+      {
+        correlationId,
+        commentId,
+        status,
+        message: err instanceof Error ? err.message : String(err),
+      },
+      'Comment reply failed'
+    );
+    await logAuditEvent({
+      correlationId,
+      userId: undefined,
+      action: 'comment_reply',
+      resourceType: 'instagram_comment',
+      status: 'failure',
+      errorMessage: err instanceof Error ? err.message : 'Unknown error',
+      metadata: { comment_id: commentId },
+    });
+    return null;
+  }
+}
+
 /**
  * Send message with retry logic
  *

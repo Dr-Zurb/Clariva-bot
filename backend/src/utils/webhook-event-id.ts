@@ -16,6 +16,7 @@
 import { createHash } from 'crypto';
 import type {
   InstagramWebhookPayload,
+  InstagramCommentWebhookPayload,
   FacebookWebhookPayload,
   WhatsAppWebhookPayload,
 } from '../types/webhook';
@@ -175,6 +176,87 @@ export function getInstagramPageIds(payload: InstagramWebhookPayload): string[] 
   }
   return [...new Set(ids)];
 }
+
+// ============================================================================
+// Instagram Comment Payload (entry[].changes[] with field "comments")
+// ============================================================================
+
+/**
+ * Check if payload is an Instagram comment webhook (entry[].changes[] with field "comments").
+ * Comment events use a different structure than DM (entry[].messaging[]).
+ */
+export function isInstagramCommentPayload(body: unknown): boolean {
+  if (!body || typeof body !== 'object') return false;
+  const p = body as { object?: string; entry?: Array<{ changes?: Array<{ field?: string }> }> };
+  if (p.object !== 'instagram' || !Array.isArray(p.entry)) return false;
+  for (const entry of p.entry) {
+    const changes = entry?.changes;
+    if (!Array.isArray(changes)) continue;
+    for (const c of changes) {
+      if (c?.field === 'comments') return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Extract comment_id from Instagram comment webhook for idempotency.
+ * Returns null if not a comment payload or comment_id missing.
+ */
+export function extractInstagramCommentEventId(body: unknown): string | null {
+  if (!body || typeof body !== 'object') return null;
+  const p = body as InstagramCommentWebhookPayload;
+  if (p.object !== 'instagram' || !Array.isArray(p.entry)) return null;
+  for (const entry of p.entry) {
+    const changes = entry?.changes;
+    if (!Array.isArray(changes)) continue;
+    for (const c of changes) {
+      if (c?.field === 'comments' && c?.value?.id != null) {
+        return String(c.value.id);
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Parse Instagram comment payload into structured fields.
+ * Returns null if not a valid comment payload.
+ */
+export function parseInstagramCommentPayload(body: unknown): {
+  commentId: string;
+  commenterIgId: string;
+  commentText: string;
+  mediaId: string | null;
+  entryId: string | null;
+} | null {
+  if (!body || typeof body !== 'object') return null;
+  const p = body as InstagramCommentWebhookPayload;
+  if (p.object !== 'instagram' || !Array.isArray(p.entry)) return null;
+  for (const entry of p.entry) {
+    const changes = entry?.changes;
+    if (!Array.isArray(changes)) continue;
+    for (const c of changes) {
+      if (c?.field !== 'comments' || !c?.value) continue;
+      const v = c.value;
+      const commentId = v.id;
+      const commenterIgId = v.from?.id;
+      if (!commentId || !commenterIgId) continue;
+      return {
+        commentId: String(commentId),
+        commenterIgId: String(commenterIgId),
+        commentText: (v.text ?? '').trim(),
+        mediaId: v.media?.id != null ? String(v.media.id) : null,
+        entryId: entry.id != null ? String(entry.id) : null,
+      };
+    }
+  }
+  return null;
+}
+
+// ============================================================================
+// Instagram DM Event ID (entry[].messaging[])
+// ============================================================================
 
 /**
  * Extract Instagram event ID from webhook payload (for idempotency).

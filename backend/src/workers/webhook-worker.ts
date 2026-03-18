@@ -27,6 +27,8 @@ import {
   sendInstagramMessage,
   getInstagramMessageSender,
   getSenderFromMostRecentConversation,
+  replyToInstagramComment,
+  COMMENT_PUBLIC_REPLY_TEXT,
 } from '../services/instagram-service';
 import {
   getDoctorIdByPageIds,
@@ -50,6 +52,7 @@ import {
 import { createMessage, getRecentMessages, getSenderIdByPlatformMessageId } from '../services/message-service';
 import {
   classifyIntent,
+  classifyCommentIntent,
   generateResponse,
   generateResponseWithActions,
   redactPhiForAI,
@@ -87,10 +90,19 @@ import {
   sendNewAppointmentToDoctor,
   sendPaymentConfirmationToPatient,
   sendPaymentReceivedToDoctor,
+  sendCommentLeadToDoctor,
 } from '../services/notification-service';
 import { razorpayAdapter } from '../adapters/razorpay-adapter';
 import { paypalAdapter } from '../adapters/paypal-adapter';
-import { getInstagramPageId, getInstagramPageIds } from '../utils/webhook-event-id';
+import {
+  getInstagramPageId,
+  getInstagramPageIds,
+  isInstagramCommentPayload,
+  parseInstagramCommentPayload,
+} from '../utils/webhook-event-id';
+import { resolveDoctorIdFromComment } from '../services/comment-media-service';
+import { createCommentLead } from '../services/comment-lead-service';
+import type { CommentIntent } from '../types/ai';
 import {
   tryAcquireConversationLock,
   releaseConversationLock,
@@ -107,6 +119,18 @@ import type { ConversationState } from '../types/conversation';
 
 /** Fallback when resolution returns null (no doctor linked for page) or AI/conversation flow is skipped */
 const FALLBACK_REPLY = "Thanks for your message. We'll get back to you soon.";
+
+/** e-task-7: High-intent comment intents (reply + DM per COMMENTS_MANAGEMENT_PLAN). */
+const HIGH_INTENT_COMMENT: Set<CommentIntent> = new Set([
+  'book_appointment',
+  'check_availability',
+  'pricing_inquiry',
+  'general_inquiry',
+  'medical_query',
+]);
+
+/** e-task-7: Skip intents (no storage, no outreach). */
+const SKIP_INTENT_COMMENT: Set<CommentIntent> = new Set(['spam', 'joke', 'unrelated', 'vulgar']);
 
 // ============================================================================
 // Connection & Worker Instance
@@ -350,6 +374,43 @@ async function getPatientIdHintForSlot(
   if (!patientId) return '';
   const patient = await findPatientByIdWithAdmin(patientId, correlationId);
   return formatPatientIdHint(patient?.medical_record_number);
+}
+
+/** e-task-7: Build proactive DM by intent per COMMENTS_MANAGEMENT_PLAN. */
+function buildCommentDMMessage(
+  intent: CommentIntent,
+  settings: DoctorSettingsRow | null
+): string {
+  const practiceName = settings?.practice_name?.trim() || 'Our practice';
+  const specialty = settings?.specialty?.trim() || '';
+  const address = settings?.address_summary?.trim() || '';
+  const detailsBlock = `\n\n${practiceName}${specialty ? ` — ${specialty}` : ''}${address ? `. ${address}` : ''}`;
+
+  const templates: Record<string, { ack: string; cta: string }> = {
+    book_appointment: {
+      ack: 'You expressed interest in booking.',
+      cta: 'Reply here if you\'d like to schedule.',
+    },
+    check_availability: {
+      ack: 'You asked about availability.',
+      cta: 'Reply here if you\'d like to schedule a consultation.',
+    },
+    pricing_inquiry: {
+      ack: 'You asked about pricing.',
+      cta: 'Reply here if you\'d like more details.',
+    },
+    general_inquiry: {
+      ack: 'You had a question.',
+      cta: 'Reply here if you\'d like to connect.',
+    },
+    medical_query: {
+      ack: 'Our doctor may be able to help with your query.',
+      cta: 'If you\'d like to schedule a consultation, reply here.',
+    },
+  };
+
+  const t = templates[intent] ?? templates.general_inquiry;
+  return `${t.ack}${detailsBlock}\n\n${t.cta}`;
 }
 
 /** AI Receptionist: Get last bot message content for extraction context. */
@@ -731,6 +792,151 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       'Webhook skipped (provider not yet implemented)'
     );
     await markWebhookProcessed(eventId, provider);
+    return;
+  }
+
+  // Comment webhooks: entry[].changes[] with field "comments" → comment handler (e-task-7)
+  if (isInstagramCommentPayload(payload)) {
+    const parsed = parseInstagramCommentPayload(payload);
+    if (!parsed) {
+      logger.info(
+        { eventId, provider, correlationId },
+        'Instagram comment webhook: unparseable payload, marking processed'
+      );
+      await markWebhookProcessed(eventId, provider);
+      return;
+    }
+
+    const { commentId, commenterIgId, commentText, mediaId, entryId } = parsed;
+    const doctorId = entryId
+      ? await resolveDoctorIdFromComment(entryId, mediaId, correlationId)
+      : null;
+
+    if (!doctorId) {
+      logger.info(
+        { eventId, provider, correlationId, entryId, mediaId },
+        'Comment: no doctor resolved, marking processed'
+      );
+      await markWebhookProcessed(eventId, provider);
+      return;
+    }
+
+    const intentResult = await classifyCommentIntent(commentText, correlationId);
+    const intent = intentResult.intent;
+
+    if (SKIP_INTENT_COMMENT.has(intent)) {
+      logger.info(
+        { eventId, provider, correlationId, intent },
+        'Comment: skip intent, no outreach'
+      );
+      await markWebhookProcessed(eventId, provider);
+      return;
+    }
+
+    const settings = await getDoctorSettings(doctorId);
+    const isHighIntent = HIGH_INTENT_COMMENT.has(intent);
+    let dmSent = false;
+    let publicReplySent = false;
+
+    await createCommentLead(
+      {
+        doctorId,
+        commentId,
+        commenterIgId,
+        commentText,
+        mediaId,
+        intent,
+        confidence: intentResult.confidence,
+        publicReplySent: false,
+        dmSent: false,
+      },
+      correlationId
+    );
+
+    if (isHighIntent) {
+      const doctorToken = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
+      if (doctorToken) {
+        const dmMessage = buildCommentDMMessage(intent, settings);
+        try {
+          await sendInstagramMessage(commenterIgId, dmMessage, correlationId, doctorToken);
+          dmSent = true;
+        } catch (dmErr) {
+          logger.warn(
+            {
+              correlationId,
+              commentId,
+              error: dmErr instanceof Error ? dmErr.message : String(dmErr),
+            },
+            'Comment: proactive DM failed (user may have blocked)'
+          );
+        }
+
+        try {
+          const replyResult = await replyToInstagramComment(
+            commentId,
+            COMMENT_PUBLIC_REPLY_TEXT,
+            doctorToken,
+            correlationId
+          );
+          publicReplySent = !!replyResult;
+        } catch (replyErr) {
+          logger.warn(
+            {
+              correlationId,
+              commentId,
+              error: replyErr instanceof Error ? replyErr.message : String(replyErr),
+            },
+            'Comment: public reply failed'
+          );
+        }
+
+        if (dmSent || publicReplySent) {
+          await createCommentLead(
+            {
+              doctorId,
+              commentId,
+              commenterIgId,
+              commentText,
+              mediaId,
+              intent,
+              confidence: intentResult.confidence,
+              publicReplySent,
+              dmSent,
+            },
+            correlationId
+          );
+        }
+      }
+    }
+
+    sendCommentLeadToDoctor(
+      doctorId,
+      { intent, commentPreview: commentText },
+      correlationId
+    ).catch((err) => {
+      logger.warn(
+        { correlationId, doctorId, error: err instanceof Error ? err.message : String(err) },
+        'Comment lead email failed (non-blocking)'
+      );
+    });
+
+    await markWebhookProcessed(eventId, provider);
+    await logAuditEvent({
+      correlationId,
+      userId: undefined,
+      action: 'webhook_processed',
+      resourceType: 'webhook',
+      status: 'success',
+      metadata: {
+        event_id: eventId,
+        provider,
+        type: 'comment',
+        comment_id: commentId,
+        intent,
+        dm_sent: dmSent,
+        public_reply_sent: publicReplySent,
+      },
+    });
     return;
   }
 

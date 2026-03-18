@@ -17,6 +17,7 @@ import { getInstagramAccessTokenForDoctor } from './instagram-connect-service';
 import { getDoctorSettings } from './doctor-settings-service';
 import { logAuditEvent } from '../utils/audit-logger';
 import { logger } from '../config/logger';
+import { redactPhiForAI } from './ai-service';
 
 // ============================================================================
 // Types
@@ -367,6 +368,47 @@ export async function sendAppointmentCancelledToDoctor(
       'doctor',
       'appointment',
       appointmentId
+    );
+  }
+  return sent;
+}
+
+// ============================================================================
+// Doctor: Comment lead email (e-task-7)
+// ============================================================================
+
+/**
+ * Send comment lead notification to doctor.
+ * Uses redacted comment preview (no PHI in email).
+ *
+ * @param doctorId - Doctor user ID
+ * @param leadSummary - Intent and redacted comment preview
+ * @param correlationId - Request correlation ID
+ */
+export async function sendCommentLeadToDoctor(
+  doctorId: string,
+  leadSummary: { intent: string; commentPreview: string },
+  correlationId: string
+): Promise<boolean> {
+  const to = await getDoctorEmail(doctorId, correlationId);
+  if (!to) {
+    logger.info({ correlationId, doctorId }, 'Comment lead email skipped (no doctor email)');
+    return true;
+  }
+
+  const preview = redactPhiForAI(leadSummary.commentPreview).trim().slice(0, 80);
+  const previewText = preview ? ` Comment: "${preview}${preview.length >= 80 ? '...' : ''}"` : '';
+  const subject = 'New lead from Instagram comment';
+  const text = `New lead from Instagram comment. Intent: ${leadSummary.intent}.${previewText} Check your dashboard for details.`;
+
+  const sent = await sendEmail(to, subject, text, correlationId);
+  if (sent) {
+    await auditNotificationSent(
+      correlationId,
+      'comment_lead_email',
+      'doctor',
+      'comment_lead',
+      doctorId
     );
   }
   return sent;

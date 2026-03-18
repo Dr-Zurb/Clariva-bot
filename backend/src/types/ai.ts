@@ -95,3 +95,55 @@ export interface IntentDetectionResult {
   intent: Intent;
   confidence: ConfidenceScore;
 }
+
+// ============================================================================
+// Comment Intent Types (e-task-6 — Instagram comment classification)
+// ============================================================================
+
+/**
+ * Valid intents for Instagram comment classification.
+ * High-intent (reply + DM): book_appointment, check_availability, pricing_inquiry, general_inquiry, medical_query
+ * Low-intent (store only): greeting, praise, other
+ * Skip (no storage): spam, joke, unrelated, vulgar
+ */
+export type CommentIntent =
+  | 'book_appointment'
+  | 'check_availability'
+  | 'pricing_inquiry'
+  | 'general_inquiry'
+  | 'medical_query'
+  | 'greeting'
+  | 'praise'
+  | 'spam'
+  | 'joke'
+  | 'unrelated'
+  | 'vulgar'
+  | 'other';
+
+export const COMMENT_INTENT_VALUES: readonly CommentIntent[] = [
+  'book_appointment',
+  'check_availability',
+  'pricing_inquiry',
+  'general_inquiry',
+  'medical_query',
+  'greeting',
+  'praise',
+  'spam',
+  'joke',
+  'unrelated',
+  'vulgar',
+  'other',
+] as const;
+
+export function isCommentIntent(value: string): value is CommentIntent {
+  return (COMMENT_INTENT_VALUES as readonly string[]).includes(value);
+}
+
+export function toCommentIntent(value: string): CommentIntent {
+  return isCommentIntent(value) ? value : 'other';
+}
+
+export interface CommentIntentDetectionResult {
+  intent: CommentIntent;
+  confidence: ConfidenceScore;
+}

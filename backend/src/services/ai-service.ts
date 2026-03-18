@@ -9,8 +9,12 @@
 import { getOpenAIClient, getOpenAIConfig } from '../config/openai';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
-import type { IntentDetectionResult, Intent } from '../types/ai';
-import { toIntent } from '../types/ai';
+import type {
+  IntentDetectionResult,
+  Intent,
+  CommentIntentDetectionResult,
+} from '../types/ai';
+import { toIntent, toCommentIntent } from '../types/ai';
 import type { ConversationState } from '../types/conversation';
 import type { Message } from '../types';
 import type { AIResponseWithActions, ToolCallFromAI } from '../types/system-actions';
@@ -52,6 +56,29 @@ function setCachedIntent(redactedText: string, result: IntentDetectionResult): v
     if (firstKey !== undefined) intentCache.delete(firstKey);
   }
   intentCache.set(redactedText, {
+    result,
+    expiresAt: Date.now() + INTENT_CACHE_TTL_MS,
+  });
+}
+
+/** Comment intent cache (separate from DM intent cache). */
+const commentIntentCache = new Map<string, { result: CommentIntentDetectionResult; expiresAt: number }>();
+
+function getCachedCommentIntent(redactedText: string): CommentIntentDetectionResult | null {
+  const entry = commentIntentCache.get(redactedText);
+  if (!entry || Date.now() > entry.expiresAt) {
+    if (entry) commentIntentCache.delete(redactedText);
+    return null;
+  }
+  return entry.result;
+}
+
+function setCachedCommentIntent(redactedText: string, result: CommentIntentDetectionResult): void {
+  if (commentIntentCache.size >= INTENT_CACHE_MAX_SIZE) {
+    const firstKey = commentIntentCache.keys().next().value;
+    if (firstKey !== undefined) commentIntentCache.delete(firstKey);
+  }
+  commentIntentCache.set(redactedText, {
     result,
     expiresAt: Date.now() + INTENT_CACHE_TTL_MS,
   });
@@ -150,6 +177,34 @@ Examples: "hello" → greeting; "book appointment" → book_appointment; "book f
 
 Respond with a single JSON object: { "intent": "<one of the valid intents>", "confidence": <number 0.0 to 1.0> }.
 Use "unknown" only when the message does not clearly match any other intent.`;
+
+/** e-task-6: Comment intent classifier. Short comments (1–20 words), emojis, @mentions, mixed language. */
+const COMMENT_INTENT_SYSTEM_PROMPT = `You are an intent classifier for Instagram post comments on a medical practice's posts. Classify each comment into exactly one intent. Comments are short (1–20 words), may have emojis, @mentions, typos, and mixed language (English, Hindi, Hinglish).
+
+Valid intents: book_appointment, check_availability, pricing_inquiry, general_inquiry, medical_query, greeting, praise, spam, joke, unrelated, vulgar, other.
+
+HIGH-INTENT (genuine medical/practice interest): book_appointment, check_availability, pricing_inquiry, general_inquiry, medical_query
+- book_appointment: Directly asking to book or schedule ("how to book?", "book me", "schedule appointment", "want to book")
+- check_availability: Asking about slots, timing ("available tomorrow?", "any slots?", "when can I come?")
+- pricing_inquiry: Asking about cost, fees ("price?", "how much?", "consultation fees?")
+- general_inquiry: General questions about practice or doctor ("more info?", "interested", "tell me more", "how does it work?")
+- medical_query: User shares symptoms or medical concern ("I have stomach pain", "suffering from diabetes", "my mother has fever", "headache for 3 days")
+
+LOW-INTENT: greeting, praise, other
+- greeting: Just hi/hello with no inquiry ("hi", "hello")
+- praise: Pure compliments, no question ("great post!", "helpful", "👍")
+- other: Unclear or borderline; not clearly high-intent or skip
+
+SKIP (never reply or store): spam, joke, unrelated, vulgar
+- spam: Promotional, bots, links ("DM for deals", "check out my page", link spam)
+- joke: Humor, puns, memes ("lol", "haha", "😂", sarcastic jokes)
+- unrelated: Off-topic ("follow for follow", "check my profile", random topics)
+- vulgar: Profanity, insults, harassment
+
+Classify intent regardless of language. Handle emojis and @mentions—"interested 👍" = general_inquiry; "lol" = joke.
+When uncertain, prefer "other" over falsely classifying as high-intent. Err on the side of not replying.
+
+Respond with a single JSON object: { "intent": "<one of the valid intents>", "confidence": <number 0.0 to 1.0> }.`;
 
 /** Base receptionist system prompt (e-task-3). Practice name injected dynamically (e-task-4). e-task-2: Acknowledge, relation, conversational tone. */
 const RESPONSE_SYSTEM_PROMPT_BASE = `You are a warm, friendly medical practice receptionist. You help with scheduling and general questions. You do NOT diagnose or give medical advice.
@@ -516,6 +571,135 @@ export async function classifyIntent(
   }
 
   return { intent: 'unknown', confidence: 0 };
+}
+
+/**
+ * Classify Instagram comment text into comment-specific intent + confidence.
+ * Redacts PHI before sending to OpenAI. Returns { intent: 'other', confidence: 0 } on failure.
+ *
+ * @param commentText - Raw comment (may contain PHI)
+ * @param correlationId - For audit and logging
+ */
+export async function classifyCommentIntent(
+  commentText: string,
+  correlationId: string
+): Promise<CommentIntentDetectionResult> {
+  const config = getOpenAIConfig();
+  const client = getOpenAIClient();
+
+  if (!client) {
+    logger.warn(
+      { correlationId },
+      'Comment intent classification skipped: OPENAI_API_KEY not set'
+    );
+    return { intent: 'other', confidence: 0 };
+  }
+
+  const redactedText = redactPhiForAI(commentText);
+  if (!redactedText.trim()) {
+    return { intent: 'other', confidence: 0 };
+  }
+
+  const cached = getCachedCommentIntent(redactedText);
+  if (cached !== null) {
+    return cached;
+  }
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const completion = await client.chat.completions.create({
+        model: config.model,
+        max_completion_tokens: config.maxTokens,
+        response_format: { type: 'json_object' as const },
+        messages: [
+          { role: 'system', content: COMMENT_INTENT_SYSTEM_PROMPT },
+          { role: 'user', content: redactedText },
+        ],
+      });
+
+      const content = completion.choices[0]?.message?.content;
+      const usage = completion.usage;
+
+      if (!content) {
+        logger.warn(
+          { correlationId, attempt: attempt + 1 },
+          'Comment intent: empty completion content'
+        );
+        await logAIClassification({
+          correlationId,
+          model: config.model,
+          redactionApplied: true,
+          status: 'failure',
+          tokens: usage?.total_tokens ?? undefined,
+          errorMessage: 'comment_intent_empty_completion',
+        });
+        return { intent: 'other', confidence: 0 };
+      }
+
+      let parsed: { intent?: string; confidence?: number };
+      try {
+        parsed = JSON.parse(content) as { intent?: string; confidence?: number };
+      } catch {
+        logger.warn(
+          { correlationId, attempt: attempt + 1 },
+          'Comment intent: invalid JSON in completion'
+        );
+        await logAIClassification({
+          correlationId,
+          model: config.model,
+          redactionApplied: true,
+          status: 'failure',
+          tokens: usage?.total_tokens ?? undefined,
+          errorMessage: 'comment_intent_invalid_json',
+        });
+        return { intent: 'other', confidence: 0 };
+      }
+
+      const intent = toCommentIntent(typeof parsed.intent === 'string' ? parsed.intent : '');
+      const confidence = clampConfidence(
+        typeof parsed.confidence === 'number' ? parsed.confidence : 0
+      );
+
+      await logAIClassification({
+        correlationId,
+        model: config.model,
+        redactionApplied: true,
+        status: 'success',
+        tokens: usage?.total_tokens ?? undefined,
+      });
+
+      const result: CommentIntentDetectionResult = { intent, confidence };
+      setCachedCommentIntent(redactedText, result);
+      return result;
+    } catch (err) {
+      const isLastAttempt = attempt === MAX_RETRIES - 1;
+      logger.warn(
+        {
+          correlationId,
+          attempt: attempt + 1,
+          maxRetries: MAX_RETRIES,
+          err: err instanceof Error ? err.message : 'unknown',
+        },
+        'Comment intent classification attempt failed'
+      );
+
+      if (isLastAttempt) {
+        await logAIClassification({
+          correlationId,
+          model: config.model,
+          redactionApplied: true,
+          status: 'failure',
+          errorMessage: 'comment_intent_failed_after_retries',
+        });
+        return { intent: 'other', confidence: 0 };
+      }
+
+      const delayMs = RETRY_DELAYS_MS[attempt] ?? 4000;
+      await sleep(delayMs);
+    }
+  }
+
+  return { intent: 'other', confidence: 0 };
 }
 
 // ============================================================================

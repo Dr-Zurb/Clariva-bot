@@ -8,9 +8,11 @@ import { verifyInstagramSignature } from '../utils/webhook-verification';
 import { verifyRazorpaySignature } from '../utils/razorpay-verification';
 import {
   extractInstagramEventId,
+  extractInstagramCommentEventId,
   extractInstagramMessageForDedup,
   generateFallbackEventId,
   getInstagramPayloadStructure,
+  isInstagramCommentPayload,
   isNonActionableInstagramEvent,
   isInstagramMessageEcho,
   isShortFlowWord,
@@ -229,6 +231,96 @@ export const handleInstagramWebhook = asyncHandler(
         req.ip
       );
       throw new UnauthorizedError('Invalid webhook signature');
+    }
+
+    // Early branch: comment webhooks use entry[].changes[] with field "comments"
+    // (different from DM entry[].messaging[]). Skip messaging-specific checks.
+    if (isInstagramCommentPayload(req.body)) {
+      const eventId =
+        extractInstagramCommentEventId(req.body) ?? generateFallbackEventId(req.body);
+      try {
+        const existing = await isWebhookProcessed(eventId, 'instagram');
+        if (existing && (existing.status === 'processed' || existing.status === 'pending')) {
+          logger.info(
+            { eventId, correlationId, provider: 'instagram', status: existing.status },
+            'Comment webhook already processed (idempotent)'
+          );
+          res.status(200).json(successResponse({ message: 'OK' }, req));
+          return;
+        }
+      } catch (error) {
+        logger.error(
+          { error, eventId, correlationId, provider: 'instagram' },
+          'Comment idempotency check failed (allowing through)'
+        );
+      }
+      try {
+        await markWebhookProcessing(eventId, 'instagram', correlationId);
+      } catch (error) {
+        logger.error(
+          { error, eventId, correlationId, provider: 'instagram' },
+          'Comment mark processing failed (allowing through)'
+        );
+      }
+      let payloadForQueue: unknown = req.body;
+      const rawBodyBuf = (req as { rawBody?: Buffer }).rawBody;
+      if (rawBodyBuf && Buffer.isBuffer(rawBodyBuf)) {
+        try {
+          payloadForQueue = JSON.parse(rawBodyBuf.toString('utf8'));
+        } catch {
+          // Fallback to parsed body
+        }
+      }
+      try {
+        await webhookQueue.add(WEBHOOK_JOB_NAME, {
+          eventId,
+          provider: 'instagram',
+          payload: payloadForQueue as any,
+          correlationId,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (error) {
+        logger.error(
+          { error, eventId, correlationId, provider: 'instagram' },
+          'Comment queue error (storing in dead letter queue)'
+        );
+        try {
+          await storeDeadLetterWebhook(
+            eventId,
+            'instagram',
+            payloadForQueue,
+            `Queue error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            0,
+            correlationId
+          );
+        } catch (dlqError) {
+          logger.error(
+            { error: dlqError, eventId, provider: 'instagram', correlationId },
+            'Failed to store comment in dead letter queue'
+          );
+        }
+        res.status(200).json(successResponse({ message: 'OK' }, req));
+        return;
+      }
+      logger.info(
+        { correlationId, eventId, provider: 'instagram' },
+        'Instagram comment webhook queued for processing'
+      );
+      await logAuditEvent({
+        correlationId,
+        userId: undefined,
+        action: 'webhook_received',
+        resourceType: 'webhook',
+        status: 'success',
+        metadata: {
+          event_id: eventId,
+          provider: 'instagram',
+          type: 'comment',
+          received_at: new Date().toISOString(),
+        },
+      });
+      res.status(200).json(successResponse({ message: 'OK' }, req));
+      return;
     }
 
     // Early return for known non-actionable events (read receipts, delivery) - no processing needed

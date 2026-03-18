@@ -10,6 +10,7 @@ interface AppointmentsListWithFiltersProps {
 }
 
 const STATUS_OPTIONS = [
+  { value: "active", label: "Active (exclude cancelled)" },
   { value: "", label: "All statuses" },
   { value: "pending", label: "Pending" },
   { value: "confirmed", label: "Confirmed" },
@@ -36,7 +37,7 @@ function formatAppointmentDate(iso: string): string {
 export default function AppointmentsListWithFilters({
   appointments,
 }: AppointmentsListWithFiltersProps) {
-  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<string>("active");
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
   const [searchName, setSearchName] = useState<string>("");
@@ -44,7 +45,9 @@ export default function AppointmentsListWithFilters({
   const filtered = useMemo(() => {
     let list = [...appointments];
 
-    if (statusFilter) {
+    if (statusFilter === "active") {
+      list = list.filter((apt) => apt.status === "pending" || apt.status === "confirmed");
+    } else if (statusFilter) {
       list = list.filter((apt) => apt.status === statusFilter);
     }
 
