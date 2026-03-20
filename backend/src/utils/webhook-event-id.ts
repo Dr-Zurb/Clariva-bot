@@ -182,7 +182,7 @@ export function getInstagramPageIds(payload: InstagramWebhookPayload): string[] 
 // ============================================================================
 
 /**
- * Check if payload is an Instagram comment webhook (entry[].changes[] with field "comments").
+ * Check if payload is an Instagram comment webhook (entry[].changes[] with field "comments" or "live_comments").
  * Comment events use a different structure than DM (entry[].messaging[]).
  */
 export function isInstagramCommentPayload(body: unknown): boolean {
@@ -193,7 +193,7 @@ export function isInstagramCommentPayload(body: unknown): boolean {
     const changes = entry?.changes;
     if (!Array.isArray(changes)) continue;
     for (const c of changes) {
-      if (c?.field === 'comments') return true;
+      if (c?.field === 'comments' || c?.field === 'live_comments') return true;
     }
   }
   return false;
@@ -211,7 +211,7 @@ export function extractInstagramCommentEventId(body: unknown): string | null {
     const changes = entry?.changes;
     if (!Array.isArray(changes)) continue;
     for (const c of changes) {
-      if (c?.field === 'comments' && c?.value?.id != null) {
+      if ((c?.field === 'comments' || c?.field === 'live_comments') && c?.value?.id != null) {
         return String(c.value.id);
       }
     }
@@ -237,7 +237,7 @@ export function parseInstagramCommentPayload(body: unknown): {
     const changes = entry?.changes;
     if (!Array.isArray(changes)) continue;
     for (const c of changes) {
-      if (c?.field !== 'comments' || !c?.value) continue;
+      if ((c?.field !== 'comments' && c?.field !== 'live_comments') || !c?.value) continue;
       const v = c.value;
       const commentId = v.id;
       const commenterIgId = v.from?.id;

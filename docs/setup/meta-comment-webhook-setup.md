@@ -86,9 +86,59 @@ Subscribing in the App Dashboard may apply to all connected accounts. If you man
 
 ## Troubleshooting
 
+### No webhooks at all (only /health in logs)
+
+If you comment on a post but see **no** `Webhook POST received (any /webhooks path)` or `Instagram webhook POST received` in logs, Meta is not sending webhooks to your backend.
+
+#### 1. Callback URL — typo check
+
+| Check | Action |
+|-------|--------|
+| **URL exact?** | Callback must be `https://clariva-bot.onrender.com/webhooks/instagram` (or your actual backend URL). Common typo: `claire-bot` vs `clariva-bot`. |
+| **No trailing slash** | Use `/webhooks/instagram` not `/webhooks/instagram/` |
+
+#### 2. Use case: Messenger vs Instagram
+
+You may have two use cases:
+- **Engage with customers on Messenger from Meta** — DMs (messages) work here
+- **Manage messaging & content on Instagram** — comments may be configured here
+
+| Check | Action |
+|-------|--------|
+| **Instagram use case** | Click **Customize** on "Manage messaging & content on Instagram". If it has its own webhook config, set the **same** callback URL and subscribe to `comments` there. |
+| **Same URL for both** | DMs and comments can use different configs. Ensure both point to your backend. |
+
+#### 3. Subscription and permissions
+
+| Check | Action |
+|-------|--------|
+| **Instagram account public?** | Comment webhooks require the account (e.g. clariva_care) to be **public**. |
+| **comments subscribed?** | Edit Subscriptions → ensure `comments` is checked and **Save**. Verify 4 fields: messages, message_edit, comments, live_comments. |
+| **Generate token** | For the Page that owns the Instagram account. Complete the flow. |
+| **Advanced Access** | `instagram_manage_comments` needs Advanced Access. Comments may require **Live** mode. |
+
+#### 4. Subscribe via API (if dashboard isn't enough)
+
+```bash
+# Replace {PAGE_ID} with your Page ID (e.g. 603305540117942)
+# Replace {ACCESS_TOKEN} with the Page's access token
+
+curl -X POST "https://graph.facebook.com/v18.0/{PAGE_ID}/subscribed_apps?subscribed_fields=comments,messages,message_edit&access_token={ACCESS_TOKEN}"
+```
+
+#### 5. Test and debug
+
+| Check | Action |
+|-------|--------|
+| **Webhook Debugger** | Meta Dashboard → Webhooks → **Webhook Debugger**. Enter Page ID, check delivery status. |
+| **Meta Test button** | Under Webhooks, use **Test** to send a test event. If test works, URL is correct. |
+| **Feed post** | Comment webhooks may not fire for Reels. Use a **Feed post**. |
+| **Keyword bypass** | Backend has a test: if comment contains "appointment", it bypasses AI. Add a comment with "appointment" and deploy — if it works, Meta IS sending. |
+
+### Other issues
+
 | Issue | Check |
 |-------|--------|
-| No comment webhooks received | App in Live mode? `comments` subscribed? Instagram account public? |
 | 401 on verification | `INSTAGRAM_WEBHOOK_VERIFY_TOKEN` matches Dashboard |
 | Comment webhook received but no outreach | Doctor resolved? (`doctor_instagram` linked). Intent classified as high-intent? |
 | "Advanced Access required" | Request `instagram_manage_comments` in App Review |

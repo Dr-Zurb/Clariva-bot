@@ -132,6 +132,9 @@ const HIGH_INTENT_COMMENT: Set<CommentIntent> = new Set([
 /** e-task-7: Skip intents (no storage, no outreach). */
 const SKIP_INTENT_COMMENT: Set<CommentIntent> = new Set(['spam', 'joke', 'unrelated', 'vulgar']);
 
+/** Simple keyword bypass for testing: if comment contains this, treat as high-intent without AI. */
+const COMMENT_TEST_KEYWORD = 'appointment';
+
 // ============================================================================
 // Connection & Worker Instance
 // ============================================================================
@@ -821,7 +824,18 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       return;
     }
 
-    const intentResult = await classifyCommentIntent(commentText, correlationId);
+    // Keyword bypass for testing: "appointment" → book_appointment without AI (verify webhook delivery)
+    const hasTestKeyword = commentText.toLowerCase().includes(COMMENT_TEST_KEYWORD);
+    let intentResult: { intent: CommentIntent; confidence: number };
+    if (hasTestKeyword) {
+      intentResult = { intent: 'book_appointment', confidence: 1 };
+      logger.info(
+        { eventId, correlationId },
+        'Comment: keyword bypass (appointment) — treating as high-intent for testing'
+      );
+    } else {
+      intentResult = await classifyCommentIntent(commentText, correlationId);
+    }
     const intent = intentResult.intent;
 
     if (SKIP_INTENT_COMMENT.has(intent)) {

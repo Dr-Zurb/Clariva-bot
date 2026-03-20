@@ -165,16 +165,34 @@ export const handleInstagramWebhook = asyncHandler(
     // and will ALWAYS fail verification. If rawBody is missing, verification cannot succeed.
     const rawBody = req.rawBody;
 
-    // Diagnostic logging (no PII) - helps debug signature failures and messages vs message_edit
-    const payloadBody = req.body as { entry?: Array<{ messaging?: Array<{ message?: unknown; message_edit?: unknown }> }> } | undefined;
-    const firstMsg = payloadBody?.entry?.[0]?.messaging?.[0];
-    const payloadType = firstMsg?.message ? 'message' : firstMsg?.message_edit ? 'message_edit' : 'unknown';
+    // Diagnostic logging (no PII) - helps debug signature failures and messages vs message_edit vs comments
+    const payloadBody = req.body as {
+      object?: string;
+      entry?: Array<{
+        id?: string;
+        messaging?: Array<{ message?: unknown; message_edit?: unknown }>;
+        changes?: Array<{ field?: string }>;
+      }>;
+    } | undefined;
+    const entry0 = payloadBody?.entry?.[0];
+    const firstMsg = entry0?.messaging?.[0];
+    const firstChange = entry0?.changes?.[0];
+    const payloadType = firstMsg?.message
+      ? 'message'
+      : firstMsg?.message_edit
+        ? 'message_edit'
+        : firstChange?.field === 'comments' || firstChange?.field === 'live_comments'
+          ? `comment:${firstChange.field}`
+          : 'unknown';
     logger.info(
       {
         correlationId,
         hasRawBody: !!rawBody,
         rawBodyLength: rawBody?.length ?? 0,
         payloadType,
+        object: payloadBody?.object,
+        entry0Keys: entry0 ? Object.keys(entry0) : [],
+        firstChangeField: firstChange?.field,
         hasSignature: !!signature,
         secretConfigured: !!env.INSTAGRAM_APP_SECRET,
         secretLength: env.INSTAGRAM_APP_SECRET?.length ?? 0,
@@ -382,10 +400,10 @@ export const handleInstagramWebhook = asyncHandler(
 
     // Debug: when idempotency uses entry id (page ID), log payload shape to troubleshoot missing mid
     const body = req.body as { object?: string; entry?: unknown[] };
-    const entry0 = body?.entry?.[0] as Record<string, unknown> | undefined;
-    const entryId = entry0?.id != null ? String(entry0.id) : null;
+    const entry0Body = body?.entry?.[0] as Record<string, unknown> | undefined;
+    const entryId = entry0Body?.id != null ? String(entry0Body.id) : null;
     if (entryId && eventId === entryId) {
-      const messaging = entry0?.messaging;
+      const messaging = entry0Body?.messaging;
       const hasMessaging = Array.isArray(messaging) && messaging.length > 0;
       const firstItemKeys = hasMessaging && typeof messaging[0] === 'object' && messaging[0] !== null
         ? Object.keys(messaging[0] as object)
