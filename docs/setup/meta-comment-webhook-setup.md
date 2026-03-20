@@ -135,6 +135,20 @@ curl -X POST "https://graph.facebook.com/v18.0/{PAGE_ID}/subscribed_apps?subscri
 | **Feed post** | Comment webhooks may not fire for Reels. Use a **Feed post**. |
 | **Keyword bypass** | Backend has a test: if comment contains "appointment", it bypasses AI. Add a comment with "appointment" and deploy — if it works, Meta IS sending. |
 
+### Logs show only `message_edit`, never `comment:comments`
+
+If every webhook POST has `payloadType: "message_edit"` and `entry0Keys: ["time","id","messaging"]`, Meta is **not** sending comment webhooks. Comment payloads would have `entry0Keys` including `"changes"` and `firstChangeField: "comments"`.
+
+| Action | Check |
+|--------|--------|
+| **Meta setup** | Comments may require Live mode, or the "Manage messaging & content on Instagram" use case with its own webhook config |
+| **Subscribe via API** | Try `POST /{PAGE_ID}/subscribed_apps?subscribed_fields=comments,messages,message_edit` |
+| **Webhook Debugger** | Meta Dashboard → Webhooks → Debugger — see if Meta shows any comment delivery attempts |
+
+### `message_edit` signature failures (401)
+
+If `message_edit` webhooks fail signature verification, the backend now returns 200 (non-critical) to stop Meta's retry storm. DMs (`message`) still require valid signatures.
+
 ### Other issues
 
 | Issue | Check |

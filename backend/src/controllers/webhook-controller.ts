@@ -228,6 +228,16 @@ export const handleInstagramWebhook = asyncHandler(
         res.status(200).json(successResponse({ message: 'OK' }, req));
         return;
       }
+      // message_edit: Meta may sign differently; edit notifications are non-critical.
+      // Return 200 to stop retry storm; we already have the original message.
+      if (payloadType === 'message_edit') {
+        logger.info(
+          { correlationId, rawBodyLength: len, payloadType },
+          'Instagram webhook: message_edit with failed signature; returning 200 (non-critical)'
+        );
+        res.status(200).json(successResponse({ message: 'OK' }, req));
+        return;
+      }
       if (len >= 300 && len <= 320) {
         const structure = getInstagramPayloadStructure(req.body);
         logger.warn(
