@@ -22,6 +22,11 @@ export default function HomePage() {
         <code className="rounded bg-gray-100 px-1">backend/</code>. Dashboard UI
         will be added in the next tasks.
       </p>
+      <footer className="mt-12 pt-6 border-t border-gray-200 text-sm text-gray-500">
+        <a href="/privacy" className="hover:text-gray-700 mr-4">Privacy Policy</a>
+        <a href="/terms" className="hover:text-gray-700 mr-4">Terms of Service</a>
+        <a href="/data-deletion" className="hover:text-gray-700">Data Deletion</a>
+      </footer>
     </main>
   );
 }

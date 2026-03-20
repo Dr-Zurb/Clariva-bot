@@ -2,6 +2,7 @@ import { Router } from 'express';
 import healthRoutes from './health';
 import apiV1Routes from './api/v1';
 import webhookRoutes from './webhooks';
+import dataDeletionRoutes from './data-deletion';
 
 const router = Router();
 
@@ -30,5 +31,9 @@ router.use('/api/v1', apiV1Routes);
 // GET /webhooks/instagram - Webhook verification
 // POST /webhooks/instagram - Webhook event processing
 router.use('/webhooks', webhookRoutes);
+
+// Meta Data Deletion Callback (Basic Settings → Data Deletion Request URL)
+// POST /data-deletion-callback - Meta POSTs when user requests data deletion
+router.use('/data-deletion-callback', dataDeletionRoutes);
 
 export default router;
