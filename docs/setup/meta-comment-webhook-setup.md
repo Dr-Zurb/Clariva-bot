@@ -117,14 +117,27 @@ You may have two use cases:
 | **Generate token** | For the Page that owns the Instagram account. Complete the flow. |
 | **Advanced Access** | `instagram_manage_comments` needs Advanced Access. Comments may require **Live** mode. |
 
-#### 4. Subscribe via API (if dashboard isn't enough)
+#### 4. Subscribe via API (Page fields only)
+
+**Important:** The Page API does **not** support `comments` — that field is invalid. Comments must be configured in the Dashboard (Edit Subscriptions). The API can only subscribe to: `messages`, `message_edits`, `message_deliveries`, `message_reads`.
+
+**Option A: npm script** (from `backend/`):
 
 ```bash
-# Replace {PAGE_ID} with your Page ID (e.g. 603305540117942)
-# Replace {ACCESS_TOKEN} with the Page's access token
+# Add to .env (do NOT commit):
+# META_PAGE_ID=123456789
+# META_PAGE_ACCESS_TOKEN=your_page_access_token
 
-curl -X POST "https://graph.facebook.com/v18.0/{PAGE_ID}/subscribed_apps?subscribed_fields=comments,messages,message_edit&access_token={ACCESS_TOKEN}"
+cd backend && npm run meta:subscribe
 ```
+
+**Option B: curl**
+
+```bash
+curl -X POST "https://graph.facebook.com/v18.0/{PAGE_ID}/subscribed_apps?subscribed_fields=messages,message_edits,message_deliveries,message_reads&access_token={ACCESS_TOKEN}"
+```
+
+Get PAGE_ID and ACCESS_TOKEN from Meta Dashboard → Messenger API Settings → Instagram settings (Page table + Generate token).
 
 #### 5. Test and debug
 
@@ -142,7 +155,7 @@ If every webhook POST has `payloadType: "message_edit"` and `entry0Keys: ["time"
 | Action | Check |
 |--------|--------|
 | **Meta setup** | Comments may require Live mode, or the "Manage messaging & content on Instagram" use case with its own webhook config |
-| **Subscribe via API** | Try `POST /{PAGE_ID}/subscribed_apps?subscribed_fields=comments,messages,message_edit` |
+| **Comments via API** | Page API does NOT support `comments` — configure in Dashboard only |
 | **Webhook Debugger** | Meta Dashboard → Webhooks → Debugger — see if Meta shows any comment delivery attempts |
 
 ### `message_edit` signature failures (401)
