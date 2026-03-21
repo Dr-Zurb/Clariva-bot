@@ -229,8 +229,8 @@ export async function releaseConversationLock(
 /** Send throttle: one reply per (user, message content) per window. New messages get replies; duplicates for same content are skipped. */
 const SEND_THROTTLE_SEC = 90;
 
-/** Per-user reply throttle: max 1 send per (pageId, senderId) per window. Stops spam when Meta sends multiple webhooks for same user message. */
-const REPLY_THROTTLE_SEC = 60;
+/** Per-user reply throttle: max 1 send per (pageId, senderId) per window. Meta duplicates arrive within 1-2s; 5s catches them while allowing fast back-and-forth. */
+const REPLY_THROTTLE_SEC = 5;
 
 /**
  * Per-user reply throttle: only allow one send per user per REPLY_THROTTLE_SEC.
