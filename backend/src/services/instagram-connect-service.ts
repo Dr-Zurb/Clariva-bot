@@ -42,7 +42,8 @@ const FACEBOOK_GRAPH_BASE = 'https://graph.facebook.com/v18.0';
  * pages_read_engagement: required for GET /{page-id}?fields=instagram_business_account (Meta error #100).
  * instagram_basic: required for /{page-id}/instagram_accounts fallback (Business Manager linking).
  * ads_management: when Page/Instagram linked via Business Manager.
- * pages_manage_metadata, pages_messaging, instagram_manage_messages: for Page token and Instagram DMs. */
+ * pages_manage_metadata, pages_messaging, instagram_manage_messages: for Page token and Instagram DMs.
+ * instagram_manage_comments: required for POST /{comment-id}/replies (public reply to comments). */
 const FACEBOOK_SCOPES = [
   'pages_show_list',
   'business_management',
@@ -52,6 +53,7 @@ const FACEBOOK_SCOPES = [
   'pages_manage_metadata',
   'pages_messaging',
   'instagram_manage_messages',
+  'instagram_manage_comments',
 ];
 const META_HTTP_TIMEOUT_MS = 10000;
 

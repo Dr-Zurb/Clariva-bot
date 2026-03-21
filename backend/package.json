@@ -18,7 +18,8 @@
     "test:coverage": "jest --coverage",
     "test:email": "node -r dotenv/config -r ts-node/register scripts/send-test-email.ts",
     "test:full-notifications": "node -r dotenv/config -r ts-node/register scripts/send-full-notification-test.ts",
-    "meta:subscribe": "node -r dotenv/config -r ts-node/register scripts/meta-subscribe-comments.ts"
+    "meta:subscribe": "node -r dotenv/config -r ts-node/register scripts/meta-subscribe-comments.ts",
+    "test:comment": "node -r dotenv/config -r ts-node/register scripts/test-comment-webhook.ts"
   },
   "keywords": [
     "ai",

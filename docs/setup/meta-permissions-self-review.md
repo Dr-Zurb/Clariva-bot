@@ -34,10 +34,10 @@ Our connect flow requests these scopes (in `instagram-connect-service.ts`):
 ```
 pages_show_list, business_management, pages_read_engagement,
 instagram_basic, ads_management, pages_manage_metadata,
-pages_messaging, instagram_manage_messages
+pages_messaging, instagram_manage_messages, instagram_manage_comments
 ```
 
-**Note:** `instagram_manage_comments` is **not** in the OAuth scopes. Comments use the **Page token** (from connect), which gets permissions when the doctor authorizes. If comment replies fail with "permission denied", add `instagram_manage_comments` to the use case permissions and ensure it's requested during connect (or that the Page token includes it).
+**Note:** `instagram_manage_comments` is required for public replies to post comments. Doctors must reconnect Instagram after this scope was added to obtain a token with the permission.
 
 ---
 
