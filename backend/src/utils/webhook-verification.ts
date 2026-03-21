@@ -31,6 +31,15 @@ import { InternalError } from './errors';
 const ALGORITHM = 'sha256';
 const SIGNATURE_PREFIX = 'sha256=';
 
+/** App secret for webhook signature verification. Uses INSTAGRAM_APP_SECRET or META_APP_SECRET (trimmed). */
+function getWebhookAppSecret(): string | null {
+  const raw =
+    (env.INSTAGRAM_APP_SECRET && env.INSTAGRAM_APP_SECRET.trim()) ||
+    (env.META_APP_SECRET && env.META_APP_SECRET.trim()) ||
+    null;
+  return raw && raw.length > 0 ? raw : null;
+}
+
 // ============================================================================
 // Signature Verification Functions
 // ============================================================================
@@ -46,7 +55,7 @@ const SIGNATURE_PREFIX = 'sha256=';
  * @param correlationId - Request correlation ID for logging
  * @returns true if signature is valid, false otherwise
  *
- * @throws InternalError if INSTAGRAM_APP_SECRET is not configured
+ * @throws InternalError if app secret is not configured (INSTAGRAM_APP_SECRET or META_APP_SECRET)
  *
  * @example
  * ```typescript
@@ -86,30 +95,48 @@ export function verifyInstagramSignature(
   // 3. Extract hash from signature (remove "sha256=" prefix)
   const receivedHash = signature.substring(SIGNATURE_PREFIX.length);
 
-  // 4. Check if app secret is configured
-  if (!env.INSTAGRAM_APP_SECRET) {
+  // 4. Check if app secret is configured (INSTAGRAM_APP_SECRET or META_APP_SECRET, trimmed)
+  const appSecret = getWebhookAppSecret();
+  if (!appSecret) {
     logger.error(
       { correlationId },
-      'INSTAGRAM_APP_SECRET not configured - cannot verify signature'
+      'App secret not configured (INSTAGRAM_APP_SECRET or META_APP_SECRET) - cannot verify signature'
     );
     throw new InternalError('Webhook signature verification not configured');
   }
 
   try {
     // 5. Compute HMAC-SHA256 hash of raw body
-    const computedHash = createHmac(ALGORITHM, env.INSTAGRAM_APP_SECRET)
+    const computedHash = createHmac(ALGORITHM, appSecret)
       .update(rawBody)
       .digest('hex');
 
     // 6. Compare hashes using constant-time comparison (prevents timing attacks)
-    const isValid = timingSafeEqual(
-      Buffer.from(receivedHash, 'hex'),
-      Buffer.from(computedHash, 'hex')
-    );
+    const receivedBuf = Buffer.from(receivedHash, 'hex');
+    const computedBuf = Buffer.from(computedHash, 'hex');
+
+    if (receivedBuf.length !== computedBuf.length) {
+      logger.warn(
+        {
+          correlationId,
+          receivedHashLength: receivedHash.length,
+          computedHashLength: computedHash.length,
+          rawBodyLength: rawBody?.length ?? 0,
+        },
+        'Webhook signature verification failed: hash length mismatch'
+      );
+      return false;
+    }
+
+    const isValid = timingSafeEqual(receivedBuf, computedBuf);
 
     if (!isValid) {
       logger.warn(
-        { correlationId },
+        {
+          correlationId,
+          receivedHashLength: receivedHash.length,
+          rawBodyLength: rawBody?.length ?? 0,
+        },
         'Webhook signature verification failed'
       );
     }
@@ -123,6 +150,17 @@ export function verifyInstagramSignature(
     );
     return false;
   }
+}
+
+/** Returns whether app secret is configured (for logging). */
+export function isWebhookSecretConfigured(): boolean {
+  return getWebhookAppSecret() != null;
+}
+
+/** Returns app secret length (for debugging, never the secret itself). */
+export function getWebhookSecretLength(): number {
+  const s = getWebhookAppSecret();
+  return s?.length ?? 0;
 }
 
 /**

@@ -50,6 +50,8 @@ const envSchema = z.object({
   // Made optional to allow server startup during setup phase
   INSTAGRAM_APP_ID: z.string().optional(),
   INSTAGRAM_APP_SECRET: z.string().optional(),
+  // Meta App Secret (fallback - same as App Secret in Meta Dashboard; some setups use META_APP_SECRET)
+  META_APP_SECRET: z.string().optional(),
   INSTAGRAM_ACCESS_TOKEN: z.string().optional(),
   INSTAGRAM_WEBHOOK_VERIFY_TOKEN: z.string().optional(), // Should be at least 32 characters when provided
   // OAuth connect flow (e-task-3): redirect URI for Meta callback; required when using connect endpoint

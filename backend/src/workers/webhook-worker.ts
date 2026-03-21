@@ -823,6 +823,17 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       return;
     }
 
+    // Skip when commenter is our own bot (we reply as doctor's account; IG webhooks echo our replies)
+    const doctorPageId = await getStoredInstagramPageIdForDoctor(doctorId, correlationId);
+    if (doctorPageId && commenterIgId === doctorPageId) {
+      logger.info(
+        { eventId, provider, correlationId, commentId },
+        'Comment: own-bot reply, skipping processing'
+      );
+      await markWebhookProcessed(eventId, provider);
+      return;
+    }
+
     const intentResult = await classifyCommentIntent(commentText, correlationId);
     let intent = intentResult.intent;
 

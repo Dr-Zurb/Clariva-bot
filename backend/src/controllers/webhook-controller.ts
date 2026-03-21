@@ -4,7 +4,11 @@ import { env } from '../config/env';
 import { UnauthorizedError } from '../utils/errors';
 import { logger } from '../config/logger';
 import { successResponse } from '../utils/response';
-import { verifyInstagramSignature } from '../utils/webhook-verification';
+import {
+  verifyInstagramSignature,
+  isWebhookSecretConfigured,
+  getWebhookSecretLength,
+} from '../utils/webhook-verification';
 import { verifyRazorpaySignature } from '../utils/razorpay-verification';
 import {
   extractInstagramEventId,
@@ -194,8 +198,8 @@ export const handleInstagramWebhook = asyncHandler(
         entry0Keys: entry0 ? Object.keys(entry0) : [],
         firstChangeField: firstChange?.field,
         hasSignature: !!signature,
-        secretConfigured: !!env.INSTAGRAM_APP_SECRET,
-        secretLength: env.INSTAGRAM_APP_SECRET?.length ?? 0,
+        secretConfigured: isWebhookSecretConfigured(),
+        secretLength: getWebhookSecretLength(),
         contentType: req.headers['content-type'],
       },
       'Webhook signature verification diagnostics'
