@@ -254,6 +254,16 @@ export const handleInstagramWebhook = asyncHandler(
           'Instagram webhook: message with failed signature; bypassing verification to process'
         );
         // Fall through to message processing below (skip the throw)
+      } else if (payloadType === 'unknown' && payloadBody?.object === 'instagram' && entry0) {
+        const entry0Any = entry0 as { messaging?: unknown[] };
+        if (Array.isArray(entry0Any?.messaging) && entry0Any.messaging.length > 0) {
+          logger.info(
+            { correlationId, rawBodyLength: len, payloadType },
+            'Instagram webhook: unknown messaging payload with failed signature; returning 200 (non-actionable)'
+          );
+          res.status(200).json(successResponse({ message: 'OK' }, req));
+          return;
+        }
       } else {
         if (len >= 300 && len <= 320) {
           const structure = getInstagramPayloadStructure(req.body);

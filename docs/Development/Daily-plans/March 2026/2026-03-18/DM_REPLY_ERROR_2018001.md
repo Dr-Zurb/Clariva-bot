@@ -66,6 +66,10 @@ A fallback was added to retry with `commenter_ig_id` from recent comment leads w
 2. **Diagnostic logging retained** – `webhook_entry_id`, `doctor_page_id`, `recipient_id` logged on page mismatch.
 3. **2018001 remains non-retryable** – mapped to `NotFoundError` in `instagram-service.ts`.
 
+### Conversation API fallback (2026-03-21, re-added)
+
+When send fails with 2018001 **and** page ID mismatch, we now call `getSenderFromMostRecentConversation()` to get the recipient ID from the Graph API. The API returns IDs that work for sending; the webhook `sender.id` may be in a different format. We try both `webhookEntryId` and `doctorPageId` as the conversation target. Safer than the comment_lead fallback (which used the most recent commenter, risking wrong recipient).
+
 ---
 
 ## Impact

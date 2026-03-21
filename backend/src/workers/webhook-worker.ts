@@ -41,7 +41,7 @@ import {
   getAppointmentByIdForWorker,
   listAppointmentsForPatient,
 } from '../services/appointment-service';
-import { ConflictError } from '../utils/errors';
+import { ConflictError, NotFoundError } from '../utils/errors';
 import {
   findConversationByPlatformId,
   createConversation,
@@ -2344,7 +2344,39 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         'Message webhook: page ID mismatch (diagnostic for 2018001)'
       );
     }
-    await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
+    let sendSucceeded = false;
+    try {
+      await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
+      sendSucceeded = true;
+    } catch (sendErr) {
+      if (sendErr instanceof NotFoundError && webhookEntryId && doctorPageId && webhookEntryId !== doctorPageId) {
+        let fallbackId = await getSenderFromMostRecentConversation(
+          doctorToken,
+          correlationId,
+          webhookEntryId
+        );
+        if (!fallbackId) {
+          fallbackId = await getSenderFromMostRecentConversation(
+            doctorToken,
+            correlationId,
+            doctorPageId
+          );
+        }
+        if (fallbackId && fallbackId !== senderId && !pageIds.includes(fallbackId)) {
+          try {
+            await sendInstagramMessage(fallbackId, replyText, correlationId, doctorToken);
+            logger.info(
+              { correlationId, api_resolved_id: fallbackId },
+              'DM sent via conversation API fallback (2018001: webhook senderId failed)'
+            );
+            sendSucceeded = true;
+          } catch {
+            // Fallback also failed
+          }
+        }
+      }
+      if (!sendSucceeded) throw sendErr;
+    }
   } catch (error) {
     const isConflict =
       error instanceof ConflictError ||
@@ -2419,7 +2451,27 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
               return;
             }
           }
-          await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
+          const recEntryId = pageIds[0] ?? getInstagramPageId(instagramPayload);
+          const recDoctorPageId = await getStoredInstagramPageIdForDoctor(doctorId, correlationId) ?? null;
+          let recSendOk = false;
+          try {
+            await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
+            recSendOk = true;
+          } catch (recErr) {
+            if (recErr instanceof NotFoundError && recEntryId && recDoctorPageId && recEntryId !== recDoctorPageId) {
+              let fbId = await getSenderFromMostRecentConversation(doctorToken, correlationId, recEntryId);
+              if (!fbId) fbId = await getSenderFromMostRecentConversation(doctorToken, correlationId, recDoctorPageId);
+              if (fbId && fbId !== senderId && !pageIds.includes(fbId)) {
+                try {
+                  await sendInstagramMessage(fbId, replyText, correlationId, doctorToken);
+                  recSendOk = true;
+                } catch {
+                  //
+                }
+              }
+            }
+            if (!recSendOk) throw recErr;
+          }
           await markWebhookProcessed(eventId, provider);
           await logAuditEvent({
             correlationId,
