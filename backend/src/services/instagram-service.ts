@@ -674,6 +674,13 @@ export function mapInstagramError(error: unknown, correlationId: string): AppErr
       if (instagramError.error_subcode === 463) {
         return new NotFoundError('Instagram recipient not found');
       }
+
+      // No matching user found (2018001) - invalid recipient or ID scope mismatch; do not retry
+      if (instagramError.code === 100 && instagramError.error_subcode === 2018001) {
+        return new NotFoundError(
+          instagramError.message || 'Instagram recipient not found (no matching user)'
+        );
+      }
     }
   }
 
