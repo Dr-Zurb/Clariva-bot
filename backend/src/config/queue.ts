@@ -230,7 +230,7 @@ export async function releaseConversationLock(
 const SEND_THROTTLE_SEC = 90;
 
 /** Per-user reply throttle: max 1 send per (pageId, senderId) per window. Stops spam when Meta sends multiple webhooks for same user message. */
-const REPLY_THROTTLE_SEC = 5;
+const REPLY_THROTTLE_SEC = 60;
 
 /**
  * Per-user reply throttle: only allow one send per user per REPLY_THROTTLE_SEC.

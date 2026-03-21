@@ -49,30 +49,22 @@ The job retried 3 times, then failed.
 
 ---
 
-## Implemented Fix (2026-03-21)
+## Implemented and Reverted
 
-### 1. Comment-lead fallback when 2018001 occurs
+### Comment-lead fallback (REVERTED 2026-03-21)
 
-When sending a DM reply fails with `NotFoundError` (100/2018001) **and** the webhook entry ID does not match the doctor's stored page ID (page ID mismatch / single-doctor fallback scenario):
+A fallback was added to retry with `commenter_ig_id` from recent comment leads when 2018001 occurred. **This caused worse issues:**
+- Sent replies to the **wrong recipient** (most recent commenter, not the actual message sender)
+- Triggered **multiple duplicate replies** (6+ intro messages) when Meta sent several webhooks for the same message
+- `REPLY_THROTTLE_SEC` (5s) was too short; webhooks ~7s apart all passed throttle
 
-1. Fetch recent comment leads with `dm_sent=true` (last 10 minutes, up to 3 leads)
-2. Retry sending using `commenter_ig_id` from each lead instead of the message webhook's `senderId`
-3. The comment webhook's `commenterIgId` worked for the initial DM; it may work for follow-up replies when the message webhook's sender ID is in a different ID space
+**Reverted** to avoid wrong-recipient spam. DM replies will again fail with 2018001 when page ID mismatches, but we no longer spam the wrong user.
 
-**Files changed:**
-- `backend/src/services/comment-lead-service.ts` – added `getRecentCommentLeadsWithDmSent()`
-- `backend/src/workers/webhook-worker.ts` – wrap `sendInstagramMessage` in try-catch; on NotFoundError + page mismatch, retry with comment_lead fallback
+### Current fixes (2026-03-21)
 
-### 2. Diagnostic logging
-
-When the message webhook has a page ID mismatch, we now log:
-- `webhook_entry_id`
-- `doctor_page_id`
-- `recipient_id`
-
-### 3. Non-retryable
-
-`metaCode 100` + `error_subcode 2018001` is already mapped to `NotFoundError` in `instagram-service.ts`; `sendWithRetry` does not retry on `NotFoundError`.
+1. **REPLY_THROTTLE_SEC increased 5 → 60** – prevents duplicate sends when Meta sends multiple webhooks for the same message (typically 7–15s apart).
+2. **Diagnostic logging retained** – `webhook_entry_id`, `doctor_page_id`, `recipient_id` logged on page mismatch.
+3. **2018001 remains non-retryable** – mapped to `NotFoundError` in `instagram-service.ts`.
 
 ---
 

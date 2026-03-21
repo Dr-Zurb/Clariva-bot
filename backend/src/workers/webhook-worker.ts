@@ -41,7 +41,7 @@ import {
   getAppointmentByIdForWorker,
   listAppointmentsForPatient,
 } from '../services/appointment-service';
-import { ConflictError, NotFoundError } from '../utils/errors';
+import { ConflictError } from '../utils/errors';
 import {
   findConversationByPlatformId,
   createConversation,
@@ -92,7 +92,6 @@ import {
   sendPaymentReceivedToDoctor,
   sendCommentLeadToDoctor,
 } from '../services/notification-service';
-import { getRecentCommentLeadsWithDmSent } from '../services/comment-lead-service';
 import { razorpayAdapter } from '../adapters/razorpay-adapter';
 import { paypalAdapter } from '../adapters/paypal-adapter';
 import {
@@ -2345,29 +2344,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         'Message webhook: page ID mismatch (diagnostic for 2018001)'
       );
     }
-    let sendSucceeded = false;
-    try {
-      await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
-      sendSucceeded = true;
-    } catch (sendErr) {
-      if (sendErr instanceof NotFoundError && webhookEntryId && doctorPageId && webhookEntryId !== doctorPageId) {
-        const leads = await getRecentCommentLeadsWithDmSent(doctorId, 3, 10, correlationId);
-        for (const lead of leads) {
-          try {
-            await sendInstagramMessage(lead.commenter_ig_id, replyText, correlationId, doctorToken);
-            logger.info(
-              { correlationId, commenter_ig_id: lead.commenter_ig_id },
-              'DM sent via comment_lead fallback (2018001: message webhook senderId failed)'
-            );
-            sendSucceeded = true;
-            break;
-          } catch {
-            // Try next lead
-          }
-        }
-      }
-      if (!sendSucceeded) throw sendErr;
-    }
+    await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
   } catch (error) {
     const isConflict =
       error instanceof ConflictError ||
@@ -2442,27 +2419,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
               return;
             }
           }
-          const recoveryEntryId = pageIds[0] ?? getInstagramPageId(instagramPayload);
-          const recoveryDoctorPageId = await getStoredInstagramPageIdForDoctor(doctorId, correlationId) ?? null;
-          let recoverySendSucceeded = false;
-          try {
-            await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
-            recoverySendSucceeded = true;
-          } catch (recoverySendErr) {
-            if (recoverySendErr instanceof NotFoundError && recoveryEntryId && recoveryDoctorPageId && recoveryEntryId !== recoveryDoctorPageId) {
-              const leads = await getRecentCommentLeadsWithDmSent(doctorId, 3, 10, correlationId);
-              for (const lead of leads) {
-                try {
-                  await sendInstagramMessage(lead.commenter_ig_id, replyText, correlationId, doctorToken);
-                  recoverySendSucceeded = true;
-                  break;
-                } catch {
-                  // Try next lead
-                }
-              }
-            }
-            if (!recoverySendSucceeded) throw recoverySendErr;
-          }
+          await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
           await markWebhookProcessed(eventId, provider);
           await logAuditEvent({
             correlationId,
