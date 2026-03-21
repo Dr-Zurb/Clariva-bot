@@ -53,6 +53,7 @@ import { createMessage, getRecentMessages, getSenderIdByPlatformMessageId } from
 import {
   classifyIntent,
   classifyCommentIntent,
+  isPossiblyMedicalComment,
   generateResponse,
   generateResponseWithActions,
   redactPhiForAI,
@@ -823,15 +824,36 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     }
 
     const intentResult = await classifyCommentIntent(commentText, correlationId);
-    const intent = intentResult.intent;
+    let intent = intentResult.intent;
 
     if (SKIP_INTENT_COMMENT.has(intent)) {
-      logger.info(
-        { eventId, provider, correlationId, intent },
-        'Comment: skip intent, no outreach'
-      );
-      await markWebhookProcessed(eventId, provider);
-      return;
+      // Option B: second-stage AI for spam/joke/unrelated — could this be medical?
+      const skipIntentsForSecondStage = new Set<CommentIntent>(['spam', 'joke', 'unrelated']);
+      if (skipIntentsForSecondStage.has(intent)) {
+        const possiblyMedical = await isPossiblyMedicalComment(commentText, correlationId);
+        if (possiblyMedical) {
+          intent = 'medical_query';
+          logger.info(
+            { eventId, provider, correlationId, originalIntent: intentResult.intent },
+            'Comment: second-stage override to medical_query'
+          );
+        } else {
+          logger.info(
+            { eventId, provider, correlationId, intent },
+            'Comment: skip intent, no outreach'
+          );
+          await markWebhookProcessed(eventId, provider);
+          return;
+        }
+      } else {
+        // vulgar — no second stage, always skip
+        logger.info(
+          { eventId, provider, correlationId, intent },
+          'Comment: skip intent, no outreach'
+        );
+        await markWebhookProcessed(eventId, provider);
+        return;
+      }
     }
 
     const settings = await getDoctorSettings(doctorId);

@@ -201,56 +201,17 @@ export async function getSenderFromMostRecentConversation(
 ): Promise<string | null> {
   const token = accessToken.trim();
   if (!token) return null;
-  try {
-    const base = INSTAGRAM_GRAPH_BASE;
-    const params = { access_token: token, platform: 'instagram' as const };
+  const params = { access_token: token, platform: 'instagram' as const };
 
-    // Try igId (webhook entry.id) first; fall back to /me if 400 (page IDs not valid on graph.instagram.com)
-    let convList: Array<{ id?: string }> = [];
-    let convTarget = igId ? `${igId}` : 'me';
+  const tryFetch = async (base: string, target: string): Promise<Array<{ id?: string }>> => {
+    const res = await axios.get<{ data?: Array<{ id?: string }> }>(
+      `${base}/${target}/conversations`,
+      { params: { ...params }, timeout: 8000 }
+    );
+    return res.data?.data ?? [];
+  };
 
-    const fetchConvs = async (target: string) => {
-      const res = await axios.get<{ data?: Array<{ id?: string }> }>(
-        `${base}/${target}/conversations`,
-        { params: { ...params }, timeout: 8000 }
-      );
-      return res.data?.data ?? [];
-    };
-
-    try {
-      convList = await fetchConvs(convTarget);
-    } catch (firstErr) {
-      // Fall back to /me when igId returns 400 or 500 (page/ID format issues on graph.instagram.com)
-      const status = axios.isAxiosError(firstErr) ? firstErr.response?.status : undefined;
-      if (igId && (status === 400 || status === 500)) {
-        try {
-          convList = await fetchConvs('me');
-          convTarget = 'me';
-        } catch {
-          const msg = axios.isAxiosError(firstErr) ? firstErr.message : 'Request failed';
-          logger.warn({ correlationId, message: msg, status }, 'Could not get sender from most recent conversation');
-          return null;
-        }
-      } else {
-        throw firstErr;
-      }
-    }
-
-    const convId = convList[0]?.id;
-    if (!convId) {
-      logger.info({ correlationId, convTarget }, 'Conversation fallback: no conversations found');
-      return null;
-    }
-
-    // ourId: the IG account that owns the token (us). Customer messages have from.id !== ourId.
-    // Always use /me for ourId - igId from webhook can be a page ID, not the IG account ID.
-    const meRes = await axios.get<{ data?: Array<{ id?: string }>; id?: string }>(`${base}/me`, {
-      params: { fields: 'id', access_token: token },
-      timeout: 8000,
-    });
-    const ourId = meRes.data?.data?.[0]?.id ?? meRes.data?.id;
-    if (!ourId) return null;
-
+  const tryGetMessages = async (base: string, convId: string, ourId: string): Promise<string | null> => {
     const msgRes = await axios.get<{
       data?: Array<{ from?: { id?: string }; id?: string }>;
     }>(`${base}/${convId}/messages`, {
@@ -264,10 +225,40 @@ export async function getSenderFromMostRecentConversation(
         return String(fromId);
       }
     }
-    logger.info(
-      { correlationId, messageCount: messages.length },
-      'Conversation fallback: no customer message found in most recent conversation'
-    );
+    return null;
+  };
+
+  try {
+    // Page tokens work with graph.facebook.com; Instagram user tokens with graph.instagram.com.
+    // Try Facebook Graph first (doctor connects via Page OAuth → Page token).
+    const targets = igId ? [igId, 'me'] : ['me'];
+    for (const base of [FACEBOOK_GRAPH_BASE, INSTAGRAM_GRAPH_BASE]) {
+      for (const target of targets) {
+        try {
+          const convList = await tryFetch(base, target);
+          const convId = convList[0]?.id;
+          if (!convId) continue;
+
+          const meRes = await axios.get<{ data?: Array<{ id?: string }>; id?: string }>(`${base}/me`, {
+            params: { fields: 'id', access_token: token },
+            timeout: 8000,
+          });
+          const ourId = meRes.data?.data?.[0]?.id ?? meRes.data?.id;
+          if (!ourId) continue;
+
+          const senderId = await tryGetMessages(base, convId, ourId);
+          if (senderId) {
+            logger.info({ correlationId, base: base.includes('facebook') ? 'fb' : 'ig' }, 'Conversation fallback: resolved sender');
+            return senderId;
+          }
+        } catch (err) {
+          const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+          if (status === 400 || status === 500) continue;
+          throw err;
+        }
+      }
+    }
+    logger.info({ correlationId }, 'Conversation fallback: no conversations or sender found');
     return null;
   } catch (err) {
     const msg = axios.isAxiosError(err) ? err.message : 'Request failed';
@@ -312,7 +303,7 @@ export async function replyToInstagramComment(
       null,
       {
         params: { message: message.trim(), access_token: token },
-        timeout: 10000,
+        timeout: 15000,
       }
     );
 

@@ -188,7 +188,7 @@ HIGH-INTENT (genuine medical/practice interest): book_appointment, check_availab
 - check_availability: Asking about slots, timing ("available tomorrow?", "any slots?", "when can I come?")
 - pricing_inquiry: Asking about cost, fees ("price?", "how much?", "consultation fees?")
 - general_inquiry: General questions about practice or doctor ("more info?", "interested", "tell me more", "how does it work?")
-- medical_query: User shares symptoms or medical concern ("I have stomach pain", "suffering from diabetes", "my mother has fever", "headache for 3 days")
+- medical_query: User shares symptoms or medical concern ("I have stomach pain", "pain in stomach", "i have pain in stomach", "suffering from diabetes", "my mother has fever", "headache for 3 days"). Symptom phrases (pain, ache, fever, etc.) are medical_query, NOT spam.
 
 LOW-INTENT: greeting, praise, other
 - greeting: Just hi/hello with no inquiry ("hi", "hello")
@@ -196,7 +196,7 @@ LOW-INTENT: greeting, praise, other
 - other: Unclear or borderline; not clearly high-intent or skip
 
 SKIP (never reply or store): spam, joke, unrelated, vulgar
-- spam: Promotional, bots, links ("DM for deals", "check out my page", link spam)
+- spam: Promotional, bots, links ("DM for deals", "check out my page", link spam). NOT symptom-sharing—"pain", "ache", "fever" = medical_query.
 - joke: Humor, puns, memes ("lol", "haha", "😂", sarcastic jokes)
 - unrelated: Off-topic ("follow for follow", "check my profile", random topics)
 - vulgar: Profanity, insults, harassment
@@ -700,6 +700,62 @@ export async function classifyCommentIntent(
   }
 
   return { intent: 'other', confidence: 0 };
+}
+
+/** Minimal prompt for second-stage check: could skip-intent comment be medical? */
+const MEDICAL_SECOND_STAGE_PROMPT = `Does this comment indicate someone seeking medical help (symptoms, health concern, medical advice)?
+Reply only "yes" or "no".`;
+
+/**
+ * Second-stage AI check for comments initially classified as spam/joke/unrelated.
+ * Option B: when Stage 1 returns skip intent, ask "could this be medical?" and override if yes.
+ *
+ * @param commentText - Raw comment (PHI will be redacted)
+ * @param correlationId - For audit and logging
+ * @returns true if the model says "yes" (possibly medical); false otherwise or on failure
+ */
+export async function isPossiblyMedicalComment(
+  commentText: string,
+  correlationId: string
+): Promise<boolean> {
+  const client = getOpenAIClient();
+  if (!client) return false;
+
+  const redactedText = redactPhiForAI(commentText);
+  if (!redactedText.trim()) return false;
+
+  try {
+    const config = getOpenAIConfig();
+    const completion = await client.chat.completions.create({
+      model: config.model,
+      max_completion_tokens: 10,
+      messages: [
+        { role: 'system', content: MEDICAL_SECOND_STAGE_PROMPT },
+        { role: 'user', content: redactedText },
+      ],
+    });
+
+    const content = completion.choices[0]?.message?.content?.trim().toLowerCase();
+    if (!content) return false;
+
+    const isYes = content.startsWith('yes');
+    if (isYes) {
+      await logAuditEvent({
+        correlationId,
+        action: 'comment_symptom_override',
+        resourceType: 'comment',
+        status: 'success',
+        metadata: { commentPreview: redactedText.slice(0, 80), secondStageAnswer: content },
+      });
+    }
+    return isYes;
+  } catch (err) {
+    logger.warn(
+      { correlationId, err: err instanceof Error ? err.message : String(err) },
+      'Second-stage medical check failed, treating as non-medical'
+    );
+    return false;
+  }
 }
 
 // ============================================================================
