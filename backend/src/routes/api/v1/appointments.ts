@@ -16,6 +16,7 @@ import {
   bookAppointmentHandler,
   listAppointmentsHandler,
   getAppointmentByIdHandler,
+  patchAppointmentByIdHandler,
 } from '../../../controllers/appointment-controller';
 
 const router = Router();
@@ -24,5 +25,6 @@ router.get('/available-slots', getAvailableSlotsHandler);
 router.post('/book', bookAppointmentHandler);
 router.get('/', authenticateToken, listAppointmentsHandler);
 router.get('/:id', authenticateToken, getAppointmentByIdHandler);
+router.patch('/:id', authenticateToken, patchAppointmentByIdHandler);
 
 export default router;

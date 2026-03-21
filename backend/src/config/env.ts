@@ -45,6 +45,9 @@ const envSchema = z.object({
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_PHONE_NUMBER: z.string().optional(),
+  // Twilio Video (teleconsultation): API Key for access tokens. Create in Twilio Console (US1 region).
+  TWILIO_API_KEY_SID: z.string().optional(),
+  TWILIO_API_KEY_SECRET: z.string().optional(),
 
   // Instagram Configuration (optional - only required when Instagram webhook integration is active)
   // Made optional to allow server startup during setup phase
@@ -92,6 +95,17 @@ const envSchema = z.object({
   // Booking slot picker (e-task-3 - external page URL; token auth)
   BOOKING_TOKEN_SECRET: z.string().min(16, 'At least 16 chars for HMAC').optional(),
   BOOKING_PAGE_URL: z.string().url().optional(),
+
+  // Teleconsultation (e-task-3 - patient join link; signed token auth)
+  CONSULTATION_TOKEN_SECRET: z.string().min(16, 'At least 16 chars for HMAC').optional(),
+  CONSULTATION_JOIN_BASE_URL: z.string().url().optional(),
+  // Teleconsultation (e-task-4 - Twilio status callbacks). Backend base URL (e.g. https://api.onrender.com).
+  WEBHOOK_BASE_URL: z.string().url().optional(),
+  // Min consultation duration (seconds) to mark as verified for payout
+  MIN_VERIFIED_CONSULTATION_SECONDS: z
+    .string()
+    .default('120')
+    .transform((v) => Math.max(60, parseInt(v, 10) || 120)),
 });
 
 /**

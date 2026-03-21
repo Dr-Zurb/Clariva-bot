@@ -16,11 +16,17 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '../utils/async-handler';
 import { successResponse } from '../utils/response';
 import { getAvailableSlots } from '../services/availability-service';
-import { bookAppointment, getAppointmentById, listAppointmentsForDoctor } from '../services/appointment-service';
+import {
+  bookAppointment,
+  getAppointmentById,
+  listAppointmentsForDoctor,
+  updateAppointment,
+} from '../services/appointment-service';
 import {
   validateAvailableSlotsQuery,
   validateBookAppointment,
   validateGetAppointmentParams,
+  validatePatchAppointmentBody,
 } from '../utils/validation';
 import { UnauthorizedError } from '../utils/errors';
 
@@ -99,6 +105,28 @@ export const getAppointmentByIdHandler = asyncHandler(async (req: Request, res: 
 
   const { id } = validateGetAppointmentParams(req.params);
   const appointment = await getAppointmentById(id, correlationId, userId);
+
+  res.status(200).json(successResponse({ appointment }, req));
+});
+
+/**
+ * Patch appointment by ID
+ * PATCH /api/v1/appointments/:id
+ *
+ * Body: { status?, clinical_notes? } - at least one required
+ * Auth: Requires authenticated doctor (req.user).
+ */
+export const patchAppointmentByIdHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const userId = req.user?.id;
+
+  if (!userId) {
+    throw new UnauthorizedError('Authentication required');
+  }
+
+  const { id } = validateGetAppointmentParams(req.params);
+  const updates = validatePatchAppointmentBody(req.body);
+  const appointment = await updateAppointment(id, updates, correlationId, userId);
 
   res.status(200).json(successResponse({ appointment }, req));
 });

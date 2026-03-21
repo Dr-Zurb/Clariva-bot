@@ -10,8 +10,9 @@ import {
   bookAppointment,
   getAppointmentById,
   hasAppointmentOnDate,
+  updateAppointment,
 } from '../../../src/services/appointment-service';
-import { ConflictError, NotFoundError } from '../../../src/utils/errors';
+import { ConflictError, NotFoundError, ValidationError } from '../../../src/utils/errors';
 import * as database from '../../../src/config/database';
 import * as auditLogger from '../../../src/utils/audit-logger';
 
@@ -60,6 +61,27 @@ function createMockAdmin(
 
   const from = jest.fn().mockReturnValue(chain);
   return { from };
+}
+
+function createMockSupabase(
+  selectResponse: { data: unknown; error: unknown },
+  updateResponse?: { data: unknown; error: unknown }
+) {
+  let selectCalled = false;
+  const chain: Record<string, unknown> = {
+    select: jest.fn().mockReturnThis(),
+    eq: jest.fn().mockReturnThis(),
+    update: jest.fn().mockReturnThis(),
+    single: jest.fn().mockImplementation(() => {
+      if (!selectCalled) {
+        selectCalled = true;
+        return Promise.resolve(selectResponse);
+      }
+      return Promise.resolve(updateResponse ?? selectResponse);
+    }),
+  };
+  const from = jest.fn().mockReturnValue(chain);
+  return { from, chain };
 }
 
 describe('Appointment Service (e-task-2)', () => {
@@ -248,6 +270,58 @@ describe('Appointment Service (e-task-2)', () => {
       );
 
       expect(result).toBe(false);
+    });
+  });
+
+  describe('updateAppointment (e-task-5)', () => {
+    it('updates status when provided', async () => {
+      const existing = { id: 'apt-patch', doctor_id: userId };
+      const updated = { ...existing, status: 'completed', updated_at: new Date() };
+      const mockSupabase = createMockSupabase(
+        { data: existing, error: null },
+        { data: updated, error: null }
+      );
+      Object.defineProperty(mockedDb, 'supabase', { value: mockSupabase, writable: true });
+      (mockedAudit.logDataModification as jest.Mock) = jest.fn().mockImplementation(() => Promise.resolve());
+
+      const result = await updateAppointment(
+        'apt-patch',
+        { status: 'completed' },
+        correlationId,
+        userId
+      );
+
+      expect(result.status).toBe('completed');
+      expect(mockSupabase.chain.update).toHaveBeenCalledWith({ status: 'completed' });
+    });
+
+    it('updates clinical_notes when provided', async () => {
+      const existing = { id: 'apt-patch', doctor_id: userId };
+      const updated = { ...existing, clinical_notes: 'Patient improved', updated_at: new Date() };
+      const mockSupabase = createMockSupabase(
+        { data: existing, error: null },
+        { data: updated, error: null }
+      );
+      Object.defineProperty(mockedDb, 'supabase', { value: mockSupabase, writable: true });
+      (mockedAudit.logDataModification as jest.Mock) = jest.fn().mockImplementation(() => Promise.resolve());
+
+      const result = await updateAppointment(
+        'apt-patch',
+        { clinical_notes: 'Patient improved' },
+        correlationId,
+        userId
+      );
+
+      expect(result.clinical_notes).toBe('Patient improved');
+      expect(mockSupabase.chain.update).toHaveBeenCalledWith({
+        clinical_notes: 'Patient improved',
+      });
+    });
+
+    it('throws ValidationError when no fields provided', async () => {
+      await expect(updateAppointment('apt-patch', {}, correlationId, userId)).rejects.toThrow(
+        ValidationError
+      );
     });
   });
 });

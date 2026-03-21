@@ -135,6 +135,15 @@ Transform the bot from regex-heavy to AI-first: understand conversations, store 
 
 Tasks: e-task-1 (AI-first extraction with context), e-task-2 (conversation-aware extraction), e-task-3 (human-like response generation), e-task-4 (simplify regex to fast-path only).
 
+### Teleconsultation (2026-03-21)
+
+In-app video consultations via Twilio Video. Doctor starts call from dashboard; patient joins via link. Platform verifies both participated for payout eligibility.
+
+- **Reference:** [TELECONSULTATION_INITIATIVE.md](./TELECONSULTATION_INITIATIVE.md), [TELECONSULTATION_PLAN.md](../Development/Daily-plans/March%202026/2026-03-21/TELECONSULTATION_PLAN.md)
+- **Daily plan:** [docs/Development/Daily-plans/March 2026/2026-03-21/README.md](../Development/Daily-plans/March%202026/2026-03-21/README.md)
+
+Tasks: e-task-1 (consultation migration), e-task-2 (Twilio Video service), e-task-3 (Consultation API), e-task-4 (Twilio status webhook), e-task-5 (PATCH appointment), e-task-6 (Frontend appointment + video), e-task-7 (Patient join page), e-task-8 (Send consultation link).
+
 ### Patient Identity & Matching (2026-03-27)
 
 Patient identification, matching, deduplication, and Patients tab. Phone search + confirm (no ID required); Patient ID (MRN) as optional shortcut; doctor can merge duplicates.

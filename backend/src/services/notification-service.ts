@@ -13,6 +13,7 @@ import { getSupabaseAdminClient } from '../config/database';
 import { env } from '../config/env';
 import { sendEmail } from '../config/email';
 import { sendInstagramMessage } from './instagram-service';
+import { sendSms } from './twilio-sms-service';
 import { getInstagramAccessTokenForDoctor } from './instagram-connect-service';
 import { getDoctorSettings } from './doctor-settings-service';
 import { logAuditEvent } from '../utils/audit-logger';
@@ -192,6 +193,152 @@ export async function sendPaymentConfirmationToPatient(
     );
     return false;
   }
+}
+
+// ============================================================================
+// Patient: Consultation link (e-task-8 - Teleconsultation)
+// ============================================================================
+
+/**
+ * Send consultation join link to patient via best available channel.
+ * Priority: SMS (if phone) > email (if email) > Instagram DM (if conversation).
+ * Non-blocking: logs on failure, does not throw.
+ *
+ * @param appointmentId - Appointment ID
+ * @param patientJoinUrl - Full URL with token (e.g. https://app.example.com/consult/join?token=xxx)
+ * @param correlationId - Request correlation ID
+ * @returns true if sent via any channel, false if skipped or all attempts failed
+ */
+export async function sendConsultationLinkToPatient(
+  appointmentId: string,
+  patientJoinUrl: string,
+  correlationId: string
+): Promise<boolean> {
+  if (!patientJoinUrl?.trim()) {
+    logger.info({ correlationId, appointmentId }, 'Consultation link skipped (no URL)');
+    return false;
+  }
+
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    logger.warn({ correlationId, appointmentId }, 'Consultation link skipped (admin client unavailable)');
+    return false;
+  }
+
+  const { data: appointment, error: appError } = await admin
+    .from('appointments')
+    .select('id, patient_id, patient_phone, doctor_id, conversation_id')
+    .eq('id', appointmentId)
+    .single();
+
+  if (appError || !appointment) {
+    logger.info({ correlationId, appointmentId }, 'Consultation link skipped (appointment not found)');
+    return false;
+  }
+
+  let phone: string | null = appointment.patient_phone?.trim() ?? null;
+  let email: string | null = null;
+  let igRecipientId: string | null = null;
+
+  if (appointment.patient_id) {
+    const { data: patient } = await admin
+      .from('patients')
+      .select('phone, email, platform, platform_external_id')
+      .eq('id', appointment.patient_id)
+      .single();
+
+    if (patient) {
+      if (!phone && patient.phone?.trim()) phone = patient.phone.trim();
+      if (patient.email?.trim()) email = patient.email.trim();
+      if (patient.platform === 'instagram' && patient.platform_external_id?.trim()) {
+        igRecipientId = patient.platform_external_id.trim();
+      }
+    }
+    if (!igRecipientId && appointment.patient_id) {
+      const { data: conv } = await admin
+        .from('conversations')
+        .select('platform_conversation_id')
+        .eq('patient_id', appointment.patient_id)
+        .eq('doctor_id', appointment.doctor_id)
+        .eq('platform', 'instagram')
+        .limit(1)
+        .maybeSingle();
+      igRecipientId = conv?.platform_conversation_id?.trim() ?? null;
+    }
+  }
+  if (!igRecipientId && appointment.conversation_id) {
+    const { data: conv } = await admin
+      .from('conversations')
+      .select('platform_conversation_id')
+      .eq('id', appointment.conversation_id)
+      .eq('platform', 'instagram')
+      .single();
+    igRecipientId = conv?.platform_conversation_id?.trim() ?? null;
+  }
+
+  const doctorSettings = appointment.doctor_id
+    ? await getDoctorSettings(appointment.doctor_id)
+    : null;
+  const practiceName = doctorSettings?.practice_name?.trim() || 'your doctor';
+  const message = `Your video consultation with ${practiceName} is ready. Join here: ${patientJoinUrl}`;
+
+  if (phone) {
+    const sent = await sendSms(phone, message, correlationId);
+    if (sent) {
+      await auditNotificationSent(
+        correlationId,
+        'consultation_link',
+        'patient',
+        'appointment',
+        appointmentId
+      );
+      return true;
+    }
+  }
+
+  if (email) {
+    const sent = await sendEmail(email, 'Your video consultation is ready', message, correlationId);
+    if (sent) {
+      await auditNotificationSent(
+        correlationId,
+        'consultation_link',
+        'patient',
+        'appointment',
+        appointmentId
+      );
+      return true;
+    }
+  }
+
+  if (igRecipientId) {
+    const doctorToken = appointment.doctor_id
+      ? await getInstagramAccessTokenForDoctor(appointment.doctor_id, correlationId)
+      : null;
+    try {
+      await sendInstagramMessage(igRecipientId, message, correlationId, doctorToken ?? undefined);
+      await auditNotificationSent(
+        correlationId,
+        'consultation_link',
+        'patient',
+        'appointment',
+        appointmentId
+      );
+      return true;
+    } catch (err) {
+      logger.warn(
+        { correlationId, appointmentId, error: err instanceof Error ? err.message : String(err) },
+        'Consultation link DM failed'
+      );
+    }
+  }
+
+  if (!phone && !email && !igRecipientId) {
+    logger.info(
+      { correlationId, appointmentId },
+      'Consultation link skipped (no patient contact channel)'
+    );
+  }
+  return false;
 }
 
 // ============================================================================

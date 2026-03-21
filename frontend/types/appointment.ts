@@ -21,6 +21,15 @@ export interface Appointment {
   notes?: string;
   created_at: string;
   updated_at: string;
+  // Consultation (e-task-3, migration 021)
+  consultation_room_sid?: string | null;
+  consultation_started_at?: string | null;
+  doctor_joined_at?: string | null;
+  patient_joined_at?: string | null;
+  consultation_ended_at?: string | null;
+  consultation_duration_seconds?: number | null;
+  verified_at?: string | null;
+  clinical_notes?: string | null;
 }
 
 export interface AppointmentsListData {

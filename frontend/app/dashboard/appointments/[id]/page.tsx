@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getAppointmentById } from "@/lib/api";
 import { redirect } from "next/navigation";
 import { cn } from "@/lib/utils";
+import AppointmentConsultationActions from "@/components/consultation/AppointmentConsultationActions";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -145,6 +146,11 @@ export default async function AppointmentDetailPage({ params }: PageProps) {
           </div>
         )}
       </dl>
+
+      <AppointmentConsultationActions
+        appointment={appointment}
+        token={token}
+      />
     </div>
   );
 }

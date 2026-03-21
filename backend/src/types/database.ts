@@ -84,6 +84,14 @@ export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6;
  * @property reason_for_visit - Patient main complaint/symptom (required for new bookings; migration 016)
  * @property notes - Optional patient extras + doctor default_notes (migration 016)
  * @property consultation_type - Video or in-clinic (e.g. 'video', 'in_clinic') (e-task-2)
+ * @property consultation_room_sid - Twilio Video room SID (migration 021)
+ * @property consultation_started_at - When room was created (migration 021)
+ * @property doctor_joined_at - When doctor connected (migration 021)
+ * @property patient_joined_at - When patient connected (migration 021)
+ * @property consultation_ended_at - When room ended (migration 021)
+ * @property consultation_duration_seconds - Call duration in seconds (migration 021)
+ * @property verified_at - When consultation was verified for payout (migration 021)
+ * @property clinical_notes - Doctor notes; in-clinic or post-call (migration 021)
  * @property created_at - Timestamp when appointment was created
  * @property updated_at - Timestamp when appointment was last updated
  */
@@ -99,6 +107,14 @@ export interface Appointment {
   reason_for_visit?: string | null;  // Patient main complaint (migration 016)
   notes?: string | null;  // Optional patient extras + doctor default_notes (migration 016)
   consultation_type?: string | null;  // e.g. 'video', 'in_clinic' (e-task-2)
+  consultation_room_sid?: string | null;  // Twilio Video room SID (migration 021)
+  consultation_started_at?: Date | string | null;  // When room was created (migration 021)
+  doctor_joined_at?: Date | string | null;  // When doctor connected (migration 021)
+  patient_joined_at?: Date | string | null;  // When patient connected (migration 021)
+  consultation_ended_at?: Date | string | null;  // When room ended (migration 021)
+  consultation_duration_seconds?: number | null;  // Call duration in seconds (migration 021)
+  verified_at?: Date | string | null;  // When consultation was verified (migration 021)
+  clinical_notes?: string | null;  // Doctor notes (migration 021)
   created_at: Date;
   updated_at: Date;
 }

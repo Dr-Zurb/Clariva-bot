@@ -92,3 +92,38 @@ export const authenticateToken = asyncHandler(
     next();
   }
 );
+
+/**
+ * Optionally authenticate user. Does not throw when no token.
+ * Use for routes that support both auth (doctor) and token-param (patient) paths.
+ *
+ * If Authorization header present: verifies and sets req.user.
+ * If not present: continues with req.user undefined.
+ */
+export const optionalAuthenticateToken = asyncHandler(
+  async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
+    const correlationId = req.correlationId || 'unknown';
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return next();
+    }
+
+    const token = authHeader.substring(7);
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+
+    if (error || !user) {
+      return next();
+    }
+
+    req.user = user;
+    await logAuditEvent({
+      correlationId,
+      userId: user.id,
+      action: 'authenticate',
+      resourceType: 'auth',
+      status: 'success',
+    });
+    next();
+  }
+);

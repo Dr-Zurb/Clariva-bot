@@ -293,6 +293,86 @@ export function validateGetAppointmentParams(params: unknown): GetAppointmentPar
 }
 
 // ============================================================================
+// PATCH Appointment Body (e-task-5 - status, clinical_notes)
+// ============================================================================
+
+const CLINICAL_NOTES_MAX_LEN = 5000;
+
+export const patchAppointmentBodySchema = z
+  .object({
+    status: z.enum(['pending', 'confirmed', 'cancelled', 'completed']).optional(),
+    clinical_notes: z
+      .union([
+        z.string().max(CLINICAL_NOTES_MAX_LEN).transform((s) => (s.trim() === '' ? null : s.trim())),
+        z.null(),
+      ])
+      .optional(),
+  })
+  .refine((data) => data.status !== undefined || data.clinical_notes !== undefined, {
+    message: 'At least one field (status or clinical_notes) is required',
+  });
+
+export type PatchAppointmentBody = z.infer<typeof patchAppointmentBodySchema>;
+
+export function validatePatchAppointmentBody(body: unknown): PatchAppointmentBody {
+  const result = patchAppointmentBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+// ============================================================================
+// Consultation Schemas (e-task-3 - teleconsultation)
+// ============================================================================
+
+export const startConsultationBodySchema = z.object({
+  appointmentId: z.string().uuid('appointmentId must be a valid UUID'),
+});
+
+export type StartConsultationBody = z.infer<typeof startConsultationBodySchema>;
+
+export function validateStartConsultationBody(body: unknown): StartConsultationBody {
+  const result = startConsultationBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+export const getConsultationTokenQuerySchema = z
+  .object({
+    appointmentId: z.string().uuid('appointmentId must be a valid UUID').optional(),
+    token: z.string().min(1).optional(), // Patient path: required when no auth
+  })
+  .refine(
+    (data) => data.appointmentId !== undefined || (data.token !== undefined && data.token.length >= 10),
+    { message: 'Either appointmentId (doctor) or token (patient) is required' }
+  );
+
+export type GetConsultationTokenQuery = z.infer<typeof getConsultationTokenQuerySchema>;
+
+export function validateGetConsultationTokenQuery(
+  query: Record<string, string | string[] | undefined>
+): GetConsultationTokenQuery {
+  const normalized: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(query)) {
+    normalized[k] = typeof v === 'string' ? v : Array.isArray(v) ? String(v[0]) : undefined;
+  }
+  const result = getConsultationTokenQuerySchema.safeParse(normalized);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid query parameters';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+// ============================================================================
 // Payment Schemas (e-task-4)
 // ============================================================================
 

@@ -16,6 +16,17 @@ import { BookAppointmentInput } from '../utils/validation';
 import { ConflictError, InternalError, NotFoundError, ValidationError } from '../utils/errors';
 import { handleSupabaseError, validateOwnership } from '../utils/db-helpers';
 import { logDataModification, logDataAccess, logAuditEvent } from '../utils/audit-logger';
+import {
+  createTwilioRoom,
+  generateVideoAccessToken,
+  isTwilioVideoConfigured,
+} from './consultation-room-service';
+import {
+  generateConsultationToken,
+  verifyConsultationToken,
+} from '../utils/consultation-token';
+import { sendConsultationLinkToPatient } from './notification-service';
+import { logger } from '../config/logger';
 
 const SLOT_INTERVAL_MS = env.SLOT_INTERVAL_MINUTES * 60 * 1000;
 
@@ -493,6 +504,81 @@ export async function updateAppointmentStatus(
   return updated as Appointment;
 }
 
+/** Max length for clinical_notes (COMPLIANCE) */
+const CLINICAL_NOTES_MAX_LEN = 5000;
+
+export interface UpdateAppointmentInput {
+  status?: AppointmentStatus;
+  clinical_notes?: string | null;
+}
+
+/**
+ * Update appointment with partial fields (PATCH).
+ * Validates ownership; updates only provided fields.
+ *
+ * @param id - Appointment ID
+ * @param updates - Partial updates: status?, clinical_notes?
+ * @param correlationId - Request correlation ID
+ * @param userId - Authenticated user ID (doctor)
+ * @returns Updated appointment
+ */
+export async function updateAppointment(
+  id: string,
+  updates: UpdateAppointmentInput,
+  correlationId: string,
+  userId: string
+): Promise<Appointment> {
+  if (!updates.status && updates.clinical_notes === undefined) {
+    throw new ValidationError('At least one field (status or clinical_notes) is required');
+  }
+
+  const { data: existing, error: fetchError } = await supabase
+    .from('appointments')
+    .select('id, doctor_id')
+    .eq('id', id)
+    .single();
+
+  if (fetchError || !existing) {
+    handleSupabaseError(fetchError, correlationId);
+  }
+
+  validateOwnership(existing!.doctor_id, userId);
+
+  const dbUpdates: Record<string, unknown> = {};
+  if (updates.status !== undefined) {
+    dbUpdates.status = updates.status;
+  }
+  if (updates.clinical_notes !== undefined) {
+    const notes =
+      updates.clinical_notes === null || updates.clinical_notes === ''
+        ? null
+        : String(updates.clinical_notes).trim();
+    if (notes !== null && notes.length > CLINICAL_NOTES_MAX_LEN) {
+      throw new ValidationError(`clinical_notes must be at most ${CLINICAL_NOTES_MAX_LEN} characters`);
+    }
+    dbUpdates.clinical_notes = notes;
+  }
+
+  if (Object.keys(dbUpdates).length === 0) {
+    return getAppointmentById(id, correlationId, userId);
+  }
+
+  const { data: updated, error } = await supabase
+    .from('appointments')
+    .update(dbUpdates)
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error || !updated) {
+    handleSupabaseError(error, correlationId);
+  }
+
+  await logDataModification(correlationId, userId, 'update', 'appointment', id, Object.keys(dbUpdates) as string[]);
+
+  return updated as Appointment;
+}
+
 /**
  * Cancel appointment for patient (webhook worker context).
  * Uses admin client; no user JWT. Validates appointment belongs to (doctorId, patientId).
@@ -639,4 +725,186 @@ export async function updateAppointmentDateForPatient(
   );
 
   return updated as Appointment;
+}
+
+// ============================================================================
+// Consultation (e-task-3 - Teleconsultation)
+// ============================================================================
+
+export interface StartConsultationResult {
+  roomSid: string;
+  roomName: string;
+  doctorToken: string;
+  patientJoinUrl: string;
+  patientJoinToken: string;
+  expiresAt: string;
+}
+
+/**
+ * Start a video consultation for an appointment.
+ * Idempotent: if room already exists, returns existing room with fresh tokens.
+ *
+ * @param appointmentId - Appointment UUID
+ * @param correlationId - Request correlation ID
+ * @param userId - Authenticated user ID (doctor, must own appointment)
+ * @returns Room info and tokens for doctor and patient join link
+ */
+export async function startConsultation(
+  appointmentId: string,
+  correlationId: string,
+  userId: string
+): Promise<StartConsultationResult> {
+  const appointment = await getAppointmentById(appointmentId, correlationId, userId);
+
+  if (appointment.status !== 'pending' && appointment.status !== 'confirmed') {
+    throw new ValidationError('Only pending or confirmed appointments can start a consultation');
+  }
+
+  if (!isTwilioVideoConfigured()) {
+    throw new ValidationError('Video consultation is not configured');
+  }
+
+  const roomName = `appointment-${appointmentId}`;
+  let roomSid = appointment.consultation_room_sid ?? null;
+
+  // Idempotent: create room only if not already started
+  if (!roomSid) {
+    const createResult = await createTwilioRoom(roomName, correlationId);
+    if (!createResult) {
+      throw new InternalError('Failed to create video room');
+    }
+    roomSid = createResult.roomSid;
+
+    const admin = getSupabaseAdminClient();
+    if (!admin) {
+      throw new InternalError('Service role client not available');
+    }
+
+    const startedAt = new Date().toISOString();
+    const { error } = await admin
+      .from('appointments')
+      .update({
+        consultation_room_sid: roomSid,
+        consultation_started_at: startedAt,
+      })
+      .eq('id', appointmentId);
+
+    if (error) {
+      handleSupabaseError(error, correlationId);
+    }
+
+    await logDataModification(correlationId, userId, 'update', 'appointment', appointmentId, [
+      'consultation_room_sid',
+      'consultation_started_at',
+    ]);
+  }
+
+  const doctorIdentity = `doctor-${appointment.doctor_id}`;
+  const doctorToken = generateVideoAccessToken(doctorIdentity, roomName, correlationId);
+  if (!doctorToken) {
+    throw new InternalError('Failed to generate doctor token');
+  }
+
+  const patientJoinToken = generateConsultationToken(appointmentId);
+  const baseUrl = env.CONSULTATION_JOIN_BASE_URL?.trim();
+  const patientJoinUrl = baseUrl ? `${baseUrl}?token=${patientJoinToken}` : '';
+
+  if (patientJoinUrl) {
+    try {
+      await sendConsultationLinkToPatient(appointmentId, patientJoinUrl, correlationId);
+    } catch (err) {
+      logger.warn(
+        { correlationId, appointmentId, error: err instanceof Error ? err.message : String(err) },
+        'Consultation link send failed (doctor can copy link)'
+      );
+    }
+  }
+
+  const expiresAt = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString();
+
+  return {
+    roomSid,
+    roomName,
+    doctorToken,
+    patientJoinUrl,
+    patientJoinToken,
+    expiresAt,
+  };
+}
+
+/**
+ * Get a Twilio Video access token for joining a consultation.
+ * Doctor path: auth required, ownership validated.
+ * Patient path: token query param required, token verified.
+ *
+ * @param appointmentId - Appointment UUID
+ * @param correlationId - Request correlation ID
+ * @param options - { userId } for doctor path, or { patientToken } for patient path
+ * @returns Twilio Video JWT
+ */
+export async function getConsultationToken(
+  appointmentId: string,
+  correlationId: string,
+  options: { userId: string } | { patientToken: string }
+): Promise<{ token: string; roomName: string }> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const { data: appointment, error } = await admin
+    .from('appointments')
+    .select('id, doctor_id, consultation_room_sid')
+    .eq('id', appointmentId)
+    .single();
+
+  if (error || !appointment) {
+    throw new NotFoundError('Appointment not found');
+  }
+
+  const roomSid = appointment.consultation_room_sid;
+  if (!roomSid) {
+    throw new ValidationError('Consultation has not been started yet');
+  }
+
+  const roomName = `appointment-${appointmentId}`;
+
+  if ('userId' in options) {
+    if (appointment.doctor_id !== options.userId) {
+      throw new NotFoundError('Appointment not found');
+    }
+    const identity = `doctor-${options.userId}`;
+    const token = generateVideoAccessToken(identity, roomName, correlationId);
+    if (!token) {
+      throw new InternalError('Failed to generate doctor token');
+    }
+    return { token, roomName };
+  }
+
+  const verified = verifyConsultationToken(options.patientToken);
+  if (verified.appointmentId !== appointmentId) {
+    throw new NotFoundError('Appointment not found');
+  }
+
+  const identity = `patient-${appointmentId}`;
+  const token = generateVideoAccessToken(identity, roomName, correlationId);
+  if (!token) {
+    throw new InternalError('Failed to generate patient token');
+  }
+  return { token, roomName };
+}
+
+/**
+ * Get consultation token for patient using only the signed join token.
+ * Verifies token to extract appointmentId, then returns Video access token.
+ * Used by /consult/join page when patient has ?token=xxx in URL.
+ */
+export async function getConsultationTokenForPatient(
+  patientToken: string,
+  correlationId: string
+): Promise<{ token: string; roomName: string }> {
+  const verified = verifyConsultationToken(patientToken);
+  return getConsultationToken(verified.appointmentId, correlationId, {
+    patientToken,
+  });
 }

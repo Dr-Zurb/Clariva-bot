@@ -583,3 +583,155 @@ export async function getBookingRedirectUrl(
     `/api/v1/bookings/redirect-url?${params.toString()}`
   );
 }
+
+// =============================================================================
+// Consultation (e-task-3, e-task-5, e-task-6)
+// =============================================================================
+
+export interface StartConsultationData {
+  roomSid: string;
+  roomName: string;
+  doctorToken: string;
+  patientJoinUrl: string;
+  patientJoinToken: string;
+  expiresAt: string;
+}
+
+export interface GetConsultationTokenData {
+  token: string;
+  roomName: string;
+}
+
+/**
+ * Start a video consultation for an appointment. Requires auth token.
+ */
+export async function startConsultation(
+  token: string,
+  appointmentId: string
+): Promise<ApiSuccess<StartConsultationData>> {
+  const res = await fetch(`${API_BASE}/api/v1/consultation/start`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ appointmentId }),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<StartConsultationData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<StartConsultationData>;
+}
+
+/**
+ * Get Twilio Video access token for doctor or patient. Doctor uses token; patient uses token query param.
+ */
+export async function getConsultationToken(
+  token: string | null,
+  appointmentId: string,
+  patientToken?: string
+): Promise<ApiSuccess<GetConsultationTokenData>> {
+  const params = new URLSearchParams({ appointmentId });
+  if (patientToken) params.set("token", patientToken);
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(
+    `${API_BASE}/api/v1/consultation/token?${params.toString()}`,
+    { headers, cache: "no-store" }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<GetConsultationTokenData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<GetConsultationTokenData>;
+}
+
+/**
+ * Get Twilio Video access token for patient using join-link token only.
+ * Public endpoint; no auth. Token is passed in URL (?token=xxx).
+ */
+export async function getConsultationTokenForPatient(
+  patientToken: string
+): Promise<ApiSuccess<GetConsultationTokenData>> {
+  const params = new URLSearchParams({ token: patientToken });
+  const res = await fetch(`${API_BASE}/api/v1/consultation/token?${params.toString()}`, {
+    headers: { "Content-Type": "application/json" },
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<GetConsultationTokenData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<GetConsultationTokenData>;
+}
+
+export interface PatchAppointmentPayload {
+  status?: "pending" | "confirmed" | "cancelled" | "completed";
+  clinical_notes?: string | null;
+}
+
+/**
+ * Patch appointment (status and/or clinical_notes). Requires auth token.
+ */
+export async function patchAppointment(
+  token: string,
+  id: string,
+  payload: PatchAppointmentPayload
+): Promise<ApiSuccess<AppointmentDetailData>> {
+  const res = await fetch(`${API_BASE}/api/v1/appointments/${id}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<AppointmentDetailData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<AppointmentDetailData>;
+}
