@@ -736,7 +736,10 @@ export async function isPossiblyMedicalComment(
     });
 
     const content = completion.choices[0]?.message?.content?.trim().toLowerCase();
-    if (!content) return false;
+    if (!content) {
+      logger.info({ correlationId, commentPreview: redactedText.slice(0, 50) }, 'Second-stage medical: empty response');
+      return false;
+    }
 
     const isYes = content.startsWith('yes');
     if (isYes) {
@@ -747,6 +750,11 @@ export async function isPossiblyMedicalComment(
         status: 'success',
         metadata: { commentPreview: redactedText.slice(0, 80), secondStageAnswer: content },
       });
+    } else {
+      logger.info(
+        { correlationId, secondStageAnswer: content.slice(0, 30), commentPreview: redactedText.slice(0, 50) },
+        'Second-stage medical: model said no'
+      );
     }
     return isYes;
   } catch (err) {

@@ -830,6 +830,10 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       // Option B: second-stage AI for spam/joke/unrelated — could this be medical?
       const skipIntentsForSecondStage = new Set<CommentIntent>(['spam', 'joke', 'unrelated']);
       if (skipIntentsForSecondStage.has(intent)) {
+        logger.info(
+          { eventId, correlationId, originalIntent: intent, commentPreview: commentText.slice(0, 50) },
+          'Comment: running second-stage medical check'
+        );
         const possiblyMedical = await isPossiblyMedicalComment(commentText, correlationId);
         if (possiblyMedical) {
           intent = 'medical_query';
