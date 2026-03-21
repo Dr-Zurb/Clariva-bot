@@ -40,16 +40,15 @@ const FACEBOOK_GRAPH_BASE = 'https://graph.facebook.com/v18.0';
 /** Scopes for Page-linked Instagram (Messenger Platform).
  * pages_show_list + business_management: required for me/accounts to return Pages (incl. business-owned).
  * pages_read_engagement: required for GET /{page-id}?fields=instagram_business_account (Meta error #100).
- * instagram_basic: required for /{page-id}/instagram_accounts fallback (Business Manager linking).
- * ads_management: when Page/Instagram linked via Business Manager.
+ * instagram_basic: required for /{page-id}/instagram_accounts fallback.
  * pages_manage_metadata, pages_messaging, instagram_manage_messages: for Page token and Instagram DMs.
- * instagram_manage_comments: required for POST /{comment-id}/replies (public reply to comments). */
+ * instagram_manage_comments: required for POST /{comment-id}/replies (public reply to comments).
+ * Note: ads_management omitted to avoid App Review; Pages linked via Business Manager may need it later. */
 const FACEBOOK_SCOPES = [
   'pages_show_list',
   'business_management',
   'pages_read_engagement',
   'instagram_basic',
-  'ads_management',
   'pages_manage_metadata',
   'pages_messaging',
   'instagram_manage_messages',

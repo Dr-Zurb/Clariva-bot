@@ -17,7 +17,7 @@ Before submitting for App Review, verify your app requests only the permissions 
 | `pages_manage_metadata` | ✅ Yes | Page token for messaging |
 | `pages_messaging` | ✅ Yes | Messenger/Instagram messaging |
 | `business_management` | ✅ Yes | Access business-owned Pages |
-| `ads_management` | ⚠️ Check | Used for Business Manager–linked Pages; remove if not needed |
+| `ads_management` | ❌ No | Removed from scopes; add back only if Business Manager–linked Pages fail to connect |
 
 ### 2. Manage messaging & content on Instagram (Comments)
 
@@ -33,8 +33,8 @@ Our connect flow requests these scopes (in `instagram-connect-service.ts`):
 
 ```
 pages_show_list, business_management, pages_read_engagement,
-instagram_basic, ads_management, pages_manage_metadata,
-pages_messaging, instagram_manage_messages, instagram_manage_comments
+instagram_basic, pages_manage_metadata, pages_messaging,
+instagram_manage_messages, instagram_manage_comments
 ```
 
 **Note:** `instagram_manage_comments` is required for public replies to post comments. Doctors must reconnect Instagram after this scope was added to obtain a token with the permission.
@@ -73,8 +73,8 @@ pages_messaging, instagram_manage_messages, instagram_manage_comments
 **pages_show_list, pages_read_engagement, instagram_basic, pages_manage_metadata, pages_messaging, business_management:**  
 "Required for our Instagram connect flow: doctors must authorize their Facebook Page (linked to Instagram) so we can obtain a Page token for sending/receiving messages on their behalf."
 
-**ads_management (optional):**  
-"Required when a doctor's Instagram is linked via Business Manager. Without this, we cannot retrieve the Instagram Business Account for Pages linked through Business Manager."
+**ads_management (removed):**  
+Not requested. Add only if doctors with Business Manager–linked Pages cannot connect.
 
 ---
 
@@ -84,6 +84,6 @@ Instagram webhooks (comments and DMs) may fail standard HMAC signature verificat
 
 ---
 
-## Optional: Trim `ads_management`
+## `ads_management` Removed
 
-If you don't use Business Manager–linked Pages, you can remove `ads_management` from the OAuth scopes to reduce the permission surface. This may simplify App Review.
+`ads_management` is **not** in our OAuth scopes (removed to simplify App Review). Connect should work for doctors whose Instagram is linked directly to their Facebook Page. If a doctor's Page is linked via **Business Manager** and connect fails to find their Instagram, we may need to add `ads_management` and submit for App Review.
