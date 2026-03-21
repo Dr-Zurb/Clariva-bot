@@ -353,6 +353,7 @@ export interface BlockedTime {
  *
  * @property doctor_id - Doctor who owns this link (UUID, references auth.users)
  * @property instagram_page_id - Meta page/IG account ID (unique)
+ * @property facebook_page_id - Facebook Page ID (for webhook entry.id matching)
  * @property instagram_access_token - Access token (never log; encrypt at rest per platform)
  * @property instagram_username - Optional handle for display (e.g. "Connected as @handle")
  * @property created_at - When link was created
@@ -361,6 +362,7 @@ export interface BlockedTime {
 export interface DoctorInstagram {
   doctor_id: string;
   instagram_page_id: string;
+  facebook_page_id: string | null;
   instagram_access_token: string;
   instagram_username: string | null;
   created_at: Date;

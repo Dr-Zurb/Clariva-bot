@@ -137,6 +137,16 @@ export async function getDoctorIdByPageIds(
       logger.debug({ correlationId, pageId }, 'Resolved doctor from Instagram page ID');
       return data.doctor_id as string;
     }
+    const { data: fbData, error: fbError } = await supabase
+      .from('doctor_instagram')
+      .select('doctor_id')
+      .eq('facebook_page_id', pageId)
+      .maybeSingle();
+    if (fbError) handleSupabaseError(fbError, correlationId ?? '');
+    if (fbData?.doctor_id) {
+      logger.debug({ correlationId, pageId }, 'Resolved doctor from Facebook page ID (webhook entry.id)');
+      return fbData.doctor_id as string;
+    }
   }
   if (pageIds.length === 0) return null;
   const { data: allRows, error: listError } = await supabase
@@ -427,6 +437,7 @@ export async function getPageTokenAndInstagramAccount(
 ): Promise<{
   pageAccessToken: string;
   instagramPageId: string;
+  facebookPageId: string;
   instagramUsername: string | null;
 }> {
   const url = `${FACEBOOK_GRAPH_BASE}/me/accounts`;
@@ -449,10 +460,11 @@ export async function getPageTokenAndInstagramAccount(
     // First pass: use instagram_business_account from me/accounts if present
     for (const page of pages) {
       const ig = page.instagram_business_account;
-      if (ig?.id && page.access_token) {
+      if (ig?.id && page.access_token && page.id) {
         return {
           pageAccessToken: page.access_token,
           instagramPageId: ig.id,
+          facebookPageId: page.id,
           instagramUsername: ig.username ?? null,
         };
       }
@@ -476,7 +488,7 @@ export async function getPageTokenAndInstagramAccount(
             }
           );
           const ig = pageRes.data?.instagram_business_account;
-          if (ig?.id) {
+          if (ig?.id && page.id) {
             logger.info(
               { correlationId, pageId: page.id },
               'Resolved Instagram via Page lookup fallback (me/accounts omitted it)'
@@ -484,6 +496,7 @@ export async function getPageTokenAndInstagramAccount(
             return {
               pageAccessToken: page.access_token,
               instagramPageId: ig.id,
+              facebookPageId: page.id,
               instagramUsername: ig.username ?? null,
             };
           }
@@ -500,7 +513,7 @@ export async function getPageTokenAndInstagramAccount(
                 }
               );
               const firstIg = igAccountsRes.data?.data?.[0];
-              if (firstIg?.id) {
+              if (firstIg?.id && page.id) {
                 logger.info(
                   { correlationId, pageId: page.id },
                   'Resolved Instagram via instagram_accounts fallback (Business Manager linking)'
@@ -508,6 +521,7 @@ export async function getPageTokenAndInstagramAccount(
                 return {
                   pageAccessToken: page.access_token,
                   instagramPageId: firstIg.id,
+                  facebookPageId: page.id,
                   instagramUsername: firstIg.username ?? null,
                 };
               }
@@ -633,6 +647,7 @@ export async function getInstagramAccessTokenForDoctor(
 
 export interface SaveDoctorInstagramInput {
   instagram_page_id: string;
+  facebook_page_id?: string | null;
   instagram_access_token: string;
   instagram_username?: string | null;
 }
@@ -658,6 +673,7 @@ export async function saveDoctorInstagram(
   const row: InsertDoctorInstagram = {
     doctor_id: doctorId,
     instagram_page_id: input.instagram_page_id,
+    facebook_page_id: input.facebook_page_id ?? null,
     instagram_access_token: input.instagram_access_token.trim(),
     instagram_username: input.instagram_username ?? null,
   };

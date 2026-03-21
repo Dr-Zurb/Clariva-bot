@@ -93,7 +93,7 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
 
   const { accessToken: shortLived } = await exchangeCodeForShortLivedToken(code, correlationId);
   const longLivedUserToken = await exchangeForLongLivedToken(shortLived, correlationId);
-  const { pageAccessToken, instagramPageId, instagramUsername } = await getPageTokenAndInstagramAccount(
+  const { pageAccessToken, instagramPageId, facebookPageId, instagramUsername } = await getPageTokenAndInstagramAccount(
     longLivedUserToken,
     correlationId
   );
@@ -103,6 +103,7 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
       doctorId,
       {
         instagram_page_id: instagramPageId,
+        facebook_page_id: facebookPageId,
         instagram_access_token: pageAccessToken,
         instagram_username: instagramUsername ?? null,
       },

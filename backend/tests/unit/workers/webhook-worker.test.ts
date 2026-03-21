@@ -59,6 +59,7 @@ jest.mock('../../../src/services/instagram-service', () => ({
 }));
 jest.mock('../../../src/services/instagram-connect-service', () => ({
   getDoctorIdByPageId: jest.fn(),
+  getDoctorIdByPageIds: jest.fn(),
   getInstagramAccessTokenForDoctor: jest.fn(),
 }));
 jest.mock('../../../src/services/patient-service', () => ({
@@ -121,7 +122,7 @@ describe('Webhook Worker', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest
-      .mocked(instagramConnectService.getDoctorIdByPageId)
+      .mocked(instagramConnectService.getDoctorIdByPageIds)
       .mockResolvedValue(TEST_DOCTOR_ID);
     jest
       .mocked(instagramConnectService.getInstagramAccessTokenForDoctor)
