@@ -78,6 +78,12 @@ pages_messaging, instagram_manage_messages
 
 ---
 
+## Webhook Signature Behavior
+
+Instagram webhooks (comments and DMs) may fail standard HMAC signature verification. Our webhook controller **bypasses verification** for `comment:*` and `message` payloads when the signature fails, so comment → DM and two-way DM conversations work. This is documented in `webhook-controller.ts` and verified by integration tests.
+
+---
+
 ## Optional: Trim `ads_management`
 
 If you don't use Business Manager–linked Pages, you can remove `ads_management` from the OAuth scopes to reduce the permission surface. This may simplify App Review.

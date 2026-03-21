@@ -234,12 +234,17 @@ describe('Webhook Controller', () => {
       expect(mockMarkProcessing).toHaveBeenCalled();
     });
 
-    it('2.1.2 logs security event and does not queue when signature is invalid', async () => {
+    it('2.1.2 logs security event and does not queue when signature is invalid (unknown payload type)', async () => {
       mockVerify.mockReturnValue(false);
 
-      const rawBody = Buffer.from(JSON.stringify(validPayload));
+      // Use payload with no messaging/changes so payloadType is "unknown" — we reject these (message/comment bypass only)
+      const unknownPayload = {
+        object: 'instagram',
+        entry: [{ id: '17841479659492101', time: 1569262486134 }],
+      };
+      const rawBody = Buffer.from(JSON.stringify(unknownPayload));
       const req = {
-        body: validPayload,
+        body: unknownPayload,
         rawBody,
         headers: { 'x-hub-signature-256': 'sha256=wrong' },
         correlationId: 'test-corr-post-2',

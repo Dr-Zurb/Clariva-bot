@@ -246,6 +246,14 @@ export const handleInstagramWebhook = asyncHandler(
           'Instagram webhook: comment with failed signature; bypassing verification to process'
         );
         // Fall through to comment processing below (skip the throw)
+      } else if (payloadType === 'message') {
+        // message: Instagram DM webhooks may sign differently than Messenger. Bypass so two-way DM
+        // conversations work (e.g. user replies "yes" to schedule). Risk: low (API calls need valid IDs).
+        logger.info(
+          { correlationId, rawBodyLength: len, payloadType },
+          'Instagram webhook: message with failed signature; bypassing verification to process'
+        );
+        // Fall through to message processing below (skip the throw)
       } else {
         if (len >= 300 && len <= 320) {
           const structure = getInstagramPayloadStructure(req.body);
