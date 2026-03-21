@@ -118,6 +118,37 @@ export async function createCommentLead(
 }
 
 /**
+ * Get recent comment leads with DM sent for a doctor (for 2018001 fallback).
+ * When message webhook senderId fails with "No matching user found", we may retry
+ * with commenter_ig_id from a recent comment—that ID worked for the initial DM.
+ */
+export async function getRecentCommentLeadsWithDmSent(
+  doctorId: string,
+  limit: number,
+  withinMinutes: number,
+  correlationId?: string
+): Promise<{ commenter_ig_id: string }[]> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return [];
+
+  const since = new Date(Date.now() - withinMinutes * 60 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from('comment_leads')
+    .select('commenter_ig_id')
+    .eq('doctor_id', doctorId)
+    .eq('dm_sent', true)
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    handleSupabaseError(error, correlationId ?? '');
+    return [];
+  }
+  return (data ?? []) as { commenter_ig_id: string }[];
+}
+
+/**
  * Link comment lead to conversation when commenter DMs.
  */
 export async function linkCommentLeadToConversation(

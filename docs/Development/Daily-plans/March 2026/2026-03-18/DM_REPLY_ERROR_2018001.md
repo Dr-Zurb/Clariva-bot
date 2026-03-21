@@ -49,28 +49,30 @@ The job retried 3 times, then failed.
 
 ---
 
-## Next Steps (in order)
+## Implemented Fix (2026-03-21)
 
-### 1. Stop retrying on 100/2018001 (reduce noise)
+### 1. Comment-lead fallback when 2018001 occurs
 
-Treat `metaCode 100` + `error_subcode 2018001` as **non-retryable** in the Instagram send logic. Mark the job as failed (or skip) instead of retrying 3 times. This prevents log spam and dead-letter buildup for a permanent failure.
+When sending a DM reply fails with `NotFoundError` (100/2018001) **and** the webhook entry ID does not match the doctor's stored page ID (page ID mismatch / single-doctor fallback scenario):
 
-### 2. Log entry ID and recipient for debugging
+1. Fetch recent comment leads with `dm_sent=true` (last 10 minutes, up to 3 leads)
+2. Retry sending using `commenter_ig_id` from each lead instead of the message webhook's `senderId`
+3. The comment webhook's `commenterIgId` worked for the initial DM; it may work for follow-up replies when the message webhook's sender ID is in a different ID space
 
-When we resolve the doctor via "page ID mismatch fallback", log:
-- `webhook_entry_id` (from the message payload)
-- `doctor_page_id` (from doctor_instagram)
-- `recipient_id` (who we're trying to send to)
+**Files changed:**
+- `backend/src/services/comment-lead-service.ts` – added `getRecentCommentLeadsWithDmSent()`
+- `backend/src/workers/webhook-worker.ts` – wrap `sendInstagramMessage` in try-catch; on NotFoundError + page mismatch, retry with comment_lead fallback
 
-Helps confirm the mismatch theory.
+### 2. Diagnostic logging
 
-### 3. Verify ID in message webhooks
+When the message webhook has a page ID mismatch, we now log:
+- `webhook_entry_id`
+- `doctor_page_id`
+- `recipient_id`
 
-Inspect a real message webhook payload (when a user sends a DM): check `sender.id`, `entry[].id`, and compare with the comment webhook's `value.from.id` for the same user. If they differ, we may need to normalize or use a different lookup.
+### 3. Non-retryable
 
-### 4. Consider Private Reply API for comment-initiated DMs
-
-For comments, we send a **proactive DM** using `commenterIgId` from the comment webhook. That works. For **replies** to that DM, we use the standard Messaging API with `sender.id` from the message webhook. If Meta uses different IDs for comment context vs DM context, we could try using the **Private Reply** API (`recipient: { comment_id: "..." }`) for the first message—but we've already moved to DM, so that may not apply to follow-up replies.
+`metaCode 100` + `error_subcode 2018001` is already mapped to `NotFoundError` in `instagram-service.ts`; `sendWithRetry` does not retry on `NotFoundError`.
 
 ---
 
