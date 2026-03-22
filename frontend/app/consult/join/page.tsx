@@ -9,12 +9,16 @@ function ConsultJoinContent() {
   const searchParams = useSearchParams();
   const token = searchParams?.get("token") ?? "";
 
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [status, setStatus] = useState<"loading" | "ready" | "error" | "ended">("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [videoData, setVideoData] = useState<{
     accessToken: string;
     roomName: string;
   } | null>(null);
+
+  const handleDisconnect = () => {
+    setStatus("ended");
+  };
 
   useEffect(() => {
     if (!token || token.length < 10) {
@@ -64,6 +68,19 @@ function ConsultJoinContent() {
     );
   }
 
+  if (status === "ended") {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 p-4">
+        <div className="w-full max-w-md rounded-lg border border-gray-200 bg-white p-8 text-center shadow-sm">
+          <h1 className="text-xl font-semibold text-gray-900">Call ended</h1>
+          <p className="mt-2 text-gray-600">
+            You have left the video consultation. You can safely close this tab.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (!videoData) return null;
 
   return (
@@ -75,6 +92,7 @@ function ConsultJoinContent() {
         <VideoRoom
           accessToken={videoData.accessToken}
           roomName={videoData.roomName}
+          onDisconnect={handleDisconnect}
         />
       </div>
     </div>

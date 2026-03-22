@@ -27,6 +27,7 @@ export default function VideoRoom({
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const roomRef = useRef<Room | null>(null);
   const localTracksRef = useRef<Awaited<ReturnType<typeof createLocalTracks>>>([]);
+  const hasNotifiedDisconnectRef = useRef(false);
 
   useEffect(() => {
     let room: Room | null = null;
@@ -95,7 +96,10 @@ export default function VideoRoom({
 
         room.on("disconnected", () => {
           setStatus("disconnected");
-          onDisconnect?.();
+          if (!hasNotifiedDisconnectRef.current) {
+            hasNotifiedDisconnectRef.current = true;
+            onDisconnect?.();
+          }
         });
       } catch (err) {
         setStatus("error");
@@ -119,8 +123,27 @@ export default function VideoRoom({
   }, [status]);
 
   const handleLeave = () => {
-    if (roomRef.current) {
-      roomRef.current.disconnect();
+    const room = roomRef.current;
+    const tracks = localTracksRef.current;
+
+    // Stop and detach local tracks immediately (stops camera, clears video)
+    tracks.forEach((track) => {
+      if ("detach" in track && typeof (track as { detach: (el?: HTMLElement) => void }).detach === "function") {
+        (track as { detach: (el?: HTMLElement) => void }).detach();
+      }
+      if ("stop" in track && typeof track.stop === "function") track.stop();
+    });
+    localTracksRef.current = [];
+
+    if (room) {
+      room.removeAllListeners();
+      room.disconnect();
+      roomRef.current = null;
+    }
+
+    setStatus("disconnected");
+    if (!hasNotifiedDisconnectRef.current) {
+      hasNotifiedDisconnectRef.current = true;
       onDisconnect?.();
     }
   };
@@ -130,6 +153,15 @@ export default function VideoRoom({
       <div className="rounded-lg border border-red-200 bg-red-50 p-4">
         <p className="font-medium text-red-800">Connection failed</p>
         <p className="mt-1 text-sm text-red-700">{errorMessage}</p>
+      </div>
+    );
+  }
+
+  if (status === "disconnected") {
+    return (
+      <div className="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center">
+        <p className="font-medium text-gray-800">Call ended</p>
+        <p className="mt-1 text-sm text-gray-600">You have left the video consultation.</p>
       </div>
     );
   }
