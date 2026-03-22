@@ -94,6 +94,11 @@ export default function AppointmentConsultationActions({
     router.refresh();
   };
 
+  const handleDisconnect = () => {
+    // Defer refresh to avoid remount during React update cycle
+    setTimeout(() => router.refresh(), 150);
+  };
+
   return (
     <div className="mt-6 space-y-6">
       {/* Start consultation button */}
@@ -123,7 +128,7 @@ export default function AppointmentConsultationActions({
             <VideoRoom
               accessToken={consultationData.doctorToken}
               roomName={consultationData.roomName}
-              onDisconnect={handleRefresh}
+              onDisconnect={handleDisconnect}
             />
           </div>
           <div>

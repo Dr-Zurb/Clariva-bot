@@ -93,6 +93,7 @@ function ConsultJoinContent() {
           accessToken={videoData.accessToken}
           roomName={videoData.roomName}
           onDisconnect={handleDisconnect}
+          role="patient"
         />
       </div>
     </div>

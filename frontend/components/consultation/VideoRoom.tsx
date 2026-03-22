@@ -7,6 +7,8 @@ interface VideoRoomProps {
   accessToken: string;
   roomName: string;
   onDisconnect?: () => void;
+  /** When "patient", remote label is "Doctor" from the start (no transition). Omit to derive from room identity. */
+  role?: "doctor" | "patient";
 }
 
 /**
@@ -17,19 +19,27 @@ export default function VideoRoom({
   accessToken,
   roomName,
   onDisconnect,
+  role,
 }: VideoRoomProps) {
   const [status, setStatus] = useState<"connecting" | "connected" | "disconnected" | "error">(
     "connecting"
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [remoteLabel, setRemoteLabel] = useState<"Doctor" | "Patient">("Patient");
+  const [remoteLabel, setRemoteLabel] = useState<"Doctor" | "Patient">(
+    role === "patient" ? "Doctor" : "Patient"
+  );
+  const onDisconnectRef = useRef(onDisconnect);
+  onDisconnectRef.current = onDisconnect;
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const roomRef = useRef<Room | null>(null);
   const localTracksRef = useRef<Awaited<ReturnType<typeof createLocalTracks>>>([]);
   const hasNotifiedDisconnectRef = useRef(false);
+  const hasDisconnectedRef = useRef(false);
 
   useEffect(() => {
+    if (hasDisconnectedRef.current) return;
+
     let room: Room | null = null;
     let localTracks: Awaited<ReturnType<typeof createLocalTracks>> = [];
 
@@ -57,9 +67,11 @@ export default function VideoRoom({
         });
         roomRef.current = room;
 
-        // Derive remote label: patient-* -> "Doctor"; doctor-* -> "Patient"
-        const identity = room.localParticipant.identity;
-        setRemoteLabel(identity.startsWith("patient-") ? "Doctor" : "Patient");
+        // Derive remote label from identity only when role not provided (patient page passes role="patient" for immediate "Doctor" label)
+        if (!role) {
+          const identity = room.localParticipant.identity;
+          setRemoteLabel(identity.startsWith("patient-") ? "Doctor" : "Patient");
+        }
         setStatus("connected");
 
         // Attach local video (element exists because we always render the grid)
@@ -95,10 +107,11 @@ export default function VideoRoom({
         });
 
         room.on("disconnected", () => {
+          hasDisconnectedRef.current = true;
           setStatus("disconnected");
           if (!hasNotifiedDisconnectRef.current) {
             hasNotifiedDisconnectRef.current = true;
-            onDisconnect?.();
+            onDisconnectRef.current?.();
           }
         });
       } catch (err) {
@@ -111,7 +124,7 @@ export default function VideoRoom({
     return () => {
       cleanup();
     };
-  }, [accessToken, roomName, onDisconnect]);
+  }, [accessToken, roomName, role]);
 
   // Backup: attach local video when ref becomes available (handles ref timing)
   useEffect(() => {
@@ -123,6 +136,7 @@ export default function VideoRoom({
   }, [status]);
 
   const handleLeave = () => {
+    hasDisconnectedRef.current = true;
     const room = roomRef.current;
     const tracks = localTracksRef.current;
 
@@ -144,7 +158,7 @@ export default function VideoRoom({
     setStatus("disconnected");
     if (!hasNotifiedDisconnectRef.current) {
       hasNotifiedDisconnectRef.current = true;
-      onDisconnect?.();
+      onDisconnectRef.current?.();
     }
   };
 
