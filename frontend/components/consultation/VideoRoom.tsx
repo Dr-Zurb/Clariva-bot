@@ -22,9 +22,11 @@ export default function VideoRoom({
     "connecting"
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [remoteLabel, setRemoteLabel] = useState<"Doctor" | "Patient">("Patient");
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const roomRef = useRef<Room | null>(null);
+  const localTracksRef = useRef<Awaited<ReturnType<typeof createLocalTracks>>>([]);
 
   useEffect(() => {
     let room: Room | null = null;
@@ -39,23 +41,31 @@ export default function VideoRoom({
       localTracks.forEach((track) => {
         if ("stop" in track && typeof track.stop === "function") track.stop();
       });
+      localTracksRef.current = [];
       roomRef.current = null;
     };
 
     const connectRoom = async () => {
       try {
         localTracks = await createLocalTracks({ audio: true, video: { width: 640, height: 480 } });
-        if (localVideoRef.current && localTracks.find((t) => t.kind === "video")) {
-          const videoTrack = localTracks.find((t) => t.kind === "video");
-          if (videoTrack) videoTrack.attach(localVideoRef.current);
-        }
+        localTracksRef.current = localTracks;
 
         room = await connect(accessToken, {
           name: roomName,
           tracks: localTracks,
         });
         roomRef.current = room;
+
+        // Derive remote label: patient-* -> "Doctor"; doctor-* -> "Patient"
+        const identity = room.localParticipant.identity;
+        setRemoteLabel(identity.startsWith("patient-") ? "Doctor" : "Patient");
         setStatus("connected");
+
+        // Attach local video (element exists because we always render the grid)
+        const videoTrack = localTracks.find((t) => t.kind === "video");
+        if (videoTrack && localVideoRef.current) {
+          videoTrack.attach(localVideoRef.current);
+        }
 
         room.on("participantConnected", (participant) => {
           participant.tracks.forEach((publication) => {
@@ -99,20 +109,21 @@ export default function VideoRoom({
     };
   }, [accessToken, roomName, onDisconnect]);
 
+  // Backup: attach local video when ref becomes available (handles ref timing)
+  useEffect(() => {
+    if (status !== "connected") return;
+    const videoTrack = localTracksRef.current.find((t) => t.kind === "video");
+    if (videoTrack && localVideoRef.current) {
+      videoTrack.attach(localVideoRef.current);
+    }
+  }, [status]);
+
   const handleLeave = () => {
     if (roomRef.current) {
       roomRef.current.disconnect();
       onDisconnect?.();
     }
   };
-
-  if (status === "connecting") {
-    return (
-      <div className="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center">
-        <p className="text-gray-600">Connecting to video room…</p>
-      </div>
-    );
-  }
 
   if (status === "error") {
     return (
@@ -126,7 +137,7 @@ export default function VideoRoom({
   return (
     <div className="space-y-4">
       <div className="grid gap-4 md:grid-cols-2">
-        <div>
+        <div className="relative">
           <p className="mb-2 text-sm font-medium text-gray-500">You</p>
           <video
             ref={localVideoRef}
@@ -135,15 +146,23 @@ export default function VideoRoom({
             playsInline
             className="w-full rounded-lg border border-gray-200 bg-gray-900 aspect-video object-cover"
           />
+          {status === "connecting" && (
+            <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-gray-900/80">
+              <p className="text-sm text-white">Starting camera…</p>
+            </div>
+          )}
         </div>
         <div>
-          <p className="mb-2 text-sm font-medium text-gray-500">Patient</p>
+          <p className="mb-2 text-sm font-medium text-gray-500">{remoteLabel}</p>
           <video
             ref={remoteVideoRef}
             autoPlay
             playsInline
             className="w-full rounded-lg border border-gray-200 bg-gray-900 aspect-video object-cover"
           />
+          {status === "connecting" && (
+            <p className="mt-1 text-xs text-gray-400">Waiting for {remoteLabel.toLowerCase()}…</p>
+          )}
         </div>
       </div>
       <button
