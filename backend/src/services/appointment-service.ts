@@ -472,10 +472,14 @@ export async function updateAppointmentStatus(
   correlationId: string,
   userId: string
 ): Promise<Appointment> {
-  // Get existing appointment (to validate ownership)
-  const { data: existing, error: fetchError } = await supabase
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const { data: existing, error: fetchError } = await admin
     .from('appointments')
-    .select('*')
+    .select('id, doctor_id')
     .eq('id', id)
     .single();
 
@@ -483,11 +487,9 @@ export async function updateAppointmentStatus(
     handleSupabaseError(fetchError, correlationId);
   }
 
-  // Validate ownership (defense in depth)
-  validateOwnership(existing.doctor_id, userId);
+  validateOwnership(existing!.doctor_id, userId);
 
-  // Update appointment (user role - respects RLS)
-  const { data: updated, error } = await supabase
+  const { data: updated, error } = await admin
     .from('appointments')
     .update({ status })
     .eq('id', id)
@@ -532,7 +534,12 @@ export async function updateAppointment(
     throw new ValidationError('At least one field (status or clinical_notes) is required');
   }
 
-  const { data: existing, error: fetchError } = await supabase
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const { data: existing, error: fetchError } = await admin
     .from('appointments')
     .select('id, doctor_id')
     .eq('id', id)
@@ -563,7 +570,7 @@ export async function updateAppointment(
     return getAppointmentById(id, correlationId, userId);
   }
 
-  const { data: updated, error } = await supabase
+  const { data: updated, error } = await admin
     .from('appointments')
     .update(dbUpdates)
     .eq('id', id)

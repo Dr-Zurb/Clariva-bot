@@ -277,11 +277,11 @@ describe('Appointment Service (e-task-2)', () => {
     it('updates status when provided', async () => {
       const existing = { id: 'apt-patch', doctor_id: userId };
       const updated = { ...existing, status: 'completed', updated_at: new Date() };
-      const mockSupabase = createMockSupabase(
+      const mockAdmin = createMockSupabase(
         { data: existing, error: null },
         { data: updated, error: null }
       );
-      Object.defineProperty(mockedDb, 'supabase', { value: mockSupabase, writable: true });
+      mockedDb.getSupabaseAdminClient.mockReturnValue(mockAdmin as any);
       (mockedAudit.logDataModification as jest.Mock) = jest.fn().mockImplementation(() => Promise.resolve());
 
       const result = await updateAppointment(
@@ -292,17 +292,17 @@ describe('Appointment Service (e-task-2)', () => {
       );
 
       expect(result.status).toBe('completed');
-      expect(mockSupabase.chain.update).toHaveBeenCalledWith({ status: 'completed' });
+      expect(mockAdmin.chain.update).toHaveBeenCalledWith({ status: 'completed' });
     });
 
     it('updates clinical_notes when provided', async () => {
       const existing = { id: 'apt-patch', doctor_id: userId };
       const updated = { ...existing, clinical_notes: 'Patient improved', updated_at: new Date() };
-      const mockSupabase = createMockSupabase(
+      const mockAdmin = createMockSupabase(
         { data: existing, error: null },
         { data: updated, error: null }
       );
-      Object.defineProperty(mockedDb, 'supabase', { value: mockSupabase, writable: true });
+      mockedDb.getSupabaseAdminClient.mockReturnValue(mockAdmin as any);
       (mockedAudit.logDataModification as jest.Mock) = jest.fn().mockImplementation(() => Promise.resolve());
 
       const result = await updateAppointment(
@@ -313,7 +313,7 @@ describe('Appointment Service (e-task-2)', () => {
       );
 
       expect(result.clinical_notes).toBe('Patient improved');
-      expect(mockSupabase.chain.update).toHaveBeenCalledWith({
+      expect(mockAdmin.chain.update).toHaveBeenCalledWith({
         clinical_notes: 'Patient improved',
       });
     });
