@@ -547,6 +547,13 @@ export const patchDoctorSettingsSchema = z
     default_notes: z.string().max(1000).trim().nullable().optional(),
     appointment_fee_minor: z.number().int().min(0).nullable().optional(),
     appointment_fee_currency: z.string().length(3).nullable().optional(),
+    /** Payout schedule (e-task-6): when doctor receives payouts */
+    payout_schedule: z
+      .enum(['per_appointment', 'daily', 'weekly', 'monthly'])
+      .nullable()
+      .optional(),
+    /** Min amount (paise) before payout; NULL = pay any (e-task-6) */
+    payout_minor: z.number().int().min(0).nullable().optional(),
   })
   .strict();
 

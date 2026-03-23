@@ -94,7 +94,8 @@ const corsOptionsDev: cors.CorsOptions = {
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: env.NODE_ENV === 'production' ? 100 : 1000, // 100 requests (prod) or 1000 (dev) per 15 minutes
-  skip: (req: Request) => req.path === '/health' || req.path === '/', // Let Render/monitoring ping health without 429
+  skip: (req: Request) =>
+    req.path === '/health' || req.path === '/' || req.path.startsWith('/cron/'), // health, root, cron (e-task-5)
   handler: (req: Request, res: Response) => {
     const error = new TooManyRequestsError('Too many requests from this IP, please try again later.');
     // errorResponse returns object with canonical format: { success: false, error: {...}, meta: {...} }

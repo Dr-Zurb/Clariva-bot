@@ -1,12 +1,13 @@
 /**
- * Consultation Verification Service Unit Tests (e-task-4)
+ * Consultation Verification Service Unit Tests (e-task-3, e-task-4)
  *
- * Tests handleParticipantConnected, handleRoomEnded, tryMarkVerified.
+ * Tests handleParticipantConnected, handleParticipantDisconnected, tryMarkVerified, handleTwilioStatusCallback.
  */
 // @ts-nocheck - Jest mock types cause strict inference issues
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import {
   handleParticipantConnected,
+  handleParticipantDisconnected,
   tryMarkVerified,
   handleTwilioStatusCallback,
 } from '../../../src/services/consultation-verification-service';
@@ -18,7 +19,7 @@ jest.mock('../../../src/config/database', () => ({
 }));
 
 jest.mock('../../../src/config/env', () => ({
-  env: { MIN_VERIFIED_CONSULTATION_SECONDS: 120 },
+  env: { MIN_VERIFIED_CONSULTATION_SECONDS: 60 },
 }));
 
 jest.mock('../../../src/utils/db-helpers', () => ({
@@ -35,7 +36,36 @@ jest.mock('../../../src/utils/audit-logger', () => ({
   logDataModification: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock('../../../src/services/payout-service', () => ({
+  processPayoutForPayment: jest.fn().mockResolvedValue({ success: false }),
+}));
+
 const correlationId = 'corr-123';
+
+/**
+ * Creates a chain that supports:
+ * - appointments: select->eq->single, update
+ * - payments: select->eq->eq->or->order->limit->maybeSingle
+ * - doctor_settings: select->eq->maybeSingle
+ * Payments/doctor_settings return { data: null } so payout trigger exits early.
+ */
+function createTryMarkVerifiedChain(apt: Record<string, unknown>, mockUpdate: ReturnType<typeof jest.fn>) {
+  const maybeSingle = jest.fn().mockResolvedValue({ data: null, error: null });
+  const limit = jest.fn().mockReturnValue({ maybeSingle });
+  const order = jest.fn().mockReturnValue({ limit });
+  const or = jest.fn().mockReturnValue({ order });
+  const eq2 = jest.fn().mockReturnValue({ or });
+  const eqWithSingle = jest.fn().mockReturnValue({
+    eq: eq2,
+    single: jest.fn().mockResolvedValue({ data: apt, error: null }),
+    maybeSingle,
+  });
+  return {
+    select: jest.fn().mockReturnValue({ eq: eqWithSingle }),
+    update: mockUpdate,
+    eq: eqWithSingle,
+  };
+}
 
 describe('Consultation Verification Service', () => {
   beforeEach(() => {
@@ -146,29 +176,120 @@ describe('Consultation Verification Service', () => {
     });
   });
 
-  describe('tryMarkVerified', () => {
-    it('sets verified_at and status=completed when all conditions met', async () => {
+  describe('handleParticipantDisconnected', () => {
+    it('sets doctor_left_at when doctor disconnects', async () => {
       const apt = {
         id: 'apt-1',
+        doctor_id: 'doc-1',
+        doctor_left_at: null,
+        patient_left_at: null,
+      };
+      const chain = {
+        select: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue({ data: [apt], error: null }),
+          }),
+        }),
+        update: jest.fn().mockReturnValue({
+          eq: jest.fn().mockResolvedValue({ error: null }),
+        }),
+      };
+      mockFrom.mockReturnValue(chain);
+
+      await handleParticipantDisconnected(
+        {
+          RoomSid: 'RM123',
+          ParticipantIdentity: 'doctor-doc-1',
+          Timestamp: '2026-03-21T12:35:00.000Z',
+          StatusCallbackEvent: 'participant-disconnected',
+        },
+        correlationId
+      );
+
+      expect(chain.update).toHaveBeenCalledWith({ doctor_left_at: '2026-03-21T12:35:00.000Z' });
+    });
+
+    it('sets patient_left_at when patient disconnects', async () => {
+      const apt = {
+        id: 'apt-1',
+        doctor_id: 'doc-1',
+        doctor_left_at: null,
+        patient_left_at: null,
+      };
+      const chain = {
+        select: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue({ data: [apt], error: null }),
+          }),
+        }),
+        update: jest.fn().mockReturnValue({
+          eq: jest.fn().mockResolvedValue({ error: null }),
+        }),
+      };
+      mockFrom.mockReturnValue(chain);
+
+      await handleParticipantDisconnected(
+        {
+          RoomSid: 'RM123',
+          ParticipantIdentity: 'patient-apt-1',
+          Timestamp: '2026-03-21T12:36:00.000Z',
+          StatusCallbackEvent: 'participant-disconnected',
+        },
+        correlationId
+      );
+
+      expect(chain.update).toHaveBeenCalledWith({ patient_left_at: '2026-03-21T12:36:00.000Z' });
+    });
+
+    it('does not update doctor_left_at if already set', async () => {
+      const apt = {
+        id: 'apt-1',
+        doctor_id: 'doc-1',
+        doctor_left_at: '2026-03-21T12:34:00.000Z',
+        patient_left_at: null,
+      };
+      const chain = {
+        select: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue({ data: [apt], error: null }),
+          }),
+        }),
+        update: jest.fn(),
+      };
+      mockFrom.mockReturnValue(chain);
+
+      await handleParticipantDisconnected(
+        {
+          RoomSid: 'RM123',
+          ParticipantIdentity: 'doctor-doc-1',
+          Timestamp: '2026-03-21T12:35:00.000Z',
+          StatusCallbackEvent: 'participant-disconnected',
+        },
+        correlationId
+      );
+
+      expect(chain.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('tryMarkVerified', () => {
+    it('verifies on patient no-show (doctor joined, patient never joined)', async () => {
+      const apt = {
+        id: 'apt-1',
+        doctor_id: 'doc-1',
         doctor_joined_at: '2026-03-21T12:00:00.000Z',
-        patient_joined_at: '2026-03-21T12:01:00.000Z',
+        patient_joined_at: null,
+        doctor_left_at: null,
+        patient_left_at: null,
         consultation_ended_at: '2026-03-21T12:35:00.000Z',
-        consultation_duration_seconds: 2040,
+        consultation_duration_seconds: 2100,
         verified_at: null,
         status: 'confirmed',
       };
       const mockUpdate = jest.fn().mockReturnValue({
         eq: jest.fn().mockResolvedValue({ error: null }),
       });
-      const chain = {
-        select: jest.fn().mockReturnValue({
-          eq: jest.fn().mockReturnValue({
-            single: jest.fn().mockResolvedValue({ data: apt, error: null }),
-          }),
-        }),
-        update: mockUpdate,
-      };
-      mockFrom.mockReturnValue(chain);
+      mockFrom.mockReturnValue(createTryMarkVerifiedChain(apt, mockUpdate));
 
       await tryMarkVerified('apt-1', correlationId);
 
@@ -178,26 +299,120 @@ describe('Consultation Verification Service', () => {
       });
     });
 
-    it('does not update when duration below threshold', async () => {
+    it('verifies when patient left first', async () => {
       const apt = {
         id: 'apt-1',
+        doctor_id: 'doc-1',
         doctor_joined_at: '2026-03-21T12:00:00.000Z',
         patient_joined_at: '2026-03-21T12:01:00.000Z',
-        consultation_ended_at: '2026-03-21T12:02:00.000Z',
-        consultation_duration_seconds: 60,
+        doctor_left_at: '2026-03-21T12:35:00.000Z',
+        patient_left_at: '2026-03-21T12:30:00.000Z',
+        consultation_ended_at: '2026-03-21T12:35:00.000Z',
+        consultation_duration_seconds: 2040,
+        verified_at: null,
+        status: 'confirmed',
+      };
+      const mockUpdate = jest.fn().mockReturnValue({
+        eq: jest.fn().mockResolvedValue({ error: null }),
+      });
+      mockFrom.mockReturnValue(createTryMarkVerifiedChain(apt, mockUpdate));
+
+      await tryMarkVerified('apt-1', correlationId);
+
+      expect(mockUpdate).toHaveBeenCalledWith({
+        verified_at: '2026-03-21T12:35:00.000Z',
+        status: 'completed',
+      });
+    });
+
+    it('verifies when doctor left first but overlap >= 60s', async () => {
+      const apt = {
+        id: 'apt-1',
+        doctor_id: 'doc-1',
+        doctor_joined_at: '2026-03-21T12:00:00.000Z',
+        patient_joined_at: '2026-03-21T12:01:00.000Z',
+        doctor_left_at: '2026-03-21T12:02:00.000Z',
+        patient_left_at: '2026-03-21T12:35:00.000Z',
+        consultation_ended_at: '2026-03-21T12:35:00.000Z',
+        consultation_duration_seconds: 2040,
+        verified_at: null,
+        status: 'confirmed',
+      };
+      const mockUpdate = jest.fn().mockReturnValue({
+        eq: jest.fn().mockResolvedValue({ error: null }),
+      });
+      mockFrom.mockReturnValue(createTryMarkVerifiedChain(apt, mockUpdate));
+
+      await tryMarkVerified('apt-1', correlationId);
+
+      expect(mockUpdate).toHaveBeenCalledWith({
+        verified_at: '2026-03-21T12:35:00.000Z',
+        status: 'completed',
+      });
+    });
+
+    it('does not verify when doctor left first and overlap < 60s', async () => {
+      const apt = {
+        id: 'apt-1',
+        doctor_id: 'doc-1',
+        doctor_joined_at: '2026-03-21T12:00:00.000Z',
+        patient_joined_at: '2026-03-21T12:01:00.000Z',
+        doctor_left_at: '2026-03-21T12:01:45.000Z',
+        patient_left_at: '2026-03-21T12:35:00.000Z',
+        consultation_ended_at: '2026-03-21T12:35:00.000Z',
+        consultation_duration_seconds: 2040,
         verified_at: null,
         status: 'confirmed',
       };
       const mockUpdate = jest.fn();
-      const chain = {
-        select: jest.fn().mockReturnValue({
-          eq: jest.fn().mockReturnValue({
-            single: jest.fn().mockResolvedValue({ data: apt, error: null }),
-          }),
-        }),
-        update: mockUpdate,
+      mockFrom.mockReturnValue(createTryMarkVerifiedChain(apt, mockUpdate));
+
+      await tryMarkVerified('apt-1', correlationId);
+
+      expect(mockUpdate).not.toHaveBeenCalled();
+    });
+
+    it('verifies on fallback when left_at missing but duration >= 60 and both joined', async () => {
+      const apt = {
+        id: 'apt-1',
+        doctor_id: 'doc-1',
+        doctor_joined_at: '2026-03-21T12:00:00.000Z',
+        patient_joined_at: '2026-03-21T12:01:00.000Z',
+        doctor_left_at: null,
+        patient_left_at: null,
+        consultation_ended_at: '2026-03-21T12:35:00.000Z',
+        consultation_duration_seconds: 2040,
+        verified_at: null,
+        status: 'confirmed',
       };
-      mockFrom.mockReturnValue(chain);
+      const mockUpdate = jest.fn().mockReturnValue({
+        eq: jest.fn().mockResolvedValue({ error: null }),
+      });
+      mockFrom.mockReturnValue(createTryMarkVerifiedChain(apt, mockUpdate));
+
+      await tryMarkVerified('apt-1', correlationId);
+
+      expect(mockUpdate).toHaveBeenCalledWith({
+        verified_at: '2026-03-21T12:35:00.000Z',
+        status: 'completed',
+      });
+    });
+
+    it('does not update when fallback duration below threshold', async () => {
+      const apt = {
+        id: 'apt-1',
+        doctor_id: 'doc-1',
+        doctor_joined_at: '2026-03-21T12:00:00.000Z',
+        patient_joined_at: '2026-03-21T12:01:00.000Z',
+        doctor_left_at: null,
+        patient_left_at: null,
+        consultation_ended_at: '2026-03-21T12:02:00.000Z',
+        consultation_duration_seconds: 30,
+        verified_at: null,
+        status: 'confirmed',
+      };
+      const mockUpdate = jest.fn();
+      mockFrom.mockReturnValue(createTryMarkVerifiedChain(apt, mockUpdate));
 
       await tryMarkVerified('apt-1', correlationId);
 
@@ -207,6 +422,7 @@ describe('Consultation Verification Service', () => {
     it('does not update when already verified', async () => {
       const apt = {
         id: 'apt-1',
+        doctor_id: 'doc-1',
         doctor_joined_at: '2026-03-21T12:00:00.000Z',
         patient_joined_at: '2026-03-21T12:01:00.000Z',
         consultation_ended_at: '2026-03-21T12:35:00.000Z',
@@ -215,15 +431,7 @@ describe('Consultation Verification Service', () => {
         status: 'completed',
       };
       const mockUpdate = jest.fn();
-      const chain = {
-        select: jest.fn().mockReturnValue({
-          eq: jest.fn().mockReturnValue({
-            single: jest.fn().mockResolvedValue({ data: apt, error: null }),
-          }),
-        }),
-        update: mockUpdate,
-      };
-      mockFrom.mockReturnValue(chain);
+      mockFrom.mockReturnValue(createTryMarkVerifiedChain(apt, mockUpdate));
 
       await tryMarkVerified('apt-1', correlationId);
 
@@ -262,6 +470,38 @@ describe('Consultation Verification Service', () => {
       );
 
       expect(chain.update).toHaveBeenCalled();
+    });
+
+    it('routes participant-disconnected to handleParticipantDisconnected', async () => {
+      const apt = {
+        id: 'apt-1',
+        doctor_id: 'doc-1',
+        doctor_left_at: null,
+        patient_left_at: null,
+      };
+      const chain = {
+        select: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue({ data: [apt], error: null }),
+          }),
+        }),
+        update: jest.fn().mockReturnValue({
+          eq: jest.fn().mockResolvedValue({ error: null }),
+        }),
+      };
+      mockFrom.mockReturnValue(chain);
+
+      await handleTwilioStatusCallback(
+        {
+          RoomSid: 'RM123',
+          StatusCallbackEvent: 'participant-disconnected',
+          ParticipantIdentity: 'doctor-doc-1',
+          Timestamp: '2026-03-21T12:35:00.000Z',
+        },
+        correlationId
+      );
+
+      expect(chain.update).toHaveBeenCalledWith({ doctor_left_at: '2026-03-21T12:35:00.000Z' });
     });
 
     it('ignores unknown events', async () => {

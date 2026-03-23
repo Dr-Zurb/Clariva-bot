@@ -3,7 +3,12 @@
  *
  * Per-doctor appointment fee and currency (and optional country).
  * When a value is null, the app uses env fallback.
+ *
+ * Payout columns (migration 025): payout_schedule, payout_minor, razorpay_linked_account_id.
  */
+
+/** When doctor receives payouts. NULL = default weekly in payout service. */
+export type PayoutSchedule = 'per_appointment' | 'daily' | 'weekly' | 'monthly';
 
 export interface DoctorSettingsRow {
   doctor_id: string;
@@ -24,6 +29,12 @@ export interface DoctorSettingsRow {
   address_summary: string | null;
   consultation_types: string | null;
   default_notes: string | null;
+  /** When doctor receives payouts. Migration 025. */
+  payout_schedule: PayoutSchedule | null;
+  /** Min amount (paise) before payout; NULL = pay any. Migration 025. */
+  payout_minor: number | null;
+  /** Razorpay Route Linked Account ID for India. Migration 025. */
+  razorpay_linked_account_id: string | null;
   created_at: string;
   updated_at: string;
 }

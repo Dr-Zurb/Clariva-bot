@@ -101,11 +101,33 @@ const envSchema = z.object({
   CONSULTATION_JOIN_BASE_URL: z.string().url().optional(),
   // Teleconsultation (e-task-4 - Twilio status callbacks). Backend base URL (e.g. https://api.onrender.com).
   WEBHOOK_BASE_URL: z.string().url().optional(),
-  // Min consultation duration (seconds) to mark as verified for payout
+  // Min consultation duration (seconds) to mark as verified for payout (Consultation Verification v2)
   MIN_VERIFIED_CONSULTATION_SECONDS: z
     .string()
-    .default('120')
-    .transform((v) => Math.max(60, parseInt(v, 10) || 120)),
+    .default('60')
+    .transform((v) => Math.max(60, parseInt(v, 10) || 60)),
+
+  // Platform Fee (monetization - migration 022)
+  // Percent fee when amount >= threshold; flat fee when amount < threshold.
+  PLATFORM_FEE_PERCENT: z
+    .string()
+    .default('5')
+    .transform((v) => Math.min(100, Math.max(0, parseInt(v, 10) || 5))),
+  PLATFORM_FEE_FLAT_MINOR: z
+    .string()
+    .default('2500')
+    .transform((v) => Math.max(0, parseInt(v, 10) || 2500)), // ₹25 in paise
+  PLATFORM_FEE_THRESHOLD_MINOR: z
+    .string()
+    .default('50000')
+    .transform((v) => Math.max(0, parseInt(v, 10) || 50000)), // ₹500 in paise
+  PLATFORM_FEE_GST_PERCENT: z
+    .string()
+    .default('18')
+    .transform((v) => Math.min(100, Math.max(0, parseInt(v, 10) || 18))),
+
+  // Cron jobs (e-task-5): secret for securing payout cron endpoint. Render cron hits POST /cron/payouts.
+  CRON_SECRET: z.string().min(16, 'CRON_SECRET must be at least 16 chars when set').optional(),
 });
 
 /**

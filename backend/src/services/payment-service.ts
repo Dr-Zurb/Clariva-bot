@@ -14,6 +14,7 @@
 
 import { getSupabaseAdminClient } from '../config/database';
 import { selectGatewayByCountry } from '../config/payment';
+import { computePlatformFee } from '../config/platform-fee';
 import { razorpayAdapter } from '../adapters/razorpay-adapter';
 import { paypalAdapter } from '../adapters/paypal-adapter';
 import type { CreatePaymentLinkInput, CreatePaymentLinkResult } from '../types/payment';
@@ -142,6 +143,12 @@ export async function processPaymentSuccess(
     return undefined;
   }
 
+  // Compute platform fee (INR: 5% or flat; non-INR: 0 for now)
+  const isInr = currency.toUpperCase() === 'INR';
+  const feeResult = isInr
+    ? computePlatformFee(amountMinor, currency)
+    : { platformFeeMinor: 0, gstMinor: 0, doctorAmountMinor: amountMinor };
+
   const { error: updatePaymentError } = await supabase
     .from('payments')
     .update({
@@ -149,6 +156,9 @@ export async function processPaymentSuccess(
       amount_minor: amountMinor,
       currency,
       status: 'captured',
+      platform_fee_minor: feeResult.platformFeeMinor,
+      gst_minor: feeResult.gstMinor,
+      doctor_amount_minor: feeResult.doctorAmountMinor,
     })
     .eq('id', payment.id);
 
@@ -178,6 +188,8 @@ export async function processPaymentSuccess(
       paymentId: payment.id,
       appointmentId: payment.appointment_id,
       gateway,
+      platformFeeMinor: feeResult.platformFeeMinor,
+      gstMinor: feeResult.gstMinor,
       correlationId,
     },
     'Payment captured and appointment confirmed'
@@ -198,7 +210,17 @@ export async function getPaymentById(
   paymentId: string,
   _correlationId: string,
   userId: string
-): Promise<{ id: string; appointment_id: string; gateway: string; status: string; amount_minor: number; currency: string } | null> {
+): Promise<{
+  id: string;
+  appointment_id: string;
+  gateway: string;
+  status: string;
+  amount_minor: number;
+  currency: string;
+  platform_fee_minor?: number | null;
+  gst_minor?: number | null;
+  doctor_amount_minor?: number | null;
+} | null> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) {
     throw new InternalError('Service role client not available');
@@ -206,7 +228,7 @@ export async function getPaymentById(
 
   const { data: payment, error } = await supabase
     .from('payments')
-    .select('id, appointment_id, gateway, status, amount_minor, currency')
+    .select('id, appointment_id, gateway, status, amount_minor, currency, platform_fee_minor, gst_minor, doctor_amount_minor')
     .eq('id', paymentId)
     .single();
 
@@ -226,7 +248,17 @@ export async function getPaymentById(
     return null;
   }
 
-  return payment as { id: string; appointment_id: string; gateway: string; status: string; amount_minor: number; currency: string };
+  return payment as {
+    id: string;
+    appointment_id: string;
+    gateway: string;
+    status: string;
+    amount_minor: number;
+    currency: string;
+    platform_fee_minor?: number | null;
+    gst_minor?: number | null;
+    doctor_amount_minor?: number | null;
+  };
 }
 
 /**

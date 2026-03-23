@@ -113,6 +113,8 @@ export interface Appointment {
   patient_joined_at?: Date | string | null;  // When patient connected (migration 021)
   consultation_ended_at?: Date | string | null;  // When room ended (migration 021)
   consultation_duration_seconds?: number | null;  // Call duration in seconds (migration 021)
+  doctor_left_at?: Date | string | null;  // When doctor disconnected; for "who left first" (migration 023)
+  patient_left_at?: Date | string | null;  // When patient disconnected; for "who left first" (migration 023)
   verified_at?: Date | string | null;  // When consultation was verified (migration 021)
   clinical_notes?: string | null;  // Doctor notes (migration 021)
   created_at: Date;

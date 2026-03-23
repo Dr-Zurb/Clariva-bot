@@ -27,6 +27,21 @@ jest.mock('../../../src/config/env', () => ({
 jest.mock('../../../src/config/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
+jest.mock('../../../src/config/platform-fee', () => ({
+  computePlatformFee: jest.fn((amountMinor: number, currency: string) => {
+    if (currency.toUpperCase() !== 'INR') {
+      return { platformFeeMinor: 0, gstMinor: 0, doctorAmountMinor: amountMinor };
+    }
+    const threshold = 50000;
+    const flat = 2500;
+    const percent = 5;
+    const gstPercent = 18;
+    const platformFeeMinor = amountMinor < threshold ? flat : Math.round((amountMinor * percent) / 100);
+    const gstMinor = Math.round((platformFeeMinor * gstPercent) / 100);
+    const doctorAmountMinor = amountMinor - platformFeeMinor - gstMinor;
+    return { platformFeeMinor, gstMinor, doctorAmountMinor };
+  }),
+}));
 
 const mockedDb = database as jest.Mocked<typeof database>;
 const mockedRazorpay = razorpayAdapter as jest.Mocked<typeof razorpayAdapter>;
@@ -45,6 +60,12 @@ function createMockSupabase(
   let idx = 0;
   const getNext = () => responses[idx++] ?? { data: null, error: null };
 
+  const updateFn = jest.fn().mockReturnValue({
+    eq: jest.fn().mockImplementation(() =>
+      Promise.resolve(getNext())
+    ),
+  });
+
   const chain = {
     select: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
@@ -52,18 +73,14 @@ function createMockSupabase(
     insert: jest.fn().mockImplementation(() =>
       Promise.resolve(getNext())
     ),
-    update: jest.fn().mockReturnValue({
-      eq: jest.fn().mockImplementation(() =>
-        Promise.resolve(getNext())
-      ),
-    }),
+    update: updateFn,
     single: jest.fn().mockImplementation(() =>
       Promise.resolve(getNext())
     ),
   };
 
   const from = jest.fn().mockReturnValue(chain);
-  return { from };
+  return { from, updateFn };
 }
 
 describe('Payment Service (e-task-4)', () => {
@@ -86,7 +103,7 @@ describe('Payment Service (e-task-4)', () => {
   describe('createPaymentLink - 9.1 & 9.2', () => {
     it('calls Razorpay adapter when doctor country is India (IN)', async () => {
       const mockSupabase = createMockSupabase([{ data: null, error: null }]);
-      mockedDb.getSupabaseAdminClient.mockReturnValue(mockSupabase as never);
+      mockedDb.getSupabaseAdminClient.mockReturnValue({ from: mockSupabase.from } as never);
 
       const input = {
         appointmentId,
@@ -115,7 +132,7 @@ describe('Payment Service (e-task-4)', () => {
 
     it('calls PayPal adapter when doctor country is US', async () => {
       const mockSupabase = createMockSupabase([{ data: null, error: null }]);
-      mockedDb.getSupabaseAdminClient.mockReturnValue(mockSupabase as never);
+      mockedDb.getSupabaseAdminClient.mockReturnValue({ from: mockSupabase.from } as never);
 
       const input = {
         appointmentId,
@@ -144,7 +161,7 @@ describe('Payment Service (e-task-4)', () => {
 
     it('inserts pending payment record on success', async () => {
       const mockSupabase = createMockSupabase([{ data: null, error: null }]);
-      mockedDb.getSupabaseAdminClient.mockReturnValue(mockSupabase as never);
+      mockedDb.getSupabaseAdminClient.mockReturnValue({ from: mockSupabase.from } as never);
 
       await createPaymentLink(
         {
@@ -187,7 +204,7 @@ describe('Payment Service (e-task-4)', () => {
         { data: null, error: null },
         { data: null, error: null },
       ]);
-      mockedDb.getSupabaseAdminClient.mockReturnValue(mockSupabase as never);
+      mockedDb.getSupabaseAdminClient.mockReturnValue({ from: mockSupabase.from } as never);
 
       await processPaymentSuccess(
         'razorpay',
@@ -202,11 +219,66 @@ describe('Payment Service (e-task-4)', () => {
       expect(mockSupabase.from).toHaveBeenCalledWith('appointments');
     });
 
+    it('includes platform fee, gst, doctor amount in payment update (INR)', async () => {
+      const mockSupabase = createMockSupabase([
+        { data: { id: 'pay-123', appointment_id: appointmentId }, error: null },
+        { data: null, error: null },
+        { data: null, error: null },
+      ]);
+      mockedDb.getSupabaseAdminClient.mockReturnValue({ from: mockSupabase.from } as never);
+
+      await processPaymentSuccess(
+        'razorpay',
+        'order_rzp_xxx',
+        'pay_rzp_xxx',
+        100000,
+        'INR',
+        correlationId
+      );
+
+      expect(mockSupabase.updateFn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          platform_fee_minor: 5000,
+          gst_minor: 900,
+          doctor_amount_minor: 94100,
+          status: 'captured',
+          amount_minor: 100000,
+          currency: 'INR',
+        })
+      );
+    });
+
+    it('uses zero platform fee for non-INR (PayPal)', async () => {
+      const mockSupabase = createMockSupabase([
+        { data: { id: 'pay-123', appointment_id: appointmentId }, error: null },
+        { data: null, error: null },
+        { data: null, error: null },
+      ]);
+      mockedDb.getSupabaseAdminClient.mockReturnValue({ from: mockSupabase.from } as never);
+
+      await processPaymentSuccess(
+        'paypal',
+        'order_pp_xxx',
+        'pay_pp_xxx',
+        10000,
+        'USD',
+        correlationId
+      );
+
+      expect(mockSupabase.updateFn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          platform_fee_minor: 0,
+          gst_minor: 0,
+          doctor_amount_minor: 10000,
+        })
+      );
+    });
+
     it('returns without throwing when payment not found (idempotent)', async () => {
       const mockSupabase = createMockSupabase([
         { data: null, error: { code: 'PGRST116' } },
       ]);
-      mockedDb.getSupabaseAdminClient.mockReturnValue(mockSupabase as never);
+      mockedDb.getSupabaseAdminClient.mockReturnValue({ from: mockSupabase.from } as never);
 
       await expect(
         processPaymentSuccess(
@@ -230,12 +302,15 @@ describe('Payment Service (e-task-4)', () => {
         status: 'pending',
         amount_minor: 50000,
         currency: 'INR',
+        platform_fee_minor: 2500,
+        gst_minor: 450,
+        doctor_amount_minor: 47050,
       };
       const mockSupabase = createMockSupabase([
         { data: mockPayment, error: null },
         { data: { doctor_id: userId }, error: null },
       ]);
-      mockedDb.getSupabaseAdminClient.mockReturnValue(mockSupabase as never);
+      mockedDb.getSupabaseAdminClient.mockReturnValue({ from: mockSupabase.from } as never);
 
       const result = await getPaymentById('pay-123', correlationId, userId);
 
@@ -243,6 +318,9 @@ describe('Payment Service (e-task-4)', () => {
       expect(result?.id).toBe('pay-123');
       expect(result?.gateway).toBe('razorpay');
       expect(result?.status).toBe('pending');
+      expect(result?.platform_fee_minor).toBe(2500);
+      expect(result?.gst_minor).toBe(450);
+      expect(result?.doctor_amount_minor).toBe(47050);
     });
 
     it('returns null when user is not owner', async () => {
@@ -258,7 +336,7 @@ describe('Payment Service (e-task-4)', () => {
         { data: mockPayment, error: null },
         { data: { doctor_id: 'other-doctor-id' }, error: null },
       ]);
-      mockedDb.getSupabaseAdminClient.mockReturnValue(mockSupabase as never);
+      mockedDb.getSupabaseAdminClient.mockReturnValue({ from: mockSupabase.from } as never);
 
       const result = await getPaymentById('pay-123', correlationId, userId);
 
@@ -269,7 +347,7 @@ describe('Payment Service (e-task-4)', () => {
       const mockSupabase = createMockSupabase([
         { data: null, error: { code: 'PGRST116' } },
       ]);
-      mockedDb.getSupabaseAdminClient.mockReturnValue(mockSupabase as never);
+      mockedDb.getSupabaseAdminClient.mockReturnValue({ from: mockSupabase.from } as never);
 
       const result = await getPaymentById('nonexistent', correlationId, userId);
 

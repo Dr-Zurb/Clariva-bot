@@ -153,6 +153,33 @@ Patient identification, matching, deduplication, and Patients tab. Phone search 
 
 Tasks: e-task-1 (MRN column), e-task-2 (patient matching service), e-task-3 (list patients API), e-task-4 (Patients tab UI), e-task-5 (booking match confirmation), e-task-6 (merge patients), e-task-7 (patient ID in confirmation).
 
+### Monetization — Platform Fee (2026-03-22)
+
+Implement Clariva's platform fee: 5% + GST (hybrid: < ₹500 → ₹25 flat + GST). Store platform_fee_minor, gst_minor, doctor_amount_minor for payouts and invoicing.
+
+- **Reference:** [MONETIZATION_INITIATIVE.md](./MONETIZATION_INITIATIVE.md)
+- **Daily plan:** [docs/Development/Daily-plans/March 2026/2026-03-22/README.md](../Development/Daily-plans/March%202026/2026-03-22/README.md)
+
+Tasks: e-task-1 (migration), e-task-2 (config), e-task-3 (payment service).
+
+### Consultation Verification v2 (2026-03-23)
+
+"Who left first" + 1-minute rule for video consultation payout eligibility. Doctor gets paid if: patient no-show, patient left first, or doctor left first but overlap ≥ 60 sec.
+
+- **Reference:** [CONSULTATION_VERIFICATION_V2.md](./CONSULTATION_VERIFICATION_V2.md), [CONSULTATION_VERIFICATION_STRATEGY.md](./CONSULTATION_VERIFICATION_STRATEGY.md)
+- **Daily plan:** [docs/Development/Daily-plans/March 2026/2026-03-23/README.md](../Development/Daily-plans/March%202026/2026-03-23/README.md)
+
+Tasks: e-task-1 (migration doctor_left_at, patient_left_at), e-task-2 (env MIN_VERIFIED 60), e-task-3 (participant-disconnected), e-task-4 (tryMarkVerified logic).
+
+### Payout Initiative (2026-03-24)
+
+Doctor payouts with configurable schedule: per appointment, daily, weekly, or monthly. Uses Razorpay Route for India. Pay only after consultation verified.
+
+- **Reference:** [PAYOUT_INITIATIVE.md](./PAYOUT_INITIATIVE.md)
+- **Daily plan:** [docs/Development/Daily-plans/March 2026/2026-03-24/README.md](../Development/Daily-plans/March%202026/2026-03-24/README.md)
+
+Tasks: e-task-1 (payments payout columns), e-task-2 (doctor payout settings migration), e-task-3 (Razorpay Route adapter), e-task-4 (payout service + trigger on verified), e-task-5 (scheduled batch payouts), e-task-6 (doctor payout settings API).
+
 ---
 
 ## 🔗 Related Documentation
@@ -167,5 +194,5 @@ Tasks: e-task-1 (MRN column), e-task-2 (patient matching service), e-task-3 (lis
 
 ---
 
-**Last Updated:** 2026-01-30  
-**Version:** 2.3.0 (Added CODE_CHANGE_RULES for tasks that change existing code)
+**Last Updated:** 2026-03-24  
+**Version:** 2.5.0 (Added Payout initiative — doctor payouts with schedule)

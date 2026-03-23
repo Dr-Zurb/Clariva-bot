@@ -3,6 +3,7 @@ import healthRoutes from './health';
 import apiV1Routes from './api/v1';
 import webhookRoutes from './webhooks';
 import dataDeletionRoutes from './data-deletion';
+import cronRoutes from './cron';
 
 const router = Router();
 
@@ -35,5 +36,8 @@ router.use('/webhooks', webhookRoutes);
 // Meta Data Deletion Callback (Basic Settings → Data Deletion Request URL)
 // POST /data-deletion-callback - Meta POSTs when user requests data deletion
 router.use('/data-deletion-callback', dataDeletionRoutes);
+
+// Cron (e-task-5): POST /cron/payouts - scheduled batch payouts (CRON_SECRET)
+router.use('/cron', cronRoutes);
 
 export default router;

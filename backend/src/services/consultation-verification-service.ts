@@ -4,6 +4,7 @@
  * Handles Twilio Video room/participant status callbacks.
  * Updates appointment: doctor_joined_at, patient_joined_at, consultation_ended_at.
  * Marks verified and completed when both joined + duration >= threshold.
+ * Triggers per-appointment payout when doctor has payout_schedule='per_appointment'.
  *
  * Identity convention (from e-task-3): doctor-{doctorId}, patient-{appointmentId}
  *
@@ -16,8 +17,10 @@ import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataModification } from '../utils/audit-logger';
+import { processPayoutForPayment } from './payout-service';
 
 const MIN_VERIFIED_SEC = env.MIN_VERIFIED_CONSULTATION_SECONDS;
+const DEFAULT_PAYOUT_SCHEDULE = 'weekly';
 
 // ============================================================================
 // Types (Twilio Room Status Callback payload - application/x-www-form-urlencoded)
@@ -33,6 +36,7 @@ export interface TwilioRoomCallbackPayload {
   ParticipantSid?: string;
   ParticipantStatus?: string;
   ParticipantIdentity?: string;
+  ParticipantDuration?: string; // seconds in room, only on participant-disconnected
   RoomDuration?: string; // seconds, only on room-ended
 }
 
@@ -51,6 +55,7 @@ function parsePayload(body: Record<string, unknown>): TwilioRoomCallbackPayload 
     ParticipantSid: body.ParticipantSid as string,
     ParticipantStatus: body.ParticipantStatus as string,
     ParticipantIdentity: (body.ParticipantIdentity as string) || '',
+    ParticipantDuration: body.ParticipantDuration as string,
     RoomDuration: body.RoomDuration as string,
   };
 }
@@ -123,6 +128,70 @@ export async function handleParticipantConnected(
 }
 
 /**
+ * Handle participant-disconnected event.
+ * Identity: doctor-{doctorId} → doctor_left_at; patient-{appointmentId} → patient_left_at.
+ * Idempotent: only set if column is null (first disconnect wins).
+ */
+export async function handleParticipantDisconnected(
+  payload: TwilioRoomCallbackPayload,
+  correlationId: string
+): Promise<void> {
+  const identity = payload.ParticipantIdentity?.trim();
+  if (!identity) return;
+
+  const admin = getSupabaseAdminClient();
+  if (!admin) return;
+
+  const { data: appointments, error: fetchError } = await admin
+    .from('appointments')
+    .select('id, doctor_id, doctor_left_at, patient_left_at')
+    .eq('consultation_room_sid', payload.RoomSid)
+    .limit(1);
+
+  if (fetchError || !appointments?.length) {
+    logger.warn({ correlationId, roomSid: payload.RoomSid }, 'No appointment for participant-disconnected callback');
+    return;
+  }
+
+  const apt = appointments[0]!;
+  const timestamp = payload.Timestamp || new Date().toISOString();
+
+  if (identity.startsWith('doctor-')) {
+    const doctorId = identity.slice('doctor-'.length);
+    if (apt.doctor_id === doctorId && !apt.doctor_left_at) {
+      const { error } = await admin
+        .from('appointments')
+        .update({ doctor_left_at: timestamp })
+        .eq('id', apt.id);
+
+      if (error) handleSupabaseError(error, correlationId);
+      else {
+        logger.info({ correlationId, appointmentId: apt.id, roomSid: payload.RoomSid }, 'doctor_left_at set');
+        await logDataModification(correlationId, undefined as any, 'update', 'appointment', apt.id, [
+          'doctor_left_at',
+        ]);
+      }
+    }
+  } else if (identity.startsWith('patient-')) {
+    const appointmentIdFromIdentity = identity.slice('patient-'.length);
+    if (apt.id === appointmentIdFromIdentity && !apt.patient_left_at) {
+      const { error } = await admin
+        .from('appointments')
+        .update({ patient_left_at: timestamp })
+        .eq('id', apt.id);
+
+      if (error) handleSupabaseError(error, correlationId);
+      else {
+        logger.info({ correlationId, appointmentId: apt.id, roomSid: payload.RoomSid }, 'patient_left_at set');
+        await logDataModification(correlationId, undefined as any, 'update', 'appointment', apt.id, [
+          'patient_left_at',
+        ]);
+      }
+    }
+  }
+}
+
+/**
  * Handle room-ended event.
  * Sets consultation_ended_at, consultation_duration_seconds, calls tryMarkVerified.
  */
@@ -172,9 +241,10 @@ export async function handleRoomEnded(
 }
 
 /**
- * Mark appointment as verified and completed when:
- * - doctor_joined_at and patient_joined_at and consultation_ended_at are set
- * - consultation_duration_seconds >= MIN_VERIFIED_CONSULTATION_SECONDS
+ * Mark appointment as verified and completed using "who left first" rules.
+ * Doctor gets verified if: patient no-show, or patient left first, or doctor left first but overlap >= MIN_VERIFIED_SEC.
+ *
+ * @see CONSULTATION_VERIFICATION_STRATEGY.md
  */
 export async function tryMarkVerified(
   appointmentId: string,
@@ -185,7 +255,9 @@ export async function tryMarkVerified(
 
   const { data: apt, error: fetchError } = await admin
     .from('appointments')
-    .select('id, doctor_joined_at, patient_joined_at, consultation_ended_at, consultation_duration_seconds, verified_at, status')
+    .select(
+      'id, doctor_id, doctor_joined_at, patient_joined_at, doctor_left_at, patient_left_at, consultation_ended_at, consultation_duration_seconds, verified_at, status'
+    )
     .eq('id', appointmentId)
     .single();
 
@@ -193,30 +265,84 @@ export async function tryMarkVerified(
 
   if (apt.verified_at || apt.status === 'completed') return;
 
-  if (
-    !apt.doctor_joined_at ||
-    !apt.patient_joined_at ||
-    !apt.consultation_ended_at ||
-    (apt.consultation_duration_seconds ?? 0) < MIN_VERIFIED_SEC
-  ) {
-    return;
-  }
+  if (!apt.doctor_joined_at || !apt.consultation_ended_at) return;
 
-  const { error } = await admin
-    .from('appointments')
-    .update({ verified_at: apt.consultation_ended_at, status: 'completed' })
-    .eq('id', appointmentId);
+  const verifiedAt = apt.consultation_ended_at;
+  const performUpdate = async (): Promise<boolean> => {
+    const { error } = await admin
+      .from('appointments')
+      .update({ verified_at: verifiedAt, status: 'completed' })
+      .eq('id', appointmentId);
 
-  if (error) handleSupabaseError(error, correlationId);
-  else {
-    logger.info(
-      { correlationId, appointmentId, durationSec: apt.consultation_duration_seconds },
-      'Consultation verified and marked completed'
-    );
+    if (error) {
+      handleSupabaseError(error, correlationId);
+      return false;
+    }
+    logger.info({ correlationId, appointmentId }, 'Consultation verified and marked completed');
     await logDataModification(correlationId, undefined as any, 'update', 'appointment', appointmentId, [
       'verified_at',
       'status',
     ]);
+    return true;
+  };
+
+  const triggerPerAppointmentPayout = async (): Promise<void> => {
+    const { data: payment } = await admin
+      .from('payments')
+      .select('id')
+      .eq('appointment_id', appointmentId)
+      .eq('status', 'captured')
+      .or('payout_status.eq.pending,payout_status.is.null')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!payment?.id) return;
+
+    const { data: settings } = await admin
+      .from('doctor_settings')
+      .select('payout_schedule')
+      .eq('doctor_id', apt.doctor_id)
+      .maybeSingle();
+
+    const schedule = settings?.payout_schedule ?? DEFAULT_PAYOUT_SCHEDULE;
+    if (schedule !== 'per_appointment') return;
+
+    await processPayoutForPayment(payment.id, correlationId);
+  };
+
+  // Patient no-show: doctor joined, room ended, patient never joined → verify
+  if (!apt.patient_joined_at) {
+    if (await performUpdate()) await triggerPerAppointmentPayout();
+    return;
+  }
+
+  const docJoined = apt.doctor_joined_at ? new Date(apt.doctor_joined_at).getTime() : 0;
+  const ptJoined = apt.patient_joined_at ? new Date(apt.patient_joined_at).getTime() : 0;
+  const overlapStart = Math.max(docJoined, ptJoined);
+  const docLeft = apt.doctor_left_at ? new Date(apt.doctor_left_at).getTime() : null;
+  const ptLeft = apt.patient_left_at ? new Date(apt.patient_left_at).getTime() : null;
+
+  // Patient left first: patient_left_at exists AND (!doctor_left_at OR patient_left_at < doctor_left_at)
+  if (ptLeft !== null && (docLeft === null || ptLeft < docLeft)) {
+    if (await performUpdate()) await triggerPerAppointmentPayout();
+    return;
+  }
+
+  // Doctor left first: doctor_left_at exists AND (doctor_left_at <= patient_left_at OR patient_left_at null)
+  // Overlap sec = from overlap_start to doctor_left_at
+  if (docLeft !== null && (ptLeft === null || docLeft <= ptLeft)) {
+    const overlapSec = (docLeft - overlapStart) / 1000;
+    if (overlapSec >= MIN_VERIFIED_SEC && (await performUpdate())) {
+      await triggerPerAppointmentPayout();
+    }
+    return;
+  }
+
+  // Fallback: left_at missing but both joined and duration >= threshold
+  const durationSec = apt.consultation_duration_seconds ?? 0;
+  if (durationSec >= MIN_VERIFIED_SEC && (await performUpdate())) {
+    await triggerPerAppointmentPayout();
   }
 }
 
@@ -237,6 +363,9 @@ export async function handleTwilioStatusCallback(
   switch (payload.StatusCallbackEvent) {
     case 'participant-connected':
       await handleParticipantConnected(payload, correlationId);
+      break;
+    case 'participant-disconnected':
+      await handleParticipantDisconnected(payload, correlationId);
       break;
     case 'room-ended':
       await handleRoomEnded(payload, correlationId);

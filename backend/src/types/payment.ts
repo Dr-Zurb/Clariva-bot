@@ -17,12 +17,20 @@ export type PaymentGateway = 'razorpay' | 'paypal';
 
 export type PaymentStatus = 'pending' | 'captured' | 'failed' | 'refunded';
 
+/** Payout state: pending -> processing -> paid | failed. Migration 024. */
+export type PayoutStatus = 'pending' | 'processing' | 'paid' | 'failed';
+
 export type DoctorCountry = 'IN' | 'US' | 'UK' | 'EU' | string;
 
 // ============================================================================
 // Payment Record (matches DB schema)
 // ============================================================================
 
+/**
+ * Payment record from database.
+ * platform_fee_minor, gst_minor, doctor_amount_minor added in migration 022 (monetization).
+ * payout_status, payout_id, payout_failed_reason, paid_at added in migration 024 (payout).
+ */
 export interface Payment {
   id: string;
   appointment_id: string;
@@ -32,6 +40,20 @@ export interface Payment {
   amount_minor: number;
   currency: string;
   status: PaymentStatus;
+  /** Clariva platform fee in smallest unit (paise). 5% or flat for < threshold. Migration 022. */
+  platform_fee_minor?: number | null;
+  /** GST (18% on platform fee) in smallest unit. Migration 022. */
+  gst_minor?: number | null;
+  /** Amount to doctor (gross - platform_fee - gst) in smallest unit. Migration 022. */
+  doctor_amount_minor?: number | null;
+  /** Payout state. Migration 024. */
+  payout_status?: PayoutStatus | null;
+  /** Razorpay Route transfer ID when paid. Migration 024. */
+  payout_id?: string | null;
+  /** Error message when payout failed. Migration 024. */
+  payout_failed_reason?: string | null;
+  /** When payout was completed. Migration 024. */
+  paid_at?: Date | string | null;
   created_at: Date;
 }
 

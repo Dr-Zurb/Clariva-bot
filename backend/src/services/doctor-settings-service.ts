@@ -12,7 +12,7 @@
  */
 
 import { getSupabaseAdminClient } from '../config/database';
-import type { DoctorSettingsRow } from '../types/doctor-settings';
+import type { DoctorSettingsRow, PayoutSchedule } from '../types/doctor-settings';
 import { validateOwnership } from '../utils/db-helpers';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataAccess, logDataModification } from '../utils/audit-logger';
@@ -23,6 +23,7 @@ const SELECT_COLUMNS =
   'practice_name, timezone, slot_interval_minutes, max_advance_booking_days, min_advance_hours, business_hours_summary, ' +
   'cancellation_policy_hours, max_appointments_per_day, booking_buffer_minutes, ' +
   'welcome_message, specialty, address_summary, consultation_types, default_notes, ' +
+  'payout_schedule, payout_minor, razorpay_linked_account_id, ' +
   'created_at, updated_at';
 
 /** Default values when no row exists (for API GET response). */
@@ -45,6 +46,9 @@ const DEFAULT_SETTINGS: DoctorSettingsRow = {
   address_summary: null,
   consultation_types: null,
   default_notes: null,
+  payout_schedule: null,
+  payout_minor: null,
+  razorpay_linked_account_id: null,
   created_at: '',
   updated_at: '',
 };
@@ -134,6 +138,10 @@ export interface UpdateDoctorSettingsPayload {
   appointment_fee_minor?: number | null;
   /** Currency code e.g. INR, USD */
   appointment_fee_currency?: string | null;
+  /** When doctor receives payouts (e-task-6). */
+  payout_schedule?: PayoutSchedule | null;
+  /** Min amount (paise) before payout; NULL = pay any (e-task-6). */
+  payout_minor?: number | null;
 }
 
 /**
@@ -174,6 +182,22 @@ export async function updateDoctorSettings(
   ) {
     throw new ValidationError('appointment_fee_currency must be a 3-letter code (e.g. INR, USD)');
   }
+  if (
+    payload.payout_schedule !== undefined &&
+    payload.payout_schedule !== null &&
+    !['per_appointment', 'daily', 'weekly', 'monthly'].includes(payload.payout_schedule)
+  ) {
+    throw new ValidationError(
+      'payout_schedule must be one of: per_appointment, daily, weekly, monthly'
+    );
+  }
+  if (
+    payload.payout_minor !== undefined &&
+    payload.payout_minor !== null &&
+    (payload.payout_minor < 0 || !Number.isInteger(payload.payout_minor))
+  ) {
+    throw new ValidationError('payout_minor must be a non-negative integer (paise)');
+  }
 
   const supabase = getSupabaseAdminClient();
   if (!supabase) {
@@ -198,6 +222,8 @@ export async function updateDoctorSettings(
     'default_notes',
     'appointment_fee_minor',
     'appointment_fee_currency',
+    'payout_schedule',
+    'payout_minor',
   ];
   for (const key of allowedKeys) {
     if (key in payload) {
