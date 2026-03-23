@@ -73,6 +73,9 @@ export * from './conversation';
 // Re-export payment types (e-task-4)
 export * from './payment';
 
+// Re-export prescription types (Prescription V1)
+export * from './prescription';
+
 // ============================================================================
 // Service Types (Placeholder - to be expanded)
 // ============================================================================

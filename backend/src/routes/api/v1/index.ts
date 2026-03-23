@@ -9,6 +9,7 @@ import instagramSettingsRoutes from './settings/instagram';
 import doctorSettingsRoutes from './settings/doctor';
 import availabilityRoutes from './availability';
 import blockedTimesRoutes from './blocked-times';
+import prescriptionRoutes from './prescriptions';
 
 const router = Router();
 
@@ -52,5 +53,8 @@ router.use('/availability', availabilityRoutes);
 
 // Blocked times (e-task-3): GET/POST/DELETE /blocked-times (auth required)
 router.use('/blocked-times', blockedTimesRoutes);
+
+// Prescriptions (Prescription V1): POST/GET/PATCH /prescriptions (auth required)
+router.use('/prescriptions', prescriptionRoutes);
 
 export default router;

@@ -361,6 +361,68 @@ export async function replyToInstagramComment(
 }
 
 /**
+ * Send image to Instagram user via URL.
+ * Meta fetches the URL when sending; URL must be HTTPS and accessible.
+ *
+ * @param recipientId - Instagram user ID
+ * @param imageUrl - HTTPS URL to image (JPEG, PNG; max 8MB)
+ * @param correlationId - For logging (no PHI)
+ * @param accessToken - Optional doctor token; else env token
+ */
+export async function sendInstagramImage(
+  recipientId: string,
+  imageUrl: string,
+  correlationId: string,
+  accessToken?: string
+): Promise<InstagramSendMessageResponse> {
+  if (!recipientId || !imageUrl?.startsWith('https://')) {
+    throw new AppError('Invalid recipient or image URL', 400);
+  }
+  const token = accessToken ?? env.INSTAGRAM_ACCESS_TOKEN ?? null;
+  if (!token) {
+    throw new InternalError('Instagram access token not configured');
+  }
+  const payload = {
+    recipient: { id: recipientId },
+    messaging_type: 'RESPONSE' as const,
+    message: {
+      attachment: { type: 'image' as const, payload: { url: imageUrl } },
+    },
+  };
+  try {
+    const res = await axios.post<InstagramSendMessageResponse>(
+      `${FACEBOOK_GRAPH_BASE}/me/messages`,
+      payload,
+      { headers: { Authorization: `Bearer ${token.trim()}` }, timeout: 15000 }
+    );
+    if (res.data) {
+      await logAuditEvent({
+        correlationId,
+        userId: undefined,
+        action: 'send_message',
+        resourceType: 'instagram_message',
+        status: 'success',
+        metadata: { recipient_id: recipientId, type: 'image', message_id: res.data.message_id },
+      });
+      return res.data;
+    }
+  } catch (error) {
+    const err = mapInstagramError(error, correlationId);
+    await logAuditEvent({
+      correlationId,
+      userId: undefined,
+      action: 'send_message',
+      resourceType: 'instagram_message',
+      status: 'failure',
+      errorMessage: err.message,
+      metadata: { recipient_id: recipientId, type: 'image' },
+    });
+    throw err;
+  }
+  throw new InternalError('Failed to send Instagram image');
+}
+
+/**
  * Send message with retry logic
  *
  * Implements exponential backoff for retryable errors (429, 5xx).

@@ -7,6 +7,8 @@ import type { Appointment } from "@/types/appointment";
 import VideoRoom from "./VideoRoom";
 import PatientJoinLink from "./PatientJoinLink";
 import MarkCompletedForm from "./MarkCompletedForm";
+import PrescriptionForm from "./PrescriptionForm";
+import PreviousPrescriptions from "./PreviousPrescriptions";
 
 interface AppointmentConsultationActionsProps {
   appointment: Appointment;
@@ -136,6 +138,34 @@ export default function AppointmentConsultationActions({
             <PatientJoinLink patientJoinUrl={consultationData.patientJoinUrl} />
           </div>
         </>
+      )}
+
+      {/* Previous prescriptions - only when patient linked */}
+      {appointment.patient_id && (
+        <PreviousPrescriptions
+          patientId={appointment.patient_id}
+          appointmentId={appointment.id}
+          token={token}
+          limit={3}
+        />
+      )}
+
+      {/* Prescription & clinical note - show when consultation started or status allows */}
+      {(consultationStarted ||
+        appointment.status === "pending" ||
+        appointment.status === "confirmed" ||
+        appointment.status === "completed") && (
+        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+          <h2 className="mb-3 text-lg font-semibold text-gray-900">
+            Prescription & clinical note
+          </h2>
+          <PrescriptionForm
+            appointmentId={appointment.id}
+            patientId={appointment.patient_id ?? null}
+            token={token}
+            onSuccess={handleRefresh}
+          />
+        </div>
       )}
 
       {/* Mark as completed - show when consultation started or for in-clinic */}

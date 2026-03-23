@@ -4,6 +4,7 @@ import { getPatientById } from "@/lib/api";
 import { redirect } from "next/navigation";
 import { cn } from "@/lib/utils";
 import type { Patient } from "@/types/patient";
+import PatientPrescriptions from "@/components/patients/PatientPrescriptions";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -147,6 +148,8 @@ export default async function PatientDetailPage({ params }: PageProps) {
           </div>
         )}
       </dl>
+
+      <PatientPrescriptions patientId={id} token={token} />
     </div>
   );
 }

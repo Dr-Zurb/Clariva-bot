@@ -285,6 +285,100 @@ updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 
 ---
 
+### `prescriptions` (migration 026)
+
+**Purpose:** Store prescription records per appointment. PHI: diagnosis, medications, clinical notes. Doctor creates structured SOAP and/or photo prescription; sends to patient.
+
+**Columns:**
+```sql
+id                      UUID PRIMARY KEY DEFAULT gen_random_uuid()
+appointment_id          UUID NOT NULL REFERENCES appointments(id) ON DELETE CASCADE
+patient_id              UUID NULL REFERENCES patients(id) ON DELETE SET NULL  -- Denormalized for list-by-patient
+doctor_id               UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE
+type                    TEXT NOT NULL CHECK (type IN ('structured', 'photo', 'both'))
+cc                      TEXT NULL   -- Chief complaint (SOAP Subjective)
+hopi                    TEXT NULL   -- History of present illness
+provisional_diagnosis   TEXT NULL   -- SOAP Assessment
+investigations          TEXT NULL   -- Plan: labs, imaging ordered
+follow_up               TEXT NULL   -- Plan: when to return
+patient_education       TEXT NULL   -- Plan: advice, lifestyle
+clinical_notes          TEXT NULL   -- Plan: additional notes
+sent_to_patient_at      TIMESTAMPTZ NULL  -- When sent via DM/email
+created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+```
+
+**Indexes:**
+- `idx_prescriptions_appointment_id` ON `appointment_id`
+- `idx_prescriptions_patient_id` ON `patient_id`
+- `idx_prescriptions_doctor_id` ON `doctor_id`
+- `idx_prescriptions_created_at` ON `created_at` DESC
+
+**Relationships:**
+- `appointment_id` → `appointments(id)`
+- `patient_id` → `patients(id)` (denormalized)
+- `doctor_id` → `auth.users(id)`
+
+**PHI:** Diagnosis, medications (via prescription_medicines), clinical notes. 7-year retention per COMPLIANCE.
+
+**RLS:** Enabled (doctor-only via doctor_id). See RLS_POLICIES.md.
+
+---
+
+### `prescription_medicines` (migration 026)
+
+**Purpose:** Medicines prescribed in a prescription.
+
+**Columns:**
+```sql
+id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
+prescription_id UUID NOT NULL REFERENCES prescriptions(id) ON DELETE CASCADE
+medicine_name   TEXT NOT NULL
+dosage          TEXT NULL
+route           TEXT NULL    -- e.g. Oral, Topical
+frequency       TEXT NULL    -- e.g. BD, TDS
+duration        TEXT NULL    -- e.g. 5 days
+instructions    TEXT NULL    -- e.g. After food
+sort_order      INTEGER NOT NULL DEFAULT 0
+created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+```
+
+**Indexes:**
+- `idx_prescription_medicines_prescription_id` ON `prescription_id`
+
+**Relationships:**
+- `prescription_id` → `prescriptions(id)` ON DELETE CASCADE
+
+**RLS:** Enabled (via parent prescription ownership).
+
+---
+
+### `prescription_attachments` (migration 026)
+
+**Purpose:** Photo attachments (handwritten Rx, lab reports) for prescriptions. file_path = Supabase Storage path.
+
+**Columns:**
+```sql
+id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
+prescription_id UUID NOT NULL REFERENCES prescriptions(id) ON DELETE CASCADE
+file_path       TEXT NOT NULL   -- Supabase Storage object path
+file_type       TEXT NULL       -- e.g. image/jpeg
+caption         TEXT NULL
+uploaded_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+```
+
+**Indexes:**
+- `idx_prescription_attachments_prescription_id` ON `prescription_id`
+
+**Relationships:**
+- `prescription_id` → `prescriptions(id)` ON DELETE CASCADE
+
+**RLS:** Enabled (via parent prescription ownership).
+
+**PHI:** Stored images may contain handwritten prescription with diagnosis/meds.
+
+---
+
 ### `audit_logs`
 
 **Purpose:** Compliance audit trail

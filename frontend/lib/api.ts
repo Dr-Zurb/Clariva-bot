@@ -21,6 +21,11 @@ import type {
   AvailabilitySlot,
 } from "@/types/availability";
 import type { BlockedTime } from "@/types/blocked-time";
+import type {
+  PrescriptionWithRelations,
+  CreatePrescriptionPayload,
+  UpdatePrescriptionPayload,
+} from "@/types/prescription";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -696,6 +701,264 @@ export async function getConsultationTokenForPatient(
   }
   return json as ApiSuccess<GetConsultationTokenData>;
 }
+
+// =============================================================================
+// Prescriptions (Prescription V1 - e-task-4)
+// =============================================================================
+
+export interface PrescriptionData {
+  prescription: PrescriptionWithRelations;
+}
+
+export interface PrescriptionsListData {
+  prescriptions: PrescriptionWithRelations[];
+}
+
+export interface CreateUploadUrlData {
+  path: string;
+  token: string;
+}
+
+export interface RegisterAttachmentData {
+  attachment: import("@/types/prescription").PrescriptionAttachment;
+}
+
+export interface DownloadUrlData {
+  downloadUrl: string;
+}
+
+/**
+ * Create prescription. Requires auth token.
+ */
+export async function createPrescription(
+  token: string,
+  payload: CreatePrescriptionPayload
+): Promise<ApiSuccess<PrescriptionData>> {
+  const res = await fetch(`${API_BASE}/api/v1/prescriptions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<PrescriptionData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<PrescriptionData>;
+}
+
+/**
+ * Get prescription by ID. Requires auth token.
+ */
+export async function getPrescription(
+  token: string,
+  id: string
+): Promise<ApiSuccess<PrescriptionData>> {
+  return request<PrescriptionData>(`/api/v1/prescriptions/${id}`, { token });
+}
+
+/**
+ * List prescriptions by appointment. Requires auth token.
+ */
+export async function listPrescriptionsByAppointment(
+  token: string,
+  appointmentId: string
+): Promise<ApiSuccess<PrescriptionsListData>> {
+  return request<PrescriptionsListData>(
+    `/api/v1/prescriptions?appointmentId=${encodeURIComponent(appointmentId)}`,
+    { token }
+  );
+}
+
+/**
+ * List prescriptions by patient. Requires auth token.
+ */
+export async function listPrescriptionsByPatient(
+  token: string,
+  patientId: string
+): Promise<ApiSuccess<PrescriptionsListData>> {
+  return request<PrescriptionsListData>(
+    `/api/v1/prescriptions?patientId=${encodeURIComponent(patientId)}`,
+    { token }
+  );
+}
+
+/**
+ * Update prescription. Requires auth token.
+ */
+export async function updatePrescription(
+  token: string,
+  id: string,
+  payload: UpdatePrescriptionPayload
+): Promise<ApiSuccess<PrescriptionData>> {
+  const res = await fetch(`${API_BASE}/api/v1/prescriptions/${id}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<PrescriptionData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<PrescriptionData>;
+}
+
+/**
+ * Get signed upload URL for prescription attachment. Requires auth token.
+ * Returns { path, token } for supabase.storage.uploadToSignedUrl(path, token, file).
+ */
+export async function getPrescriptionUploadUrl(
+  token: string,
+  prescriptionId: string,
+  body: { filename?: string; contentType?: string }
+): Promise<ApiSuccess<CreateUploadUrlData>> {
+  const res = await fetch(
+    `${API_BASE}/api/v1/prescriptions/${prescriptionId}/attachments/upload-url`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<CreateUploadUrlData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<CreateUploadUrlData>;
+}
+
+/**
+ * Register attachment after upload. Requires auth token.
+ */
+export async function registerPrescriptionAttachment(
+  token: string,
+  prescriptionId: string,
+  body: { filePath: string; fileType: string; caption?: string | null }
+): Promise<ApiSuccess<RegisterAttachmentData>> {
+  const res = await fetch(
+    `${API_BASE}/api/v1/prescriptions/${prescriptionId}/attachments`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<RegisterAttachmentData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<RegisterAttachmentData>;
+}
+
+/**
+ * Get signed download URL for attachment. Requires auth token.
+ */
+export async function getPrescriptionDownloadUrl(
+  token: string,
+  prescriptionId: string,
+  attachmentId: string
+): Promise<ApiSuccess<DownloadUrlData>> {
+  return request<DownloadUrlData>(
+    `/api/v1/prescriptions/${prescriptionId}/attachments/${attachmentId}/download-url`,
+    { token }
+  );
+}
+
+export interface SendPrescriptionData {
+  sent: boolean;
+  channels?: { instagram?: boolean; email?: boolean };
+  reason?: string;
+}
+
+/**
+ * Send prescription to patient via DM/email. Requires auth token.
+ */
+export async function sendPrescriptionToPatient(
+  token: string,
+  prescriptionId: string
+): Promise<ApiSuccess<SendPrescriptionData>> {
+  const res = await fetch(`${API_BASE}/api/v1/prescriptions/${prescriptionId}/send`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<SendPrescriptionData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<SendPrescriptionData>;
+}
+
+// =============================================================================
+// Appointments
+// =============================================================================
 
 export interface PatchAppointmentPayload {
   status?: "pending" | "confirmed" | "cancelled" | "completed";

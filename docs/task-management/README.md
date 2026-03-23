@@ -71,6 +71,7 @@ This folder contains task management documentation and templates.
 - **Daily Tasks:** `docs/Development/Daily-plans/YYYY-MM-DD/`
 - **Monthly Plans:** `docs/Development/Monthly-plans/`
 - **Learning Tasks:** `docs/Learning/YYYY-MM-DD/`
+- **Deferred Tasks:** `docs/Development/deferred/` — postponed work with notes to resume later
 
 ### Current active plan: MVP completion (2026-02-06)
 
@@ -180,6 +181,15 @@ Doctor payouts with configurable schedule: per appointment, daily, weekly, or mo
 
 Tasks: e-task-1 (payments payout columns), e-task-2 (doctor payout settings migration), e-task-3 (Razorpay Route adapter), e-task-4 (payout service + trigger on verified), e-task-5 (scheduled batch payouts), e-task-6 (doctor payout settings API).
 
+### Prescription V1 (2026-03-28)
+
+Structured SOAP prescription + photo upload (parchi). Store under patient; send to patient via Instagram DM and email; show previous prescriptions on appointment view.
+
+- **Reference:** [PRESCRIPTION_EHR_PLAN.md](../Development/Daily-plans/March%202026/2026-03-23/PRESCRIPTION_EHR_PLAN.md)
+- **Daily plan:** [docs/Development/Daily-plans/March 2026/2026-03-28/README.md](../Development/Daily-plans/March%202026/2026-03-28/README.md)
+
+Tasks: e-task-1 (prescription migration), e-task-2 (prescription service & API), e-task-3 (photo storage), e-task-4 (prescription form UI), e-task-5 (send to patient), e-task-6 (previous prescriptions view), e-task-7 (integration & README).
+
 ---
 
 ## 🔗 Related Documentation
@@ -194,5 +204,5 @@ Tasks: e-task-1 (payments payout columns), e-task-2 (doctor payout settings migr
 
 ---
 
-**Last Updated:** 2026-03-24  
-**Version:** 2.5.0 (Added Payout initiative — doctor payouts with schedule)
+**Last Updated:** 2026-03-28  
+**Version:** 2.6.0 (Added Prescription V1 initiative)

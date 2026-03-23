@@ -682,3 +682,180 @@ export function validateDeleteBlockedTimeParams(params: unknown): DeleteBlockedT
   }
   return result.data;
 }
+
+// ============================================================================
+// Prescription Schemas (Prescription V1)
+// ============================================================================
+
+const PRESCRIPTION_CC_MAX = 500;
+const PRESCRIPTION_HOPI_MAX = 2000;
+const PRESCRIPTION_DIAGNOSIS_MAX = 500;
+const PRESCRIPTION_FIELD_MAX = 1000;
+const PRESCRIPTION_MEDICINE_NAME_MAX = 200;
+const PRESCRIPTION_MEDICINE_FIELD_MAX = 100;
+
+const prescriptionMedicineSchema = z.object({
+  medicineName: z.string().min(1).max(PRESCRIPTION_MEDICINE_NAME_MAX).trim(),
+  dosage: z.string().max(PRESCRIPTION_MEDICINE_FIELD_MAX).trim().optional().nullable(),
+  route: z.string().max(PRESCRIPTION_MEDICINE_FIELD_MAX).trim().optional().nullable(),
+  frequency: z.string().max(PRESCRIPTION_MEDICINE_FIELD_MAX).trim().optional().nullable(),
+  duration: z.string().max(PRESCRIPTION_MEDICINE_FIELD_MAX).trim().optional().nullable(),
+  instructions: z.string().max(PRESCRIPTION_MEDICINE_FIELD_MAX).trim().optional().nullable(),
+  sortOrder: z.number().int().min(0).optional(),
+});
+
+export const createPrescriptionBodySchema = z.object({
+  appointmentId: z.string().uuid('appointmentId must be a valid UUID'),
+  patientId: z.string().uuid().nullable().optional(),
+  type: z.enum(['structured', 'photo', 'both']),
+  cc: z.string().max(PRESCRIPTION_CC_MAX).trim().optional().nullable(),
+  hopi: z.string().max(PRESCRIPTION_HOPI_MAX).trim().optional().nullable(),
+  provisionalDiagnosis: z.string().max(PRESCRIPTION_DIAGNOSIS_MAX).trim().optional().nullable(),
+  investigations: z.string().max(PRESCRIPTION_FIELD_MAX).trim().optional().nullable(),
+  followUp: z.string().max(PRESCRIPTION_FIELD_MAX).trim().optional().nullable(),
+  patientEducation: z.string().max(PRESCRIPTION_FIELD_MAX).trim().optional().nullable(),
+  clinicalNotes: z.string().max(5000).trim().optional().nullable(),
+  medicines: z.array(prescriptionMedicineSchema).optional(),
+});
+
+export type CreatePrescriptionBody = z.infer<typeof createPrescriptionBodySchema>;
+
+export function validateCreatePrescriptionBody(body: unknown): CreatePrescriptionBody {
+  const result = createPrescriptionBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+export const updatePrescriptionBodySchema = z
+  .object({
+    cc: z.string().max(PRESCRIPTION_CC_MAX).trim().optional().nullable(),
+    hopi: z.string().max(PRESCRIPTION_HOPI_MAX).trim().optional().nullable(),
+    provisionalDiagnosis: z.string().max(PRESCRIPTION_DIAGNOSIS_MAX).trim().optional().nullable(),
+    investigations: z.string().max(PRESCRIPTION_FIELD_MAX).trim().optional().nullable(),
+    followUp: z.string().max(PRESCRIPTION_FIELD_MAX).trim().optional().nullable(),
+    patientEducation: z.string().max(PRESCRIPTION_FIELD_MAX).trim().optional().nullable(),
+    clinicalNotes: z.string().max(5000).trim().optional().nullable(),
+    medicines: z.array(prescriptionMedicineSchema).optional(),
+  })
+  .strict()
+  .refine((data) => Object.keys(data).length > 0, 'At least one field required');
+
+export type UpdatePrescriptionBody = z.infer<typeof updatePrescriptionBodySchema>;
+
+export function validateUpdatePrescriptionBody(body: unknown): UpdatePrescriptionBody {
+  const result = updatePrescriptionBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+export const prescriptionParamsSchema = z.object({
+  id: z.string().uuid('Invalid prescription ID'),
+});
+
+export type PrescriptionParams = z.infer<typeof prescriptionParamsSchema>;
+
+export function validatePrescriptionParams(params: unknown): PrescriptionParams {
+  const result = prescriptionParamsSchema.safeParse(params);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid prescription ID';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+export const listPrescriptionsQuerySchema = z
+  .object({
+    appointmentId: z.string().uuid().optional(),
+    patientId: z.string().uuid().optional(),
+  })
+  .refine((data) => data.appointmentId || data.patientId, 'appointmentId or patientId required');
+
+export type ListPrescriptionsQuery = z.infer<typeof listPrescriptionsQuerySchema>;
+
+export function validateListPrescriptionsQuery(
+  query: Record<string, string | string[] | undefined>
+): ListPrescriptionsQuery {
+  const normalized: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(query)) {
+    normalized[k] = typeof v === 'string' ? v : Array.isArray(v) ? String(v[0]) : undefined;
+  }
+  const result = listPrescriptionsQuerySchema.safeParse(normalized);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid query';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+// ============================================================================
+// Prescription Attachment Schemas (Prescription V1 - e-task-3)
+// ============================================================================
+
+const ATTACHMENT_ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] as const;
+const ATTACHMENT_FILENAME_MAX = 200;
+const ATTACHMENT_CAPTION_MAX = 500;
+
+export const createUploadUrlBodySchema = z.object({
+  filename: z.string().max(ATTACHMENT_FILENAME_MAX).trim().optional().default('file'),
+  contentType: z
+    .enum(ATTACHMENT_ALLOWED_MIME as unknown as [string, ...string[]])
+    .optional()
+    .default('image/jpeg'),
+});
+
+export type CreateUploadUrlBody = z.infer<typeof createUploadUrlBodySchema>;
+
+export function validateCreateUploadUrlBody(body: unknown): CreateUploadUrlBody {
+  const result = createUploadUrlBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+export const registerAttachmentBodySchema = z.object({
+  filePath: z.string().min(1, 'filePath is required').max(500).trim(),
+  fileType: z.enum(ATTACHMENT_ALLOWED_MIME as unknown as [string, ...string[]]),
+  caption: z.string().max(ATTACHMENT_CAPTION_MAX).trim().optional().nullable(),
+});
+
+export type RegisterAttachmentBody = z.infer<typeof registerAttachmentBodySchema>;
+
+export function validateRegisterAttachmentBody(body: unknown): RegisterAttachmentBody {
+  const result = registerAttachmentBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+export const prescriptionAttachmentParamsSchema = z.object({
+  id: z.string().uuid('Invalid prescription ID'),
+  attachmentId: z.string().uuid('Invalid attachment ID'),
+});
+
+export type PrescriptionAttachmentParams = z.infer<typeof prescriptionAttachmentParamsSchema>;
+
+export function validatePrescriptionAttachmentParams(params: unknown): PrescriptionAttachmentParams {
+  const result = prescriptionAttachmentParamsSchema.safeParse(params);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid params';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}

@@ -29,6 +29,12 @@ Update video consultation verification so doctors are paid only when they fulfil
 
 ---
 
+## Related / Future
+
+- [PRESCRIPTION_EHR_PLAN.md](./PRESCRIPTION_EHR_PLAN.md) — Prescription & EHR-lite (post-consultation) — planning doc
+
+---
+
 ## Reference
 
 - [CONSULTATION_VERIFICATION_STRATEGY.md](../../../task-management/CONSULTATION_VERIFICATION_STRATEGY.md)
