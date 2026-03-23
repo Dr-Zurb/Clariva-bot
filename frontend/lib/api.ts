@@ -4,6 +4,7 @@
  */
 
 import type {
+  Appointment,
   AppointmentsListData,
   AppointmentDetailData,
 } from "@/types/appointment";
@@ -104,6 +105,71 @@ export async function getAppointments(
   token: string
 ): Promise<ApiSuccess<AppointmentsListData>> {
   return request<AppointmentsListData>("/api/v1/appointments", { token });
+}
+
+/** Payload for creating an appointment (doctor dashboard). */
+export interface CreateAppointmentPayload {
+  patientId?: string;
+  patientName?: string;
+  patientPhone?: string;
+  appointmentDate: string;
+  reasonForVisit: string;
+  notes?: string;
+  freeOfCost?: boolean;
+}
+
+/**
+ * Create an appointment (doctor-only). Requires auth token.
+ * Either patientId or both patientName and patientPhone required.
+ */
+export async function createAppointment(
+  token: string,
+  payload: CreateAppointmentPayload
+): Promise<ApiSuccess<{ appointment: Appointment }>> {
+  const res = await fetch(`${API_BASE}/api/v1/appointments`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ appointment: Appointment }>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<{ appointment: Appointment }>;
+}
+
+/** Available slot for doctor dashboard (start/end ISO strings). */
+export interface AvailableSlot {
+  start: string;
+  end: string;
+}
+
+/**
+ * Fetch available slots for a doctor on a date.
+ * No auth required (used by public booking too).
+ */
+export async function getAvailableSlots(
+  doctorId: string,
+  date: string
+): Promise<ApiSuccess<{ slots: AvailableSlot[] }>> {
+  const params = new URLSearchParams({ doctorId, date });
+  return request<{ slots: AvailableSlot[] }>(
+    `/api/v1/appointments/available-slots?${params.toString()}`
+  );
 }
 
 /**

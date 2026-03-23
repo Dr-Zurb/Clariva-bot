@@ -3,10 +3,11 @@
  *
  * GET /api/v1/appointments/available-slots - Available time slots for a doctor on a date
  * POST /api/v1/appointments/book - Book an appointment
+ * POST /api/v1/appointments - Create appointment (doctor-only, requires auth)
  * GET /api/v1/appointments - List appointments for authenticated doctor (requires auth)
  * GET /api/v1/appointments/:id - Get appointment by ID (doctor-only, requires auth)
  *
- * Auth: available-slots/book unauthenticated; list and getById require auth (doctor).
+ * Auth: available-slots/book unauthenticated; POST /, list, getById, patch require auth (doctor).
  */
 
 import { Router } from 'express';
@@ -14,6 +15,7 @@ import { authenticateToken } from '../../../middleware/auth';
 import {
   getAvailableSlotsHandler,
   bookAppointmentHandler,
+  createAppointmentHandler,
   listAppointmentsHandler,
   getAppointmentByIdHandler,
   patchAppointmentByIdHandler,
@@ -23,6 +25,7 @@ const router = Router();
 
 router.get('/available-slots', getAvailableSlotsHandler);
 router.post('/book', bookAppointmentHandler);
+router.post('/', authenticateToken, createAppointmentHandler);
 router.get('/', authenticateToken, listAppointmentsHandler);
 router.get('/:id', authenticateToken, getAppointmentByIdHandler);
 router.patch('/:id', authenticateToken, patchAppointmentByIdHandler);

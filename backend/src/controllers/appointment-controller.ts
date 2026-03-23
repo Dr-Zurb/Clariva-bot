@@ -25,10 +25,12 @@ import {
 import {
   validateAvailableSlotsQuery,
   validateBookAppointment,
+  validateDoctorCreateAppointment,
   validateGetAppointmentParams,
   validatePatchAppointmentBody,
 } from '../utils/validation';
 import { UnauthorizedError } from '../utils/errors';
+import { getPatientForDoctor } from '../services/patient-service';
 
 /**
  * Get available slots
@@ -65,6 +67,54 @@ export const bookAppointmentHandler = asyncHandler(async (req: Request, res: Res
 
   const data = validateBookAppointment(req.body);
   const appointment = await bookAppointment(data, correlationId, userId);
+
+  res.status(201).json(successResponse({ appointment }, req));
+});
+
+/**
+ * Create appointment (doctor-only)
+ * POST /api/v1/appointments
+ *
+ * Body: patientId? (existing patient), patientName, patientPhone (required for walk-in), appointmentDate, reasonForVisit, notes?, freeOfCost?
+ * Auth: Requires authenticated doctor. doctorId derived from req.user.id.
+ */
+export const createAppointmentHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const userId = req.user?.id;
+
+  if (!userId) {
+    throw new UnauthorizedError('Authentication required');
+  }
+
+  const data = validateDoctorCreateAppointment(req.body);
+  const doctorId = userId;
+
+  let patientName: string;
+  let patientPhone: string;
+  let patientId: string | undefined;
+
+  if (data.patientId) {
+    const patient = await getPatientForDoctor(data.patientId, doctorId, correlationId);
+    patientName = patient.name;
+    patientPhone = patient.phone;
+    patientId = data.patientId;
+  } else {
+    patientName = data.patientName!;
+    patientPhone = data.patientPhone!;
+  }
+
+  const bookData = {
+    doctorId,
+    patientId,
+    patientName,
+    patientPhone,
+    appointmentDate: data.appointmentDate,
+    reasonForVisit: data.reasonForVisit,
+    notes: data.notes,
+    freeOfCost: data.freeOfCost,
+  };
+
+  const appointment = await bookAppointment(bookData, correlationId, userId);
 
   res.status(201).json(successResponse({ appointment }, req));
 });

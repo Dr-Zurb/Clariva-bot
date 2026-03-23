@@ -51,5 +51,7 @@ export default async function AppointmentsPage() {
     );
   }
 
-  return <AppointmentsListWithFilters appointments={appointments} />;
+  return (
+    <AppointmentsListWithFilters appointments={appointments} token={token} />
+  );
 }

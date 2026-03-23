@@ -101,6 +101,7 @@ export async function bookAppointment(
   userId?: string
 ): Promise<Appointment> {
   const appointmentDate = new Date(data.appointmentDate);
+  const status = data.freeOfCost ? 'confirmed' : 'pending';
   const insertData: InsertAppointment = {
     doctor_id: data.doctorId,
     patient_id: data.patientId ?? undefined,
@@ -108,7 +109,7 @@ export async function bookAppointment(
     patient_name: data.patientName,
     patient_phone: data.patientPhone,
     appointment_date: appointmentDate,
-    status: 'pending',
+    status,
     reason_for_visit: data.reasonForVisit ?? 'Not provided',
     notes: data.notes ?? null,
     ...(data.consultationType && { consultation_type: data.consultationType }),

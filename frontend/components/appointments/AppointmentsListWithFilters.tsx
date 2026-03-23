@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { Appointment } from "@/types/appointment";
+import AddAppointmentModal from "./AddAppointmentModal";
 
 interface AppointmentsListWithFiltersProps {
   appointments: Appointment[];
+  token: string;
 }
 
 const STATUS_OPTIONS = [
@@ -36,11 +39,14 @@ function formatAppointmentDate(iso: string): string {
  */
 export default function AppointmentsListWithFilters({
   appointments,
+  token,
 }: AppointmentsListWithFiltersProps) {
+  const router = useRouter();
   const [statusFilter, setStatusFilter] = useState<string>("active");
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
   const [searchName, setSearchName] = useState<string>("");
+  const [addModalOpen, setAddModalOpen] = useState(false);
 
   const filtered = useMemo(() => {
     let list = [...appointments];
@@ -171,7 +177,27 @@ export default function AppointmentsListWithFilters({
         </div>
       </div>
 
-      <h1 className="text-2xl font-semibold text-gray-900">Appointments</h1>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <h1 className="text-2xl font-semibold text-gray-900">Appointments</h1>
+        <button
+          type="button"
+          onClick={() => setAddModalOpen(true)}
+          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+        >
+          Add appointment
+        </button>
+      </div>
+
+      {addModalOpen && (
+        <AddAppointmentModal
+          isOpen={addModalOpen}
+          onClose={() => setAddModalOpen(false)}
+          onSuccess={() => router.refresh()}
+          token={token}
+        />
+      )}
+
+      <div className="mt-4">
       {filtered.length === 0 ? (
         <p className="mt-4 text-gray-600" role="status">
           {appointments.length === 0
@@ -216,6 +242,7 @@ export default function AppointmentsListWithFilters({
           ))}
         </ul>
       )}
+      </div>
     </div>
   );
 }

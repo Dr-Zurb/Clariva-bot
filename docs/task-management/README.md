@@ -172,6 +172,15 @@ Tasks: e-task-1 (migration), e-task-2 (config), e-task-3 (payment service).
 
 Tasks: e-task-1 (migration doctor_left_at, patient_left_at), e-task-2 (env MIN_VERIFIED 60), e-task-3 (participant-disconnected), e-task-4 (tryMarkVerified logic).
 
+### Add Appointment from Dashboard (2026-03-23)
+
+Doctors can add appointments from the appointments tab, with option to mark as free of cost. Patient selector (existing or walk-in), date/time from available slots, reason for visit, notes.
+
+- **Reference:** [ADD_APPOINTMENT_FROM_DASHBOARD.md](../Development/Daily-plans/March%202026/2026-03-23/Plans/ADD_APPOINTMENT_FROM_DASHBOARD.md)
+- **Daily plan:** [docs/Development/Daily-plans/March 2026/2026-03-23/README.md](../Development/Daily-plans/March%202026/2026-03-23/README.md)
+
+Tasks: e-task-5 (backend doctor create appointment API), e-task-6 (frontend Add Appointment modal), e-task-7 (integration & README).
+
 ### Payout Initiative (2026-03-24)
 
 Doctor payouts with configurable schedule: per appointment, daily, weekly, or monthly. Uses Razorpay Route for India. Pay only after consultation verified.

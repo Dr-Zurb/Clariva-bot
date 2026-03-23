@@ -258,9 +258,59 @@ export const bookAppointmentSchema = z.object({
     .enum(['video', 'in_clinic'])
     .optional(),
   conversationId: z.string().uuid().optional(),
+  /** When true, appointment status is 'confirmed' and no payment; doctor-create flow only. */
+  freeOfCost: z.boolean().optional(),
 });
 
 export type BookAppointmentInput = z.infer<typeof bookAppointmentSchema>;
+
+// ============================================================================
+// Doctor Create Appointment Schema (e-task-5 - Add Appointment from Dashboard)
+// ============================================================================
+
+export const doctorCreateAppointmentSchema = z
+  .object({
+    patientId: z.string().uuid('patientId must be a valid UUID').optional(),
+    patientName: patientNameSchema.optional(),
+    patientPhone: patientPhoneSchema.optional(),
+    appointmentDate: z
+      .string()
+      .datetime({ message: 'appointmentDate must be ISO 8601 datetime' })
+      .refine(
+        (val) => new Date(val) >= new Date(),
+        'Cannot book appointments in the past'
+      ),
+    reasonForVisit: z
+      .string()
+      .min(1, 'Reason for visit is required')
+      .max(REASON_FOR_VISIT_MAX_LEN, `Reason for visit must be at most ${REASON_FOR_VISIT_MAX_LEN} characters`)
+      .transform((s) => s.trim()),
+    notes: z
+      .string()
+      .max(NOTES_MAX_LEN, `Notes must be at most ${NOTES_MAX_LEN} characters`)
+      .transform((s) => s.trim() || undefined)
+      .optional(),
+    freeOfCost: z.boolean().optional().default(false),
+  })
+  .refine(
+    (data) => {
+      if (data.patientId) return true;
+      return !!data.patientName && !!data.patientPhone;
+    },
+    { message: 'Either patientId or both patientName and patientPhone are required for walk-in' }
+  );
+
+export type DoctorCreateAppointmentInput = z.infer<typeof doctorCreateAppointmentSchema>;
+
+export function validateDoctorCreateAppointment(body: unknown): DoctorCreateAppointmentInput {
+  const result = doctorCreateAppointmentSchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
 
 export function validateBookAppointment(body: unknown): BookAppointmentInput {
   const result = bookAppointmentSchema.safeParse(body);
