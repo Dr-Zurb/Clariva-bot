@@ -129,10 +129,6 @@ export async function bookAppointment(
     throw new ConflictError('This time slot is no longer available');
   }
 
-  if (userId) {
-    return createAppointment(insertData, correlationId, userId);
-  }
-
   const admin = getSupabaseAdminClient();
   if (!admin) {
     throw new InternalError('Service role client not available for booking');
@@ -148,13 +144,23 @@ export async function bookAppointment(
     handleSupabaseError(error, correlationId);
   }
 
-  await logAuditEvent({
-    correlationId,
-    action: 'create_appointment',
-    resourceType: 'appointment',
-    resourceId: appointment.id,
-    status: 'success',
-  });
+  if (userId) {
+    await logDataModification(
+      correlationId,
+      userId,
+      'create',
+      'appointment',
+      appointment.id
+    );
+  } else {
+    await logAuditEvent({
+      correlationId,
+      action: 'create_appointment',
+      resourceType: 'appointment',
+      resourceId: appointment.id,
+      status: 'success',
+    });
+  }
 
   return appointment as Appointment;
 }
