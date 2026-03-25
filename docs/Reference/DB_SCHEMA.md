@@ -56,11 +56,15 @@ patient_id          UUID NULL REFERENCES patients(id) ON DELETE SET NULL  -- e-t
 patient_name        TEXT NOT NULL  -- Encrypted at rest (platform-level, Supabase encryption-at-rest)
 patient_phone       TEXT NOT NULL  -- Encrypted at rest (platform-level, Supabase encryption-at-rest)
 appointment_date    TIMESTAMPTZ NOT NULL
-status              TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'cancelled', 'completed'))
+status              TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'cancelled', 'completed', 'no_show'))  -- no_show: migration 031 (OPD-08)
 reason_for_visit    TEXT NULL  -- Patient main complaint/symptom (required for new bookings; migration 016)
 notes               TEXT NULL  -- Optional patient extras + doctor default_notes (migration 016)
+related_appointment_id UUID NULL REFERENCES appointments(id) ON DELETE SET NULL  -- migration 031: same-day return / link to prior visit
+opd_event_type      TEXT NOT NULL DEFAULT 'standard' CHECK (opd_event_type IN ('standard', 'return_after_completed'))  -- migration 031
+transferred_payment_from_appointment_id UUID NULL REFERENCES appointments(id) ON DELETE SET NULL  -- migration 031: fee entitlement audit
 created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+-- Also: teleconsultation columns (021–023); OPD early invite (029): opd_early_invite_expires_at, opd_early_invite_response; OPD doctor delay (030): opd_session_delay_minutes
 ```
 
 **Indexes:**
@@ -259,16 +263,35 @@ created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 
 ---
 
-### `doctor_settings` (e-task-4.1)
+### `doctor_settings` (e-task-4.1; extended 012, 025, **028 OPD**)
 
-**Purpose:** Per-doctor appointment fee, currency, and country. When null, app uses env fallback (`APPOINTMENT_FEE_*`, `DEFAULT_DOCTOR_COUNTRY`).
+**Purpose:** Per-doctor practice, fees, booking rules, payouts, and **OPD mode** (`slot` vs `queue`).
 
-**Columns:**
+**Columns (summary — see migrations):**
 ```sql
 doctor_id               UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE
-appointment_fee_minor  BIGINT NULL   -- Fee in smallest unit (paise/cents); NULL = use env
-appointment_fee_currency TEXT NULL   -- e.g. INR, USD; NULL = use env
-country                 TEXT NULL    -- Gateway routing (IN -> Razorpay, else PayPal); NULL = use env
+appointment_fee_minor   BIGINT NULL
+appointment_fee_currency TEXT NULL
+country                 TEXT NULL
+practice_name           TEXT NULL
+timezone                TEXT NOT NULL DEFAULT 'Asia/Kolkata'
+slot_interval_minutes   INTEGER NOT NULL DEFAULT 15
+max_advance_booking_days INTEGER NOT NULL DEFAULT 90
+min_advance_hours       INTEGER NOT NULL DEFAULT 0
+business_hours_summary  TEXT NULL
+cancellation_policy_hours INTEGER NULL
+max_appointments_per_day INTEGER NULL
+booking_buffer_minutes  INTEGER NULL
+welcome_message         TEXT NULL
+specialty               TEXT NULL
+address_summary         TEXT NULL
+consultation_types      TEXT NULL
+default_notes           TEXT NULL
+payout_schedule         TEXT NULL  -- per_appointment | daily | weekly | monthly (025)
+payout_minor            BIGINT NULL  -- (025)
+razorpay_linked_account_id TEXT NULL  -- (025)
+opd_mode                TEXT NOT NULL DEFAULT 'slot'  -- CHECK (slot | queue); migration 028
+opd_policies            JSONB NULL   -- optional keys (OPD-08): `slot_join_grace_minutes` (int; patient join window after scheduled start, slot mode); `reschedule_payment_policy` (`forfeit` | `transfer_entitlement`); `queue_reinsert_default` (`end_of_queue` | `after_current`); plus earlier queue caps; no PHI
 created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
@@ -281,7 +304,38 @@ updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 
 **RLS:** Enabled (doctor read/insert/update own row; service role can read for worker)
 
-**See:** e-task-4.1-per-doctor-payment-settings.md
+**See:** e-task-4.1-per-doctor-payment-settings.md; **e-task-opd-01** (OPD modes)
+
+---
+
+### `opd_queue_entries` (migration 028)
+
+**Purpose:** Queue-mode OPD: **one row per appointment** with token number and status for a given **session_date** (calendar day in doctor context). Used when `doctor_settings.opd_mode = 'queue'`. No PHI.
+
+**Columns:**
+```sql
+id                    UUID PRIMARY KEY DEFAULT gen_random_uuid()
+doctor_id             UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE
+appointment_id        UUID NOT NULL REFERENCES appointments(id) ON DELETE CASCADE
+session_date          DATE NOT NULL
+token_number          INTEGER NOT NULL
+position              INTEGER NOT NULL DEFAULT 0
+status                TEXT NOT NULL DEFAULT 'waiting'
+  CHECK (status IN ('waiting','called','in_consultation','completed','skipped','missed','cancelled'))
+created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+UNIQUE (appointment_id)
+```
+
+**Indexes:**
+- `idx_opd_queue_entries_doctor_session_token` UNIQUE ON `(doctor_id, session_date, token_number)`
+- `idx_opd_queue_entries_doctor_session` ON `(doctor_id, session_date)`
+- `idx_opd_queue_entries_doctor_id` ON `doctor_id`
+
+**Never store:**
+- ❌ Free-text patient complaints in this table (use `appointments`)
+
+**RLS:** Enabled (doctor-only CRUD on own `doctor_id`; backend uses service role). See [RLS_POLICIES.md](./RLS_POLICIES.md).
 
 ---
 

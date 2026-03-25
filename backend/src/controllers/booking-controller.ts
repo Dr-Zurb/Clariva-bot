@@ -53,7 +53,9 @@ export const getDaySlotsHandler = asyncHandler(async (req: Request, res: Respons
     { timezone, slotIntervalMinutes: slotInterval, minAdvanceHours }
   );
 
-  res.status(200).json(successResponse({ slots, timezone: tz }, req));
+  const opdMode = doctorSettings?.opd_mode ?? 'slot';
+
+  res.status(200).json(successResponse({ slots, timezone: tz, opdMode }, req));
 });
 
 /**
@@ -90,10 +92,18 @@ export const getSlotPageInfoHandler = asyncHandler(async (req: Request, res: Res
   const doctorSettings = await getDoctorSettings(doctorId);
   const practiceName = doctorSettings?.practice_name?.trim() || 'Clariva Care';
   const mode = appointmentId ? 'reschedule' as const : 'book' as const;
+  const opdMode = doctorSettings?.opd_mode ?? 'slot';
 
   res.status(200).json(
     successResponse(
-      { doctorId, practiceName, conversationId, mode, appointmentId: appointmentId ?? undefined },
+      {
+        doctorId,
+        practiceName,
+        conversationId,
+        mode,
+        appointmentId: appointmentId ?? undefined,
+        opdMode,
+      },
       req
     )
   );
@@ -133,6 +143,8 @@ export const selectSlotAndPayHandler = asyncHandler(async (req: Request, res: Re
             redirectUrl: result.redirectUrl,
             appointmentId: result.appointmentId,
             mode: 'book',
+            opdMode: result.opdMode,
+            ...(result.tokenNumber != null ? { tokenNumber: result.tokenNumber } : {}),
           },
           req
         )
@@ -140,9 +152,20 @@ export const selectSlotAndPayHandler = asyncHandler(async (req: Request, res: Re
     }
   } catch (err) {
     if (err instanceof ConflictError) {
+      const message =
+        err.message && err.message.trim().length > 0
+          ? err.message
+          : 'This slot was just taken. Please pick another.';
+      const isSessionCap =
+        message.toLowerCase().includes('maximum appointments') ||
+        message.toLowerCase().includes('reached the maximum');
       res.status(409).json(
         errorResponse(
-          { code: 'CONFLICT', message: 'This slot was just taken. Please pick another.', statusCode: 409 },
+          {
+            code: isSessionCap ? 'OPD_SESSION_FULL' : 'CONFLICT',
+            message,
+            statusCode: 409,
+          },
           req
         )
       );

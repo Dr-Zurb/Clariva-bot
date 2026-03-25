@@ -10,6 +10,7 @@ import doctorSettingsRoutes from './settings/doctor';
 import availabilityRoutes from './availability';
 import blockedTimesRoutes from './blocked-times';
 import prescriptionRoutes from './prescriptions';
+import opdRoutes from './opd';
 
 const router = Router();
 
@@ -56,5 +57,8 @@ router.use('/blocked-times', blockedTimesRoutes);
 
 // Prescriptions (Prescription V1): POST/GET/PATCH /prescriptions (auth required)
 router.use('/prescriptions', prescriptionRoutes);
+
+// Doctor OPD controls (e-task-opd-06): queue session, early join, delay
+router.use('/opd', opdRoutes);
 
 export default router;

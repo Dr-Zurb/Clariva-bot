@@ -15,12 +15,17 @@ import {
 import { ConflictError, NotFoundError, ValidationError } from '../../../src/utils/errors';
 import * as database from '../../../src/config/database';
 import * as auditLogger from '../../../src/utils/audit-logger';
+import * as doctorSettings from '../../../src/services/doctor-settings-service';
 
 jest.mock('../../../src/config/database');
 jest.mock('../../../src/utils/audit-logger');
+jest.mock('../../../src/services/doctor-settings-service', () => ({
+  getDoctorSettings: jest.fn(async () => null),
+}));
 
 const mockedDb = database as jest.Mocked<typeof database>;
 const mockedAudit = auditLogger as jest.Mocked<typeof auditLogger>;
+const mockedDoctorSettings = doctorSettings as jest.Mocked<typeof doctorSettings>;
 
 const doctorId = '550e8400-e29b-41d4-a716-446655440000';
 const userId = '550e8400-e29b-41d4-a716-446655440001';
@@ -67,14 +72,15 @@ function createMockSupabase(
   selectResponse: { data: unknown; error: unknown },
   updateResponse?: { data: unknown; error: unknown }
 ) {
-  let selectCalled = false;
+  let singleCalls = 0;
   const chain: Record<string, unknown> = {
     select: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
     update: jest.fn().mockReturnThis(),
+    maybeSingle: jest.fn().mockImplementation(async () => ({ data: null, error: null })),
     single: jest.fn().mockImplementation(() => {
-      if (!selectCalled) {
-        selectCalled = true;
+      singleCalls += 1;
+      if (singleCalls === 1) {
         return Promise.resolve(selectResponse);
       }
       return Promise.resolve(updateResponse ?? selectResponse);
@@ -93,6 +99,7 @@ describe('Appointment Service (e-task-2)', () => {
     (mockedAudit.logDataAccess as jest.Mock) = jest
       .fn()
       .mockImplementation(() => Promise.resolve());
+    mockedDoctorSettings.getDoctorSettings.mockResolvedValue(null);
   });
 
   describe('bookAppointment', () => {

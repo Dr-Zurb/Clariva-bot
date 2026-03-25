@@ -4,6 +4,7 @@ import { getAppointmentById } from "@/lib/api";
 import { redirect } from "next/navigation";
 import { cn } from "@/lib/utils";
 import AppointmentConsultationActions from "@/components/consultation/AppointmentConsultationActions";
+import DoctorOpdSlotActions from "@/components/opd/DoctorOpdSlotActions";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -146,6 +147,12 @@ export default async function AppointmentDetailPage({ params }: PageProps) {
           </div>
         )}
       </dl>
+
+      <DoctorOpdSlotActions
+        token={token}
+        appointmentId={appointment.id}
+        appointmentStatus={appointment.status}
+      />
 
       <AppointmentConsultationActions
         appointment={appointment}

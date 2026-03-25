@@ -85,6 +85,17 @@ From scheduling chatbot guides (2024–2026):
 2. ~~**AI prompt** asks for "two date/time options"~~ – Prompt updated to forbid this; slot flow used.
 3. ~~**After consent** we set `step: 'responded'`~~ – Now set `step: 'selecting_slot'` and show slots in same reply.
 
+### 2.4 OPD mode: slot vs queue (`doctor_settings.opd_mode`)
+
+| Mode | Instagram DM (after details ready) | Public `/book` page |
+|------|-------------------------------------|----------------------|
+| **slot** | Link: pick a time + complete payment; redirect back to DM. | Day + time grid; pay if fee is non-zero. |
+| **queue** | Link: join the queue; choose a day, confirm for a **token**; wait times **approximate** (not a fixed clock promise). | Choose a day; first available slot on that day is used to join the queue; token shown when fee is 0 (otherwise pay then usual redirect). |
+
+Reschedule DMs use queue-aware copy (“new day” vs “new date and time”) when `opd_mode === 'queue'`.
+
+Implementation: `backend/src/utils/booking-link-copy.ts`, `frontend/app/book/page.tsx`, `GET/POST /api/v1/bookings/*` responses include `opdMode`; `select-slot-and-pay` includes `tokenNumber` in queue mode when applicable.
+
 ---
 
 ## 3. Implementation Checklist
@@ -105,5 +116,5 @@ From scheduling chatbot guides (2024–2026):
 
 ---
 
-**Last Updated:** 2026-03-08  
-**Version:** 1.0.0
+**Last Updated:** 2026-03-24  
+**Version:** 1.1.0

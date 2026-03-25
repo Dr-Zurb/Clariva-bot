@@ -18,6 +18,7 @@ import { logger } from '../config/logger';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataModification } from '../utils/audit-logger';
 import { processPayoutForPayment } from './payout-service';
+import { syncOpdQueueEntryOnAppointmentStatus } from './opd/opd-queue-service';
 
 const MIN_VERIFIED_SEC = env.MIN_VERIFIED_CONSULTATION_SECONDS;
 const DEFAULT_PAYOUT_SCHEDULE = 'weekly';
@@ -283,6 +284,7 @@ export async function tryMarkVerified(
       'verified_at',
       'status',
     ]);
+    await syncOpdQueueEntryOnAppointmentStatus(appointmentId, 'completed', correlationId);
     return true;
   };
 

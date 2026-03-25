@@ -179,13 +179,24 @@ export default function AppointmentsListWithFilters({
 
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold text-gray-900">Appointments</h1>
-        <button
-          type="button"
-          onClick={() => setAddModalOpen(true)}
-          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-        >
-          Add appointment
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href="/dashboard/opd-today"
+            className={cn(
+              "rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50",
+              "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            )}
+          >
+            OPD today
+          </Link>
+          <button
+            type="button"
+            onClick={() => setAddModalOpen(true)}
+            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          >
+            Add appointment
+          </button>
+        </div>
       </div>
 
       {addModalOpen && (

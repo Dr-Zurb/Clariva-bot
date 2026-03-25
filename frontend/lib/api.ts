@@ -27,6 +27,8 @@ import type {
   CreatePrescriptionPayload,
   UpdatePrescriptionPayload,
 } from "@/types/prescription";
+import type { OpdSessionSnapshotData } from "@/types/opd-session";
+import type { DoctorQueueSessionRow } from "@/types/opd-doctor";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -379,6 +381,128 @@ export async function patchDoctorSettings(
 }
 
 // =============================================================================
+// Doctor OPD dashboard (e-task-opd-06)
+// =============================================================================
+
+export interface DoctorOpdQueueSessionData {
+  entries: DoctorQueueSessionRow[];
+  date: string;
+}
+
+/**
+ * Queue list for a session day (queue mode). Requires auth.
+ */
+export async function getDoctorOpdQueueSession(
+  token: string,
+  date: string
+): Promise<ApiSuccess<DoctorOpdQueueSessionData>> {
+  const params = new URLSearchParams({ date });
+  return request<DoctorOpdQueueSessionData>(
+    `/api/v1/opd/queue-session?${params.toString()}`,
+    { token }
+  );
+}
+
+export async function postDoctorOfferEarlyJoin(
+  token: string,
+  appointmentId: string,
+  body?: { expiresInMinutes?: number }
+): Promise<ApiSuccess<{ offered: boolean; expiresInMinutes: number }>> {
+  const res = await fetch(
+    `${API_BASE}/api/v1/opd/appointments/${appointmentId}/offer-early-join`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body ?? {}),
+      cache: "no-store",
+    }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ offered: boolean; expiresInMinutes: number }>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<{ offered: boolean; expiresInMinutes: number }>;
+}
+
+export async function postDoctorSessionDelay(
+  token: string,
+  appointmentId: string,
+  delayMinutes: number | null
+): Promise<ApiSuccess<{ updated: boolean; delayMinutes: number | null }>> {
+  const res = await fetch(
+    `${API_BASE}/api/v1/opd/appointments/${appointmentId}/session-delay`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ delayMinutes }),
+      cache: "no-store",
+    }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ updated: boolean; delayMinutes: number | null }>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<{ updated: boolean; delayMinutes: number | null }>;
+}
+
+export async function patchDoctorQueueEntry(
+  token: string,
+  entryId: string,
+  status: "called" | "skipped"
+): Promise<ApiSuccess<{ updated: boolean; status: string }>> {
+  const res = await fetch(`${API_BASE}/api/v1/opd/queue-entries/${entryId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ status }),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ updated: boolean; status: string }>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<{ updated: boolean; status: string }>;
+}
+
+// =============================================================================
 // Availability (e-task-5)
 // =============================================================================
 
@@ -522,12 +646,15 @@ export async function deleteBlockedTime(
 // Booking slot picker (e-task-4) — public, token-based (no Bearer auth)
 // =============================================================================
 
+export type OpdModeApi = "slot" | "queue";
+
 export interface SlotPageInfoData {
   doctorId: string;
   practiceName: string;
   conversationId: string;
   mode?: "book" | "reschedule";
   appointmentId?: string;
+  opdMode?: OpdModeApi;
 }
 
 export interface DaySlotWithStatus {
@@ -539,6 +666,7 @@ export interface DaySlotWithStatus {
 export interface DaySlotsData {
   slots: DaySlotWithStatus[];
   timezone: string;
+  opdMode?: OpdModeApi;
 }
 
 export interface SelectSlotData {
@@ -549,6 +677,9 @@ export interface SelectSlotAndPayData {
   paymentUrl: string | null;
   redirectUrl: string;
   appointmentId: string;
+  mode?: "book" | "reschedule";
+  opdMode?: OpdModeApi;
+  tokenNumber?: number;
 }
 
 export interface RedirectUrlData {
@@ -630,13 +761,23 @@ export async function selectSlotAndPay(
     | ApiError;
   if (!res.ok) {
     const message = isApiError(json) ? json.error.message : "Request failed";
-    const err = new Error(message) as Error & { status?: number };
+    const err = new Error(message) as Error & {
+      status?: number;
+      code?: string;
+    };
     err.status = res.status;
+    if (isApiError(json)) {
+      err.code = json.error.code;
+    }
     throw err;
   }
   if (isApiError(json)) {
-    const err = new Error(json.error.message) as Error & { status?: number };
+    const err = new Error(json.error.message) as Error & {
+      status?: number;
+      code?: string;
+    };
     err.status = json.error.statusCode ?? 500;
+    err.code = json.error.code;
     throw err;
   }
   return json as ApiSuccess<SelectSlotAndPayData>;
@@ -653,6 +794,86 @@ export async function getBookingRedirectUrl(
   return request<RedirectUrlData>(
     `/api/v1/bookings/redirect-url?${params.toString()}`
   );
+}
+
+// =============================================================================
+// OPD patient session (e-task-opd-05) — public; consultation token in query
+// =============================================================================
+
+/**
+ * Live appointment snapshot for patient PWA. Token = signed consultation token (same as /consult/join).
+ */
+export async function getOpdSessionSnapshot(
+  consultationToken: string
+): Promise<ApiSuccess<OpdSessionSnapshotData>> {
+  const params = new URLSearchParams({ token: consultationToken });
+  return request<OpdSessionSnapshotData>(
+    `/api/v1/bookings/session/snapshot?${params.toString()}`
+  );
+}
+
+/**
+ * Accept early join offer (slot mode). Idempotent.
+ */
+export async function acceptOpdEarlyJoin(
+  consultationToken: string
+): Promise<ApiSuccess<{ accepted: boolean }>> {
+  const params = new URLSearchParams({ token: consultationToken });
+  const res = await fetch(
+    `${API_BASE}/api/v1/bookings/session/early-join/accept?${params.toString()}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+    }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ accepted: boolean }>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<{ accepted: boolean }>;
+}
+
+/**
+ * Decline early join offer. Idempotent.
+ */
+export async function declineOpdEarlyJoin(
+  consultationToken: string
+): Promise<ApiSuccess<{ declined: boolean }>> {
+  const params = new URLSearchParams({ token: consultationToken });
+  const res = await fetch(
+    `${API_BASE}/api/v1/bookings/session/early-join/decline?${params.toString()}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+    }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ declined: boolean }>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<{ declined: boolean }>;
 }
 
 // =============================================================================
@@ -1027,7 +1248,7 @@ export async function sendPrescriptionToPatient(
 // =============================================================================
 
 export interface PatchAppointmentPayload {
-  status?: "pending" | "confirmed" | "cancelled" | "completed";
+  status?: "pending" | "confirmed" | "cancelled" | "completed" | "no_show";
   clinical_notes?: string | null;
 }
 

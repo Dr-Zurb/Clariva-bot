@@ -216,6 +216,10 @@ if (appointment.status === 'booked') {
 }
 ```
 
+**API error `code` (booking / OPD queue):**
+
+- `OPD_SESSION_FULL` — HTTP 409; queue-mode practice has reached **max appointments per day** for the chosen session day. Client should show `error.message` (server supplies user-facing text). Distinct from slot-taken conflicts (`CONFLICT`).
+
 ---
 
 ### TooManyRequestsError (429)

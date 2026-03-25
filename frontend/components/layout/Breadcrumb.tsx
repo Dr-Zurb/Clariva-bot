@@ -10,6 +10,7 @@ const SEGMENTS: Record<string, string> = {
   "booking-rules": "Booking Rules",
   "bot-messages": "Bot Messages",
   availability: "Availability",
+  "opd-mode": "OPD mode",
   integrations: "Integrations",
 };
 

@@ -10,6 +10,9 @@
 /** When doctor receives payouts. NULL = default weekly in payout service. */
 export type PayoutSchedule = 'per_appointment' | 'daily' | 'weekly' | 'monthly';
 
+/** OPD scheduling mode (migration 028, e-task-opd-01). */
+export type OpdMode = 'slot' | 'queue';
+
 export interface DoctorSettingsRow {
   doctor_id: string;
   appointment_fee_minor: number | null;
@@ -35,6 +38,10 @@ export interface DoctorSettingsRow {
   payout_minor: number | null;
   /** Razorpay Route Linked Account ID for India. Migration 025. */
   razorpay_linked_account_id: string | null;
+  /** OPD: fixed slots vs token queue. Migration 028. Default slot. */
+  opd_mode: OpdMode;
+  /** Optional JSON policies (grace minutes, caps); keys documented in DB_SCHEMA. Migration 028. */
+  opd_policies: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }

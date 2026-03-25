@@ -1,7 +1,10 @@
 /**
  * Doctor settings types aligned with backend API.
- * @see backend/src/types/doctor-settings.ts, e-task-2
+ * @see backend/src/types/doctor-settings.ts, e-task-2, e-task-opd-01
  */
+
+/** OPD scheduling: fixed slots vs token queue (migration 028). */
+export type OpdMode = 'slot' | 'queue';
 
 export interface DoctorSettings {
   doctor_id: string;
@@ -22,6 +25,10 @@ export interface DoctorSettings {
   address_summary: string | null;
   consultation_types: string | null;
   default_notes: string | null;
+  /** OPD mode (migration 028). Absent pre-migration — UI defaults to `slot`. */
+  opd_mode?: OpdMode;
+  /** Optional policy JSON (grace minutes, caps); keys in DB_SCHEMA. */
+  opd_policies?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
@@ -46,4 +53,6 @@ export type PatchDoctorSettingsPayload = Partial<{
   appointment_fee_minor: number | null;
   /** Currency code e.g. INR, USD */
   appointment_fee_currency: string | null;
+  opd_mode?: OpdMode;
+  opd_policies?: Record<string, unknown> | null;
 }>;

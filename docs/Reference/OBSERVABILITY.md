@@ -336,6 +336,16 @@ metrics.increment('request_count', {
 - Webhook processing rate
 - Error rate by type
 
+**OPD metrics (OPD-09)** — emitted as structured **INFO** logs with `context: 'opd_metric'` (no PHI in labels):
+
+| Log `metric` field | Labels | When |
+|--------------------|--------|------|
+| `opd_booking_total` | `mode`: `slot` \| `queue` | After successful `bookAppointment` |
+| `opd_eta_computed_total` | — | After queue ETA computed in session snapshot poll |
+| `opd_queue_reinsert_total` | `strategy`: `end_of_queue` \| `after_current` | After doctor requeue API |
+
+Downstream: filter logs by `context` + `metric` for counters; correlate with `correlationId`.
+
 **Implementation:**
 - Log business events with standard fields
 - Aggregate in log aggregation tool (e.g., Datadog, New Relic)
@@ -489,8 +499,8 @@ const response = await externalApi.call({
 
 ## 📝 Version
 
-**Last Updated:** 2026-01-17  
-**Version:** 1.0.0
+**Last Updated:** 2026-03-24  
+**Version:** 1.1.0
 
 ---
 
@@ -500,3 +510,4 @@ const response = await externalApi.call({
 - [COMPLIANCE.md](./COMPLIANCE.md) - Audit requirements
 - [RECIPES.md](./RECIPES.md) - Logging implementation
 - [ERROR_CATALOG.md](./ERROR_CATALOG.md) - Error definitions
+- [OPD_SUPPORT_RUNBOOK.md](./OPD_SUPPORT_RUNBOOK.md) - OPD troubleshooting (ETA, queue, snapshot polling)

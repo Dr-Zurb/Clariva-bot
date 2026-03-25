@@ -47,6 +47,7 @@ This document defines testing strategies, patterns, and best practices for the C
 - [ARCHITECTURE.md](./ARCHITECTURE.md) - Project structure
 - [RECIPES.md](./RECIPES.md) - Implementation patterns
 - [CODING_WORKFLOW.md](./CODING_WORKFLOW.md) - Coding process
+- **OPD (2026-03-24):** Unit tests under `backend/tests/unit/services/` — `opd-snapshot-service.test.ts`, `opd-notification-hints.test.ts`, `opd-policy-service.test.ts`, `opd-mode-service.test.ts`, `opd-eta.test.ts`; support **[OPD_SUPPORT_RUNBOOK.md](./OPD_SUPPORT_RUNBOOK.md)**
 
 ---
 

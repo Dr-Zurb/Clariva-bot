@@ -118,6 +118,15 @@ Handle "book for my mother" (collect for other person, book under their name) an
 
 Tasks: e-task-1 (booking for someone else), e-task-2 (appointment limit per person per day).
 
+### OPD modes — slot vs queue (2026-03-24)
+
+Implement doctor-selectable **slot** (fixed calendar) and **queue** (token + ETA) OPD models; patient/doctor dashboards, policies (missed, early join, overflow).
+
+- **Product plan:** [docs/Development/Daily-plans/March 2026/2026-03-24/OPD modes/opd-systems-plan.md](../Development/Daily-plans/March%202026/2026-03-24/OPD%20modes/opd-systems-plan.md)
+- **Initiative README + task files:** [docs/Development/Daily-plans/March 2026/2026-03-24/OPD modes/README.md](../Development/Daily-plans/March%202026/2026-03-24/OPD%20modes/README.md)
+
+Tasks: **e-task-opd-01** (migrations) through **e-task-opd-09** (notifications, tests, docs). Use [TASK_TEMPLATE.md](./TASK_TEMPLATE.md).
+
 ### Bot Intelligence & Conversation UX (2026-03-25)
 
 Make the receptionist bot context-aware and conversational (ChatGPT/Gemini-like). Hybrid AI-first approach: keep handlers for clear actions; use AI for conversational turns with richer context.

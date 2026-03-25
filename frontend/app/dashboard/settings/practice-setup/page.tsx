@@ -26,6 +26,19 @@ const cards = [
     ),
   },
   {
+    href: `${practiceSetupBase}/opd-mode`,
+    label: "OPD mode",
+    description: "Fixed slots vs token queue — how patients join your session",
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+      </svg>
+    ),
+  },
+  {
     href: `${practiceSetupBase}/bot-messages`,
     label: "Bot Messages",
     description: "Welcome message and default appointment notes",
@@ -51,7 +64,7 @@ const cards = [
 ] as const;
 
 /**
- * Practice Setup landing: 4 icon+label cards with short descriptions.
+ * Practice Setup landing: icon+label cards with short descriptions.
  */
 export default function PracticeSetupLandingPage() {
   return (
@@ -60,7 +73,7 @@ export default function PracticeSetupLandingPage() {
       <p className="mt-1 text-gray-600">
         Configure how your receptionist bot communicates with patients. Choose a section to get started.
       </p>
-      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {cards.map((card) => (
           <PracticeSetupCard
             key={card.href}

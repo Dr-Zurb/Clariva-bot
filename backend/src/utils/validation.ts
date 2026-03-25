@@ -350,7 +350,9 @@ const CLINICAL_NOTES_MAX_LEN = 5000;
 
 export const patchAppointmentBodySchema = z
   .object({
-    status: z.enum(['pending', 'confirmed', 'cancelled', 'completed']).optional(),
+    status: z
+      .enum(['pending', 'confirmed', 'cancelled', 'completed', 'no_show'])
+      .optional(),
     clinical_notes: z
       .union([
         z.string().max(CLINICAL_NOTES_MAX_LEN).transform((s) => (s.trim() === '' ? null : s.trim())),
@@ -533,6 +535,128 @@ export function validateSlotPageInfoQuery(
   if (!result.success) {
     const first = result.error.issues[0];
     const message = first?.message ?? 'Invalid query parameters';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+// ============================================================================
+// OPD session snapshot (e-task-opd-04)
+// ============================================================================
+
+export const sessionTokenQuerySchema = z.object({
+  token: z.string().min(1, 'token is required'),
+});
+
+export type SessionTokenQuery = z.infer<typeof sessionTokenQuerySchema>;
+
+export function validateSessionTokenQuery(query: Record<string, string | undefined>): SessionTokenQuery {
+  const result = sessionTokenQuerySchema.safeParse(query);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid query parameters';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+// ============================================================================
+// OPD doctor dashboard (e-task-opd-06)
+// ============================================================================
+
+export const opdQueueSessionQuerySchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD'),
+});
+
+export type OpdQueueSessionQuery = z.infer<typeof opdQueueSessionQuerySchema>;
+
+export function validateOpdQueueSessionQuery(
+  query: Record<string, string | undefined>
+): OpdQueueSessionQuery {
+  const result = opdQueueSessionQuerySchema.safeParse(query);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid query parameters';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+export const offerEarlyJoinBodySchema = z.object({
+  expiresInMinutes: z.number().int().min(5).max(120).optional(),
+});
+
+export type OfferEarlyJoinBody = z.infer<typeof offerEarlyJoinBodySchema>;
+
+export function validateOfferEarlyJoinBody(body: unknown): OfferEarlyJoinBody {
+  const result = offerEarlyJoinBodySchema.safeParse(body ?? {});
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+export const sessionDelayBodySchema = z.object({
+  delayMinutes: z.union([z.number().int().min(0).max(480), z.null()]),
+});
+
+export type SessionDelayBody = z.infer<typeof sessionDelayBodySchema>;
+
+export function validateSessionDelayBody(body: unknown): SessionDelayBody {
+  const result = sessionDelayBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+export const patchQueueEntryBodySchema = z.object({
+  status: z.enum(['called', 'skipped']),
+});
+
+export type PatchQueueEntryBody = z.infer<typeof patchQueueEntryBodySchema>;
+
+export function validatePatchQueueEntryBody(body: unknown): PatchQueueEntryBody {
+  const result = patchQueueEntryBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+export const queueEntryParamsSchema = z.object({
+  entryId: z.string().uuid('Invalid queue entry id'),
+});
+
+export type QueueEntryParams = z.infer<typeof queueEntryParamsSchema>;
+
+export function validateQueueEntryParams(params: unknown): QueueEntryParams {
+  const result = queueEntryParamsSchema.safeParse(params);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid parameters';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+export const requeueQueueEntryBodySchema = z.object({
+  strategy: z.enum(['end_of_queue', 'after_current']),
+});
+
+export type RequeueQueueEntryBody = z.infer<typeof requeueQueueEntryBodySchema>;
+
+export function validateRequeueQueueEntryBody(body: unknown): RequeueQueueEntryBody {
+  const result = requeueQueueEntryBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
     throw new ValidationError(message);
   }
   return result.data;

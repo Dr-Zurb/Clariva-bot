@@ -83,6 +83,12 @@ import {
   handleRevocation,
 } from '../services/consent-service';
 import { buildBookingPageUrl, buildReschedulePageUrl } from '../services/slot-selection-service';
+import {
+  formatBookingLinkDm,
+  formatBookingAwaitingFollowUpDm,
+  formatRescheduleChoiceLinkDm,
+  formatRescheduleLinkDm,
+} from '../utils/booking-link-copy';
 import { processPaymentSuccess, hasCapturedPaymentForAppointment } from '../services/payment-service';
 import { getDoctorSettings } from '../services/doctor-settings-service';
 import type { DoctorSettingsRow } from '../types/doctor-settings';
@@ -1359,7 +1365,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           state = { ...state, step: 'responded', updatedAt: new Date().toISOString() };
         } else {
           const url = buildReschedulePageUrl(conversation.id, doctorId, chosenId);
-          replyText = `Pick a new date and time: [Choose new slot](${url})`;
+          replyText = formatRescheduleChoiceLinkDm(url, doctorSettings);
           state = {
             ...state,
             step: 'awaiting_reschedule_slot',
@@ -1566,7 +1572,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       } else if (upcoming.length === 1) {
         const a = upcoming[0]!;
         const url = buildReschedulePageUrl(conversation.id, doctorId, a.id);
-        replyText = `Pick a new date and time: [Reschedule](${url})`;
+        replyText = formatRescheduleLinkDm(url, doctorSettings);
         state = {
           ...state,
           lastIntent: intentResult.intent,
@@ -1646,7 +1652,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         await clearCollectedData(conversation.id);
         const slotLink = buildBookingPageUrl(conversation.id, doctorId);
         const mrnHint = await getPatientIdHintForSlot(chosenId, correlationId);
-        const baseSlotMsg = `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
+        const baseSlotMsg = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
         replyText = state.pendingSelfBooking
           ? `${baseSlotMsg}\n\nWould you like to book one for yourself now?`
           : baseSlotMsg;
@@ -1690,7 +1696,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           await clearCollectedData(conversation.id);
           const slotLink = buildBookingPageUrl(conversation.id, doctorId);
           const mrnHint = formatPatientIdHint(newPatient.medical_record_number);
-          const baseSlotMsg = `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
+          const baseSlotMsg = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
           replyText = state.pendingSelfBooking
             ? `${baseSlotMsg}\n\nWould you like to book one for yourself now?`
             : baseSlotMsg;
@@ -1756,7 +1762,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
             await clearCollectedData(conversation.id);
             const slotLink = buildBookingPageUrl(conversation.id, doctorId);
             const mrnHint = formatPatientIdHint(newPatient.medical_record_number);
-            const baseSlotMsg = `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
+            const baseSlotMsg = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
             replyText = state.pendingSelfBooking
               ? `${baseSlotMsg}\n\nWould you like to book one for yourself now?`
               : baseSlotMsg;
@@ -1798,7 +1804,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
           }
           const slotLink = buildBookingPageUrl(conversation.id, doctorId);
           const mrnHint = await getPatientIdHintForSlot(conversation.patient_id, correlationId);
-          const baseSlotMsg = `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
+          const baseSlotMsg = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
           if (!persistResult.success) {
             replyText =
               `I had trouble saving your details—please say 'book appointment' to re-share them if needed. Meanwhile, ${baseSlotMsg}`;
@@ -2218,13 +2224,11 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
         const patientId = state.bookingForPatientId ?? conversation.patient_id;
         const mrnHint = await getPatientIdHintForSlot(patientId, correlationId);
         const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-        replyText =
-          `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
+        replyText = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
         state = { ...state, updatedAt: new Date().toISOString() };
         await updateConversationState(conversation.id, state, correlationId);
         } else {
-        replyText =
-          "Pick your slot and complete payment using the link above, or say 'change' to get a new link.";
+        replyText = formatBookingAwaitingFollowUpDm(doctorSettings);
         state = { ...state, updatedAt: new Date().toISOString() };
         await updateConversationState(conversation.id, state, correlationId);
       }
@@ -2233,8 +2237,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       const patientId = state.bookingForPatientId ?? conversation.patient_id;
       const mrnHint = await getPatientIdHintForSlot(patientId, correlationId);
       const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-      replyText =
-        `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
+      replyText = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
       state = {
         ...state,
         step: 'awaiting_slot_selection',
@@ -2247,8 +2250,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       const patientId = state.bookingForPatientId ?? conversation.patient_id;
       const mrnHint = await getPatientIdHintForSlot(patientId, correlationId);
       const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-      replyText =
-        `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
+      replyText = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
       state = {
         ...state,
         step: 'awaiting_slot_selection',
@@ -2266,8 +2268,7 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       if (hasPatientReady) {
         const slotLink = buildBookingPageUrl(conversation.id, doctorId);
         const mrnHint = formatPatientIdHint(patient.medical_record_number);
-        replyText =
-          `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
+        replyText = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
       state = {
         ...state,
         lastIntent: intentResult.intent,

@@ -117,6 +117,38 @@ USING (auth.uid() = doctor_id);
 
 ---
 
+### `opd_queue_entries` Table (migration 028)
+
+**RLS Enabled:** ✅ Yes
+
+**Pattern:** Same ownership as appointments — `doctor_id = auth.uid()`.
+
+**Policies:**
+```sql
+CREATE POLICY "Doctors can read own opd queue entries"
+  ON opd_queue_entries FOR SELECT
+  USING (doctor_id = auth.uid());
+
+CREATE POLICY "Doctors can insert own opd queue entries"
+  ON opd_queue_entries FOR INSERT
+  WITH CHECK (doctor_id = auth.uid());
+
+CREATE POLICY "Doctors can update own opd queue entries"
+  ON opd_queue_entries FOR UPDATE
+  USING (doctor_id = auth.uid())
+  WITH CHECK (doctor_id = auth.uid());
+
+CREATE POLICY "Doctors can delete own opd queue entries"
+  ON opd_queue_entries FOR DELETE
+  USING (doctor_id = auth.uid());
+```
+
+**Rationale:**
+- Queue rows belong to the doctor; patient access is via **server-side APIs** (service role), not patient JWT.
+- `service_role` bypasses RLS for backend admin client.
+
+---
+
 ### `payments` Table
 
 **RLS Enabled:** ✅ Yes

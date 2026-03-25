@@ -108,6 +108,12 @@ CREATE TABLE slot_selections (
 
 ---
 
+## OPD modes (slot vs queue) — patient snapshot
+
+After booking, the patient **visit** experience (token / ETA / slot window) is driven by `doctor_settings.opd_mode` and public APIs under `/api/v1/bookings/session/*`. The client **polls** `GET /api/v1/bookings/session/snapshot` (see [CONTRACTS.md](./CONTRACTS.md)); there is **no Meta DM requirement** for live OPD status in MVP. Queue copy must stay **forecast**-aligned (approximate wait), not a fixed-time guarantee.
+
+---
+
 ## References
 
 - [APPOINTMENT_BOOKING_FLOW.md](./APPOINTMENT_BOOKING_FLOW.md) — Legacy flow
@@ -116,4 +122,4 @@ CREATE TABLE slot_selections (
 
 ---
 
-**Last Updated:** 2026-03-13
+**Last Updated:** 2026-03-24

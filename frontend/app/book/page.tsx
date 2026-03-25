@@ -7,6 +7,7 @@ import {
   getDaySlots,
   selectSlotAndPay,
   type DaySlotWithStatus,
+  type OpdModeApi,
 } from "@/lib/api";
 
 const DAYS_AHEAD = 14;
@@ -46,6 +47,7 @@ function BookPageContent() {
 
   const [practiceName, setPracticeName] = useState<string>("");
   const [mode, setMode] = useState<"book" | "reschedule">("book");
+  const [opdMode, setOpdMode] = useState<OpdModeApi>("slot");
   const [pageError, setPageError] = useState<string | null>(null);
   const [pageLoading, setPageLoading] = useState(true);
 
@@ -58,6 +60,10 @@ function BookPageContent() {
   );
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [queueSuccess, setQueueSuccess] = useState<{
+    tokenNumber: number;
+    redirectUrl: string;
+  } | null>(null);
 
   const dateOptions = useMemo(() => {
     const options: string[] = [];
@@ -86,6 +92,7 @@ function BookPageContent() {
         if (cancelled) return;
         setPracticeName(res.data.practiceName || "Book Appointment");
         setMode(res.data.mode ?? "book");
+        setOpdMode(res.data.opdMode ?? "slot");
         setPageLoading(false);
         setSelectedDate(dateOptions[0] ?? null);
       })
@@ -114,6 +121,9 @@ function BookPageContent() {
         .then((res) => {
           setSlots(res.data.slots);
           setTimezone(res.data.timezone);
+          if (res.data.opdMode) {
+            setOpdMode(res.data.opdMode);
+          }
         })
         .catch(() => {
           setSlots([]);
@@ -131,31 +141,53 @@ function BookPageContent() {
     }
   }, [selectedDate, token, fetchSlots]);
 
+  /** Queue + booking: first available slot on the chosen day backs the join request. */
+  useEffect(() => {
+    if (opdMode !== "queue" || mode !== "book" || slotsLoading) return;
+    const first = slots.find((s) => s.status === "available");
+    setSelectedSlot(first ?? null);
+  }, [opdMode, mode, slots, slotsLoading]);
+
   const handleSave = useCallback(async () => {
     if (!selectedSlot || !token || saving) return;
     setSaving(true);
     setSaveError(null);
     try {
       const res = await selectSlotAndPay(token, selectedSlot.start);
-      const { paymentUrl, redirectUrl } = res.data;
+      const { paymentUrl, redirectUrl, tokenNumber, opdMode: resMode } = res.data;
       if (paymentUrl) {
         window.location.href = paymentUrl;
         return;
       }
+      if (
+        (resMode ?? opdMode) === "queue" &&
+        tokenNumber != null &&
+        mode === "book"
+      ) {
+        setQueueSuccess({ tokenNumber, redirectUrl });
+        return;
+      }
       window.location.href = redirectUrl;
     } catch (err) {
-      const status = (err as Error & { status?: number }).status;
-      setSaveError(
-        status === 409
-          ? "This slot was just taken. Please pick another."
-          : "Something went wrong. Please try again or return to the chat."
-      );
+      const e = err as Error & { status?: number; code?: string };
+      const status = e.status;
+      const msg = e.message?.trim();
+      if (status === 409 && msg) {
+        setSaveError(msg);
+      } else {
+        setSaveError(
+          status === 409
+            ? "This time was just taken. Please pick another."
+            : "Something went wrong. Please try again or return to the chat."
+        );
+      }
     } finally {
       setSaving(false);
     }
-  }, [selectedSlot, token, saving]);
+  }, [selectedSlot, token, saving, opdMode, mode]);
 
   const availableCount = slots.filter((s) => s.status === "available").length;
+  const isQueueBook = opdMode === "queue" && mode === "book";
 
   if (pageLoading) {
     return (
@@ -177,6 +209,35 @@ function BookPageContent() {
     );
   }
 
+  if (queueSuccess) {
+    return (
+      <main className="min-h-screen bg-gray-50 p-4">
+        <div className="mx-auto max-w-md rounded-lg border border-green-200 bg-white p-6 shadow-sm">
+          <h1 className="text-xl font-semibold text-gray-900">
+            You&apos;re in the queue
+          </h1>
+          <p className="mt-3 text-sm text-gray-700">
+            Your consultation token is{" "}
+            <span className="font-semibold text-gray-900">
+              #{queueSuccess.tokenNumber}
+            </span>
+            . Wait times are approximate (around order of arrival, not a fixed
+            clock time).
+          </p>
+          <button
+            type="button"
+            className="mt-6 w-full rounded-lg bg-blue-600 px-4 py-3 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            onClick={() => {
+              window.location.href = queueSuccess.redirectUrl;
+            }}
+          >
+            Continue to Instagram
+          </button>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-gray-50 p-4">
       <div className="mx-auto max-w-md">
@@ -185,8 +246,12 @@ function BookPageContent() {
         </h1>
         <p className="mt-1 text-sm text-gray-600">
           {mode === "reschedule"
-            ? "Select a new date and time for your appointment."
-            : "Select a date and time for your appointment."}
+            ? opdMode === "queue"
+              ? "Pick a new day for your visit. You’ll keep a place in the queue for that session day."
+              : "Select a new date and time for your appointment."
+            : isQueueBook
+              ? "Choose a day to join the queue. You’ll get a token number — wait times are approximate."
+              : "Select a date and time for your appointment."}
         </p>
 
         {/* Date picker */}
@@ -212,10 +277,10 @@ function BookPageContent() {
           </div>
         </section>
 
-        {/* Slot grid */}
+        {/* Slot grid (slot mode, or reschedule in queue) */}
         <section className="mt-6" aria-labelledby="time-heading">
           <h2 id="time-heading" className="text-sm font-medium text-gray-700">
-            Select a time
+            {isQueueBook ? "Queue for this day" : "Select a time"}
           </h2>
 
           {slotsLoading ? (
@@ -223,6 +288,12 @@ function BookPageContent() {
           ) : slots.length === 0 ? (
             <p className="mt-3 text-sm text-gray-500">
               No slots available. Pick another date.
+            </p>
+          ) : isQueueBook ? (
+            <p className="mt-3 text-sm text-gray-600">
+              {availableCount > 0
+                ? "We’ll use the first available slot on this day to join the queue. Tap Continue to confirm."
+                : "No openings left on this day — the session may be full. Try another date."}
             </p>
           ) : (
             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -265,7 +336,9 @@ function BookPageContent() {
               ? "Processing…"
               : mode === "reschedule"
                 ? "Reschedule"
-                : "Continue to payment"}
+                : isQueueBook
+                  ? "Join queue"
+                  : "Continue to payment"}
           </button>
           {saveError && (
             <p className="mt-2 text-center text-sm text-red-600">

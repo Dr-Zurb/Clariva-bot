@@ -27,6 +27,17 @@ import {
 } from '../utils/consultation-token';
 import { sendConsultationLinkToPatient } from './notification-service';
 import { logger } from '../config/logger';
+import { getDoctorSettings } from './doctor-settings-service';
+import { resolveOpdModeFromSettings } from './opd/opd-mode-service';
+import {
+  countActiveAppointmentsForSessionDay,
+  createQueueEntryAfterBooking,
+  deleteQueueEntryByAppointmentId,
+  sessionDateFromAppointmentDate,
+  syncOpdQueueEntryOnAppointmentStatus,
+} from './opd/opd-queue-service';
+import { assertSlotJoinAllowedForPatient } from './opd/opd-policy-service';
+import { recordOpdBookingTotal } from './opd/opd-metrics';
 
 const SLOT_INTERVAL_MS = env.SLOT_INTERVAL_MINUTES * 60 * 1000;
 
@@ -123,10 +134,38 @@ export async function bookAppointment(
     validateOwnership(data.doctorId, userId);
   }
 
-  const slotEnd = new Date(appointmentDate.getTime() + SLOT_INTERVAL_MS);
-  const hasConflict = await checkSlotConflict(data.doctorId, appointmentDate, slotEnd, correlationId);
-  if (hasConflict) {
-    throw new ConflictError('This time slot is no longer available');
+  const settings = await getDoctorSettings(data.doctorId);
+  const opdMode = resolveOpdModeFromSettings(settings);
+  const timezone = settings?.timezone ?? 'Asia/Kolkata';
+
+  logger.info(
+    {
+      correlationId,
+      doctorId: data.doctorId,
+      opd_mode: opdMode,
+      context: 'opd_queue',
+    },
+    'booking_opd_mode'
+  );
+
+  if (opdMode === 'queue') {
+    const sessionDateYmd = sessionDateFromAppointmentDate(appointmentDate, timezone);
+    const dayCount = await countActiveAppointmentsForSessionDay(
+      data.doctorId,
+      sessionDateYmd,
+      timezone,
+      correlationId
+    );
+    const maxCap = settings?.max_appointments_per_day;
+    if (maxCap != null && maxCap > 0 && dayCount >= maxCap) {
+      throw new ConflictError('This doctor has reached the maximum appointments for that day');
+    }
+  } else {
+    const slotEnd = new Date(appointmentDate.getTime() + SLOT_INTERVAL_MS);
+    const hasConflict = await checkSlotConflict(data.doctorId, appointmentDate, slotEnd, correlationId);
+    if (hasConflict) {
+      throw new ConflictError('This time slot is no longer available');
+    }
   }
 
   const admin = getSupabaseAdminClient();
@@ -142,6 +181,21 @@ export async function bookAppointment(
 
   if (error || !appointment) {
     handleSupabaseError(error, correlationId);
+  }
+
+  if (opdMode === 'queue') {
+    try {
+      await createQueueEntryAfterBooking(
+        appointment.id,
+        data.doctorId,
+        appointmentDate,
+        timezone,
+        correlationId
+      );
+    } catch (queueErr) {
+      await admin.from('appointments').delete().eq('id', appointment.id);
+      throw queueErr;
+    }
   }
 
   if (userId) {
@@ -161,6 +215,8 @@ export async function bookAppointment(
       status: 'success',
     });
   }
+
+  recordOpdBookingTotal(opdMode, correlationId);
 
   return appointment as Appointment;
 }
@@ -510,6 +566,8 @@ export async function updateAppointmentStatus(
   // Audit log
   await logDataModification(correlationId, userId, 'update', 'appointment', id, ['status']);
 
+  await syncOpdQueueEntryOnAppointmentStatus(id, status, correlationId);
+
   return updated as Appointment;
 }
 
@@ -590,6 +648,10 @@ export async function updateAppointment(
 
   await logDataModification(correlationId, userId, 'update', 'appointment', id, Object.keys(dbUpdates) as string[]);
 
+  if (updates.status !== undefined) {
+    await syncOpdQueueEntryOnAppointmentStatus(id, updates.status, correlationId);
+  }
+
   return updated as Appointment;
 }
 
@@ -630,8 +692,12 @@ export async function cancelAppointmentForPatient(
     throw new NotFoundError('Appointment not found');
   }
 
-  if (existing.status === 'cancelled' || existing.status === 'completed') {
-    throw new ValidationError('Appointment is already cancelled or completed');
+  if (
+    existing.status === 'cancelled' ||
+    existing.status === 'completed' ||
+    existing.status === 'no_show'
+  ) {
+    throw new ValidationError('Appointment is already cancelled, completed, or marked no-show');
   }
 
   const { data: updated, error } = await admin
@@ -653,6 +719,8 @@ export async function cancelAppointmentForPatient(
     appointmentId,
     ['status']
   );
+
+  await syncOpdQueueEntryOnAppointmentStatus(appointmentId, 'cancelled', correlationId);
 
   return updated as Appointment;
 }
@@ -706,16 +774,24 @@ export async function updateAppointmentDateForPatient(
     throw new ValidationError('Cannot reschedule to a slot in the past');
   }
 
-  const slotEnd = new Date(newSlotStart.getTime() + SLOT_INTERVAL_MS);
-  const hasConflict = await checkSlotConflict(
-    doctorId,
-    newSlotStart,
-    slotEnd,
-    correlationId,
-    appointmentId
-  );
-  if (hasConflict) {
-    throw new ConflictError('This time slot is no longer available');
+  const settings = await getDoctorSettings(doctorId);
+  const opdMode = resolveOpdModeFromSettings(settings);
+  const timezone = settings?.timezone ?? 'Asia/Kolkata';
+
+  if (opdMode === 'queue') {
+    await deleteQueueEntryByAppointmentId(appointmentId, correlationId);
+  } else {
+    const slotEnd = new Date(newSlotStart.getTime() + SLOT_INTERVAL_MS);
+    const hasConflict = await checkSlotConflict(
+      doctorId,
+      newSlotStart,
+      slotEnd,
+      correlationId,
+      appointmentId
+    );
+    if (hasConflict) {
+      throw new ConflictError('This time slot is no longer available');
+    }
   }
 
   const { data: updated, error } = await admin
@@ -737,6 +813,10 @@ export async function updateAppointmentDateForPatient(
     appointmentId,
     ['appointment_date']
   );
+
+  if (opdMode === 'queue') {
+    await createQueueEntryAfterBooking(appointmentId, doctorId, newSlotStart, timezone, correlationId);
+  }
 
   return updated as Appointment;
 }
@@ -899,6 +979,8 @@ export async function getConsultationToken(
   if (verified.appointmentId !== appointmentId) {
     throw new NotFoundError('Appointment not found');
   }
+
+  await assertSlotJoinAllowedForPatient(appointmentId, correlationId);
 
   const identity = `patient-${appointmentId}`;
   const token = generateVideoAccessToken(identity, roomName, correlationId);

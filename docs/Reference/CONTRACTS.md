@@ -360,10 +360,46 @@ Response: X-Correlation-ID: 550e8400-e29b-41d4-a716-446655440000
 
 ---
 
+## 🏥 Patient OPD session snapshot (e-task-opd-04)
+
+**Auth:** Query param `token` = signed **consultation token** (same as patient video join link). Signature must be valid; `exp` may be expired for read-only snapshot polling.
+
+**Rate limit:** 100 requests / 15 minutes / IP on session routes (see [RATE_LIMITING.md](./RATE_LIMITING.md)).
+
+### GET `/api/v1/bookings/session/snapshot?token=`
+
+**Success `data`:**
+- `snapshot` — **PatientOpdSnapshot** (object):
+  - `appointmentId` (uuid)
+  - `status` — `pending` | `confirmed` | `cancelled` | `completed` | `no_show`
+  - `opdMode` — `slot` | `queue`
+  - `suggestedPollSeconds` — number (hint for client polling; also aligns with `Cache-Control: public, max-age=…`)
+  - `delayMinutes` — number | null — minutes past scheduled start while still waiting (pending/confirmed, consult not started)
+  - `doctorBusyWith` — optional: `you` | `other_patient` — in-progress consult context
+  - **Slot mode:** `slotStart`, `slotEnd` (ISO 8601), `earlyInviteAvailable` (boolean), `earlyInviteExpiresAt` (ISO or null)
+  - **Queue mode:** `tokenNumber`, `aheadCount`, `etaMinutes`, `etaRange` `{ minMinutes, maxMinutes }` — omit or undefined when no queue row exists
+  - **`inAppNotifications`** (optional, OPD-09): array of `{ type }` where `type` is `delay_broadcast` | `early_invite` | `your_turn_soon` | `queue_position_changed` — hints for banners / a11y; **queue order changes** are also detectable by comparing `tokenNumber` / `aheadCount` between polls
+
+**No PHI** in `snapshot` (no patient name/phone).
+
+### POST `/api/v1/bookings/session/early-join/accept?token=`
+
+**Success `data`:** `{ "accepted": true }`  
+Idempotent if already accepted.
+
+### POST `/api/v1/bookings/session/early-join/decline?token=`
+
+**Success `data`:** `{ "declined": true }`  
+Idempotent if already declined.
+
+**Errors:** Standard error envelope; `ValidationError` when no active early join offer or invalid state transition.
+
+---
+
 ## 📝 Version
 
-**Last Updated:** 2026-01-17  
-**Version:** 1.0.0
+**Last Updated:** 2026-03-24  
+**Version:** 1.1.0
 
 ---
 

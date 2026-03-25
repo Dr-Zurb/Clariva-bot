@@ -46,3 +46,38 @@ export const webhookLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: false,
 });
+
+/**
+ * Public OPD session snapshot / early-join (e-task-opd-04).
+ * Token auth; limit by IP per RATE_LIMITING.md (public unauthenticated API).
+ */
+export const publicSessionLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  keyGenerator: (req: Request) => {
+    return ipKeyGenerator(req.ip || req.socket.remoteAddress || 'unknown', false);
+  },
+  handler: async (req: Request, res: Response) => {
+    await logSecurityEvent(
+      req.correlationId || 'unknown',
+      undefined,
+      'rate_limit_exceeded',
+      'medium',
+      req.ip
+    );
+    const error = new TooManyRequestsError('Too many session requests, please try again later.');
+    return res.status(429).json(
+      errorResponse(
+        {
+          code: 'TooManyRequestsError',
+          message: error.message,
+          statusCode: 429,
+        },
+        req
+      )
+    );
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+});

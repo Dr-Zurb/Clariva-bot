@@ -27,8 +27,14 @@
 
 /**
  * Appointment status values
+ * no_show: slot missed / no-show after policy (migration 031, OPD-08)
  */
-export type AppointmentStatus = 'pending' | 'confirmed' | 'cancelled' | 'completed';
+export type AppointmentStatus =
+  | 'pending'
+  | 'confirmed'
+  | 'cancelled'
+  | 'completed'
+  | 'no_show';
 
 /**
  * Webhook provider platforms (includes payment gateways for idempotency)
@@ -117,6 +123,18 @@ export interface Appointment {
   patient_left_at?: Date | string | null;  // When patient disconnected; for "who left first" (migration 023)
   verified_at?: Date | string | null;  // When consultation was verified (migration 021)
   clinical_notes?: string | null;  // Doctor notes (migration 021)
+  /** Early join offer expiry (slot mode; migration 029, e-task-opd-04) */
+  opd_early_invite_expires_at?: Date | string | null;
+  /** Patient response to early join (migration 029) */
+  opd_early_invite_response?: 'accepted' | 'declined' | null;
+  /** Doctor broadcast delay minutes for patient UI (migration 030, e-task-opd-06) */
+  opd_session_delay_minutes?: number | null;
+  /** Link to prior appointment for return / addendum flows (migration 031, OPD-08) */
+  related_appointment_id?: string | null;
+  /** standard vs return_after_completed (migration 031, OPD-08) */
+  opd_event_type?: 'standard' | 'return_after_completed';
+  /** Fee entitlement transferred from prior appointment (migration 031, OPD-08) */
+  transferred_payment_from_appointment_id?: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -387,6 +405,31 @@ export interface DoctorInstagram {
   updated_at: Date;
 }
 
+/**
+ * Queue-mode OPD entry (migration 028). One row per appointment in queue mode.
+ * No PHI; links to appointment_id only.
+ */
+export type OpdQueueEntryStatus =
+  | 'waiting'
+  | 'called'
+  | 'in_consultation'
+  | 'completed'
+  | 'skipped'
+  | 'missed'
+  | 'cancelled';
+
+export interface OpdQueueEntry {
+  id: string;
+  doctor_id: string;
+  appointment_id: string;
+  session_date: Date | string;
+  token_number: number;
+  position: number;
+  status: OpdQueueEntryStatus;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
 // ============================================================================
 // Insert Types (Omit auto-generated fields)
 // ============================================================================
@@ -456,6 +499,8 @@ export type InsertDoctorInstagram = Omit<
   DoctorInstagram,
   'created_at' | 'updated_at'
 >;
+
+export type InsertOpdQueueEntry = Omit<OpdQueueEntry, 'id' | 'created_at' | 'updated_at'>;
 
 // ============================================================================
 // Update Types (All fields optional except id)
@@ -529,4 +574,8 @@ export type UpdateDoctorInstagram = Partial<
   Omit<DoctorInstagram, 'doctor_id' | 'created_at' | 'updated_at'>
 > & {
   doctor_id: string;
+};
+
+export type UpdateOpdQueueEntry = Partial<Omit<OpdQueueEntry, 'id' | 'created_at' | 'updated_at'>> & {
+  id: string;
 };

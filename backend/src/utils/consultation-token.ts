@@ -88,3 +88,39 @@ export function verifyConsultationToken(token: string): VerifiedConsultationToke
   }
   return { appointmentId: payload.appointmentId };
 }
+
+/**
+ * Verify consultation token signature but allow expired `exp` (read-only session snapshot / polling).
+ * Same secret and payload shape as {@link verifyConsultationToken}.
+ */
+export function verifyConsultationTokenAllowExpired(token: string): VerifiedConsultationToken {
+  if (!token || typeof token !== 'string') {
+    throw new UnauthorizedError('Missing or invalid consultation token');
+  }
+  const secret = env.CONSULTATION_TOKEN_SECRET;
+  if (!secret || secret.length < 16) {
+    throw new UnauthorizedError('Consultation token verification not configured');
+  }
+  const parts = token.split('.');
+  if (parts.length !== 2) {
+    throw new UnauthorizedError('Invalid consultation token format');
+  }
+  const [payloadB64, sigB64] = parts;
+  const expectedSig = crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');
+  const sigBuf = Buffer.from(sigB64, 'base64url');
+  const expectedBuf = Buffer.from(expectedSig, 'base64url');
+  if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+    throw new UnauthorizedError('Invalid consultation token (signature mismatch)');
+  }
+  const payloadStr = Buffer.from(payloadB64, 'base64url').toString('utf8');
+  let payload: ConsultationTokenPayload;
+  try {
+    payload = JSON.parse(payloadStr) as ConsultationTokenPayload;
+  } catch {
+    throw new UnauthorizedError('Invalid consultation token (malformed payload)');
+  }
+  if (!payload.appointmentId || payload.role !== 'patient' || typeof payload.exp !== 'number') {
+    throw new UnauthorizedError('Invalid consultation token (missing fields)');
+  }
+  return { appointmentId: payload.appointmentId };
+}

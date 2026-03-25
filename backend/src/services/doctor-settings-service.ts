@@ -12,7 +12,7 @@
  */
 
 import { getSupabaseAdminClient } from '../config/database';
-import type { DoctorSettingsRow, PayoutSchedule } from '../types/doctor-settings';
+import type { DoctorSettingsRow, OpdMode, PayoutSchedule } from '../types/doctor-settings';
 import { validateOwnership } from '../utils/db-helpers';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataAccess, logDataModification } from '../utils/audit-logger';
@@ -24,6 +24,7 @@ const SELECT_COLUMNS =
   'cancellation_policy_hours, max_appointments_per_day, booking_buffer_minutes, ' +
   'welcome_message, specialty, address_summary, consultation_types, default_notes, ' +
   'payout_schedule, payout_minor, razorpay_linked_account_id, ' +
+  'opd_mode, opd_policies, ' +
   'created_at, updated_at';
 
 /** Default values when no row exists (for API GET response). */
@@ -49,6 +50,8 @@ const DEFAULT_SETTINGS: DoctorSettingsRow = {
   payout_schedule: null,
   payout_minor: null,
   razorpay_linked_account_id: null,
+  opd_mode: 'slot',
+  opd_policies: null,
   created_at: '',
   updated_at: '',
 };
@@ -142,6 +145,10 @@ export interface UpdateDoctorSettingsPayload {
   payout_schedule?: PayoutSchedule | null;
   /** Min amount (paise) before payout; NULL = pay any (e-task-6). */
   payout_minor?: number | null;
+  /** OPD scheduling mode (e-task-opd-01). */
+  opd_mode?: OpdMode;
+  /** Optional JSON policies (grace, queue caps). */
+  opd_policies?: Record<string, unknown> | null;
 }
 
 /**
@@ -198,6 +205,13 @@ export async function updateDoctorSettings(
   ) {
     throw new ValidationError('payout_minor must be a non-negative integer (paise)');
   }
+  if (
+    payload.opd_mode !== undefined &&
+    payload.opd_mode !== null &&
+    !['slot', 'queue'].includes(payload.opd_mode)
+  ) {
+    throw new ValidationError('opd_mode must be slot or queue');
+  }
 
   const supabase = getSupabaseAdminClient();
   if (!supabase) {
@@ -224,6 +238,8 @@ export async function updateDoctorSettings(
     'appointment_fee_currency',
     'payout_schedule',
     'payout_minor',
+    'opd_mode',
+    'opd_policies',
   ];
   for (const key of allowedKeys) {
     if (key in payload) {

@@ -28,6 +28,9 @@ import { verifyBookingToken, generateBookingToken } from '../utils/booking-token
 import { sendAppointmentRescheduledToDoctor } from './notification-service';
 import { logger } from '../config/logger';
 import { InternalError, NotFoundError, UnauthorizedError, ValidationError } from '../utils/errors';
+import { resolveOpdModeFromSettings } from './opd/opd-mode-service';
+import { getQueueTokenForAppointment } from './opd/opd-queue-service';
+import type { OpdMode } from '../types/doctor-settings';
 
 /**
  * Save or overwrite slot selection for a conversation.
@@ -195,6 +198,8 @@ export interface ProcessSlotSelectionAndPayResult {
   paymentUrl: string | null;
   redirectUrl: string;
   appointmentId: string;
+  opdMode: OpdMode;
+  tokenNumber?: number;
 }
 
 /**
@@ -284,6 +289,15 @@ export async function processSlotSelectionAndPay(
     undefined
   );
 
+  const opdMode = resolveOpdModeFromSettings(doctorSettings);
+  let tokenNumber: number | undefined;
+  if (opdMode === 'queue') {
+    const q = await getQueueTokenForAppointment(appointment.id, correlationId);
+    if (q != null) {
+      tokenNumber = q;
+    }
+  }
+
   const amountMinor = doctorSettings?.appointment_fee_minor ?? env.APPOINTMENT_FEE_MINOR ?? 0;
   const currency = doctorSettings?.appointment_fee_currency ?? env.APPOINTMENT_FEE_CURRENCY ?? 'INR';
   const doctorCountry = doctorSettings?.country ?? env.DEFAULT_DOCTOR_COUNTRY ?? 'IN';
@@ -303,7 +317,13 @@ export async function processSlotSelectionAndPay(
       updatedAt: new Date().toISOString(),
     };
     await updateConversationState(conversationId, newState, correlationId);
-    return { paymentUrl: null, redirectUrl, appointmentId: appointment.id };
+    return {
+      paymentUrl: null,
+      redirectUrl,
+      appointmentId: appointment.id,
+      opdMode,
+      ...(tokenNumber != null ? { tokenNumber } : {}),
+    };
   }
 
   const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
@@ -328,7 +348,10 @@ export async function processSlotSelectionAndPay(
       patientName: patient.name,
       patientPhone: patient.phone,
       patientEmail: patient.email ?? undefined,
-      description: `Appointment - ${slotDisplayStr}`,
+      description:
+        opdMode === 'queue'
+          ? `Queue visit — ${slotDisplayStr}`
+          : `Appointment - ${slotDisplayStr}`,
       callbackUrl: successCallbackUrl,
     },
     correlationId
@@ -349,6 +372,8 @@ export async function processSlotSelectionAndPay(
     paymentUrl: paymentResult.url,
     redirectUrl,
     appointmentId: appointment.id,
+    opdMode,
+    ...(tokenNumber != null ? { tokenNumber } : {}),
   };
 }
 

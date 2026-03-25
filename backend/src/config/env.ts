@@ -72,6 +72,8 @@ const envSchema = z.object({
   // Availability / Slot Configuration (Phase 0 - optional with defaults)
   SLOT_INTERVAL_MINUTES: z.string().default('30').transform(Number),
   AVAILABLE_SLOTS_MAX_FUTURE_DAYS: z.string().default('90').transform(Number),
+  /** Queue-mode OPD: default consult length (minutes) when no rolling telemetry yet (e-task-opd-03). */
+  OPD_QUEUE_DEFAULT_CONSULT_MINUTES: z.string().default('10').transform(Number),
 
   // Payment Gateways (e-task-4 - Razorpay India, PayPal International)
   RAZORPAY_KEY_ID: z.string().optional(),

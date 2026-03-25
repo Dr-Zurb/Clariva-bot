@@ -53,6 +53,7 @@ backend/src/
 │   ├── appointment-service.ts
 │   ├── availability-service.ts
 │   ├── conversation-service.ts
+│   ├── opd/                    ← OPD initiative (e-task-opd): mode, queue, ETA, policy, metrics, snapshot hints
 │   ├── message-service.ts
 │   └── patient-service.ts
 │
