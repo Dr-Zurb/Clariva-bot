@@ -740,6 +740,9 @@ export const patchDoctorSettingsSchema = z
         z.null(),
       ])
       .optional(),
+    /** RBH-09: Pause Instagram DM + comment automation */
+    instagram_receptionist_paused: z.boolean().optional(),
+    instagram_receptionist_pause_message: z.string().max(500).trim().nullable().optional(),
   })
   .strict();
 

@@ -26,7 +26,7 @@ import {
   getPageTokenAndInstagramAccount,
   saveDoctorInstagram,
   disconnectInstagram,
-  getConnectionStatus,
+  getInstagramDashboardStatus,
 } from '../services/instagram-connect-service';
 
 /**
@@ -41,7 +41,7 @@ export const statusHandler = asyncHandler(async (req: Request, res: Response) =>
     throw new UnauthorizedError('Authentication required');
   }
 
-  const status = await getConnectionStatus(userId, correlationId);
+  const status = await getInstagramDashboardStatus(userId, correlationId);
   res.status(200).json(successResponse(status, req));
 });
 

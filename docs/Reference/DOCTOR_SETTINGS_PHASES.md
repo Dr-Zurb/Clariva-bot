@@ -127,10 +127,11 @@ Tables `availability` and `blocked_times` already exist (001_initial_schema.sql)
 | Slot interval (env) | `backend/src/config/env.ts` (SLOT_INTERVAL_MINUTES) |
 | Slot generation | `backend/src/services/availability-service.ts` |
 | Bot slot date | `backend/src/workers/webhook-worker.ts` – `getTomorrowDate()`, `slotSelectionDate` |
+| Instagram receptionist pause (RBH-09) | `033_instagram_receptionist_pause.sql`; `instagram-dm-webhook-handler.ts`; `instagram-comment-webhook-handler.ts`; dashboard **Bot Messages** |
 | AI prompt | `backend/src/services/ai-service.ts` – RESPONSE_SYSTEM_PROMPT |
 | Availability/blocked_times | `backend/src/services/availability-service.ts` |
 
 ---
 
-**Last Updated:** 2026-03-09  
-**Version:** 1.0.0
+**Last Updated:** 2026-03-28  
+**Version:** 1.0.1

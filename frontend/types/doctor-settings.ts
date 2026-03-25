@@ -29,6 +29,10 @@ export interface DoctorSettings {
   opd_mode?: OpdMode;
   /** Optional policy JSON (grace minutes, caps); keys in DB_SCHEMA. */
   opd_policies?: Record<string, unknown> | null;
+  /** RBH-09: Pause automated Instagram DM + comment outreach. */
+  instagram_receptionist_paused?: boolean;
+  /** Optional custom DM text when paused (nullable). */
+  instagram_receptionist_pause_message?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -55,4 +59,6 @@ export type PatchDoctorSettingsPayload = Partial<{
   appointment_fee_currency: string | null;
   opd_mode?: OpdMode;
   opd_policies?: Record<string, unknown> | null;
+  instagram_receptionist_paused?: boolean;
+  instagram_receptionist_pause_message?: string | null;
 }>;

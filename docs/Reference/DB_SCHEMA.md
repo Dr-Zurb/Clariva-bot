@@ -263,9 +263,9 @@ created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 
 ---
 
-### `doctor_settings` (e-task-4.1; extended 012, 025, **028 OPD**)
+### `doctor_settings` (e-task-4.1; extended 012, 025, **028 OPD**, **033 Instagram pause / RBH-09**)
 
-**Purpose:** Per-doctor practice, fees, booking rules, payouts, and **OPD mode** (`slot` vs `queue`).
+**Purpose:** Per-doctor practice, fees, booking rules, payouts, **OPD mode** (`slot` vs `queue`), and **Instagram receptionist pause** (human handoff).
 
 **Columns (summary — see migrations):**
 ```sql
@@ -292,6 +292,8 @@ payout_minor            BIGINT NULL  -- (025)
 razorpay_linked_account_id TEXT NULL  -- (025)
 opd_mode                TEXT NOT NULL DEFAULT 'slot'  -- CHECK (slot | queue); migration 028
 opd_policies            JSONB NULL   -- optional keys (OPD-08): `slot_join_grace_minutes` (int; patient join window after scheduled start, slot mode); `reschedule_payment_policy` (`forfeit` | `transfer_entitlement`); `queue_reinsert_default` (`end_of_queue` | `after_current`); plus earlier queue caps; no PHI
+instagram_receptionist_paused BOOLEAN NOT NULL DEFAULT false  -- migration 033; pause DM + comment automation
+instagram_receptionist_pause_message TEXT NULL  -- optional custom patient DM when paused (RBH-09)
 created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
@@ -305,6 +307,14 @@ updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 **RLS:** Enabled (doctor read/insert/update own row; service role can read for worker)
 
 **See:** e-task-4.1-per-doctor-payment-settings.md; **e-task-opd-01** (OPD modes)
+
+---
+
+### `doctor_instagram` (migrations **011**, **020**, **034** / RBH-10)
+
+**Purpose:** Per-doctor Meta Page / Instagram Business link and Page access token. Webhook resolves `instagram_page_id` → `doctor_id`.
+
+**RBH-10 (034):** Optional health cache (no message bodies): `instagram_health_checked_at`, `instagram_health_level` (`ok` \| `warning` \| `error` \| `unknown`), `instagram_health_error_code`, `instagram_token_expires_at`, `instagram_last_dm_success_at`. See `docs/setup/instagram-setup.md` (Dashboard health).
 
 ---
 

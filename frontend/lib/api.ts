@@ -256,9 +256,20 @@ export async function mergePatients(
 // Instagram settings (e-task-5)
 // =============================================================================
 
+/** Instagram health (RBH-10); from GET /settings/instagram/status */
+export interface InstagramHealthData {
+  level: "ok" | "warning" | "error" | "unknown" | "not_connected";
+  checkedAt: string | null;
+  tokenExpiresAt: string | null;
+  lastDmSuccessAt: string | null;
+  message: string;
+  reconnectRecommended: boolean;
+}
+
 export interface InstagramStatusData {
   connected: boolean;
   username: string | null;
+  health?: InstagramHealthData;
 }
 
 /**

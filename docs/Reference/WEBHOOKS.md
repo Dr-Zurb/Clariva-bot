@@ -43,6 +43,8 @@ This file governs webhook handling, reliability, and failure recovery.
 - **Instagram:** Same as Facebook (Meta platform)
 - **WhatsApp:** Uses `X-Hub-Signature-256` (Meta platform)
 
+**Instagram POST — documented exceptions (RBH-08):** HMAC is always attempted first. If verification **fails**, `handleInstagramWebhook` may still return **200** for specific payload classes (e.g. some read/delivery-style payloads, `message_edit` no-queue path) or **continue processing** Instagram DMs/comments when product signing mismatches are observed. **Branch matrix, threat model, staging checklist:** [WEBHOOK_SECURITY.md](./WEBHOOK_SECURITY.md). **Razorpay** and **PayPal** webhooks have **no** equivalent bypass.
+
 **Implementation:**
 ```typescript
 // MUST verify BEFORE any processing
@@ -51,7 +53,7 @@ if (!verifyWebhookSignature(req)) {
 }
 ```
 
-**AI Agents:** Never skip signature verification. Invalid signatures MUST result in 401 Unauthorized.
+**AI Agents:** Do not remove or weaken verification without updating **WEBHOOK_SECURITY.md** and ops review. Default: invalid signature → **401** unless the payload matches a documented Instagram exception.
 
 ### Body and signature (raw vs sanitized)
 
@@ -83,6 +85,38 @@ logger.info('Webhook received', {
 ```
 
 **See:** [STANDARDS.md](./STANDARDS.md) "PII Redaction Rule" section
+
+---
+
+## RBH-11: Instagram message_edit and sender fallbacks
+
+**Purpose:** Explain why `message_edit` is treated specially at the HTTP layer, why the worker still has `tryResolveSenderFromMessageEdit` + **`decodeMidExperimental`**, and when **not** to delete that code. Detailed incident notes: [Instagram DM reply troubleshooting](../Development/Daily-plans/February%202026/Week%203/instagram-dm-reply-troubleshooting.md).
+
+### Controller (ingest): queue only what we can process once
+
+- **Primary path for user text:** `entry[].messaging[].message` (or Graph `changes` with sender + message). These requests are **queued** for `processInstagramDmWebhook`.
+- **`message_edit`-only in `messaging[]`:** If the first messaging item has **`message_edit` but no `message`**, the payload type is classified as `message_edit`. The controller **returns 200 and does not enqueue** the job. **Reason:** Meta often sends **both** `message` and `message_edit` for the same user action. Queueing both races the worker (duplicate create / ConflictError / “edit first” ordering) and can yield **zero** outbound replies. The **`message`** event is the single source of truth for that turn.
+- **Signature verification:** For Instagram, `message_edit` may verify differently; on failure the controller may still return **200** as **non-critical** so Meta stops retrying (original content is carried by the `message` event when present). See [WEBHOOK_SECURITY.md](./WEBHOOK_SECURITY.md) (RBH-08).
+
+**Implication:** A webhook that is **only** `message_edit` in `messaging[]` **never reaches** the worker fallback chain below. If production logs show only `message_edit` and no queued `message` for the same conversation turn, treat that as a **Meta subscription / payload-shape** issue ([Meta Developer Support](https://developers.facebook.com/support/)), not as “delete the fallback.”
+
+### Worker: when the fallback chain runs
+
+**Code:** `backend/src/workers/instagram-dm-webhook-handler.ts` — `processInstagramDmWebhook` → `parseInstagramMessage` → optional `tryResolveSenderFromMessageEdit`.
+
+Jobs that **are** queued can still fail `parseInstagramMessage` when Meta omits a usable sender (e.g. first messaging item includes **`message` and `message_edit`** so the controller classifies the webhook as **`message`**, but IDs needed for routing are missing). Then:
+
+1. **DB lookup** — `mid` from `message_edit` on the first messaging item, mapped via stored platform message rows (`getSenderIdByPlatformMessageId`). Page IDs stored by mistake are rejected.
+2. **Graph API** — With the doctor’s token: **most recent conversation** sender, then **message lookup** by `mid` (`getInstagramMessageSender` / related helpers). Results that are the page ID are rejected.
+3. **Single-conversation fallback** — If the doctor has exactly one IG conversation and the resolved ID looks like a real user ID (`getOnlyInstagramConversationSenderId` + validation).
+4. **`decodeMidExperimental`** — Last resort: base64-decodes `mid`, scans for long numeric runs that might be IG user IDs, filters page IDs, picks a candidate that passes `isValidInstagramSenderId`. **Heuristic / undocumented by Meta** — keep for resilience; do **not** use decoded bytes or candidate IDs as **examples in docs** (treat as sensitive). Logs should remain metadata-only (counts, lengths, correlation id), per STANDARDS.
+
+Nothing in this chain should reply **to the page itself**; page IDs are explicitly rejected so Meta does not return “No matching user found.”
+
+### Operators: when to escalate
+
+- Repeated **`Webhook has no message to reply to`** / **`message_edit` only** hints in logs with **no** paired **`message`** processing for real user DMs → verify app **webhook fields** (`messages`, `message_edits`), token permissions, and open **Meta** support with **payload structure** (keys only — no patient content or real mids in tickets).
+- Do **not** remove **`decodeMidExperimental`** or Graph fallbacks without product sign-off and tests; they exist because **real payloads** omitted `sender` / `recipient`.
 
 ---
 
@@ -367,13 +401,15 @@ Manual review required
 
 ## 📝 Version
 
-**Last Updated:** 2026-01-17  
-**Version:** 1.0.0
+**Last Updated:** 2026-03-28  
+**Version:** 1.0.2
 
 ---
 
 ## See Also
 
+- [Instagram DM reply troubleshooting](../Development/Daily-plans/February%202026/Week%203/instagram-dm-reply-troubleshooting.md) — historical experiments + debug checklist (RBH-11 points here for operator context)
+- [WEBHOOK_SECURITY.md](./WEBHOOK_SECURITY.md) - Instagram signature bypass audit, threat model, re-test triggers (RBH-08)
 - [CONTRACTS.md](./CONTRACTS.md) - Idempotency contract
 - [RECIPES.md](./RECIPES.md) - Implementation patterns
 - [COMPLIANCE.md](./COMPLIANCE.md) - PHI handling and audit

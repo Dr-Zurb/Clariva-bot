@@ -184,6 +184,53 @@ export default function InstagramConnect() {
           {message.text}
         </div>
       )}
+      {status?.health && status.health.level !== "not_connected" && (
+        <div
+          className={`mt-3 rounded-md border p-3 text-sm ${
+            status.health.level === "ok"
+              ? "border-green-200 bg-green-50 text-green-900"
+              : status.health.level === "warning"
+                ? "border-amber-200 bg-amber-50 text-amber-900"
+                : status.health.level === "error"
+                  ? "border-red-200 bg-red-50 text-red-900"
+                  : "border-gray-200 bg-gray-50 text-gray-800"
+          }`}
+          role="status"
+          aria-live="polite"
+        >
+          <p className="font-medium">
+            Connection health:{" "}
+            {status.health.level === "ok"
+              ? "OK"
+              : status.health.level === "warning"
+                ? "Needs attention"
+                : status.health.level === "error"
+                  ? "Action required"
+                  : "Unknown"}
+          </p>
+          <p className="mt-1">{status.health.message}</p>
+          {status.health.tokenExpiresAt && (
+            <p className="mt-1 text-xs opacity-90">
+              Token expiry (UTC): {new Date(status.health.tokenExpiresAt).toLocaleString()}
+            </p>
+          )}
+          {status.health.lastDmSuccessAt && (
+            <p className="mt-1 text-xs opacity-90">
+              Last bot DM sent: {new Date(status.health.lastDmSuccessAt).toLocaleString()}
+            </p>
+          )}
+          {status.health.checkedAt && (
+            <p className="mt-1 text-xs opacity-75">Checked: {new Date(status.health.checkedAt).toLocaleString()}</p>
+          )}
+          {(status.health.reconnectRecommended || status.health.level === "error") && (
+            <p className="mt-2 text-xs">
+              Use <span className="font-medium">Disconnect</span> then{" "}
+              <span className="font-medium">Connect Instagram</span> below to refresh your Meta token.
+              Full checklist: <code className="rounded bg-white/60 px-1">docs/setup/instagram-setup.md</code> (Troubleshooting).
+            </p>
+          )}
+        </div>
+      )}
       <div className="mt-3">
         {status?.connected ? (
           <>
@@ -204,6 +251,11 @@ export default function InstagramConnect() {
           </>
         ) : (
           <>
+            {status?.health?.level === "not_connected" && (
+              <p className="text-sm text-gray-600" role="status">
+                {status.health.message}
+              </p>
+            )}
             <p className="text-gray-600">Not connected</p>
             <button
               type="button"

@@ -148,6 +148,7 @@ export const verifyInstagramWebhook = asyncHandler(
  * @see RECIPES.md - R-WEBHOOK-001 pattern
  * @see WEBHOOKS.md - Webhook processing rules
  * @see COMPLIANCE.md - Webhook security requirements (section H)
+ * @see docs/Reference/WEBHOOK_SECURITY.md - Instagram signature-failure branches, threat model (RBH-08)
  */
 export const handleInstagramWebhook = asyncHandler(
   async (req: Request, res: Response): Promise<void> => {

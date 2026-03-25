@@ -36,6 +36,8 @@ function baseSettings(overrides: Partial<DoctorSettingsRow> = {}): DoctorSetting
     razorpay_linked_account_id: null,
     opd_mode: 'slot',
     opd_policies: null,
+    instagram_receptionist_paused: false,
+    instagram_receptionist_pause_message: null,
     created_at: '',
     updated_at: '',
     ...overrides,

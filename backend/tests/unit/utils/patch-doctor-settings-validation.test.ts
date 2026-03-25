@@ -65,6 +65,23 @@ describe('validatePatchDoctorSettings (e-task-6)', () => {
     expect(result.opd_policies).toBeNull();
   });
 
+  it('accepts instagram_receptionist_paused and pause message (RBH-09)', () => {
+    const result = validatePatchDoctorSettings({
+      instagram_receptionist_paused: true,
+      instagram_receptionist_pause_message: 'We will reply soon.',
+    });
+    expect(result.instagram_receptionist_paused).toBe(true);
+    expect(result.instagram_receptionist_pause_message).toBe('We will reply soon.');
+  });
+
+  it('rejects pause message over 500 chars', () => {
+    expect(() =>
+      validatePatchDoctorSettings({
+        instagram_receptionist_pause_message: 'x'.repeat(501),
+      })
+    ).toThrow(ValidationError);
+  });
+
   it('rejects invalid opd_mode', () => {
     expect(() =>
       validatePatchDoctorSettings({ opd_mode: 'hybrid' as 'slot' })

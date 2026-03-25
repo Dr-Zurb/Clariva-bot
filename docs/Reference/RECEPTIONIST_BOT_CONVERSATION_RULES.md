@@ -43,6 +43,11 @@ When multiple intents could apply: **emergency > medical_query > book_appointmen
 
 ---
 
+## Conversation metadata (engine)
+
+- **`state.step`:** Canonical flow position (`collecting_all`, `confirm_details`, `consent`, `awaiting_match_confirmation`, slot/cancel/reschedule branches, `responded`, …).
+- **`state.lastPromptKind` (RBH-07):** Machine-readable last gated prompt (`collect_details`, `confirm_details`, `consent`, `match_pick`, `cancel_confirm`). Refreshed from `step` when the DM handler persists state so routing does not depend on bot wording. Legacy rows may omit it; the worker still falls back to substring checks on the last system message where needed.
+
 ## Deterministic Rules (Before AI)
 
 - **Simple greeting:** Regex match → `greeting` (skip AI)
@@ -69,4 +74,4 @@ When multiple intents could apply: **emergency > medical_query > book_appointmen
 
 ---
 
-**Last Updated:** 2026-03-18
+**Last Updated:** 2026-03-28

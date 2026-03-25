@@ -26,6 +26,12 @@ Improve the bot's ability to understand context, handle ambiguity, and respond n
 
 ---
 
+## Plans (code map & hardening)
+
+- [Receptionist bot — engineering map & backlog](./Receptionist%20Bot%20improvements/RECEPTIONIST_BOT_ENGINEERING.md) — DM + comment pipeline, redundancy, test gaps; execution tasks: [task-management RBH-01…11](../../../../task-management/tasks/receptionist-bot-hardening/README.md)
+
+---
+
 ## Reference
 
 - [BOT_INTELLIGENCE_PLANNING.md](../../../Future%20Planning/BOT_INTELLIGENCE_PLANNING.md) — Master planning doc

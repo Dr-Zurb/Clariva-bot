@@ -329,6 +329,26 @@ describe('createAppointment', () => {
 });
 ```
 
+### Receptionist / Instagram webhook worker characterization (RBH-02)
+
+**File:** `backend/tests/unit/workers/webhook-worker-characterization.test.ts`
+
+**Purpose:** Pin receptionist pipeline behavior before refactors—DM state segments (consent granted → slot link, `awaiting_match_confirmation` yes / numeric choice, multi-appointment cancel & reschedule choice, Instagram send lock / reply throttle skip) and comment handling (high-intent outreach vs vulgar skip vs spam + second-stage medical override). All Meta and AI calls are mocked; fixtures use synthetic IDs/text only.
+
+**Complements:** `backend/tests/unit/workers/webhook-worker.test.ts` (queue/edge cases).
+
+**Run:** From `backend/`, `npx jest tests/unit/workers/webhook-worker-characterization.test.ts` (included in default `npm test`).
+
+**Observability context:** [OBSERVABILITY.md](./OBSERVABILITY.md) (webhook / receptionist metrics).
+
+**RBH-03 — merged upcoming list helper:** `backend/src/services/webhook-appointment-helpers.ts` (unit: `tests/unit/services/webhook-appointment-helpers.test.ts`).
+
+**RBH-04 — unified DM send (locks, reply throttle, 2018001 fallback):** `backend/src/workers/webhook-dm-send.ts` (unit: `tests/unit/workers/webhook-dm-send.test.ts`).
+
+**RBH-05 — worker module split:** `webhook-worker.ts` (payment + Instagram router + BullMQ lifecycle); `instagram-comment-webhook-handler.ts`; `instagram-dm-webhook-handler.ts` (DM helpers + state machine). Characterization tests still import `processWebhookJob` from `webhook-worker.ts`.
+
+**RBH-06 — legacy slot steps:** `tests/unit/services/conversation-legacy-slot-steps.test.ts` (`normalizeLegacySlotConversationSteps`).
+
 ---
 
 ## 5. Integration Testing
@@ -932,6 +952,6 @@ it('should return standardized response format', async () => {
 
 ---
 
-**Last Updated:** 2026-02-01  
-**Version:** 1.1.0  
+**Last Updated:** 2026-03-28  
+**Version:** 1.2.0  
 **Status:** Active

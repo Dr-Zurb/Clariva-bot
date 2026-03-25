@@ -5,6 +5,7 @@
  * When a value is null, the app uses env fallback.
  *
  * Payout columns (migration 025): payout_schedule, payout_minor, razorpay_linked_account_id.
+ * RBH-09 (migration 033): instagram_receptionist_paused, instagram_receptionist_pause_message.
  */
 
 /** When doctor receives payouts. NULL = default weekly in payout service. */
@@ -42,6 +43,13 @@ export interface DoctorSettingsRow {
   opd_mode: OpdMode;
   /** Optional JSON policies (grace minutes, caps); keys documented in DB_SCHEMA. Migration 028. */
   opd_policies: Record<string, unknown> | null;
+  /**
+   * When true, automated Instagram DM replies and comment outreach (DM + public reply) are off.
+   * Migration 033, RBH-09.
+   */
+  instagram_receptionist_paused: boolean;
+  /** Optional custom patient-facing DM when paused; null = default copy (no “instant human” promise). */
+  instagram_receptionist_pause_message: string | null;
   created_at: string;
   updated_at: string;
 }

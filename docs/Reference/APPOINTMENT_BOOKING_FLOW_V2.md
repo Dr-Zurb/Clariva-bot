@@ -59,8 +59,9 @@
 | `collecting_all` | Asking for all details at once; accepting partial/multi-turn |
 | `confirm_details` | Read back summary; waiting for Yes or correction |
 | `consent` | Combined consent; waiting for Yes |
-| `awaiting_slot_selection` | Sent slot link; waiting for user to pick on external page |
-| `confirming_slot` | User picked slot; bot sent confirmation; waiting for Yes/No |
+| `awaiting_slot_selection` | Sent slot link; waiting for user to pick on external page (or follow-up after slot picked — **RBH-06** canonical step for both) |
+| ~~`confirming_slot`~~ | **Deprecated (RBH-06).** Old rows backfilled to `awaiting_slot_selection`; `processSlotSelection` no longer sets this. |
+| ~~`selecting_slot`~~ | **Deprecated (RBH-06).** Same backfill / worker normalize as above. |
 | `responded` | Flow complete |
 
 ---

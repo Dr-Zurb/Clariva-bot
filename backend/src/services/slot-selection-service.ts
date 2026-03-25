@@ -162,7 +162,7 @@ export async function processSlotSelection(
   const state = await getConversationState(conversationId, correlationId);
   const newState = {
     ...state,
-    step: 'confirming_slot',
+    step: 'awaiting_slot_selection' as const,
     slotToConfirm: {
       start: slotDate.toISOString(),
       end: slotEnd.toISOString(),
@@ -175,7 +175,7 @@ export async function processSlotSelection(
   const redirectUrl = await getRedirectUrlForDoctor(doctorId);
   const bookingLink = buildBookingPageUrl(conversationId, doctorId);
   const message =
-    `You selected **${dateStr}**. Reply Yes to confirm, or No to pick another time. [Change slot](${bookingLink})`;
+    `You selected **${dateStr}**. Continue in chat if you need help, or pick another time here: [Change slot](${bookingLink})`;
 
   const recipientId = conversation.platform_conversation_id;
   if (!recipientId || conversation.platform !== 'instagram') {

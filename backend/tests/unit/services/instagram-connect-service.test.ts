@@ -12,6 +12,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import {
   getDoctorIdByPageId,
   disconnectInstagram,
+  getInstagramDashboardStatus,
 } from '../../../src/services/instagram-connect-service';
 import * as database from '../../../src/config/database';
 
@@ -91,6 +92,30 @@ describe('Instagram Connect Service (e-task-2)', () => {
     mockedDb.getSupabaseAdminClient.mockReturnValue(mockSupabase as never);
 
     await expect(getDoctorIdByPageId(pageId, 'corr-1')).rejects.toThrow();
+  });
+});
+
+describe('getInstagramDashboardStatus (RBH-10)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('returns not_connected health when no Instagram row', async () => {
+    const chain = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null } as never),
+    };
+    const from = jest.fn().mockReturnValue(chain);
+    mockedDb.getSupabaseAdminClient.mockReturnValue({ from } as never);
+
+    const r = await getInstagramDashboardStatus(doctorId, 'corr-health');
+
+    expect(r.connected).toBe(false);
+    expect(r.username).toBeNull();
+    expect(r.health.level).toBe('not_connected');
+    expect(r.health.reconnectRecommended).toBe(true);
+    expect(from).toHaveBeenCalledWith('doctor_instagram');
   });
 });
 

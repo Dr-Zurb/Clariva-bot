@@ -213,6 +213,340 @@ export async function getConnectionStatus(
 }
 
 // ============================================================================
+// Connection health (RBH-10) — Meta debug_token, 5-minute cache, no PHI in API
+// ============================================================================
+
+const HEALTH_CACHE_TTL_MS = 5 * 60 * 1000;
+const TOKEN_EXPIRY_WARN_MS = 7 * 24 * 60 * 60 * 1000;
+const STALE_DM_WARN_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** Dashboard / status API: safe summary for doctors */
+export interface InstagramHealthSummary {
+  level: 'ok' | 'warning' | 'error' | 'unknown' | 'not_connected';
+  checkedAt: string | null;
+  tokenExpiresAt: string | null;
+  lastDmSuccessAt: string | null;
+  message: string;
+  reconnectRecommended: boolean;
+}
+
+function notConnectedHealth(): InstagramHealthSummary {
+  return {
+    level: 'not_connected',
+    checkedAt: null,
+    tokenExpiresAt: null,
+    lastDmSuccessAt: null,
+    message: 'Connect Instagram to enable automated replies.',
+    reconnectRecommended: true,
+  };
+}
+
+interface DoctorInstagramHealthRow {
+  instagram_access_token: string;
+  instagram_health_checked_at: string | null;
+  instagram_health_level: string | null;
+  instagram_health_error_code: string | null;
+  instagram_token_expires_at: string | null;
+  instagram_last_dm_success_at: string | null;
+}
+
+interface MetaDebugTokenData {
+  app_id?: string;
+  is_valid?: boolean;
+  expires_at?: number;
+  data_access_expires_at?: number;
+  error?: { code?: number; subcode?: number; message?: string };
+}
+
+async function fetchMetaDebugToken(
+  inputToken: string,
+  correlationId: string
+): Promise<{ data: MetaDebugTokenData | null; requestFailed: boolean }> {
+  const appId = env.INSTAGRAM_APP_ID;
+  const appSecret = env.INSTAGRAM_APP_SECRET;
+  if (!appId || !appSecret) {
+    logger.warn({ correlationId }, 'Instagram health: app id/secret not configured');
+    return { data: null, requestFailed: false };
+  }
+  const appAccessToken = `${appId}|${appSecret}`;
+  const url = `${FACEBOOK_GRAPH_BASE}/debug_token`;
+  try {
+    const res = await axios.get<{ data?: MetaDebugTokenData }>(url, {
+      params: {
+        input_token: inputToken,
+        access_token: appAccessToken,
+      },
+      timeout: META_HTTP_TIMEOUT_MS,
+    });
+    return { data: res.data?.data ?? null, requestFailed: false };
+  } catch (err: unknown) {
+    const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+    logger.warn(
+      { correlationId, status, message: axios.isAxiosError(err) ? err.message : 'debug_token failed' },
+      'Instagram health: Meta debug_token request failed'
+    );
+    return { data: null, requestFailed: true };
+  }
+}
+
+function summarizeHealthFromMetaAndRow(
+  debug: MetaDebugTokenData | null,
+  lastDmSuccessAt: string | null,
+  requestFailed: boolean
+): {
+  level: 'ok' | 'warning' | 'error' | 'unknown';
+  errorCode: string | null;
+  tokenExpiresAt: string | null;
+  message: string;
+  reconnectRecommended: boolean;
+} {
+  if (requestFailed) {
+    return {
+      level: 'unknown',
+      errorCode: null,
+      tokenExpiresAt: null,
+      message:
+        "We couldn't verify your Instagram token with Meta right now. If patients can't reach the bot, try reconnecting.",
+      reconnectRecommended: false,
+    };
+  }
+  if (!debug) {
+    return {
+      level: 'unknown',
+      errorCode: null,
+      tokenExpiresAt: null,
+      message:
+        'Could not read token details from Meta. Check server configuration or try reconnecting.',
+      reconnectRecommended: false,
+    };
+  }
+  if (debug.error?.code != null) {
+    return {
+      level: 'error',
+      errorCode: String(debug.error.code),
+      tokenExpiresAt: null,
+      message: 'Instagram reported a problem with your access token. Reconnect your account.',
+      reconnectRecommended: true,
+    };
+  }
+  if (debug.is_valid === false) {
+    return {
+      level: 'error',
+      errorCode: null,
+      tokenExpiresAt: null,
+      message: 'Your Instagram access token is no longer valid. Reconnect your account.',
+      reconnectRecommended: true,
+    };
+  }
+  if (debug.is_valid !== true) {
+    return {
+      level: 'unknown',
+      errorCode: null,
+      tokenExpiresAt: null,
+      message: 'Meta returned an unexpected token status. Try reconnecting if problems continue.',
+      reconnectRecommended: false,
+    };
+  }
+
+  let tokenExpiresAt: string | null = null;
+  let expMs: number | null = null;
+  if (typeof debug.expires_at === 'number' && debug.expires_at > 0) {
+    expMs = debug.expires_at * 1000;
+    tokenExpiresAt = new Date(expMs).toISOString();
+  }
+  const now = Date.now();
+  if (expMs != null && expMs < now + TOKEN_EXPIRY_WARN_MS) {
+    return {
+      level: 'warning',
+      errorCode: null,
+      tokenExpiresAt,
+      message: 'Your Instagram access token expires soon. Reconnect to avoid interruptions.',
+      reconnectRecommended: true,
+    };
+  }
+
+  if (lastDmSuccessAt) {
+    const last = new Date(lastDmSuccessAt).getTime();
+    if (!Number.isNaN(last) && now - last > STALE_DM_WARN_MS) {
+      return {
+        level: 'warning',
+        errorCode: null,
+        tokenExpiresAt,
+        message:
+          'No automated DM reply has been recorded recently. If something seems off, reconnect or check Meta / inbox.',
+        reconnectRecommended: false,
+      };
+    }
+  }
+
+  return {
+    level: 'ok',
+    errorCode: null,
+    tokenExpiresAt,
+    message: 'Instagram connection looks healthy.',
+    reconnectRecommended: false,
+  };
+}
+
+async function persistInstagramHealth(
+  doctorId: string,
+  summary: ReturnType<typeof summarizeHealthFromMetaAndRow>,
+  tokenExpiresAtIso: string | null,
+  correlationId: string
+): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return;
+  const { error } = await supabase
+    .from('doctor_instagram')
+    .update({
+      instagram_health_checked_at: new Date().toISOString(),
+      instagram_health_level: summary.level,
+      instagram_health_error_code: summary.errorCode,
+      instagram_token_expires_at: tokenExpiresAtIso,
+    })
+    .eq('doctor_id', doctorId);
+  if (error) {
+    logger.warn({ correlationId, doctorId }, 'Instagram health: failed to persist snapshot');
+  }
+}
+
+function summaryFromCachedRow(row: DoctorInstagramHealthRow): InstagramHealthSummary {
+  const checkedAt = row.instagram_health_checked_at;
+  const tokenExpiresAt = row.instagram_token_expires_at;
+  const lastDm = row.instagram_last_dm_success_at;
+  const levelRaw = row.instagram_health_level;
+  let level: InstagramHealthSummary['level'] = 'unknown';
+  if (levelRaw === 'ok' || levelRaw === 'warning' || levelRaw === 'error' || levelRaw === 'unknown') {
+    level = levelRaw;
+  }
+
+  let message = 'Could not confirm token health. Try again later or reconnect.';
+  let reconnectRecommended = level === 'error';
+  if (level === 'ok') {
+    message = 'Instagram connection looks healthy.';
+  } else if (level === 'warning') {
+    message =
+      'Check token expiry or recent DM activity. Reconnect if patients report the bot is not replying.';
+    reconnectRecommended = true;
+  } else if (level === 'error') {
+    message = 'Instagram access token needs attention. Reconnect your account.';
+  }
+
+  return {
+    level,
+    checkedAt,
+    tokenExpiresAt,
+    lastDmSuccessAt: lastDm,
+    message,
+    reconnectRecommended,
+  };
+}
+
+/**
+ * Connection + health for dashboard (Meta debug_token, cached 5 minutes).
+ */
+export async function getInstagramDashboardStatus(
+  doctorId: string,
+  correlationId: string
+): Promise<{
+  connected: boolean;
+  username: string | null;
+  health: InstagramHealthSummary;
+}> {
+  const basic = await getConnectionStatus(doctorId, correlationId);
+  if (!basic.connected) {
+    return {
+      ...basic,
+      health: notConnectedHealth(),
+    };
+  }
+
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) {
+    throw new InternalError('Service role client not available for Instagram health');
+  }
+
+  const { data, error } = await supabase
+    .from('doctor_instagram')
+    .select(
+      'instagram_access_token, instagram_health_checked_at, instagram_health_level, instagram_health_error_code, instagram_token_expires_at, instagram_last_dm_success_at'
+    )
+    .eq('doctor_id', doctorId)
+    .maybeSingle();
+
+  if (error) handleSupabaseError(error, correlationId);
+
+  const row = data as DoctorInstagramHealthRow | null;
+  if (!row?.instagram_access_token) {
+    return {
+      ...basic,
+      health: {
+        level: 'unknown',
+        checkedAt: null,
+        tokenExpiresAt: null,
+        lastDmSuccessAt: null,
+        message: 'Connection data incomplete. Try reconnecting.',
+        reconnectRecommended: true,
+      },
+    };
+  }
+
+  const checkedMs = row.instagram_health_checked_at
+    ? new Date(row.instagram_health_checked_at).getTime()
+    : 0;
+  const cacheFresh =
+    checkedMs > 0 && Date.now() - checkedMs < HEALTH_CACHE_TTL_MS && !!row.instagram_health_level;
+
+  if (cacheFresh) {
+    return { ...basic, health: summaryFromCachedRow(row) };
+  }
+
+  const { data: debugData, requestFailed } = await fetchMetaDebugToken(
+    row.instagram_access_token,
+    correlationId
+  );
+  const summary = summarizeHealthFromMetaAndRow(
+    debugData,
+    row.instagram_last_dm_success_at,
+    requestFailed
+  );
+  const tokenExpiresIso =
+    summary.tokenExpiresAt ??
+    (typeof debugData?.expires_at === 'number' && debugData.expires_at > 0
+      ? new Date(debugData.expires_at * 1000).toISOString()
+      : null);
+
+  await persistInstagramHealth(doctorId, summary, tokenExpiresIso, correlationId);
+
+  return {
+    ...basic,
+    health: {
+      level: summary.level,
+      checkedAt: new Date().toISOString(),
+      tokenExpiresAt: tokenExpiresIso,
+      lastDmSuccessAt: row.instagram_last_dm_success_at,
+      message: summary.message,
+      reconnectRecommended: summary.reconnectRecommended,
+    },
+  };
+}
+
+/**
+ * Record last successful bot DM (worker). Best-effort; no throw.
+ */
+export async function recordInstagramLastDmSuccess(doctorId: string, correlationId?: string): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return;
+  const { error } = await supabase
+    .from('doctor_instagram')
+    .update({ instagram_last_dm_success_at: new Date().toISOString() })
+    .eq('doctor_id', doctorId);
+  if (error) {
+    logger.warn({ correlationId, doctorId }, 'Instagram: could not record last DM success time');
+  }
+}
+
+// ============================================================================
 // OAuth state (CSRF-safe)
 // ============================================================================
 
@@ -676,6 +1010,10 @@ export async function saveDoctorInstagram(
     facebook_page_id: input.facebook_page_id ?? null,
     instagram_access_token: input.instagram_access_token.trim(),
     instagram_username: input.instagram_username ?? null,
+    instagram_health_checked_at: null,
+    instagram_health_level: null,
+    instagram_health_error_code: null,
+    instagram_token_expires_at: null,
   };
 
   const { error } = await supabase

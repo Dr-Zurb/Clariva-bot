@@ -18,6 +18,28 @@ import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataModification } from '../utils/audit-logger';
 
 /**
+ * RBH-06: Map legacy slot steps to `awaiting_slot_selection` (in-memory + caller may persist).
+ * Clears `slotSelectionDate` / `slotToConfirm` the same way the former DM migration branches did.
+ */
+export function normalizeLegacySlotConversationSteps(state: ConversationState): ConversationState {
+  const step = state.step;
+  if (step !== 'selecting_slot' && step !== 'confirming_slot') {
+    return state;
+  }
+  const next: ConversationState = {
+    ...state,
+    step: 'awaiting_slot_selection',
+  };
+  if (step === 'selecting_slot') {
+    delete next.slotSelectionDate;
+  }
+  if (step === 'confirming_slot') {
+    delete next.slotToConfirm;
+  }
+  return next;
+}
+
+/**
  * Find conversation by platform conversation ID
  * 
  * Used to look up existing conversations when processing webhooks.

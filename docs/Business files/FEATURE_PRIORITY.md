@@ -1,6 +1,8 @@
 # Feature Priority & Development Roadmap
 ## Clariva Care - AI Receptionist Bot for Doctors
 
+**Related:** **[Complete Feature Set](./COMPLETE_FEATURE_SET.md)** — living inventory of all capabilities (shipped / partial / planned / deferred). Update it when scope changes; *this* doc stays the prioritization roadmap.
+
 ---
 
 ## Development Philosophy

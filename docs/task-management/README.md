@@ -136,6 +136,13 @@ Make the receptionist bot context-aware and conversational (ChatGPT/Gemini-like)
 
 Tasks: e-task-1 (AI context enhancement), e-task-2 (AI prompt improvements), e-task-3 (route ambiguous messages to AI), e-task-4 (multi-person booking "me and X"), e-task-5 (conversation history expansion), e-task-6 (hybrid extraction fallback).
 
+### Receptionist bot hardening — market readiness (2026-03-28)
+
+Observability, characterization tests, worker refactors (helpers + module split), legacy step migration, structured prompt kinds, webhook security doc, pause/handoff, Instagram health UI, and operator docs for message_edit fallbacks.
+
+- **Engineering map:** [RECEPTIONIST_BOT_ENGINEERING.md](../Development/Daily-plans/March%202026/2026-03-25/Receptionist%20Bot%20improvements/RECEPTIONIST_BOT_ENGINEERING.md)
+- **Task index:** [tasks/receptionist-bot-hardening/README.md](./tasks/receptionist-bot-hardening/README.md) — **RBH-01** through **RBH-11**
+
 ### AI Receptionist — Human-Like Bot (2026-03-26)
 
 Transform the bot from regex-heavy to AI-first: understand conversations, store data intelligently, respond like a human receptionist.
@@ -223,4 +230,4 @@ Tasks: e-task-1 (prescription migration), e-task-2 (prescription service & API),
 ---
 
 **Last Updated:** 2026-03-28  
-**Version:** 2.6.0 (Added Prescription V1 initiative)
+**Version:** 2.7.0 (Added Receptionist bot hardening RBH-01…11)

@@ -40,6 +40,23 @@ jest.mock('../../../src/config/env', () => ({
 jest.mock('../../../src/config/queue', () => ({
   isQueueEnabled: jest.fn().mockReturnValue(false),
   WEBHOOK_QUEUE_NAME: 'webhook-processing',
+  tryAcquireConversationLock: jest.fn(async () => true),
+  releaseConversationLock: jest.fn(async () => undefined),
+  tryAcquireInstagramSendLock: jest.fn(async () => true),
+  tryAcquireReplyThrottle: jest.fn(async () => true),
+  tryAcquireInstagramDedupLock: jest.fn(async () => true),
+}));
+jest.mock('../../../src/services/webhook-metrics', () => ({
+  classifyInstagramDmFailureReason: jest.fn().mockReturnValue('unknown'),
+  logWebhookCommentPipeline: jest.fn(),
+  logWebhookConflictRecovery: jest.fn(),
+  logWebhookDmThrottleSkip: jest.fn(),
+  logWebhookInstagramDmDelivery: jest.fn(),
+  logWebhookJobDeadLetter: jest.fn(),
+  logWebhookJobDequeued: jest.fn(),
+  logWebhookJobWorkerFailure: jest.fn(),
+  logWebhookJobWorkerSuccess: jest.fn(),
+  logWebhookPaymentJobCompleted: jest.fn(),
 }));
 jest.mock('../../../src/config/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
@@ -61,6 +78,7 @@ jest.mock('../../../src/services/instagram-connect-service', () => ({
   getDoctorIdByPageId: jest.fn(),
   getDoctorIdByPageIds: jest.fn(),
   getInstagramAccessTokenForDoctor: jest.fn(),
+  getStoredInstagramPageIdForDoctor: jest.fn(async () => '987654321098765'),
 }));
 jest.mock('../../../src/services/patient-service', () => ({
   findOrCreatePlaceholderPatient: jest.fn(),
@@ -77,6 +95,9 @@ jest.mock('../../../src/services/conversation-service', () => ({
   createConversation: jest.fn(),
   getConversationState: jest.fn(),
   updateConversationState: jest.fn(),
+  normalizeLegacySlotConversationSteps: jest.requireActual<
+    typeof import('../../../src/services/conversation-service')
+  >('../../../src/services/conversation-service').normalizeLegacySlotConversationSteps,
 }));
 jest.mock('../../../src/services/message-service', () => ({
   createMessage: jest.fn(),
@@ -308,7 +329,7 @@ describe('Webhook Worker', () => {
     });
 
     it('unknown page (no doctor linked): markWebhookFailed, audit failure, optional fallback reply, no conversation', async () => {
-      jest.mocked(instagramConnectService.getDoctorIdByPageId).mockResolvedValue(null);
+      jest.mocked(instagramConnectService.getDoctorIdByPageIds).mockResolvedValue(null);
       const job = fakeJob({
         eventId: 'evt_unknown_page',
         provider: 'instagram',

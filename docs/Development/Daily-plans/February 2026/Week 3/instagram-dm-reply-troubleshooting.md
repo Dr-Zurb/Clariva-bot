@@ -3,6 +3,16 @@
 
 ---
 
+## Canonical behavior (RBH-11)
+
+For **controller vs worker** split, **why `message_edit`-only requests are not queued**, and the **full fallback order** (DB → Graph → single conversation → `decodeMidExperimental`), use the reference doc — avoid duplicating long explanations here:
+
+**→ [WEBHOOKS.md — RBH-11: Instagram message_edit and sender fallbacks](../../../../Reference/WEBHOOKS.md)** (search **RBH-11** in page)  
+
+That section also states when **not** to delete “experimental” mid decoding and how to escalate to Meta **without** pasting real message IDs or patient text.
+
+---
+
 ## 📋 Problem Summary
 
 **Symptom:** When a user sends a DM to the connected Instagram professional account (@clariva_care), no automated reply is sent.
@@ -143,7 +153,9 @@ Meta sends real Instagram DMs as `message_edit` events in `entry[].messaging[]` 
 
 | Component | Path | Purpose |
 |-----------|------|---------|
-| Webhook worker | `backend/src/workers/webhook-worker.ts` | `parseInstagramMessage`, `tryResolveSenderFromMessageEdit`, `isValidInstagramSenderId` |
+| Webhook router | `backend/src/workers/webhook-worker.ts` | BullMQ job dispatch to DM / comment handlers (RBH-05) |
+| DM handler | `backend/src/workers/instagram-dm-webhook-handler.ts` | `processInstagramDmWebhook`, `parseInstagramMessage`, `tryResolveSenderFromMessageEdit`, `decodeMidExperimental`, `isValidInstagramSenderId` |
+| Webhook controller | `backend/src/controllers/webhook-controller.ts` | Skip queue for `message_edit`-only `messaging[]`; signature branches for `message_edit` |
 | Patient service | `backend/src/services/patient-service.ts` | `findOrCreatePlaceholderPatient` (23505 handling) |
 | Instagram service | `backend/src/services/instagram-service.ts` | `getInstagramMessageSender`, `getSenderFromMostRecentConversation`, `sendInstagramMessage` |
 | Conversation service | `backend/src/services/conversation-service.ts` | `getOnlyInstagramConversationSenderId` |
@@ -165,6 +177,7 @@ When investigating, check logs for:
 
 ## 🔗 Related Docs
 
+- [WEBHOOKS.md — RBH-11: message_edit & sender fallbacks](../../../../Reference/WEBHOOKS.md)
 - [Instagram Setup](../../../setup/instagram-setup.md)
 - [Webhooks Reference](../../../Reference/WEBHOOKS.md)
 - [e-task-3: Connect flow (OAuth)](../../Week%201/2026-02-06/e-task-3-instagram-connect-flow-oauth.md)
@@ -172,5 +185,5 @@ When investigating, check logs for:
 
 ---
 
-**Last updated:** 2026-02 (Week 3)  
-**Status:** Blocked on Meta webhook payload (missing sender for real DMs)
+**Last updated:** 2026-03-28 (RBH-11: links + code paths after worker split)  
+**Status:** Blocked on Meta webhook payload (missing sender for real DMs); engineering reference migrated to WEBHOOKS.md

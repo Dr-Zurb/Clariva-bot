@@ -401,6 +401,12 @@ export interface DoctorInstagram {
   facebook_page_id: string | null;
   instagram_access_token: string;
   instagram_username: string | null;
+  /** RBH-10: last debug_token refresh */
+  instagram_health_checked_at?: Date | string | null;
+  instagram_health_level?: string | null;
+  instagram_health_error_code?: string | null;
+  instagram_token_expires_at?: Date | string | null;
+  instagram_last_dm_success_at?: Date | string | null;
   created_at: Date;
   updated_at: Date;
 }

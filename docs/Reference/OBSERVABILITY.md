@@ -346,6 +346,30 @@ metrics.increment('request_count', {
 
 Downstream: filter logs by `context` + `metric` for counters; correlate with `correlationId`.
 
+### Receptionist / Instagram webhook metrics (RBH-01)
+
+Emitted as structured **INFO** / **WARN** logs with `context: 'webhook_metric'` (no message text, no comment body, no patient identifiers).
+
+| Log `metric` field | Key fields | When |
+|--------------------|------------|------|
+| `webhook_job_dequeued_total` | `eventId`, `provider`, `jobId?` | BullMQ worker picks up a job |
+| `webhook_job_worker_success` | `durationMs`, `provider` | Job handler finished without throw |
+| `webhook_job_worker_failure_total` | `durationMs`, `attempt?` | Job handler threw (retry or DLQ next) |
+| `webhook_job_dead_letter_total` | `attempts`, `errorClass` | Stored to DLQ after max retries |
+| `webhook_payment_job_completed_total` | `parsed`, `appointmentNotified` | Razorpay/PayPal branch completed |
+| `webhook_comment_pipeline_total` | `outcome`, `skipReason?`, `intent?`, `highIntent?`, `dmSent?`, `publicReplySent?`, `doctorTokenPresent?` | Instagram comment webhook processed or skipped |
+| `webhook_instagram_dm_delivery_total` | `outcome`, `reason?`, `usedRecipientFallback?` | DM send after conversation flow (success or classified failure) |
+| `webhook_dm_throttle_skip_total` | `throttleReason`: `send_lock` \| `reply_throttle` | Reply skipped due to per-event or per-user throttle |
+| `webhook_conflict_recovery_total` | `recoveryOutcome`: `success` \| `failed` \| `send_skipped_throttle` | Duplicate conversation / message race handling |
+
+**Example queries (log aggregation):**
+
+- DM failure rate: count lines where `msg ~ webhook_metric_webhook_instagram_dm_delivery_total` and `outcome = failure`, group by `reason`.
+- Comment outreach: count `webhook_comment_pipeline_total` with `highIntent = true`, compare `dmSent` / `publicReplySent`.
+- Worker duration: percentile on `durationMs` for `webhook_job_worker_success` by `provider`.
+
+**Code:** `backend/src/services/webhook-metrics.ts` (helpers); `backend/src/workers/webhook-worker.ts` (BullMQ wrapper + Instagram branches).
+
 **Implementation:**
 - Log business events with standard fields
 - Aggregate in log aggregation tool (e.g., Datadog, New Relic)

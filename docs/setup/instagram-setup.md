@@ -438,6 +438,21 @@ If **no** webhook log appears when you send a DM, the request is not hitting you
 
 ---
 
+## Dashboard: Instagram connection health (RBH-10)
+
+The doctor dashboard **Settings → Integrations → Instagram** card shows a **connection health** summary (refreshed from Meta about every **5 minutes** per doctor to avoid API spam):
+
+| Status | Meaning |
+|--------|--------|
+| **OK** | Meta `debug_token` reports the Page access token is valid; optional “last bot DM” timestamp is recent enough. |
+| **Needs attention** | Token expires within ~7 days, or no successful bot DM has been recorded for ~14 days (low traffic may still show this — use judgment). |
+| **Action required** | Token invalid or Meta returned an OAuth-style error — use **Disconnect** then **Connect Instagram** again. |
+| **Unknown** | Could not reach Meta or parse the response — retry later; if patients report failures, reconnect. |
+
+**Not configured:** If the server lacks `INSTAGRAM_APP_ID` / `INSTAGRAM_APP_SECRET`, health may show **Unknown** even when the token works for messaging.
+
+---
+
 ## 📚 Reference Documentation
 
 - [Facebook Developers Documentation](https://developers.facebook.com/docs/instagram-api)
@@ -464,6 +479,6 @@ Before proceeding to Task 4 (Webhook Controller), ensure:
 
 ---
 
-**Last Updated:** 2026-01-21  
+**Last Updated:** 2026-03-28  
 **Related Task:** [Task 1: Instagram Account Setup & Configuration](../../Development/Daily-plans/2026-01-21/e-task-1-instagram-setup.md)  
 **Next Steps:** [Task 4: Webhook Controller & Routes](../../Development/Daily-plans/2026-01-21/e-task-4-webhook-controller.md)

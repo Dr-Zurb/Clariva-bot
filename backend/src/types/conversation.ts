@@ -8,7 +8,32 @@
 import type { Intent } from './ai';
 
 /**
+ * Last gated prompt the bot sent (RBH-07). Stored in metadata; no PHI.
+ * Derived from `step` on each persist; substring checks on recent messages remain fallback for legacy rows.
+ */
+export type ConversationLastPromptKind =
+  | 'collect_details'
+  | 'consent'
+  | 'confirm_details'
+  | 'match_pick'
+  | 'cancel_confirm';
+
+/**
+ * Map flow step → prompt kind for persistence. Non-gating steps clear the field.
+ */
+export function conversationLastPromptKindForStep(step?: string): ConversationLastPromptKind | undefined {
+  if (!step || step === 'responded') return undefined;
+  if (step === 'collecting_all' || step.startsWith('collecting_')) return 'collect_details';
+  if (step === 'confirm_details') return 'confirm_details';
+  if (step === 'consent') return 'consent';
+  if (step === 'awaiting_match_confirmation') return 'match_pick';
+  if (step === 'awaiting_cancel_confirmation') return 'cancel_confirm';
+  return undefined;
+}
+
+/**
  * Collection step values (e-task-4). No PHI; only step and field names in metadata.
+ * RBH-06: `confirming_slot` / `selecting_slot` are deprecated — use `awaiting_slot_selection`.
  */
 export type PatientCollectionStep =
   | 'collecting_all'
@@ -34,19 +59,24 @@ export type PatientCollectionStep =
 export interface ConversationState {
   /** Last detected intent (for context in next turn) */
   lastIntent?: Intent;
-  /** Current step in flow (e.g. collecting_name, consent, selecting_slot, responded) */
+  /** Current step in flow (e.g. collecting_name, consent, awaiting_slot_selection, responded) */
   step?: string;
+  /**
+   * RBH-07: Which gated prompt we last showed (details, consent, confirm, match, cancel yes/no).
+   * Refreshed from `step` when the DM handler persists state; optional on legacy conversations.
+   */
+  lastPromptKind?: ConversationLastPromptKind;
   /** Collected data keys only (no values; values are PHI - stored in memory/Redis until Task 5) */
   collectedFields?: string[];
   /** Timestamp of last state update (ISO string) */
   updatedAt?: string;
   /** When consent was first requested (ISO string); set when transitioning to step consent */
   consent_requested_at?: string;
-  /** Date (YYYY-MM-DD) for slot selection; set when entering selecting_slot (e-task-3) */
+  /** Date (YYYY-MM-DD) for slot selection; legacy selecting_slot only (RBH-06) */
   slotSelectionDate?: string;
   /** Consultation type chosen: video or in_clinic (e-task-2); used at booking */
   consultationType?: 'video' | 'in_clinic';
-  /** Slot offered for confirmation (e-task-2); when step is confirming_slot */
+  /** Slot picked on booking page; optional metadata (canonical step: awaiting_slot_selection; RBH-06) */
   slotToConfirm?: { start: string; end: string; dateStr: string };
   /** Reason for visit (e-task-2); preserved for appointment.reason_for_visit at booking */
   reasonForVisit?: string;
