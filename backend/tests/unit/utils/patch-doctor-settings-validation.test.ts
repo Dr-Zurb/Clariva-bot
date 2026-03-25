@@ -50,4 +50,24 @@ describe('validatePatchDoctorSettings (e-task-6)', () => {
       validatePatchDoctorSettings({ payout_schedule: 'daily', unknownKey: 'x' })
     ).toThrow(ValidationError);
   });
+
+  it('accepts opd_mode and opd_policies (e-task-opd-02)', () => {
+    const result = validatePatchDoctorSettings({
+      opd_mode: 'queue',
+      opd_policies: { slot_join_grace_minutes: 5 },
+    });
+    expect(result.opd_mode).toBe('queue');
+    expect(result.opd_policies).toEqual({ slot_join_grace_minutes: 5 });
+  });
+
+  it('accepts null opd_policies', () => {
+    const result = validatePatchDoctorSettings({ opd_policies: null });
+    expect(result.opd_policies).toBeNull();
+  });
+
+  it('rejects invalid opd_mode', () => {
+    expect(() =>
+      validatePatchDoctorSettings({ opd_mode: 'hybrid' as 'slot' })
+    ).toThrow(ValidationError);
+  });
 });

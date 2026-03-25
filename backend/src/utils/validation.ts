@@ -728,6 +728,18 @@ export const patchDoctorSettingsSchema = z
       .optional(),
     /** Min amount (paise) before payout; NULL = pay any (e-task-6) */
     payout_minor: z.number().int().min(0).nullable().optional(),
+    /** OPD: fixed slots vs token queue (e-task-opd-02) */
+    opd_mode: z.enum(['slot', 'queue']).optional(),
+    /**
+     * Optional JSON policy blob (grace minutes, reschedule policy, etc.).
+     * Object keys/values are validated loosely here; doctor-settings-service applies business rules.
+     */
+    opd_policies: z
+      .union([
+        z.record(z.string(), z.any()),
+        z.null(),
+      ])
+      .optional(),
   })
   .strict();
 
