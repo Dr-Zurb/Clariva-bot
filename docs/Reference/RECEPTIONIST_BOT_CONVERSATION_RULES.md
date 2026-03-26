@@ -12,11 +12,12 @@
 ## Design Principles
 
 1. **Receptionist-first:** Greet, offer help, then collect info. Never jump straight to "tell me your name" on "hello".
-2. **RBH-16 (copy encoding):** Deterministic DM/booking strings prefer **ASCII `-` / ` - `** in templates so fixed copy does not show **mojibake** in Instagram or other clients.
-3. **Medical boundary:** Never diagnose, prescribe, or give medical advice. Redirect medical/chief-complaint messages.
-4. **Emergency handling:** Detect emergency language → redirect to emergency services immediately.
-5. **Language matching:** Respond in the same language the user types in (English, Hinglish, Hindi written in English).
-6. **Graceful degradation:** For unclear messages, stay polite and offer clear next steps.
+2. **AI for language, system for facts:** The **model** handles open-ended conversation and essentially any human language (no need to code every phrase). **Practice facts** (fees, hours, address, `consultation_types`, cancellation policy) come from **`doctor_settings`** and are injected into the system prompt (`DoctorContext` → `buildResponseSystemPrompt`). The model is instructed to treat those blocks as the **only** source of truth for pricing and to **never** claim fees are "not in the system" when the block lists them. A small set of **deterministic** paths remains for compliance (e.g. `medical_query` / `emergency` fixed copy, simple regex intents where useful).
+3. **RBH-16 (copy encoding):** Deterministic DM/booking strings prefer **ASCII `-` / ` - `** in templates so fixed copy does not show **mojibake** in Instagram or other clients.
+4. **Medical boundary:** Never diagnose, prescribe, or give medical advice. Redirect medical/chief-complaint messages.
+5. **Emergency handling:** Detect emergency language → redirect to emergency services immediately.
+6. **Language matching:** Respond in the same language the user types in (English, Hinglish, Hindi written in English) — reinforced in the receptionist system prompt; optional locale helpers for **fixed** safety strings (RBH-15).
+7. **Graceful degradation:** For unclear messages, stay polite and offer clear next steps.
 
 ---
 
@@ -89,4 +90,4 @@ When multiple intents could apply: **emergency > medical_query > book_appointmen
 
 ---
 
-**Last Updated:** 2026-03-28 (RBH-16 UTF-8 / ASCII-safe deterministic punctuation)
+**Last Updated:** 2026-03-28 (design note: AI conversation + injected system facts; RBH-16 punctuation)
