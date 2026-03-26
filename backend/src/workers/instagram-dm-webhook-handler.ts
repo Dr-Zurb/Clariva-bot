@@ -91,6 +91,7 @@ import {
 } from '../types/conversation';
 import {
   formatConsultationFeesForDm,
+  formatFeeBookingCtaForDm,
   isPricingInquiryMessage,
   userExplicitlyWantsToBookNow,
 } from '../utils/consultation-fees';
@@ -645,13 +646,18 @@ function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): Docto
 }
 
 /** RBH-13: Fee copy from doctor settings + booking CTA (structured or plain `consultation_types`). */
-function buildFeeQuoteDm(settings: DoctorSettingsRow | null): string {
-  const body = formatConsultationFeesForDm({
-    consultation_types: settings?.consultation_types ?? null,
-    practice_name: settings?.practice_name ?? null,
-    business_hours_summary: settings?.business_hours_summary ?? null,
-  });
-  return `${body}\n\nWhen you're ready to schedule, say **book appointment** and we'll take it from there.`;
+function buildFeeQuoteDm(settings: DoctorSettingsRow | null, userText: string): string {
+  const body = formatConsultationFeesForDm(
+    {
+      consultation_types: settings?.consultation_types ?? null,
+      practice_name: settings?.practice_name ?? null,
+      business_hours_summary: settings?.business_hours_summary ?? null,
+      appointment_fee_minor: settings?.appointment_fee_minor ?? null,
+      appointment_fee_currency: settings?.appointment_fee_currency ?? null,
+    },
+    userText
+  );
+  return `${body}\n\n${formatFeeBookingCtaForDm(userText)}`;
 }
 
 /** Format appointment status for check_appointment_status: "Tue, Mar 14, 2026 at 2:00 PM (pending)" */
@@ -1160,7 +1166,7 @@ export async function processInstagramDmWebhook(params: {
       (!state.step || state.step === 'responded')
     ) {
       // RBH-13: Fee / pricing questions - structured reply; stay in `responded`, do not start intake.
-      replyText = buildFeeQuoteDm(doctorSettings);
+      replyText = buildFeeQuoteDm(doctorSettings, text);
       state = {
         ...state,
         lastIntent: intentResult.intent,
@@ -1863,7 +1869,7 @@ export async function processInstagramDmWebhook(params: {
       !userExplicitlyWantsToBookNow(text)
     ) {
       // RBH-13: "How much..." misclassified as book_appointment with empty step - fee answer, not intake.
-      replyText = buildFeeQuoteDm(doctorSettings);
+      replyText = buildFeeQuoteDm(doctorSettings, text);
       state = {
         ...state,
         lastIntent: intentResult.intent,
@@ -1984,7 +1990,7 @@ export async function processInstagramDmWebhook(params: {
       const pricingOnly = isPricingInquiryMessage(text) && !explicitBook;
 
       if (!hasPatientReady && pricingOnly) {
-        replyText = buildFeeQuoteDm(doctorSettings);
+        replyText = buildFeeQuoteDm(doctorSettings, text);
         state = {
           ...state,
           lastIntent: intentResult.intent,

@@ -58,12 +58,15 @@ export function detectSafetyMessageLocale(raw: string): SafetyMessageLocale {
   ) {
     return 'pa';
   }
-  // Latin Hindi / Hinglish markers
+  // Latin Hindi / Hinglish markers (incl. fee questions: kitni fees, acha kitna, etc.)
   if (
     /\b(mujhe|mere|mera|meri|kya|hai|hain|nahi|nahin|dard|bukhar|bukhhaar|khansi|khans|jukam|jukaam|saans|sans|chakkar|ulti|tabiyat|beech)\b/i.test(
       t
     ) ||
-    /\b(pet\s+dard|sir\s+dard|kitni\s+din)\b/i.test(lower)
+    /\b(pet\s+dard|sir\s+dard|kitni\s+din)\b/i.test(lower) ||
+    /\b(kitni|kitna|acha|accha|bolo|bhai|yaar|toh|theek|thik|rupaye|rupiya|paise|zada|zyada|doc)\b/i.test(
+      lower
+    )
   ) {
     return 'hi';
   }

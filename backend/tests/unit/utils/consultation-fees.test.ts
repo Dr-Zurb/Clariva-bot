@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   formatConsultationFeesForDm,
+  formatFeeBookingCtaForDm,
   isConsultationTypePricingFollowUp,
   isMetaBookingOrFeeReasonText,
   isPricingInquiryMessage,
@@ -19,14 +20,16 @@ describe('consultation-fees (RBH-13)', () => {
     expect(userExplicitlyWantsToBookNow('how much do you charge')).toBe(false);
   });
 
-  it('formatConsultationFeesForDm echoes plain consultation_types', () => {
+  it('formatConsultationFeesForDm parses plain consultation_types with inline ₹', () => {
     const out = formatConsultationFeesForDm({
       practice_name: 'Test Clinic',
       consultation_types: 'In-person ₹500, Video ₹400',
       business_hours_summary: 'Mon–Fri 9–5',
     });
     expect(out).toContain('Test Clinic');
-    expect(out).toContain('In-person ₹500');
+    expect(out).toContain('**In-person**');
+    expect(out).toContain('₹500');
+    expect(out).toContain('₹400');
     expect(out).toContain('Mon–Fri');
   });
 
@@ -47,6 +50,41 @@ describe('consultation-fees (RBH-13)', () => {
     });
     expect(out.toLowerCase()).toContain("don't have");
     expect(out).not.toMatch(/₹\d+/);
+  });
+
+  it('formatConsultationFeesForDm Roman Hindi when user writes Hinglish (fee question)', () => {
+    const out = formatConsultationFeesForDm(
+      {
+        practice_name: 'Dr Zurb Clinic',
+        consultation_types: 'Video',
+        appointment_fee_minor: 50000,
+        appointment_fee_currency: 'INR',
+      },
+      'acha kitni fees hai?'
+    );
+    expect(out).toContain('consultation types / fees');
+    expect(out).toMatch(/₹500/);
+    expect(out).toContain('**Video**');
+  });
+
+  it('formatConsultationFeesForDm uses appointment_fee_minor when JSON rows lack amounts', () => {
+    const out = formatConsultationFeesForDm(
+      {
+        practice_name: 'Clinic',
+        consultation_types: '[{"l":"Video","note":"ask desk"}]',
+        appointment_fee_minor: 75000,
+        appointment_fee_currency: 'INR',
+      },
+      ''
+    );
+    expect(out).toContain('₹750');
+    expect(out).toContain('Video');
+  });
+
+  it('formatFeeBookingCtaForDm follows Hinglish locale', () => {
+    const cta = formatFeeBookingCtaForDm('kitni fee hai bhai');
+    expect(cta).toMatch(/appointment book/i);
+    expect(cta.toLowerCase()).not.toContain("when you're ready");
   });
 
   it('isMetaBookingOrFeeReasonText blocks meta strings for reason', () => {
