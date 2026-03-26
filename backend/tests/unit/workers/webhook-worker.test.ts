@@ -52,6 +52,7 @@ jest.mock('../../../src/services/webhook-metrics', () => ({
   logWebhookConflictRecovery: jest.fn(),
   logWebhookDmThrottleSkip: jest.fn(),
   logWebhookInstagramDmDelivery: jest.fn(),
+  logWebhookInstagramDmPipelineTiming: jest.fn(),
   logWebhookJobDeadLetter: jest.fn(),
   logWebhookJobDequeued: jest.fn(),
   logWebhookJobWorkerFailure: jest.fn(),
@@ -79,6 +80,7 @@ jest.mock('../../../src/services/instagram-connect-service', () => ({
   getDoctorIdByPageIds: jest.fn(),
   getInstagramAccessTokenForDoctor: jest.fn(),
   getStoredInstagramPageIdForDoctor: jest.fn(async () => '987654321098765'),
+  recordInstagramLastDmSuccess: jest.fn(),
 }));
 jest.mock('../../../src/services/patient-service', () => ({
   findOrCreatePlaceholderPatient: jest.fn(),

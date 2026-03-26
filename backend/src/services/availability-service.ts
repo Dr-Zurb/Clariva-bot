@@ -424,7 +424,7 @@ const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 /**
  * Get weekly availability summary for display (e-task-2).
- * Aggregates availability by day_of_week; returns human-readable string (e.g. "Mon 9–5, Tue 12–5, Wed 9–12").
+ * Aggregates availability by day_of_week; returns human-readable string (e.g. "Mon 9-5, Tue 12-5, Wed 9-12").
  * Uses doctor timezone when formatting times.
  *
  * @param doctorId - Doctor ID
@@ -487,7 +487,7 @@ export async function getWeeklyAvailabilitySummary(
     const endM = end % 60;
     const startStr = formatTimeForSummary(startH, startM, timezone);
     const endStr = formatTimeForSummary(endH, endM, timezone);
-    parts.push(`${DAY_NAMES[day]} ${startStr}–${endStr}`);
+    parts.push(`${DAY_NAMES[day]} ${startStr}-${endStr}`);
   }
   return parts.join(', ');
 }

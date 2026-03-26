@@ -219,6 +219,48 @@ export function logWebhookDmThrottleSkip(fields: {
   );
 }
 
+/**
+ * Instagram DM pipeline timing (RBH-12). Metadata only — no message text, no patient identifiers.
+ * Use for p50/p95 of intent vs generate vs IG send on staging/production logs.
+ */
+export function logWebhookInstagramDmPipelineTiming(fields: {
+  correlationId: string;
+  eventId: string;
+  doctorId?: string;
+  /** Classified intent (string enum). */
+  intent: string;
+  /** Time spent in classifyIntent (ms); 0 if skipped (should not happen in normal DM path). */
+  intentMs: number;
+  /** Sum of all generateResponse / generateResponseWithActions OpenAI calls in this handler (ms). */
+  generateMs: number;
+  /** Instagram send path duration (ms); omit if send not attempted. */
+  igSendMs?: number;
+  /** Wall time from handler try-start through state ready to send (approx. before IG). */
+  handlerPreSendMs: number;
+  /** True when RBH-12 greeting fast path avoided generateResponse. */
+  greetingFastPath?: boolean;
+  /** Reply skipped after DB write (throttle); IG not delivered. */
+  throttleSkipped?: boolean;
+}): void {
+  logger.info(
+    {
+      context: CONTEXT,
+      metric: 'webhook_instagram_dm_pipeline_timing',
+      correlationId: fields.correlationId,
+      eventId: fields.eventId,
+      doctorId: fields.doctorId,
+      intent: fields.intent,
+      intentMs: fields.intentMs,
+      generateMs: fields.generateMs,
+      igSendMs: fields.igSendMs,
+      handlerPreSendMs: fields.handlerPreSendMs,
+      greetingFastPath: fields.greetingFastPath === true,
+      throttleSkipped: fields.throttleSkipped === true,
+    },
+    'webhook_metric_webhook_instagram_dm_pipeline_timing'
+  );
+}
+
 /** Conflict recovery path after duplicate conversation / message. */
 export function logWebhookConflictRecovery(fields: {
   correlationId: string;

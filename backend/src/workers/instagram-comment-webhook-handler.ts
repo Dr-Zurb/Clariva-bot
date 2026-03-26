@@ -1,6 +1,6 @@
 /**
  * Instagram comment webhook branch (RBH-05).
- * entry[].changes[] field "comments" / "live_comments" — lead, optional DM + public reply.
+ * entry[].changes[] field "comments" / "live_comments" - lead, optional DM + public reply.
  */
 
 import { logger } from '../config/logger';
@@ -46,7 +46,7 @@ function buildCommentDMMessage(
   const practiceName = settings?.practice_name?.trim() || 'Our practice';
   const specialty = settings?.specialty?.trim() || '';
   const address = settings?.address_summary?.trim() || '';
-  const detailsBlock = `\n\n${practiceName}${specialty ? ` — ${specialty}` : ''}${address ? `. ${address}` : ''}`;
+  const detailsBlock = `\n\n${practiceName}${specialty ? ` - ${specialty}` : ''}${address ? `. ${address}` : ''}`;
 
   const templates: Record<string, { ack: string; cta: string }> = {
     book_appointment: {

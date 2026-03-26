@@ -12,10 +12,11 @@
 ## Design Principles
 
 1. **Receptionist-first:** Greet, offer help, then collect info. Never jump straight to "tell me your name" on "hello".
-2. **Medical boundary:** Never diagnose, prescribe, or give medical advice. Redirect medical/chief-complaint messages.
-3. **Emergency handling:** Detect emergency language → redirect to emergency services immediately.
-4. **Language matching:** Respond in the same language the user types in (English, Hinglish, Hindi written in English).
-5. **Graceful degradation:** For unclear messages, stay polite and offer clear next steps.
+2. **RBH-16 (copy encoding):** Deterministic DM/booking strings prefer **ASCII `-` / ` - `** in templates so fixed copy does not show **mojibake** in Instagram or other clients.
+3. **Medical boundary:** Never diagnose, prescribe, or give medical advice. Redirect medical/chief-complaint messages.
+4. **Emergency handling:** Detect emergency language → redirect to emergency services immediately.
+5. **Language matching:** Respond in the same language the user types in (English, Hinglish, Hindi written in English).
+6. **Graceful degradation:** For unclear messages, stay polite and offer clear next steps.
 
 ---
 
@@ -46,7 +47,21 @@ When multiple intents could apply: **emergency > medical_query > book_appointmen
 ## Conversation metadata (engine)
 
 - **`state.step`:** Canonical flow position (`collecting_all`, `confirm_details`, `consent`, `awaiting_match_confirmation`, slot/cancel/reschedule branches, `responded`, …).
-- **`state.lastPromptKind` (RBH-07):** Machine-readable last gated prompt (`collect_details`, `confirm_details`, `consent`, `match_pick`, `cancel_confirm`). Refreshed from `step` when the DM handler persists state so routing does not depend on bot wording. Legacy rows may omit it; the worker still falls back to substring checks on the last system message where needed.
+- **`state.lastPromptKind` (RBH-07 + RBH-13):** Machine-readable last gated prompt (`collect_details`, `confirm_details`, `consent`, `match_pick`, `cancel_confirm`, **`fee_quote`**). Usually refreshed from `step` (and **`state.activeFlow`** for fee quotes) when the DM handler persists state. Legacy rows may omit it; the worker still falls back to substring checks on the last system message where needed.
+- **`state.activeFlow` (RBH-13):** Optional sub-flow. **`fee_quote`** = user is in a pricing thread; the bot must **not** start `collecting_all` on a misclassified `book_appointment` until they clearly ask to book (e.g. “book appointment”). Cleared when they enter real booking (slot link or intake).
+
+## Fee & pricing (RBH-13)
+
+- **Source of truth:** `doctor_settings.consultation_types` (plain text, max length enforced in API) **or** optional **compact JSON array** in the same field, e.g. `[{"l":"General (in-person)","r":500},{"l":"Video","r":400}]` (`l`/`label`, `r`/`fee_inr`/`amount`). The bot **never invents** rupee amounts; if empty, copy directs the user to the clinic / profile.
+- **DM path:** Keyword / intent detection → `formatConsultationFeesForDm` + “say **book appointment** when ready”. Stays on `step: responded` with `activeFlow: 'fee_quote'`.
+- **Guardrails:** Meta strings (fee questions, “how do I book”) must not be stored as **`reason_for_visit`** during extraction (regex + collection validation + AI extraction prompt).
+
+## Context-aware intent (RBH-14)
+
+- **Problem:** Classifying **only** the latest user line mislabels e.g. “general consultation please” as **`book_appointment`** after a fee reply.
+- **DM handler:** Loads **`state`** + **recent messages** (prior turns; current line not yet in DB) **before** `classifyIntent`.
+- **`classifyIntent`:** Optional **`classifyContext`** — redacted **last N turns** + **`conversationGoal: fee_quote`** when `activeFlow` / `lastPromptKind` is fee quote. User prompt includes `Recent conversation` and `Current user message:`. **Intent cache is skipped** when context is present (same text can mean different intents in different threads).
+- **`applyIntentPostClassificationPolicy`:** If the model still returns **`book_appointment`** in a **fee thread** and the message looks like **pricing / consultation-type follow-up** (not explicit book, not a long intake blob), downgrade to **`ask_question`**.
 
 ## Deterministic Rules (Before AI)
 
@@ -67,11 +82,11 @@ When multiple intents could apply: **emergency > medical_query > book_appointmen
 
 ## Fixed Response Templates
 
-| Intent | Template (English) |
-|--------|-------------------|
-| `medical_query` | "I'm the scheduling assistant. For medical questions, please speak with the doctor during your appointment or call the clinic directly." |
-| `emergency` | "Please call emergency services or go to the nearest hospital immediately." |
+| Intent | Template |
+|--------|----------|
+| `medical_query` | **RBH-15:** Localized via `resolveSafetyMessage('medical_query', userText)` — English, **Devanagari Hindi**, **Gurmukhi Punjabi**, or **Roman Hindi / Punjabi** from script + simple keyword cues. Same meaning: scheduling assistant only; see doctor / call clinic. |
+| `emergency` | **RBH-15:** Localized emergency redirect + **India 112/108** in `resolveSafetyMessage('emergency', userText)`. **Pattern-based emergency** (`isEmergencyUserMessage`) runs **before** `medical_query` so Indic chest pain / breathless / poison phrases are not deflected as generic medical_query. Booking phrases `emergency appointment` / `urgent appointment` are excluded. |
 
 ---
 
-**Last Updated:** 2026-03-28
+**Last Updated:** 2026-03-28 (RBH-16 UTF-8 / ASCII-safe deterministic punctuation)

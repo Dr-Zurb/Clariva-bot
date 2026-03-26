@@ -16,12 +16,23 @@ export type ConversationLastPromptKind =
   | 'consent'
   | 'confirm_details'
   | 'match_pick'
-  | 'cancel_confirm';
+  | 'cancel_confirm'
+  /** RBH-13: Last assistant turn was a structured fee quote (not collecting PHI). */
+  | 'fee_quote';
+
+/** RBH-13: Sub-flow stored in metadata alongside `step`. */
+export type ConversationActiveFlow = 'fee_quote';
 
 /**
  * Map flow step → prompt kind for persistence. Non-gating steps clear the field.
  */
-export function conversationLastPromptKindForStep(step?: string): ConversationLastPromptKind | undefined {
+export function conversationLastPromptKindForStep(
+  step?: string,
+  activeFlow?: ConversationActiveFlow
+): ConversationLastPromptKind | undefined {
+  if (activeFlow === 'fee_quote' && (step === 'responded' || !step)) {
+    return 'fee_quote';
+  }
   if (!step || step === 'responded') return undefined;
   if (step === 'collecting_all' || step.startsWith('collecting_')) return 'collect_details';
   if (step === 'confirm_details') return 'confirm_details';
@@ -106,4 +117,6 @@ export interface ConversationState {
   rescheduleAppointmentId?: string;
   /** Reschedule flow: when multiple appointments, store IDs for "1", "2" mapping */
   pendingRescheduleAppointmentIds?: string[];
+  /** RBH-13: Optional sub-flow (e.g. fee quote without forced intake). */
+  activeFlow?: ConversationActiveFlow;
 }

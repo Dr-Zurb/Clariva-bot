@@ -53,7 +53,7 @@ export interface PersistPatientResult {
  * age and reason_for_visit are stored in conversation state for appointment.notes at booking.
  * Calls clearCollectedData after persist. Idempotent: safe to call multiple times.
  *
- * @returns { success, reply } — when success is false, caller must use reply as the bot response.
+ * @returns { success, reply } - when success is false, caller must use reply as the bot response.
  */
 export async function persistPatientAfterConsent(
   conversationId: string,
@@ -105,7 +105,7 @@ export async function persistPatientAfterConsent(
 
   return {
     success: true,
-    reply: "Thanks! I've saved your details. How can I help you next—would you like to book an appointment or check availability?",
+    reply: "Thanks! I've saved your details. How can I help you next - would you like to book an appointment or check availability?",
   };
 }
 

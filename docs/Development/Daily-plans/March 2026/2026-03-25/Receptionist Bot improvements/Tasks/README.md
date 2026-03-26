@@ -19,9 +19,16 @@
 | 9 | [e-task-rbh-09](./e-task-rbh-09-bot-pause-human-handoff.md) | product spec |
 | 10 | [e-task-rbh-10](./e-task-rbh-10-dashboard-instagram-health.md) | — |
 | 11 | [e-task-rbh-11](./e-task-rbh-11-message-edit-fallback-docs.md) | — |
+| 12 | [e-task-rbh-12](./e-task-rbh-12-dm-latency-faster-replies.md) | 14 preferred (routing may cut wasted LLM) |
+| 13 | [e-task-rbh-13](./e-task-rbh-13-fee-pricing-structured-path.md) | 14 preferred |
+| 14 | [e-task-rbh-14](./e-task-rbh-14-context-aware-intent-routing.md) | pairs with 13 |
+| 15 | [e-task-rbh-15](./e-task-rbh-15-multilingual-safety-messages-emergency.md) | — |
+| 16 | [e-task-rbh-16](./e-task-rbh-16-utf8-deterministic-strings.md) | quick win; before 13 UX polish |
+
+**Suggested product-quality order (post-RBH-11):** **16** (mojibake) → **15** (safety language) → **14** + **13** (routing + fees) → **12** (latency).
 
 **Related day plan (bot intelligence):** [2026-03-25 README](../../../Development/Daily-plans/March%202026/2026-03-25/README.md) — e-task-1…e-task-6 overlap with RBH-07 / AI alignment where relevant.
 
 ---
 
-**Last updated:** 2026-03-28
+**Last updated:** 2026-03-28 (RBH-12…16 — pre-launch UX: latency, fees, context, i18n safety, UTF-8)

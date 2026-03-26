@@ -53,6 +53,7 @@ jest.mock('../../../src/services/webhook-metrics', () => ({
   logWebhookConflictRecovery: jest.fn(),
   logWebhookDmThrottleSkip: jest.fn(),
   logWebhookInstagramDmDelivery: jest.fn(),
+  logWebhookInstagramDmPipelineTiming: jest.fn(),
   logWebhookJobDeadLetter: jest.fn(),
   logWebhookJobDequeued: jest.fn(),
   logWebhookJobWorkerFailure: jest.fn(),
@@ -84,6 +85,7 @@ jest.mock('../../../src/services/instagram-connect-service', () => ({
   getDoctorIdByPageIds: jest.fn(),
   getInstagramAccessTokenForDoctor: jest.fn(),
   getStoredInstagramPageIdForDoctor: jest.fn(),
+  recordInstagramLastDmSuccess: jest.fn(),
 }));
 jest.mock('../../../src/services/patient-service', () => ({
   findOrCreatePlaceholderPatient: jest.fn(),
@@ -122,8 +124,8 @@ jest.mock('../../../src/services/ai-service', () => ({
   redactPhiForAI: jest.fn((s: string) => s),
   parseMultiPersonBooking: jest.fn().mockReturnValue(null),
   AI_RECENT_MESSAGES_LIMIT: 30,
-  MEDICAL_QUERY_RESPONSE: 'Please consult in person.',
-  EMERGENCY_RESPONSE: 'Emergency.',
+  buildClassifyIntentContext: jest.fn().mockReturnValue(undefined),
+  applyIntentPostClassificationPolicy: jest.fn((r: { intent: string; confidence: number }) => r),
 }));
 jest.mock('../../../src/services/action-executor-service', () => ({
   executeAction: jest.fn(),

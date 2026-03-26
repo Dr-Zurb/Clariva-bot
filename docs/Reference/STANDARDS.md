@@ -775,7 +775,20 @@ These rules are enforced through:
 
 ---
 
-**Last Updated:** 2026-01-17  
+## User-visible copy (Receptionist / DM) - UTF-8 and punctuation (RBH-16)
+
+**SHOULD:** Save all `.ts` sources as **UTF-8** (no BOM issues in typical CI).
+
+**MUST for deterministic bot strings** (Instagram DM, booking links, fixed safety copy, payment descriptions shown to patients):
+
+- Prefer **ASCII hyphen-minus** (`-`) or spaced ` - ` instead of **Unicode em dash** (`U+2014`), **en dash** (`U+2013`), or **smart quotes** in templates. Fancy punctuation has caused **mojibake** (e.g. `Sureâ€¦`) when bytes were mishandled by a layer.
+- Reject known mojibake from mis-decoded em dashes (UTF-8 bytes read as Latin-1): search the codebase for the substring that renders as **a-euro-right-double-quote** together (`\\u00e2\\u20ac\\u201d`); it must not appear in source.
+
+**Reference:** [RECEPTIONIST_BOT_CONVERSATION_RULES.md](./RECEPTIONIST_BOT_CONVERSATION_RULES.md).
+
+---
+
+**Last Updated:** 2026-03-28  
 **Version:** 1.0.0  
 **Status:** ✅ Production-Enforced  
 **See Also:** [`CODING_WORKFLOW.md`](./CODING_WORKFLOW.md) for step-by-step coding process, [`API_DESIGN.md`](./API_DESIGN.md) for API design principles, [`TESTING.md`](./TESTING.md) for testing strategies, [`ARCHITECTURE.md`](./ARCHITECTURE.md), [`RECIPES.md`](./RECIPES.md), [`COMPLIANCE.md`](./COMPLIANCE.md), [`TASK_MANAGEMENT_GUIDE.md`](../../task-management/TASK_MANAGEMENT_GUIDE.md)

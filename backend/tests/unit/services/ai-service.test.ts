@@ -7,10 +7,12 @@
 
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import {
+  buildClassifyIntentContext,
   classifyIntent,
   redactPhiForAI,
   generateResponse,
 } from '../../../src/services/ai-service';
+import type { ConversationState } from '../../../src/types/conversation';
 import * as openaiConfig from '../../../src/config/openai';
 import * as auditLogger from '../../../src/utils/audit-logger';
 
@@ -128,7 +130,7 @@ describe('AI Service', () => {
           messages: { content: string }[];
         };
         expect(callArg.model).toBe('gpt-5.2');
-        expect(callArg.max_completion_tokens).toBe(256);
+        expect(callArg.max_completion_tokens).toBe(120);
         expect(callArg.messages[1].content).not.toContain('@');
         expect(mockedAudit.logAIClassification).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -139,6 +141,43 @@ describe('AI Service', () => {
             tokens: 50,
           })
         );
+      });
+
+      it('RBH-14: sends multi-turn user payload when classifyContext is provided', async () => {
+        const res: MockCompletion = {
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  intent: 'ask_question',
+                  confidence: 0.88,
+                }),
+              },
+            },
+          ],
+          usage: { total_tokens: 60 },
+        };
+        const mockCreate = jest.fn<() => Promise<MockCompletion>>().mockResolvedValue(res);
+        mockedOpenai.getOpenAIClient.mockReturnValue({
+          chat: { completions: { create: mockCreate } },
+        } as any);
+        mockedOpenai.getOpenAIConfig.mockReturnValue({
+          model: 'gpt-5.2',
+          maxTokens: 256,
+        });
+        const state: ConversationState = { activeFlow: 'fee_quote', step: 'responded' };
+        const classifyCtx = buildClassifyIntentContext(state, [
+          { sender_type: 'system', content: 'Fees: general vs video' },
+        ]);
+        await classifyIntent('general consultation please', correlationId, {
+          classifyContext: classifyCtx,
+        });
+        const firstCallArgs = (mockCreate.mock.calls as unknown as unknown[][])[0];
+        const callArg = (firstCallArgs?.[0] as { messages: { content: string }[] }).messages[1]
+          .content;
+        expect(callArg).toContain('Current user message:');
+        expect(callArg).toContain('Recent conversation');
+        expect(callArg).toContain('[Conversation context:');
       });
     });
 
@@ -220,7 +259,10 @@ describe('AI Service', () => {
           maxTokens: 256,
         });
 
-        const result = await classifyIntent('Hello', correlationId);
+        const result = await classifyIntent(
+          'I have a complicated question about scheduling and paperwork for next month',
+          correlationId
+        );
 
         expect(result).toEqual({ intent: 'unknown', confidence: 0 });
         expect(mockedAudit.logAIClassification).toHaveBeenCalledWith(

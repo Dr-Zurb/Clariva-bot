@@ -2,8 +2,8 @@
  * Webhook Processing Worker
  *
  * BullMQ worker: routes jobs to payment adapter, Instagram comment handler, or DM handler (RBH-05).
- * @see WEBHOOKS.md — Retry, dead letter
- * @see COMPLIANCE.md — Audit, no PHI in logs
+ * @see WEBHOOKS.md - Retry, dead letter
+ * @see COMPLIANCE.md - Audit, no PHI in logs
  */
 
 import { Worker, Job } from 'bullmq';

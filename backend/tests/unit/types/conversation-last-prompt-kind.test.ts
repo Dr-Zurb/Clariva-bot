@@ -18,4 +18,9 @@ describe('conversationLastPromptKindForStep (RBH-07)', () => {
     expect(conversationLastPromptKindForStep('awaiting_cancel_choice')).toBeUndefined();
     expect(conversationLastPromptKindForStep('awaiting_reschedule_slot')).toBeUndefined();
   });
+
+  it('RBH-13: fee_quote when activeFlow is fee_quote and step is responded', () => {
+    expect(conversationLastPromptKindForStep('responded', 'fee_quote')).toBe('fee_quote');
+    expect(conversationLastPromptKindForStep(undefined, 'fee_quote')).toBe('fee_quote');
+  });
 });

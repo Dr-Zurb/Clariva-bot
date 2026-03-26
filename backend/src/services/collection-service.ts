@@ -18,6 +18,7 @@ import {
 import { logPatientDataCollection } from '../utils/audit-logger';
 import { getWebhookQueue, getQueueConnection, isQueueEnabled } from '../config/queue';
 import { extractFieldsFromMessage, extractPhoneAndEmail, type ExtractedFields } from '../utils/extract-patient-fields';
+import { isMetaBookingOrFeeReasonText } from '../utils/consultation-fees';
 import { extractFieldsWithAI, redactPhiForAI, type ExtractionContext } from '../services/ai-service';
 
 // ============================================================================
@@ -414,7 +415,7 @@ export async function validateAndApplyExtracted(
         // skip invalid
       }
     } else if (field === 'reason_for_visit' && typeof value === 'string') {
-      if (isRelationshipOrGenderLike(value)) continue; // Never use "he is my father he is male" as reason
+      if (isRelationshipOrGenderLike(value) || isMetaBookingOrFeeReasonText(value)) continue;
       try {
         const v = validatePatientField('reason_for_visit', value);
         if (v !== undefined && typeof v === 'string') updates.reason_for_visit = v;

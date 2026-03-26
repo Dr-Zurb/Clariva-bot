@@ -361,12 +361,14 @@ Emitted as structured **INFO** / **WARN** logs with `context: 'webhook_metric'` 
 | `webhook_instagram_dm_delivery_total` | `outcome`, `reason?`, `usedRecipientFallback?` | DM send after conversation flow (success or classified failure) |
 | `webhook_dm_throttle_skip_total` | `throttleReason`: `send_lock` \| `reply_throttle` | Reply skipped due to per-event or per-user throttle |
 | `webhook_conflict_recovery_total` | `recoveryOutcome`: `success` \| `failed` \| `send_skipped_throttle` | Duplicate conversation / message race handling |
+| `webhook_instagram_dm_pipeline_timing` (RBH-12) | `intent`, `intentMs`, `generateMs`, `igSendMs?`, `handlerPreSendMs`, `greetingFastPath?`, `throttleSkipped?`, `doctorId?` | After DM send attempt: OpenAI + Instagram segment latencies (no PHI) |
 
 **Example queries (log aggregation):**
 
 - DM failure rate: count lines where `msg ~ webhook_metric_webhook_instagram_dm_delivery_total` and `outcome = failure`, group by `reason`.
 - Comment outreach: count `webhook_comment_pipeline_total` with `highIntent = true`, compare `dmSent` / `publicReplySent`.
 - Worker duration: percentile on `durationMs` for `webhook_job_worker_success` by `provider`.
+- DM perceived latency: percentile on `intentMs`, `generateMs`, `igSendMs`, `handlerPreSendMs` for `webhook_instagram_dm_pipeline_timing` (filter `greetingFastPath = true` to validate fast-path).
 
 **Code:** `backend/src/services/webhook-metrics.ts` (helpers); `backend/src/workers/webhook-worker.ts` (BullMQ wrapper + Instagram branches).
 

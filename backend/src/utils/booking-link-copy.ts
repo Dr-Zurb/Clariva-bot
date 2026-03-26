@@ -15,13 +15,13 @@ export function formatBookingLinkDm(
 ): string {
   const mode = resolveOpdModeFromSettings(doctorSettings);
   if (mode === 'queue') {
-    return `Join the queue for your visit here: ${slotLink}\n\nChoose a day, then confirm — you'll get a token number. Wait times are approximate.${mrnHint}`;
+    return `Join the queue for your visit here: ${slotLink}\n\nChoose a day, then confirm - you'll get a token number. Wait times are approximate.${mrnHint}`;
   }
   return `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
 }
 
 /**
- * Reschedule deep-link (Markdown) — queue practices emphasize day, not fixed time.
+ * Reschedule deep-link (Markdown) - queue practices emphasize day, not fixed time.
  */
 export function formatRescheduleLinkDm(
   url: string,

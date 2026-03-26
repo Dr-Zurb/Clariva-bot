@@ -9,6 +9,8 @@
  * No PHI sent to external services. Used when step is collecting_all.
  */
 
+import { isMetaBookingOrFeeReasonText } from './consultation-fees';
+
 export interface ExtractedFields {
   name?: string;
   phone?: string;
@@ -189,10 +191,14 @@ export function extractFieldsFromMessage(
   const reasonLabelMatch = trimmed.match(REASON_LABEL_REGEX);
   if (reasonLabelMatch) {
     const reason = reasonLabelMatch[1].trim();
-    if (reason.length >= 2) result.reason_for_visit = reason;
+    if (reason.length >= 2 && !isMetaBookingOrFeeReasonText(reason)) result.reason_for_visit = reason;
   } else if (!fastPathOnly) {
     const iHaveMatch = trimmed.match(/\bi\s+have\s+([^.@,\n]+?)(?=\s*(?:,|@|\n|$))/i);
-    if (iHaveMatch && iHaveMatch[1].trim().length >= 3) {
+    if (
+      iHaveMatch &&
+      iHaveMatch[1].trim().length >= 3 &&
+      !isMetaBookingOrFeeReasonText(iHaveMatch[1].trim())
+    ) {
       result.reason_for_visit = iHaveMatch[1].trim();
     } else {
       const heIsMatch = trimmed.match(/\b(?:he|she|him|her)\s+is\s+([^.@,\n]+?)(?=\s*(?:,|@|\n|$|so\s))/i);
@@ -200,10 +206,14 @@ export function extractFieldsFromMessage(
         const captured = heIsMatch[1].trim();
         const isRelOrGender = /\b(?:my\s+)?(?:father|mother|dad|mom|brother|sister)\b/i.test(captured) ||
           /\b(?:male|female)\b/i.test(captured) || /\bobviously\s*$/i.test(captured);
-        if (!isRelOrGender) result.reason_for_visit = captured;
+        if (!isRelOrGender && !isMetaBookingOrFeeReasonText(captured)) result.reason_for_visit = captured;
       } else {
         const getCheckedMatch = trimmed.match(/\b(?:get|want\s+to\s+get)\s+(?:him|her)\s+checked\s+(?:for\s+)?([^.@,\n]+?)(?=\s*(?:,|@|\n|$))/i);
-        if (getCheckedMatch && getCheckedMatch[1].trim().length >= 2) {
+        if (
+          getCheckedMatch &&
+          getCheckedMatch[1].trim().length >= 2 &&
+          !isMetaBookingOrFeeReasonText(getCheckedMatch[1].trim())
+        ) {
           result.reason_for_visit = getCheckedMatch[1].trim();
         } else {
           const parts = trimmed.split(/[\n,;]+/).map((p) => p.trim()).filter(Boolean);
@@ -231,8 +241,10 @@ export function extractFieldsFromMessage(
               !isNameLikePart(p) &&
               (p.toLowerCase().startsWith('i have') || isReasonLike(p) || p.length >= 5)
             ) {
-              result.reason_for_visit = p;
-              break;
+              if (!isMetaBookingOrFeeReasonText(p)) {
+                result.reason_for_visit = p;
+                break;
+              }
             }
           }
         }

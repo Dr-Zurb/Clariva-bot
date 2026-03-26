@@ -106,14 +106,15 @@ Includes `collecting_all`, `consent`, `confirm_details`, `awaiting_match_confirm
 
 ## 7. Suggested improvement order
 
-**Task files (tracked):** [docs/task-management/tasks/receptionist-bot-hardening/README.md](../../../../../task-management/tasks/receptionist-bot-hardening/README.md) — RBH-01 … RBH-11.
+**Task files (tracked):** [Tasks/README.md](./Tasks/README.md) — RBH-01 … **RBH-16** (hardening + pre-launch UX). Legacy index: [task-management receptionist-bot-hardening](../../../../../task-management/tasks/receptionist-bot-hardening/README.md).
 
 1. Observability: queue depth, worker failures, send/comment DM success rates. → **RBH-01**
 2. Tests: golden-path DM, comment high-intent (mocked IG). → **RBH-02**
 3. Refactor: shared helpers → split modules (no behavior change). → **RBH-03**, **RBH-04**, **RBH-05**
 4. Legacy steps migration → **RBH-06**; structured prompts → **RBH-07**; signature threat model → **RBH-08**
-5. Product: pause bot / human handoff → **RBH-09** ✅; dashboard IG health → **RBH-10** ✅; message_edit docs (**RBH-11**)
-6. AI: Align comment vs DM prompts; unified redaction/caching policy (ties to [e-task-1](../e-task-1-ai-context-enhancement.md), [e-task-2](../e-task-2-ai-prompt-improvements.md)).
+5. Product: pause bot / human handoff → **RBH-09** ✅; dashboard IG health → **RBH-10** ✅; message_edit docs → **RBH-11** ✅
+6. Pre-launch UX (**manual test gaps**): DM latency → **RBH-12**; fee/pricing without forced booking → **RBH-13**; context-aware intent → **RBH-14**; multilingual safety + emergency → **RBH-15**; UTF-8 mojibake → **RBH-16**
+7. AI: Align comment vs DM prompts; unified redaction/caching policy (ties to [e-task-1](../e-task-1-ai-context-enhancement.md), [e-task-2](../e-task-2-ai-prompt-improvements.md)).
 
 ---
 
@@ -131,3 +132,4 @@ Includes `collecting_all`, `consent`, `confirm_details`, `awaiting_match_confirm
 | 2026-03-28 | RBH-09: `instagram_receptionist_paused` + optional pause message (migration 033); DM + comment worker gating; dashboard **Bot Messages**; audit on toggle. |
 | 2026-03-28 | RBH-10: Instagram dashboard health — `debug_token` + 5m cache (migration 034); GET `/settings/instagram/status` includes `health`; last DM success from `webhook-dm-send`. |
 | 2026-03-28 | **RBH-11:** [WEBHOOKS.md](../../../../../Reference/WEBHOOKS.md) — `message_edit` ingest vs worker fallbacks (`tryResolveSenderFromMessageEdit`, `decodeMidExperimental`); §5 links + troubleshooting code paths updated. |
+| 2026-03-28 | **RBH-12…RBH-16** task files: latency, structured fees, context-aware routing, multilingual safety templates, UTF-8 copy — see [Tasks/README.md](./Tasks/README.md). |

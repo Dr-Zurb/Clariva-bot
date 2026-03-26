@@ -1,5 +1,5 @@
 /**
- * AI Service – Intent Detection & Response Generation
+ * AI Service - Intent Detection & Response Generation
  *
  * Classifies user message text into intents and generates assistive bot replies using OpenAI.
  * PHI is redacted before sending to OpenAI; only metadata is audited (COMPLIANCE.md G).
@@ -20,6 +20,16 @@ import type { Message } from '../types';
 import type { AIResponseWithActions, ToolCallFromAI } from '../types/system-actions';
 import { logAIClassification, logAIResponseGeneration, logAuditEvent } from '../utils/audit-logger';
 import type { CollectedPatientData } from '../utils/validation';
+import {
+  isConsultationTypePricingFollowUp,
+  isPricingInquiryMessage,
+  userExplicitlyWantsToBookNow,
+} from '../utils/consultation-fees';
+import {
+  EMERGENCY_RESPONSE_EN,
+  isEmergencyUserMessage,
+  MEDICAL_QUERY_RESPONSE_EN,
+} from '../utils/safety-messages';
 
 // ============================================================================
 // Constants
@@ -27,6 +37,9 @@ import type { CollectedPatientData } from '../utils/validation';
 
 const MAX_RETRIES = 3;
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
+
+/** RBH-12: Intent output is small JSON; lower cap reduces generation latency vs full DM max_tokens. */
+const INTENT_CLASSIFICATION_MAX_COMPLETION_TOKENS = 120;
 
 /** In-memory cache TTL (ms). Key = redacted text; cache hit = no OpenAI call, no audit. */
 const INTENT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -110,7 +123,7 @@ function isBookForSomeoneElse(text: string): boolean {
 }
 
 /**
- * e-task-4: Parse "book for me and my X" — returns relation when multi-person, null otherwise.
+ * e-task-4: Parse "book for me and my X" - returns relation when multi-person, null otherwise.
  * Use in webhook to distinguish multi-person from single-person book_for_someone_else.
  */
 export function parseMultiPersonBooking(text: string): { relation: string } | null {
@@ -127,31 +140,17 @@ function isCheckAppointmentStatus(text: string): boolean {
   return CHECK_APPOINTMENT_REGEX.test(trimmed);
 }
 
-/** Emergency keywords/phrases. Match → emergency, skip AI. */
-const EMERGENCY_PATTERNS = [
-  /\b(chest\s+pain|can'?t\s+breathe|cannot\s+breathe|difficulty\s+breathing)\b/i,
-  /\b(heart\s+attack|stroke|unconscious)\b/i,
-  /\b(emergency|urgent|accident|bleeding)\b/i,
-  /\b(severe\s+pain|critical)\b/i,
-];
-
 function isSimpleGreeting(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed.length > 50) return false; // Long messages are not simple greetings
   return SIMPLE_GREETING_REGEX.test(trimmed);
 }
 
-function isEmergency(text: string): boolean {
-  return EMERGENCY_PATTERNS.some((p) => p.test(text));
-}
+/** Fixed English response for medical_query (RBH-15: use `resolveSafetyMessage` in DM for localized copy). */
+export const MEDICAL_QUERY_RESPONSE = MEDICAL_QUERY_RESPONSE_EN;
 
-/** Fixed response for medical_query intent. No AI-generated medical advice. */
-export const MEDICAL_QUERY_RESPONSE =
-  "I'm the scheduling assistant. For medical questions, please speak with the doctor during your appointment or call the clinic directly.";
-
-/** Fixed response for emergency intent. */
-export const EMERGENCY_RESPONSE =
-  "Please call emergency services or go to the nearest hospital immediately.";
+/** Fixed English emergency line (RBH-15: use `resolveSafetyMessage` in DM for localized copy). */
+export const EMERGENCY_RESPONSE = EMERGENCY_RESPONSE_EN;
 
 // ============================================================================
 // AI Prompts
@@ -168,18 +167,22 @@ Intent rules:
 - book_appointment: Use when user explicitly asks to book for THEMSELVES (e.g. "book", "schedule", "I want an appointment", "can I book"). NOT when they say "for my mother" etc.
 - medical_query: User describes symptoms, chief complaints, or asks for medical advice/prescription. Redirect to doctor/clinic; never diagnose.
 - emergency: Urgent/emergency language (chest pain, can't breathe, accident). Redirect to emergency services.
-- ask_question: General questions (price, timings, location, consultation type). Answer from practice info.
+- ask_question: General questions (price, timings, location, consultation type). Answer from practice info. Use ask_question for fee/pricing/cost questions even if the user mentions "consultation" or "appointment" without clearly asking to schedule (e.g. "how much is consultation fee", "what are your charges").
 - revoke_consent: User wants to delete data or revoke consent (e.g. "delete my data", "revoke consent").
 - check_appointment_status: User asks if appointment is confirmed, when is visit.
 - unknown: Spam, vulgar, meaningless, or unclear. Polite deflection.
 
-Examples: "hello" → greeting; "book appointment" → book_appointment; "book for my mother" → book_for_someone_else; "I have fever" → medical_query; "chest pain" → emergency.
+After the user asked about fees/pricing, a short follow-up like "general consultation" or "video consult" is still ask_question (clarifying visit type / pricing), NOT book_appointment, unless they clearly ask to book (e.g. "book appointment", "schedule me").
+
+Examples: "hello" → greeting; "book appointment" → book_appointment; "book for my mother" → book_for_someone_else; "I have fever" → medical_query; "chest pain" → emergency; "how much is the consultation fee" → ask_question; "general consultation" (right after a fee discussion) → ask_question.
+
+Multi-turn input: You may receive a [Conversation context] block and/or "Recent conversation (redacted)" lines followed by "Current user message:". Always classify **only** the current user message, using prior turns to disambiguate (e.g. after a fee reply, "general consultation please" → ask_question, not book_appointment).
 
 Respond with a single JSON object: { "intent": "<one of the valid intents>", "confidence": <number 0.0 to 1.0> }.
 Use "unknown" only when the message does not clearly match any other intent.`;
 
-/** e-task-6: Comment intent classifier. Short comments (1–20 words), emojis, @mentions, mixed language. */
-const COMMENT_INTENT_SYSTEM_PROMPT = `You are an intent classifier for Instagram post comments on a medical practice's posts. Classify each comment into exactly one intent. Comments are short (1–20 words), may have emojis, @mentions, typos, and mixed language (English, Hindi, Hinglish).
+/** e-task-6: Comment intent classifier. Short comments (1-20 words), emojis, @mentions, mixed language. */
+const COMMENT_INTENT_SYSTEM_PROMPT = `You are an intent classifier for Instagram post comments on a medical practice's posts. Classify each comment into exactly one intent. Comments are short (1-20 words), may have emojis, @mentions, typos, and mixed language (English, Hindi, Hinglish).
 
 Valid intents: book_appointment, check_availability, pricing_inquiry, general_inquiry, medical_query, greeting, praise, spam, joke, unrelated, vulgar, other.
 
@@ -196,12 +199,12 @@ LOW-INTENT: greeting, praise, other
 - other: Unclear or borderline; not clearly high-intent or skip
 
 SKIP (never reply or store): spam, joke, unrelated, vulgar
-- spam: Promotional, bots, links ("DM for deals", "check out my page", link spam). NOT symptom-sharing—"pain", "ache", "fever" = medical_query.
+- spam: Promotional, bots, links ("DM for deals", "check out my page", link spam). NOT symptom-sharing - "pain", "ache", "fever" = medical_query.
 - joke: Humor, puns, memes ("lol", "haha", "😂", sarcastic jokes)
 - unrelated: Off-topic ("follow for follow", "check my profile", random topics)
 - vulgar: Profanity, insults, harassment
 
-Classify intent regardless of language. Handle emojis and @mentions—"interested 👍" = general_inquiry; "lol" = joke.
+Classify intent regardless of language. Handle emojis and @mentions - "interested 👍" = general_inquiry; "lol" = joke.
 When uncertain, prefer "other" over falsely classifying as high-intent. Err on the side of not replying.
 
 Respond with a single JSON object: { "intent": "<one of the valid intents>", "confidence": <number 0.0 to 1.0> }.`;
@@ -215,19 +218,19 @@ GREETING: When currentIntent is greeting, greet back warmly, introduce yourself 
 
 IMPORTANT - Our booking flow collects: full name, age, gender, phone number, reason for visit (required); email (optional). Then we confirm details, get consent, and show a link to pick a slot. Keep replies brief and natural.
 
-CRITICAL - When currentIntent is book_appointment, the user has ALREADY chosen to book. NEVER ask "would you like to book or ask a question?"—go straight to the current step. Never repeat that choice prompt. If state shows collecting_all, ALWAYS ask for ALL fields at once (full name, age, gender, mobile, reason for visit; email optional). NEVER ask for one field, wait for reply, then ask for the next—that wastes time. If the user asks "what's YOUR name" (to the bot), say you're the practice's assistant and ask for THEIR details—one brief reply only.
+CRITICAL - When currentIntent is book_appointment, the user has ALREADY chosen to book. NEVER ask "would you like to book or ask a question?" - go straight to the current step. Never repeat that choice prompt. If state shows collecting_all, ALWAYS ask for ALL fields at once (full name, age, gender, mobile, reason for visit; email optional). NEVER ask for one field, wait for reply, then ask for the next - that wastes time. If the user asks "what's YOUR name" (to the bot), say you're the practice's assistant and ask for THEIR details - one brief reply only.
 
-NEVER ask "what date/time?" or "share two date/time options"—we use a slot-selection flow. When we need date/time, the system shows numbered slots; the user picks 1, 2, 3. Your job is only to collect name, phone, or handle consent/other questions.
+NEVER ask "what date/time?" or "share two date/time options" - we use a slot-selection flow. When we need date/time, the system shows numbered slots; the user picks 1, 2, 3. Your job is only to collect name, phone, or handle consent/other questions.
 
-CRITICAL - NEVER output placeholder text like "[Slot selection link]", "[link]", or "**[Slot selection link]**". The system injects the real URL when needed. You do not have access to it. If you mention a link, do not invent one—the system handles it.
+CRITICAL - NEVER output placeholder text like "[Slot selection link]", "[link]", or "**[Slot selection link]**". The system injects the real URL when needed. You do not have access to it. If you mention a link, do not invent one - the system handles it.
 
-CRITICAL - When state shows collecting_all or confirm_details with collectedFields, the user has ALREADY shared details. NEVER repeat "Please share: Full name, Age, Mobile, Reason for visit". Acknowledge what they said, ask for missing fields only, or move to confirmation. If they refine the reason (e.g. "i wanna get her checked for diabetes"), treat it as updating the reason—do NOT start over.
+CRITICAL - When state shows collecting_all or confirm_details with collectedFields, the user has ALREADY shared details. NEVER repeat "Please share: Full name, Age, Mobile, Reason for visit". Acknowledge what they said, ask for missing fields only, or move to confirmation. If they refine the reason (e.g. "i wanna get her checked for diabetes"), treat it as updating the reason - do NOT start over.
 
 ACKNOWLEDGE FIRST - ALWAYS acknowledge what the user just said before asking for more. Examples: "Got it, your sister." / "Thanks for clarifying." / "Understood." Do not repeat the same prompt verbatim when the user has already responded.
 
 RELATION - When Context says "Booking for user's [relation]" (e.g. sister, mother), use the relation in your reply. Say "your sister" or "for your mother" not "them" when known. When the user clarifies (e.g. "my sister?", "sister first"), acknowledge the clarification and continue with the flow. Do not start over.
 
-TONE - Be warm and natural. Match the user's energy. Avoid robotic repetition. When step is collecting_all, ALWAYS ask for ALL required fields at once—never one by one. Do not repeat the same prompt verbatim when the user has already responded. If the user asks something outside your role, politely suggest they speak with the practice.`;
+TONE - Be warm and natural. Match the user's energy. Avoid robotic repetition. When step is collecting_all, ALWAYS ask for ALL required fields at once - never one by one. Do not repeat the same prompt verbatim when the user has already responded. If the user asks something outside your role, politely suggest they speak with the practice.`;
 
 /** Safe fallback when response generation fails (no PHI, no medical advice). */
 const FALLBACK_RESPONSE =
@@ -240,7 +243,7 @@ const MAX_HISTORY_PAIRS = env.AI_MAX_HISTORY_PAIRS;
 export const AI_RECENT_MESSAGES_LIMIT = MAX_HISTORY_PAIRS * 2;
 
 // ============================================================================
-// PHI Redaction (COMPLIANCE.md G – redact before sending to OpenAI)
+// PHI Redaction (COMPLIANCE.md G - redact before sending to OpenAI)
 // ============================================================================
 
 /**
@@ -279,7 +282,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** e-task-6 + AI Receptionist: Prompt for AI-assisted field extraction. No PHI in prompt.
- * Phone/email appear as [REDACTED_PHONE]/[REDACTED_EMAIL] — we extract those separately. Focus on name, age, gender, reason. */
+ * Phone/email appear as [REDACTED_PHONE]/[REDACTED_EMAIL] - we extract those separately. Focus on name, age, gender, reason. */
 const EXTRACTION_SYSTEM_PROMPT = `You are a smart extractor for patient booking. Understand context and natural language. Extract patient fields from the user's message.
 
 Valid fields to extract: name, age, gender, reason_for_visit.
@@ -287,8 +290,9 @@ Valid fields to extract: name, age, gender, reason_for_visit.
 - age: Number 1-120. "60 Y M" or "60 years male" → age is 60.
 - gender: male, female, or other. "60 Y M" or "M" → male; "60 Y F" → female.
 - reason_for_visit: Chief complaint, symptom, or reason. "diabetic checkup", "stomach pain", "get her checked for diabetes" → extract as reason. NEVER use name/age/gender as reason.
+- NEVER set reason_for_visit for meta questions about fees, price, or how to book (e.g. "how much is consultation", "what is the fee", "how do I book") - return {} for those.
 
-IGNORE: [REDACTED_PHONE] and [REDACTED_EMAIL] — we extract those separately. Do not include phone or email in your output.
+IGNORE: [REDACTED_PHONE] and [REDACTED_EMAIL] - we extract those separately. Do not include phone or email in your output.
 
 CRITICAL - Use conversation context: If we asked for a specific field (e.g. gender) and the user said "he is my father he is male obviously", extract ONLY gender. Do NOT use relationship/gender clarifications as name or reason.
 If the message says "i wanna get her checked for diabetes", extract reason_for_visit, NOT name.
@@ -304,7 +308,7 @@ export interface ExtractionContext {
 }
 
 /**
- * e-task-6 + AI Receptionist: AI-assisted extraction. Redacted input only; output is PHI—store only, never log.
+ * e-task-6 + AI Receptionist: AI-assisted extraction. Redacted input only; output is PHI - store only, never log.
  * When context is provided, AI uses it to understand (e.g. "we asked for gender" → extract only gender).
  * On failure returns {}; caller merges with existing and validates.
  */
@@ -429,6 +433,113 @@ Return JSON only.`;
   }
 }
 
+// ============================================================================
+// RBH-14: Context-aware intent classification (multi-turn, fee thread)
+// ============================================================================
+
+/** Optional dialogue context - all strings must already be PHI-redacted. */
+export interface ClassifyIntentContext {
+  /** assistant | user turns, oldest first */
+  recentTurns?: { role: 'user' | 'assistant'; content: string }[];
+  /** Active sub-flow from conversation metadata */
+  conversationGoal?: 'fee_quote';
+}
+
+const CLASSIFY_INTENT_MAX_PRIOR_TURNS = 6;
+const CLASSIFY_INTENT_MAX_CHARS_PER_TURN = 450;
+
+/**
+ * Build redacted, capped prior turns + optional fee-thread hint for `classifyIntent`.
+ */
+export function buildClassifyIntentContext(
+  state: ConversationState,
+  recentMessages: { sender_type: string; content: string }[],
+  options?: { maxTurns?: number }
+): ClassifyIntentContext | undefined {
+  const maxTurns = options?.maxTurns ?? CLASSIFY_INTENT_MAX_PRIOR_TURNS;
+  const feeThread =
+    state.activeFlow === 'fee_quote' || state.lastPromptKind === 'fee_quote';
+  const turns = recentMessages
+    .slice(-maxTurns)
+    .map((m) => ({
+      role: (m.sender_type === 'patient' ? 'user' : 'assistant') as 'user' | 'assistant',
+      content: redactPhiForAI(m.content ?? '')
+        .slice(0, CLASSIFY_INTENT_MAX_CHARS_PER_TURN)
+        .trim(),
+    }))
+    .filter((t) => t.content.length > 0);
+  const conversationGoal = feeThread ? ('fee_quote' as const) : undefined;
+  if (!conversationGoal && turns.length === 0) return undefined;
+  return {
+    conversationGoal,
+    recentTurns: turns.length > 0 ? turns : undefined,
+  };
+}
+
+function buildIntentClassificationUserContent(
+  redactedCurrent: string,
+  ctx?: ClassifyIntentContext
+): string {
+  if (
+    !ctx ||
+    (!ctx.recentTurns?.length && ctx.conversationGoal !== 'fee_quote')
+  ) {
+    return redactedCurrent;
+  }
+  const blocks: string[] = [];
+  if (ctx.conversationGoal === 'fee_quote') {
+    blocks.push(
+      '[Conversation context: The assistant is discussing consultation fees or pricing with this user. Short follow-ups that only name or clarify a visit type/channel (e.g. "general consultation", "video please") are ask_question, not book_appointment, unless they clearly ask to book or schedule.]'
+    );
+  }
+  if (ctx.recentTurns?.length) {
+    blocks.push(
+      `Recent conversation (redacted, oldest first):\n${ctx.recentTurns.map((t) => `${t.role}: ${t.content}`).join('\n')}`
+    );
+  }
+  blocks.push(`Current user message: ${redactedCurrent}`);
+  return blocks.join('\n\n');
+}
+
+function classifyIntentUsesContext(ctx: ClassifyIntentContext | undefined): boolean {
+  if (!ctx) return false;
+  return (
+    ctx.conversationGoal === 'fee_quote' ||
+    (ctx.recentTurns !== undefined && ctx.recentTurns.length > 0)
+  );
+}
+
+/**
+ * RBH-14: If the model returns book_appointment during a fee thread but the message is fee/clarification, not a booking request, downgrade to ask_question.
+ */
+export function applyIntentPostClassificationPolicy(
+  result: IntentDetectionResult,
+  messageText: string,
+  state: Pick<ConversationState, 'activeFlow' | 'lastPromptKind'>
+): IntentDetectionResult {
+  if (result.intent !== 'book_appointment') return result;
+  const feeThread =
+    state.activeFlow === 'fee_quote' || state.lastPromptKind === 'fee_quote';
+  if (!feeThread) return result;
+  if (userExplicitlyWantsToBookNow(messageText)) return result;
+  const t = messageText.trim();
+  const digits = t.replace(/\D/g, '');
+  if (digits.length >= 10 && /^[6-9]/.test(digits)) return result;
+  if (t.length > 220) return result;
+  const looksFeeRelated =
+    isPricingInquiryMessage(t) || isConsultationTypePricingFollowUp(t);
+  if (!looksFeeRelated) return result;
+  return {
+    intent: 'ask_question',
+    confidence: Math.min(result.confidence, 0.88),
+  };
+}
+
+export interface ClassifyIntentOptions {
+  /** RBH-14: prior turns + goal; skips intent cache when set */
+  classifyContext?: ClassifyIntentContext;
+}
+
 /**
  * Classify user message text into intent + confidence.
  * - Redacts PHI before sending to OpenAI.
@@ -437,11 +548,13 @@ Return JSON only.`;
  *
  * @param messageText - Raw user message (may contain PHI)
  * @param correlationId - Request correlation ID for audit and logging
- * @returns Intent and confidence (0–1)
+ * @param options - Optional RBH-14 multi-turn context (redacted transcript + fee-thread hint)
+ * @returns Intent and confidence (0-1)
  */
 export async function classifyIntent(
   messageText: string,
-  correlationId: string
+  correlationId: string,
+  options?: ClassifyIntentOptions
 ): Promise<IntentDetectionResult> {
   const config = getOpenAIConfig();
   const client = getOpenAIClient();
@@ -455,9 +568,12 @@ export async function classifyIntent(
   }
 
   const redactedText = redactPhiForAI(messageText);
+  const classifyContext = options?.classifyContext;
+  const userContent = buildIntentClassificationUserContent(redactedText, classifyContext);
+  const skipIntentCache = classifyIntentUsesContext(classifyContext);
 
-  // Deterministic rules (e-task-1): run before AI to avoid misclassification
-  if (isEmergency(redactedText)) {
+  // Deterministic rules (e-task-1): run before AI to avoid misclassification - current message only
+  if (isEmergencyUserMessage(redactedText)) {
     return { intent: 'emergency', confidence: 1 };
   }
   if (isSimpleGreeting(redactedText)) {
@@ -470,20 +586,22 @@ export async function classifyIntent(
     return { intent: 'check_appointment_status', confidence: 1 };
   }
 
-  const cached = getCachedIntent(redactedText);
-  if (cached !== null) {
-    return cached;
+  if (!skipIntentCache) {
+    const cached = getCachedIntent(redactedText);
+    if (cached !== null) {
+      return cached;
+    }
   }
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       const completion = await client.chat.completions.create({
         model: config.model,
-        max_completion_tokens: config.maxTokens,
+        max_completion_tokens: INTENT_CLASSIFICATION_MAX_COMPLETION_TOKENS,
         response_format: { type: 'json_object' as const },
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: redactedText },
+          { role: 'user', content: userContent },
         ],
       });
 
@@ -540,7 +658,9 @@ export async function classifyIntent(
         tokens: usage?.total_tokens ?? undefined,
       });
 
-      setCachedIntent(redactedText, { intent, confidence });
+      if (!skipIntentCache) {
+        setCachedIntent(redactedText, { intent, confidence });
+      }
       return { intent, confidence };
     } catch (err) {
       const isLastAttempt = attempt === MAX_RETRIES - 1;
@@ -778,7 +898,7 @@ export interface DoctorContext {
   specialty?: string | null;
   address_summary?: string | null;
   cancellation_policy_hours?: number | null;
-  /** e-task-2: e.g. "Video, In-clinic" — drives consultation type options */
+  /** e-task-2: e.g. "Video, In-clinic" - drives consultation type options */
   consultation_types?: string | null;
 }
 
@@ -910,12 +1030,12 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
   const collectingAllHint =
     state?.step === 'collecting_all'
       ? aiContext?.missingFields?.length
-        ? ' The user just shared some details. Acknowledge briefly, then ask for ALL remaining missing fields at once. Example: "Got it. Still need: age, reason for visit. Please share." If only one missing: "Just need your age." NEVER ask for one field, wait, then ask for the next—always list all missing at once.'
+        ? ' The user just shared some details. Acknowledge briefly, then ask for ALL remaining missing fields at once. Example: "Got it. Still need: age, reason for visit. Please share." If only one missing: "Just need your age." NEVER ask for one field, wait, then ask for the next - always list all missing at once.'
         : ' Ask for ALL details at once: Full name, Age, Gender, Mobile number, Reason for visit. Email optional. Example: "To book your appointment, please share: Full name, Age, Gender, Mobile number, Reason for visit. Email (optional) for receipts."'
       : '';
   const collectionHint =
     state?.step?.startsWith('collecting_') && state?.step !== 'collecting_all'
-      ? ` Ask for ALL missing fields at once—never one by one.`
+      ? ` Ask for ALL missing fields at once - never one by one.`
       : '';
   const confirmDetailsHint =
     state?.step === 'confirm_details'
@@ -923,7 +1043,7 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
       : '';
   const consentHint =
     state?.step === 'consent'
-      ? ' The user has provided their details. Use a combined consent message: thank them by name, say we\'ll use their phone number to confirm the appointment by call or text, and ask "Ready to pick a time?" (e.g. "Thanks, [Name]. We\'ll use [phone] to confirm your appointment. Ready to pick a time?"). Do NOT ask "Do I have your permission to use this number?"—providing the number implies consent. CRITICAL: NEVER output placeholder text like "[Slot selection link]" or "[link]"—the system injects the real URL. If the user says yes to consent, the system handles the link; you do not have access to it. Do not invent or fake a link.'
+      ? ' The user has provided their details. Use a combined consent message: thank them by name, say we\'ll use their phone number to confirm the appointment by call or text, and ask "Ready to pick a time?" (e.g. "Thanks, [Name]. We\'ll use [phone] to confirm your appointment. Ready to pick a time?"). Do NOT ask "Do I have your permission to use this number?" - providing the number implies consent. CRITICAL: NEVER output placeholder text like "[Slot selection link]" or "[link]" - the system injects the real URL. If the user says yes to consent, the system handles the link; you do not have access to it. Do not invent or fake a link.'
       : '';
   const systemPrompt = buildResponseSystemPrompt(doctorContext);
   const systemContent =
@@ -1100,7 +1220,7 @@ export async function generateResponseWithActions(
   const stepContext = state?.step ? ` Current step: ${state.step}.` : '';
   const cancelContext =
     state.step === 'awaiting_cancel_confirmation' && state.cancelAppointmentId
-      ? ' User is confirming cancel. You MUST call confirm_cancel with confirm=true (yes/yeah/go ahead/etc.) or confirm=false (no/nope/keep). Never reply with text only—always call the tool.'
+      ? ' User is confirming cancel. You MUST call confirm_cancel with confirm=true (yes/yeah/go ahead/etc.) or confirm=false (no/nope/keep). Never reply with text only - always call the tool.'
       : '';
   const pickContext =
     (state.step === 'awaiting_cancel_choice' && state.pendingCancelAppointmentIds?.length) ||
@@ -1126,7 +1246,7 @@ export async function generateResponseWithActions(
     stream: false as const,
   };
 
-  // Force tool call when only confirm_cancel—API guarantees a tool call, no text-only reply
+  // Force tool call when only confirm_cancel - API guarantees a tool call, no text-only reply
   const forceConfirmCancel =
     availableTools.length === 1 &&
     availableTools[0] === 'confirm_cancel' &&

@@ -1,6 +1,6 @@
 /**
  * Instagram DM / messaging webhook handler (RBH-05).
- * State machine, locks, AI replies — split from webhook-worker.
+ * State machine, locks, AI replies - split from webhook-worker.
  */
 
 import { logger } from '../config/logger';
@@ -34,15 +34,16 @@ import {
 } from '../services/conversation-service';
 import { createMessage, getRecentMessages, getSenderIdByPlatformMessageId } from '../services/message-service';
 import {
+  applyIntentPostClassificationPolicy,
+  buildClassifyIntentContext,
   classifyIntent,
   generateResponse,
   generateResponseWithActions,
   redactPhiForAI,
   parseMultiPersonBooking,
   AI_RECENT_MESSAGES_LIMIT,
-  MEDICAL_QUERY_RESPONSE,
-  EMERGENCY_RESPONSE,
 } from '../services/ai-service';
+import { isEmergencyUserMessage, resolveSafetyMessage } from '../utils/safety-messages';
 import {
   executeAction,
   parseToolCallToAction,
@@ -81,9 +82,18 @@ import {
   classifyInstagramDmFailureReason,
   logWebhookConflictRecovery,
   logWebhookInstagramDmDelivery,
+  logWebhookInstagramDmPipelineTiming,
 } from '../services/webhook-metrics';
 import type { InstagramWebhookPayload, WebhookProvider } from '../types/webhook';
-import { conversationLastPromptKindForStep, type ConversationState } from '../types/conversation';
+import {
+  conversationLastPromptKindForStep,
+  type ConversationState,
+} from '../types/conversation';
+import {
+  formatConsultationFeesForDm,
+  isPricingInquiryMessage,
+  userExplicitlyWantsToBookNow,
+} from '../utils/consultation-fees';
 
 /** Fallback when resolution returns null or AI/conversation flow is skipped */
 const FALLBACK_REPLY = "Thanks for your message. We'll get back to you soon.";
@@ -93,7 +103,7 @@ const FALLBACK_REPLY = "Thanks for your message. We'll get back to you soon.";
  * Does not promise an immediate human reply (ops/legal).
  */
 export const DEFAULT_INSTAGRAM_RECEPTIONIST_PAUSE_MESSAGE =
-  'Thanks for your message. Our team will reply from this inbox personally when they can. Automated scheduling is paused right now — we appreciate your patience.';
+  'Thanks for your message. Our team will reply from this inbox personally when they can. Automated scheduling is paused right now - we appreciate your patience.';
 
 function resolveInstagramReceptionistPauseMessage(settings: DoctorSettingsRow | null): string {
   const custom = settings?.instagram_receptionist_pause_message?.trim();
@@ -318,7 +328,7 @@ function effectiveAskedForMatch(
   return state.lastPromptKind === 'match_pick' || lastBotMessageAskedForMatch(recentMessages);
 }
 
-/** Parse match confirmation reply: 'yes' | 'no' | '1' | '2' | 'unclear'. Unclear â†’ treat as No. */
+/** Parse match confirmation reply: 'yes' | 'no' | '1' | '2' | 'unclear'. Unclear -> treat as No. */
 function parseMatchConfirmationReply(text: string, matchCount: number): 'yes' | 'no' | '1' | '2' | 'unclear' {
   const t = text.trim().toLowerCase();
   if (/^(yes|yeah|yep|ok|okay|sure|correct)$/.test(t)) return 'yes';
@@ -356,7 +366,7 @@ function getLastBotMessage(
   return undefined;
 }
 
-/** Skip phrases for optional "Anything else?" â€” user declines to add extras. */
+/** Skip phrases for optional "Anything else?" - user declines to add extras. */
 const SKIP_EXTRAS_PHRASES = [
   'nothing', 'skip', 'nope', 'no thanks', 'no thank you', 'all good', "that's all",
   'thats all', 'no', 'that\'s it', 'thats it', 'none', 'no extras', 'im good', "i'm good",
@@ -376,7 +386,7 @@ function extractExtraNotesFromConsentReply(text: string, consentResult: 'granted
   if (isSkipExtrasReply(trimmed)) return undefined;
 
   if (consentResult === 'granted') {
-    // "yes, on blood thinners" â†’ "on blood thinners"
+    // "yes, on blood thinners" -> "on blood thinners"
     const lower = trimmed.toLowerCase();
     for (const kw of ['yes', 'yeah', 'yep', 'agree', 'ok', 'okay', 'sure', 'i agree', 'i consent']) {
       if (lower === kw) return undefined;
@@ -388,7 +398,7 @@ function extractExtraNotesFromConsentReply(text: string, consentResult: 'granted
     return undefined;
   }
 
-  // unclear â†’ treat as extras (e.g. "I'm on blood thinners")
+  // unclear -> treat as extras (e.g. "I'm on blood thinners")
   return trimmed;
 }
 
@@ -583,7 +593,7 @@ function isAmbiguousCollectionMessage(text: string, extracted: ExtractedFields):
     extracted.reason_for_visit ||
     extracted.email
   );
-  if (hasExtracted) return false; // Clear data â€” use extraction path
+  if (hasExtracted) return false; // Clear data - use extraction path
 
   // Clarification: relation, who we're booking for
   const clarificationPatterns = [
@@ -632,6 +642,16 @@ function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): Docto
     cancellation_policy_hours: settings.cancellation_policy_hours,
     consultation_types: settings.consultation_types,
   };
+}
+
+/** RBH-13: Fee copy from doctor settings + booking CTA (structured or plain `consultation_types`). */
+function buildFeeQuoteDm(settings: DoctorSettingsRow | null): string {
+  const body = formatConsultationFeesForDm({
+    consultation_types: settings?.consultation_types ?? null,
+    practice_name: settings?.practice_name ?? null,
+    business_hours_summary: settings?.business_hours_summary ?? null,
+  });
+  return `${body}\n\nWhen you're ready to schedule, say **book appointment** and we'll take it from there.`;
 }
 
 /** Format appointment status for check_appointment_status: "Tue, Mar 14, 2026 at 2:00 PM (pending)" */
@@ -861,6 +881,28 @@ export async function processInstagramDmWebhook(params: {
   }
 
   try {
+    const handlerT0 = Date.now();
+    let dmGenerateMs = 0;
+    let greetingFastPath = false;
+    const runGenerateResponse = async (input: Parameters<typeof generateResponse>[0]) => {
+      const t = Date.now();
+      try {
+        return await generateResponse(input);
+      } finally {
+        dmGenerateMs += Date.now() - t;
+      }
+    };
+    const runGenerateResponseWithActions = async (
+      input: Parameters<typeof generateResponseWithActions>[0]
+    ) => {
+      const t = Date.now();
+      try {
+        return await generateResponseWithActions(input);
+      } finally {
+        dmGenerateMs += Date.now() - t;
+      }
+    };
+
     const patient = await findOrCreatePlaceholderPatient(
       doctorId,
       'instagram',
@@ -887,7 +929,23 @@ export async function processInstagramDmWebhook(params: {
       );
     }
 
-    const intentResult = await classifyIntent(text, correlationId);
+    let state = await getConversationState(conversation.id, correlationId);
+    const normalizedState = normalizeLegacySlotConversationSteps(state);
+    if (normalizedState !== state) {
+      state = normalizedState;
+      await updateConversationState(conversation.id, state, correlationId);
+    }
+    const recentMessages = await getRecentMessages(conversation.id, AI_RECENT_MESSAGES_LIMIT, correlationId);
+
+    const intentStartedAt = Date.now();
+    const classifyCtx = buildClassifyIntentContext(state, recentMessages);
+    let intentResult = await classifyIntent(
+      text,
+      correlationId,
+      classifyCtx ? { classifyContext: classifyCtx } : undefined
+    );
+    intentResult = applyIntentPostClassificationPolicy(intentResult, text, state);
+    const intentMs = Date.now() - intentStartedAt;
 
     const platformMessageId = mid ?? `evt-${eventId}`;
     await createMessage(
@@ -900,14 +958,6 @@ export async function processInstagramDmWebhook(params: {
       },
       correlationId
     );
-
-    let state = await getConversationState(conversation.id, correlationId);
-    const normalizedState = normalizeLegacySlotConversationSteps(state);
-    if (normalizedState !== state) {
-      state = normalizedState;
-      await updateConversationState(conversation.id, state, correlationId);
-    }
-    const recentMessages = await getRecentMessages(conversation.id, AI_RECENT_MESSAGES_LIMIT, correlationId);
 
     const doctorSettings = await getDoctorSettings(doctorId);
     const doctorContext = getDoctorContextFromSettings(doctorSettings);
@@ -943,7 +993,7 @@ export async function processInstagramDmWebhook(params: {
       };
       await updateConversationState(conversation.id, state, correlationId);
     } else if (doctorSettings?.instagram_receptionist_paused === true) {
-      // RBH-09: Pause automation — optional handoff copy only (revoke_consent handled above).
+      // RBH-09: Pause automation - optional handoff copy only (revoke_consent handled above).
       replyText = resolveInstagramReceptionistPauseMessage(doctorSettings);
       state = {
         ...state,
@@ -1013,7 +1063,7 @@ export async function processInstagramDmWebhook(params: {
 
       if (!executedReply) {
         // AI path: natural language (2737, go ahead, etc.)
-        const aiResult = await generateResponseWithActions({
+        const aiResult = await runGenerateResponseWithActions({
           conversationId: conversation.id,
           currentIntent: intentResult.intent,
           state,
@@ -1080,12 +1130,22 @@ export async function processInstagramDmWebhook(params: {
         replyText = `Please reply 1, 2, or ${ids.length}.`;
         await updateConversationState(conversation.id, state, correlationId);
       }
+    } else if (isEmergencyUserMessage(text) || intentResult.intent === 'emergency') {
+      // RBH-15: Pattern-based emergency wins over misclassified medical_query; message in user's language.
+      replyText = resolveSafetyMessage('emergency', text);
+      state = {
+        ...state,
+        lastIntent: 'emergency',
+        step: 'responded',
+        updatedAt: new Date().toISOString(),
+      };
+      await updateConversationState(conversation.id, state, correlationId);
     } else if (intentResult.intent === 'medical_query' && !inCollection) {
       // Only deflect when NOT in collection flow. Context matters: if we asked for "reason for visit"
-      // and the patient replied "Pain Abdomen", that's their answerâ€”not an unsolicited medical query.
+      // and the patient replied "Pain Abdomen", that's their answer - not an unsolicited medical query.
       // inCollection = we asked for details; their reply is data. No field-count heuristic (unreliable:
       // a patient could send details + "what should I do?" without booking intent).
-      replyText = MEDICAL_QUERY_RESPONSE;
+      replyText = resolveSafetyMessage('medical_query', text);
       state = {
         ...state,
         lastIntent: intentResult.intent,
@@ -1093,8 +1153,31 @@ export async function processInstagramDmWebhook(params: {
         updatedAt: new Date().toISOString(),
       };
       await updateConversationState(conversation.id, state, correlationId);
-    } else if (intentResult.intent === 'emergency') {
-      replyText = EMERGENCY_RESPONSE;
+    } else if (
+      isPricingInquiryMessage(text) &&
+      !userExplicitlyWantsToBookNow(text) &&
+      !inCollection &&
+      (!state.step || state.step === 'responded')
+    ) {
+      // RBH-13: Fee / pricing questions - structured reply; stay in `responded`, do not start intake.
+      replyText = buildFeeQuoteDm(doctorSettings);
+      state = {
+        ...state,
+        lastIntent: intentResult.intent,
+        step: 'responded',
+        activeFlow: 'fee_quote',
+        updatedAt: new Date().toISOString(),
+      };
+      await updateConversationState(conversation.id, state, correlationId);
+    } else if (
+      intentResult.intent === 'greeting' &&
+      !inCollection &&
+      (!state.step || state.step === 'responded')
+    ) {
+      // RBH-12: Skip second OpenAI call for idle greetings (classify may already be regex-fast).
+      greetingFastPath = true;
+      const practiceName = doctorContext?.practice_name?.trim() || 'the clinic';
+      replyText = `Hello! I'm the assistant at **${practiceName}**. How can I help you today - would you like to **book an appointment**, **check availability**, or ask a **general question**?`;
       state = {
         ...state,
         lastIntent: intentResult.intent,
@@ -1236,7 +1319,7 @@ export async function processInstagramDmWebhook(params: {
     } else if (intentResult.intent === 'book_for_someone_else' && (state.step === 'responded' || state.step === 'awaiting_slot_selection')) {
       const multiPerson = parseMultiPersonBooking(text);
       if (multiPerson) {
-        // e-task-4: Multi-person "me and my X" â€” other first, then offer self
+        // e-task-4: Multi-person "me and my X" - other first, then offer self
         await clearCollectedData(conversation.id);
         const relation = multiPerson.relation;
         const relationPhrase = `your ${relation}`;
@@ -1253,7 +1336,7 @@ export async function processInstagramDmWebhook(params: {
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
-        replyText = `I'll help you book for both. Let's do one at a timeâ€”${relationPhrase} first, then you. Please share: Full name, Age, Mobile, Reason for visit for your ${relation}. Email (optional).`;
+        replyText = `I'll help you book for both. Let's do one at a time - ${relationPhrase} first, then you. Please share: Full name, Age, Mobile, Reason for visit for your ${relation}. Email (optional).`;
       } else {
         // Single-person book for someone else
         await clearCollectedData(conversation.id);
@@ -1277,7 +1360,7 @@ export async function processInstagramDmWebhook(params: {
       state.step === 'awaiting_match_confirmation' ||
       (effectiveAskedForMatch(state, recentMessages) && state.pendingMatchPatientIds?.length)
     ) {
-      // e-task-5: Handle match confirmation. Yes â†’ use existing; No â†’ create new; 1/2 â†’ pick from multi-match.
+      // e-task-5: Handle match confirmation. Yes -> use existing; No -> create new; 1/2 -> pick from multi-match.
       const matchIds = state.pendingMatchPatientIds ?? [];
       const matchCount = matchIds.length;
       const parsed = parseMatchConfirmationReply(text, matchCount);
@@ -1445,7 +1528,7 @@ export async function processInstagramDmWebhook(params: {
           const baseSlotMsg = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
           if (!persistResult.success) {
             replyText =
-              `I had trouble saving your detailsâ€”please say 'book appointment' to re-share them if needed. Meanwhile, ${baseSlotMsg}`;
+              `I had trouble saving your details - please say 'book appointment' to re-share them if needed. Meanwhile, ${baseSlotMsg}`;
           } else {
             replyText = state.pendingOtherBooking
               ? `${baseSlotMsg}\n\nWould you like to book for your ${state.pendingOtherBooking.relation} now?`
@@ -1476,7 +1559,7 @@ export async function processInstagramDmWebhook(params: {
           await updateConversationState(conversation.id, state, correlationId);
         } else {
         const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
-          replyText = await generateResponse({
+          replyText = await runGenerateResponse({
             conversationId: conversation.id,
             currentIntent: intentResult.intent,
             state,
@@ -1489,7 +1572,7 @@ export async function processInstagramDmWebhook(params: {
       }
     } else if (state.step === 'collecting_all' || (lastBotAskedForDetails && !state.step)) {
       // Process as collection data. Context: we asked for details (state or last bot message).
-      // E.g. "Pain Abdomen" may be classified as medical_query but we askedâ€”treat as data.
+      // E.g. "Pain Abdomen" may be classified as medical_query but we asked - treat as data.
       if (!state.step) {
         state = {
           ...state,
@@ -1499,7 +1582,7 @@ export async function processInstagramDmWebhook(params: {
         };
         await updateConversationState(conversation.id, state, correlationId);
       }
-      // e-task-3: Relation clarification â€” update state.relation when detected (for AI context)
+      // e-task-3: Relation clarification - update state.relation when detected (for AI context)
       if (state.bookingForSomeoneElse) {
         const relationMatch = text.match(/\b(?:my\s+)?(mother|father|mom|dad|wife|husband|son|daughter|sister|brother|parent|spouse)\b/i);
         if (relationMatch) {
@@ -1512,7 +1595,7 @@ export async function processInstagramDmWebhook(params: {
           }
         }
       }
-      // e-task-4: "me first" â€” switch to self first when no data collected yet
+      // e-task-4: "me first" - switch to self first when no data collected yet
       const wantsMeFirst =
         state.pendingSelfBooking &&
         state.bookingForSomeoneElse &&
@@ -1533,7 +1616,7 @@ export async function processInstagramDmWebhook(params: {
         };
         await updateConversationState(conversation.id, state, correlationId);
         const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
-        replyText = await generateResponse({
+        replyText = await runGenerateResponse({
           conversationId: conversation.id,
           currentIntent: 'book_appointment',
           state,
@@ -1544,7 +1627,7 @@ export async function processInstagramDmWebhook(params: {
           context: aiContext,
         });
       } else {
-      // e-task-4: "actually just my sister" â€” cancel multi-person, single-person only
+      // e-task-4: "actually just my sister" - cancel multi-person, single-person only
       const wantsJustOther =
         state.pendingSelfBooking &&
         state.bookingForSomeoneElse &&
@@ -1584,7 +1667,7 @@ export async function processInstagramDmWebhook(params: {
           await updateConversationState(conversation.id, state, correlationId);
         }
         const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
-          replyText = await generateResponse({
+          replyText = await runGenerateResponse({
             conversationId: conversation.id,
             currentIntent: intentResult.intent,
             state,
@@ -1609,7 +1692,7 @@ export async function processInstagramDmWebhook(params: {
           replyText = buildConfirmDetailsMessage(collected ?? {});
         } else {
           const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
-          const aiReply = await generateResponse({
+          const aiReply = await runGenerateResponse({
               conversationId: conversation.id,
               currentIntent: intentResult.intent,
               state,
@@ -1658,7 +1741,7 @@ export async function processInstagramDmWebhook(params: {
         const phoneDisplay = phone ? `**${phone}**` : 'your number';
 
         if (state.bookingForSomeoneElse && collected?.name?.trim() && collected?.phone?.trim()) {
-          // e-task-5: Match check before consent. If matches â†’ awaiting_match_confirmation; else â†’ consent.
+          // e-task-5: Match check before consent. If matches -> awaiting_match_confirmation; else -> consent.
           const matches = await findPossiblePatientMatches(
             doctorId,
             collected.phone.trim(),
@@ -1732,7 +1815,7 @@ export async function processInstagramDmWebhook(params: {
           replyText = buildConfirmDetailsMessage(collected ?? {});
         } else {
           const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
-          const aiReply = await generateResponse({
+          const aiReply = await runGenerateResponse({
             conversationId: conversation.id,
             currentIntent: intentResult.intent,
             state,
@@ -1750,7 +1833,7 @@ export async function processInstagramDmWebhook(params: {
         }
           } else {
         const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
-        replyText = await generateResponse({
+        replyText = await runGenerateResponse({
           conversationId: conversation.id,
           currentIntent: intentResult.intent,
           state,
@@ -1765,12 +1848,28 @@ export async function processInstagramDmWebhook(params: {
       state.step === 'responded' &&
       isPostBookingAcknowledgment(text, recentMessages)
     ) {
-      replyText = "Greatâ€”you're all set. Let us know if you need anything else.";
+      replyText = "Great - you're all set. Let us know if you need anything else.";
               state = {
                 ...state,
                 lastIntent: intentResult.intent,
                 step: 'responded',
                 updatedAt: new Date().toISOString(),
+      };
+      await updateConversationState(conversation.id, state, correlationId);
+    } else if (
+      isBookIntent &&
+      justStartingCollection &&
+      isPricingInquiryMessage(text) &&
+      !userExplicitlyWantsToBookNow(text)
+    ) {
+      // RBH-13: "How much..." misclassified as book_appointment with empty step - fee answer, not intake.
+      replyText = buildFeeQuoteDm(doctorSettings);
+      state = {
+        ...state,
+        lastIntent: intentResult.intent,
+        step: 'responded',
+        activeFlow: 'fee_quote',
+        updatedAt: new Date().toISOString(),
       };
       await updateConversationState(conversation.id, state, correlationId);
     } else if (isBookIntent && (justStartingCollection || inCollection)) {
@@ -1785,7 +1884,7 @@ export async function processInstagramDmWebhook(params: {
         };
         await updateConversationState(conversation.id, state, correlationId);
         const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
-        replyText = await generateResponse({
+        replyText = await runGenerateResponse({
           conversationId: conversation.id,
           currentIntent: intentResult.intent,
           state,
@@ -1797,7 +1896,7 @@ export async function processInstagramDmWebhook(params: {
         });
               } else {
         const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
-        replyText = await generateResponse({
+        replyText = await runGenerateResponse({
           conversationId: conversation.id,
           currentIntent: intentResult.intent,
           state,
@@ -1852,7 +1951,7 @@ export async function processInstagramDmWebhook(params: {
         };
         await updateConversationState(conversation.id, state, correlationId);
         const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
-        replyText = await generateResponse({
+        replyText = await runGenerateResponse({
           conversationId: conversation.id,
           currentIntent: 'book_appointment',
           state,
@@ -1875,40 +1974,52 @@ export async function processInstagramDmWebhook(params: {
         await updateConversationState(conversation.id, state, correlationId);
       }
     } else if (isBookIntent && state.step === 'responded') {
-      // e-task-2: Show weekly availability + "When would you like to come?" â€” never random first-available slots
+      // e-task-2: Show weekly availability + "When would you like to come?" - never random first-available slots
       const patient = await findPatientByIdWithAdmin(conversation.patient_id, correlationId);
       const hasPatientReady =
         patient?.name?.trim() &&
         patient?.phone?.trim() &&
         patient?.consent_status === 'granted';
-      if (hasPatientReady) {
+      const explicitBook = userExplicitlyWantsToBookNow(text);
+      const pricingOnly = isPricingInquiryMessage(text) && !explicitBook;
+
+      if (!hasPatientReady && pricingOnly) {
+        replyText = buildFeeQuoteDm(doctorSettings);
+        state = {
+          ...state,
+          lastIntent: intentResult.intent,
+          step: 'responded',
+          activeFlow: 'fee_quote',
+          updatedAt: new Date().toISOString(),
+        };
+      } else if (hasPatientReady) {
         const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-        const mrnHint = formatPatientIdHint(patient.medical_record_number);
+        const mrnHint = formatPatientIdHint(patient?.medical_record_number);
         replyText = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
-      state = {
-        ...state,
-        lastIntent: intentResult.intent,
+        state = {
+          ...state,
+          lastIntent: intentResult.intent,
           step: 'awaiting_slot_selection',
           consultationType: state.consultationType,
+          activeFlow: undefined,
           updatedAt: new Date().toISOString(),
         };
       } else {
-        // No patient data â€” start collection. Use deterministic all-at-once prompt (never one-by-one).
         state = {
           ...state,
           lastIntent: intentResult.intent,
           step: getInitialCollectionStep(),
           collectedFields: [],
-        updatedAt: new Date().toISOString(),
-      };
-        await updateConversationState(conversation.id, state, correlationId);
+          activeFlow: undefined,
+          updatedAt: new Date().toISOString(),
+        };
         const practiceName = doctorContext?.practice_name?.trim() || 'the clinic';
-        replyText = `Sureâ€”happy to help you book at **${practiceName}**. Please share: Full name, Age, Gender, Mobile number, Reason for visit. Email (optional) for receipts.`;
+        replyText = `Sure - happy to help you book at **${practiceName}**. Please share: Full name, Age, Gender, Mobile number, Reason for visit. Email (optional) for receipts.`;
       }
       await updateConversationState(conversation.id, state, correlationId);
     } else {
       const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
-      replyText = await generateResponse({
+      replyText = await runGenerateResponse({
         conversationId: conversation.id,
         currentIntent: intentResult.intent,
         state,
@@ -1951,13 +2062,18 @@ export async function processInstagramDmWebhook(params: {
           };
     const stateToPersist = {
       ...stateToPersistRaw,
-      lastPromptKind: conversationLastPromptKindForStep(stateToPersistRaw.step),
+      lastPromptKind: conversationLastPromptKindForStep(
+        stateToPersistRaw.step,
+        stateToPersistRaw.activeFlow
+      ),
     };
     await updateConversationState(conversation.id, stateToPersist, correlationId);
 
-    // Send lock + reply throttle + 2018001 fallback (shared with conflict recovery â€” RBH-04)
+    // Send lock + reply throttle + 2018001 fallback (shared with conflict recovery - RBH-04)
     const pageIdForDm = pageIds[0] ?? getInstagramPageId(instagramPayload);
     const doctorPageIdForDm = (await getStoredInstagramPageIdForDoctor(doctorId, correlationId)) ?? null;
+    const handlerPreSendMs = Date.now() - handlerT0;
+    const igSendStartedAt = Date.now();
     try {
       const dmSend = await sendInstagramDmWithLocksAndFallback({
         pageId: pageIdForDm,
@@ -1972,6 +2088,19 @@ export async function processInstagramDmWebhook(params: {
         doctorPageId: doctorPageIdForDm,
         pageIds,
         context: 'default',
+      });
+      const igSendMs = Date.now() - igSendStartedAt;
+      logWebhookInstagramDmPipelineTiming({
+        correlationId,
+        eventId,
+        doctorId,
+        intent: intentResult.intent,
+        intentMs,
+        generateMs: dmGenerateMs,
+        igSendMs,
+        handlerPreSendMs,
+        greetingFastPath,
+        throttleSkipped: dmSend.status === 'throttle_skipped',
       });
       if (dmSend.status === 'throttle_skipped') {
         return;
@@ -2016,7 +2145,6 @@ export async function processInstagramDmWebhook(params: {
       }
       if (conversation && doctorToken) {
         try {
-          const intentResult = await classifyIntent(text, correlationId);
           let state = await getConversationState(conversation.id, correlationId);
           const normState = normalizeLegacySlotConversationSteps(state);
           if (normState !== state) {
@@ -2024,6 +2152,13 @@ export async function processInstagramDmWebhook(params: {
             await updateConversationState(conversation.id, state, correlationId);
           }
           const recentMessages = await getRecentMessages(conversation.id, AI_RECENT_MESSAGES_LIMIT, correlationId);
+          const classifyCtx = buildClassifyIntentContext(state, recentMessages);
+          let intentResult = await classifyIntent(
+            text,
+            correlationId,
+            classifyCtx ? { classifyContext: classifyCtx } : undefined
+          );
+          intentResult = applyIntentPostClassificationPolicy(intentResult, text, state);
           const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
           const replyText =
             (await generateResponse({

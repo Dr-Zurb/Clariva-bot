@@ -350,7 +350,7 @@ export async function processSlotSelectionAndPay(
       patientEmail: patient.email ?? undefined,
       description:
         opdMode === 'queue'
-          ? `Queue visit — ${slotDisplayStr}`
+          ? `Queue visit - ${slotDisplayStr}`
           : `Appointment - ${slotDisplayStr}`,
       callbackUrl: successCallbackUrl,
     },
