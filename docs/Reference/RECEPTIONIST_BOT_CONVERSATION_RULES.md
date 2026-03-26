@@ -13,11 +13,63 @@
 
 1. **Receptionist-first:** Greet, offer help, then collect info. Never jump straight to "tell me your name" on "hello".
 2. **AI for language, system for facts:** The **model** handles open-ended conversation and essentially any human language (no need to code every phrase). **Practice facts** (fees, hours, address, `consultation_types`, cancellation policy) come from **`doctor_settings`** and are injected into the system prompt (`DoctorContext` → `buildResponseSystemPrompt`). The model is instructed to treat those blocks as the **only** source of truth for pricing and to **never** claim fees are "not in the system" when the block lists them. A small set of **deterministic** paths remains for compliance (e.g. `medical_query` / `emergency` fixed copy, simple regex intents where useful).
+
+### Three-layer pattern (industry-style AI receptionist)
+
+| Layer | Role | Typical implementation here |
+|-------|------|-----------------------------|
+| **Understand** | Interpret user message (any language): intent + topics | `classifyIntent` (LLM); regex only for cheap wins (greeting, emergency speed) |
+| **Decide** | Which flows/actions: fee block, booking step, safety, link | `instagram-dm-webhook-handler` branches + `ConversationState`; RBH-14 post-policies |
+| **Say** | Wording, tone, empathy | `generateResponse` (LLM) and/or **server-composed** markdown (fee quote, links) — **₹ amounts and URLs must originate from code/DB**, not invented by the model |
+
+**Guiding line:** *The model interprets; the platform executes; facts come from the database.*
+
+**Roadmap:** See **RBH-17**–**RBH-20** (Tasks) — classifier `topics` / `is_fee_question`, hybrid reply composer, branch observability.
+
+**Branch inventory:** [RECEPTIONIST_BOT_DM_BRANCH_INVENTORY.md](./RECEPTIONIST_BOT_DM_BRANCH_INVENTORY.md) — DM handler order, layers per branch, canonical fact paths.
+
+#### Anti-patterns (avoid)
+
+- ❌ Trying to encode **every** Hinglish or transliterated phrase as regex — unbounded; prefer LLM **Understand** + structured topics (RBH-18).
+- ❌ Letting the model be the **only** source of **₹ amounts** or **URLs** — always inject server-rendered blocks or `AUTHORITATIVE FEES` from DB.
+- ✅ Classifier returns **intent**; optional **topics** from JSON (`pricing`, …) in a future schema (RBH-18).
+
+#### When regex / keywords are still OK
+
+- **Emergency** signals — latency and safety (`isEmergencyUserMessage` before generic medical deflection).
+- **Trivial greeting** — cost/latency (`SIMPLE_GREETING_REGEX` in `ai-service` when used).
+- **Fixed compliance copy** — `medical_query` / `emergency` via `resolveSafetyMessage` (localized templates).
+- **Narrow transactional parsers** — e.g. cancel “yes/no”, pick “1/2/3”, consent `parseConsentReply` — **not** open-ended language.
+
+#### Request flow (sequence)
+
+```mermaid
+sequenceDiagram
+  participant U as User (DM)
+  participant W as Webhook handler
+  participant C as classifyIntent (LLM)
+  participant D as Decide (branches/state)
+  participant S as Say (template or generateResponse)
+
+  U->>W: message text
+  W->>C: Understand (intent + context)
+  C-->>W: intent (+ policy pass)
+  W->>D: step gates, safety, fee path, booking
+  alt deterministic Say
+    D-->>U: template / buildFeeQuoteDm / resolveSafetyMessage
+  else LLM Say
+    D->>S: generateResponse (DoctorContext facts injected)
+    S-->>U: reply text
+  end
+```
+
 3. **RBH-16 (copy encoding):** Deterministic DM/booking strings prefer **ASCII `-` / ` - `** in templates so fixed copy does not show **mojibake** in Instagram or other clients.
 4. **Medical boundary:** Never diagnose, prescribe, or give medical advice. Redirect medical/chief-complaint messages.
 5. **Emergency handling:** Detect emergency language → redirect to emergency services immediately.
 6. **Language matching:** Respond in the same language the user types in (English, Hinglish, Hindi written in English) — reinforced in the receptionist system prompt; optional locale helpers for **fixed** safety strings (RBH-15).
 7. **Graceful degradation:** For unclear messages, stay polite and offer clear next steps.
+
+**Product note:** We optimize for **correct clinic data** (fees, links, appointments), not for open-domain chat breadth — same posture as most AI receptionist products.
 
 ---
 
@@ -54,7 +106,7 @@ When multiple intents could apply: **emergency > medical_query > book_appointmen
 ## Fee & pricing (RBH-13)
 
 - **Source of truth:** `doctor_settings.consultation_types` (plain text, max length enforced in API) **or** optional **compact JSON array** in the same field, e.g. `[{"l":"General (in-person)","r":500},{"l":"Video","r":400}]` (`l`/`label`, `r`/`fee_inr`/`amount`). The bot **never invents** rupee amounts; if empty, copy directs the user to the clinic / profile.
-- **DM path:** Keyword / intent detection → `formatConsultationFeesForDm` + “say **book appointment** when ready”. Stays on `step: responded` with `activeFlow: 'fee_quote'`.
+- **DM path (RBH-18):** `classifyIntent` returns `is_fee_question` / `topics` (`pricing`); `intentSignalsFeeOrPricing` ORs that with a **small** keyword fallback. Idle path → `buildFeeQuoteDm`; mid-intake → same fee block + continue footer without resetting `state.step`. Stays on `responded` + `activeFlow: 'fee_quote'` when idle.
 - **Guardrails:** Meta strings (fee questions, “how do I book”) must not be stored as **`reason_for_visit`** during extraction (regex + collection validation + AI extraction prompt).
 
 ## Context-aware intent (RBH-14)
@@ -90,4 +142,4 @@ When multiple intents could apply: **emergency > medical_query > book_appointmen
 
 ---
 
-**Last Updated:** 2026-03-28 (design note: AI conversation + injected system facts; RBH-16 punctuation)
+**Last Updated:** 2026-03-28 (RBH-17: anti-patterns, keyword policy, mermaid, DM branch inventory link)

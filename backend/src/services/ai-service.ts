@@ -12,9 +12,10 @@ import { logger } from '../config/logger';
 import type {
   IntentDetectionResult,
   Intent,
+  IntentTopic,
   CommentIntentDetectionResult,
 } from '../types/ai';
-import { toIntent, toCommentIntent } from '../types/ai';
+import { toIntent, toCommentIntent, isIntentTopic } from '../types/ai';
 import type { ConversationState } from '../types/conversation';
 import type { Message } from '../types';
 import type { AIResponseWithActions, ToolCallFromAI } from '../types/system-actions';
@@ -45,6 +46,8 @@ const INTENT_CLASSIFICATION_MAX_COMPLETION_TOKENS = 120;
 const INTENT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 /** Max cache entries; evict oldest when full (Map insertion order). */
 const INTENT_CACHE_MAX_SIZE = 500;
+/** RBH-18: bump prefix when classifier JSON schema changes (invalidates stale cache entries). */
+const INTENT_CACHE_KEY_PREFIX = 'rbh18:';
 
 interface CacheEntry {
   result: IntentDetectionResult;
@@ -55,7 +58,7 @@ interface CacheEntry {
 const intentCache = new Map<string, CacheEntry>();
 
 function getCachedIntent(redactedText: string): IntentDetectionResult | null {
-  const entry = intentCache.get(redactedText);
+  const entry = intentCache.get(INTENT_CACHE_KEY_PREFIX + redactedText);
   if (!entry || Date.now() > entry.expiresAt) {
     if (entry) intentCache.delete(redactedText);
     return null;
@@ -68,7 +71,7 @@ function setCachedIntent(redactedText: string, result: IntentDetectionResult): v
     const firstKey = intentCache.keys().next().value;
     if (firstKey !== undefined) intentCache.delete(firstKey);
   }
-  intentCache.set(redactedText, {
+  intentCache.set(INTENT_CACHE_KEY_PREFIX + redactedText, {
     result,
     expiresAt: Date.now() + INTENT_CACHE_TTL_MS,
   });
@@ -178,8 +181,17 @@ Examples: "hello" → greeting; "book appointment" → book_appointment; "book f
 
 Multi-turn input: You may receive a [Conversation context] block and/or "Recent conversation (redacted)" lines followed by "Current user message:". Always classify **only** the current user message, using prior turns to disambiguate (e.g. after a fee reply, "general consultation please" → ask_question, not book_appointment).
 
-Respond with a single JSON object: { "intent": "<one of the valid intents>", "confidence": <number 0.0 to 1.0> }.
-Use "unknown" only when the message does not clearly match any other intent.`;
+Respond with a single JSON object (required keys):
+- "intent": one of the valid intent strings
+- "confidence": number from 0.0 to 1.0
+- "topics": array (may be empty) of zero or more of exactly these strings: "pricing", "hours", "location", "booking_howto"
+  - Include "pricing" when the user asks about cost, fees, charges, money, payment, insurance, cash, card, discount, "kitna"/"kitne" in a money sense, paise, rupaye, consultation/visit/video/phone/online appointment price, etc., in **any** language.
+  - "hours" = opening times / when open / availability in general; "location" = address / where / directions; "booking_howto" = how to book / process (not asking to book right now).
+- "is_fee_question": boolean — true if the message is partly or wholly asking what they pay / fee amount / price to consult or book; false otherwise. If "pricing" is in topics, set this to true.
+
+Example: {"intent":"ask_question","confidence":0.92,"topics":["pricing"],"is_fee_question":true}
+
+Use "unknown" for intent only when the message does not clearly match any other intent.`;
 
 /** e-task-6: Comment intent classifier. Short comments (1-20 words), emojis, @mentions, mixed language. */
 const COMMENT_INTENT_SYSTEM_PROMPT = `You are an intent classifier for Instagram post comments on a medical practice's posts. Classify each comment into exactly one intent. Comments are short (1-20 words), may have emojis, @mentions, typos, and mixed language (English, Hindi, Hinglish).
@@ -266,6 +278,38 @@ export function redactPhiForAI(text: string): string {
     '[REDACTED_PHONE]'
   );
   return out;
+}
+
+function normalizeIntentAuxFields(
+  parsed: Record<string, unknown>
+): Pick<IntentDetectionResult, 'topics' | 'is_fee_question'> {
+  const topics: IntentTopic[] = [];
+  if (Array.isArray(parsed.topics)) {
+    for (const x of parsed.topics) {
+      if (typeof x === 'string' && isIntentTopic(x)) topics.push(x);
+    }
+  }
+  let isFee = parsed.is_fee_question === true;
+  if (!isFee && topics.includes('pricing')) isFee = true;
+
+  const out: Pick<IntentDetectionResult, 'topics' | 'is_fee_question'> = {};
+  if (topics.length > 0) out.topics = topics;
+  if (isFee) out.is_fee_question = true;
+  else if (parsed.is_fee_question === false) out.is_fee_question = false;
+  return out;
+}
+
+/**
+ * RBH-18: Use classifier topics / is_fee_question first; fall back to keyword helper when missing
+ * (e.g. cache hit from older process, or edge parser omission).
+ */
+export function intentSignalsFeeOrPricing(
+  result: IntentDetectionResult,
+  messageText: string
+): boolean {
+  if (result.is_fee_question === true) return true;
+  if (result.topics?.includes('pricing')) return true;
+  return isPricingInquiryMessage(messageText);
 }
 
 /**
@@ -531,9 +575,13 @@ export function applyIntentPostClassificationPolicy(
   const looksFeeRelated =
     isPricingInquiryMessage(t) || isConsultationTypePricingFollowUp(t);
   if (!looksFeeRelated) return result;
+  const topicSet = new Set(result.topics ?? []);
+  topicSet.add('pricing');
   return {
     intent: 'ask_question',
     confidence: Math.min(result.confidence, 0.88),
+    is_fee_question: true,
+    topics: [...topicSet],
   };
 }
 
@@ -626,9 +674,9 @@ export async function classifyIntent(
         return { intent: 'unknown', confidence: 0 };
       }
 
-      let parsed: { intent?: string; confidence?: number };
+      let parsed: Record<string, unknown>;
       try {
-        parsed = JSON.parse(content) as { intent?: string; confidence?: number };
+        parsed = JSON.parse(content) as Record<string, unknown>;
       } catch {
         logger.warn(
           { correlationId, attempt: attempt + 1 },
@@ -651,6 +699,8 @@ export async function classifyIntent(
       const confidence = clampConfidence(
         typeof parsed.confidence === 'number' ? parsed.confidence : 0
       );
+      const aux = normalizeIntentAuxFields(parsed);
+      const result: IntentDetectionResult = { intent, confidence, ...aux };
 
       await logAIClassification({
         correlationId,
@@ -658,12 +708,14 @@ export async function classifyIntent(
         redactionApplied: true,
         status: 'success',
         tokens: usage?.total_tokens ?? undefined,
+        intentTopics: result.topics,
+        isFeeQuestion: result.is_fee_question === true,
       });
 
       if (!skipIntentCache) {
-        setCachedIntent(redactedText, { intent, confidence });
+        setCachedIntent(redactedText, result);
       }
-      return { intent, confidence };
+      return result;
     } catch (err) {
       const isLastAttempt = attempt === MAX_RETRIES - 1;
       logger.warn(
@@ -930,6 +982,8 @@ export interface GenerateResponseInput {
   doctorContext?: DoctorContext;
   /** e-task-1: Richer context for context-aware replies */
   context?: GenerateResponseContext;
+  /** RBH-18: classifyIntent said fee/pricing — strengthens fee PRIORITY hint vs keywords-only */
+  classifierSignalsFeeQuestion?: boolean;
 }
 
 /**
@@ -994,6 +1048,7 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
     correlationId,
     doctorContext,
     context: aiContext,
+    classifierSignalsFeeQuestion,
   } = input;
 
   const config = getOpenAIConfig();
@@ -1068,7 +1123,8 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
       : '';
   const systemPrompt = buildResponseSystemPrompt(doctorContext);
   const pricingFocusHint =
-    isPricingInquiryMessage(redactedCurrent) && !userExplicitlyWantsToBookNow(redactedCurrent)
+    (classifierSignalsFeeQuestion === true || isPricingInquiryMessage(redactedCurrent)) &&
+    !userExplicitlyWantsToBookNow(redactedCurrent)
       ? ' PRIORITY: The latest user message is about pricing/fees (including paise/kitne/rupees). Lead with SYSTEM FACTS - FEES if any amount is listed; state the exact fee clearly. Never claim fees are missing from the system when that block includes an amount. If you are mid-booking flow, combine the fee answer with asking for any still-missing fields in one reply, in the user language.'
       : '';
   const systemContent =
@@ -1352,4 +1408,102 @@ export async function generateResponseWithActions(
   }
 
   return { reply: FALLBACK_RESPONSE };
+}
+
+// ============================================================================
+// RBH-19 Phase 2 — optional short LLM line after deterministic blocks (mid-collection fee)
+// ============================================================================
+
+const DM_REPLY_BRIDGE_MAX_COMPLETION_TOKENS = 120;
+
+const DM_REPLY_BRIDGE_SYSTEM = `You write a very short follow-up for a clinic assistant on Instagram DM.
+The patient already sees another block with exact consultation fees and booking steps (rupee amounts are there only — not in your text).
+
+Write 1–2 short sentences that acknowledge their message in a natural, warm tone. Match the user's language style (e.g. Hinglish when they use Hinglish).
+
+STRICT RULES:
+- Do NOT state prices, fees, rupees, INR, amounts, or any digits that could be read as a price.
+- Do NOT invent or repeat URLs, booking links, or phone numbers.
+- If costs matter, refer only to "the details above" / "jo upar diya hai" — never quote numbers.
+- Plain text only (no markdown headings, no bullet lists).`;
+
+/**
+ * When `AI_DM_REPLY_BRIDGE_ENABLED`, appends a short OpenAI completion after `baseReply`.
+ * User/PHI content is redacted per COMPLIANCE.md G. On failure or disabled flag, returns `baseReply` unchanged.
+ */
+export async function appendOptionalDmReplyBridge(params: {
+  correlationId: string;
+  userText: string;
+  baseReply: string;
+}): Promise<string> {
+  const { correlationId, userText, baseReply } = params;
+  if (!env.AI_DM_REPLY_BRIDGE_ENABLED) {
+    return baseReply;
+  }
+  const client = getOpenAIClient();
+  const config = getOpenAIConfig();
+  if (!client) {
+    return baseReply;
+  }
+  const redacted = redactPhiForAI(userText);
+  if (!redacted.trim()) {
+    return baseReply;
+  }
+
+  try {
+    const completion = await client.chat.completions.create({
+      model: config.model,
+      max_completion_tokens: DM_REPLY_BRIDGE_MAX_COMPLETION_TOKENS,
+      messages: [
+        { role: 'system', content: DM_REPLY_BRIDGE_SYSTEM },
+        {
+          role: 'user',
+          content: `Patient's latest message (redacted):\n${redacted.slice(0, 500)}\n\nWrite only the brief acknowledgment (1–2 sentences).`,
+        },
+      ],
+    });
+
+    const bridge = completion.choices[0]?.message?.content?.trim() ?? '';
+    const usage = completion.usage;
+
+    if (!bridge) {
+      await logAuditEvent({
+        correlationId,
+        action: 'ai_dm_reply_bridge',
+        resourceType: 'ai',
+        status: 'failure',
+        errorMessage: 'empty_completion',
+        metadata: { model: config.model, redactionApplied: true },
+      });
+      return baseReply;
+    }
+
+    await logAuditEvent({
+      correlationId,
+      action: 'ai_dm_reply_bridge',
+      resourceType: 'ai',
+      status: 'success',
+      metadata: {
+        model: config.model,
+        redactionApplied: true,
+        tokens: usage?.total_tokens,
+      },
+    });
+
+    return `${baseReply}\n\n${bridge}`;
+  } catch (err) {
+    logger.warn(
+      { correlationId, err: err instanceof Error ? err.message : String(err) },
+      'appendOptionalDmReplyBridge failed; using deterministic reply only'
+    );
+    await logAuditEvent({
+      correlationId,
+      action: 'ai_dm_reply_bridge',
+      resourceType: 'ai',
+      status: 'failure',
+      errorMessage: err instanceof Error ? err.message : 'unknown',
+      metadata: { model: config.model, redactionApplied: true },
+    });
+    return baseReply;
+  }
 }

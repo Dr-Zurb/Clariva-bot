@@ -1,6 +1,14 @@
 /**
  * Instagram DM / messaging webhook handler (RBH-05).
  * State machine, locks, AI replies - split from webhook-worker.
+ *
+ * RBH-17 (three layers):
+ * - **Understand:** `classifyIntent` (+ `applyIntentPostClassificationPolicy`) — LLM intent; optional regex fast-paths in ai-service.
+ * - **Decide:** This file's branch chain (after classify) — which flow runs; state transitions.
+ * - **Say:** Templates / `composeIdleFeeQuoteDm` / `composeMidCollectionFeeQuoteDm` / `resolveSafetyMessage` / `generateResponse` — tone via LLM, but ₹ + URLs must come from code (see `DoctorContext`, formatters).
+ *
+ * **Branch order** (keep stable; doc: docs/Reference/RECEPTIONIST_BOT_DM_BRANCH_INVENTORY.md):
+ * revoke → paused → cancel/reschedule step gates → emergency → medical (idle) → fee quote (idle) → greeting (idle) → status/cancel/reschedule/book_other → match/consent/collection → default AI.
  */
 
 import { logger } from '../config/logger';
@@ -35,10 +43,12 @@ import {
 import { createMessage, getRecentMessages, getSenderIdByPlatformMessageId } from '../services/message-service';
 import {
   applyIntentPostClassificationPolicy,
+  appendOptionalDmReplyBridge,
   buildClassifyIntentContext,
   classifyIntent,
   generateResponse,
   generateResponseWithActions,
+  intentSignalsFeeOrPricing,
   redactPhiForAI,
   parseMultiPersonBooking,
   AI_RECENT_MESSAGES_LIMIT,
@@ -74,6 +84,7 @@ import {
 import { hasCapturedPaymentForAppointment } from '../services/payment-service';
 import { getDoctorSettings } from '../services/doctor-settings-service';
 import type { DoctorSettingsRow } from '../types/doctor-settings';
+import type { DmHandlerBranch } from '../types/dm-instrumentation';
 import type { DoctorContext, GenerateResponseContext } from '../services/ai-service';
 import { getInstagramPageId, getInstagramPageIds } from '../utils/webhook-event-id';
 import { tryAcquireConversationLock, releaseConversationLock } from '../config/queue';
@@ -89,13 +100,12 @@ import {
   conversationLastPromptKindForStep,
   type ConversationState,
 } from '../types/conversation';
+import { formatAppointmentFeeForAiContext, userExplicitlyWantsToBookNow } from '../utils/consultation-fees';
 import {
-  formatAppointmentFeeForAiContext,
-  formatConsultationFeesForDm,
-  formatFeeBookingCtaForDm,
-  isPricingInquiryMessage,
-  userExplicitlyWantsToBookNow,
-} from '../utils/consultation-fees';
+  composeIdleFeeQuoteDm,
+  composeMidCollectionFeeQuoteDm,
+} from '../utils/dm-reply-composer';
+import { logInstagramDmRouting } from '../utils/log-instagram-dm-routing';
 
 /** Fallback when resolution returns null or AI/conversation flow is skipped */
 const FALLBACK_REPLY = "Thanks for your message. We'll get back to you soon.";
@@ -653,21 +663,6 @@ function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): Docto
   };
 }
 
-/** RBH-13: Fee copy from doctor settings + booking CTA (structured or plain `consultation_types`). */
-function buildFeeQuoteDm(settings: DoctorSettingsRow | null, userText: string): string {
-  const body = formatConsultationFeesForDm(
-    {
-      consultation_types: settings?.consultation_types ?? null,
-      practice_name: settings?.practice_name ?? null,
-      business_hours_summary: settings?.business_hours_summary ?? null,
-      appointment_fee_minor: settings?.appointment_fee_minor ?? null,
-      appointment_fee_currency: settings?.appointment_fee_currency ?? null,
-    },
-    userText
-  );
-  return `${body}\n\n${formatFeeBookingCtaForDm(userText)}`;
-}
-
 /** Format appointment status for check_appointment_status: "Tue, Mar 14, 2026 at 2:00 PM (pending)" */
 function formatAppointmentStatusLine(
   isoDate: string,
@@ -898,24 +893,6 @@ export async function processInstagramDmWebhook(params: {
     const handlerT0 = Date.now();
     let dmGenerateMs = 0;
     let greetingFastPath = false;
-    const runGenerateResponse = async (input: Parameters<typeof generateResponse>[0]) => {
-      const t = Date.now();
-      try {
-        return await generateResponse(input);
-      } finally {
-        dmGenerateMs += Date.now() - t;
-      }
-    };
-    const runGenerateResponseWithActions = async (
-      input: Parameters<typeof generateResponseWithActions>[0]
-    ) => {
-      const t = Date.now();
-      try {
-        return await generateResponseWithActions(input);
-      } finally {
-        dmGenerateMs += Date.now() - t;
-      }
-    };
 
     const patient = await findOrCreatePlaceholderPatient(
       doctorId,
@@ -976,6 +953,12 @@ export async function processInstagramDmWebhook(params: {
     const doctorSettings = await getDoctorSettings(doctorId);
     const doctorContext = getDoctorContextFromSettings(doctorSettings);
 
+    // -------------------------------------------------------------------------
+    // RBH-17: Main reply decision tree (Decide + Say). Understand already ran above.
+    // Order: see file header. Prefer deterministic Say for fees/safety; LLM for open wording.
+    // -------------------------------------------------------------------------
+    const stateStepBefore = state.step ?? null;
+    let dmRoutingBranch: DmHandlerBranch = 'unknown';
     let replyText: string;
     const isBookIntent = intentResult.intent === 'book_appointment';
     const isRevokeIntent = intentResult.intent === 'revoke_consent';
@@ -992,8 +975,38 @@ export async function processInstagramDmWebhook(params: {
       state.lastPromptKind === 'match_pick';
     const justStartingCollection =
       isBookIntent && !state.step && !(state.collectedFields?.length);
+    /** RBH-18: Classifier topics / is_fee_question OR keyword fallback */
+    const signalsFeePricing = intentSignalsFeeOrPricing(intentResult, text);
+
+    const runGenerateResponse = async (input: Parameters<typeof generateResponse>[0]) => {
+      const t = Date.now();
+      try {
+        return await generateResponse({
+          ...input,
+          classifierSignalsFeeQuestion:
+            input.classifierSignalsFeeQuestion ?? signalsFeePricing,
+        });
+      } finally {
+        dmGenerateMs += Date.now() - t;
+      }
+    };
+    const runGenerateResponseWithActions = async (
+      input: Parameters<typeof generateResponseWithActions>[0]
+    ) => {
+      const t = Date.now();
+      try {
+        return await generateResponseWithActions({
+          ...input,
+          classifierSignalsFeeQuestion:
+            input.classifierSignalsFeeQuestion ?? signalsFeePricing,
+        });
+      } finally {
+        dmGenerateMs += Date.now() - t;
+      }
+    };
 
     if (isRevokeIntent) {
+      dmRoutingBranch = 'revoke_consent';
       replyText = await handleRevocation(
         conversation.id,
         conversation.patient_id,
@@ -1008,6 +1021,7 @@ export async function processInstagramDmWebhook(params: {
       await updateConversationState(conversation.id, state, correlationId);
     } else if (doctorSettings?.instagram_receptionist_paused === true) {
       // RBH-09: Pause automation - optional handoff copy only (revoke_consent handled above).
+      dmRoutingBranch = 'receptionist_paused';
       replyText = resolveInstagramReceptionistPauseMessage(doctorSettings);
       state = {
         ...state,
@@ -1021,6 +1035,7 @@ export async function processInstagramDmWebhook(params: {
         'Instagram DM: receptionist paused; handoff message only (RBH-09)'
       );
     } else if (state.step === 'awaiting_cancel_choice') {
+      dmRoutingBranch = 'cancel_flow_numeric';
       // Cancel flow: user picks which appointment (1, 2, 3...)
       const ids = state.pendingCancelAppointmentIds ?? [];
       const trimmed = text.trim();
@@ -1052,6 +1067,7 @@ export async function processInstagramDmWebhook(params: {
         await updateConversationState(conversation.id, state, correlationId);
       }
     } else if (state.step === 'awaiting_cancel_confirmation') {
+      dmRoutingBranch = 'cancel_flow_confirm';
       // Fast-path: clear yes/no executes immediately (no AI). Prevents AI returning text without tool call.
       const lower = text.trim().toLowerCase();
       const isYes = /^(yes|yeah|yep|ok|okay|cancel|confirm)$/.test(lower);
@@ -1118,6 +1134,7 @@ export async function processInstagramDmWebhook(params: {
       }
       await updateConversationState(conversation.id, state, correlationId);
     } else if (state.step === 'awaiting_reschedule_choice') {
+      dmRoutingBranch = 'reschedule_flow_numeric';
       // Reschedule flow: user picks which appointment (1, 2, 3...)
       const ids = state.pendingRescheduleAppointmentIds ?? [];
       const trimmed = text.trim();
@@ -1146,6 +1163,7 @@ export async function processInstagramDmWebhook(params: {
       }
     } else if (isEmergencyUserMessage(text) || intentResult.intent === 'emergency') {
       // RBH-15: Pattern-based emergency wins over misclassified medical_query; message in user's language.
+      dmRoutingBranch = 'emergency_safety';
       replyText = resolveSafetyMessage('emergency', text);
       state = {
         ...state,
@@ -1155,6 +1173,7 @@ export async function processInstagramDmWebhook(params: {
       };
       await updateConversationState(conversation.id, state, correlationId);
     } else if (intentResult.intent === 'medical_query' && !inCollection) {
+      dmRoutingBranch = 'medical_safety';
       // Only deflect when NOT in collection flow. Context matters: if we asked for "reason for visit"
       // and the patient replied "Pain Abdomen", that's their answer - not an unsolicited medical query.
       // inCollection = we asked for details; their reply is data. No field-count heuristic (unreliable:
@@ -1168,13 +1187,34 @@ export async function processInstagramDmWebhook(params: {
       };
       await updateConversationState(conversation.id, state, correlationId);
     } else if (
-      isPricingInquiryMessage(text) &&
+      signalsFeePricing &&
+      !userExplicitlyWantsToBookNow(text) &&
+      inCollection
+    ) {
+      // RBH-18/19: Pricing during intake — deterministic fee + localized continue line; optional AI bridge (env).
+      dmRoutingBranch = 'fee_deterministic_mid_collection';
+      replyText = await appendOptionalDmReplyBridge({
+        correlationId,
+        userText: text,
+        baseReply: composeMidCollectionFeeQuoteDm(doctorSettings, text, {
+          collectedFields: state.collectedFields,
+        }),
+      });
+      state = {
+        ...state,
+        lastIntent: intentResult.intent,
+        updatedAt: new Date().toISOString(),
+      };
+      await updateConversationState(conversation.id, state, correlationId);
+    } else if (
+      signalsFeePricing &&
       !userExplicitlyWantsToBookNow(text) &&
       !inCollection &&
       (!state.step || state.step === 'responded')
     ) {
-      // RBH-13: Fee / pricing questions - structured reply; stay in `responded`, do not start intake.
-      replyText = buildFeeQuoteDm(doctorSettings, text);
+      // RBH-13 + RBH-18/19: Fee / pricing — structured reply; stay in `responded`, do not start intake.
+      dmRoutingBranch = 'fee_deterministic_idle';
+      replyText = composeIdleFeeQuoteDm(doctorSettings, text);
       state = {
         ...state,
         lastIntent: intentResult.intent,
@@ -1189,6 +1229,7 @@ export async function processInstagramDmWebhook(params: {
       (!state.step || state.step === 'responded')
     ) {
       // RBH-12: Skip second OpenAI call for idle greetings (classify may already be regex-fast).
+      dmRoutingBranch = 'greeting_template';
       greetingFastPath = true;
       const practiceName = doctorContext?.practice_name?.trim() || 'the clinic';
       replyText = `Hello! I'm the assistant at **${practiceName}**. How can I help you today - would you like to **book an appointment**, **check availability**, or ask a **general question**?`;
@@ -1200,6 +1241,7 @@ export async function processInstagramDmWebhook(params: {
       };
       await updateConversationState(conversation.id, state, correlationId);
     } else if (intentResult.intent === 'check_appointment_status') {
+      dmRoutingBranch = 'check_appointment_status';
       const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
       const askingForSelfOnly = /\b(my\s+appointment|what\s+about\s+my\s+appointment)\b/i.test(text.trim());
       const patientIdsList = askingForSelfOnly
@@ -1248,6 +1290,7 @@ export async function processInstagramDmWebhook(params: {
       };
       await updateConversationState(conversation.id, state, correlationId);
     } else if (intentResult.intent === 'cancel_appointment') {
+      dmRoutingBranch = 'cancel_appointment_intent';
       const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
       const patientIdsList = buildRelatedPatientIdsForWebhook(conversation.patient_id, state);
       const upcoming = await getMergedUpcomingAppointmentsForRelatedPatients(
@@ -1290,6 +1333,7 @@ export async function processInstagramDmWebhook(params: {
         await updateConversationState(conversation.id, state, correlationId);
       }
     } else if (intentResult.intent === 'reschedule_appointment') {
+      dmRoutingBranch = 'reschedule_appointment_intent';
       const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
       const patientIdsList = buildRelatedPatientIdsForWebhook(conversation.patient_id, state);
       const upcoming = await getMergedUpcomingAppointmentsForRelatedPatients(
@@ -1331,6 +1375,7 @@ export async function processInstagramDmWebhook(params: {
         await updateConversationState(conversation.id, state, correlationId);
       }
     } else if (intentResult.intent === 'book_for_someone_else' && (state.step === 'responded' || state.step === 'awaiting_slot_selection')) {
+      dmRoutingBranch = 'book_for_someone_else';
       const multiPerson = parseMultiPersonBooking(text);
       if (multiPerson) {
         // e-task-4: Multi-person "me and my X" - other first, then offer self
@@ -1374,6 +1419,7 @@ export async function processInstagramDmWebhook(params: {
       state.step === 'awaiting_match_confirmation' ||
       (effectiveAskedForMatch(state, recentMessages) && state.pendingMatchPatientIds?.length)
     ) {
+      dmRoutingBranch = 'patient_match_confirmation';
       // e-task-5: Handle match confirmation. Yes -> use existing; No -> create new; 1/2 -> pick from multi-match.
       const matchIds = state.pendingMatchPatientIds ?? [];
       const matchCount = matchIds.length;
@@ -1454,6 +1500,7 @@ export async function processInstagramDmWebhook(params: {
         await updateConversationState(conversation.id, state, correlationId);
       }
     } else if (state.step === 'consent' || (effectiveAskedForConsent(state, recentMessages) && parseConsentReply(text) === 'granted')) {
+      dmRoutingBranch = 'consent_flow';
       // Handle consent reply regardless of intent. Fallback: last bot asked for consent + user said yes.
       if (!state.step) {
         state = { ...state, step: 'consent', updatedAt: new Date().toISOString() };
@@ -1585,6 +1632,7 @@ export async function processInstagramDmWebhook(params: {
         });
       }
     } else if (state.step === 'collecting_all' || (lastBotAskedForDetails && !state.step)) {
+      dmRoutingBranch = 'booking_collection';
       // Process as collection data. Context: we asked for details (state or last bot message).
       // E.g. "Pain Abdomen" may be classified as medical_query but we asked - treat as data.
       if (!state.step) {
@@ -1732,6 +1780,7 @@ export async function processInstagramDmWebhook(params: {
       (effectiveAskedForConfirm(state, recentMessages) &&
         /^(yes|yeah|yep|ok|okay|correct|looks good|confirmed)$/.test(text.trim().toLowerCase()))
     ) {
+      dmRoutingBranch = 'confirm_details';
       // Handle confirm reply regardless of intent. Fallback: last bot asked for confirm + user said yes.
       if (!state.step) {
         state = { ...state, step: 'confirm_details', updatedAt: new Date().toISOString() };
@@ -1862,6 +1911,7 @@ export async function processInstagramDmWebhook(params: {
       state.step === 'responded' &&
       isPostBookingAcknowledgment(text, recentMessages)
     ) {
+      dmRoutingBranch = 'post_booking_ack';
       replyText = "Great - you're all set. Let us know if you need anything else.";
               state = {
                 ...state,
@@ -1873,11 +1923,12 @@ export async function processInstagramDmWebhook(params: {
     } else if (
       isBookIntent &&
       justStartingCollection &&
-      isPricingInquiryMessage(text) &&
+      signalsFeePricing &&
       !userExplicitlyWantsToBookNow(text)
     ) {
-      // RBH-13: "How much..." misclassified as book_appointment with empty step - fee answer, not intake.
-      replyText = buildFeeQuoteDm(doctorSettings, text);
+      // RBH-13/19: "How much..." misclassified as book_appointment with empty step - fee answer, not intake.
+      dmRoutingBranch = 'fee_book_misclassified_idle';
+      replyText = composeIdleFeeQuoteDm(doctorSettings, text);
       state = {
         ...state,
         lastIntent: intentResult.intent,
@@ -1888,6 +1939,7 @@ export async function processInstagramDmWebhook(params: {
       await updateConversationState(conversation.id, state, correlationId);
     } else if (isBookIntent && (justStartingCollection || inCollection)) {
       // Note: consent, confirm_details, collecting_all are handled above (regardless of intent).
+      dmRoutingBranch = justStartingCollection ? 'booking_start_ai' : 'booking_continue_ai';
       if (justStartingCollection) {
         state = {
           ...state,
@@ -1922,6 +1974,7 @@ export async function processInstagramDmWebhook(params: {
         });
       }
     } else if (state.step === 'awaiting_slot_selection') {
+      dmRoutingBranch = 'slot_selection';
       const trimmed = text.trim().toLowerCase();
       const wantsNewLink =
         /^(change|pick another|different time|new link|another time|different slot)$/.test(trimmed) ||
@@ -1988,6 +2041,7 @@ export async function processInstagramDmWebhook(params: {
         await updateConversationState(conversation.id, state, correlationId);
       }
     } else if (isBookIntent && state.step === 'responded') {
+      dmRoutingBranch = 'book_responded';
       // e-task-2: Show weekly availability + "When would you like to come?" - never random first-available slots
       const patient = await findPatientByIdWithAdmin(conversation.patient_id, correlationId);
       const hasPatientReady =
@@ -1995,10 +2049,10 @@ export async function processInstagramDmWebhook(params: {
         patient?.phone?.trim() &&
         patient?.consent_status === 'granted';
       const explicitBook = userExplicitlyWantsToBookNow(text);
-      const pricingOnly = isPricingInquiryMessage(text) && !explicitBook;
+      const pricingOnly = signalsFeePricing && !explicitBook;
 
       if (!hasPatientReady && pricingOnly) {
-        replyText = buildFeeQuoteDm(doctorSettings, text);
+        replyText = composeIdleFeeQuoteDm(doctorSettings, text);
         state = {
           ...state,
           lastIntent: intentResult.intent,
@@ -2032,6 +2086,7 @@ export async function processInstagramDmWebhook(params: {
       }
       await updateConversationState(conversation.id, state, correlationId);
     } else {
+      dmRoutingBranch = 'ai_open_response';
       const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
       replyText = await runGenerateResponse({
         conversationId: conversation.id,
@@ -2081,6 +2136,19 @@ export async function processInstagramDmWebhook(params: {
         stateToPersistRaw.activeFlow
       ),
     };
+    logInstagramDmRouting({
+      correlationId,
+      eventId,
+      doctorId,
+      conversationId: conversation.id,
+      branch: dmRoutingBranch,
+      intent: intentResult.intent,
+      intent_topics: intentResult.topics,
+      is_fee_question: intentResult.is_fee_question,
+      state_step_before: stateStepBefore,
+      state_step_after: stateToPersist.step ?? null,
+      greeting_fast_path: greetingFastPath,
+    });
     await updateConversationState(conversation.id, stateToPersist, correlationId);
 
     // Send lock + reply throttle + 2018001 fallback (shared with conflict recovery - RBH-04)
@@ -2186,7 +2254,20 @@ export async function processInstagramDmWebhook(params: {
                 await getDoctorSettings(doctorId)
               ),
               context: aiContext,
+              classifierSignalsFeeQuestion: intentSignalsFeeOrPricing(intentResult, text),
             })) || FALLBACK_REPLY;
+          logInstagramDmRouting({
+            correlationId,
+            eventId,
+            doctorId,
+            conversationId: conversation.id,
+            branch: 'conflict_recovery_ai',
+            intent: intentResult.intent,
+            intent_topics: intentResult.topics,
+            is_fee_question: intentResult.is_fee_question,
+            state_step_before: state.step ?? null,
+            state_step_after: state.step ?? null,
+          });
           await createMessage(
             {
               conversation_id: conversation.id,

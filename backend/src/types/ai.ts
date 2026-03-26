@@ -87,13 +87,33 @@ export function toIntent(value: string): Intent {
  */
 export type ConfidenceScore = number;
 
+/** RBH-18: Optional sub-topics from the classifier (any language; no regex growth). */
+export type IntentTopic = 'pricing' | 'hours' | 'location' | 'booking_howto';
+
+export const INTENT_TOPIC_VALUES: readonly IntentTopic[] = [
+  'pricing',
+  'hours',
+  'location',
+  'booking_howto',
+] as const;
+
+export function isIntentTopic(value: string): value is IntentTopic {
+  return (INTENT_TOPIC_VALUES as readonly string[]).includes(value);
+}
+
 /**
  * Result of intent detection: intent plus optional confidence.
  * Used by ai-service (Task 2) return type.
+ *
+ * RBH-18: `topics` + `is_fee_question` — from LLM JSON when available; omit on regex-only paths.
  */
 export interface IntentDetectionResult {
   intent: Intent;
   confidence: ConfidenceScore;
+  /** Classifier: user asking about cost/fees/charges/money/payment in any language */
+  is_fee_question?: boolean;
+  /** Classifier: thematic buckets (may be empty array from model) */
+  topics?: IntentTopic[];
 }
 
 // ============================================================================

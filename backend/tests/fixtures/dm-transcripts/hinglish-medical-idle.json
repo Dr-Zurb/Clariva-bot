@@ -1,0 +1,9 @@
+{
+  "id": "hinglish_medical_idle",
+  "description": "RBH-15: medical_query while not in collection → safety template (no PHI in logs).",
+  "expectedBranch": "medical_safety",
+  "when": {
+    "intent": "medical_query",
+    "in_collection": false
+  }
+}

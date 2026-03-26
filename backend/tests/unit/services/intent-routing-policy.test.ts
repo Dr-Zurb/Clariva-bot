@@ -6,6 +6,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   applyIntentPostClassificationPolicy,
   buildClassifyIntentContext,
+  intentSignalsFeeOrPricing,
 } from '../../../src/services/ai-service';
 import type { ConversationState } from '../../../src/types/conversation';
 
@@ -22,6 +23,8 @@ describe('RBH-14 intent routing', () => {
       );
       expect(out.intent).toBe('ask_question');
       expect(out.confidence).toBeLessThanOrEqual(0.88);
+      expect(out.is_fee_question).toBe(true);
+      expect(out.topics).toContain('pricing');
     });
 
     it('keeps book_appointment when user explicitly books', () => {
@@ -83,6 +86,35 @@ describe('RBH-14 intent routing', () => {
       const state: ConversationState = { step: 'responded' };
       const ctx = buildClassifyIntentContext(state, []);
       expect(ctx).toBeUndefined();
+    });
+  });
+
+  describe('intentSignalsFeeOrPricing (RBH-18)', () => {
+    it('uses classifier is_fee_question without fee keywords in text', () => {
+      expect(
+        intentSignalsFeeOrPricing(
+          { intent: 'book_appointment', confidence: 0.9, is_fee_question: true },
+          'phone pe ho jayega consultation?'
+        )
+      ).toBe(true);
+    });
+
+    it('uses topics pricing from classifier', () => {
+      expect(
+        intentSignalsFeeOrPricing(
+          { intent: 'ask_question', confidence: 0.9, topics: ['pricing'] },
+          'random words no money'
+        )
+      ).toBe(true);
+    });
+
+    it('falls back to keyword helper when classifier omits fee fields', () => {
+      expect(
+        intentSignalsFeeOrPricing(
+          { intent: 'ask_question', confidence: 0.9 },
+          'how much is the consultation fee'
+        )
+      ).toBe(true);
     });
   });
 });

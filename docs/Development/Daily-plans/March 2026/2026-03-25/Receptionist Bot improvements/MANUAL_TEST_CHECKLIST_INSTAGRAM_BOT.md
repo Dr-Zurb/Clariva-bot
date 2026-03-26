@@ -37,26 +37,28 @@
 
 ## 2. Intents & routing (DM)
 
-| # | Scenario | Input | Expected | Pass/Fail |
-|---|----------|-------|----------|-----------|
-| 2.1 | Simple greeting only | “hi”, “namaste” | Greeting path; **no** immediate demand for 5 fields. |✅|
-| 2.2 | Book self | “I want to book for myself” | `book_appointment` → collection / slot flow. |✅|
-| 2.3 | Book for someone else | “Book for my mother” | Relation capture; flow for other person. | |
-| 2.4 | Multi-person | “Book for me and my brother” | Multi-person parsing; correct relation handling. | |
-| 2.5 | Check availability | “Any slots tomorrow?” | Appropriate reply + slot/link behaviour per implementation. | |
-| 2.6 | General question / fees (RBH-13) | “What are your fees?” / “How much is consultation?” | Structured reply from `consultation_types` (or safe fallback); **no** immediate “share full name…” intake unless user asks to book. | |
-| 2.6b | Fee then clarify (RBH-13 + RBH-14) | After fee reply: “general consultation please” / “video consult” | Intent stays **pricing/q&A** (`ask_question` or fee path); **no** forced intake until explicit book. Classifier uses **prior turns**. | |
-| 2.7a | Medical query (normal) RBH-15 | “ਮੇਨੂੰ ਤਿੰਨ ਦਿਨ ਤੋਂ ਬੁਖ਼ਾਰ ਹੈ” / “Menu tin din to bukhar hai” | **No** diagnosis; deflection in **Punjabi (script or Roman)** — same assistant/doctor/clinic meaning. | |
-| 2.7b | Medical query (normal) RBH-15 | “ਮੇਰੇ ਨਾਲ ਪੇਟ ਦਰਦ ਹੋ ਰਿਹਾ ਹੈ” / Latin transliteration | Same; **localized** medical_query template. | |
-| 2.7c | Medical query (normal) RBH-15 | “ਮੀਨੂੰ ਖੰਘ ਤੇ ਜੁਕਾਮ ਹੋ ਗਿਆ” | Same; **localized** medical_query template. | |
-| 2.7d | Emergency RBH-15 | “ਮੇਰੀ ਛਾਤੀ ਵਿੱਚ ਦਰਦ ਤੇ ਸਾਸ ਨਹੀਂ ਆ ਰਹੀ” / “Meri chhati vich dard…” | **Emergency** message in **user language**; includes **112/108** (India); no booking upsell. | |
-| 2.7e | Emergency RBH-15 | “ਕਿਸੇ ਨੇ ਜ਼ਹਿਰ ਖਾ ਲਿਆ” / “Kise ne zahar kha lia” | Same; pattern wins over `medical_query`. | |
-| 2.7f | Emergency RBH-15 | “ਬੱਚਾ ਬੇਹੋਸ਼ ਹੋ ਗਿਆ” (“Baccha behosh ho giya”) | Same. | |
-| 2.8 | Emergency phrase | “Chest pain and can’t breathe” | **EN** emergency template + **112/108**; no booking upsell. | |
-| 2.8b | Non-emergency booking | “I need an **emergency appointment**” / “urgent appointment” | **Not** treated as medical emergency keywords → normal booking / classify flow. | |
-| 2.9 | Payment / status | “I paid, is it confirmed?” | `check_appointment_status` or equivalent. | |
-| 2.10 | Revoke consent | “Delete my data” / “revoke consent” | Consent revocation path per policy. | |
-| 2.11 | Ambiguous / spam | Random emoji chain / empty | Polite deflection or `unknown`; no crash. | |
+**RBH-20 (logs):** After each DM reply, search structured logs for message `instagram_dm_routing` and fields `branch`, `intent`, `intent_topics`, `state_step_before`, `state_step_after`. Use **expected branch** column below for staging validation (no user message text in logs).
+
+| # | Scenario | Input | Expected | Expected branch (RBH-20) | Pass/Fail |
+|---|----------|-------|----------|--------------------------|-----------|
+| 2.1 | Simple greeting only | “hi”, “namaste” | Greeting path; **no** immediate demand for 5 fields. | `greeting_template` | ✅ |
+| 2.2 | Book self | “I want to book for myself” | `book_appointment` → collection / slot flow. | `booking_start_ai` / `book_responded` / `booking_collection` *(step-dependent)* | ✅ |
+| 2.3 | Book for someone else | “Book for my mother” | Relation capture; flow for other person. | `book_for_someone_else` | |
+| 2.4 | Multi-person | “Book for me and my brother” | Multi-person parsing; correct relation handling. | `book_for_someone_else` | |
+| 2.5 | Check availability | “Any slots tomorrow?” | Appropriate reply + slot/link behaviour per implementation. | `ai_open_response` *(typical)* | |
+| 2.6 | General question / fees (RBH-13) | “What are your fees?” / “How much is consultation?” | Structured reply from `consultation_types` (or safe fallback); **no** immediate “share full name…” intake unless user asks to book. | `fee_deterministic_idle` | |
+| 2.6b | Fee then clarify (RBH-13 + RBH-14) | After fee reply: “general consultation please” / “video consult” | Intent stays **pricing/q&A** (`ask_question` or fee path); **no** forced intake until explicit book. Classifier uses **prior turns**. | `ai_open_response` or `fee_deterministic_idle` | |
+| 2.7a | Medical query (normal) RBH-15 | “ਮੇਨੂੰ ਤਿੰਨ ਦਿਨ ਤੋਂ ਬੁਖ਼ਾਰ ਹੈ” / “Menu tin din to bukhar hai” | **No** diagnosis; deflection in **Punjabi (script or Roman)** — same assistant/doctor/clinic meaning. | `medical_safety` | |
+| 2.7b | Medical query (normal) RBH-15 | “ਮੇਰੇ ਨਾਲ ਪੇਟ ਦਰਦ ਹੋ ਰਿਹਾ ਹੈ” / Latin transliteration | Same; **localized** medical_query template. | `medical_safety` | |
+| 2.7c | Medical query (normal) RBH-15 | “ਮੀਨੂੰ ਖੰਘ ਤੇ ਜੁਕਾਮ ਹੋ ਗਿਆ” | Same; **localized** medical_query template. | `medical_safety` | |
+| 2.7d | Emergency RBH-15 | “ਮੇਰੀ ਛਾਤੀ ਵਿੱਚ ਦਰਦ ਤੇ ਸਾਸ ਨਹੀਂ ਆ ਰਹੀ” / “Meri chhati vich dard…” | **Emergency** message in **user language**; includes **112/108** (India); no booking upsell. | `emergency_safety` | |
+| 2.7e | Emergency RBH-15 | “ਕਿਸੇ ਨੇ ਜ਼ਹਿਰ ਖਾ ਲਿਆ” / “Kise ne zahar kha lia” | Same; pattern wins over `medical_query`. | `emergency_safety` | |
+| 2.7f | Emergency RBH-15 | “ਬੱਚਾ ਬੇਹੋਸ਼ ਹੋ ਗਿਆ” (“Baccha behosh ho giya”) | Same. | `emergency_safety` | |
+| 2.8 | Emergency phrase | “Chest pain and can’t breathe” | **EN** emergency template + **112/108**; no booking upsell. | `emergency_safety` | |
+| 2.8b | Non-emergency booking | “I need an **emergency appointment**” / “urgent appointment” | **Not** treated as medical emergency keywords → normal booking / classify flow. | `booking_start_ai` / `book_responded` *(varies)* | |
+| 2.9 | Payment / status | “I paid, is it confirmed?” | `check_appointment_status` or equivalent. | `check_appointment_status` | |
+| 2.10 | Revoke consent | “Delete my data” / “revoke consent” | Consent revocation path per policy. | `revoke_consent` | |
+| 2.11 | Ambiguous / spam | Random emoji chain / empty | Polite deflection or `unknown`; no crash. | `ai_open_response`; branch `unknown` = bug | |
 
 ---
 

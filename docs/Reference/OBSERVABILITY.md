@@ -363,8 +363,12 @@ Emitted as structured **INFO** / **WARN** logs with `context: 'webhook_metric'` 
 | `webhook_conflict_recovery_total` | `recoveryOutcome`: `success` \| `failed` \| `send_skipped_throttle` | Duplicate conversation / message race handling |
 | `webhook_instagram_dm_pipeline_timing` (RBH-12) | `intent`, `intentMs`, `generateMs`, `igSendMs?`, `handlerPreSendMs`, `greetingFastPath?`, `throttleSkipped?`, `doctorId?` | After DM send attempt: OpenAI + Instagram segment latencies (no PHI) |
 
+**Instagram DM routing (RBH-20):** One structured **INFO** log per processed DM turn with **message** `instagram_dm_routing` (see `backend/src/utils/log-instagram-dm-routing.ts`). Fields include `branch` (`DmHandlerBranch`), `intent`, `intent_topics`, `is_fee_question`, `state_step_before`, `state_step_after`, `conversationId`, `doctorId`, `eventId`, `correlationId`, optional `greeting_fast_path`. **No user message text.**
+
 **Example queries (log aggregation):**
 
+- Routing mix: count `instagram_dm_routing` group by `branch` (sanity: `fee_deterministic_idle` + `fee_deterministic_mid_collection` for pricing; `unknown` should be near zero).
+- Conflict recovery: filter `branch = conflict_recovery_ai`.
 - DM failure rate: count lines where `msg ~ webhook_metric_webhook_instagram_dm_delivery_total` and `outcome = failure`, group by `reason`.
 - Comment outreach: count `webhook_comment_pipeline_total` with `highIntent = true`, compare `dmSent` / `publicReplySent`.
 - Worker duration: percentile on `durationMs` for `webhook_job_worker_success` by `provider`.

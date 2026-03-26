@@ -1,0 +1,11 @@
+{
+  "id": "fee_mid_collection",
+  "description": "RBH-18/19: fee question during intake → deterministic fee + continue line.",
+  "expectedBranch": "fee_deterministic_mid_collection",
+  "when": {
+    "intent": "ask_question",
+    "signals_fee_pricing": true,
+    "user_explicit_book": false,
+    "in_collection": true
+  }
+}

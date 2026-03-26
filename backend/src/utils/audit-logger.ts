@@ -279,6 +279,10 @@ export async function logAIClassification(params: {
   resourceId?: string;
   tokens?: number;
   errorMessage?: string;
+  /** RBH-18: classifier topics (no PHI) */
+  intentTopics?: string[];
+  /** RBH-18 */
+  isFeeQuestion?: boolean;
 }): Promise<void> {
   await logAuditEvent({
     correlationId: params.correlationId,
@@ -291,6 +295,8 @@ export async function logAIClassification(params: {
       model: params.model,
       redactionApplied: params.redactionApplied,
       ...(params.tokens !== undefined ? { tokens: params.tokens } : {}),
+      ...(params.intentTopics?.length ? { intentTopics: params.intentTopics } : {}),
+      ...(params.isFeeQuestion === true ? { isFeeQuestion: true } : {}),
     },
   });
 }

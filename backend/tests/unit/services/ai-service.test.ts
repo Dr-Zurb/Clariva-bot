@@ -143,6 +143,46 @@ describe('AI Service', () => {
         );
       });
 
+      it('RBH-18: parses topics and is_fee_question from model JSON', async () => {
+        const res: MockCompletion = {
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  intent: 'ask_question',
+                  confidence: 0.91,
+                  topics: ['pricing', 'hours'],
+                  is_fee_question: true,
+                }),
+              },
+            },
+          ],
+          usage: { total_tokens: 55 },
+        };
+        const mockCreate = jest.fn<() => Promise<MockCompletion>>().mockResolvedValue(res);
+        mockedOpenai.getOpenAIClient.mockReturnValue({
+          chat: { completions: { create: mockCreate } },
+        } as any);
+        mockedOpenai.getOpenAIConfig.mockReturnValue({
+          model: 'gpt-5.2',
+          maxTokens: 256,
+        });
+
+        const result = await classifyIntent('paisa kitna lagta hai video call pe', correlationId);
+
+        expect(result.intent).toBe('ask_question');
+        expect(result.confidence).toBe(0.91);
+        expect(result.is_fee_question).toBe(true);
+        expect(result.topics).toEqual(['pricing', 'hours']);
+        expect(mockedAudit.logAIClassification).toHaveBeenCalledWith(
+          expect.objectContaining({
+            status: 'success',
+            intentTopics: ['pricing', 'hours'],
+            isFeeQuestion: true,
+          })
+        );
+      });
+
       it('RBH-14: sends multi-turn user payload when classifyContext is provided', async () => {
         const res: MockCompletion = {
           choices: [

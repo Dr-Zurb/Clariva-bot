@@ -40,6 +40,11 @@ const envSchema = z.object({
       const n = parseInt(v, 10);
       return Math.min(15, Math.max(3, Number.isNaN(n) ? 8 : n));
     }),
+  // RBH-19 Phase 2: optional short LLM line after deterministic fee block (mid-collection). Default off (latency/cost).
+  AI_DM_REPLY_BRIDGE_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
 
   // Twilio Configuration (optional - only if using Twilio)
   TWILIO_ACCOUNT_SID: z.string().optional(),
