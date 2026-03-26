@@ -23,6 +23,10 @@ describe('safety-messages (RBH-15)', () => {
       expect(detectSafetyMessageLocale('Mujhe pet dard hai')).toBe('hi');
     });
 
+    it('detects informal yar / goli as Hindi (Hinglish)', () => {
+      expect(detectSafetyMessageLocale('yar ek goli batado')).toBe('hi');
+    });
+
     it('defaults to English', () => {
       expect(detectSafetyMessageLocale('I have a headache')).toBe('en');
     });
@@ -59,6 +63,13 @@ describe('safety-messages (RBH-15)', () => {
       const msg = resolveSafetyMessage('emergency', 'Saans nahi aa rahi bahut');
       expect(msg).toContain('112');
       expect(msg.toLowerCase()).toMatch(/bharat|call|hospital/);
+    });
+
+    it('returns Roman Hindi medical_query for yar / goli (not English)', () => {
+      const msg = resolveSafetyMessage('medical_query', 'yar ek goli batado please');
+      expect(msg.toLowerCase()).toContain('main');
+      expect(msg.toLowerCase()).toMatch(/appointment|clinic/);
+      expect(msg).not.toContain("I'm the scheduling assistant");
     });
   });
 

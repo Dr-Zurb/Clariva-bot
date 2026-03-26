@@ -22,7 +22,24 @@ interface CompactFeeRow {
 }
 
 const PRICING_KEYWORDS =
-  /\b(fee|fees|price|prices|pricing|cost|costs|charge|charges|how\s+much|kitna|kitni|कितना|rupee|rupees|rs\.?|inr|₹|consultation\s+fee|doctor\s+fee|appointment\s+fee)\b/i;
+  /\b(fee|fees|price|prices|pricing|cost|costs|charge|charges|how\s+much|kitna|kitni|kitne|कितना|rupee|rupees|paise|paisa|rs\.?|inr|₹|consultation\s+fee|doctor\s+fee|appointment\s+fee)\b/i;
+
+/**
+ * One-line fee facts for OpenAI system prompt (authoritative; from DB only).
+ * Used so the model never claims “fee not in system” when Booking Rules has a value.
+ */
+export function formatAppointmentFeeForAiContext(settings: {
+  appointment_fee_minor?: number | null;
+  appointment_fee_currency?: string | null;
+}): string | null {
+  const minor = settings.appointment_fee_minor;
+  if (minor == null || minor <= 0) return null;
+  const cur = (settings.appointment_fee_currency || 'INR').toUpperCase();
+  if (cur === 'INR') {
+    return `Standard appointment / consultation fee on file: ₹${Math.round(minor / 100)} (INR). This is what patients pay when booking unless a different per–visit-type amount is listed under consultation types.`;
+  }
+  return `Standard appointment / consultation fee on file: ${(minor / 100).toFixed(2)} ${cur}.`;
+}
 
 /** User message looks like a pricing question (EN + common Roman Hindi). */
 export function isPricingInquiryMessage(text: string): boolean {

@@ -90,6 +90,7 @@ import {
   type ConversationState,
 } from '../types/conversation';
 import {
+  formatAppointmentFeeForAiContext,
   formatConsultationFeesForDm,
   formatFeeBookingCtaForDm,
   isPricingInquiryMessage,
@@ -625,6 +626,8 @@ function isAmbiguousCollectionMessage(text: string, extracted: ExtractedFields):
 /** Build doctor context for AI (e-task-4, e-task-2 consultation_types) */
 function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): DoctorContext | undefined {
   if (!settings) return undefined;
+  const hasFeeOnFile =
+    settings.appointment_fee_minor != null && settings.appointment_fee_minor > 0;
   const hasAny =
     settings.practice_name ||
     settings.business_hours_summary ||
@@ -632,6 +635,7 @@ function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): Docto
     settings.specialty ||
     settings.address_summary ||
     settings.consultation_types ||
+    hasFeeOnFile ||
     (settings.cancellation_policy_hours != null && settings.cancellation_policy_hours > 0);
   if (!hasAny) return undefined;
   return {
@@ -642,6 +646,10 @@ function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): Docto
     address_summary: settings.address_summary,
     cancellation_policy_hours: settings.cancellation_policy_hours,
     consultation_types: settings.consultation_types,
+    appointment_fee_summary: formatAppointmentFeeForAiContext({
+      appointment_fee_minor: settings.appointment_fee_minor,
+      appointment_fee_currency: settings.appointment_fee_currency,
+    }),
   };
 }
 

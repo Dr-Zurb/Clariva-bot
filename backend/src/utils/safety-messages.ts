@@ -64,7 +64,7 @@ export function detectSafetyMessageLocale(raw: string): SafetyMessageLocale {
       t
     ) ||
     /\b(pet\s+dard|sir\s+dard|kitni\s+din)\b/i.test(lower) ||
-    /\b(kitni|kitna|acha|accha|bolo|bhai|yaar|toh|theek|thik|rupaye|rupiya|paise|zada|zyada|doc)\b/i.test(
+    /\b(kitni|kitna|kitne|acha|accha|bolo|bhai|yaar|yar|toh|theek|thik|rupaye|rupiya|paise|paisa|zada|zyada|doc|goli|batado|batao|bohut)\b/i.test(
       lower
     )
   ) {

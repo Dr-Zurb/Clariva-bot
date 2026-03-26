@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  formatAppointmentFeeForAiContext,
   formatConsultationFeesForDm,
   formatFeeBookingCtaForDm,
   isConsultationTypePricingFollowUp,
@@ -11,8 +12,17 @@ import {
 describe('consultation-fees (RBH-13)', () => {
   it('isPricingInquiryMessage detects fee questions', () => {
     expect(isPricingInquiryMessage('how much is consultation')).toBe(true);
+    expect(isPricingInquiryMessage('yar kitne paise ye to batao')).toBe(true);
     expect(isPricingInquiryMessage('Hi')).toBe(false);
     expect(isPricingInquiryMessage('')).toBe(false);
+  });
+
+  it('formatAppointmentFeeForAiContext formats INR from paise', () => {
+    const line = formatAppointmentFeeForAiContext({
+      appointment_fee_minor: 1000,
+      appointment_fee_currency: 'INR',
+    });
+    expect(line).toContain('₹10');
   });
 
   it('userExplicitlyWantsToBookNow detects real booking intent', () => {

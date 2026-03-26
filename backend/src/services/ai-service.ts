@@ -212,7 +212,7 @@ Respond with a single JSON object: { "intent": "<one of the valid intents>", "co
 /** Base receptionist system prompt (e-task-3). Practice name injected dynamically (e-task-4). e-task-2: Acknowledge, relation, conversational tone. */
 const RESPONSE_SYSTEM_PROMPT_BASE = `You are a warm, friendly medical practice receptionist. You help with scheduling and general questions. You do NOT diagnose or give medical advice.
 
-LANGUAGE: Respond in the SAME language the user writes in. If they write in Hindi, Hinglish, or Hindi written in English (e.g. "kya aap available ho"), respond in that style. If they write in English, respond in English. Match their tone and script.
+LANGUAGE: Respond in the SAME language the user writes in. If they write in Hindi, Hinglish, or Hindi written in English (e.g. "kya aap available ho", "yar kitne paise", "goli bata do"), respond in that same Roman Hindi / Hinglish style—not formal English—unless their message is clearly English-only. If they use Devanagari Hindi, reply in Devanagari. Match their tone and script.
 
 GREETING: When currentIntent is greeting, greet back warmly, introduce yourself as the practice's assistant, and ask how you can help (e.g. book appointment, check availability, ask a question). Do NOT start collecting name, phone, or other booking details on greeting alone.
 
@@ -900,6 +900,8 @@ export interface DoctorContext {
   cancellation_policy_hours?: number | null;
   /** e-task-2: e.g. "Video, In-clinic" - drives consultation type options */
   consultation_types?: string | null;
+  /** Pre-formatted line(s) from doctor_settings — must be passed through to the model verbatim when user asks fees. */
+  appointment_fee_summary?: string | null;
 }
 
 /** Optional context for AI response generation (e-task-1 Bot Intelligence). No PHI. */
@@ -960,6 +962,23 @@ function buildResponseSystemPrompt(doctorContext?: DoctorContext): string {
   if (parts.length > 0) {
     prompt += `\n\nPractice info (use when relevant): ${parts.join(' ')}`;
   }
+
+  const feeFacts: string[] = [];
+  const feeSummary = doctorContext?.appointment_fee_summary?.trim();
+  if (feeSummary) feeFacts.push(feeSummary);
+  const consultRaw = doctorContext?.consultation_types?.trim();
+  if (consultRaw) {
+    feeFacts.push(
+      `Consultation types / per-visit fee notes exactly as stored: ${consultRaw}. Use any rupee amounts or labels you find here; do not invent prices.`
+    );
+  }
+  if (feeFacts.length > 0) {
+    prompt += `\n\nAUTHORITATIVE FEES (from the practice database — these ARE "in the system"):
+${feeFacts.join('\n')}
+
+CRITICAL: When the user asks about cost, fees, charges, money, paise, kitna/kitne, phone/video consult price, etc., you MUST quote the amounts above if present. NEVER say the exact fee is missing, not visible, or not in the system when this block lists an amount. For phone/video/online consults, if only a standard fee is listed, say that amount applies to booking unless a different line explicitly gives another price. If this block has no rupee figure for their exact question, say the clinic can confirm any edge case — but still state the standard on-file fee if one exists.`;
+  }
+
   return prompt;
 }
 
@@ -1046,9 +1065,13 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
       ? ' The user has provided their details. Use a combined consent message: thank them by name, say we\'ll use their phone number to confirm the appointment by call or text, and ask "Ready to pick a time?" (e.g. "Thanks, [Name]. We\'ll use [phone] to confirm your appointment. Ready to pick a time?"). Do NOT ask "Do I have your permission to use this number?" - providing the number implies consent. CRITICAL: NEVER output placeholder text like "[Slot selection link]" or "[link]" - the system injects the real URL. If the user says yes to consent, the system handles the link; you do not have access to it. Do not invent or fake a link.'
       : '';
   const systemPrompt = buildResponseSystemPrompt(doctorContext);
+  const pricingFocusHint =
+    isPricingInquiryMessage(redactedCurrent) && !userExplicitlyWantsToBookNow(redactedCurrent)
+      ? ' PRIORITY: The latest user message is about pricing/fees (including paise/kitne/rupees). Lead with the AUTHORITATIVE FEES from Practice info if any amount is listed—state the exact fee clearly. Never claim fees are missing from the system when that block includes an amount. If you are mid–booking flow, combine the fee answer with asking for any still-missing fields in one reply, in the user’s language.'
+      : '';
   const systemContent =
     systemPrompt +
-    `\n\nCurrent detected intent for the latest user message: ${currentIntent}.${stepContext}${collectedContext}${aiContextBlock}${collectingAllHint}${collectionHint}${confirmDetailsHint}${consentHint}`;
+    `\n\nCurrent detected intent for the latest user message: ${currentIntent}.${stepContext}${collectedContext}${aiContextBlock}${collectingAllHint}${collectionHint}${confirmDetailsHint}${consentHint}${pricingFocusHint}`;
 
   const messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [
     { role: 'system', content: systemContent },
