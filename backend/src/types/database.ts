@@ -89,7 +89,7 @@ export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6;
  * @property status - Current appointment status
  * @property reason_for_visit - Patient main complaint/symptom (required for new bookings; migration 016)
  * @property notes - Optional patient extras + doctor default_notes (migration 016)
- * @property consultation_type - Video or in-clinic (e.g. 'video', 'in_clinic') (e-task-2)
+ * @property consultation_type - Teleconsult modality or in-clinic: 'text'|'voice'|'video'|'in_clinic' (e-task-2, SFU-07)
  * @property consultation_room_sid - Twilio Video room SID (migration 021)
  * @property consultation_started_at - When room was created (migration 021)
  * @property doctor_joined_at - When doctor connected (migration 021)
@@ -112,7 +112,7 @@ export interface Appointment {
   status: AppointmentStatus;
   reason_for_visit?: string | null;  // Patient main complaint (migration 016)
   notes?: string | null;  // Optional patient extras + doctor default_notes (migration 016)
-  consultation_type?: string | null;  // e.g. 'video', 'in_clinic' (e-task-2)
+  consultation_type?: string | null;  // e.g. 'text', 'voice', 'video', 'in_clinic' (e-task-2, SFU-07)
   consultation_room_sid?: string | null;  // Twilio Video room SID (migration 021)
   consultation_started_at?: Date | string | null;  // When room was created (migration 021)
   doctor_joined_at?: Date | string | null;  // When doctor connected (migration 021)
@@ -135,6 +135,12 @@ export interface Appointment {
   opd_event_type?: 'standard' | 'return_after_completed';
   /** Fee entitlement transferred from prior appointment (migration 031, OPD-08) */
   transferred_payment_from_appointment_id?: string | null;
+  /** Linked care episode for follow-up pricing (migration 036, SFU-02) */
+  episode_id?: string | null;
+  /** Catalog service_key for visit / episode matching (migration 036, SFU-02) */
+  catalog_service_key?: string | null;
+  /** SFU-04: episode lifecycle applied once when status completed (migration 037) */
+  care_episode_completion_processed_at?: Date | string | null;
   created_at: Date;
   updated_at: Date;
 }

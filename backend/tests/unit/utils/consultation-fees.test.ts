@@ -3,11 +3,15 @@ import {
   formatAppointmentFeeForAiContext,
   formatConsultationFeesForDm,
   formatFeeBookingCtaForDm,
+  formatServiceCatalogForAiContext,
+  formatServiceCatalogForDm,
   isConsultationTypePricingFollowUp,
   isMetaBookingOrFeeReasonText,
   isPricingInquiryMessage,
+  pickCatalogServicesMatchingUserText,
   userExplicitlyWantsToBookNow,
 } from '../../../src/utils/consultation-fees';
+import type { ServiceCatalogV1 } from '../../../src/utils/service-catalog-schema';
 
 describe('consultation-fees (RBH-13)', () => {
   it('isPricingInquiryMessage detects fee questions', () => {
@@ -107,5 +111,87 @@ describe('consultation-fees (RBH-13)', () => {
     expect(isConsultationTypePricingFollowUp('general consultation please')).toBe(true);
     expect(isConsultationTypePricingFollowUp('video consult')).toBe(true);
     expect(isConsultationTypePricingFollowUp('tomorrow')).toBe(false);
+  });
+
+  const catalogTwoServices: ServiceCatalogV1 = {
+    version: 1,
+    services: [
+      {
+        service_key: 'skin',
+        label: 'Dermatology',
+        modalities: {
+          text: { enabled: true, price_minor: 50_00 },
+          voice: { enabled: true, price_minor: 80_00 },
+          video: { enabled: true, price_minor: 100_00 },
+        },
+      },
+      {
+        service_key: 'gp',
+        label: 'General',
+        modalities: {
+          video: { enabled: true, price_minor: 200_00 },
+        },
+      },
+    ],
+  };
+
+  it('SFU-08: formatConsultationFeesForDm prefers service_offerings_json over consultation_types', () => {
+    const out = formatConsultationFeesForDm({
+      practice_name: 'Skin Clinic',
+      consultation_types: 'Legacy ₹999 should not appear',
+      service_offerings_json: catalogTwoServices,
+      appointment_fee_minor: 300_00,
+      appointment_fee_currency: 'INR',
+      business_hours_summary: 'Mon–Fri',
+    });
+    expect(out).toContain('Dermatology');
+    expect(out).toContain('`skin`');
+    expect(out).toContain('₹50');
+    expect(out).toContain('₹80');
+    expect(out).toContain('₹100');
+    expect(out).toContain('General');
+    expect(out).toContain('₹200');
+    expect(out).toContain('₹300');
+    expect(out).not.toContain('999');
+    expect(out).not.toContain('Legacy');
+  });
+
+  it('SFU-08: legacy path unchanged when catalog null', () => {
+    const out = formatConsultationFeesForDm({
+      practice_name: 'Test Clinic',
+      consultation_types: 'Video ₹400',
+      service_offerings_json: null,
+    });
+    expect(out).toContain('₹400');
+  });
+
+  it('SFU-08: pickCatalogServicesMatchingUserText narrows to one service', () => {
+    const rows = pickCatalogServicesMatchingUserText(catalogTwoServices, 'how much for dermatology');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.service_key).toBe('skin');
+  });
+
+  it('SFU-08: formatServiceCatalogForAiContext compact line', () => {
+    const s = formatServiceCatalogForAiContext({
+      service_offerings_json: catalogTwoServices,
+      appointment_fee_currency: 'INR',
+    });
+    expect(s).toContain('Dermatology');
+    expect(s).toContain('service_key=skin');
+    expect(s).toContain('₹50');
+    expect(s).toContain('video ₹100');
+  });
+
+  it('SFU-08: formatServiceCatalogForDm uses narrow pick', () => {
+    const body = formatServiceCatalogForDm(catalogTwoServices, {
+      practice_name: 'X',
+      consultation_types: null,
+      business_hours_summary: null,
+      appointment_fee_minor: null,
+      appointment_fee_currency: 'INR',
+    }, 'price for gp visit');
+    expect(body).toContain('General');
+    expect(body).toContain('`gp`');
+    expect(body).not.toContain('Dermatology');
   });
 });

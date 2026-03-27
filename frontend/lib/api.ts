@@ -659,6 +659,23 @@ export async function deleteBlockedTime(
 
 export type OpdModeApi = "slot" | "queue";
 
+/** SFU-07: teleconsult modality for /book + select-slot-and-pay */
+export type ConsultationModalityApi = "text" | "voice" | "video";
+
+export interface BookingPageCatalogServiceApi {
+  service_key: string;
+  label: string;
+  modalities: Partial<
+    Record<ConsultationModalityApi, { enabled: true; price_minor: number }>
+  >;
+}
+
+export interface BookingPageCatalogApi {
+  version: 1;
+  services: BookingPageCatalogServiceApi[];
+  feeCurrency: string;
+}
+
 export interface SlotPageInfoData {
   doctorId: string;
   practiceName: string;
@@ -666,6 +683,8 @@ export interface SlotPageInfoData {
   mode?: "book" | "reschedule";
   appointmentId?: string;
   opdMode?: OpdModeApi;
+  /** Token-scoped doctor catalog for service + modality picker (book flow only). */
+  serviceCatalog?: BookingPageCatalogApi | null;
 }
 
 export interface DaySlotWithStatus {
@@ -759,12 +778,28 @@ export async function selectSlot(
  */
 export async function selectSlotAndPay(
   bookingToken: string,
-  slotStart: string
+  slotStart: string,
+  catalog?: {
+    catalogServiceKey?: string;
+    consultationModality?: ConsultationModalityApi;
+  }
 ): Promise<ApiSuccess<SelectSlotAndPayData>> {
+  const body: {
+    token: string;
+    slotStart: string;
+    catalogServiceKey?: string;
+    consultationModality?: ConsultationModalityApi;
+  } = { token: bookingToken, slotStart };
+  if (catalog?.catalogServiceKey) {
+    body.catalogServiceKey = catalog.catalogServiceKey;
+  }
+  if (catalog?.consultationModality) {
+    body.consultationModality = catalog.consultationModality;
+  }
   const res = await fetch(`${API_BASE}/api/v1/bookings/select-slot-and-pay`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token: bookingToken, slotStart }),
+    body: JSON.stringify(body),
     cache: "no-store",
   });
   const json = (await res.json().catch(() => ({}))) as

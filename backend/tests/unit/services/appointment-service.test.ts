@@ -23,6 +23,10 @@ jest.mock('../../../src/services/doctor-settings-service', () => ({
   getDoctorSettings: jest.fn(async () => null),
 }));
 
+jest.mock('../../../src/services/care-episode-service', () => ({
+  syncCareEpisodeLifecycleOnAppointmentCompleted: jest.fn(async () => {}),
+}));
+
 const mockedDb = database as jest.Mocked<typeof database>;
 const mockedAudit = auditLogger as jest.Mocked<typeof auditLogger>;
 const mockedDoctorSettings = doctorSettings as jest.Mocked<typeof doctorSettings>;
@@ -282,7 +286,7 @@ describe('Appointment Service (e-task-2)', () => {
 
   describe('updateAppointment (e-task-5)', () => {
     it('updates status when provided', async () => {
-      const existing = { id: 'apt-patch', doctor_id: userId };
+      const existing = { id: 'apt-patch', doctor_id: userId, status: 'confirmed' };
       const updated = { ...existing, status: 'completed', updated_at: new Date() };
       const mockAdmin = createMockSupabase(
         { data: existing, error: null },
@@ -303,7 +307,7 @@ describe('Appointment Service (e-task-2)', () => {
     });
 
     it('updates clinical_notes when provided', async () => {
-      const existing = { id: 'apt-patch', doctor_id: userId };
+      const existing = { id: 'apt-patch', doctor_id: userId, status: 'confirmed' };
       const updated = { ...existing, clinical_notes: 'Patient improved', updated_at: new Date() };
       const mockAdmin = createMockSupabase(
         { data: existing, error: null },

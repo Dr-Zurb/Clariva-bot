@@ -20,8 +20,10 @@ import {
   processSlotSelection,
   processSlotSelectionAndPay,
   getRedirectUrlForDoctor,
+  getBookingPageCatalogPayload,
 } from '../services/slot-selection-service';
 import { getDoctorSettings } from '../services/doctor-settings-service';
+import { getConversationState } from '../services/conversation-service';
 import { ConflictError } from '../utils/errors';
 import { errorResponse } from '../utils/response';
 
@@ -81,6 +83,7 @@ export const selectSlotHandler = asyncHandler(async (req: Request, res: Response
  * Returns doctorId and practiceName for the slot picker page header.
  */
 export const getSlotPageInfoHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
   const query = req.query as Record<string, string | string[] | undefined>;
   const normalized: Record<string, string | undefined> = {
     token: typeof query.token === 'string' ? query.token : Array.isArray(query.token) ? query.token[0] : undefined,
@@ -90,9 +93,14 @@ export const getSlotPageInfoHandler = asyncHandler(async (req: Request, res: Res
   const { conversationId, doctorId, appointmentId } = verifyBookingToken(token);
 
   const doctorSettings = await getDoctorSettings(doctorId);
+  const convState = await getConversationState(conversationId, correlationId);
   const practiceName = doctorSettings?.practice_name?.trim() || 'Clariva Care';
-  const mode = appointmentId ? 'reschedule' as const : 'book' as const;
+  const mode = appointmentId ? ('reschedule' as const) : ('book' as const);
   const opdMode = doctorSettings?.opd_mode ?? 'slot';
+  const serviceCatalog =
+    convState.consultationType === 'in_clinic'
+      ? null
+      : getBookingPageCatalogPayload(doctorSettings, mode);
 
   res.status(200).json(
     successResponse(
@@ -103,6 +111,7 @@ export const getSlotPageInfoHandler = asyncHandler(async (req: Request, res: Res
         mode,
         appointmentId: appointmentId ?? undefined,
         opdMode,
+        ...(serviceCatalog ? { serviceCatalog } : {}),
       },
       req
     )
@@ -135,7 +144,16 @@ export const selectSlotAndPayHandler = asyncHandler(async (req: Request, res: Re
         )
       );
     } else {
-      const result = await processSlotSelectionAndPay(body.token, body.slotStart, correlationId);
+      const result = await processSlotSelectionAndPay(
+        body.token,
+        body.slotStart,
+        correlationId,
+        {
+          catalogServiceKey: body.catalogServiceKey,
+          consultationModality: body.consultationModality,
+          isReschedule: false,
+        }
+      );
       res.status(200).json(
         successResponse(
           {

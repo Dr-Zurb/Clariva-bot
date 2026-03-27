@@ -174,13 +174,29 @@ export default function BotMessagesPage() {
           <FieldLabel htmlFor="welcome_message" tooltip="Greeting or context the AI bot uses when starting a conversation.">
             Welcome message (AI context)
           </FieldLabel>
-          <textarea id="welcome_message" rows={3} value={form.welcome_message ?? ""} onChange={(e) => handleFormChange((p) => ({ ...p, welcome_message: e.target.value }))} maxLength={1000} placeholder="Optional greeting for the bot" className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          <textarea
+            id="welcome_message"
+            rows={3}
+            value={typeof form.welcome_message === "string" ? form.welcome_message : ""}
+            onChange={(e) => handleFormChange((p) => ({ ...p, welcome_message: e.target.value }))}
+            maxLength={1000}
+            placeholder="Optional greeting for the bot"
+            className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
         </div>
         <div>
           <FieldLabel htmlFor="default_notes" tooltip="Notes pre-filled when creating new appointments.">
             Default appointment notes
           </FieldLabel>
-          <textarea id="default_notes" rows={2} value={form.default_notes ?? ""} onChange={(e) => handleFormChange((p) => ({ ...p, default_notes: e.target.value }))} maxLength={1000} placeholder="Optional default notes for new appointments" className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          <textarea
+            id="default_notes"
+            rows={2}
+            value={typeof form.default_notes === "string" ? form.default_notes : ""}
+            onChange={(e) => handleFormChange((p) => ({ ...p, default_notes: e.target.value }))}
+            maxLength={1000}
+            placeholder="Optional default notes for new appointments"
+            className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
         </div>
         <SaveButton isDirty={isDirty} saving={saving} saveSuccess={saveSuccess} />
       </form>

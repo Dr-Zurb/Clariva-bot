@@ -71,6 +71,14 @@ export interface InsertPayment {
 // Create Payment Link Input
 // ============================================================================
 
+/** SFU-05: string-only metadata for gateway notes / reconciliation */
+export interface PaymentQuoteMetadata {
+  visit_kind: string;
+  service_key: string;
+  modality: string;
+  episode_id?: string;
+}
+
 export interface CreatePaymentLinkInput {
   appointmentId: string;
   amountMinor: number;
@@ -84,6 +92,8 @@ export interface CreatePaymentLinkInput {
   description?: string;
   /** Razorpay redirect URL after payment (e.g. /book/success?token=X) */
   callbackUrl?: string;
+  /** SFU-05: merged into adapter notes (Razorpay) alongside appointment_id */
+  quoteMetadata?: PaymentQuoteMetadata;
 }
 
 export interface CreatePaymentLinkResult {

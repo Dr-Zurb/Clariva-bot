@@ -8,6 +8,9 @@ import {
   type SafetyMessageLocale,
   detectSafetyMessageLocale,
 } from './safety-messages';
+import type { ServiceCatalogV1 } from './service-catalog-schema';
+import { safeParseServiceCatalogV1FromDb } from './service-catalog-schema';
+import type { DoctorSettingsRow } from '../types/doctor-settings';
 
 /** Optional compact JSON in consultation_types (keep under doctor_settings max length). Example:
  * [{"l":"General (in-person)","r":500},{"l":"Video consult","r":400}]
@@ -116,6 +119,174 @@ export interface ConsultationFeesDmSettings {
   business_hours_summary?: string | null;
   appointment_fee_minor?: number | null;
   appointment_fee_currency?: string | null;
+  /** SFU-08: when valid v1 catalog present, DM uses `formatServiceCatalogForDm` first */
+  service_offerings_json?: DoctorSettingsRow['service_offerings_json'];
+}
+
+/** Instagram DM soft limit — trim + ellipsis when catalog is large (SFU-08 §5). */
+export const CONSULTATION_FEE_DM_MAX_CHARS = 3200;
+
+const MODALITY_DM_LABEL: Record<'text' | 'voice' | 'video', string> = {
+  text: 'Text',
+  voice: 'Voice',
+  video: 'Video',
+};
+
+function formatMinorCurrencyDm(minor: number, currency: string | null | undefined): string {
+  const cur = (currency || 'INR').toUpperCase();
+  const main = minor / 100;
+  if (cur === 'INR') {
+    return Number.isInteger(main) ? `₹${main}` : `₹${main.toFixed(2)}`;
+  }
+  return `${main.toFixed(2)} ${cur}`;
+}
+
+function localizeCatalogIntro(practiceName: string, locale: SafetyMessageLocale): string {
+  if (locale === 'hi') {
+    return `**${practiceName}** ke **online / teleconsult fees** (hamare record ke mutabik):\n\n`;
+  }
+  if (locale === 'pa') {
+    return `**${practiceName}** de **online / teleconsult fees** (sade record mutabik):\n\n`;
+  }
+  return `**Teleconsult (online) fees** on file for **${practiceName}**:\n\n`;
+}
+
+function localizeInClinicFlatLine(
+  minor: number,
+  currency: string | null | undefined,
+  locale: SafetyMessageLocale
+): string {
+  const amt = formatMinorCurrencyDm(minor, currency);
+  if (locale === 'hi') {
+    return `- **Clinic / in-person (standard fee on file)**: ${amt}`;
+  }
+  if (locale === 'pa') {
+    return `- **Clinic / in-person (standard fee on file)**: ${amt}`;
+  }
+  return `- **In-clinic / standard appointment fee (on file)**: ${amt}`;
+}
+
+/**
+ * Pick a single service if the user message clearly names one (label or service_key). SFU-08 optional narrow.
+ */
+export function pickCatalogServicesMatchingUserText(
+  catalog: ServiceCatalogV1,
+  userText: string
+): ServiceCatalogV1['services'] {
+  const t = userText.trim().toLowerCase();
+  if (t.length < 2) {
+    return catalog.services;
+  }
+  const hits = catalog.services.filter((s) => {
+    const key = s.service_key.toLowerCase();
+    const lab = s.label.toLowerCase();
+    return t.includes(key) || (lab.length >= 3 && t.includes(lab));
+  });
+  return hits.length === 1 ? hits : catalog.services;
+}
+
+function truncateIfNeededDm(text: string, maxLen: number, locale: SafetyMessageLocale): string {
+  if (text.length <= maxLen) {
+    return text;
+  }
+  const cut = maxLen - 80;
+  const base = text.slice(0, cut).trimEnd();
+  if (locale === 'hi') {
+    return `${base}\n\n…(yahan list shorten ki gayi — poori jankari ke liye clinic se puchein.)`;
+  }
+  if (locale === 'pa') {
+    return `${base}\n\n…(list shorten hai — poori info layi clinic nu puchho.)`;
+  }
+  return `${base}\n\n…(list shortened here — ask the clinic for the full fee sheet.)`;
+}
+
+/**
+ * SFU-08: Human-readable teleconsult fee block from `service_offerings_json` (₹ from JSON only).
+ */
+export function formatServiceCatalogForDm(
+  catalog: ServiceCatalogV1,
+  settings: ConsultationFeesDmSettings,
+  userText: string = ''
+): string {
+  const practiceName = settings.practice_name?.trim() || 'the practice';
+  const locale = detectSafetyMessageLocale(userText || '');
+  const hasDevanagari = /[\u0900-\u097F]/.test(userText || '');
+  const hasGurmukhi = /[\u0A00-\u0A7F]/.test(userText || '');
+  const hoursSuffix = formatHoursHintLine(
+    locale,
+    settings.business_hours_summary?.trim() ?? '',
+    hasDevanagari,
+    hasGurmukhi
+  );
+  const cur = settings.appointment_fee_currency;
+  const rows = pickCatalogServicesMatchingUserText(catalog, userText);
+  const lines: string[] = [];
+
+  for (const s of rows) {
+    const modParts: string[] = [];
+    for (const mod of ['text', 'voice', 'video'] as const) {
+      const slot = s.modalities[mod];
+      if (slot?.enabled === true) {
+        modParts.push(
+          `**${MODALITY_DM_LABEL[mod]}**: ${formatMinorCurrencyDm(slot.price_minor, cur)}`
+        );
+      }
+    }
+    if (modParts.length === 0) {
+      continue;
+    }
+    lines.push(`**${s.label}** (\`${s.service_key}\`)\n${modParts.map((p) => `- ${p}`).join('\n')}`);
+  }
+
+  if (lines.length === 0) {
+    return localizeJsonUnreadable(practiceName, locale, hoursSuffix);
+  }
+
+  const intro = localizeCatalogIntro(practiceName, locale);
+  let body = `${intro}${lines.join('\n\n')}`;
+
+  const minor = settings.appointment_fee_minor;
+  if (minor != null && minor > 0 && isInrFeeCurrency(cur)) {
+    body += `\n\n${localizeInClinicFlatLine(minor, cur, locale)}`;
+  }
+
+  body += `\n\n${localizeFeeListFooter(locale, hoursSuffix)}`;
+  return truncateIfNeededDm(body, CONSULTATION_FEE_DM_MAX_CHARS, locale);
+}
+
+/**
+ * SFU-08: One compact block for LLM system prompt (amounts verbatim from catalog JSON).
+ */
+export function formatServiceCatalogForAiContext(settings: {
+  service_offerings_json?: DoctorSettingsRow['service_offerings_json'] | null;
+  appointment_fee_currency?: string | null;
+}): string | null {
+  if (settings.service_offerings_json == null) {
+    return null;
+  }
+  const catalog = safeParseServiceCatalogV1FromDb(settings.service_offerings_json as unknown);
+  if (!catalog || catalog.services.length === 0) {
+    return null;
+  }
+  const cur = (settings.appointment_fee_currency || 'INR').toUpperCase();
+  const chunks: string[] = [];
+  for (const s of catalog.services) {
+    const mods: string[] = [];
+    for (const mod of ['text', 'voice', 'video'] as const) {
+      const slot = s.modalities[mod];
+      if (slot?.enabled === true) {
+        const amt =
+          cur === 'INR'
+            ? `₹${slot.price_minor / 100}`
+            : `${(slot.price_minor / 100).toFixed(2)} ${cur}`;
+        mods.push(`${mod} ${amt}`);
+      }
+    }
+    if (mods.length > 0) {
+      chunks.push(`${s.label} [service_key=${s.service_key}]: ${mods.join(', ')}`);
+    }
+  }
+  return chunks.length > 0 ? chunks.join(' | ') : null;
 }
 
 function isInrFeeCurrency(currency: string | null | undefined): boolean {
@@ -356,6 +527,15 @@ export function formatConsultationFeesForDm(
   userText: string = ''
 ): string {
   const practiceName = settings.practice_name?.trim() || 'the practice';
+  if (settings.service_offerings_json != null) {
+    const catalog = safeParseServiceCatalogV1FromDb(
+      settings.service_offerings_json as unknown
+    );
+    if (catalog && catalog.services.length > 0) {
+      return formatServiceCatalogForDm(catalog, settings, userText);
+    }
+  }
+
   const raw = settings.consultation_types?.trim();
   const locale = detectSafetyMessageLocale(userText || '');
   const hasDevanagari = /[\u0900-\u097F]/.test(userText || '');

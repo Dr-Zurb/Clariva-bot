@@ -16,7 +16,16 @@ import { getConnectionStatus } from './instagram-connect-service';
 import { getInstagramAccessTokenForDoctor } from './instagram-connect-service';
 import { sendInstagramMessage } from './instagram-service';
 import { getDoctorSettings } from './doctor-settings-service';
+import type { DoctorSettingsRow } from '../types/doctor-settings';
+import type { ConversationState } from '../types/conversation';
+import type { ServiceCatalogV1 } from '../utils/service-catalog-schema';
 import { findPatientByIdWithAdmin } from './patient-service';
+import { getActiveEpisodeForPatientDoctorService } from './care-episode-service';
+import { findServiceOfferingByKey, getActiveServiceCatalog } from '../utils/service-catalog-helpers';
+import {
+  quoteConsultationVisit,
+  type ConsultationModality,
+} from './consultation-quote-service';
 import {
   bookAppointment,
   getAppointmentByIdForWorker,
@@ -114,6 +123,278 @@ export function buildReschedulePageUrl(
   const baseUrl = env.BOOKING_PAGE_URL?.trim() || 'https://example.com/book';
   const token = generateBookingToken(conversationId, doctorId, { appointmentId });
   return `${baseUrl.replace(/\/$/, '')}?token=${token}`;
+}
+
+/** SFU-05: amount resolution for booking-page checkout (catalog quote vs legacy fee). */
+export type SlotBookingPricingSource = 'catalog_quote' | 'legacy_fee';
+
+export interface SlotBookingQuoteResult {
+  amountMinor: number;
+  currency: string;
+  doctorCountry: string;
+  pricingSource: SlotBookingPricingSource;
+  catalogServiceKey?: string;
+  episodeId?: string;
+  quoteMetadata?: {
+    visit_kind: string;
+    service_key: string;
+    modality: string;
+    episode_id?: string;
+  };
+}
+
+/**
+ * Resolve catalog service_key: explicit state, else single-service default.
+ * Multi-service without `state.catalogServiceKey` → null (caller falls back to legacy fee).
+ */
+export function resolveCatalogServiceKeyForSlotBooking(
+  state: ConversationState,
+  catalog: ServiceCatalogV1,
+  correlationId: string
+): string | null {
+  const raw = state.catalogServiceKey?.trim().toLowerCase();
+  if (raw) {
+    if (findServiceOfferingByKey(catalog, raw)) {
+      return raw;
+    }
+    logger.warn({ correlationId, catalogServiceKey: raw }, 'slot_booking_catalog_key_not_in_catalog');
+    return null;
+  }
+  if (catalog.services.length === 1) {
+    return catalog.services[0]!.service_key;
+  }
+  return null;
+}
+
+/** Map conversation to teleconsult modality for quoting. */
+export function resolveModalityForSlotBooking(
+  state: ConversationState,
+  consultationType?: ConversationState['consultationType']
+): ConsultationModality {
+  const m = state.consultationModality;
+  if (m === 'text' || m === 'voice' || m === 'video') {
+    return m;
+  }
+  const ct = consultationType ?? state.consultationType;
+  if (ct === 'text' || ct === 'voice' || ct === 'video') {
+    return ct;
+  }
+  return 'video';
+}
+
+/** SFU-07: Catalog snippet for /book page (single doctor, token-scoped). */
+export interface BookingPageCatalogServiceRow {
+  service_key: string;
+  label: string;
+  modalities: Partial<
+    Record<'text' | 'voice' | 'video', { enabled: true; price_minor: number }>
+  >;
+}
+
+export interface BookingPageCatalogPayload {
+  version: 1;
+  services: BookingPageCatalogServiceRow[];
+  feeCurrency: string;
+}
+
+/**
+ * Public booking: offerings for the token’s doctor only (no PHI). `null` when no catalog or reschedule mode.
+ */
+export function getBookingPageCatalogPayload(
+  doctorSettings: DoctorSettingsRow | null,
+  mode: 'book' | 'reschedule'
+): BookingPageCatalogPayload | null {
+  if (mode === 'reschedule') {
+    return null;
+  }
+  const catalog = getActiveServiceCatalog(doctorSettings);
+  if (!catalog) {
+    return null;
+  }
+  const rawCur = doctorSettings?.appointment_fee_currency?.trim();
+  const feeCurrency =
+    rawCur && /^[A-Z]{3}$/.test(rawCur) ? rawCur : 'INR';
+  return {
+    version: 1,
+    services: catalog.services.map((s) => {
+      const modalities: BookingPageCatalogServiceRow['modalities'] = {};
+      for (const mod of ['text', 'voice', 'video'] as const) {
+        const sl = s.modalities[mod];
+        if (sl?.enabled === true) {
+          modalities[mod] = { enabled: true, price_minor: sl.price_minor };
+        }
+      }
+      return {
+        service_key: s.service_key,
+        label: s.label,
+        modalities,
+      };
+    }),
+    feeCurrency,
+  };
+}
+
+export interface PublicBookingSelectionInput {
+  catalogServiceKey?: string;
+  consultationModality?: ConsultationModality;
+}
+
+/**
+ * SFU-07: Merge /book POST body + defaults into conversation state for quote + appointment.
+ */
+export function applyPublicBookingSelectionsToState(
+  state: ConversationState,
+  doctorSettings: DoctorSettingsRow | null,
+  input: PublicBookingSelectionInput,
+  isReschedule: boolean
+): ConversationState {
+  if (isReschedule) {
+    return state;
+  }
+  if (state.consultationType === 'in_clinic') {
+    return state;
+  }
+  const catalog = getActiveServiceCatalog(doctorSettings);
+  if (!catalog) {
+    return state;
+  }
+
+  let serviceKey =
+    input.catalogServiceKey?.trim().toLowerCase() ??
+    state.catalogServiceKey?.trim().toLowerCase() ??
+    undefined;
+  if (!serviceKey && catalog.services.length === 1) {
+    serviceKey = catalog.services[0]!.service_key;
+  }
+  if (!serviceKey) {
+    throw new ValidationError('Please select a consultation service.');
+  }
+
+  const offering = findServiceOfferingByKey(catalog, serviceKey);
+  if (!offering) {
+    throw new ValidationError('Invalid service selection.');
+  }
+
+  const enabledModalities: ConsultationModality[] = [];
+  for (const mod of ['text', 'voice', 'video'] as const) {
+    const slot = offering.modalities[mod];
+    if (slot?.enabled === true) {
+      enabledModalities.push(mod);
+    }
+  }
+  if (enabledModalities.length === 0) {
+    throw new ValidationError('This service has no consultation modes enabled.');
+  }
+
+  let modality: ConsultationModality | undefined =
+    input.consultationModality ?? state.consultationModality;
+  if (modality && !enabledModalities.includes(modality)) {
+    throw new ValidationError('Selected consultation mode is not available for this service.');
+  }
+  if (!modality) {
+    if (enabledModalities.length === 1) {
+      modality = enabledModalities[0]!;
+    } else {
+      throw new ValidationError(
+        'Please select how you would like to consult: text, voice, or video.'
+      );
+    }
+  }
+
+  return {
+    ...state,
+    catalogServiceKey: serviceKey,
+    consultationModality: modality,
+  };
+}
+
+function appointmentConsultationTypeFromState(
+  state: ConversationState
+): 'in_clinic' | 'text' | 'voice' | 'video' {
+  if (state.consultationType === 'in_clinic') {
+    return 'in_clinic';
+  }
+  return resolveModalityForSlotBooking(state, state.consultationType);
+}
+
+/**
+ * Compute payment amount + SFU metadata for slot booking (before `bookAppointment`).
+ * In-clinic visits use legacy flat fee (catalog modalities are teleconsult-only).
+ */
+export async function computeSlotBookingQuote(
+  doctorId: string,
+  patientId: string,
+  state: ConversationState,
+  doctorSettings: DoctorSettingsRow | null,
+  correlationId: string
+): Promise<SlotBookingQuoteResult> {
+  const doctorCountry = doctorSettings?.country ?? env.DEFAULT_DOCTOR_COUNTRY ?? 'IN';
+  const legacyAmount = doctorSettings?.appointment_fee_minor ?? env.APPOINTMENT_FEE_MINOR ?? 0;
+  const legacyCurrency =
+    doctorSettings?.appointment_fee_currency ?? env.APPOINTMENT_FEE_CURRENCY ?? 'INR';
+
+  if (state.consultationType === 'in_clinic') {
+    return {
+      amountMinor: legacyAmount,
+      currency: legacyCurrency,
+      doctorCountry,
+      pricingSource: 'legacy_fee',
+    };
+  }
+
+  const catalog = getActiveServiceCatalog(doctorSettings);
+  if (!catalog) {
+    return {
+      amountMinor: legacyAmount,
+      currency: legacyCurrency,
+      doctorCountry,
+      pricingSource: 'legacy_fee',
+    };
+  }
+
+  const serviceKeyNorm = resolveCatalogServiceKeyForSlotBooking(state, catalog, correlationId);
+  if (!serviceKeyNorm) {
+    logger.warn(
+      { correlationId, doctorId, reason: 'multi_service_needs_catalogServiceKey' },
+      'slot_booking_quote_fallback_legacy'
+    );
+    return {
+      amountMinor: legacyAmount,
+      currency: legacyCurrency,
+      doctorCountry,
+      pricingSource: 'legacy_fee',
+    };
+  }
+
+  const modality = resolveModalityForSlotBooking(state, state.consultationType);
+  const activeEpisode = await getActiveEpisodeForPatientDoctorService(
+    doctorId,
+    patientId,
+    serviceKeyNorm
+  );
+
+  const quote = quoteConsultationVisit({
+    settings: doctorSettings,
+    catalogServiceKey: serviceKeyNorm,
+    modality,
+    at: new Date(),
+    activeEpisode,
+  });
+
+  return {
+    amountMinor: quote.amount_minor,
+    currency: quote.currency,
+    doctorCountry,
+    pricingSource: 'catalog_quote',
+    catalogServiceKey: quote.service_key,
+    episodeId: quote.episode_id,
+    quoteMetadata: {
+      visit_kind: quote.visit_kind,
+      service_key: quote.service_key,
+      modality: quote.modality,
+      ...(quote.episode_id ? { episode_id: quote.episode_id } : {}),
+    },
+  };
 }
 
 export interface ProcessSlotSelectionResult {
@@ -215,7 +496,8 @@ export interface ProcessSlotSelectionAndPayResult {
 export async function processSlotSelectionAndPay(
   token: string,
   slotStart: string,
-  correlationId: string
+  correlationId: string,
+  options?: PublicBookingSelectionInput & { isReschedule?: boolean }
 ): Promise<ProcessSlotSelectionAndPayResult> {
   const { conversationId, doctorId } = verifyBookingToken(token);
 
@@ -243,6 +525,16 @@ export async function processSlotSelectionAndPay(
   }
 
   const doctorSettings = await getDoctorSettings(doctorId);
+  const effectiveState = applyPublicBookingSelectionsToState(
+    state,
+    doctorSettings,
+    {
+      catalogServiceKey: options?.catalogServiceKey,
+      consultationModality: options?.consultationModality,
+    },
+    options?.isReschedule === true
+  );
+
   const dateStr = slotStart.slice(0, 10);
   const alreadyHasAppointment = await hasAppointmentOnDate(
     doctorId,
@@ -273,6 +565,14 @@ export async function processSlotSelectionAndPay(
   const combined = parts.length > 0 ? parts.join('. ') : '';
   const notes = combined.length > NOTES_MAX_LEN ? combined.slice(0, NOTES_MAX_LEN) : (combined || undefined);
 
+  const quotePreview = await computeSlotBookingQuote(
+    doctorId,
+    patient.id,
+    effectiveState,
+    doctorSettings,
+    correlationId
+  );
+
   const appointment = await bookAppointment(
     {
       doctorId,
@@ -282,8 +582,12 @@ export async function processSlotSelectionAndPay(
       appointmentDate: slotDate.toISOString(),
       reasonForVisit,
       notes,
-      consultationType: state.consultationType,
+      consultationType: appointmentConsultationTypeFromState(effectiveState),
       conversationId: conversationId,
+      ...(quotePreview.pricingSource === 'catalog_quote' && quotePreview.catalogServiceKey
+        ? { catalogServiceKey: quotePreview.catalogServiceKey }
+        : {}),
+      ...(quotePreview.episodeId ? { episodeId: quotePreview.episodeId } : {}),
     },
     correlationId,
     undefined
@@ -298,9 +602,9 @@ export async function processSlotSelectionAndPay(
     }
   }
 
-  const amountMinor = doctorSettings?.appointment_fee_minor ?? env.APPOINTMENT_FEE_MINOR ?? 0;
-  const currency = doctorSettings?.appointment_fee_currency ?? env.APPOINTMENT_FEE_CURRENCY ?? 'INR';
-  const doctorCountry = doctorSettings?.country ?? env.DEFAULT_DOCTOR_COUNTRY ?? 'IN';
+  const amountMinor = quotePreview.amountMinor;
+  const currency = quotePreview.currency;
+  const doctorCountry = quotePreview.doctorCountry;
 
   const redirectUrl = await getRedirectUrlForDoctor(doctorId);
   const baseUrl = env.BOOKING_PAGE_URL?.trim() || 'https://example.com/book';
@@ -310,6 +614,8 @@ export async function processSlotSelectionAndPay(
     await saveSlotSelection(conversationId, doctorId, slotStart, correlationId);
     const newState = {
       ...state,
+      catalogServiceKey: effectiveState.catalogServiceKey,
+      consultationModality: effectiveState.consultationModality,
       step: 'responded',
       slotToConfirm: undefined,
       bookingForPatientId: undefined,
@@ -353,6 +659,7 @@ export async function processSlotSelectionAndPay(
           ? `Queue visit - ${slotDisplayStr}`
           : `Appointment - ${slotDisplayStr}`,
       callbackUrl: successCallbackUrl,
+      ...(quotePreview.quoteMetadata ? { quoteMetadata: quotePreview.quoteMetadata } : {}),
     },
     correlationId
   );
@@ -360,6 +667,8 @@ export async function processSlotSelectionAndPay(
   await saveSlotSelection(conversationId, doctorId, slotStart, correlationId);
   const newState = {
     ...state,
+    catalogServiceKey: effectiveState.catalogServiceKey,
+    consultationModality: effectiveState.consultationModality,
     step: 'responded',
     slotToConfirm: undefined,
     bookingForPatientId: undefined,

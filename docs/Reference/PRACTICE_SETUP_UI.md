@@ -20,6 +20,7 @@ The **Practice Setup** consolidates doctor-to-bot configuration. Settings is col
 Settings (collapsible)
 ├── Practice Setup (expandable) → /dashboard/settings/practice-setup
 │   ├── Practice Info → /dashboard/settings/practice-setup/practice-info
+│   ├── Services catalog → /dashboard/settings/practice-setup/services-catalog  (SFU-06)
 │   ├── Booking Rules → /dashboard/settings/practice-setup/booking-rules
 │   ├── Bot Messages → /dashboard/settings/practice-setup/bot-messages
 │   └── Availability → /dashboard/settings/practice-setup/availability
@@ -37,8 +38,9 @@ Settings (collapsible)
 | Route | Content |
 |-------|---------|
 | `/dashboard/settings` | Redirects to Practice Setup |
-| `/dashboard/settings/practice-setup` | Landing page with 4 icon+label cards |
+| `/dashboard/settings/practice-setup` | Landing page with icon+label cards |
 | `/dashboard/settings/practice-setup/practice-info` | Practice Info form |
+| `/dashboard/settings/practice-setup/services-catalog` | Service offerings matrix (`service_offerings_json`) — modalities, prices, follow-up policy |
 | `/dashboard/settings/practice-setup/booking-rules` | Booking Rules form |
 | `/dashboard/settings/practice-setup/bot-messages` | Bot Messages form |
 | `/dashboard/settings/practice-setup/availability` | Weekly Slots + Blocked Times (two sections, single scroll) |
@@ -51,6 +53,7 @@ Settings (collapsible)
 | Card | Label | Short description |
 |------|-------|-------------------|
 | Practice Info | Practice Info | Practice name, location, specialty, and consultation types |
+| Services catalog | Services catalog | Teleconsult services, modalities, prices, follow-up policy (SFU-06) |
 | Booking Rules | Booking Rules | Slot length, advance booking limits, cancellation policy |
 | Bot Messages | Bot Messages | Welcome message and default appointment notes |
 | Availability | Availability | Weekly schedule and blocked times when you're unavailable |

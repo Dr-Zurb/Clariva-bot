@@ -3,6 +3,8 @@
  * @see backend/src/types/doctor-settings.ts, e-task-2, e-task-opd-01
  */
 
+import type { ServiceCatalogV1 } from "@/lib/service-catalog-schema";
+
 /** OPD scheduling: fixed slots vs token queue (migration 028). */
 export type OpdMode = 'slot' | 'queue';
 
@@ -24,6 +26,8 @@ export interface DoctorSettings {
   specialty: string | null;
   address_summary: string | null;
   consultation_types: string | null;
+  /** SFU-01/06: structured teleconsult pricing; null/omitted = legacy flat fee only. */
+  service_offerings_json?: ServiceCatalogV1 | null;
   default_notes: string | null;
   /** OPD mode (migration 028). Absent pre-migration — UI defaults to `slot`. */
   opd_mode?: OpdMode;
@@ -52,6 +56,7 @@ export type PatchDoctorSettingsPayload = Partial<{
   specialty: string | null;
   address_summary: string | null;
   consultation_types: string | null;
+  service_offerings_json?: ServiceCatalogV1 | null;
   default_notes: string | null;
   /** Appointment fee in smallest unit (paise INR, cents USD). e.g. 50000 = ₹500 */
   appointment_fee_minor: number | null;

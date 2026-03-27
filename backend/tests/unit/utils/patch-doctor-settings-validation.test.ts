@@ -87,4 +87,34 @@ describe('validatePatchDoctorSettings (e-task-6)', () => {
       validatePatchDoctorSettings({ opd_mode: 'hybrid' as 'slot' })
     ).toThrow(ValidationError);
   });
+
+  it('accepts service_offerings_json null (SFU-01)', () => {
+    const result = validatePatchDoctorSettings({ service_offerings_json: null });
+    expect(result.service_offerings_json).toBeNull();
+  });
+
+  it('accepts valid service_offerings_json (SFU-01)', () => {
+    const result = validatePatchDoctorSettings({
+      service_offerings_json: {
+        version: 1,
+        services: [
+          {
+            service_key: 'follow',
+            label: 'Follow-up',
+            modalities: { video: { enabled: true, price_minor: 50000 } },
+          },
+        ],
+      },
+    });
+    expect(result.service_offerings_json?.version).toBe(1);
+    expect(result.service_offerings_json?.services).toHaveLength(1);
+  });
+
+  it('rejects invalid service_offerings_json (SFU-01)', () => {
+    expect(() =>
+      validatePatchDoctorSettings({
+        service_offerings_json: { version: 1, services: [] },
+      })
+    ).toThrow(ValidationError);
+  });
 });

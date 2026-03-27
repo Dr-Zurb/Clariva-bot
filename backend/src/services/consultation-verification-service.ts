@@ -17,8 +17,10 @@ import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataModification } from '../utils/audit-logger';
+import type { Appointment } from '../types/database';
 import { processPayoutForPayment } from './payout-service';
 import { syncOpdQueueEntryOnAppointmentStatus } from './opd/opd-queue-service';
+import { syncCareEpisodeLifecycleOnAppointmentCompleted } from './care-episode-service';
 
 const MIN_VERIFIED_SEC = env.MIN_VERIFIED_CONSULTATION_SECONDS;
 const DEFAULT_PAYOUT_SCHEDULE = 'weekly';
@@ -269,11 +271,14 @@ export async function tryMarkVerified(
   if (!apt.doctor_joined_at || !apt.consultation_ended_at) return;
 
   const verifiedAt = apt.consultation_ended_at;
+  const previousStatus = apt.status;
   const performUpdate = async (): Promise<boolean> => {
-    const { error } = await admin
+    const { data: updated, error } = await admin
       .from('appointments')
       .update({ verified_at: verifiedAt, status: 'completed' })
-      .eq('id', appointmentId);
+      .eq('id', appointmentId)
+      .select('*')
+      .single();
 
     if (error) {
       handleSupabaseError(error, correlationId);
@@ -285,6 +290,14 @@ export async function tryMarkVerified(
       'status',
     ]);
     await syncOpdQueueEntryOnAppointmentStatus(appointmentId, 'completed', correlationId);
+    if (updated) {
+      await syncCareEpisodeLifecycleOnAppointmentCompleted(
+        admin,
+        updated as Appointment,
+        previousStatus,
+        correlationId
+      );
+    }
     return true;
   };
 

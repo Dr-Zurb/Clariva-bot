@@ -82,6 +82,36 @@ export class ConflictError extends AppError {
 }
 
 /**
+ * Consultation quote: service_key not present in catalog (SFU-03)
+ */
+export class ServiceNotFoundForQuote extends AppError {
+  constructor(serviceKey: string) {
+    super(`Service not found in catalog: ${serviceKey}`, 400);
+  }
+}
+
+/**
+ * Consultation quote: modality not offered for this service (SFU-03)
+ */
+export class ModalityNotOfferedForQuote extends AppError {
+  constructor(serviceKey: string, modality: string) {
+    super(`Modality "${modality}" is not offered for service: ${serviceKey}`, 400);
+  }
+}
+
+/**
+ * Legacy quote path: doctor has no catalog and appointment_fee_minor is unset (SFU-03)
+ */
+export class LegacyAppointmentFeeNotConfiguredError extends AppError {
+  constructor() {
+    super(
+      'Cannot quote: no service catalog and appointment_fee_minor is not set on doctor settings',
+      400
+    );
+  }
+}
+
+/**
  * Too many requests error (429)
  * Used when rate limit is exceeded
  */

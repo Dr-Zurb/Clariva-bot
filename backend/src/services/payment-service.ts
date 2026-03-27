@@ -44,6 +44,16 @@ export async function createPaymentLink(
 
   const referenceId = input.appointmentId;
 
+  const notes: Record<string, string> = { appointment_id: input.appointmentId };
+  if (input.quoteMetadata) {
+    notes.visit_kind = input.quoteMetadata.visit_kind;
+    notes.service_key = input.quoteMetadata.service_key;
+    notes.modality = input.quoteMetadata.modality;
+    if (input.quoteMetadata.episode_id) {
+      notes.episode_id = input.quoteMetadata.episode_id;
+    }
+  }
+
   const adapterInput = {
     amountMinor: input.amountMinor,
     currency: input.currency,
@@ -56,7 +66,7 @@ export async function createPaymentLink(
           contact: input.patientPhone,
         }
       : undefined,
-    notes: { appointment_id: input.appointmentId },
+    notes,
     expireBy: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
     callbackUrl: input.callbackUrl,
   };

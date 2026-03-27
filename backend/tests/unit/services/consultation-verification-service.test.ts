@@ -40,6 +40,10 @@ jest.mock('../../../src/services/payout-service', () => ({
   processPayoutForPayment: jest.fn().mockResolvedValue({ success: false }),
 }));
 
+jest.mock('../../../src/services/care-episode-service', () => ({
+  syncCareEpisodeLifecycleOnAppointmentCompleted: jest.fn().mockResolvedValue(undefined),
+}));
+
 const correlationId = 'corr-123';
 
 /**
@@ -49,7 +53,7 @@ const correlationId = 'corr-123';
  * - doctor_settings: select->eq->maybeSingle
  * Payments/doctor_settings return { data: null } so payout trigger exits early.
  */
-function createTryMarkVerifiedChain(apt: Record<string, unknown>, mockUpdate: ReturnType<typeof jest.fn>) {
+function createTryMarkVerifiedChain(apt: Record<string, unknown>, disableUpdate = false) {
   const maybeSingle = jest.fn().mockResolvedValue({ data: null, error: null });
   const limit = jest.fn().mockReturnValue({ maybeSingle });
   const order = jest.fn().mockReturnValue({ limit });
@@ -60,6 +64,22 @@ function createTryMarkVerifiedChain(apt: Record<string, unknown>, mockUpdate: Re
     single: jest.fn().mockResolvedValue({ data: apt, error: null }),
     maybeSingle,
   });
+  const mockUpdate = disableUpdate
+    ? jest.fn()
+    : jest.fn().mockReturnValue({
+        eq: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnValue({
+            single: jest.fn().mockResolvedValue({
+              data: {
+                ...apt,
+                status: 'completed',
+                verified_at: apt.consultation_ended_at,
+              },
+              error: null,
+            }),
+          }),
+        }),
+      });
   return {
     select: jest.fn().mockReturnValue({ eq: eqWithSingle }),
     update: mockUpdate,
@@ -286,14 +306,12 @@ describe('Consultation Verification Service', () => {
         verified_at: null,
         status: 'confirmed',
       };
-      const mockUpdate = jest.fn().mockReturnValue({
-        eq: jest.fn().mockResolvedValue({ error: null }),
-      });
-      mockFrom.mockReturnValue(createTryMarkVerifiedChain(apt, mockUpdate));
+      const chain = createTryMarkVerifiedChain(apt);
+      mockFrom.mockReturnValue(chain);
 
       await tryMarkVerified('apt-1', correlationId);
 
-      expect(mockUpdate).toHaveBeenCalledWith({
+      expect(chain.update).toHaveBeenCalledWith({
         verified_at: '2026-03-21T12:35:00.000Z',
         status: 'completed',
       });
@@ -312,14 +330,12 @@ describe('Consultation Verification Service', () => {
         verified_at: null,
         status: 'confirmed',
       };
-      const mockUpdate = jest.fn().mockReturnValue({
-        eq: jest.fn().mockResolvedValue({ error: null }),
-      });
-      mockFrom.mockReturnValue(createTryMarkVerifiedChain(apt, mockUpdate));
+      const chain = createTryMarkVerifiedChain(apt);
+      mockFrom.mockReturnValue(chain);
 
       await tryMarkVerified('apt-1', correlationId);
 
-      expect(mockUpdate).toHaveBeenCalledWith({
+      expect(chain.update).toHaveBeenCalledWith({
         verified_at: '2026-03-21T12:35:00.000Z',
         status: 'completed',
       });
@@ -338,14 +354,12 @@ describe('Consultation Verification Service', () => {
         verified_at: null,
         status: 'confirmed',
       };
-      const mockUpdate = jest.fn().mockReturnValue({
-        eq: jest.fn().mockResolvedValue({ error: null }),
-      });
-      mockFrom.mockReturnValue(createTryMarkVerifiedChain(apt, mockUpdate));
+      const chain = createTryMarkVerifiedChain(apt);
+      mockFrom.mockReturnValue(chain);
 
       await tryMarkVerified('apt-1', correlationId);
 
-      expect(mockUpdate).toHaveBeenCalledWith({
+      expect(chain.update).toHaveBeenCalledWith({
         verified_at: '2026-03-21T12:35:00.000Z',
         status: 'completed',
       });
@@ -364,12 +378,12 @@ describe('Consultation Verification Service', () => {
         verified_at: null,
         status: 'confirmed',
       };
-      const mockUpdate = jest.fn();
-      mockFrom.mockReturnValue(createTryMarkVerifiedChain(apt, mockUpdate));
+      const chain = createTryMarkVerifiedChain(apt, true);
+      mockFrom.mockReturnValue(chain);
 
       await tryMarkVerified('apt-1', correlationId);
 
-      expect(mockUpdate).not.toHaveBeenCalled();
+      expect(chain.update).not.toHaveBeenCalled();
     });
 
     it('verifies on fallback when left_at missing but duration >= 60 and both joined', async () => {
@@ -385,14 +399,12 @@ describe('Consultation Verification Service', () => {
         verified_at: null,
         status: 'confirmed',
       };
-      const mockUpdate = jest.fn().mockReturnValue({
-        eq: jest.fn().mockResolvedValue({ error: null }),
-      });
-      mockFrom.mockReturnValue(createTryMarkVerifiedChain(apt, mockUpdate));
+      const chain = createTryMarkVerifiedChain(apt);
+      mockFrom.mockReturnValue(chain);
 
       await tryMarkVerified('apt-1', correlationId);
 
-      expect(mockUpdate).toHaveBeenCalledWith({
+      expect(chain.update).toHaveBeenCalledWith({
         verified_at: '2026-03-21T12:35:00.000Z',
         status: 'completed',
       });
@@ -411,12 +423,12 @@ describe('Consultation Verification Service', () => {
         verified_at: null,
         status: 'confirmed',
       };
-      const mockUpdate = jest.fn();
-      mockFrom.mockReturnValue(createTryMarkVerifiedChain(apt, mockUpdate));
+      const chain = createTryMarkVerifiedChain(apt, true);
+      mockFrom.mockReturnValue(chain);
 
       await tryMarkVerified('apt-1', correlationId);
 
-      expect(mockUpdate).not.toHaveBeenCalled();
+      expect(chain.update).not.toHaveBeenCalled();
     });
 
     it('does not update when already verified', async () => {
@@ -430,12 +442,12 @@ describe('Consultation Verification Service', () => {
         verified_at: '2026-03-21T12:35:00.000Z',
         status: 'completed',
       };
-      const mockUpdate = jest.fn();
-      mockFrom.mockReturnValue(createTryMarkVerifiedChain(apt, mockUpdate));
+      const chain = createTryMarkVerifiedChain(apt, true);
+      mockFrom.mockReturnValue(chain);
 
       await tryMarkVerified('apt-1', correlationId);
 
-      expect(mockUpdate).not.toHaveBeenCalled();
+      expect(chain.update).not.toHaveBeenCalled();
     });
   });
 

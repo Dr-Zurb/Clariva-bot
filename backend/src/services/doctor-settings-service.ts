@@ -13,6 +13,7 @@
 
 import { getSupabaseAdminClient } from '../config/database';
 import type { DoctorSettingsRow, OpdMode, PayoutSchedule } from '../types/doctor-settings';
+import { parseServiceCatalogV1, type ServiceCatalogV1 } from '../utils/service-catalog-schema';
 import { validateOwnership } from '../utils/db-helpers';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataAccess, logDataModification, logAuditEvent } from '../utils/audit-logger';
@@ -22,7 +23,7 @@ const SELECT_COLUMNS =
   'doctor_id, appointment_fee_minor, appointment_fee_currency, country, ' +
   'practice_name, timezone, slot_interval_minutes, max_advance_booking_days, min_advance_hours, business_hours_summary, ' +
   'cancellation_policy_hours, max_appointments_per_day, booking_buffer_minutes, ' +
-  'welcome_message, specialty, address_summary, consultation_types, default_notes, ' +
+  'welcome_message, specialty, address_summary, consultation_types, service_offerings_json, default_notes, ' +
   'payout_schedule, payout_minor, razorpay_linked_account_id, ' +
   'opd_mode, opd_policies, ' +
   'instagram_receptionist_paused, instagram_receptionist_pause_message, ' +
@@ -47,6 +48,7 @@ const DEFAULT_SETTINGS: DoctorSettingsRow = {
   specialty: null,
   address_summary: null,
   consultation_types: null,
+  service_offerings_json: null,
   default_notes: null,
   payout_schedule: null,
   payout_minor: null,
@@ -139,6 +141,8 @@ export interface UpdateDoctorSettingsPayload {
   specialty?: string | null;
   address_summary?: string | null;
   consultation_types?: string | null;
+  /** SFU-01: structured services × modalities; null clears. Validated before persist. */
+  service_offerings_json?: ServiceCatalogV1 | null;
   default_notes?: string | null;
   /** Appointment fee in smallest unit (paise INR, cents USD). e.g. 50000 = ₹500 */
   appointment_fee_minor?: number | null;
@@ -261,6 +265,13 @@ export async function updateDoctorSettings(
     if (key in payload) {
       (updateData as Record<string, unknown>)[key] = (payload as Record<string, unknown>)[key];
     }
+  }
+
+  if ('service_offerings_json' in payload) {
+    updateData.service_offerings_json =
+      payload.service_offerings_json === null
+        ? null
+        : parseServiceCatalogV1(payload.service_offerings_json);
   }
 
   if (Object.keys(updateData).length === 0) {

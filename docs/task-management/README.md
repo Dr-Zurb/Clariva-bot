@@ -170,6 +170,15 @@ Patient identification, matching, deduplication, and Patients tab. Phone search 
 
 Tasks: e-task-1 (MRN column), e-task-2 (patient matching service), e-task-3 (list patients API), e-task-4 (Patients tab UI), e-task-5 (booking match confirmation), e-task-6 (merge patients), e-task-7 (patient ID in confirmation).
 
+### Services, modalities & follow-ups (2026-03-27 / 2026-03-28)
+
+Structured **service catalog** (text / voice / video + prices), **care episodes**, and **follow-up discount** quoting; integrates booking, payments, dashboard, and DM fee copy.
+
+- **Plan:** [PLAN-services-modalities-and-follow-ups.md](../Development/Daily-plans/March%202026/2026-03-27/services-and-follow-ups/PLAN-services-modalities-and-follow-ups.md)
+- **Task index:** [services-and-follow-ups/tasks/README.md](../Development/Daily-plans/March%202026/2026-03-27/services-and-follow-ups/tasks/README.md) — **SFU-01** … **SFU-09**
+
+Use [TASK_TEMPLATE.md](./TASK_TEMPLATE.md) and [CODE_CHANGE_RULES.md](./CODE_CHANGE_RULES.md) when executing.
+
 ### Monetization — Platform Fee (2026-03-22)
 
 Implement Clariva's platform fee: 5% + GST (hybrid: < ₹500 → ₹25 flat + GST). Store platform_fee_minor, gst_minor, doctor_amount_minor for payouts and invoicing.
@@ -230,4 +239,4 @@ Tasks: e-task-1 (prescription migration), e-task-2 (prescription service & API),
 ---
 
 **Last Updated:** 2026-03-28  
-**Version:** 2.7.0 (Added Receptionist bot hardening RBH-01…11)
+**Version:** 2.8.0 (Added Services & follow-ups SFU-01…09 task index)

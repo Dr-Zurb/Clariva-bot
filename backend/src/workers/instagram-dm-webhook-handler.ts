@@ -100,7 +100,11 @@ import {
   conversationLastPromptKindForStep,
   type ConversationState,
 } from '../types/conversation';
-import { formatAppointmentFeeForAiContext, userExplicitlyWantsToBookNow } from '../utils/consultation-fees';
+import {
+  formatAppointmentFeeForAiContext,
+  formatServiceCatalogForAiContext,
+  userExplicitlyWantsToBookNow,
+} from '../utils/consultation-fees';
 import {
   composeIdleFeeQuoteDm,
   composeMidCollectionFeeQuoteDm,
@@ -633,11 +637,15 @@ function isAmbiguousCollectionMessage(text: string, extracted: ExtractedFields):
   return false;
 }
 
-/** Build doctor context for AI (e-task-4, e-task-2 consultation_types) */
+/** Build doctor context for AI (e-task-4, e-task-2 consultation_types, SFU-08 catalog) */
 function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): DoctorContext | undefined {
   if (!settings) return undefined;
   const hasFeeOnFile =
     settings.appointment_fee_minor != null && settings.appointment_fee_minor > 0;
+  const catalogAi = formatServiceCatalogForAiContext({
+    service_offerings_json: settings.service_offerings_json,
+    appointment_fee_currency: settings.appointment_fee_currency,
+  });
   const hasAny =
     settings.practice_name ||
     settings.business_hours_summary ||
@@ -646,6 +654,7 @@ function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): Docto
     settings.address_summary ||
     settings.consultation_types ||
     hasFeeOnFile ||
+    catalogAi ||
     (settings.cancellation_policy_hours != null && settings.cancellation_policy_hours > 0);
   if (!hasAny) return undefined;
   return {
@@ -660,6 +669,7 @@ function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): Docto
       appointment_fee_minor: settings.appointment_fee_minor,
       appointment_fee_currency: settings.appointment_fee_currency,
     }),
+    service_catalog_summary_for_ai: catalogAi,
   };
 }
 

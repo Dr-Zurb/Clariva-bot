@@ -58,6 +58,7 @@ export function feeQuoteSettingsFromDoctorRow(
     business_hours_summary: settings?.business_hours_summary ?? null,
     appointment_fee_minor: settings?.appointment_fee_minor ?? null,
     appointment_fee_currency: settings?.appointment_fee_currency ?? null,
+    service_offerings_json: settings?.service_offerings_json ?? null,
   };
 }
 

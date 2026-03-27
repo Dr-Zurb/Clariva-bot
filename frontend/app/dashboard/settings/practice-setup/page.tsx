@@ -15,6 +15,19 @@ const cards = [
     ),
   },
   {
+    href: `${practiceSetupBase}/services-catalog`,
+    label: "Services catalog",
+    description: "Teleconsult services, modalities (text/voice/video), prices, and follow-up policy",
+    icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+        <line x1="8" y1="7" x2="16" y2="7" />
+        <line x1="8" y1="11" x2="14" y2="11" />
+      </svg>
+    ),
+  },
+  {
     href: `${practiceSetupBase}/booking-rules`,
     label: "Booking Rules",
     description: "Slot length, advance booking limits, appointment fee, and cancellation policy",
@@ -73,7 +86,7 @@ export default function PracticeSetupLandingPage() {
       <p className="mt-1 text-gray-600">
         Configure how your receptionist bot communicates with patients. Choose a section to get started.
       </p>
-      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-6">
         {cards.map((card) => (
           <PracticeSetupCard
             key={card.href}

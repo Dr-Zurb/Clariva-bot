@@ -130,8 +130,9 @@ Tables `availability` and `blocked_times` already exist (001_initial_schema.sql)
 | Instagram receptionist pause (RBH-09) | `033_instagram_receptionist_pause.sql`; `instagram-dm-webhook-handler.ts`; `instagram-comment-webhook-handler.ts`; dashboard **Bot Messages** |
 | AI prompt | `backend/src/services/ai-service.ts` – RESPONSE_SYSTEM_PROMPT |
 | Availability/blocked_times | `backend/src/services/availability-service.ts` |
+| **SFU-05** — booking-page checkout amount | `slot-selection-service.ts`: `computeSlotBookingQuote` uses `quoteConsultationVisit` when `service_offerings_json` is active and visit is **not** `in_clinic`; otherwise **`appointment_fee_minor`** (+ env). Multi-service doctors need **`conversation.state.catalogServiceKey`** (SFU-07) or flow falls back to legacy fee. Payment link **notes** include `visit_kind`, `service_key`, `modality`, optional `episode_id`. |
 
 ---
 
 **Last Updated:** 2026-03-28  
-**Version:** 1.0.1
+**Version:** 1.0.2

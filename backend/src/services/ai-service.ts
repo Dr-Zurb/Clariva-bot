@@ -956,6 +956,8 @@ export interface DoctorContext {
   consultation_types?: string | null;
   /** Pre-formatted line(s) from doctor_settings — must be passed through to the model verbatim when user asks fees. */
   appointment_fee_summary?: string | null;
+  /** SFU-08: compact teleconsult fee schedule from service_offerings_json (amounts verbatim). */
+  service_catalog_summary_for_ai?: string | null;
 }
 
 /** Optional context for AI response generation (e-task-1 Bot Intelligence). No PHI. */
@@ -1020,6 +1022,12 @@ function buildResponseSystemPrompt(doctorContext?: DoctorContext): string {
   }
 
   const feeFacts: string[] = [];
+  const catalogSummary = doctorContext?.service_catalog_summary_for_ai?.trim();
+  if (catalogSummary) {
+    feeFacts.push(
+      `Teleconsult fee schedule from practice catalog (verbatim; do not invent or change amounts): ${catalogSummary}`
+    );
+  }
   const feeSummary = doctorContext?.appointment_fee_summary?.trim();
   if (feeSummary) feeFacts.push(feeSummary);
   const consultRaw = doctorContext?.consultation_types?.trim();

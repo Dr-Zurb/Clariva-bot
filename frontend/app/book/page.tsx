@@ -6,11 +6,35 @@ import {
   getSlotPageInfo,
   getDaySlots,
   selectSlotAndPay,
+  type BookingPageCatalogApi,
+  type ConsultationModalityApi,
   type DaySlotWithStatus,
   type OpdModeApi,
 } from "@/lib/api";
 
 const DAYS_AHEAD = 14;
+
+const MODALITY_LABEL: Record<ConsultationModalityApi, string> = {
+  text: "Text chat",
+  voice: "Voice",
+  video: "Video",
+};
+
+function formatMoneyMinor(minor: number, currency: string): string {
+  const main = minor / 100;
+  if (currency === "INR") {
+    return `₹${main.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+  }
+  return `${main.toFixed(2)} ${currency}`;
+}
+
+function enabledModalitiesForService(
+  service: BookingPageCatalogApi["services"][0]
+): ConsultationModalityApi[] {
+  return (["text", "voice", "video"] as const).filter(
+    (m) => service.modalities[m]?.enabled === true
+  );
+}
 
 function formatSlotTime(iso: string, timezone: string): string {
   try {
@@ -65,6 +89,15 @@ function BookPageContent() {
     redirectUrl: string;
   } | null>(null);
 
+  const [serviceCatalog, setServiceCatalog] = useState<BookingPageCatalogApi | null>(
+    null
+  );
+  const [selectedServiceKey, setSelectedServiceKey] = useState<string | null>(
+    null
+  );
+  const [selectedModality, setSelectedModality] =
+    useState<ConsultationModalityApi | null>(null);
+
   const dateOptions = useMemo(() => {
     const options: string[] = [];
     const today = new Date();
@@ -93,6 +126,14 @@ function BookPageContent() {
         setPracticeName(res.data.practiceName || "Book Appointment");
         setMode(res.data.mode ?? "book");
         setOpdMode(res.data.opdMode ?? "slot");
+        const sc = res.data.serviceCatalog ?? null;
+        setServiceCatalog(sc);
+        if (sc && sc.services.length === 1) {
+          setSelectedServiceKey(sc.services[0]!.service_key);
+        } else {
+          setSelectedServiceKey(null);
+        }
+        setSelectedModality(null);
         setPageLoading(false);
         setSelectedDate(dateOptions[0] ?? null);
       })
@@ -110,6 +151,26 @@ function BookPageContent() {
       cancelled = true;
     };
   }, [token, dateOptions]);
+
+  useEffect(() => {
+    if (!serviceCatalog || !selectedServiceKey) {
+      return;
+    }
+    const svc = serviceCatalog.services.find(
+      (s) => s.service_key === selectedServiceKey
+    );
+    if (!svc) {
+      return;
+    }
+    const enabled = enabledModalitiesForService(svc);
+    if (enabled.length === 1) {
+      setSelectedModality(enabled[0]!);
+    } else {
+      setSelectedModality((prev) =>
+        prev && enabled.includes(prev) ? prev : null
+      );
+    }
+  }, [serviceCatalog, selectedServiceKey]);
 
   const fetchSlots = useCallback(
     (date: string) => {
@@ -148,12 +209,30 @@ function BookPageContent() {
     setSelectedSlot(first ?? null);
   }, [opdMode, mode, slots, slotsLoading]);
 
+  const catalogPickComplete = useMemo(() => {
+    if (!serviceCatalog || mode !== "book") {
+      return true;
+    }
+    return Boolean(selectedServiceKey && selectedModality);
+  }, [serviceCatalog, mode, selectedServiceKey, selectedModality]);
+
   const handleSave = useCallback(async () => {
-    if (!selectedSlot || !token || saving) return;
+    if (!selectedSlot || !token || saving || !catalogPickComplete) return;
     setSaving(true);
     setSaveError(null);
     try {
-      const res = await selectSlotAndPay(token, selectedSlot.start);
+      const catalogPayload =
+        serviceCatalog && mode === "book"
+          ? {
+              catalogServiceKey: selectedServiceKey ?? undefined,
+              consultationModality: selectedModality ?? undefined,
+            }
+          : undefined;
+      const res = await selectSlotAndPay(
+        token,
+        selectedSlot.start,
+        catalogPayload
+      );
       const { paymentUrl, redirectUrl, tokenNumber, opdMode: resMode } = res.data;
       if (paymentUrl) {
         window.location.href = paymentUrl;
@@ -184,7 +263,17 @@ function BookPageContent() {
     } finally {
       setSaving(false);
     }
-  }, [selectedSlot, token, saving, opdMode, mode]);
+  }, [
+    selectedSlot,
+    token,
+    saving,
+    opdMode,
+    mode,
+    catalogPickComplete,
+    serviceCatalog,
+    selectedServiceKey,
+    selectedModality,
+  ]);
 
   const availableCount = slots.filter((s) => s.status === "available").length;
   const isQueueBook = opdMode === "queue" && mode === "book";
@@ -253,6 +342,86 @@ function BookPageContent() {
               ? "Choose a day to join the queue. You’ll get a token number — wait times are approximate."
               : "Select a date and time for your appointment."}
         </p>
+
+        {serviceCatalog && mode === "book" && serviceCatalog.services.length > 0 && (
+          <section className="mt-6 space-y-4" aria-labelledby="svc-heading">
+            <h2 id="svc-heading" className="text-sm font-medium text-gray-700">
+              Consultation type
+            </h2>
+            {serviceCatalog.services.length > 1 && (
+              <div className="flex flex-col gap-2">
+                <span className="text-xs text-gray-500">Service</span>
+                <div className="flex flex-wrap gap-2">
+                  {serviceCatalog.services.map((s) => (
+                    <button
+                      key={s.service_key}
+                      type="button"
+                      onClick={() => {
+                        setSelectedServiceKey(s.service_key);
+                        setSelectedModality(null);
+                      }}
+                      className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                        selectedServiceKey === s.service_key
+                          ? "bg-blue-600 text-white"
+                          : "bg-white text-gray-800 shadow-sm ring-1 ring-gray-200 hover:bg-gray-50"
+                      }`}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {selectedServiceKey &&
+              (() => {
+                const svc = serviceCatalog.services.find(
+                  (s) => s.service_key === selectedServiceKey
+                );
+                if (!svc) return null;
+                const enabled = enabledModalitiesForService(svc);
+                if (enabled.length <= 1) {
+                  return (
+                    <p className="text-xs text-gray-600">
+                      Price:{" "}
+                      {enabled[0]
+                        ? formatMoneyMinor(
+                            svc.modalities[enabled[0]]!.price_minor,
+                            serviceCatalog.feeCurrency
+                          )
+                        : "—"}
+                    </p>
+                  );
+                }
+                return (
+                  <div className="flex flex-col gap-2">
+                    <span className="text-xs text-gray-500">
+                      How would you like to consult?
+                    </span>
+                    <div className="flex flex-wrap gap-2">
+                      {enabled.map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setSelectedModality(m)}
+                          className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                            selectedModality === m
+                              ? "bg-blue-600 text-white"
+                              : "bg-white text-gray-800 shadow-sm ring-1 ring-gray-200 hover:bg-gray-50"
+                          }`}
+                        >
+                          {MODALITY_LABEL[m]} —{" "}
+                          {formatMoneyMinor(
+                            svc.modalities[m]!.price_minor,
+                            serviceCatalog.feeCurrency
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+          </section>
+        )}
 
         {/* Date picker */}
         <section className="mt-6" aria-labelledby="date-heading">
@@ -329,7 +498,12 @@ function BookPageContent() {
           <button
             type="button"
             onClick={handleSave}
-            disabled={!selectedSlot || saving || availableCount === 0}
+            disabled={
+              !selectedSlot ||
+              saving ||
+              availableCount === 0 ||
+              !catalogPickComplete
+            }
             className="w-full rounded-lg bg-blue-600 px-4 py-3 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving

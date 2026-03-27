@@ -117,6 +117,38 @@ USING (auth.uid() = doctor_id);
 
 ---
 
+### `care_episodes` Table (migration 036, SFU-02)
+
+**RLS Enabled:** ✅ Yes
+
+**Pattern:** Same as `prescriptions` / `appointments` — ownership via `doctor_id = auth.uid()`.
+
+**Policies (migration 036):**
+```sql
+CREATE POLICY "Users can read own care episodes"
+ON care_episodes FOR SELECT
+USING (auth.uid() = doctor_id);
+
+CREATE POLICY "Users can insert own care episodes"
+ON care_episodes FOR INSERT
+WITH CHECK (auth.uid() = doctor_id);
+
+CREATE POLICY "Users can update own care episodes"
+ON care_episodes FOR UPDATE
+USING (auth.uid() = doctor_id)
+WITH CHECK (auth.uid() = doctor_id);
+
+CREATE POLICY "Users can delete own care episodes"
+ON care_episodes FOR DELETE
+USING (auth.uid() = doctor_id);
+```
+
+**Rationale:**
+- Doctors see and manage episode rows for their practice.
+- Webhook/worker flows use **service role** (bypasses RLS), consistent with other backend writers.
+
+---
+
 ### `opd_queue_entries` Table (migration 028)
 
 **RLS Enabled:** ✅ Yes

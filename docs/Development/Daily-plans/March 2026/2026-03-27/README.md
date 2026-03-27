@@ -35,6 +35,13 @@ Phone search + confirm (no ID required); Patient ID (MRN) as optional shortcut; 
 
 ---
 
+## Related planning (same date folder)
+
+- **[Services, modalities & follow-up pricing](./services-and-follow-ups/README.md)** — teleconsult service catalog (text/voice/video), per-modality fees, episode-based follow-up rules; future replacement/evolution of plain `consultation_types` for quoting.
+- **Implementation tasks:** [services-and-follow-ups/tasks/README.md](./services-and-follow-ups/tasks/README.md) (SFU-01 … SFU-09).
+
+---
+
 ## Reference
 
 - [PATIENT_IDENTITY_AND_MATCHING.md](../../../Future%20Planning/PATIENT_IDENTITY_AND_MATCHING.md)

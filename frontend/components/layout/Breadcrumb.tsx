@@ -7,6 +7,7 @@ const SEGMENTS: Record<string, string> = {
   settings: "Settings",
   "practice-setup": "Practice Setup",
   "practice-info": "Practice Info",
+  "services-catalog": "Services catalog",
   "booking-rules": "Booking Rules",
   "bot-messages": "Bot Messages",
   availability: "Availability",

@@ -62,6 +62,9 @@ notes               TEXT NULL  -- Optional patient extras + doctor default_notes
 related_appointment_id UUID NULL REFERENCES appointments(id) ON DELETE SET NULL  -- migration 031: same-day return / link to prior visit
 opd_event_type      TEXT NOT NULL DEFAULT 'standard' CHECK (opd_event_type IN ('standard', 'return_after_completed'))  -- migration 031
 transferred_payment_from_appointment_id UUID NULL REFERENCES appointments(id) ON DELETE SET NULL  -- migration 031: fee entitlement audit
+episode_id          UUID NULL REFERENCES care_episodes(id) ON DELETE SET NULL  -- migration 036 (SFU-02): linked course of care
+catalog_service_key TEXT NULL  -- migration 036 (SFU-02): matches catalog service_key for pricing / episode matching
+care_episode_completion_processed_at TIMESTAMPTZ NULL  -- migration 037 (SFU-04): episode open/increment applied once for this visit
 created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 -- Also: teleconsultation columns (021–023); OPD early invite (029): opd_early_invite_expires_at, opd_early_invite_response; OPD doctor delay (030): opd_session_delay_minutes
@@ -72,10 +75,12 @@ updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 - `idx_appointments_appointment_date` ON `appointment_date`
 - `idx_appointments_doctor_status_date` ON `(doctor_id, status, appointment_date)` - **Composite index for common query pattern (filter by doctor + status + date)**
 - `idx_appointments_patient_id` ON `patient_id` (e-task-5)
+- `idx_appointments_episode_id` ON `episode_id` (SFU-02)
 
 **Relationships:**
 - `doctor_id` → `auth.users(id)` (many-to-one)
 - `patient_id` → `patients(id)` (optional; used for payment confirmation DM)
+- `episode_id` → `care_episodes(id)` (optional; SFU follow-up pricing)
 
 **Never Store:**
 - ❌ Patient DOB (not needed for appointments)
@@ -84,6 +89,45 @@ updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 - ❌ Medical records (not appointment system)
 
 **RLS:** Enabled (see RLS_POLICIES.md)
+
+---
+
+### `care_episodes` (migration **036**, SFU-02)
+
+**Purpose:** Course of care for **patient + doctor + `catalog_service_key`**: follow-up counters, eligibility window, and **locked fee snapshot** when the index visit completes. Lifecycle (create / transition / link index appointment) is implemented in **SFU-04**.
+
+**Columns:**
+```sql
+id                      UUID PRIMARY KEY DEFAULT gen_random_uuid()
+doctor_id               UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE
+patient_id              UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE
+catalog_service_key     TEXT NOT NULL  -- slug; matches service catalog service_key
+status                  TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'exhausted', 'expired', 'closed'))
+started_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+eligibility_ends_at     TIMESTAMPTZ NULL
+followups_used          INTEGER NOT NULL DEFAULT 0
+max_followups           INTEGER NOT NULL  -- copy from policy at creation
+price_snapshot_json     JSONB NOT NULL  -- per-modality minor units at index completion
+index_appointment_id    UUID NULL REFERENCES appointments(id) ON DELETE SET NULL  -- unique when set
+created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+```
+
+**Indexes:**
+- `idx_care_episodes_patient_id` ON `patient_id`
+- `idx_care_episodes_active_lookup` ON `(doctor_id, patient_id, catalog_service_key)` **WHERE** `status = 'active'`
+- `idx_care_episodes_index_appointment_id_unique` — partial UNIQUE on `index_appointment_id` WHERE **NOT NULL**
+
+**Relationships:**
+- `doctor_id` → `auth.users(id)`
+- `patient_id` → `patients(id)`
+- `index_appointment_id` → `appointments(id)` (optional; index / opening visit)
+- Referenced by `appointments.episode_id`
+
+**Never Store:**
+- ❌ PHI beyond linkage IDs (keep clinical content on appointments / other tables)
+
+**RLS:** Enabled (doctor owns via `doctor_id`; see RLS_POLICIES.md). Service role bypasses for workers.
 
 ---
 
@@ -263,9 +307,9 @@ created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 
 ---
 
-### `doctor_settings` (e-task-4.1; extended 012, 025, **028 OPD**, **033 Instagram pause / RBH-09**)
+### `doctor_settings` (e-task-4.1; extended 012, 025, **028 OPD**, **033 Instagram pause / RBH-09**, **035 SFU-01 service catalog**)
 
-**Purpose:** Per-doctor practice, fees, booking rules, payouts, **OPD mode** (`slot` vs `queue`), and **Instagram receptionist pause** (human handoff).
+**Purpose:** Per-doctor practice, fees, booking rules, payouts, **OPD mode** (`slot` vs `queue`), **Instagram receptionist pause** (human handoff), and optional **structured service offerings** (modalities + follow-up policy JSON).
 
 **Columns (summary — see migrations):**
 ```sql
@@ -286,6 +330,7 @@ welcome_message         TEXT NULL
 specialty               TEXT NULL
 address_summary         TEXT NULL
 consultation_types      TEXT NULL
+service_offerings_json  JSONB NULL  -- migration 035; Zod shape `serviceCatalogV1` in backend (version, services[], modalities, optional followup_policy)
 default_notes           TEXT NULL
 payout_schedule         TEXT NULL  -- per_appointment | daily | weekly | monthly (025)
 payout_minor            BIGINT NULL  -- (025)
@@ -306,7 +351,7 @@ updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 
 **RLS:** Enabled (doctor read/insert/update own row; service role can read for worker)
 
-**See:** e-task-4.1-per-doctor-payment-settings.md; **e-task-opd-01** (OPD modes)
+**See:** e-task-4.1-per-doctor-payment-settings.md; **e-task-opd-01** (OPD modes); **SFU-01** (`service-catalog-schema.ts`, `PATCH` doctor settings)
 
 ---
 

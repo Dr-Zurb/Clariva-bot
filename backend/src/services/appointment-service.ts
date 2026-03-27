@@ -38,6 +38,7 @@ import {
 } from './opd/opd-queue-service';
 import { assertSlotJoinAllowedForPatient } from './opd/opd-policy-service';
 import { recordOpdBookingTotal } from './opd/opd-metrics';
+import { syncCareEpisodeLifecycleOnAppointmentCompleted } from './care-episode-service';
 
 const SLOT_INTERVAL_MS = env.SLOT_INTERVAL_MINUTES * 60 * 1000;
 
@@ -124,6 +125,10 @@ export async function bookAppointment(
     reason_for_visit: data.reasonForVisit ?? 'Not provided',
     notes: data.notes ?? null,
     ...(data.consultationType && { consultation_type: data.consultationType }),
+    ...(data.catalogServiceKey?.trim() && {
+      catalog_service_key: data.catalogServiceKey.trim().toLowerCase(),
+    }),
+    ...(data.episodeId && { episode_id: data.episodeId }),
   };
 
   if (appointmentDate < new Date()) {
@@ -542,7 +547,7 @@ export async function updateAppointmentStatus(
 
   const { data: existing, error: fetchError } = await admin
     .from('appointments')
-    .select('id, doctor_id')
+    .select('*')
     .eq('id', id)
     .single();
 
@@ -551,6 +556,8 @@ export async function updateAppointmentStatus(
   }
 
   validateOwnership(existing!.doctor_id, userId);
+
+  const previousStatus = (existing as Appointment).status;
 
   const { data: updated, error } = await admin
     .from('appointments')
@@ -568,7 +575,12 @@ export async function updateAppointmentStatus(
 
   await syncOpdQueueEntryOnAppointmentStatus(id, status, correlationId);
 
-  return updated as Appointment;
+  const updatedAppt = updated as Appointment;
+  if (status === 'completed' && previousStatus !== 'completed') {
+    await syncCareEpisodeLifecycleOnAppointmentCompleted(admin, updatedAppt, previousStatus, correlationId);
+  }
+
+  return updatedAppt;
 }
 
 /** Max length for clinical_notes (COMPLIANCE) */
@@ -606,7 +618,7 @@ export async function updateAppointment(
 
   const { data: existing, error: fetchError } = await admin
     .from('appointments')
-    .select('id, doctor_id')
+    .select('*')
     .eq('id', id)
     .single();
 
@@ -615,6 +627,8 @@ export async function updateAppointment(
   }
 
   validateOwnership(existing!.doctor_id, userId);
+
+  const previousStatus = (existing as Appointment).status;
 
   const dbUpdates: Record<string, unknown> = {};
   if (updates.status !== undefined) {
@@ -652,7 +666,16 @@ export async function updateAppointment(
     await syncOpdQueueEntryOnAppointmentStatus(id, updates.status, correlationId);
   }
 
-  return updated as Appointment;
+  const updatedAppt = updated as Appointment;
+  if (
+    updates.status !== undefined &&
+    updates.status === 'completed' &&
+    previousStatus !== 'completed'
+  ) {
+    await syncCareEpisodeLifecycleOnAppointmentCompleted(admin, updatedAppt, previousStatus, correlationId);
+  }
+
+  return updatedAppt;
 }
 
 /**

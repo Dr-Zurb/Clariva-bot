@@ -85,8 +85,12 @@ export interface ConversationState {
   consent_requested_at?: string;
   /** Date (YYYY-MM-DD) for slot selection; legacy selecting_slot only (RBH-06) */
   slotSelectionDate?: string;
-  /** Consultation type chosen: video or in_clinic (e-task-2); used at booking */
-  consultationType?: 'video' | 'in_clinic';
+  /** Consultation channel: teleconsult modality or in_clinic (e-task-2, SFU-07) */
+  consultationType?: 'video' | 'in_clinic' | 'text' | 'voice';
+  /** SFU-05/SFU-07: catalog `service_key` when doctor has multi-service matrix */
+  catalogServiceKey?: string;
+  /** SFU-05: teleconsult modality for quoting (text / voice / video) */
+  consultationModality?: 'text' | 'voice' | 'video';
   /** Slot picked on booking page; optional metadata (canonical step: awaiting_slot_selection; RBH-06) */
   slotToConfirm?: { start: string; end: string; dateStr: string };
   /** Reason for visit (e-task-2); preserved for appointment.reason_for_visit at booking */

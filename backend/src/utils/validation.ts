@@ -11,6 +11,7 @@
 import { z } from 'zod';
 import { ValidationError } from './errors';
 import { env } from '../config/env';
+import { serviceCatalogV1Schema } from './service-catalog-schema';
 
 // ============================================================================
 // Constants (RECIPES: E.164-like phone)
@@ -255,8 +256,14 @@ export const bookAppointmentSchema = z.object({
     .transform((s) => s.trim() || undefined)
     .optional(),
   consultationType: z
-    .enum(['video', 'in_clinic'])
+    .enum(['video', 'in_clinic', 'text', 'voice'])
     .optional(),
+  /** SFU-05: matches doctor_settings.service_offerings_json service_key */
+  catalogServiceKey: z.string().min(1).max(64).trim().optional(),
+  /** SFU-05: quote modality (teleconsult) */
+  consultationModality: z.enum(['text', 'voice', 'video']).optional(),
+  /** SFU-05: active episode when visit is a priced follow-up */
+  episodeId: z.string().uuid('episodeId must be a valid UUID').optional(),
   conversationId: z.string().uuid().optional(),
   /** When true, appointment status is 'confirmed' and no payment; doctor-create flow only. */
   freeOfCost: z.boolean().optional(),
@@ -508,6 +515,10 @@ export const selectSlotBodySchema = z.object({
       (val) => new Date(val) >= new Date(),
       'Cannot select a slot in the past'
     ),
+  /** SFU-07: required when doctor has multi-service catalog (unless already in conversation state). */
+  catalogServiceKey: z.string().min(1).max(64).trim().optional(),
+  /** SFU-07: teleconsult modality; required when multiple modalities enabled for the service. */
+  consultationModality: z.enum(['text', 'voice', 'video']).optional(),
 });
 
 export type SelectSlotBody = z.infer<typeof selectSlotBodySchema>;
@@ -718,6 +729,8 @@ export const patchDoctorSettingsSchema = z
     specialty: z.string().max(200).trim().nullable().optional(),
     address_summary: z.string().max(500).trim().nullable().optional(),
     consultation_types: z.string().max(200).trim().nullable().optional(),
+    /** SFU-01: validated catalog v1; null clears column */
+    service_offerings_json: z.union([serviceCatalogV1Schema, z.null()]).optional(),
     default_notes: z.string().max(1000).trim().nullable().optional(),
     appointment_fee_minor: z.number().int().min(0).nullable().optional(),
     appointment_fee_currency: z.string().length(3).nullable().optional(),

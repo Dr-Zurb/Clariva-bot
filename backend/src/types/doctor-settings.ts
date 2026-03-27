@@ -6,7 +6,10 @@
  *
  * Payout columns (migration 025): payout_schedule, payout_minor, razorpay_linked_account_id.
  * RBH-09 (migration 033): instagram_receptionist_paused, instagram_receptionist_pause_message.
+ * SFU-01 (migration 035): service_offerings_json — validated via service-catalog-schema (version 1).
  */
+
+import type { ServiceCatalogV1 } from '../utils/service-catalog-schema';
 
 /** When doctor receives payouts. NULL = default weekly in payout service. */
 export type PayoutSchedule = 'per_appointment' | 'daily' | 'weekly' | 'monthly';
@@ -32,6 +35,11 @@ export interface DoctorSettingsRow {
   specialty: string | null;
   address_summary: string | null;
   consultation_types: string | null;
+  /**
+   * SFU-01: Structured service × modality pricing + optional follow-up policy.
+   * DB may contain legacy invalid shapes — use `getActiveServiceCatalog` / `safeParseServiceCatalogV1FromDb` when reading.
+   */
+  service_offerings_json: ServiceCatalogV1 | null;
   default_notes: string | null;
   /** When doctor receives payouts. Migration 025. */
   payout_schedule: PayoutSchedule | null;

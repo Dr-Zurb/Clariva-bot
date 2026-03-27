@@ -30,6 +30,7 @@ function baseSettings(overrides: Partial<DoctorSettingsRow> = {}): DoctorSetting
     specialty: null,
     address_summary: null,
     consultation_types: null,
+    service_offerings_json: null,
     default_notes: null,
     payout_schedule: null,
     payout_minor: null,

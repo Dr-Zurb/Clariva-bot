@@ -7,6 +7,17 @@ import {
 import type { DoctorSettingsRow } from '../../../src/types/doctor-settings';
 
 /** Minimal row for fee formatters (other columns unused). */
+const catalogFixture = {
+  version: 1 as const,
+  services: [
+    {
+      service_key: 'only',
+      label: 'Solo Service',
+      modalities: { video: { enabled: true, price_minor: 123_45 } },
+    },
+  ],
+};
+
 const feeFixture = {
   doctor_id: 'doc-1',
   appointment_fee_minor: null,
@@ -25,6 +36,7 @@ const feeFixture = {
   specialty: null,
   address_summary: null,
   consultation_types: 'In-person ₹500, Video ₹400',
+  service_offerings_json: null as typeof catalogFixture | null,
   default_notes: null,
   payout_schedule: null,
   payout_minor: null,
@@ -64,6 +76,15 @@ describe('dm-reply-composer (RBH-19)', () => {
     expect(out).toContain('₹500');
     expect(out).toContain('---');
     expect(out).toContain('Booking complete karne ke liye');
+  });
+
+  it('composeIdleFeeQuoteDm uses catalog when service_offerings_json set (SFU-08)', () => {
+    const withCat = { ...feeFixture, service_offerings_json: catalogFixture, consultation_types: 'ignored' };
+    const out = composeIdleFeeQuoteDm(withCat, 'fees please');
+    expect(out).toContain('Solo Service');
+    expect(out).toContain('₹123.45');
+    expect(out).not.toContain('₹500');
+    expect(out).toContain('**book appointment**');
   });
 
   it('formatMidCollectionAfterFeeBlock omits missing line when all required fields present', () => {
