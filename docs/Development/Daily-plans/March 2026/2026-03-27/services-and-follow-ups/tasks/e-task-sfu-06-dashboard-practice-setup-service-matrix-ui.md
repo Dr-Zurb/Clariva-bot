@@ -19,7 +19,7 @@ Load/save via existing **doctor settings** API extended in **SFU-01**.
 **Current State:**
 - ✅ Practice setup: **Services catalog** at `practice-setup/services-catalog` with `ServiceCatalogEditor`.
 - ✅ Settings PATCH: `service_offerings_json` (+ Zod client validation aligned with SFU-01).
-- ✅ Legacy: read-only **consultation_types** banner when set and catalog empty.
+- ✅ Legacy: read-only **consultation_types** banner when set and catalog empty *(scheduled for removal in **[SFU-10](./e-task-sfu-10-remove-practice-consultation-types-ui.md)** — catalog-first UX)*.
 
 **Reference:** `docs/Reference/PRACTICE_SETUP_UI.md`, PLAN §2.2
 
