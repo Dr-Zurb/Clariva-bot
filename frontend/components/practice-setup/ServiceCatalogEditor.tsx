@@ -14,6 +14,10 @@ type Props = {
   onServicesChange: (next: ServiceOfferingDraft[]) => void;
 };
 
+type ModalityKey = "text" | "voice" | "video";
+type PriceField = "textPriceMain" | "voicePriceMain" | "videoPriceMain";
+type FollowUpField = "textFollowUp" | "voiceFollowUp" | "videoFollowUp";
+
 function updateService(
   services: ServiceOfferingDraft[],
   id: string,
@@ -22,7 +26,7 @@ function updateService(
   return services.map((si) => (si.id === id ? { ...si, ...patch } : si));
 }
 
-/** Compact follow-up fields: one dense block inside <details>. */
+/** Compact follow-up fields: one dense block inside <details> (fits narrow columns). */
 function FollowUpDiscountFieldsCompact({
   serviceId,
   modalityKey,
@@ -43,58 +47,60 @@ function FollowUpDiscountFieldsCompact({
     draft.discount_type === "fixed_price";
 
   return (
-    <div className="mt-1.5 rounded-md border border-gray-100 bg-gray-50/80 px-2 py-2">
-      <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-gray-700">
+    <div className="mt-1.5 rounded-md border border-gray-100 bg-gray-50/80 px-1.5 py-1.5">
+      <label className="flex cursor-pointer items-center gap-2 text-[11px] font-medium leading-tight text-gray-700">
         <input
           type="checkbox"
           checked={draft.followUpDiscountEnabled}
           onChange={(e) => onChange({ ...draft, followUpDiscountEnabled: e.target.checked })}
           className="rounded border-gray-300"
         />
-        Follow-up pricing · {label}
+        <span>Follow-up · {label}</span>
       </label>
 
       {draft.followUpDiscountEnabled && (
-        <details className="group mt-2 rounded border border-dashed border-gray-200 bg-white px-2 py-1.5">
-          <summary className="cursor-pointer select-none text-xs font-medium text-blue-700 hover:text-blue-900">
-            Rules (max visits, window, discount)
+        <details className="group mt-1.5 rounded border border-dashed border-gray-200 bg-white px-1.5 py-1">
+          <summary className="cursor-pointer select-none text-[11px] font-medium text-blue-700 hover:text-blue-900">
+            Rules
           </summary>
-          <div className="mt-2 flex flex-wrap items-end gap-x-3 gap-y-2 pb-1">
-            <div className="flex flex-col gap-0.5">
-              <span
-                className="text-[10px] font-medium uppercase tracking-wide text-gray-500"
-                title="Maximum discounted follow-up visits on this channel after the index visit"
-              >
-                Max visits
-              </span>
-              <input
-                id={`${prefix}-fmax`}
-                type="number"
-                min={0}
-                max={100}
-                value={draft.max_followups}
-                onChange={(e) => onChange({ ...draft, max_followups: e.target.value })}
-                className="w-14 rounded border border-gray-300 px-1.5 py-1 text-sm tabular-nums"
-              />
+          <div className="mt-2 flex max-h-[min(50vh,260px)] flex-col gap-2 overflow-y-auto overscroll-contain pb-1">
+            <div className="flex flex-wrap gap-2">
+              <div className="flex flex-col gap-0.5">
+                <span
+                  className="text-[10px] font-medium uppercase tracking-wide text-gray-500"
+                  title="Maximum discounted follow-up visits on this channel after the index visit"
+                >
+                  Max
+                </span>
+                <input
+                  id={`${prefix}-fmax`}
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={draft.max_followups}
+                  onChange={(e) => onChange({ ...draft, max_followups: e.target.value })}
+                  className="w-full min-w-0 rounded border border-gray-300 px-1.5 py-1 text-sm tabular-nums sm:w-14"
+                />
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <span
+                  className="text-[10px] font-medium uppercase tracking-wide text-gray-500"
+                  title="Days after index visit when follow-ups qualify"
+                >
+                  Days
+                </span>
+                <input
+                  id={`${prefix}-fwin`}
+                  type="number"
+                  min={1}
+                  max={3650}
+                  value={draft.eligibility_window_days}
+                  onChange={(e) => onChange({ ...draft, eligibility_window_days: e.target.value })}
+                  className="w-full min-w-0 rounded border border-gray-300 px-1.5 py-1 text-sm tabular-nums sm:w-14"
+                />
+              </div>
             </div>
-            <div className="flex flex-col gap-0.5">
-              <span
-                className="text-[10px] font-medium uppercase tracking-wide text-gray-500"
-                title="Days after index visit when follow-ups qualify"
-              >
-                Window (d)
-              </span>
-              <input
-                id={`${prefix}-fwin`}
-                type="number"
-                min={1}
-                max={3650}
-                value={draft.eligibility_window_days}
-                onChange={(e) => onChange({ ...draft, eligibility_window_days: e.target.value })}
-                className="w-14 rounded border border-gray-300 px-1.5 py-1 text-sm tabular-nums"
-              />
-            </div>
-            <div className="flex min-w-[7.5rem] flex-col gap-0.5">
+            <div className="flex min-w-0 flex-col gap-0.5">
               <span className="text-[10px] font-medium uppercase tracking-wide text-gray-500">Discount</span>
               <select
                 id={`${prefix}-dtype`}
@@ -103,7 +109,7 @@ function FollowUpDiscountFieldsCompact({
                 onChange={(e) =>
                   onChange({ ...draft, discount_type: e.target.value as DiscountTypeOption })
                 }
-                className="rounded border border-gray-300 px-1.5 py-1 text-xs"
+                className="w-full min-w-0 rounded border border-gray-300 px-1 py-1 text-[11px]"
               >
                 <option value="percent">% off list</option>
                 <option value="flat_off">Amount off</option>
@@ -129,12 +135,109 @@ function FollowUpDiscountFieldsCompact({
                   max={draft.discount_type === "percent" ? 100 : undefined}
                   value={draft.discount_value}
                   onChange={(e) => onChange({ ...draft, discount_value: e.target.value })}
-                  className="w-20 rounded border border-gray-300 px-1.5 py-1 text-sm tabular-nums"
+                  className="w-full rounded border border-gray-300 px-1.5 py-1 text-sm tabular-nums"
                 />
               </div>
             )}
           </div>
         </details>
+      )}
+    </div>
+  );
+}
+
+/** One fixed modality column (Text / Voice / Video). */
+function ModalityColumn({
+  serviceId,
+  modalityKey,
+  columnTitle,
+  enabled,
+  price,
+  priceField,
+  fuDraft,
+  fuField,
+  services,
+  onServicesChange,
+}: {
+  serviceId: string;
+  modalityKey: ModalityKey;
+  columnTitle: string;
+  enabled: boolean;
+  price: string;
+  priceField: PriceField;
+  fuDraft: ModalityFollowUpDiscountDraft;
+  fuField: FollowUpField;
+  services: ServiceOfferingDraft[];
+  onServicesChange: (next: ServiceOfferingDraft[]) => void;
+}) {
+  return (
+    <div
+      className={`flex min-w-0 flex-col rounded-md border border-gray-100 bg-white p-2 ${
+        enabled ? "" : "opacity-[0.85]"
+      }`}
+    >
+      <div className="border-b border-gray-100 pb-1.5 text-center">
+        <span className="text-[10px] font-bold uppercase tracking-wide text-gray-600">{columnTitle}</span>
+      </div>
+
+      <label className="mt-2 flex cursor-pointer items-center justify-center gap-2 text-xs">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => {
+            const on = e.target.checked;
+            onServicesChange(
+              updateService(services, serviceId, {
+                [`${modalityKey}Enabled`]: on,
+                ...(on ? {} : { [priceField]: "" }),
+              } as Partial<ServiceOfferingDraft>)
+            );
+          }}
+          className="rounded border-gray-300"
+        />
+        <span className="font-medium text-gray-800">On</span>
+      </label>
+
+      <div className="mt-2 min-h-[2.5rem]">
+        {enabled ? (
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[10px] text-gray-500">Price</span>
+            <input
+              id={`${modalityKey}-price-${serviceId}`}
+              type="number"
+              min={0}
+              step="0.01"
+              value={price}
+              onChange={(e) =>
+                onServicesChange(
+                  updateService(services, serviceId, {
+                    [priceField]: e.target.value,
+                  } as Partial<ServiceOfferingDraft>)
+                )
+              }
+              placeholder="0"
+              className="w-full min-w-0 rounded border border-gray-300 px-2 py-1 text-sm tabular-nums"
+            />
+          </div>
+        ) : (
+          <p className="pt-1 text-center text-[10px] text-gray-400">Off</p>
+        )}
+      </div>
+
+      {enabled && (
+        <FollowUpDiscountFieldsCompact
+          serviceId={serviceId}
+          modalityKey={modalityKey}
+          label={columnTitle}
+          draft={fuDraft}
+          onChange={(next) =>
+            onServicesChange(
+              updateService(services, serviceId, {
+                [fuField]: next,
+              } as Partial<ServiceOfferingDraft>)
+            )
+          }
+        />
       )}
     </div>
   );
@@ -211,152 +314,126 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                   </button>
                 </div>
 
-                <div className="mt-2">
-                  <FieldLabel htmlFor={`svc-label-${s.id}`} tooltip="Shown to you and in patient-facing copy.">
-                    Service name
-                  </FieldLabel>
-                  <input
-                    id={`svc-label-${s.id}`}
-                    type="text"
-                    value={s.label}
-                    onChange={(e) =>
-                      onServicesChange(updateService(services, s.id, { label: e.target.value }))
-                    }
-                    className="mt-0.5 block w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"
-                    maxLength={200}
-                    placeholder="e.g. General checkup"
-                  />
-                </div>
-
-                <div className="mt-2">
-                  {!descExpanded && !hasDesc && (
-                    <button
-                      type="button"
-                      onClick={() => setDescExpanded(s.id, true)}
-                      className="text-xs font-medium text-blue-700 hover:text-blue-900"
-                    >
-                      + Add description
-                    </button>
-                  )}
-                  {!descExpanded && hasDesc && (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="line-clamp-1 flex-1 text-xs text-gray-600" title={s.description}>
-                        {s.description}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => setDescExpanded(s.id, true)}
-                        className="shrink-0 text-xs font-medium text-blue-700 hover:text-blue-900"
-                      >
-                        Edit
-                      </button>
+                <div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-6">
+                  {/* Left: name + description (stacked) */}
+                  <div className="min-w-0 w-full shrink-0 space-y-2 lg:max-w-[20rem]">
+                    <div>
+                      <FieldLabel htmlFor={`svc-label-${s.id}`} tooltip="Shown to you and in patient-facing copy.">
+                        Service name
+                      </FieldLabel>
+                      <input
+                        id={`svc-label-${s.id}`}
+                        type="text"
+                        value={s.label}
+                        onChange={(e) =>
+                          onServicesChange(updateService(services, s.id, { label: e.target.value }))
+                        }
+                        className="mt-0.5 block w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"
+                        maxLength={200}
+                        placeholder="e.g. General checkup"
+                      />
                     </div>
-                  )}
-                  {descExpanded && (
-                    <>
-                      <div className="flex items-center justify-between gap-2">
-                        <FieldLabel htmlFor={`svc-desc-${s.id}`} tooltip="Optional (max 500 characters).">
-                          Description
-                        </FieldLabel>
+
+                    <div>
+                      {!descExpanded && !hasDesc && (
                         <button
                           type="button"
-                          onClick={() => setDescExpanded(s.id, false)}
-                          className="text-xs text-gray-500 hover:text-gray-800"
+                          onClick={() => setDescExpanded(s.id, true)}
+                          className="text-xs font-medium text-blue-700 hover:text-blue-900"
                         >
-                          Collapse
+                          + Add description
                         </button>
-                      </div>
-                      <textarea
-                        id={`svc-desc-${s.id}`}
-                        value={s.description}
-                        onChange={(e) =>
-                          onServicesChange(updateService(services, s.id, { description: e.target.value }))
-                        }
-                        rows={2}
-                        maxLength={500}
-                        className="mt-0.5 block w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"
-                        placeholder="Optional"
-                      />
-                    </>
-                  )}
-                </div>
-
-                <fieldset className="mt-3 min-w-0 border-0 p-0">
-                  <legend className="text-xs font-semibold text-gray-800">Channels &amp; prices</legend>
-                  <p className="text-[10px] text-gray-500">Enable at least one · amounts in your main currency</p>
-                  <div className="mt-1.5 space-y-1.5">
-                    {(
-                      [
-                        ["text", "Text", s.textEnabled, s.textPriceMain, "textPriceMain", s.textFollowUp, "textFollowUp"] as const,
-                        ["voice", "Voice", s.voiceEnabled, s.voicePriceMain, "voicePriceMain", s.voiceFollowUp, "voiceFollowUp"] as const,
-                        ["video", "Video", s.videoEnabled, s.videoPriceMain, "videoPriceMain", s.videoFollowUp, "videoFollowUp"] as const,
-                      ]
-                    ).map(([key, shortLabel, enabled, price, priceField, fuDraft, fuField]) => (
-                      <div
-                        key={key}
-                        className="rounded-md border border-gray-100 bg-white px-2 py-1.5"
-                      >
-                        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                          <label className="flex min-w-0 shrink-0 cursor-pointer items-center gap-1.5 text-sm">
-                            <input
-                              type="checkbox"
-                              checked={enabled}
-                              onChange={(e) => {
-                                const on = e.target.checked;
-                                onServicesChange(
-                                  updateService(services, s.id, {
-                                    [`${key}Enabled`]: on,
-                                    ...(on ? {} : { [priceField]: "" }),
-                                  } as Partial<ServiceOfferingDraft>)
-                                );
-                              }}
-                              className="rounded border-gray-300"
-                            />
-                            <span className="font-medium">{shortLabel}</span>
-                          </label>
-                          {enabled && (
-                            <>
-                              <div className="flex items-center gap-1">
-                                <span className="text-xs text-gray-500">Price</span>
-                                <input
-                                  id={`${key}-price-${s.id}`}
-                                  type="number"
-                                  min={0}
-                                  step="0.01"
-                                  value={price}
-                                  onChange={(e) =>
-                                    onServicesChange(
-                                      updateService(services, s.id, {
-                                        [priceField]: e.target.value,
-                                      } as Partial<ServiceOfferingDraft>)
-                                    )
-                                  }
-                                  placeholder="0"
-                                  className="w-24 rounded border border-gray-300 px-2 py-1 text-sm tabular-nums sm:w-28"
-                                />
-                              </div>
-                            </>
-                          )}
+                      )}
+                      {!descExpanded && hasDesc && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="line-clamp-2 flex-1 text-xs text-gray-600" title={s.description}>
+                            {s.description}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setDescExpanded(s.id, true)}
+                            className="shrink-0 text-xs font-medium text-blue-700 hover:text-blue-900"
+                          >
+                            Edit
+                          </button>
                         </div>
-                        {enabled && (
-                          <FollowUpDiscountFieldsCompact
-                            serviceId={s.id}
-                            modalityKey={key}
-                            label={shortLabel}
-                            draft={fuDraft}
-                            onChange={(next) =>
-                              onServicesChange(
-                                updateService(services, s.id, {
-                                  [fuField]: next,
-                                } as Partial<ServiceOfferingDraft>)
-                              )
+                      )}
+                      {descExpanded && (
+                        <>
+                          <div className="flex items-center justify-between gap-2">
+                            <FieldLabel htmlFor={`svc-desc-${s.id}`} tooltip="Optional (max 500 characters).">
+                              Description
+                            </FieldLabel>
+                            <button
+                              type="button"
+                              onClick={() => setDescExpanded(s.id, false)}
+                              className="text-xs text-gray-500 hover:text-gray-800"
+                            >
+                              Collapse
+                            </button>
+                          </div>
+                          <textarea
+                            id={`svc-desc-${s.id}`}
+                            value={s.description}
+                            onChange={(e) =>
+                              onServicesChange(updateService(services, s.id, { description: e.target.value }))
                             }
+                            rows={3}
+                            maxLength={500}
+                            className="mt-0.5 block w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"
+                            placeholder="Optional"
                           />
-                        )}
-                      </div>
-                    ))}
+                        </>
+                      )}
+                    </div>
                   </div>
-                </fieldset>
+
+                  {/* Right: fixed 3 modality columns — stack on small screens, equal thirds from md */}
+                  <fieldset className="min-w-0 flex-1 border-0 p-0">
+                    <legend className="text-xs font-semibold text-gray-800">Channels &amp; prices</legend>
+                    <p className="text-[10px] text-gray-500">
+                      Enable at least one · amounts in your main currency
+                    </p>
+                    <div className="mt-2 grid min-w-0 grid-cols-1 gap-3 md:grid-cols-3 md:gap-2">
+                      <ModalityColumn
+                        serviceId={s.id}
+                        modalityKey="text"
+                        columnTitle="Text"
+                        enabled={s.textEnabled}
+                        price={s.textPriceMain}
+                        priceField="textPriceMain"
+                        fuDraft={s.textFollowUp}
+                        fuField="textFollowUp"
+                        services={services}
+                        onServicesChange={onServicesChange}
+                      />
+                      <ModalityColumn
+                        serviceId={s.id}
+                        modalityKey="voice"
+                        columnTitle="Voice"
+                        enabled={s.voiceEnabled}
+                        price={s.voicePriceMain}
+                        priceField="voicePriceMain"
+                        fuDraft={s.voiceFollowUp}
+                        fuField="voiceFollowUp"
+                        services={services}
+                        onServicesChange={onServicesChange}
+                      />
+                      <ModalityColumn
+                        serviceId={s.id}
+                        modalityKey="video"
+                        columnTitle="Video"
+                        enabled={s.videoEnabled}
+                        price={s.videoPriceMain}
+                        priceField="videoPriceMain"
+                        fuDraft={s.videoFollowUp}
+                        fuField="videoFollowUp"
+                        services={services}
+                        onServicesChange={onServicesChange}
+                      />
+                    </div>
+                  </fieldset>
+                </div>
               </li>
             );
           })}
