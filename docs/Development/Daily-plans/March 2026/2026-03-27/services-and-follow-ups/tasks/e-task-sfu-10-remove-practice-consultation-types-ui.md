@@ -11,7 +11,7 @@
 **Goal:** Remove both **UI surfaces**. Consultation methods remain defined **only** via the service catalog (modalities per service). **`doctor_settings.consultation_types`** may remain in the **database and API** for now as a **read/write optional legacy fallback** for DM/fees and practices without a catalog—unless a follow-up task explicitly deprecates the column or migrates values into catalog rows.
 
 **Estimated Time:** 0.5–1 day  
-**Status:** 🔲 **PENDING**
+**Status:** ✅ **UI done** — see remediation [e-task-sfu-10a](./e-task-sfu-10a-remove-consultation-types-ui-remediation.md) (2026-03-29)
 
 **Change Type:**
 - [x] **Update existing** — dashboard Practice Setup pages, docs; no DB migration required for MVP of this task

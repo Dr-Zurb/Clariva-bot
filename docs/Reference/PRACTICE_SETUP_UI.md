@@ -52,7 +52,7 @@ Settings (collapsible)
 
 | Card | Label | Short description |
 |------|-------|-------------------|
-| Practice Info | Practice Info | Practice name, location, specialty, and consultation types |
+| Practice Info | Practice Info | Practice name, timezone, specialty, and address (teleconsult: Services catalog) |
 | Services catalog | Services catalog | Teleconsult services, modalities, prices, follow-up policy (SFU-06) |
 | Booking Rules | Booking Rules | Slot length, advance booking limits, cancellation policy |
 | Bot Messages | Bot Messages | Welcome message and default appointment notes |
@@ -66,7 +66,7 @@ Style: icon + label + short description; each card links to its section page.
 
 | Section | Fields / Content | API |
 |---------|------------------|-----|
-| **Practice Info** | practice_name, timezone, specialty, address_summary, consultation_types | PATCH /api/v1/settings/doctor |
+| **Practice Info** | practice_name, timezone, specialty, address_summary (UI does not edit `consultation_types`; column remains for API/bot fallback) | PATCH /api/v1/settings/doctor |
 | **Booking Rules** | slot_interval_minutes, max_advance_booking_days, min_advance_hours, business_hours_summary, cancellation_policy_hours, max_appointments_per_day, booking_buffer_minutes | PATCH /api/v1/settings/doctor |
 | **Bot Messages** | welcome_message, default_notes | PATCH /api/v1/settings/doctor |
 | **Availability** | Weekly slots (GET/PUT) + Blocked times (GET/POST/DELETE) | /api/v1/availability, /api/v1/blocked-times |

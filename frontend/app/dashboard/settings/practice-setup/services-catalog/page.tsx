@@ -74,11 +74,6 @@ export default function ServicesCatalogPage() {
     [services, followUp, lastSaved]
   );
 
-  const legacyConsultationTypes =
-    settings?.consultation_types?.trim() && !settings?.service_offerings_json
-      ? settings.consultation_types
-      : null;
-
   const hasStructuredCatalog = Boolean(settings?.service_offerings_json);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -206,7 +201,6 @@ export default function ServicesCatalogPage() {
             setClientError(null);
             setFollowUp(next);
           }}
-          legacyConsultationTypes={legacyConsultationTypes}
         />
 
         {(clientError || error) && (

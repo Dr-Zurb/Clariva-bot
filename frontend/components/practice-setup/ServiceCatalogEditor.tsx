@@ -9,8 +9,6 @@ type Props = {
   followUp: FollowUpFormDraft;
   onServicesChange: (next: ServiceOfferingDraft[]) => void;
   onFollowUpChange: (next: FollowUpFormDraft) => void;
-  /** Show when legacy text exists but no structured catalog (migration hint). */
-  legacyConsultationTypes: string | null;
 };
 
 function updateService(
@@ -26,7 +24,6 @@ export function ServiceCatalogEditor({
   followUp,
   onServicesChange,
   onFollowUpChange,
-  legacyConsultationTypes,
 }: Props) {
   const removeService = (id: string) => {
     if (typeof window !== "undefined" && !window.confirm("Remove this service from your catalog?")) {
@@ -37,23 +34,6 @@ export function ServiceCatalogEditor({
 
   return (
     <div className="space-y-6">
-      {legacyConsultationTypes?.trim() && (
-        <div
-          className="rounded-md border border-amber-200 bg-amber-50/80 p-4 text-sm text-amber-950"
-          role="region"
-          aria-label="Legacy consultation types"
-        >
-          <p className="font-medium">Legacy consultation types (read-only)</p>
-          <p className="mt-1 text-amber-900/90">
-            Your Practice Info still has free-text consultation types. Structured services below replace teleconsult pricing when saved.
-            Consider copying any useful wording into service labels, then updating Practice Info.
-          </p>
-          <p className="mt-2 whitespace-pre-wrap rounded border border-amber-100 bg-white/60 p-2 text-xs text-gray-800">
-            {legacyConsultationTypes}
-          </p>
-        </div>
-      )}
-
       <div className="rounded-lg border border-gray-200 bg-white p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>

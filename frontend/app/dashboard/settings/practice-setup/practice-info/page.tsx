@@ -34,7 +34,6 @@ function toForm(s: DoctorSettings | null): Record<string, string> {
     timezone: toFormValue(s.timezone) || "UTC",
     specialty: toFormValue(s.specialty),
     address_summary: toFormValue(s.address_summary),
-    consultation_types: toFormValue(s.consultation_types),
   };
 }
 
@@ -94,7 +93,6 @@ export default function PracticeInfoPage() {
       timezone: form.timezone.trim() || "UTC",
       specialty: form.specialty.trim() || null,
       address_summary: form.address_summary.trim() || null,
-      consultation_types: form.consultation_types.trim() || null,
     };
 
     setSaving(true);
@@ -140,7 +138,8 @@ export default function PracticeInfoPage() {
     <div>
       <h1 className="text-2xl font-semibold text-gray-900">Practice Info</h1>
       <p className="mt-1 text-gray-600">
-        Practice name, location, specialty, and consultation types.
+        Practice name, timezone, specialty, and address. Teleconsult channels and prices are set under{" "}
+        <span className="font-medium">Services catalog</span>.
       </p>
       <form onSubmit={handleSubmit} className="mt-6 space-y-4 rounded-lg border border-gray-200 bg-white p-4">
         <div>
@@ -168,12 +167,6 @@ export default function PracticeInfoPage() {
             Address summary
           </FieldLabel>
           <input id="address_summary" type="text" value={form.address_summary ?? ""} onChange={(e) => handleFormChange((p) => ({ ...p, address_summary: e.target.value }))} maxLength={500} placeholder="e.g. 123 Main St, City" className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
-        </div>
-        <div>
-          <FieldLabel htmlFor="consultation_types" tooltip="Types of consultation offered (e.g. In-person, Video).">
-            Consultation types
-          </FieldLabel>
-          <input id="consultation_types" type="text" value={form.consultation_types ?? ""} onChange={(e) => handleFormChange((p) => ({ ...p, consultation_types: e.target.value }))} maxLength={200} placeholder="e.g. In-person, Video" className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
         </div>
         <SaveButton isDirty={isDirty} saving={saving} saveSuccess={saveSuccess} />
       </form>
