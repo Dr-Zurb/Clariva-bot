@@ -1,5 +1,5 @@
 /**
- * SFU-06: Draft state ↔ ServiceCatalogV1 for Practice Setup editor.
+ * SFU-06 + SFU-12: Draft state ↔ ServiceCatalogV1 for Practice Setup editor.
  */
 
 import type {
@@ -10,6 +10,13 @@ import type {
 import { SERVICE_CATALOG_VERSION } from "@/lib/service-catalog-schema";
 
 export type DiscountTypeOption = FollowUpPolicyV1["discount_type"];
+
+/** Per-modality follow-up discount (shared max/window on the service draft). */
+export interface ModalityFollowUpDiscountDraft {
+  followUpDiscountEnabled: boolean;
+  discount_type: DiscountTypeOption;
+  discount_value: string;
+}
 
 export interface ServiceOfferingDraft {
   /** Stable React key */
@@ -27,6 +34,12 @@ export interface ServiceOfferingDraft {
   textPriceMain: string;
   voicePriceMain: string;
   videoPriceMain: string;
+  /** SFU-12: episode-level follow-up eligibility (shared across modalities with follow-up discounts) */
+  followUpMax: string;
+  followUpWindowDays: string;
+  textFollowUp: ModalityFollowUpDiscountDraft;
+  voiceFollowUp: ModalityFollowUpDiscountDraft;
+  videoFollowUp: ModalityFollowUpDiscountDraft;
 }
 
 export interface FollowUpFormDraft {
@@ -59,6 +72,14 @@ export function slugifyLabelToServiceKey(label: string): string {
   return s;
 }
 
+function defaultModalityFollowUpDiscount(): ModalityFollowUpDiscountDraft {
+  return {
+    followUpDiscountEnabled: false,
+    discount_type: "percent",
+    discount_value: "30",
+  };
+}
+
 export function emptyServiceDraft(): ServiceOfferingDraft {
   const sid =
     typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -76,6 +97,11 @@ export function emptyServiceDraft(): ServiceOfferingDraft {
     textPriceMain: "",
     voicePriceMain: "",
     videoPriceMain: "",
+    followUpMax: "3",
+    followUpWindowDays: "90",
+    textFollowUp: defaultModalityFollowUpDiscount(),
+    voiceFollowUp: defaultModalityFollowUpDiscount(),
+    videoFollowUp: defaultModalityFollowUpDiscount(),
   };
 }
 
@@ -89,50 +115,33 @@ export function defaultFollowUpDraft(): FollowUpFormDraft {
   };
 }
 
-function policyToForm(p: FollowUpPolicyV1 | null | undefined): FollowUpFormDraft {
-  if (!p || !p.enabled) {
-    return defaultFollowUpDraft();
+function eligibilitySourceFromOffering(o: ServiceOfferingV1): FollowUpPolicyV1 | null {
+  if (o.followup_policy?.enabled) {
+    return o.followup_policy;
+  }
+  for (const k of ["text", "voice", "video"] as const) {
+    const fp = o.modalities[k]?.followup_policy;
+    if (fp?.enabled) return fp;
+  }
+  return null;
+}
+
+function modalityDiscountFromPolicy(p: FollowUpPolicyV1 | null | undefined): ModalityFollowUpDiscountDraft {
+  if (!p?.enabled) {
+    return defaultModalityFollowUpDiscount();
   }
   const dv = p.discount_value;
   const valueStr =
-    dv === undefined || dv === null ? "" : p.discount_type === "percent" ? String(dv) : String(dv / 100);
+    dv === undefined || dv === null
+      ? ""
+      : p.discount_type === "percent"
+        ? String(dv)
+        : String(dv / 100);
   return {
-    enabled: true,
-    max_followups: String(p.max_followups),
-    eligibility_window_days: String(p.eligibility_window_days),
+    followUpDiscountEnabled: true,
     discount_type: p.discount_type,
     discount_value: valueStr,
   };
-}
-
-function policiesEqual(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-}
-
-/** Pick uniform follow-up from catalog (all services same → form; else first non-null). */
-export function catalogToFollowUpDraft(catalog: ServiceCatalogV1 | null): FollowUpFormDraft {
-  if (!catalog || catalog.services.length === 0) {
-    return defaultFollowUpDraft();
-  }
-  const policies = catalog.services.map((s) => s.followup_policy ?? null);
-  const first = policies.find((p) => p && p.enabled) ?? null;
-  if (!first) {
-    return defaultFollowUpDraft();
-  }
-  const allSame = policies.every((p) => policiesEqual(p, first));
-  return policyToForm(allSame ? first : first);
-}
-
-function mainToMinor(s: string): number | null {
-  const t = s.trim();
-  if (t === "") return null;
-  const n = Number(t);
-  if (!Number.isFinite(n) || n < 0) return null;
-  return Math.round(n * 100);
-}
-
-function minorToMain(minor: number): string {
-  return (minor / 100).toString();
 }
 
 export function offeringToDraft(o: ServiceOfferingV1): ServiceOfferingDraft {
@@ -142,6 +151,10 @@ export function offeringToDraft(o: ServiceOfferingV1): ServiceOfferingDraft {
   const sid =
     o.service_id ??
     (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : newId());
+  const meta = eligibilitySourceFromOffering(o);
+  const followUpMax = meta ? String(meta.max_followups) : "3";
+  const followUpWindowDays = meta ? String(meta.eligibility_window_days) : "90";
+
   return {
     id: newId(),
     service_id: sid,
@@ -154,6 +167,17 @@ export function offeringToDraft(o: ServiceOfferingV1): ServiceOfferingDraft {
     textPriceMain: text?.enabled ? minorToMain(text.price_minor) : "",
     voicePriceMain: voice?.enabled ? minorToMain(voice.price_minor) : "",
     videoPriceMain: video?.enabled ? minorToMain(video.price_minor) : "",
+    followUpMax,
+    followUpWindowDays,
+    textFollowUp: modalityDiscountFromPolicy(
+      text?.followup_policy ?? (text?.enabled ? o.followup_policy : undefined)
+    ),
+    voiceFollowUp: modalityDiscountFromPolicy(
+      voice?.followup_policy ?? (voice?.enabled ? o.followup_policy : undefined)
+    ),
+    videoFollowUp: modalityDiscountFromPolicy(
+      video?.followup_policy ?? (video?.enabled ? o.followup_policy : undefined)
+    ),
   };
 }
 
@@ -162,24 +186,21 @@ export function catalogToServiceDrafts(catalog: ServiceCatalogV1 | null): Servic
   return catalog.services.map(offeringToDraft);
 }
 
-function buildModalities(d: ServiceOfferingDraft): ServiceOfferingV1["modalities"] {
-  const modalities: ServiceOfferingV1["modalities"] = {};
-  if (d.textEnabled) {
-    const m = mainToMinor(d.textPriceMain);
-    if (m === null) throw new Error("Text price required");
-    modalities.text = { enabled: true, price_minor: m };
-  }
-  if (d.voiceEnabled) {
-    const m = mainToMinor(d.voicePriceMain);
-    if (m === null) throw new Error("Voice price required");
-    modalities.voice = { enabled: true, price_minor: m };
-  }
-  if (d.videoEnabled) {
-    const m = mainToMinor(d.videoPriceMain);
-    if (m === null) throw new Error("Video price required");
-    modalities.video = { enabled: true, price_minor: m };
-  }
-  return modalities;
+/** @deprecated SFU-12 — use per-service drafts only; kept for transitional imports */
+export function catalogToFollowUpDraft(_catalog: ServiceCatalogV1 | null): FollowUpFormDraft {
+  return defaultFollowUpDraft();
+}
+
+function mainToMinor(s: string): number | null {
+  const t = s.trim();
+  if (t === "") return null;
+  const n = Number(t);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.round(n * 100);
+}
+
+function minorToMain(minor: number): string {
+  return (minor / 100).toString();
 }
 
 function buildFollowUpPolicy(form: FollowUpFormDraft): FollowUpPolicyV1 | null {
@@ -222,40 +243,98 @@ function buildFollowUpPolicy(form: FollowUpFormDraft): FollowUpPolicyV1 | null {
   };
 }
 
+function buildModalityFollowUpPolicy(
+  d: ServiceOfferingDraft,
+  disc: ModalityFollowUpDiscountDraft
+): FollowUpPolicyV1 | null {
+  if (!disc.followUpDiscountEnabled) return null;
+  return buildFollowUpPolicy({
+    enabled: true,
+    max_followups: d.followUpMax,
+    eligibility_window_days: d.followUpWindowDays,
+    discount_type: disc.discount_type,
+    discount_value: disc.discount_value,
+  });
+}
+
+function buildModalities(d: ServiceOfferingDraft): ServiceOfferingV1["modalities"] {
+  const modalities: ServiceOfferingV1["modalities"] = {};
+  if (d.textEnabled) {
+    const m = mainToMinor(d.textPriceMain);
+    if (m === null) throw new Error("Text price required");
+    const fp = buildModalityFollowUpPolicy(d, d.textFollowUp);
+    modalities.text = {
+      enabled: true,
+      price_minor: m,
+      ...(fp ? { followup_policy: fp } : { followup_policy: null }),
+    };
+  }
+  if (d.voiceEnabled) {
+    const m = mainToMinor(d.voicePriceMain);
+    if (m === null) throw new Error("Voice price required");
+    const fp = buildModalityFollowUpPolicy(d, d.voiceFollowUp);
+    modalities.voice = {
+      enabled: true,
+      price_minor: m,
+      ...(fp ? { followup_policy: fp } : { followup_policy: null }),
+    };
+  }
+  if (d.videoEnabled) {
+    const m = mainToMinor(d.videoPriceMain);
+    if (m === null) throw new Error("Video price required");
+    const fp = buildModalityFollowUpPolicy(d, d.videoFollowUp);
+    modalities.video = {
+      enabled: true,
+      price_minor: m,
+      ...(fp ? { followup_policy: fp } : { followup_policy: null }),
+    };
+  }
+  return modalities;
+}
+
 /** Build API payload from drafts. Returns null if user cleared all services (legacy-only). */
-export function draftsToCatalogOrNull(
-  services: ServiceOfferingDraft[],
-  followUp: FollowUpFormDraft
-): ServiceCatalogV1 | null {
+export function draftsToCatalogOrNull(services: ServiceOfferingDraft[]): ServiceCatalogV1 | null {
   if (services.length === 0) {
     return null;
-  }
-
-  let followup_policy: FollowUpPolicyV1 | null;
-  try {
-    followup_policy = buildFollowUpPolicy(followUp);
-  } catch (e) {
-    throw e;
   }
 
   const offerings: ServiceOfferingV1[] = services.map((d) => {
     if (!d.label.trim()) throw new Error("Each service needs a label");
     if (!d.service_id.trim()) throw new Error("Each service needs a stable id");
-    const modalities = buildModalities(d);
-    const key =
-      d.service_key.trim().toLowerCase() || slugifyLabelToServiceKey(d.label);
-    const base: ServiceOfferingV1 = {
-      service_id: d.service_id.trim(),
-      service_key: key,
-      label: d.label.trim(),
-      modalities,
-      ...(followup_policy ? { followup_policy } : { followup_policy: null }),
-    };
-    const desc = d.description.trim();
-    if (desc) {
-      base.description = desc;
+
+    const anyFu =
+      (d.textEnabled && d.textFollowUp.followUpDiscountEnabled) ||
+      (d.voiceEnabled && d.voiceFollowUp.followUpDiscountEnabled) ||
+      (d.videoEnabled && d.videoFollowUp.followUpDiscountEnabled);
+    if (anyFu) {
+      const mf = parseInt(d.followUpMax, 10);
+      const wd = parseInt(d.followUpWindowDays, 10);
+      if (Number.isNaN(mf) || mf < 0 || mf > 100) {
+        throw new Error("Max follow-up visits must be 0–100");
+      }
+      if (Number.isNaN(wd) || wd < 1 || wd > 3650) {
+        throw new Error("Eligibility window must be 1–3650 days");
+      }
     }
-    return base;
+
+    try {
+      const modalities = buildModalities(d);
+      const key = d.service_key.trim().toLowerCase() || slugifyLabelToServiceKey(d.label);
+      const base: ServiceOfferingV1 = {
+        service_id: d.service_id.trim(),
+        service_key: key,
+        label: d.label.trim(),
+        modalities,
+        followup_policy: null,
+      };
+      const desc = d.description.trim();
+      if (desc) {
+        base.description = desc;
+      }
+      return base;
+    } catch (e) {
+      throw e;
+    }
   });
 
   return {

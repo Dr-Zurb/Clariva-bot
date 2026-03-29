@@ -14,40 +14,6 @@ export const MAX_SERVICE_OFFERINGS = 50;
 
 const serviceKeyRegex = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
-const modalitySlotSchema = z.object({
-  enabled: z.boolean(),
-  price_minor: z.number().int().min(0),
-});
-
-/** Per-mod prices; omit key or enabled:false for unavailable mode */
-export const serviceModalitiesSchema = z
-  .object({
-    text: modalitySlotSchema.optional(),
-    voice: modalitySlotSchema.optional(),
-    video: modalitySlotSchema.optional(),
-  })
-  .superRefine((modalities, ctx) => {
-    const slots = [modalities.text, modalities.voice, modalities.video].filter(Boolean);
-    const anyEnabled = slots.some((s) => s!.enabled);
-    if (!anyEnabled) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'At least one modality must be enabled',
-        path: [],
-      });
-    }
-    for (const s of slots) {
-      if (s!.enabled && s!.price_minor < 0) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'Enabled modalities must have non-negative price_minor',
-          path: [],
-        });
-        break;
-      }
-    }
-  });
-
 const followUpDiscountTypeSchema = z.enum(['none', 'percent', 'flat_off', 'fixed_price', 'free']);
 
 function refineFollowUpDiscountFields(
@@ -105,6 +71,68 @@ export const followUpPolicyV1Schema = z
     refineFollowUpDiscountFields(data.discount_type, data.discount_value, ctx, ['discount_value']);
   });
 
+/** SFU-12: optional per-modality follow-up policy (discount can differ by channel; shared max/window must align). */
+export const modalitySlotSchema = z.object({
+  enabled: z.boolean(),
+  price_minor: z.number().int().min(0),
+  followup_policy: followUpPolicyV1Schema.nullable().optional(),
+});
+
+/** Per-mod prices; omit key or enabled:false for unavailable mode */
+export const serviceModalitiesSchema = z
+  .object({
+    text: modalitySlotSchema.optional(),
+    voice: modalitySlotSchema.optional(),
+    video: modalitySlotSchema.optional(),
+  })
+  .superRefine((modalities, ctx) => {
+    const slots = [modalities.text, modalities.voice, modalities.video].filter(Boolean);
+    const anyEnabled = slots.some((s) => s!.enabled);
+    if (!anyEnabled) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'At least one modality must be enabled',
+        path: [],
+      });
+    }
+    for (const s of slots) {
+      if (s!.enabled && s!.price_minor < 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Enabled modalities must have non-negative price_minor',
+          path: [],
+        });
+        break;
+      }
+    }
+    type Policy = z.infer<typeof followUpPolicyV1Schema>;
+    const keys = ['text', 'voice', 'video'] as const;
+    const enabledPolicies: Policy[] = [];
+    for (const k of keys) {
+      const slot = modalities[k];
+      const fp = slot?.followup_policy;
+      if (fp?.enabled) {
+        enabledPolicies.push(fp);
+      }
+    }
+    if (enabledPolicies.length >= 2) {
+      const refMax = enabledPolicies[0]!.max_followups;
+      const refWin = enabledPolicies[0]!.eligibility_window_days;
+      for (let i = 1; i < enabledPolicies.length; i++) {
+        const p = enabledPolicies[i]!;
+        if (p.max_followups !== refMax || p.eligibility_window_days !== refWin) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              'SFU-12: all enabled modality follow-up policies must share the same max_followups and eligibility_window_days',
+            path: [],
+          });
+          return;
+        }
+      }
+    }
+  });
+
 const serviceOfferingCoreSchema = z.object({
   service_key: z
     .string()
@@ -123,9 +151,28 @@ export const serviceOfferingIncomingSchema = serviceOfferingCoreSchema.extend({
 });
 
 /** Persisted catalog row: immutable `service_id` per offering. */
-export const serviceOfferingV1Schema = serviceOfferingCoreSchema.extend({
-  service_id: z.string().uuid('service_id must be a UUID'),
-});
+export const serviceOfferingV1Schema = serviceOfferingCoreSchema
+  .extend({
+    service_id: z.string().uuid('service_id must be a UUID'),
+  })
+  .superRefine((off, ctx) => {
+    const root = off.followup_policy;
+    if (!root?.enabled) return;
+    for (const k of ['text', 'voice', 'video'] as const) {
+      const fp = off.modalities[k]?.followup_policy;
+      if (
+        fp?.enabled &&
+        (fp.max_followups !== root.max_followups || fp.eligibility_window_days !== root.eligibility_window_days)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'followup_policy and per-modality follow-up must share max_followups and eligibility_window_days',
+          path: ['followup_policy'],
+        });
+        return;
+      }
+    }
+  });
 
 function refineCatalogUniqueKeysAndIds(
   data: { services: { service_key: string; service_id?: string }[] },
@@ -204,7 +251,7 @@ export function parseServiceCatalogV1(input: unknown): ServiceCatalogV1 {
     const msg = first ? `${first.path.join('.')}: ${first.message}` : 'Invalid service_offerings_json';
     throw new ValidationError(msg);
   }
-  return result.data;
+  return hydrateCatalogPerModalityFollowUp(result.data);
 }
 
 /** Returns parsed catalog or null if input is null/undefined */
@@ -248,6 +295,55 @@ export function hydrateServiceCatalogServiceIds(
   return { ...catalog, services };
 }
 
+const MODALITY_KEYS = ['text', 'voice', 'video'] as const;
+
+/**
+ * SFU-12: copy legacy service-level `followup_policy` into enabled modality slots that omit it.
+ */
+export function hydrateOfferingRootFollowUpIntoModalities(offering: ServiceOfferingV1): ServiceOfferingV1 {
+  const root = offering.followup_policy;
+  if (root === undefined || root === null) {
+    return offering;
+  }
+  const modalities = { ...offering.modalities };
+  let changed = false;
+  for (const k of MODALITY_KEYS) {
+    const slot = modalities[k];
+    if (slot?.enabled !== true) continue;
+    if (slot.followup_policy !== undefined) continue;
+    modalities[k] = {
+      ...slot,
+      followup_policy: JSON.parse(JSON.stringify(root)) as z.infer<typeof followUpPolicyV1Schema>,
+    };
+    changed = true;
+  }
+  return changed ? { ...offering, modalities } : offering;
+}
+
+/** Run per-offering SFU-12 hydration on a validated catalog. */
+export function hydrateCatalogPerModalityFollowUp(catalog: ServiceCatalogV1): ServiceCatalogV1 {
+  return {
+    ...catalog,
+    services: catalog.services.map(hydrateOfferingRootFollowUpIntoModalities),
+  };
+}
+
+/**
+ * SFU-12: episode max_followups + eligibility window come from root policy or first enabled per-modality policy.
+ */
+export function resolveEpisodeFollowUpEligibilitySource(
+  offering: ServiceOfferingV1
+): z.infer<typeof followUpPolicyV1Schema> | null {
+  if (offering.followup_policy?.enabled) {
+    return offering.followup_policy;
+  }
+  for (const k of MODALITY_KEYS) {
+    const fp = offering.modalities[k]?.followup_policy;
+    if (fp?.enabled) return fp;
+  }
+  return null;
+}
+
 /**
  * Parse catalog from DB / settings. When `doctorId` is set, legacy rows without `service_id`
  * receive a deterministic UUID so reads match after SFU-11 hydration.
@@ -261,7 +357,7 @@ export function safeParseServiceCatalogV1FromDb(
   }
   const strict = serviceCatalogV1Schema.safeParse(raw);
   if (strict.success) {
-    return strict.data;
+    return hydrateCatalogPerModalityFollowUp(strict.data);
   }
   const loose = serviceCatalogIncomingSchema.safeParse(raw);
   if (!loose.success || !doctorId) {
@@ -269,5 +365,5 @@ export function safeParseServiceCatalogV1FromDb(
   }
   const hydrated = hydrateServiceCatalogServiceIds(doctorId, loose.data as ServiceCatalogV1);
   const again = serviceCatalogV1Schema.safeParse(hydrated);
-  return again.success ? again.data : null;
+  return again.success ? hydrateCatalogPerModalityFollowUp(again.data) : null;
 }

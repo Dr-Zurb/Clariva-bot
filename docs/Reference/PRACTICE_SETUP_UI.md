@@ -53,7 +53,7 @@ Settings (collapsible)
 | Card | Label | Short description |
 |------|-------|-------------------|
 | Practice Info | Practice Info | Practice name, timezone, specialty, and address (teleconsult: Services catalog) |
-| Services catalog | Services catalog | Teleconsult services, modalities, prices, follow-up policy (SFU-06) |
+| Services catalog | Services catalog | Teleconsult services, modalities, prices; **follow-up discount per modality** + shared max/window (SFU-06, SFU-12) |
 | Booking Rules | Booking Rules | Slot length, advance booking limits, cancellation policy |
 | Bot Messages | Bot Messages | Welcome message and default appointment notes |
 | Availability | Availability | Weekly schedule and blocked times when you're unavailable |

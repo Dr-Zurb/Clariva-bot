@@ -10,39 +10,6 @@ export const MAX_SERVICE_OFFERINGS = 50;
 
 const serviceKeyRegex = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
-const modalitySlotSchema = z.object({
-  enabled: z.boolean(),
-  price_minor: z.number().int().min(0),
-});
-
-export const serviceModalitiesSchema = z
-  .object({
-    text: modalitySlotSchema.optional(),
-    voice: modalitySlotSchema.optional(),
-    video: modalitySlotSchema.optional(),
-  })
-  .superRefine((modalities, ctx) => {
-    const slots = [modalities.text, modalities.voice, modalities.video].filter(Boolean);
-    const anyEnabled = slots.some((s) => s!.enabled);
-    if (!anyEnabled) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "At least one modality must be enabled",
-        path: [],
-      });
-    }
-    for (const s of slots) {
-      if (s!.enabled && s!.price_minor < 0) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Enabled modalities must have non-negative price_minor",
-          path: [],
-        });
-        break;
-      }
-    }
-  });
-
 const followUpDiscountTypeSchema = z.enum(["none", "percent", "flat_off", "fixed_price", "free"]);
 
 function refineFollowUpDiscountFields(
@@ -96,6 +63,65 @@ export const followUpPolicyV1Schema = z
     refineFollowUpDiscountFields(data.discount_type, data.discount_value, ctx, ["discount_value"]);
   });
 
+export const modalitySlotSchema = z.object({
+  enabled: z.boolean(),
+  price_minor: z.number().int().min(0),
+  followup_policy: followUpPolicyV1Schema.nullable().optional(),
+});
+
+export const serviceModalitiesSchema = z
+  .object({
+    text: modalitySlotSchema.optional(),
+    voice: modalitySlotSchema.optional(),
+    video: modalitySlotSchema.optional(),
+  })
+  .superRefine((modalities, ctx) => {
+    const slots = [modalities.text, modalities.voice, modalities.video].filter(Boolean);
+    const anyEnabled = slots.some((s) => s!.enabled);
+    if (!anyEnabled) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "At least one modality must be enabled",
+        path: [],
+      });
+    }
+    for (const s of slots) {
+      if (s!.enabled && s!.price_minor < 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Enabled modalities must have non-negative price_minor",
+          path: [],
+        });
+        break;
+      }
+    }
+    type Policy = z.infer<typeof followUpPolicyV1Schema>;
+    const keys = ["text", "voice", "video"] as const;
+    const enabledPolicies: Policy[] = [];
+    for (const k of keys) {
+      const fp = modalities[k]?.followup_policy;
+      if (fp?.enabled) {
+        enabledPolicies.push(fp);
+      }
+    }
+    if (enabledPolicies.length >= 2) {
+      const refMax = enabledPolicies[0]!.max_followups;
+      const refWin = enabledPolicies[0]!.eligibility_window_days;
+      for (let i = 1; i < enabledPolicies.length; i++) {
+        const p = enabledPolicies[i]!;
+        if (p.max_followups !== refMax || p.eligibility_window_days !== refWin) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              "SFU-12: all enabled modality follow-up policies must share the same max_followups and eligibility_window_days",
+            path: [],
+          });
+          return;
+        }
+      }
+    }
+  });
+
 const serviceOfferingCoreSchema = z.object({
   service_key: z
     .string()
@@ -112,9 +138,29 @@ export const serviceOfferingIncomingSchema = serviceOfferingCoreSchema.extend({
   service_id: z.string().uuid().optional(),
 });
 
-export const serviceOfferingV1Schema = serviceOfferingCoreSchema.extend({
-  service_id: z.string().uuid("service_id must be a UUID"),
-});
+export const serviceOfferingV1Schema = serviceOfferingCoreSchema
+  .extend({
+    service_id: z.string().uuid("service_id must be a UUID"),
+  })
+  .superRefine((off, ctx) => {
+    const root = off.followup_policy;
+    if (!root?.enabled) return;
+    for (const k of ["text", "voice", "video"] as const) {
+      const fp = off.modalities[k]?.followup_policy;
+      if (
+        fp?.enabled &&
+        (fp.max_followups !== root.max_followups || fp.eligibility_window_days !== root.eligibility_window_days)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "followup_policy and per-modality follow-up must share max_followups and eligibility_window_days",
+          path: ["followup_policy"],
+        });
+        return;
+      }
+    }
+  });
 
 function refineCatalogUniqueKeysAndIds(
   data: { services: { service_key: string; service_id?: string }[] },

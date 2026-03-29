@@ -96,8 +96,46 @@ describe('buildEpisodePriceSnapshotJson', () => {
       ],
     };
     const snap = buildEpisodePriceSnapshotJson(cat.services[0]!);
-    expect(snap.version).toBe(1);
+    expect(snap.version).toBe(2);
     expect((snap.modalities as Record<string, unknown>).video).toEqual({ price_minor: 5000 });
     expect(snap.followup_policy).toEqual(cat.services[0]!.followup_policy);
+  });
+
+  it('SFU-12: embeds per-modality followup_policy on v2 snapshot', () => {
+    const offering = {
+      service_id: sid('skin'),
+      service_key: 'skin',
+      label: 'Skin',
+      modalities: {
+        text: {
+          enabled: true,
+          price_minor: 50_00,
+          followup_policy: {
+            enabled: true,
+            max_followups: 2,
+            eligibility_window_days: 30,
+            discount_type: 'percent' as const,
+            discount_value: 50,
+          },
+        },
+        video: {
+          enabled: true,
+          price_minor: 100_00,
+          followup_policy: {
+            enabled: true,
+            max_followups: 2,
+            eligibility_window_days: 30,
+            discount_type: 'percent' as const,
+            discount_value: 20,
+          },
+        },
+      },
+      followup_policy: null,
+    };
+    const snap = buildEpisodePriceSnapshotJson(offering);
+    expect(snap.version).toBe(2);
+    const modal = snap.modalities as Record<string, { price_minor: number; followup_policy?: unknown }>;
+    expect(modal.text?.followup_policy).toMatchObject({ discount_value: 50 });
+    expect(modal.video?.followup_policy).toMatchObject({ discount_value: 20 });
   });
 });

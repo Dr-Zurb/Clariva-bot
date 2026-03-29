@@ -5,7 +5,11 @@
 
 import { randomUUID } from 'crypto';
 import type { ServiceCatalogV1, ServiceOfferingV1 } from './service-catalog-schema';
-import { hydrateServiceCatalogServiceIds, serviceCatalogV1Schema } from './service-catalog-schema';
+import {
+  hydrateCatalogPerModalityFollowUp,
+  hydrateServiceCatalogServiceIds,
+  serviceCatalogV1Schema,
+} from './service-catalog-schema';
 import { ValidationError } from './errors';
 
 /** Match frontend / historical slug rules (service-catalog-drafts). */
@@ -103,10 +107,10 @@ export function mergeServiceCatalogOnSave(
     };
   });
 
-  const out: ServiceCatalogV1 = {
+  const out: ServiceCatalogV1 = hydrateCatalogPerModalityFollowUp({
     version: incoming.version,
     services: nextServices,
-  };
+  });
   const parsed = serviceCatalogV1Schema.safeParse(out);
   if (!parsed.success) {
     const first = parsed.error.issues[0];

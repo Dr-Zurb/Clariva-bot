@@ -19,6 +19,7 @@ Execute in **order** below; later tasks assume earlier contracts (types, DB, quo
 | 10 | [e-task-sfu-10](./e-task-sfu-10-remove-practice-consultation-types-ui.md) | sfu-06 | 0.5–1 d |
 | 10a | [e-task-sfu-10a](./e-task-sfu-10a-remove-consultation-types-ui-remediation.md) | sfu-10 | remed. |
 | 11 | [e-task-sfu-11](./e-task-sfu-11-catalog-service-id-uuid-episode-linkage.md) | sfu-01–07 | 3–6 d |
+| 12 | [e-task-sfu-12](./e-task-sfu-12-per-modality-follow-up-policies.md) | sfu-01, 03, 04, 06/11 | 4–8 d |
 
 **Code anchors (audit 2026-03-28):**
 
@@ -30,4 +31,4 @@ Execute in **order** below; later tasks assume earlier contracts (types, DB, quo
 
 ---
 
-**Last updated:** 2026-03-29 (SFU-10a remediation added)
+**Last updated:** 2026-03-29 (SFU-12 per-modality follow-up task added)

@@ -5,16 +5,10 @@
  * (or legacy `appointment_fee_minor`) plus optional **active episode** row.
  * Platform fee / GST are applied later in the payment layer (SFU-05).
  *
- * **Episode `price_snapshot_json` v1** (written at index completion, SFU-04):
- * ```json
- * {
- *   "version": 1,
- *   "modalities": { "video": { "price_minor": 50000 }, "text": { "price_minor": 10000 } },
- *   "followup_policy": { "enabled": true, "max_followups": 3, "eligibility_window_days": 90,
- *     "discount_type": "percent", "discount_value": 30 }
- * }
- * ```
- * If `followup_policy` is omitted, the current catalog offering's `followup_policy` is used (replay).
+ * **Episode `price_snapshot_json` v1 legacy / v2 (SFU-04, SFU-12):**
+ * - v1: top-level `followup_policy` applies to all modalities; modality objects may only have `price_minor`.
+ * - v2: `modalities.<m>.followup_policy` per channel (optional); top-level `followup_policy` kept for compatibility.
+ * If v1 omits `followup_policy`, the current catalog offering may be used (replay). v2 uses per-modality snapshot only.
  *
  * **Expired / exhausted episode:** caller may still pass the row; this engine **falls back to index**
  * pricing (list price) so payments can open a **new** episode downstream — see PLAN §3.3.
@@ -90,20 +84,28 @@ function readSlotMinor(
   return { enabled, price_minor: pm };
 }
 
-/** Episode snapshot: `enabled` optional; explicit `enabled: false` excludes modality */
-function readSnapshotModalityMinor(val: unknown): number | null {
+/** SFU-12: modality cell may include `followup_policy`. */
+function readSnapshotModalityCell(val: unknown): {
+  price_minor: number | null;
+  followup_policy?: FollowUpPolicyV1 | null;
+} {
   if (!val || typeof val !== 'object' || Array.isArray(val)) {
-    return null;
+    return { price_minor: null };
   }
-  const rec = val as { enabled?: unknown; price_minor?: unknown };
+  const rec = val as { enabled?: unknown; price_minor?: unknown; followup_policy?: unknown };
   if (rec.enabled === false) {
-    return null;
+    return { price_minor: null };
   }
   const pm = rec.price_minor;
-  if (typeof pm !== 'number' || !Number.isInteger(pm) || pm < 0) {
-    return null;
+  const price_minor =
+    typeof pm === 'number' && Number.isInteger(pm) && pm >= 0 ? pm : null;
+  if (!Object.prototype.hasOwnProperty.call(rec, 'followup_policy')) {
+    return { price_minor };
   }
-  return pm;
+  return {
+    price_minor,
+    followup_policy: parseFollowUpPolicyLoose(rec.followup_policy),
+  };
 }
 
 function indexAmountFromOffering(offering: ServiceOfferingV1, modality: ConsultationModality): number {
@@ -123,39 +125,51 @@ function parseFollowUpPolicyLoose(raw: unknown): FollowUpPolicyV1 | null {
 }
 
 export interface ParsedEpisodePriceSnapshotV1 {
-  modalities: Partial<Record<ConsultationModality, { price_minor: number }>>;
+  /** 1 = legacy single top-level follow-up policy; 2 = SFU-12 per-modality policies in snapshot */
+  snapshotVersion: number;
+  modalities: Partial<
+    Record<ConsultationModality, { price_minor: number; followup_policy?: FollowUpPolicyV1 | null }>
+  >;
   followup_policy: FollowUpPolicyV1 | null;
 }
 
 /** Read locked snapshot + optional frozen policy from `care_episodes.price_snapshot_json` */
 export function parseEpisodePriceSnapshotV1(raw: Record<string, unknown>): ParsedEpisodePriceSnapshotV1 {
-  const modalities: Partial<Record<ConsultationModality, { price_minor: number }>> = {};
+  const snapshotVersion =
+    typeof raw['version'] === 'number' && Number.isFinite(raw['version']) ? (raw['version'] as number) : 1;
+  const modalities: ParsedEpisodePriceSnapshotV1['modalities'] = {};
 
   const wrap = raw['modalities'];
   if (wrap && typeof wrap === 'object' && wrap !== null && !Array.isArray(wrap)) {
     const obj = wrap as Record<string, unknown>;
     for (const m of CONSULTATION_MODALITIES) {
-      const pm = readSnapshotModalityMinor(obj[m]);
-      if (pm !== null) {
-        modalities[m] = { price_minor: pm };
+      const cell = readSnapshotModalityCell(obj[m]);
+      if (cell.price_minor !== null) {
+        modalities[m] =
+          cell.followup_policy !== undefined
+            ? { price_minor: cell.price_minor, followup_policy: cell.followup_policy }
+            : { price_minor: cell.price_minor };
       }
     }
   } else {
     for (const m of CONSULTATION_MODALITIES) {
-      const pm = readSnapshotModalityMinor(raw[m]);
-      if (pm !== null) {
-        modalities[m] = { price_minor: pm };
+      const cell = readSnapshotModalityCell(raw[m]);
+      if (cell.price_minor !== null) {
+        modalities[m] =
+          cell.followup_policy !== undefined
+            ? { price_minor: cell.price_minor, followup_policy: cell.followup_policy }
+            : { price_minor: cell.price_minor };
       }
     }
   }
 
   const followup_policy = parseFollowUpPolicyLoose(raw['followup_policy']);
 
-  return { modalities, followup_policy };
+  return { snapshotVersion, modalities, followup_policy };
 }
 
 function baseMinorFromSnapshotModalities(
-  modalities: Partial<Record<ConsultationModality, { price_minor: number }>>,
+  modalities: ParsedEpisodePriceSnapshotV1['modalities'],
   serviceKey: string,
   modality: ConsultationModality
 ): number {
@@ -164,6 +178,22 @@ function baseMinorFromSnapshotModalities(
     throw new ModalityNotOfferedForQuote(serviceKey, modality);
   }
   return entry.price_minor;
+}
+
+/** SFU-12: per-modality frozen policy, else legacy v1 top-level + catalog replay. */
+function resolveFollowUpPolicyForFollowUpQuote(
+  snap: ParsedEpisodePriceSnapshotV1,
+  modality: ConsultationModality,
+  catalogOffering: ServiceOfferingV1 | null
+): FollowUpPolicyV1 | null {
+  const entry = snap.modalities[modality];
+  if (entry && Object.prototype.hasOwnProperty.call(entry, 'followup_policy')) {
+    return entry.followup_policy ?? null;
+  }
+  if (snap.snapshotVersion < 2) {
+    return effectiveFollowUpPolicy(snap.followup_policy, catalogOffering, modality);
+  }
+  return effectiveFollowUpPolicy(null, catalogOffering, modality);
 }
 
 /**
@@ -281,10 +311,17 @@ function quoteIndexPath(
 
 function effectiveFollowUpPolicy(
   snapshotPolicy: FollowUpPolicyV1 | null,
-  catalogOffering: ServiceOfferingV1 | null
+  catalogOffering: ServiceOfferingV1 | null,
+  modality?: ConsultationModality
 ): FollowUpPolicyV1 | null {
   if (snapshotPolicy) {
     return snapshotPolicy;
+  }
+  if (modality && catalogOffering?.modalities[modality]) {
+    const fp = catalogOffering.modalities[modality]!.followup_policy;
+    if (fp !== undefined && fp !== null) {
+      return fp;
+    }
   }
   const fromCatalog = catalogOffering?.followup_policy;
   if (!fromCatalog) {
@@ -318,7 +355,7 @@ export function quoteConsultationVisit(input: QuoteConsultationVisitInput): Visi
     const baseMinor = baseMinorFromSnapshotModalities(snap.modalities, service_key, modality);
 
     const offering = catalog ? findServiceOfferingByKey(catalog, service_key) : null;
-    const policy = effectiveFollowUpPolicy(snap.followup_policy, offering ?? null);
+    const policy = resolveFollowUpPolicyForFollowUpQuote(snap, modality, offering ?? null);
 
     const followupsUsed = episodeForService.followups_used;
     const maxFollow = episodeForService.max_followups;

@@ -4,26 +4,18 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ServiceCatalogEditor } from "@/components/practice-setup/ServiceCatalogEditor";
 import { SaveButton } from "@/components/ui/SaveButton";
 import { getDoctorSettings, patchDoctorSettings } from "@/lib/api";
-import {
-  catalogToFollowUpDraft,
-  catalogToServiceDrafts,
-  defaultFollowUpDraft,
-  draftsToCatalogOrNull,
-  type FollowUpFormDraft,
-  type ServiceOfferingDraft,
-} from "@/lib/service-catalog-drafts";
+import { catalogToServiceDrafts, draftsToCatalogOrNull, type ServiceOfferingDraft } from "@/lib/service-catalog-drafts";
 import { safeParseServiceCatalogV1 } from "@/lib/service-catalog-schema";
 import { createClient } from "@/lib/supabase/client";
 import type { DoctorSettings, PatchDoctorSettingsPayload } from "@/types/doctor-settings";
 
-function snapshot(services: ServiceOfferingDraft[], followUp: FollowUpFormDraft): string {
-  return JSON.stringify({ services, followUp });
+function snapshot(services: ServiceOfferingDraft[]): string {
+  return JSON.stringify({ services });
 }
 
 export default function ServicesCatalogPage() {
   const [settings, setSettings] = useState<DoctorSettings | null>(null);
   const [services, setServices] = useState<ServiceOfferingDraft[]>([]);
-  const [followUp, setFollowUp] = useState<FollowUpFormDraft>(defaultFollowUpDraft);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -50,10 +42,8 @@ export default function ServicesCatalogPage() {
       setSettings(s);
       const cat = s.service_offerings_json ?? null;
       const svcDrafts = catalogToServiceDrafts(cat);
-      const fu = catalogToFollowUpDraft(cat);
       setServices(svcDrafts);
-      setFollowUp(fu);
-      setLastSaved(snapshot(svcDrafts, fu));
+      setLastSaved(snapshot(svcDrafts));
       setSaveSuccess(false);
       setClientError(null);
     } catch (err) {
@@ -70,8 +60,8 @@ export default function ServicesCatalogPage() {
   }, [fetchSettings]);
 
   const isDirty = useMemo(
-    () => lastSaved !== "" && snapshot(services, followUp) !== lastSaved,
-    [services, followUp, lastSaved]
+    () => lastSaved !== "" && snapshot(services) !== lastSaved,
+    [services, lastSaved]
   );
 
   const hasStructuredCatalog = Boolean(settings?.service_offerings_json);
@@ -88,7 +78,7 @@ export default function ServicesCatalogPage() {
 
     let catalog: ReturnType<typeof draftsToCatalogOrNull>;
     try {
-      catalog = draftsToCatalogOrNull(services, followUp);
+      catalog = draftsToCatalogOrNull(services);
     } catch (err) {
       setClientError(err instanceof Error ? err.message : "Check your service rows and follow-up fields.");
       return;
@@ -116,10 +106,8 @@ export default function ServicesCatalogPage() {
       const s = res.data.settings;
       const catNext = s.service_offerings_json ?? null;
       const svcDrafts = catalogToServiceDrafts(catNext);
-      const fu = catalogToFollowUpDraft(catNext);
       setServices(svcDrafts);
-      setFollowUp(fu);
-      setLastSaved(snapshot(svcDrafts, fu));
+      setLastSaved(snapshot(svcDrafts));
       setSaveSuccess(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Save failed";
@@ -150,10 +138,8 @@ export default function ServicesCatalogPage() {
     try {
       const res = await patchDoctorSettings(token, { service_offerings_json: null });
       setSettings(res.data.settings);
-      const fu = defaultFollowUpDraft();
       setServices([]);
-      setFollowUp(fu);
-      setLastSaved(snapshot([], fu));
+      setLastSaved(snapshot([]));
       setSaveSuccess(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Could not clear catalog";
@@ -184,22 +170,17 @@ export default function ServicesCatalogPage() {
     <div>
       <h1 className="text-2xl font-semibold text-gray-900">Services catalog</h1>
       <p className="mt-1 text-gray-600">
-        Define consultation services and teleconsult prices (text, voice, video). Used for quotes and checkout when patients book video/remote visits.
+        Define consultation services and teleconsult prices (text, voice, video). Follow-up discounts can differ by channel.
+        Used for quotes and checkout when patients book remote visits.
       </p>
 
       <form onSubmit={handleSave} className="mt-6 space-y-4">
         <ServiceCatalogEditor
           services={services}
-          followUp={followUp}
           onServicesChange={(next) => {
             setSaveSuccess(false);
             setClientError(null);
             setServices(next);
-          }}
-          onFollowUpChange={(next) => {
-            setSaveSuccess(false);
-            setClientError(null);
-            setFollowUp(next);
           }}
         />
 

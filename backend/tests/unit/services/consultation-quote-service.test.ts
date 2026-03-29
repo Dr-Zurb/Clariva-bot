@@ -388,6 +388,52 @@ describe('quoteConsultationVisit', () => {
     expect(q.amount_minor).toBe(200_00);
   });
 
+  it('SFU-12: v2 snapshot uses per-modality follow-up policy (text vs video)', () => {
+    const settings = baseDoctorRow({ service_offerings_json: catalogSingleVideo() });
+    const snapshot = {
+      version: 2 as const,
+      modalities: {
+        video: {
+          price_minor: 100_00,
+          followup_policy: {
+            enabled: true,
+            max_followups: 3,
+            eligibility_window_days: 90,
+            discount_type: 'percent' as const,
+            discount_value: 10,
+          },
+        },
+        text: {
+          price_minor: 50_00,
+          followup_policy: {
+            enabled: true,
+            max_followups: 3,
+            eligibility_window_days: 90,
+            discount_type: 'percent' as const,
+            discount_value: 40,
+          },
+        },
+      },
+    };
+    const ep = baseEpisode({ price_snapshot_json: snapshot });
+    const qVideo = quoteConsultationVisit({
+      settings,
+      catalogServiceKey: 'skin',
+      modality: 'video',
+      at,
+      activeEpisode: ep,
+    });
+    expect(qVideo.amount_minor).toBe(90_00);
+    const qText = quoteConsultationVisit({
+      settings,
+      catalogServiceKey: 'skin',
+      modality: 'text',
+      at,
+      activeEpisode: ep,
+    });
+    expect(qText.amount_minor).toBe(30_00);
+  });
+
   it('replays follow-up policy from catalog when snapshot omits it', () => {
     const cat = catalogSingleVideo();
     cat.services[0]!.followup_policy = {
@@ -498,6 +544,27 @@ describe('parseEpisodePriceSnapshotV1', () => {
     const p = parseEpisodePriceSnapshotV1({
       modalities: { video: { price_minor: 5000 } },
     });
+    expect(p.snapshotVersion).toBe(1);
     expect(p.modalities.video?.price_minor).toBe(5000);
+  });
+
+  it('SFU-12: reads per-modality followup_policy on v2', () => {
+    const p = parseEpisodePriceSnapshotV1({
+      version: 2,
+      modalities: {
+        video: {
+          price_minor: 100_00,
+          followup_policy: {
+            enabled: true,
+            max_followups: 2,
+            eligibility_window_days: 30,
+            discount_type: 'percent',
+            discount_value: 25,
+          },
+        },
+      },
+    });
+    expect(p.snapshotVersion).toBe(2);
+    expect(p.modalities.video?.followup_policy?.discount_value).toBe(25);
   });
 });

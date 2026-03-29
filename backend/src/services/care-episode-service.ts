@@ -17,6 +17,7 @@ import { InternalError } from '../utils/errors';
 import { getSupabaseAdminClient } from '../config/database';
 import { findServiceOfferingByKey, getActiveServiceCatalog } from '../utils/service-catalog-helpers';
 import type { ServiceOfferingV1 } from '../utils/service-catalog-schema';
+import { resolveEpisodeFollowUpEligibilitySource } from '../utils/service-catalog-schema';
 
 const SELECT_COLUMNS =
   'id, doctor_id, patient_id, catalog_service_key, catalog_service_id, status, started_at, eligibility_ends_at, ' +
@@ -51,28 +52,35 @@ export function planCareEpisodeOnCompletedVisit(input: {
   return { kind: 'increment', episodeId: activeEpisode.id };
 }
 
-/** Locked JSON for `care_episodes.price_snapshot_json` (see SFU-03 doc shape). */
+/** Locked JSON for `care_episodes.price_snapshot_json` (SFU-03 / SFU-12). */
 export function buildEpisodePriceSnapshotJson(offering: ServiceOfferingV1): Record<string, unknown> {
   const modalities: Record<string, unknown> = {};
   for (const m of SNAPSHOT_MODALITIES) {
     const slot = offering.modalities[m];
     if (slot?.enabled === true) {
-      modalities[m] = { price_minor: slot.price_minor };
+      const cell: Record<string, unknown> = { price_minor: slot.price_minor };
+      if (slot.followup_policy !== undefined) {
+        cell.followup_policy = slot.followup_policy
+          ? (JSON.parse(JSON.stringify(slot.followup_policy)) as unknown)
+          : null;
+      }
+      modalities[m] = cell;
     }
   }
   const out: Record<string, unknown> = {
-    version: 1,
+    version: 2,
     modalities,
   };
-  if (offering.followup_policy) {
-    out.followup_policy = JSON.parse(JSON.stringify(offering.followup_policy)) as unknown;
+  const rootPolicy = offering.followup_policy;
+  if (rootPolicy) {
+    out.followup_policy = JSON.parse(JSON.stringify(rootPolicy)) as unknown;
   }
   return out;
 }
 
 function eligibilityEndsAtIso(
   completion: Date,
-  policy: ServiceOfferingV1['followup_policy']
+  policy: ReturnType<typeof resolveEpisodeFollowUpEligibilitySource>
 ): string | null {
   if (!policy?.enabled || !policy.eligibility_window_days) {
     return null;
@@ -269,9 +277,9 @@ async function executeEpisodePlan(
     }
 
     const price_snapshot_json = buildEpisodePriceSnapshotJson(offering);
-    const policy = offering.followup_policy;
+    const policy = resolveEpisodeFollowUpEligibilitySource(offering);
     const max_followups = policy?.enabled === true ? policy.max_followups : 0;
-    const eligibility_ends_at = eligibilityEndsAtIso(completion, policy ?? null);
+    const eligibility_ends_at = eligibilityEndsAtIso(completion, policy);
 
     const insertRow = {
       doctor_id: appointment.doctor_id,
