@@ -5,9 +5,12 @@
  * (or legacy `appointment_fee_minor`) plus optional **active episode** row.
  * Platform fee / GST are applied later in the payment layer (SFU-05).
  *
- * **Episode `price_snapshot_json` v1 legacy / v2 (SFU-04, SFU-12):**
+ * **Episode `price_snapshot_json` v1 legacy / v2 (SFU-04, SFU-12, SFU-12b):**
  * - v1: top-level `followup_policy` applies to all modalities; modality objects may only have `price_minor`.
  * - v2: `modalities.<m>.followup_policy` per channel (optional); top-level `followup_policy` kept for compatibility.
+ * - SFU-12b: when `followups_used_by_modality` is present, max visits + eligibility window are enforced per modality;
+ *   increments bump the bucket for `appointment.consultation_type` (text|voice|video). Older episodes omit this key and
+ *   keep row-level `followups_used` / `max_followups` / `eligibility_ends_at`.
  * If v1 omits `followup_policy`, the current catalog offering may be used (replay). v2 uses per-modality snapshot only.
  *
  * **Expired / exhausted episode:** caller may still pass the row; this engine **falls back to index**
@@ -131,6 +134,8 @@ export interface ParsedEpisodePriceSnapshotV1 {
     Record<ConsultationModality, { price_minor: number; followup_policy?: FollowUpPolicyV1 | null }>
   >;
   followup_policy: FollowUpPolicyV1 | null;
+  /** When present on raw JSON, follow-up caps/eligibility are enforced per modality (SFU-12b). */
+  followups_used_by_modality?: Partial<Record<ConsultationModality, number>>;
 }
 
 /** Read locked snapshot + optional frozen policy from `care_episodes.price_snapshot_json` */
@@ -165,7 +170,76 @@ export function parseEpisodePriceSnapshotV1(raw: Record<string, unknown>): Parse
 
   const followup_policy = parseFollowUpPolicyLoose(raw['followup_policy']);
 
-  return { snapshotVersion, modalities, followup_policy };
+  let followups_used_by_modality: ParsedEpisodePriceSnapshotV1['followups_used_by_modality'];
+  const fuMapRaw = raw['followups_used_by_modality'];
+  if (fuMapRaw && typeof fuMapRaw === 'object' && !Array.isArray(fuMapRaw)) {
+    const o = fuMapRaw as Record<string, unknown>;
+    followups_used_by_modality = {};
+    for (const m of CONSULTATION_MODALITIES) {
+      const v = o[m];
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
+        followups_used_by_modality[m] = Math.floor(v);
+      }
+    }
+  }
+
+  return { snapshotVersion, modalities, followup_policy, followups_used_by_modality };
+}
+
+/** True when episode JSON tracks follow-up usage per teleconsult modality (new index episodes). */
+export function priceSnapshotTracksPerModalityFollowUps(raw: Record<string, unknown>): boolean {
+  return Object.prototype.hasOwnProperty.call(raw, 'followups_used_by_modality');
+}
+
+function snapshotHasEnabledPerModalityFollowUp(snap: ParsedEpisodePriceSnapshotV1): boolean {
+  return CONSULTATION_MODALITIES.some((m) => {
+    const c = snap.modalities[m];
+    return (
+      !!c &&
+      Object.prototype.hasOwnProperty.call(c, 'followup_policy') &&
+      c.followup_policy?.enabled === true
+    );
+  });
+}
+
+/**
+ * After incrementing follow-up counters, whether the episode should move to `exhausted`.
+ */
+export function episodeShouldMarkExhaustedAfterFollowUp(
+  episode: CareEpisodeRow,
+  nextPriceSnapshotJson: Record<string, unknown>,
+  nextFollowupsUsed: number
+): boolean {
+  if (!priceSnapshotTracksPerModalityFollowUps(nextPriceSnapshotJson)) {
+    return nextFollowupsUsed >= episode.max_followups;
+  }
+  const snap = parseEpisodePriceSnapshotV1(nextPriceSnapshotJson);
+  const map = snap.followups_used_by_modality ?? {};
+
+  if (snapshotHasEnabledPerModalityFollowUp(snap)) {
+    for (const m of CONSULTATION_MODALITIES) {
+      const cell = snap.modalities[m];
+      if (
+        !cell ||
+        !Object.prototype.hasOwnProperty.call(cell, 'followup_policy') ||
+        !cell.followup_policy?.enabled
+      ) {
+        continue;
+      }
+      const pol = cell.followup_policy;
+      const used = map[m] ?? 0;
+      if (used < pol.max_followups) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  const root = snap.followup_policy;
+  if (root?.enabled) {
+    return nextFollowupsUsed >= root.max_followups;
+  }
+  return nextFollowupsUsed >= episode.max_followups;
 }
 
 function baseMinorFromSnapshotModalities(
@@ -265,20 +339,53 @@ function episodeMatchesQuoteCatalog(
   return ep.catalog_service_key.trim().toLowerCase() === serviceKeyNorm;
 }
 
-/** Whether an active episode still qualifies for discounted follow-up pricing */
-export function isEpisodeEligibleForFollowUpQuote(episode: CareEpisodeRow, at: Date): boolean {
+/**
+ * Whether an active episode still qualifies for discounted follow-up pricing for `modality`.
+ * Legacy episodes (no `followups_used_by_modality` on snapshot) use row-level caps and `eligibility_ends_at`.
+ */
+export function isEpisodeEligibleForFollowUpQuote(
+  episode: CareEpisodeRow,
+  at: Date,
+  modality: ConsultationModality,
+  catalogOffering: ServiceOfferingV1 | null = null
+): boolean {
   if (episode.status !== 'active') {
     return false;
   }
-  if (episode.followups_used >= episode.max_followups) {
+
+  const snap = parseEpisodePriceSnapshotV1(episode.price_snapshot_json);
+  const policy = resolveFollowUpPolicyForFollowUpQuote(snap, modality, catalogOffering);
+
+  if (!policy?.enabled) {
     return false;
   }
-  if (episode.eligibility_ends_at) {
-    const end = new Date(episode.eligibility_ends_at);
-    if (at.getTime() > end.getTime()) {
+
+  const raw = episode.price_snapshot_json;
+  if (!priceSnapshotTracksPerModalityFollowUps(raw)) {
+    if (episode.followups_used >= episode.max_followups) {
       return false;
     }
+    if (episode.eligibility_ends_at) {
+      const end = new Date(episode.eligibility_ends_at);
+      if (at.getTime() > end.getTime()) {
+        return false;
+      }
+    }
+    return true;
   }
+
+  const map = snap.followups_used_by_modality ?? {};
+  const used = map[modality] ?? 0;
+  if (used >= policy.max_followups) {
+    return false;
+  }
+
+  const start = new Date(episode.started_at);
+  const endMs = start.getTime() + policy.eligibility_window_days * 86_400_000;
+  if (at.getTime() > endMs) {
+    return false;
+  }
+
   return true;
 }
 
@@ -347,18 +454,24 @@ export function quoteConsultationVisit(input: QuoteConsultationVisitInput): Visi
       ? activeEpisode
       : null;
 
+  const offeringForEpisode = catalog ? findServiceOfferingByKey(catalog, service_key) : null;
   const useFollowUp =
-    episodeForService && isEpisodeEligibleForFollowUpQuote(episodeForService, at);
+    episodeForService &&
+    isEpisodeEligibleForFollowUpQuote(episodeForService, at, modality, offeringForEpisode ?? null);
 
   if (useFollowUp) {
     const snap = parseEpisodePriceSnapshotV1(episodeForService.price_snapshot_json);
     const baseMinor = baseMinorFromSnapshotModalities(snap.modalities, service_key, modality);
 
-    const offering = catalog ? findServiceOfferingByKey(catalog, service_key) : null;
+    const offering = offeringForEpisode;
     const policy = resolveFollowUpPolicyForFollowUpQuote(snap, modality, offering ?? null);
 
-    const followupsUsed = episodeForService.followups_used;
-    const maxFollow = episodeForService.max_followups;
+    const rawSnap = episodeForService.price_snapshot_json;
+    const modalityTracked = priceSnapshotTracksPerModalityFollowUps(rawSnap);
+    const followupsUsed = modalityTracked
+      ? (snap.followups_used_by_modality?.[modality] ?? 0)
+      : episodeForService.followups_used;
+    const maxFollow = modalityTracked ? policy!.max_followups : episodeForService.max_followups;
     const visits_remaining = Math.max(0, maxFollow - followupsUsed - 1);
     const visit_index = followupsUsed + 2;
     const amount_minor = applyFollowUpDiscount(baseMinor, policy, visit_index);

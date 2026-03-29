@@ -388,6 +388,53 @@ describe('quoteConsultationVisit', () => {
     expect(q.amount_minor).toBe(200_00);
   });
 
+  it('SFU-12b: visits_remaining uses per-modality cap when snapshot tracks usage', () => {
+    const settings = baseDoctorRow({ service_offerings_json: catalogSingleVideo() });
+    const snapshot = {
+      version: 2 as const,
+      followups_used_by_modality: { video: 2, text: 0 },
+      modalities: {
+        video: {
+          price_minor: 100_00,
+          followup_policy: {
+            enabled: true,
+            max_followups: 3,
+            eligibility_window_days: 90,
+            discount_type: 'percent' as const,
+            discount_value: 10,
+          },
+        },
+        text: {
+          price_minor: 50_00,
+          followup_policy: {
+            enabled: true,
+            max_followups: 10,
+            eligibility_window_days: 90,
+            discount_type: 'percent' as const,
+            discount_value: 40,
+          },
+        },
+      },
+    };
+    const ep = baseEpisode({ price_snapshot_json: snapshot, followups_used: 2, max_followups: 3 });
+    const qV = quoteConsultationVisit({
+      settings,
+      catalogServiceKey: 'skin',
+      modality: 'video',
+      at,
+      activeEpisode: ep,
+    });
+    expect(qV.visits_remaining).toBe(0);
+    const qT = quoteConsultationVisit({
+      settings,
+      catalogServiceKey: 'skin',
+      modality: 'text',
+      at,
+      activeEpisode: ep,
+    });
+    expect(qT.visits_remaining).toBe(9);
+  });
+
   it('SFU-12: v2 snapshot uses per-modality follow-up policy (text vs video)', () => {
     const settings = baseDoctorRow({ service_offerings_json: catalogSingleVideo() });
     const snapshot = {
@@ -466,11 +513,78 @@ describe('isEpisodeEligibleForFollowUpQuote', () => {
   const at = new Date('2026-06-15T12:00:00.000Z');
 
   it('returns false when status is not active', () => {
-    expect(isEpisodeEligibleForFollowUpQuote(baseEpisode({ status: 'exhausted' }), at)).toBe(false);
+    expect(isEpisodeEligibleForFollowUpQuote(baseEpisode({ status: 'exhausted' }), at, 'video')).toBe(false);
   });
 
-  it('returns true when within window and slots remain', () => {
-    expect(isEpisodeEligibleForFollowUpQuote(baseEpisode(), at)).toBe(true);
+  it('returns true when within window and slots remain (legacy row-level)', () => {
+    expect(isEpisodeEligibleForFollowUpQuote(baseEpisode(), at, 'video')).toBe(true);
+  });
+
+  it('SFU-12b: per-modality bucket — video exhausted while text still eligible', () => {
+    const started = new Date('2026-06-01T12:00:00.000Z');
+    const snap = {
+      version: 2 as const,
+      followups_used_by_modality: { video: 1, text: 0 },
+      modalities: {
+        video: {
+          price_minor: 100_00,
+          followup_policy: {
+            enabled: true,
+            max_followups: 1,
+            eligibility_window_days: 90,
+            discount_type: 'percent' as const,
+            discount_value: 10,
+          },
+        },
+        text: {
+          price_minor: 50_00,
+          followup_policy: {
+            enabled: true,
+            max_followups: 5,
+            eligibility_window_days: 90,
+            discount_type: 'percent' as const,
+            discount_value: 40,
+          },
+        },
+      },
+    };
+    const ep = baseEpisode({ started_at: started.toISOString(), price_snapshot_json: snap });
+    expect(isEpisodeEligibleForFollowUpQuote(ep, at, 'video')).toBe(false);
+    expect(isEpisodeEligibleForFollowUpQuote(ep, at, 'text')).toBe(true);
+  });
+
+  it('SFU-12b: per-modality eligibility window', () => {
+    const started = new Date('2026-06-01T12:00:00.000Z');
+    const snap = {
+      version: 2 as const,
+      followups_used_by_modality: {},
+      modalities: {
+        video: {
+          price_minor: 100_00,
+          followup_policy: {
+            enabled: true,
+            max_followups: 5,
+            eligibility_window_days: 7,
+            discount_type: 'percent' as const,
+            discount_value: 10,
+          },
+        },
+        text: {
+          price_minor: 50_00,
+          followup_policy: {
+            enabled: true,
+            max_followups: 5,
+            eligibility_window_days: 90,
+            discount_type: 'percent' as const,
+            discount_value: 40,
+          },
+        },
+      },
+    };
+    const ep = baseEpisode({ started_at: started.toISOString(), price_snapshot_json: snap });
+    const late = new Date('2026-06-20T12:00:00.000Z');
+    expect(isEpisodeEligibleForFollowUpQuote(ep, late, 'video')).toBe(false);
+    expect(isEpisodeEligibleForFollowUpQuote(ep, late, 'text')).toBe(true);
   });
 });
 
@@ -566,5 +680,14 @@ describe('parseEpisodePriceSnapshotV1', () => {
     });
     expect(p.snapshotVersion).toBe(2);
     expect(p.modalities.video?.followup_policy?.discount_value).toBe(25);
+  });
+
+  it('reads followups_used_by_modality', () => {
+    const p = parseEpisodePriceSnapshotV1({
+      version: 2,
+      followups_used_by_modality: { video: 2, text: 1 },
+      modalities: { video: { price_minor: 100 } },
+    });
+    expect(p.followups_used_by_modality).toEqual({ video: 2, text: 1 });
   });
 });

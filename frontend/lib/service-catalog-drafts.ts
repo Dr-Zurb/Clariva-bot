@@ -11,9 +11,11 @@ import { SERVICE_CATALOG_VERSION } from "@/lib/service-catalog-schema";
 
 export type DiscountTypeOption = FollowUpPolicyV1["discount_type"];
 
-/** Per-modality follow-up discount (shared max/window on the service draft). */
+/** Per-modality follow-up policy (max, window, and discount). */
 export interface ModalityFollowUpDiscountDraft {
   followUpDiscountEnabled: boolean;
+  max_followups: string;
+  eligibility_window_days: string;
   discount_type: DiscountTypeOption;
   discount_value: string;
 }
@@ -34,9 +36,6 @@ export interface ServiceOfferingDraft {
   textPriceMain: string;
   voicePriceMain: string;
   videoPriceMain: string;
-  /** SFU-12: episode-level follow-up eligibility (shared across modalities with follow-up discounts) */
-  followUpMax: string;
-  followUpWindowDays: string;
   textFollowUp: ModalityFollowUpDiscountDraft;
   voiceFollowUp: ModalityFollowUpDiscountDraft;
   videoFollowUp: ModalityFollowUpDiscountDraft;
@@ -75,6 +74,8 @@ export function slugifyLabelToServiceKey(label: string): string {
 function defaultModalityFollowUpDiscount(): ModalityFollowUpDiscountDraft {
   return {
     followUpDiscountEnabled: false,
+    max_followups: "3",
+    eligibility_window_days: "90",
     discount_type: "percent",
     discount_value: "30",
   };
@@ -97,8 +98,6 @@ export function emptyServiceDraft(): ServiceOfferingDraft {
     textPriceMain: "",
     voicePriceMain: "",
     videoPriceMain: "",
-    followUpMax: "3",
-    followUpWindowDays: "90",
     textFollowUp: defaultModalityFollowUpDiscount(),
     voiceFollowUp: defaultModalityFollowUpDiscount(),
     videoFollowUp: defaultModalityFollowUpDiscount(),
@@ -115,31 +114,26 @@ export function defaultFollowUpDraft(): FollowUpFormDraft {
   };
 }
 
-function eligibilitySourceFromOffering(o: ServiceOfferingV1): FollowUpPolicyV1 | null {
-  if (o.followup_policy?.enabled) {
-    return o.followup_policy;
-  }
-  for (const k of ["text", "voice", "video"] as const) {
-    const fp = o.modalities[k]?.followup_policy;
-    if (fp?.enabled) return fp;
-  }
-  return null;
-}
-
-function modalityDiscountFromPolicy(p: FollowUpPolicyV1 | null | undefined): ModalityFollowUpDiscountDraft {
-  if (!p?.enabled) {
+function modalityFollowUpDraftFromPolicy(
+  p: FollowUpPolicyV1 | null | undefined,
+  root: FollowUpPolicyV1 | null | undefined
+): ModalityFollowUpDiscountDraft {
+  const effective = p ?? root;
+  if (!effective?.enabled) {
     return defaultModalityFollowUpDiscount();
   }
-  const dv = p.discount_value;
+  const dv = effective.discount_value;
   const valueStr =
     dv === undefined || dv === null
       ? ""
-      : p.discount_type === "percent"
+      : effective.discount_type === "percent"
         ? String(dv)
         : String(dv / 100);
   return {
     followUpDiscountEnabled: true,
-    discount_type: p.discount_type,
+    max_followups: String(effective.max_followups),
+    eligibility_window_days: String(effective.eligibility_window_days),
+    discount_type: effective.discount_type,
     discount_value: valueStr,
   };
 }
@@ -151,9 +145,7 @@ export function offeringToDraft(o: ServiceOfferingV1): ServiceOfferingDraft {
   const sid =
     o.service_id ??
     (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : newId());
-  const meta = eligibilitySourceFromOffering(o);
-  const followUpMax = meta ? String(meta.max_followups) : "3";
-  const followUpWindowDays = meta ? String(meta.eligibility_window_days) : "90";
+  const rootFu = o.followup_policy?.enabled ? o.followup_policy : undefined;
 
   return {
     id: newId(),
@@ -167,16 +159,17 @@ export function offeringToDraft(o: ServiceOfferingV1): ServiceOfferingDraft {
     textPriceMain: text?.enabled ? minorToMain(text.price_minor) : "",
     voicePriceMain: voice?.enabled ? minorToMain(voice.price_minor) : "",
     videoPriceMain: video?.enabled ? minorToMain(video.price_minor) : "",
-    followUpMax,
-    followUpWindowDays,
-    textFollowUp: modalityDiscountFromPolicy(
-      text?.followup_policy ?? (text?.enabled ? o.followup_policy : undefined)
+    textFollowUp: modalityFollowUpDraftFromPolicy(
+      text?.followup_policy,
+      text?.enabled ? rootFu : undefined
     ),
-    voiceFollowUp: modalityDiscountFromPolicy(
-      voice?.followup_policy ?? (voice?.enabled ? o.followup_policy : undefined)
+    voiceFollowUp: modalityFollowUpDraftFromPolicy(
+      voice?.followup_policy,
+      voice?.enabled ? rootFu : undefined
     ),
-    videoFollowUp: modalityDiscountFromPolicy(
-      video?.followup_policy ?? (video?.enabled ? o.followup_policy : undefined)
+    videoFollowUp: modalityFollowUpDraftFromPolicy(
+      video?.followup_policy,
+      video?.enabled ? rootFu : undefined
     ),
   };
 }
@@ -243,15 +236,12 @@ function buildFollowUpPolicy(form: FollowUpFormDraft): FollowUpPolicyV1 | null {
   };
 }
 
-function buildModalityFollowUpPolicy(
-  d: ServiceOfferingDraft,
-  disc: ModalityFollowUpDiscountDraft
-): FollowUpPolicyV1 | null {
+function buildModalityFollowUpPolicy(disc: ModalityFollowUpDiscountDraft): FollowUpPolicyV1 | null {
   if (!disc.followUpDiscountEnabled) return null;
   return buildFollowUpPolicy({
     enabled: true,
-    max_followups: d.followUpMax,
-    eligibility_window_days: d.followUpWindowDays,
+    max_followups: disc.max_followups,
+    eligibility_window_days: disc.eligibility_window_days,
     discount_type: disc.discount_type,
     discount_value: disc.discount_value,
   });
@@ -262,7 +252,7 @@ function buildModalities(d: ServiceOfferingDraft): ServiceOfferingV1["modalities
   if (d.textEnabled) {
     const m = mainToMinor(d.textPriceMain);
     if (m === null) throw new Error("Text price required");
-    const fp = buildModalityFollowUpPolicy(d, d.textFollowUp);
+    const fp = buildModalityFollowUpPolicy(d.textFollowUp);
     modalities.text = {
       enabled: true,
       price_minor: m,
@@ -272,7 +262,7 @@ function buildModalities(d: ServiceOfferingDraft): ServiceOfferingV1["modalities
   if (d.voiceEnabled) {
     const m = mainToMinor(d.voicePriceMain);
     if (m === null) throw new Error("Voice price required");
-    const fp = buildModalityFollowUpPolicy(d, d.voiceFollowUp);
+    const fp = buildModalityFollowUpPolicy(d.voiceFollowUp);
     modalities.voice = {
       enabled: true,
       price_minor: m,
@@ -282,7 +272,7 @@ function buildModalities(d: ServiceOfferingDraft): ServiceOfferingV1["modalities
   if (d.videoEnabled) {
     const m = mainToMinor(d.videoPriceMain);
     if (m === null) throw new Error("Video price required");
-    const fp = buildModalityFollowUpPolicy(d, d.videoFollowUp);
+    const fp = buildModalityFollowUpPolicy(d.videoFollowUp);
     modalities.video = {
       enabled: true,
       price_minor: m,
@@ -302,20 +292,20 @@ export function draftsToCatalogOrNull(services: ServiceOfferingDraft[]): Service
     if (!d.label.trim()) throw new Error("Each service needs a label");
     if (!d.service_id.trim()) throw new Error("Each service needs a stable id");
 
-    const anyFu =
-      (d.textEnabled && d.textFollowUp.followUpDiscountEnabled) ||
-      (d.voiceEnabled && d.voiceFollowUp.followUpDiscountEnabled) ||
-      (d.videoEnabled && d.videoFollowUp.followUpDiscountEnabled);
-    if (anyFu) {
-      const mf = parseInt(d.followUpMax, 10);
-      const wd = parseInt(d.followUpWindowDays, 10);
+    const validateFu = (disc: ModalityFollowUpDiscountDraft) => {
+      if (!disc.followUpDiscountEnabled) return;
+      const mf = parseInt(disc.max_followups, 10);
+      const wd = parseInt(disc.eligibility_window_days, 10);
       if (Number.isNaN(mf) || mf < 0 || mf > 100) {
         throw new Error("Max follow-up visits must be 0–100");
       }
       if (Number.isNaN(wd) || wd < 1 || wd > 3650) {
         throw new Error("Eligibility window must be 1–3650 days");
       }
-    }
+    };
+    if (d.textEnabled) validateFu(d.textFollowUp);
+    if (d.voiceEnabled) validateFu(d.voiceFollowUp);
+    if (d.videoEnabled) validateFu(d.videoFollowUp);
 
     try {
       const modalities = buildModalities(d);

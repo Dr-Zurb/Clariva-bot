@@ -17,7 +17,11 @@ import { InternalError } from '../utils/errors';
 import { getSupabaseAdminClient } from '../config/database';
 import { findServiceOfferingByKey, getActiveServiceCatalog } from '../utils/service-catalog-helpers';
 import type { ServiceOfferingV1 } from '../utils/service-catalog-schema';
-import { resolveEpisodeFollowUpEligibilitySource } from '../utils/service-catalog-schema';
+import { aggregateEpisodeFollowUpRowMeta } from '../utils/service-catalog-schema';
+import {
+  episodeShouldMarkExhaustedAfterFollowUp,
+  priceSnapshotTracksPerModalityFollowUps,
+} from './consultation-quote-service';
 
 const SELECT_COLUMNS =
   'id, doctor_id, patient_id, catalog_service_key, catalog_service_id, status, started_at, eligibility_ends_at, ' +
@@ -70,24 +74,13 @@ export function buildEpisodePriceSnapshotJson(offering: ServiceOfferingV1): Reco
   const out: Record<string, unknown> = {
     version: 2,
     modalities,
+    followups_used_by_modality: {},
   };
   const rootPolicy = offering.followup_policy;
   if (rootPolicy) {
     out.followup_policy = JSON.parse(JSON.stringify(rootPolicy)) as unknown;
   }
   return out;
-}
-
-function eligibilityEndsAtIso(
-  completion: Date,
-  policy: ReturnType<typeof resolveEpisodeFollowUpEligibilitySource>
-): string | null {
-  if (!policy?.enabled || !policy.eligibility_window_days) {
-    return null;
-  }
-  const d = new Date(completion.getTime());
-  d.setUTCDate(d.getUTCDate() + policy.eligibility_window_days);
-  return d.toISOString();
 }
 
 /**
@@ -277,9 +270,7 @@ async function executeEpisodePlan(
     }
 
     const price_snapshot_json = buildEpisodePriceSnapshotJson(offering);
-    const policy = resolveEpisodeFollowUpEligibilitySource(offering);
-    const max_followups = policy?.enabled === true ? policy.max_followups : 0;
-    const eligibility_ends_at = eligibilityEndsAtIso(completion, policy);
+    const { max_followups, eligibility_ends_at } = aggregateEpisodeFollowUpRowMeta(offering, completion);
 
     const insertRow = {
       doctor_id: appointment.doctor_id,
@@ -344,17 +335,39 @@ async function executeEpisodePlan(
     return false;
   }
 
+  const rawSnapshot = episode.price_snapshot_json;
+  let nextSnapshot: Record<string, unknown> = rawSnapshot;
+  if (priceSnapshotTracksPerModalityFollowUps(rawSnapshot)) {
+    const prev = rawSnapshot['followups_used_by_modality'] as Record<string, unknown> | undefined;
+    const map: Record<string, number> = {};
+    if (prev && typeof prev === 'object' && !Array.isArray(prev)) {
+      for (const k of SNAPSHOT_MODALITIES) {
+        const v = prev[k];
+        if (typeof v === 'number' && v >= 0) {
+          map[k] = Math.floor(v);
+        }
+      }
+    }
+    const ct = appointment.consultation_type?.trim().toLowerCase();
+    if (ct === 'text' || ct === 'voice' || ct === 'video') {
+      map[ct] = (map[ct] ?? 0) + 1;
+    }
+    nextSnapshot = { ...rawSnapshot, followups_used_by_modality: map };
+  }
+
   const nextUsed = episode.followups_used + 1;
-  const exhausted = nextUsed >= episode.max_followups;
+  const exhausted = episodeShouldMarkExhaustedAfterFollowUp(episode, nextSnapshot, nextUsed);
   const nextStatus = exhausted ? 'exhausted' : episode.status;
 
-  const { error: epErr } = await admin
-    .from('care_episodes')
-    .update({
-      followups_used: nextUsed,
-      status: nextStatus,
-    })
-    .eq('id', episode.id);
+  const updateRow: Record<string, unknown> = {
+    followups_used: nextUsed,
+    status: nextStatus,
+  };
+  if (priceSnapshotTracksPerModalityFollowUps(rawSnapshot)) {
+    updateRow.price_snapshot_json = nextSnapshot;
+  }
+
+  const { error: epErr } = await admin.from('care_episodes').update(updateRow).eq('id', episode.id);
 
   if (epErr) {
     throw new InternalError(epErr.message || 'Failed to update care_episode followups');

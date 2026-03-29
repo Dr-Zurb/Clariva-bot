@@ -101,6 +101,45 @@ describe('parseServiceCatalogV1', () => {
     ).toThrow(ValidationError);
   });
 
+  it('accepts different max_followups per modality (SFU-12b)', () => {
+    const out = parseServiceCatalogV1({
+      version: 1,
+      services: [
+        {
+          service_id: SVC_ID_A,
+          service_key: 'multi',
+          label: 'Multi',
+          modalities: {
+            text: {
+              enabled: true,
+              price_minor: 100,
+              followup_policy: {
+                enabled: true,
+                max_followups: 5,
+                eligibility_window_days: 90,
+                discount_type: 'percent',
+                discount_value: 30,
+              },
+            },
+            video: {
+              enabled: true,
+              price_minor: 200,
+              followup_policy: {
+                enabled: true,
+                max_followups: 1,
+                eligibility_window_days: 7,
+                discount_type: 'percent',
+                discount_value: 10,
+              },
+            },
+          },
+        },
+      ],
+    });
+    expect(out.services[0]!.modalities.text!.followup_policy!.max_followups).toBe(5);
+    expect(out.services[0]!.modalities.video!.followup_policy!.max_followups).toBe(1);
+  });
+
   it('accepts follow-up policy with discount_tiers (SFU-09 Phase A)', () => {
     const out = parseServiceCatalogV1({
       version: 1,

@@ -99,6 +99,7 @@ describe('buildEpisodePriceSnapshotJson', () => {
     expect(snap.version).toBe(2);
     expect((snap.modalities as Record<string, unknown>).video).toEqual({ price_minor: 5000 });
     expect(snap.followup_policy).toEqual(cat.services[0]!.followup_policy);
+    expect(snap.followups_used_by_modality).toEqual({});
   });
 
   it('SFU-12: embeds per-modality followup_policy on v2 snapshot', () => {

@@ -47,6 +47,37 @@ function FollowUpDiscountFields({
       {draft.followUpDiscountEnabled && (
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
           <div>
+            <FieldLabel htmlFor={`${prefix}-fmax`} tooltip="Maximum discounted follow-up visits on this channel after the index visit.">
+              Max follow-up visits
+            </FieldLabel>
+            <input
+              id={`${prefix}-fmax`}
+              type="number"
+              min={0}
+              max={100}
+              value={draft.max_followups}
+              onChange={(e) => onChange({ ...draft, max_followups: e.target.value })}
+              className="mt-1 block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
+            <FieldLabel
+              htmlFor={`${prefix}-fwin`}
+              tooltip="Days after the index visit during which follow-ups on this channel still qualify."
+            >
+              Eligibility window (days)
+            </FieldLabel>
+            <input
+              id={`${prefix}-fwin`}
+              type="number"
+              min={1}
+              max={3650}
+              value={draft.eligibility_window_days}
+              onChange={(e) => onChange({ ...draft, eligibility_window_days: e.target.value })}
+              className="mt-1 block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div>
             <FieldLabel htmlFor={`${prefix}-dtype`} tooltip="How follow-up price is derived from this channel list price.">
               Discount type
             </FieldLabel>
@@ -186,47 +217,6 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                   maxLength={500}
                   className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                 />
-              </div>
-
-              <div className="mt-4 rounded-md border border-blue-100 bg-blue-50/50 p-3">
-                <p className="text-xs font-medium text-gray-800">Follow-up eligibility (shared across channels)</p>
-                <p className="mt-0.5 text-xs text-gray-600">
-                  Max visits and window apply to this service. Discount %/amount can still differ per modality below.
-                </p>
-                <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <FieldLabel htmlFor={`fu-max-${s.id}`} tooltip="After the completed index visit.">
-                      Max follow-up visits
-                    </FieldLabel>
-                    <input
-                      id={`fu-max-${s.id}`}
-                      type="number"
-                      min={0}
-                      max={100}
-                      value={s.followUpMax}
-                      onChange={(e) =>
-                        onServicesChange(updateService(services, s.id, { followUpMax: e.target.value }))
-                      }
-                      className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <FieldLabel htmlFor={`fu-win-${s.id}`} tooltip="Days after index during which follow-ups qualify.">
-                      Eligibility window (days)
-                    </FieldLabel>
-                    <input
-                      id={`fu-win-${s.id}`}
-                      type="number"
-                      min={1}
-                      max={3650}
-                      value={s.followUpWindowDays}
-                      onChange={(e) =>
-                        onServicesChange(updateService(services, s.id, { followUpWindowDays: e.target.value }))
-                      }
-                      className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                    />
-                  </div>
-                </div>
               </div>
 
               <fieldset className="mt-4">

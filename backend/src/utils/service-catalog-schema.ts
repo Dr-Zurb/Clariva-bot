@@ -71,7 +71,7 @@ export const followUpPolicyV1Schema = z
     refineFollowUpDiscountFields(data.discount_type, data.discount_value, ctx, ['discount_value']);
   });
 
-/** SFU-12: optional per-modality follow-up policy (discount can differ by channel; shared max/window must align). */
+/** SFU-12: optional per-modality follow-up policy (max/window/discount can differ by channel). */
 export const modalitySlotSchema = z.object({
   enabled: z.boolean(),
   price_minor: z.number().int().min(0),
@@ -105,32 +105,6 @@ export const serviceModalitiesSchema = z
         break;
       }
     }
-    type Policy = z.infer<typeof followUpPolicyV1Schema>;
-    const keys = ['text', 'voice', 'video'] as const;
-    const enabledPolicies: Policy[] = [];
-    for (const k of keys) {
-      const slot = modalities[k];
-      const fp = slot?.followup_policy;
-      if (fp?.enabled) {
-        enabledPolicies.push(fp);
-      }
-    }
-    if (enabledPolicies.length >= 2) {
-      const refMax = enabledPolicies[0]!.max_followups;
-      const refWin = enabledPolicies[0]!.eligibility_window_days;
-      for (let i = 1; i < enabledPolicies.length; i++) {
-        const p = enabledPolicies[i]!;
-        if (p.max_followups !== refMax || p.eligibility_window_days !== refWin) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message:
-              'SFU-12: all enabled modality follow-up policies must share the same max_followups and eligibility_window_days',
-            path: [],
-          });
-          return;
-        }
-      }
-    }
   });
 
 const serviceOfferingCoreSchema = z.object({
@@ -151,28 +125,9 @@ export const serviceOfferingIncomingSchema = serviceOfferingCoreSchema.extend({
 });
 
 /** Persisted catalog row: immutable `service_id` per offering. */
-export const serviceOfferingV1Schema = serviceOfferingCoreSchema
-  .extend({
-    service_id: z.string().uuid('service_id must be a UUID'),
-  })
-  .superRefine((off, ctx) => {
-    const root = off.followup_policy;
-    if (!root?.enabled) return;
-    for (const k of ['text', 'voice', 'video'] as const) {
-      const fp = off.modalities[k]?.followup_policy;
-      if (
-        fp?.enabled &&
-        (fp.max_followups !== root.max_followups || fp.eligibility_window_days !== root.eligibility_window_days)
-      ) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'followup_policy and per-modality follow-up must share max_followups and eligibility_window_days',
-          path: ['followup_policy'],
-        });
-        return;
-      }
-    }
-  });
+export const serviceOfferingV1Schema = serviceOfferingCoreSchema.extend({
+  service_id: z.string().uuid('service_id must be a UUID'),
+});
 
 function refineCatalogUniqueKeysAndIds(
   data: { services: { service_key: string; service_id?: string }[] },
@@ -329,7 +284,49 @@ export function hydrateCatalogPerModalityFollowUp(catalog: ServiceCatalogV1): Se
 }
 
 /**
- * SFU-12: episode max_followups + eligibility window come from root policy or first enabled per-modality policy.
+ * Episode row `max_followups` / `eligibility_ends_at` — loose aggregates for legacy readers.
+ * Per-modality caps/windows are enforced from `price_snapshot_json` when `followups_used_by_modality` is present.
+ */
+export function aggregateEpisodeFollowUpRowMeta(
+  offering: ServiceOfferingV1,
+  completion: Date
+): { max_followups: number; eligibility_ends_at: string | null } {
+  let maxCap = 0;
+  let anyEnabled = false;
+  let eligibilityEndsAtMs = 0;
+  const bump = (pol: z.infer<typeof followUpPolicyV1Schema> | null | undefined) => {
+    if (!pol?.enabled) return;
+    anyEnabled = true;
+    if (pol.max_followups > maxCap) {
+      maxCap = pol.max_followups;
+    }
+    const d = new Date(completion.getTime());
+    d.setUTCDate(d.getUTCDate() + pol.eligibility_window_days);
+    const ms = d.getTime();
+    if (!eligibilityEndsAtMs || ms > eligibilityEndsAtMs) {
+      eligibilityEndsAtMs = ms;
+    }
+  };
+
+  for (const k of MODALITY_KEYS) {
+    const slot = offering.modalities[k];
+    if (slot?.enabled === true) {
+      bump(slot.followup_policy);
+    }
+  }
+  bump(offering.followup_policy);
+  if (!anyEnabled) {
+    return { max_followups: 0, eligibility_ends_at: null };
+  }
+  return {
+    max_followups: maxCap,
+    eligibility_ends_at: new Date(eligibilityEndsAtMs).toISOString(),
+  };
+}
+
+/**
+ * @deprecated Prefer aggregateEpisodeFollowUpRowMeta — kept for callers that need a single policy shape.
+ * SFU-12: first enabled root, else first enabled per-modality policy.
  */
 export function resolveEpisodeFollowUpEligibilitySource(
   offering: ServiceOfferingV1

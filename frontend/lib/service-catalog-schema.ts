@@ -95,31 +95,6 @@ export const serviceModalitiesSchema = z
         break;
       }
     }
-    type Policy = z.infer<typeof followUpPolicyV1Schema>;
-    const keys = ["text", "voice", "video"] as const;
-    const enabledPolicies: Policy[] = [];
-    for (const k of keys) {
-      const fp = modalities[k]?.followup_policy;
-      if (fp?.enabled) {
-        enabledPolicies.push(fp);
-      }
-    }
-    if (enabledPolicies.length >= 2) {
-      const refMax = enabledPolicies[0]!.max_followups;
-      const refWin = enabledPolicies[0]!.eligibility_window_days;
-      for (let i = 1; i < enabledPolicies.length; i++) {
-        const p = enabledPolicies[i]!;
-        if (p.max_followups !== refMax || p.eligibility_window_days !== refWin) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message:
-              "SFU-12: all enabled modality follow-up policies must share the same max_followups and eligibility_window_days",
-            path: [],
-          });
-          return;
-        }
-      }
-    }
   });
 
 const serviceOfferingCoreSchema = z.object({
@@ -138,29 +113,9 @@ export const serviceOfferingIncomingSchema = serviceOfferingCoreSchema.extend({
   service_id: z.string().uuid().optional(),
 });
 
-export const serviceOfferingV1Schema = serviceOfferingCoreSchema
-  .extend({
-    service_id: z.string().uuid("service_id must be a UUID"),
-  })
-  .superRefine((off, ctx) => {
-    const root = off.followup_policy;
-    if (!root?.enabled) return;
-    for (const k of ["text", "voice", "video"] as const) {
-      const fp = off.modalities[k]?.followup_policy;
-      if (
-        fp?.enabled &&
-        (fp.max_followups !== root.max_followups || fp.eligibility_window_days !== root.eligibility_window_days)
-      ) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message:
-            "followup_policy and per-modality follow-up must share max_followups and eligibility_window_days",
-          path: ["followup_policy"],
-        });
-        return;
-      }
-    }
-  });
+export const serviceOfferingV1Schema = serviceOfferingCoreSchema.extend({
+  service_id: z.string().uuid("service_id must be a UUID"),
+});
 
 function refineCatalogUniqueKeysAndIds(
   data: { services: { service_key: string; service_id?: string }[] },
