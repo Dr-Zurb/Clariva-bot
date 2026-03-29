@@ -322,31 +322,17 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                 </div>
 
                 {/*
-                  Mobile: label, input, channels header, grid, description (DOM order).
-                  lg: row1 [Service name label | Channels title+hint], row2 [input | grid], row3 [description | —]
+                  Mobile (flex): label → name + description → channels line → grid.
+                  lg (grid): row1 [label | channels], row2 [name + description | grid].
                 */}
-                <div className="mt-3 grid grid-cols-1 gap-3 gap-x-6 lg:grid-cols-[minmax(0,20rem)_1fr] lg:grid-rows-[auto_auto_1fr] lg:items-start">
-                  <div className="lg:col-start-1 lg:row-start-1">
+                <div className="mt-3 flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,20rem)_1fr] lg:gap-x-6 lg:gap-y-2">
+                  <div className="order-1 lg:order-none lg:col-start-1 lg:row-start-1">
                     <FieldLabel htmlFor={`svc-label-${s.id}`} tooltip="Shown to you and in patient-facing copy.">
                       Service name
                     </FieldLabel>
                   </div>
 
-                  <div className="w-full self-start lg:col-start-1 lg:row-start-2">
-                    <input
-                      id={`svc-label-${s.id}`}
-                      type="text"
-                      value={s.label}
-                      onChange={(e) =>
-                        onServicesChange(updateService(services, s.id, { label: e.target.value }))
-                      }
-                      className="mt-0.5 block w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"
-                      maxLength={200}
-                      placeholder="e.g. General checkup"
-                    />
-                  </div>
-
-                  <div className="min-w-0 lg:col-start-2 lg:row-start-1">
+                  <div className="order-3 min-w-0 lg:order-none lg:col-start-2 lg:row-start-1">
                     <p className="text-sm leading-snug text-gray-800">
                       <span className="font-medium">Channels &amp; prices</span>
                       <span className="font-normal text-gray-600">
@@ -356,9 +342,79 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                     </p>
                   </div>
 
+                  <div className="order-2 flex min-w-0 flex-col gap-3 self-start lg:order-none lg:col-start-1 lg:row-start-2">
+                    <textarea
+                      id={`svc-label-${s.id}`}
+                      value={s.label}
+                      onChange={(e) =>
+                        onServicesChange(updateService(services, s.id, { label: e.target.value }))
+                      }
+                      autoComplete="off"
+                      rows={2}
+                      maxLength={200}
+                      wrap="soft"
+                      placeholder="e.g. General checkup"
+                      className="mt-0.5 block w-full resize-y overflow-x-hidden rounded-md border border-gray-300 px-2.5 py-1.5 text-sm leading-snug"
+                    />
+
+                    <div className="min-w-0 space-y-2">
+                      {!descExpanded && !hasDesc && (
+                        <button
+                          type="button"
+                          onClick={() => setDescExpanded(s.id, true)}
+                          className="text-xs font-medium text-blue-700 hover:text-blue-900"
+                        >
+                          + Add description
+                        </button>
+                      )}
+                      {!descExpanded && hasDesc && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="line-clamp-3 flex-1 text-xs text-gray-600" title={s.description}>
+                            {s.description}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setDescExpanded(s.id, true)}
+                            className="shrink-0 text-xs font-medium text-blue-700 hover:text-blue-900"
+                          >
+                            Edit
+                          </button>
+                        </div>
+                      )}
+                      {descExpanded && (
+                        <>
+                          <div className="flex items-center justify-between gap-2">
+                            <FieldLabel htmlFor={`svc-desc-${s.id}`} tooltip="Optional (max 500 characters).">
+                              Description
+                            </FieldLabel>
+                            <button
+                              type="button"
+                              onClick={() => setDescExpanded(s.id, false)}
+                              className="text-xs text-gray-500 hover:text-gray-800"
+                            >
+                              Collapse
+                            </button>
+                          </div>
+                          <textarea
+                            id={`svc-desc-${s.id}`}
+                            value={s.description}
+                            onChange={(e) =>
+                              onServicesChange(updateService(services, s.id, { description: e.target.value }))
+                            }
+                            rows={7}
+                            maxLength={500}
+                            wrap="soft"
+                            className="mt-0.5 min-h-[11rem] w-full resize-y overflow-x-hidden rounded-md border border-gray-300 px-2.5 py-1.5 text-sm leading-snug"
+                            placeholder="Optional"
+                          />
+                        </>
+                      )}
+                    </div>
+                  </div>
+
                   <fieldset
                     aria-label="Channels and prices"
-                    className="flex min-h-0 min-w-0 flex-col border-0 p-0 lg:col-start-2 lg:row-start-2"
+                    className="order-4 flex min-h-0 min-w-0 flex-col border-0 p-0 lg:order-none lg:col-start-2 lg:row-start-2"
                   >
                     <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-3 md:grid-cols-3 md:gap-2 md:items-stretch">
                       <ModalityColumn
@@ -399,59 +455,6 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                       />
                     </div>
                   </fieldset>
-
-                  <div className="min-w-0 space-y-2 self-stretch lg:col-start-1 lg:row-start-3">
-                    {!descExpanded && !hasDesc && (
-                      <button
-                        type="button"
-                        onClick={() => setDescExpanded(s.id, true)}
-                        className="text-xs font-medium text-blue-700 hover:text-blue-900"
-                      >
-                        + Add description
-                      </button>
-                    )}
-                    {!descExpanded && hasDesc && (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="line-clamp-3 flex-1 text-xs text-gray-600" title={s.description}>
-                          {s.description}
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => setDescExpanded(s.id, true)}
-                          className="shrink-0 text-xs font-medium text-blue-700 hover:text-blue-900"
-                        >
-                          Edit
-                        </button>
-                      </div>
-                    )}
-                    {descExpanded && (
-                      <>
-                        <div className="flex items-center justify-between gap-2">
-                          <FieldLabel htmlFor={`svc-desc-${s.id}`} tooltip="Optional (max 500 characters).">
-                            Description
-                          </FieldLabel>
-                          <button
-                            type="button"
-                            onClick={() => setDescExpanded(s.id, false)}
-                            className="text-xs text-gray-500 hover:text-gray-800"
-                          >
-                            Collapse
-                          </button>
-                        </div>
-                        <textarea
-                          id={`svc-desc-${s.id}`}
-                          value={s.description}
-                          onChange={(e) =>
-                            onServicesChange(updateService(services, s.id, { description: e.target.value }))
-                          }
-                          rows={7}
-                          maxLength={500}
-                          className="mt-0.5 min-h-[11rem] w-full resize-y rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"
-                          placeholder="Optional"
-                        />
-                      </>
-                    )}
-                  </div>
                 </div>
               </li>
             );
