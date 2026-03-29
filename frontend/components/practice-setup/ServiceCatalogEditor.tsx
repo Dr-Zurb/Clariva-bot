@@ -182,11 +182,7 @@ function ModalityColumn({
         MODALITY_ACCENT[modalityKey]
       } border-t-2 pt-1.5 ${enabled ? "" : "opacity-[0.88]"}`}
     >
-      <div className="border-b border-gray-100 pb-1.5 text-center">
-        <span className="text-[10px] font-bold uppercase tracking-wide text-gray-600">{columnTitle}</span>
-      </div>
-
-      <label className="mt-2 flex cursor-pointer items-center justify-center gap-2 text-xs">
+      <label className="flex cursor-pointer items-center gap-2 border-b border-gray-100 pb-2 text-sm font-semibold text-gray-800">
         <input
           type="checkbox"
           checked={enabled}
@@ -201,7 +197,7 @@ function ModalityColumn({
           }}
           className="rounded border-gray-300"
         />
-        <span className="font-medium text-gray-800">On</span>
+        <span>{columnTitle}</span>
       </label>
 
       <div className="mt-2 min-h-[2.5rem]">
@@ -325,87 +321,46 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                   </button>
                 </div>
 
-                <div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-stretch lg:gap-6">
-                  {/* Left: name + description — does not stretch with tall channel grid */}
-                  <div className="min-w-0 w-full shrink-0 space-y-2 self-start lg:max-w-[20rem]">
-                    <div>
-                      <FieldLabel htmlFor={`svc-label-${s.id}`} tooltip="Shown to you and in patient-facing copy.">
-                        Service name
-                      </FieldLabel>
-                      <input
-                        id={`svc-label-${s.id}`}
-                        type="text"
-                        value={s.label}
-                        onChange={(e) =>
-                          onServicesChange(updateService(services, s.id, { label: e.target.value }))
-                        }
-                        className="mt-0.5 block w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"
-                        maxLength={200}
-                        placeholder="e.g. General checkup"
-                      />
-                    </div>
-
-                    <div>
-                      {!descExpanded && !hasDesc && (
-                        <button
-                          type="button"
-                          onClick={() => setDescExpanded(s.id, true)}
-                          className="text-xs font-medium text-blue-700 hover:text-blue-900"
-                        >
-                          + Add description
-                        </button>
-                      )}
-                      {!descExpanded && hasDesc && (
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="line-clamp-2 flex-1 text-xs text-gray-600" title={s.description}>
-                            {s.description}
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => setDescExpanded(s.id, true)}
-                            className="shrink-0 text-xs font-medium text-blue-700 hover:text-blue-900"
-                          >
-                            Edit
-                          </button>
-                        </div>
-                      )}
-                      {descExpanded && (
-                        <>
-                          <div className="flex items-center justify-between gap-2">
-                            <FieldLabel htmlFor={`svc-desc-${s.id}`} tooltip="Optional (max 500 characters).">
-                              Description
-                            </FieldLabel>
-                            <button
-                              type="button"
-                              onClick={() => setDescExpanded(s.id, false)}
-                              className="text-xs text-gray-500 hover:text-gray-800"
-                            >
-                              Collapse
-                            </button>
-                          </div>
-                          <textarea
-                            id={`svc-desc-${s.id}`}
-                            value={s.description}
-                            onChange={(e) =>
-                              onServicesChange(updateService(services, s.id, { description: e.target.value }))
-                            }
-                            rows={3}
-                            maxLength={500}
-                            className="mt-0.5 block w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"
-                            placeholder="Optional"
-                          />
-                        </>
-                      )}
-                    </div>
+                {/*
+                  Mobile: label, input, channels header, grid, description (DOM order).
+                  lg: row1 [Service name label | Channels title+hint], row2 [input | grid], row3 [description | —]
+                */}
+                <div className="mt-3 grid grid-cols-1 gap-3 gap-x-6 lg:grid-cols-[minmax(0,20rem)_1fr] lg:grid-rows-[auto_auto_1fr] lg:items-start">
+                  <div className="lg:col-start-1 lg:row-start-1">
+                    <FieldLabel htmlFor={`svc-label-${s.id}`} tooltip="Shown to you and in patient-facing copy.">
+                      Service name
+                    </FieldLabel>
                   </div>
 
-                  {/* Right: fixed 3 modality columns — equal height on md+ */}
-                  <fieldset className="flex min-h-0 min-w-0 flex-1 flex-col border-0 p-0">
-                    <legend className="text-xs font-semibold text-gray-800">Channels &amp; prices</legend>
-                    <p className="text-[10px] text-gray-500">
-                      Enable at least one · amounts in your main currency
+                  <div className="w-full self-start lg:col-start-1 lg:row-start-2">
+                    <input
+                      id={`svc-label-${s.id}`}
+                      type="text"
+                      value={s.label}
+                      onChange={(e) =>
+                        onServicesChange(updateService(services, s.id, { label: e.target.value }))
+                      }
+                      className="mt-0.5 block w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"
+                      maxLength={200}
+                      placeholder="e.g. General checkup"
+                    />
+                  </div>
+
+                  <div className="min-w-0 lg:col-start-2 lg:row-start-1">
+                    <p className="text-sm leading-snug text-gray-800">
+                      <span className="font-medium">Channels &amp; prices</span>
+                      <span className="font-normal text-gray-600">
+                        {" "}
+                        · Enable at least one · amounts in your main currency
+                      </span>
                     </p>
-                    <div className="mt-2 grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-3 md:grid-cols-3 md:gap-2 md:items-stretch">
+                  </div>
+
+                  <fieldset
+                    aria-label="Channels and prices"
+                    className="flex min-h-0 min-w-0 flex-col border-0 p-0 lg:col-start-2 lg:row-start-2"
+                  >
+                    <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-3 md:grid-cols-3 md:gap-2 md:items-stretch">
                       <ModalityColumn
                         serviceId={s.id}
                         modalityKey="text"
@@ -444,6 +399,59 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                       />
                     </div>
                   </fieldset>
+
+                  <div className="min-w-0 space-y-2 self-stretch lg:col-start-1 lg:row-start-3">
+                    {!descExpanded && !hasDesc && (
+                      <button
+                        type="button"
+                        onClick={() => setDescExpanded(s.id, true)}
+                        className="text-xs font-medium text-blue-700 hover:text-blue-900"
+                      >
+                        + Add description
+                      </button>
+                    )}
+                    {!descExpanded && hasDesc && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="line-clamp-3 flex-1 text-xs text-gray-600" title={s.description}>
+                          {s.description}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setDescExpanded(s.id, true)}
+                          className="shrink-0 text-xs font-medium text-blue-700 hover:text-blue-900"
+                        >
+                          Edit
+                        </button>
+                      </div>
+                    )}
+                    {descExpanded && (
+                      <>
+                        <div className="flex items-center justify-between gap-2">
+                          <FieldLabel htmlFor={`svc-desc-${s.id}`} tooltip="Optional (max 500 characters).">
+                            Description
+                          </FieldLabel>
+                          <button
+                            type="button"
+                            onClick={() => setDescExpanded(s.id, false)}
+                            className="text-xs text-gray-500 hover:text-gray-800"
+                          >
+                            Collapse
+                          </button>
+                        </div>
+                        <textarea
+                          id={`svc-desc-${s.id}`}
+                          value={s.description}
+                          onChange={(e) =>
+                            onServicesChange(updateService(services, s.id, { description: e.target.value }))
+                          }
+                          rows={7}
+                          maxLength={500}
+                          className="mt-0.5 min-h-[11rem] w-full resize-y rounded-md border border-gray-300 px-2.5 py-1.5 text-sm"
+                          placeholder="Optional"
+                        />
+                      </>
+                    )}
+                  </div>
                 </div>
               </li>
             );
