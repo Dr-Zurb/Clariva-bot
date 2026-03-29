@@ -18,6 +18,12 @@ type ModalityKey = "text" | "voice" | "video";
 type PriceField = "textPriceMain" | "voicePriceMain" | "videoPriceMain";
 type FollowUpField = "textFollowUp" | "voiceFollowUp" | "videoFollowUp";
 
+const MODALITY_ACCENT: Record<ModalityKey, string> = {
+  text: "border-t-blue-400",
+  voice: "border-t-violet-400",
+  video: "border-t-emerald-500",
+};
+
 function updateService(
   services: ServiceOfferingDraft[],
   id: string,
@@ -172,9 +178,9 @@ function ModalityColumn({
 }) {
   return (
     <div
-      className={`flex min-w-0 flex-col rounded-md border border-gray-100 bg-white p-2 ${
-        enabled ? "" : "opacity-[0.85]"
-      }`}
+      className={`flex h-full min-h-0 min-w-0 flex-col rounded-md border border-gray-200 bg-white p-2 shadow-sm ${
+        MODALITY_ACCENT[modalityKey]
+      } border-t-2 pt-1.5 ${enabled ? "" : "opacity-[0.88]"}`}
     >
       <div className="border-b border-gray-100 pb-1.5 text-center">
         <span className="text-[10px] font-bold uppercase tracking-wide text-gray-600">{columnTitle}</span>
@@ -224,20 +230,25 @@ function ModalityColumn({
         )}
       </div>
 
+      {/* Fills leftover height so column cards share one row height; follow-up sits above card bottom */}
+      <div className="min-h-1 flex-1 shrink-0" aria-hidden="true" />
+
       {enabled && (
-        <FollowUpDiscountFieldsCompact
-          serviceId={serviceId}
-          modalityKey={modalityKey}
-          label={columnTitle}
-          draft={fuDraft}
-          onChange={(next) =>
-            onServicesChange(
-              updateService(services, serviceId, {
-                [fuField]: next,
-              } as Partial<ServiceOfferingDraft>)
-            )
-          }
-        />
+        <div className="shrink-0">
+          <FollowUpDiscountFieldsCompact
+            serviceId={serviceId}
+            modalityKey={modalityKey}
+            label={columnTitle}
+            draft={fuDraft}
+            onChange={(next) =>
+              onServicesChange(
+                updateService(services, serviceId, {
+                  [fuField]: next,
+                } as Partial<ServiceOfferingDraft>)
+              )
+            }
+          />
+        </div>
       )}
     </div>
   );
@@ -301,22 +312,22 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                 key={s.id}
                 className="rounded-lg border border-gray-200 bg-gray-50/60 p-2.5 sm:p-3"
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                <div className="flex items-center justify-between gap-3 border-b border-gray-200/90 pb-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-gray-600">
                     Service {idx + 1}
                   </span>
                   <button
                     type="button"
                     onClick={() => removeService(s.id)}
-                    className="text-xs text-red-600 hover:underline focus:outline-none focus:ring-2 focus:ring-red-500"
+                    className="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium text-red-600 hover:bg-red-50 hover:underline focus:outline-none focus:ring-2 focus:ring-red-400"
                   >
                     Remove
                   </button>
                 </div>
 
-                <div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-6">
-                  {/* Left: name + description (stacked) */}
-                  <div className="min-w-0 w-full shrink-0 space-y-2 lg:max-w-[20rem]">
+                <div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-stretch lg:gap-6">
+                  {/* Left: name + description — does not stretch with tall channel grid */}
+                  <div className="min-w-0 w-full shrink-0 space-y-2 self-start lg:max-w-[20rem]">
                     <div>
                       <FieldLabel htmlFor={`svc-label-${s.id}`} tooltip="Shown to you and in patient-facing copy.">
                         Service name
@@ -388,13 +399,13 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                     </div>
                   </div>
 
-                  {/* Right: fixed 3 modality columns — stack on small screens, equal thirds from md */}
-                  <fieldset className="min-w-0 flex-1 border-0 p-0">
+                  {/* Right: fixed 3 modality columns — equal height on md+ */}
+                  <fieldset className="flex min-h-0 min-w-0 flex-1 flex-col border-0 p-0">
                     <legend className="text-xs font-semibold text-gray-800">Channels &amp; prices</legend>
                     <p className="text-[10px] text-gray-500">
                       Enable at least one · amounts in your main currency
                     </p>
-                    <div className="mt-2 grid min-w-0 grid-cols-1 gap-3 md:grid-cols-3 md:gap-2">
+                    <div className="mt-2 grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-3 md:grid-cols-3 md:gap-2 md:items-stretch">
                       <ModalityColumn
                         serviceId={s.id}
                         modalityKey="text"
