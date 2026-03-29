@@ -15,7 +15,7 @@ export function getActiveServiceCatalog(settings: DoctorSettingsRow | null): Ser
   if (raw == null) {
     return null;
   }
-  return safeParseServiceCatalogV1FromDb(raw as unknown);
+  return safeParseServiceCatalogV1FromDb(raw as unknown, settings.doctor_id);
 }
 
 export function findServiceOfferingByKey(
@@ -24,4 +24,12 @@ export function findServiceOfferingByKey(
 ): ServiceOfferingV1 | undefined {
   const key = serviceKey.trim().toLowerCase();
   return catalog.services.find((s) => s.service_key === key);
+}
+
+export function findServiceOfferingByServiceId(
+  catalog: ServiceCatalogV1,
+  serviceId: string
+): ServiceOfferingV1 | undefined {
+  const id = serviceId.trim().toLowerCase();
+  return catalog.services.find((s) => s.service_id.trim().toLowerCase() === id);
 }

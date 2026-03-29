@@ -77,6 +77,8 @@ export interface PaymentQuoteMetadata {
   service_key: string;
   modality: string;
   episode_id?: string;
+  /** SFU-11 */
+  service_id?: string;
 }
 
 export interface CreatePaymentLinkInput {

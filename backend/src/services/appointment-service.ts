@@ -128,6 +128,9 @@ export async function bookAppointment(
     ...(data.catalogServiceKey?.trim() && {
       catalog_service_key: data.catalogServiceKey.trim().toLowerCase(),
     }),
+    ...(data.catalogServiceId?.trim() && {
+      catalog_service_id: data.catalogServiceId.trim(),
+    }),
     ...(data.episodeId && { episode_id: data.episodeId }),
   };
 

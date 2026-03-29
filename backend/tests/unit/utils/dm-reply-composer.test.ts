@@ -5,12 +5,14 @@ import {
   formatMidCollectionAfterFeeBlock,
 } from '../../../src/utils/dm-reply-composer';
 import type { DoctorSettingsRow } from '../../../src/types/doctor-settings';
+import { deterministicServiceIdForLegacyOffering } from '../../../src/utils/service-catalog-schema';
 
 /** Minimal row for fee formatters (other columns unused). */
 const catalogFixture = {
   version: 1 as const,
   services: [
     {
+      service_id: deterministicServiceIdForLegacyOffering('doc-1', 'only'),
       service_key: 'only',
       label: 'Solo Service',
       modalities: { video: { enabled: true, price_minor: 123_45 } },

@@ -96,7 +96,7 @@ export const followUpPolicyV1Schema = z
     refineFollowUpDiscountFields(data.discount_type, data.discount_value, ctx, ["discount_value"]);
   });
 
-export const serviceOfferingV1Schema = z.object({
+const serviceOfferingCoreSchema = z.object({
   service_key: z
     .string()
     .min(1)
@@ -108,25 +108,65 @@ export const serviceOfferingV1Schema = z.object({
   followup_policy: followUpPolicyV1Schema.nullable().optional(),
 });
 
+export const serviceOfferingIncomingSchema = serviceOfferingCoreSchema.extend({
+  service_id: z.string().uuid().optional(),
+});
+
+export const serviceOfferingV1Schema = serviceOfferingCoreSchema.extend({
+  service_id: z.string().uuid("service_id must be a UUID"),
+});
+
+function refineCatalogUniqueKeysAndIds(
+  data: { services: { service_key: string; service_id?: string }[] },
+  ctx: z.RefinementCtx,
+  requireAllIds: boolean
+): void {
+  const seenKeys = new Set<string>();
+  const seenIds = new Set<string>();
+  for (let i = 0; i < data.services.length; i++) {
+    const s = data.services[i]!;
+    const k = s.service_key;
+    if (seenKeys.has(k)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Duplicate service_key: ${k}`,
+        path: ["services", i, "service_key"],
+      });
+    }
+    seenKeys.add(k);
+    const id = s.service_id?.trim();
+    if (id) {
+      if (seenIds.has(id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate service_id: ${id}`,
+          path: ["services", i, "service_id"],
+        });
+      }
+      seenIds.add(id);
+    } else if (requireAllIds) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "service_id is required",
+        path: ["services", i, "service_id"],
+      });
+    }
+  }
+}
+
+export const serviceCatalogIncomingSchema = z
+  .object({
+    version: z.literal(SERVICE_CATALOG_VERSION),
+    services: z.array(serviceOfferingIncomingSchema).min(1).max(MAX_SERVICE_OFFERINGS),
+  })
+  .superRefine((data, ctx) => refineCatalogUniqueKeysAndIds(data, ctx, false));
+
 export const serviceCatalogV1Schema = z
   .object({
     version: z.literal(SERVICE_CATALOG_VERSION),
     services: z.array(serviceOfferingV1Schema).min(1).max(MAX_SERVICE_OFFERINGS),
   })
-  .superRefine((data, ctx) => {
-    const seen = new Set<string>();
-    for (let i = 0; i < data.services.length; i++) {
-      const k = data.services[i]!.service_key;
-      if (seen.has(k)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `Duplicate service_key: ${k}`,
-          path: ["services", i, "service_key"],
-        });
-      }
-      seen.add(k);
-    }
-  });
+  .superRefine((data, ctx) => refineCatalogUniqueKeysAndIds(data, ctx, true));
 
 export type ServiceCatalogV1 = z.infer<typeof serviceCatalogV1Schema>;
 export type ServiceOfferingV1 = z.infer<typeof serviceOfferingV1Schema>;

@@ -43,6 +43,8 @@ export interface VisitQuote {
   amount_minor: number;
   currency: string;
   service_key: string;
+  /** SFU-11: stable id from `service_offerings_json` */
+  service_id: string;
   modality: ConsultationModality;
   episode_id?: string;
   /** Discounted follow-up visits remaining **after** this quoted visit */
@@ -54,6 +56,8 @@ export interface VisitQuote {
 export interface QuoteConsultationVisitInput {
   settings: DoctorSettingsRow | null;
   catalogServiceKey: string;
+  /** SFU-11: when set, must match episode.catalog_service_id for follow-up path */
+  catalogServiceId?: string | null;
   modality: ConsultationModality;
   /** Booking / quote time (eligibility vs `eligibility_ends_at`) */
   at: Date;
@@ -218,6 +222,19 @@ function normalizeServiceKey(catalogServiceKey: string): string {
   return catalogServiceKey.trim().toLowerCase();
 }
 
+function episodeMatchesQuoteCatalog(
+  ep: CareEpisodeRow,
+  serviceKeyNorm: string,
+  catalogServiceId?: string | null
+): boolean {
+  const qid = catalogServiceId?.trim();
+  const eid = ep.catalog_service_id?.trim();
+  if (qid && eid) {
+    return qid === eid;
+  }
+  return ep.catalog_service_key.trim().toLowerCase() === serviceKeyNorm;
+}
+
 /** Whether an active episode still qualifies for discounted follow-up pricing */
 export function isEpisodeEligibleForFollowUpQuote(episode: CareEpisodeRow, at: Date): boolean {
   if (episode.status !== 'active') {
@@ -279,17 +296,17 @@ function effectiveFollowUpPolicy(
 /**
  * Authoritative visit quote for payments, booking, and bot (SFU-03).
  *
- * - **Different `catalog_service_key` than episode:** episode is ignored → **index** list price.
+ * - **Different service (`catalog_service_id` or `catalog_service_key`) than episode:** episode ignored → **index**.
  * - **Expired eligibility or exhausted follow-ups:** index list price (new episode path downstream).
  */
 export function quoteConsultationVisit(input: QuoteConsultationVisitInput): VisitQuote {
-  const { settings, catalogServiceKey, modality, at, activeEpisode } = input;
+  const { settings, catalogServiceKey, catalogServiceId, modality, at, activeEpisode } = input;
   const service_key = normalizeServiceKey(catalogServiceKey);
   const currency = resolveCurrency(settings);
   const catalog = getActiveServiceCatalog(settings);
 
   const episodeForService =
-    activeEpisode && activeEpisode.catalog_service_key.trim().toLowerCase() === service_key
+    activeEpisode && episodeMatchesQuoteCatalog(activeEpisode, service_key, catalogServiceId)
       ? activeEpisode
       : null;
 
@@ -309,12 +326,19 @@ export function quoteConsultationVisit(input: QuoteConsultationVisitInput): Visi
     const visit_index = followupsUsed + 2;
     const amount_minor = applyFollowUpDiscount(baseMinor, policy, visit_index);
 
+    const offeringFu = catalog ? findServiceOfferingByKey(catalog, service_key) : null;
+    const sidFu =
+      offeringFu?.service_id ??
+      episodeForService.catalog_service_id?.trim() ??
+      '';
+
     return {
       kind: 'followup',
       visit_kind: 'followup',
       amount_minor,
       currency,
       service_key,
+      service_id: sidFu,
       modality,
       episode_id: episodeForService.id,
       visits_remaining,
@@ -323,12 +347,14 @@ export function quoteConsultationVisit(input: QuoteConsultationVisitInput): Visi
   }
 
   const { amount_minor } = quoteIndexPath(settings, service_key, modality);
+  const offeringIx = catalog ? findServiceOfferingByKey(catalog, service_key) : null;
   return {
     kind: 'index',
     visit_kind: 'index',
     amount_minor,
     currency,
     service_key,
+    service_id: offeringIx?.service_id ?? '',
     modality,
     visit_index: 1,
   };

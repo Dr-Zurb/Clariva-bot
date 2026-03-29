@@ -139,6 +139,8 @@ export interface Appointment {
   episode_id?: string | null;
   /** Catalog service_key for visit / episode matching (migration 036, SFU-02) */
   catalog_service_key?: string | null;
+  /** SFU-11: stable catalog service UUID at booking */
+  catalog_service_id?: string | null;
   /** SFU-04: episode lifecycle applied once when status completed (migration 037) */
   care_episode_completion_processed_at?: Date | string | null;
   created_at: Date;

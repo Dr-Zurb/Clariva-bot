@@ -5,6 +5,7 @@
  * @see docs/Development/Daily-plans/March 2026/2026-03-27/services-and-follow-ups/
  */
 
+import { createHash } from 'crypto';
 import { z } from 'zod';
 import { ValidationError } from './errors';
 
@@ -104,7 +105,7 @@ export const followUpPolicyV1Schema = z
     refineFollowUpDiscountFields(data.discount_type, data.discount_value, ctx, ['discount_value']);
   });
 
-export const serviceOfferingV1Schema = z.object({
+const serviceOfferingCoreSchema = z.object({
   service_key: z
     .string()
     .min(1)
@@ -116,31 +117,85 @@ export const serviceOfferingV1Schema = z.object({
   followup_policy: followUpPolicyV1Schema.nullable().optional(),
 });
 
+/** SFU-11: API / merge input — `service_id` backfilled server-side when absent. */
+export const serviceOfferingIncomingSchema = serviceOfferingCoreSchema.extend({
+  service_id: z.string().uuid().optional(),
+});
+
+/** Persisted catalog row: immutable `service_id` per offering. */
+export const serviceOfferingV1Schema = serviceOfferingCoreSchema.extend({
+  service_id: z.string().uuid('service_id must be a UUID'),
+});
+
+function refineCatalogUniqueKeysAndIds(
+  data: { services: { service_key: string; service_id?: string }[] },
+  ctx: z.RefinementCtx,
+  requireAllIds: boolean
+): void {
+  const seenKeys = new Set<string>();
+  const seenIds = new Set<string>();
+  for (let i = 0; i < data.services.length; i++) {
+    const s = data.services[i]!;
+    const k = s.service_key;
+    if (seenKeys.has(k)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Duplicate service_key: ${k}`,
+        path: ['services', i, 'service_key'],
+      });
+    }
+    seenKeys.add(k);
+    const id = s.service_id?.trim();
+    if (id) {
+      if (seenIds.has(id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate service_id: ${id}`,
+          path: ['services', i, 'service_id'],
+        });
+      }
+      seenIds.add(id);
+    } else if (requireAllIds) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'service_id is required',
+        path: ['services', i, 'service_id'],
+      });
+    }
+  }
+}
+
+export const serviceCatalogIncomingSchema = z
+  .object({
+    version: z.literal(SERVICE_CATALOG_VERSION),
+    services: z.array(serviceOfferingIncomingSchema).min(1).max(MAX_SERVICE_OFFERINGS),
+  })
+  .superRefine((data, ctx) => refineCatalogUniqueKeysAndIds(data, ctx, false));
+
 export const serviceCatalogV1Schema = z
   .object({
     version: z.literal(SERVICE_CATALOG_VERSION),
     services: z.array(serviceOfferingV1Schema).min(1).max(MAX_SERVICE_OFFERINGS),
   })
-  .superRefine((data, ctx) => {
-    const seen = new Set<string>();
-    for (let i = 0; i < data.services.length; i++) {
-      const k = data.services[i]!.service_key;
-      if (seen.has(k)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `Duplicate service_key: ${k}`,
-          path: ['services', i, 'service_key'],
-        });
-      }
-      seen.add(k);
-    }
-  });
+  .superRefine((data, ctx) => refineCatalogUniqueKeysAndIds(data, ctx, true));
 
 export type ServiceCatalogV1 = z.infer<typeof serviceCatalogV1Schema>;
 export type ServiceOfferingV1 = z.infer<typeof serviceOfferingV1Schema>;
 export type FollowUpPolicyV1 = z.infer<typeof followUpPolicyV1Schema>;
 export type FollowUpDiscountTierV1 = z.infer<typeof followUpDiscountTierV1Schema>;
 export type ServiceModalitiesV1 = z.infer<typeof serviceModalitiesSchema>;
+
+export type ServiceCatalogIncoming = z.infer<typeof serviceCatalogIncomingSchema>;
+
+export function parseServiceCatalogIncoming(input: unknown): ServiceCatalogIncoming {
+  const result = serviceCatalogIncomingSchema.safeParse(input);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const msg = first ? `${first.path.join('.')}: ${first.message}` : 'Invalid service_offerings_json';
+    throw new ValidationError(msg);
+  }
+  return result.data;
+}
 
 export function parseServiceCatalogV1(input: unknown): ServiceCatalogV1 {
   const result = serviceCatalogV1Schema.safeParse(input);
@@ -164,10 +219,55 @@ export function parseServiceCatalogV1OrNull(input: unknown): ServiceCatalogV1 | 
  * Returns validated catalog from doctor settings row, or null if column missing / invalid.
  * Invalid JSON in DB should not crash readers — log at warn in callers if needed.
  */
-export function safeParseServiceCatalogV1FromDb(raw: unknown): ServiceCatalogV1 | null {
+/** Stable UUID-shaped id for legacy rows missing `service_id` (per doctor + service_key). */
+export function deterministicServiceIdForLegacyOffering(doctorId: string, serviceKey: string): string {
+  const h = createHash('sha256')
+    .update(`clariva:svc:v1:${doctorId}:${serviceKey.trim().toLowerCase()}`)
+    .digest();
+  const b = Buffer.from(h.subarray(0, 16));
+  b[6] = (b[6]! & 0x0f) | 0x40;
+  b[8] = (b[8]! & 0x3f) | 0x80;
+  const hex = b.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+/** Ensure every offering has `service_id` (deterministic for legacy rows). */
+export function hydrateServiceCatalogServiceIds(
+  doctorId: string,
+  catalog: ServiceCatalogV1
+): ServiceCatalogV1 {
+  const services = catalog.services.map((s) => {
+    if (s.service_id && /^[0-9a-f-]{36}$/i.test(s.service_id)) {
+      return s;
+    }
+    return {
+      ...s,
+      service_id: deterministicServiceIdForLegacyOffering(doctorId, s.service_key),
+    };
+  });
+  return { ...catalog, services };
+}
+
+/**
+ * Parse catalog from DB / settings. When `doctorId` is set, legacy rows without `service_id`
+ * receive a deterministic UUID so reads match after SFU-11 hydration.
+ */
+export function safeParseServiceCatalogV1FromDb(
+  raw: unknown,
+  doctorId?: string
+): ServiceCatalogV1 | null {
   if (raw === null || raw === undefined) {
     return null;
   }
-  const result = serviceCatalogV1Schema.safeParse(raw);
-  return result.success ? result.data : null;
+  const strict = serviceCatalogV1Schema.safeParse(raw);
+  if (strict.success) {
+    return strict.data;
+  }
+  const loose = serviceCatalogIncomingSchema.safeParse(raw);
+  if (!loose.success || !doctorId) {
+    return null;
+  }
+  const hydrated = hydrateServiceCatalogServiceIds(doctorId, loose.data as ServiceCatalogV1);
+  const again = serviceCatalogV1Schema.safeParse(hydrated);
+  return again.success ? again.data : null;
 }

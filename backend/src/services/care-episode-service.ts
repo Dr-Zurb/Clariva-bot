@@ -19,7 +19,7 @@ import { findServiceOfferingByKey, getActiveServiceCatalog } from '../utils/serv
 import type { ServiceOfferingV1 } from '../utils/service-catalog-schema';
 
 const SELECT_COLUMNS =
-  'id, doctor_id, patient_id, catalog_service_key, status, started_at, eligibility_ends_at, ' +
+  'id, doctor_id, patient_id, catalog_service_key, catalog_service_id, status, started_at, eligibility_ends_at, ' +
   'followups_used, max_followups, price_snapshot_json, index_appointment_id, created_at, updated_at';
 
 const SNAPSHOT_MODALITIES = ['text', 'voice', 'video'] as const;
@@ -109,11 +109,29 @@ export async function getCareEpisodeById(episodeId: string): Promise<CareEpisode
 export async function getActiveEpisodeForPatientDoctorService(
   doctorId: string,
   patientId: string,
-  catalogServiceKey: string
+  catalogServiceKey: string,
+  catalogServiceId?: string | null
 ): Promise<CareEpisodeRow | null> {
   const admin = getSupabaseAdminClient();
   if (!admin) {
     return null;
+  }
+
+  const idTrim = catalogServiceId?.trim();
+  if (idTrim) {
+    const byId = await admin
+      .from('care_episodes')
+      .select(SELECT_COLUMNS)
+      .eq('doctor_id', doctorId)
+      .eq('patient_id', patientId)
+      .eq('catalog_service_id', idTrim)
+      .eq('status', 'active')
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!byId.error && byId.data) {
+      return byId.data as unknown as CareEpisodeRow;
+    }
   }
 
   const key = catalogServiceKey.trim().toLowerCase();
@@ -135,12 +153,19 @@ export async function getActiveEpisodeForPatientDoctorService(
 }
 
 function episodeMatchesAppointment(ep: CareEpisodeRow, apt: Appointment, serviceKeyNorm: string): boolean {
-  return (
-    ep.doctor_id === apt.doctor_id &&
-    ep.patient_id === apt.patient_id &&
-    ep.catalog_service_key === serviceKeyNorm &&
-    ep.status === 'active'
-  );
+  if (
+    ep.doctor_id !== apt.doctor_id ||
+    ep.patient_id !== apt.patient_id ||
+    ep.status !== 'active'
+  ) {
+    return false;
+  }
+  const aid = apt.catalog_service_id?.trim();
+  const eid = ep.catalog_service_id?.trim();
+  if (aid && eid && aid === eid) {
+    return true;
+  }
+  return ep.catalog_service_key === serviceKeyNorm;
 }
 
 async function fetchEpisodeRow(admin: SupabaseClient, episodeId: string): Promise<CareEpisodeRow | null> {
@@ -159,8 +184,26 @@ async function fetchActiveEpisodeForTriplet(
   admin: SupabaseClient,
   doctorId: string,
   patientId: string,
-  catalogServiceKey: string
+  catalogServiceKey: string,
+  catalogServiceId?: string | null
 ): Promise<CareEpisodeRow | null> {
+  const idTrim = catalogServiceId?.trim();
+  if (idTrim) {
+    const byId = await admin
+      .from('care_episodes')
+      .select(SELECT_COLUMNS)
+      .eq('doctor_id', doctorId)
+      .eq('patient_id', patientId)
+      .eq('catalog_service_id', idTrim)
+      .eq('status', 'active')
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!byId.error && byId.data) {
+      return byId.data as unknown as CareEpisodeRow;
+    }
+  }
+
   const key = catalogServiceKey.trim().toLowerCase();
   const { data, error } = await admin
     .from('care_episodes')
@@ -234,6 +277,7 @@ async function executeEpisodePlan(
       doctor_id: appointment.doctor_id,
       patient_id: appointment.patient_id!,
       catalog_service_key: serviceKeyNorm,
+      catalog_service_id: offering.service_id,
       status: 'active' as const,
       started_at: completion.toISOString(),
       eligibility_ends_at,
@@ -343,11 +387,13 @@ export async function syncCareEpisodeLifecycleOnAppointmentCompleted(
 
   const patientId = appointment.patient_id;
   const rawKey = appointment.catalog_service_key;
+  const rawId = appointment.catalog_service_id;
   if (!patientId || !rawKey?.trim()) {
     return;
   }
 
   const serviceKeyNorm = rawKey.trim().toLowerCase();
+  const serviceIdTrim = rawId?.trim() ?? null;
   const nowIso = new Date().toISOString();
 
   const { data: claimed, error: claimErr } = await admin
@@ -376,7 +422,8 @@ export async function syncCareEpisodeLifecycleOnAppointmentCompleted(
       admin,
       appointment.doctor_id,
       patientId,
-      serviceKeyNorm
+      serviceKeyNorm,
+      serviceIdTrim
     );
 
     const plan = planCareEpisodeOnCompletedVisit({

@@ -150,6 +150,7 @@ export const selectSlotAndPayHandler = asyncHandler(async (req: Request, res: Re
         correlationId,
         {
           catalogServiceKey: body.catalogServiceKey,
+          catalogServiceId: body.catalogServiceId,
           consultationModality: body.consultationModality,
           isReschedule: false,
         }

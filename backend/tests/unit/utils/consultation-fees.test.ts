@@ -11,7 +11,12 @@ import {
   pickCatalogServicesMatchingUserText,
   userExplicitlyWantsToBookNow,
 } from '../../../src/utils/consultation-fees';
-import type { ServiceCatalogV1 } from '../../../src/utils/service-catalog-schema';
+import {
+  deterministicServiceIdForLegacyOffering,
+  type ServiceCatalogV1,
+} from '../../../src/utils/service-catalog-schema';
+
+const sid = (key: string) => deterministicServiceIdForLegacyOffering('d-dm', key);
 
 describe('consultation-fees (RBH-13)', () => {
   it('isPricingInquiryMessage detects fee questions', () => {
@@ -117,6 +122,7 @@ describe('consultation-fees (RBH-13)', () => {
     version: 1,
     services: [
       {
+        service_id: sid('skin'),
         service_key: 'skin',
         label: 'Dermatology',
         modalities: {
@@ -126,6 +132,7 @@ describe('consultation-fees (RBH-13)', () => {
         },
       },
       {
+        service_id: sid('gp'),
         service_key: 'gp',
         label: 'General',
         modalities: {

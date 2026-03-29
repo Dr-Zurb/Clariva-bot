@@ -95,6 +95,9 @@ function BookPageContent() {
   const [selectedServiceKey, setSelectedServiceKey] = useState<string | null>(
     null
   );
+  const [selectedServiceId, setSelectedServiceId] = useState<string | null>(
+    null
+  );
   const [selectedModality, setSelectedModality] =
     useState<ConsultationModalityApi | null>(null);
 
@@ -130,8 +133,10 @@ function BookPageContent() {
         setServiceCatalog(sc);
         if (sc && sc.services.length === 1) {
           setSelectedServiceKey(sc.services[0]!.service_key);
+          setSelectedServiceId(sc.services[0]!.service_id);
         } else {
           setSelectedServiceKey(null);
+          setSelectedServiceId(null);
         }
         setSelectedModality(null);
         setPageLoading(false);
@@ -213,8 +218,8 @@ function BookPageContent() {
     if (!serviceCatalog || mode !== "book") {
       return true;
     }
-    return Boolean(selectedServiceKey && selectedModality);
-  }, [serviceCatalog, mode, selectedServiceKey, selectedModality]);
+    return Boolean(selectedServiceKey && selectedServiceId && selectedModality);
+  }, [serviceCatalog, mode, selectedServiceKey, selectedServiceId, selectedModality]);
 
   const handleSave = useCallback(async () => {
     if (!selectedSlot || !token || saving || !catalogPickComplete) return;
@@ -225,6 +230,7 @@ function BookPageContent() {
         serviceCatalog && mode === "book"
           ? {
               catalogServiceKey: selectedServiceKey ?? undefined,
+              catalogServiceId: selectedServiceId ?? undefined,
               consultationModality: selectedModality ?? undefined,
             }
           : undefined;
@@ -272,6 +278,7 @@ function BookPageContent() {
     catalogPickComplete,
     serviceCatalog,
     selectedServiceKey,
+    selectedServiceId,
     selectedModality,
   ]);
 
@@ -354,10 +361,11 @@ function BookPageContent() {
                 <div className="flex flex-wrap gap-2">
                   {serviceCatalog.services.map((s) => (
                     <button
-                      key={s.service_key}
+                      key={s.service_id}
                       type="button"
                       onClick={() => {
                         setSelectedServiceKey(s.service_key);
+                        setSelectedServiceId(s.service_id);
                         setSelectedModality(null);
                       }}
                       className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${

@@ -663,6 +663,7 @@ export type OpdModeApi = "slot" | "queue";
 export type ConsultationModalityApi = "text" | "voice" | "video";
 
 export interface BookingPageCatalogServiceApi {
+  service_id: string;
   service_key: string;
   label: string;
   modalities: Partial<
@@ -781,6 +782,7 @@ export async function selectSlotAndPay(
   slotStart: string,
   catalog?: {
     catalogServiceKey?: string;
+    catalogServiceId?: string;
     consultationModality?: ConsultationModalityApi;
   }
 ): Promise<ApiSuccess<SelectSlotAndPayData>> {
@@ -788,10 +790,14 @@ export async function selectSlotAndPay(
     token: string;
     slotStart: string;
     catalogServiceKey?: string;
+    catalogServiceId?: string;
     consultationModality?: ConsultationModalityApi;
   } = { token: bookingToken, slotStart };
   if (catalog?.catalogServiceKey) {
     body.catalogServiceKey = catalog.catalogServiceKey;
+  }
+  if (catalog?.catalogServiceId) {
+    body.catalogServiceId = catalog.catalogServiceId;
   }
   if (catalog?.consultationModality) {
     body.consultationModality = catalog.consultationModality;

@@ -5,7 +5,13 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { ConversationState } from '../../../src/types/conversation';
 import type { DoctorSettingsRow } from '../../../src/types/doctor-settings';
-import type { ServiceCatalogV1 } from '../../../src/utils/service-catalog-schema';
+import {
+  deterministicServiceIdForLegacyOffering,
+  type ServiceCatalogV1,
+} from '../../../src/utils/service-catalog-schema';
+
+const DOC = 'd1';
+const sid = (key: string) => deterministicServiceIdForLegacyOffering(DOC, key);
 import * as careEpisode from '../../../src/services/care-episode-service';
 import {
   computeSlotBookingQuote,
@@ -26,6 +32,7 @@ function catalogSingle(serviceKey = 'skin'): ServiceCatalogV1 {
     version: 1,
     services: [
       {
+        service_id: sid(serviceKey),
         service_key: serviceKey,
         label: 'Skin',
         modalities: {
@@ -43,11 +50,13 @@ function catalogMulti(): ServiceCatalogV1 {
     version: 1,
     services: [
       {
+        service_id: sid('skin'),
         service_key: 'skin',
         label: 'Skin',
         modalities: { video: { enabled: true, price_minor: 80_00 } },
       },
       {
+        service_id: sid('gp'),
         service_key: 'gp',
         label: 'GP',
         modalities: { video: { enabled: true, price_minor: 200_00 } },
@@ -166,9 +175,10 @@ describe('computeSlotBookingQuote', () => {
     expect(q.quoteMetadata).toEqual({
       visit_kind: 'index',
       service_key: 'skin',
+      service_id: sid('skin'),
       modality: 'video',
     });
-    expect(mockedGetActiveEpisode).toHaveBeenCalledWith('d1', 'p1', 'skin');
+    expect(mockedGetActiveEpisode).toHaveBeenCalledWith('d1', 'p1', 'skin', sid('skin'));
   });
 
   it('uses catalog quote with state consultationModality text', async () => {
@@ -200,6 +210,7 @@ describe('computeSlotBookingQuote', () => {
       version: 1,
       services: [
         {
+          service_id: sid('freebie'),
           service_key: 'freebie',
           label: 'Free',
           modalities: { video: { enabled: true, price_minor: 0 } },

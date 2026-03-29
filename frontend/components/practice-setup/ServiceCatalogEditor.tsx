@@ -2,7 +2,7 @@
 
 import { FieldLabel } from "@/components/ui/FieldLabel";
 import type { DiscountTypeOption, FollowUpFormDraft, ServiceOfferingDraft } from "@/lib/service-catalog-drafts";
-import { emptyServiceDraft, slugifyLabelToServiceKey } from "@/lib/service-catalog-drafts";
+import { emptyServiceDraft } from "@/lib/service-catalog-drafts";
 
 type Props = {
   services: ServiceOfferingDraft[];
@@ -19,21 +19,6 @@ function updateService(
   patch: Partial<ServiceOfferingDraft>
 ): ServiceOfferingDraft[] {
   return services.map((s) => (s.id === id ? { ...s, ...patch } : s));
-}
-
-function onLabelChange(
-  services: ServiceOfferingDraft[],
-  id: string,
-  label: string,
-  onServicesChange: (next: ServiceOfferingDraft[]) => void
-): void {
-  const row = services.find((s) => s.id === id);
-  if (!row) return;
-  const patch: Partial<ServiceOfferingDraft> = { label };
-  if (!row.serviceKeyManual) {
-    patch.service_key = slugifyLabelToServiceKey(label);
-  }
-  onServicesChange(updateService(services, id, patch));
 }
 
 export function ServiceCatalogEditor({
@@ -74,7 +59,7 @@ export function ServiceCatalogEditor({
           <div>
             <h2 className="text-base font-semibold text-gray-900">Services &amp; teleconsult prices</h2>
             <p className="mt-1 text-sm text-gray-600">
-              Each service has a unique key (slug) and prices per channel: text chat, voice, or video. In-clinic visits still use the flat{" "}
+              Add a name and prices per channel: text chat, voice, or video. In-clinic visits still use the flat{" "}
               <span className="font-medium">appointment fee</span> on Booking Rules.
             </p>
           </div>
@@ -111,46 +96,21 @@ export function ServiceCatalogEditor({
                   Remove
                 </button>
               </div>
-              <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <FieldLabel htmlFor={`svc-label-${s.id}`} tooltip="Shown to you and in patient-facing copy.">
-                    Label
-                  </FieldLabel>
-                  <input
-                    id={`svc-label-${s.id}`}
-                    type="text"
-                    value={s.label}
-                    onChange={(e) => onLabelChange(services, s.id, e.target.value, onServicesChange)}
-                    className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                    maxLength={200}
-                    placeholder="e.g. General dermatology"
-                  />
-                </div>
-                <div>
-                  <FieldLabel
-                    htmlFor={`svc-key-${s.id}`}
-                    tooltip="Lowercase slug: letters, numbers, underscores, hyphens. Used in booking and payouts."
-                  >
-                    Service key
-                  </FieldLabel>
-                  <input
-                    id={`svc-key-${s.id}`}
-                    type="text"
-                    value={s.service_key}
-                    onChange={(e) =>
-                      onServicesChange(
-                        updateService(services, s.id, {
-                          service_key: e.target.value.toLowerCase(),
-                          serviceKeyManual: true,
-                        })
-                      )
-                    }
-                    className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-sm"
-                    maxLength={64}
-                    placeholder="e.g. dermatology"
-                    autoComplete="off"
-                  />
-                </div>
+              <div className="mt-3">
+                <FieldLabel htmlFor={`svc-label-${s.id}`} tooltip="Shown to you and in patient-facing copy.">
+                  Service name
+                </FieldLabel>
+                <input
+                  id={`svc-label-${s.id}`}
+                  type="text"
+                  value={s.label}
+                  onChange={(e) =>
+                    onServicesChange(updateService(services, s.id, { label: e.target.value }))
+                  }
+                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  maxLength={200}
+                  placeholder="e.g. General dermatology"
+                />
               </div>
               <div className="mt-3">
                 <FieldLabel htmlFor={`svc-desc-${s.id}`} tooltip="Optional short description (max 500 characters).">

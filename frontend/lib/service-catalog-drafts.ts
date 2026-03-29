@@ -14,10 +14,11 @@ export type DiscountTypeOption = FollowUpPolicyV1["discount_type"];
 export interface ServiceOfferingDraft {
   /** Stable React key */
   id: string;
+  /** SFU-11: persisted UUID; never change when label edits */
+  service_id: string;
   label: string;
+  /** Internal slug for API payload (server may preserve per service_id) */
   service_key: string;
-  /** User manually edited service_key (stop auto-slug from label). */
-  serviceKeyManual: boolean;
   description: string;
   textEnabled: boolean;
   voiceEnabled: boolean;
@@ -59,11 +60,15 @@ export function slugifyLabelToServiceKey(label: string): string {
 }
 
 export function emptyServiceDraft(): ServiceOfferingDraft {
+  const sid =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : newId();
   return {
     id: newId(),
+    service_id: sid,
     label: "",
     service_key: "",
-    serviceKeyManual: false,
     description: "",
     textEnabled: false,
     voiceEnabled: false,
@@ -134,11 +139,14 @@ export function offeringToDraft(o: ServiceOfferingV1): ServiceOfferingDraft {
   const text = o.modalities.text;
   const voice = o.modalities.voice;
   const video = o.modalities.video;
+  const sid =
+    o.service_id ??
+    (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : newId());
   return {
     id: newId(),
+    service_id: sid,
     label: o.label,
     service_key: o.service_key,
-    serviceKeyManual: true,
     description: o.description?.trim() ?? "",
     textEnabled: !!text?.enabled,
     voiceEnabled: !!voice?.enabled,
@@ -223,14 +231,6 @@ export function draftsToCatalogOrNull(
     return null;
   }
 
-  const keys = services.map((s) => s.service_key.trim().toLowerCase());
-  const seen = new Set<string>();
-  for (const k of keys) {
-    if (!k) throw new Error("Each service needs a service key");
-    if (seen.has(k)) throw new Error(`Duplicate service key: ${k}`);
-    seen.add(k);
-  }
-
   let followup_policy: FollowUpPolicyV1 | null;
   try {
     followup_policy = buildFollowUpPolicy(followUp);
@@ -240,9 +240,13 @@ export function draftsToCatalogOrNull(
 
   const offerings: ServiceOfferingV1[] = services.map((d) => {
     if (!d.label.trim()) throw new Error("Each service needs a label");
+    if (!d.service_id.trim()) throw new Error("Each service needs a stable id");
     const modalities = buildModalities(d);
+    const key =
+      d.service_key.trim().toLowerCase() || slugifyLabelToServiceKey(d.label);
     const base: ServiceOfferingV1 = {
-      service_key: d.service_key.trim().toLowerCase(),
+      service_id: d.service_id.trim(),
+      service_key: key,
       label: d.label.trim(),
       modalities,
       ...(followup_policy ? { followup_policy } : { followup_policy: null }),

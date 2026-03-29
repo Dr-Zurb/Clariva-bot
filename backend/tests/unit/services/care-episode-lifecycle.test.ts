@@ -8,7 +8,12 @@ import {
   buildEpisodePriceSnapshotJson,
   planCareEpisodeOnCompletedVisit,
 } from '../../../src/services/care-episode-service';
-import type { ServiceCatalogV1 } from '../../../src/utils/service-catalog-schema';
+import {
+  deterministicServiceIdForLegacyOffering,
+  type ServiceCatalogV1,
+} from '../../../src/utils/service-catalog-schema';
+
+const sid = (key: string) => deterministicServiceIdForLegacyOffering('d1', key);
 
 function episode(partial: Partial<CareEpisodeRow> = {}): CareEpisodeRow {
   return {
@@ -73,6 +78,7 @@ describe('buildEpisodePriceSnapshotJson', () => {
       version: 1,
       services: [
         {
+          service_id: sid('skin'),
           service_key: 'skin',
           label: 'Skin',
           modalities: {

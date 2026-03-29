@@ -5,7 +5,13 @@
 import { describe, it, expect } from '@jest/globals';
 import type { DoctorSettingsRow } from '../../../src/types/doctor-settings';
 import type { ConversationState } from '../../../src/types/conversation';
-import type { ServiceCatalogV1 } from '../../../src/utils/service-catalog-schema';
+import {
+  deterministicServiceIdForLegacyOffering,
+  type ServiceCatalogV1,
+} from '../../../src/utils/service-catalog-schema';
+
+const DOC = 'd1';
+const id = (k: string) => deterministicServiceIdForLegacyOffering(DOC, k);
 import { ValidationError } from '../../../src/utils/errors';
 import {
   applyPublicBookingSelectionsToState,
@@ -17,6 +23,7 @@ function catTwoModalities(): ServiceCatalogV1 {
     version: 1,
     services: [
       {
+        service_id: id('skin'),
         service_key: 'skin',
         label: 'Dermatology',
         modalities: {
@@ -33,11 +40,13 @@ function catMultiService(): ServiceCatalogV1 {
     version: 1,
     services: [
       {
+        service_id: id('a'),
         service_key: 'a',
         label: 'A',
         modalities: { video: { enabled: true, price_minor: 1 } },
       },
       {
+        service_id: id('b'),
         service_key: 'b',
         label: 'B',
         modalities: { video: { enabled: true, price_minor: 2 } },
@@ -91,6 +100,7 @@ describe('getBookingPageCatalogPayload', () => {
     expect(p?.services).toHaveLength(1);
     expect(p?.services[0]!.modalities.video).toEqual({ enabled: true, price_minor: 100_00 });
     expect(p?.services[0]!.modalities.text).toEqual({ enabled: true, price_minor: 50_00 });
+    expect(p?.services[0]!.service_id).toBeTruthy();
     expect(p?.feeCurrency).toBe('INR');
   });
 });
@@ -125,6 +135,7 @@ describe('applyPublicBookingSelectionsToState', () => {
       version: 1,
       services: [
         {
+          service_id: id('only'),
           service_key: 'only',
           label: 'Only',
           modalities: { video: { enabled: true, price_minor: 10 } },
@@ -153,6 +164,7 @@ describe('applyPublicBookingSelectionsToState', () => {
       false
     );
     expect(next.catalogServiceKey).toBe('skin');
+    expect(next.catalogServiceId).toBe(id('skin'));
     expect(next.consultationModality).toBe('text');
   });
 
@@ -161,6 +173,7 @@ describe('applyPublicBookingSelectionsToState', () => {
       version: 1,
       services: [
         {
+          service_id: id('x'),
           service_key: 'x',
           label: 'X',
           modalities: { video: { enabled: true, price_minor: 1 }, voice: { enabled: false, price_minor: 0 } },

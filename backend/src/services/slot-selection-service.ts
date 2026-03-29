@@ -21,7 +21,11 @@ import type { ConversationState } from '../types/conversation';
 import type { ServiceCatalogV1 } from '../utils/service-catalog-schema';
 import { findPatientByIdWithAdmin } from './patient-service';
 import { getActiveEpisodeForPatientDoctorService } from './care-episode-service';
-import { findServiceOfferingByKey, getActiveServiceCatalog } from '../utils/service-catalog-helpers';
+import {
+  findServiceOfferingByKey,
+  findServiceOfferingByServiceId,
+  getActiveServiceCatalog,
+} from '../utils/service-catalog-helpers';
 import {
   quoteConsultationVisit,
   type ConsultationModality,
@@ -134,10 +138,12 @@ export interface SlotBookingQuoteResult {
   doctorCountry: string;
   pricingSource: SlotBookingPricingSource;
   catalogServiceKey?: string;
+  catalogServiceId?: string;
   episodeId?: string;
   quoteMetadata?: {
     visit_kind: string;
     service_key: string;
+    service_id?: string;
     modality: string;
     episode_id?: string;
   };
@@ -152,6 +158,15 @@ export function resolveCatalogServiceKeyForSlotBooking(
   catalog: ServiceCatalogV1,
   correlationId: string
 ): string | null {
+  const idRaw = state.catalogServiceId?.trim();
+  if (idRaw) {
+    const byId = findServiceOfferingByServiceId(catalog, idRaw);
+    if (byId) {
+      return byId.service_key;
+    }
+    logger.warn({ correlationId, catalogServiceId: idRaw }, 'slot_booking_catalog_id_not_in_catalog');
+    return null;
+  }
   const raw = state.catalogServiceKey?.trim().toLowerCase();
   if (raw) {
     if (findServiceOfferingByKey(catalog, raw)) {
@@ -184,6 +199,7 @@ export function resolveModalityForSlotBooking(
 
 /** SFU-07: Catalog snippet for /book page (single doctor, token-scoped). */
 export interface BookingPageCatalogServiceRow {
+  service_id: string;
   service_key: string;
   label: string;
   modalities: Partial<
@@ -225,6 +241,7 @@ export function getBookingPageCatalogPayload(
         }
       }
       return {
+        service_id: s.service_id,
         service_key: s.service_key,
         label: s.label,
         modalities,
@@ -236,6 +253,7 @@ export function getBookingPageCatalogPayload(
 
 export interface PublicBookingSelectionInput {
   catalogServiceKey?: string;
+  catalogServiceId?: string;
   consultationModality?: ConsultationModality;
 }
 
@@ -263,6 +281,14 @@ export function applyPublicBookingSelectionsToState(
     input.catalogServiceKey?.trim().toLowerCase() ??
     state.catalogServiceKey?.trim().toLowerCase() ??
     undefined;
+  const idIn = input.catalogServiceId?.trim() ?? state.catalogServiceId?.trim();
+  if (idIn) {
+    const byId = findServiceOfferingByServiceId(catalog, idIn);
+    if (!byId) {
+      throw new ValidationError('Invalid service selection.');
+    }
+    serviceKey = byId.service_key;
+  }
   if (!serviceKey && catalog.services.length === 1) {
     serviceKey = catalog.services[0]!.service_key;
   }
@@ -274,6 +300,7 @@ export function applyPublicBookingSelectionsToState(
   if (!offering) {
     throw new ValidationError('Invalid service selection.');
   }
+  const catalogServiceId = offering.service_id;
 
   const enabledModalities: ConsultationModality[] = [];
   for (const mod of ['text', 'voice', 'video'] as const) {
@@ -304,6 +331,7 @@ export function applyPublicBookingSelectionsToState(
   return {
     ...state,
     catalogServiceKey: serviceKey,
+    catalogServiceId,
     consultationModality: modality,
   };
 }
@@ -367,15 +395,19 @@ export async function computeSlotBookingQuote(
   }
 
   const modality = resolveModalityForSlotBooking(state, state.consultationType);
+  const offeringForQuote = findServiceOfferingByKey(catalog, serviceKeyNorm);
+  const catalogServiceIdForQuote = offeringForQuote?.service_id ?? null;
   const activeEpisode = await getActiveEpisodeForPatientDoctorService(
     doctorId,
     patientId,
-    serviceKeyNorm
+    serviceKeyNorm,
+    catalogServiceIdForQuote
   );
 
   const quote = quoteConsultationVisit({
     settings: doctorSettings,
     catalogServiceKey: serviceKeyNorm,
+    catalogServiceId: catalogServiceIdForQuote,
     modality,
     at: new Date(),
     activeEpisode,
@@ -387,10 +419,12 @@ export async function computeSlotBookingQuote(
     doctorCountry,
     pricingSource: 'catalog_quote',
     catalogServiceKey: quote.service_key,
+    catalogServiceId: quote.service_id,
     episodeId: quote.episode_id,
     quoteMetadata: {
       visit_kind: quote.visit_kind,
       service_key: quote.service_key,
+      ...(quote.service_id ? { service_id: quote.service_id } : {}),
       modality: quote.modality,
       ...(quote.episode_id ? { episode_id: quote.episode_id } : {}),
     },
@@ -530,6 +564,7 @@ export async function processSlotSelectionAndPay(
     doctorSettings,
     {
       catalogServiceKey: options?.catalogServiceKey,
+      catalogServiceId: options?.catalogServiceId,
       consultationModality: options?.consultationModality,
     },
     options?.isReschedule === true
@@ -587,6 +622,9 @@ export async function processSlotSelectionAndPay(
       ...(quotePreview.pricingSource === 'catalog_quote' && quotePreview.catalogServiceKey
         ? { catalogServiceKey: quotePreview.catalogServiceKey }
         : {}),
+      ...(quotePreview.pricingSource === 'catalog_quote' && quotePreview.catalogServiceId
+        ? { catalogServiceId: quotePreview.catalogServiceId }
+        : {}),
       ...(quotePreview.episodeId ? { episodeId: quotePreview.episodeId } : {}),
     },
     correlationId,
@@ -615,6 +653,7 @@ export async function processSlotSelectionAndPay(
     const newState = {
       ...state,
       catalogServiceKey: effectiveState.catalogServiceKey,
+      catalogServiceId: effectiveState.catalogServiceId,
       consultationModality: effectiveState.consultationModality,
       step: 'responded',
       slotToConfirm: undefined,
@@ -668,6 +707,7 @@ export async function processSlotSelectionAndPay(
   const newState = {
     ...state,
     catalogServiceKey: effectiveState.catalogServiceKey,
+    catalogServiceId: effectiveState.catalogServiceId,
     consultationModality: effectiveState.consultationModality,
     step: 'responded',
     slotToConfirm: undefined,

@@ -13,7 +13,14 @@
 
 import { getSupabaseAdminClient } from '../config/database';
 import type { DoctorSettingsRow, OpdMode, PayoutSchedule } from '../types/doctor-settings';
-import { parseServiceCatalogV1, type ServiceCatalogV1 } from '../utils/service-catalog-schema';
+import { mergeServiceCatalogOnSave } from '../utils/service-catalog-normalize';
+import {
+  hydrateServiceCatalogServiceIds,
+  parseServiceCatalogIncoming,
+  safeParseServiceCatalogV1FromDb,
+  serviceCatalogV1Schema,
+  type ServiceCatalogV1,
+} from '../utils/service-catalog-schema';
 import { validateOwnership } from '../utils/db-helpers';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataAccess, logDataModification, logAuditEvent } from '../utils/audit-logger';
@@ -80,7 +87,10 @@ export async function getDoctorSettings(doctorId: string): Promise<DoctorSetting
   if (error) {
     return null;
   }
-  return data as DoctorSettingsRow | null;
+  if (!data) {
+    return null;
+  }
+  return normalizeServiceOfferingsInRow(data as unknown as DoctorSettingsRow);
 }
 
 /**
@@ -119,12 +129,24 @@ export async function getDoctorSettingsForUser(
   if (!data) {
     return { ...DEFAULT_SETTINGS, doctor_id: doctorId };
   }
-  return data as unknown as DoctorSettingsRow;
+  return normalizeServiceOfferingsInRow(data as unknown as DoctorSettingsRow);
 }
 
 /** Valid slot interval range: 1–60 minutes. */
 const SLOT_INTERVAL_MIN = 1;
 const SLOT_INTERVAL_MAX = 60;
+
+/** SFU-11: hydrate legacy/missing `service_id` for API consumers. */
+function normalizeServiceOfferingsInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  if (row.service_offerings_json == null) {
+    return row;
+  }
+  const c = safeParseServiceCatalogV1FromDb(row.service_offerings_json as unknown, row.doctor_id);
+  if (!c) {
+    return row;
+  }
+  return { ...row, service_offerings_json: c };
+}
 
 /** Payload for partial update of doctor settings. */
 export interface UpdateDoctorSettingsPayload {
@@ -141,7 +163,7 @@ export interface UpdateDoctorSettingsPayload {
   specialty?: string | null;
   address_summary?: string | null;
   consultation_types?: string | null;
-  /** SFU-01: structured services × modalities; null clears. Validated before persist. */
+  /** SFU-01 / SFU-11: structured catalog; merged + normalized before persist. */
   service_offerings_json?: ServiceCatalogV1 | null;
   default_notes?: string | null;
   /** Appointment fee in smallest unit (paise INR, cents USD). e.g. 50000 = ₹500 */
@@ -268,10 +290,32 @@ export async function updateDoctorSettings(
   }
 
   if ('service_offerings_json' in payload) {
-    updateData.service_offerings_json =
-      payload.service_offerings_json === null
-        ? null
-        : parseServiceCatalogV1(payload.service_offerings_json);
+    if (payload.service_offerings_json === null) {
+      updateData.service_offerings_json = null;
+    } else {
+      const { data: existingSnap } = await supabase
+        .from('doctor_settings')
+        .select('service_offerings_json')
+        .eq('doctor_id', doctorId)
+        .maybeSingle();
+      const previousCatalog = existingSnap?.service_offerings_json
+        ? safeParseServiceCatalogV1FromDb(existingSnap.service_offerings_json as unknown, doctorId)
+        : null;
+      const incomingLoose = parseServiceCatalogIncoming(payload.service_offerings_json);
+      const incomingHydrated = hydrateServiceCatalogServiceIds(
+        doctorId,
+        incomingLoose as ServiceCatalogV1
+      );
+      const incStrict = serviceCatalogV1Schema.safeParse(incomingHydrated);
+      if (!incStrict.success) {
+        const first = incStrict.error.issues[0];
+        throw new ValidationError(
+          first ? `${first.path.join('.')}: ${first.message}` : 'Invalid service_offerings_json'
+        );
+      }
+      const merged = mergeServiceCatalogOnSave(doctorId, incStrict.data, previousCatalog);
+      updateData.service_offerings_json = merged;
+    }
   }
 
   if (Object.keys(updateData).length === 0) {
@@ -337,5 +381,5 @@ export async function updateDoctorSettings(
     });
   }
 
-  return result;
+  return normalizeServiceOfferingsInRow(result);
 }

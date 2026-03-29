@@ -15,6 +15,8 @@ export interface CareEpisodeRow {
   doctor_id: string;
   patient_id: string;
   catalog_service_key: string;
+  /** SFU-11: matches `service_id` in service_offerings_json; preferred for quote/episode match */
+  catalog_service_id?: string | null;
   status: CareEpisodeStatus;
   started_at: string;
   eligibility_ends_at: string | null;

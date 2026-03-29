@@ -17,6 +17,7 @@ Execute in **order** below; later tasks assume earlier contracts (types, DB, quo
 | 8 | [e-task-sfu-08](./e-task-sfu-08-dm-bot-and-ai-context-catalog-fees.md) | sfu-01, sfu-03 | 1–2 d |
 | — | [e-task-sfu-09](./e-task-sfu-09-p2-tiered-discounts-episode-admin-analytics.md) | P1 shipped | backlog |
 | 10 | [e-task-sfu-10](./e-task-sfu-10-remove-practice-consultation-types-ui.md) | sfu-06 | 0.5–1 d |
+| 11 | [e-task-sfu-11](./e-task-sfu-11-catalog-service-id-uuid-episode-linkage.md) | sfu-01–07 | 3–6 d |
 
 **Code anchors (audit 2026-03-28):**
 
@@ -28,4 +29,4 @@ Execute in **order** below; later tasks assume earlier contracts (types, DB, quo
 
 ---
 
-**Last updated:** 2026-03-28 (SFU-10 task added)
+**Last updated:** 2026-03-28 (SFU-11 task added)

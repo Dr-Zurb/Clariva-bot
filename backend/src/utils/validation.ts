@@ -11,7 +11,7 @@
 import { z } from 'zod';
 import { ValidationError } from './errors';
 import { env } from '../config/env';
-import { serviceCatalogV1Schema } from './service-catalog-schema';
+import { serviceCatalogIncomingSchema } from './service-catalog-schema';
 
 // ============================================================================
 // Constants (RECIPES: E.164-like phone)
@@ -260,6 +260,8 @@ export const bookAppointmentSchema = z.object({
     .optional(),
   /** SFU-05: matches doctor_settings.service_offerings_json service_key */
   catalogServiceKey: z.string().min(1).max(64).trim().optional(),
+  /** SFU-11: matches service_id in catalog */
+  catalogServiceId: z.string().uuid('catalogServiceId must be a UUID').optional(),
   /** SFU-05: quote modality (teleconsult) */
   consultationModality: z.enum(['text', 'voice', 'video']).optional(),
   /** SFU-05: active episode when visit is a priced follow-up */
@@ -517,6 +519,8 @@ export const selectSlotBodySchema = z.object({
     ),
   /** SFU-07: required when doctor has multi-service catalog (unless already in conversation state). */
   catalogServiceKey: z.string().min(1).max(64).trim().optional(),
+  /** SFU-11 */
+  catalogServiceId: z.string().uuid().optional(),
   /** SFU-07: teleconsult modality; required when multiple modalities enabled for the service. */
   consultationModality: z.enum(['text', 'voice', 'video']).optional(),
 });
@@ -729,8 +733,8 @@ export const patchDoctorSettingsSchema = z
     specialty: z.string().max(200).trim().nullable().optional(),
     address_summary: z.string().max(500).trim().nullable().optional(),
     consultation_types: z.string().max(200).trim().nullable().optional(),
-    /** SFU-01: validated catalog v1; null clears column */
-    service_offerings_json: z.union([serviceCatalogV1Schema, z.null()]).optional(),
+    /** SFU-01 / SFU-11: catalog v1; service_id optional until merge */
+    service_offerings_json: z.union([serviceCatalogIncomingSchema, z.null()]).optional(),
     default_notes: z.string().max(1000).trim().nullable().optional(),
     appointment_fee_minor: z.number().int().min(0).nullable().optional(),
     appointment_fee_currency: z.string().length(3).nullable().optional(),

@@ -11,11 +11,15 @@ import { getActiveServiceCatalog, findServiceOfferingByKey } from '../../../src/
 import { ValidationError } from '../../../src/utils/errors';
 import type { DoctorSettingsRow } from '../../../src/types/doctor-settings';
 
+const SVC_ID_A = '11111111-1111-4111-8111-111111111111';
+const SVC_ID_B = '22222222-2222-4222-8222-222222222222';
+
 function minimalCatalog() {
   return {
     version: 1 as const,
     services: [
       {
+        service_id: SVC_ID_A,
         service_key: 'general',
         label: 'General consult',
         modalities: { text: { enabled: true, price_minor: 100 } },
@@ -39,11 +43,13 @@ describe('parseServiceCatalogV1', () => {
         version: 1,
         services: [
           {
+            service_id: SVC_ID_A,
             service_key: 'x',
             label: 'A',
             modalities: { voice: { enabled: true, price_minor: 0 } },
           },
           {
+            service_id: SVC_ID_B,
             service_key: 'x',
             label: 'B',
             modalities: { video: { enabled: true, price_minor: 1 } },
@@ -59,6 +65,7 @@ describe('parseServiceCatalogV1', () => {
         version: 1,
         services: [
           {
+            service_id: SVC_ID_A,
             service_key: 'only_off',
             label: 'Nope',
             modalities: {
@@ -77,6 +84,7 @@ describe('parseServiceCatalogV1', () => {
         version: 1,
         services: [
           {
+            service_id: SVC_ID_A,
             service_key: 'svc',
             label: 'Svc',
             modalities: { text: { enabled: true, price_minor: 1 } },
@@ -98,6 +106,7 @@ describe('parseServiceCatalogV1', () => {
       version: 1,
       services: [
         {
+          service_id: SVC_ID_A,
           service_key: 'svc',
           label: 'Svc',
           modalities: { text: { enabled: true, price_minor: 100 } },
@@ -127,6 +136,22 @@ describe('safeParseServiceCatalogV1FromDb', () => {
   it('returns null for null', () => {
     expect(safeParseServiceCatalogV1FromDb(null)).toBeNull();
   });
+
+  it('hydrates legacy rows without service_id when doctorId provided', () => {
+    const raw = {
+      version: 1,
+      services: [
+        {
+          service_key: 'general',
+          label: 'General consult',
+          modalities: { text: { enabled: true, price_minor: 100 } },
+        },
+      ],
+    };
+    const cat = safeParseServiceCatalogV1FromDb(raw, '33333333-3333-4333-8333-333333333333');
+    expect(cat).not.toBeNull();
+    expect(cat!.services[0]!.service_id).toMatch(/^[0-9a-f-]{36}$/i);
+  });
 });
 
 describe('getActiveServiceCatalog / findServiceOfferingByKey', () => {
@@ -140,6 +165,7 @@ describe('getActiveServiceCatalog / findServiceOfferingByKey', () => {
 
   it('returns null for invalid stored shape', () => {
     const row = {
+      doctor_id: '44444444-4444-4444-4444-444444444444',
       service_offerings_json: { bad: true },
     } as unknown as DoctorSettingsRow;
     expect(getActiveServiceCatalog(row)).toBeNull();

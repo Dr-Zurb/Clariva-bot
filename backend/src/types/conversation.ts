@@ -89,6 +89,8 @@ export interface ConversationState {
   consultationType?: 'video' | 'in_clinic' | 'text' | 'voice';
   /** SFU-05/SFU-07: catalog `service_key` when doctor has multi-service matrix */
   catalogServiceKey?: string;
+  /** SFU-11: catalog `service_id` for episode lookup */
+  catalogServiceId?: string;
   /** SFU-05: teleconsult modality for quoting (text / voice / video) */
   consultationModality?: 'text' | 'voice' | 'video';
   /** Slot picked on booking page; optional metadata (canonical step: awaiting_slot_selection; RBH-06) */

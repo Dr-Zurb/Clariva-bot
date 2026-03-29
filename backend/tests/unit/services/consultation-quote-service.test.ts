@@ -17,13 +17,19 @@ import {
   ModalityNotOfferedForQuote,
   ServiceNotFoundForQuote,
 } from '../../../src/utils/errors';
-import type { ServiceCatalogV1 } from '../../../src/utils/service-catalog-schema';
+import {
+  deterministicServiceIdForLegacyOffering,
+  type ServiceCatalogV1,
+} from '../../../src/utils/service-catalog-schema';
+
+const DOC = 'd1';
 
 function catalogSingleVideo(serviceKey = 'skin'): ServiceCatalogV1 {
   return {
     version: 1,
     services: [
       {
+        service_id: deterministicServiceIdForLegacyOffering(DOC, serviceKey),
         service_key: serviceKey,
         label: 'Skin',
         modalities: {
@@ -75,6 +81,7 @@ function baseEpisode(overrides: Partial<CareEpisodeRow> = {}): CareEpisodeRow {
     doctor_id: 'd1',
     patient_id: 'p1',
     catalog_service_key: 'skin',
+    catalog_service_id: deterministicServiceIdForLegacyOffering(DOC, 'skin'),
     status: 'active',
     started_at: new Date().toISOString(),
     eligibility_ends_at: new Date('2030-12-31T23:59:59.000Z').toISOString(),
@@ -324,12 +331,42 @@ describe('quoteConsultationVisit', () => {
     ).toThrow(LegacyAppointmentFeeNotConfiguredError);
   });
 
+  it('SFU-11: same service_id keeps follow-up after service_key rename in catalog', () => {
+    const sidSkin = deterministicServiceIdForLegacyOffering(DOC, 'skin');
+    const catRenamed: ServiceCatalogV1 = {
+      version: 1,
+      services: [
+        {
+          service_id: sidSkin,
+          service_key: 'derm',
+          label: 'Dermatology',
+          modalities: {
+            video: { enabled: true, price_minor: 100_00 },
+            text: { enabled: true, price_minor: 50_00 },
+          },
+        },
+      ],
+    };
+    const settings = baseDoctorRow({ service_offerings_json: catRenamed });
+    const q = quoteConsultationVisit({
+      settings,
+      catalogServiceKey: 'derm',
+      catalogServiceId: sidSkin,
+      modality: 'video',
+      at,
+      activeEpisode: baseEpisode({ catalog_service_key: 'skin', catalog_service_id: sidSkin }),
+    });
+    expect(q.kind).toBe('followup');
+    expect(q.amount_minor).toBe(70_00);
+  });
+
   it('episode for different service: ignored — index quote for requested service', () => {
     const cat2: ServiceCatalogV1 = {
       version: 1,
       services: [
         catalogSingleVideo('skin').services[0]!,
         {
+          service_id: deterministicServiceIdForLegacyOffering(DOC, 'other'),
           service_key: 'other',
           label: 'Other',
           modalities: { video: { enabled: true, price_minor: 200_00 } },
@@ -342,7 +379,10 @@ describe('quoteConsultationVisit', () => {
       catalogServiceKey: 'other',
       modality: 'video',
       at,
-      activeEpisode: baseEpisode({ catalog_service_key: 'skin' }),
+      activeEpisode: baseEpisode({
+        catalog_service_key: 'skin',
+        catalog_service_id: deterministicServiceIdForLegacyOffering(DOC, 'skin'),
+      }),
     });
     expect(q.kind).toBe('index');
     expect(q.amount_minor).toBe(200_00);

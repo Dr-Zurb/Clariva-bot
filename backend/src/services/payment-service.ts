@@ -52,6 +52,9 @@ export async function createPaymentLink(
     if (input.quoteMetadata.episode_id) {
       notes.episode_id = input.quoteMetadata.episode_id;
     }
+    if (input.quoteMetadata.service_id) {
+      notes.service_id = input.quoteMetadata.service_id;
+    }
   }
 
   const adapterInput = {
