@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { FieldLabel } from "@/components/ui/FieldLabel";
 import type {
   DiscountTypeOption,
@@ -29,6 +30,53 @@ function updateService(
   patch: Partial<ServiceOfferingDraft>
 ): ServiceOfferingDraft[] {
   return services.map((si) => (si.id === id ? { ...si, ...patch } : si));
+}
+
+function cloneFollowUpDraft(d: ModalityFollowUpDiscountDraft): ModalityFollowUpDiscountDraft {
+  return { ...d };
+}
+
+/** Sync list price across enabled channels only (does not enable/disable channels). */
+function applyPricePatch(
+  services: ServiceOfferingDraft[],
+  serviceRowId: string,
+  priceField: PriceField,
+  priceValue: string,
+  syncPrice: boolean
+): ServiceOfferingDraft[] {
+  return services.map((row) => {
+    if (row.id !== serviceRowId) return row;
+    if (!syncPrice) {
+      return { ...row, [priceField]: priceValue };
+    }
+    const patch: Partial<ServiceOfferingDraft> = {};
+    if (row.textEnabled) patch.textPriceMain = priceValue;
+    if (row.voiceEnabled) patch.voicePriceMain = priceValue;
+    if (row.videoEnabled) patch.videoPriceMain = priceValue;
+    return { ...row, ...patch };
+  });
+}
+
+/** Sync follow-up draft across enabled channels only (does not enable/disable channels). */
+function applyFollowUpPatch(
+  services: ServiceOfferingDraft[],
+  serviceRowId: string,
+  fuField: FollowUpField,
+  nextDraft: ModalityFollowUpDiscountDraft,
+  syncFollowUp: boolean
+): ServiceOfferingDraft[] {
+  return services.map((row) => {
+    if (row.id !== serviceRowId) return row;
+    if (!syncFollowUp) {
+      return { ...row, [fuField]: cloneFollowUpDraft(nextDraft) };
+    }
+    const base = cloneFollowUpDraft(nextDraft);
+    const patch: Partial<ServiceOfferingDraft> = {};
+    if (row.textEnabled) patch.textFollowUp = { ...base };
+    if (row.voiceEnabled) patch.voiceFollowUp = { ...base };
+    if (row.videoEnabled) patch.videoFollowUp = { ...base };
+    return { ...row, ...patch };
+  });
 }
 
 /** Preview follow-up price in main currency from list price + discount (matches backend applyFollowUpDiscount logic). */
@@ -61,7 +109,7 @@ function computeFollowUpFinalDisplay(
   }
 }
 
-/** Follow-up policy fields: always expanded below price; no &lt;details&gt;. */
+/** Follow-up policy fields: always expanded below price. */
 function FollowUpDiscountFieldsCompact({
   serviceId,
   modalityKey,
@@ -73,30 +121,45 @@ function FollowUpDiscountFieldsCompact({
   serviceId: string;
   modalityKey: string;
   label: string;
-  /** Channel list price (main currency) for final-price preview */
   listPriceMain: string;
   draft: ModalityFollowUpDiscountDraft;
   onChange: (next: ModalityFollowUpDiscountDraft) => void;
 }) {
   const prefix = `${serviceId}-${modalityKey}`;
-  const needsValue =
-    draft.discount_type === "percent" ||
-    draft.discount_type === "flat_off" ||
-    draft.discount_type === "fixed_price";
+  const dt = draft.discount_type;
+  const showPercentFlatRow = dt === "percent" || dt === "flat_off";
+  const showFixedRow = dt === "fixed_price";
+  /** Middle + final price only for % off and amount off */
+  const showValueAndFinal = showPercentFlatRow;
 
   const middleLabel =
-    draft.discount_type === "percent"
-      ? "% off list"
-      : draft.discount_type === "flat_off"
-        ? "Amount off"
-        : draft.discount_type === "fixed_price"
-          ? "Follow-up price"
-          : "—";
+    dt === "percent" ? "% off list" : dt === "flat_off" ? "Amount off" : "Follow-up price";
 
-  const finalDisplay = computeFollowUpFinalDisplay(
-    listPriceMain,
-    draft.discount_type,
-    draft.discount_value
+  const finalDisplay = computeFollowUpFinalDisplay(listPriceMain, dt, draft.discount_value);
+
+  const discountBlock = (
+    <div className="min-w-0">
+      <FieldLabel
+        htmlFor={`${prefix}-dtype`}
+        tooltip="How follow-up price is derived from this channel list price."
+      >
+        Discount
+      </FieldLabel>
+      <select
+        id={`${prefix}-dtype`}
+        value={draft.discount_type}
+        onChange={(e) =>
+          onChange({ ...draft, discount_type: e.target.value as DiscountTypeOption })
+        }
+        className="mt-0.5 w-full min-w-0 rounded border border-gray-300 px-1 py-1.5 text-[11px]"
+      >
+        <option value="percent">% off list</option>
+        <option value="flat_off">Amount off</option>
+        <option value="fixed_price">Fixed price</option>
+        <option value="free">Free</option>
+        <option value="none">No discount</option>
+      </select>
+    </div>
   );
 
   return (
@@ -113,7 +176,6 @@ function FollowUpDiscountFieldsCompact({
 
       {draft.followUpDiscountEnabled && (
         <div className="mt-1.5 space-y-2 rounded border border-dashed border-gray-200 bg-white px-1.5 py-2">
-          {/* Row 1: max visits + eligibility window */}
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <div className="min-w-0">
               <FieldLabel
@@ -151,78 +213,64 @@ function FollowUpDiscountFieldsCompact({
             </div>
           </div>
 
-          {/* Row 2: discount type | value | final price (Option A) */}
-          <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
-            <div className="min-w-0">
-              <FieldLabel
-                htmlFor={`${prefix}-dtype`}
-                tooltip="How follow-up price is derived from this channel list price."
-              >
-                Discount
-              </FieldLabel>
-              <select
-                id={`${prefix}-dtype`}
-                value={draft.discount_type}
-                onChange={(e) =>
-                  onChange({ ...draft, discount_type: e.target.value as DiscountTypeOption })
-                }
-                className="mt-0.5 w-full min-w-0 rounded border border-gray-300 px-1 py-1.5 text-[11px]"
-              >
-                <option value="percent">% off list</option>
-                <option value="flat_off">Amount off</option>
-                <option value="fixed_price">Fixed price</option>
-                <option value="free">Free</option>
-                <option value="none">No discount</option>
-              </select>
+          {showPercentFlatRow && (
+            <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
+              {discountBlock}
+              <div className="min-w-0">
+                <FieldLabel htmlFor={`${prefix}-dval`} tooltip={`${middleLabel} (main currency).`}>
+                  {middleLabel}
+                </FieldLabel>
+                <input
+                  id={`${prefix}-dval`}
+                  type="number"
+                  min={0}
+                  step={dt === "percent" ? 1 : "0.01"}
+                  max={dt === "percent" ? 100 : undefined}
+                  value={draft.discount_value}
+                  onChange={(e) => onChange({ ...draft, discount_value: e.target.value })}
+                  className="mt-0.5 w-full min-w-0 rounded border border-gray-300 px-1.5 py-1 text-sm tabular-nums"
+                />
+              </div>
+              <div className="min-w-0">
+                <FieldLabel
+                  htmlFor={`${prefix}-final`}
+                  tooltip="Estimated follow-up price from this channel’s list price (preview only)."
+                >
+                  Final price
+                </FieldLabel>
+                <input
+                  id={`${prefix}-final`}
+                  readOnly
+                  value={finalDisplay}
+                  className="mt-0.5 w-full min-w-0 rounded border border-gray-200 bg-gray-50 px-1.5 py-1 text-sm tabular-nums text-gray-800"
+                />
+              </div>
             </div>
-            <div className="min-w-0">
-              {needsValue ? (
-                <>
-                  <FieldLabel htmlFor={`${prefix}-dval`} tooltip={`${middleLabel} (main currency).`}>
-                    {middleLabel}
-                  </FieldLabel>
-                  <input
-                    id={`${prefix}-dval`}
-                    type="number"
-                    min={0}
-                    step={draft.discount_type === "percent" ? 1 : "0.01"}
-                    max={draft.discount_type === "percent" ? 100 : undefined}
-                    value={draft.discount_value}
-                    onChange={(e) => onChange({ ...draft, discount_value: e.target.value })}
-                    className="mt-0.5 w-full min-w-0 rounded border border-gray-300 px-1.5 py-1 text-sm tabular-nums"
-                  />
-                </>
-              ) : (
-                <>
-                  <FieldLabel htmlFor={`${prefix}-dval-na`} tooltip="No extra amount for this discount type.">
-                    Value
-                  </FieldLabel>
-                  <input
-                    id={`${prefix}-dval-na`}
-                    readOnly
-                    disabled
-                    value=""
-                    placeholder="—"
-                    className="mt-0.5 w-full cursor-not-allowed rounded border border-gray-200 bg-gray-50 px-1.5 py-1 text-sm text-gray-400"
-                  />
-                </>
-              )}
+          )}
+
+          {showFixedRow && (
+            <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+              {discountBlock}
+              <div className="min-w-0">
+                <FieldLabel htmlFor={`${prefix}-dval`} tooltip="Follow-up visit price in main currency.">
+                  Follow-up price
+                </FieldLabel>
+                <input
+                  id={`${prefix}-dval`}
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={draft.discount_value}
+                  onChange={(e) => onChange({ ...draft, discount_value: e.target.value })}
+                  className="mt-0.5 w-full min-w-0 rounded border border-gray-300 px-1.5 py-1 text-sm tabular-nums"
+                />
+              </div>
             </div>
-            <div className="min-w-0">
-              <FieldLabel
-                htmlFor={`${prefix}-final`}
-                tooltip="Estimated follow-up price from this channel’s list price (preview only)."
-              >
-                Final price
-              </FieldLabel>
-              <input
-                id={`${prefix}-final`}
-                readOnly
-                value={finalDisplay}
-                className="mt-0.5 w-full min-w-0 rounded border border-gray-200 bg-gray-50 px-1.5 py-1 text-sm tabular-nums text-gray-800"
-              />
-            </div>
-          </div>
+          )}
+
+          {(dt === "free" || dt === "none") && (
+            <div className="grid grid-cols-1">{discountBlock}</div>
+          )}
         </div>
       )}
     </div>
@@ -240,6 +288,8 @@ function ModalityColumn({
   fuDraft,
   fuField,
   services,
+  syncPrice,
+  syncFollowUp,
   onServicesChange,
 }: {
   serviceId: string;
@@ -251,6 +301,8 @@ function ModalityColumn({
   fuDraft: ModalityFollowUpDiscountDraft;
   fuField: FollowUpField;
   services: ServiceOfferingDraft[];
+  syncPrice: boolean;
+  syncFollowUp: boolean;
   onServicesChange: (next: ServiceOfferingDraft[]) => void;
 }) {
   return (
@@ -289,9 +341,7 @@ function ModalityColumn({
               value={price}
               onChange={(e) =>
                 onServicesChange(
-                  updateService(services, serviceId, {
-                    [priceField]: e.target.value,
-                  } as Partial<ServiceOfferingDraft>)
+                  applyPricePatch(services, serviceId, priceField, e.target.value, syncPrice)
                 )
               }
               placeholder="0"
@@ -312,11 +362,7 @@ function ModalityColumn({
             listPriceMain={price}
             draft={fuDraft}
             onChange={(next) =>
-              onServicesChange(
-                updateService(services, serviceId, {
-                  [fuField]: next,
-                } as Partial<ServiceOfferingDraft>)
-              )
+              onServicesChange(applyFollowUpPatch(services, serviceId, fuField, next, syncFollowUp))
             }
           />
         </div>
@@ -326,6 +372,9 @@ function ModalityColumn({
 }
 
 export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
+  const [priceSyncById, setPriceSyncById] = useState<Record<string, boolean>>({});
+  const [followUpSyncById, setFollowUpSyncById] = useState<Record<string, boolean>>({});
+
   const removeService = (id: string) => {
     if (
       typeof window !== "undefined" &&
@@ -334,6 +383,16 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
       return;
     }
     onServicesChange(services.filter((s) => s.id !== id));
+    setPriceSyncById((prev) => {
+      const n = { ...prev };
+      delete n[id];
+      return n;
+    });
+    setFollowUpSyncById((prev) => {
+      const n = { ...prev };
+      delete n[id];
+      return n;
+    });
   };
 
   return (
@@ -364,6 +423,9 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
 
         <ul className="mt-3 space-y-3">
           {services.map((s, idx) => {
+            const syncPrice = !!priceSyncById[s.id];
+            const syncFollowUp = !!followUpSyncById[s.id];
+
             return (
               <li
                 key={s.id}
@@ -382,10 +444,6 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                   </button>
                 </div>
 
-                {/*
-                  Mobile (flex): label → name + description → channels line → grid.
-                  lg (grid): row1 [label | channels], row2 [name + description | grid]; items stretch so description grows.
-                */}
                 <div className="mt-3 flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,20rem)_1fr] lg:items-stretch lg:gap-x-6 lg:gap-y-2">
                   <div className="order-1 lg:order-none lg:col-start-1 lg:row-start-1">
                     <FieldLabel htmlFor={`svc-label-${s.id}`} tooltip="Shown to you and in patient-facing copy.">
@@ -418,7 +476,7 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                       className="block w-full shrink-0 resize-y overflow-x-hidden rounded-md border border-gray-300 px-2.5 py-1.5 text-sm leading-snug"
                     />
 
-                    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                    <div className="flex min-w-0 flex-col">
                       <FieldLabel htmlFor={`svc-desc-${s.id}`} tooltip="Optional (max 500 characters).">
                         Description
                       </FieldLabel>
@@ -428,10 +486,11 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                         onChange={(e) =>
                           onServicesChange(updateService(services, s.id, { description: e.target.value }))
                         }
+                        rows={6}
                         maxLength={500}
                         wrap="soft"
                         placeholder="Optional"
-                        className="mt-0.5 min-h-[12rem] w-full flex-1 resize-y overflow-x-hidden rounded-md border border-gray-300 px-2.5 py-1.5 text-sm leading-snug lg:min-h-0"
+                        className="mt-0.5 min-h-[12rem] w-full resize-y overflow-x-hidden rounded-md border border-gray-300 px-2.5 py-1.5 text-sm leading-snug"
                       />
                     </div>
                   </div>
@@ -440,6 +499,34 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                     aria-label="Channels and prices"
                     className="order-4 flex h-full min-h-0 min-w-0 flex-col border-0 p-0 lg:order-none lg:col-start-2 lg:row-start-2"
                   >
+                    <div className="mb-2 flex flex-col gap-2 rounded-md border border-gray-100 bg-gray-50/80 px-2 py-2 sm:flex-row sm:flex-wrap sm:items-center">
+                      <label className="flex cursor-pointer items-center gap-2 text-xs text-gray-800">
+                        <input
+                          type="checkbox"
+                          checked={syncPrice}
+                          onChange={(e) =>
+                            setPriceSyncById((prev) => ({ ...prev, [s.id]: e.target.checked }))
+                          }
+                          className="rounded border-gray-300"
+                        />
+                        <span>Same list price for all enabled channels</span>
+                      </label>
+                      <label className="flex cursor-pointer items-center gap-2 text-xs text-gray-800">
+                        <input
+                          type="checkbox"
+                          checked={syncFollowUp}
+                          onChange={(e) =>
+                            setFollowUpSyncById((prev) => ({ ...prev, [s.id]: e.target.checked }))
+                          }
+                          className="rounded border-gray-300"
+                        />
+                        <span>Same follow-up rules for all enabled channels</span>
+                      </label>
+                      <p className="w-full text-[10px] leading-snug text-gray-500">
+                        When checked, editing one channel updates the others (enabled channels only).
+                      </p>
+                    </div>
+
                     <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-3 md:grid-cols-3 md:gap-2 md:items-stretch">
                       <ModalityColumn
                         serviceId={s.id}
@@ -451,6 +538,8 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                         fuDraft={s.textFollowUp}
                         fuField="textFollowUp"
                         services={services}
+                        syncPrice={syncPrice}
+                        syncFollowUp={syncFollowUp}
                         onServicesChange={onServicesChange}
                       />
                       <ModalityColumn
@@ -463,6 +552,8 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                         fuDraft={s.voiceFollowUp}
                         fuField="voiceFollowUp"
                         services={services}
+                        syncPrice={syncPrice}
+                        syncFollowUp={syncFollowUp}
                         onServicesChange={onServicesChange}
                       />
                       <ModalityColumn
@@ -475,6 +566,8 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                         fuDraft={s.videoFollowUp}
                         fuField="videoFollowUp"
                         services={services}
+                        syncPrice={syncPrice}
+                        syncFollowUp={syncFollowUp}
                         onServicesChange={onServicesChange}
                       />
                     </div>
