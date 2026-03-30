@@ -6,6 +6,14 @@ import { getDoctorSettings, patchDoctorSettings } from "@/lib/api";
 import type { DoctorSettings, PatchDoctorSettingsPayload } from "@/types/doctor-settings";
 import { FieldLabel } from "@/components/ui/FieldLabel";
 import { SaveButton } from "@/components/ui/SaveButton";
+import { MEDICAL_SPECIALTIES } from "@/lib/medical-specialties";
+
+/** Select sentinel — not a real specialty value. */
+const SPECIALTY_SELECT_OTHER = "__specialty_other__";
+
+function isSpecialtyInList(value: string): boolean {
+  return value !== "" && MEDICAL_SPECIALTIES.includes(value);
+}
 
 const COMMON_TIMEZONES = [
   "America/New_York",
@@ -117,6 +125,12 @@ export default function PracticeInfoPage() {
     []
   );
 
+  const specialtyTrim = (form.specialty ?? "").trim();
+  const specialtyInList = isSpecialtyInList(specialtyTrim);
+  const specialtySelectValue =
+    specialtyInList ? specialtyTrim : specialtyTrim === "" ? "" : SPECIALTY_SELECT_OTHER;
+  const showSpecialtyOtherInput = specialtySelectValue === SPECIALTY_SELECT_OTHER;
+
   if (loading) {
     return (
       <div className="rounded-lg border border-gray-200 bg-white p-4" aria-busy="true">
@@ -157,10 +171,59 @@ export default function PracticeInfoPage() {
           </select>
         </div>
         <div>
-          <FieldLabel htmlFor="specialty" tooltip="Medical specialty or focus area (e.g. General Practice, Dermatology).">
+          <FieldLabel
+            htmlFor="specialty"
+            tooltip="Choose from the curated list (India-focused), or Other to type a custom specialty (max 200 characters)."
+          >
             Specialty
           </FieldLabel>
-          <input id="specialty" type="text" value={form.specialty ?? ""} onChange={(e) => handleFormChange((p) => ({ ...p, specialty: e.target.value }))} maxLength={200} placeholder="e.g. General Practice" className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          <select
+            id="specialty"
+            value={specialtySelectValue}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "") {
+                handleFormChange((p) => ({ ...p, specialty: "" }));
+              } else if (v === SPECIALTY_SELECT_OTHER) {
+                handleFormChange((p) => {
+                  const cur = (p.specialty ?? "").trim();
+                  const keep = cur && !isSpecialtyInList(cur) ? cur : "";
+                  return { ...p, specialty: keep };
+                });
+              } else {
+                handleFormChange((p) => ({ ...p, specialty: v }));
+              }
+            }}
+            className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="">— Select specialty —</option>
+            {MEDICAL_SPECIALTIES.map((label) => (
+              <option key={label} value={label}>
+                {label}
+              </option>
+            ))}
+            <option value={SPECIALTY_SELECT_OTHER}>Other / not listed</option>
+          </select>
+          {showSpecialtyOtherInput && (
+            <div className="mt-2">
+              <label htmlFor="specialty-other" className="sr-only">
+                Custom specialty
+              </label>
+              <input
+                id="specialty-other"
+                type="text"
+                value={form.specialty ?? ""}
+                onChange={(e) => handleFormChange((p) => ({ ...p, specialty: e.target.value }))}
+                maxLength={200}
+                placeholder="Type your specialty"
+                className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                aria-describedby="specialty-other-hint"
+              />
+              <p id="specialty-other-hint" className="mt-1 text-xs text-gray-500">
+                Saved as typed. Use this if your specialty is not in the list.
+              </p>
+            </div>
+          )}
         </div>
         <div>
           <FieldLabel htmlFor="address_summary" tooltip="Short address or location description for patients.">
