@@ -113,24 +113,24 @@ function computeFollowUpFinalDisplay(
 function FollowUpDiscountFieldsCompact({
   serviceId,
   modalityKey,
-  label,
   listPriceMain,
   draft,
   onChange,
+  isFollowUpSyncSource,
+  onFollowUpSyncToggle,
 }: {
   serviceId: string;
   modalityKey: string;
-  label: string;
   listPriceMain: string;
   draft: ModalityFollowUpDiscountDraft;
   onChange: (next: ModalityFollowUpDiscountDraft) => void;
+  isFollowUpSyncSource: boolean;
+  onFollowUpSyncToggle: (checked: boolean) => void;
 }) {
   const prefix = `${serviceId}-${modalityKey}`;
   const dt = draft.discount_type;
   const showPercentFlatRow = dt === "percent" || dt === "flat_off";
   const showFixedRow = dt === "fixed_price";
-  /** Middle + final price only for % off and amount off */
-  const showValueAndFinal = showPercentFlatRow;
 
   const middleLabel =
     dt === "percent" ? "% off list" : dt === "flat_off" ? "Amount off" : "Follow-up price";
@@ -164,15 +164,27 @@ function FollowUpDiscountFieldsCompact({
 
   return (
     <div className="mt-1.5 rounded-md border border-gray-100 bg-gray-50/80 px-1.5 py-1.5">
-      <label className="flex cursor-pointer items-center gap-2 text-[11px] font-medium leading-tight text-gray-700">
-        <input
-          type="checkbox"
-          checked={draft.followUpDiscountEnabled}
-          onChange={(e) => onChange({ ...draft, followUpDiscountEnabled: e.target.checked })}
-          className="rounded border-gray-300"
-        />
-        <span>Follow-up · {label}</span>
-      </label>
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+        <label className="flex min-w-0 cursor-pointer items-center gap-2 text-[11px] font-medium leading-tight text-gray-700">
+          <input
+            type="checkbox"
+            checked={draft.followUpDiscountEnabled}
+            onChange={(e) => onChange({ ...draft, followUpDiscountEnabled: e.target.checked })}
+            className="rounded border-gray-300"
+          />
+          <span>Follow ups</span>
+        </label>
+        <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[10px] text-gray-600">
+          <input
+            type="checkbox"
+            checked={isFollowUpSyncSource}
+            onChange={(e) => onFollowUpSyncToggle(e.target.checked)}
+            className="rounded border-gray-300"
+            title="Copy these follow-up rules to all other enabled channels"
+          />
+          <span className="whitespace-nowrap">Same for all</span>
+        </label>
+      </div>
 
       {draft.followUpDiscountEnabled && (
         <div className="mt-1.5 space-y-2 rounded border border-dashed border-gray-200 bg-white px-1.5 py-2">
@@ -288,8 +300,10 @@ function ModalityColumn({
   fuDraft,
   fuField,
   services,
-  syncPrice,
-  syncFollowUp,
+  priceSyncSource,
+  followUpSyncSource,
+  onSetPriceSyncSource,
+  onSetFollowUpSyncSource,
   onServicesChange,
 }: {
   serviceId: string;
@@ -301,10 +315,35 @@ function ModalityColumn({
   fuDraft: ModalityFollowUpDiscountDraft;
   fuField: FollowUpField;
   services: ServiceOfferingDraft[];
-  syncPrice: boolean;
-  syncFollowUp: boolean;
+  priceSyncSource: ModalityKey | null;
+  followUpSyncSource: ModalityKey | null;
+  onSetPriceSyncSource: (next: ModalityKey | null) => void;
+  onSetFollowUpSyncSource: (next: ModalityKey | null) => void;
   onServicesChange: (next: ServiceOfferingDraft[]) => void;
 }) {
+  const isPriceSyncSource = priceSyncSource === modalityKey;
+  const isFollowUpSyncSource = followUpSyncSource === modalityKey;
+
+  const handlePriceSyncToggle = (checked: boolean) => {
+    if (checked) {
+      onSetPriceSyncSource(modalityKey);
+      onServicesChange(applyPricePatch(services, serviceId, priceField, price, true));
+    } else if (isPriceSyncSource) {
+      onSetPriceSyncSource(null);
+    }
+  };
+
+  const handleFollowUpSyncToggle = (checked: boolean) => {
+    if (checked) {
+      onSetFollowUpSyncSource(modalityKey);
+      onServicesChange(
+        applyFollowUpPatch(services, serviceId, fuField, cloneFollowUpDraft(fuDraft), true)
+      );
+    } else if (isFollowUpSyncSource) {
+      onSetFollowUpSyncSource(null);
+    }
+  };
+
   return (
     <div
       className={`flex h-full min-h-0 min-w-0 flex-col rounded-md border border-gray-200 bg-white p-2 shadow-sm ${
@@ -317,6 +356,10 @@ function ModalityColumn({
           checked={enabled}
           onChange={(e) => {
             const on = e.target.checked;
+            if (!on) {
+              if (priceSyncSource === modalityKey) onSetPriceSyncSource(null);
+              if (followUpSyncSource === modalityKey) onSetFollowUpSyncSource(null);
+            }
             onServicesChange(
               updateService(services, serviceId, {
                 [`${modalityKey}Enabled`]: on,
@@ -331,8 +374,20 @@ function ModalityColumn({
 
       <div className="mt-2 min-h-[2.5rem] shrink-0">
         {enabled ? (
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[10px] text-gray-500">Price</span>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center justify-between gap-x-2 gap-y-0.5">
+              <span className="text-sm font-medium text-gray-700">Price</span>
+              <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[10px] text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={isPriceSyncSource}
+                  onChange={(e) => handlePriceSyncToggle(e.target.checked)}
+                  className="rounded border-gray-300"
+                  title="Use this channel’s list price for all other enabled channels"
+                />
+                <span className="whitespace-nowrap">Same for all</span>
+              </label>
+            </div>
             <input
               id={`${modalityKey}-price-${serviceId}`}
               type="number"
@@ -341,7 +396,7 @@ function ModalityColumn({
               value={price}
               onChange={(e) =>
                 onServicesChange(
-                  applyPricePatch(services, serviceId, priceField, e.target.value, syncPrice)
+                  applyPricePatch(services, serviceId, priceField, e.target.value, isPriceSyncSource)
                 )
               }
               placeholder="0"
@@ -358,12 +413,15 @@ function ModalityColumn({
           <FollowUpDiscountFieldsCompact
             serviceId={serviceId}
             modalityKey={modalityKey}
-            label={columnTitle}
             listPriceMain={price}
             draft={fuDraft}
             onChange={(next) =>
-              onServicesChange(applyFollowUpPatch(services, serviceId, fuField, next, syncFollowUp))
+              onServicesChange(
+                applyFollowUpPatch(services, serviceId, fuField, next, isFollowUpSyncSource)
+              )
             }
+            isFollowUpSyncSource={isFollowUpSyncSource}
+            onFollowUpSyncToggle={handleFollowUpSyncToggle}
           />
         </div>
       )}
@@ -372,8 +430,30 @@ function ModalityColumn({
 }
 
 export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
-  const [priceSyncById, setPriceSyncById] = useState<Record<string, boolean>>({});
-  const [followUpSyncById, setFollowUpSyncById] = useState<Record<string, boolean>>({});
+  /** Which channel is the “source” for list-price sync (only that column’s edits propagate). */
+  const [priceSyncSourceById, setPriceSyncSourceById] = useState<Record<string, ModalityKey>>({});
+  /** Which channel is the “source” for follow-up sync. */
+  const [followUpSyncSourceById, setFollowUpSyncSourceById] = useState<Record<string, ModalityKey>>(
+    {}
+  );
+
+  const setPriceSyncSourceForRow = (rowId: string, next: ModalityKey | null) => {
+    setPriceSyncSourceById((prev) => {
+      const n = { ...prev };
+      if (next === null) delete n[rowId];
+      else n[rowId] = next;
+      return n;
+    });
+  };
+
+  const setFollowUpSyncSourceForRow = (rowId: string, next: ModalityKey | null) => {
+    setFollowUpSyncSourceById((prev) => {
+      const n = { ...prev };
+      if (next === null) delete n[rowId];
+      else n[rowId] = next;
+      return n;
+    });
+  };
 
   const removeService = (id: string) => {
     if (
@@ -383,12 +463,12 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
       return;
     }
     onServicesChange(services.filter((s) => s.id !== id));
-    setPriceSyncById((prev) => {
+    setPriceSyncSourceById((prev) => {
       const n = { ...prev };
       delete n[id];
       return n;
     });
-    setFollowUpSyncById((prev) => {
+    setFollowUpSyncSourceById((prev) => {
       const n = { ...prev };
       delete n[id];
       return n;
@@ -423,8 +503,8 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
 
         <ul className="mt-3 space-y-3">
           {services.map((s, idx) => {
-            const syncPrice = !!priceSyncById[s.id];
-            const syncFollowUp = !!followUpSyncById[s.id];
+            const priceSyncSource = priceSyncSourceById[s.id] ?? null;
+            const followUpSyncSource = followUpSyncSourceById[s.id] ?? null;
 
             return (
               <li
@@ -499,34 +579,6 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                     aria-label="Channels and prices"
                     className="order-4 flex h-full min-h-0 min-w-0 flex-col border-0 p-0 lg:order-none lg:col-start-2 lg:row-start-2"
                   >
-                    <div className="mb-2 flex flex-col gap-2 rounded-md border border-gray-100 bg-gray-50/80 px-2 py-2 sm:flex-row sm:flex-wrap sm:items-center">
-                      <label className="flex cursor-pointer items-center gap-2 text-xs text-gray-800">
-                        <input
-                          type="checkbox"
-                          checked={syncPrice}
-                          onChange={(e) =>
-                            setPriceSyncById((prev) => ({ ...prev, [s.id]: e.target.checked }))
-                          }
-                          className="rounded border-gray-300"
-                        />
-                        <span>Same list price for all enabled channels</span>
-                      </label>
-                      <label className="flex cursor-pointer items-center gap-2 text-xs text-gray-800">
-                        <input
-                          type="checkbox"
-                          checked={syncFollowUp}
-                          onChange={(e) =>
-                            setFollowUpSyncById((prev) => ({ ...prev, [s.id]: e.target.checked }))
-                          }
-                          className="rounded border-gray-300"
-                        />
-                        <span>Same follow-up rules for all enabled channels</span>
-                      </label>
-                      <p className="w-full text-[10px] leading-snug text-gray-500">
-                        When checked, editing one channel updates the others (enabled channels only).
-                      </p>
-                    </div>
-
                     <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-3 md:grid-cols-3 md:gap-2 md:items-stretch">
                       <ModalityColumn
                         serviceId={s.id}
@@ -538,8 +590,10 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                         fuDraft={s.textFollowUp}
                         fuField="textFollowUp"
                         services={services}
-                        syncPrice={syncPrice}
-                        syncFollowUp={syncFollowUp}
+                        priceSyncSource={priceSyncSource}
+                        followUpSyncSource={followUpSyncSource}
+                        onSetPriceSyncSource={(next) => setPriceSyncSourceForRow(s.id, next)}
+                        onSetFollowUpSyncSource={(next) => setFollowUpSyncSourceForRow(s.id, next)}
                         onServicesChange={onServicesChange}
                       />
                       <ModalityColumn
@@ -552,8 +606,10 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                         fuDraft={s.voiceFollowUp}
                         fuField="voiceFollowUp"
                         services={services}
-                        syncPrice={syncPrice}
-                        syncFollowUp={syncFollowUp}
+                        priceSyncSource={priceSyncSource}
+                        followUpSyncSource={followUpSyncSource}
+                        onSetPriceSyncSource={(next) => setPriceSyncSourceForRow(s.id, next)}
+                        onSetFollowUpSyncSource={(next) => setFollowUpSyncSourceForRow(s.id, next)}
                         onServicesChange={onServicesChange}
                       />
                       <ModalityColumn
@@ -566,8 +622,10 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                         fuDraft={s.videoFollowUp}
                         fuField="videoFollowUp"
                         services={services}
-                        syncPrice={syncPrice}
-                        syncFollowUp={syncFollowUp}
+                        priceSyncSource={priceSyncSource}
+                        followUpSyncSource={followUpSyncSource}
+                        onSetPriceSyncSource={(next) => setPriceSyncSourceForRow(s.id, next)}
+                        onSetFollowUpSyncSource={(next) => setFollowUpSyncSourceForRow(s.id, next)}
                         onServicesChange={onServicesChange}
                       />
                     </div>
