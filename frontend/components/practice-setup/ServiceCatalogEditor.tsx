@@ -1,6 +1,5 @@
 "use client";
 
-import { useCallback, useState } from "react";
 import { FieldLabel } from "@/components/ui/FieldLabel";
 import type {
   DiscountTypeOption,
@@ -32,17 +31,50 @@ function updateService(
   return services.map((si) => (si.id === id ? { ...si, ...patch } : si));
 }
 
-/** Compact follow-up fields: one dense block inside <details> (fits narrow columns). */
+/** Preview follow-up price in main currency from list price + discount (matches backend applyFollowUpDiscount logic). */
+function computeFollowUpFinalDisplay(
+  listMainStr: string,
+  dt: DiscountTypeOption,
+  discountValueStr: string
+): string {
+  const list = parseFloat(String(listMainStr).trim());
+  if (!Number.isFinite(list) || list < 0) {
+    return "—";
+  }
+  const vRaw = parseFloat(String(discountValueStr).trim());
+  const v = Number.isFinite(vRaw) ? vRaw : 0;
+  switch (dt) {
+    case "none":
+      return list.toFixed(2);
+    case "free":
+      return (0).toFixed(2);
+    case "percent": {
+      const pct = Math.min(100, Math.max(0, v));
+      return Math.max(0, (list * (100 - pct)) / 100).toFixed(2);
+    }
+    case "flat_off":
+      return Math.max(0, list - v).toFixed(2);
+    case "fixed_price":
+      return Math.max(0, v).toFixed(2);
+    default:
+      return "—";
+  }
+}
+
+/** Follow-up policy fields: always expanded below price; no &lt;details&gt;. */
 function FollowUpDiscountFieldsCompact({
   serviceId,
   modalityKey,
   label,
+  listPriceMain,
   draft,
   onChange,
 }: {
   serviceId: string;
   modalityKey: string;
   label: string;
+  /** Channel list price (main currency) for final-price preview */
+  listPriceMain: string;
   draft: ModalityFollowUpDiscountDraft;
   onChange: (next: ModalityFollowUpDiscountDraft) => void;
 }) {
@@ -51,6 +83,21 @@ function FollowUpDiscountFieldsCompact({
     draft.discount_type === "percent" ||
     draft.discount_type === "flat_off" ||
     draft.discount_type === "fixed_price";
+
+  const middleLabel =
+    draft.discount_type === "percent"
+      ? "% off list"
+      : draft.discount_type === "flat_off"
+        ? "Amount off"
+        : draft.discount_type === "fixed_price"
+          ? "Follow-up price"
+          : "—";
+
+  const finalDisplay = computeFollowUpFinalDisplay(
+    listPriceMain,
+    draft.discount_type,
+    draft.discount_value
+  );
 
   return (
     <div className="mt-1.5 rounded-md border border-gray-100 bg-gray-50/80 px-1.5 py-1.5">
@@ -65,57 +112,61 @@ function FollowUpDiscountFieldsCompact({
       </label>
 
       {draft.followUpDiscountEnabled && (
-        <details className="group mt-1.5 rounded border border-dashed border-gray-200 bg-white px-1.5 py-1">
-          <summary className="cursor-pointer select-none text-[11px] font-medium text-blue-700 hover:text-blue-900">
-            Rules
-          </summary>
-          <div className="mt-2 flex max-h-[min(50vh,260px)] flex-col gap-2 overflow-y-auto overscroll-contain pb-1">
-            <div className="flex flex-wrap gap-2">
-              <div className="flex flex-col gap-0.5">
-                <span
-                  className="text-[10px] font-medium uppercase tracking-wide text-gray-500"
-                  title="Maximum discounted follow-up visits on this channel after the index visit"
-                >
-                  Max
-                </span>
-                <input
-                  id={`${prefix}-fmax`}
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={draft.max_followups}
-                  onChange={(e) => onChange({ ...draft, max_followups: e.target.value })}
-                  className="w-full min-w-0 rounded border border-gray-300 px-1.5 py-1 text-sm tabular-nums sm:w-14"
-                />
-              </div>
-              <div className="flex flex-col gap-0.5">
-                <span
-                  className="text-[10px] font-medium uppercase tracking-wide text-gray-500"
-                  title="Days after index visit when follow-ups qualify"
-                >
-                  Days
-                </span>
-                <input
-                  id={`${prefix}-fwin`}
-                  type="number"
-                  min={1}
-                  max={3650}
-                  value={draft.eligibility_window_days}
-                  onChange={(e) => onChange({ ...draft, eligibility_window_days: e.target.value })}
-                  className="w-full min-w-0 rounded border border-gray-300 px-1.5 py-1 text-sm tabular-nums sm:w-14"
-                />
-              </div>
+        <div className="mt-1.5 space-y-2 rounded border border-dashed border-gray-200 bg-white px-1.5 py-2">
+          {/* Row 1: max visits + eligibility window */}
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="min-w-0">
+              <FieldLabel
+                htmlFor={`${prefix}-fmax`}
+                tooltip="Maximum discounted follow-up visits on this channel after the index visit."
+              >
+                Max visits
+              </FieldLabel>
+              <input
+                id={`${prefix}-fmax`}
+                type="number"
+                min={0}
+                max={100}
+                value={draft.max_followups}
+                onChange={(e) => onChange({ ...draft, max_followups: e.target.value })}
+                className="mt-0.5 w-full min-w-0 rounded border border-gray-300 px-1.5 py-1 text-sm tabular-nums"
+              />
             </div>
-            <div className="flex min-w-0 flex-col gap-0.5">
-              <span className="text-[10px] font-medium uppercase tracking-wide text-gray-500">Discount</span>
+            <div className="min-w-0">
+              <FieldLabel
+                htmlFor={`${prefix}-fwin`}
+                tooltip="Days after the index visit during which follow-ups on this channel still qualify."
+              >
+                Eligibility (days)
+              </FieldLabel>
+              <input
+                id={`${prefix}-fwin`}
+                type="number"
+                min={1}
+                max={3650}
+                value={draft.eligibility_window_days}
+                onChange={(e) => onChange({ ...draft, eligibility_window_days: e.target.value })}
+                className="mt-0.5 w-full min-w-0 rounded border border-gray-300 px-1.5 py-1 text-sm tabular-nums"
+              />
+            </div>
+          </div>
+
+          {/* Row 2: discount type | value | final price (Option A) */}
+          <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
+            <div className="min-w-0">
+              <FieldLabel
+                htmlFor={`${prefix}-dtype`}
+                tooltip="How follow-up price is derived from this channel list price."
+              >
+                Discount
+              </FieldLabel>
               <select
                 id={`${prefix}-dtype`}
                 value={draft.discount_type}
-                title="How follow-up price is derived from list price"
                 onChange={(e) =>
                   onChange({ ...draft, discount_type: e.target.value as DiscountTypeOption })
                 }
-                className="w-full min-w-0 rounded border border-gray-300 px-1 py-1 text-[11px]"
+                className="mt-0.5 w-full min-w-0 rounded border border-gray-300 px-1 py-1.5 text-[11px]"
               >
                 <option value="percent">% off list</option>
                 <option value="flat_off">Amount off</option>
@@ -124,29 +175,55 @@ function FollowUpDiscountFieldsCompact({
                 <option value="none">No discount</option>
               </select>
             </div>
-            {needsValue && (
-              <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] font-medium uppercase tracking-wide text-gray-500">
-                  {draft.discount_type === "percent"
-                    ? "% off"
-                    : draft.discount_type === "flat_off"
-                      ? "Amount"
-                      : "Price"}
-                </span>
-                <input
-                  id={`${prefix}-dval`}
-                  type="number"
-                  min={0}
-                  step={draft.discount_type === "percent" ? 1 : "0.01"}
-                  max={draft.discount_type === "percent" ? 100 : undefined}
-                  value={draft.discount_value}
-                  onChange={(e) => onChange({ ...draft, discount_value: e.target.value })}
-                  className="w-full rounded border border-gray-300 px-1.5 py-1 text-sm tabular-nums"
-                />
-              </div>
-            )}
+            <div className="min-w-0">
+              {needsValue ? (
+                <>
+                  <FieldLabel htmlFor={`${prefix}-dval`} tooltip={`${middleLabel} (main currency).`}>
+                    {middleLabel}
+                  </FieldLabel>
+                  <input
+                    id={`${prefix}-dval`}
+                    type="number"
+                    min={0}
+                    step={draft.discount_type === "percent" ? 1 : "0.01"}
+                    max={draft.discount_type === "percent" ? 100 : undefined}
+                    value={draft.discount_value}
+                    onChange={(e) => onChange({ ...draft, discount_value: e.target.value })}
+                    className="mt-0.5 w-full min-w-0 rounded border border-gray-300 px-1.5 py-1 text-sm tabular-nums"
+                  />
+                </>
+              ) : (
+                <>
+                  <FieldLabel htmlFor={`${prefix}-dval-na`} tooltip="No extra amount for this discount type.">
+                    Value
+                  </FieldLabel>
+                  <input
+                    id={`${prefix}-dval-na`}
+                    readOnly
+                    disabled
+                    value=""
+                    placeholder="—"
+                    className="mt-0.5 w-full cursor-not-allowed rounded border border-gray-200 bg-gray-50 px-1.5 py-1 text-sm text-gray-400"
+                  />
+                </>
+              )}
+            </div>
+            <div className="min-w-0">
+              <FieldLabel
+                htmlFor={`${prefix}-final`}
+                tooltip="Estimated follow-up price from this channel’s list price (preview only)."
+              >
+                Final price
+              </FieldLabel>
+              <input
+                id={`${prefix}-final`}
+                readOnly
+                value={finalDisplay}
+                className="mt-0.5 w-full min-w-0 rounded border border-gray-200 bg-gray-50 px-1.5 py-1 text-sm tabular-nums text-gray-800"
+              />
+            </div>
           </div>
-        </details>
+        </div>
       )}
     </div>
   );
@@ -200,7 +277,7 @@ function ModalityColumn({
         <span>{columnTitle}</span>
       </label>
 
-      <div className="mt-2 min-h-[2.5rem]">
+      <div className="mt-2 min-h-[2.5rem] shrink-0">
         {enabled ? (
           <div className="flex flex-col gap-0.5">
             <span className="text-[10px] text-gray-500">Price</span>
@@ -226,15 +303,13 @@ function ModalityColumn({
         )}
       </div>
 
-      {/* Fills leftover height so column cards share one row height; follow-up sits above card bottom */}
-      <div className="min-h-1 flex-1 shrink-0" aria-hidden="true" />
-
       {enabled && (
         <div className="shrink-0">
           <FollowUpDiscountFieldsCompact
             serviceId={serviceId}
             modalityKey={modalityKey}
             label={columnTitle}
+            listPriceMain={price}
             draft={fuDraft}
             onChange={(next) =>
               onServicesChange(
@@ -251,12 +326,6 @@ function ModalityColumn({
 }
 
 export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
-  const [descOpenById, setDescOpen] = useState<Record<string, boolean>>({});
-
-  const setDescExpanded = useCallback((id: string, open: boolean) => {
-    setDescOpen((prev) => ({ ...prev, [id]: open }));
-  }, []);
-
   const removeService = (id: string) => {
     if (
       typeof window !== "undefined" &&
@@ -265,11 +334,6 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
       return;
     }
     onServicesChange(services.filter((s) => s.id !== id));
-    setDescOpen((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
   };
 
   return (
@@ -300,9 +364,6 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
 
         <ul className="mt-3 space-y-3">
           {services.map((s, idx) => {
-            const hasDesc = s.description.trim().length > 0;
-            const descExpanded = descOpenById[s.id] ?? false;
-
             return (
               <li
                 key={s.id}
@@ -323,9 +384,9 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
 
                 {/*
                   Mobile (flex): label → name + description → channels line → grid.
-                  lg (grid): row1 [label | channels], row2 [name + description | grid].
+                  lg (grid): row1 [label | channels], row2 [name + description | grid]; items stretch so description grows.
                 */}
-                <div className="mt-3 flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,20rem)_1fr] lg:gap-x-6 lg:gap-y-2">
+                <div className="mt-3 flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,20rem)_1fr] lg:items-stretch lg:gap-x-6 lg:gap-y-2">
                   <div className="order-1 lg:order-none lg:col-start-1 lg:row-start-1">
                     <FieldLabel htmlFor={`svc-label-${s.id}`} tooltip="Shown to you and in patient-facing copy.">
                       Service name
@@ -342,7 +403,7 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                     </p>
                   </div>
 
-                  <div className="order-2 flex min-w-0 flex-col gap-3 self-start lg:order-none lg:col-start-1 lg:row-start-2">
+                  <div className="order-2 flex h-full min-h-0 min-w-0 flex-col gap-3 lg:order-none lg:col-start-1 lg:row-start-2">
                     <textarea
                       id={`svc-label-${s.id}`}
                       value={s.label}
@@ -354,67 +415,30 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                       maxLength={200}
                       wrap="soft"
                       placeholder="e.g. General checkup"
-                      className="mt-0.5 block w-full resize-y overflow-x-hidden rounded-md border border-gray-300 px-2.5 py-1.5 text-sm leading-snug"
+                      className="block w-full shrink-0 resize-y overflow-x-hidden rounded-md border border-gray-300 px-2.5 py-1.5 text-sm leading-snug"
                     />
 
-                    <div className="min-w-0 space-y-2">
-                      {!descExpanded && !hasDesc && (
-                        <button
-                          type="button"
-                          onClick={() => setDescExpanded(s.id, true)}
-                          className="text-xs font-medium text-blue-700 hover:text-blue-900"
-                        >
-                          + Add description
-                        </button>
-                      )}
-                      {!descExpanded && hasDesc && (
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="line-clamp-3 flex-1 text-xs text-gray-600" title={s.description}>
-                            {s.description}
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => setDescExpanded(s.id, true)}
-                            className="shrink-0 text-xs font-medium text-blue-700 hover:text-blue-900"
-                          >
-                            Edit
-                          </button>
-                        </div>
-                      )}
-                      {descExpanded && (
-                        <>
-                          <div className="flex items-center justify-between gap-2">
-                            <FieldLabel htmlFor={`svc-desc-${s.id}`} tooltip="Optional (max 500 characters).">
-                              Description
-                            </FieldLabel>
-                            <button
-                              type="button"
-                              onClick={() => setDescExpanded(s.id, false)}
-                              className="text-xs text-gray-500 hover:text-gray-800"
-                            >
-                              Collapse
-                            </button>
-                          </div>
-                          <textarea
-                            id={`svc-desc-${s.id}`}
-                            value={s.description}
-                            onChange={(e) =>
-                              onServicesChange(updateService(services, s.id, { description: e.target.value }))
-                            }
-                            rows={7}
-                            maxLength={500}
-                            wrap="soft"
-                            className="mt-0.5 min-h-[11rem] w-full resize-y overflow-x-hidden rounded-md border border-gray-300 px-2.5 py-1.5 text-sm leading-snug"
-                            placeholder="Optional"
-                          />
-                        </>
-                      )}
+                    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                      <FieldLabel htmlFor={`svc-desc-${s.id}`} tooltip="Optional (max 500 characters).">
+                        Description
+                      </FieldLabel>
+                      <textarea
+                        id={`svc-desc-${s.id}`}
+                        value={s.description}
+                        onChange={(e) =>
+                          onServicesChange(updateService(services, s.id, { description: e.target.value }))
+                        }
+                        maxLength={500}
+                        wrap="soft"
+                        placeholder="Optional"
+                        className="mt-0.5 min-h-[12rem] w-full flex-1 resize-y overflow-x-hidden rounded-md border border-gray-300 px-2.5 py-1.5 text-sm leading-snug lg:min-h-0"
+                      />
                     </div>
                   </div>
 
                   <fieldset
                     aria-label="Channels and prices"
-                    className="order-4 flex min-h-0 min-w-0 flex-col border-0 p-0 lg:order-none lg:col-start-2 lg:row-start-2"
+                    className="order-4 flex h-full min-h-0 min-w-0 flex-col border-0 p-0 lg:order-none lg:col-start-2 lg:row-start-2"
                   >
                     <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-3 md:grid-cols-3 md:gap-2 md:items-stretch">
                       <ModalityColumn
