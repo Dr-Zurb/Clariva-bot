@@ -61,6 +61,7 @@ function baseDoctorRow(overrides: Partial<DoctorSettingsRow> = {}): DoctorSettin
     address_summary: null,
     consultation_types: null,
     service_offerings_json: null,
+    service_catalog_templates_json: { templates: [] },
     default_notes: null,
     payout_schedule: null,
     payout_minor: null,

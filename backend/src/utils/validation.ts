@@ -11,7 +11,10 @@
 import { z } from 'zod';
 import { ValidationError } from './errors';
 import { env } from '../config/env';
-import { serviceCatalogIncomingSchema } from './service-catalog-schema';
+import {
+  serviceCatalogIncomingSchema,
+  serviceCatalogTemplatesJsonSchema,
+} from './service-catalog-schema';
 
 // ============================================================================
 // Constants (RECIPES: E.164-like phone)
@@ -735,6 +738,10 @@ export const patchDoctorSettingsSchema = z
     consultation_types: z.string().max(200).trim().nullable().optional(),
     /** SFU-01 / SFU-11: catalog v1; service_id optional until merge */
     service_offerings_json: z.union([serviceCatalogIncomingSchema, z.null()]).optional(),
+    /** SFU-14: user-named template library */
+    service_catalog_templates_json: z
+      .union([serviceCatalogTemplatesJsonSchema, z.null()])
+      .optional(),
     default_notes: z.string().max(1000).trim().nullable().optional(),
     appointment_fee_minor: z.number().int().min(0).nullable().optional(),
     appointment_fee_currency: z.string().length(3).nullable().optional(),

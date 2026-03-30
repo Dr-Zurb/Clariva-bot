@@ -20,6 +20,8 @@ Execute in **order** below; later tasks assume earlier contracts (types, DB, quo
 | 10a | [e-task-sfu-10a](./e-task-sfu-10a-remove-consultation-types-ui-remediation.md) | sfu-10 | remed. |
 | 11 | [e-task-sfu-11](./e-task-sfu-11-catalog-service-id-uuid-episode-linkage.md) | sfu-01–07 | 3–6 d |
 | 12 | [e-task-sfu-12](./e-task-sfu-12-per-modality-follow-up-policies.md) | sfu-01, 03, 04, 06/11 | 4–8 d |
+| 13 | [e-task-sfu-13](./e-task-sfu-13-starter-service-templates-by-specialty.md) | sfu-01, 06, 12 | 3–6 d |
+| 14 | [e-task-sfu-14](./e-task-sfu-14-user-saved-service-catalog-templates.md) | sfu-01, 06; sfu-13 optional (shared Apply UX) | 2–5 d |
 
 **Code anchors (audit 2026-03-28):**
 
@@ -31,4 +33,4 @@ Execute in **order** below; later tasks assume earlier contracts (types, DB, quo
 
 ---
 
-**Last updated:** 2026-03-29 (SFU-12 per-modality follow-up task added)
+**Last updated:** 2026-03-29 (SFU-13 starter templates + SFU-14 user-saved templates added)

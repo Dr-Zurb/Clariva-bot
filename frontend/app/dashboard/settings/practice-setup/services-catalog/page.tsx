@@ -2,12 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ServiceCatalogEditor } from "@/components/practice-setup/ServiceCatalogEditor";
+import { StarterTemplatesModal } from "@/components/practice-setup/StarterTemplatesModal";
+import { UserSavedTemplatesModal } from "@/components/practice-setup/UserSavedTemplatesModal";
 import { SaveButton } from "@/components/ui/SaveButton";
+import { STARTER_SERVICE_TEMPLATES } from "@/lib/service-catalog-starter-templates";
 import { getDoctorSettings, patchDoctorSettings } from "@/lib/api";
 import { catalogToServiceDrafts, draftsToCatalogOrNull, type ServiceOfferingDraft } from "@/lib/service-catalog-drafts";
 import { safeParseServiceCatalogV1 } from "@/lib/service-catalog-schema";
 import { createClient } from "@/lib/supabase/client";
-import type { DoctorSettings, PatchDoctorSettingsPayload } from "@/types/doctor-settings";
+import type {
+  DoctorSettings,
+  PatchDoctorSettingsPayload,
+  ServiceCatalogTemplatesJsonV1,
+} from "@/types/doctor-settings";
 
 function snapshot(services: ServiceOfferingDraft[]): string {
   return JSON.stringify({ services });
@@ -23,6 +30,9 @@ export default function ServicesCatalogPage() {
   const [error, setError] = useState<string | null>(null);
   const [clientError, setClientError] = useState<string | null>(null);
   const [lastSaved, setLastSaved] = useState<string>("");
+  const [starterModalOpen, setStarterModalOpen] = useState(false);
+  const [userTemplatesModalOpen, setUserTemplatesModalOpen] = useState(false);
+  const [userTemplatesBusy, setUserTemplatesBusy] = useState(false);
 
   const fetchSettings = useCallback(async () => {
     const supabase = createClient();
@@ -65,6 +75,34 @@ export default function ServicesCatalogPage() {
   );
 
   const hasStructuredCatalog = Boolean(settings?.service_offerings_json);
+
+  const practiceSpecialty = settings?.specialty?.trim() ?? "";
+  const suggestedStarter =
+    practiceSpecialty &&
+    STARTER_SERVICE_TEMPLATES.find((t) => t.specialtyLabel === practiceSpecialty);
+
+  const userSavedTemplates = settings?.service_catalog_templates_json?.templates ?? [];
+
+  const handleTemplatesLibraryChange = async (next: ServiceCatalogTemplatesJsonV1) => {
+    const supabase = createClient();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) throw new Error("Not signed in");
+    setUserTemplatesBusy(true);
+    setClientError(null);
+    try {
+      const res = await patchDoctorSettings(token, { service_catalog_templates_json: next });
+      setSettings(res.data.settings);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Could not update saved templates.";
+      setClientError(msg);
+      throw err;
+    } finally {
+      setUserTemplatesBusy(false);
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -175,6 +213,63 @@ export default function ServicesCatalogPage() {
       </p>
 
       <form onSubmit={handleSave} className="mt-6 space-y-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+          <button
+            type="button"
+            onClick={() => setUserTemplatesModalOpen(true)}
+            className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-400"
+          >
+            My templates
+          </button>
+          <button
+            type="button"
+            onClick={() => setStarterModalOpen(true)}
+            className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-900 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            Apply starter template
+          </button>
+        </div>
+        {suggestedStarter && (
+          <p className="text-sm text-gray-600">
+            <span className="font-medium text-gray-800">Suggested for your specialty ({practiceSpecialty}):</span>{" "}
+            {suggestedStarter.title}. Open{" "}
+            <button
+              type="button"
+              className="font-medium text-blue-700 underline hover:text-blue-900"
+              onClick={() => setStarterModalOpen(true)}
+            >
+              starter templates
+            </button>{" "}
+            to apply.
+          </p>
+        )}
+
+        <StarterTemplatesModal
+          open={starterModalOpen}
+          onClose={() => setStarterModalOpen(false)}
+          currentServicesCount={services.length}
+          onApply={(next) => {
+            setServices(next);
+            setSaveSuccess(false);
+            setClientError(null);
+          }}
+        />
+
+        <UserSavedTemplatesModal
+          open={userTemplatesModalOpen}
+          onClose={() => setUserTemplatesModalOpen(false)}
+          templates={userSavedTemplates}
+          currentServices={services}
+          currentServicesCount={services.length}
+          onApply={(next) => {
+            setServices(next);
+            setSaveSuccess(false);
+            setClientError(null);
+          }}
+          onTemplatesChange={handleTemplatesLibraryChange}
+          busy={userTemplatesBusy}
+        />
+
         <ServiceCatalogEditor
           services={services}
           onServicesChange={(next) => {

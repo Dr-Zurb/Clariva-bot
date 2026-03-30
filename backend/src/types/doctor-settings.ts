@@ -9,7 +9,10 @@
  * SFU-01 (migration 035): service_offerings_json — validated via service-catalog-schema (version 1).
  */
 
-import type { ServiceCatalogV1 } from '../utils/service-catalog-schema';
+import type {
+  ServiceCatalogTemplatesJsonV1,
+  ServiceCatalogV1,
+} from '../utils/service-catalog-schema';
 
 /** When doctor receives payouts. NULL = default weekly in payout service. */
 export type PayoutSchedule = 'per_appointment' | 'daily' | 'weekly' | 'monthly';
@@ -40,6 +43,11 @@ export interface DoctorSettingsRow {
    * DB may contain legacy invalid shapes — use `getActiveServiceCatalog` / `safeParseServiceCatalogV1FromDb` when reading.
    */
   service_offerings_json: ServiceCatalogV1 | null;
+  /**
+   * SFU-14: User-named catalogs. Omitted on legacy-shaped rows; API GET/PATCH responses include
+   * normalized `{ templates: [] }` after `normalizeDoctorSettingsApiRow`.
+   */
+  service_catalog_templates_json?: ServiceCatalogTemplatesJsonV1;
   default_notes: string | null;
   /** When doctor receives payouts. Migration 025. */
   payout_schedule: PayoutSchedule | null;

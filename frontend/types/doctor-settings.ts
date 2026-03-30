@@ -8,6 +8,22 @@ import type { ServiceCatalogV1 } from "@/lib/service-catalog-schema";
 /** OPD scheduling: fixed slots vs token queue (migration 028). */
 export type OpdMode = 'slot' | 'queue';
 
+/** SFU-14: one user-named snapshot (same `catalog` shape as live `service_offerings_json`). */
+export interface UserSavedServiceTemplateV1 {
+  id: string;
+  name: string;
+  specialty_tag?: string | null;
+  updated_at: string;
+  catalog: ServiceCatalogV1;
+}
+
+export interface ServiceCatalogTemplatesJsonV1 {
+  templates: UserSavedServiceTemplateV1[];
+}
+
+/** Max templates per doctor (backend `MAX_USER_SAVED_TEMPLATES`). */
+export const MAX_USER_SAVED_SERVICE_TEMPLATES = 20;
+
 export interface DoctorSettings {
   doctor_id: string;
   appointment_fee_minor: number | null;
@@ -28,6 +44,8 @@ export interface DoctorSettings {
   consultation_types: string | null;
   /** SFU-01/06: structured teleconsult pricing; null/omitted = legacy flat fee only. */
   service_offerings_json?: ServiceCatalogV1 | null;
+  /** SFU-14: user-named catalog templates; omitted or empty until saved. */
+  service_catalog_templates_json?: ServiceCatalogTemplatesJsonV1 | null;
   default_notes: string | null;
   /** OPD mode (migration 028). Absent pre-migration — UI defaults to `slot`. */
   opd_mode?: OpdMode;
@@ -57,6 +75,7 @@ export type PatchDoctorSettingsPayload = Partial<{
   address_summary: string | null;
   consultation_types: string | null;
   service_offerings_json?: ServiceCatalogV1 | null;
+  service_catalog_templates_json?: ServiceCatalogTemplatesJsonV1 | null;
   default_notes: string | null;
   /** Appointment fee in smallest unit (paise INR, cents USD). e.g. 50000 = ₹500 */
   appointment_fee_minor: number | null;

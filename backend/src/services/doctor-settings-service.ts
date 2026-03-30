@@ -17,7 +17,9 @@ import { mergeServiceCatalogOnSave } from '../utils/service-catalog-normalize';
 import {
   hydrateServiceCatalogServiceIds,
   parseServiceCatalogIncoming,
+  parseServiceCatalogTemplatesJson,
   safeParseServiceCatalogV1FromDb,
+  serviceCatalogTemplatesJsonSchema,
   serviceCatalogV1Schema,
   type ServiceCatalogV1,
 } from '../utils/service-catalog-schema';
@@ -30,7 +32,7 @@ const SELECT_COLUMNS =
   'doctor_id, appointment_fee_minor, appointment_fee_currency, country, ' +
   'practice_name, timezone, slot_interval_minutes, max_advance_booking_days, min_advance_hours, business_hours_summary, ' +
   'cancellation_policy_hours, max_appointments_per_day, booking_buffer_minutes, ' +
-  'welcome_message, specialty, address_summary, consultation_types, service_offerings_json, default_notes, ' +
+  'welcome_message, specialty, address_summary, consultation_types, service_offerings_json, service_catalog_templates_json, default_notes, ' +
   'payout_schedule, payout_minor, razorpay_linked_account_id, ' +
   'opd_mode, opd_policies, ' +
   'instagram_receptionist_paused, instagram_receptionist_pause_message, ' +
@@ -56,6 +58,7 @@ const DEFAULT_SETTINGS: DoctorSettingsRow = {
   address_summary: null,
   consultation_types: null,
   service_offerings_json: null,
+  service_catalog_templates_json: { templates: [] },
   default_notes: null,
   payout_schedule: null,
   payout_minor: null,
@@ -90,7 +93,7 @@ export async function getDoctorSettings(doctorId: string): Promise<DoctorSetting
   if (!data) {
     return null;
   }
-  return normalizeServiceOfferingsInRow(data as unknown as DoctorSettingsRow);
+  return normalizeDoctorSettingsApiRow(data as unknown as DoctorSettingsRow);
 }
 
 /**
@@ -129,7 +132,7 @@ export async function getDoctorSettingsForUser(
   if (!data) {
     return { ...DEFAULT_SETTINGS, doctor_id: doctorId };
   }
-  return normalizeServiceOfferingsInRow(data as unknown as DoctorSettingsRow);
+  return normalizeDoctorSettingsApiRow(data as unknown as DoctorSettingsRow);
 }
 
 /** Valid slot interval range: 1–60 minutes. */
@@ -146,6 +149,20 @@ function normalizeServiceOfferingsInRow(row: DoctorSettingsRow): DoctorSettingsR
     return row;
   }
   return { ...row, service_offerings_json: c };
+}
+
+/** SFU-14: coerce DB JSON to validated shape or empty list. */
+function normalizeUserTemplatesInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as unknown as { service_catalog_templates_json?: unknown }).service_catalog_templates_json;
+  const parsed = parseServiceCatalogTemplatesJson(raw);
+  return {
+    ...row,
+    service_catalog_templates_json: parsed ?? { templates: [] },
+  };
+}
+
+function normalizeDoctorSettingsApiRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  return normalizeUserTemplatesInRow(normalizeServiceOfferingsInRow(row));
 }
 
 /** Payload for partial update of doctor settings. */
@@ -165,6 +182,10 @@ export interface UpdateDoctorSettingsPayload {
   consultation_types?: string | null;
   /** SFU-01 / SFU-11: structured catalog; merged + normalized before persist. */
   service_offerings_json?: ServiceCatalogV1 | null;
+  /** SFU-14: replace entire user template library, or null to clear. */
+  service_catalog_templates_json?:
+    | import('../utils/service-catalog-schema').ServiceCatalogTemplatesJsonV1
+    | null;
   default_notes?: string | null;
   /** Appointment fee in smallest unit (paise INR, cents USD). e.g. 50000 = ₹500 */
   appointment_fee_minor?: number | null;
@@ -318,6 +339,21 @@ export async function updateDoctorSettings(
     }
   }
 
+  if ('service_catalog_templates_json' in payload) {
+    if (payload.service_catalog_templates_json === null) {
+      updateData.service_catalog_templates_json = null;
+    } else {
+      const tpl = serviceCatalogTemplatesJsonSchema.safeParse(payload.service_catalog_templates_json);
+      if (!tpl.success) {
+        const first = tpl.error.issues[0];
+        throw new ValidationError(
+          first ? `${first.path.join('.')}: ${first.message}` : 'Invalid service_catalog_templates_json'
+        );
+      }
+      updateData.service_catalog_templates_json = tpl.data;
+    }
+  }
+
   if (Object.keys(updateData).length === 0) {
     const existing = await getDoctorSettingsForUser(doctorId, userId, correlationId);
     return existing;
@@ -381,5 +417,5 @@ export async function updateDoctorSettings(
     });
   }
 
-  return normalizeServiceOfferingsInRow(result);
+  return normalizeDoctorSettingsApiRow(result);
 }

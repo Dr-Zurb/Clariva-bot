@@ -117,4 +117,74 @@ describe('validatePatchDoctorSettings (e-task-6)', () => {
       })
     ).toThrow(ValidationError);
   });
+
+  it('accepts service_catalog_templates_json (SFU-14)', () => {
+    const result = validatePatchDoctorSettings({
+      service_catalog_templates_json: {
+        templates: [
+          {
+            id: 'b1000000-0000-4000-8000-000000000002',
+            name: 'My pack',
+            updated_at: '2026-01-01T00:00:00.000Z',
+            catalog: {
+              version: 1,
+              services: [
+                {
+                  service_id: 'a1000000-0000-4000-8000-000000000001',
+                  service_key: 'x',
+                  label: 'X',
+                  modalities: { video: { enabled: true, price_minor: 100 } },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    expect(result.service_catalog_templates_json?.templates).toHaveLength(1);
+  });
+
+  it('rejects duplicate user template ids (SFU-14)', () => {
+    const tid = 'b1000000-0000-4000-8000-000000000002';
+    expect(() =>
+      validatePatchDoctorSettings({
+        service_catalog_templates_json: {
+          templates: [
+            {
+              id: tid,
+              name: 'A',
+              updated_at: '2026-01-01T00:00:00.000Z',
+              catalog: {
+                version: 1,
+                services: [
+                  {
+                    service_id: 'a1000000-0000-4000-8000-000000000001',
+                    service_key: 'a',
+                    label: 'A',
+                    modalities: { video: { enabled: true, price_minor: 100 } },
+                  },
+                ],
+              },
+            },
+            {
+              id: tid,
+              name: 'B',
+              updated_at: '2026-01-01T00:00:00.000Z',
+              catalog: {
+                version: 1,
+                services: [
+                  {
+                    service_id: 'a2000000-0000-4000-8000-000000000003',
+                    service_key: 'b',
+                    label: 'B',
+                    modalities: { video: { enabled: true, price_minor: 100 } },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      })
+    ).toThrow(ValidationError);
+  });
 });

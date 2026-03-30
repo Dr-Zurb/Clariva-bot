@@ -39,6 +39,7 @@ const feeFixture = {
   address_summary: null,
   consultation_types: 'In-person ₹500, Video ₹400',
   service_offerings_json: null as typeof catalogFixture | null,
+  service_catalog_templates_json: { templates: [] },
   default_notes: null,
   payout_schedule: null,
   payout_minor: null,

@@ -187,6 +187,54 @@ export type FollowUpPolicyV1 = z.infer<typeof followUpPolicyV1Schema>;
 export type FollowUpDiscountTierV1 = z.infer<typeof followUpDiscountTierV1Schema>;
 export type ServiceModalitiesV1 = z.infer<typeof serviceModalitiesSchema>;
 
+/** SFU-14: max saved templates per doctor (doctor_settings.service_catalog_templates_json). */
+export const MAX_USER_SAVED_TEMPLATES = 20;
+
+/** One user-named snapshot; `catalog` is full ServiceCatalogV1. */
+export const userSavedServiceTemplateSchema = z
+  .object({
+    id: z.string().uuid(),
+    name: z.string().min(1).max(80).trim(),
+    specialty_tag: z.string().max(200).trim().nullable().optional(),
+    updated_at: z.string().max(50),
+    catalog: serviceCatalogV1Schema,
+  })
+  .strict();
+
+export const serviceCatalogTemplatesJsonSchema = z
+  .object({
+    templates: z.array(userSavedServiceTemplateSchema).max(MAX_USER_SAVED_TEMPLATES),
+  })
+  .strict()
+  .superRefine((data, ctx) => {
+    const ids = new Set<string>();
+    for (let i = 0; i < data.templates.length; i++) {
+      const id = data.templates[i]!.id;
+      if (ids.has(id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Duplicate template id',
+          path: ['templates', i, 'id'],
+        });
+      }
+      ids.add(id);
+    }
+  });
+
+export type UserSavedServiceTemplateV1 = z.infer<typeof userSavedServiceTemplateSchema>;
+export type ServiceCatalogTemplatesJsonV1 = z.infer<typeof serviceCatalogTemplatesJsonSchema>;
+
+/** Parse stored JSON; null if missing/invalid (callers may default to { templates: [] }). */
+export function parseServiceCatalogTemplatesJson(
+  raw: unknown
+): ServiceCatalogTemplatesJsonV1 | null {
+  if (raw === null || raw === undefined) {
+    return null;
+  }
+  const result = serviceCatalogTemplatesJsonSchema.safeParse(raw);
+  return result.success ? result.data : null;
+}
+
 export type ServiceCatalogIncoming = z.infer<typeof serviceCatalogIncomingSchema>;
 
 export function parseServiceCatalogIncoming(input: unknown): ServiceCatalogIncoming {
