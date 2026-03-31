@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ServiceCatalogEditor } from "@/components/practice-setup/ServiceCatalogEditor";
 import { ServiceCatalogTemplatesModal } from "@/components/practice-setup/ServiceCatalogTemplatesModal";
 import { SaveButton } from "@/components/ui/SaveButton";
-import { STARTER_SERVICE_TEMPLATES } from "@/lib/service-catalog-starter-templates";
 import { getDoctorSettings, patchDoctorSettings } from "@/lib/api";
 import { catalogToServiceDrafts, draftsToCatalogOrNull, type ServiceOfferingDraft } from "@/lib/service-catalog-drafts";
 import { safeParseServiceCatalogV1 } from "@/lib/service-catalog-schema";
@@ -73,11 +72,6 @@ export default function ServicesCatalogPage() {
   );
 
   const hasStructuredCatalog = Boolean(settings?.service_offerings_json);
-
-  const practiceSpecialty = settings?.specialty?.trim() ?? "";
-  const suggestedStarter =
-    practiceSpecialty &&
-    STARTER_SERVICE_TEMPLATES.find((t) => t.specialtyLabel === practiceSpecialty);
 
   const userSavedTemplates = settings?.service_catalog_templates_json?.templates ?? [];
 
@@ -217,28 +211,13 @@ export default function ServicesCatalogPage() {
             onClick={() => setTemplatesModalOpen(true)}
             className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-900 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
-            Template library
+            Saved templates
           </button>
         </div>
-        {suggestedStarter && (
-          <p className="text-sm text-gray-600">
-            <span className="font-medium text-gray-800">Suggested for your specialty ({practiceSpecialty}):</span>{" "}
-            {suggestedStarter.title}. Open{" "}
-            <button
-              type="button"
-              className="font-medium text-blue-700 underline hover:text-blue-900"
-              onClick={() => setTemplatesModalOpen(true)}
-            >
-              Template library
-            </button>{" "}
-            to apply.
-          </p>
-        )}
 
         <ServiceCatalogTemplatesModal
           open={templatesModalOpen}
           onClose={() => setTemplatesModalOpen(false)}
-          practiceSpecialty={practiceSpecialty}
           currentServices={services}
           currentServicesCount={services.length}
           onApplyCatalog={(next) => {

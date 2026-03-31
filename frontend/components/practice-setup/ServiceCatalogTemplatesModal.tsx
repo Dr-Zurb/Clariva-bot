@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   catalogToServiceDrafts,
   draftsToCatalogOrNull,
@@ -8,8 +8,6 @@ import {
 } from "@/lib/service-catalog-drafts";
 import { confirmReplaceServiceCatalogIfNeeded } from "@/lib/confirm-replace-service-catalog";
 import { safeParseServiceCatalogV1 } from "@/lib/service-catalog-schema";
-import { STARTER_SERVICE_TEMPLATES } from "@/lib/service-catalog-starter-templates";
-import type { ServiceStarterTemplate } from "@/lib/service-catalog-starter-templates";
 import {
   MAX_USER_SAVED_SERVICE_TEMPLATES,
   type ServiceCatalogTemplatesJsonV1,
@@ -19,8 +17,6 @@ import {
 type Props = {
   open: boolean;
   onClose: () => void;
-  /** From Practice Info; starters match `specialtyLabel` exactly. */
-  practiceSpecialty: string;
   currentServices: ServiceOfferingDraft[];
   currentServicesCount: number;
   onApplyCatalog: (drafts: ServiceOfferingDraft[]) => void;
@@ -32,7 +28,6 @@ type Props = {
 export function ServiceCatalogTemplatesModal({
   open,
   onClose,
-  practiceSpecialty,
   currentServices,
   currentServicesCount,
   onApplyCatalog,
@@ -47,15 +42,6 @@ export function ServiceCatalogTemplatesModal({
   const [newTag, setNewTag] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   const [savingNew, setSavingNew] = useState(false);
-
-  const specialtyTrimmed = practiceSpecialty.trim();
-  const startersForSpecialty = useMemo(
-    () =>
-      specialtyTrimmed
-        ? STARTER_SERVICE_TEMPLATES.filter((t) => t.specialtyLabel === specialtyTrimmed)
-        : [],
-    [specialtyTrimmed]
-  );
 
   useEffect(() => {
     if (!open) {
@@ -73,12 +59,6 @@ export function ServiceCatalogTemplatesModal({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose, busy, savingNew]);
-
-  const handleApplyStarter = (template: ServiceStarterTemplate) => {
-    if (!confirmReplaceServiceCatalogIfNeeded(currentServicesCount)) return;
-    onApplyCatalog(catalogToServiceDrafts(template.catalog));
-    onClose();
-  };
 
   const handleApplyUser = (t: UserSavedServiceTemplateV1) => {
     if (!confirmReplaceServiceCatalogIfNeeded(currentServicesCount)) return;
@@ -192,54 +172,17 @@ export function ServiceCatalogTemplatesModal({
       >
         <div className="border-b border-gray-100 px-4 py-3">
           <h2 id={titleId} className="text-lg font-semibold text-gray-900">
-            Template library
+            Saved templates
           </h2>
           <p className="mt-1 text-sm text-gray-600">
-            Clariva starter packs match your <strong>Practice Info</strong> specialty. Prices are placeholders — review
-            before saving. Saved templates are stored on your account (max {MAX_USER_SAVED_SERVICE_TEMPLATES}).
+            Save versions of your catalog or apply one you stored before (max {MAX_USER_SAVED_SERVICE_TEMPLATES} on your
+            account). Applying a template loads it into the editor — use <strong>Save</strong> on the page to persist to
+            your live catalog.
           </p>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-            Clariva suggestions {specialtyTrimmed ? `(${specialtyTrimmed})` : ""}
-          </h3>
-          {!specialtyTrimmed ? (
-            <p className="mt-2 rounded-md border border-amber-100 bg-amber-50/80 px-3 py-2 text-sm text-amber-950">
-              Set your specialty under{" "}
-              <span className="font-medium">Settings → Practice setup → Practice Info</span> to see starter catalogs
-              for your field.
-            </p>
-          ) : startersForSpecialty.length === 0 ? (
-            <p className="mt-2 text-sm text-gray-600">
-              We don&apos;t have a Clariva starter pack that matches this specialty yet. You can still use{" "}
-              <strong>My saved templates</strong> below, or adjust Practice Info if the specialty spelling doesn&apos;t
-              match our list.
-            </p>
-          ) : (
-            <ul className="mt-2 space-y-2" role="list">
-              {startersForSpecialty.map((t) => (
-                <li key={t.id} className="rounded-md border border-gray-100 bg-white px-3 py-2 shadow-sm">
-                  <p className="text-xs font-medium uppercase tracking-wide text-blue-700">{t.specialtyLabel}</p>
-                  <p className="mt-0.5 font-medium text-gray-900">{t.title}</p>
-                  <p className="mt-1 text-sm text-gray-600">{t.description}</p>
-                  <p className="mt-1 text-xs text-gray-500">
-                    {t.catalog.services.length} service{t.catalog.services.length === 1 ? "" : "s"} · text, voice,
-                    &amp; video on each row
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => handleApplyStarter(t)}
-                    className="mt-2 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    Use this template
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-gray-500">Save current catalog</h3>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Save current catalog</h3>
           <div className="mt-2 rounded-md border border-gray-100 bg-gray-50/80 p-3">
             <label htmlFor={nameId} className="block text-xs font-medium text-gray-700">
               Template name <span className="text-red-600">*</span>
@@ -281,7 +224,7 @@ export function ServiceCatalogTemplatesModal({
             </p>
           )}
 
-          <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide text-gray-500">My saved templates</h3>
+          <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide text-gray-500">Your saved templates</h3>
           {sortedUser.length === 0 ? (
             <p className="mt-2 text-sm text-gray-500">No saved templates yet.</p>
           ) : (
