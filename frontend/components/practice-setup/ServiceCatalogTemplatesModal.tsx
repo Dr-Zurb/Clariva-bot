@@ -1,9 +1,15 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
-import { catalogToServiceDrafts, draftsToCatalogOrNull, type ServiceOfferingDraft } from "@/lib/service-catalog-drafts";
+import { useEffect, useId, useMemo, useState } from "react";
+import {
+  catalogToServiceDrafts,
+  draftsToCatalogOrNull,
+  type ServiceOfferingDraft,
+} from "@/lib/service-catalog-drafts";
 import { confirmReplaceServiceCatalogIfNeeded } from "@/lib/confirm-replace-service-catalog";
 import { safeParseServiceCatalogV1 } from "@/lib/service-catalog-schema";
+import { STARTER_SERVICE_TEMPLATES } from "@/lib/service-catalog-starter-templates";
+import type { ServiceStarterTemplate } from "@/lib/service-catalog-starter-templates";
 import {
   MAX_USER_SAVED_SERVICE_TEMPLATES,
   type ServiceCatalogTemplatesJsonV1,
@@ -13,21 +19,24 @@ import {
 type Props = {
   open: boolean;
   onClose: () => void;
-  templates: UserSavedServiceTemplateV1[];
+  /** From Practice Info; starters match `specialtyLabel` exactly. */
+  practiceSpecialty: string;
   currentServices: ServiceOfferingDraft[];
   currentServicesCount: number;
-  onApply: (drafts: ServiceOfferingDraft[]) => void;
+  onApplyCatalog: (drafts: ServiceOfferingDraft[]) => void;
+  templates: UserSavedServiceTemplateV1[];
   onTemplatesChange: (next: ServiceCatalogTemplatesJsonV1) => Promise<void>;
   busy?: boolean;
 };
 
-export function UserSavedTemplatesModal({
+export function ServiceCatalogTemplatesModal({
   open,
   onClose,
-  templates,
+  practiceSpecialty,
   currentServices,
   currentServicesCount,
-  onApply,
+  onApplyCatalog,
+  templates,
   onTemplatesChange,
   busy = false,
 }: Props) {
@@ -39,6 +48,15 @@ export function UserSavedTemplatesModal({
   const [localError, setLocalError] = useState<string | null>(null);
   const [savingNew, setSavingNew] = useState(false);
 
+  const specialtyTrimmed = practiceSpecialty.trim();
+  const startersForSpecialty = useMemo(
+    () =>
+      specialtyTrimmed
+        ? STARTER_SERVICE_TEMPLATES.filter((t) => t.specialtyLabel === specialtyTrimmed)
+        : [],
+    [specialtyTrimmed]
+  );
+
   useEffect(() => {
     if (!open) {
       setNewName("");
@@ -47,9 +65,24 @@ export function UserSavedTemplatesModal({
     }
   }, [open]);
 
-  const handleApply = (t: UserSavedServiceTemplateV1) => {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !busy && !savingNew) onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose, busy, savingNew]);
+
+  const handleApplyStarter = (template: ServiceStarterTemplate) => {
     if (!confirmReplaceServiceCatalogIfNeeded(currentServicesCount)) return;
-    onApply(catalogToServiceDrafts(t.catalog));
+    onApplyCatalog(catalogToServiceDrafts(template.catalog));
+    onClose();
+  };
+
+  const handleApplyUser = (t: UserSavedServiceTemplateV1) => {
+    if (!confirmReplaceServiceCatalogIfNeeded(currentServicesCount)) return;
+    onApplyCatalog(catalogToServiceDrafts(t.catalog));
     onClose();
   };
 
@@ -61,7 +94,9 @@ export function UserSavedTemplatesModal({
       return;
     }
     if (templates.length >= MAX_USER_SAVED_SERVICE_TEMPLATES) {
-      setLocalError(`You can save at most ${MAX_USER_SAVED_SERVICE_TEMPLATES} templates. Delete one to add another.`);
+      setLocalError(
+        `You can save at most ${MAX_USER_SAVED_SERVICE_TEMPLATES} templates. Delete one to add another.`
+      );
       return;
     }
     let catalog: ReturnType<typeof draftsToCatalogOrNull>;
@@ -133,7 +168,7 @@ export function UserSavedTemplatesModal({
     }
   };
 
-  const sorted = [...templates].sort(
+  const sortedUser = [...templates].sort(
     (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
   );
 
@@ -152,21 +187,59 @@ export function UserSavedTemplatesModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative z-[101] flex max-h-[min(36rem,92vh)] w-full max-w-lg flex-col rounded-lg border border-gray-200 bg-white shadow-xl"
+        className="relative z-[101] flex max-h-[min(40rem,92vh)] w-full max-w-lg flex-col rounded-lg border border-gray-200 bg-white shadow-xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="border-b border-gray-100 px-4 py-3">
           <h2 id={titleId} className="text-lg font-semibold text-gray-900">
-            My templates
+            Template library
           </h2>
           <p className="mt-1 text-sm text-gray-600">
-            Save your current catalog or apply a pack you saved before. Stored on your account (max{" "}
-            {MAX_USER_SAVED_SERVICE_TEMPLATES}).
+            Clariva starter packs match your <strong>Practice Info</strong> specialty. Prices are placeholders — review
+            before saving. Saved templates are stored on your account (max {MAX_USER_SAVED_SERVICE_TEMPLATES}).
           </p>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Save current catalog</h3>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+            Clariva suggestions {specialtyTrimmed ? `(${specialtyTrimmed})` : ""}
+          </h3>
+          {!specialtyTrimmed ? (
+            <p className="mt-2 rounded-md border border-amber-100 bg-amber-50/80 px-3 py-2 text-sm text-amber-950">
+              Set your specialty under{" "}
+              <span className="font-medium">Settings → Practice setup → Practice Info</span> to see starter catalogs
+              for your field.
+            </p>
+          ) : startersForSpecialty.length === 0 ? (
+            <p className="mt-2 text-sm text-gray-600">
+              We don&apos;t have a Clariva starter pack that matches this specialty yet. You can still use{" "}
+              <strong>My saved templates</strong> below, or adjust Practice Info if the specialty spelling doesn&apos;t
+              match our list.
+            </p>
+          ) : (
+            <ul className="mt-2 space-y-2" role="list">
+              {startersForSpecialty.map((t) => (
+                <li key={t.id} className="rounded-md border border-gray-100 bg-white px-3 py-2 shadow-sm">
+                  <p className="text-xs font-medium uppercase tracking-wide text-blue-700">{t.specialtyLabel}</p>
+                  <p className="mt-0.5 font-medium text-gray-900">{t.title}</p>
+                  <p className="mt-1 text-sm text-gray-600">{t.description}</p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    {t.catalog.services.length} service{t.catalog.services.length === 1 ? "" : "s"} · text, voice,
+                    &amp; video on each row
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => handleApplyStarter(t)}
+                    className="mt-2 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    Use this template
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-gray-500">Save current catalog</h3>
           <div className="mt-2 rounded-md border border-gray-100 bg-gray-50/80 p-3">
             <label htmlFor={nameId} className="block text-xs font-medium text-gray-700">
               Template name <span className="text-red-600">*</span>
@@ -208,12 +281,12 @@ export function UserSavedTemplatesModal({
             </p>
           )}
 
-          <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide text-gray-500">Saved templates</h3>
-          {sorted.length === 0 ? (
+          <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide text-gray-500">My saved templates</h3>
+          {sortedUser.length === 0 ? (
             <p className="mt-2 text-sm text-gray-500">No saved templates yet.</p>
           ) : (
             <ul className="mt-2 space-y-2" role="list">
-              {sorted.map((t) => (
+              {sortedUser.map((t) => (
                 <li
                   key={t.id}
                   className="rounded-md border border-gray-100 bg-white px-3 py-2 shadow-sm"
@@ -229,7 +302,7 @@ export function UserSavedTemplatesModal({
                   <div className="mt-2 flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => handleApply(t)}
+                      onClick={() => handleApplyUser(t)}
                       disabled={busy}
                       className="rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                     >

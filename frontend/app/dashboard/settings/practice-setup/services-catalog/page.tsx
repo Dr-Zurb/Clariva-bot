@@ -2,8 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ServiceCatalogEditor } from "@/components/practice-setup/ServiceCatalogEditor";
-import { StarterTemplatesModal } from "@/components/practice-setup/StarterTemplatesModal";
-import { UserSavedTemplatesModal } from "@/components/practice-setup/UserSavedTemplatesModal";
+import { ServiceCatalogTemplatesModal } from "@/components/practice-setup/ServiceCatalogTemplatesModal";
 import { SaveButton } from "@/components/ui/SaveButton";
 import { STARTER_SERVICE_TEMPLATES } from "@/lib/service-catalog-starter-templates";
 import { getDoctorSettings, patchDoctorSettings } from "@/lib/api";
@@ -30,8 +29,7 @@ export default function ServicesCatalogPage() {
   const [error, setError] = useState<string | null>(null);
   const [clientError, setClientError] = useState<string | null>(null);
   const [lastSaved, setLastSaved] = useState<string>("");
-  const [starterModalOpen, setStarterModalOpen] = useState(false);
-  const [userTemplatesModalOpen, setUserTemplatesModalOpen] = useState(false);
+  const [templatesModalOpen, setTemplatesModalOpen] = useState(false);
   const [userTemplatesBusy, setUserTemplatesBusy] = useState(false);
 
   const fetchSettings = useCallback(async () => {
@@ -216,17 +214,10 @@ export default function ServicesCatalogPage() {
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
           <button
             type="button"
-            onClick={() => setUserTemplatesModalOpen(true)}
-            className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-400"
-          >
-            My templates
-          </button>
-          <button
-            type="button"
-            onClick={() => setStarterModalOpen(true)}
+            onClick={() => setTemplatesModalOpen(true)}
             className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-900 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
-            Apply starter template
+            Template library
           </button>
         </div>
         {suggestedStarter && (
@@ -236,36 +227,26 @@ export default function ServicesCatalogPage() {
             <button
               type="button"
               className="font-medium text-blue-700 underline hover:text-blue-900"
-              onClick={() => setStarterModalOpen(true)}
+              onClick={() => setTemplatesModalOpen(true)}
             >
-              starter templates
+              Template library
             </button>{" "}
             to apply.
           </p>
         )}
 
-        <StarterTemplatesModal
-          open={starterModalOpen}
-          onClose={() => setStarterModalOpen(false)}
-          currentServicesCount={services.length}
-          onApply={(next) => {
-            setServices(next);
-            setSaveSuccess(false);
-            setClientError(null);
-          }}
-        />
-
-        <UserSavedTemplatesModal
-          open={userTemplatesModalOpen}
-          onClose={() => setUserTemplatesModalOpen(false)}
-          templates={userSavedTemplates}
+        <ServiceCatalogTemplatesModal
+          open={templatesModalOpen}
+          onClose={() => setTemplatesModalOpen(false)}
+          practiceSpecialty={practiceSpecialty}
           currentServices={services}
           currentServicesCount={services.length}
-          onApply={(next) => {
+          onApplyCatalog={(next) => {
             setServices(next);
             setSaveSuccess(false);
             setClientError(null);
           }}
+          templates={userSavedTemplates}
           onTemplatesChange={handleTemplatesLibraryChange}
           busy={userTemplatesBusy}
         />
