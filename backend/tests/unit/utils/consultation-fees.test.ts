@@ -3,6 +3,7 @@ import {
   formatAppointmentFeeForAiContext,
   formatConsultationFeesForDm,
   formatFeeBookingCtaForDm,
+  formatFollowUpPolicyHint,
   formatServiceCatalogForAiContext,
   formatServiceCatalogForDm,
   isConsultationTypePricingFollowUp,
@@ -32,6 +33,20 @@ describe('consultation-fees (RBH-13)', () => {
       appointment_fee_currency: 'INR',
     });
     expect(line).toContain('₹10');
+    expect(line).toContain('Standard appointment');
+  });
+
+  it('formatAppointmentFeeForAiContext uses supplemental wording when teleconsult catalog present', () => {
+    const line = formatAppointmentFeeForAiContext(
+      {
+        appointment_fee_minor: 5000_00,
+        appointment_fee_currency: 'USD',
+      },
+      { teleconsultCatalogPresent: true }
+    );
+    expect(line).toContain('catalog');
+    expect(line).toContain('5000.00 USD');
+    expect(line).not.toContain('Standard appointment / consultation fee on file:');
   });
 
   it('userExplicitlyWantsToBookNow detects real booking intent', () => {
@@ -200,5 +215,76 @@ describe('consultation-fees (RBH-13)', () => {
     expect(body).toContain('General');
     expect(body).toContain('`gp`');
     expect(body).not.toContain('Dermatology');
+  });
+
+  it('e-task-2: formatFollowUpPolicyHint summarizes enabled policy', () => {
+    const h = formatFollowUpPolicyHint(
+      {
+        enabled: true,
+        max_followups: 2,
+        eligibility_window_days: 30,
+        discount_type: 'percent',
+        discount_value: 15,
+      },
+      'INR'
+    );
+    expect(h).toContain('15%');
+    expect(h).toContain('max 2');
+    expect(h).toContain('30 days');
+  });
+
+  it('e-task-2: formatServiceCatalogForAiContext includes follow-up hint on modality', () => {
+    const catalog: ServiceCatalogV1 = {
+      version: 1,
+      services: [
+        {
+          service_id: sid('fu'),
+          service_key: 'fu',
+          label: 'Follow svc',
+          modalities: {
+            video: {
+              enabled: true,
+              price_minor: 99_00,
+              followup_policy: {
+                enabled: true,
+                max_followups: 1,
+                eligibility_window_days: 14,
+                discount_type: 'free',
+              },
+            },
+          },
+        },
+      ],
+    };
+    const s = formatServiceCatalogForAiContext({
+      service_offerings_json: catalog,
+      appointment_fee_currency: 'INR',
+    });
+    expect(s).toContain('follow-ups');
+    expect(s).toContain('free');
+    expect(s).toContain('service_key=fu');
+  });
+
+  it('e-task-2: empty service catalog + no legacy types uses empty-catalog copy', () => {
+    const emptyCatalog: ServiceCatalogV1 = { version: 1, services: [] };
+    const out = formatConsultationFeesForDm({
+      practice_name: 'Solo Doc',
+      consultation_types: null,
+      service_offerings_json: emptyCatalog,
+      appointment_fee_minor: null,
+    });
+    expect(out.toLowerCase()).toContain('services catalog');
+    expect(out.toLowerCase()).toContain('empty');
+    expect(out).not.toMatch(/₹\d+/);
+  });
+
+  it('e-task-2: appendMinorFeeLine path supports non-INR legacy fee', () => {
+    const out = formatConsultationFeesForDm({
+      practice_name: 'US Clinic',
+      consultation_types: null,
+      appointment_fee_minor: 150_00,
+      appointment_fee_currency: 'USD',
+    });
+    expect(out).toContain('150.00 USD');
   });
 });

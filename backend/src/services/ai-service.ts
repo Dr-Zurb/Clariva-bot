@@ -954,6 +954,8 @@ export interface DoctorContext {
   cancellation_policy_hours?: number | null;
   /** e-task-2: e.g. "Video, In-clinic" - drives consultation type options */
   consultation_types?: string | null;
+  /** Practice currency for teleconsult quotes (ISO 4217), e.g. INR / USD */
+  appointment_fee_currency?: string | null;
   /** Pre-formatted line(s) from doctor_settings — must be passed through to the model verbatim when user asks fees. */
   appointment_fee_summary?: string | null;
   /** SFU-08: compact teleconsult fee schedule from service_offerings_json (amounts verbatim). */
@@ -1023,6 +1025,12 @@ function buildResponseSystemPrompt(doctorContext?: DoctorContext): string {
 
   const feeFacts: string[] = [];
   const catalogSummary = doctorContext?.service_catalog_summary_for_ai?.trim();
+  const cur = (doctorContext?.appointment_fee_currency || 'INR').trim().toUpperCase() || 'INR';
+  if (cur !== 'INR') {
+    feeFacts.push(
+      `Practice currency: ${cur}. Treat catalog and on-file amounts as being in this currency unless a line states otherwise.`
+    );
+  }
   if (catalogSummary) {
     feeFacts.push(
       `Teleconsult fee schedule from practice catalog (verbatim; do not invent or change amounts): ${catalogSummary}`
@@ -1032,15 +1040,18 @@ function buildResponseSystemPrompt(doctorContext?: DoctorContext): string {
   if (feeSummary) feeFacts.push(feeSummary);
   const consultRaw = doctorContext?.consultation_types?.trim();
   if (consultRaw) {
+    const legacyNote = catalogSummary
+      ? ' Supplemental notes only — teleconsult/modality prices in the catalog above take precedence when both apply.'
+      : '';
     feeFacts.push(
-      `Consultation types / per-visit fee notes exactly as stored: ${consultRaw}. Use any rupee amounts or labels you find here; do not invent prices.`
+      `Legacy consultation types / per-visit notes exactly as stored: ${consultRaw}.${legacyNote} Use any amounts or labels you find here verbatim; do not invent prices.`
     );
   }
   if (feeFacts.length > 0) {
     prompt += `\n\nSYSTEM FACTS — FEES (practice database — must be treated as "in the system" for patients):
 ${feeFacts.join('\n')}
 
-CRITICAL: When the user asks about cost, fees, charges, money, paise, kitna/kitne, phone/video consult price, etc., quote the lines above exactly when they contain amounts. NEVER say the exact fee is missing, not visible, or not in the system when this block lists an amount. For phone/video/online consults, if only a standard fee is listed here, that amount applies unless another line gives a different price. If there is no rupee figure for their exact scenario, the clinic can confirm — but still state the standard on-file fee when it appears above.`;
+CRITICAL pricing guardrails: When the user asks about cost, fees, charges, money, paise, kitna/kitne, phone/video consult price, etc., quote the lines above exactly when they contain amounts. NEVER say the exact fee is missing, not visible, or not in the system when this block lists an amount. Prefer **catalog** modality lines for text/voice/video when present; use the standard on-file line for in-clinic or when the catalog does not cover their scenario. If there is no matching amount for their exact scenario, say the clinic can confirm — but still state any on-file or catalog amount that does apply. Do not invent follow-up discounts beyond what the catalog follow-up hints say.`;
   }
 
   return prompt;

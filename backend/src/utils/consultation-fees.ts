@@ -8,8 +8,11 @@ import {
   type SafetyMessageLocale,
   detectSafetyMessageLocale,
 } from './safety-messages';
-import type { ServiceCatalogV1 } from './service-catalog-schema';
-import { safeParseServiceCatalogV1FromDb } from './service-catalog-schema';
+import type { FollowUpPolicyV1, ServiceCatalogV1 } from './service-catalog-schema';
+import {
+  SERVICE_CATALOG_VERSION,
+  safeParseServiceCatalogV1FromDb,
+} from './service-catalog-schema';
 import type { DoctorSettingsRow } from '../types/doctor-settings';
 
 /** Optional compact JSON in consultation_types (keep under doctor_settings max length). Example:
@@ -32,17 +35,29 @@ const PRICING_KEYWORDS =
  * One-line fee facts for OpenAI system prompt (authoritative; from DB only).
  * Used so the model never claims “fee not in system” when Booking Rules has a value.
  */
-export function formatAppointmentFeeForAiContext(settings: {
-  appointment_fee_minor?: number | null;
-  appointment_fee_currency?: string | null;
-}): string | null {
+export function formatAppointmentFeeForAiContext(
+  settings: {
+    appointment_fee_minor?: number | null;
+    appointment_fee_currency?: string | null;
+  },
+  opts?: { teleconsultCatalogPresent?: boolean }
+): string | null {
   const minor = settings.appointment_fee_minor;
   if (minor == null || minor <= 0) return null;
   const cur = (settings.appointment_fee_currency || 'INR').toUpperCase();
+  const sup = opts?.teleconsultCatalogPresent === true;
   if (cur === 'INR') {
-    return `Standard appointment / consultation fee on file: ₹${Math.round(minor / 100)} (INR). This is what patients pay when booking unless a different per–visit-type amount is listed under consultation types.`;
+    const amt = `₹${Math.round(minor / 100)} (INR)`;
+    if (sup) {
+      return `In-clinic / standard fee on file (separate from teleconsult catalog prices above): ${amt}. Use catalog lines for text/voice/video amounts when present.`;
+    }
+    return `Standard appointment / consultation fee on file: ${amt}. This is what patients pay when booking unless a different per–visit-type amount is listed under consultation types.`;
   }
-  return `Standard appointment / consultation fee on file: ${(minor / 100).toFixed(2)} ${cur}.`;
+  const num = (minor / 100).toFixed(2);
+  if (sup) {
+    return `In-clinic / standard fee on file (separate from teleconsult catalog prices above): ${num} ${cur}. Use catalog lines for modality amounts when present.`;
+  }
+  return `Standard appointment / consultation fee on file: ${num} ${cur}.`;
 }
 
 /** User message looks like a pricing question (EN + common Roman Hindi). */
@@ -123,8 +138,21 @@ export interface ConsultationFeesDmSettings {
   service_offerings_json?: DoctorSettingsRow['service_offerings_json'];
 }
 
+/** Shape is valid "empty shelf" but Zod catalog schema requires ≥1 service — treat as explicit empty (e-task-2). */
+function isExplicitlyEmptyServiceCatalogJson(raw: unknown): boolean {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  const o = raw as Record<string, unknown>;
+  if (Number(o.version) !== SERVICE_CATALOG_VERSION) return false;
+  const s = o.services;
+  if (!Array.isArray(s)) return false;
+  return s.length === 0;
+}
+
 /** Instagram DM soft limit — trim + ellipsis when catalog is large (SFU-08 §5). */
 export const CONSULTATION_FEE_DM_MAX_CHARS = 3200;
+
+/** LLM system-prompt catalog block — keep bounded for token cost (e-task-2). */
+const SERVICE_CATALOG_AI_CONTEXT_MAX_CHARS = 7200;
 
 const MODALITY_DM_LABEL: Record<'text' | 'voice' | 'video', string> = {
   text: 'Text',
@@ -139,6 +167,30 @@ function formatMinorCurrencyDm(minor: number, currency: string | null | undefine
     return Number.isInteger(main) ? `₹${main}` : `₹${main.toFixed(2)}`;
   }
   return `${main.toFixed(2)} ${cur}`;
+}
+
+/** Compact follow-up policy hint for catalog lines (amounts from DB only). */
+export function formatFollowUpPolicyHint(
+  policy: FollowUpPolicyV1 | null | undefined,
+  currency: string | null | undefined
+): string | null {
+  if (!policy || !policy.enabled) return null;
+  const cur = (currency || 'INR').toUpperCase();
+  const parts: string[] = [];
+  if (policy.discount_tiers?.length) {
+    parts.push('tiered follow-up discounts by visit #');
+  } else {
+    const dt = policy.discount_type;
+    const dv = policy.discount_value;
+    if (dt === 'free') parts.push('follow-ups free');
+    else if (dt === 'none') parts.push('no follow-up discount');
+    else if (dt === 'percent' && dv != null) parts.push(`${dv}% off eligible follow-ups`);
+    else if (dt === 'flat_off' && dv != null) parts.push(`${formatMinorCurrencyDm(dv, cur)} off follow-ups`);
+    else if (dt === 'fixed_price' && dv != null) parts.push(`follow-ups at ${formatMinorCurrencyDm(dv, cur)}`);
+    else parts.push('follow-up pricing per practice settings');
+  }
+  parts.push(`max ${policy.max_followups} follow-up(s) within ${policy.eligibility_window_days} days`);
+  return parts.join('; ');
 }
 
 function localizeCatalogIntro(practiceName: string, locale: SafetyMessageLocale): string {
@@ -227,8 +279,10 @@ export function formatServiceCatalogForDm(
     for (const mod of ['text', 'voice', 'video'] as const) {
       const slot = s.modalities[mod];
       if (slot?.enabled === true) {
+        const price = `**${MODALITY_DM_LABEL[mod]}**: ${formatMinorCurrencyDm(slot.price_minor, cur)}`;
+        const fu = formatFollowUpPolicyHint(slot.followup_policy ?? null, cur);
         modParts.push(
-          `**${MODALITY_DM_LABEL[mod]}**: ${formatMinorCurrencyDm(slot.price_minor, cur)}`
+          fu ? `${price}\n  - Follow-ups (on file): ${fu}` : price
         );
       }
     }
@@ -246,7 +300,7 @@ export function formatServiceCatalogForDm(
   let body = `${intro}${lines.join('\n\n')}`;
 
   const minor = settings.appointment_fee_minor;
-  if (minor != null && minor > 0 && isInrFeeCurrency(cur)) {
+  if (minor != null && minor > 0) {
     body += `\n\n${localizeInClinicFlatLine(minor, cur, locale)}`;
   }
 
@@ -279,23 +333,25 @@ export function formatServiceCatalogForAiContext(settings: {
           cur === 'INR'
             ? `₹${slot.price_minor / 100}`
             : `${(slot.price_minor / 100).toFixed(2)} ${cur}`;
-        mods.push(`${mod} ${amt}`);
+        const fu = formatFollowUpPolicyHint(slot.followup_policy ?? null, cur);
+        mods.push(
+          fu ? `${mod} ${amt} [follow-ups: ${fu}]` : `${mod} ${amt}`
+        );
       }
     }
     if (mods.length > 0) {
       chunks.push(`${s.label} [service_key=${s.service_key}]: ${mods.join(', ')}`);
     }
   }
-  return chunks.length > 0 ? chunks.join(' | ') : null;
-}
-
-function isInrFeeCurrency(currency: string | null | undefined): boolean {
-  if (currency == null || currency === '') return true;
-  return currency.toUpperCase() === 'INR';
-}
-
-function rupeesFromMinor(minor: number): number {
-  return Math.round(minor / 100);
+  if (chunks.length === 0) {
+    return null;
+  }
+  let out = chunks.join(' | ');
+  if (out.length > SERVICE_CATALOG_AI_CONTEXT_MAX_CHARS) {
+    const cut = SERVICE_CATALOG_AI_CONTEXT_MAX_CHARS - 32;
+    out = `${out.slice(0, cut).trimEnd()} … [catalog truncated]`;
+  }
+  return out;
 }
 
 function lineHasRupeeAmount(line: string): boolean {
@@ -404,6 +460,30 @@ function localizeEmptyTypes(
   );
 }
 
+/** Services catalog JSON is valid but has no rows — do not imply a missing “flat fee” from booking rules (e-task-2). */
+function localizeEmptyServiceCatalog(
+  practiceName: string,
+  locale: SafetyMessageLocale,
+  hoursSuffix: string
+): string {
+  if (locale === 'hi') {
+    return (
+      `**${practiceName}** ka **Services catalog** abhi **khali** hai — system me koi saved teleconsult price nahi.${hoursSuffix}\n\n` +
+      `Yeh booking rules wala purana “flat fee” field se link nahi hai. Exact amount ke liye clinic / team se confirm karein.`
+    );
+  }
+  if (locale === 'pa') {
+    return (
+      `**${practiceName}** da **Services catalog** haje **khali** hai — system vich koi teleconsult price save nahi.${hoursSuffix}\n\n` +
+      `Eh booking rules wala purana flat-fee field naal bandha nahi. Exact amount layi clinic nu puchho.`
+    );
+  }
+  return (
+    `The practice **Services catalog** is **empty** — there are no saved teleconsult prices in the system yet.${hoursSuffix}\n\n` +
+    `This is **not** tied to an old “flat fee” from booking rules (that path is not used for pricing here). For amounts, the team can confirm.`
+  );
+}
+
 function localizeJsonUnreadable(
   practiceName: string,
   locale: SafetyMessageLocale,
@@ -471,12 +551,12 @@ function localizePlainEchoFooter(locale: SafetyMessageLocale, hoursSuffix: strin
 
 function localizeNoPerTypeAmountNote(locale: SafetyMessageLocale): string {
   if (locale === 'hi') {
-    return '\n\n*Line items par abhi exact ₹ amount clinic ne yahan add nahi kiya—neeche **on-record** fee (agar set hai) dekhein.*';
+    return '\n\n*Line items par abhi exact amount clinic ne yahan add nahi kiya—neeche **on-record** fee (agar set hai) dekhein.*';
   }
   if (locale === 'pa') {
     return '\n\n*Line items utte haje exact amount clinic ne add nahi kita—thalle **record** fee (je set hai) vekho.*';
   }
-  return '\n\n*Exact rupee amounts for each line aren’t on file below—see the **on-record** fee if one is set.*';
+  return '\n\n*Exact amounts for each line aren’t on file below—see the **on-record** fee if one is set.*';
 }
 
 function minorFeeLabel(locale: SafetyMessageLocale): string {
@@ -491,9 +571,8 @@ function appendMinorFeeLine(
   currency: string | null | undefined,
   locale: SafetyMessageLocale
 ): void {
-  if (minor == null || minor <= 0 || !isInrFeeCurrency(currency)) return;
-  const r = rupeesFromMinor(minor);
-  lines.push(`- **${minorFeeLabel(locale)}**: ₹${r}`);
+  if (minor == null || minor <= 0) return;
+  lines.push(`- **${minorFeeLabel(locale)}**: ${formatMinorCurrencyDm(minor, currency)}`);
 }
 
 /**
@@ -527,12 +606,17 @@ export function formatConsultationFeesForDm(
   userText: string = ''
 ): string {
   const practiceName = settings.practice_name?.trim() || 'the practice';
+  let serviceCatalogExplicitlyEmpty = false;
   if (settings.service_offerings_json != null) {
-    const catalog = safeParseServiceCatalogV1FromDb(
-      settings.service_offerings_json as unknown
-    );
-    if (catalog && catalog.services.length > 0) {
-      return formatServiceCatalogForDm(catalog, settings, userText);
+    if (isExplicitlyEmptyServiceCatalogJson(settings.service_offerings_json)) {
+      serviceCatalogExplicitlyEmpty = true;
+    } else {
+      const catalog = safeParseServiceCatalogV1FromDb(
+        settings.service_offerings_json as unknown
+      );
+      if (catalog && catalog.services.length > 0) {
+        return formatServiceCatalogForDm(catalog, settings, userText);
+      }
     }
   }
 
@@ -558,7 +642,9 @@ export function formatConsultationFeesForDm(
       const intro = localizeFeeListIntro(practiceName, locale);
       return `${intro}${lines.join('\n')}\n\n${localizeFeeListFooter(locale, hoursSuffix)}`;
     }
-    return localizeEmptyTypes(practiceName, locale, hoursSuffix);
+    return serviceCatalogExplicitlyEmpty
+      ? localizeEmptyServiceCatalog(practiceName, locale, hoursSuffix)
+      : localizeEmptyTypes(practiceName, locale, hoursSuffix);
   }
 
   const rows = parseCompactFeeJson(raw);

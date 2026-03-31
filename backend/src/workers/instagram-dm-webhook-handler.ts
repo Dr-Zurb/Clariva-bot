@@ -646,6 +646,7 @@ function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): Docto
     service_offerings_json: settings.service_offerings_json,
     appointment_fee_currency: settings.appointment_fee_currency,
   });
+  const hasTeleconsultCatalogPricing = Boolean(catalogAi?.trim());
   const hasAny =
     settings.practice_name ||
     settings.business_hours_summary ||
@@ -654,7 +655,7 @@ function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): Docto
     settings.address_summary ||
     settings.consultation_types ||
     hasFeeOnFile ||
-    catalogAi ||
+    hasTeleconsultCatalogPricing ||
     (settings.cancellation_policy_hours != null && settings.cancellation_policy_hours > 0);
   if (!hasAny) return undefined;
   return {
@@ -665,10 +666,14 @@ function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): Docto
     address_summary: settings.address_summary,
     cancellation_policy_hours: settings.cancellation_policy_hours,
     consultation_types: settings.consultation_types,
-    appointment_fee_summary: formatAppointmentFeeForAiContext({
-      appointment_fee_minor: settings.appointment_fee_minor,
-      appointment_fee_currency: settings.appointment_fee_currency,
-    }),
+    appointment_fee_currency: settings.appointment_fee_currency ?? null,
+    appointment_fee_summary: formatAppointmentFeeForAiContext(
+      {
+        appointment_fee_minor: settings.appointment_fee_minor,
+        appointment_fee_currency: settings.appointment_fee_currency,
+      },
+      { teleconsultCatalogPresent: hasTeleconsultCatalogPricing }
+    ),
     service_catalog_summary_for_ai: catalogAi,
   };
 }

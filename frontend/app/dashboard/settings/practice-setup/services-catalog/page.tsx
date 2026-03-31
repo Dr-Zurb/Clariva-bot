@@ -114,7 +114,9 @@ export default function ServicesCatalogPage() {
       return;
     }
     if (catalog === null) {
-      setClientError('Add at least one service to save, or use "Clear structured catalog" to use only the flat fee.');
+      setClientError(
+        'Add at least one service to save, or use "Clear structured catalog" to remove the catalog (priced teleconsults require services on file).'
+      );
       return;
     }
 
@@ -151,7 +153,7 @@ export default function ServicesCatalogPage() {
     if (
       typeof window !== "undefined" &&
       !window.confirm(
-        "Remove structured service catalog? Teleconsult bookings will use the flat appointment fee from Booking Rules until you add a catalog again."
+        "Remove structured service catalog? Priced teleconsult booking and quotes need at least one service row — add a catalog again before taking paid remote bookings."
       )
     ) {
       return;

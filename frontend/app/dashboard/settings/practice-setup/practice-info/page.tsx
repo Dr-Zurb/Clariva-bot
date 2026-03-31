@@ -23,6 +23,15 @@ const COMMON_TIMEZONES = [
   "UTC",
 ];
 
+const PRACTICE_CURRENCY_OPTIONS = ["INR", "USD", "EUR", "GBP"] as const;
+
+const PRACTICE_CURRENCY_LABEL: Record<(typeof PRACTICE_CURRENCY_OPTIONS)[number], string> = {
+  INR: "INR (₹)",
+  USD: "USD ($)",
+  EUR: "EUR (€)",
+  GBP: "GBP (£)",
+};
+
 function toFormValue<T>(v: T | null | undefined): string {
   if (v === null || v === undefined) return "";
   return String(v);
@@ -35,6 +44,7 @@ function toForm(s: DoctorSettings | null): Record<string, string> {
     timezone: toFormValue(s.timezone) || "UTC",
     specialty: toFormValue(s.specialty),
     address_summary: toFormValue(s.address_summary),
+    appointment_fee_currency: toFormValue(s.appointment_fee_currency) || "INR",
   };
 }
 
@@ -89,11 +99,14 @@ export default function PracticeInfoPage() {
     const token = session?.access_token;
     if (!token) return;
 
+    const currency = (form.appointment_fee_currency?.trim() || "INR").toUpperCase().slice(0, 3);
+
     const payload: PatchDoctorSettingsPayload = {
       practice_name: form.practice_name.trim() || null,
       timezone: form.timezone.trim() || "UTC",
       specialty: form.specialty.trim() || null,
       address_summary: form.address_summary.trim() || null,
+      appointment_fee_currency: currency,
     };
 
     setSaving(true);
@@ -139,8 +152,8 @@ export default function PracticeInfoPage() {
     <div>
       <h1 className="text-2xl font-semibold text-gray-900">Practice Info</h1>
       <p className="mt-1 text-gray-600">
-        Practice name, timezone, specialty, and address. Teleconsult channels and prices are set under{" "}
-        <span className="font-medium">Services catalog</span>.
+        Practice name, timezone, specialty, address, and <strong>practice currency</strong> (for service catalog
+        amounts and quotes). Teleconsult lines and prices are set under <span className="font-medium">Services catalog</span>.
       </p>
       <form onSubmit={handleSubmit} className="mt-6 space-y-4 rounded-lg border border-gray-200 bg-white p-4">
         <div>
@@ -175,6 +188,30 @@ export default function PracticeInfoPage() {
             Address summary
           </FieldLabel>
           <input id="address_summary" type="text" value={form.address_summary ?? ""} onChange={(e) => handleFormChange((p) => ({ ...p, address_summary: e.target.value }))} maxLength={500} placeholder="e.g. 123 Main St, City" className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+        </div>
+        <div>
+          <FieldLabel
+            htmlFor="appointment_fee_currency"
+            tooltip="ISO 4217 code. All service catalog prices and checkout quotes use this currency; amounts are stored in minor units (e.g. paise or cents)."
+          >
+            Practice currency
+          </FieldLabel>
+          <select
+            id="appointment_fee_currency"
+            value={form.appointment_fee_currency ?? "INR"}
+            onChange={(e) => handleFormChange((p) => ({ ...p, appointment_fee_currency: e.target.value }))}
+            className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            {PRACTICE_CURRENCY_OPTIONS.map((code) => (
+              <option key={code} value={code}>
+                {PRACTICE_CURRENCY_LABEL[code]}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-gray-500">
+            Service catalog list prices and follow-up discounts use this currency. Save here before interpreting amounts
+            on the Services catalog page.
+          </p>
         </div>
         <SaveButton isDirty={isDirty} saving={saving} saveSuccess={saveSuccess} />
       </form>

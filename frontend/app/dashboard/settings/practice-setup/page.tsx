@@ -6,7 +6,7 @@ const cards = [
   {
     href: `${practiceSetupBase}/practice-info`,
     label: "Practice Info",
-    description: "Practice name, timezone, specialty, and address",
+    description: "Practice name, timezone, specialty, address, and practice currency",
     icon: (
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
@@ -30,7 +30,7 @@ const cards = [
   {
     href: `${practiceSetupBase}/booking-rules`,
     label: "Booking Rules",
-    description: "Slot length, advance booking limits, appointment fee, and cancellation policy",
+    description: "Slot length, advance booking limits, cancellation policy, and booking buffers",
     icon: (
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <circle cx="12" cy="12" r="10" />

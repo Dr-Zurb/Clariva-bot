@@ -105,7 +105,7 @@ export class ModalityNotOfferedForQuote extends AppError {
 export class LegacyAppointmentFeeNotConfiguredError extends AppError {
   constructor() {
     super(
-      'Cannot quote: no service catalog and appointment_fee_minor is not set on doctor settings',
+      'Cannot quote: practice has no services in the catalog (or catalog is unset) and no legacy appointment fee is configured. Add services under Practice Setup → Services catalog, or set a fallback fee.',
       400
     );
   }
