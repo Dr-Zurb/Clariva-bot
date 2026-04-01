@@ -7,7 +7,15 @@ import type {
   ModalityFollowUpDiscountDraft,
   ServiceOfferingDraft,
 } from "@/lib/service-catalog-drafts";
-import { emptyServiceDraft } from "@/lib/service-catalog-drafts";
+import {
+  catalogMissingCatchAllOffering,
+  catchAllServiceDraft,
+  emptyServiceDraft,
+} from "@/lib/service-catalog-drafts";
+import {
+  CATALOG_CATCH_ALL_LABEL_DEFAULT,
+  CATALOG_CATCH_ALL_SERVICE_KEY,
+} from "@/lib/service-catalog-schema";
 
 type Props = {
   services: ServiceOfferingDraft[];
@@ -485,10 +493,23 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
               Per-channel prices and optional follow-up rules. In-clinic uses the booking{" "}
               <span className="font-medium">appointment fee</span>.
             </p>
+            <p className="mt-2 rounded-md border border-amber-100 bg-amber-50/90 px-2 py-1.5 text-[11px] leading-snug text-amber-950 sm:text-xs">
+              <span className="font-semibold">Catch-all required:</span> every saved catalog must include{" "}
+              <span className="font-medium">{CATALOG_CATCH_ALL_LABEL_DEFAULT}</span> (internal key{" "}
+              <code className="rounded bg-amber-100/80 px-0.5">{CATALOG_CATCH_ALL_SERVICE_KEY}</code>). It is the
+              fallback when a patient’s complaint does not match a named service — for AI receptionist routing and
+              booking, not a discount tier.
+            </p>
           </div>
           <button
             type="button"
-            onClick={() => onServicesChange([...services, emptyServiceDraft()])}
+            onClick={() => {
+              const nextRow =
+                services.length === 0 || catalogMissingCatchAllOffering(services)
+                  ? catchAllServiceDraft()
+                  : emptyServiceDraft();
+              onServicesChange([...services, nextRow]);
+            }}
             className="shrink-0 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm font-medium text-gray-800 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             Add service
@@ -497,7 +518,9 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
 
         {services.length === 0 && (
           <p className="mt-3 text-sm text-gray-600">
-            No structured services yet. Add at least one, or clear the catalog to use only the legacy flat fee.
+            No structured services yet. Choose <span className="font-medium">Add service</span> to start with{" "}
+            {CATALOG_CATCH_ALL_LABEL_DEFAULT}, then add your named visit types. Or clear the catalog to use only the
+            legacy flat fee (no structured teleconsult tiers).
           </p>
         )}
 
@@ -505,6 +528,8 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
           {services.map((s, idx) => {
             const priceSyncSource = priceSyncSourceById[s.id] ?? null;
             const followUpSyncSource = followUpSyncSourceById[s.id] ?? null;
+            const isCatchAllRow =
+              s.service_key.trim().toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY;
 
             return (
               <li
@@ -542,6 +567,22 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                   </div>
 
                   <div className="order-2 flex h-full min-h-0 min-w-0 flex-col gap-3 lg:order-none lg:col-start-1 lg:row-start-2">
+                    {isCatchAllRow && (
+                      <div className="min-w-0">
+                        <FieldLabel
+                          htmlFor={`svc-key-${s.id}`}
+                          tooltip="Reserved for the mandatory catch-all service. Do not reuse this key on other rows."
+                        >
+                          Internal key (fixed)
+                        </FieldLabel>
+                        <input
+                          id={`svc-key-${s.id}`}
+                          readOnly
+                          value={CATALOG_CATCH_ALL_SERVICE_KEY}
+                          className="mt-0.5 w-full max-w-md rounded-md border border-gray-200 bg-gray-100 px-2.5 py-1.5 text-sm text-gray-700"
+                        />
+                      </div>
+                    )}
                     <textarea
                       id={`svc-label-${s.id}`}
                       value={s.label}
@@ -572,6 +613,81 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                         placeholder="Optional"
                         className="mt-0.5 min-h-[12rem] w-full resize-y overflow-x-hidden rounded-md border border-gray-300 px-2.5 py-1.5 text-sm leading-snug"
                       />
+                    </div>
+
+                    <div className="flex min-w-0 flex-col gap-2 rounded-md border border-violet-100 bg-violet-50/50 p-2.5">
+                      <p className="text-xs font-semibold text-violet-950">AI matching hints (optional)</p>
+                      <p className="text-[11px] leading-snug text-violet-900/85">
+                        Used only in the bot&apos;s internal context to map complaints to this{" "}
+                        <span className="font-medium">service_key</span>. Not shown in patient fee DMs. Add
+                        keywords and short rules to improve auto-routing — never put patient names or PHI here.
+                      </p>
+                      <div className="min-w-0">
+                        <FieldLabel
+                          htmlFor={`svc-mkw-${s.id}`}
+                          tooltip="Synonyms or phrases, e.g. skin rash, eczema, acne, mole check"
+                        >
+                          Keywords / synonyms
+                        </FieldLabel>
+                        <textarea
+                          id={`svc-mkw-${s.id}`}
+                          value={s.matcherKeywords}
+                          onChange={(e) =>
+                            onServicesChange(
+                              updateService(services, s.id, { matcherKeywords: e.target.value })
+                            )
+                          }
+                          rows={2}
+                          maxLength={400}
+                          wrap="soft"
+                          placeholder="e.g. fever 3 days, diabetes follow-up, dressing change"
+                          className="mt-0.5 w-full resize-y rounded-md border border-violet-200/80 bg-white px-2 py-1.5 text-sm leading-snug"
+                        />
+                      </div>
+                      <div className="min-w-0">
+                        <FieldLabel
+                          htmlFor={`svc-minc-${s.id}`}
+                          tooltip="When this row is the right teleconsult service"
+                        >
+                          Book this service when…
+                        </FieldLabel>
+                        <textarea
+                          id={`svc-minc-${s.id}`}
+                          value={s.matcherIncludeWhen}
+                          onChange={(e) =>
+                            onServicesChange(
+                              updateService(services, s.id, { matcherIncludeWhen: e.target.value })
+                            )
+                          }
+                          rows={2}
+                          maxLength={800}
+                          wrap="soft"
+                          placeholder="e.g. Chronic condition follow-up already diagnosed; medication adjustment questions."
+                          className="mt-0.5 w-full resize-y rounded-md border border-violet-200/80 bg-white px-2 py-1.5 text-sm leading-snug"
+                        />
+                      </div>
+                      <div className="min-w-0">
+                        <FieldLabel
+                          htmlFor={`svc-mexc-${s.id}`}
+                          tooltip="Steer away from this row when…"
+                        >
+                          Not this service when…
+                        </FieldLabel>
+                        <textarea
+                          id={`svc-mexc-${s.id}`}
+                          value={s.matcherExcludeWhen}
+                          onChange={(e) =>
+                            onServicesChange(
+                              updateService(services, s.id, { matcherExcludeWhen: e.target.value })
+                            )
+                          }
+                          rows={2}
+                          maxLength={800}
+                          wrap="soft"
+                          placeholder="e.g. First-time chest pain — suggest emergency; acute injury — in-person."
+                          className="mt-0.5 w-full resize-y rounded-md border border-violet-200/80 bg-white px-2 py-1.5 text-sm leading-snug"
+                        />
+                      </div>
                     </div>
                   </div>
 

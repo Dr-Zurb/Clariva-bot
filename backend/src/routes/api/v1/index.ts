@@ -11,6 +11,7 @@ import availabilityRoutes from './availability';
 import blockedTimesRoutes from './blocked-times';
 import prescriptionRoutes from './prescriptions';
 import opdRoutes from './opd';
+import serviceStaffReviewRoutes from './service-staff-reviews';
 
 const router = Router();
 
@@ -60,5 +61,8 @@ router.use('/prescriptions', prescriptionRoutes);
 
 // Doctor OPD controls (e-task-opd-06): queue session, early join, delay
 router.use('/opd', opdRoutes);
+
+// ARM-06: Pending service catalog staff reviews (inbox / resolve)
+router.use('/service-staff-reviews', serviceStaffReviewRoutes);
 
 export default router;

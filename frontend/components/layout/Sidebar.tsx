@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 const topLevelNav = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/dashboard/appointments", label: "Appointments" },
+  { href: "/dashboard/service-reviews", label: "Match reviews" },
   { href: "/dashboard/opd-today", label: "OPD today" },
   { href: "/dashboard/patients", label: "Patients" },
   { href: "/dashboard/settings", label: "Settings" },

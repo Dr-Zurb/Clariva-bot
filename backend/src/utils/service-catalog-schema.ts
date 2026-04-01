@@ -12,6 +12,12 @@ import { ValidationError } from './errors';
 export const SERVICE_CATALOG_VERSION = 1 as const;
 export const MAX_SERVICE_OFFERINGS = 50;
 
+/** ARM-01 / AI receptionist: reserved slug for mandatory catch-all offering (matcher + booking). */
+export const CATALOG_CATCH_ALL_SERVICE_KEY = 'other' as const;
+
+/** Default label for catch-all row (doctors may edit display name; key stays `other`). */
+export const CATALOG_CATCH_ALL_LABEL_DEFAULT = 'Other / not listed';
+
 const serviceKeyRegex = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 const followUpDiscountTypeSchema = z.enum(['none', 'percent', 'flat_off', 'fixed_price', 'free']);
@@ -107,6 +113,20 @@ export const serviceModalitiesSchema = z
     }
   });
 
+/**
+ * ARM-02: Optional doctor-entered text for AI service-key matching only.
+ * Do not put patient PHI here. Omitted from patient-facing fee DMs (`formatServiceCatalogForDm`).
+ */
+export const serviceMatcherHintsV1Schema = z
+  .object({
+    keywords: z.string().trim().max(400).optional(),
+    include_when: z.string().trim().max(800).optional(),
+    exclude_when: z.string().trim().max(800).optional(),
+  })
+  .strict();
+
+export type ServiceMatcherHintsV1 = z.infer<typeof serviceMatcherHintsV1Schema>;
+
 const serviceOfferingCoreSchema = z.object({
   service_key: z
     .string()
@@ -115,6 +135,7 @@ const serviceOfferingCoreSchema = z.object({
     .regex(serviceKeyRegex, 'service_key must be lowercase slug: a-z, 0-9, _, -'),
   label: z.string().min(1).max(200).trim(),
   description: z.string().max(500).trim().nullable().optional(),
+  matcher_hints: serviceMatcherHintsV1Schema.optional(),
   modalities: serviceModalitiesSchema,
   followup_policy: followUpPolicyV1Schema.nullable().optional(),
 });
@@ -167,21 +188,46 @@ function refineCatalogUniqueKeysAndIds(
   }
 }
 
-export const serviceCatalogIncomingSchema = z
-  .object({
-    version: z.literal(SERVICE_CATALOG_VERSION),
-    services: z.array(serviceOfferingIncomingSchema).min(1).max(MAX_SERVICE_OFFERINGS),
-  })
-  .superRefine((data, ctx) => refineCatalogUniqueKeysAndIds(data, ctx, false));
+function refineCatalogRequiresCatchAllOffering(
+  data: { services: { service_key: string }[] },
+  ctx: z.RefinementCtx
+): void {
+  const has = data.services.some(
+    (s) => s.service_key.trim().toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY
+  );
+  if (!has) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Catalog must include a catch-all service with service_key "${CATALOG_CATCH_ALL_SERVICE_KEY}" (default label "${CATALOG_CATCH_ALL_LABEL_DEFAULT}")`,
+      path: ['services'],
+    });
+  }
+}
 
-export const serviceCatalogV1Schema = z
+/**
+ * Persisted catalog shape + uniqueness — **no** catch-all requirement (legacy DB rows, saved templates).
+ */
+export const serviceCatalogV1BaseSchema = z
   .object({
     version: z.literal(SERVICE_CATALOG_VERSION),
     services: z.array(serviceOfferingV1Schema).min(1).max(MAX_SERVICE_OFFERINGS),
   })
   .superRefine((data, ctx) => refineCatalogUniqueKeysAndIds(data, ctx, true));
 
-export type ServiceCatalogV1 = z.infer<typeof serviceCatalogV1Schema>;
+export const serviceCatalogIncomingSchema = z
+  .object({
+    version: z.literal(SERVICE_CATALOG_VERSION),
+    services: z.array(serviceOfferingIncomingSchema).min(1).max(MAX_SERVICE_OFFERINGS),
+  })
+  .superRefine((data, ctx) => refineCatalogUniqueKeysAndIds(data, ctx, false))
+  .superRefine((data, ctx) => refineCatalogRequiresCatchAllOffering(data, ctx));
+
+/** Live `service_offerings_json`: must include catch-all `other` (ARM-01). */
+export const serviceCatalogV1Schema = serviceCatalogV1BaseSchema.superRefine((data, ctx) =>
+  refineCatalogRequiresCatchAllOffering(data, ctx)
+);
+
+export type ServiceCatalogV1 = z.infer<typeof serviceCatalogV1BaseSchema>;
 export type ServiceOfferingV1 = z.infer<typeof serviceOfferingV1Schema>;
 export type FollowUpPolicyV1 = z.infer<typeof followUpPolicyV1Schema>;
 export type FollowUpDiscountTierV1 = z.infer<typeof followUpDiscountTierV1Schema>;
@@ -197,7 +243,8 @@ export const userSavedServiceTemplateSchema = z
     name: z.string().min(1).max(80).trim(),
     specialty_tag: z.string().max(200).trim().nullable().optional(),
     updated_at: z.string().max(50),
-    catalog: serviceCatalogV1Schema,
+    /** Snapshots may predate ARM-01; live catalog still requires `other` on save. */
+    catalog: serviceCatalogV1BaseSchema,
   })
   .strict();
 
@@ -400,15 +447,22 @@ export function safeParseServiceCatalogV1FromDb(
   if (raw === null || raw === undefined) {
     return null;
   }
-  const strict = serviceCatalogV1Schema.safeParse(raw);
-  if (strict.success) {
-    return hydrateCatalogPerModalityFollowUp(strict.data);
+  const baseOk = serviceCatalogV1BaseSchema.safeParse(raw);
+  if (baseOk.success) {
+    return hydrateCatalogPerModalityFollowUp(baseOk.data);
   }
-  const loose = serviceCatalogIncomingSchema.safeParse(raw);
-  if (!loose.success || !doctorId) {
+  /** Legacy rows may lack catch-all until the next save (ARM-01). */
+  const legacyIncomingSchema = z
+    .object({
+      version: z.literal(SERVICE_CATALOG_VERSION),
+      services: z.array(serviceOfferingIncomingSchema).min(1).max(MAX_SERVICE_OFFERINGS),
+    })
+    .superRefine((data, ctx) => refineCatalogUniqueKeysAndIds(data, ctx, false));
+  const looseRaw = legacyIncomingSchema.safeParse(raw);
+  if (!looseRaw.success || !doctorId) {
     return null;
   }
-  const hydrated = hydrateServiceCatalogServiceIds(doctorId, loose.data as ServiceCatalogV1);
-  const again = serviceCatalogV1Schema.safeParse(hydrated);
+  const hydrated = hydrateServiceCatalogServiceIds(doctorId, looseRaw.data as ServiceCatalogV1);
+  const again = serviceCatalogV1BaseSchema.safeParse(hydrated);
   return again.success ? hydrateCatalogPerModalityFollowUp(again.data) : null;
 }

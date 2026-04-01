@@ -121,6 +121,9 @@ This file contains copy-pastable code patterns for common tasks. Use these as te
 15. [Add 404 Handler](#add-404-handler)
 16. [Add Graceful Shutdown](#add-graceful-shutdown)
 17. [Configure Request Body Size Limits](#configure-request-body-size-limits)
+18. [Standard Controller Skeleton (Canonical Template)](#standard-controller-skeleton-canonical-template)
+19. [Service catalog matcher (ARM-04)](#19-service-catalog-matcher-arm-04)
+20. [Public booking payment gate (ARM-10)](#20-public-booking-payment-gate-arm-10)
 
 ---
 
@@ -1449,6 +1452,55 @@ app.use((err, req, res, next) => {
   next(err);
 });
 ```
+
+---
+
+## 19. Service catalog matcher (ARM-04) {#19-service-catalog-matcher-arm-04}
+
+**Module:** `backend/src/services/service-catalog-matcher.ts`
+
+**Entry:** `matchServiceCatalogOffering(input, options?)` — returns `ServiceCatalogMatchResult | null` (null only if catalog missing/empty; callers should skip).
+
+**Compliance:** Pass **raw** `reasonForVisitText` and optional `recentUserMessages`; the service applies **`redactPhiForAI`** before LLM. Logs use **correlationId**, **source**, **confidence**, **catalogServiceKey** only (see `logger.info` in matcher + webhook).
+
+**Test / CI without OpenAI:** `options.skipLlm: true` **or** inject `options.runLlm` mock — when `runLlm` is provided, the engine runs Stage B without `OPENAI_API_KEY`.
+
+**Pure helpers:** `resolveCatalogOfferingByKey`, `runDeterministicServiceCatalogMatchStageA`, `pickSuggestedModality`.
+
+**Metrics:** optional `options.metrics(event)` — `ServiceCatalogMatchMetricEvent` (no PHI).
+
+**ARM-05 (after matcher):** `isSlotBookingBlockedPendingStaffReview(state)` is true when `pendingStaffServiceReview && !serviceSelectionFinalized`. Instagram handler then uses `transitionToAwaitingStaffServiceConfirmation` + `staff-service-review-dm.ts` templates instead of `buildBookingPageUrl`. SLA: `STAFF_SERVICE_REVIEW_SLA_HOURS` in `env.ts` (default 24).
+
+---
+
+## 20. Public booking payment gate (ARM-10) {#20-public-booking-payment-gate-arm-10}
+
+**Policy (v1):** Razorpay capture happens only from `POST /api/v1/bookings/select-slot-and-pay` after the conversation allows payment.
+
+| Situation | Payment / capture |
+|-----------|-------------------|
+| `pendingStaffServiceReview && !serviceSelectionFinalized` | **Blocked** — `StaffServiceReviewPendingPaymentError` (403). Log: `booking_payment_gate_denied` with `staff_review_pending`. |
+| Multi-service teleconsult catalog (`getActiveServiceCatalog` has 2+ services), `consultationType !== 'in_clinic'`, `serviceSelectionFinalized !== true` | **Blocked** — `ServiceSelectionNotFinalizedPaymentError` (403). Log: `service_selection_not_finalized`. |
+| Single-service catalog, or in_clinic, or no catalog, or finalized selection | **Allowed** (existing quote + Razorpay flow). |
+| Reschedule token (`appointmentId` in JWT) | **Out of scope** — gate not applied in reschedule path. |
+
+**API:** `GET /api/v1/bookings/slot-page-info` returns `bookingAllowed` + optional `bookingBlockedReason` for `/book` UX (same rules; 200 with flags — not 403).
+
+**Module:** `evaluatePublicBookingPaymentGate` in `backend/src/utils/public-booking-payment-gate.ts`.
+
+**Note:** No auth-hold / deposit in v1; one checkout amount per attempt.
+
+### ARM-11 — Catalog quote fallback safety (multi-service + invalid keys)
+
+**Module:** `computeSlotBookingQuote` in `backend/src/services/slot-selection-service.ts`.
+
+| Catalog | Resolved `service_key` for quote | Behavior |
+|---------|----------------------------------|----------|
+| `getActiveServiceCatalog` is **null** | N/A | **Legacy** flat fee (`appointment_fee_minor` / env). |
+| Catalog **non-empty** (teleconsult) | Valid key/id or single-service default | **Catalog** quote via `quoteConsultationVisit`. |
+| Catalog **non-empty** | Unresolved (`resolveCatalogServiceKeyForSlotBooking` → null) | **`ValidationError` 400** — no silent legacy fallback. Log: `slot_booking_quote_blocked` with `slot_booking_quote_block_reason`: `missing_catalog_service_selection` \| `invalid_catalog_service_key` \| `invalid_catalog_service_id`. |
+
+Interacts with **ARM-10** (payment gate) and **ARM-09** ( `/book` pre-fill): patient should have a valid finalized selection before quote; ARM-11 is a safety net if state and catalog diverge.
 
 ---
 

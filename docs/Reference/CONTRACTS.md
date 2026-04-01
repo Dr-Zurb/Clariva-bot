@@ -360,6 +360,35 @@ Response: X-Correlation-ID: 550e8400-e29b-41d4-a716-446655440000
 
 ---
 
+## 📅 Public booking — slot page info (ARM-09)
+
+**Auth:** Query param `token` = signed **booking token** scoped to one `conversationId` + `doctorId`.
+
+### GET `/api/v1/bookings/slot-page-info?token=`
+
+**Success `data`** includes existing fields (`doctorId`, `practiceName`, `conversationId`, `mode`, `opdMode`, optional `serviceCatalog`, etc.). **Optional non-PHI hints** (backward compatible — older clients ignore unknown keys):
+
+| Field | Type | Meaning |
+|--------|------|---------|
+| `suggestedCatalogServiceKey` | string | Catalog `service_key` (lowercase) pre-filled from chat when selection is final. |
+| `suggestedCatalogServiceId` | string | Optional stable id from doctor catalog. |
+| `suggestedConsultationModality` | `text` \| `voice` \| `video` | Optional modality aligned with conversation state. |
+| `matchConfidence` | `high` \| `medium` \| `low` | Last matcher band (for UI messaging only). |
+| `serviceSelectionFinalized` | boolean | True when hints come from a finalized catalog selection. |
+| `servicePickerLocked` | boolean | When true, `/book` should not let the patient pick a different service row (visit type fixed in chat). |
+| `bookingAllowed` | boolean | **ARM-10:** `false` when payment must not run until chat/staff gate clears (book mode only; reschedule is always `true`). |
+| `bookingBlockedReason` | `staff_review_pending` \| `service_selection_not_finalized` | Present when `bookingAllowed` is `false`. |
+
+**Omitted** when staff review still blocks alignment (`pendingStaffServiceReview` without finalization), when `serviceSelectionFinalized` is not true, when `consultationType` is `in_clinic`, or when the suggested key is not in the token-scoped `serviceCatalog` (e.g. stale state after catalog edit).
+
+### POST `/api/v1/bookings/select-slot-and-pay` (ARM-10)
+
+When the gate denies payment, response **403** with `error.code` = `StaffServiceReviewPendingPaymentError` or `ServiceSelectionNotFinalizedPaymentError` (canonical error envelope).
+
+**ARM-11:** If the doctor has an active teleconsult **catalog** but the conversation cannot resolve a catalog service for quoting, checkout returns **400** `ValidationError` (no silent fallback to legacy flat fee). See [RECIPES.md](./RECIPES.md) ARM-11.
+
+---
+
 ## 🏥 Patient OPD session snapshot (e-task-opd-04)
 
 **Auth:** Query param `token` = signed **consultation token** (same as patient video join link). Signature must be valid; `exp` may be expired for read-only snapshot polling.

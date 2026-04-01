@@ -135,6 +135,26 @@ const envSchema = z.object({
 
   // Cron jobs (e-task-5): secret for securing payout cron endpoint. Render cron hits POST /cron/payouts.
   CRON_SECRET: z.string().min(16, 'CRON_SECRET must be at least 16 chars when set').optional(),
+
+  /** ARM-05/06: patient copy for “clinic will confirm within N hours” (1–168; default 24). */
+  STAFF_SERVICE_REVIEW_SLA_HOURS: z
+    .string()
+    .default('24')
+    .transform((v) => {
+      const n = parseInt(v, 10);
+      if (!Number.isFinite(n) || n < 1) return 24;
+      return Math.min(168, n);
+    }),
+
+  /** ARM-08: max pending timeout rows processed per cron tick (avoid long locks). */
+  STAFF_REVIEW_TIMEOUT_BATCH_SIZE: z
+    .string()
+    .default('50')
+    .transform((v) => {
+      const n = parseInt(v, 10);
+      if (!Number.isFinite(n) || n < 1) return 50;
+      return Math.min(500, n);
+    }),
 });
 
 /**

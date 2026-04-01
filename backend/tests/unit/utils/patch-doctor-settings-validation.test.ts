@@ -93,7 +93,7 @@ describe('validatePatchDoctorSettings (e-task-6)', () => {
     expect(result.service_offerings_json).toBeNull();
   });
 
-  it('accepts valid service_offerings_json (SFU-01)', () => {
+  it('accepts valid service_offerings_json (SFU-01 + ARM-01 catch-all)', () => {
     const result = validatePatchDoctorSettings({
       service_offerings_json: {
         version: 1,
@@ -103,11 +103,33 @@ describe('validatePatchDoctorSettings (e-task-6)', () => {
             label: 'Follow-up',
             modalities: { video: { enabled: true, price_minor: 50000 } },
           },
+          {
+            service_key: 'other',
+            label: 'Other / not listed',
+            modalities: { video: { enabled: true, price_minor: 50000 } },
+          },
         ],
       },
     });
     expect(result.service_offerings_json?.version).toBe(1);
-    expect(result.service_offerings_json?.services).toHaveLength(1);
+    expect(result.service_offerings_json?.services).toHaveLength(2);
+  });
+
+  it('rejects service_offerings_json without catch-all other (ARM-01)', () => {
+    expect(() =>
+      validatePatchDoctorSettings({
+        service_offerings_json: {
+          version: 1,
+          services: [
+            {
+              service_key: 'follow',
+              label: 'Follow-up',
+              modalities: { video: { enabled: true, price_minor: 50000 } },
+            },
+          ],
+        },
+      })
+    ).toThrow(ValidationError);
   });
 
   it('rejects invalid service_offerings_json (SFU-01)', () => {

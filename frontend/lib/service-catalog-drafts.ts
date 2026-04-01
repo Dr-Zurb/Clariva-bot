@@ -7,7 +7,11 @@ import type {
   ServiceCatalogV1,
   ServiceOfferingV1,
 } from "@/lib/service-catalog-schema";
-import { SERVICE_CATALOG_VERSION } from "@/lib/service-catalog-schema";
+import {
+  CATALOG_CATCH_ALL_LABEL_DEFAULT,
+  CATALOG_CATCH_ALL_SERVICE_KEY,
+  SERVICE_CATALOG_VERSION,
+} from "@/lib/service-catalog-schema";
 
 export type DiscountTypeOption = FollowUpPolicyV1["discount_type"];
 
@@ -29,6 +33,12 @@ export interface ServiceOfferingDraft {
   /** Internal slug for API payload (server may preserve per service_id) */
   service_key: string;
   description: string;
+  /** ARM-02: AI matching only — keywords / synonyms (comma or free text). */
+  matcherKeywords: string;
+  /** When this service is the right choice (complaint patterns). */
+  matcherIncludeWhen: string;
+  /** When to choose a different service or catch-all. */
+  matcherExcludeWhen: string;
   textEnabled: boolean;
   voiceEnabled: boolean;
   videoEnabled: boolean;
@@ -92,6 +102,9 @@ export function emptyServiceDraft(): ServiceOfferingDraft {
     label: "",
     service_key: "",
     description: "",
+    matcherKeywords: "",
+    matcherIncludeWhen: "",
+    matcherExcludeWhen: "",
     textEnabled: false,
     voiceEnabled: false,
     videoEnabled: true,
@@ -102,6 +115,31 @@ export function emptyServiceDraft(): ServiceOfferingDraft {
     voiceFollowUp: defaultModalityFollowUpDiscount(),
     videoFollowUp: defaultModalityFollowUpDiscount(),
   };
+}
+
+/** ARM-01: mandatory catch-all row — fixed internal key `other`, default label (editable). */
+export function catchAllServiceDraft(): ServiceOfferingDraft {
+  const base = emptyServiceDraft();
+  return {
+    ...base,
+    id: newId(),
+    label: CATALOG_CATCH_ALL_LABEL_DEFAULT,
+    service_key: CATALOG_CATCH_ALL_SERVICE_KEY,
+    description:
+      "Fallback when a patient’s concern does not fit a named service. Used for AI routing and booking — not emergency care and not a “cheap visit” tier.",
+    textEnabled: false,
+    voiceEnabled: false,
+    videoEnabled: true,
+    textPriceMain: "",
+    voicePriceMain: "",
+    videoPriceMain: "0",
+  };
+}
+
+export function catalogMissingCatchAllOffering(services: ServiceOfferingDraft[]): boolean {
+  return !services.some(
+    (d) => d.service_key.trim().toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY
+  );
 }
 
 export function defaultFollowUpDraft(): FollowUpFormDraft {
@@ -153,6 +191,9 @@ export function offeringToDraft(o: ServiceOfferingV1): ServiceOfferingDraft {
     label: o.label,
     service_key: o.service_key,
     description: o.description?.trim() ?? "",
+    matcherKeywords: o.matcher_hints?.keywords?.trim() ?? "",
+    matcherIncludeWhen: o.matcher_hints?.include_when?.trim() ?? "",
+    matcherExcludeWhen: o.matcher_hints?.exclude_when?.trim() ?? "",
     textEnabled: !!text?.enabled,
     voiceEnabled: !!voice?.enabled,
     videoEnabled: !!video?.enabled,
@@ -321,11 +362,30 @@ export function draftsToCatalogOrNull(services: ServiceOfferingDraft[]): Service
       if (desc) {
         base.description = desc;
       }
+      const mk = d.matcherKeywords.trim();
+      const mi = d.matcherIncludeWhen.trim();
+      const me = d.matcherExcludeWhen.trim();
+      if (mk || mi || me) {
+        base.matcher_hints = {
+          ...(mk ? { keywords: mk } : {}),
+          ...(mi ? { include_when: mi } : {}),
+          ...(me ? { exclude_when: me } : {}),
+        };
+      }
       return base;
     } catch (e) {
       throw e;
     }
   });
+
+  const hasCatchAll = offerings.some(
+    (o) => o.service_key.trim().toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY
+  );
+  if (!hasCatchAll) {
+    throw new Error(
+      `Your catalog must include “${CATALOG_CATCH_ALL_LABEL_DEFAULT}” (internal key ${CATALOG_CATCH_ALL_SERVICE_KEY}). Use Add service on an empty catalog to start from that row, or add it before saving.`
+    );
+  }
 
   return {
     version: SERVICE_CATALOG_VERSION,

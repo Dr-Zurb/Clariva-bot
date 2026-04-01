@@ -1,8 +1,20 @@
 /**
  * Conversation State Types (e-task-3)
  *
- * State shape for multi-turn flow. Stored in conversations.metadata (no PHI).
- * Used for flow control (e.g. current intent, step) and response generation.
+ * State shape for multi-turn flow. Stored in conversations.metadata.
+ *
+ * **PHI / COMPLIANCE (ARM-03):**
+ * - New ARM-03 fields MUST be enums, booleans, ISO timestamps, or opaque IDs only — **no** patient
+ *   free-text, complaints, or echoes of DM content in `serviceCatalogMatchReasonCodes` or matcher fields.
+ * - Pre-existing keys like `reasonForVisit` / `extraNotes` may hold PHI and follow legacy booking flows;
+ *   do **not** add new PHI-bearing keys to metadata.
+ *
+ * **Semantics:** `matcherProposedCatalogServiceKey` (and related) = AI/staff **proposal**.
+ * `catalogServiceKey` / `catalogServiceId` = **final** selection for quoting & `/book` once
+ * `serviceSelectionFinalized` is true (or high-confidence path sets them without staff review).
+ *
+ * Persistence: callers merge with `{ ...state, ...patch }` then `updateConversationState` replaces
+ * the whole metadata object — always spread existing state first.
  */
 
 import type { Intent } from './ai';
@@ -17,6 +29,8 @@ export type ConversationLastPromptKind =
   | 'confirm_details'
   | 'match_pick'
   | 'cancel_confirm'
+  /** ARM-05: Visit type pending staff confirmation — no slot/payment CTA yet. */
+  | 'staff_service_pending'
   /** RBH-13: Last assistant turn was a structured fee quote (not collecting PHI). */
   | 'fee_quote';
 
@@ -39,6 +53,7 @@ export function conversationLastPromptKindForStep(
   if (step === 'consent') return 'consent';
   if (step === 'awaiting_match_confirmation') return 'match_pick';
   if (step === 'awaiting_cancel_confirmation') return 'cancel_confirm';
+  if (step === 'awaiting_staff_service_confirmation') return 'staff_service_pending';
   return undefined;
 }
 
@@ -46,6 +61,33 @@ export function conversationLastPromptKindForStep(
  * Collection step values (e-task-4). No PHI; only step and field names in metadata.
  * RBH-06: `confirming_slot` / `selecting_slot` are deprecated — use `awaiting_slot_selection`.
  */
+/**
+ * ARM-03 / AI receptionist: confidence band for catalog `service_key` matching (stored in metadata).
+ */
+export type ServiceCatalogMatchConfidence = 'high' | 'medium' | 'low';
+
+/**
+ * ARM-03: suggested reason codes for structured metrics/logging (snake_case). Arbitrary strings allowed
+ * in `serviceCatalogMatchReasonCodes` for forward compatibility; prefer these when possible.
+ */
+export const SERVICE_CATALOG_MATCH_REASON_CODES = {
+  CATALOG_ALLOWLIST_MATCH: 'catalog_allowlist_match',
+  KEYWORD_HINT_MATCH: 'keyword_hint_match',
+  SINGLE_SERVICE_CATALOG: 'single_service_catalog',
+  AMBIGUOUS_COMPLAINT: 'ambiguous_complaint',
+  NO_CATALOG_MATCH: 'no_catalog_match',
+  MATCHER_ERROR: 'matcher_error',
+  STAFF_CONFIRMED_PROPOSAL: 'staff_confirmed_proposal',
+  STAFF_REASSIGNED_SERVICE: 'staff_reassigned_service',
+  AUTO_FINALIZED_HIGH_CONFIDENCE: 'auto_finalized_high_confidence',
+  /** ARM-04: validated choice produced by LLM stage (key still allowlisted). */
+  SERVICE_MATCH_LLM: 'service_match_llm',
+  /** ARM-06: staff closed review without confirming matcher proposal. */
+  STAFF_REVIEW_CANCELLED_BY_STAFF: 'staff_review_cancelled_by_staff',
+  /** ARM-06 / ARM-08: SLA elapsed before staff action. */
+  STAFF_REVIEW_TIMED_OUT: 'staff_review_timed_out',
+} as const;
+
 export type PatientCollectionStep =
   | 'collecting_all'
   | 'collecting_name'
@@ -59,6 +101,8 @@ export type PatientCollectionStep =
   | 'consent'
   | 'awaiting_date_time'
   | 'awaiting_slot_selection'
+  /** ARM-05: Matcher medium/low — clinic must confirm service before slot link. */
+  | 'awaiting_staff_service_confirmation'
   | 'confirming_slot'
   | 'selecting_slot'
   | string;
@@ -91,6 +135,28 @@ export interface ConversationState {
   catalogServiceKey?: string;
   /** SFU-11: catalog `service_id` for episode lookup */
   catalogServiceId?: string;
+  /**
+   * ARM-03: AI matcher proposal for `service_key` **before** staff confirmation or auto-finalize.
+   * Do not store patient text here — slug/key only.
+   */
+  matcherProposedCatalogServiceKey?: string;
+  /** ARM-03: proposal stable id from `service_offerings_json` */
+  matcherProposedCatalogServiceId?: string;
+  matcherProposedConsultationModality?: 'text' | 'voice' | 'video';
+  /** ARM-03: last matcher confidence (enum only) */
+  serviceCatalogMatchConfidence?: ServiceCatalogMatchConfidence;
+  /** ARM-03: machine-readable codes for logs/metrics — no free-text patient content */
+  serviceCatalogMatchReasonCodes?: string[];
+  /** ARM-03: patient must not get slot/payment until staff resolves (ARM-05/06) */
+  pendingStaffServiceReview?: boolean;
+  /** ARM-03 / ARM-06: id of pending review row */
+  staffServiceReviewRequestId?: string;
+  /** ARM-03: SLA end (ISO 8601); internal UI / worker only */
+  staffServiceReviewDeadlineAt?: string;
+  /**
+   * ARM-03 / ARM-09: when true, `catalogServiceKey` (and modality/id) are authoritative for booking UX.
+   */
+  serviceSelectionFinalized?: boolean;
   /** SFU-05: teleconsult modality for quoting (text / voice / video) */
   consultationModality?: 'text' | 'voice' | 'video';
   /** Slot picked on booking page; optional metadata (canonical step: awaiting_slot_selection; RBH-06) */
@@ -125,4 +191,142 @@ export interface ConversationState {
   pendingRescheduleAppointmentIds?: string[];
   /** RBH-13: Optional sub-flow (e.g. fee quote without forced intake). */
   activeFlow?: ConversationActiveFlow;
+}
+
+/** ARM-05: Block booking/slot CTAs until staff resolves (ARM-06/07) or high-confidence path finalized. */
+export function isSlotBookingBlockedPendingStaffReview(state: ConversationState): boolean {
+  return state.pendingStaffServiceReview === true && state.serviceSelectionFinalized !== true;
+}
+
+/**
+ * ARM-03: record a matcher proposal and optional staff-review gate (pure; merge into state then persist).
+ */
+export function applyMatcherProposalToConversationState(
+  state: ConversationState,
+  proposal: {
+    matcherProposedCatalogServiceKey: string;
+    matcherProposedCatalogServiceId?: string;
+    matcherProposedConsultationModality?: 'text' | 'voice' | 'video';
+    serviceCatalogMatchConfidence: ServiceCatalogMatchConfidence;
+    serviceCatalogMatchReasonCodes?: string[];
+    pendingStaffServiceReview?: boolean;
+    staffServiceReviewRequestId?: string;
+    staffServiceReviewDeadlineAt?: string;
+    /** High-confidence path: copy proposal into final `catalog*` fields and set finalized */
+    finalizeSelection?: boolean;
+  }
+): ConversationState {
+  const next: ConversationState = {
+    ...state,
+    matcherProposedCatalogServiceKey: proposal.matcherProposedCatalogServiceKey,
+    serviceCatalogMatchConfidence: proposal.serviceCatalogMatchConfidence,
+  };
+
+  if (proposal.matcherProposedCatalogServiceId !== undefined) {
+    next.matcherProposedCatalogServiceId = proposal.matcherProposedCatalogServiceId;
+  }
+  if (proposal.matcherProposedConsultationModality !== undefined) {
+    next.matcherProposedConsultationModality = proposal.matcherProposedConsultationModality;
+  }
+  if (proposal.serviceCatalogMatchReasonCodes?.length) {
+    next.serviceCatalogMatchReasonCodes = [
+      ...new Set([
+        ...(state.serviceCatalogMatchReasonCodes ?? []),
+        ...proposal.serviceCatalogMatchReasonCodes,
+      ]),
+    ];
+  }
+  if (proposal.pendingStaffServiceReview !== undefined) {
+    next.pendingStaffServiceReview = proposal.pendingStaffServiceReview;
+  }
+  if (proposal.staffServiceReviewRequestId !== undefined) {
+    next.staffServiceReviewRequestId = proposal.staffServiceReviewRequestId;
+  }
+  if (proposal.staffServiceReviewDeadlineAt !== undefined) {
+    next.staffServiceReviewDeadlineAt = proposal.staffServiceReviewDeadlineAt;
+  }
+
+  if (proposal.finalizeSelection) {
+    next.catalogServiceKey = proposal.matcherProposedCatalogServiceKey;
+    if (proposal.matcherProposedCatalogServiceId !== undefined) {
+      next.catalogServiceId = proposal.matcherProposedCatalogServiceId;
+    }
+    if (proposal.matcherProposedConsultationModality !== undefined) {
+      next.consultationModality = proposal.matcherProposedConsultationModality;
+    }
+    next.serviceSelectionFinalized = true;
+    next.pendingStaffServiceReview = false;
+    next.staffServiceReviewRequestId = undefined;
+    next.staffServiceReviewDeadlineAt = undefined;
+  }
+
+  return next;
+}
+
+/**
+ * ARM-03: apply staff-confirmed (or API) **final** catalog row — clears pending review flags (pure).
+ */
+export function applyFinalCatalogServiceSelection(
+  state: ConversationState,
+  final: {
+    catalogServiceKey: string;
+    catalogServiceId?: string;
+    consultationModality?: 'text' | 'voice' | 'video';
+    /** Remove proposal fields from returned state (undefined so JSON omits). */
+    clearProposal?: boolean;
+    reasonCodesAppend?: string[];
+  }
+): ConversationState {
+  const mergedCodes = [
+    ...new Set([...(state.serviceCatalogMatchReasonCodes ?? []), ...(final.reasonCodesAppend ?? [])]),
+  ];
+  const next: ConversationState = {
+    ...state,
+    catalogServiceKey: final.catalogServiceKey,
+    serviceSelectionFinalized: true,
+    pendingStaffServiceReview: false,
+    staffServiceReviewRequestId: undefined,
+    staffServiceReviewDeadlineAt: undefined,
+    serviceCatalogMatchConfidence: 'high',
+    serviceCatalogMatchReasonCodes: mergedCodes.length > 0 ? mergedCodes : undefined,
+  };
+
+  if (final.catalogServiceId !== undefined) {
+    next.catalogServiceId = final.catalogServiceId;
+  }
+  if (final.consultationModality !== undefined) {
+    next.consultationModality = final.consultationModality;
+  }
+
+  if (final.clearProposal) {
+    next.matcherProposedCatalogServiceKey = undefined;
+    next.matcherProposedCatalogServiceId = undefined;
+    next.matcherProposedConsultationModality = undefined;
+  }
+
+  return next;
+}
+
+/**
+ * ARM-06: clear pending staff-review gate without finalizing catalog (cancel / timeout paths).
+ * Moves DM flow off `awaiting_staff_service_confirmation` so the patient is not stuck.
+ */
+export function applyStaffReviewGateCancellationToConversationState(
+  state: ConversationState,
+  reasonCode:
+    | typeof SERVICE_CATALOG_MATCH_REASON_CODES.STAFF_REVIEW_CANCELLED_BY_STAFF
+    | typeof SERVICE_CATALOG_MATCH_REASON_CODES.STAFF_REVIEW_TIMED_OUT
+): ConversationState {
+  const mergedCodes = [...new Set([...(state.serviceCatalogMatchReasonCodes ?? []), reasonCode])];
+  return {
+    ...state,
+    pendingStaffServiceReview: false,
+    staffServiceReviewRequestId: undefined,
+    staffServiceReviewDeadlineAt: undefined,
+    step: state.step === 'awaiting_staff_service_confirmation' ? 'responded' : state.step,
+    lastPromptKind:
+      state.step === 'awaiting_staff_service_confirmation' ? undefined : state.lastPromptKind,
+    serviceCatalogMatchReasonCodes: mergedCodes,
+    updatedAt: new Date().toISOString(),
+  };
 }

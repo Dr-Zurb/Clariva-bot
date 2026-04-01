@@ -26,6 +26,11 @@ import { getDoctorSettings } from '../services/doctor-settings-service';
 import { getConversationState } from '../services/conversation-service';
 import { ConflictError } from '../utils/errors';
 import { errorResponse } from '../utils/response';
+import {
+  deriveSlotPageBookingHints,
+  narrowSlotPageBookingHintsToCatalog,
+} from '../utils/slot-page-booking-hints';
+import { evaluatePublicBookingPaymentGate } from '../utils/public-booking-payment-gate';
 
 /**
  * GET /api/v1/bookings/day-slots?token=X&date=YYYY-MM-DD
@@ -102,6 +107,23 @@ export const getSlotPageInfoHandler = asyncHandler(async (req: Request, res: Res
       ? null
       : getBookingPageCatalogPayload(doctorSettings, mode);
 
+  const bookingHintsRaw = deriveSlotPageBookingHints(convState);
+  const allowedKeys =
+    serviceCatalog && serviceCatalog.services.length > 0
+      ? new Set(serviceCatalog.services.map((s) => String(s.service_key).trim().toLowerCase()))
+      : null;
+  const bookingHints =
+    allowedKeys && allowedKeys.size > 0
+      ? narrowSlotPageBookingHintsToCatalog(bookingHintsRaw, allowedKeys)
+      : {};
+
+  const bookingGate =
+    mode === 'book'
+      ? evaluatePublicBookingPaymentGate(convState, doctorSettings)
+      : ({ allowed: true as const });
+  const bookingAllowed = bookingGate.allowed;
+  const bookingBlockedReason = bookingGate.allowed ? undefined : bookingGate.reason;
+
   res.status(200).json(
     successResponse(
       {
@@ -111,7 +133,10 @@ export const getSlotPageInfoHandler = asyncHandler(async (req: Request, res: Res
         mode,
         appointmentId: appointmentId ?? undefined,
         opdMode,
+        bookingAllowed,
+        ...(bookingBlockedReason ? { bookingBlockedReason } : {}),
         ...(serviceCatalog ? { serviceCatalog } : {}),
+        ...(Object.keys(bookingHints).length > 0 ? bookingHints : {}),
       },
       req
     )

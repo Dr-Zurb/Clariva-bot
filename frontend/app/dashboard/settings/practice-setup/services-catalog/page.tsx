@@ -203,7 +203,9 @@ export default function ServicesCatalogPage() {
       <h1 className="text-2xl font-semibold text-gray-900">Services catalog</h1>
       <p className="mt-1 text-gray-600">
         Define consultation services and teleconsult prices (text, voice, video). Follow-up discounts can differ by channel.
-        Used for quotes and checkout when patients book remote visits.
+        Used for quotes and checkout when patients book remote visits. A mandatory{" "}
+        <span className="font-medium">Other / not listed</span> catch-all (internal key <code className="text-sm">other</code>)
+        is required on every saved catalog so unmatched complaints can still book safely.
       </p>
 
       <form onSubmit={handleSave} className="mt-6 space-y-4">

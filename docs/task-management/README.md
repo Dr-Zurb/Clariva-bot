@@ -143,6 +143,14 @@ Observability, characterization tests, worker refactors (helpers + module split)
 - **Engineering map:** [RECEPTIONIST_BOT_ENGINEERING.md](../Development/Daily-plans/March%202026/2026-03-25/Receptionist%20Bot%20improvements/RECEPTIONIST_BOT_ENGINEERING.md)
 - **Task index:** [tasks/receptionist-bot-hardening/README.md](./tasks/receptionist-bot-hardening/README.md) — **RBH-01** through **RBH-11**
 
+### AI Receptionist — Service matching & staff review (2026-04-01)
+
+Map patient **reason / complaint** to **`service_offerings_json`** with confidence-based routing: **high** → proceed to slot + single capture; **low / ambiguous** → **no slot & no capture** until staff resolution (**24h SLA**). Mandatory **Other / not listed** catch-all; **mandatory audit** on staff actions.
+
+- **Product plan:** [plan-ai-receptionist-service-matching-and-booking.md](../Development/Daily-plans/April%202026/01-04-2026/plan-ai-receptionist-service-matching-and-booking.md)
+- **Initiative hub:** [AI_RECEPTIONIST_MATCHING_INITIATIVE.md](./AI_RECEPTIONIST_MATCHING_INITIATIVE.md)
+- **Task index:** [docs/Development/Daily-plans/April 2026/01-04-2026/tasks/README.md](../Development/Daily-plans/April%202026/01-04-2026/tasks/README.md) — **e-task-arm-01** … **e-task-arm-11**
+
 ### AI Receptionist — Human-Like Bot (2026-03-26)
 
 Transform the bot from regex-heavy to AI-first: understand conversations, store data intelligently, respond like a human receptionist.
@@ -238,5 +246,5 @@ Tasks: e-task-1 (prescription migration), e-task-2 (prescription service & API),
 
 ---
 
-**Last Updated:** 2026-03-28  
-**Version:** 2.8.0 (Added Services & follow-ups SFU-01…09 task index)
+**Last Updated:** 2026-03-31  
+**Version:** 2.9.0 (AI Receptionist matching ARM-01…11 task index, April 2026 plan)

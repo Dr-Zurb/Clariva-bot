@@ -29,6 +29,7 @@ import type {
 } from "@/types/prescription";
 import type { OpdSessionSnapshotData } from "@/types/opd-session";
 import type { DoctorQueueSessionRow } from "@/types/opd-doctor";
+import type { ServiceStaffReviewListItem } from "@/types/service-staff-review";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -677,6 +678,14 @@ export interface BookingPageCatalogApi {
   feeCurrency: string;
 }
 
+/** ARM-09: matcher band for /book UI (no PHI). */
+export type ServiceCatalogMatchConfidenceApi = "high" | "medium" | "low";
+
+/** ARM-10: why /book cannot proceed to payment yet */
+export type BookingBlockedReasonApi =
+  | "staff_review_pending"
+  | "service_selection_not_finalized";
+
 export interface SlotPageInfoData {
   doctorId: string;
   practiceName: string;
@@ -684,8 +693,22 @@ export interface SlotPageInfoData {
   mode?: "book" | "reschedule";
   appointmentId?: string;
   opdMode?: OpdModeApi;
+  /**
+   * ARM-10: false when payment must not run until chat/staff gate clears.
+   * Reschedule flow is always allowed here (true).
+   */
+  bookingAllowed?: boolean;
+  bookingBlockedReason?: BookingBlockedReasonApi;
   /** Token-scoped doctor catalog for service + modality picker (book flow only). */
   serviceCatalog?: BookingPageCatalogApi | null;
+  /** Pre-fill from chat when staff confirmed or auto-finalized; omitted if pending staff or not final. */
+  suggestedCatalogServiceKey?: string;
+  suggestedCatalogServiceId?: string;
+  suggestedConsultationModality?: ConsultationModalityApi;
+  matchConfidence?: ServiceCatalogMatchConfidenceApi;
+  serviceSelectionFinalized?: boolean;
+  /** When true, do not let the patient switch to another service row (visit type fixed in chat). */
+  servicePickerLocked?: boolean;
 }
 
 export interface DaySlotWithStatus {
@@ -1336,4 +1359,133 @@ export async function patchAppointment(
     throw err;
   }
   return json as ApiSuccess<AppointmentDetailData>;
+}
+
+// =============================================================================
+// Service staff reviews (ARM-06 / ARM-07)
+// =============================================================================
+
+export interface ServiceStaffReviewsListData {
+  reviews: ServiceStaffReviewListItem[];
+}
+
+/**
+ * Pending (or filtered) service match reviews for the logged-in doctor.
+ */
+export async function getServiceStaffReviews(
+  token: string,
+  status: ServiceStaffReviewListItem["status"] = "pending"
+): Promise<ApiSuccess<ServiceStaffReviewsListData>> {
+  const params = new URLSearchParams({ status });
+  return request<ServiceStaffReviewsListData>(
+    `/api/v1/service-staff-reviews?${params.toString()}`,
+    { token }
+  );
+}
+
+export async function postConfirmServiceStaffReview(
+  token: string,
+  reviewId: string,
+  body: { note?: string }
+): Promise<ApiSuccess<{ review: ServiceStaffReviewListItem }>> {
+  const res = await fetch(
+    `${API_BASE}/api/v1/service-staff-reviews/${encodeURIComponent(reviewId)}/confirm`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ review: ServiceStaffReviewListItem }>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<{ review: ServiceStaffReviewListItem }>;
+}
+
+export async function postReassignServiceStaffReview(
+  token: string,
+  reviewId: string,
+  body: {
+    catalogServiceKey: string;
+    catalogServiceId?: string;
+    consultationModality?: "text" | "voice" | "video";
+    note?: string;
+  }
+): Promise<ApiSuccess<{ review: ServiceStaffReviewListItem }>> {
+  const res = await fetch(
+    `${API_BASE}/api/v1/service-staff-reviews/${encodeURIComponent(reviewId)}/reassign`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ review: ServiceStaffReviewListItem }>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<{ review: ServiceStaffReviewListItem }>;
+}
+
+export async function postCancelServiceStaffReview(
+  token: string,
+  reviewId: string,
+  body: { note?: string }
+): Promise<ApiSuccess<{ review: ServiceStaffReviewListItem }>> {
+  const res = await fetch(
+    `${API_BASE}/api/v1/service-staff-reviews/${encodeURIComponent(reviewId)}/cancel`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ review: ServiceStaffReviewListItem }>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<{ review: ServiceStaffReviewListItem }>;
 }

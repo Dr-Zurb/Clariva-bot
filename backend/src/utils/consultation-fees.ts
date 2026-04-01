@@ -8,7 +8,11 @@ import {
   type SafetyMessageLocale,
   detectSafetyMessageLocale,
 } from './safety-messages';
-import type { FollowUpPolicyV1, ServiceCatalogV1 } from './service-catalog-schema';
+import type {
+  FollowUpPolicyV1,
+  ServiceCatalogV1,
+  ServiceMatcherHintsV1,
+} from './service-catalog-schema';
 import {
   SERVICE_CATALOG_VERSION,
   safeParseServiceCatalogV1FromDb,
@@ -153,6 +157,34 @@ export const CONSULTATION_FEE_DM_MAX_CHARS = 3200;
 
 /** LLM system-prompt catalog block — keep bounded for token cost (e-task-2). */
 const SERVICE_CATALOG_AI_CONTEXT_MAX_CHARS = 7200;
+
+/** ARM-02: cap matcher hint text per offering inside the LLM catalog line. */
+const MATCHER_HINTS_AI_PER_SERVICE_MAX = 420;
+
+function truncateForAiContext(s: string, max: number): string {
+  const t = s.trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+}
+
+/** Compact matcher metadata for system prompt only (not for patient DMs). */
+export function formatMatcherHintsForAiContext(hints: ServiceMatcherHintsV1 | undefined): string {
+  if (!hints) return '';
+  const parts: string[] = [];
+  if (hints.keywords?.trim()) {
+    parts.push(`keywords=${truncateForAiContext(hints.keywords, 140)}`);
+  }
+  if (hints.include_when?.trim()) {
+    parts.push(`include_when=${truncateForAiContext(hints.include_when, 220)}`);
+  }
+  if (hints.exclude_when?.trim()) {
+    parts.push(`exclude_when=${truncateForAiContext(hints.exclude_when, 220)}`);
+  }
+  if (parts.length === 0) return '';
+  const joined = parts.join('; ');
+  if (joined.length <= MATCHER_HINTS_AI_PER_SERVICE_MAX) return joined;
+  return `${joined.slice(0, MATCHER_HINTS_AI_PER_SERVICE_MAX - 1).trimEnd()}…`;
+}
 
 const MODALITY_DM_LABEL: Record<'text' | 'voice' | 'video', string> = {
   text: 'Text',
@@ -340,7 +372,9 @@ export function formatServiceCatalogForAiContext(settings: {
       }
     }
     if (mods.length > 0) {
-      chunks.push(`${s.label} [service_key=${s.service_key}]: ${mods.join(', ')}`);
+      const mh = formatMatcherHintsForAiContext(s.matcher_hints);
+      const core = `${s.label} [service_key=${s.service_key}]: ${mods.join(', ')}`;
+      chunks.push(mh ? `${core} [matcher: ${mh}]` : core);
     }
   }
   if (chunks.length === 0) {

@@ -6,6 +6,7 @@
 import { randomUUID } from 'crypto';
 import type { ServiceCatalogV1, ServiceOfferingV1 } from './service-catalog-schema';
 import {
+  CATALOG_CATCH_ALL_SERVICE_KEY,
   hydrateCatalogPerModalityFollowUp,
   hydrateServiceCatalogServiceIds,
   serviceCatalogV1Schema,
@@ -73,10 +74,14 @@ export function mergeServiceCatalogOnSave(
 
     if (idNorm && prevById.has(idNorm)) {
       const prevRow = prevById.get(idNorm)!;
+      const incomingKey = s.service_key.trim().toLowerCase();
+      const promoteToCatchAll =
+        incomingKey === CATALOG_CATCH_ALL_SERVICE_KEY &&
+        prevRow.service_key.trim().toLowerCase() !== CATALOG_CATCH_ALL_SERVICE_KEY;
       return {
         ...s,
         service_id: prevRow.service_id,
-        service_key: prevRow.service_key,
+        service_key: promoteToCatchAll ? CATALOG_CATCH_ALL_SERVICE_KEY : prevRow.service_key,
       };
     }
 

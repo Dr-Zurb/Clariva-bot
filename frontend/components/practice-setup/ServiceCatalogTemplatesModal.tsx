@@ -2,7 +2,9 @@
 
 import { useEffect, useId, useState } from "react";
 import {
+  catalogMissingCatchAllOffering,
   catalogToServiceDrafts,
+  catchAllServiceDraft,
   draftsToCatalogOrNull,
   type ServiceOfferingDraft,
 } from "@/lib/service-catalog-drafts";
@@ -62,7 +64,11 @@ export function ServiceCatalogTemplatesModal({
 
   const handleApplyUser = (t: UserSavedServiceTemplateV1) => {
     if (!confirmReplaceServiceCatalogIfNeeded(currentServicesCount)) return;
-    onApplyCatalog(catalogToServiceDrafts(t.catalog));
+    let drafts: ServiceOfferingDraft[] = catalogToServiceDrafts(t.catalog);
+    if (catalogMissingCatchAllOffering(drafts)) {
+      drafts = [catchAllServiceDraft(), ...drafts];
+    }
+    onApplyCatalog(drafts);
     onClose();
   };
 

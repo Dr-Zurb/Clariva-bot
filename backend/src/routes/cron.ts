@@ -9,6 +9,7 @@ import { Router, Request, Response } from 'express';
 import { DateTime } from 'luxon';
 import { env } from '../config/env';
 import { processBatchedPayouts } from '../services/payout-service';
+import { runStaffReviewTimeoutJob } from '../services/service-staff-review-service';
 import { logger } from '../config/logger';
 
 const router = Router();
@@ -119,6 +120,35 @@ router.post('/payouts', async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: { code: 'InternalError', message: 'Batch payout failed' },
+    });
+  }
+});
+
+/**
+ * POST /cron/staff-review-timeouts
+ *
+ * ARM-08: close expired pending staff service-review rows and send at-most-once Instagram notify where applicable.
+ * Schedule externally (e.g. every 15 minutes UTC) with same CRON_SECRET as payouts.
+ */
+router.post('/staff-review-timeouts', async (req: Request, res: Response) => {
+  if (!verifyCronAuth(req)) {
+    return res.status(401).json({
+      success: false,
+      error: { code: 'Unauthorized', message: 'Invalid or missing cron secret' },
+    });
+  }
+
+  const correlationId = `cron-staff-review-timeout-${Date.now()}`;
+
+  try {
+    const data = await runStaffReviewTimeoutJob(correlationId);
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ correlationId, error: msg }, 'Cron staff review timeouts failed');
+    return res.status(500).json({
+      success: false,
+      error: { code: 'InternalError', message: 'Staff review timeout job failed' },
     });
   }
 });

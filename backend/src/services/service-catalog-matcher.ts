@@ -1,0 +1,506 @@
+/**
+ * ARM-04: Deterministic-first, LLM-assisted service_key matcher against `service_offerings_json`.
+ * Patient text is redacted before any LLM call. Logs only correlationId, keys, confidence, source.
+ */
+
+import { getOpenAIClient, getOpenAIConfig } from '../config/openai';
+import { logger } from '../config/logger';
+import type { ServiceCatalogMatchConfidence } from '../types/conversation';
+import { SERVICE_CATALOG_MATCH_REASON_CODES } from '../types/conversation';
+import { redactPhiForAI } from './ai-service';
+import { logAIClassification } from '../utils/audit-logger';
+import { findServiceOfferingByKey } from '../utils/service-catalog-helpers';
+import type { ServiceCatalogV1, ServiceOfferingV1 } from '../utils/service-catalog-schema';
+import { CATALOG_CATCH_ALL_SERVICE_KEY } from '../utils/service-catalog-schema';
+
+const LLM_MAX_RETRIES = 2;
+const LLM_RETRY_DELAYS_MS = [800, 2000];
+const USER_CONTEXT_MAX_CHARS = 1800;
+const SERVICE_MATCH_MAX_COMPLETION_TOKENS = 180;
+
+const MODALITIES = ['text', 'voice', 'video'] as const;
+
+export interface ServiceCatalogMatchResult {
+  catalogServiceKey: string;
+  catalogServiceId: string;
+  suggestedModality?: 'text' | 'voice' | 'video';
+  confidence: ServiceCatalogMatchConfidence;
+  reasonCodes: string[];
+  /** Top labels for inbox / staff UI — no PHI */
+  candidateLabels: Array<{ service_key: string; label: string }>;
+  source: 'deterministic' | 'llm' | 'fallback';
+  pendingStaffReview: boolean;
+  autoFinalize: boolean;
+}
+
+export interface MatchServiceCatalogInput {
+  catalog: ServiceCatalogV1 | null;
+  /** Raw reason for visit — redacted inside this service before LLM */
+  reasonForVisitText: string;
+  recentUserMessages?: string[];
+  correlationId: string;
+}
+
+export interface ServiceCatalogMatchMetricEvent {
+  correlationId: string;
+  source: ServiceCatalogMatchResult['source'];
+  confidence: ServiceCatalogMatchConfidence;
+  fallbackToOther: boolean;
+  llmParseFailed: boolean;
+}
+
+export interface MatchServiceCatalogOptions {
+  /** Skip OpenAI (deterministic + catch-all fallback only). */
+  skipLlm?: boolean;
+  /** In tests, mock the LLM JSON completion. */
+  runLlm?: (params: {
+    systemPrompt: string;
+    userContent: string;
+    correlationId: string;
+  }) => Promise<string | null>;
+  metrics?: (evt: ServiceCatalogMatchMetricEvent) => void;
+}
+
+/** Pure: normalized key must exist in catalog or null (invalid / hallucinated keys). */
+export function resolveCatalogOfferingByKey(
+  catalog: ServiceCatalogV1,
+  rawKey: string | null | undefined
+): { service_key: string; service_id: string; offering: ServiceOfferingV1 } | null {
+  if (rawKey == null || typeof rawKey !== 'string') {
+    return null;
+  }
+  const offering = findServiceOfferingByKey(catalog, rawKey);
+  if (!offering) {
+    return null;
+  }
+  return {
+    service_key: offering.service_key,
+    service_id: offering.service_id,
+    offering,
+  };
+}
+
+export function pickSuggestedModality(
+  offering: ServiceOfferingV1
+): 'text' | 'voice' | 'video' | undefined {
+  const enabled = MODALITIES.filter((m) => offering.modalities[m]?.enabled === true);
+  return enabled.length === 1 ? enabled[0] : undefined;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function candidateLabelsForCatalog(catalog: ServiceCatalogV1): ServiceCatalogMatchResult['candidateLabels'] {
+  return [...catalog.services]
+    .sort((a, b) => a.service_key.localeCompare(b.service_key))
+    .map((s) => ({ service_key: s.service_key, label: s.label }));
+}
+
+function hasLooseOverlap(reason: string, hint: string): boolean {
+  const r = reason.toLowerCase();
+  const h = hint.toLowerCase().trim();
+  if (!h) return true;
+  if (h.length <= 48 && r.includes(h)) return true;
+  const tokens = h.split(/\W+/).filter((w) => w.length >= 3);
+  if (tokens.length === 0) {
+    return r.includes(h);
+  }
+  return tokens.some((w) => r.includes(w));
+}
+
+function matcherHintScore(offering: ServiceOfferingV1, reasonLower: string): number {
+  const h = offering.matcher_hints;
+  if (!h) return 0;
+  if (h.exclude_when?.trim() && hasLooseOverlap(reasonLower, h.exclude_when)) {
+    return -1;
+  }
+  if (h.include_when?.trim() && !hasLooseOverlap(reasonLower, h.include_when)) {
+    return -1;
+  }
+  let score = 0;
+  const kw = h.keywords?.trim();
+  if (kw) {
+    for (const part of kw.split(/[,;]+/)) {
+      const k = part.trim().toLowerCase();
+      if (k.length >= 2 && reasonLower.includes(k)) {
+        score += 4;
+      }
+    }
+  }
+  return score;
+}
+
+function labelOrKeyHits(catalog: ServiceCatalogV1, userText: string): ServiceOfferingV1[] {
+  const t = userText.trim().toLowerCase();
+  if (t.length < 2) {
+    return [];
+  }
+  return catalog.services.filter((s) => {
+    const key = s.service_key.toLowerCase();
+    const lab = s.label.toLowerCase();
+    return t.includes(key) || (lab.length >= 3 && t.includes(lab));
+  });
+}
+
+function buildAllowlistPromptLines(catalog: ServiceCatalogV1): string {
+  const lines: string[] = [];
+  for (const s of [...catalog.services].sort((a, b) => a.service_key.localeCompare(b.service_key))) {
+    const mods = MODALITIES.filter((m) => s.modalities[m]?.enabled === true).join(', ');
+    lines.push(`- ${s.service_key}: ${JSON.stringify(s.label)} [modalities enabled: ${mods || 'none'}]`);
+  }
+  return lines.join('\n');
+}
+
+const SERVICE_MATCH_SYSTEM_PROMPT_BASE = `You map a patient's reason for visit to ONE teleconsult service_key from the practice catalog.
+
+Rules:
+- Output JSON only, no markdown.
+- service_key MUST be copied exactly from the allowed list.
+- modality must be one of the enabled modalities for that service, or null if unsure.
+- match_confidence: "high" if clear fit, "medium" if plausible, "low" if weak or unclear.
+
+Schema:
+{"service_key":"<slug>","modality":"text"|"voice"|"video"|null,"match_confidence":"high"|"medium"|"low"}
+
+Allowed service_key values:
+`;
+
+export type DeterministicMatchInner =
+  | {
+      offering: ServiceOfferingV1;
+      confidence: ServiceCatalogMatchConfidence;
+      reasonCodes: string[];
+      autoFinalize: boolean;
+    }
+  | null;
+
+/** Exported for unit tests — pure Stage A. */
+export function runDeterministicServiceCatalogMatchStageA(
+  catalog: ServiceCatalogV1,
+  reasonForVisitRedacted: string
+): DeterministicMatchInner {
+  const reasonLower = reasonForVisitRedacted.trim().toLowerCase();
+  if (!reasonLower) {
+    return null;
+  }
+
+  const nonCatch = catalog.services.filter(
+    (s) => s.service_key.trim().toLowerCase() !== CATALOG_CATCH_ALL_SERVICE_KEY
+  );
+
+  if (nonCatch.length === 1) {
+    const offering = nonCatch[0]!;
+    return {
+      offering,
+      confidence: 'high',
+      reasonCodes: [SERVICE_CATALOG_MATCH_REASON_CODES.SINGLE_SERVICE_CATALOG],
+      autoFinalize: true,
+    };
+  }
+
+  const hits = labelOrKeyHits(catalog, reasonForVisitRedacted);
+  if (hits.length === 1) {
+    return {
+      offering: hits[0]!,
+      confidence: 'high',
+      reasonCodes: [SERVICE_CATALOG_MATCH_REASON_CODES.CATALOG_ALLOWLIST_MATCH],
+      autoFinalize: true,
+    };
+  }
+
+  const scored = catalog.services
+    .map((s) => ({ s, sc: matcherHintScore(s, reasonLower) }))
+    .filter((x) => x.sc > 0);
+  if (scored.length === 0) {
+    return null;
+  }
+  const maxSc = Math.max(...scored.map((x) => x.sc));
+  const winners = scored.filter((x) => x.sc === maxSc).map((x) => x.s);
+  if (winners.length !== 1) {
+    return null;
+  }
+
+  return {
+    offering: winners[0]!,
+    confidence: 'medium',
+    reasonCodes: [
+      SERVICE_CATALOG_MATCH_REASON_CODES.KEYWORD_HINT_MATCH,
+      SERVICE_CATALOG_MATCH_REASON_CODES.CATALOG_ALLOWLIST_MATCH,
+    ],
+    autoFinalize: false,
+  };
+}
+
+function buildUserContentForLlm(redactedParts: string[]): string {
+  const joined = redactedParts.filter(Boolean).join('\n---\n').slice(0, USER_CONTEXT_MAX_CHARS);
+  return `Patient messages (redacted, most recent last):\n${joined}`;
+}
+
+async function defaultRunServiceMatchLlm(params: {
+  systemPrompt: string;
+  userContent: string;
+  correlationId: string;
+}): Promise<string | null> {
+  const client = getOpenAIClient();
+  if (!client) {
+    logger.warn({ correlationId: params.correlationId }, 'service_catalog_match: no OpenAI client');
+    return null;
+  }
+  const config = getOpenAIConfig();
+
+  for (let attempt = 0; attempt < LLM_MAX_RETRIES; attempt++) {
+    try {
+      const completion = await client.chat.completions.create({
+        model: config.model,
+        max_completion_tokens: SERVICE_MATCH_MAX_COMPLETION_TOKENS,
+        response_format: { type: 'json_object' as const },
+        messages: [
+          { role: 'system', content: params.systemPrompt },
+          { role: 'user', content: params.userContent },
+        ],
+      });
+
+      const content = completion.choices[0]?.message?.content ?? null;
+      const usage = completion.usage;
+
+      if (!content) {
+        await logAIClassification({
+          correlationId: params.correlationId,
+          model: config.model,
+          redactionApplied: true,
+          status: 'failure',
+          tokens: usage?.total_tokens,
+          errorMessage: 'service_catalog_match_empty_completion',
+        });
+        return null;
+      }
+
+      await logAIClassification({
+        correlationId: params.correlationId,
+        model: config.model,
+        redactionApplied: true,
+        status: 'success',
+        tokens: usage?.total_tokens,
+      });
+
+      return content;
+    } catch (err) {
+      const isLast = attempt === LLM_MAX_RETRIES - 1;
+      logger.warn(
+        {
+          correlationId: params.correlationId,
+          attempt: attempt + 1,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        'service_catalog_match_llm_attempt_failed'
+      );
+      if (isLast) {
+        await logAIClassification({
+          correlationId: params.correlationId,
+          model: config.model,
+          redactionApplied: true,
+          status: 'failure',
+          errorMessage: 'service_catalog_match_llm_failed_after_retries',
+        });
+        return null;
+      }
+      await sleep(LLM_RETRY_DELAYS_MS[attempt] ?? 1500);
+    }
+  }
+  return null;
+}
+
+function parseLlmJson(content: string): {
+  service_key?: string;
+  modality?: string | null;
+  match_confidence?: string;
+} | null {
+  try {
+    return JSON.parse(content) as {
+      service_key?: string;
+      modality?: string | null;
+      match_confidence?: string;
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeLlmConfidence(raw: string | undefined): ServiceCatalogMatchConfidence {
+  const c = raw?.toLowerCase().trim();
+  if (c === 'high' || c === 'medium' || c === 'low') {
+    return c;
+  }
+  return 'low';
+}
+
+/**
+ * Full matcher: Stage A (rules + ARM-02 hints), Stage B (LLM with allowlist), validated fallback to `other`.
+ */
+export async function matchServiceCatalogOffering(
+  input: MatchServiceCatalogInput,
+  options?: MatchServiceCatalogOptions
+): Promise<ServiceCatalogMatchResult | null> {
+  const { catalog, reasonForVisitText, recentUserMessages, correlationId } = input;
+  const metrics = options?.metrics;
+
+  const emit = (partial: Omit<ServiceCatalogMatchMetricEvent, 'correlationId'>) => {
+    metrics?.({ correlationId, ...partial });
+  };
+
+  if (!catalog || catalog.services.length === 0) {
+    logger.warn({ correlationId }, 'service_catalog_match_skipped_empty_catalog');
+    return null;
+  }
+
+  const candidates = candidateLabelsForCatalog(catalog);
+  const catchAll = resolveCatalogOfferingByKey(catalog, CATALOG_CATCH_ALL_SERVICE_KEY);
+  if (!catchAll) {
+    logger.error(
+      { correlationId },
+      'service_catalog_match: catalog missing catch-all other — using first row (misconfigured)'
+    );
+  }
+
+  const reasonRedacted = redactPhiForAI(reasonForVisitText);
+  const recentRedacted = (recentUserMessages ?? []).map((m) => redactPhiForAI(m ?? '')).filter(Boolean);
+
+  const stageA = runDeterministicServiceCatalogMatchStageA(catalog, reasonRedacted);
+  if (stageA) {
+    const mod = pickSuggestedModality(stageA.offering);
+    const result: ServiceCatalogMatchResult = {
+      catalogServiceKey: stageA.offering.service_key,
+      catalogServiceId: stageA.offering.service_id,
+      suggestedModality: mod,
+      confidence: stageA.confidence,
+      reasonCodes: stageA.reasonCodes,
+      candidateLabels: candidates,
+      source: 'deterministic',
+      pendingStaffReview: !stageA.autoFinalize,
+      autoFinalize: stageA.autoFinalize,
+    };
+    emit({
+      source: 'deterministic',
+      confidence: result.confidence,
+      fallbackToOther: result.catalogServiceKey === CATALOG_CATCH_ALL_SERVICE_KEY,
+      llmParseFailed: false,
+    });
+    return result;
+  }
+
+  const skipLlm = options?.skipLlm === true;
+  const runLlm = options?.runLlm ?? defaultRunServiceMatchLlm;
+  const canRunLlm = Boolean(options?.runLlm) || Boolean(getOpenAIClient());
+
+  if (skipLlm || !canRunLlm) {
+    const fb = catchAll ?? resolveCatalogOfferingByKey(catalog, catalog.services[0]!.service_key)!;
+    const result: ServiceCatalogMatchResult = {
+      catalogServiceKey: fb.service_key,
+      catalogServiceId: fb.service_id,
+      suggestedModality: pickSuggestedModality(fb.offering),
+      confidence: 'low',
+      reasonCodes: [SERVICE_CATALOG_MATCH_REASON_CODES.NO_CATALOG_MATCH],
+      candidateLabels: candidates,
+      source: 'fallback',
+      pendingStaffReview: true,
+      autoFinalize: false,
+    };
+    emit({ source: 'fallback', confidence: 'low', fallbackToOther: true, llmParseFailed: false });
+    return result;
+  }
+
+  const systemPrompt = SERVICE_MATCH_SYSTEM_PROMPT_BASE + buildAllowlistPromptLines(catalog);
+  const userContent = buildUserContentForLlm([...recentRedacted, reasonRedacted].filter(Boolean));
+
+  const rawJson = await runLlm({ systemPrompt, userContent, correlationId });
+  let llmParseFailed = false;
+
+  if (!rawJson) {
+    llmParseFailed = true;
+  }
+
+  const parsed = rawJson ? parseLlmJson(rawJson) : null;
+  if (!parsed?.service_key) {
+    llmParseFailed = true;
+  }
+
+  const resolved =
+    parsed?.service_key != null ? resolveCatalogOfferingByKey(catalog, parsed.service_key) : null;
+
+  if (!resolved) {
+    llmParseFailed = true;
+    const fb = catchAll ?? resolveCatalogOfferingByKey(catalog, catalog.services[0]!.service_key)!;
+    const result: ServiceCatalogMatchResult = {
+      catalogServiceKey: fb.service_key,
+      catalogServiceId: fb.service_id,
+      suggestedModality: pickSuggestedModality(fb.offering),
+      confidence: 'low',
+      reasonCodes: llmParseFailed
+        ? [SERVICE_CATALOG_MATCH_REASON_CODES.MATCHER_ERROR, SERVICE_CATALOG_MATCH_REASON_CODES.NO_CATALOG_MATCH]
+        : [SERVICE_CATALOG_MATCH_REASON_CODES.NO_CATALOG_MATCH],
+      candidateLabels: candidates,
+      source: 'fallback',
+      pendingStaffReview: true,
+      autoFinalize: false,
+    };
+    emit({
+      source: 'fallback',
+      confidence: 'low',
+      fallbackToOther: result.catalogServiceKey === CATALOG_CATCH_ALL_SERVICE_KEY,
+      llmParseFailed,
+    });
+    return result;
+  }
+
+  let modality: 'text' | 'voice' | 'video' | undefined;
+  const modRaw = parsed!.modality;
+  if (typeof modRaw === 'string') {
+    const m = modRaw.toLowerCase().trim() as 'text' | 'voice' | 'video';
+    if (MODALITIES.includes(m) && resolved.offering.modalities[m]?.enabled === true) {
+      modality = m;
+    } else {
+      modality = pickSuggestedModality(resolved.offering);
+    }
+  } else {
+    modality = pickSuggestedModality(resolved.offering);
+  }
+
+  const conf = normalizeLlmConfidence(parsed!.match_confidence);
+  const autoFinalize = conf === 'high';
+
+  const result: ServiceCatalogMatchResult = {
+    catalogServiceKey: resolved.service_key,
+    catalogServiceId: resolved.service_id,
+    suggestedModality: modality,
+    confidence: conf,
+    reasonCodes: [
+      SERVICE_CATALOG_MATCH_REASON_CODES.SERVICE_MATCH_LLM,
+      SERVICE_CATALOG_MATCH_REASON_CODES.CATALOG_ALLOWLIST_MATCH,
+    ],
+    candidateLabels: candidates,
+    source: 'llm',
+    pendingStaffReview: !autoFinalize,
+    autoFinalize,
+  };
+
+  logger.info(
+    {
+      correlationId,
+      serviceCatalogMatchSource: result.source,
+      serviceCatalogMatchConfidence: result.confidence,
+      catalogServiceKey: result.catalogServiceKey,
+      autoFinalize: result.autoFinalize,
+    },
+    'service_catalog_match'
+  );
+
+  emit({
+    source: 'llm',
+    confidence: result.confidence,
+    fallbackToOther: false,
+    llmParseFailed: false,
+  });
+
+  return result;
+}

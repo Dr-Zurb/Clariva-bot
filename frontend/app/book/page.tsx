@@ -100,6 +100,8 @@ function BookPageContent() {
   );
   const [selectedModality, setSelectedModality] =
     useState<ConsultationModalityApi | null>(null);
+  /** ARM-09: visit type fixed in chat — disable switching to another catalog row. */
+  const [servicePickerLocked, setServicePickerLocked] = useState(false);
 
   const dateOptions = useMemo(() => {
     const options: string[] = [];
@@ -129,16 +131,67 @@ function BookPageContent() {
         setPracticeName(res.data.practiceName || "Book Appointment");
         setMode(res.data.mode ?? "book");
         setOpdMode(res.data.opdMode ?? "slot");
+
+        if (res.data.bookingAllowed === false) {
+          const why = res.data.bookingBlockedReason;
+          const msg =
+            why === "staff_review_pending"
+              ? "Your visit type is still being confirmed by the clinic. Please return to your chat thread — we’ll send you a link when you can schedule and pay."
+              : why === "service_selection_not_finalized"
+                ? "Please finish confirming your visit type in chat with the clinic before choosing a time here."
+                : "This scheduling link is not ready yet. Please return to the chat for the next step.";
+          setPageError(msg);
+          setPageLoading(false);
+          return;
+        }
+
         const sc = res.data.serviceCatalog ?? null;
         setServiceCatalog(sc);
-        if (sc && sc.services.length === 1) {
+
+        const locked = res.data.servicePickerLocked === true;
+        setServicePickerLocked(locked);
+
+        const sugKey = res.data.suggestedCatalogServiceKey?.trim().toLowerCase();
+        const sugId = res.data.suggestedCatalogServiceId?.trim();
+        const sugMod = res.data.suggestedConsultationModality;
+
+        if (sc && (sugKey || sugId)) {
+          const svc = sc.services.find(
+            (s) =>
+              s.service_key.toLowerCase() === sugKey ||
+              (Boolean(sugId) && s.service_id === sugId)
+          );
+          if (svc) {
+            setSelectedServiceKey(svc.service_key);
+            setSelectedServiceId(svc.service_id);
+            const enabled = enabledModalitiesForService(svc);
+            if (sugMod && enabled.includes(sugMod)) {
+              setSelectedModality(sugMod);
+            } else if (enabled.length === 1) {
+              setSelectedModality(enabled[0]!);
+            } else {
+              setSelectedModality(null);
+            }
+          } else if (sc.services.length === 1) {
+            setSelectedServiceKey(sc.services[0]!.service_key);
+            setSelectedServiceId(sc.services[0]!.service_id);
+            setSelectedModality(null);
+          } else {
+            setSelectedServiceKey(null);
+            setSelectedServiceId(null);
+            setSelectedModality(null);
+            setServicePickerLocked(false);
+          }
+        } else if (sc && sc.services.length === 1) {
           setSelectedServiceKey(sc.services[0]!.service_key);
           setSelectedServiceId(sc.services[0]!.service_id);
+          setSelectedModality(null);
         } else {
           setSelectedServiceKey(null);
           setSelectedServiceId(null);
+          setSelectedModality(null);
         }
-        setSelectedModality(null);
+
         setPageLoading(false);
         setSelectedDate(dateOptions[0] ?? null);
       })
@@ -355,7 +408,20 @@ function BookPageContent() {
             <h2 id="svc-heading" className="text-sm font-medium text-gray-700">
               Consultation type
             </h2>
-            {serviceCatalog.services.length > 1 && (
+            {servicePickerLocked &&
+              selectedServiceKey &&
+              serviceCatalog.services.length > 1 && (
+              <p className="rounded-md bg-blue-50 px-3 py-2 text-xs text-blue-900">
+                Your visit type was confirmed in chat as{" "}
+                <span className="font-medium">
+                  {serviceCatalog.services.find((x) => x.service_key === selectedServiceKey)
+                    ?.label ?? selectedServiceKey}
+                </span>
+                . Other consultation types are not shown here so scheduling matches what the clinic set up.
+              </p>
+            )}
+            {serviceCatalog.services.length > 1 &&
+              !(servicePickerLocked && selectedServiceKey) && (
               <div className="flex flex-col gap-2">
                 <span className="text-xs text-gray-500">Service</span>
                 <div className="flex flex-wrap gap-2">

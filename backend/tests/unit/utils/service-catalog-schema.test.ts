@@ -14,6 +14,15 @@ import type { DoctorSettingsRow } from '../../../src/types/doctor-settings';
 const SVC_ID_A = '11111111-1111-4111-8111-111111111111';
 const SVC_ID_B = '22222222-2222-4222-8222-222222222222';
 
+function catchAllOffering(serviceId: string) {
+  return {
+    service_id: serviceId,
+    service_key: 'other',
+    label: 'Other / not listed',
+    modalities: { video: { enabled: true, price_minor: 100 } },
+  };
+}
+
 function minimalCatalog() {
   return {
     version: 1 as const,
@@ -24,6 +33,7 @@ function minimalCatalog() {
         label: 'General consult',
         modalities: { text: { enabled: true, price_minor: 100 } },
       },
+      catchAllOffering(SVC_ID_B),
     ],
   };
 }
@@ -33,8 +43,25 @@ describe('parseServiceCatalogV1', () => {
     const data = minimalCatalog();
     const out = parseServiceCatalogV1(data);
     expect(out.version).toBe(1);
-    expect(out.services).toHaveLength(1);
+    expect(out.services).toHaveLength(2);
     expect(out.services[0]!.service_key).toBe('general');
+    expect(out.services.some((s) => s.service_key === 'other')).toBe(true);
+  });
+
+  it('rejects catalog without catch-all other (ARM-01)', () => {
+    expect(() =>
+      parseServiceCatalogV1({
+        version: 1,
+        services: [
+          {
+            service_id: SVC_ID_A,
+            service_key: 'only',
+            label: 'Only',
+            modalities: { video: { enabled: true, price_minor: 1 } },
+          },
+        ],
+      })
+    ).toThrow(ValidationError);
   });
 
   it('rejects duplicate service_key', () => {
@@ -73,6 +100,7 @@ describe('parseServiceCatalogV1', () => {
               voice: { enabled: false, price_minor: 0 },
             },
           },
+          catchAllOffering(SVC_ID_B),
         ],
       })
     ).toThrow(ValidationError);
@@ -96,6 +124,7 @@ describe('parseServiceCatalogV1', () => {
               discount_value: 101,
             },
           },
+          catchAllOffering(SVC_ID_B),
         ],
       })
     ).toThrow(ValidationError);
@@ -134,6 +163,7 @@ describe('parseServiceCatalogV1', () => {
             },
           },
         },
+        catchAllOffering(SVC_ID_B),
       ],
     });
     expect(out.services[0]!.modalities.text!.followup_policy!.max_followups).toBe(5);
@@ -161,9 +191,28 @@ describe('parseServiceCatalogV1', () => {
             ],
           },
         },
+        catchAllOffering(SVC_ID_B),
       ],
     });
     expect(out.services[0]!.followup_policy?.discount_tiers).toHaveLength(2);
+  });
+
+  it('ARM-02: accepts optional matcher_hints on offerings', () => {
+    const out = parseServiceCatalogV1({
+      version: 1,
+      services: [
+        {
+          service_id: SVC_ID_A,
+          service_key: 'derm',
+          label: 'Derm',
+          matcher_hints: { keywords: 'rash, acne', include_when: 'skin complaints' },
+          modalities: { video: { enabled: true, price_minor: 100 } },
+        },
+        catchAllOffering(SVC_ID_B),
+      ],
+    });
+    expect(out.services[0]!.matcher_hints?.keywords).toContain('rash');
+    expect(out.services[0]!.matcher_hints?.include_when).toContain('skin');
   });
 });
 

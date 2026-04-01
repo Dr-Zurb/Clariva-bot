@@ -156,12 +156,45 @@ describe('computeSlotBookingQuote', () => {
     expect(q.amountMinor).toBe(88_00);
   });
 
-  it('uses legacy fee when multi-service and catalogServiceKey missing', async () => {
+  it('ARM-11: rejects quote when multi-service and catalogServiceKey missing (no legacy fallback)', async () => {
     const settings = baseDoctor({ service_offerings_json: catalogMulti(), appointment_fee_minor: 42_00 });
     const state = { consultationType: 'video' as const } as ConversationState;
-    const q = await computeSlotBookingQuote('d1', 'p1', state, settings, correlationId);
-    expect(q.pricingSource).toBe('legacy_fee');
-    expect(q.amountMinor).toBe(42_00);
+    await expect(computeSlotBookingQuote('d1', 'p1', state, settings, correlationId)).rejects.toThrow(
+      /select a consultation service/i
+    );
+  });
+
+  it('ARM-11: rejects quote when catalogServiceKey not in catalog (single-service doctor)', async () => {
+    const settings = baseDoctor({ service_offerings_json: catalogSingle('skin'), appointment_fee_minor: 42_00 });
+    const state = {
+      consultationType: 'video' as const,
+      catalogServiceKey: 'bogus',
+    } as ConversationState;
+    await expect(computeSlotBookingQuote('d1', 'p1', state, settings, correlationId)).rejects.toThrow(
+      /does not match an active service/i
+    );
+  });
+
+  it('ARM-11: rejects quote when catalogServiceKey not in catalog (multi-service)', async () => {
+    const settings = baseDoctor({ service_offerings_json: catalogMulti(), appointment_fee_minor: 42_00 });
+    const state = {
+      consultationType: 'video' as const,
+      catalogServiceKey: 'nope',
+    } as ConversationState;
+    await expect(computeSlotBookingQuote('d1', 'p1', state, settings, correlationId)).rejects.toThrow(
+      /does not match an active service/i
+    );
+  });
+
+  it('ARM-11: rejects quote when catalogServiceId not in catalog', async () => {
+    const settings = baseDoctor({ service_offerings_json: catalogMulti(), appointment_fee_minor: 42_00 });
+    const state = {
+      consultationType: 'video' as const,
+      catalogServiceId: '00000000-0000-4000-8000-000000000099',
+    } as ConversationState;
+    await expect(computeSlotBookingQuote('d1', 'p1', state, settings, correlationId)).rejects.toThrow(
+      /does not match an active service/i
+    );
   });
 
   it('uses catalog quote for single-service teleconsult (video default)', async () => {

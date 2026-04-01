@@ -1072,3 +1072,113 @@ export function validatePrescriptionAttachmentParams(params: unknown): Prescript
   }
   return result.data;
 }
+
+// ============================================================================
+// Service staff review (ARM-06)
+// ============================================================================
+
+const SERVICE_STAFF_REVIEW_NOTE_MAX = 2000;
+
+const serviceStaffReviewStatusSchema = z.enum([
+  'pending',
+  'confirmed',
+  'reassigned',
+  'cancelled_by_staff',
+  'cancelled_timeout',
+]);
+
+export const listServiceStaffReviewsQuerySchema = z.object({
+  status: serviceStaffReviewStatusSchema.optional().default('pending'),
+});
+
+export type ListServiceStaffReviewsQuery = z.infer<typeof listServiceStaffReviewsQuerySchema>;
+
+export function validateListServiceStaffReviewsQuery(
+  query: Record<string, string | string[] | undefined>
+): ListServiceStaffReviewsQuery {
+  const normalized: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(query)) {
+    normalized[k] = typeof v === 'string' ? v : Array.isArray(v) ? String(v[0]) : undefined;
+  }
+  const result = listServiceStaffReviewsQuerySchema.safeParse(normalized);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid query');
+  }
+  return result.data;
+}
+
+export const serviceStaffReviewIdParamsSchema = z.object({
+  id: z.string().uuid('Invalid review ID'),
+});
+
+export type ServiceStaffReviewIdParams = z.infer<typeof serviceStaffReviewIdParamsSchema>;
+
+export function validateServiceStaffReviewIdParams(params: unknown): ServiceStaffReviewIdParams {
+  const result = serviceStaffReviewIdParamsSchema.safeParse(params);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid review ID');
+  }
+  return result.data;
+}
+
+const serviceStaffResolutionNoteSchema = z
+  .string()
+  .max(SERVICE_STAFF_REVIEW_NOTE_MAX)
+  .trim()
+  .optional();
+
+export const confirmServiceStaffReviewBodySchema = z
+  .object({
+    note: serviceStaffResolutionNoteSchema,
+  })
+  .strict();
+
+export type ConfirmServiceStaffReviewBody = z.infer<typeof confirmServiceStaffReviewBodySchema>;
+
+export function validateConfirmServiceStaffReviewBody(body: unknown): ConfirmServiceStaffReviewBody {
+  const result = confirmServiceStaffReviewBodySchema.safeParse(body ?? {});
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+export const reassignServiceStaffReviewBodySchema = z
+  .object({
+    catalogServiceKey: z.string().min(1).max(64).trim(),
+    catalogServiceId: z.string().uuid().optional(),
+    consultationModality: z.enum(['text', 'voice', 'video']).optional(),
+    note: serviceStaffResolutionNoteSchema,
+  })
+  .strict();
+
+export type ReassignServiceStaffReviewBody = z.infer<typeof reassignServiceStaffReviewBodySchema>;
+
+export function validateReassignServiceStaffReviewBody(body: unknown): ReassignServiceStaffReviewBody {
+  const result = reassignServiceStaffReviewBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+export const cancelServiceStaffReviewBodySchema = z
+  .object({
+    note: serviceStaffResolutionNoteSchema,
+  })
+  .strict();
+
+export type CancelServiceStaffReviewBody = z.infer<typeof cancelServiceStaffReviewBodySchema>;
+
+export function validateCancelServiceStaffReviewBody(body: unknown): CancelServiceStaffReviewBody {
+  const result = cancelServiceStaffReviewBodySchema.safeParse(body ?? {});
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}

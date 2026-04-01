@@ -40,7 +40,15 @@ import { createPaymentLink } from './payment-service';
 import { verifyBookingToken, generateBookingToken } from '../utils/booking-token';
 import { sendAppointmentRescheduledToDoctor } from './notification-service';
 import { logger } from '../config/logger';
-import { InternalError, NotFoundError, UnauthorizedError, ValidationError } from '../utils/errors';
+import {
+  InternalError,
+  NotFoundError,
+  ServiceSelectionNotFinalizedPaymentError,
+  StaffServiceReviewPendingPaymentError,
+  UnauthorizedError,
+  ValidationError,
+} from '../utils/errors';
+import { evaluatePublicBookingPaymentGate } from '../utils/public-booking-payment-gate';
 import { resolveOpdModeFromSettings } from './opd/opd-mode-service';
 import { getQueueTokenForAppointment } from './opd/opd-queue-service';
 import type { OpdMode } from '../types/doctor-settings';
@@ -149,9 +157,41 @@ export interface SlotBookingQuoteResult {
   };
 }
 
+/** ARM-11: observability when catalog quote cannot resolve (no PHI). */
+export type SlotBookingCatalogQuoteBlockReason =
+  | 'missing_catalog_service_selection'
+  | 'invalid_catalog_service_key'
+  | 'invalid_catalog_service_id';
+
+function inferSlotBookingCatalogQuoteBlockReason(
+  state: ConversationState,
+  catalog: ServiceCatalogV1
+): SlotBookingCatalogQuoteBlockReason {
+  const idRaw = state.catalogServiceId?.trim();
+  if (idRaw && !findServiceOfferingByServiceId(catalog, idRaw)) {
+    return 'invalid_catalog_service_id';
+  }
+  const raw = state.catalogServiceKey?.trim().toLowerCase();
+  if (raw && !findServiceOfferingByKey(catalog, raw)) {
+    return 'invalid_catalog_service_key';
+  }
+  return 'missing_catalog_service_selection';
+}
+
+function catalogQuoteBlockUserMessage(reason: SlotBookingCatalogQuoteBlockReason): string {
+  switch (reason) {
+    case 'invalid_catalog_service_id':
+    case 'invalid_catalog_service_key':
+      return 'Your visit type does not match an active service for this practice. Please return to chat or choose a valid consultation type on the booking page.';
+    case 'missing_catalog_service_selection':
+    default:
+      return 'Please select a consultation service before completing booking.';
+  }
+}
+
 /**
  * Resolve catalog service_key: explicit state, else single-service default.
- * Multi-service without `state.catalogServiceKey` → null (caller falls back to legacy fee).
+ * Multi-service without a resolvable key/id → null (ARM-11: caller must not use legacy fee when catalog exists).
  */
 export function resolveCatalogServiceKeyForSlotBooking(
   state: ConversationState,
@@ -382,16 +422,12 @@ export async function computeSlotBookingQuote(
 
   const serviceKeyNorm = resolveCatalogServiceKeyForSlotBooking(state, catalog, correlationId);
   if (!serviceKeyNorm) {
+    const blockReason = inferSlotBookingCatalogQuoteBlockReason(state, catalog);
     logger.warn(
-      { correlationId, doctorId, reason: 'multi_service_needs_catalogServiceKey' },
-      'slot_booking_quote_fallback_legacy'
+      { correlationId, doctorId, slot_booking_quote_block_reason: blockReason },
+      'slot_booking_quote_blocked'
     );
-    return {
-      amountMinor: legacyAmount,
-      currency: legacyCurrency,
-      doctorCountry,
-      pricingSource: 'legacy_fee',
-    };
+    throw new ValidationError(catalogQuoteBlockUserMessage(blockReason));
   }
 
   const modality = resolveModalityForSlotBooking(state, state.consultationType);
@@ -552,13 +588,25 @@ export async function processSlotSelectionAndPay(
   }
 
   const state = await getConversationState(conversationId, correlationId);
+  const doctorSettings = await getDoctorSettings(doctorId);
+
+  const payGate = evaluatePublicBookingPaymentGate(state, doctorSettings);
+  if (!payGate.allowed) {
+    logger.info(
+      { correlationId, conversationId, booking_payment_gate_denied: payGate.reason },
+      'booking_payment_gate_denied'
+    );
+    if (payGate.reason === 'staff_review_pending') {
+      throw new StaffServiceReviewPendingPaymentError();
+    }
+    throw new ServiceSelectionNotFinalizedPaymentError();
+  }
+
   const patientIdToUse = state.bookingForPatientId ?? conversation.patient_id;
   const patient = await findPatientByIdWithAdmin(patientIdToUse, correlationId);
   if (!patient || !patient.name || !patient.phone) {
     throw new NotFoundError('Patient details not found. Please complete the booking flow in chat first.');
   }
-
-  const doctorSettings = await getDoctorSettings(doctorId);
   const effectiveState = applyPublicBookingSelectionsToState(
     state,
     doctorSettings,

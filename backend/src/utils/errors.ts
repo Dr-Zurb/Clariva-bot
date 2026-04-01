@@ -71,6 +71,24 @@ export class ForbiddenError extends AppError {
   }
 }
 
+/** ARM-10: booking link used before staff clears pending service review */
+export class StaffServiceReviewPendingPaymentError extends ForbiddenError {
+  constructor(
+    message: string = 'Your visit type is still being confirmed by the clinic. Return to the chat and try again once you receive confirmation.'
+  ) {
+    super(message);
+  }
+}
+
+/** ARM-10: multi-service catalog requires finalized selection from chat before payment */
+export class ServiceSelectionNotFinalizedPaymentError extends ForbiddenError {
+  constructor(
+    message: string = 'Please finish choosing your visit type in chat with the clinic before paying. Return to the conversation for the next step.'
+  ) {
+    super(message);
+  }
+}
+
 /**
  * Conflict error (409)
  * Used when there's a conflict with the current state

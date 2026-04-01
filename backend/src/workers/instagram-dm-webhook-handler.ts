@@ -97,9 +97,14 @@ import {
 } from '../services/webhook-metrics';
 import type { InstagramWebhookPayload, WebhookProvider } from '../types/webhook';
 import {
+  applyMatcherProposalToConversationState,
   conversationLastPromptKindForStep,
+  isSlotBookingBlockedPendingStaffReview,
   type ConversationState,
 } from '../types/conversation';
+import type { Message } from '../types';
+import { getActiveServiceCatalog } from '../utils/service-catalog-helpers';
+import { matchServiceCatalogOffering } from '../services/service-catalog-matcher';
 import {
   formatAppointmentFeeForAiContext,
   formatServiceCatalogForAiContext,
@@ -110,9 +115,93 @@ import {
   composeMidCollectionFeeQuoteDm,
 } from '../utils/dm-reply-composer';
 import { logInstagramDmRouting } from '../utils/log-instagram-dm-routing';
+import {
+  formatAwaitingStaffServiceConfirmationDm,
+  formatStaffServiceReviewStillPendingDm,
+  staffServiceReviewDeadlineIsoFromNow,
+} from '../utils/staff-service-review-dm';
+import { upsertPendingStaffServiceReviewRequest } from '../services/service-staff-review-service';
 
 /** Fallback when resolution returns null or AI/conversation flow is skipped */
 const FALLBACK_REPLY = "Thanks for your message. We'll get back to you soon.";
+
+/** ARM-04: After details confirm → consent, map reason for visit to catalog row (deterministic + LLM). */
+async function enrichStateWithServiceCatalogMatch(
+  baseState: ConversationState,
+  doctorSettings: DoctorSettingsRow | null,
+  reasonForVisit: string | null | undefined,
+  recentMessages: Message[],
+  correlationId: string
+): Promise<ConversationState> {
+  const trimmed = reasonForVisit?.trim();
+  if (!trimmed) {
+    return baseState;
+  }
+  if (!doctorSettings) {
+    return baseState;
+  }
+  const catalog = getActiveServiceCatalog(doctorSettings);
+  if (!catalog?.services.length) {
+    return baseState;
+  }
+  const recentPatient = recentMessages
+    .filter((m) => m.sender_type === 'patient')
+    .slice(-5)
+    .map((m) => m.content ?? '');
+
+  const match = await matchServiceCatalogOffering({
+    catalog,
+    reasonForVisitText: trimmed,
+    recentUserMessages: recentPatient,
+    correlationId,
+  });
+
+  if (!match) {
+    return baseState;
+  }
+
+  logger.info(
+    {
+      correlationId,
+      serviceCatalogMatchSource: match.source,
+      serviceCatalogMatchConfidence: match.confidence,
+      catalogServiceKey: match.catalogServiceKey,
+      pendingStaffReview: match.pendingStaffReview,
+    },
+    'instagram_dm_service_catalog_match'
+  );
+
+  return applyMatcherProposalToConversationState(baseState, {
+    matcherProposedCatalogServiceKey: match.catalogServiceKey,
+    matcherProposedCatalogServiceId: match.catalogServiceId,
+    matcherProposedConsultationModality: match.suggestedModality,
+    serviceCatalogMatchConfidence: match.confidence,
+    serviceCatalogMatchReasonCodes: match.reasonCodes,
+    pendingStaffServiceReview: match.pendingStaffReview,
+    finalizeSelection: match.autoFinalize,
+  });
+}
+
+/** ARM-05: intake complete but matcher requires staff — no slot link yet. */
+function transitionToAwaitingStaffServiceConfirmation(
+  base: ConversationState,
+  doctorSettings: DoctorSettingsRow | null,
+  intent: ConversationState['lastIntent'],
+  patch: Partial<ConversationState>
+): { state: ConversationState; replyText: string } {
+  const merged: ConversationState = {
+    ...base,
+    ...patch,
+    lastIntent: intent,
+    step: 'awaiting_staff_service_confirmation',
+    staffServiceReviewDeadlineAt: staffServiceReviewDeadlineIsoFromNow(),
+    updatedAt: new Date().toISOString(),
+  };
+  return {
+    state: merged,
+    replyText: formatAwaitingStaffServiceConfirmationDm(doctorSettings, merged),
+  };
+}
 
 /**
  * RBH-09: Default DM when receptionist automation is paused.
@@ -983,11 +1072,13 @@ export async function processInstagramDmWebhook(params: {
       state.step === 'consent' ||
       state.step === 'confirm_details' ||
       state.step === 'awaiting_match_confirmation' ||
+      state.step === 'awaiting_staff_service_confirmation' ||
       lastBotAskedForDetails ||
       state.lastPromptKind === 'collect_details' ||
       state.lastPromptKind === 'consent' ||
       state.lastPromptKind === 'confirm_details' ||
-      state.lastPromptKind === 'match_pick';
+      state.lastPromptKind === 'match_pick' ||
+      state.lastPromptKind === 'staff_service_pending';
     const justStartingCollection =
       isBookIntent && !state.step && !(state.collectedFields?.length);
     /** RBH-18: Classifier topics / is_fee_question OR keyword fallback */
@@ -1186,6 +1277,11 @@ export async function processInstagramDmWebhook(params: {
         step: 'responded',
         updatedAt: new Date().toISOString(),
       };
+      await updateConversationState(conversation.id, state, correlationId);
+    } else if (state.step === 'awaiting_staff_service_confirmation') {
+      dmRoutingBranch = 'staff_service_review_pending';
+      replyText = formatStaffServiceReviewStillPendingDm(doctorSettings);
+      state = { ...state, updatedAt: new Date().toISOString() };
       await updateConversationState(conversation.id, state, correlationId);
     } else if (intentResult.intent === 'medical_query' && !inCollection) {
       dmRoutingBranch = 'medical_safety';
@@ -1446,21 +1542,32 @@ export async function processInstagramDmWebhook(params: {
       if (useExisting || useSecond) {
         const chosenId = useSecond ? matchIds[1]! : matchIds[0]!;
         await clearCollectedData(conversation.id);
-        const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-        const mrnHint = await getPatientIdHintForSlot(chosenId, correlationId);
-        const baseSlotMsg = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
-        replyText = state.pendingSelfBooking
-          ? `${baseSlotMsg}\n\nWould you like to book one for yourself now?`
-          : baseSlotMsg;
-        state = {
+        const shared: ConversationState = {
           ...state,
           lastIntent: intentResult.intent,
-          step: 'awaiting_slot_selection',
           bookingForPatientId: chosenId,
           bookingForSomeoneElse: false,
           pendingMatchPatientIds: undefined,
           updatedAt: new Date().toISOString(),
         };
+        if (isSlotBookingBlockedPendingStaffReview(shared)) {
+          const gate = transitionToAwaitingStaffServiceConfirmation(
+            shared,
+            doctorSettings,
+            intentResult.intent,
+            {}
+          );
+          state = gate.state;
+          replyText = gate.replyText;
+        } else {
+          const slotLink = buildBookingPageUrl(conversation.id, doctorId);
+          const mrnHint = await getPatientIdHintForSlot(chosenId, correlationId);
+          const baseSlotMsg = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
+          replyText = shared.pendingSelfBooking
+            ? `${baseSlotMsg}\n\nWould you like to book one for yourself now?`
+            : baseSlotMsg;
+          state = { ...shared, step: 'awaiting_slot_selection' };
+        }
         await updateConversationState(conversation.id, state, correlationId);
       } else if (createNew) {
         let collectedBeforePersist = await getCollectedData(conversation.id);
@@ -1490,22 +1597,33 @@ export async function processInstagramDmWebhook(params: {
             correlationId
           );
           await clearCollectedData(conversation.id);
-          const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-          const mrnHint = formatPatientIdHint(newPatient.medical_record_number);
-          const baseSlotMsg = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
-          replyText = state.pendingSelfBooking
-            ? `${baseSlotMsg}\n\nWould you like to book one for yourself now?`
-            : baseSlotMsg;
-          state = {
+          const shared: ConversationState = {
             ...state,
             lastIntent: intentResult.intent,
-            step: 'awaiting_slot_selection',
             reasonForVisit: state.reasonForVisit ?? collectedBeforePersist.reason_for_visit,
             bookingForPatientId: newPatient.id,
             bookingForSomeoneElse: false,
             pendingMatchPatientIds: undefined,
             updatedAt: new Date().toISOString(),
           };
+          if (isSlotBookingBlockedPendingStaffReview(shared)) {
+            const gate = transitionToAwaitingStaffServiceConfirmation(
+              shared,
+              doctorSettings,
+              intentResult.intent,
+              {}
+            );
+            state = gate.state;
+            replyText = gate.replyText;
+          } else {
+            const slotLink = buildBookingPageUrl(conversation.id, doctorId);
+            const mrnHint = formatPatientIdHint(newPatient.medical_record_number);
+            const baseSlotMsg = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
+            replyText = shared.pendingSelfBooking
+              ? `${baseSlotMsg}\n\nWould you like to book one for yourself now?`
+              : baseSlotMsg;
+            state = { ...shared, step: 'awaiting_slot_selection' };
+          }
           await updateConversationState(conversation.id, state, correlationId);
         }
       } else {
@@ -1557,22 +1675,33 @@ export async function processInstagramDmWebhook(params: {
               correlationId
             );
             await clearCollectedData(conversation.id);
-            const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-            const mrnHint = formatPatientIdHint(newPatient.medical_record_number);
-            const baseSlotMsg = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
-            replyText = state.pendingSelfBooking
-              ? `${baseSlotMsg}\n\nWould you like to book one for yourself now?`
-              : baseSlotMsg;
-            state = {
+            const shared: ConversationState = {
               ...state,
               lastIntent: intentResult.intent,
-              step: 'awaiting_slot_selection',
               reasonForVisit: state.reasonForVisit ?? reasonForVisitFromCollected,
               extraNotes: extraNotes ?? state.extraNotes,
               bookingForPatientId: newPatient.id,
               bookingForSomeoneElse: false,
               updatedAt: new Date().toISOString(),
             };
+            if (isSlotBookingBlockedPendingStaffReview(shared)) {
+              const gate = transitionToAwaitingStaffServiceConfirmation(
+                shared,
+                doctorSettings,
+                intentResult.intent,
+                {}
+              );
+              state = gate.state;
+              replyText = gate.replyText;
+            } else {
+              const slotLink = buildBookingPageUrl(conversation.id, doctorId);
+              const mrnHint = formatPatientIdHint(newPatient.medical_record_number);
+              const baseSlotMsg = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
+              replyText = shared.pendingSelfBooking
+                ? `${baseSlotMsg}\n\nWould you like to book one for yourself now?`
+                : baseSlotMsg;
+              state = { ...shared, step: 'awaiting_slot_selection' };
+            }
             await updateConversationState(conversation.id, state, correlationId);
           }
         } else {
@@ -1602,22 +1731,32 @@ export async function processInstagramDmWebhook(params: {
           const slotLink = buildBookingPageUrl(conversation.id, doctorId);
           const mrnHint = await getPatientIdHintForSlot(conversation.patient_id, correlationId);
           const baseSlotMsg = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
-          if (!persistResult.success) {
-            replyText =
-              `I had trouble saving your details - please say 'book appointment' to re-share them if needed. Meanwhile, ${baseSlotMsg}`;
-          } else {
-            replyText = state.pendingOtherBooking
-              ? `${baseSlotMsg}\n\nWould you like to book for your ${state.pendingOtherBooking.relation} now?`
-              : baseSlotMsg;
-          }
-          state = {
+          const sharedBase: ConversationState = {
             ...state,
             lastIntent: intentResult.intent,
-            step: 'awaiting_slot_selection',
             reasonForVisit: state.reasonForVisit ?? reasonForVisitFromCollected,
             extraNotes: extraNotes ?? state.extraNotes,
             updatedAt: new Date().toISOString(),
           };
+          if (!persistResult.success) {
+            replyText =
+              `I had trouble saving your details - please say 'book appointment' to re-share them if needed. Meanwhile, ${baseSlotMsg}`;
+            state = { ...sharedBase, step: 'awaiting_slot_selection' };
+          } else if (isSlotBookingBlockedPendingStaffReview(sharedBase)) {
+            const gate = transitionToAwaitingStaffServiceConfirmation(
+              sharedBase,
+              doctorSettings,
+              intentResult.intent,
+              {}
+            );
+            state = gate.state;
+            replyText = gate.replyText;
+          } else {
+            replyText = sharedBase.pendingOtherBooking
+              ? `${baseSlotMsg}\n\nWould you like to book for your ${sharedBase.pendingOtherBooking.relation} now?`
+              : baseSlotMsg;
+            state = { ...sharedBase, step: 'awaiting_slot_selection' };
+          }
           await updateConversationState(conversation.id, state, correlationId);
         }
         } else if (consentResult === 'denied') {
@@ -1839,6 +1978,13 @@ export async function processInstagramDmWebhook(params: {
               age: collected?.age,
               updatedAt: new Date().toISOString(),
             };
+            state = await enrichStateWithServiceCatalogMatch(
+              state,
+              doctorSettings,
+              collected?.reason_for_visit,
+              recentMessages,
+              correlationId
+            );
             await updateConversationState(conversation.id, state, correlationId);
             if (matches.length === 1) {
               replyText = `We found a record for **${matches[0]!.name}** with this number. Same person? Reply Yes or No.`;
@@ -1857,6 +2003,13 @@ export async function processInstagramDmWebhook(params: {
               reasonForVisit: collected?.reason_for_visit,
               age: collected?.age,
             };
+            state = await enrichStateWithServiceCatalogMatch(
+              state,
+              doctorSettings,
+              collected?.reason_for_visit,
+              recentMessages,
+              correlationId
+            );
             await updateConversationState(conversation.id, state, correlationId);
             replyText = `Thanks. We'll use ${phoneDisplay} to confirm the appointment for **${name}**. Do I have your consent to use these details to schedule? Reply Yes to continue.`;
           }
@@ -1871,6 +2024,13 @@ export async function processInstagramDmWebhook(params: {
             reasonForVisit: collected?.reason_for_visit,
             age: collected?.age,
           };
+          state = await enrichStateWithServiceCatalogMatch(
+            state,
+            doctorSettings,
+            collected?.reason_for_visit,
+            recentMessages,
+            correlationId
+          );
           await updateConversationState(conversation.id, state, correlationId);
           if (state.bookingForSomeoneElse) {
             replyText = `Thanks. We'll use ${phoneDisplay} to confirm the appointment for **${name}**. Do I have your consent to use these details to schedule? Reply Yes to continue.`;
@@ -2044,10 +2204,14 @@ export async function processInstagramDmWebhook(params: {
           context: aiContext,
         });
       } else if (wantsNewLink) {
-        const patientId = state.bookingForPatientId ?? conversation.patient_id;
-        const mrnHint = await getPatientIdHintForSlot(patientId, correlationId);
-        const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-        replyText = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
+        if (isSlotBookingBlockedPendingStaffReview(state)) {
+          replyText = formatStaffServiceReviewStillPendingDm(doctorSettings);
+        } else {
+          const patientId = state.bookingForPatientId ?? conversation.patient_id;
+          const mrnHint = await getPatientIdHintForSlot(patientId, correlationId);
+          const slotLink = buildBookingPageUrl(conversation.id, doctorId);
+          replyText = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
+        }
         state = { ...state, updatedAt: new Date().toISOString() };
         await updateConversationState(conversation.id, state, correlationId);
         } else {
@@ -2076,17 +2240,28 @@ export async function processInstagramDmWebhook(params: {
           updatedAt: new Date().toISOString(),
         };
       } else if (hasPatientReady) {
-        const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-        const mrnHint = formatPatientIdHint(patient?.medical_record_number);
-        replyText = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
-        state = {
-          ...state,
-          lastIntent: intentResult.intent,
-          step: 'awaiting_slot_selection',
-          consultationType: state.consultationType,
-          activeFlow: undefined,
-          updatedAt: new Date().toISOString(),
-        };
+        if (isSlotBookingBlockedPendingStaffReview(state)) {
+          const gate = transitionToAwaitingStaffServiceConfirmation(
+            state,
+            doctorSettings,
+            intentResult.intent,
+            { consultationType: state.consultationType, activeFlow: undefined }
+          );
+          state = gate.state;
+          replyText = gate.replyText;
+        } else {
+          const slotLink = buildBookingPageUrl(conversation.id, doctorId);
+          const mrnHint = formatPatientIdHint(patient?.medical_record_number);
+          replyText = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'awaiting_slot_selection',
+            consultationType: state.consultationType,
+            activeFlow: undefined,
+            updatedAt: new Date().toISOString(),
+          };
+        }
       } else {
         state = {
           ...state,
@@ -2136,7 +2311,8 @@ export async function processInstagramDmWebhook(params: {
       state.step === 'awaiting_cancel_choice' ||
       state.step === 'awaiting_cancel_confirmation' ||
       state.step === 'awaiting_reschedule_choice' ||
-      state.step === 'awaiting_reschedule_slot'
+      state.step === 'awaiting_reschedule_slot' ||
+      state.step === 'awaiting_staff_service_confirmation'
         ? state
         : {
             ...state,
@@ -2144,13 +2320,44 @@ export async function processInstagramDmWebhook(params: {
             step: 'responded',
             updatedAt: new Date().toISOString(),
           };
-    const stateToPersist = {
+    let stateToPersist = {
       ...stateToPersistRaw,
       lastPromptKind: conversationLastPromptKindForStep(
         stateToPersistRaw.step,
         stateToPersistRaw.activeFlow
       ),
     };
+
+    if (
+      stateToPersist.step === 'awaiting_staff_service_confirmation' &&
+      stateToPersist.pendingStaffServiceReview === true &&
+      stateToPersist.matcherProposedCatalogServiceKey?.trim()
+    ) {
+      try {
+        const deadlineIso =
+          stateToPersist.staffServiceReviewDeadlineAt ?? staffServiceReviewDeadlineIsoFromNow();
+        const ensured = await upsertPendingStaffServiceReviewRequest({
+          doctorId,
+          conversationId: conversation.id,
+          patientId: conversation.patient_id ?? null,
+          correlationId,
+          state: stateToPersist,
+          slaDeadlineIso: deadlineIso,
+          candidateLabels: [],
+        });
+        stateToPersist = {
+          ...stateToPersist,
+          staffServiceReviewRequestId: ensured.id,
+          staffServiceReviewDeadlineAt: ensured.slaDeadlineIso,
+        };
+      } catch (err) {
+        logger.error(
+          { correlationId, conversationId: conversation.id, err },
+          'instagram_dm_staff_review_upsert_failed'
+        );
+      }
+    }
+
     logInstagramDmRouting({
       correlationId,
       eventId,

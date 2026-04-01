@@ -204,6 +204,33 @@ describe('consultation-fees (RBH-13)', () => {
     expect(s).toContain('video ₹100');
   });
 
+  it('ARM-02: formatServiceCatalogForAiContext includes matcher hints (system prompt only)', () => {
+    const catalog: ServiceCatalogV1 = {
+      version: 1,
+      services: [
+        {
+          service_id: sid('skin'),
+          service_key: 'skin',
+          label: 'Dermatology',
+          matcher_hints: {
+            keywords: 'rash, acne',
+            include_when: 'skin lesions',
+            exclude_when: 'chest pain emergency',
+          },
+          modalities: { video: { enabled: true, price_minor: 100_00 } },
+        },
+      ],
+    };
+    const s = formatServiceCatalogForAiContext({
+      service_offerings_json: catalog,
+      appointment_fee_currency: 'INR',
+    });
+    expect(s).toContain('[matcher:');
+    expect(s).toContain('keywords=rash, acne');
+    expect(s).toContain('include_when=');
+    expect(s).toContain('exclude_when=');
+  });
+
   it('SFU-08: formatServiceCatalogForDm uses narrow pick', () => {
     const body = formatServiceCatalogForDm(catalogTwoServices, {
       practice_name: 'X',
