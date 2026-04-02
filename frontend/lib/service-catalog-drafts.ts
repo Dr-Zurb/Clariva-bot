@@ -13,6 +13,9 @@ import {
   SERVICE_CATALOG_VERSION,
 } from "@/lib/service-catalog-schema";
 
+/** localStorage: user cleared catalog → keep empty editor until they opt back into structured setup */
+export const SERVICES_CATALOG_LEGACY_EMPTY_STORAGE_KEY = "clariva_services_catalog_legacy_empty";
+
 export type DiscountTypeOption = FollowUpPolicyV1["discount_type"];
 
 /** Per-modality follow-up policy (max, window, and discount). */
@@ -215,9 +218,33 @@ export function offeringToDraft(o: ServiceOfferingV1): ServiceOfferingDraft {
   };
 }
 
+/** Catch-all row last; relative order preserved within named vs catch-all groups. */
+export function normalizeDraftOrder(services: ServiceOfferingDraft[]): ServiceOfferingDraft[] {
+  const key = CATALOG_CATCH_ALL_SERVICE_KEY.toLowerCase();
+  const named = services.filter((s) => s.service_key.trim().toLowerCase() !== key);
+  const tail = services.filter((s) => s.service_key.trim().toLowerCase() === key);
+  return [...named, ...tail];
+}
+
 export function catalogToServiceDrafts(catalog: ServiceCatalogV1 | null): ServiceOfferingDraft[] {
   if (!catalog) return [];
-  return catalog.services.map(offeringToDraft);
+  return normalizeDraftOrder(catalog.services.map(offeringToDraft));
+}
+
+/**
+ * Null when save would succeed; otherwise a short message for Save gating + UX copy.
+ * Empty list → message (cannot persist structured catalog).
+ */
+export function draftsSaveBlockingReason(services: ServiceOfferingDraft[]): string | null {
+  if (services.length === 0) {
+    return 'Add at least one service row to save, or use "Clear structured catalog" for legacy-only pricing.';
+  }
+  try {
+    draftsToCatalogOrNull(services);
+    return null;
+  } catch (e) {
+    return e instanceof Error ? e.message : "Fix validation errors before saving.";
+  }
 }
 
 /** @deprecated SFU-12 — use per-service drafts only; kept for transitional imports */
@@ -383,7 +410,7 @@ export function draftsToCatalogOrNull(services: ServiceOfferingDraft[]): Service
   );
   if (!hasCatchAll) {
     throw new Error(
-      `Your catalog must include “${CATALOG_CATCH_ALL_LABEL_DEFAULT}” (internal key ${CATALOG_CATCH_ALL_SERVICE_KEY}). Use Add service on an empty catalog to start from that row, or add it before saving.`
+      `Your catalog must include the “${CATALOG_CATCH_ALL_LABEL_DEFAULT}” row before saving. Add it back (for example with Add service on an empty catalog), then try again.`
     );
   }
 

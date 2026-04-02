@@ -181,7 +181,7 @@ function refineCatalogRequiresCatchAllOffering(
   if (!has) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: `Catalog must include a catch-all service with service_key "${CATALOG_CATCH_ALL_SERVICE_KEY}" (default label "${CATALOG_CATCH_ALL_LABEL_DEFAULT}")`,
+      message: `Catalog must include the “${CATALOG_CATCH_ALL_LABEL_DEFAULT}” row.`,
       path: ["services"],
     });
   }

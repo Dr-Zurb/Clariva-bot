@@ -11,6 +11,8 @@ import {
   catalogMissingCatchAllOffering,
   catchAllServiceDraft,
   emptyServiceDraft,
+  normalizeDraftOrder,
+  SERVICES_CATALOG_LEGACY_EMPTY_STORAGE_KEY,
 } from "@/lib/service-catalog-drafts";
 import {
   CATALOG_CATCH_ALL_LABEL_DEFAULT,
@@ -493,22 +495,35 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
               Per-channel prices and optional follow-up rules. In-clinic uses the booking{" "}
               <span className="font-medium">appointment fee</span>.
             </p>
-            <p className="mt-2 rounded-md border border-amber-100 bg-amber-50/90 px-2 py-1.5 text-[11px] leading-snug text-amber-950 sm:text-xs">
-              <span className="font-semibold">Catch-all required:</span> every saved catalog must include{" "}
-              <span className="font-medium">{CATALOG_CATCH_ALL_LABEL_DEFAULT}</span> (internal key{" "}
-              <code className="rounded bg-amber-100/80 px-0.5">{CATALOG_CATCH_ALL_SERVICE_KEY}</code>). It is the
-              fallback when a patient’s complaint does not match a named service — for AI receptionist routing and
-              booking, not a discount tier.
-            </p>
           </div>
           <button
             type="button"
             onClick={() => {
+              if (typeof window !== "undefined") {
+                try {
+                  window.localStorage.removeItem(SERVICES_CATALOG_LEGACY_EMPTY_STORAGE_KEY);
+                } catch {
+                  /* ignore */
+                }
+              }
               const nextRow =
                 services.length === 0 || catalogMissingCatchAllOffering(services)
                   ? catchAllServiceDraft()
                   : emptyServiceDraft();
-              onServicesChange([...services, nextRow]);
+              const isCatchAllNew =
+                nextRow.service_key.trim().toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY;
+              if (isCatchAllNew) {
+                onServicesChange(normalizeDraftOrder([...services, nextRow]));
+                return;
+              }
+              const nonOther = services.filter(
+                (row) =>
+                  row.service_key.trim().toLowerCase() !== CATALOG_CATCH_ALL_SERVICE_KEY
+              );
+              const otherRows = services.filter(
+                (row) => row.service_key.trim().toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY
+              );
+              onServicesChange([nextRow, ...nonOther, ...otherRows]);
             }}
             className="shrink-0 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm font-medium text-gray-800 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
@@ -518,9 +533,10 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
 
         {services.length === 0 && (
           <p className="mt-3 text-sm text-gray-600">
-            No structured services yet. Choose <span className="font-medium">Add service</span> to start with{" "}
-            {CATALOG_CATCH_ALL_LABEL_DEFAULT}, then add your named visit types. Or clear the catalog to use only the
-            legacy flat fee (no structured teleconsult tiers).
+            <span className="font-medium">Legacy-only mode:</span> no structured catalog. Use{" "}
+            <span className="font-medium">Add service</span> to start a catalog (you’ll begin with{" "}
+            <span className="font-medium">{CATALOG_CATCH_ALL_LABEL_DEFAULT}</span>, which every saved catalog must
+            include), or keep this empty for flat-fee teleconsults only.
           </p>
         )}
 
@@ -530,6 +546,12 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
             const followUpSyncSource = followUpSyncSourceById[s.id] ?? null;
             const isCatchAllRow =
               s.service_key.trim().toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY;
+            const namedBefore = services
+              .slice(0, idx)
+              .filter(
+                (row) =>
+                  row.service_key.trim().toLowerCase() !== CATALOG_CATCH_ALL_SERVICE_KEY
+              ).length;
 
             return (
               <li
@@ -537,8 +559,22 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                 className="rounded-lg border border-gray-200 bg-gray-50/60 p-2.5 sm:p-3"
               >
                 <div className="flex items-center justify-between gap-3 border-b border-gray-200/90 pb-2">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-gray-600">
-                    Service {idx + 1}
+                  <span
+                    className={`text-xs font-semibold tracking-wide ${
+                      isCatchAllRow ? "text-amber-900" : "uppercase text-gray-600"
+                    }`}
+                  >
+                    {isCatchAllRow ? (
+                      <>
+                        {CATALOG_CATCH_ALL_LABEL_DEFAULT}{" "}
+                        <span className="font-normal normal-case text-gray-600">(required)</span>{" "}
+                        <span className="text-red-600 normal-case" aria-hidden>
+                          *
+                        </span>
+                      </>
+                    ) : (
+                      <>Service {namedBefore + 1}</>
+                    )}
                   </span>
                   <button
                     type="button"
@@ -553,6 +589,14 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                   <div className="order-1 lg:order-none lg:col-start-1 lg:row-start-1">
                     <FieldLabel htmlFor={`svc-label-${s.id}`} tooltip="Shown to you and in patient-facing copy.">
                       Service name
+                      {isCatchAllRow ? (
+                        <>
+                          {" "}
+                          <span className="text-red-600" aria-hidden>
+                            *
+                          </span>
+                        </>
+                      ) : null}
                     </FieldLabel>
                   </div>
 
@@ -568,12 +612,24 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
 
                   <div className="order-2 flex h-full min-h-0 min-w-0 flex-col gap-3 lg:order-none lg:col-start-1 lg:row-start-2">
                     {isCatchAllRow && (
+                      <div className="rounded-md border border-amber-100 bg-amber-50/90 px-2.5 py-2 text-[11px] leading-snug text-amber-950 sm:text-xs">
+                        <p className="font-semibold text-amber-950">Why this row is here</p>
+                        <p className="mt-1">
+                          Every saved catalog needs <span className="font-medium">{CATALOG_CATCH_ALL_LABEL_DEFAULT}</span>
+                          . Use it for visits that don&apos;t match one of your named services above, so patients still
+                          see clear prices and can complete a remote booking. This is not a cheaper or &quot;special&quot;
+                          tier — it covers the &quot;everything else&quot; cases. You may edit the name and description if
+                          you prefer different wording for your practice.
+                        </p>
+                      </div>
+                    )}
+                    {isCatchAllRow && (
                       <div className="min-w-0">
                         <FieldLabel
                           htmlFor={`svc-key-${s.id}`}
-                          tooltip="Reserved for the mandatory catch-all service. Do not reuse this key on other rows."
+                          tooltip="The app uses this code only for this row. Do not reuse it on another service."
                         >
-                          Internal key (fixed)
+                          Reference code (fixed)
                         </FieldLabel>
                         <input
                           id={`svc-key-${s.id}`}
@@ -616,11 +672,11 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                     </div>
 
                     <div className="flex min-w-0 flex-col gap-2 rounded-md border border-violet-100 bg-violet-50/50 p-2.5">
-                      <p className="text-xs font-semibold text-violet-950">AI matching hints (optional)</p>
+                      <p className="text-xs font-semibold text-violet-950">Matching hints (optional)</p>
                       <p className="text-[11px] leading-snug text-violet-900/85">
-                        Used only in the bot&apos;s internal context to map complaints to this{" "}
-                        <span className="font-medium">service_key</span>. Not shown in patient fee DMs. Add
-                        keywords and short rules to improve auto-routing — never put patient names or PHI here.
+                        Optional hints for the assistant so patient questions line up with the right service. Not shown in
+                        patient fee messages. Add keywords and short rules in plain language — never put patient names or
+                        PHI here.
                       </p>
                       <div className="min-w-0">
                         <FieldLabel

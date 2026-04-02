@@ -5,7 +5,14 @@ import { ServiceCatalogEditor } from "@/components/practice-setup/ServiceCatalog
 import { ServiceCatalogTemplatesModal } from "@/components/practice-setup/ServiceCatalogTemplatesModal";
 import { SaveButton } from "@/components/ui/SaveButton";
 import { getDoctorSettings, patchDoctorSettings } from "@/lib/api";
-import { catalogToServiceDrafts, draftsToCatalogOrNull, type ServiceOfferingDraft } from "@/lib/service-catalog-drafts";
+import {
+  catalogToServiceDrafts,
+  catchAllServiceDraft,
+  draftsSaveBlockingReason,
+  draftsToCatalogOrNull,
+  SERVICES_CATALOG_LEGACY_EMPTY_STORAGE_KEY,
+  type ServiceOfferingDraft,
+} from "@/lib/service-catalog-drafts";
 import { safeParseServiceCatalogV1 } from "@/lib/service-catalog-schema";
 import { createClient } from "@/lib/supabase/client";
 import type {
@@ -48,7 +55,20 @@ export default function ServicesCatalogPage() {
       const s = res.data.settings;
       setSettings(s);
       const cat = s.service_offerings_json ?? null;
-      const svcDrafts = catalogToServiceDrafts(cat);
+      if (typeof window !== "undefined" && cat) {
+        try {
+          window.localStorage.removeItem(SERVICES_CATALOG_LEGACY_EMPTY_STORAGE_KEY);
+        } catch {
+          /* ignore */
+        }
+      }
+      let svcDrafts = catalogToServiceDrafts(cat);
+      const preferLegacyEmpty =
+        typeof window !== "undefined" &&
+        window.localStorage.getItem(SERVICES_CATALOG_LEGACY_EMPTY_STORAGE_KEY) === "1";
+      if (!cat && svcDrafts.length === 0 && !preferLegacyEmpty) {
+        svcDrafts = [catchAllServiceDraft()];
+      }
       setServices(svcDrafts);
       setLastSaved(snapshot(svcDrafts));
       setSaveSuccess(false);
@@ -69,6 +89,11 @@ export default function ServicesCatalogPage() {
   const isDirty = useMemo(
     () => lastSaved !== "" && snapshot(services) !== lastSaved,
     [services, lastSaved]
+  );
+
+  const saveDisableReason = useMemo(
+    () => (isDirty ? draftsSaveBlockingReason(services) : null),
+    [isDirty, services]
   );
 
   const hasStructuredCatalog = Boolean(settings?.service_offerings_json);
@@ -137,6 +162,13 @@ export default function ServicesCatalogPage() {
       setSettings(res.data.settings);
       const s = res.data.settings;
       const catNext = s.service_offerings_json ?? null;
+      if (typeof window !== "undefined") {
+        try {
+          window.localStorage.removeItem(SERVICES_CATALOG_LEGACY_EMPTY_STORAGE_KEY);
+        } catch {
+          /* ignore */
+        }
+      }
       const svcDrafts = catalogToServiceDrafts(catNext);
       setServices(svcDrafts);
       setLastSaved(snapshot(svcDrafts));
@@ -170,6 +202,13 @@ export default function ServicesCatalogPage() {
     try {
       const res = await patchDoctorSettings(token, { service_offerings_json: null });
       setSettings(res.data.settings);
+      if (typeof window !== "undefined") {
+        try {
+          window.localStorage.setItem(SERVICES_CATALOG_LEGACY_EMPTY_STORAGE_KEY, "1");
+        } catch {
+          /* ignore */
+        }
+      }
       setServices([]);
       setLastSaved(snapshot([]));
       setSaveSuccess(true);
@@ -202,10 +241,8 @@ export default function ServicesCatalogPage() {
     <div>
       <h1 className="text-2xl font-semibold text-gray-900">Services catalog</h1>
       <p className="mt-1 text-gray-600">
-        Define consultation services and teleconsult prices (text, voice, video). Follow-up discounts can differ by channel.
-        Used for quotes and checkout when patients book remote visits. A mandatory{" "}
-        <span className="font-medium">Other / not listed</span> catch-all (internal key <code className="text-sm">other</code>)
-        is required on every saved catalog so unmatched complaints can still book safely.
+        Set up your consultation types and teleconsult prices (text, voice, video). Follow-up discounts can differ by
+        channel. These prices feed into quotes and checkout when patients book remote visits.
       </p>
 
       <form onSubmit={handleSave} className="mt-6 space-y-4">
@@ -225,6 +262,13 @@ export default function ServicesCatalogPage() {
           currentServices={services}
           currentServicesCount={services.length}
           onApplyCatalog={(next) => {
+            if (typeof window !== "undefined") {
+              try {
+                window.localStorage.removeItem(SERVICES_CATALOG_LEGACY_EMPTY_STORAGE_KEY);
+              } catch {
+                /* ignore */
+              }
+            }
             setServices(next);
             setSaveSuccess(false);
             setClientError(null);
@@ -250,7 +294,12 @@ export default function ServicesCatalogPage() {
         )}
 
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-white p-4">
-          <SaveButton isDirty={isDirty} saving={saving} saveSuccess={saveSuccess} />
+          <SaveButton
+            isDirty={isDirty}
+            saving={saving}
+            saveSuccess={saveSuccess}
+            disableReason={saveDisableReason}
+          />
           {(hasStructuredCatalog || services.length > 0) && (
             <button
               type="button"
