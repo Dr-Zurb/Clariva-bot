@@ -10,7 +10,6 @@ import {
   catchAllServiceDraft,
   draftsSaveBlockingReason,
   draftsToCatalogOrNull,
-  SERVICES_CATALOG_LEGACY_EMPTY_STORAGE_KEY,
   type ServiceOfferingDraft,
 } from "@/lib/service-catalog-drafts";
 import { safeParseServiceCatalogV1 } from "@/lib/service-catalog-schema";
@@ -55,22 +54,13 @@ export default function ServicesCatalogPage() {
       const s = res.data.settings;
       setSettings(s);
       const cat = s.service_offerings_json ?? null;
-      if (typeof window !== "undefined" && cat) {
-        try {
-          window.localStorage.removeItem(SERVICES_CATALOG_LEGACY_EMPTY_STORAGE_KEY);
-        } catch {
-          /* ignore */
-        }
+      const serverDrafts = catalogToServiceDrafts(cat);
+      let displayDrafts = serverDrafts;
+      if (!cat && serverDrafts.length === 0) {
+        displayDrafts = [catchAllServiceDraft()];
       }
-      let svcDrafts = catalogToServiceDrafts(cat);
-      const preferLegacyEmpty =
-        typeof window !== "undefined" &&
-        window.localStorage.getItem(SERVICES_CATALOG_LEGACY_EMPTY_STORAGE_KEY) === "1";
-      if (!cat && svcDrafts.length === 0 && !preferLegacyEmpty) {
-        svcDrafts = [catchAllServiceDraft()];
-      }
-      setServices(svcDrafts);
-      setLastSaved(snapshot(svcDrafts));
+      setServices(displayDrafts);
+      setLastSaved(snapshot(serverDrafts));
       setSaveSuccess(false);
       setClientError(null);
     } catch (err) {
@@ -162,16 +152,13 @@ export default function ServicesCatalogPage() {
       setSettings(res.data.settings);
       const s = res.data.settings;
       const catNext = s.service_offerings_json ?? null;
-      if (typeof window !== "undefined") {
-        try {
-          window.localStorage.removeItem(SERVICES_CATALOG_LEGACY_EMPTY_STORAGE_KEY);
-        } catch {
-          /* ignore */
-        }
+      const serverDrafts = catalogToServiceDrafts(catNext);
+      let displayDrafts = serverDrafts;
+      if (!catNext && serverDrafts.length === 0) {
+        displayDrafts = [catchAllServiceDraft()];
       }
-      const svcDrafts = catalogToServiceDrafts(catNext);
-      setServices(svcDrafts);
-      setLastSaved(snapshot(svcDrafts));
+      setServices(displayDrafts);
+      setLastSaved(snapshot(serverDrafts));
       setSaveSuccess(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Save failed";
@@ -202,14 +189,7 @@ export default function ServicesCatalogPage() {
     try {
       const res = await patchDoctorSettings(token, { service_offerings_json: null });
       setSettings(res.data.settings);
-      if (typeof window !== "undefined") {
-        try {
-          window.localStorage.setItem(SERVICES_CATALOG_LEGACY_EMPTY_STORAGE_KEY, "1");
-        } catch {
-          /* ignore */
-        }
-      }
-      setServices([]);
+      setServices([catchAllServiceDraft()]);
       setLastSaved(snapshot([]));
       setSaveSuccess(true);
     } catch (err) {
@@ -262,13 +242,6 @@ export default function ServicesCatalogPage() {
           currentServices={services}
           currentServicesCount={services.length}
           onApplyCatalog={(next) => {
-            if (typeof window !== "undefined") {
-              try {
-                window.localStorage.removeItem(SERVICES_CATALOG_LEGACY_EMPTY_STORAGE_KEY);
-              } catch {
-                /* ignore */
-              }
-            }
             setServices(next);
             setSaveSuccess(false);
             setClientError(null);

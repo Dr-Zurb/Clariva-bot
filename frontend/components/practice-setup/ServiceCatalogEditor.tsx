@@ -12,7 +12,6 @@ import {
   catchAllServiceDraft,
   emptyServiceDraft,
   normalizeDraftOrder,
-  SERVICES_CATALOG_LEGACY_EMPTY_STORAGE_KEY,
 } from "@/lib/service-catalog-drafts";
 import {
   CATALOG_CATCH_ALL_LABEL_DEFAULT,
@@ -466,6 +465,10 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
   };
 
   const removeService = (id: string) => {
+    const row = services.find((s) => s.id === id);
+    if (row?.service_key.trim().toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY) {
+      return;
+    }
     if (
       typeof window !== "undefined" &&
       !window.confirm("Remove this service from your catalog?")
@@ -499,17 +502,9 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
           <button
             type="button"
             onClick={() => {
-              if (typeof window !== "undefined") {
-                try {
-                  window.localStorage.removeItem(SERVICES_CATALOG_LEGACY_EMPTY_STORAGE_KEY);
-                } catch {
-                  /* ignore */
-                }
-              }
-              const nextRow =
-                services.length === 0 || catalogMissingCatchAllOffering(services)
-                  ? catchAllServiceDraft()
-                  : emptyServiceDraft();
+              const nextRow = catalogMissingCatchAllOffering(services)
+                ? catchAllServiceDraft()
+                : emptyServiceDraft();
               const isCatchAllNew =
                 nextRow.service_key.trim().toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY;
               if (isCatchAllNew) {
@@ -530,15 +525,6 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
             Add service
           </button>
         </div>
-
-        {services.length === 0 && (
-          <p className="mt-3 text-sm text-gray-600">
-            <span className="font-medium">Legacy-only mode:</span> no structured catalog. Use{" "}
-            <span className="font-medium">Add service</span> to start a catalog (you’ll begin with{" "}
-            <span className="font-medium">{CATALOG_CATCH_ALL_LABEL_DEFAULT}</span>, which every saved catalog must
-            include), or keep this empty for flat-fee teleconsults only.
-          </p>
-        )}
 
         <ul className="mt-3 space-y-3">
           {services.map((s, idx) => {
@@ -576,13 +562,19 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                       <>Service {namedBefore + 1}</>
                     )}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => removeService(s.id)}
-                    className="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium text-red-600 hover:bg-red-50 hover:underline focus:outline-none focus:ring-2 focus:ring-red-400"
-                  >
-                    Remove
-                  </button>
+                  {isCatchAllRow ? (
+                    <span className="shrink-0 text-[10px] font-normal normal-case text-gray-500 sm:text-xs">
+                      Always included
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => removeService(s.id)}
+                      className="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium text-red-600 hover:bg-red-50 hover:underline focus:outline-none focus:ring-2 focus:ring-red-400"
+                    >
+                      Remove
+                    </button>
+                  )}
                 </div>
 
                 <div className="mt-3 flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,20rem)_1fr] lg:items-stretch lg:gap-x-6 lg:gap-y-2">

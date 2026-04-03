@@ -13,9 +13,6 @@ import {
   SERVICE_CATALOG_VERSION,
 } from "@/lib/service-catalog-schema";
 
-/** localStorage: user cleared catalog → keep empty editor until they opt back into structured setup */
-export const SERVICES_CATALOG_LEGACY_EMPTY_STORAGE_KEY = "clariva_services_catalog_legacy_empty";
-
 export type DiscountTypeOption = FollowUpPolicyV1["discount_type"];
 
 /** Per-modality follow-up policy (max, window, and discount). */
@@ -120,6 +117,17 @@ export function emptyServiceDraft(): ServiceOfferingDraft {
   };
 }
 
+/** Default description for the Other / not listed row (doctor-facing; editable in the form). */
+export const CATALOG_CATCH_ALL_DESCRIPTION_DEFAULT =
+  "For patient concerns that do not fit one of your named services above. Set the teleconsult prices patients should see for those visits. This is not for emergencies — send urgent, life-threatening problems to emergency care.";
+
+/** Detect old template text so we can swap in {@link CATALOG_CATCH_ALL_DESCRIPTION_DEFAULT} on load. */
+function shouldMigrateLegacyOtherDescription(desc: string): boolean {
+  const t = desc.trim();
+  if (!t.startsWith("Fallback when a patient")) return false;
+  return t.includes("AI routing") || t.includes("does not fit a named service");
+}
+
 /** ARM-01: mandatory catch-all row — fixed internal key `other`, default label (editable). */
 export function catchAllServiceDraft(): ServiceOfferingDraft {
   const base = emptyServiceDraft();
@@ -128,8 +136,7 @@ export function catchAllServiceDraft(): ServiceOfferingDraft {
     id: newId(),
     label: CATALOG_CATCH_ALL_LABEL_DEFAULT,
     service_key: CATALOG_CATCH_ALL_SERVICE_KEY,
-    description:
-      "Fallback when a patient’s concern does not fit a named service. Used for AI routing and booking — not emergency care and not a “cheap visit” tier.",
+    description: CATALOG_CATCH_ALL_DESCRIPTION_DEFAULT,
     textEnabled: false,
     voiceEnabled: false,
     videoEnabled: true,
@@ -188,12 +195,20 @@ export function offeringToDraft(o: ServiceOfferingV1): ServiceOfferingDraft {
     (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : newId());
   const rootFu = o.followup_policy?.enabled ? o.followup_policy : undefined;
 
+  let description = o.description?.trim() ?? "";
+  if (
+    o.service_key.trim().toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY &&
+    shouldMigrateLegacyOtherDescription(description)
+  ) {
+    description = CATALOG_CATCH_ALL_DESCRIPTION_DEFAULT;
+  }
+
   return {
     id: newId(),
     service_id: sid,
     label: o.label,
     service_key: o.service_key,
-    description: o.description?.trim() ?? "",
+    description,
     matcherKeywords: o.matcher_hints?.keywords?.trim() ?? "",
     matcherIncludeWhen: o.matcher_hints?.include_when?.trim() ?? "",
     matcherExcludeWhen: o.matcher_hints?.exclude_when?.trim() ?? "",
