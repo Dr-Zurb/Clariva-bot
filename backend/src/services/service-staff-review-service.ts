@@ -380,35 +380,37 @@ export async function listEnrichedServiceStaffReviewsForDoctor(
   ];
   const convIds = [...new Set(rows.map((r) => r.conversation_id))];
 
+  // patients table has no doctor_id; scope via conversations (doctor_id + patient_id).
   const patientMap = new Map<string, string>();
-  if (patientIds.length > 0) {
-    const { data: patients, error: pErr } = await admin
-      .from('patients')
-      .select('id,name')
-      .eq('doctor_id', doctorId)
-      .in('id', patientIds);
-    if (pErr) handleSupabaseError(pErr, correlationId);
-    for (const p of patients ?? []) {
-      const row = p as { id: string; name: string | null };
-      if (row.name?.trim()) patientMap.set(row.id, row.name.trim());
-    }
-  }
-
   const reasonMap = new Map<string, string | null>();
   if (convIds.length > 0) {
     const { data: convs, error: cErr } = await admin
       .from('conversations')
-      .select('id,metadata')
+      .select('id,metadata,patient_id')
       .eq('doctor_id', doctorId)
       .in('id', convIds);
     if (cErr) handleSupabaseError(cErr, correlationId);
+    const patientIdsForDoctor = new Set<string>();
     for (const c of convs ?? []) {
-      const row = c as { id: string; metadata: unknown };
+      const row = c as { id: string; metadata: unknown; patient_id: string };
+      patientIdsForDoctor.add(row.patient_id);
       const meta =
         row.metadata && typeof row.metadata === 'object'
           ? (row.metadata as ConversationState)
           : null;
       reasonMap.set(row.id, truncateReasonPreview(meta?.reasonForVisit));
+    }
+    const safePatientIds = patientIds.filter((id) => patientIdsForDoctor.has(id));
+    if (safePatientIds.length > 0) {
+      const { data: patients, error: pErr } = await admin
+        .from('patients')
+        .select('id,name')
+        .in('id', safePatientIds);
+      if (pErr) handleSupabaseError(pErr, correlationId);
+      for (const p of patients ?? []) {
+        const pr = p as { id: string; name: string | null };
+        if (pr.name?.trim()) patientMap.set(pr.id, pr.name.trim());
+      }
     }
   }
 
