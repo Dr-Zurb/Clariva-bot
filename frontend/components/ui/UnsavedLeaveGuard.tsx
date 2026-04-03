@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 type Props = {
   isDirty: boolean;
@@ -10,6 +10,14 @@ type Props = {
   saveBlockedReason: string | null;
   onSave: () => Promise<boolean>;
 };
+
+const GUARD_KEY = "__unsavedCatalog" as const;
+
+function isGuardState(state: unknown): boolean {
+  return typeof state === "object" && state !== null && GUARD_KEY in state;
+}
+
+type PendingLeave = { kind: "href"; href: string } | { kind: "history" };
 
 function navigateClient(router: ReturnType<typeof useRouter>, pathWithQueryAndHash: string) {
   try {
@@ -22,23 +30,45 @@ function navigateClient(router: ReturnType<typeof useRouter>, pathWithQueryAndHa
 }
 
 /**
- * When the user has unsaved edits and clicks an in-app link, show a three-way choice:
- * Save & leave, Stay, or Leave without saving.
- * Tab close / refresh uses the native beforeunload prompt only (browser cannot offer Save).
+ * When the user has unsaved edits:
+ * - Same-origin link clicks open a modal (Save & leave / Stay / Leave without saving).
+ * - Browser Back/Forward is intercepted by pushing a guard history entry while dirty;
+ *   the first Back pops that entry and opens the same modal.
+ * - Tab close / refresh: native beforeunload only (browser cannot offer Save).
  */
 export function UnsavedLeaveGuard({ isDirty, isSaving, saveBlockedReason, onSave }: Props) {
   const router = useRouter();
   const titleId = useId();
   const descId = useId();
-  const [pendingHref, setPendingHref] = useState<string | null>(null);
+  const [pendingLeave, setPendingLeave] = useState<PendingLeave | null>(null);
+
+  const isDirtyRef = useRef(isDirty);
+  isDirtyRef.current = isDirty;
+
+  const ignoreNextPopRef = useRef(false);
 
   const saveBlocked = Boolean(saveBlockedReason);
-  const modalOpen = Boolean(isDirty && pendingHref);
+  const modalOpen = Boolean(isDirty && pendingLeave);
 
   useEffect(() => {
     if (!isDirty) {
-      setPendingHref(null);
+      setPendingLeave(null);
     }
+  }, [isDirty]);
+
+  /** While dirty, add a duplicate history entry so the first Back/Forward step is recoverable. */
+  useEffect(() => {
+    if (!isDirty) return;
+    if (isGuardState(window.history.state)) return;
+    window.history.pushState({ [GUARD_KEY]: 1 }, "", window.location.href);
+  }, [isDirty]);
+
+  /** After save (dirty → clean), drop only our guard entry if it is still on top. */
+  useEffect(() => {
+    if (isDirty) return;
+    if (!isGuardState(window.history.state)) return;
+    ignoreNextPopRef.current = true;
+    window.history.go(-1);
   }, [isDirty]);
 
   useEffect(() => {
@@ -49,6 +79,20 @@ export function UnsavedLeaveGuard({ isDirty, isSaving, saveBlockedReason, onSave
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [isDirty]);
+
+  useEffect(() => {
+    if (!isDirty) return;
+    const onPop = () => {
+      if (ignoreNextPopRef.current) {
+        ignoreNextPopRef.current = false;
+        return;
+      }
+      if (!isDirtyRef.current) return;
+      setPendingLeave({ kind: "history" });
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
   }, [isDirty]);
 
   useEffect(() => {
@@ -73,7 +117,7 @@ export function UnsavedLeaveGuard({ isDirty, isSaving, saveBlockedReason, onSave
       if (nextPath === currentPath) return;
       e.preventDefault();
       e.stopPropagation();
-      setPendingHref(nextPath);
+      setPendingLeave({ kind: "href", href: nextPath });
     };
     document.addEventListener("click", onClickCapture, true);
     return () => document.removeEventListener("click", onClickCapture, true);
@@ -84,7 +128,7 @@ export function UnsavedLeaveGuard({ isDirty, isSaving, saveBlockedReason, onSave
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key === "Escape") {
         ev.preventDefault();
-        setPendingHref(null);
+        closeModalInternal();
       }
     };
     document.addEventListener("keydown", onKey);
@@ -100,21 +144,47 @@ export function UnsavedLeaveGuard({ isDirty, isSaving, saveBlockedReason, onSave
     };
   }, [modalOpen]);
 
-  const closeModal = () => setPendingHref(null);
+  function closeModalInternal() {
+    setPendingLeave((prev) => {
+      if (prev?.kind === "history") {
+        if (!isGuardState(window.history.state)) {
+          window.history.pushState({ [GUARD_KEY]: 1 }, "", window.location.href);
+        }
+      }
+      return null;
+    });
+  }
 
   const leaveWithoutSaving = () => {
-    const href = pendingHref;
-    closeModal();
-    if (href) navigateClient(router, href);
+    const p = pendingLeave;
+    setPendingLeave(null);
+    if (p?.kind === "href") {
+      if (isGuardState(window.history.state)) {
+        ignoreNextPopRef.current = true;
+        window.history.go(-1);
+      }
+      setTimeout(() => navigateClient(router, p.href), 0);
+    }
+    if (p?.kind === "history") {
+      ignoreNextPopRef.current = true;
+      window.history.back();
+    }
   };
 
   const saveAndLeave = async () => {
     if (saveBlocked || isSaving) return;
-    const href = pendingHref;
+    const p = pendingLeave;
+    if (!p) return;
     const ok = await onSave();
-    if (ok && href) {
-      closeModal();
-      navigateClient(router, href);
+    if (!ok) return;
+    setPendingLeave(null);
+    if (p.kind === "href") {
+      // Let the isDirty→false effect peel the guard entry before client navigation.
+      setTimeout(() => navigateClient(router, p.href), 0);
+    }
+    if (p.kind === "history") {
+      ignoreNextPopRef.current = true;
+      window.history.back();
     }
   };
 
@@ -125,7 +195,7 @@ export function UnsavedLeaveGuard({ isDirty, isSaving, saveBlockedReason, onSave
       className="fixed inset-0 z-[200] flex items-center justify-center p-4"
       role="presentation"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) closeModal();
+        if (e.target === e.currentTarget) closeModalInternal();
       }}
     >
       <div className="absolute inset-0 bg-black/50" aria-hidden />
@@ -158,7 +228,7 @@ export function UnsavedLeaveGuard({ isDirty, isSaving, saveBlockedReason, onSave
           </button>
           <button
             type="button"
-            onClick={closeModal}
+            onClick={closeModalInternal}
             disabled={isSaving}
             className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
           >

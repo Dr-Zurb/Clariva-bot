@@ -95,14 +95,15 @@ export function ServiceOfferingDetailDrawer({
   const canNext = idx >= 0 && idx < services.length - 1;
 
   return (
-    <div
-      className="fixed inset-0 z-[100] flex justify-end"
-      role="presentation"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div className="absolute inset-0 bg-black/40" aria-hidden />
+    <div className="fixed inset-0 z-[100] flex justify-end" role="presentation">
+      <div
+        className="absolute inset-0 bg-black/40"
+        aria-hidden
+        onMouseDown={(e) => {
+          e.preventDefault();
+          onClose();
+        }}
+      />
       <div
         role="dialog"
         aria-modal="true"
