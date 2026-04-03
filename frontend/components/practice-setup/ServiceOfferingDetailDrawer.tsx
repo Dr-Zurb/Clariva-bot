@@ -296,7 +296,7 @@ export function ServiceOfferingDetailDrawer({
                 Channels &amp; prices{" "}
                 <span className="font-normal text-gray-600">· enable at least one</span>
               </p>
-              <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-3 md:gap-2 md:items-stretch">
+              <div className="grid min-w-0 grid-cols-1 gap-3">
                 <ModalityColumn
                   serviceId={s.id}
                   modalityKey="text"
