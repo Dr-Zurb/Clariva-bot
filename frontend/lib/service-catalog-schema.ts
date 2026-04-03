@@ -210,14 +210,60 @@ export type ServiceCatalogV1 = z.infer<typeof serviceCatalogV1BaseSchema>;
 export type ServiceOfferingV1 = z.infer<typeof serviceOfferingV1Schema>;
 export type FollowUpPolicyV1 = z.infer<typeof followUpPolicyV1Schema>;
 
+/** End-user copy for Practice Setup / booking flows (avoid Zod paths and jargon). */
+export function humanizeServiceCatalogIssue(issue: z.ZodIssue): string {
+  const msg = issue.message;
+
+  const dupKey = /^Duplicate service_key:\s*(.+)$/i.exec(msg);
+  if (dupKey) {
+    const key = dupKey[1]!.trim();
+    return `More than one service shares the same code (“${key}”). Give each row a different service name, or remove the duplicate row.`;
+  }
+
+  if (/^Duplicate service_id:/i.test(msg)) {
+    return "Something is inconsistent in your service list. Try refreshing the page. If this keeps happening, contact support.";
+  }
+
+  if (
+    msg === "service_id must be a UUID" ||
+    (issue.code === "invalid_string" && issue.path.some((p) => p === "service_id"))
+  ) {
+    return "A service row is missing a valid ID. Try refreshing the page or removing and re-adding that row.";
+  }
+
+  if (msg.includes("service_key must be lowercase slug")) {
+    return "A service name produced an invalid code. Use only letters, numbers, spaces, hyphens, and underscores in the name.";
+  }
+
+  if (msg.includes("At least one modality must be enabled")) {
+    return "Turn on at least one channel (text, voice, or video) for each service.";
+  }
+
+  if (msg.includes("service_id is required")) {
+    return "A service row is incomplete. Try refreshing the page or re-adding that service.";
+  }
+
+  if (issue.code === "too_small" && issue.path.some((p) => p === "label")) {
+    return "Each service needs a name.";
+  }
+
+  if (issue.path.length > 0 && issue.path[0] === "services" && typeof issue.path[1] === "number") {
+    const row = (issue.path[1] as number) + 1;
+    return `There's a problem on row ${row}. ${msg}`;
+  }
+
+  return msg;
+}
+
 export function safeParseServiceCatalogV1(
   input: unknown
 ): { ok: true; data: ServiceCatalogV1 } | { ok: false; message: string } {
   const result = serviceCatalogV1Schema.safeParse(input);
   if (!result.success) {
     const first = result.error.issues[0];
-    const msg = first ? `${first.path.join(".")}: ${first.message}` : "Invalid service catalog";
-    return { ok: false, message: msg };
+    const message =
+      first != null ? humanizeServiceCatalogIssue(first) : "This catalog could not be saved. Check each service and try again.";
+    return { ok: false, message };
   }
   return { ok: true, data: result.data };
 }

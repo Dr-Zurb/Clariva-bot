@@ -2,10 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ServiceCatalogEditor } from "@/components/practice-setup/ServiceCatalogEditor";
-import {
-  ServiceCatalogTemplatesModal,
-  type TemplatesModalInitialPanel,
-} from "@/components/practice-setup/ServiceCatalogTemplatesModal";
+import { MyServiceCatalogTemplatesModal } from "@/components/practice-setup/MyServiceCatalogTemplatesModal";
+import { SaveServiceCatalogTemplateModal } from "@/components/practice-setup/SaveServiceCatalogTemplateModal";
 import { SaveButton } from "@/components/ui/SaveButton";
 import { getDoctorSettings, patchDoctorSettings } from "@/lib/api";
 import {
@@ -38,10 +36,8 @@ export default function ServicesCatalogPage() {
   const [error, setError] = useState<string | null>(null);
   const [clientError, setClientError] = useState<string | null>(null);
   const [lastSaved, setLastSaved] = useState<string>("");
-  const [templatesModal, setTemplatesModal] = useState<{
-    open: boolean;
-    panel: TemplatesModalInitialPanel;
-  }>({ open: false, panel: "library" });
+  const [saveTemplateModalOpen, setSaveTemplateModalOpen] = useState(false);
+  const [myTemplatesModalOpen, setMyTemplatesModalOpen] = useState(false);
   const [userTemplatesBusy, setUserTemplatesBusy] = useState(false);
 
   const fetchSettings = useCallback(async () => {
@@ -251,25 +247,32 @@ export default function ServicesCatalogPage() {
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
           <button
             type="button"
-            onClick={() => setTemplatesModal({ open: true, panel: "save" })}
+            onClick={() => setSaveTemplateModalOpen(true)}
             className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             Save template
           </button>
           <button
             type="button"
-            onClick={() => setTemplatesModal({ open: true, panel: "library" })}
+            onClick={() => setMyTemplatesModalOpen(true)}
             className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-900 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             My templates
           </button>
         </div>
 
-        <ServiceCatalogTemplatesModal
-          open={templatesModal.open}
-          initialPanel={templatesModal.panel}
-          onClose={() => setTemplatesModal((m) => ({ ...m, open: false }))}
+        <SaveServiceCatalogTemplateModal
+          open={saveTemplateModalOpen}
+          onClose={() => setSaveTemplateModalOpen(false)}
           currentServices={services}
+          templates={userSavedTemplates}
+          onTemplatesChange={handleTemplatesLibraryChange}
+          busy={userTemplatesBusy}
+        />
+
+        <MyServiceCatalogTemplatesModal
+          open={myTemplatesModalOpen}
+          onClose={() => setMyTemplatesModalOpen(false)}
           currentServicesCount={services.length}
           onApplyCatalog={(next) => {
             setServices(next);
