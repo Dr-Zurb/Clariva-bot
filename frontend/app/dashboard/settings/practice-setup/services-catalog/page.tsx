@@ -13,8 +13,8 @@ import {
   type ServiceOfferingDraft,
 } from "@/lib/service-catalog-drafts";
 import { safeParseServiceCatalogV1 } from "@/lib/service-catalog-schema";
-import { useUnsavedChangesPrompt } from "@/hooks/useUnsavedChangesPrompt";
 import { createClient } from "@/lib/supabase/client";
+import { UnsavedLeaveGuard } from "@/components/ui/UnsavedLeaveGuard";
 import type {
   DoctorSettings,
   PatchDoctorSettingsPayload,
@@ -87,8 +87,6 @@ export default function ServicesCatalogPage() {
     [isDirty, services]
   );
 
-  useUnsavedChangesPrompt(isDirty);
-
   const hasStructuredCatalog = Boolean(settings?.service_offerings_json);
 
   const userSavedTemplates = settings?.service_catalog_templates_json?.templates ?? [];
@@ -114,34 +112,36 @@ export default function ServicesCatalogPage() {
     }
   };
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const performSave = useCallback(async (): Promise<boolean> => {
     setClientError(null);
     const supabase = createClient();
     const {
       data: { session },
     } = await supabase.auth.getSession();
     const token = session?.access_token;
-    if (!token) return;
+    if (!token) {
+      setClientError("Not signed in");
+      return false;
+    }
 
     let catalog: ReturnType<typeof draftsToCatalogOrNull>;
     try {
       catalog = draftsToCatalogOrNull(services);
     } catch (err) {
       setClientError(err instanceof Error ? err.message : "Check your service rows and follow-up fields.");
-      return;
+      return false;
     }
     if (catalog === null) {
       setClientError(
         'Add at least one service to save, or use "Clear structured catalog" to remove the catalog (priced teleconsults require services on file).'
       );
-      return;
+      return false;
     }
 
     const parsed = safeParseServiceCatalogV1(catalog);
     if (!parsed.ok) {
       setClientError(parsed.message);
-      return;
+      return false;
     }
 
     const payload: PatchDoctorSettingsPayload = {
@@ -161,14 +161,21 @@ export default function ServicesCatalogPage() {
         displayDrafts = [catchAllServiceDraft()];
       }
       setServices(displayDrafts);
-      setLastSaved(snapshot(serverDrafts));
+      setLastSaved(snapshot(displayDrafts));
       setSaveSuccess(true);
+      return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Save failed";
       setClientError(msg);
+      return false;
     } finally {
       setSaving(false);
     }
+  }, [services]);
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await performSave();
   };
 
   const handleClearCatalog = async () => {
@@ -222,6 +229,12 @@ export default function ServicesCatalogPage() {
 
   return (
     <div>
+      <UnsavedLeaveGuard
+        isDirty={isDirty}
+        isSaving={saving}
+        saveBlockedReason={saveDisableReason}
+        onSave={performSave}
+      />
       <h1 className="text-2xl font-semibold text-gray-900">Services catalog</h1>
       <p className="mt-1 text-gray-600">
         Set up your consultation types and teleconsult prices (text, voice, video). Follow-up discounts can differ by

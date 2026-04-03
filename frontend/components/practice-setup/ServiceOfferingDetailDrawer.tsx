@@ -27,7 +27,7 @@ export type DetailDrawerProps = {
 export function formatServiceChannelSummary(s: ServiceOfferingDraft): string {
   const fmt = (on: boolean, price: string) =>
     on ? (price.trim() ? price.trim() : "—") : "off";
-  return `T ${fmt(s.textEnabled, s.textPriceMain)} · V ${fmt(s.voiceEnabled, s.voicePriceMain)} · Vid ${fmt(s.videoEnabled, s.videoPriceMain)}`;
+  return `Vid ${fmt(s.videoEnabled, s.videoPriceMain)} · V ${fmt(s.voiceEnabled, s.voicePriceMain)} · T ${fmt(s.textEnabled, s.textPriceMain)}`;
 }
 
 export function hasMatcherHints(s: ServiceOfferingDraft): boolean {
@@ -299,13 +299,13 @@ export function ServiceOfferingDetailDrawer({
               <div className="grid min-w-0 grid-cols-1 gap-3">
                 <ModalityColumn
                   serviceId={s.id}
-                  modalityKey="text"
-                  columnTitle="Text"
-                  enabled={s.textEnabled}
-                  price={s.textPriceMain}
-                  priceField="textPriceMain"
-                  fuDraft={s.textFollowUp}
-                  fuField="textFollowUp"
+                  modalityKey="video"
+                  columnTitle="Video"
+                  enabled={s.videoEnabled}
+                  price={s.videoPriceMain}
+                  priceField="videoPriceMain"
+                  fuDraft={s.videoFollowUp}
+                  fuField="videoFollowUp"
                   services={services}
                   priceSyncSource={priceSyncSource}
                   followUpSyncSource={followUpSyncSource}
@@ -331,13 +331,13 @@ export function ServiceOfferingDetailDrawer({
                 />
                 <ModalityColumn
                   serviceId={s.id}
-                  modalityKey="video"
-                  columnTitle="Video"
-                  enabled={s.videoEnabled}
-                  price={s.videoPriceMain}
-                  priceField="videoPriceMain"
-                  fuDraft={s.videoFollowUp}
-                  fuField="videoFollowUp"
+                  modalityKey="text"
+                  columnTitle="Text"
+                  enabled={s.textEnabled}
+                  price={s.textPriceMain}
+                  priceField="textPriceMain"
+                  fuDraft={s.textFollowUp}
+                  fuField="textFollowUp"
                   services={services}
                   priceSyncSource={priceSyncSource}
                   followUpSyncSource={followUpSyncSource}
