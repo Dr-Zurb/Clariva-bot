@@ -13,12 +13,9 @@ import {
   CATALOG_CATCH_ALL_LABEL_DEFAULT,
   CATALOG_CATCH_ALL_SERVICE_KEY,
 } from "@/lib/service-catalog-schema";
+import { formatServiceChannelSummary } from "@/lib/service-catalog-channel-format";
 import type { ModalityKey } from "./service-catalog-editor-shared";
-import {
-  formatServiceChannelSummary,
-  hasMatcherHints,
-  ServiceOfferingDetailDrawer,
-} from "./ServiceOfferingDetailDrawer";
+import { hasMatcherHints, ServiceOfferingDetailDrawer } from "./ServiceOfferingDetailDrawer";
 
 type Props = {
   services: ServiceOfferingDraft[];

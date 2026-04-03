@@ -7,6 +7,8 @@ import {
   CATALOG_CATCH_ALL_LABEL_DEFAULT,
   CATALOG_CATCH_ALL_SERVICE_KEY,
 } from "@/lib/service-catalog-schema";
+
+export { formatServiceChannelSummary } from "@/lib/service-catalog-channel-format";
 import type { ModalityKey } from "./service-catalog-editor-shared";
 import { ModalityColumn, updateService } from "./service-catalog-editor-shared";
 
@@ -22,13 +24,6 @@ export type DetailDrawerProps = {
   setPriceSyncSourceForRow: (rowId: string, next: ModalityKey | null) => void;
   setFollowUpSyncSourceForRow: (rowId: string, next: ModalityKey | null) => void;
 };
-
-/** Compact price line for list rows (uses same string fields as save flow). */
-export function formatServiceChannelSummary(s: ServiceOfferingDraft): string {
-  const fmt = (on: boolean, price: string) =>
-    on ? (price.trim() ? price.trim() : "—") : "off";
-  return `Vid ${fmt(s.videoEnabled, s.videoPriceMain)} · V ${fmt(s.voiceEnabled, s.voicePriceMain)} · T ${fmt(s.textEnabled, s.textPriceMain)}`;
-}
 
 export function hasMatcherHints(s: ServiceOfferingDraft): boolean {
   return Boolean(

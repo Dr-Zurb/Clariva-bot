@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ServiceCatalogEditor } from "@/components/practice-setup/ServiceCatalogEditor";
-import { ServiceCatalogTemplatesModal } from "@/components/practice-setup/ServiceCatalogTemplatesModal";
+import {
+  ServiceCatalogTemplatesModal,
+  type TemplatesModalInitialPanel,
+} from "@/components/practice-setup/ServiceCatalogTemplatesModal";
 import { SaveButton } from "@/components/ui/SaveButton";
 import { getDoctorSettings, patchDoctorSettings } from "@/lib/api";
 import {
@@ -35,7 +38,10 @@ export default function ServicesCatalogPage() {
   const [error, setError] = useState<string | null>(null);
   const [clientError, setClientError] = useState<string | null>(null);
   const [lastSaved, setLastSaved] = useState<string>("");
-  const [templatesModalOpen, setTemplatesModalOpen] = useState(false);
+  const [templatesModal, setTemplatesModal] = useState<{
+    open: boolean;
+    panel: TemplatesModalInitialPanel;
+  }>({ open: false, panel: "library" });
   const [userTemplatesBusy, setUserTemplatesBusy] = useState(false);
 
   const fetchSettings = useCallback(async () => {
@@ -245,16 +251,24 @@ export default function ServicesCatalogPage() {
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
           <button
             type="button"
-            onClick={() => setTemplatesModalOpen(true)}
+            onClick={() => setTemplatesModal({ open: true, panel: "save" })}
+            className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            Save template
+          </button>
+          <button
+            type="button"
+            onClick={() => setTemplatesModal({ open: true, panel: "library" })}
             className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-900 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
-            Saved templates
+            My templates
           </button>
         </div>
 
         <ServiceCatalogTemplatesModal
-          open={templatesModalOpen}
-          onClose={() => setTemplatesModalOpen(false)}
+          open={templatesModal.open}
+          initialPanel={templatesModal.panel}
+          onClose={() => setTemplatesModal((m) => ({ ...m, open: false }))}
           currentServices={services}
           currentServicesCount={services.length}
           onApplyCatalog={(next) => {
