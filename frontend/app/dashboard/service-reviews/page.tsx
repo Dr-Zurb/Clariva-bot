@@ -35,10 +35,20 @@ export default async function ServiceReviewsPage() {
     if (status === 401) {
       redirect("/login");
     }
+    const fromError = err instanceof Error ? err.message : "";
+    const showDetail =
+      process.env.NODE_ENV === "development" ||
+      (fromError &&
+        (fromError.includes("API base URL is not configured") ||
+          fromError.includes("NEXT_PUBLIC_API_URL") ||
+          fromError.includes("could not reach the Clariva API") ||
+          fromError.includes("API_URL")));
     errorMessage =
       status === 403
         ? "You don’t have access to this page."
-        : "Unable to load service reviews. Please try again.";
+        : showDetail && fromError
+          ? fromError
+          : "Unable to load service reviews. Please try again.";
   }
 
   if (errorMessage) {

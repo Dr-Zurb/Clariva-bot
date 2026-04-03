@@ -1,8 +1,10 @@
 /**
  * Typed API client for backend. Per FRONTEND_RECIPES F1 and CONTRACTS.
- * Base URL from NEXT_PUBLIC_API_URL; auth via Bearer token (Supabase session).
+ * Base URL: NEXT_PUBLIC_API_URL (all runtimes); optional API_URL / BACKEND_API_URL on the server.
+ * Auth via Bearer token (Supabase session).
  */
 
+import { requireApiBaseUrl } from "@/lib/api-base";
 import type {
   Appointment,
   AppointmentsListData,
@@ -30,8 +32,6 @@ import type {
 import type { OpdSessionSnapshotData } from "@/types/opd-session";
 import type { DoctorQueueSessionRow } from "@/types/opd-doctor";
 import type { ServiceStaffReviewListItem } from "@/types/service-staff-review";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export interface ApiMeta {
   timestamp: string;
@@ -67,7 +67,8 @@ async function request<T>(
   path: string,
   options: { token?: string } = {}
 ): Promise<ApiSuccess<T>> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const base = requireApiBaseUrl();
+  const res = await fetch(`${base}${path}`, {
     headers: {
       "Content-Type": "application/json",
       ...(options.token && { Authorization: `Bearer ${options.token}` }),
@@ -75,10 +76,26 @@ async function request<T>(
     cache: "no-store",
   });
 
-  const json = (await res.json().catch(() => ({}))) as ApiSuccess<T> | ApiError;
+  const text = await res.text();
+  let parsed: unknown = {};
+  if (text.length > 0) {
+    try {
+      parsed = JSON.parse(text) as unknown;
+    } catch {
+      parsed = {};
+    }
+  }
+  const json = parsed as ApiSuccess<T> | ApiError;
 
   if (!res.ok) {
-    const message = isApiError(json) ? json.error.message : "Request failed";
+    let message = isApiError(json) ? json.error.message : "Request failed";
+    if (!isApiError(json)) {
+      const trimmed = text.trimStart();
+      if (trimmed.startsWith("<") || trimmed.startsWith("<!")) {
+        message =
+          "The dashboard could not reach the Clariva API (received HTML instead of JSON). Set NEXT_PUBLIC_API_URL in your deployment to your backend origin (e.g. https://your-api.onrender.com), with no trailing slash.";
+      }
+    }
     const err = new Error(message) as Error & {
       status?: number;
       body?: unknown;
@@ -129,7 +146,7 @@ export async function createAppointment(
   token: string,
   payload: CreateAppointmentPayload
 ): Promise<ApiSuccess<{ appointment: Appointment }>> {
-  const res = await fetch(`${API_BASE}/api/v1/appointments`, {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/appointments`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -227,7 +244,7 @@ export async function mergePatients(
   token: string,
   body: { sourcePatientId: string; targetPatientId: string }
 ): Promise<ApiSuccess<{ merged: boolean }>> {
-  const res = await fetch(`${API_BASE}/api/v1/patients/merge`, {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/patients/merge`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -292,7 +309,7 @@ export async function getInstagramStatus(
  */
 export async function redirectToInstagramConnect(token: string): Promise<void> {
   const res = await fetch(
-    `${API_BASE}/api/v1/settings/instagram/connect`,
+    `${requireApiBaseUrl()}/api/v1/settings/instagram/connect`,
     {
       method: "GET",
       headers: {
@@ -318,7 +335,7 @@ export async function redirectToInstagramConnect(token: string): Promise<void> {
  */
 export async function disconnectInstagram(token: string): Promise<void> {
   const res = await fetch(
-    `${API_BASE}/api/v1/settings/instagram/disconnect`,
+    `${requireApiBaseUrl()}/api/v1/settings/instagram/disconnect`,
     {
       method: "DELETE",
       headers: {
@@ -366,7 +383,7 @@ export async function patchDoctorSettings(
   token: string,
   payload: PatchDoctorSettingsPayload
 ): Promise<ApiSuccess<DoctorSettingsData>> {
-  const res = await fetch(`${API_BASE}/api/v1/settings/doctor`, {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/settings/doctor`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
@@ -421,7 +438,7 @@ export async function postDoctorOfferEarlyJoin(
   body?: { expiresInMinutes?: number }
 ): Promise<ApiSuccess<{ offered: boolean; expiresInMinutes: number }>> {
   const res = await fetch(
-    `${API_BASE}/api/v1/opd/appointments/${appointmentId}/offer-early-join`,
+    `${requireApiBaseUrl()}/api/v1/opd/appointments/${appointmentId}/offer-early-join`,
     {
       method: "POST",
       headers: {
@@ -455,7 +472,7 @@ export async function postDoctorSessionDelay(
   delayMinutes: number | null
 ): Promise<ApiSuccess<{ updated: boolean; delayMinutes: number | null }>> {
   const res = await fetch(
-    `${API_BASE}/api/v1/opd/appointments/${appointmentId}/session-delay`,
+    `${requireApiBaseUrl()}/api/v1/opd/appointments/${appointmentId}/session-delay`,
     {
       method: "POST",
       headers: {
@@ -488,7 +505,7 @@ export async function patchDoctorQueueEntry(
   entryId: string,
   status: "called" | "skipped"
 ): Promise<ApiSuccess<{ updated: boolean; status: string }>> {
-  const res = await fetch(`${API_BASE}/api/v1/opd/queue-entries/${entryId}`, {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/opd/queue-entries/${entryId}`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
@@ -538,7 +555,7 @@ export async function putAvailability(
   token: string,
   slots: AvailabilitySlot[]
 ): Promise<ApiSuccess<AvailabilityData>> {
-  const res = await fetch(`${API_BASE}/api/v1/availability`, {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/availability`, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
@@ -599,7 +616,7 @@ export async function postBlockedTime(
   token: string,
   data: { start_time: string; end_time: string; reason?: string }
 ): Promise<ApiSuccess<BlockedTimeCreateData>> {
-  const res = await fetch(`${API_BASE}/api/v1/blocked-times`, {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/blocked-times`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -632,7 +649,7 @@ export async function deleteBlockedTime(
   token: string,
   id: string
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/blocked-times/${id}`, {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/blocked-times/${id}`, {
     method: "DELETE",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -773,7 +790,7 @@ export async function selectSlot(
   bookingToken: string,
   slotStart: string
 ): Promise<ApiSuccess<SelectSlotData>> {
-  const res = await fetch(`${API_BASE}/api/v1/bookings/select-slot`, {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/bookings/select-slot`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token: bookingToken, slotStart }),
@@ -825,7 +842,7 @@ export async function selectSlotAndPay(
   if (catalog?.consultationModality) {
     body.consultationModality = catalog.consultationModality;
   }
-  const res = await fetch(`${API_BASE}/api/v1/bookings/select-slot-and-pay`, {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/bookings/select-slot-and-pay`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -895,7 +912,7 @@ export async function acceptOpdEarlyJoin(
 ): Promise<ApiSuccess<{ accepted: boolean }>> {
   const params = new URLSearchParams({ token: consultationToken });
   const res = await fetch(
-    `${API_BASE}/api/v1/bookings/session/early-join/accept?${params.toString()}`,
+    `${requireApiBaseUrl()}/api/v1/bookings/session/early-join/accept?${params.toString()}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -927,7 +944,7 @@ export async function declineOpdEarlyJoin(
 ): Promise<ApiSuccess<{ declined: boolean }>> {
   const params = new URLSearchParams({ token: consultationToken });
   const res = await fetch(
-    `${API_BASE}/api/v1/bookings/session/early-join/decline?${params.toString()}`,
+    `${requireApiBaseUrl()}/api/v1/bookings/session/early-join/decline?${params.toString()}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -976,7 +993,7 @@ export async function startConsultation(
   token: string,
   appointmentId: string
 ): Promise<ApiSuccess<StartConsultationData>> {
-  const res = await fetch(`${API_BASE}/api/v1/consultation/start`, {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/consultation/start`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1015,7 +1032,7 @@ export async function getConsultationToken(
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(
-    `${API_BASE}/api/v1/consultation/token?${params.toString()}`,
+    `${requireApiBaseUrl()}/api/v1/consultation/token?${params.toString()}`,
     { headers, cache: "no-store" }
   );
   const json = (await res.json().catch(() => ({}))) as
@@ -1043,7 +1060,7 @@ export async function getConsultationTokenForPatient(
   patientToken: string
 ): Promise<ApiSuccess<GetConsultationTokenData>> {
   const params = new URLSearchParams({ token: patientToken });
-  const res = await fetch(`${API_BASE}/api/v1/consultation/token?${params.toString()}`, {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/consultation/token?${params.toString()}`, {
     headers: { "Content-Type": "application/json" },
     cache: "no-store",
   });
@@ -1096,7 +1113,7 @@ export async function createPrescription(
   token: string,
   payload: CreatePrescriptionPayload
 ): Promise<ApiSuccess<PrescriptionData>> {
-  const res = await fetch(`${API_BASE}/api/v1/prescriptions`, {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/prescriptions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1166,7 +1183,7 @@ export async function updatePrescription(
   id: string,
   payload: UpdatePrescriptionPayload
 ): Promise<ApiSuccess<PrescriptionData>> {
-  const res = await fetch(`${API_BASE}/api/v1/prescriptions/${id}`, {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/prescriptions/${id}`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
@@ -1202,7 +1219,7 @@ export async function getPrescriptionUploadUrl(
   body: { filename?: string; contentType?: string }
 ): Promise<ApiSuccess<CreateUploadUrlData>> {
   const res = await fetch(
-    `${API_BASE}/api/v1/prescriptions/${prescriptionId}/attachments/upload-url`,
+    `${requireApiBaseUrl()}/api/v1/prescriptions/${prescriptionId}/attachments/upload-url`,
     {
       method: "POST",
       headers: {
@@ -1239,7 +1256,7 @@ export async function registerPrescriptionAttachment(
   body: { filePath: string; fileType: string; caption?: string | null }
 ): Promise<ApiSuccess<RegisterAttachmentData>> {
   const res = await fetch(
-    `${API_BASE}/api/v1/prescriptions/${prescriptionId}/attachments`,
+    `${requireApiBaseUrl()}/api/v1/prescriptions/${prescriptionId}/attachments`,
     {
       method: "POST",
       headers: {
@@ -1294,7 +1311,7 @@ export async function sendPrescriptionToPatient(
   token: string,
   prescriptionId: string
 ): Promise<ApiSuccess<SendPrescriptionData>> {
-  const res = await fetch(`${API_BASE}/api/v1/prescriptions/${prescriptionId}/send`, {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/prescriptions/${prescriptionId}/send`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -1335,7 +1352,7 @@ export async function patchAppointment(
   id: string,
   payload: PatchAppointmentPayload
 ): Promise<ApiSuccess<AppointmentDetailData>> {
-  const res = await fetch(`${API_BASE}/api/v1/appointments/${id}`, {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/appointments/${id}`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
@@ -1389,7 +1406,7 @@ export async function postConfirmServiceStaffReview(
   body: { note?: string }
 ): Promise<ApiSuccess<{ review: ServiceStaffReviewListItem }>> {
   const res = await fetch(
-    `${API_BASE}/api/v1/service-staff-reviews/${encodeURIComponent(reviewId)}/confirm`,
+    `${requireApiBaseUrl()}/api/v1/service-staff-reviews/${encodeURIComponent(reviewId)}/confirm`,
     {
       method: "POST",
       headers: {
@@ -1428,7 +1445,7 @@ export async function postReassignServiceStaffReview(
   }
 ): Promise<ApiSuccess<{ review: ServiceStaffReviewListItem }>> {
   const res = await fetch(
-    `${API_BASE}/api/v1/service-staff-reviews/${encodeURIComponent(reviewId)}/reassign`,
+    `${requireApiBaseUrl()}/api/v1/service-staff-reviews/${encodeURIComponent(reviewId)}/reassign`,
     {
       method: "POST",
       headers: {
@@ -1462,7 +1479,7 @@ export async function postCancelServiceStaffReview(
   body: { note?: string }
 ): Promise<ApiSuccess<{ review: ServiceStaffReviewListItem }>> {
   const res = await fetch(
-    `${API_BASE}/api/v1/service-staff-reviews/${encodeURIComponent(reviewId)}/cancel`,
+    `${requireApiBaseUrl()}/api/v1/service-staff-reviews/${encodeURIComponent(reviewId)}/cancel`,
     {
       method: "POST",
       headers: {
