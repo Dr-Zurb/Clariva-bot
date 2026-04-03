@@ -13,6 +13,7 @@ import {
   type ServiceOfferingDraft,
 } from "@/lib/service-catalog-drafts";
 import { safeParseServiceCatalogV1 } from "@/lib/service-catalog-schema";
+import { useUnsavedChangesPrompt } from "@/hooks/useUnsavedChangesPrompt";
 import { createClient } from "@/lib/supabase/client";
 import type {
   DoctorSettings,
@@ -85,6 +86,8 @@ export default function ServicesCatalogPage() {
     () => (isDirty ? draftsSaveBlockingReason(services) : null),
     [isDirty, services]
   );
+
+  useUnsavedChangesPrompt(isDirty);
 
   const hasStructuredCatalog = Boolean(settings?.service_offerings_json);
 

@@ -7,6 +7,7 @@ import {
   catchAllServiceDraft,
   emptyServiceDraft,
   normalizeDraftOrder,
+  reorderNamedServiceRelative,
 } from "@/lib/service-catalog-drafts";
 import {
   CATALOG_CATCH_ALL_LABEL_DEFAULT,
@@ -30,6 +31,8 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
     {}
   );
   const [expandedServiceId, setExpandedServiceId] = useState<string | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
 
   const setPriceSyncSourceForRow = useCallback((rowId: string, next: ModalityKey | null) => {
     setPriceSyncSourceById((prev) => {
@@ -107,9 +110,9 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
               <span className="font-medium">appointment fee</span>.
             </p>
             <p className="mt-2 text-[11px] leading-snug text-gray-600 sm:text-xs">
-              Click a row to open the full editor. Use the list to scan names and prices; use{" "}
-              <span className="font-medium">Add service</span> for a new visit type (it appears above{" "}
-              <span className="font-medium">{CATALOG_CATCH_ALL_LABEL_DEFAULT}</span>).
+              Click a row to edit. Drag the grip (<span className="tabular-nums">⋮⋮</span>) on named services to reorder;{" "}
+              <span className="font-medium">{CATALOG_CATCH_ALL_LABEL_DEFAULT}</span> stays last. Save the page to keep
+              changes — you&apos;ll be asked before leaving if you haven&apos;t saved.
             </p>
           </div>
           <button
@@ -138,9 +141,64 @@ export function ServiceCatalogEditor({ services, onServicesChange }: Props) {
                 : "Untitled service";
             const isExpanded = expandedServiceId === s.id;
 
+            const isDragOver = dragOverId === s.id;
+            const isDragging = draggingId === s.id;
+
             return (
-              <li key={s.id} className={`bg-white first:rounded-t-lg last:rounded-b-lg ${isExpanded ? "ring-1 ring-inset ring-blue-200" : ""}`}>
+              <li
+                key={s.id}
+                onDragOver={(e) => {
+                  if (!draggingId || draggingId === s.id) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  setDragOverId(s.id);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const raw = e.dataTransfer.getData("text/plain");
+                  setDragOverId(null);
+                  setDraggingId(null);
+                  if (!raw || raw === s.id) return;
+                  const targetBefore =
+                    isCatchAllRow ? null : s.id;
+                  onServicesChange(reorderNamedServiceRelative(services, raw, targetBefore));
+                }}
+                className={`bg-white first:rounded-t-lg last:rounded-b-lg ${
+                  isExpanded ? "ring-1 ring-inset ring-blue-200" : ""
+                } ${isDragOver ? "bg-blue-50/80 ring-1 ring-inset ring-blue-300" : ""} ${
+                  isDragging ? "opacity-60" : ""
+                }`}
+              >
                 <div className="flex items-stretch gap-0 sm:gap-2">
+                  {!isCatchAllRow ? (
+                    <div
+                      draggable
+                      title="Drag to reorder"
+                      aria-label={`Drag to reorder ${displayTitle}`}
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData("text/plain", s.id);
+                        e.dataTransfer.effectAllowed = "move";
+                        setDraggingId(s.id);
+                      }}
+                      onDragEnd={() => {
+                        setDraggingId(null);
+                        setDragOverId(null);
+                      }}
+                      className="flex w-9 shrink-0 cursor-grab touch-none select-none flex-col items-center justify-center border-r border-gray-100 bg-gray-50/80 text-gray-400 hover:bg-gray-100 active:cursor-grabbing"
+                    >
+                      <span className="text-xs leading-none tracking-tighter" aria-hidden>
+                        ⋮
+                      </span>
+                      <span className="text-xs leading-none tracking-tighter" aria-hidden>
+                        ⋮
+                      </span>
+                    </div>
+                  ) : (
+                    <div
+                      className="w-2 shrink-0 border-r border-gray-100 bg-gray-50/30"
+                      aria-hidden
+                    />
+                  )}
                   <button
                     type="button"
                     onClick={() => setExpandedServiceId(s.id)}

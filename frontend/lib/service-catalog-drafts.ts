@@ -241,6 +241,37 @@ export function normalizeDraftOrder(services: ServiceOfferingDraft[]): ServiceOf
   return [...named, ...tail];
 }
 
+/**
+ * Drag-reorder among named rows only; Other / not listed stays last.
+ * @param targetId named row id to insert before, or null to append as last named (before Other).
+ */
+export function reorderNamedServiceRelative(
+  services: ServiceOfferingDraft[],
+  draggedId: string,
+  targetId: string | null
+): ServiceOfferingDraft[] {
+  if (targetId !== null && draggedId === targetId) {
+    return services;
+  }
+  const key = CATALOG_CATCH_ALL_SERVICE_KEY.toLowerCase();
+  const others = services.filter((s) => s.service_key.trim().toLowerCase() === key);
+  const named = services.filter((s) => s.service_key.trim().toLowerCase() !== key);
+  const fromIdx = named.findIndex((s) => s.id === draggedId);
+  if (fromIdx < 0) return services;
+  const [item] = named.splice(fromIdx, 1);
+  if (targetId === null) {
+    named.push(item);
+    return [...named, ...others];
+  }
+  const toIdx = named.findIndex((s) => s.id === targetId);
+  if (toIdx < 0) {
+    named.push(item);
+  } else {
+    named.splice(toIdx, 0, item);
+  }
+  return [...named, ...others];
+}
+
 export function catalogToServiceDrafts(catalog: ServiceCatalogV1 | null): ServiceOfferingDraft[] {
   if (!catalog) return [];
   return normalizeDraftOrder(catalog.services.map(offeringToDraft));
