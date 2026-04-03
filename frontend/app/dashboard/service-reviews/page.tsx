@@ -6,6 +6,9 @@ import { ServiceReviewsInbox } from "@/components/service-reviews/ServiceReviews
 /**
  * ARM-07: Service match review inbox (pending AI proposals → confirm / reassign / cancel).
  */
+/** Allow backend cold starts on Render; Vercel Hobby may still cap lower than this. */
+export const maxDuration = 60;
+
 export default async function ServiceReviewsPage() {
   const supabase = await createClient();
   const {
@@ -35,20 +38,23 @@ export default async function ServiceReviewsPage() {
     if (status === 401) {
       redirect("/login");
     }
-    const fromError = err instanceof Error ? err.message : "";
-    const showDetail =
-      process.env.NODE_ENV === "development" ||
-      (fromError &&
-        (fromError.includes("API base URL is not configured") ||
-          fromError.includes("NEXT_PUBLIC_API_URL") ||
-          fromError.includes("could not reach the Clariva API") ||
-          fromError.includes("API_URL")));
+    const fromError =
+      err instanceof Error ? err.message : typeof err === "string" ? err : "";
+    const coldStartHint =
+      " If your API is on a free Render plan, it may be asleep—wait a minute, open your API base URL once, then refresh.";
+    const generic = "Unable to load service reviews. Please try again." + coldStartHint;
+    // Authenticated dashboard: surface the real failure in production so misconfig/timeouts are visible.
     errorMessage =
       status === 403
         ? "You don’t have access to this page."
-        : showDetail && fromError
-          ? fromError
-          : "Unable to load service reviews. Please try again.";
+        : fromError
+          ? fromError +
+            (/fetch|network|timeout|ECONN|ENOTFOUND|socket|abort/i.test(fromError) ||
+            status === 503 ||
+            status === 504
+              ? coldStartHint
+              : "")
+          : generic;
   }
 
   if (errorMessage) {
