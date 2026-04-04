@@ -108,9 +108,12 @@ import type { Message } from '../types';
 import { getActiveServiceCatalog } from '../utils/service-catalog-helpers';
 import { matchServiceCatalogOffering } from '../services/service-catalog-matcher';
 import {
+  type ConsultationFeeAmbiguousStaffReview,
+  feeThreadHasCompetingVisitTypeBuckets,
   formatAppointmentFeeForAiContext,
   formatServiceCatalogForAiContext,
   isTeleconsultCatalogAuthoritative,
+  mergeFeeCatalogMatchText,
   userExplicitlyWantsToBookNow,
 } from '../utils/consultation-fees';
 import {
@@ -167,6 +170,31 @@ function mergeFeeQuoteMatcherIntoState(
     finalizeSelection: true,
     pendingStaffServiceReview: false,
   });
+}
+
+/** Competing NCD vs acute/general thread: staff assigns visit type; no patient-facing multi-tier fee menu. */
+function mergeStateForFeeAmbiguousStaffReview(
+  state: ConversationState,
+  review: ConsultationFeeAmbiguousStaffReview,
+  extra: Partial<ConversationState>
+): ConversationState {
+  const merged = { ...state, ...extra };
+  return {
+    ...applyMatcherProposalToConversationState(merged, {
+      matcherProposedCatalogServiceKey: review.matcherProposedCatalogServiceKey,
+      matcherProposedCatalogServiceId: review.matcherProposedCatalogServiceId,
+      serviceCatalogMatchConfidence: review.serviceCatalogMatchConfidence,
+      serviceCatalogMatchReasonCodes: review.serviceCatalogMatchReasonCodes,
+      pendingStaffServiceReview: true,
+      finalizeSelection: false,
+    }),
+    step: 'awaiting_staff_service_confirmation',
+    staffServiceReviewDeadlineAt: staffServiceReviewDeadlineIsoFromNow(),
+    activeFlow: undefined,
+    reasonFirstTriagePhase: undefined,
+    postMedicalConsultFeeAckSent: undefined,
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 /** ARM-04: After details confirm → consent, map reason for visit to catalog row (deterministic + LLM). */
@@ -703,7 +731,8 @@ async function buildAiContextForResponse(
   conversationId: string,
   state: ConversationState,
   recentMessages: { sender_type: string; content: string }[],
-  _correlationId: string
+  _correlationId: string,
+  currentUserMessage?: string
 ): Promise<GenerateResponseContext> {
   const ctx: GenerateResponseContext = {};
   const inCollection =
@@ -724,6 +753,14 @@ async function buildAiContextForResponse(
         ctx.lastBotMessage = redactPhiForAI(content);
         break;
       }
+    }
+  }
+
+  if (currentUserMessage !== undefined) {
+    const catalogMatchText = buildFeeCatalogMatchText(currentUserMessage, recentMessages);
+    const feeThreadMerged = mergeFeeCatalogMatchText(currentUserMessage, catalogMatchText);
+    if (feeThreadHasCompetingVisitTypeBuckets(feeThreadMerged)) {
+      ctx.competingVisitTypeBuckets = true;
     }
   }
 
@@ -758,6 +795,7 @@ async function buildAiContextForResponse(
     ctx.bookingForSomeoneElse = true;
     if (state.relation) ctx.relation = state.relation;
   }
+
   return ctx;
 }
 
@@ -1414,7 +1452,8 @@ export async function processInstagramDmWebhook(params: {
           conversation.id,
           state,
           recentMessages,
-          correlationId
+          correlationId,
+          text
         );
         replyText = await runGenerateResponse({
           conversationId: conversation.id,
@@ -1463,6 +1502,13 @@ export async function processInstagramDmWebhook(params: {
           catalogMatchText: feeThread,
         });
         replyText = idleFeeOut.reply;
+        if (idleFeeOut.feeAmbiguousStaffReview) {
+          state = mergeStateForFeeAmbiguousStaffReview(state, idleFeeOut.feeAmbiguousStaffReview, {
+            lastIntent: intentResult.intent,
+          });
+          dmRoutingBranch = 'fee_ambiguous_visit_type_staff';
+          return;
+        }
         state = {
           ...state,
           reasonFirstTriagePhase: undefined,
@@ -1479,7 +1525,6 @@ export async function processInstagramDmWebhook(params: {
       };
 
       const runReasonFirstFeeNarrowFromTriage = (): void => {
-        dmRoutingBranch = 'reason_first_triage_fee_narrow';
         const feeThreadRf = buildFeeCatalogMatchText(text, recentMessages);
         const idleFeeOutRf = composeIdleFeeQuoteDmWithMeta(doctorSettings, text, {
           catalogMatchText: feeThreadRf,
@@ -1488,6 +1533,15 @@ export async function processInstagramDmWebhook(params: {
         const consolidated = buildConsolidatedReasonSnippetFromMessages(recentForTriage, '').trim();
         const reasonSeed =
           consolidated && consolidated !== 'what you shared' ? consolidated : undefined;
+        if (idleFeeOutRf.feeAmbiguousStaffReview) {
+          state = mergeStateForFeeAmbiguousStaffReview(state, idleFeeOutRf.feeAmbiguousStaffReview, {
+            lastIntent: intentResult.intent,
+            ...(reasonSeed ? { reasonForVisit: reasonSeed } : {}),
+          });
+          dmRoutingBranch = 'fee_ambiguous_visit_type_staff';
+          return;
+        }
+        dmRoutingBranch = 'reason_first_triage_fee_narrow';
         state = {
           ...state,
           reasonFirstTriagePhase: undefined,
@@ -1584,18 +1638,26 @@ export async function processInstagramDmWebhook(params: {
         collectedFields: state.collectedFields,
         catalogMatchText: feeThreadMid,
       });
-      replyText = await appendOptionalDmReplyBridge({
-        correlationId,
-        userText: text,
-        baseReply: midFeeOut.reply,
-      });
-      state = {
-        ...state,
-        lastIntent: intentResult.intent,
-        updatedAt: new Date().toISOString(),
-      };
-      if (midFeeOut.feeQuoteMatcherFinalize) {
-        state = mergeFeeQuoteMatcherIntoState(state, midFeeOut.feeQuoteMatcherFinalize);
+      if (midFeeOut.feeAmbiguousStaffReview) {
+        replyText = midFeeOut.reply;
+        state = mergeStateForFeeAmbiguousStaffReview(state, midFeeOut.feeAmbiguousStaffReview, {
+          lastIntent: intentResult.intent,
+        });
+        dmRoutingBranch = 'fee_ambiguous_visit_type_staff';
+      } else {
+        replyText = await appendOptionalDmReplyBridge({
+          correlationId,
+          userText: text,
+          baseReply: midFeeOut.reply,
+        });
+        state = {
+          ...state,
+          lastIntent: intentResult.intent,
+          updatedAt: new Date().toISOString(),
+        };
+        if (midFeeOut.feeQuoteMatcherFinalize) {
+          state = mergeFeeQuoteMatcherIntoState(state, midFeeOut.feeQuoteMatcherFinalize);
+        }
       }
       await updateConversationState(conversation.id, state, correlationId);
     } else if (
@@ -1632,15 +1694,22 @@ export async function processInstagramDmWebhook(params: {
           catalogMatchText: feeThreadIdle,
         });
         replyText = idleFeeOut.reply;
-        state = {
-          ...state,
-          lastIntent: intentResult.intent,
-          step: 'responded',
-          activeFlow: 'fee_quote',
-          updatedAt: new Date().toISOString(),
-        };
-        if (idleFeeOut.feeQuoteMatcherFinalize) {
-          state = mergeFeeQuoteMatcherIntoState(state, idleFeeOut.feeQuoteMatcherFinalize);
+        if (idleFeeOut.feeAmbiguousStaffReview) {
+          state = mergeStateForFeeAmbiguousStaffReview(state, idleFeeOut.feeAmbiguousStaffReview, {
+            lastIntent: intentResult.intent,
+          });
+          dmRoutingBranch = 'fee_ambiguous_visit_type_staff';
+        } else {
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'responded',
+            activeFlow: 'fee_quote',
+            updatedAt: new Date().toISOString(),
+          };
+          if (idleFeeOut.feeQuoteMatcherFinalize) {
+            state = mergeFeeQuoteMatcherIntoState(state, idleFeeOut.feeQuoteMatcherFinalize);
+          }
         }
       }
       await updateConversationState(conversation.id, state, correlationId);
@@ -2088,7 +2157,7 @@ export async function processInstagramDmWebhook(params: {
           };
           await updateConversationState(conversation.id, state, correlationId);
         } else {
-        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
           replyText = await runGenerateResponse({
             conversationId: conversation.id,
             currentIntent: intentResult.intent,
@@ -2158,7 +2227,7 @@ export async function processInstagramDmWebhook(params: {
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
-        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
         replyText = await runGenerateResponse({
           conversationId: conversation.id,
           currentIntent: 'book_appointment',
@@ -2209,7 +2278,7 @@ export async function processInstagramDmWebhook(params: {
           state = extractResult.newState;
           await updateConversationState(conversation.id, state, correlationId);
         }
-        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
           replyText = await runGenerateResponse({
             conversationId: conversation.id,
             currentIntent: intentResult.intent,
@@ -2234,7 +2303,7 @@ export async function processInstagramDmWebhook(params: {
           const collected = await getCollectedData(conversation.id);
           replyText = buildConfirmDetailsMessage(collected ?? {});
         } else {
-          const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
+          const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
           const aiReply = await runGenerateResponse({
               conversationId: conversation.id,
               currentIntent: intentResult.intent,
@@ -2379,7 +2448,7 @@ export async function processInstagramDmWebhook(params: {
         if (extractResult.missingFields.length === 0) {
           replyText = buildConfirmDetailsMessage(collected ?? {});
         } else {
-          const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
+          const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
           const aiReply = await runGenerateResponse({
             conversationId: conversation.id,
             currentIntent: intentResult.intent,
@@ -2397,7 +2466,7 @@ export async function processInstagramDmWebhook(params: {
               : `Still need: ${extractResult.missingFields.map((f) => labels[f] ?? f).join(', ')}. Please share.`;
         }
           } else {
-        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
         replyText = await runGenerateResponse({
           conversationId: conversation.id,
           currentIntent: intentResult.intent,
@@ -2455,15 +2524,22 @@ export async function processInstagramDmWebhook(params: {
           catalogMatchText: feeThreadBookMis,
         });
         replyText = misFeeOut.reply;
-        state = {
-          ...state,
-          lastIntent: intentResult.intent,
-          step: 'responded',
-          activeFlow: 'fee_quote',
-          updatedAt: new Date().toISOString(),
-        };
-        if (misFeeOut.feeQuoteMatcherFinalize) {
-          state = mergeFeeQuoteMatcherIntoState(state, misFeeOut.feeQuoteMatcherFinalize);
+        if (misFeeOut.feeAmbiguousStaffReview) {
+          state = mergeStateForFeeAmbiguousStaffReview(state, misFeeOut.feeAmbiguousStaffReview, {
+            lastIntent: intentResult.intent,
+          });
+          dmRoutingBranch = 'fee_ambiguous_visit_type_staff';
+        } else {
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'responded',
+            activeFlow: 'fee_quote',
+            updatedAt: new Date().toISOString(),
+          };
+          if (misFeeOut.feeQuoteMatcherFinalize) {
+            state = mergeFeeQuoteMatcherIntoState(state, misFeeOut.feeQuoteMatcherFinalize);
+          }
         }
       }
       await updateConversationState(conversation.id, state, correlationId);
@@ -2486,7 +2562,7 @@ export async function processInstagramDmWebhook(params: {
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
-        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
         replyText = await runGenerateResponse({
           conversationId: conversation.id,
           currentIntent: intentResult.intent,
@@ -2498,7 +2574,7 @@ export async function processInstagramDmWebhook(params: {
           context: aiContext,
         });
               } else {
-        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
         replyText = await runGenerateResponse({
           conversationId: conversation.id,
           currentIntent: intentResult.intent,
@@ -2560,7 +2636,7 @@ export async function processInstagramDmWebhook(params: {
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
-        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
         replyText = await runGenerateResponse({
           conversationId: conversation.id,
           currentIntent: 'book_appointment',
@@ -2624,15 +2700,22 @@ export async function processInstagramDmWebhook(params: {
             catalogMatchText: feeThreadBook,
           });
           replyText = bookIdleFeeOut.reply;
-          state = {
-            ...state,
-            lastIntent: intentResult.intent,
-            step: 'responded',
-            activeFlow: 'fee_quote',
-            updatedAt: new Date().toISOString(),
-          };
-          if (bookIdleFeeOut.feeQuoteMatcherFinalize) {
-            state = mergeFeeQuoteMatcherIntoState(state, bookIdleFeeOut.feeQuoteMatcherFinalize);
+          if (bookIdleFeeOut.feeAmbiguousStaffReview) {
+            state = mergeStateForFeeAmbiguousStaffReview(state, bookIdleFeeOut.feeAmbiguousStaffReview, {
+              lastIntent: intentResult.intent,
+            });
+            dmRoutingBranch = 'fee_ambiguous_visit_type_staff';
+          } else {
+            state = {
+              ...state,
+              lastIntent: intentResult.intent,
+              step: 'responded',
+              activeFlow: 'fee_quote',
+              updatedAt: new Date().toISOString(),
+            };
+            if (bookIdleFeeOut.feeQuoteMatcherFinalize) {
+              state = mergeFeeQuoteMatcherIntoState(state, bookIdleFeeOut.feeQuoteMatcherFinalize);
+            }
           }
         }
       } else if (hasPatientReady) {
@@ -2683,7 +2766,7 @@ export async function processInstagramDmWebhook(params: {
       await updateConversationState(conversation.id, state, correlationId);
     } else {
       dmRoutingBranch = 'ai_open_response';
-      const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
+      const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
       replyText = await runGenerateResponse({
         conversationId: conversation.id,
         currentIntent: intentResult.intent,
@@ -2869,7 +2952,7 @@ export async function processInstagramDmWebhook(params: {
             classifyCtx ? { classifyContext: classifyCtx } : undefined
           );
           intentResult = applyIntentPostClassificationPolicy(intentResult, text, state);
-          const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId);
+          const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
           const replyText =
             (await generateResponse({
               conversationId: conversation.id,

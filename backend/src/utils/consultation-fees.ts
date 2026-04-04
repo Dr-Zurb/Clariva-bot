@@ -20,6 +20,7 @@ import {
 } from './service-catalog-schema';
 import type { DoctorSettingsRow } from '../types/doctor-settings';
 import { SERVICE_CATALOG_MATCH_REASON_CODES } from '../types/conversation';
+import { staffServiceReviewSlaHours } from './staff-service-review-dm';
 import {
   pickSuggestedModality,
   runDeterministicServiceCatalogMatchStageA,
@@ -253,6 +254,50 @@ function localizeNarrowFeeCatalogIntro(practiceName: string, locale: SafetyMessa
   return `Based on what you shared, **teleconsult (online) fees** on file for **${p}** for this visit type:\n\n`;
 }
 
+/** Patient-visible: competing NCD vs acute/general signals — staff assigns visit type (no fee-tier choice). */
+function formatCompetingVisitTypeDeferToStaffDm(
+  practiceName: string,
+  locale: SafetyMessageLocale,
+  hasDevanagari: boolean,
+  hasGurmukhi: boolean,
+  hoursSummary: string
+): string {
+  const hours = staffServiceReviewSlaHours();
+  const hoursLabel = hours === 24 ? '24 hours' : `${hours} hours`;
+  const p = practiceName.trim() || 'the clinic';
+  const hoursSuffix = formatHoursHintLine(locale, hoursSummary, hasDevanagari, hasGurmukhi);
+  const tail = hoursSuffix ? `\n\n${hoursSuffix}` : '';
+
+  if (locale === 'hi' && !hasDevanagari) {
+    return (
+      `Aapne jo bataya usse **${p}** ko pehle **visit type confirm** karna hoga, uske baad exact fee / booking — aapki baat **ek se zyada consult bucket** mein fit ho sakti hai, isliye hum fee options patient se **choose** nahi karwate.\n\n` +
+      `Team **${hoursLabel}** ke andar (aksar jaldi) yahan reply karegi. **Abhi payment ki zaroorat nahi.** Visit type clear hote hi aage badhenge.${tail}`
+    );
+  }
+  if (locale === 'hi' && hasDevanagari) {
+    return (
+      `आपने जो बताया, **${p}** को पहले **विज़िट टाइप तय** करना होगा, फिर सटीक फी / बुकिंग — कारण **एक से ज़्यादा प्रकार** से मेल खा सकते हैं; हम चैट में फी विकल्प **चुनने** नहीं कहते।\n\n` +
+      `टीम **${hoursLabel}** में (आमतौर पर पहले) यहाँ जवाब देगी। **अभी भुगतान की ज़रूरत नहीं।**${tail}`
+    );
+  }
+  if (locale === 'pa' && !hasGurmukhi) {
+    return (
+      `Jo tu dassya, **${p}** nu pehlan **visit type fix** karna paina — tere reasons **ek ton wadh consult bucket** vich ja sakde ne, asi patient kolon fee **choose** nahi karaunde.\n\n` +
+      `Team **${hoursLabel}** ch (aksar jaldi) ithe reply karegi. **Hun payment di lorh nahi.**${tail}`
+    );
+  }
+  if (locale === 'pa' && hasGurmukhi) {
+    return (
+      `ਜੋ ਤੁਸੀਂ ਦੱਸਿਆ, **${p}** ਨੂੰ ਪਹਿਲਾਂ **ਵਿਜ਼ਿਟ ਟਾਈਪ ਤੈਯ** ਕਰਨਾ ਪਵੇਗਾ — ਕਾਰਨ **ਇੱਕ ਤੋਂ ਵੱਧ ਕਿਸਮ** ਨਾਲ ਮੇਲ ਖਾ ਸਕਦੇ ਹਨ; ਅਸੀਂ ਮਰੀਜ਼ ਨੂੰ ਫੀ **ਚੁਣੋ** ਨਹੀਂ ਕਹਿੰਦੇ।\n\n` +
+      `ਟੀਮ **${hoursLabel}** ਵਿੱਚ (ਆਮ ਤੌਰ ’ਤੇ ਜਲਦੀ) ਇੱਥੇ ਜਵਾਬ ਦੇਵੇਗੀ। **ਹੁਣ ਭੁਗਤਾਨ ਦੀ ਲੋੜ ਨਹੀਂ।**${tail}`
+    );
+  }
+  return (
+    `Thanks for sharing what you're dealing with. **${p}** needs to **confirm which visit type applies** before we quote an exact fee or open scheduling — what you described could fit **more than one kind of consult**, and we **don't ask patients to pick between fee options** in chat.\n\n` +
+    `Our team will review and reply here within **${hoursLabel}** (usually sooner). **You don't need to pay yet.** We'll message you when visit type is set so you can continue.${tail}`
+  );
+}
+
 /**
  * Pick a single service if the user message clearly names one (label or service_key). SFU-08 optional narrow.
  */
@@ -326,6 +371,30 @@ function threadTextSuggestsNcdConsultBucket(text: string): boolean {
 const FEE_MATCHER_NCD_BUCKET_RE =
   /\b(blood\s*sugar|glucose|fasting|pp\s*sugar|hba1c|hb\s*a1c|\ba1c\b|diabet|thyroid|hypothyroid|hyperthyroid|cholesterol|lipid|hypert|blood\s*pressure|\bbp\b|heart\s*disease|cardiac|stroke|copd|asthma|kidney|renal|liver|hepatitis|cirrhosis|obesity|overweight|chronic|metabolic|pcos|anemia|sugar\s*level)\b/i;
 
+/**
+ * Acute / primary-care style concerns that often map to a different catalog row than NCD follow-ups.
+ * Used with {@link threadTextSuggestsNcdConsultBucket} to detect competing visit-type signals (staff must assign).
+ */
+const FEE_MATCHER_NON_NCD_ACUTE_OR_GENERAL_RE =
+  /\b(cough|coughing|colds?|cold\s+and|flu|fever|throat|sore\s+throat|runny\s+nose|congestion|blocked\s+nose|sneez|stomach\s+pain|tummy|gastric|gastritis|heartburn|burning|acidity|indigestion|acid\s+reflux|reflux|loose\s+motion|diarrhoea|diarrhea|vomit|vomiting|nausea|headache|migraine|uti|ear\s*ache|general\s+check|check\s*up|checkup|opd)\b/i;
+
+/** True when thread also suggests an acute/general consult bucket (not only chronic/NCD). Exported for tests. */
+export function threadTextSuggestsNonNcdAcuteOrGeneralConsultBucket(text: string): boolean {
+  const s = text.trim();
+  if (s.length < 4) return false;
+  return FEE_MATCHER_NON_NCD_ACUTE_OR_GENERAL_RE.test(s);
+}
+
+/**
+ * Patient thread fits both NCD-style and acute/general buckets — do not ask them to pick a fee tier; staff assigns.
+ */
+export function feeThreadHasCompetingVisitTypeBuckets(text: string): boolean {
+  return (
+    threadTextSuggestsNcdConsultBucket(text) &&
+    threadTextSuggestsNonNcdAcuteOrGeneralConsultBucket(text)
+  );
+}
+
 function pickNcdBucketOffering(
   catalog: ServiceCatalogV1
 ): ServiceCatalogV1['services'][number] | null {
@@ -359,6 +428,14 @@ export interface ConsultationFeeQuoteMatcherFinalize {
   serviceCatalogMatchReasonCodes: string[];
 }
 
+/** Matcher proposal that opens ARM-05 staff review without showing competing fee tiers to the patient. */
+export interface ConsultationFeeAmbiguousStaffReview {
+  matcherProposedCatalogServiceKey: string;
+  matcherProposedCatalogServiceId: string;
+  serviceCatalogMatchConfidence: 'low';
+  serviceCatalogMatchReasonCodes: string[];
+}
+
 export function pickCatalogServicesForFeeDm(
   catalog: ServiceCatalogV1,
   userText: string,
@@ -366,8 +443,24 @@ export function pickCatalogServicesForFeeDm(
 ): {
   services: ServiceCatalogV1['services'];
   feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;
+  competingBucketsDeferToStaff?: boolean;
+  staffPlaceholderOffering?: ServiceCatalogV1['services'][number];
 } {
   const merged = mergeFeeCatalogMatchText(userText, catalogMatchText);
+
+  if (catalog.services.length > 1 && feeThreadHasCompetingVisitTypeBuckets(merged)) {
+    const placeholder = catalog.services.find(
+      (s) => s.service_key.trim().toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY
+    );
+    if (placeholder) {
+      return {
+        services: [],
+        competingBucketsDeferToStaff: true,
+        staffPlaceholderOffering: placeholder,
+      };
+    }
+  }
+
   const reasonFocusForStageA =
     isPricingOnlyLineForFeeMatcher(userText) && catalogMatchText?.trim()
       ? catalogMatchText.trim()
@@ -459,19 +552,44 @@ export function formatServiceCatalogForDmWithMeta(
   settings: ConsultationFeesDmSettings,
   userText: string = '',
   catalogMatchText?: string
-): { markdown: string; feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize } {
+): {
+  markdown: string;
+  feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;
+  feeAmbiguousStaffReview?: ConsultationFeeAmbiguousStaffReview;
+} {
   const practiceName = settings.practice_name?.trim() || 'the practice';
   const locale = detectSafetyMessageLocale(userText || '');
   const hasDevanagari = /[\u0900-\u097F]/.test(userText || '');
   const hasGurmukhi = /[\u0A00-\u0A7F]/.test(userText || '');
-  const hoursSuffix = formatHoursHintLine(
-    locale,
-    settings.business_hours_summary?.trim() ?? '',
-    hasDevanagari,
-    hasGurmukhi
-  );
+  const hoursSummary = settings.business_hours_summary?.trim() ?? '';
+  const hoursSuffix = formatHoursHintLine(locale, hoursSummary, hasDevanagari, hasGurmukhi);
   const cur = settings.appointment_fee_currency;
   const pick = pickCatalogServicesForFeeDm(catalog, userText, catalogMatchText);
+  if (pick.competingBucketsDeferToStaff && pick.staffPlaceholderOffering) {
+    const o = pick.staffPlaceholderOffering;
+    return {
+      markdown: truncateIfNeededDm(
+        formatCompetingVisitTypeDeferToStaffDm(
+          practiceName,
+          locale,
+          hasDevanagari,
+          hasGurmukhi,
+          hoursSummary
+        ),
+        CONSULTATION_FEE_DM_MAX_CHARS,
+        locale
+      ),
+      feeAmbiguousStaffReview: {
+        matcherProposedCatalogServiceKey: o.service_key,
+        matcherProposedCatalogServiceId: o.service_id,
+        serviceCatalogMatchConfidence: 'low',
+        serviceCatalogMatchReasonCodes: [
+          SERVICE_CATALOG_MATCH_REASON_CODES.AMBIGUOUS_COMPLAINT,
+          SERVICE_CATALOG_MATCH_REASON_CODES.COMPETING_VISIT_TYPE_BUCKETS,
+        ],
+      },
+    };
+  }
   const rows = pick.services;
   const feeQuoteMatcherFinalize = pick.feeQuoteMatcherFinalize;
   const lines: string[] = [];
@@ -824,6 +942,7 @@ export function formatFeeBookingCtaForDm(userText: string): string {
 export interface ConsultationFeeDmWithMeta {
   markdown: string;
   feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;
+  feeAmbiguousStaffReview?: ConsultationFeeAmbiguousStaffReview;
 }
 
 /**
@@ -853,7 +972,12 @@ export function formatConsultationFeesForDmWithMeta(
         settings.service_offerings_json as unknown
       );
       if (catalog && catalog.services.length > 0) {
-        return formatServiceCatalogForDmWithMeta(catalog, settings, userText, catalogMatchText);
+        const catMeta = formatServiceCatalogForDmWithMeta(catalog, settings, userText, catalogMatchText);
+        return {
+          markdown: catMeta.markdown,
+          feeQuoteMatcherFinalize: catMeta.feeQuoteMatcherFinalize,
+          feeAmbiguousStaffReview: catMeta.feeAmbiguousStaffReview,
+        };
       }
     }
   }

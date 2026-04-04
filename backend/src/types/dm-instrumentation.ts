@@ -20,6 +20,8 @@ export type DmHandlerBranch =
   /** e-task-dm-04b: Short “consultations are paid” after deflection (no fee table yet) */
   | 'post_medical_payment_existence_ack'
   | 'fee_deterministic_idle'
+  /** Competing NCD vs acute/general signals — staff assigns visit type (no multi-tier fee menu for patient). */
+  | 'fee_ambiguous_visit_type_staff'
   /** Ask-more: user asked pricing before confirm — bridge copy, stay in ask_more */
   | 'reason_first_triage_ask_more_payment_bridge'
   /** e-task-dm-04: deferred full catalog — ask-more copy */

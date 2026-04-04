@@ -7,6 +7,7 @@ import type { DoctorSettingsRow } from '../types/doctor-settings';
 import { detectSafetyMessageLocale } from './safety-messages';
 import type { SafetyMessageLocale } from './safety-messages';
 import {
+  type ConsultationFeeAmbiguousStaffReview,
   type ConsultationFeeQuoteMatcherFinalize,
   type ConsultationFeesDmSettings,
   formatConsultationFeesForDmWithMeta,
@@ -77,12 +78,19 @@ export function composeIdleFeeQuoteDmWithMeta(
   settings: DoctorSettingsRow | null,
   userText: string,
   opts?: { catalogMatchText?: string }
-): { reply: string; feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize } {
+): {
+  reply: string;
+  feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;
+  feeAmbiguousStaffReview?: ConsultationFeeAmbiguousStaffReview;
+} {
   const fee = formatConsultationFeesForDmWithMeta(
     feeQuoteSettingsFromDoctorRow(settings),
     userText,
     opts?.catalogMatchText
   );
+  if (fee.feeAmbiguousStaffReview) {
+    return { reply: fee.markdown.trim(), feeAmbiguousStaffReview: fee.feeAmbiguousStaffReview };
+  }
   return {
     reply: composeDmReplySegments([
       { kind: 'fee_body', markdown: fee.markdown },
@@ -105,12 +113,19 @@ export function composeMidCollectionFeeQuoteDmWithMeta(
   settings: DoctorSettingsRow | null,
   userText: string,
   opts?: { collectedFields?: string[] | null; catalogMatchText?: string }
-): { reply: string; feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize } {
+): {
+  reply: string;
+  feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;
+  feeAmbiguousStaffReview?: ConsultationFeeAmbiguousStaffReview;
+} {
   const fee = formatConsultationFeesForDmWithMeta(
     feeQuoteSettingsFromDoctorRow(settings),
     userText,
     opts?.catalogMatchText
   );
+  if (fee.feeAmbiguousStaffReview) {
+    return { reply: fee.markdown.trim(), feeAmbiguousStaffReview: fee.feeAmbiguousStaffReview };
+  }
   const missing = computeMissingCollectionFields(opts?.collectedFields);
   return {
     reply: composeDmReplySegments([

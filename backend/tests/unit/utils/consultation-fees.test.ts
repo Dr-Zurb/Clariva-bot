@@ -1,5 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
+import { SERVICE_CATALOG_MATCH_REASON_CODES } from '../../../src/types/conversation';
 import {
+  feeThreadHasCompetingVisitTypeBuckets,
   formatAppointmentFeeForAiContext,
   formatConsultationFeesForDm,
   formatFeeBookingCtaForDm,
@@ -392,6 +394,35 @@ describe('consultation-fees (RBH-13)', () => {
     const pick = pickCatalogServicesForFeeDm(catalogFourDrZurbStyle, 'so i have to pay ?', thread);
     expect(pick.services).toHaveLength(1);
     expect(pick.services[0]!.service_key).toBe('non_communicable_diseases');
+  });
+
+  it('competing NCD + acute/general thread defers to staff (no multi-tier fee menu for patient)', () => {
+    const thread =
+      'high blood sugar , also i have cough cold , i sometimes have pain in my stomach too like burning';
+    expect(feeThreadHasCompetingVisitTypeBuckets(thread)).toBe(true);
+    const meta = formatServiceCatalogForDmWithMeta(
+      catalogFourDrZurbStyle,
+      {
+        practice_name: 'Dr Zurb Clinic',
+        consultation_types: null,
+        business_hours_summary: null,
+        appointment_fee_minor: null,
+        appointment_fee_currency: 'INR',
+      },
+      'how much is video consult',
+      thread
+    );
+    expect(meta.feeAmbiguousStaffReview?.matcherProposedCatalogServiceKey).toBe('other');
+    expect(meta.feeAmbiguousStaffReview?.serviceCatalogMatchReasonCodes).toEqual(
+      expect.arrayContaining([
+        SERVICE_CATALOG_MATCH_REASON_CODES.AMBIGUOUS_COMPLAINT,
+        SERVICE_CATALOG_MATCH_REASON_CODES.COMPETING_VISIT_TYPE_BUCKETS,
+      ])
+    );
+    expect(meta.markdown.toLowerCase()).toContain('visit type');
+    expect(meta.markdown).not.toContain('₹1000');
+    expect(meta.markdown).not.toContain('₹2000');
+    expect(meta.feeQuoteMatcherFinalize).toBeUndefined();
   });
 
   it('e-task-dm-04: skin-led thread + pricing line does not force NCD bucket', () => {

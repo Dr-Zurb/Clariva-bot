@@ -78,6 +78,8 @@ export const SERVICE_CATALOG_MATCH_REASON_CODES = {
   KEYWORD_HINT_MATCH: 'keyword_hint_match',
   SINGLE_SERVICE_CATALOG: 'single_service_catalog',
   AMBIGUOUS_COMPLAINT: 'ambiguous_complaint',
+  /** DM fee path: thread matches both NCD-style and acute/general consult signals — staff assigns visit type (no patient price pick). */
+  COMPETING_VISIT_TYPE_BUCKETS: 'competing_visit_type_buckets',
   NO_CATALOG_MATCH: 'no_catalog_match',
   MATCHER_ERROR: 'matcher_error',
   STAFF_CONFIRMED_PROPOSAL: 'staff_confirmed_proposal',
