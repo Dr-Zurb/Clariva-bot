@@ -68,7 +68,7 @@ describe('safety-messages (RBH-15)', () => {
     it('returns Roman Hindi medical_query for yar / goli (not English)', () => {
       const msg = resolveSafetyMessage('medical_query', 'yar ek goli batado please');
       expect(msg.toLowerCase()).toContain('main');
-      expect(msg.toLowerCase()).toMatch(/appointment|clinic/);
+      expect(msg.toLowerCase()).toMatch(/appointment|doctor|book|teleconsult|visit/);
       expect(msg).not.toContain("I'm the scheduling assistant");
     });
   });

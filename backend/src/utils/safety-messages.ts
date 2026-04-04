@@ -8,24 +8,24 @@ export type SafetyMessageKind = 'medical_query' | 'emergency';
 
 /** English defaults (backward compatible exports). */
 export const MEDICAL_QUERY_RESPONSE_EN =
-  "I'm the scheduling assistant. For medical questions, please speak with the doctor during your appointment or call the clinic directly.";
+  "I'm the scheduling assistant. I can't give medical advice here. Book a teleconsult through this chat, or discuss your concerns with the doctor during your visit.";
 
 export const EMERGENCY_RESPONSE_EN =
   'Please call emergency services (in India: **112** or **108**) or go to the nearest hospital immediately.';
 
 const MEDICAL_QUERY_BY_LOCALE: Record<SafetyMessageLocale, string> = {
   en: MEDICAL_QUERY_RESPONSE_EN,
-  hi: 'मैं अपॉइंटमेंट बुक करने में मदद करने वाला सहायक हूँ। चिकित्सा संबंधी सवालों के लिए कृपया अपॉइंटमेंट के दौरान डॉक्टर से बात करें या क्लिनिक पर कॉल करें।',
-  pa: 'ਮੈਂ ਸਿਰਫ਼ ਅਪਾਇੰਟਮੈਂਟ ਲਈ ਸਹਾਇਕ ਹਾਂ। ਸਿਹਤ ਬਾਰੇ ਸਵਾਲਾਂ ਲਈ ਕਿਰਪਾ ਕਰਕੇ ਡਾਕਟਰ ਨਾਲ ਗੱਲ ਕਰੋ ਜਾਂ ਕਲੀਨਿਕ ਨੂੰ ਕਾਲ ਕਰੋ।',
+  hi: 'मैं अपॉइंटमेंट बुक करने में मदद करने वाला सहायक हूँ। मैं यहाँ चिकित्सा सलाह नहीं दे सकता। कृपया इस चैट से टेलीकंसल्ट बुक करें, या विज़िट के दौरान डॉक्टर से अपनी बात साझा करें।',
+  pa: 'ਮੈਂ ਸਿਰਫ਼ ਅਪਾਇੰਟਮੈਂਟ ਲਈ ਸਹਾਇਕ ਹਾਂ। ਮੈਂ ਇੱਥੇ ਵੈਦਕ ਸਲਾਹ ਨਹੀਂ ਦੇ ਸਕਦਾ। ਕਿਰਪਾ ਕਰਕੇ ਇਸ ਚੈਟ ਰਾਹੀਂ ਟੈਲੀਕੰਸਲਟ ਬੁੱਕ ਕਰੋ, ਜਾਂ ਦੌਰਾਨ ਡਾਕਟਰ ਨਾਲ ਗੱਲ ਕਰੋ।',
 };
 
 /** Roman Hindi - for users typing Hinglish without Devanagari */
 const MEDICAL_QUERY_LATIN_HI =
-  'Main appointment booking assistant hoon. Medical sawaalon ke liye kripaya appointment ke time doctor se baat karein ya clinic ko call karein.';
+  'Main appointment booking assistant hoon. Main yahan medical advice nahi de sakta. Kripaya is chat se teleconsult book karein, ya visit ke dauran doctor se baat karein.';
 
 /** Roman Punjabi */
 const MEDICAL_QUERY_LATIN_PA =
-  'Main sirf appointment layi assistant haan. Sehat baare savaalan layi kirpa karke doctor naal gal karo ya clinic nu call karo.';
+  'Main sirf appointment layi assistant haan. Main ithe medical salah nahi de sakda. Kirpa karke is chat rahi teleconsult book karo, jaan visit dauran doctor naal gal karo.';
 
 const EMERGENCY_BY_LOCALE: Record<SafetyMessageLocale, string> = {
   en: EMERGENCY_RESPONSE_EN,

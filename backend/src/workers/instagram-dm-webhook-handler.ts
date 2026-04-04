@@ -387,14 +387,30 @@ function lastBotMessageAskedForConsent(
   return false;
 }
 
-/** Last bot message asked for confirm (Is this correct? Reply Yes to see available slots). */
+/** Last bot message asked for confirm (template or AI wording before consent / slot link). */
 function lastBotMessageAskedForConfirm(
   recentMessages: { sender_type: string; content: string }[]
 ): boolean {
   for (let i = recentMessages.length - 1; i >= 0; i--) {
     if (recentMessages[i].sender_type !== 'patient') {
       const c = (recentMessages[i].content ?? '').toLowerCase();
-      return c.includes('is this correct') && c.includes('reply yes');
+      if (c.includes('is this correct') && c.includes('reply yes')) return true;
+      // Optional-extras consent ("say Yes to continue") is not detail confirmation
+      if (c.includes('anything else') && c.includes('say yes to continue') && !c.includes('detail')) {
+        return false;
+      }
+      const mentionsDetailConfirm =
+        (c.includes('confirm') && (c.includes('detail') || c.includes('correct'))) ||
+        (c.includes('detail') && c.includes('correct')) ||
+        c.includes('is this correct');
+      const asksAffirmation =
+        (c.includes('reply') && /\b(yes|yeah|yep|confirm|okay|ok)\b/.test(c)) ||
+        /\byes,?\s+i\s+confirm\b/.test(c) ||
+        c.includes('yes to proceed') ||
+        (c.includes('slot') &&
+          (c.includes('picker') || c.includes('pick') || c.includes('select') || c.includes('link')) &&
+          (c.includes('confirm') || c.includes('correct')));
+      return mentionsDetailConfirm && asksAffirmation;
     }
   }
   return false;
@@ -1710,9 +1726,8 @@ export async function processInstagramDmWebhook(params: {
         await updateConversationState(conversation.id, state, correlationId);
       }
         const consentResult = parseConsentReply(text);
-      const hasExtrasOrGranted =
-        consentResult === 'granted' ||
-        (consentResult === 'unclear' && !isSkipExtrasReply(text));
+      // Denied is handled below; granted + any unclear (incl. "nothing"/skip extras) proceeds to slot link.
+      const hasExtrasOrGranted = consentResult === 'granted' || consentResult === 'unclear';
       if (hasExtrasOrGranted) {
         const extraNotes = extractExtraNotesFromConsentReply(text, consentResult);
         let collectedBeforePersist = await getCollectedData(conversation.id);
@@ -1855,7 +1870,13 @@ export async function processInstagramDmWebhook(params: {
           context: aiContext,
         });
       }
-    } else if (state.step === 'collecting_all' || (lastBotAskedForDetails && !state.step)) {
+    } else if (
+      (state.step === 'collecting_all' || (lastBotAskedForDetails && !state.step)) &&
+      !(
+        /^(yes|yeah|yep|ok|okay|correct|looks good|confirmed)$/i.test(text.trim()) &&
+        effectiveAskedForConfirm(state, recentMessages)
+      )
+    ) {
       dmRoutingBranch = 'booking_collection';
       // Process as collection data. Context: we asked for details (state or last bot message).
       // E.g. "Pain Abdomen" may be classified as medical_query but we asked - treat as data.
