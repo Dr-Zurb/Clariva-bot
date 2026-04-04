@@ -1,0 +1,10 @@
+---
+description: Append ideas and tasks to docs/capture when the user wants to park or remember work
+alwaysApply: true
+---
+
+# Capture inbox (Clariva-bot)
+
+- When the user asks to **capture**, **remember**, **park**, or **note** an idea, bug, or task for later, append a concise line to `docs/capture/inbox.md` using `- [ ] description` unless they specify another path under `docs/capture/` (e.g. `notes/YYYY-MM-DD.md`).
+- Include links, file paths, or ticket IDs in the same line when provided. Do not duplicate long write-ups—point to `TEMPLATE.md` or a dated file if they need more space.
+- Do not treat the inbox as the execution backlog; remind them to promote items to Daily-plans or Taskmaster during review.
