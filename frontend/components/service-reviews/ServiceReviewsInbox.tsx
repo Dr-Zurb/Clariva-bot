@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import Link from "next/link";
 import type {
   ServiceStaffReviewListItem,
@@ -98,11 +98,10 @@ export function ServiceReviewsInbox({
   const catalog = settings?.service_offerings_json ?? null;
   const [activeTab, setActiveTab] = useState<ServiceStaffReviewListQueryStatus>("pending");
   const [reviews, setReviews] = useState(initialReviews);
-  /** Which tab the current `reviews` rows belong to (after last successful fetch or cache prime). */
+  /** Which tab the current `reviews` rows belong to (last applied successful fetch only). */
   const [dataTab, setDataTab] = useState<ServiceStaffReviewListQueryStatus>("pending");
-  const [tabCache, setTabCache] = useState<
-    Partial<Record<ServiceStaffReviewListQueryStatus, ServiceStaffReviewListItem[]>>
-  >(() => ({ pending: initialReviews }));
+  /** Monotonic id so out-of-order HTTP responses cannot overwrite the UI after a newer tab load starts. */
+  const loadGenRef = useRef(0);
   const [refreshing, setRefreshing] = useState(false);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
@@ -114,15 +113,18 @@ export function ServiceReviewsInbox({
 
   const loadTab = useCallback(
     async (tab: ServiceStaffReviewListQueryStatus) => {
+      const gen = ++loadGenRef.current;
       setRefreshing(true);
       try {
         const res = await getServiceStaffReviews(token, tab);
+        if (gen !== loadGenRef.current) return;
         const rows = res.data.reviews;
         setReviews(rows);
         setDataTab(tab);
-        setTabCache((c) => ({ ...c, [tab]: rows }));
       } finally {
-        setRefreshing(false);
+        if (gen === loadGenRef.current) {
+          setRefreshing(false);
+        }
       }
     },
     [token]
@@ -134,11 +136,6 @@ export function ServiceReviewsInbox({
 
   const selectTab = (tab: ServiceStaffReviewListQueryStatus) => {
     setActiveTab(tab);
-    const cached = tabCache[tab];
-    if (cached !== undefined) {
-      setReviews(cached);
-      setDataTab(tab);
-    }
     void loadTab(tab);
   };
 
