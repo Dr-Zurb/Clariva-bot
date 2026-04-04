@@ -131,12 +131,16 @@ import { upsertPendingStaffServiceReviewRequest } from '../services/service-staf
 import { buildFeeCatalogMatchText } from '../utils/dm-turn-context';
 import {
   buildConsolidatedReasonSnippetFromMessages,
+  formatPostMedicalPaymentExistenceAck,
   formatReasonFirstAskMoreQuestion,
   formatReasonFirstConfirmClarify,
   formatReasonFirstConfirmQuestion,
+  formatReasonFirstFeePatienceBridgeWhileAskMore,
+  isVagueConsultationPaymentExistenceQuestion,
   parseNothingElseOrSameOnly,
   parseReasonTriageConfirmYes,
   parseReasonTriageNegationForClarify,
+  recentPatientThreadHasClinicalReason,
   shouldDeferIdleFeeForReasonFirstTriage,
   userWantsExplicitFullFeeList,
 } from '../utils/reason-first-triage';
@@ -1211,6 +1215,7 @@ export async function processInstagramDmWebhook(params: {
         lastIntent: intentResult.intent,
         step: 'responded',
         reasonFirstTriagePhase: undefined,
+        postMedicalConsultFeeAckSent: undefined,
         updatedAt: new Date().toISOString(),
       };
       await updateConversationState(conversation.id, state, correlationId);
@@ -1365,6 +1370,7 @@ export async function processInstagramDmWebhook(params: {
         lastIntent: 'emergency',
         step: 'responded',
         reasonFirstTriagePhase: undefined,
+        postMedicalConsultFeeAckSent: undefined,
         updatedAt: new Date().toISOString(),
       };
       await updateConversationState(conversation.id, state, correlationId);
@@ -1422,6 +1428,27 @@ export async function processInstagramDmWebhook(params: {
         });
       }
     } else if (
+      !inCollection &&
+      (!state.step || state.step === 'responded') &&
+      isRecentMedicalDeflectionWindow(state) &&
+      !state.reasonFirstTriagePhase &&
+      !state.postMedicalConsultFeeAckSent &&
+      isVagueConsultationPaymentExistenceQuestion(text) &&
+      recentPatientThreadHasClinicalReason(
+        recentMessages.map((m) => ({ sender_type: m.sender_type, content: m.content ?? '' }))
+      )
+    ) {
+      dmRoutingBranch = 'post_medical_payment_existence_ack';
+      replyText = formatPostMedicalPaymentExistenceAck(text);
+      state = {
+        ...state,
+        lastIntent: intentResult.intent,
+        step: 'responded',
+        postMedicalConsultFeeAckSent: true,
+        updatedAt: new Date().toISOString(),
+      };
+      await updateConversationState(conversation.id, state, correlationId);
+    } else if (
       state.reasonFirstTriagePhase &&
       !inCollection &&
       (!state.step || state.step === 'responded')
@@ -1439,6 +1466,7 @@ export async function processInstagramDmWebhook(params: {
         state = {
           ...state,
           reasonFirstTriagePhase: undefined,
+          postMedicalConsultFeeAckSent: undefined,
           lastIntent: intentResult.intent,
           step: 'responded',
           activeFlow: 'fee_quote',
@@ -1449,47 +1477,8 @@ export async function processInstagramDmWebhook(params: {
         }
         dmRoutingBranch = 'fee_deterministic_idle';
       };
-      if (userWantsExplicitFullFeeList(text)) {
-        runReasonFirstFullFeeEscape();
-      } else if (signalsFeePricing && !userExplicitlyWantsToBookNow(text)) {
-        // Pivot: user asked about fees/payment during triage — answer, don't replay ask_more / confirm.
-        dmRoutingBranch = 'fee_deterministic_idle';
-        const feeThreadPivot = buildFeeCatalogMatchText(text, recentMessages);
-        const idleFeePivot = composeIdleFeeQuoteDmWithMeta(doctorSettings, text, {
-          catalogMatchText: feeThreadPivot,
-        });
-        replyText = idleFeePivot.reply;
-        const consolidatedPivot = buildConsolidatedReasonSnippetFromMessages(recentForTriage, '').trim();
-        const reasonSeedPivot =
-          consolidatedPivot && consolidatedPivot !== 'what you shared'
-            ? consolidatedPivot
-            : undefined;
-        state = {
-          ...state,
-          reasonFirstTriagePhase: undefined,
-          lastIntent: intentResult.intent,
-          step: 'responded',
-          activeFlow: 'fee_quote',
-          updatedAt: new Date().toISOString(),
-          ...(reasonSeedPivot ? { reasonForVisit: reasonSeedPivot } : {}),
-        };
-        if (idleFeePivot.feeQuoteMatcherFinalize) {
-          state = mergeFeeQuoteMatcherIntoState(state, idleFeePivot.feeQuoteMatcherFinalize);
-        }
-      } else if (state.reasonFirstTriagePhase === 'ask_more') {
-        dmRoutingBranch = 'reason_first_triage_confirm';
-        const snippet = parseNothingElseOrSameOnly(text)
-          ? buildConsolidatedReasonSnippetFromMessages(recentForTriage, '')
-          : buildConsolidatedReasonSnippetFromMessages(recentForTriage, text);
-        replyText = formatReasonFirstConfirmQuestion(text, snippet);
-        state = {
-          ...state,
-          reasonFirstTriagePhase: 'confirm',
-          lastIntent: intentResult.intent,
-          step: 'responded',
-          updatedAt: new Date().toISOString(),
-        };
-      } else if (parseReasonTriageConfirmYes(text)) {
+
+      const runReasonFirstFeeNarrowFromTriage = (): void => {
         dmRoutingBranch = 'reason_first_triage_fee_narrow';
         const feeThreadRf = buildFeeCatalogMatchText(text, recentMessages);
         const idleFeeOutRf = composeIdleFeeQuoteDmWithMeta(doctorSettings, text, {
@@ -1502,6 +1491,7 @@ export async function processInstagramDmWebhook(params: {
         state = {
           ...state,
           reasonFirstTriagePhase: undefined,
+          postMedicalConsultFeeAckSent: undefined,
           lastIntent: intentResult.intent,
           step: 'responded',
           activeFlow: 'fee_quote',
@@ -1511,25 +1501,59 @@ export async function processInstagramDmWebhook(params: {
         if (idleFeeOutRf.feeQuoteMatcherFinalize) {
           state = mergeFeeQuoteMatcherIntoState(state, idleFeeOutRf.feeQuoteMatcherFinalize);
         }
-      } else if (parseReasonTriageNegationForClarify(text)) {
-        dmRoutingBranch = 'reason_first_triage_confirm';
-        replyText = formatReasonFirstConfirmClarify(text);
-        state = {
-          ...state,
-          lastIntent: intentResult.intent,
-          step: 'responded',
-          updatedAt: new Date().toISOString(),
-        };
-      } else {
-        dmRoutingBranch = 'reason_first_triage_confirm';
-        const snippetReplay = buildConsolidatedReasonSnippetFromMessages(recentForTriage, text);
-        replyText = formatReasonFirstConfirmQuestion(text, snippetReplay);
-        state = {
-          ...state,
-          lastIntent: intentResult.intent,
-          step: 'responded',
-          updatedAt: new Date().toISOString(),
-        };
+      };
+
+      if (userWantsExplicitFullFeeList(text)) {
+        runReasonFirstFullFeeEscape();
+      } else if (state.reasonFirstTriagePhase === 'ask_more') {
+        if (signalsFeePricing && !userExplicitlyWantsToBookNow(text)) {
+          dmRoutingBranch = 'reason_first_triage_ask_more_payment_bridge';
+          replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(text);
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'responded',
+            updatedAt: new Date().toISOString(),
+          };
+        } else {
+          dmRoutingBranch = 'reason_first_triage_confirm';
+          const snippet = parseNothingElseOrSameOnly(text)
+            ? buildConsolidatedReasonSnippetFromMessages(recentForTriage, '')
+            : buildConsolidatedReasonSnippetFromMessages(recentForTriage, text);
+          replyText = formatReasonFirstConfirmQuestion(text, snippet);
+          state = {
+            ...state,
+            reasonFirstTriagePhase: 'confirm',
+            lastIntent: intentResult.intent,
+            step: 'responded',
+            updatedAt: new Date().toISOString(),
+          };
+        }
+      } else if (state.reasonFirstTriagePhase === 'confirm') {
+        if (signalsFeePricing && !userExplicitlyWantsToBookNow(text)) {
+          runReasonFirstFeeNarrowFromTriage();
+        } else if (parseReasonTriageConfirmYes(text)) {
+          runReasonFirstFeeNarrowFromTriage();
+        } else if (parseReasonTriageNegationForClarify(text)) {
+          dmRoutingBranch = 'reason_first_triage_confirm';
+          replyText = formatReasonFirstConfirmClarify(text);
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'responded',
+            updatedAt: new Date().toISOString(),
+          };
+        } else {
+          dmRoutingBranch = 'reason_first_triage_confirm';
+          const snippetReplay = buildConsolidatedReasonSnippetFromMessages(recentForTriage, text);
+          replyText = formatReasonFirstConfirmQuestion(text, snippetReplay);
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'responded',
+            updatedAt: new Date().toISOString(),
+          };
+        }
       }
       await updateConversationState(conversation.id, state, correlationId);
     } else if (intentResult.intent === 'medical_query' && !inCollection) {
@@ -1544,6 +1568,7 @@ export async function processInstagramDmWebhook(params: {
         lastIntent: intentResult.intent,
         step: 'responded',
         lastMedicalDeflectionAt: new Date().toISOString(),
+        postMedicalConsultFeeAckSent: undefined,
         updatedAt: new Date().toISOString(),
       };
       await updateConversationState(conversation.id, state, correlationId);
@@ -1790,6 +1815,7 @@ export async function processInstagramDmWebhook(params: {
           bookingForPatientId: undefined,
           lastMedicalDeflectionAt: undefined,
           reasonFirstTriagePhase: undefined,
+          postMedicalConsultFeeAckSent: undefined,
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
@@ -1810,6 +1836,7 @@ export async function processInstagramDmWebhook(params: {
           bookingForPatientId: undefined,
           lastMedicalDeflectionAt: undefined,
           reasonFirstTriagePhase: undefined,
+          postMedicalConsultFeeAckSent: undefined,
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
@@ -2090,6 +2117,7 @@ export async function processInstagramDmWebhook(params: {
           collectedFields: [],
           lastMedicalDeflectionAt: undefined,
           reasonFirstTriagePhase: undefined,
+          postMedicalConsultFeeAckSent: undefined,
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
@@ -2126,6 +2154,7 @@ export async function processInstagramDmWebhook(params: {
           pendingOtherBooking: { relation },
           lastMedicalDeflectionAt: undefined,
           reasonFirstTriagePhase: undefined,
+          postMedicalConsultFeeAckSent: undefined,
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
@@ -2450,9 +2479,10 @@ export async function processInstagramDmWebhook(params: {
           ...state,
           lastIntent: intentResult.intent,
           step: getInitialCollectionStep(),
-          collectedFields: reasonSeedFields,
+          collectedFields:         reasonSeedFields,
           lastMedicalDeflectionAt: undefined,
           reasonFirstTriagePhase: undefined,
+          postMedicalConsultFeeAckSent: undefined,
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
@@ -2509,6 +2539,7 @@ export async function processInstagramDmWebhook(params: {
           bookingForPatientId: undefined,
           lastMedicalDeflectionAt: undefined,
           reasonFirstTriagePhase: undefined,
+          postMedicalConsultFeeAckSent: undefined,
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
@@ -2525,6 +2556,7 @@ export async function processInstagramDmWebhook(params: {
           bookingForPatientId: undefined,
           lastMedicalDeflectionAt: undefined,
           reasonFirstTriagePhase: undefined,
+          postMedicalConsultFeeAckSent: undefined,
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
@@ -2639,6 +2671,7 @@ export async function processInstagramDmWebhook(params: {
           activeFlow: undefined,
           lastMedicalDeflectionAt: undefined,
           reasonFirstTriagePhase: undefined,
+          postMedicalConsultFeeAckSent: undefined,
           updatedAt: new Date().toISOString(),
         };
         const practiceName = doctorContext?.practice_name?.trim() || 'the clinic';

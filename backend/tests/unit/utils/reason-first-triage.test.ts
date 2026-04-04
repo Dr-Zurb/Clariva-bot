@@ -10,7 +10,7 @@ import {
 import type { ConversationState } from '../../../src/types/conversation';
 
 describe('reason-first-triage', () => {
-  it('does not defer when this turn is clearly about payment even if thread is clinical', () => {
+  it('does not defer vague pay-existence until short ack is sent (clinical thread)', () => {
     const state: ConversationState = {};
     const defer = shouldDeferIdleFeeForReasonFirstTriage({
       state,
@@ -18,6 +18,26 @@ describe('reason-first-triage', () => {
       recentMessages: [{ sender_type: 'patient', content: 'blood sugar 177' }],
     });
     expect(defer).toBe(false);
+  });
+
+  it('defers pricing after post-medical pay ack (same vague line can route to triage)', () => {
+    const state: ConversationState = { postMedicalConsultFeeAckSent: true };
+    const defer = shouldDeferIdleFeeForReasonFirstTriage({
+      state,
+      text: 'okay so i have to pay?',
+      recentMessages: [{ sender_type: 'patient', content: 'blood sugar 177' }],
+    });
+    expect(defer).toBe(true);
+  });
+
+  it('defers amount-seeking pricing in clinical context (reason-first, not short-ack path)', () => {
+    const state: ConversationState = {};
+    const defer = shouldDeferIdleFeeForReasonFirstTriage({
+      state,
+      text: 'how much is the consultation?',
+      recentMessages: [{ sender_type: 'patient', content: 'blood sugar 177' }],
+    });
+    expect(defer).toBe(true);
   });
 
   it('shouldDefer when thread is clinical and this turn is still a clinical follow-up', () => {

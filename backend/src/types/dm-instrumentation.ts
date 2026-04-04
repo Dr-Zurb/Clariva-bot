@@ -17,7 +17,11 @@ export type DmHandlerBranch =
   | 'reschedule_flow_numeric'
   | 'emergency_safety'
   | 'medical_safety'
+  /** e-task-dm-04b: Short “consultations are paid” after deflection (no fee table yet) */
+  | 'post_medical_payment_existence_ack'
   | 'fee_deterministic_idle'
+  /** Ask-more: user asked pricing before confirm — bridge copy, stay in ask_more */
+  | 'reason_first_triage_ask_more_payment_bridge'
   /** e-task-dm-04: deferred full catalog — ask-more copy */
   | 'reason_first_triage_ask_more'
   /** e-task-dm-04: confirm / clarify / replay consolidated reason */

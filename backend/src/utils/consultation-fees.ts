@@ -14,6 +14,7 @@ import type {
   ServiceMatcherHintsV1,
 } from './service-catalog-schema';
 import {
+  CATALOG_CATCH_ALL_SERVICE_KEY,
   SERVICE_CATALOG_VERSION,
   safeParseServiceCatalogV1FromDb,
 } from './service-catalog-schema';
@@ -295,6 +296,60 @@ export function mergeFeeCatalogMatchText(userText: string, catalogMatchText?: st
     : combined;
 }
 
+/**
+ * Current inbound line is only pricing/booking-cost wording (no clinical cues in the same line).
+ * Used to prefer prior-thread text for catalog Stage-A when the user pivots "do I pay?" after symptoms.
+ */
+function isPricingOnlyLineForFeeMatcher(userLine: string): boolean {
+  const t = userLine.trim();
+  if (t.length < 3 || !isPricingInquiryMessage(t)) return false;
+  return !FEE_MATCHER_LINE_HAS_CLINICAL_CUE_RE.test(t);
+}
+
+/** If this matches the pricing line itself, merged(thread+line) is a better matcher input than thread alone. */
+const FEE_MATCHER_LINE_HAS_CLINICAL_CUE_RE =
+  /\b(blood\s*sugar|glucose|fasting|diabet|insulin|hypert|blood\s*pressure|\bbp\b|fever|pain|ache|rash|skin|symptom|cough|bleed|medi(cine|cations?)|reading|nausea|vomit|dizzy|headache|chest|stomach|hurt|throat|ear|eye|uti|burning)\b/i;
+
+/**
+ * Redacted thread suggests chronic / metabolic (NCD-style) teleconsult — Stage-A may be null when matcher_hints are unset.
+ * Excludes primary dermatology-style concerns so we do not swap a skin thread to NCD.
+ */
+function threadTextSuggestsNcdConsultBucket(text: string): boolean {
+  const s = text.trim();
+  if (s.length < 4) return false;
+  if (/\b(rash|skin\s+problem|acne|eczema|mole|dermat|wart|itching|melasma|psoriasis|hair\s*fall)\b/i.test(s)) {
+    return false;
+  }
+  return FEE_MATCHER_NCD_BUCKET_RE.test(s);
+}
+
+const FEE_MATCHER_NCD_BUCKET_RE =
+  /\b(blood\s*sugar|glucose|fasting|pp\s*sugar|hba1c|hb\s*a1c|\ba1c\b|diabet|thyroid|hypothyroid|hyperthyroid|cholesterol|lipid|hypert|blood\s*pressure|\bbp\b|heart\s*disease|cardiac|stroke|copd|asthma|kidney|renal|liver|hepatitis|cirrhosis|obesity|overweight|chronic|metabolic|pcos|anemia|sugar\s*level)\b/i;
+
+function pickNcdBucketOffering(
+  catalog: ServiceCatalogV1
+): ServiceCatalogV1['services'][number] | null {
+  const services = catalog.services.filter(
+    (x) => x.service_key.trim().toLowerCase() !== CATALOG_CATCH_ALL_SERVICE_KEY
+  );
+  const exact = services.find(
+    (s) => s.service_key.trim().toLowerCase() === 'non_communicable_diseases'
+  );
+  if (exact) return exact;
+  const byHeuristic = services.filter((s) => {
+    const k = s.service_key.trim().toLowerCase();
+    const lab = s.label.trim().toLowerCase();
+    return (
+      k === 'ncd' ||
+      k.includes('non_communicable') ||
+      /\bnon[-\s]?communicable\b/i.test(lab) ||
+      (k.includes('ncd') && !k.includes('skin') && !k.includes('no_ncd'))
+    );
+  });
+  if (byHeuristic.length === 1) return byHeuristic[0]!;
+  return null;
+}
+
 /** High-confidence fee narrow — safe to finalize catalog selection on conversation (idle/mid-fee). */
 export interface ConsultationFeeQuoteMatcherFinalize {
   matcherProposedCatalogServiceKey: string;
@@ -313,6 +368,11 @@ export function pickCatalogServicesForFeeDm(
   feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;
 } {
   const merged = mergeFeeCatalogMatchText(userText, catalogMatchText);
+  const reasonFocusForStageA =
+    isPricingOnlyLineForFeeMatcher(userText) && catalogMatchText?.trim()
+      ? catalogMatchText.trim()
+      : merged;
+
   let rows = pickCatalogServicesMatchingUserText(catalog, merged);
 
   const makeFinalize = (
@@ -336,7 +396,10 @@ export function pickCatalogServicesForFeeDm(
   }
 
   if (rows.length === catalog.services.length && catalog.services.length > 1) {
-    const stageA = runDeterministicServiceCatalogMatchStageA(catalog, merged);
+    let stageA = runDeterministicServiceCatalogMatchStageA(catalog, reasonFocusForStageA);
+    if (!stageA && reasonFocusForStageA !== merged) {
+      stageA = runDeterministicServiceCatalogMatchStageA(catalog, merged);
+    }
     if (stageA) {
       const o = stageA.offering;
       if (stageA.confidence === 'high' && stageA.autoFinalize) {
@@ -346,6 +409,17 @@ export function pickCatalogServicesForFeeDm(
         };
       }
       return { services: [o] };
+    }
+
+    const ncdPick = pickNcdBucketOffering(catalog);
+    if (ncdPick && threadTextSuggestsNcdConsultBucket(reasonFocusForStageA)) {
+      return {
+        services: [ncdPick],
+        feeQuoteMatcherFinalize: makeFinalize(ncdPick, [
+          SERVICE_CATALOG_MATCH_REASON_CODES.KEYWORD_HINT_MATCH,
+          SERVICE_CATALOG_MATCH_REASON_CODES.CATALOG_ALLOWLIST_MATCH,
+        ]),
+      };
     }
   }
 

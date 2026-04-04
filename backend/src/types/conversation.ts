@@ -205,6 +205,11 @@ export interface ConversationState {
    * Cleared with fresh collection / `lastMedicalDeflectionAt` resets.
    */
   reasonFirstTriagePhase?: ReasonFirstTriagePhase;
+  /**
+   * e-task-dm-04b: After idle medical deflection, we sent a **short** “yes, visits are paid” reply (no rupee block yet).
+   * Next pricing turns defer to reason-first triage, then narrow fee after confirm. Cleared on new deflection / fee shown / intake start.
+   */
+  postMedicalConsultFeeAckSent?: boolean;
 }
 
 /** e-task-dm-03: TTL for treating `lastMedicalDeflectionAt` as active routing memory. */

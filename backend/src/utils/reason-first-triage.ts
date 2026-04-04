@@ -41,6 +41,27 @@ export function userWantsExplicitFullFeeList(text: string): boolean {
   return EXPLICIT_FULL_FEE_LIST_RE.test(text.trim());
 }
 
+/** User is asking for an amount / rate, not merely whether payment applies. */
+const AMOUNT_SEEKING_PRICING_RE =
+  /\b(how\s+much|how\s+many\s+rupees|what\s*('|’)?s\s+the\s+(fee|price|cost|charge|amount|payment\b)|what\s+(is|are)\s+the\s+(fee|fees|price|prices|charges)|kitna|kitne|kitni|कितना|exact(\s+(fee|price|amount))?|breakdown|quote|fee\s+for|price\s+for)\b/i;
+
+/**
+ * “Do I have to pay?” style — **yes/no fee existence**, not “how much?” (handled by reason-first after ack).
+ */
+export function isVagueConsultationPaymentExistenceQuestion(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 3) return false;
+  if (userWantsExplicitFullFeeList(t)) return false;
+  if (AMOUNT_SEEKING_PRICING_RE.test(t)) return false;
+  if (!isPricingInquiryMessage(t)) return false;
+  return (
+    /\b(do\s+i\s+(have\s+)?(to|need\s+to)\s+pay|have\s+to\s+pay|need\s+to\s+pay|will\s+i\s+pay)\b/i.test(t) ||
+    /\bso\s+i\s+have\s+to\s+pay\b/i.test(t) ||
+    /\b(is\s+there\s+(a\s+)?(fee|charge|payment)|is\s+it\s+(paid|free))\b/i.test(t) ||
+    /\b(am\s+i\s+supposed\s+to\s+pay|do\s+i\s+pay)\b/i.test(t)
+  );
+}
+
 export function shouldDeferIdleFeeForReasonFirstTriage(params: {
   state: ConversationState;
   text: string;
@@ -49,12 +70,26 @@ export function shouldDeferIdleFeeForReasonFirstTriage(params: {
   const { state, text, recentMessages } = params;
   if (state.reasonFirstTriagePhase) return false;
   if (userWantsExplicitFullFeeList(text)) return false;
-  // This turn is about money — answer with fee copy, not reason-first ask_more.
-  if (isPricingInquiryMessage(text)) return false;
+
   const threadClinical = recentPatientThreadHasClinicalReason(recentMessages);
   const currentClinical = userMessageSuggestsClinicalReason(text);
   const postDeflect = isRecentMedicalDeflectionWindow(state);
-  return postDeflect || threadClinical || currentClinical;
+  const clinicalContext = postDeflect || threadClinical || currentClinical;
+
+  if (!clinicalContext) {
+    if (isPricingInquiryMessage(text)) return false;
+    return false;
+  }
+
+  // Post-deflection / symptom-led: defer full catalog until reason-first triage + confirm.
+  if (isPricingInquiryMessage(text)) {
+    if (!state.postMedicalConsultFeeAckSent && isVagueConsultationPaymentExistenceQuestion(text)) {
+      return false;
+    }
+    return true;
+  }
+
+  return true;
 }
 
 export function parseNothingElseOrSameOnly(text: string): boolean {
@@ -126,6 +161,59 @@ export function formatReasonFirstAskMoreQuestion(userText: string): string {
   if (loc === 'hi') return askMoreHi();
   if (loc === 'pa') return askMorePa();
   return askMoreEnglish();
+}
+
+/** After medical deflection: short “visits are paid” — **no** rupee amounts (e-task-dm-04b). */
+export function formatPostMedicalPaymentExistenceAck(userText: string): string {
+  const loc = detectSafetyMessageLocale(userText || '');
+  const hasDe = /[\u0900-\u097F]/.test(userText || '');
+  const hasPa = /[\u0A00-\u0A7F]/.test(userText || '');
+  if (loc === 'hi' && !hasDe) {
+    return (
+      '**Haan** — doctor se **teleconsult / visit** paid hota hai. Jab aap **exact amount** jaanna chahein, **kitna** ya **fee kya hai** likhein — hum aapke visit reason ke hisaab se bata denge.'
+    );
+  }
+  if (loc === 'hi' && hasDe) {
+    return (
+      '**हाँ** — डॉक्टर से **टेलीकंसल्ट / विज़िट** के लिए **शुल्क** लगता है। जब **सटीक राशि** जाननी हो, **कितना** या **फीस क्या है** लिखें — हम आपके विज़िट के कारण के अनुसार बताएँगे।'
+    );
+  }
+  if (loc === 'pa' && !hasPa) {
+    return (
+      '**Haan ji** — doctor naal **visit / teleconsult** paid hunda hai. Jadon **exact paisa** pannaa hove, **kitna** ya **fee ki hai** likho — asi visit di wajah de hisaab naal dassaange.'
+    );
+  }
+  if (loc === 'pa' && hasPa) {
+    return (
+      '**ਹਾਂ** — ਡਾਕਟਰ ਨਾਲ **ਵਿਜ਼ਿਟ / ਟੈਲੀਕੰਸਲਟ** ਲਈ **ਫੀਸ** ਲਗਦੀ ਹੈ। ਜਦੋਂ **ਸਹੀ ਰਕਮ** ਚਾਹੀਦੀ ਹੋਵੇ, **kitna** ਜਾਂ **fee ki hai** ਲਿਖੋ — ਅਸੀਂ ਵਿਜ਼ਿਟ ਦੀ ਵਜ੍ਹਾ ਮੁਤਾਬਕ ਦੱਸਾਂਗੇ।'
+    );
+  }
+  return (
+    '**Yes**—**consultations with the doctor are paid.** When you want the **exact fee**, ask **how much** or **what\'s the fee**, and we\'ll align it with what you\'re seeing the doctor for.'
+  );
+}
+
+/** User asked pricing during ask_more; keep triage — no fee table until confirm. */
+export function formatReasonFirstFeePatienceBridgeWhileAskMore(userText: string): string {
+  const loc = detectSafetyMessageLocale(userText || '');
+  const hasDe = /[\u0900-\u097F]/.test(userText || '');
+  const hasPa = /[\u0A00-\u0A7F]/.test(userText || '');
+  if (loc === 'hi' && !hasDe) {
+    return (
+      '**Haan**, yeh visit **paid** hai. Pehle confirm kar lein kya-kya discuss karna hai — phir **exact fee** aapke reason ke hisaab se bata dunga.\n\n' +
+      askMoreHi()
+    );
+  }
+  if (loc === 'pa' && !hasPa) {
+    return (
+      '**Haan ji**, eh visit **paid** hai. Pehla confirm kar lao ki ki-ki discuss karna hai — phir **exact fee** tere reason mutabik das ditta jaavega.\n\n' +
+      askMorePa()
+    );
+  }
+  return (
+    "**Yes**—there's a **consultation fee**. I'll share the **exact amount** once we confirm what you'd like the doctor to address.\n\n" +
+    askMoreEnglish()
+  );
 }
 
 function confirmTemplateEnglish(snippet: string): string {

@@ -11,6 +11,7 @@ import {
   isMetaBookingOrFeeReasonText,
   isPricingInquiryMessage,
   isTeleconsultCatalogAuthoritative,
+  pickCatalogServicesForFeeDm,
   pickCatalogServicesMatchingUserText,
   userExplicitlyWantsToBookNow,
 } from '../../../src/utils/consultation-fees';
@@ -330,6 +331,86 @@ describe('consultation-fees (RBH-13)', () => {
     expect(meta.markdown).toContain('General checkup');
     expect(meta.markdown).toContain('NCD');
     expect(meta.feeQuoteMatcherFinalize).toBeUndefined();
+  });
+
+  const catalogFourDrZurbStyle: ServiceCatalogV1 = {
+    version: 1,
+    services: [
+      {
+        service_id: sid('skin'),
+        service_key: 'skin_problems',
+        label: 'Skin Problems',
+        modalities: { video: { enabled: true, price_minor: 1000_00 } },
+      },
+      {
+        service_id: sid('gen'),
+        service_key: 'general_checkup',
+        label: 'General Checkup',
+        modalities: { video: { enabled: true, price_minor: 2000_00 } },
+      },
+      {
+        service_id: sid('ncd'),
+        service_key: 'non_communicable_diseases',
+        label: 'Non Communicable diseases',
+        modalities: {
+          text: { enabled: true, price_minor: 1000_00 },
+          voice: { enabled: true, price_minor: 1000_00 },
+          video: { enabled: true, price_minor: 1000_00 },
+        },
+      },
+      {
+        service_id: sid('oth'),
+        service_key: 'other',
+        label: 'Other / not listed',
+        modalities: { video: { enabled: true, price_minor: 1000_00 } },
+      },
+    ],
+  };
+
+  it('e-task-dm-04: sugar concern thread + pricing-only line narrows to NCD row without JSON matcher_hints', () => {
+    const thread =
+      'hello doctor i have high blood sugar , on empty stomach it came out to 188 today , how do i manage it , please guide me';
+    const meta = formatServiceCatalogForDmWithMeta(
+      catalogFourDrZurbStyle,
+      {
+        practice_name: 'Dr Zurb Clinic',
+        consultation_types: null,
+        business_hours_summary: null,
+        appointment_fee_minor: null,
+        appointment_fee_currency: 'INR',
+      },
+      'so i have to pay ?',
+      thread
+    );
+    expect(meta.markdown).toContain('Non Communicable');
+    expect(meta.markdown).toContain('non_communicable_diseases');
+    expect(meta.markdown).not.toContain('Skin Problems');
+    expect(meta.markdown).not.toContain('General Checkup');
+    expect(meta.feeQuoteMatcherFinalize?.matcherProposedCatalogServiceKey).toBe(
+      'non_communicable_diseases'
+    );
+    const pick = pickCatalogServicesForFeeDm(catalogFourDrZurbStyle, 'so i have to pay ?', thread);
+    expect(pick.services).toHaveLength(1);
+    expect(pick.services[0]!.service_key).toBe('non_communicable_diseases');
+  });
+
+  it('e-task-dm-04: skin-led thread + pricing line does not force NCD bucket', () => {
+    const thread = 'i have a bad rash on my arm getting worse';
+    const meta = formatServiceCatalogForDmWithMeta(
+      catalogFourDrZurbStyle,
+      {
+        practice_name: 'Dr Zurb Clinic',
+        consultation_types: null,
+        business_hours_summary: null,
+        appointment_fee_minor: null,
+        appointment_fee_currency: 'INR',
+      },
+      'what is the fee?',
+      thread
+    );
+    expect(meta.markdown).toContain('Skin Problems');
+    expect(meta.markdown).toContain('General Checkup');
+    expect(meta.markdown).toContain('Non Communicable');
   });
 
   it('e-task-2: formatFollowUpPolicyHint summarizes enabled policy', () => {
