@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   buildConsolidatedReasonSnippetFromMessages,
+  isVagueConsultationPaymentExistenceQuestion,
   parseReasonTriageConfirmYes,
   parseReasonTriageNegationForClarify,
   shouldDeferIdleFeeForReasonFirstTriage,
@@ -18,6 +19,19 @@ describe('reason-first-triage', () => {
       recentMessages: [{ sender_type: 'patient', content: 'blood sugar 177' }],
     });
     expect(defer).toBe(false);
+  });
+
+  it('treats colloquial "so i pay" as vague pay-existence (not reason-first deferral)', () => {
+    expect(isVagueConsultationPaymentExistenceQuestion('oh so i pay ?')).toBe(true);
+    expect(isVagueConsultationPaymentExistenceQuestion('so i pay?')).toBe(true);
+    const state: ConversationState = {};
+    expect(
+      shouldDeferIdleFeeForReasonFirstTriage({
+        state,
+        text: 'oh so i pay?',
+        recentMessages: [{ sender_type: 'patient', content: 'blood sugar 198 please guide' }],
+      })
+    ).toBe(false);
   });
 
   it('defers pricing after post-medical pay ack (same vague line can route to triage)', () => {

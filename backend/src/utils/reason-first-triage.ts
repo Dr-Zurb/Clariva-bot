@@ -57,6 +57,7 @@ export function isVagueConsultationPaymentExistenceQuestion(text: string): boole
   return (
     /\b(do\s+i\s+(have\s+)?(to|need\s+to)\s+pay|have\s+to\s+pay|need\s+to\s+pay|will\s+i\s+pay)\b/i.test(t) ||
     /\bso\s+i\s+have\s+to\s+pay\b/i.test(t) ||
+    /\bso\s+i\s+pay\b/i.test(t) || // "oh/okay so i pay?" — existence, not amount
     /\b(is\s+there\s+(a\s+)?(fee|charge|payment)|is\s+it\s+(paid|free))\b/i.test(t) ||
     /\b(am\s+i\s+supposed\s+to\s+pay|do\s+i\s+pay)\b/i.test(t)
   );
