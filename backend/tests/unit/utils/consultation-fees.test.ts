@@ -9,6 +9,7 @@ import {
   isConsultationTypePricingFollowUp,
   isMetaBookingOrFeeReasonText,
   isPricingInquiryMessage,
+  isTeleconsultCatalogAuthoritative,
   pickCatalogServicesMatchingUserText,
   userExplicitlyWantsToBookNow,
 } from '../../../src/utils/consultation-fees';
@@ -47,6 +48,7 @@ describe('consultation-fees (RBH-13)', () => {
     expect(line).toContain('catalog');
     expect(line).toContain('5000.00 USD');
     expect(line).not.toContain('Standard appointment / consultation fee on file:');
+    expect(line).not.toContain('In-clinic');
   });
 
   it('userExplicitlyWantsToBookNow detects real booking intent', () => {
@@ -173,7 +175,8 @@ describe('consultation-fees (RBH-13)', () => {
     expect(out).toContain('₹100');
     expect(out).toContain('General');
     expect(out).toContain('₹200');
-    expect(out).toContain('₹300');
+    expect(out).not.toContain('₹300');
+    expect(out).not.toContain('In-clinic');
     expect(out).not.toContain('999');
     expect(out).not.toContain('Legacy');
   });
@@ -191,6 +194,16 @@ describe('consultation-fees (RBH-13)', () => {
     const rows = pickCatalogServicesMatchingUserText(catalogTwoServices, 'how much for dermatology');
     expect(rows).toHaveLength(1);
     expect(rows[0]!.service_key).toBe('skin');
+  });
+
+  it('isTeleconsultCatalogAuthoritative when catalog has enabled modalities', () => {
+    expect(
+      isTeleconsultCatalogAuthoritative({
+        service_offerings_json: catalogTwoServices,
+        appointment_fee_currency: 'INR',
+      })
+    ).toBe(true);
+    expect(isTeleconsultCatalogAuthoritative({ service_offerings_json: null })).toBe(false);
   });
 
   it('SFU-08: formatServiceCatalogForAiContext compact line', () => {

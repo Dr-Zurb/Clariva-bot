@@ -53,13 +53,13 @@ export function formatAppointmentFeeForAiContext(
   if (cur === 'INR') {
     const amt = `₹${Math.round(minor / 100)} (INR)`;
     if (sup) {
-      return `In-clinic / standard fee on file (separate from teleconsult catalog prices above): ${amt}. Use catalog lines for text/voice/video amounts when present.`;
+      return `Legacy flat appointment fee on file (separate from teleconsult catalog modality prices above): ${amt}. Prefer catalog lines for text/voice/video; do not describe this as an in-person visit type unless the practice explicitly enables in-clinic booking.`;
     }
     return `Standard appointment / consultation fee on file: ${amt}. This is what patients pay when booking unless a different per–visit-type amount is listed under consultation types.`;
   }
   const num = (minor / 100).toFixed(2);
   if (sup) {
-    return `In-clinic / standard fee on file (separate from teleconsult catalog prices above): ${num} ${cur}. Use catalog lines for modality amounts when present.`;
+    return `Legacy flat appointment fee on file (separate from teleconsult catalog modality prices above): ${num} ${cur}. Prefer catalog lines for text/voice/video; do not describe this as in-clinic unless the practice explicitly enables in-clinic booking.`;
   }
   return `Standard appointment / consultation fee on file: ${num} ${cur}.`;
 }
@@ -235,21 +235,6 @@ function localizeCatalogIntro(practiceName: string, locale: SafetyMessageLocale)
   return `**Teleconsult (online) fees** on file for **${practiceName}**:\n\n`;
 }
 
-function localizeInClinicFlatLine(
-  minor: number,
-  currency: string | null | undefined,
-  locale: SafetyMessageLocale
-): string {
-  const amt = formatMinorCurrencyDm(minor, currency);
-  if (locale === 'hi') {
-    return `- **Clinic / in-person (standard fee on file)**: ${amt}`;
-  }
-  if (locale === 'pa') {
-    return `- **Clinic / in-person (standard fee on file)**: ${amt}`;
-  }
-  return `- **In-clinic / standard appointment fee (on file)**: ${amt}`;
-}
-
 /**
  * Pick a single service if the user message clearly names one (label or service_key). SFU-08 optional narrow.
  */
@@ -331,10 +316,7 @@ export function formatServiceCatalogForDm(
   const intro = localizeCatalogIntro(practiceName, locale);
   let body = `${intro}${lines.join('\n\n')}`;
 
-  const minor = settings.appointment_fee_minor;
-  if (minor != null && minor > 0) {
-    body += `\n\n${localizeInClinicFlatLine(minor, cur, locale)}`;
-  }
+  /** Catalog path lists text/voice/video only — do not append legacy “in-clinic” flat fee (misleading when teleconsult-only). */
 
   body += `\n\n${localizeFeeListFooter(locale, hoursSuffix)}`;
   return truncateIfNeededDm(body, CONSULTATION_FEE_DM_MAX_CHARS, locale);
@@ -386,6 +368,22 @@ export function formatServiceCatalogForAiContext(settings: {
     out = `${out.slice(0, cut).trimEnd()} … [catalog truncated]`;
   }
   return out;
+}
+
+/**
+ * Practice has a non-empty teleconsult catalog (text/voice/video rows). When true, legacy
+ * `consultation_types` + physical-address booking hints should not drive the receptionist.
+ */
+export function isTeleconsultCatalogAuthoritative(settings: {
+  service_offerings_json?: DoctorSettingsRow['service_offerings_json'] | null;
+  appointment_fee_currency?: string | null;
+}): boolean {
+  return Boolean(
+    formatServiceCatalogForAiContext({
+      service_offerings_json: settings.service_offerings_json,
+      appointment_fee_currency: settings.appointment_fee_currency,
+    })?.trim()
+  );
 }
 
 function lineHasRupeeAmount(line: string): boolean {

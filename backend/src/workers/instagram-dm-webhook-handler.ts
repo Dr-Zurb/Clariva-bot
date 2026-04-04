@@ -108,8 +108,13 @@ import { matchServiceCatalogOffering } from '../services/service-catalog-matcher
 import {
   formatAppointmentFeeForAiContext,
   formatServiceCatalogForAiContext,
+  isTeleconsultCatalogAuthoritative,
   userExplicitlyWantsToBookNow,
 } from '../utils/consultation-fees';
+import {
+  lastBotAskedForConsultationChannel,
+  parseConsultationChannelUserReply,
+} from '../utils/dm-consultation-channel';
 import {
   composeIdleFeeQuoteDm,
   composeMidCollectionFeeQuoteDm,
@@ -733,20 +738,27 @@ function isAmbiguousCollectionMessage(text: string, extracted: ExtractedFields):
 /** Build doctor context for AI (e-task-4, e-task-2 consultation_types, SFU-08 catalog) */
 function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): DoctorContext | undefined {
   if (!settings) return undefined;
-  const hasFeeOnFile =
-    settings.appointment_fee_minor != null && settings.appointment_fee_minor > 0;
   const catalogAi = formatServiceCatalogForAiContext({
     service_offerings_json: settings.service_offerings_json,
     appointment_fee_currency: settings.appointment_fee_currency,
   });
+  const catalogAuthority = isTeleconsultCatalogAuthoritative({
+    service_offerings_json: settings.service_offerings_json,
+    appointment_fee_currency: settings.appointment_fee_currency,
+  });
+  /** When catalog defines teleconsult offers, do not inject legacy consultation_types / clinic address / flat fee into LLM context. */
+  const hasFeeOnFile =
+    !catalogAuthority &&
+    settings.appointment_fee_minor != null &&
+    settings.appointment_fee_minor > 0;
   const hasTeleconsultCatalogPricing = Boolean(catalogAi?.trim());
   const hasAny =
     settings.practice_name ||
     settings.business_hours_summary ||
     settings.welcome_message ||
     settings.specialty ||
-    settings.address_summary ||
-    settings.consultation_types ||
+    (!catalogAuthority && settings.address_summary) ||
+    (!catalogAuthority && settings.consultation_types) ||
     hasFeeOnFile ||
     hasTeleconsultCatalogPricing ||
     (settings.cancellation_policy_hours != null && settings.cancellation_policy_hours > 0);
@@ -756,18 +768,21 @@ function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): Docto
     business_hours_summary: settings.business_hours_summary,
     welcome_message: settings.welcome_message,
     specialty: settings.specialty,
-    address_summary: settings.address_summary,
+    address_summary: catalogAuthority ? null : settings.address_summary,
     cancellation_policy_hours: settings.cancellation_policy_hours,
-    consultation_types: settings.consultation_types,
+    consultation_types: catalogAuthority ? null : settings.consultation_types,
     appointment_fee_currency: settings.appointment_fee_currency ?? null,
-    appointment_fee_summary: formatAppointmentFeeForAiContext(
-      {
-        appointment_fee_minor: settings.appointment_fee_minor,
-        appointment_fee_currency: settings.appointment_fee_currency,
-      },
-      { teleconsultCatalogPresent: hasTeleconsultCatalogPricing }
-    ),
+    appointment_fee_summary: catalogAuthority
+      ? null
+      : formatAppointmentFeeForAiContext(
+          {
+            appointment_fee_minor: settings.appointment_fee_minor,
+            appointment_fee_currency: settings.appointment_fee_currency,
+          },
+          { teleconsultCatalogPresent: hasTeleconsultCatalogPricing }
+        ),
     service_catalog_summary_for_ai: catalogAi,
+    teleconsultCatalogAuthoritative: catalogAuthority || undefined,
   };
 }
 
@@ -1071,6 +1086,8 @@ export async function processInstagramDmWebhook(params: {
     const isBookIntent = intentResult.intent === 'book_appointment';
     const isRevokeIntent = intentResult.intent === 'revoke_consent';
     const lastBotAskedForDetails = effectiveAskedForDetails(state, recentMessages);
+    const lastBotAskedChannelPick = lastBotAskedForConsultationChannel(recentMessages);
+    const channelReplyPick = lastBotAskedChannelPick ? parseConsultationChannelUserReply(text) : null;
     const inCollection =
       state.step?.startsWith('collecting_') ||
       state.step === 'consent' ||
@@ -1078,6 +1095,7 @@ export async function processInstagramDmWebhook(params: {
       state.step === 'awaiting_match_confirmation' ||
       state.step === 'awaiting_staff_service_confirmation' ||
       lastBotAskedForDetails ||
+      lastBotAskedChannelPick ||
       state.lastPromptKind === 'collect_details' ||
       state.lastPromptKind === 'consent' ||
       state.lastPromptKind === 'confirm_details' ||
@@ -1287,6 +1305,54 @@ export async function processInstagramDmWebhook(params: {
       replyText = formatStaffServiceReviewStillPendingDm(doctorSettings);
       state = { ...state, updatedAt: new Date().toISOString() };
       await updateConversationState(conversation.id, state, correlationId);
+    } else if (channelReplyPick) {
+      dmRoutingBranch = 'consultation_channel_pick';
+      const pick = channelReplyPick;
+      const teleOnly = isTeleconsultCatalogAuthoritative({
+        service_offerings_json: doctorSettings?.service_offerings_json ?? null,
+        appointment_fee_currency: doctorSettings?.appointment_fee_currency ?? null,
+      });
+      if (teleOnly && pick === 'in_clinic') {
+        replyText =
+          "Right now we offer **teleconsult** only (text, voice, or video) — which works best for you?";
+        state = {
+          ...state,
+          lastIntent: intentResult.intent,
+          updatedAt: new Date().toISOString(),
+        };
+      } else {
+        const nextModality: 'text' | 'voice' | 'video' | undefined =
+          pick === 'in_clinic' ? undefined : pick;
+        const nextStep =
+          state.step === 'collecting_all' || state.step?.startsWith('collecting_')
+            ? state.step!
+            : 'collecting_all';
+        state = {
+          ...state,
+          consultationType: pick,
+          consultationModality: nextModality,
+          step: nextStep,
+          collectedFields: state.collectedFields ?? [],
+          lastIntent: intentResult.intent,
+          updatedAt: new Date().toISOString(),
+        };
+        const aiContext = await buildAiContextForResponse(
+          conversation.id,
+          state,
+          recentMessages,
+          correlationId
+        );
+        replyText = await runGenerateResponse({
+          conversationId: conversation.id,
+          currentIntent: 'book_appointment',
+          state,
+          recentMessages,
+          currentUserMessage: text,
+          correlationId,
+          doctorContext,
+          context: aiContext,
+        });
+      }
     } else if (intentResult.intent === 'medical_query' && !inCollection) {
       dmRoutingBranch = 'medical_safety';
       // Only deflect when NOT in collection flow. Context matters: if we asked for "reason for visit"

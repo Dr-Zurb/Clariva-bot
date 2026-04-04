@@ -27,6 +27,7 @@ export type DmHandlerBranch =
   | 'patient_match_confirmation'
   | 'consent_flow'
   | 'staff_service_review_pending'
+  | 'consultation_channel_pick'
   | 'booking_collection'
   | 'confirm_details'
   | 'post_booking_ack'
