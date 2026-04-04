@@ -1015,6 +1015,11 @@ export interface GenerateResponseContext {
    * Suppresses multi-row fee catalog in the system prompt and blocks dual-tier pricing copy.
    */
   competingVisitTypeBuckets?: boolean;
+  /**
+   * e-task-dm-05: clinical-led thread + multi-row teleconsult catalog — same prompt suppression as competing buckets
+   * (no verbatim multi-tier catalog; practice confirms visit type).
+   */
+  silentAssignmentStrict?: boolean;
 }
 
 export interface GenerateResponseInput {
@@ -1044,12 +1049,16 @@ export interface GenerateResponseInput {
 /** Options that tighten fee/catalog injection (visit-type ambiguity hardening). */
 export type BuildResponseSystemPromptOptions = {
   competingVisitTypeBuckets?: boolean;
+  silentAssignmentStrict?: boolean;
 };
 
 function buildResponseSystemPrompt(
   doctorContext?: DoctorContext,
   promptOpts?: BuildResponseSystemPromptOptions
 ): string {
+  const suppressMultiTierFeeCatalog =
+    promptOpts?.competingVisitTypeBuckets === true ||
+    promptOpts?.silentAssignmentStrict === true;
   const practiceName = doctorContext?.practice_name?.trim() || 'Clariva Care';
   let prompt = RESPONSE_SYSTEM_PROMPT_BASE.replace(
     /practice's assistant/g,
@@ -1081,9 +1090,9 @@ function buildResponseSystemPrompt(
     );
   }
   if (catalogSummary) {
-    if (promptOpts?.competingVisitTypeBuckets) {
+    if (suppressMultiTierFeeCatalog) {
       feeFacts.push(
-        `Teleconsult catalog: this practice has multiple visit types and prices on file, but **this thread is flagged** because the patient’s reasons may fit **more than one** category. Do **not** paste, list, or compare specific prices for different visit types; do **not** ask the patient to pick a fee tier or service row. Acknowledge warmly; if booking fields are missing, continue intake; for fee questions say **the practice will confirm the correct visit type** and then the exact fee — **no competing amounts in this reply**.`
+        `Teleconsult catalog: this practice has multiple visit types and prices on file, but **this thread is flagged** — do **not** paste, list, or compare specific prices for different visit types; do **not** ask the patient to pick a fee tier or service row. Acknowledge warmly; if booking fields are missing, continue intake; for fee questions say **the practice will confirm the correct visit type** and then the exact fee — **no multi-tier amounts or comparisons in this reply**.`
       );
     } else {
       feeFacts.push(
@@ -1094,7 +1103,7 @@ function buildResponseSystemPrompt(
   const feeSummary = doctorContext?.appointment_fee_summary?.trim();
   if (feeSummary) feeFacts.push(feeSummary);
   const consultRaw = doctorContext?.consultation_types?.trim();
-  if (consultRaw && !promptOpts?.competingVisitTypeBuckets) {
+  if (consultRaw && !suppressMultiTierFeeCatalog) {
     const legacyNote = catalogSummary
       ? ' Supplemental notes only — teleconsult/modality prices in the catalog above take precedence when both apply.'
       : '';
@@ -1103,8 +1112,8 @@ function buildResponseSystemPrompt(
     );
   }
   if (feeFacts.length > 0) {
-    const pricingGuardrails = promptOpts?.competingVisitTypeBuckets
-      ? `CRITICAL pricing guardrails (this turn): Visit type may span **competing buckets**. Do **not** quote, list, or compare prices for **different** visit types or ask the patient to choose a tier. Say **the practice will confirm the correct visit type** and then the exact fee. Do not invent rupee amounts. A single legacy flat fee line above (if any) is not a substitute for resolving competing teleconsult rows.`
+    const pricingGuardrails = suppressMultiTierFeeCatalog
+      ? `CRITICAL pricing guardrails (this turn): Visit type must be **set by the practice** from what the patient described — do **not** quote, list, or compare prices for **different** visit types or ask the patient to choose a tier. Say **the practice will confirm the correct visit type** and then the exact fee. Do not invent rupee amounts. A single legacy flat fee line above (if any) is not a substitute for resolving which teleconsult row applies.`
       : `CRITICAL pricing guardrails: When the user asks about cost, fees, charges, money, paise, kitna/kitne, phone/video consult price, etc., quote the lines above exactly when they contain amounts. NEVER say the exact fee is missing, not visible, or not in the system when this block lists an amount. Prefer **catalog** modality lines for text/voice/video when present. If there is no matching amount for their exact scenario, say the clinic can confirm — but still state any on-file or catalog amount that does apply. Do not invent follow-up discounts beyond what the catalog follow-up hints say.`;
     prompt += `\n\nSYSTEM FACTS — FEES (practice database — must be treated as "in the system" for patients):
 ${feeFacts.join('\n')}
@@ -1115,11 +1124,11 @@ ${pricingGuardrails}`;
   if (
     doctorContext?.teleconsultCatalogAuthoritative &&
     doctorContext?.service_catalog_summary_for_ai?.trim() &&
-    !promptOpts?.competingVisitTypeBuckets
+    !suppressMultiTierFeeCatalog
   ) {
     prompt += `\n\nTELECONSULT-ONLY (product rule): This practice uses the **teleconsult catalog** above for visit types (text / voice / video only). Do **not** offer in-clinic or in-person appointments, do **not** quote a street address for booking, and do **not** invite users to visit the clinic physically—unless the Practice info block above explicitly states otherwise (it should not when this rule appears). When asking how to consult, only reference modalities present in the catalog (e.g. video, voice, text chat).`;
   }
-  if (doctorContext?.teleconsultCatalogAuthoritative && promptOpts?.competingVisitTypeBuckets) {
+  if (doctorContext?.teleconsultCatalogAuthoritative && suppressMultiTierFeeCatalog) {
     prompt += `\n\nTELECONSULT-ONLY (product rule): This practice offers **text / voice / video** teleconsult only — do not offer in-clinic visits unless Practice info explicitly says otherwise. While visit type is ambiguous, do not steer the user using price differences between catalog rows.`;
   }
 
@@ -1193,9 +1202,9 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
   if (aiContext?.idleDialogueHint?.trim()) {
     contextParts.push(aiContext.idleDialogueHint.trim());
   }
-  if (aiContext?.competingVisitTypeBuckets) {
+  if (aiContext?.competingVisitTypeBuckets || aiContext?.silentAssignmentStrict) {
     contextParts.push(
-      'CRITICAL (server flag): Competing visit-type buckets — do not output multiple priced consultation options or ask the patient to choose a fee tier.'
+      'CRITICAL (server flag): Visit type / fee tier must not be a patient-facing multi-option menu — do not output multiple priced consultation rows or ask the patient to pick a fee category. Practice confirms visit type; then exact fee.'
     );
   }
   const aiContextBlock = contextParts.length > 0 ? `\n\nContext: ${contextParts.join(' ')}` : '';
@@ -1219,12 +1228,15 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
       : '';
   const systemPrompt = buildResponseSystemPrompt(doctorContext, {
     competingVisitTypeBuckets: aiContext?.competingVisitTypeBuckets === true,
+    silentAssignmentStrict: aiContext?.silentAssignmentStrict === true,
   });
+  const suppressFeeMenu =
+    aiContext?.competingVisitTypeBuckets === true || aiContext?.silentAssignmentStrict === true;
   const pricingFocusHint =
     (classifierSignalsFeeQuestion === true || isPricingInquiryMessage(redactedCurrent)) &&
     !userExplicitlyWantsToBookNow(redactedCurrent)
-      ? aiContext?.competingVisitTypeBuckets
-        ? ' PRIORITY: Latest turn may be about fees — **competing visit-type buckets** (server). Do NOT quote or compare amounts for different visit types. Say the **practice will confirm visit type** and exact fee after; you may continue collecting any missing booking fields in the same reply, in the user’s language.'
+      ? suppressFeeMenu
+        ? ' PRIORITY: Latest turn may be about fees — **server flag: no multi-tier fee menu**. Do NOT quote or compare amounts for different visit types. Say the **practice will confirm visit type** and exact fee after; you may continue collecting any missing booking fields in the same reply, in the user’s language.'
         : ' PRIORITY: The latest user message is about pricing/fees (including paise/kitne/rupees). Lead with SYSTEM FACTS - FEES if any amount is listed; state the exact fee clearly. Never claim fees are missing from the system when that block includes an amount. If you are mid-booking flow, combine the fee answer with asking for any still-missing fields in one reply, in the user language.'
       : '';
   const systemContent =

@@ -26,6 +26,8 @@ This folder contains task management documentation and templates.
    - Audit current implementation → map impact → implement → remove obsolete code → update tests and docs
    - Use in addition to the guide when the task is "Update existing"
 
+4. **[SILENT_FEE_ASSIGNMENT_POLICY.md](./SILENT_FEE_ASSIGNMENT_POLICY.md)** - DM receptionist: reason-first fees, **no patient tier menu**; two outcomes (narrow quote or staff SLA). Implementation: [e-task-dm-05](../Development/Daily-plans/April%202026/04-04-2026/tasks/e-task-dm-05-silent-fee-menu-closure.md).
+
 ---
 
 ## 🎯 Quick Start
@@ -153,10 +155,11 @@ Map patient **reason / complaint** to **`service_offerings_json`** with confiden
 
 ### DM context, fees & capture (2026-04-04)
 
-Follow-ups from receptionist DM discussions: **thread-aware teleconsult fees**, **TurnContext / conversation memory**, **shipped** safety + confirm + consent fixes (reference), **capture inbox** process, **NCD catalog hints** (ops).
+Follow-ups from receptionist DM discussions: **thread-aware teleconsult fees**, **TurnContext / conversation memory**, **shipped** safety + confirm + consent fixes (reference), **capture inbox** process, **NCD catalog hints** (ops), **silent fee assignment** (no patient tier menu).
 
 - **Daily plan:** [docs/Development/Daily-plans/April 2026/04-04-2026/README.md](../Development/Daily-plans/April%202026/04-04-2026/README.md)
-- **Task files:** `e-task-dm-01` … `e-task-dm-03`, `e-task-doc-02`, `e-task-ops-01` under [tasks/](../Development/Daily-plans/April%202026/04-04-2026/tasks/)
+- **Policy:** [SILENT_FEE_ASSIGNMENT_POLICY.md](./SILENT_FEE_ASSIGNMENT_POLICY.md) — principles + QA acceptance for narrow fee vs staff only
+- **Task files:** `e-task-dm-01` … `e-task-dm-05`, `e-task-doc-02`, `e-task-ops-01` under [tasks/](../Development/Daily-plans/April%202026/04-04-2026/tasks/)
 
 ### AI Receptionist — Human-Like Bot (2026-03-26)
 
@@ -254,4 +257,4 @@ Tasks: e-task-1 (prescription migration), e-task-2 (prescription service & API),
 ---
 
 **Last Updated:** 2026-03-31  
-**Version:** 2.9.0 (AI Receptionist matching ARM-01…11 task index, April 2026 plan)
+**Version:** 2.10.0 (Silent fee assignment policy + e-task-dm-05)

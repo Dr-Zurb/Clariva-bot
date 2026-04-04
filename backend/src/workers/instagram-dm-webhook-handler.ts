@@ -114,6 +114,7 @@ import {
   formatServiceCatalogForAiContext,
   isTeleconsultCatalogAuthoritative,
   mergeFeeCatalogMatchText,
+  teleconsultCatalogServiceRowCount,
   userExplicitlyWantsToBookNow,
 } from '../utils/consultation-fees';
 import {
@@ -134,12 +135,15 @@ import { upsertPendingStaffServiceReviewRequest } from '../services/service-staf
 import { buildFeeCatalogMatchText } from '../utils/dm-turn-context';
 import {
   buildConsolidatedReasonSnippetFromMessages,
+  clinicalLedFeeThread,
+  feeFollowUpAnaphora,
   formatPostMedicalPaymentExistenceAck,
   formatReasonFirstAskMoreQuestion,
   formatReasonFirstConfirmClarify,
   formatReasonFirstConfirmQuestion,
   formatReasonFirstFeePatienceBridgeWhileAskMore,
   isVagueConsultationPaymentExistenceQuestion,
+  lastAssistantDmContent,
   parseNothingElseOrSameOnly,
   parseReasonTriageConfirmYes,
   parseReasonTriageNegationForClarify,
@@ -732,7 +736,8 @@ async function buildAiContextForResponse(
   state: ConversationState,
   recentMessages: { sender_type: string; content: string }[],
   _correlationId: string,
-  currentUserMessage?: string
+  currentUserMessage?: string,
+  teleconsultCatalogRowCount?: number
 ): Promise<GenerateResponseContext> {
   const ctx: GenerateResponseContext = {};
   const inCollection =
@@ -761,6 +766,13 @@ async function buildAiContextForResponse(
     const feeThreadMerged = mergeFeeCatalogMatchText(currentUserMessage, catalogMatchText);
     if (feeThreadHasCompetingVisitTypeBuckets(feeThreadMerged)) {
       ctx.competingVisitTypeBuckets = true;
+    }
+    if (
+      teleconsultCatalogRowCount != null &&
+      teleconsultCatalogRowCount > 1 &&
+      clinicalLedFeeThread({ state, recentMessages })
+    ) {
+      ctx.silentAssignmentStrict = true;
     }
   }
 
@@ -1183,6 +1195,21 @@ export async function processInstagramDmWebhook(params: {
 
     const doctorSettings = await getDoctorSettings(doctorId);
     const doctorContext = getDoctorContextFromSettings(doctorSettings);
+    const recentDmForClinical = recentMessages.map((m) => ({
+      sender_type: m.sender_type,
+      content: m.content ?? '',
+    }));
+    const lastAssistantRawForFee = lastAssistantDmContent(recentDmForClinical);
+    const teleconsultCatalogRowCount = teleconsultCatalogServiceRowCount(
+      doctorSettings?.service_offerings_json
+    );
+    const clinicalLedForFees = clinicalLedFeeThread({
+      state,
+      recentMessages: recentDmForClinical,
+    });
+    const feeComposerClinicalOpts = clinicalLedForFees
+      ? ({ clinicalLedFeeThread: true } as const)
+      : {};
 
     // -------------------------------------------------------------------------
     // RBH-17: Main reply decision tree (Decide + Say). Understand already ran above.
@@ -1211,8 +1238,12 @@ export async function processInstagramDmWebhook(params: {
       state.lastPromptKind === 'staff_service_pending';
     const justStartingCollection =
       isBookIntent && !state.step && !(state.collectedFields?.length);
-    /** RBH-18: Classifier topics / is_fee_question OR keyword fallback */
-    const signalsFeePricing = intentSignalsFeeOrPricing(intentResult, text);
+    /** RBH-18: Classifier topics / is_fee_question OR keyword fallback; e-task-dm-05: fee anaphora after bot fee line */
+    const classifierSignalsFeePricing = intentSignalsFeeOrPricing(intentResult, text);
+    const signalsFeePricing =
+      classifierSignalsFeePricing || feeFollowUpAnaphora(text, lastAssistantRawForFee);
+    const feeIdleRoutedByAnaphora =
+      !classifierSignalsFeePricing && feeFollowUpAnaphora(text, lastAssistantRawForFee);
 
     const runGenerateResponse = async (input: Parameters<typeof generateResponse>[0]) => {
       const t = Date.now();
@@ -1453,7 +1484,8 @@ export async function processInstagramDmWebhook(params: {
           state,
           recentMessages,
           correlationId,
-          text
+          text,
+          teleconsultCatalogRowCount
         );
         replyText = await runGenerateResponse({
           conversationId: conversation.id,
@@ -1500,6 +1532,7 @@ export async function processInstagramDmWebhook(params: {
         const feeThread = buildFeeCatalogMatchText(text, recentMessages);
         const idleFeeOut = composeIdleFeeQuoteDmWithMeta(doctorSettings, text, {
           catalogMatchText: feeThread,
+          ...feeComposerClinicalOpts,
         });
         replyText = idleFeeOut.reply;
         if (idleFeeOut.feeAmbiguousStaffReview) {
@@ -1521,13 +1554,16 @@ export async function processInstagramDmWebhook(params: {
         if (idleFeeOut.feeQuoteMatcherFinalize) {
           state = mergeFeeQuoteMatcherIntoState(state, idleFeeOut.feeQuoteMatcherFinalize);
         }
-        dmRoutingBranch = 'fee_deterministic_idle';
+        dmRoutingBranch = feeIdleRoutedByAnaphora
+          ? 'fee_follow_up_anaphora_idle'
+          : 'fee_deterministic_idle';
       };
 
       const runReasonFirstFeeNarrowFromTriage = (): void => {
         const feeThreadRf = buildFeeCatalogMatchText(text, recentMessages);
         const idleFeeOutRf = composeIdleFeeQuoteDmWithMeta(doctorSettings, text, {
           catalogMatchText: feeThreadRf,
+          ...feeComposerClinicalOpts,
         });
         replyText = idleFeeOutRf.reply;
         const consolidated = buildConsolidatedReasonSnippetFromMessages(recentForTriage, '').trim();
@@ -1637,6 +1673,7 @@ export async function processInstagramDmWebhook(params: {
       const midFeeOut = composeMidCollectionFeeQuoteDmWithMeta(doctorSettings, text, {
         collectedFields: state.collectedFields,
         catalogMatchText: feeThreadMid,
+        ...feeComposerClinicalOpts,
       });
       if (midFeeOut.feeAmbiguousStaffReview) {
         replyText = midFeeOut.reply;
@@ -1688,10 +1725,13 @@ export async function processInstagramDmWebhook(params: {
         };
       } else {
         // RBH-13 + RBH-18/19: Fee / pricing — structured reply; e-task-dm-04 escape + pure pricing uses full/narrow composer.
-        dmRoutingBranch = 'fee_deterministic_idle';
+        dmRoutingBranch = feeIdleRoutedByAnaphora
+          ? 'fee_follow_up_anaphora_idle'
+          : 'fee_deterministic_idle';
         const feeThreadIdle = buildFeeCatalogMatchText(text, recentMessages);
         const idleFeeOut = composeIdleFeeQuoteDmWithMeta(doctorSettings, text, {
           catalogMatchText: feeThreadIdle,
+          ...feeComposerClinicalOpts,
         });
         replyText = idleFeeOut.reply;
         if (idleFeeOut.feeAmbiguousStaffReview) {
@@ -2157,7 +2197,7 @@ export async function processInstagramDmWebhook(params: {
           };
           await updateConversationState(conversation.id, state, correlationId);
         } else {
-        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text, teleconsultCatalogRowCount);
           replyText = await runGenerateResponse({
             conversationId: conversation.id,
             currentIntent: intentResult.intent,
@@ -2227,7 +2267,7 @@ export async function processInstagramDmWebhook(params: {
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
-        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text, teleconsultCatalogRowCount);
         replyText = await runGenerateResponse({
           conversationId: conversation.id,
           currentIntent: 'book_appointment',
@@ -2278,7 +2318,7 @@ export async function processInstagramDmWebhook(params: {
           state = extractResult.newState;
           await updateConversationState(conversation.id, state, correlationId);
         }
-        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text, teleconsultCatalogRowCount);
           replyText = await runGenerateResponse({
             conversationId: conversation.id,
             currentIntent: intentResult.intent,
@@ -2303,7 +2343,7 @@ export async function processInstagramDmWebhook(params: {
           const collected = await getCollectedData(conversation.id);
           replyText = buildConfirmDetailsMessage(collected ?? {});
         } else {
-          const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
+          const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text, teleconsultCatalogRowCount);
           const aiReply = await runGenerateResponse({
               conversationId: conversation.id,
               currentIntent: intentResult.intent,
@@ -2448,7 +2488,7 @@ export async function processInstagramDmWebhook(params: {
         if (extractResult.missingFields.length === 0) {
           replyText = buildConfirmDetailsMessage(collected ?? {});
         } else {
-          const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
+          const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text, teleconsultCatalogRowCount);
           const aiReply = await runGenerateResponse({
             conversationId: conversation.id,
             currentIntent: intentResult.intent,
@@ -2466,7 +2506,7 @@ export async function processInstagramDmWebhook(params: {
               : `Still need: ${extractResult.missingFields.map((f) => labels[f] ?? f).join(', ')}. Please share.`;
         }
           } else {
-        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text, teleconsultCatalogRowCount);
         replyText = await runGenerateResponse({
           conversationId: conversation.id,
           currentIntent: intentResult.intent,
@@ -2522,6 +2562,7 @@ export async function processInstagramDmWebhook(params: {
         const feeThreadBookMis = buildFeeCatalogMatchText(text, recentMessages);
         const misFeeOut = composeIdleFeeQuoteDmWithMeta(doctorSettings, text, {
           catalogMatchText: feeThreadBookMis,
+          ...feeComposerClinicalOpts,
         });
         replyText = misFeeOut.reply;
         if (misFeeOut.feeAmbiguousStaffReview) {
@@ -2562,7 +2603,7 @@ export async function processInstagramDmWebhook(params: {
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
-        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text, teleconsultCatalogRowCount);
         replyText = await runGenerateResponse({
           conversationId: conversation.id,
           currentIntent: intentResult.intent,
@@ -2574,7 +2615,7 @@ export async function processInstagramDmWebhook(params: {
           context: aiContext,
         });
               } else {
-        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text, teleconsultCatalogRowCount);
         replyText = await runGenerateResponse({
           conversationId: conversation.id,
           currentIntent: intentResult.intent,
@@ -2636,7 +2677,7 @@ export async function processInstagramDmWebhook(params: {
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
-        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text, teleconsultCatalogRowCount);
         replyText = await runGenerateResponse({
           conversationId: conversation.id,
           currentIntent: 'book_appointment',
@@ -2698,6 +2739,7 @@ export async function processInstagramDmWebhook(params: {
           const feeThreadBook = buildFeeCatalogMatchText(text, recentMessages);
           const bookIdleFeeOut = composeIdleFeeQuoteDmWithMeta(doctorSettings, text, {
             catalogMatchText: feeThreadBook,
+            ...feeComposerClinicalOpts,
           });
           replyText = bookIdleFeeOut.reply;
           if (bookIdleFeeOut.feeAmbiguousStaffReview) {
@@ -2766,7 +2808,7 @@ export async function processInstagramDmWebhook(params: {
       await updateConversationState(conversation.id, state, correlationId);
     } else {
       dmRoutingBranch = 'ai_open_response';
-      const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
+      const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text, teleconsultCatalogRowCount);
       replyText = await runGenerateResponse({
         conversationId: conversation.id,
         currentIntent: intentResult.intent,
@@ -2952,7 +2994,18 @@ export async function processInstagramDmWebhook(params: {
             classifyCtx ? { classifyContext: classifyCtx } : undefined
           );
           intentResult = applyIntentPostClassificationPolicy(intentResult, text, state);
-          const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text);
+          const conflictRecoveryDoctorSettings = await getDoctorSettings(doctorId);
+          const conflictRecoveryCatalogRows = teleconsultCatalogServiceRowCount(
+            conflictRecoveryDoctorSettings?.service_offerings_json
+          );
+          const aiContext = await buildAiContextForResponse(
+            conversation.id,
+            state,
+            recentMessages,
+            correlationId,
+            text,
+            conflictRecoveryCatalogRows
+          );
           const replyText =
             (await generateResponse({
               conversationId: conversation.id,
@@ -2961,9 +3014,7 @@ export async function processInstagramDmWebhook(params: {
               recentMessages,
               currentUserMessage: text,
               correlationId,
-              doctorContext: getDoctorContextFromSettings(
-                await getDoctorSettings(doctorId)
-              ),
+              doctorContext: getDoctorContextFromSettings(conflictRecoveryDoctorSettings),
               context: aiContext,
               classifierSignalsFeeQuestion: intentSignalsFeeOrPricing(intentResult, text),
             })) || FALLBACK_REPLY;

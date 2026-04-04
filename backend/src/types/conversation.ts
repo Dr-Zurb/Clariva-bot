@@ -80,6 +80,8 @@ export const SERVICE_CATALOG_MATCH_REASON_CODES = {
   AMBIGUOUS_COMPLAINT: 'ambiguous_complaint',
   /** DM fee path: thread matches both NCD-style and acute/general consult signals — staff assigns visit type (no patient price pick). */
   COMPETING_VISIT_TYPE_BUCKETS: 'competing_visit_type_buckets',
+  /** e-task-dm-05: clinical-led thread + multi-row catalog could not be narrowed to one row — staff assigns visit type (no patient tier menu). */
+  CLINICAL_LED_VISIT_TYPE_UNCLEAR: 'clinical_led_visit_type_unclear',
   NO_CATALOG_MATCH: 'no_catalog_match',
   MATCHER_ERROR: 'matcher_error',
   STAFF_CONFIRMED_PROPOSAL: 'staff_confirmed_proposal',

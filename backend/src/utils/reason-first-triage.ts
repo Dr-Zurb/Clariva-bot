@@ -15,6 +15,53 @@ const CLINICAL_OR_CONCERN_RE =
 const EXPLICIT_FULL_FEE_LIST_RE =
   /\b(all\s+(your\s+)?(fees|prices|services|consultation\s+types|consultation\s+fees|consultation\s+prices)|every\s+(fee|price|service)|full\s+(fee\s+)?list|complete\s+(price|fee)|what\s+are\s+all\s+(the\s+)?(your\s+)?(fees|prices|services))\b/i;
 
+/** Last assistant/bot line in recent DM history (for anaphora). Not redacted here — use webhook redacted thread if logging. */
+export function lastAssistantDmContent(
+  recentMessages: { sender_type: string; content: string }[]
+): string | undefined {
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    if (recentMessages[i].sender_type === 'patient') continue;
+    const c = (recentMessages[i].content ?? '').trim();
+    if (c) return c;
+  }
+  return undefined;
+}
+
+const LAST_BOT_FEE_TOPIC_RE =
+  /\b(fee|fees|price|prices|cost|pay|paid|payment|consult|consultation|amount|kitna|kitne|teleconsult|booking\s+fee|\u20b9|rupees?|rs\.?)\b/i;
+
+/**
+ * e-task-dm-05: short reply continuing a fee/payment turn (e.g. after post-medical ack) without pricing keywords.
+ */
+export function feeFollowUpAnaphora(userText: string, lastBotMessage: string | undefined): boolean {
+  const bot = (lastBotMessage ?? '').trim();
+  if (!bot || !LAST_BOT_FEE_TOPIC_RE.test(bot)) return false;
+  const t = userText.trim();
+  if (t.length < 2 || t.length > 96) return false;
+  if (/^what\s+is\s+(it|that)\??\s*$/i.test(t)) return true;
+  if (/^what'?s\s+(it|that)\??\s*$/i.test(t)) return true;
+  if (/^how\s+much(\s+(is\s+it|for\s+that))?\??\s*$/i.test(t)) return true;
+  if (/^(the\s+)?fee(s)?\??\s*$/i.test(t)) return true;
+  if (/^kitna\??\s*$/i.test(t)) return true;
+  if (/^what\s+about\s+(the\s+)?(fee|price|cost)\??\s*$/i.test(t)) return true;
+  return false;
+}
+
+/**
+ * e-task-dm-05: thread is “clinical-led” for fee policy — reason-first, deflection window, post-pay ack chain, or clinical cues in patient lines.
+ */
+export function clinicalLedFeeThread(params: {
+  state: ConversationState;
+  recentMessages: { sender_type: string; content: string }[];
+}): boolean {
+  const { state, recentMessages } = params;
+  if (state.reasonFirstTriagePhase) return true;
+  if (isRecentMedicalDeflectionWindow(state)) return true;
+  if (recentPatientThreadHasClinicalReason(recentMessages)) return true;
+  if (state.postMedicalConsultFeeAckSent) return true;
+  return false;
+}
+
 const NOTHING_ELSE_RE =
   /^(no|nope|nothing\s+else|not\s+really|that's\s+all|thats\s+all|just\s+that|only\s+this|same\s+thing|only\s+what\s+i\s+said|bas|sirf\s+itna|nai|nahi\s+aur)\b/i;
 
@@ -171,26 +218,31 @@ export function formatPostMedicalPaymentExistenceAck(userText: string): string {
   const hasPa = /[\u0A00-\u0A7F]/.test(userText || '');
   if (loc === 'hi' && !hasDe) {
     return (
-      '**Haan** — doctor se **teleconsult / visit** paid hota hai. Jab aap **exact amount** jaanna chahein, **kitna** ya **fee kya hai** likhein — hum aapke visit reason ke hisaab se bata denge.'
+      '**Haan** — doctor se **teleconsult / visit** paid hota hai. **Visit type** practice aapke concern ke hisaab **match** karti hai — chat mein fee tiers **choose** karne ki zaroorat nahi.\n\n' +
+      'Jab aap **exact amount** jaanna chahein, **kitna** ya **fee kya hai** likhein — hum aapke visit reason ke hisaab se bata denge.'
     );
   }
   if (loc === 'hi' && hasDe) {
     return (
-      '**हाँ** — डॉक्टर से **टेलीकंसल्ट / विज़िट** के लिए **शुल्क** लगता है। जब **सटीक राशि** जाननी हो, **कितना** या **फीस क्या है** लिखें — हम आपके विज़िट के कारण के अनुसार बताएँगे।'
+      '**हाँ** — डॉक्टर से **टेलीकंसल्ट / विज़िट** के लिए **शुल्क** लगता है। **विज़िट प्रकार** आपकी समस्या के अनुसार **प्रैक्टिस तय** करती है — चैट में फीस श्रेणी **चुनने** की ज़रूरत नहीं।\n\n' +
+      'जब **सटीक राशि** जाननी हो, **कितना** या **फीस क्या है** लिखें — हम आपके विज़िट के कारण के अनुसार बताएँगे।'
     );
   }
   if (loc === 'pa' && !hasPa) {
     return (
-      '**Haan ji** — doctor naal **visit / teleconsult** paid hunda hai. Jadon **exact paisa** pannaa hove, **kitna** ya **fee ki hai** likho — asi visit di wajah de hisaab naal dassaange.'
+      '**Haan ji** — doctor naal **visit / teleconsult** paid hunda hai. **Visit type** practice tere concern mutabik **match** kardi — chat vich fee tiers **chun**n di lorh nahi.\n\n' +
+      'Jadon **exact paisa** pannaa hove, **kitna** ya **fee ki hai** likho — asi visit di wajah de hisaab naal dassaange.'
     );
   }
   if (loc === 'pa' && hasPa) {
     return (
-      '**ਹਾਂ** — ਡਾਕਟਰ ਨਾਲ **ਵਿਜ਼ਿਟ / ਟੈਲੀਕੰਸਲਟ** ਲਈ **ਫੀਸ** ਲਗਦੀ ਹੈ। ਜਦੋਂ **ਸਹੀ ਰਕਮ** ਚਾਹੀਦੀ ਹੋਵੇ, **kitna** ਜਾਂ **fee ki hai** ਲਿਖੋ — ਅਸੀਂ ਵਿਜ਼ਿਟ ਦੀ ਵਜ੍ਹਾ ਮੁਤਾਬਕ ਦੱਸਾਂਗੇ।'
+      '**ਹਾਂ** — ਡਾਕਟਰ ਨਾਲ **ਵਿਜ਼ਿਟ / ਟੈਲੀਕੰਸਲਟ** ਲਈ **ਫੀਸ** ਲਗਦੀ ਹੈ। **ਵਿਜ਼ਿਟ ਟਾਈਪ** ਤੁਹਾਡੀ ਸਮਸਿਆ ਮੁਤਾਬਕ **ਪ੍ਰੈਕਟਿਸ ਤੈਅ** ਕਰਦੀ ਹੈ — ਚੈਟ ਵਿਚ ਫੀਸ **ਚੁਣੋ** ਨਹੀਂ ਕਹਿੰਦੇ।\n\n' +
+      'ਜਦੋਂ **ਸਹੀ ਰਕਮ** ਚਾਹੀਦੀ ਹੋਵੇ, **kitna** ਜਾਂ **fee ki hai** ਲਿਖੋ — ਅਸੀਂ ਵਿਜ਼ਿਟ ਦੀ ਵਜ੍ਹਾ ਮੁਤਾਬਕ ਦੱਸਾਂਗੇ।'
     );
   }
   return (
-    '**Yes**—**consultations with the doctor are paid.** When you want the **exact fee**, ask **how much** or **what\'s the fee**, and we\'ll align it with what you\'re seeing the doctor for.'
+    '**Yes**—**consultations with the doctor are paid.** We match what you describe to the **right visit type** — you **don’t need to pick fee options** in chat.\n\n' +
+      'When you want the **exact fee**, ask **how much** or **what\'s the fee**, and we\'ll align it with what you\'re seeing the doctor for.'
   );
 }
 

@@ -159,6 +159,28 @@ function isExplicitlyEmptyServiceCatalogJson(raw: unknown): boolean {
   return s.length === 0;
 }
 
+/** User asked for the full price sheet — bypass clinical-led staff defer (e-task-dm-05; mirror reason-first-triage). */
+function isExplicitFullFeeListUserText(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 8) return false;
+  return /\b(all\s+(your\s+)?(fees|prices|services|consultation\s+types|consultation\s+fees|consultation\s+prices)|every\s+(fee|price|service)|full\s+(fee\s+)?list|complete\s+(price|fee)|what\s+are\s+all\s+(the\s+)?(your\s+)?(fees|prices|services))\b/i.test(
+    t
+  );
+}
+
+/**
+ * e-task-dm-05: teleconsult catalog row count (0 if missing / empty / invalid).
+ * Used to gate LLM multi-tier suppression and clinical-led defer.
+ */
+export function teleconsultCatalogServiceRowCount(
+  service_offerings_json: DoctorSettingsRow['service_offerings_json'] | null | undefined
+): number {
+  if (service_offerings_json == null) return 0;
+  if (isExplicitlyEmptyServiceCatalogJson(service_offerings_json)) return 0;
+  const catalog = safeParseServiceCatalogV1FromDb(service_offerings_json as unknown);
+  return catalog?.services.length ?? 0;
+}
+
 /** Instagram DM soft limit — trim + ellipsis when catalog is large (SFU-08 §5). */
 export const CONSULTATION_FEE_DM_MAX_CHARS = 3200;
 
@@ -245,13 +267,23 @@ function localizeCatalogIntro(practiceName: string, locale: SafetyMessageLocale)
 /** e-task-dm-04: intro when exactly one catalog row is shown (reason-first / narrowed thread). */
 function localizeNarrowFeeCatalogIntro(practiceName: string, locale: SafetyMessageLocale): string {
   const p = practiceName.trim() || 'the practice';
+  /** e-task-dm-05: one-line promise — practice matches visit type; no fee-tier picking in chat. */
   if (locale === 'hi') {
-    return `**${p}** — aapne jo bataya uske hisaab se **online / teleconsult** fee (hamare record ke mutabik):\n\n`;
+    return (
+      'Hum **ki visit type** sahi hai yeh practice aapke concern ke hisaab se **khud match** karti hai — chat mein alag-alag fee options **choose** karne ki zaroorat nahi.\n\n' +
+      `**${p}** — aapne jo bataya uske hisaab se **online / teleconsult** fee (hamare record ke mutabik):\n\n`
+    );
   }
   if (locale === 'pa') {
-    return `**${p}** — jo tu dassya us hisaab naal **online / teleconsult** fee (sade record mutabik):\n\n`;
+    return (
+      '**Visit type** practice tere concern de mutabik **khud match** kardi — chat vich fee tiers **chun**n di lorh nahi.\n\n' +
+      `**${p}** — jo tu dassya us hisaab naal **online / teleconsult** fee (sade record mutabik):\n\n`
+    );
   }
-  return `Based on what you shared, **teleconsult (online) fees** on file for **${p}** for this visit type:\n\n`;
+  return (
+    'We match what you describe to the **right visit type** for the practice — you **don’t need to pick fee options** in chat.\n\n' +
+    `Based on what you shared, **teleconsult (online) fees** on file for **${p}** for this visit type:\n\n`
+  );
 }
 
 /** Patient-visible: competing NCD vs acute/general signals — staff assigns visit type (no fee-tier choice). */
@@ -439,11 +471,13 @@ export interface ConsultationFeeAmbiguousStaffReview {
 export function pickCatalogServicesForFeeDm(
   catalog: ServiceCatalogV1,
   userText: string,
-  catalogMatchText?: string
+  catalogMatchText?: string,
+  opts?: { clinicalLedFeeThread?: boolean }
 ): {
   services: ServiceCatalogV1['services'];
   feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;
   competingBucketsDeferToStaff?: boolean;
+  clinicalLedAmbiguousDeferToStaff?: boolean;
   staffPlaceholderOffering?: ServiceCatalogV1['services'][number];
 } {
   const merged = mergeFeeCatalogMatchText(userText, catalogMatchText);
@@ -486,6 +520,49 @@ export function pickCatalogServicesForFeeDm(
         SERVICE_CATALOG_MATCH_REASON_CODES.CATALOG_ALLOWLIST_MATCH,
       ]),
     };
+  }
+
+  // e-task-dm-05: symptom-led / clinical thread — never show a partial multi-row “menu”; narrow or staff.
+  if (
+    rows.length > 1 &&
+    opts?.clinicalLedFeeThread === true &&
+    !isExplicitFullFeeListUserText(userText) &&
+    catalog.services.length > 1
+  ) {
+    let stageA = runDeterministicServiceCatalogMatchStageA(catalog, reasonFocusForStageA);
+    if (!stageA && reasonFocusForStageA !== merged) {
+      stageA = runDeterministicServiceCatalogMatchStageA(catalog, merged);
+    }
+    if (stageA) {
+      const o = stageA.offering;
+      if (stageA.confidence === 'high' && stageA.autoFinalize) {
+        return {
+          services: [o],
+          feeQuoteMatcherFinalize: makeFinalize(o, stageA.reasonCodes),
+        };
+      }
+      return { services: [o] };
+    }
+    const ncdPick = pickNcdBucketOffering(catalog);
+    if (ncdPick && threadTextSuggestsNcdConsultBucket(reasonFocusForStageA)) {
+      return {
+        services: [ncdPick],
+        feeQuoteMatcherFinalize: makeFinalize(ncdPick, [
+          SERVICE_CATALOG_MATCH_REASON_CODES.KEYWORD_HINT_MATCH,
+          SERVICE_CATALOG_MATCH_REASON_CODES.CATALOG_ALLOWLIST_MATCH,
+        ]),
+      };
+    }
+    const placeholder = catalog.services.find(
+      (s) => s.service_key.trim().toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY
+    );
+    if (placeholder) {
+      return {
+        services: [],
+        clinicalLedAmbiguousDeferToStaff: true,
+        staffPlaceholderOffering: placeholder,
+      };
+    }
   }
 
   if (rows.length === catalog.services.length && catalog.services.length > 1) {
@@ -542,16 +619,18 @@ export function formatServiceCatalogForDm(
   catalog: ServiceCatalogV1,
   settings: ConsultationFeesDmSettings,
   userText: string = '',
-  catalogMatchText?: string
+  catalogMatchText?: string,
+  opts?: { clinicalLedFeeThread?: boolean }
 ): string {
-  return formatServiceCatalogForDmWithMeta(catalog, settings, userText, catalogMatchText).markdown;
+  return formatServiceCatalogForDmWithMeta(catalog, settings, userText, catalogMatchText, opts).markdown;
 }
 
 export function formatServiceCatalogForDmWithMeta(
   catalog: ServiceCatalogV1,
   settings: ConsultationFeesDmSettings,
   userText: string = '',
-  catalogMatchText?: string
+  catalogMatchText?: string,
+  opts?: { clinicalLedFeeThread?: boolean }
 ): {
   markdown: string;
   feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;
@@ -564,7 +643,7 @@ export function formatServiceCatalogForDmWithMeta(
   const hoursSummary = settings.business_hours_summary?.trim() ?? '';
   const hoursSuffix = formatHoursHintLine(locale, hoursSummary, hasDevanagari, hasGurmukhi);
   const cur = settings.appointment_fee_currency;
-  const pick = pickCatalogServicesForFeeDm(catalog, userText, catalogMatchText);
+  const pick = pickCatalogServicesForFeeDm(catalog, userText, catalogMatchText, opts);
   if (pick.competingBucketsDeferToStaff && pick.staffPlaceholderOffering) {
     const o = pick.staffPlaceholderOffering;
     return {
@@ -586,6 +665,31 @@ export function formatServiceCatalogForDmWithMeta(
         serviceCatalogMatchReasonCodes: [
           SERVICE_CATALOG_MATCH_REASON_CODES.AMBIGUOUS_COMPLAINT,
           SERVICE_CATALOG_MATCH_REASON_CODES.COMPETING_VISIT_TYPE_BUCKETS,
+        ],
+      },
+    };
+  }
+  if (pick.clinicalLedAmbiguousDeferToStaff && pick.staffPlaceholderOffering) {
+    const o = pick.staffPlaceholderOffering;
+    return {
+      markdown: truncateIfNeededDm(
+        formatCompetingVisitTypeDeferToStaffDm(
+          practiceName,
+          locale,
+          hasDevanagari,
+          hasGurmukhi,
+          hoursSummary
+        ),
+        CONSULTATION_FEE_DM_MAX_CHARS,
+        locale
+      ),
+      feeAmbiguousStaffReview: {
+        matcherProposedCatalogServiceKey: o.service_key,
+        matcherProposedCatalogServiceId: o.service_id,
+        serviceCatalogMatchConfidence: 'low',
+        serviceCatalogMatchReasonCodes: [
+          SERVICE_CATALOG_MATCH_REASON_CODES.AMBIGUOUS_COMPLAINT,
+          SERVICE_CATALOG_MATCH_REASON_CODES.CLINICAL_LED_VISIT_TYPE_UNCLEAR,
         ],
       },
     };
@@ -952,15 +1056,17 @@ export interface ConsultationFeeDmWithMeta {
 export function formatConsultationFeesForDm(
   settings: ConsultationFeesDmSettings,
   userText: string = '',
-  catalogMatchText?: string
+  catalogMatchText?: string,
+  catalogOpts?: { clinicalLedFeeThread?: boolean }
 ): string {
-  return formatConsultationFeesForDmWithMeta(settings, userText, catalogMatchText).markdown;
+  return formatConsultationFeesForDmWithMeta(settings, userText, catalogMatchText, catalogOpts).markdown;
 }
 
 export function formatConsultationFeesForDmWithMeta(
   settings: ConsultationFeesDmSettings,
   userText: string = '',
-  catalogMatchText?: string
+  catalogMatchText?: string,
+  catalogOpts?: { clinicalLedFeeThread?: boolean }
 ): ConsultationFeeDmWithMeta {
   const practiceName = settings.practice_name?.trim() || 'the practice';
   let serviceCatalogExplicitlyEmpty = false;
@@ -972,7 +1078,13 @@ export function formatConsultationFeesForDmWithMeta(
         settings.service_offerings_json as unknown
       );
       if (catalog && catalog.services.length > 0) {
-        const catMeta = formatServiceCatalogForDmWithMeta(catalog, settings, userText, catalogMatchText);
+        const catMeta = formatServiceCatalogForDmWithMeta(
+          catalog,
+          settings,
+          userText,
+          catalogMatchText,
+          catalogOpts
+        );
         return {
           markdown: catMeta.markdown,
           feeQuoteMatcherFinalize: catMeta.feeQuoteMatcherFinalize,

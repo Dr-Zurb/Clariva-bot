@@ -153,6 +153,7 @@ This task defines **product + engineering** work: a **reason-first triage** path
 
 - [e-task-dm-02-thread-aware-fee-catalog.md](./e-task-dm-02-thread-aware-fee-catalog.md)
 - [e-task-dm-03-turncontext-memory-layer.md](./e-task-dm-03-turncontext-memory-layer.md)
+- [e-task-dm-05-silent-fee-menu-closure.md](./e-task-dm-05-silent-fee-menu-closure.md) — follow-up: clinical-led strict closure, anaphora routing, microcopy promise
 - [e-task-ops-01-ncd-catalog-hints.md](./e-task-ops-01-ncd-catalog-hints.md)
 
 ---

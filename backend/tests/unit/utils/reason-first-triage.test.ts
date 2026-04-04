@@ -1,7 +1,10 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   buildConsolidatedReasonSnippetFromMessages,
+  clinicalLedFeeThread,
+  feeFollowUpAnaphora,
   isVagueConsultationPaymentExistenceQuestion,
+  lastAssistantDmContent,
   parseReasonTriageConfirmYes,
   parseReasonTriageNegationForClarify,
   shouldDeferIdleFeeForReasonFirstTriage,
@@ -110,5 +113,38 @@ describe('reason-first-triage', () => {
     expect(s).toContain('fever');
     expect(s).toContain('cough');
     expect(s).toContain('nothing else');
+  });
+
+  it('lastAssistantDmContent returns latest non-patient message with text', () => {
+    expect(
+      lastAssistantDmContent([
+        { sender_type: 'patient', content: 'fever' },
+        { sender_type: 'system', content: 'Consultation fee applies.' },
+      ])
+    ).toBe('Consultation fee applies.');
+  });
+
+  it('feeFollowUpAnaphora after fee-themed bot turn', () => {
+    const bot = 'Yes — there is a consultation fee for this visit.';
+    expect(feeFollowUpAnaphora('what is it?', bot)).toBe(true);
+    expect(feeFollowUpAnaphora("what's that?", bot)).toBe(true);
+    expect(feeFollowUpAnaphora('how much?', bot)).toBe(true);
+    expect(feeFollowUpAnaphora('what is it?', 'Hello — how can I help?')).toBe(false);
+    expect(feeFollowUpAnaphora('book appointment', bot)).toBe(false);
+  });
+
+  it('clinicalLedFeeThread when triage, clinical patient line, or related state flags', () => {
+    expect(
+      clinicalLedFeeThread({ state: { reasonFirstTriagePhase: 'ask_more' }, recentMessages: [] })
+    ).toBe(true);
+    expect(
+      clinicalLedFeeThread({
+        state: {},
+        recentMessages: [{ sender_type: 'patient', content: 'blood sugar 220' }],
+      })
+    ).toBe(true);
+    expect(
+      clinicalLedFeeThread({ state: {}, recentMessages: [{ sender_type: 'patient', content: 'hi' }] })
+    ).toBe(false);
   });
 });

@@ -68,7 +68,7 @@ export function feeQuoteSettingsFromDoctorRow(
 export function composeIdleFeeQuoteDm(
   settings: DoctorSettingsRow | null,
   userText: string,
-  opts?: { catalogMatchText?: string }
+  opts?: { catalogMatchText?: string; clinicalLedFeeThread?: boolean }
 ): string {
   return composeIdleFeeQuoteDmWithMeta(settings, userText, opts).reply;
 }
@@ -77,7 +77,7 @@ export function composeIdleFeeQuoteDm(
 export function composeIdleFeeQuoteDmWithMeta(
   settings: DoctorSettingsRow | null,
   userText: string,
-  opts?: { catalogMatchText?: string }
+  opts?: { catalogMatchText?: string; clinicalLedFeeThread?: boolean }
 ): {
   reply: string;
   feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;
@@ -86,7 +86,10 @@ export function composeIdleFeeQuoteDmWithMeta(
   const fee = formatConsultationFeesForDmWithMeta(
     feeQuoteSettingsFromDoctorRow(settings),
     userText,
-    opts?.catalogMatchText
+    opts?.catalogMatchText,
+    opts?.clinicalLedFeeThread !== undefined
+      ? { clinicalLedFeeThread: opts.clinicalLedFeeThread }
+      : undefined
   );
   if (fee.feeAmbiguousStaffReview) {
     return { reply: fee.markdown.trim(), feeAmbiguousStaffReview: fee.feeAmbiguousStaffReview };
@@ -112,7 +115,11 @@ export function composeMidCollectionFeeQuoteDm(
 export function composeMidCollectionFeeQuoteDmWithMeta(
   settings: DoctorSettingsRow | null,
   userText: string,
-  opts?: { collectedFields?: string[] | null; catalogMatchText?: string }
+  opts?: {
+    collectedFields?: string[] | null;
+    catalogMatchText?: string;
+    clinicalLedFeeThread?: boolean;
+  }
 ): {
   reply: string;
   feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;
@@ -121,7 +128,10 @@ export function composeMidCollectionFeeQuoteDmWithMeta(
   const fee = formatConsultationFeesForDmWithMeta(
     feeQuoteSettingsFromDoctorRow(settings),
     userText,
-    opts?.catalogMatchText
+    opts?.catalogMatchText,
+    opts?.clinicalLedFeeThread !== undefined
+      ? { clinicalLedFeeThread: opts.clinicalLedFeeThread }
+      : undefined
   );
   if (fee.feeAmbiguousStaffReview) {
     return { reply: fee.markdown.trim(), feeAmbiguousStaffReview: fee.feeAmbiguousStaffReview };
