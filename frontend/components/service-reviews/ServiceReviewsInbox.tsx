@@ -98,19 +98,29 @@ export function ServiceReviewsInbox({
   const catalog = settings?.service_offerings_json ?? null;
   const [activeTab, setActiveTab] = useState<ServiceStaffReviewListQueryStatus>("pending");
   const [reviews, setReviews] = useState(initialReviews);
+  /** Which tab the current `reviews` rows belong to (after last successful fetch or cache prime). */
+  const [dataTab, setDataTab] = useState<ServiceStaffReviewListQueryStatus>("pending");
+  const [tabCache, setTabCache] = useState<
+    Partial<Record<ServiceStaffReviewListQueryStatus, ServiceStaffReviewListItem[]>>
+  >(() => ({ pending: initialReviews }));
   const [refreshing, setRefreshing] = useState(false);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const isPendingTab = activeTab === "pending";
+  /** Avoid empty state + wrong columns while the list for the selected tab is still in flight. */
+  const dataStale = refreshing && activeTab !== dataTab;
 
   const loadTab = useCallback(
     async (tab: ServiceStaffReviewListQueryStatus) => {
       setRefreshing(true);
       try {
         const res = await getServiceStaffReviews(token, tab);
-        setReviews(res.data.reviews);
+        const rows = res.data.reviews;
+        setReviews(rows);
+        setDataTab(tab);
+        setTabCache((c) => ({ ...c, [tab]: rows }));
       } finally {
         setRefreshing(false);
       }
@@ -124,6 +134,11 @@ export function ServiceReviewsInbox({
 
   const selectTab = (tab: ServiceStaffReviewListQueryStatus) => {
     setActiveTab(tab);
+    const cached = tabCache[tab];
+    if (cached !== undefined) {
+      setReviews(cached);
+      setDataTab(tab);
+    }
     void loadTab(tab);
   };
 
@@ -230,7 +245,21 @@ export function ServiceReviewsInbox({
         </div>
       )}
 
-      {reviews.length === 0 ? (
+      {dataStale ? (
+        <div
+          className="flex min-h-[12rem] flex-col items-center justify-center rounded-lg border border-gray-200 bg-white p-8 text-center"
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
+          <p className="mt-4 text-sm font-medium text-gray-800">Loading reviews…</p>
+          <p className="mt-1 text-xs text-gray-500">
+            {INBOX_TABS.find((x) => x.id === activeTab)?.label ?? "This view"} will appear here in a
+            moment.
+          </p>
+        </div>
+      ) : reviews.length === 0 ? (
         <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-8 text-center">
           <p className="font-medium text-gray-900">
             {activeTab === "pending"
@@ -252,7 +281,11 @@ export function ServiceReviewsInbox({
           )}
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-gray-200 shadow-sm">
+        <div
+          className={`overflow-x-auto rounded-lg border border-gray-200 shadow-sm transition-opacity duration-150 ${
+            refreshing && !dataStale ? "opacity-75" : ""
+          }`}
+        >
           <table
             className="min-w-full divide-y divide-gray-200 text-left text-sm"
             aria-busy={refreshing}
