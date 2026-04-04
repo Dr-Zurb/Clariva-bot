@@ -33,12 +33,20 @@ export interface ServiceCatalogMatchResult {
   autoFinalize: boolean;
 }
 
+/** Non-PHI practice context for smarter routing (LLM + prompt only). */
+export interface MatchServiceCatalogDoctorProfile {
+  practiceName?: string | null;
+  specialty?: string | null;
+}
+
 export interface MatchServiceCatalogInput {
   catalog: ServiceCatalogV1 | null;
   /** Raw reason for visit — redacted inside this service before LLM */
   reasonForVisitText: string;
   recentUserMessages?: string[];
   correlationId: string;
+  /** Optional; when set, included in the LLM system prompt so specialty informs classification. */
+  doctorProfile?: MatchServiceCatalogDoctorProfile | null;
 }
 
 export interface ServiceCatalogMatchMetricEvent {
@@ -143,28 +151,63 @@ function labelOrKeyHits(catalog: ServiceCatalogV1, userText: string): ServiceOff
   });
 }
 
+/** Stage A: doctor-facing description on the row (optional); substring match only, min length avoids noise. */
+function descriptionSubstringHits(catalog: ServiceCatalogV1, userText: string): ServiceOfferingV1[] {
+  const t = userText.trim().toLowerCase();
+  if (t.length < 2) {
+    return [];
+  }
+  return catalog.services.filter((s) => {
+    const d = typeof s.description === 'string' ? s.description.trim().toLowerCase() : '';
+    return d.length >= 4 && t.includes(d);
+  });
+}
+
 function buildAllowlistPromptLines(catalog: ServiceCatalogV1): string {
   const lines: string[] = [];
   for (const s of [...catalog.services].sort((a, b) => a.service_key.localeCompare(b.service_key))) {
     const mods = MODALITIES.filter((m) => s.modalities[m]?.enabled === true).join(', ');
-    lines.push(`- ${s.service_key}: ${JSON.stringify(s.label)} [modalities enabled: ${mods || 'none'}]`);
+    const desc = typeof s.description === 'string' ? s.description.trim() : '';
+    const descSeg = desc ? ` | doctor_note: ${JSON.stringify(desc)}` : '';
+    lines.push(
+      `- ${s.service_key}: ${JSON.stringify(s.label)}${descSeg} [modalities enabled: ${mods || 'none'}]`
+    );
   }
   return lines.join('\n');
 }
 
-const SERVICE_MATCH_SYSTEM_PROMPT_BASE = `You map a patient's reason for visit to ONE teleconsult service_key from the practice catalog.
+/** Exported for unit tests — full LLM system prompt (catalog allowlist + rules + optional profile). */
+export function buildServiceCatalogLlmSystemPrompt(
+  catalog: ServiceCatalogV1,
+  doctorProfile?: MatchServiceCatalogDoctorProfile | null
+): string {
+  const practice = doctorProfile?.practiceName?.trim();
+  const spec = doctorProfile?.specialty?.trim();
+  const contextLines: string[] = [];
+  if (practice) contextLines.push(`- Practice: ${practice}`);
+  if (spec) contextLines.push(`- Doctor specialty: ${spec}`);
+  const contextBlock =
+    contextLines.length > 0
+      ? `\nPractice context (use to interpret symptoms; do not invent services):\n${contextLines.join('\n')}\n`
+      : '\nPractice context was not provided; use only the patient text and the catalog below.\n';
 
+  return `You map a patient's reason for visit to ONE teleconsult service_key from the practice catalog.
+${contextBlock}
 Rules:
 - Output JSON only, no markdown.
-- service_key MUST be copied exactly from the allowed list.
+- service_key MUST be copied exactly from the allowed list below.
 - modality must be one of the enabled modalities for that service, or null if unsure.
 - match_confidence: "high" if clear fit, "medium" if plausible, "low" if weak or unclear.
+- Prefer the best-fitting row other than "other" whenever it reasonably applies. Use service_key "other" only when no non-other row plausibly fits, or the visit is clearly outside every listed service.
+- If specialty suggests broad primary or general care (e.g. general medicine, family medicine, internal medicine, GP), nonspecific acute complaints (headache, fever, cold, fatigue, general pain, "not feeling well", routine checkup) usually belong in a general consult or checkup row if one exists — not "other".
+- If specialty is narrow (e.g. dermatology, cardiology), match chief complaints to that scope first; use "other" when the complaint is clearly outside it and no listed row fits.
 
 Schema:
 {"service_key":"<slug>","modality":"text"|"voice"|"video"|null,"match_confidence":"high"|"medium"|"low"}
 
 Allowed service_key values:
-`;
+${buildAllowlistPromptLines(catalog)}`;
+}
 
 export type DeterministicMatchInner =
   | {
@@ -199,13 +242,34 @@ export function runDeterministicServiceCatalogMatchStageA(
     };
   }
 
-  const hits = labelOrKeyHits(catalog, reasonForVisitRedacted);
-  if (hits.length === 1) {
+  const labelHits = labelOrKeyHits(catalog, reasonForVisitRedacted);
+  if (labelHits.length === 1) {
     return {
-      offering: hits[0]!,
+      offering: labelHits[0]!,
       confidence: 'high',
       reasonCodes: [SERVICE_CATALOG_MATCH_REASON_CODES.CATALOG_ALLOWLIST_MATCH],
       autoFinalize: true,
+    };
+  }
+
+  const descHits = descriptionSubstringHits(catalog, reasonForVisitRedacted);
+  if (labelHits.length > 1 && descHits.length === 1) {
+    const narrowed = descHits[0]!;
+    if (labelHits.some((h) => h.service_key === narrowed.service_key)) {
+      return {
+        offering: narrowed,
+        confidence: 'medium',
+        reasonCodes: [SERVICE_CATALOG_MATCH_REASON_CODES.CATALOG_ALLOWLIST_MATCH],
+        autoFinalize: false,
+      };
+    }
+  }
+  if (labelHits.length === 0 && descHits.length === 1) {
+    return {
+      offering: descHits[0]!,
+      confidence: 'medium',
+      reasonCodes: [SERVICE_CATALOG_MATCH_REASON_CODES.CATALOG_ALLOWLIST_MATCH],
+      autoFinalize: false,
     };
   }
 
@@ -342,7 +406,7 @@ export async function matchServiceCatalogOffering(
   input: MatchServiceCatalogInput,
   options?: MatchServiceCatalogOptions
 ): Promise<ServiceCatalogMatchResult | null> {
-  const { catalog, reasonForVisitText, recentUserMessages, correlationId } = input;
+  const { catalog, reasonForVisitText, recentUserMessages, correlationId, doctorProfile } = input;
   const metrics = options?.metrics;
 
   const emit = (partial: Omit<ServiceCatalogMatchMetricEvent, 'correlationId'>) => {
@@ -410,7 +474,7 @@ export async function matchServiceCatalogOffering(
     return result;
   }
 
-  const systemPrompt = SERVICE_MATCH_SYSTEM_PROMPT_BASE + buildAllowlistPromptLines(catalog);
+  const systemPrompt = buildServiceCatalogLlmSystemPrompt(catalog, doctorProfile);
   const userContent = buildUserContentForLlm([...recentRedacted, reasonRedacted].filter(Boolean));
 
   const rawJson = await runLlm({ systemPrompt, userContent, correlationId });

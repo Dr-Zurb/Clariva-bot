@@ -154,6 +154,10 @@ async function enrichStateWithServiceCatalogMatch(
     reasonForVisitText: trimmed,
     recentUserMessages: recentPatient,
     correlationId,
+    doctorProfile: {
+      practiceName: doctorSettings.practice_name,
+      specialty: doctorSettings.specialty,
+    },
   });
 
   if (!match) {

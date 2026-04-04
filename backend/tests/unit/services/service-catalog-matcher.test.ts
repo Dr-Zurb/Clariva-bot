@@ -4,6 +4,7 @@ import {
   resolveCatalogOfferingByKey,
   runDeterministicServiceCatalogMatchStageA,
   pickSuggestedModality,
+  buildServiceCatalogLlmSystemPrompt,
   type ServiceCatalogMatchMetricEvent,
 } from '../../../src/services/service-catalog-matcher';
 import { SERVICE_CATALOG_MATCH_REASON_CODES } from '../../../src/types/conversation';
@@ -239,5 +240,50 @@ describe('service-catalog-matcher (ARM-04)', () => {
     catalog.services[1]!.matcher_hints = { keywords: 'pain' };
     const a = runDeterministicServiceCatalogMatchStageA(catalog, 'pain in body');
     expect(a).toBeNull();
+  });
+
+  it('Stage A: unique description substring → medium, staff review', () => {
+    const catalog = catalogSkinGpOther();
+    catalog.services[1]!.description =
+      'acute fevers colds and general symptoms evaluation in person or video';
+    const a = runDeterministicServiceCatalogMatchStageA(
+      catalog,
+      'acute fevers colds and general symptoms evaluation in person or video please'
+    );
+    expect(a?.offering.service_key).toBe('gp');
+    expect(a?.confidence).toBe('medium');
+    expect(a?.autoFinalize).toBe(false);
+  });
+
+  it('buildServiceCatalogLlmSystemPrompt includes practice and specialty', () => {
+    const catalog = catalogSkinGpOther();
+    const prompt = buildServiceCatalogLlmSystemPrompt(catalog, {
+      practiceName: "Dr Zurb's Clinic",
+      specialty: 'General medicine',
+    });
+    expect(prompt).toContain("Dr Zurb's Clinic");
+    expect(prompt).toContain('General medicine');
+    expect(prompt).toContain('Allowed service_key values:');
+  });
+
+  it('passes doctorProfile through to LLM system prompt', async () => {
+    const catalog = catalogSkinGpOther();
+    let seen = '';
+    await matchServiceCatalogOffering(
+      {
+        catalog,
+        reasonForVisitText: 'headache',
+        correlationId,
+        doctorProfile: { specialty: 'General medicine', practiceName: 'Clinic A' },
+      },
+      {
+        runLlm: async ({ systemPrompt }) => {
+          seen = systemPrompt;
+          return JSON.stringify({ service_key: 'gp', modality: null, match_confidence: 'high' });
+        },
+      }
+    );
+    expect(seen).toContain('General medicine');
+    expect(seen).toContain('Clinic A');
   });
 });
