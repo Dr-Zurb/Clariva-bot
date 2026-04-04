@@ -24,6 +24,7 @@ const sid = (key: string) => deterministicServiceIdForLegacyOffering('d-dm', key
 describe('consultation-fees (RBH-13)', () => {
   it('isPricingInquiryMessage detects fee questions', () => {
     expect(isPricingInquiryMessage('how much is consultation')).toBe(true);
+    expect(isPricingInquiryMessage('okay so i have to pay?')).toBe(true);
     expect(isPricingInquiryMessage('yar kitne paise ye to batao')).toBe(true);
     expect(isPricingInquiryMessage('Hi')).toBe(false);
     expect(isPricingInquiryMessage('')).toBe(false);

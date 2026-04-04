@@ -38,7 +38,7 @@ interface CompactFeeRow {
 
 /** RBH-18: Fallback when `classifyIntent` omits `is_fee_question` / `topics`; prefer model signal in `intentSignalsFeeOrPricing`. */
 const PRICING_KEYWORDS =
-  /\b(fee|fees|price|prices|pricing|cost|costs|charge|charges|how\s+much|kitna|kitni|kitne|कितना|rupee|rupees|paise|paisa|rs\.?|inr|₹|consultation\s+fee|doctor\s+fee|appointment\s+fee)\b/i;
+  /\b(fee|fees|price|prices|pricing|cost|costs|charge|charges|pay|paid|payment|payments|paying|how\s+much|kitna|kitni|kitne|कितना|rupee|rupees|paise|paisa|rs\.?|inr|₹|consultation\s+fee|doctor\s+fee|appointment\s+fee)\b/i;
 
 /**
  * One-line fee facts for OpenAI system prompt (authoritative; from DB only).

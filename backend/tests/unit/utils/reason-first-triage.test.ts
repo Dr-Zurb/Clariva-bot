@@ -10,11 +10,21 @@ import {
 import type { ConversationState } from '../../../src/types/conversation';
 
 describe('reason-first-triage', () => {
-  it('shouldDefer when thread has clinical reason and no phase yet', () => {
+  it('does not defer when this turn is clearly about payment even if thread is clinical', () => {
     const state: ConversationState = {};
     const defer = shouldDeferIdleFeeForReasonFirstTriage({
       state,
-      text: 'how much for video',
+      text: 'okay so i have to pay?',
+      recentMessages: [{ sender_type: 'patient', content: 'blood sugar 177' }],
+    });
+    expect(defer).toBe(false);
+  });
+
+  it('shouldDefer when thread is clinical and this turn is still a clinical follow-up', () => {
+    const state: ConversationState = {};
+    const defer = shouldDeferIdleFeeForReasonFirstTriage({
+      state,
+      text: 'also I feel dizzy lately',
       recentMessages: [{ sender_type: 'patient', content: 'blood sugar 189' }],
     });
     expect(defer).toBe(true);
@@ -49,6 +59,7 @@ describe('reason-first-triage', () => {
   it('parseReasonTriageConfirmYes and negation', () => {
     expect(parseReasonTriageConfirmYes('yes')).toBe(true);
     expect(parseReasonTriageConfirmYes('haan ji')).toBe(true);
+    expect(parseReasonTriageConfirmYes('okay so i have to pay?')).toBe(false);
     expect(parseReasonTriageNegationForClarify('no')).toBe(true);
     expect(parseReasonTriageNegationForClarify('not quite')).toBe(true);
   });

@@ -1451,6 +1451,31 @@ export async function processInstagramDmWebhook(params: {
       };
       if (userWantsExplicitFullFeeList(text)) {
         runReasonFirstFullFeeEscape();
+      } else if (signalsFeePricing && !userExplicitlyWantsToBookNow(text)) {
+        // Pivot: user asked about fees/payment during triage — answer, don't replay ask_more / confirm.
+        dmRoutingBranch = 'fee_deterministic_idle';
+        const feeThreadPivot = buildFeeCatalogMatchText(text, recentMessages);
+        const idleFeePivot = composeIdleFeeQuoteDmWithMeta(doctorSettings, text, {
+          catalogMatchText: feeThreadPivot,
+        });
+        replyText = idleFeePivot.reply;
+        const consolidatedPivot = buildConsolidatedReasonSnippetFromMessages(recentForTriage, '').trim();
+        const reasonSeedPivot =
+          consolidatedPivot && consolidatedPivot !== 'what you shared'
+            ? consolidatedPivot
+            : undefined;
+        state = {
+          ...state,
+          reasonFirstTriagePhase: undefined,
+          lastIntent: intentResult.intent,
+          step: 'responded',
+          activeFlow: 'fee_quote',
+          updatedAt: new Date().toISOString(),
+          ...(reasonSeedPivot ? { reasonForVisit: reasonSeedPivot } : {}),
+        };
+        if (idleFeePivot.feeQuoteMatcherFinalize) {
+          state = mergeFeeQuoteMatcherIntoState(state, idleFeePivot.feeQuoteMatcherFinalize);
+        }
       } else if (state.reasonFirstTriagePhase === 'ask_more') {
         dmRoutingBranch = 'reason_first_triage_confirm';
         const snippet = parseNothingElseOrSameOnly(text)

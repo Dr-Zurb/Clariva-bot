@@ -5,6 +5,7 @@
 
 import type { ConversationState } from '../types/conversation';
 import { isRecentMedicalDeflectionWindow } from '../types/conversation';
+import { isPricingInquiryMessage } from './consultation-fees';
 import { detectSafetyMessageLocale } from './safety-messages';
 
 /** Roman + common message cues that the user is describing a health concern (not pure pricing). */
@@ -48,6 +49,8 @@ export function shouldDeferIdleFeeForReasonFirstTriage(params: {
   const { state, text, recentMessages } = params;
   if (state.reasonFirstTriagePhase) return false;
   if (userWantsExplicitFullFeeList(text)) return false;
+  // This turn is about money — answer with fee copy, not reason-first ask_more.
+  if (isPricingInquiryMessage(text)) return false;
   const threadClinical = recentPatientThreadHasClinicalReason(recentMessages);
   const currentClinical = userMessageSuggestsClinicalReason(text);
   const postDeflect = isRecentMedicalDeflectionWindow(state);
@@ -63,6 +66,7 @@ export function parseNothingElseOrSameOnly(text: string): boolean {
 export function parseReasonTriageConfirmYes(text: string): boolean {
   const t = text.trim();
   if (t.length < 2) return false;
+  if (isPricingInquiryMessage(t)) return false;
   return CONFIRM_YES_RE.test(t);
 }
 
