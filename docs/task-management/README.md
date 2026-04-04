@@ -151,6 +151,13 @@ Map patient **reason / complaint** to **`service_offerings_json`** with confiden
 - **Initiative hub:** [AI_RECEPTIONIST_MATCHING_INITIATIVE.md](./AI_RECEPTIONIST_MATCHING_INITIATIVE.md)
 - **Task index:** [docs/Development/Daily-plans/April 2026/01-04-2026/tasks/README.md](../Development/Daily-plans/April%202026/01-04-2026/tasks/README.md) — **e-task-arm-01** … **e-task-arm-11**
 
+### DM context, fees & capture (2026-04-04)
+
+Follow-ups from receptionist DM discussions: **thread-aware teleconsult fees**, **TurnContext / conversation memory**, **shipped** safety + confirm + consent fixes (reference), **capture inbox** process, **NCD catalog hints** (ops).
+
+- **Daily plan:** [docs/Development/Daily-plans/April 2026/04-04-2026/README.md](../Development/Daily-plans/April%202026/04-04-2026/README.md)
+- **Task files:** `e-task-dm-01` … `e-task-dm-03`, `e-task-doc-02`, `e-task-ops-01` under [tasks/](../Development/Daily-plans/April%202026/04-04-2026/tasks/)
+
 ### AI Receptionist — Human-Like Bot (2026-03-26)
 
 Transform the bot from regex-heavy to AI-first: understand conversations, store data intelligently, respond like a human receptionist.
