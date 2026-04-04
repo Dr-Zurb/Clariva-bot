@@ -191,6 +191,26 @@ export interface ConversationState {
   pendingRescheduleAppointmentIds?: string[];
   /** RBH-13: Optional sub-flow (e.g. fee quote without forced intake). */
   activeFlow?: ConversationActiveFlow;
+  /**
+   * e-task-dm-03: ISO time when user last received idle `medical_query` safety/deflection copy.
+   * **No PHI** — timestamp only; used so classify/generate paths weight thread continuity.
+   * Cleared when starting fresh collection. Expire reads via `isRecentMedicalDeflectionWindow`.
+   */
+  lastMedicalDeflectionAt?: string;
+}
+
+/** e-task-dm-03: TTL for treating `lastMedicalDeflectionAt` as active routing memory. */
+export const MEDICAL_DEFLECTION_CONTEXT_TTL_MS = 48 * 60 * 60 * 1000;
+
+export function isRecentMedicalDeflectionWindow(
+  state: Pick<ConversationState, 'lastMedicalDeflectionAt'>,
+  nowMs: number = Date.now()
+): boolean {
+  const raw = state.lastMedicalDeflectionAt;
+  if (!raw) return false;
+  const t = Date.parse(raw);
+  if (Number.isNaN(t)) return false;
+  return nowMs - t <= MEDICAL_DEFLECTION_CONTEXT_TTL_MS;
 }
 
 /** ARM-05: Block booking/slot CTAs until staff resolves (ARM-06/07) or high-confidence path finalized. */

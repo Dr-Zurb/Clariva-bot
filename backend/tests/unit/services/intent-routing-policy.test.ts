@@ -87,6 +87,35 @@ describe('RBH-14 intent routing', () => {
       const ctx = buildClassifyIntentContext(state, []);
       expect(ctx).toBeUndefined();
     });
+
+    it('returns post_medical_deflection goal when lastMedicalDeflectionAt is recent', () => {
+      const state: ConversationState = {
+        step: 'responded',
+        lastMedicalDeflectionAt: new Date().toISOString(),
+      };
+      const ctx = buildClassifyIntentContext(state, []);
+      expect(ctx?.conversationGoal).toBe('post_medical_deflection');
+    });
+
+    it('prefers fee_quote over post_medical_deflection when both apply', () => {
+      const state: ConversationState = {
+        step: 'responded',
+        activeFlow: 'fee_quote',
+        lastMedicalDeflectionAt: new Date().toISOString(),
+      };
+      const ctx = buildClassifyIntentContext(state, []);
+      expect(ctx?.conversationGoal).toBe('fee_quote');
+    });
+
+    it('omits post_medical_deflection when deflection timestamp is older than TTL', () => {
+      const stale = new Date(Date.now() - 49 * 60 * 60 * 1000).toISOString();
+      const state: ConversationState = {
+        step: 'responded',
+        lastMedicalDeflectionAt: stale,
+      };
+      const ctx = buildClassifyIntentContext(state, []);
+      expect(ctx).toBeUndefined();
+    });
   });
 
   describe('intentSignalsFeeOrPricing (RBH-18)', () => {

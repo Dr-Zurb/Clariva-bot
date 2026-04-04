@@ -18,6 +18,11 @@ import {
   safeParseServiceCatalogV1FromDb,
 } from './service-catalog-schema';
 import type { DoctorSettingsRow } from '../types/doctor-settings';
+import { SERVICE_CATALOG_MATCH_REASON_CODES } from '../types/conversation';
+import {
+  pickSuggestedModality,
+  runDeterministicServiceCatalogMatchStageA,
+} from './service-catalog-deterministic-match';
 
 /** Optional compact JSON in consultation_types (keep under doctor_settings max length). Example:
  * [{"l":"General (in-person)","r":500},{"l":"Video consult","r":400}]
@@ -254,6 +259,87 @@ export function pickCatalogServicesMatchingUserText(
   return hits.length === 1 ? hits : catalog.services;
 }
 
+/** e-task-dm-02: Bound merged thread + current line used for catalog narrowing (no logging here). */
+export const FEE_CATALOG_MATCH_TEXT_MAX_CHARS = 2600;
+
+/**
+ * Merge current DM line with optional pre-redacted thread (prior patient lines). Used only for
+ * catalog row narrowing — locale/footer still use `userText` alone.
+ */
+export function mergeFeeCatalogMatchText(userText: string, catalogMatchText?: string): string {
+  const u = userText.trim();
+  const c = catalogMatchText?.trim() ?? '';
+  if (!c) return u;
+  if (!u) return c.length > FEE_CATALOG_MATCH_TEXT_MAX_CHARS ? c.slice(-FEE_CATALOG_MATCH_TEXT_MAX_CHARS) : c;
+  if (c === u || c.endsWith(`\n${u}`) || c.includes(`\n${u}\n`)) {
+    return c.length > FEE_CATALOG_MATCH_TEXT_MAX_CHARS ? c.slice(-FEE_CATALOG_MATCH_TEXT_MAX_CHARS) : c;
+  }
+  if (u.includes(c) && u.length >= c.length) {
+    return u.length > FEE_CATALOG_MATCH_TEXT_MAX_CHARS ? u.slice(-FEE_CATALOG_MATCH_TEXT_MAX_CHARS) : u;
+  }
+  const combined = `${c}\n${u}`;
+  return combined.length > FEE_CATALOG_MATCH_TEXT_MAX_CHARS
+    ? combined.slice(-FEE_CATALOG_MATCH_TEXT_MAX_CHARS)
+    : combined;
+}
+
+/** High-confidence fee narrow — safe to finalize catalog selection on conversation (idle/mid-fee). */
+export interface ConsultationFeeQuoteMatcherFinalize {
+  matcherProposedCatalogServiceKey: string;
+  matcherProposedCatalogServiceId: string;
+  matcherProposedConsultationModality?: 'text' | 'voice' | 'video';
+  serviceCatalogMatchConfidence: 'high';
+  serviceCatalogMatchReasonCodes: string[];
+}
+
+export function pickCatalogServicesForFeeDm(
+  catalog: ServiceCatalogV1,
+  userText: string,
+  catalogMatchText?: string
+): {
+  services: ServiceCatalogV1['services'];
+  feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;
+} {
+  const merged = mergeFeeCatalogMatchText(userText, catalogMatchText);
+  let rows = pickCatalogServicesMatchingUserText(catalog, merged);
+
+  const makeFinalize = (
+    offering: ServiceCatalogV1['services'][number],
+    reasonCodes: string[]
+  ): ConsultationFeeQuoteMatcherFinalize => ({
+    matcherProposedCatalogServiceKey: offering.service_key,
+    matcherProposedCatalogServiceId: offering.service_id,
+    matcherProposedConsultationModality: pickSuggestedModality(offering),
+    serviceCatalogMatchConfidence: 'high',
+    serviceCatalogMatchReasonCodes: reasonCodes,
+  });
+
+  if (rows.length === 1) {
+    return {
+      services: rows,
+      feeQuoteMatcherFinalize: makeFinalize(rows[0]!, [
+        SERVICE_CATALOG_MATCH_REASON_CODES.CATALOG_ALLOWLIST_MATCH,
+      ]),
+    };
+  }
+
+  if (rows.length === catalog.services.length && catalog.services.length > 1) {
+    const stageA = runDeterministicServiceCatalogMatchStageA(catalog, merged);
+    if (stageA) {
+      const o = stageA.offering;
+      if (stageA.confidence === 'high' && stageA.autoFinalize) {
+        return {
+          services: [o],
+          feeQuoteMatcherFinalize: makeFinalize(o, stageA.reasonCodes),
+        };
+      }
+      return { services: [o] };
+    }
+  }
+
+  return { services: rows };
+}
+
 function truncateIfNeededDm(text: string, maxLen: number, locale: SafetyMessageLocale): string {
   if (text.length <= maxLen) {
     return text;
@@ -271,12 +357,23 @@ function truncateIfNeededDm(text: string, maxLen: number, locale: SafetyMessageL
 
 /**
  * SFU-08: Human-readable teleconsult fee block from `service_offerings_json` (₹ from JSON only).
+ * @param catalogMatchText Optional redacted thread (prior patient turns) for row narrowing (e-task-dm-02).
  */
 export function formatServiceCatalogForDm(
   catalog: ServiceCatalogV1,
   settings: ConsultationFeesDmSettings,
-  userText: string = ''
+  userText: string = '',
+  catalogMatchText?: string
 ): string {
+  return formatServiceCatalogForDmWithMeta(catalog, settings, userText, catalogMatchText).markdown;
+}
+
+export function formatServiceCatalogForDmWithMeta(
+  catalog: ServiceCatalogV1,
+  settings: ConsultationFeesDmSettings,
+  userText: string = '',
+  catalogMatchText?: string
+): { markdown: string; feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize } {
   const practiceName = settings.practice_name?.trim() || 'the practice';
   const locale = detectSafetyMessageLocale(userText || '');
   const hasDevanagari = /[\u0900-\u097F]/.test(userText || '');
@@ -288,7 +385,9 @@ export function formatServiceCatalogForDm(
     hasGurmukhi
   );
   const cur = settings.appointment_fee_currency;
-  const rows = pickCatalogServicesMatchingUserText(catalog, userText);
+  const pick = pickCatalogServicesForFeeDm(catalog, userText, catalogMatchText);
+  const rows = pick.services;
+  const feeQuoteMatcherFinalize = pick.feeQuoteMatcherFinalize;
   const lines: string[] = [];
 
   for (const s of rows) {
@@ -310,7 +409,7 @@ export function formatServiceCatalogForDm(
   }
 
   if (lines.length === 0) {
-    return localizeJsonUnreadable(practiceName, locale, hoursSuffix);
+    return { markdown: localizeJsonUnreadable(practiceName, locale, hoursSuffix) };
   }
 
   const intro = localizeCatalogIntro(practiceName, locale);
@@ -319,7 +418,10 @@ export function formatServiceCatalogForDm(
   /** Catalog path lists text/voice/video only — do not append legacy “in-clinic” flat fee (misleading when teleconsult-only). */
 
   body += `\n\n${localizeFeeListFooter(locale, hoursSuffix)}`;
-  return truncateIfNeededDm(body, CONSULTATION_FEE_DM_MAX_CHARS, locale);
+  return {
+    markdown: truncateIfNeededDm(body, CONSULTATION_FEE_DM_MAX_CHARS, locale),
+    feeQuoteMatcherFinalize,
+  };
 }
 
 /**
@@ -630,13 +732,28 @@ export function formatFeeBookingCtaForDm(userText: string): string {
   return "When you're ready to schedule, say **book appointment** and we'll take it from there.";
 }
 
+export interface ConsultationFeeDmWithMeta {
+  markdown: string;
+  feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;
+}
+
 /**
  * Human-readable fee block for DM. Only shows ₹ from doctor data (JSON, plain text digits, or appointment_fee_minor).
+ * @param catalogMatchText Redacted prior patient thread for teleconsult catalog narrowing (e-task-dm-02).
  */
 export function formatConsultationFeesForDm(
   settings: ConsultationFeesDmSettings,
-  userText: string = ''
+  userText: string = '',
+  catalogMatchText?: string
 ): string {
+  return formatConsultationFeesForDmWithMeta(settings, userText, catalogMatchText).markdown;
+}
+
+export function formatConsultationFeesForDmWithMeta(
+  settings: ConsultationFeesDmSettings,
+  userText: string = '',
+  catalogMatchText?: string
+): ConsultationFeeDmWithMeta {
   const practiceName = settings.practice_name?.trim() || 'the practice';
   let serviceCatalogExplicitlyEmpty = false;
   if (settings.service_offerings_json != null) {
@@ -647,7 +764,7 @@ export function formatConsultationFeesForDm(
         settings.service_offerings_json as unknown
       );
       if (catalog && catalog.services.length > 0) {
-        return formatServiceCatalogForDm(catalog, settings, userText);
+        return formatServiceCatalogForDmWithMeta(catalog, settings, userText, catalogMatchText);
       }
     }
   }
@@ -672,11 +789,15 @@ export function formatConsultationFeesForDm(
     appendMinorFeeLine(lines, minor, cur, locale);
     if (lines.length > 0) {
       const intro = localizeFeeListIntro(practiceName, locale);
-      return `${intro}${lines.join('\n')}\n\n${localizeFeeListFooter(locale, hoursSuffix)}`;
+      return {
+        markdown: `${intro}${lines.join('\n')}\n\n${localizeFeeListFooter(locale, hoursSuffix)}`,
+      };
     }
-    return serviceCatalogExplicitlyEmpty
-      ? localizeEmptyServiceCatalog(practiceName, locale, hoursSuffix)
-      : localizeEmptyTypes(practiceName, locale, hoursSuffix);
+    return {
+      markdown: serviceCatalogExplicitlyEmpty
+        ? localizeEmptyServiceCatalog(practiceName, locale, hoursSuffix)
+        : localizeEmptyTypes(practiceName, locale, hoursSuffix),
+    };
   }
 
   const rows = parseCompactFeeJson(raw);
@@ -692,7 +813,7 @@ export function formatConsultationFeesForDm(
       }
     }
     if (lines.length === 0) {
-      return localizeJsonUnreadable(practiceName, locale, hoursSuffix);
+      return { markdown: localizeJsonUnreadable(practiceName, locale, hoursSuffix) };
     }
     const hadRupeeFromRows = lines.some(lineHasRupeeAmount);
     if (!hadRupeeFromRows) {
@@ -703,7 +824,7 @@ export function formatConsultationFeesForDm(
     if (!lines.some(lineHasRupeeAmount)) {
       out += localizeNoPerTypeAmountNote(locale);
     }
-    return out;
+    return { markdown: out };
   }
 
   const { lines: plainLines, unmatchedLabels } = buildPlainTextFeeLines(raw);
@@ -714,7 +835,9 @@ export function formatConsultationFeesForDm(
       plainLines.push(`- **${label}**`);
     }
     const intro = localizeFeeListIntro(practiceName, locale);
-    return `${intro}${plainLines.join('\n')}\n\n${localizeFeeListFooter(locale, hoursSuffix)}`;
+    return {
+      markdown: `${intro}${plainLines.join('\n')}\n\n${localizeFeeListFooter(locale, hoursSuffix)}`,
+    };
   }
 
   const echoLines: string[] = [];
@@ -728,9 +851,8 @@ export function formatConsultationFeesForDm(
   if (!echoLines.some(lineHasRupeeAmount)) {
     out += localizeNoPerTypeAmountNote(locale);
   }
-  return out;
+  return { markdown: out };
 }
-
 /**
  * RBH-13: Meta phrases about fees/booking - must not become `reason_for_visit` during intake.
  */

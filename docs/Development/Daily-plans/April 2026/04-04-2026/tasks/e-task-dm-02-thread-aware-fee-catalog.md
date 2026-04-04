@@ -13,17 +13,17 @@ When a patient already described a **clinical concern** (e.g. blood sugar, diabe
 - **Idle** and **mid-collection** fee paths must take **conversation context**, not only the **latest** user line, when narrowing `pickCatalogServicesMatchingUserText` or equivalent.
 
 **Estimated Time:** 2–4 days  
-**Status:** ⏳ **PENDING**
+**Status:** ✅ **Core implementation done** (2026-03-31) — optional: TurnContext (dm-03), manual DM script
 
 **Change Type:**
 - [x] **Update existing** — fee DM composition, optional matcher integration, intent/fee routing
 
 **Current State:**
-- ✅ `composeIdleFeeQuoteDm` / `formatServiceCatalogForDm` / `pickCatalogServicesMatchingUserText` in `consultation-fees` (narrow only on label/service_key substrings in **current** `userText`).
-- ✅ `matchServiceCatalog` in `service-catalog-matcher` (deterministic + LLM, matcher_hints, catalog allowlist).
-- ✅ Instagram webhook: idle fee branch passes **only** current `text` into fee composer.
-- ❌ **No** merged “effective clinical thread” string for fee narrowing.
-- ❌ **No** caller guarantee that post-`medical_query` turns retain a **state** handle for the prior complaint (see e-task-dm-03).
+- ✅ `mergeFeeCatalogMatchText`, `pickCatalogServicesForFeeDm`, `formatConsultationFeesForDmWithMeta` — thread-aware narrowing + optional **`feeQuoteMatcherFinalize`** (high-confidence substring or Stage A `high`+`autoFinalize` only).
+- ✅ `service-catalog-deterministic-match.ts` — Stage A extracted (no `consultation-fees` ↔ `ai-service` cycle).
+- ✅ `composeIdleFeeQuoteDmWithMeta` / `composeMidCollectionFeeQuoteDmWithMeta` + webhook **`buildFeeCatalogMatchThread`** (`redactPhiForAI` on concatenated patient lines + current).
+- ✅ Webhook applies **`mergeFeeQuoteMatcherIntoState`** when finalize metadata present (existing `applyMatcherProposalToConversationState`, no new DB columns).
+- ⏳ **e-task-dm-03:** canonical TurnContext / memory for chief complaint still optional enhancement.
 
 **Dependencies:** Prefer coordination with **e-task-dm-03** (TurnContext / memory) so fee layer receives one canonical thread summary.
 
@@ -36,35 +36,36 @@ When a patient already described a **clinical concern** (e.g. blood sugar, diabe
 ## ✅ Task Breakdown
 
 ### 1. Requirements & policy
-- [ ] 1.1 Define product rules: when to show **one** service vs **full** menu vs **clarify** (document in task acceptance or product brief).
-- [ ] 1.2 Define confidence threshold for auto-selecting catalog row vs asking user (align with ARM-03 / staff review if applicable).
+- [x] 1.1 Encode in implementation: single row when substring **or** Stage A unique hint/high-autoFinalize; full catalog when ambiguous; medium hint = narrow **display** without state finalize — **2026-03-31**
+- [x] 1.2 State finalize only when **`feeQuoteMatcherFinalize`** present (high + substring or Stage A high+autoFinalize) — **2026-03-31**
 
 ### 2. Context input for fees
-- [ ] 2.1 Introduce or consume a **single per-turn context object** (recent patient turns + optional state fields) for **idle** and **mid-collection** fee composition — do not pass **only** the latest message when prior turns contain chief complaint.
-- [ ] 2.2 Ensure redaction rules match existing **PHI** handling for any concatenated thread used for matching (not for public logging).
+- [x] 2.1 Instagram fee branches pass **`catalogMatchText`** from recent patient messages + current line — **2026-03-31**
+- [x] 2.2 **`redactPhiForAI`** on merged thread before use in matchers — **2026-03-31**
 
 ### 3. Matching integration
-- [ ] 3.1 When catalog exists, invoke or reuse **service catalog matcher** (or equivalent) using the **effective clinical text**, not label substring alone.
-- [ ] 3.2 Handle **conflicting** signals (e.g. “general checkup” + “blood sugar”) per policy in §1.
+- [x] 3.1 **`runDeterministicServiceCatalogMatchStageA`** on merged text after substring pick (no OpenAI on fee path) — **2026-03-31**
+- [x] 3.2 Conflicting labels resolved by ARM-02 **`matcher_hints`** (e.g. blood sugar → NCD row beats undifferentiated full menu); tie → full catalog — **2026-03-31**
 
 ### 4. Conversation state (coordination)
-- [ ] 4.1 Persist **tentative** `service_key` / reason handle on conversation when matcher is **high** confidence, so **book appointment** continues without re-asking visit type unnecessarily.
+- [x] 4.1 **`mergeFeeQuoteMatcherIntoState`** + `finalizeSelection: true` when high-confidence finalize returned — **2026-03-31**
 
 ### 5. Verification
-- [ ] 5.1 Unit tests: fee DM shows **subset** when thread mentions NCD-relevant symptoms and matcher agrees.
-- [ ] 5.2 Regression: pure “how much” with **no** prior clinical text may still show full catalog or safe default per policy.
-- [ ] 5.3 Manual DM test script documented (blood sugar → cost → book).
+- [x] 5.1 Unit tests in `consultation-fees.test.ts` (NCD hints + regression) — **2026-03-31**
+- [x] 5.2 Regression: no thread → both services listed — **2026-03-31**
+- [ ] 5.3 Manual DM test script (optional ops doc)
 
 ---
 
 ## 📁 Files to Create/Update
 
-**Expected touch points (audit before editing):**
-- `backend/src/utils/consultation-fees.ts` — `pickCatalogServicesMatchingUserText`, `formatConsultationFeesForDm` call chain
-- `backend/src/utils/dm-reply-composer.ts` — idle / mid-collection composers’ signatures
-- `backend/src/workers/instagram-dm-webhook-handler.ts` — fee branches, state updates
-- `backend/src/services/service-catalog-matcher.ts` — call sites or exports as needed
-- `backend/tests/unit/utils/dm-reply-composer.test.ts` and related
+**Touched (2026-03-31):**
+- `backend/src/utils/service-catalog-deterministic-match.ts` **(new)** — Stage A + `pickSuggestedModality`
+- `backend/src/utils/consultation-fees.ts` — `pickCatalogServicesForFeeDm`, thread merge, `*WithMeta` formatters
+- `backend/src/utils/dm-reply-composer.ts` — `*WithMeta` composers
+- `backend/src/workers/instagram-dm-webhook-handler.ts` — fee branches, `buildFeeCatalogMatchThread`, state merge
+- `backend/src/services/service-catalog-matcher.ts` — imports deterministic util; re-exports unchanged API
+- `backend/tests/unit/utils/consultation-fees.test.ts`
 
 ---
 
@@ -78,17 +79,17 @@ When a patient already described a **clinical concern** (e.g. blood sugar, diabe
 
 ## 🌍 Global Safety Gate
 
-- [ ] **Data touched?** (conversation state fields — verify persistence and RLS if new columns)
-- [ ] **PHI in logs?** MUST remain No
-- [ ] **External AI?** Y if matcher LLM used — consent + redaction confirmed per existing flows
+- [x] **Data touched?** Conversation state JSON only (existing keys); no new columns — **2026-03-31**
+- [x] **PHI in logs?** Unchanged; thread used for matching is redacted, not logged here — **2026-03-31**
+- [x] **External AI?** Fee narrowing is deterministic (no LLM on this path) — **2026-03-31**
 
 ---
 
 ## ✅ Acceptance & Verification Criteria
 
-- [ ] After prior user message describes blood-sugar concern, a short **pricing** follow-up yields **NCD-appropriate** fee presentation per policy (not full menu-only default).
-- [ ] Mixed “general checkup” + chronic symptom phrasing does not silently pick wrong row without policy handling.
-- [ ] Tests and docs updated per [CODE_CHANGE_RULES.md](../../../../../task-management/CODE_CHANGE_RULES.md).
+- [x] Blood-sugar context in thread + pricing line → NCD-appropriate **narrow** fee block (unit test) — **2026-03-31**
+- [x] Ambiguous multi-label cases fall back to **full** catalog or hint-winner per Stage A (no silent wrong finalize unless high-confidence) — **2026-03-31**
+- [x] Unit tests added; task doc updated — **2026-03-31**
 
 ---
 
@@ -99,5 +100,5 @@ When a patient already described a **clinical concern** (e.g. blood sugar, diabe
 
 ---
 
-**Last Updated:** 2026-04-04  
+**Last Updated:** 2026-03-31  
 **Reference:** [TASK_MANAGEMENT_GUIDE.md](../../../../../task-management/TASK_MANAGEMENT_GUIDE.md)

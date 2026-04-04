@@ -6,6 +6,7 @@ import {
   formatFollowUpPolicyHint,
   formatServiceCatalogForAiContext,
   formatServiceCatalogForDm,
+  formatServiceCatalogForDmWithMeta,
   isConsultationTypePricingFollowUp,
   isMetaBookingOrFeeReasonText,
   isPricingInquiryMessage,
@@ -255,6 +256,79 @@ describe('consultation-fees (RBH-13)', () => {
     expect(body).toContain('General');
     expect(body).toContain('`gp`');
     expect(body).not.toContain('Dermatology');
+  });
+
+  const catalogNcdAmbiguous: ServiceCatalogV1 = {
+    version: 1,
+    services: [
+      {
+        service_id: sid('gen'),
+        service_key: 'general_checkup',
+        label: 'General checkup',
+        modalities: { video: { enabled: true, price_minor: 200_00 } },
+      },
+      {
+        service_id: sid('ncd'),
+        service_key: 'ncd_followup',
+        label: 'NCD follow-up',
+        matcher_hints: { keywords: 'diabetes, blood sugar, glucose' },
+        modalities: { video: { enabled: true, price_minor: 150_00 } },
+      },
+    ],
+  };
+
+  it('e-task-dm-02: fee DM narrows to hint-matched row when thread has clinical context and line is pricing-only', () => {
+    const meta = formatServiceCatalogForDmWithMeta(
+      catalogNcdAmbiguous,
+      {
+        practice_name: 'Clinic',
+        consultation_types: null,
+        business_hours_summary: null,
+        appointment_fee_minor: null,
+        appointment_fee_currency: 'INR',
+      },
+      'how much does it cost',
+      'my blood sugar readings have been high'
+    );
+    expect(meta.markdown).toContain('NCD');
+    expect(meta.markdown).toContain('₹150');
+    expect(meta.markdown).not.toContain('General checkup');
+    expect(meta.feeQuoteMatcherFinalize).toBeUndefined();
+  });
+
+  it('e-task-dm-02: thread + label substring yields single row and high-confidence finalize metadata', () => {
+    const meta = formatServiceCatalogForDmWithMeta(
+      catalogTwoServices,
+      {
+        practice_name: 'X',
+        consultation_types: null,
+        business_hours_summary: null,
+        appointment_fee_minor: null,
+        appointment_fee_currency: 'INR',
+      },
+      'what is the fee',
+      'skin rash getting worse'
+    );
+    expect(meta.markdown).toContain('Dermatology');
+    expect(meta.markdown).not.toContain('General');
+    expect(meta.feeQuoteMatcherFinalize?.matcherProposedCatalogServiceKey).toBe('skin');
+  });
+
+  it('e-task-dm-02: pricing question without clinical thread shows full multi-service catalog', () => {
+    const meta = formatServiceCatalogForDmWithMeta(
+      catalogNcdAmbiguous,
+      {
+        practice_name: 'Clinic',
+        consultation_types: null,
+        business_hours_summary: null,
+        appointment_fee_minor: null,
+        appointment_fee_currency: 'INR',
+      },
+      'how much for a consult'
+    );
+    expect(meta.markdown).toContain('General checkup');
+    expect(meta.markdown).toContain('NCD');
+    expect(meta.feeQuoteMatcherFinalize).toBeUndefined();
   });
 
   it('e-task-2: formatFollowUpPolicyHint summarizes enabled policy', () => {

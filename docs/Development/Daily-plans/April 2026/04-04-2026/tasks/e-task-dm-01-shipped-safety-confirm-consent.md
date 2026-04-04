@@ -16,7 +16,7 @@ Track **shipped** backend work from early April 2026 that improves Instagram DM 
 Follow-up work: strengthen automated tests and fix brittle mocks so characterization tests reflect current AI service exports.
 
 **Estimated Time:** Follow-ups 0.5–1 day  
-**Status:** ✅ **Core behavior shipped** — follow-ups ⏳ **PENDING**
+**Status:** ✅ **Core behavior shipped** — follow-ups ✅ **DONE** (2026-03-31)
 
 **Change Type:**
 - [x] **Update existing** — `safety-messages`, `instagram-dm-webhook-handler`, `consent` branch behavior, tests (partial)
@@ -25,7 +25,7 @@ Follow-up work: strengthen automated tests and fix brittle mocks so characteriza
 - ✅ Ship commits on `main` (e.g. safety + routing + capture docs in separate commit).
 - ✅ `backend/src/utils/safety-messages.ts` — medical_query strings without clinic call.
 - ✅ `backend/src/workers/instagram-dm-webhook-handler.ts` — `lastBotMessageAskedForConfirm`, collecting_all guard, `hasExtrasOrGranted` for consent.
-- ⚠️ `webhook-worker-characterization.test.ts` — may fail until `intentSignalsFeeOrPricing` (or equivalent) is provided in jest mocks for `ai-service`.
+- ✅ `webhook-worker-characterization.test.ts` — `intentSignalsFeeOrPricing` wired via `jest.requireActual` on `ai-service`; confirm → consent + unclear consent → URL covered.
 
 **Reference:**
 - [TASK_MANAGEMENT_GUIDE.md](../../../../../task-management/TASK_MANAGEMENT_GUIDE.md)
@@ -40,9 +40,9 @@ Follow-up work: strengthen automated tests and fix brittle mocks so characteriza
 - [x] 1.3 Consent “skip extras” proceeds to booking link path — **Completed: 2026-04-04**
 
 ### 2. Follow-ups (recommended)
-- [ ] 2.1 Repair **webhook worker unit test mocks** so imports match `ai-service` exports (fee / intent helpers).
-- [ ] 2.2 Add **golden / integration** coverage: after confirm-yes → consent-yes, outbound DM contains booking URL pattern (tokenized link).
-- [ ] 2.3 Document branches in **RECIPES** or DM troubleshooting note: *confirm heuristic*, *consent unclear*, *idle vs collection*.
+- [x] 2.1 Repair **webhook worker unit test mocks** so imports match `ai-service` exports (fee / intent helpers). — **2026-03-31**
+- [x] 2.2 Add characterization coverage: **confirm-yes → consent**; **consent unclear (skip-extras) → booking URL**; existing **consent granted → URL**. — **2026-03-31**
+- [x] 2.3 Document branches in **RECIPES** (section 19, ARM-04): confirm / consent unclear / `jest` mock note. — **2026-03-31**
 
 ---
 
@@ -54,8 +54,7 @@ Follow-up work: strengthen automated tests and fix brittle mocks so characteriza
 - ✅ `backend/tests/unit/utils/safety-messages.test.ts`
 
 **Follow-ups:**
-- ⚠️ `backend/tests/unit/workers/webhook-worker-characterization.test.ts` — mock alignment
-- ❌ Optional new test file under `backend/tests/...` for DM confirm → link
+- ✅ `backend/tests/unit/workers/webhook-worker-characterization.test.ts` — `intentSignalsFeeOrPricing` + confirm / consent scenarios
 
 ---
 
@@ -70,8 +69,8 @@ Follow-up work: strengthen automated tests and fix brittle mocks so characteriza
 ## ✅ Acceptance & Verification Criteria
 
 - [x] Safety copy does not reference clinic phone for medical_query deflection (product requirement).
-- [ ] Characterization / webhook tests green in CI after mock updates.
-- [ ] Optional: new test asserts booking URL present on consent success path.
+- [x] Characterization / webhook tests green after mock updates (`webhook-worker-characterization.test.ts`).
+- [x] Tests assert booking URL on consent granted and on consent unclear (skip-extras) paths.
 
 ---
 
@@ -82,5 +81,5 @@ Follow-up work: strengthen automated tests and fix brittle mocks so characteriza
 
 ---
 
-**Last Updated:** 2026-04-04  
+**Last Updated:** 2026-03-31  
 **Reference:** [TASK_MANAGEMENT_GUIDE.md](../../../../../task-management/TASK_MANAGEMENT_GUIDE.md)

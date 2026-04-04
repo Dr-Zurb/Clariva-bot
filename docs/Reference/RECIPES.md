@@ -1471,6 +1471,10 @@ app.use((err, req, res, next) => {
 
 **ARM-05 (after matcher):** `isSlotBookingBlockedPendingStaffReview(state)` is true when `pendingStaffServiceReview && !serviceSelectionFinalized`. Instagram handler then uses `transitionToAwaitingStaffServiceConfirmation` + `staff-service-review-dm.ts` templates instead of `buildBookingPageUrl`. SLA: `STAFF_SERVICE_REVIEW_SLA_HOURS` in `env.ts` (default 24).
 
+**Instagram DM — confirm, consent, collection (handler):** In `instagram-dm-webhook-handler.ts`, short **yes** after a bot **confirm-details** prompt is routed to **`confirm_details`** (`effectiveAskedForConfirm` / `lastBotMessageAskedForConfirm`) so **`collecting_all`** does not treat the turn as open-ended collection. **Consent:** `parseConsentReply` **`granted`** or **`unclear`** (including skip-extras replies) proceeds to **`persistPatientAfterConsent`** and the booking link path when staff-review does not block. **Jest:** characterization tests that mock `ai-service` must expose **`intentSignalsFeeOrPricing`** (e.g. `jest.requireActual('.../ai-service').intentSignalsFeeOrPricing`) because the handler invokes it on every DM.
+
+**Instagram DM — context-first turn (e-task-dm-03):** Assemble **thread-aware, redacted** text once via **`buildFeeCatalogMatchText`** / **`dm-turn-context.ts`** for fee catalog narrowing (same shape as classify history). After an idle **`medical_query`** deflection, persist **`lastMedicalDeflectionAt`** (ISO timestamp only — **no PHI**); **`isRecentMedicalDeflectionWindow`** gates **`conversationGoal: 'post_medical_deflection'`** in **`buildClassifyIntentContext`** ( **`fee_quote` wins** if both apply). Clear **`lastMedicalDeflectionAt`** when starting fresh collection (**`undefined`** on state merge). Idle **`generateResponse`** turns get **`lastBotMessage`** plus **`idleDialogueHint`** from **`buildAiContextForResponse`** so the model keeps fee / post-deflection continuity without extra PHI in prompts.
+
 ---
 
 ## 20. Public booking payment gate (ARM-10) {#20-public-booking-payment-gate-arm-10}
@@ -1530,6 +1534,6 @@ Interacts with **ARM-10** (payment gate) and **ARM-09** ( `/book` pre-fill): pat
 
 ---
 
-**Last Updated:** 2026-01-17  
+**Last Updated:** 2026-04-04  
 **Version:** 1.0.0  
 **See Also:** [`STANDARDS.md`](./STANDARDS.md), [`ARCHITECTURE.md`](./ARCHITECTURE.md), [`EXTERNAL_SERVICES.md`](./EXTERNAL_SERVICES.md)

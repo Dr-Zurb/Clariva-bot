@@ -475,6 +475,30 @@ describe('AI Service', () => {
       );
     });
 
+    it('includes idleDialogueHint in system prompt when context provides it', async () => {
+      const mockCreate = jest.fn<() => Promise<{ choices: { message: { content: string } }[]; usage?: { total_tokens?: number } }>>().mockResolvedValue({
+        choices: [{ message: { content: 'ok' } }],
+        usage: { total_tokens: 10 },
+      });
+      mockedOpenai.getOpenAIClient.mockReturnValue({
+        chat: { completions: { create: mockCreate } },
+      } as any);
+      mockedOpenai.getOpenAIConfig.mockReturnValue({
+        model: 'gpt-5.2',
+        maxTokens: 256,
+      });
+
+      await generateResponse({
+        ...defaultInput,
+        context: { idleDialogueHint: 'Thread note: user was in fee discussion.' },
+      });
+
+      const firstCall = (mockCreate.mock.calls as unknown as unknown[][])[0];
+      const systemContent = (firstCall?.[0] as { messages: { role: string; content: string }[] }).messages[0]
+        .content;
+      expect(systemContent).toContain('Thread note: user was in fee discussion.');
+    });
+
     it('returns generated text and audits success when OpenAI returns content', async () => {
       const mockCreate = jest.fn<() => Promise<{ choices: { message: { content: string } }[]; usage?: { total_tokens?: number } }>>().mockResolvedValue({
         choices: [{ message: { content: 'Hello! How can I help you today?' } }],

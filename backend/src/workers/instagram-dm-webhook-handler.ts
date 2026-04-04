@@ -5,7 +5,7 @@
  * RBH-17 (three layers):
  * - **Understand:** `classifyIntent` (+ `applyIntentPostClassificationPolicy`) — LLM intent; optional regex fast-paths in ai-service.
  * - **Decide:** This file's branch chain (after classify) — which flow runs; state transitions.
- * - **Say:** Templates / `composeIdleFeeQuoteDm` / `composeMidCollectionFeeQuoteDm` / `resolveSafetyMessage` / `generateResponse` — tone via LLM, but ₹ + URLs must come from code (see `DoctorContext`, formatters).
+ * - **Say:** Templates / `composeIdleFeeQuoteDmWithMeta` / `composeMidCollectionFeeQuoteDmWithMeta` / `resolveSafetyMessage` / `generateResponse` — tone via LLM, but ₹ + URLs must come from code (see `DoctorContext`, formatters).
  *
  * **Branch order** (keep stable; doc: docs/Reference/RECEPTIONIST_BOT_DM_BRANCH_INVENTORY.md):
  * revoke → paused → cancel/reschedule step gates → emergency → medical (idle) → fee quote (idle) → greeting (idle) → status/cancel/reschedule/book_other → match/consent/collection → default AI.
@@ -99,6 +99,7 @@ import type { InstagramWebhookPayload, WebhookProvider } from '../types/webhook'
 import {
   applyMatcherProposalToConversationState,
   conversationLastPromptKindForStep,
+  isRecentMedicalDeflectionWindow,
   isSlotBookingBlockedPendingStaffReview,
   type ConversationState,
 } from '../types/conversation';
@@ -116,8 +117,8 @@ import {
   parseConsultationChannelUserReply,
 } from '../utils/dm-consultation-channel';
 import {
-  composeIdleFeeQuoteDm,
-  composeMidCollectionFeeQuoteDm,
+  composeIdleFeeQuoteDmWithMeta,
+  composeMidCollectionFeeQuoteDmWithMeta,
 } from '../utils/dm-reply-composer';
 import { logInstagramDmRouting } from '../utils/log-instagram-dm-routing';
 import {
@@ -126,9 +127,31 @@ import {
   staffServiceReviewDeadlineIsoFromNow,
 } from '../utils/staff-service-review-dm';
 import { upsertPendingStaffServiceReviewRequest } from '../services/service-staff-review-service';
+import { buildFeeCatalogMatchText } from '../utils/dm-turn-context';
 
 /** Fallback when resolution returns null or AI/conversation flow is skipped */
 const FALLBACK_REPLY = "Thanks for your message. We'll get back to you soon.";
+
+function mergeFeeQuoteMatcherIntoState(
+  state: ConversationState,
+  fin: {
+    matcherProposedCatalogServiceKey: string;
+    matcherProposedCatalogServiceId: string;
+    matcherProposedConsultationModality?: 'text' | 'voice' | 'video';
+    serviceCatalogMatchConfidence: 'high';
+    serviceCatalogMatchReasonCodes: string[];
+  }
+): ConversationState {
+  return applyMatcherProposalToConversationState(state, {
+    matcherProposedCatalogServiceKey: fin.matcherProposedCatalogServiceKey,
+    matcherProposedCatalogServiceId: fin.matcherProposedCatalogServiceId,
+    matcherProposedConsultationModality: fin.matcherProposedConsultationModality,
+    serviceCatalogMatchConfidence: fin.serviceCatalogMatchConfidence,
+    serviceCatalogMatchReasonCodes: fin.serviceCatalogMatchReasonCodes,
+    finalizeSelection: true,
+    pendingStaffServiceReview: false,
+  });
+}
 
 /** ARM-04: After details confirm → consent, map reason for visit to catalog row (deterministic + LLM). */
 async function enrichStateWithServiceCatalogMatch(
@@ -677,7 +700,29 @@ async function buildAiContextForResponse(
     state.lastPromptKind === 'consent' ||
     state.lastPromptKind === 'confirm_details' ||
     state.lastPromptKind === 'match_pick';
-  if (!inCollection) return ctx;
+
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    if (recentMessages[i].sender_type !== 'patient') {
+      const content = (recentMessages[i].content ?? '').trim();
+      if (content) {
+        ctx.lastBotMessage = redactPhiForAI(content);
+        break;
+      }
+    }
+  }
+
+  if (!inCollection) {
+    const feeIdle =
+      state.activeFlow === 'fee_quote' || state.lastPromptKind === 'fee_quote';
+    if (feeIdle) {
+      ctx.idleDialogueHint =
+        'Thread note: The user was recently discussing consultation fees or pricing. Short follow-ups about visit type or channel usually continue that thread unless they clearly change topic.';
+    } else if (isRecentMedicalDeflectionWindow(state)) {
+      ctx.idleDialogueHint =
+        'Thread note: The user recently got the standard message that specific medical advice cannot be given here. Help with booking, fees, or general practice info is appropriate; do not diagnose or treat.';
+    }
+    return ctx;
+  }
 
   const collected = await getCollectedData(conversationId);
   const collectedFields = state.collectedFields ?? [];
@@ -689,16 +734,6 @@ async function buildAiContextForResponse(
   ctx.collectedDataSummary = summaryParts.join(', ');
   ctx.missingFields = REQUIRED_COLLECTION_FIELDS.filter((f) => !collectedFields.includes(f));
   if (ctx.missingFields.length === 0) ctx.missingFields = undefined;
-
-  for (let i = recentMessages.length - 1; i >= 0; i--) {
-    if (recentMessages[i].sender_type !== 'patient') {
-      const content = (recentMessages[i].content ?? '').trim();
-      if (content) {
-        ctx.lastBotMessage = redactPhiForAI(content);
-        break;
-      }
-    }
-  }
 
   if (state.bookingForSomeoneElse) {
     ctx.bookingForSomeoneElse = true;
@@ -1380,6 +1415,7 @@ export async function processInstagramDmWebhook(params: {
         ...state,
         lastIntent: intentResult.intent,
         step: 'responded',
+        lastMedicalDeflectionAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
       await updateConversationState(conversation.id, state, correlationId);
@@ -1390,18 +1426,24 @@ export async function processInstagramDmWebhook(params: {
     ) {
       // RBH-18/19: Pricing during intake — deterministic fee + localized continue line; optional AI bridge (env).
       dmRoutingBranch = 'fee_deterministic_mid_collection';
+      const feeThreadMid = buildFeeCatalogMatchText(text, recentMessages);
+      const midFeeOut = composeMidCollectionFeeQuoteDmWithMeta(doctorSettings, text, {
+        collectedFields: state.collectedFields,
+        catalogMatchText: feeThreadMid,
+      });
       replyText = await appendOptionalDmReplyBridge({
         correlationId,
         userText: text,
-        baseReply: composeMidCollectionFeeQuoteDm(doctorSettings, text, {
-          collectedFields: state.collectedFields,
-        }),
+        baseReply: midFeeOut.reply,
       });
       state = {
         ...state,
         lastIntent: intentResult.intent,
         updatedAt: new Date().toISOString(),
       };
+      if (midFeeOut.feeQuoteMatcherFinalize) {
+        state = mergeFeeQuoteMatcherIntoState(state, midFeeOut.feeQuoteMatcherFinalize);
+      }
       await updateConversationState(conversation.id, state, correlationId);
     } else if (
       signalsFeePricing &&
@@ -1411,7 +1453,11 @@ export async function processInstagramDmWebhook(params: {
     ) {
       // RBH-13 + RBH-18/19: Fee / pricing — structured reply; stay in `responded`, do not start intake.
       dmRoutingBranch = 'fee_deterministic_idle';
-      replyText = composeIdleFeeQuoteDm(doctorSettings, text);
+      const feeThreadIdle = buildFeeCatalogMatchText(text, recentMessages);
+      const idleFeeOut = composeIdleFeeQuoteDmWithMeta(doctorSettings, text, {
+        catalogMatchText: feeThreadIdle,
+      });
+      replyText = idleFeeOut.reply;
       state = {
         ...state,
         lastIntent: intentResult.intent,
@@ -1419,6 +1465,9 @@ export async function processInstagramDmWebhook(params: {
         activeFlow: 'fee_quote',
         updatedAt: new Date().toISOString(),
       };
+      if (idleFeeOut.feeQuoteMatcherFinalize) {
+        state = mergeFeeQuoteMatcherIntoState(state, idleFeeOut.feeQuoteMatcherFinalize);
+      }
       await updateConversationState(conversation.id, state, correlationId);
     } else if (
       intentResult.intent === 'greeting' &&
@@ -1589,6 +1638,7 @@ export async function processInstagramDmWebhook(params: {
           pendingSelfBooking: true,
           pendingOtherBooking: undefined,
           bookingForPatientId: undefined,
+          lastMedicalDeflectionAt: undefined,
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
@@ -1607,6 +1657,7 @@ export async function processInstagramDmWebhook(params: {
           bookingForSomeoneElse: true,
           relation,
           bookingForPatientId: undefined,
+          lastMedicalDeflectionAt: undefined,
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
@@ -1885,6 +1936,7 @@ export async function processInstagramDmWebhook(params: {
           ...state,
           step: 'collecting_all',
           collectedFields: [],
+          lastMedicalDeflectionAt: undefined,
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
@@ -1919,6 +1971,7 @@ export async function processInstagramDmWebhook(params: {
           bookingForSomeoneElse: false,
           pendingSelfBooking: false,
           pendingOtherBooking: { relation },
+          lastMedicalDeflectionAt: undefined,
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
@@ -2194,7 +2247,11 @@ export async function processInstagramDmWebhook(params: {
     ) {
       // RBH-13/19: "How much..." misclassified as book_appointment with empty step - fee answer, not intake.
       dmRoutingBranch = 'fee_book_misclassified_idle';
-      replyText = composeIdleFeeQuoteDm(doctorSettings, text);
+      const feeThreadBookMis = buildFeeCatalogMatchText(text, recentMessages);
+      const misFeeOut = composeIdleFeeQuoteDmWithMeta(doctorSettings, text, {
+        catalogMatchText: feeThreadBookMis,
+      });
+      replyText = misFeeOut.reply;
       state = {
         ...state,
         lastIntent: intentResult.intent,
@@ -2202,6 +2259,9 @@ export async function processInstagramDmWebhook(params: {
         activeFlow: 'fee_quote',
         updatedAt: new Date().toISOString(),
       };
+      if (misFeeOut.feeQuoteMatcherFinalize) {
+        state = mergeFeeQuoteMatcherIntoState(state, misFeeOut.feeQuoteMatcherFinalize);
+      }
       await updateConversationState(conversation.id, state, correlationId);
     } else if (isBookIntent && (justStartingCollection || inCollection)) {
       // Note: consent, confirm_details, collecting_all are handled above (regardless of intent).
@@ -2212,6 +2272,7 @@ export async function processInstagramDmWebhook(params: {
           lastIntent: intentResult.intent,
           step: getInitialCollectionStep(),
           collectedFields: [],
+          lastMedicalDeflectionAt: undefined,
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
@@ -2266,6 +2327,7 @@ export async function processInstagramDmWebhook(params: {
           relation,
           pendingOtherBooking: undefined,
           bookingForPatientId: undefined,
+          lastMedicalDeflectionAt: undefined,
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
@@ -2280,6 +2342,7 @@ export async function processInstagramDmWebhook(params: {
           collectedFields: [],
           pendingSelfBooking: false,
           bookingForPatientId: undefined,
+          lastMedicalDeflectionAt: undefined,
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
@@ -2322,7 +2385,11 @@ export async function processInstagramDmWebhook(params: {
       const pricingOnly = signalsFeePricing && !explicitBook;
 
       if (!hasPatientReady && pricingOnly) {
-        replyText = composeIdleFeeQuoteDm(doctorSettings, text);
+        const feeThreadBook = buildFeeCatalogMatchText(text, recentMessages);
+        const bookIdleFeeOut = composeIdleFeeQuoteDmWithMeta(doctorSettings, text, {
+          catalogMatchText: feeThreadBook,
+        });
+        replyText = bookIdleFeeOut.reply;
         state = {
           ...state,
           lastIntent: intentResult.intent,
@@ -2330,6 +2397,9 @@ export async function processInstagramDmWebhook(params: {
           activeFlow: 'fee_quote',
           updatedAt: new Date().toISOString(),
         };
+        if (bookIdleFeeOut.feeQuoteMatcherFinalize) {
+          state = mergeFeeQuoteMatcherIntoState(state, bookIdleFeeOut.feeQuoteMatcherFinalize);
+        }
       } else if (hasPatientReady) {
         if (isSlotBookingBlockedPendingStaffReview(state)) {
           const gate = transitionToAwaitingStaffServiceConfirmation(
@@ -2360,6 +2430,7 @@ export async function processInstagramDmWebhook(params: {
           step: getInitialCollectionStep(),
           collectedFields: [],
           activeFlow: undefined,
+          lastMedicalDeflectionAt: undefined,
           updatedAt: new Date().toISOString(),
         };
         const practiceName = doctorContext?.practice_name?.trim() || 'the clinic';

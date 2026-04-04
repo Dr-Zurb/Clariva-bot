@@ -7,8 +7,9 @@ import type { DoctorSettingsRow } from '../types/doctor-settings';
 import { detectSafetyMessageLocale } from './safety-messages';
 import type { SafetyMessageLocale } from './safety-messages';
 import {
+  type ConsultationFeeQuoteMatcherFinalize,
   type ConsultationFeesDmSettings,
-  formatConsultationFeesForDm,
+  formatConsultationFeesForDmWithMeta,
   formatFeeBookingCtaForDm,
 } from './consultation-fees';
 import type { PatientCollectionField } from './validation';
@@ -65,31 +66,63 @@ export function feeQuoteSettingsFromDoctorRow(
 /** Idle user (not in intake): fee block + localized booking CTA. */
 export function composeIdleFeeQuoteDm(
   settings: DoctorSettingsRow | null,
-  userText: string
+  userText: string,
+  opts?: { catalogMatchText?: string }
 ): string {
-  const fee = formatConsultationFeesForDm(feeQuoteSettingsFromDoctorRow(settings), userText);
-  return composeDmReplySegments([
-    { kind: 'fee_body', markdown: fee },
-    { kind: 'booking_cta', userText },
-  ]);
+  return composeIdleFeeQuoteDmWithMeta(settings, userText, opts).reply;
+}
+
+/** e-task-dm-02: includes optional high-confidence catalog finalize from thread-aware narrowing. */
+export function composeIdleFeeQuoteDmWithMeta(
+  settings: DoctorSettingsRow | null,
+  userText: string,
+  opts?: { catalogMatchText?: string }
+): { reply: string; feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize } {
+  const fee = formatConsultationFeesForDmWithMeta(
+    feeQuoteSettingsFromDoctorRow(settings),
+    userText,
+    opts?.catalogMatchText
+  );
+  return {
+    reply: composeDmReplySegments([
+      { kind: 'fee_body', markdown: fee.markdown },
+      { kind: 'booking_cta', userText },
+    ]),
+    feeQuoteMatcherFinalize: fee.feeQuoteMatcherFinalize,
+  };
 }
 
 /** Mid-intake pricing: fee block + localized “continue sharing details” (+ optional missing fields). */
 export function composeMidCollectionFeeQuoteDm(
   settings: DoctorSettingsRow | null,
   userText: string,
-  opts?: { collectedFields?: string[] | null }
+  opts?: { collectedFields?: string[] | null; catalogMatchText?: string }
 ): string {
-  const fee = formatConsultationFeesForDm(feeQuoteSettingsFromDoctorRow(settings), userText);
+  return composeMidCollectionFeeQuoteDmWithMeta(settings, userText, opts).reply;
+}
+
+export function composeMidCollectionFeeQuoteDmWithMeta(
+  settings: DoctorSettingsRow | null,
+  userText: string,
+  opts?: { collectedFields?: string[] | null; catalogMatchText?: string }
+): { reply: string; feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize } {
+  const fee = formatConsultationFeesForDmWithMeta(
+    feeQuoteSettingsFromDoctorRow(settings),
+    userText,
+    opts?.catalogMatchText
+  );
   const missing = computeMissingCollectionFields(opts?.collectedFields);
-  return composeDmReplySegments([
-    { kind: 'fee_body', markdown: fee },
-    {
-      kind: 'mid_collection_continue',
-      userText,
-      missingFieldKeys: missing.length > 0 ? missing : undefined,
-    },
-  ]);
+  return {
+    reply: composeDmReplySegments([
+      { kind: 'fee_body', markdown: fee.markdown },
+      {
+        kind: 'mid_collection_continue',
+        userText,
+        missingFieldKeys: missing.length > 0 ? missing : undefined,
+      },
+    ]),
+    feeQuoteMatcherFinalize: fee.feeQuoteMatcherFinalize,
+  };
 }
 
 function computeMissingCollectionFields(

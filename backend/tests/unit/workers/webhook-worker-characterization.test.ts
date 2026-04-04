@@ -126,6 +126,9 @@ jest.mock('../../../src/services/ai-service', () => ({
   AI_RECENT_MESSAGES_LIMIT: 30,
   buildClassifyIntentContext: jest.fn().mockReturnValue(undefined),
   applyIntentPostClassificationPolicy: jest.fn((r: { intent: string; confidence: number }) => r),
+  intentSignalsFeeOrPricing: (
+    jest.requireActual('../../../src/services/ai-service') as typeof import('../../../src/services/ai-service')
+  ).intentSignalsFeeOrPricing,
 }));
 jest.mock('../../../src/services/action-executor-service', () => ({
   executeAction: jest.fn(),
@@ -363,6 +366,102 @@ describe('RBH-02 webhook worker characterization', () => {
         'corr-consent'
       );
       expect(mockMarkProcessed).toHaveBeenCalledWith('evt-consent-1', 'instagram');
+    });
+
+    it('unclear consent (e.g. skip-extras) still persists and sends booking URL', async () => {
+      jest.mocked(conversationService.getConversationState).mockResolvedValue({
+        step: 'consent',
+        bookingForSomeoneElse: false,
+        collectedFields: [],
+        updatedAt: new Date().toISOString(),
+      } as never);
+      jest.mocked(messageService.getRecentMessages).mockResolvedValue([
+        {
+          sender_type: 'system',
+          content: 'Do I have your consent to use these details? Reply yes to continue. Anything else to add?',
+        },
+      ] as never);
+      jest.mocked(consentService.parseConsentReply).mockReturnValue('unclear' as never);
+      jest.mocked(collectionService.getCollectedData).mockResolvedValue({
+        name: 'Test Patient',
+        phone: '5550001234',
+        reason_for_visit: 'annual check',
+      } as never);
+      jest.mocked(consentService.persistPatientAfterConsent).mockResolvedValue({ success: true } as never);
+      jest.mocked(patientService.findPatientByIdWithAdmin).mockResolvedValue({
+        medical_record_number: 'MRN-CH',
+      } as never);
+      jest.mocked(aiService.classifyIntent).mockResolvedValue({ intent: 'greeting', confidence: 1 } as never);
+
+      await processWebhookJob(
+        fakeJob({
+          eventId: 'evt-consent-unclear',
+          provider: 'instagram',
+          payload: dmPayload('nothing'),
+          correlationId: 'corr-consent-u',
+        })
+      );
+
+      expect(consentService.persistPatientAfterConsent).toHaveBeenCalled();
+      expect(slotSelectionService.buildBookingPageUrl).toHaveBeenCalledWith(TEST_CONV_ID, TEST_DOCTOR_ID);
+      expect(mockSendMessage).toHaveBeenCalledWith(
+        '987654321012345',
+        expect.stringContaining('https://book.test/link'),
+        'corr-consent-u',
+        'doctor-token'
+      );
+      expect(conversationService.updateConversationState).toHaveBeenCalledWith(
+        TEST_CONV_ID,
+        expect.objectContaining({ step: 'awaiting_slot_selection' }),
+        'corr-consent-u'
+      );
+    });
+  });
+
+  describe('DM: confirm_details yes → consent (self booking)', () => {
+    it('user confirms details; state moves to consent with extras prompt', async () => {
+      jest.mocked(conversationService.getConversationState).mockResolvedValue({
+        step: 'confirm_details',
+        bookingForSomeoneElse: false,
+        collectedFields: ['name', 'phone', 'age', 'gender', 'reason_for_visit'],
+        updatedAt: new Date().toISOString(),
+      } as never);
+      jest.mocked(messageService.getRecentMessages).mockResolvedValue([
+        {
+          sender_type: 'system',
+          content: 'Before we continue, please confirm these details are correct. Reply yes to proceed.',
+        },
+      ] as never);
+      jest.mocked(collectionService.getCollectedData).mockResolvedValue({
+        name: 'Test Patient',
+        phone: '5550001234',
+        age: 40,
+        gender: 'female',
+        reason_for_visit: 'annual check',
+      } as never);
+      jest.mocked(aiService.classifyIntent).mockResolvedValue({ intent: 'book_appointment', confidence: 1 } as never);
+
+      await processWebhookJob(
+        fakeJob({
+          eventId: 'evt-confirm-yes',
+          provider: 'instagram',
+          payload: dmPayload('yes'),
+          correlationId: 'corr-confirm',
+        })
+      );
+
+      expect(conversationService.updateConversationState).toHaveBeenCalledWith(
+        TEST_CONV_ID,
+        expect.objectContaining({ step: 'consent' }),
+        'corr-confirm'
+      );
+      expect(mockSendMessage).toHaveBeenCalledWith(
+        '987654321012345',
+        expect.stringMatching(/Anything else|extras/i),
+        'corr-confirm',
+        'doctor-token'
+      );
+      expect(mockMarkProcessed).toHaveBeenCalledWith('evt-confirm-yes', 'instagram');
     });
   });
 

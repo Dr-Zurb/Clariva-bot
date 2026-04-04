@@ -16,7 +16,7 @@ import type {
   CommentIntentDetectionResult,
 } from '../types/ai';
 import { toIntent, toCommentIntent, isIntentTopic } from '../types/ai';
-import type { ConversationState } from '../types/conversation';
+import { isRecentMedicalDeflectionWindow, type ConversationState } from '../types/conversation';
 import type { Message } from '../types';
 import type { AIResponseWithActions, ToolCallFromAI } from '../types/system-actions';
 import { logAIClassification, logAIResponseGeneration, logAuditEvent } from '../utils/audit-logger';
@@ -488,7 +488,7 @@ export interface ClassifyIntentContext {
   /** assistant | user turns, oldest first */
   recentTurns?: { role: 'user' | 'assistant'; content: string }[];
   /** Active sub-flow from conversation metadata */
-  conversationGoal?: 'fee_quote';
+  conversationGoal?: 'fee_quote' | 'post_medical_deflection';
 }
 
 const CLASSIFY_INTENT_MAX_PRIOR_TURNS = 6;
@@ -505,6 +505,12 @@ export function buildClassifyIntentContext(
   const maxTurns = options?.maxTurns ?? CLASSIFY_INTENT_MAX_PRIOR_TURNS;
   const feeThread =
     state.activeFlow === 'fee_quote' || state.lastPromptKind === 'fee_quote';
+  const postMedical = !feeThread && isRecentMedicalDeflectionWindow(state);
+  const conversationGoal = feeThread
+    ? ('fee_quote' as const)
+    : postMedical
+      ? ('post_medical_deflection' as const)
+      : undefined;
   const turns = recentMessages
     .slice(-maxTurns)
     .map((m) => ({
@@ -514,7 +520,6 @@ export function buildClassifyIntentContext(
         .trim(),
     }))
     .filter((t) => t.content.length > 0);
-  const conversationGoal = feeThread ? ('fee_quote' as const) : undefined;
   if (!conversationGoal && turns.length === 0) return undefined;
   return {
     conversationGoal,
@@ -528,7 +533,9 @@ function buildIntentClassificationUserContent(
 ): string {
   if (
     !ctx ||
-    (!ctx.recentTurns?.length && ctx.conversationGoal !== 'fee_quote')
+    (!ctx.recentTurns?.length &&
+      ctx.conversationGoal !== 'fee_quote' &&
+      ctx.conversationGoal !== 'post_medical_deflection')
   ) {
     return redactedCurrent;
   }
@@ -536,6 +543,11 @@ function buildIntentClassificationUserContent(
   if (ctx.conversationGoal === 'fee_quote') {
     blocks.push(
       '[Conversation context: The assistant is discussing consultation fees or pricing with this user. Short follow-ups that only name or clarify a visit type/channel (e.g. "general consultation", "video please") are ask_question, not book_appointment, unless they clearly ask to book or schedule.]'
+    );
+  }
+  if (ctx.conversationGoal === 'post_medical_deflection') {
+    blocks.push(
+      '[Conversation context: The user recently received a brief safety message that specific health questions cannot be diagnosed in chat. Follow-ups about booking, fees, hours, or general practice logistics are appropriate; do not give diagnoses, treatment advice, or triage as if you were a clinician.]'
     );
   }
   if (ctx.recentTurns?.length) {
@@ -551,6 +563,7 @@ function classifyIntentUsesContext(ctx: ClassifyIntentContext | undefined): bool
   if (!ctx) return false;
   return (
     ctx.conversationGoal === 'fee_quote' ||
+    ctx.conversationGoal === 'post_medical_deflection' ||
     (ctx.recentTurns !== undefined && ctx.recentTurns.length > 0)
   );
 }
@@ -978,6 +991,11 @@ export interface GenerateResponseContext {
   relation?: string;
   /** True when collecting for another person */
   bookingForSomeoneElse?: boolean;
+  /**
+   * e-task-dm-03: Idle-thread hint (pre-redacted / static). Appended to system context for
+   * responded / fee / post-safety turns so the model keeps continuity without duplicating PHI.
+   */
+  idleDialogueHint?: string;
 }
 
 export interface GenerateResponseInput {
@@ -1128,6 +1146,9 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
     contextParts.push(`Booking for user's ${aiContext.relation}. Use "your ${aiContext.relation}" or "for them" in replies.`);
   } else if (aiContext?.bookingForSomeoneElse) {
     contextParts.push(`Booking for someone else (relation not specified). Use "for them" in replies.`);
+  }
+  if (aiContext?.idleDialogueHint?.trim()) {
+    contextParts.push(aiContext.idleDialogueHint.trim());
   }
   const aiContextBlock = contextParts.length > 0 ? `\n\nContext: ${contextParts.join(' ')}` : '';
   const collectingAllHint =

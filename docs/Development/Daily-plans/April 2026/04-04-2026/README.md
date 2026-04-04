@@ -10,7 +10,7 @@
 | [tasks/e-task-dm-02-thread-aware-fee-catalog.md](./tasks/e-task-dm-02-thread-aware-fee-catalog.md) | Thread-aware pricing + catalog match (NCD vs full menu, general vs blood sugar) | Pending |
 | [tasks/e-task-dm-03-turncontext-memory-layer.md](./tasks/e-task-dm-03-turncontext-memory-layer.md) | Context-first pipeline: TurnContext, state memory, formatter alignment | Pending |
 | [tasks/e-task-doc-02-capture-inbox-system.md](./tasks/e-task-doc-02-capture-inbox-system.md) | `docs/capture/` inbox + Cursor rule | Shipped |
-| [tasks/e-task-ops-01-ncd-catalog-hints.md](./tasks/e-task-ops-01-ncd-catalog-hints.md) | Practice admin: NCD matcher hints (keywords / book when) | Pending (ops + validation) |
+| [tasks/e-task-ops-01-ncd-catalog-hints.md](./tasks/e-task-ops-01-ncd-catalog-hints.md) | Practice admin: fill `matcher_hints` per row—runbook + UI guidance shipped | Done (repo); per-practice data + staging per runbook |
 
 ## References
 

@@ -15,17 +15,17 @@ This task defines a **context-first** approach:
 3. **Persist** small, policy-safe handles after key turns (e.g. after `medical_query` detection, store a **non-diagnostic** routing phrase for the next user message so pricing can narrow services without re-reading full history if needed — exact fields subject to design review).
 
 **Estimated Time:** 3–5 days  
-**Status:** ⏳ **PENDING**
+**Status:** ✅ **IMPLEMENTED** (core slice: turn helper, deflection memory, classify + idle generate context)
 
 **Change Type:**
 - [x] **Update existing** — webhook orchestration, context builders, optional `ConversationState` fields
 
 **Current State:**
 - ✅ `generateResponse` builds chat **history** from `recentMessages` (capped).
-- ✅ `buildClassifyIntentContext` supplies **prior turns** + fee-thread hint for classification.
-- ⚠️ `buildAiContextForResponse` **short-circuits** to `{}` outside collection/consent/confirm/match steps.
-- ⚠️ `medical_query` path updates intent + `responded` but does **not** attach a durable routing handle for follow-up pricing/booking.
-- ❌ No single **TurnContext** type or helper consumed by all branches.
+- ✅ `buildClassifyIntentContext` supplies **prior turns** + fee-thread hint + **`post_medical_deflection`** when `lastMedicalDeflectionAt` is in TTL.
+- ✅ `buildAiContextForResponse` supplies **`lastBotMessage`** + **`idleDialogueHint`** on idle / responded turns (fee + post-deflection); full collection summary unchanged when in intake.
+- ✅ `medical_query` (idle) sets **`lastMedicalDeflectionAt`**; cleared when starting fresh collection.
+- ✅ Shared **`buildFeeCatalogMatchText`** in `dm-turn-context.ts` for fee/matcher inputs (`buildDmTurnContext` for consumers that want the full turn package).
 
 **Dependencies:** Strongly coupled with **e-task-dm-02** (fee + matcher inputs).
 
@@ -38,25 +38,25 @@ This task defines a **context-first** approach:
 ## ✅ Task Breakdown
 
 ### 1. Design (what, not how — details in RECIPES/ARCHITECTURE after approval)
-- [ ] 1.1 List **all** webhook branches that currently use **only** `text` where thread or state should matter.
-- [ ] 1.2 Decide **minimal** state fields for “conversation gist” (chief complaint handle, tentative service, dialogue goal) and **retention rules** (TTL, clear on book complete, privacy review).
+- [x] 1.1 List **all** webhook branches that currently use **only** `text` where thread or state should matter. *(Initial slice: fee paths + classify/generate; inventory in RECIPES.)*
+- [x] 1.2 Decide **minimal** state fields — **`lastMedicalDeflectionAt`** + 48h TTL; cleared on collection start.
 
 ### 2. Turn assembly
-- [ ] 2.1 Implement **one** per-message assembly entry point used by the Instagram DM worker (name and module TBD in implementation phase).
-- [ ] 2.2 Ensure **redaction** parity with existing AI and logging rules.
+- [x] 2.1 **`backend/src/utils/dm-turn-context.ts`** — `buildFeeCatalogMatchText`, `buildDmTurnContext`.
+- [x] 2.2 **Redaction** via `redactPhiForAI` (same as prior inline helper).
 
 ### 3. Wire consumers
-- [ ] 3.1 Pass assembly output into **fee** paths (idle + mid-collection).
-- [ ] 3.2 Pass into **catalog matcher** when narrowing or booking.
-- [ ] 3.3 Extend **buildAiContextForResponse** (or successor) so **idle / fee_quote / responded** turns still receive **last bot ask** + **missing** cues when product requires — without duplicating PHI in prompts.
+- [x] 3.1 Fee idle + mid-collection + misclassified book use **`buildFeeCatalogMatchText`**.
+- [x] 3.2 Matcher inputs use the same redacted thread string as 3.1.
+- [x] 3.3 **`buildAiContextForResponse`** — idle turns get **`lastBotMessage`** + **`idleDialogueHint`**; intake turns unchanged.
 
 ### 4. Medical deflection handoff
-- [ ] 4.1 After `medical_query` template reply, update state with **routing-safe** summary for next turns (coordinate with compliance — no diagnostic content in state if policy forbids).
+- [x] 4.1 **`lastMedicalDeflectionAt`** set on idle `medical_query`; classify + generate hints; **no diagnostic text** in metadata.
 
 ### 5. Verification
-- [ ] 5.1 Regression tests: multi-turn “symptom mention → short follow-up” still routes correctly.
-- [ ] 5.2 Logs: no PHI leaks; correlation IDs only on metadata events.
-- [ ] 5.3 Update **RECIPES** / troubleshooting doc for “context-first” DM behavior.
+- [x] 5.1 Unit tests: `buildClassifyIntentContext`, `dm-turn-context`, `isRecentMedicalDeflectionWindow`, `generateResponse` idle hint.
+- [x] 5.2 No logging changes; state field is timestamp-only.
+- [x] 5.3 **RECIPES.md** — Instagram DM context-first paragraph.
 
 ---
 
@@ -89,9 +89,9 @@ This task defines a **context-first** approach:
 
 ## ✅ Acceptance & Verification Criteria
 
-- [ ] Deterministic paths that should “remember” the thread demonstrably use the **same** context package as classification/matcher inputs in acceptance scenarios.
-- [ ] Documented **clear** behavior when user clears topic or starts a new request.
-- [ ] Definition of done per [DEFINITION_OF_DONE.md](../../../../../Reference/DEFINITION_OF_DONE.md) if referenced in repo.
+- [x] Fee deterministic paths use **`buildFeeCatalogMatchText`** (aligned with redacted thread pattern used for classification).
+- [x] **Clear** deflection memory: TTL + explicit clear when intake starts (`lastMedicalDeflectionAt: undefined`).
+- [ ] Broader branch audit (non-fee paths still on `text` only) — follow-up if product expands “gist” beyond deflection timestamp.
 
 ---
 

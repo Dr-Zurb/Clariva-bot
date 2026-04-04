@@ -228,13 +228,14 @@ export function ServiceOfferingDetailDrawer({
               <p className="text-xs font-semibold text-violet-950">Matching hints (optional)</p>
               <p className="text-[11px] leading-snug text-violet-900/85">
                 Optional hints for the assistant so patient questions line up with the right service. Not shown in
-                patient fee messages. Add keywords and short rules in plain language — never put patient names or PHI
-                here.
+                patient fee messages. Use words patients actually type (e.g. blood sugar, diabetes, high BP)—not only
+                clinical abbreviations—unless your patients use those abbreviations too. Short rules in plain language;
+                never put patient names or PHI here.
               </p>
               <div className="min-w-0">
                 <FieldLabel
                   htmlFor={`drawer-svc-mkw-${s.id}`}
-                  tooltip="Synonyms or phrases, e.g. skin rash, eczema, acne, mole check"
+                  tooltip="Synonyms patients might type—e.g. skin rash, eczema; or for chronic care: blood sugar, diabetes, high BP, hypertension"
                 >
                   Keywords / synonyms
                 </FieldLabel>
@@ -247,7 +248,7 @@ export function ServiceOfferingDetailDrawer({
                   rows={2}
                   maxLength={400}
                   wrap="soft"
-                  placeholder="e.g. fever 3 days, diabetes follow-up, dressing change"
+                  placeholder="e.g. fever 3 days, blood sugar, diabetes follow-up, high BP, dressing change"
                   className="mt-0.5 w-full resize-y rounded-md border border-violet-200/80 bg-white px-2 py-1.5 text-sm leading-snug"
                 />
               </div>
