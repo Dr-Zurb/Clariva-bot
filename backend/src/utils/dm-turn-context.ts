@@ -6,6 +6,7 @@
 import { redactPhiForAI } from '../services/ai-service';
 import type { ConversationState } from '../types/conversation';
 import { isRecentMedicalDeflectionWindow } from '../types/conversation';
+import { shouldOmitPatientLineFromFeeCatalogMatchContent } from './reason-first-triage';
 
 export interface DmTurnContext {
   /** Redacted patient lines + current message for teleconsult fee catalog narrowing. */
@@ -24,10 +25,15 @@ export function buildFeeCatalogMatchText(text: string, recentMessages: RecentDmM
   for (const m of recentMessages) {
     if (m.sender_type !== 'patient') continue;
     const c = typeof m.content === 'string' ? m.content.trim() : '';
-    if (c) lines.push(c);
+    if (c && !shouldOmitPatientLineFromFeeCatalogMatchContent(c)) lines.push(c);
   }
   const t = text.trim();
-  if (t && lines[lines.length - 1] !== t && !lines.includes(t)) {
+  if (
+    t &&
+    !shouldOmitPatientLineFromFeeCatalogMatchContent(t) &&
+    lines[lines.length - 1] !== t &&
+    !lines.includes(t)
+  ) {
     lines.push(t);
   }
   const raw = lines.join('\n').trim();

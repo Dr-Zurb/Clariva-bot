@@ -92,6 +92,13 @@ export function userWantsExplicitFullFeeList(text: string): boolean {
 const AMOUNT_SEEKING_PRICING_RE =
   /\b(how\s+much|how\s+many\s+rupees|what\s*('|’)?s\s+the\s+(fee|price|cost|charge|amount|payment\b)|what\s+(is|are)\s+the\s+(fee|fees|price|prices|charges)|kitna|kitne|kitni|कितना|exact(\s+(fee|price|amount))?|breakdown|quote|fee\s+for|price\s+for)\b/i;
 
+/** Amount-seeking during reason-first triage — route to narrow fee, not ask-more patience loop (e-task-dm-05). */
+export function isAmountSeekingPricingQuestion(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 3) return false;
+  return AMOUNT_SEEKING_PRICING_RE.test(t);
+}
+
 /**
  * “Do I have to pay?” style — **yes/no fee existence**, not “how much?” (handled by reason-first after ack).
  */
@@ -108,6 +115,19 @@ export function isVagueConsultationPaymentExistenceQuestion(text: string): boole
     /\b(is\s+there\s+(a\s+)?(fee|charge|payment)|is\s+it\s+(paid|free))\b/i.test(t) ||
     /\b(am\s+i\s+supposed\s+to\s+pay|do\s+i\s+pay)\b/i.test(t)
   );
+}
+
+/**
+ * Patient line should not inflate fee matcher / reason summary — pricing-only lines without clinical cues
+ * in the same message (e.g. "how much do I pay?" after symptoms).
+ */
+export function shouldOmitPatientLineFromFeeCatalogMatchContent(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  if (userMessageSuggestsClinicalReason(t)) return false;
+  if (isVagueConsultationPaymentExistenceQuestion(t)) return true;
+  if (isPricingInquiryMessage(t)) return true;
+  return false;
 }
 
 export function shouldDeferIdleFeeForReasonFirstTriage(params: {
@@ -150,6 +170,7 @@ export function parseReasonTriageConfirmYes(text: string): boolean {
   const t = text.trim();
   if (t.length < 2) return false;
   if (isPricingInquiryMessage(t)) return false;
+  if (isAmountSeekingPricingQuestion(t)) return false;
   return CONFIRM_YES_RE.test(t);
 }
 
@@ -174,10 +195,18 @@ export function buildConsolidatedReasonSnippetFromMessages(
   for (const m of recentMessages) {
     if (m.sender_type !== 'patient') continue;
     const c = (m.content ?? '').trim();
-    if (c && !parts.includes(c)) parts.push(c);
+    if (!c || shouldOmitPatientLineFromFeeCatalogMatchContent(c)) continue;
+    if (!parts.includes(c)) parts.push(c);
   }
   const cur = currentText.trim();
-  if (cur && !parts.includes(cur)) parts.push(cur);
+  if (
+    cur &&
+    !parseNothingElseOrSameOnly(cur) &&
+    !shouldOmitPatientLineFromFeeCatalogMatchContent(cur) &&
+    !parts.includes(cur)
+  ) {
+    parts.push(cur);
+  }
   let out = parts.join(' ').replace(/\s+/g, ' ').trim();
   if (out.length > SNIPPET_MAX) out = `${out.slice(0, SNIPPET_MAX - 1).trimEnd()}…`;
   return out || 'what you shared';

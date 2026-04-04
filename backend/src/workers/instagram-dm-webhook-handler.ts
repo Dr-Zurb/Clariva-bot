@@ -137,6 +137,7 @@ import {
   buildConsolidatedReasonSnippetFromMessages,
   clinicalLedFeeThread,
   feeFollowUpAnaphora,
+  isAmountSeekingPricingQuestion,
   formatPostMedicalPaymentExistenceAck,
   formatReasonFirstAskMoreQuestion,
   formatReasonFirstConfirmClarify,
@@ -1596,7 +1597,14 @@ export async function processInstagramDmWebhook(params: {
       if (userWantsExplicitFullFeeList(text)) {
         runReasonFirstFullFeeEscape();
       } else if (state.reasonFirstTriagePhase === 'ask_more') {
-        if (signalsFeePricing && !userExplicitlyWantsToBookNow(text)) {
+        const narrowFeeFromAskMore =
+          signalsFeePricing &&
+          !userExplicitlyWantsToBookNow(text) &&
+          (isAmountSeekingPricingQuestion(text) ||
+            feeFollowUpAnaphora(text, lastAssistantRawForFee));
+        if (narrowFeeFromAskMore) {
+          runReasonFirstFeeNarrowFromTriage();
+        } else if (signalsFeePricing && !userExplicitlyWantsToBookNow(text)) {
           dmRoutingBranch = 'reason_first_triage_ask_more_payment_bridge';
           replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(text);
           state = {

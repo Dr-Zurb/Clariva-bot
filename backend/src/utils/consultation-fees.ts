@@ -221,6 +221,16 @@ const MODALITY_DM_LABEL: Record<'text' | 'voice' | 'video', string> = {
   video: 'Video',
 };
 
+/** Prefer text → voice → video for clinical-led single-line fee (e-task-dm-05). */
+function pickDefaultNarrowModalityForDm(
+  offering: ServiceCatalogV1['services'][number]
+): 'text' | 'voice' | 'video' | undefined {
+  for (const mod of ['text', 'voice', 'video'] as const) {
+    if (offering.modalities[mod]?.enabled === true) return mod;
+  }
+  return undefined;
+}
+
 function formatMinorCurrencyDm(minor: number, currency: string | null | undefined): string {
   const cur = (currency || 'INR').toUpperCase();
   const main = minor / 100;
@@ -265,25 +275,29 @@ function localizeCatalogIntro(practiceName: string, locale: SafetyMessageLocale)
 }
 
 /** e-task-dm-04: intro when exactly one catalog row is shown (reason-first / narrowed thread). */
-function localizeNarrowFeeCatalogIntro(practiceName: string, locale: SafetyMessageLocale): string {
+function localizeNarrowFeeCatalogIntro(
+  practiceName: string,
+  locale: SafetyMessageLocale,
+  withSilentPromise: boolean
+): string {
   const p = practiceName.trim() || 'the practice';
-  /** e-task-dm-05: one-line promise — practice matches visit type; no fee-tier picking in chat. */
+  /** e-task-dm-05: promise paragraph skipped when clinical-led (already shown in triage / payment ack). */
   if (locale === 'hi') {
-    return (
-      'Hum **ki visit type** sahi hai yeh practice aapke concern ke hisaab se **khud match** karti hai — chat mein alag-alag fee options **choose** karne ki zaroorat nahi.\n\n' +
-      `**${p}** — aapne jo bataya uske hisaab se **online / teleconsult** fee (hamare record ke mutabik):\n\n`
-    );
+    const promise =
+      'Hum **ki visit type** sahi hai yeh practice aapke concern ke hisaab se **khud match** karti hai — chat mein alag-alag fee options **choose** karne ki zaroorat nahi.\n\n';
+    const head = `**${p}** — aapne jo bataya uske hisaab se **online / teleconsult** fee (hamare record ke mutabik):\n\n`;
+    return withSilentPromise ? `${promise}${head}` : head;
   }
   if (locale === 'pa') {
-    return (
-      '**Visit type** practice tere concern de mutabik **khud match** kardi — chat vich fee tiers **chun**n di lorh nahi.\n\n' +
-      `**${p}** — jo tu dassya us hisaab naal **online / teleconsult** fee (sade record mutabik):\n\n`
-    );
+    const promise =
+      '**Visit type** practice tere concern de mutabik **khud match** kardi — chat vich fee tiers **chun**n di lorh nahi.\n\n';
+    const head = `**${p}** — jo tu dassya us hisaab naal **online / teleconsult** fee (sade record mutabik):\n\n`;
+    return withSilentPromise ? `${promise}${head}` : head;
   }
-  return (
-    'We match what you describe to the **right visit type** for the practice — you **don’t need to pick fee options** in chat.\n\n' +
-    `Based on what you shared, **teleconsult (online) fees** on file for **${p}** for this visit type:\n\n`
-  );
+  const promise =
+    'We match what you describe to the **right visit type** for the practice — you **don’t need to pick fee options** in chat.\n\n';
+  const head = `Based on what you shared, **teleconsult (online) fees** on file for **${p}** for this visit type:\n\n`;
+  return withSilentPromise ? `${promise}${head}` : head;
 }
 
 /** Patient-visible: competing NCD vs acute/general signals — staff assigns visit type (no fee-tier choice). */
@@ -696,11 +710,27 @@ export function formatServiceCatalogForDmWithMeta(
   }
   const rows = pick.services;
   const feeQuoteMatcherFinalize = pick.feeQuoteMatcherFinalize;
+  const clinicalNarrowSingle =
+    opts?.clinicalLedFeeThread === true &&
+    rows.length === 1 &&
+    rows[0] != null;
   const lines: string[] = [];
 
   for (const s of rows) {
     const modParts: string[] = [];
-    for (const mod of ['text', 'voice', 'video'] as const) {
+    const modalityOrder: readonly ('text' | 'voice' | 'video')[] = clinicalNarrowSingle
+      ? (() => {
+          const chosen =
+            feeQuoteMatcherFinalize?.matcherProposedConsultationModality ??
+            pickSuggestedModality(s) ??
+            pickDefaultNarrowModalityForDm(s);
+          if (chosen && s.modalities[chosen]?.enabled === true) {
+            return [chosen];
+          }
+          return ['text', 'voice', 'video'] as const;
+        })()
+      : (['text', 'voice', 'video'] as const);
+    for (const mod of modalityOrder) {
       const slot = s.modalities[mod];
       if (slot?.enabled === true) {
         const price = `**${MODALITY_DM_LABEL[mod]}**: ${formatMinorCurrencyDm(slot.price_minor, cur)}`;
@@ -722,13 +752,19 @@ export function formatServiceCatalogForDmWithMeta(
 
   const intro =
     rows.length === 1
-      ? localizeNarrowFeeCatalogIntro(practiceName, locale)
+      ? localizeNarrowFeeCatalogIntro(
+          practiceName,
+          locale,
+          opts?.clinicalLedFeeThread !== true
+        )
       : localizeCatalogIntro(practiceName, locale);
   let body = `${intro}${lines.join('\n\n')}`;
 
   /** Catalog path lists text/voice/video only — do not append legacy “in-clinic” flat fee (misleading when teleconsult-only). */
 
-  body += `\n\n${localizeFeeListFooter(locale, hoursSuffix)}`;
+  body += `\n\n${localizeFeeListFooter(locale, hoursSuffix, {
+    omitUnlistedVisitTypeCaveat: clinicalNarrowSingle === true,
+  })}`;
   return {
     markdown: truncateIfNeededDm(body, CONSULTATION_FEE_DM_MAX_CHARS, locale),
     feeQuoteMatcherFinalize,
@@ -962,8 +998,15 @@ function localizeFeeListIntro(practiceName: string, locale: SafetyMessageLocale)
   return `Here are the **consultation fees** we have on file for **${practiceName}**:\n\n`;
 }
 
-function localizeFeeListFooter(locale: SafetyMessageLocale, hoursSuffix: string): string {
+function localizeFeeListFooter(
+  locale: SafetyMessageLocale,
+  hoursSuffix: string,
+  opts?: { omitUnlistedVisitTypeCaveat?: boolean }
+): string {
   const hs = hoursSuffix ? `\n\n${hoursSuffix.trim()}` : '';
+  if (opts?.omitUnlistedVisitTypeCaveat) {
+    return hs ? hs.trimStart() : '';
+  }
   if (locale === 'hi') {
     return `*Agar aapka visit type list me nahi hai, clinic se exact charge confirm karein.*${hs}`;
   }

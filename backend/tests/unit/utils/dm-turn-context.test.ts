@@ -14,10 +14,18 @@ describe('dm-turn-context', () => {
   describe('buildFeeCatalogMatchText', () => {
     it('joins patient lines and appends current text when not duplicate', () => {
       const out = buildFeeCatalogMatchText('video please', [
-        { sender_type: 'patient', content: 'How much for consult?' },
+        { sender_type: 'patient', content: 'blood sugar has been high' },
         { sender_type: 'system', content: 'Here are fees...' },
       ]);
-      expect(out).toContain('How much for consult?');
+      expect(out).toContain('blood sugar');
+      expect(out).toContain('video please');
+    });
+
+    it('drops pricing-only patient lines so matcher focuses on clinical thread (e-task-dm-05)', () => {
+      const out = buildFeeCatalogMatchText('video please', [
+        { sender_type: 'patient', content: 'How much for consult?' },
+      ]);
+      expect(out).not.toContain('How much');
       expect(out).toContain('video please');
     });
 

@@ -3,6 +3,7 @@ import {
   buildConsolidatedReasonSnippetFromMessages,
   clinicalLedFeeThread,
   feeFollowUpAnaphora,
+  isAmountSeekingPricingQuestion,
   isVagueConsultationPaymentExistenceQuestion,
   lastAssistantDmContent,
   parseReasonTriageConfirmYes,
@@ -101,7 +102,7 @@ describe('reason-first-triage', () => {
     expect(parseReasonTriageNegationForClarify('not quite')).toBe(true);
   });
 
-  it('buildConsolidatedReasonSnippetFromMessages joins patient lines and current', () => {
+  it('buildConsolidatedReasonSnippetFromMessages joins clinical patient lines; omits triage fillers and payment lines', () => {
     const s = buildConsolidatedReasonSnippetFromMessages(
       [
         { sender_type: 'patient', content: 'fever' },
@@ -112,7 +113,16 @@ describe('reason-first-triage', () => {
     );
     expect(s).toContain('fever');
     expect(s).toContain('cough');
-    expect(s).toContain('nothing else');
+    expect(s).not.toContain('nothing else');
+    const withPay = buildConsolidatedReasonSnippetFromMessages(
+      [
+        { sender_type: 'patient', content: 'blood sugar 199' },
+        { sender_type: 'patient', content: 'okay how much do i pay?' },
+      ],
+      ''
+    );
+    expect(withPay).toContain('blood sugar');
+    expect(withPay).not.toContain('how much');
   });
 
   it('lastAssistantDmContent returns latest non-patient message with text', () => {
@@ -122,6 +132,11 @@ describe('reason-first-triage', () => {
         { sender_type: 'system', content: 'Consultation fee applies.' },
       ])
     ).toBe('Consultation fee applies.');
+  });
+
+  it('isAmountSeekingPricingQuestion detects how-much without requiring book intent', () => {
+    expect(isAmountSeekingPricingQuestion('okay how much do i pay?')).toBe(true);
+    expect(isAmountSeekingPricingQuestion('so i have to pay first?')).toBe(false);
   });
 
   it('feeFollowUpAnaphora after fee-themed bot turn', () => {
