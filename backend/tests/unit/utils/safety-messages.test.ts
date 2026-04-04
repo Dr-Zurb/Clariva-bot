@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  MEDICAL_QUERY_RESPONSE_EN,
   detectSafetyMessageLocale,
   isEmergencyUserMessage,
   resolveSafetyMessage,
@@ -29,6 +30,20 @@ describe('safety-messages (RBH-15)', () => {
 
     it('defaults to English', () => {
       expect(detectSafetyMessageLocale('I have a headache')).toBe('en');
+    });
+
+    it('does not treat English “doc” (doctor) as Hinglish — regression (DM English message → Hindi deflection)', () => {
+      const msg =
+        'hello how are you doc , so i checked my blood sugar today on empty stomach , its high , 199 , how do i manage , please guide me';
+      expect(detectSafetyMessageLocale(msg)).toBe('en');
+    });
+
+    it('still treats sans nahi as Hinglish breath distress', () => {
+      expect(detectSafetyMessageLocale('sans nahi aa rahi')).toBe('hi');
+    });
+
+    it('does not treat typography “sans” alone as Hindi', () => {
+      expect(detectSafetyMessageLocale('Use Comic Sans for the poster')).toBe('en');
     });
   });
 
@@ -70,6 +85,13 @@ describe('safety-messages (RBH-15)', () => {
       expect(msg.toLowerCase()).toContain('main');
       expect(msg.toLowerCase()).toMatch(/appointment|doctor|book|teleconsult|visit/);
       expect(msg).not.toContain("I'm the scheduling assistant");
+    });
+
+    it('returns English medical_query when user writes English including “doc”', () => {
+      const userText =
+        'hello how are you doc , so i checked my blood sugar today on empty stomach , its high , 199 , how do i manage , please guide me';
+      const msg = resolveSafetyMessage('medical_query', userText);
+      expect(msg).toBe(MEDICAL_QUERY_RESPONSE_EN);
     });
   });
 

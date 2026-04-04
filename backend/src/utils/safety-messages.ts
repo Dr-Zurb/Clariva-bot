@@ -41,6 +41,10 @@ const EMERGENCY_LATIN_PA =
 
 /**
  * Guess locale from script + common Latin transliterations (no LLM).
+ *
+ * **Patient language rule:** Reply locale follows the patient's message. Avoid false positives:
+ * - Do **not** treat English `doc` (doctor) as Hindi; use real Hinglish/Hindi tokens only.
+ * - Do **not** treat English `sans` (e.g. font names) as `saans`; breath is usually `saans` / `saas` + context.
  */
 export function detectSafetyMessageLocale(raw: string): SafetyMessageLocale {
   const t = raw.trim();
@@ -60,11 +64,12 @@ export function detectSafetyMessageLocale(raw: string): SafetyMessageLocale {
   }
   // Latin Hindi / Hinglish markers (incl. fee questions: kitni fees, acha kitna, etc.)
   if (
-    /\b(mujhe|mere|mera|meri|kya|hai|hain|nahi|nahin|dard|bukhar|bukhhaar|khansi|khans|jukam|jukaam|saans|sans|chakkar|ulti|tabiyat|beech)\b/i.test(
+    /\b(mujhe|mere|mera|meri|kya|hai|hain|nahi|nahin|dard|bukhar|bukhhaar|khansi|khans|jukam|jukaam|saans|chakkar|ulti|tabiyat|beech)\b/i.test(
       t
     ) ||
+    /\b(saas|saans|sans)\s+nahi\b/i.test(lower) ||
     /\b(pet\s+dard|sir\s+dard|kitni\s+din)\b/i.test(lower) ||
-    /\b(kitni|kitna|kitne|acha|accha|bolo|bhai|yaar|yar|toh|theek|thik|rupaye|rupiya|paise|paisa|zada|zyada|doc|goli|batado|batao|bohut)\b/i.test(
+    /\b(kitni|kitna|kitne|acha|accha|bolo|bhai|yaar|yar|toh|theek|thik|rupaye|rupiya|paise|paisa|zada|zyada|goli|batado|batao|bohut)\b/i.test(
       lower
     )
   ) {
