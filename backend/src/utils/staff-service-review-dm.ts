@@ -61,6 +61,25 @@ export function formatStaffServiceReviewStillPendingDm(
   );
 }
 
+/** After staff confirms or reassigns visit type: patient can open booking page (matches prior “we’ll message you” promise). */
+export function formatStaffReviewResolvedContinueBookingDm(
+  settings: DoctorSettingsRow | null,
+  visitLabel: string,
+  bookingUrl: string,
+  kind: 'confirmed' | 'reassigned'
+): string {
+  const practice = settings?.practice_name?.trim() || 'the clinic';
+  const label = visitLabel.trim() || 'your visit';
+  const intro =
+    kind === 'confirmed'
+      ? `**${practice}** has confirmed your visit type: **${label}**.`
+      : `**${practice}** has updated your visit type to **${label}**.`;
+  return (
+    `${intro} You can **pick a time and complete booking** here — tap to open: ${bookingUrl}\n\n` +
+    `If something looks wrong, just reply here in this chat.`
+  );
+}
+
 /** ARM-08: proactive DM when staff SLA elapsed without confirmation (no charge on this path). */
 export function formatStaffServiceReviewSlaTimeoutDm(settings: DoctorSettingsRow | null): string {
   const practice = settings?.practice_name?.trim() || 'the clinic';

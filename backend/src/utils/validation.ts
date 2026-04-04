@@ -1079,16 +1079,18 @@ export function validatePrescriptionAttachmentParams(params: unknown): Prescript
 
 const SERVICE_STAFF_REVIEW_NOTE_MAX = 2000;
 
-const serviceStaffReviewStatusSchema = z.enum([
+/** List inbox: `cancelled` = both staff-cancelled and SLA timeout rows. */
+export const listServiceStaffReviewsQueryStatusSchema = z.enum([
   'pending',
   'confirmed',
   'reassigned',
   'cancelled_by_staff',
   'cancelled_timeout',
+  'cancelled',
 ]);
 
 export const listServiceStaffReviewsQuerySchema = z.object({
-  status: serviceStaffReviewStatusSchema.optional().default('pending'),
+  status: listServiceStaffReviewsQueryStatusSchema.optional().default('pending'),
 });
 
 export type ListServiceStaffReviewsQuery = z.infer<typeof listServiceStaffReviewsQuerySchema>;

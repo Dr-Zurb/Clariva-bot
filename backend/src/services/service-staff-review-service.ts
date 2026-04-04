@@ -8,7 +8,10 @@
 import { getSupabaseAdminClient } from '../config/database';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
-import { formatStaffServiceReviewSlaTimeoutDm } from '../utils/staff-service-review-dm';
+import {
+  formatStaffReviewResolvedContinueBookingDm,
+  formatStaffServiceReviewSlaTimeoutDm,
+} from '../utils/staff-service-review-dm';
 import {
   applyFinalCatalogServiceSelection,
   applyStaffReviewGateCancellationToConversationState,
@@ -28,6 +31,7 @@ import { getDoctorSettings } from './doctor-settings-service';
 import { findServiceOfferingByKey, getActiveServiceCatalog } from '../utils/service-catalog-helpers';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { ConflictError, InternalError, NotFoundError, ValidationError } from '../utils/errors';
+import { buildBookingPageUrl } from './slot-selection-service';
 
 export type ServiceStaffReviewStatus =
   | 'pending'
@@ -334,17 +338,24 @@ export async function upsertPendingStaffServiceReviewRequest(params: {
 export async function listPendingServiceStaffReviewRequestsForDoctor(
   doctorId: string,
   correlationId: string,
-  status: ServiceStaffReviewStatus = 'pending'
+  status: ServiceStaffReviewStatus | ServiceStaffReviewStatus[] = 'pending'
 ): Promise<ServiceStaffReviewRequestRow[]> {
   const admin = getSupabaseAdminClient();
   if (!admin) throw new InternalError('Service role client not available');
 
-  const { data, error } = await admin
+  const statuses = Array.isArray(status) ? status : [status];
+  const pendingOnly = statuses.length === 1 && statuses[0] === 'pending';
+
+  let q = admin
     .from('service_staff_review_requests')
     .select('*')
     .eq('doctor_id', doctorId)
-    .eq('status', status)
-    .order('sla_deadline_at', { ascending: true });
+    .in('status', statuses);
+  q = pendingOnly
+    ? q.order('sla_deadline_at', { ascending: true })
+    : q.order('resolved_at', { ascending: false });
+
+  const { data, error } = await q;
 
   if (error) handleSupabaseError(error, correlationId);
   return (data ?? []) as ServiceStaffReviewRequestRow[];
@@ -367,7 +378,7 @@ function truncateReasonPreview(raw: unknown, max = REASON_PREVIEW_MAX): string |
 export async function listEnrichedServiceStaffReviewsForDoctor(
   doctorId: string,
   correlationId: string,
-  status: ServiceStaffReviewStatus = 'pending'
+  status: ServiceStaffReviewStatus | ServiceStaffReviewStatus[] = 'pending'
 ): Promise<ServiceStaffReviewListItem[]> {
   const rows = await listPendingServiceStaffReviewRequestsForDoctor(doctorId, correlationId, status);
   if (rows.length === 0) return [];
@@ -419,6 +430,76 @@ export async function listEnrichedServiceStaffReviewsForDoctor(
     patient_display_name: r.patient_id ? patientMap.get(r.patient_id) ?? null : null,
     reason_for_visit_preview: reasonMap.get(r.conversation_id) ?? null,
   }));
+}
+
+/**
+ * Instagram: booking link DM after staff confirms or reassigns visit type (best-effort; DB update already succeeded).
+ */
+async function sendInstagramBookingLinkAfterStaffReviewResolution(params: {
+  doctorId: string;
+  conversationId: string;
+  correlationId: string;
+  finalCatalogServiceKey: string;
+  kind: 'confirmed' | 'reassigned';
+}): Promise<void> {
+  const conv = await findConversationById(params.conversationId, params.correlationId);
+  if (!conv || conv.platform !== 'instagram') {
+    logger.info(
+      { correlationId: params.correlationId, conversationId: params.conversationId },
+      'staff_review_resolution_skip_dm_non_ig'
+    );
+    return;
+  }
+  const recipientId = conv.platform_conversation_id?.trim();
+  if (!recipientId) {
+    logger.warn(
+      { correlationId: params.correlationId, conversationId: params.conversationId },
+      'staff_review_resolution_skip_dm_no_recipient'
+    );
+    return;
+  }
+
+  const igToken = await getInstagramAccessTokenForDoctor(params.doctorId, params.correlationId);
+  if (!igToken?.trim()) {
+    logger.warn(
+      { correlationId: params.correlationId, doctorId: params.doctorId },
+      'staff_review_resolution_dm_no_ig_token'
+    );
+    return;
+  }
+
+  const settings = await getDoctorSettings(params.doctorId);
+  const catalog = settings ? getActiveServiceCatalog(settings) : null;
+  const offering = catalog ? findServiceOfferingByKey(catalog, params.finalCatalogServiceKey) : null;
+  const visitLabel = offering?.label?.trim() || params.finalCatalogServiceKey;
+  const bookingUrl = buildBookingPageUrl(params.conversationId, params.doctorId);
+  const text = formatStaffReviewResolvedContinueBookingDm(
+    settings,
+    visitLabel,
+    bookingUrl,
+    params.kind
+  );
+
+  try {
+    const res = await sendInstagramMessage(recipientId, text, params.correlationId, igToken.trim());
+    await createMessage(
+      {
+        conversation_id: params.conversationId,
+        platform_message_id: res.message_id,
+        sender_type: 'system',
+        content: text,
+      },
+      params.correlationId
+    );
+  } catch (e) {
+    logger.warn(
+      {
+        correlationId: params.correlationId,
+        err: e instanceof Error ? e.message : String(e),
+      },
+      'staff_review_resolution_dm_failed'
+    );
+  }
 }
 
 export async function getServiceStaffReviewRequestForDoctor(
@@ -500,6 +581,14 @@ export async function confirmServiceStaffReviewRequest(params: {
   });
   nextState = mergeSlotStepAfterStaffResolution(nextState);
   await updateConversationState(row.conversation_id, nextState, params.correlationId);
+
+  await sendInstagramBookingLinkAfterStaffReviewResolution({
+    doctorId: params.doctorId,
+    conversationId: row.conversation_id,
+    correlationId: params.correlationId,
+    finalCatalogServiceKey: row.proposed_catalog_service_key,
+    kind: 'confirmed',
+  });
 
   return updated as ServiceStaffReviewRequestRow;
 }
@@ -586,6 +675,14 @@ export async function reassignServiceStaffReviewRequest(params: {
   });
   nextState = mergeSlotStepAfterStaffResolution(nextState);
   await updateConversationState(row.conversation_id, nextState, params.correlationId);
+
+  await sendInstagramBookingLinkAfterStaffReviewResolution({
+    doctorId: params.doctorId,
+    conversationId: row.conversation_id,
+    correlationId: params.correlationId,
+    finalCatalogServiceKey: offering.service_key,
+    kind: 'reassigned',
+  });
 
   return updated as ServiceStaffReviewRequestRow;
 }

@@ -27,7 +27,11 @@ export const listServiceStaffReviewsHandler = asyncHandler(async (req: Request, 
   if (!userId) throw new UnauthorizedError('Authentication required');
 
   const { status } = validateListServiceStaffReviewsQuery(req.query as Record<string, string | string[] | undefined>);
-  const items = await listEnrichedServiceStaffReviewsForDoctor(userId, correlationId, status);
+  const statuses =
+    status === 'cancelled'
+      ? (['cancelled_by_staff', 'cancelled_timeout'] as const)
+      : [status];
+  const items = await listEnrichedServiceStaffReviewsForDoctor(userId, correlationId, [...statuses]);
 
   res.status(200).json(successResponse({ reviews: items }, req));
 });

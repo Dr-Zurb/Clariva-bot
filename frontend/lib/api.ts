@@ -31,7 +31,10 @@ import type {
 } from "@/types/prescription";
 import type { OpdSessionSnapshotData } from "@/types/opd-session";
 import type { DoctorQueueSessionRow } from "@/types/opd-doctor";
-import type { ServiceStaffReviewListItem } from "@/types/service-staff-review";
+import type {
+  ServiceStaffReviewListItem,
+  ServiceStaffReviewListQueryStatus,
+} from "@/types/service-staff-review";
 
 export interface ApiMeta {
   timestamp: string;
@@ -1391,7 +1394,7 @@ export interface ServiceStaffReviewsListData {
  */
 export async function getServiceStaffReviews(
   token: string,
-  status: ServiceStaffReviewListItem["status"] = "pending"
+  status: ServiceStaffReviewListQueryStatus = "pending"
 ): Promise<ApiSuccess<ServiceStaffReviewsListData>> {
   const params = new URLSearchParams({ status });
   return request<ServiceStaffReviewsListData>(

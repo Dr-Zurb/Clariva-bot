@@ -9,6 +9,9 @@ export type ServiceStaffReviewStatus =
   | "cancelled_by_staff"
   | "cancelled_timeout";
 
+/** GET /service-staff-reviews?status= — `cancelled` returns staff-cancelled + SLA timeout rows. */
+export type ServiceStaffReviewListQueryStatus = ServiceStaffReviewStatus | "cancelled";
+
 export interface ServiceStaffReviewListItem {
   id: string;
   doctor_id: string;

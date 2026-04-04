@@ -2,7 +2,10 @@
 
 import { useCallback, useState } from "react";
 import Link from "next/link";
-import type { ServiceStaffReviewListItem } from "@/types/service-staff-review";
+import type {
+  ServiceStaffReviewListItem,
+  ServiceStaffReviewListQueryStatus,
+} from "@/types/service-staff-review";
 import type { DoctorSettings } from "@/types/doctor-settings";
 import type { ServiceCatalogV1 } from "@/lib/service-catalog-schema";
 import {
@@ -43,6 +46,35 @@ function confidenceClass(conf: string): string {
   return "bg-orange-100 text-orange-900";
 }
 
+function formatResolvedAt(iso: string | null): string {
+  if (!iso) return "—";
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "—";
+  return new Date(iso).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+}
+
+function rowStatusLabel(status: ServiceStaffReviewListItem["status"]): string {
+  switch (status) {
+    case "confirmed":
+      return "Confirmed";
+    case "reassigned":
+      return "Reassigned";
+    case "cancelled_by_staff":
+      return "Cancelled (staff)";
+    case "cancelled_timeout":
+      return "Cancelled (timeout)";
+    default:
+      return status;
+  }
+}
+
+const INBOX_TABS: { id: ServiceStaffReviewListQueryStatus; label: string }[] = [
+  { id: "pending", label: "Pending" },
+  { id: "confirmed", label: "Confirmed" },
+  { id: "reassigned", label: "Reassigned" },
+  { id: "cancelled", label: "Cancelled" },
+];
+
 export interface ServiceReviewsInboxProps {
   initialReviews: ServiceStaffReviewListItem[];
   settings: DoctorSettings | null;
@@ -64,25 +96,41 @@ export function ServiceReviewsInbox({
   token,
 }: ServiceReviewsInboxProps) {
   const catalog = settings?.service_offerings_json ?? null;
+  const [activeTab, setActiveTab] = useState<ServiceStaffReviewListQueryStatus>("pending");
   const [reviews, setReviews] = useState(initialReviews);
   const [refreshing, setRefreshing] = useState(false);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  const isPendingTab = activeTab === "pending";
+
+  const loadTab = useCallback(
+    async (tab: ServiceStaffReviewListQueryStatus) => {
+      setRefreshing(true);
+      try {
+        const res = await getServiceStaffReviews(token, tab);
+        setReviews(res.data.reviews);
+      } finally {
+        setRefreshing(false);
+      }
+    },
+    [token]
+  );
+
   const refresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      const res = await getServiceStaffReviews(token, "pending");
-      setReviews(res.data.reviews);
-    } finally {
-      setRefreshing(false);
-    }
-  }, [token]);
+    await loadTab(activeTab);
+  }, [loadTab, activeTab]);
+
+  const selectTab = (tab: ServiceStaffReviewListQueryStatus) => {
+    setActiveTab(tab);
+    void loadTab(tab);
+  };
 
   const runAction = async (
     reviewId: string,
-    fn: () => Promise<unknown>
+    fn: () => Promise<unknown>,
+    okMessage: string
   ): Promise<boolean> => {
     setBusyId(reviewId);
     setBanner(null);
@@ -90,9 +138,9 @@ export function ServiceReviewsInbox({
       await fn();
       setBanner({
         kind: "ok",
-        text: "Saved. The patient can continue booking when they message again.",
+        text: okMessage,
       });
-      await refresh();
+      await loadTab(activeTab);
       return true;
     } catch (e) {
       const status =
@@ -102,7 +150,7 @@ export function ServiceReviewsInbox({
           kind: "err",
           text: "This request was already resolved. The list has been refreshed.",
         });
-        await refresh();
+        await loadTab(activeTab);
         return true;
       }
       setBanner({
@@ -116,8 +164,15 @@ export function ServiceReviewsInbox({
   };
 
   const onConfirm = (r: ServiceStaffReviewListItem) => {
-    void runAction(r.id, () => postConfirmServiceStaffReview(token, r.id, {}));
+    void runAction(
+      r.id,
+      () => postConfirmServiceStaffReview(token, r.id, {}),
+      "Saved. We messaged the patient on Instagram with a link to pick a time and finish booking (opens your booking page)."
+    );
   };
+
+  const okReassign =
+    "Saved. We messaged the patient on Instagram with a link to pick a time and finish booking.";
 
   return (
     <div className="space-y-4">
@@ -125,8 +180,8 @@ export function ServiceReviewsInbox({
         <div>
           <h1 className="text-xl font-semibold text-gray-900">Service match reviews</h1>
           <p className="mt-1 text-sm text-gray-600">
-            Confirm AI-suggested visit types from Instagram bookings before patients receive a slot
-            link.
+            Confirm AI-suggested visit types from Instagram bookings; once confirmed, patients get a
+            booking link in the same chat.
           </p>
         </div>
         <button
@@ -137,6 +192,29 @@ export function ServiceReviewsInbox({
         >
           {refreshing ? "Refreshing…" : "Refresh"}
         </button>
+      </div>
+
+      <div
+        className="flex flex-wrap gap-2 border-b border-gray-200 pb-2"
+        role="tablist"
+        aria-label="Review status"
+      >
+        {INBOX_TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === t.id}
+            onClick={() => selectTab(t.id)}
+            className={
+              activeTab === t.id
+                ? "rounded-md bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-800 ring-1 ring-blue-200"
+                : "rounded-md px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100"
+            }
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
       {banner && (
@@ -154,28 +232,44 @@ export function ServiceReviewsInbox({
 
       {reviews.length === 0 ? (
         <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-8 text-center">
-          <p className="font-medium text-gray-900">No pending reviews</p>
-          <p className="mt-2 text-sm text-gray-600">
-            When the bot is unsure about a visit type, requests appear here. Tune matcher hints in
-            your catalog to reduce low-confidence matches.
+          <p className="font-medium text-gray-900">
+            {activeTab === "pending"
+              ? "No pending reviews"
+              : `No ${INBOX_TABS.find((x) => x.id === activeTab)?.label.toLowerCase() ?? "matching"} reviews`}
           </p>
-          <Link
-            href="/dashboard/settings/practice-setup/services-catalog"
-            className="mt-4 inline-block text-sm font-medium text-blue-600 hover:text-blue-800"
-          >
-            Open services catalog
-          </Link>
+          <p className="mt-2 text-sm text-gray-600">
+            {activeTab === "pending"
+              ? "When the bot is unsure about a visit type, requests appear here. Tune matcher hints in your catalog to reduce low-confidence matches."
+              : "Resolved requests stay here for your records. Switch tabs to see other outcomes."}
+          </p>
+          {activeTab === "pending" && (
+            <Link
+              href="/dashboard/settings/practice-setup/services-catalog"
+              className="mt-4 inline-block text-sm font-medium text-blue-600 hover:text-blue-800"
+            >
+              Open services catalog
+            </Link>
+          )}
         </div>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-gray-200 shadow-sm">
           <table
             className="min-w-full divide-y divide-gray-200 text-left text-sm"
             aria-busy={refreshing}
-            aria-label="Pending service match reviews"
+            aria-label="Service match reviews"
           >
-            <caption className="sr-only">Pending service match reviews, sorted by SLA deadline</caption>
+            <caption className="sr-only">
+              {isPendingTab
+                ? "Pending reviews sorted by SLA deadline"
+                : "Resolved reviews sorted by resolved time"}
+            </caption>
             <thead className="bg-gray-50">
               <tr>
+                {!isPendingTab && (
+                  <th scope="col" className="px-4 py-3 font-medium text-gray-700">
+                    Outcome
+                  </th>
+                )}
                 <th scope="col" className="px-4 py-3 font-medium text-gray-700">
                   Patient
                 </th>
@@ -185,26 +279,40 @@ export function ServiceReviewsInbox({
                 <th scope="col" className="px-4 py-3 font-medium text-gray-700">
                   AI proposal
                 </th>
+                {!isPendingTab && (
+                  <th scope="col" className="px-4 py-3 font-medium text-gray-700">
+                    Final visit type
+                  </th>
+                )}
                 <th scope="col" className="px-4 py-3 font-medium text-gray-700">
                   Confidence
                 </th>
                 <th scope="col" className="px-4 py-3 font-medium text-gray-700">
-                  SLA
+                  {isPendingTab ? "SLA" : "Resolved"}
                 </th>
-                <th scope="col" className="px-4 py-3 font-medium text-gray-700">
-                  Actions
-                </th>
+                {isPendingTab && (
+                  <th scope="col" className="px-4 py-3 font-medium text-gray-700">
+                    Actions
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 bg-white">
               {reviews.map((r) => {
                 const propLabel = labelForServiceKey(catalog, r.proposed_catalog_service_key);
+                const finalKey = r.final_catalog_service_key?.trim();
+                const finalLabel = finalKey ? labelForServiceKey(catalog, finalKey) : null;
                 const patientLabel =
                   r.patient_display_name?.trim() ||
                   (r.patient_id ? `Patient ${r.patient_id.slice(0, 8)}…` : "—");
                 const disabled = busyId === r.id;
                 return (
                   <tr key={r.id}>
+                    {!isPendingTab && (
+                      <td className="px-4 py-3 text-gray-700">
+                        <span className="text-xs font-medium text-gray-600">{rowStatusLabel(r.status)}</span>
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       {r.patient_id ? (
                         <Link
@@ -226,6 +334,18 @@ export function ServiceReviewsInbox({
                         ({r.proposed_catalog_service_key})
                       </span>
                     </td>
+                    {!isPendingTab && (
+                      <td className="px-4 py-3 text-gray-800">
+                        {finalKey ? (
+                          <>
+                            <span className="font-medium">{finalLabel ?? finalKey}</span>
+                            <span className="ml-2 text-xs text-gray-500">({finalKey})</span>
+                          </>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       <span
                         className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${confidenceClass(r.match_confidence)}`}
@@ -233,35 +353,41 @@ export function ServiceReviewsInbox({
                         {r.match_confidence}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-gray-700">{slaTimeRemainingLabel(r.sla_deadline_at)}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          disabled={disabled}
-                          onClick={() => onConfirm(r)}
-                          className="rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                        >
-                          Confirm
-                        </button>
-                        <button
-                          type="button"
-                          disabled={disabled}
-                          onClick={() => setDialog({ mode: "reassign", review: r })}
-                          className="rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50"
-                        >
-                          Reassign
-                        </button>
-                        <button
-                          type="button"
-                          disabled={disabled}
-                          onClick={() => setDialog({ mode: "cancel", review: r })}
-                          className="rounded-md border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-800 hover:bg-red-50 disabled:opacity-50"
-                        >
-                          Cancel
-                        </button>
-                      </div>
+                    <td className="px-4 py-3 text-gray-700">
+                      {isPendingTab
+                        ? slaTimeRemainingLabel(r.sla_deadline_at)
+                        : formatResolvedAt(r.resolved_at)}
                     </td>
+                    {isPendingTab && (
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            disabled={disabled}
+                            onClick={() => onConfirm(r)}
+                            className="rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            type="button"
+                            disabled={disabled}
+                            onClick={() => setDialog({ mode: "reassign", review: r })}
+                            className="rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50"
+                          >
+                            Reassign
+                          </button>
+                          <button
+                            type="button"
+                            disabled={disabled}
+                            onClick={() => setDialog({ mode: "cancel", review: r })}
+                            className="rounded-md border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-800 hover:bg-red-50 disabled:opacity-50"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -277,8 +403,10 @@ export function ServiceReviewsInbox({
           review={dialog.review}
           onClose={() => setDialog(null)}
           onSubmit={async (payload) => {
-            const ok = await runAction(dialog.review.id, () =>
-              postReassignServiceStaffReview(token, dialog.review.id, payload)
+            const ok = await runAction(
+              dialog.review.id,
+              () => postReassignServiceStaffReview(token, dialog.review.id, payload),
+              okReassign
             );
             if (ok) setDialog(null);
           }}
@@ -290,8 +418,10 @@ export function ServiceReviewsInbox({
           review={dialog.review}
           onClose={() => setDialog(null)}
           onSubmit={async (note) => {
-            const ok = await runAction(dialog.review.id, () =>
-              postCancelServiceStaffReview(token, dialog.review.id, { note })
+            const ok = await runAction(
+              dialog.review.id,
+              () => postCancelServiceStaffReview(token, dialog.review.id, { note }),
+              "Saved. No booking link was sent. The patient can keep chatting in Instagram if they need help."
             );
             if (ok) setDialog(null);
           }}

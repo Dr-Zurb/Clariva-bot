@@ -1,6 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
 import {
   formatAwaitingStaffServiceConfirmationDm,
+  formatStaffReviewResolvedContinueBookingDm,
   formatStaffServiceReviewSlaTimeoutDm,
   formatStaffServiceReviewStillPendingDm,
   resolveVisitTypeLabelForDm,
@@ -69,6 +70,18 @@ describe('staff-service-review-dm (ARM-05)', () => {
     expect(s).toContain('Demo Clinic');
     expect(s).toMatch(/not been charged|haven't been charged|have not been charged/i);
     expect(s).toMatch(/closed|close/i);
+  });
+
+  it('formatStaffReviewResolvedContinueBookingDm includes booking URL and visit label', () => {
+    const url = 'https://app.example/book?token=abc';
+    const c = formatStaffReviewResolvedContinueBookingDm(settings, 'General Checkup', url, 'confirmed');
+    expect(c).toContain('Demo Clinic');
+    expect(c).toContain('General Checkup');
+    expect(c).toContain(url);
+    expect(c).toMatch(/confirm/i);
+    const r = formatStaffReviewResolvedContinueBookingDm(settings, 'Follow-up', url, 'reassigned');
+    expect(r).toContain('updated');
+    expect(r).toContain('Follow-up');
   });
 
   it('isSlotBookingBlockedPendingStaffReview matches ARM-03 flags', () => {
