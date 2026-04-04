@@ -488,7 +488,7 @@ export interface ClassifyIntentContext {
   /** assistant | user turns, oldest first */
   recentTurns?: { role: 'user' | 'assistant'; content: string }[];
   /** Active sub-flow from conversation metadata */
-  conversationGoal?: 'fee_quote' | 'post_medical_deflection';
+  conversationGoal?: 'fee_quote' | 'post_medical_deflection' | 'reason_first_triage';
 }
 
 const CLASSIFY_INTENT_MAX_PRIOR_TURNS = 6;
@@ -503,14 +503,17 @@ export function buildClassifyIntentContext(
   options?: { maxTurns?: number }
 ): ClassifyIntentContext | undefined {
   const maxTurns = options?.maxTurns ?? CLASSIFY_INTENT_MAX_PRIOR_TURNS;
+  const reasonFirst = state.reasonFirstTriagePhase !== undefined;
   const feeThread =
     state.activeFlow === 'fee_quote' || state.lastPromptKind === 'fee_quote';
-  const postMedical = !feeThread && isRecentMedicalDeflectionWindow(state);
-  const conversationGoal = feeThread
-    ? ('fee_quote' as const)
-    : postMedical
-      ? ('post_medical_deflection' as const)
-      : undefined;
+  const postMedical = !feeThread && !reasonFirst && isRecentMedicalDeflectionWindow(state);
+  const conversationGoal = reasonFirst
+    ? ('reason_first_triage' as const)
+    : feeThread
+      ? ('fee_quote' as const)
+      : postMedical
+        ? ('post_medical_deflection' as const)
+        : undefined;
   const turns = recentMessages
     .slice(-maxTurns)
     .map((m) => ({
@@ -535,11 +538,17 @@ function buildIntentClassificationUserContent(
     !ctx ||
     (!ctx.recentTurns?.length &&
       ctx.conversationGoal !== 'fee_quote' &&
-      ctx.conversationGoal !== 'post_medical_deflection')
+      ctx.conversationGoal !== 'post_medical_deflection' &&
+      ctx.conversationGoal !== 'reason_first_triage')
   ) {
     return redactedCurrent;
   }
   const blocks: string[] = [];
+  if (ctx.conversationGoal === 'reason_first_triage') {
+    blocks.push(
+      '[Conversation context: The assistant is asking whether anything else should be addressed at the visit and/or confirming a short summary of concerns before quoting fees. Replies like "nothing else", "yes", small corrections, or brief add-ons fit this flow; pure pricing clarification may be ask_question unless the user explicitly starts booking.]'
+    );
+  }
   if (ctx.conversationGoal === 'fee_quote') {
     blocks.push(
       '[Conversation context: The assistant is discussing consultation fees or pricing with this user. Short follow-ups that only name or clarify a visit type/channel (e.g. "general consultation", "video please") are ask_question, not book_appointment, unless they clearly ask to book or schedule.]'
@@ -564,6 +573,7 @@ function classifyIntentUsesContext(ctx: ClassifyIntentContext | undefined): bool
   return (
     ctx.conversationGoal === 'fee_quote' ||
     ctx.conversationGoal === 'post_medical_deflection' ||
+    ctx.conversationGoal === 'reason_first_triage' ||
     (ctx.recentTurns !== undefined && ctx.recentTurns.length > 0)
   );
 }
@@ -574,11 +584,13 @@ function classifyIntentUsesContext(ctx: ClassifyIntentContext | undefined): bool
 export function applyIntentPostClassificationPolicy(
   result: IntentDetectionResult,
   messageText: string,
-  state: Pick<ConversationState, 'activeFlow' | 'lastPromptKind'>
+  state: Pick<ConversationState, 'activeFlow' | 'lastPromptKind' | 'reasonFirstTriagePhase'>
 ): IntentDetectionResult {
   if (result.intent !== 'book_appointment') return result;
   const feeThread =
-    state.activeFlow === 'fee_quote' || state.lastPromptKind === 'fee_quote';
+    state.activeFlow === 'fee_quote' ||
+    state.lastPromptKind === 'fee_quote' ||
+    state.reasonFirstTriagePhase !== undefined;
   if (!feeThread) return result;
   if (userExplicitlyWantsToBookNow(messageText)) return result;
   const t = messageText.trim();

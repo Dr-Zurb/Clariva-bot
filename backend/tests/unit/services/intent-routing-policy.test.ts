@@ -13,7 +13,10 @@ import type { ConversationState } from '../../../src/types/conversation';
 describe('RBH-14 intent routing', () => {
   describe('applyIntentPostClassificationPolicy', () => {
     it('downgrades book_appointment to ask_question in fee thread for consultation follow-up', () => {
-      const state: Pick<ConversationState, 'activeFlow' | 'lastPromptKind'> = {
+      const state: Pick<
+        ConversationState,
+        'activeFlow' | 'lastPromptKind' | 'reasonFirstTriagePhase'
+      > = {
         activeFlow: 'fee_quote',
       };
       const out = applyIntentPostClassificationPolicy(
@@ -27,8 +30,26 @@ describe('RBH-14 intent routing', () => {
       expect(out.topics).toContain('pricing');
     });
 
+    it('downgrades book_appointment during reason-first triage for pricing-shaped follow-up', () => {
+      const state: Pick<
+        ConversationState,
+        'activeFlow' | 'lastPromptKind' | 'reasonFirstTriagePhase'
+      > = {
+        reasonFirstTriagePhase: 'confirm',
+      };
+      const out = applyIntentPostClassificationPolicy(
+        { intent: 'book_appointment', confidence: 0.95 },
+        'how much for video',
+        state
+      );
+      expect(out.intent).toBe('ask_question');
+    });
+
     it('keeps book_appointment when user explicitly books', () => {
-      const state: Pick<ConversationState, 'activeFlow' | 'lastPromptKind'> = {
+      const state: Pick<
+        ConversationState,
+        'activeFlow' | 'lastPromptKind' | 'reasonFirstTriagePhase'
+      > = {
         lastPromptKind: 'fee_quote',
       };
       const out = applyIntentPostClassificationPolicy(
@@ -41,7 +62,10 @@ describe('RBH-14 intent routing', () => {
     });
 
     it('does not downgrade outside fee thread', () => {
-      const state: Pick<ConversationState, 'activeFlow' | 'lastPromptKind'> = {};
+      const state: Pick<
+        ConversationState,
+        'activeFlow' | 'lastPromptKind' | 'reasonFirstTriagePhase'
+      > = {};
       const out = applyIntentPostClassificationPolicy(
         { intent: 'book_appointment', confidence: 0.9 },
         'general consultation',
@@ -51,7 +75,10 @@ describe('RBH-14 intent routing', () => {
     });
 
     it('does not downgrade when message has no fee/consultation cues', () => {
-      const state: Pick<ConversationState, 'activeFlow' | 'lastPromptKind'> = {
+      const state: Pick<
+        ConversationState,
+        'activeFlow' | 'lastPromptKind' | 'reasonFirstTriagePhase'
+      > = {
         activeFlow: 'fee_quote',
       };
       const out = applyIntentPostClassificationPolicy(
@@ -105,6 +132,17 @@ describe('RBH-14 intent routing', () => {
       };
       const ctx = buildClassifyIntentContext(state, []);
       expect(ctx?.conversationGoal).toBe('fee_quote');
+    });
+
+    it('prefers reason_first_triage over post_medical_deflection and fee_quote', () => {
+      const state: ConversationState = {
+        step: 'responded',
+        reasonFirstTriagePhase: 'ask_more',
+        activeFlow: 'fee_quote',
+        lastMedicalDeflectionAt: new Date().toISOString(),
+      };
+      const ctx = buildClassifyIntentContext(state, []);
+      expect(ctx?.conversationGoal).toBe('reason_first_triage');
     });
 
     it('omits post_medical_deflection when deflection timestamp is older than TTL', () => {

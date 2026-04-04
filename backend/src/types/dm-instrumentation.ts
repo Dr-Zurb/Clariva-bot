@@ -18,6 +18,12 @@ export type DmHandlerBranch =
   | 'emergency_safety'
   | 'medical_safety'
   | 'fee_deterministic_idle'
+  /** e-task-dm-04: deferred full catalog — ask-more copy */
+  | 'reason_first_triage_ask_more'
+  /** e-task-dm-04: confirm / clarify / replay consolidated reason */
+  | 'reason_first_triage_confirm'
+  /** e-task-dm-04: fee quote after confirm yes (narrow when matcher resolves one row) */
+  | 'reason_first_triage_fee_narrow'
   | 'fee_deterministic_mid_collection'
   | 'greeting_template'
   | 'check_appointment_status'

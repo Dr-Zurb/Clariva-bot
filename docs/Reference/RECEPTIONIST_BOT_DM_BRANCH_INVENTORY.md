@@ -12,11 +12,14 @@
 2. **Ops:** `instagram_receptionist_paused` → handoff copy  
 3. **Step gates (numeric / yes-no):** cancel choice, cancel confirm, reschedule choice, reschedule slot (if applicable)  
 4. **Safety:** `isEmergencyUserMessage` / `emergency` intent → `resolveSafetyMessage('emergency')`  
-5. **Medical deflection (idle):** `medical_query` && !`inCollection` → `resolveSafetyMessage('medical_query')`  
-6. **Fee quote (idle):** pricing keyword path && !`inCollection` && responded → `buildFeeQuoteDm`  
-7. **Greeting fast path:** `greeting` && idle → English template (regex-fast in classifier)  
-8. **Transactional:** `check_appointment_status`, `cancel_appointment`, `reschedule_appointment`, `book_for_someone_else`, match confirmation, consent, `collecting_all`, …  
-9. **Default:** `generateResponse` / `generateResponseWithActions` (LLM **Say** + injected **facts** in system prompt)
+5. **Staff service review pending** (if step gated) — template, no slot link  
+6. **Consultation channel pick** (if bot asked tele vs in-person)  
+7. **Reason-first triage (e-task-dm-04):** when `metadata.reasonFirstTriagePhase` is `ask_more` or `confirm` && idle — deterministic ask-more / confirm / fee-narrow turns (`reason_first_triage_*` branches); runs **before** idle `medical_query` so symptom follow-ups in triage are not blanket-deflected  
+8. **Medical deflection (idle):** `medical_query` && !`inCollection` → `resolveSafetyMessage('medical_query')`  
+9. **Fee quote (idle):** pricing keyword path && !`inCollection` && responded — may **defer** to reason-first when `shouldDeferIdleFeeForReasonFirstTriage`  
+10. **Greeting fast path:** `greeting` && idle → English template (regex-fast in classifier)  
+11. **Transactional:** `check_appointment_status`, `cancel_appointment`, `reschedule_appointment`, `book_for_someone_else`, match confirmation, consent, `collecting_all`, …  
+12. **Default:** `generateResponse` / `generateResponseWithActions` (LLM **Say** + injected **facts** in system prompt)
 
 ---
 
@@ -31,17 +34,20 @@
 | 4 | `awaiting_cancel_confirmation` | intent | regex yes/no or `executeAction` / tool | template or AI+tool |
 | 5 | `awaiting_reschedule_choice` | — | numeric parse | template + `buildReschedulePageUrl` when single |
 | 6 | Emergency | pattern / intent | handler | `resolveSafetyMessage('emergency')` |
-| 7 | `medical_query` !collection | intent | handler | `resolveSafetyMessage('medical_query')` |
-| 8 | Pricing & idle | regex + intent | handler | `buildFeeQuoteDm` (server fee block) |
-| 9 | Greeting & idle | regex / intent | handler | greeting template |
-| 10 | `check_appointment_status` | intent | DB | template from `formatAppointmentStatusLine` + appointments |
-| 11 | `cancel_appointment` | intent | DB + state | templates |
-| 12 | `reschedule_appointment` | intent | DB + state | `formatRescheduleLinkDm` / choice list |
-| 13 | `book_for_someone_else` (idle/slot) | intent | state | intake template |
-| 14 | Match confirmation | parsed reply | DB / create patient | `formatBookingLinkDm` |
-| 15 | Consent | `parseConsentReply` | persist + DB | `formatBookingLinkDm` or AI |
-| 16 | `collecting_all` / details | intent + extraction | collection service | **mostly AI** + extraction |
-| 17 | Rest / book / availability | intent | state machine | **AI** (`generateResponse`) |
+| 7 | `awaiting_staff_service_confirmation` | step | handler | staff-review pending copy |
+| 8 | Consultation channel pick | last bot + parse | handler | templates / AI |
+| 9 | Reason-first triage (`reasonFirstTriagePhase`) | state + idle | handler | `reason-first-triage.ts` + `composeIdleFeeQuoteDmWithMeta` |
+| 10 | `medical_query` !collection | intent | handler | `resolveSafetyMessage('medical_query')` |
+| 11 | Pricing & idle | regex + intent | handler | `composeIdleFeeQuoteDmWithMeta` (or defer → row 9) |
+| 12 | Greeting & idle | regex / intent | handler | greeting template |
+| 13 | `check_appointment_status` | intent | DB | template from `formatAppointmentStatusLine` + appointments |
+| 14 | `cancel_appointment` | intent | DB + state | templates |
+| 15 | `reschedule_appointment` | intent | DB + state | `formatRescheduleLinkDm` / choice list |
+| 16 | `book_for_someone_else` (idle/slot) | intent | state | intake template |
+| 17 | Match confirmation | parsed reply | DB / create patient | `formatBookingLinkDm` |
+| 18 | Consent | `parseConsentReply` | persist + DB | `formatBookingLinkDm` or AI |
+| 19 | `collecting_all` / details | intent + extraction | collection service | **mostly AI** + extraction |
+| 20 | Rest / book / availability | intent | state machine | **AI** (`generateResponse`) |
 
 Rows are **guidance**; inner branches may call AI for ambiguous cancel consent.
 
@@ -66,4 +72,4 @@ Keep these in sync when changing product behavior.
 - [RECEPTIONIST_BOT_CONVERSATION_RULES.md](./RECEPTIONIST_BOT_CONVERSATION_RULES.md) — principles and intent map  
 - Task [RBH-17](../Development/Daily-plans/March%202026/2026-03-25/Receptionist%20Bot%20improvements/Tasks/e-task-rbh-17-receptionist-architecture-llm-vs-system-actions.md)
 
-**Last updated:** 2026-03-28 (RBH-17 implementation)
+**Last updated:** 2026-03-31 (e-task-dm-04 reason-first triage branches)

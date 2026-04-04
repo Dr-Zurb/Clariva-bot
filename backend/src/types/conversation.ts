@@ -37,6 +37,9 @@ export type ConversationLastPromptKind =
 /** RBH-13: Sub-flow stored in metadata alongside `step`. */
 export type ConversationActiveFlow = 'fee_quote';
 
+/** e-task-dm-04: reason-first triage before showing full fee catalog (enums only in metadata). */
+export type ReasonFirstTriagePhase = 'ask_more' | 'confirm';
+
 /**
  * Map flow step → prompt kind for persistence. Non-gating steps clear the field.
  */
@@ -197,6 +200,11 @@ export interface ConversationState {
    * Cleared when starting fresh collection. Expire reads via `isRecentMedicalDeflectionWindow`.
    */
   lastMedicalDeflectionAt?: string;
+  /**
+   * e-task-dm-04: When set, fee idle paths defer full catalog until confirm (phase === confirm + yes).
+   * Cleared with fresh collection / `lastMedicalDeflectionAt` resets.
+   */
+  reasonFirstTriagePhase?: ReasonFirstTriagePhase;
 }
 
 /** e-task-dm-03: TTL for treating `lastMedicalDeflectionAt` as active routing memory. */

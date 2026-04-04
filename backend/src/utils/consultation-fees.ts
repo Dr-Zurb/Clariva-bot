@@ -240,6 +240,18 @@ function localizeCatalogIntro(practiceName: string, locale: SafetyMessageLocale)
   return `**Teleconsult (online) fees** on file for **${practiceName}**:\n\n`;
 }
 
+/** e-task-dm-04: intro when exactly one catalog row is shown (reason-first / narrowed thread). */
+function localizeNarrowFeeCatalogIntro(practiceName: string, locale: SafetyMessageLocale): string {
+  const p = practiceName.trim() || 'the practice';
+  if (locale === 'hi') {
+    return `**${p}** — aapne jo bataya uske hisaab se **online / teleconsult** fee (hamare record ke mutabik):\n\n`;
+  }
+  if (locale === 'pa') {
+    return `**${p}** — jo tu dassya us hisaab naal **online / teleconsult** fee (sade record mutabik):\n\n`;
+  }
+  return `Based on what you shared, **teleconsult (online) fees** on file for **${p}** for this visit type:\n\n`;
+}
+
 /**
  * Pick a single service if the user message clearly names one (label or service_key). SFU-08 optional narrow.
  */
@@ -412,7 +424,10 @@ export function formatServiceCatalogForDmWithMeta(
     return { markdown: localizeJsonUnreadable(practiceName, locale, hoursSuffix) };
   }
 
-  const intro = localizeCatalogIntro(practiceName, locale);
+  const intro =
+    rows.length === 1
+      ? localizeNarrowFeeCatalogIntro(practiceName, locale)
+      : localizeCatalogIntro(practiceName, locale);
   let body = `${intro}${lines.join('\n\n')}`;
 
   /** Catalog path lists text/voice/video only — do not append legacy “in-clinic” flat fee (misleading when teleconsult-only). */

@@ -257,6 +257,26 @@ export function getInitialCollectionStep(): string {
 }
 
 /**
+ * e-task-dm-04: Pre-seed Redis `reason_for_visit` when `state.reasonForVisit` was set during reason-first triage.
+ * Returns `collectedFields` fragment to merge into conversation state (usually `['reason_for_visit']` or `[]`).
+ */
+export async function seedCollectedReasonFromStateIfValid(
+  conversationId: string,
+  reasonForVisit: string | undefined
+): Promise<string[]> {
+  const t = reasonForVisit?.trim();
+  if (!t) return [];
+  try {
+    const v = validatePatientField('reason_for_visit', t) as string;
+    const existing = (await getCollectedData(conversationId)) ?? {};
+    await setCollectedData(conversationId, { ...existing, reason_for_visit: v });
+    return ['reason_for_visit'];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Build the confirm_details message (read-back summary).
  */
 export function buildConfirmDetailsMessage(collected: CollectedPatientData): string {

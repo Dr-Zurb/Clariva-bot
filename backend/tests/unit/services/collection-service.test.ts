@@ -15,9 +15,9 @@ import {
   setCollectedData,
   clearCollectedData,
   COLLECTION_ORDER,
-  REQUIRED_COLLECTION_FIELDS,
   getInitialCollectionStep,
 } from '../../../src/services/collection-service';
+import { REQUIRED_COLLECTION_FIELDS } from '../../../src/utils/validation';
 import * as auditLogger from '../../../src/utils/audit-logger';
 
 jest.mock('../../../src/utils/audit-logger');
@@ -46,12 +46,18 @@ describe('Collection Service', () => {
       expect(COLLECTION_ORDER).toEqual([
         'name',
         'phone',
-        'consultation_type',
-        'date_of_birth',
+        'age',
+        'gender',
+        'reason_for_visit',
+        'email',
+      ]);
+      expect(REQUIRED_COLLECTION_FIELDS).toEqual([
+        'name',
+        'phone',
+        'age',
         'gender',
         'reason_for_visit',
       ]);
-      expect(REQUIRED_COLLECTION_FIELDS).toEqual(['name', 'phone']);
     });
   });
 
@@ -63,14 +69,14 @@ describe('Collection Service', () => {
 
     it('returns next field when some collected', () => {
       expect(getNextCollectionField(['name'])).toBe('phone');
-      expect(getNextCollectionField(['name', 'phone'])).toBe('consultation_type');
-      expect(getNextCollectionField(['name', 'phone', 'consultation_type'])).toBe('date_of_birth');
+      expect(getNextCollectionField(['name', 'phone'])).toBe('age');
+      expect(getNextCollectionField(['name', 'phone', 'age'])).toBe('gender');
+      expect(getNextCollectionField(['name', 'phone', 'age', 'gender'])).toBe(
+        'reason_for_visit'
+      );
       expect(
-        getNextCollectionField(['name', 'phone', 'consultation_type', 'date_of_birth'])
-      ).toBe('gender');
-      expect(
-        getNextCollectionField(['name', 'phone', 'consultation_type', 'date_of_birth', 'gender'])
-      ).toBe('reason_for_visit');
+        getNextCollectionField(['name', 'phone', 'age', 'gender', 'reason_for_visit'])
+      ).toBe('email');
     });
 
     it('returns null when all collected', () => {
@@ -78,10 +84,10 @@ describe('Collection Service', () => {
         getNextCollectionField([
           'name',
           'phone',
-          'consultation_type',
-          'date_of_birth',
+          'age',
           'gender',
           'reason_for_visit',
+          'email',
         ])
       ).toBeNull();
     });
@@ -90,14 +96,29 @@ describe('Collection Service', () => {
   describe('hasAllRequiredFields', () => {
     it('returns false when required missing', () => {
       expect(hasAllRequiredFields([])).toBe(false);
-      expect(hasAllRequiredFields(['name'])).toBe(false);
+      expect(hasAllRequiredFields(['name', 'phone'])).toBe(false);
     });
 
-    it('returns true when name and phone collected', () => {
-      expect(hasAllRequiredFields(['name', 'phone'])).toBe(true);
-      expect(hasAllRequiredFields(['name', 'phone', 'date_of_birth'])).toBe(
-        true
-      );
+    it('returns true when all required fields collected', () => {
+      expect(
+        hasAllRequiredFields([
+          'name',
+          'phone',
+          'age',
+          'gender',
+          'reason_for_visit',
+        ])
+      ).toBe(true);
+      expect(
+        hasAllRequiredFields([
+          'name',
+          'phone',
+          'age',
+          'gender',
+          'reason_for_visit',
+          'email',
+        ])
+      ).toBe(true);
     });
   });
 
@@ -168,39 +189,33 @@ describe('Collection Service', () => {
       });
     });
 
-    it('when all required collected sets step to consent', async () => {
+    it('after age success next step is collecting_gender', async () => {
       await setCollectedData(conversationId, { name: 'A', phone: '+10000000000' });
       const state = {
-        collectedFields: ['name', 'phone', 'consultation_type'],
-        step: 'collecting_date_of_birth',
+        collectedFields: ['name', 'phone'],
+        step: 'collecting_age',
       };
       const result = await validateAndApply(
         conversationId,
-        'date_of_birth',
-        '1990-01-15',
+        'age',
+        '30',
         state,
         correlationId
       );
       expect(result.success).toBe(true);
-      expect(result.newState.collectedFields).toEqual([
-        'name',
-        'phone',
-        'consultation_type',
-        'date_of_birth',
-      ]);
+      expect(result.newState.collectedFields).toEqual(['name', 'phone', 'age']);
       expect(result.newState.step).toBe('collecting_gender');
     });
 
-    it('after last optional field sets step to consent', async () => {
+    it('after reason_for_visit next step is collecting_email', async () => {
       await setCollectedData(conversationId, {
         name: 'A',
         phone: '+10000000000',
-        consultation_type: 'video',
-        date_of_birth: '1990-01-15',
+        age: 30,
         gender: 'other',
       });
       const state = {
-        collectedFields: ['name', 'phone', 'consultation_type', 'date_of_birth', 'gender'],
+        collectedFields: ['name', 'phone', 'age', 'gender'],
         step: 'collecting_reason_for_visit',
       };
       const result = await validateAndApply(
@@ -211,6 +226,37 @@ describe('Collection Service', () => {
         correlationId
       );
       expect(result.success).toBe(true);
+      expect(result.newState.step).toBe('collecting_email');
+    });
+
+    it('after email success with all fields sets step to consent', async () => {
+      await setCollectedData(conversationId, {
+        name: 'A',
+        phone: '+10000000000',
+        age: 30,
+        gender: 'other',
+        reason_for_visit: 'Checkup',
+      });
+      const state = {
+        collectedFields: ['name', 'phone', 'age', 'gender', 'reason_for_visit'],
+        step: 'collecting_email',
+      };
+      const result = await validateAndApply(
+        conversationId,
+        'email',
+        'a@example.com',
+        state,
+        correlationId
+      );
+      expect(result.success).toBe(true);
+      expect(result.newState.collectedFields).toEqual([
+        'name',
+        'phone',
+        'age',
+        'gender',
+        'reason_for_visit',
+        'email',
+      ]);
       expect(result.newState.step).toBe('consent');
     });
   });
@@ -236,8 +282,8 @@ describe('Collection Service', () => {
   });
 
   describe('getInitialCollectionStep', () => {
-    it('returns collecting_name', () => {
-      expect(getInitialCollectionStep()).toBe('collecting_name');
+    it('returns collecting_all', () => {
+      expect(getInitialCollectionStep()).toBe('collecting_all');
     });
   });
 });
