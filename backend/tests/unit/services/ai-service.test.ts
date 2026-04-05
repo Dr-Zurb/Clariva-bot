@@ -12,7 +12,9 @@ import {
   redactPhiForAI,
   generateResponse,
   resolvePostMedicalPaymentExistenceAck,
+  resolveVisitReasonSnippetForTriage,
 } from '../../../src/services/ai-service';
+import { buildConsolidatedReasonSnippetFromMessages } from '../../../src/utils/reason-first-triage';
 import { env } from '../../../src/config/env';
 import { POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN } from '../../../src/utils/post-medical-ack-copy';
 import type { ConversationState } from '../../../src/types/conversation';
@@ -46,18 +48,22 @@ type MockCompletion = {
 describe('AI Service', () => {
   const correlationId = 'test-correlation-id';
   let savedPostMedAckLocalize: boolean;
+  let savedVisitReasonSnippetAi: boolean;
 
   beforeAll(() => {
     savedPostMedAckLocalize = env.POST_MEDICAL_ACK_AI_LOCALIZE;
+    savedVisitReasonSnippetAi = env.VISIT_REASON_SNIPPET_AI_ENABLED;
   });
 
   afterAll(() => {
     env.POST_MEDICAL_ACK_AI_LOCALIZE = savedPostMedAckLocalize;
+    env.VISIT_REASON_SNIPPET_AI_ENABLED = savedVisitReasonSnippetAi;
   });
 
   beforeEach(() => {
     jest.resetAllMocks();
     env.POST_MEDICAL_ACK_AI_LOCALIZE = savedPostMedAckLocalize;
+    env.VISIT_REASON_SNIPPET_AI_ENABLED = savedVisitReasonSnippetAi;
     mockedAudit.logAIClassification.mockReset();
     mockedAudit.logAIResponseGeneration.mockReset();
     mockedAudit.logAuditEvent.mockReset();
@@ -725,6 +731,88 @@ describe('AI Service', () => {
         expect.objectContaining({
           status: 'failure',
           errorMessage: 'empty_or_short_completion',
+        })
+      );
+    });
+  });
+
+  describe('resolveVisitReasonSnippetForTriage', () => {
+    const recent = [
+      {
+        sender_type: 'patient' as const,
+        content:
+          'hello doc how are you ? i checked my blood sugar today it came out to be 199 , how do i fix it ?',
+      },
+    ];
+
+    it('skips OpenAI when VISIT_REASON_SNIPPET_AI_ENABLED is false', async () => {
+      env.VISIT_REASON_SNIPPET_AI_ENABLED = false;
+      const mockCreate = jest.fn();
+      mockedOpenai.getOpenAIClient.mockReturnValue({
+        chat: { completions: { create: mockCreate } },
+      } as any);
+      mockedOpenai.getOpenAIConfig.mockReturnValue({
+        model: 'gpt-5.2',
+        maxTokens: 256,
+      });
+
+      const out = await resolveVisitReasonSnippetForTriage(recent, '', correlationId);
+      expect(out).toBe(buildConsolidatedReasonSnippetFromMessages(recent, ''));
+      expect(mockCreate).not.toHaveBeenCalled();
+    });
+
+    it('uses model JSON reasons when AI is enabled', async () => {
+      env.VISIT_REASON_SNIPPET_AI_ENABLED = true;
+      const json = JSON.stringify({
+        reasons: ['Blood sugar reading 199 (today)', 'Want doctor review'],
+      });
+      const mockCreate = jest.fn<() => Promise<MockCompletion>>().mockResolvedValue({
+        choices: [{ message: { content: json } }],
+        usage: { total_tokens: 30 },
+      });
+      mockedOpenai.getOpenAIClient.mockReturnValue({
+        chat: { completions: { create: mockCreate } },
+      } as any);
+      mockedOpenai.getOpenAIConfig.mockReturnValue({
+        model: 'gpt-5.2',
+        maxTokens: 256,
+      });
+
+      const out = await resolveVisitReasonSnippetForTriage(recent, '', correlationId);
+
+      expect(out).toContain('1)');
+      expect(out).toContain('2)');
+      expect(out).toContain('Blood sugar reading 199');
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+      expect(mockedAudit.logAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'ai_visit_reason_snippet',
+          status: 'success',
+        })
+      );
+    });
+
+    it('falls back to deterministic output on invalid JSON', async () => {
+      env.VISIT_REASON_SNIPPET_AI_ENABLED = true;
+      const mockCreate = jest.fn<() => Promise<MockCompletion>>().mockResolvedValue({
+        choices: [{ message: { content: 'not json' } }],
+        usage: { total_tokens: 2 },
+      });
+      mockedOpenai.getOpenAIClient.mockReturnValue({
+        chat: { completions: { create: mockCreate } },
+      } as any);
+      mockedOpenai.getOpenAIConfig.mockReturnValue({
+        model: 'gpt-5.2',
+        maxTokens: 256,
+      });
+
+      const fallback = buildConsolidatedReasonSnippetFromMessages(recent, '');
+      const out = await resolveVisitReasonSnippetForTriage(recent, '', correlationId);
+      expect(out).toBe(fallback);
+      expect(mockedAudit.logAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'ai_visit_reason_snippet',
+          status: 'failure',
         })
       );
     });

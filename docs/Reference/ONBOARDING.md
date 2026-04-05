@@ -4,7 +4,7 @@
 
 **Audience:** New developers, AI agents, or returning developers after a break.
 
-**Related:** [ARCHITECTURE.md](./ARCHITECTURE.md) | [README.md](../../README.md) | [BUSINESS_PLAN.md](../Business files/BUSINESS_PLAN.md)
+**Related:** [ARCHITECTURE.md](./ARCHITECTURE.md) | [AI_BOT_BUILDING_PHILOSOPHY.md](./AI_BOT_BUILDING_PHILOSOPHY.md) | [README.md](../../README.md) | [BUSINESS_PLAN.md](../Business files/BUSINESS_PLAN.md)
 
 ---
 

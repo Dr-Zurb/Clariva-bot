@@ -115,21 +115,38 @@ jest.mock('../../../src/services/message-service', () => ({
   getRecentMessages: jest.fn(),
   getSenderIdByPlatformMessageId: jest.fn(),
 }));
-jest.mock('../../../src/services/ai-service', () => ({
-  classifyIntent: jest.fn(),
-  classifyCommentIntent: jest.fn(),
-  isPossiblyMedicalComment: jest.fn(),
-  generateResponse: jest.fn(),
-  generateResponseWithActions: jest.fn(),
-  redactPhiForAI: jest.fn((s: string) => s),
-  parseMultiPersonBooking: jest.fn().mockReturnValue(null),
-  AI_RECENT_MESSAGES_LIMIT: 30,
-  buildClassifyIntentContext: jest.fn().mockReturnValue(undefined),
-  applyIntentPostClassificationPolicy: jest.fn((r: { intent: string; confidence: number }) => r),
-  intentSignalsFeeOrPricing: (
-    jest.requireActual('../../../src/services/ai-service') as typeof import('../../../src/services/ai-service')
-  ).intentSignalsFeeOrPricing,
-}));
+jest.mock('../../../src/services/ai-service', () => {
+  const actual = jest.requireActual('../../../src/services/ai-service') as typeof import(
+    '../../../src/services/ai-service'
+  );
+  const reasonFirst = jest.requireActual('../../../src/utils/reason-first-triage') as typeof import(
+    '../../../src/utils/reason-first-triage'
+  );
+  return {
+    ...actual,
+    classifyIntent: jest.fn(),
+    classifyCommentIntent: jest.fn(),
+    isPossiblyMedicalComment: jest.fn(),
+    generateResponse: jest.fn(),
+    generateResponseWithActions: jest.fn(),
+    redactPhiForAI: jest.fn((s: string) => s),
+    parseMultiPersonBooking: jest.fn().mockReturnValue(null),
+    AI_RECENT_MESSAGES_LIMIT: 30,
+    buildClassifyIntentContext: jest.fn().mockReturnValue(undefined),
+    applyIntentPostClassificationPolicy: jest.fn((r: { intent: string; confidence: number }) => r),
+    /** No OpenAI in CI — same output shape as production fallback. */
+    resolveVisitReasonSnippetForTriage: jest
+      .fn()
+      .mockImplementation(async (...args: unknown[]) => {
+        const [recent, current] = args as [
+          { sender_type: string; content: string }[],
+          string,
+          string?,
+        ];
+        return reasonFirst.buildConsolidatedReasonSnippetFromMessages(recent, current ?? '');
+      }),
+  };
+});
 jest.mock('../../../src/services/action-executor-service', () => ({
   executeAction: jest.fn(),
   parseToolCallToAction: jest.fn(),

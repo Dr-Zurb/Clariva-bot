@@ -25,6 +25,8 @@ import {
   pickSuggestedModality,
   runDeterministicServiceCatalogMatchStageA,
 } from './service-catalog-deterministic-match';
+import { env } from '../config/env';
+import type { MatchServiceCatalogDoctorProfile } from '../services/service-catalog-matcher';
 
 /** Optional compact JSON in consultation_types (keep under doctor_settings max length). Example:
  * [{"l":"General (in-person)","r":500},{"l":"Video consult","r":400}]
@@ -650,11 +652,22 @@ export function formatServiceCatalogForDm(
   return formatServiceCatalogForDmWithMeta(catalog, settings, userText, catalogMatchText, opts).markdown;
 }
 
-export function formatServiceCatalogForDmWithMeta(
-  catalog: ServiceCatalogV1,
+/** Options for teleconsult fee catalog DM; `llmNarrow` is used only by the async formatter. */
+export type ServiceCatalogDmFormatOpts = {
+  clinicalLedFeeThread?: boolean;
+  llmNarrow?: {
+    correlationId: string;
+    recentUserMessages?: string[];
+    doctorProfile?: MatchServiceCatalogDoctorProfile | null;
+  };
+};
+
+type PickCatalogForFeeDmResult = ReturnType<typeof pickCatalogServicesForFeeDm>;
+
+function buildServiceCatalogFeeDmResultFromPick(
   settings: ConsultationFeesDmSettings,
-  userText: string = '',
-  catalogMatchText?: string,
+  userText: string,
+  pick: PickCatalogForFeeDmResult,
   opts?: { clinicalLedFeeThread?: boolean }
 ): {
   markdown: string;
@@ -668,7 +681,6 @@ export function formatServiceCatalogForDmWithMeta(
   const hoursSummary = settings.business_hours_summary?.trim() ?? '';
   const hoursSuffix = formatHoursHintLine(locale, hoursSummary, hasDevanagari, hasGurmukhi);
   const cur = settings.appointment_fee_currency;
-  const pick = pickCatalogServicesForFeeDm(catalog, userText, catalogMatchText, opts);
   if (pick.competingBucketsDeferToStaff && pick.staffPlaceholderOffering) {
     const o = pick.staffPlaceholderOffering;
     return {
@@ -788,6 +800,87 @@ export function formatServiceCatalogForDmWithMeta(
     markdown: truncateIfNeededDm(body, CONSULTATION_FEE_DM_MAX_CHARS, locale),
     feeQuoteMatcherFinalize,
   };
+}
+
+export function formatServiceCatalogForDmWithMeta(
+  catalog: ServiceCatalogV1,
+  settings: ConsultationFeesDmSettings,
+  userText: string = '',
+  catalogMatchText?: string,
+  opts?: { clinicalLedFeeThread?: boolean }
+): {
+  markdown: string;
+  feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;
+  feeAmbiguousStaffReview?: ConsultationFeeAmbiguousStaffReview;
+} {
+  const pick = pickCatalogServicesForFeeDm(catalog, userText, catalogMatchText, opts);
+  return buildServiceCatalogFeeDmResultFromPick(settings, userText, pick, opts);
+}
+
+/**
+ * Like `formatServiceCatalogForDmWithMeta`, but when clinical-led narrowing would defer to staff,
+ * optionally runs allowlist LLM match once (`FEE_DM_CATALOG_LLM_NARROW_ENABLED`, default on).
+ */
+export async function formatServiceCatalogForDmWithMetaAsync(
+  catalog: ServiceCatalogV1,
+  settings: ConsultationFeesDmSettings,
+  userText: string = '',
+  catalogMatchText?: string,
+  opts?: ServiceCatalogDmFormatOpts
+): Promise<{
+  markdown: string;
+  feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;
+  feeAmbiguousStaffReview?: ConsultationFeeAmbiguousStaffReview;
+}> {
+  let pick = pickCatalogServicesForFeeDm(catalog, userText, catalogMatchText, opts);
+  const tryLlm =
+    env.FEE_DM_CATALOG_LLM_NARROW_ENABLED &&
+    Boolean(opts?.llmNarrow?.correlationId) &&
+    opts?.clinicalLedFeeThread === true &&
+    pick.clinicalLedAmbiguousDeferToStaff === true &&
+    Boolean(pick.staffPlaceholderOffering);
+
+  if (tryLlm && opts?.llmNarrow) {
+    const merged = mergeFeeCatalogMatchText(userText, catalogMatchText).trim();
+    if (merged.length >= 3) {
+      const { matchServiceCatalogOffering } = await import('../services/service-catalog-matcher');
+      const match = await matchServiceCatalogOffering(
+        {
+          catalog,
+          reasonForVisitText: merged,
+          recentUserMessages: opts.llmNarrow.recentUserMessages,
+          correlationId: opts.llmNarrow.correlationId,
+          doctorProfile: opts.llmNarrow.doctorProfile ?? null,
+        },
+        {}
+      );
+      if (match && match.source !== 'fallback') {
+        const offering = catalog.services.find((s) => s.service_key === match.catalogServiceKey);
+        if (offering) {
+          const makeFinalize = (
+            o: ServiceCatalogV1['services'][number],
+            reasonCodes: string[]
+          ): ConsultationFeeQuoteMatcherFinalize => ({
+            matcherProposedCatalogServiceKey: o.service_key,
+            matcherProposedCatalogServiceId: o.service_id,
+            matcherProposedConsultationModality: pickSuggestedModality(o),
+            serviceCatalogMatchConfidence: 'high',
+            serviceCatalogMatchReasonCodes: reasonCodes,
+          });
+          if (match.confidence === 'high' && match.autoFinalize) {
+            pick = {
+              services: [offering],
+              feeQuoteMatcherFinalize: makeFinalize(offering, match.reasonCodes),
+            };
+          } else {
+            pick = { services: [offering] };
+          }
+        }
+      }
+    }
+  }
+
+  return buildServiceCatalogFeeDmResultFromPick(settings, userText, pick, opts);
 }
 
 /**
@@ -1240,6 +1333,41 @@ export function formatConsultationFeesForDmWithMeta(
   }
   return { markdown: out };
 }
+
+/**
+ * Async variant: teleconsult catalog fee DMs may call LLM narrowing when `catalogOpts.llmNarrow` is set.
+ * Non-catalog paths delegate to the synchronous formatter (no extra API call).
+ */
+export async function formatConsultationFeesForDmWithMetaAsync(
+  settings: ConsultationFeesDmSettings,
+  userText: string = '',
+  catalogMatchText?: string,
+  catalogOpts?: ServiceCatalogDmFormatOpts
+): Promise<ConsultationFeeDmWithMeta> {
+  if (settings.service_offerings_json != null) {
+    if (!isExplicitlyEmptyServiceCatalogJson(settings.service_offerings_json)) {
+      const catalog = safeParseServiceCatalogV1FromDb(
+        settings.service_offerings_json as unknown
+      );
+      if (catalog && catalog.services.length > 0) {
+        const catMeta = await formatServiceCatalogForDmWithMetaAsync(
+          catalog,
+          settings,
+          userText,
+          catalogMatchText,
+          catalogOpts
+        );
+        return {
+          markdown: catMeta.markdown,
+          feeQuoteMatcherFinalize: catMeta.feeQuoteMatcherFinalize,
+          feeAmbiguousStaffReview: catMeta.feeAmbiguousStaffReview,
+        };
+      }
+    }
+  }
+  return formatConsultationFeesForDmWithMeta(settings, userText, catalogMatchText, catalogOpts);
+}
+
 /**
  * RBH-13: Meta phrases about fees/booking - must not become `reason_for_visit` during intake.
  */

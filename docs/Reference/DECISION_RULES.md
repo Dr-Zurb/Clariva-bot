@@ -31,6 +31,7 @@ This file resolves conflicts between:
 - [ARCHITECTURE.md](./ARCHITECTURE.md) - System structure
 - [RECIPES.md](./RECIPES.md) - Implementation patterns
 - [API_DESIGN.md](./API_DESIGN.md) - API design principles
+- [AI_BOT_BUILDING_PHILOSOPHY.md](./AI_BOT_BUILDING_PHILOSOPHY.md) - Receptionist/DM: LLM vs deterministic strategy (quality-first defaults)
 
 ---
 

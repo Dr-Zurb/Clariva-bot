@@ -30,6 +30,7 @@ This file controls **AI agent behavior**, not code behavior. This is what turns 
 - [ARCHITECTURE.md](./ARCHITECTURE.md) - System structure and boundaries (backend)
 - [RECIPES.md](./RECIPES.md) - Canonical code patterns (backend)
 - [CODING_WORKFLOW.md](./CODING_WORKFLOW.md) - Step-by-step coding process
+- [AI_BOT_BUILDING_PHILOSOPHY.md](./AI_BOT_BUILDING_PHILOSOPHY.md) - LLM vs regex, hybrid pattern, anti-patterns for receptionist/DM work
 - [FRONTEND_ARCHITECTURE.md](./FRONTEND_ARCHITECTURE.md) - Frontend structure (read when editing frontend)
 - [FRONTEND_STANDARDS.md](./FRONTEND_STANDARDS.md) - Frontend coding rules (read when editing frontend)
 - [FRONTEND_RECIPES.md](./FRONTEND_RECIPES.md) - Frontend patterns (use when adding frontend features)

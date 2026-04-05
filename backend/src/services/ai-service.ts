@@ -26,7 +26,13 @@ import {
   isPricingInquiryMessage,
   userExplicitlyWantsToBookNow,
 } from '../utils/consultation-fees';
-import { lastBotDiscussesFeesTopic } from '../utils/reason-first-triage';
+import {
+  lastBotDiscussesFeesTopic,
+  collectPatientReasonPartsForTriage,
+  formatVisitReasonItemsForSnippet,
+  truncateReasonSnippetToMax,
+  buildConsolidatedReasonSnippetFromMessages,
+} from '../utils/reason-first-triage';
 import {
   EMERGENCY_RESPONSE_EN,
   isEmergencyUserMessage,
@@ -110,13 +116,25 @@ function setCachedCommentIntent(redactedText: string, result: CommentIntentDetec
 /** Simple greetings only (no mixed content). Match → greeting, skip AI. */
 const SIMPLE_GREETING_REGEX = /^(hi|hello|hey|hiya|howdy|namaste|नमस्ते|good\s*morning|good\s*afternoon|good\s*evening|good\s*day)[\s!?.]*$/i;
 
+/** Kin / role terms for "book for my …" / "me and my …" (EN + common desi English). */
+const BOOKING_RELATION_KIN =
+  'mother|father|mom|dad|mummy|papa|amma|appa|wife|husband|son|daughter|sister|brother|parent|parents|spouse|grandmother|grandma|grandfather|grandpa|nani|nana|dadi|dada|grandchild|grandson|granddaughter|kid|kids|child|children|baby|partner|friend|boss|colleague|coworker|uncle|aunt|cousin|nephew|niece|father-in-law|mother-in-law|brother-in-law|sister-in-law|fiancé|fiance|mentor';
+
 /** e-task-4: Multi-person "me and my X". Must run before BOOK_FOR_SOMEONE_ELSE. */
-const MULTI_PERSON_BOOKING_REGEX =
-  /\b(?:book|schedule|appointment|want\s+to\s+book)\s+(?:an?\s+)?(?:appointment\s+)?(?:for\s+)?(?:me|myself|us)\s+and\s+(?:my\s+)?(mother|father|mom|dad|wife|husband|son|daughter|sister|brother|parent|spouse)\b/i;
+const MULTI_PERSON_BOOKING_REGEX = new RegExp(
+  '\\b(?:book|schedule|appointment|want\\s+to\\s+book)\\s+(?:an?\\s+)?(?:appointment\\s+)?(?:for\\s+)?(?:me|myself|us)\\s+and\\s+(?:my\\s+)?(' +
+    BOOKING_RELATION_KIN +
+    ')\\b',
+  'i'
+);
 
 /** Book for someone else (e.g. "book for my mother/sister"). Match → book_for_someone_else. */
-const BOOK_FOR_SOMEONE_ELSE_REGEX =
-  /\b(book|schedule|appointment|want\s+to\s+book)\s+(?:an?\s+)?(?:appointment\s+)?(?:for\s+)?(?:my\s+)?(mother|father|mom|dad|wife|husband|son|daughter|sister|brother|parent|spouse|someone\s+else|them)\b/i;
+const BOOK_FOR_SOMEONE_ELSE_REGEX = new RegExp(
+  '\\b(book|schedule|appointment|want\\s+to\\s+book)\\s+(?:an?\\s+)?(?:appointment\\s+)?(?:for\\s+)?(?:my\\s+)?(' +
+    BOOKING_RELATION_KIN +
+    '|someone\\s+else|them)\\b',
+  'i'
+);
 
 /** Payment done / check appointment status. Match → check_appointment_status. */
 const CHECK_APPOINTMENT_REGEX =
@@ -137,7 +155,136 @@ export function parseMultiPersonBooking(text: string): { relation: string } | nu
   if (trimmed.length > 120) return null;
   const match = trimmed.match(MULTI_PERSON_BOOKING_REGEX);
   if (!match) return null;
-  return { relation: match[1].toLowerCase() };
+  return { relation: match[1]!.toLowerCase() };
+}
+
+const BOOKING_RELATION_KEYWORD_RE = new RegExp(
+  '\\b(?:my\\s+)?(' + BOOKING_RELATION_KIN + ')\\b',
+  'i'
+);
+
+/**
+ * Deterministic kin/role capture for book_for_someone_else copy ("your mother").
+ * Does not match "someone else" / bare "them" — handler treats those separately.
+ */
+export function extractBookForSomeoneElseRelationKeyword(text: string): string | null {
+  const trimmed = text.trim();
+  if (trimmed.length > 200) return null;
+  const m = trimmed.match(BOOKING_RELATION_KEYWORD_RE);
+  return m ? m[1]!.toLowerCase() : null;
+}
+
+const BOOKING_RELATION_LLM_SYSTEM = `The user is booking a medical appointment on behalf of another person.
+Extract who the appointment is for. Output JSON only, no markdown.
+Schema: {"relation_en": string | null}
+
+Rules:
+- relation_en: short English in lowercase (one or two words): e.g. mother, father, grandmother, child, friend, boss, cousin, nani.
+- Use common equivalents (mom -> mother, dad -> father) when obvious from context.
+- null if you cannot tell a specific role/person from the message (e.g. only "book for someone" with no detail).
+
+Never include diagnoses or symptoms. Never echo phone numbers or emails.`;
+
+const BOOKING_RELATION_LLM_MAX_TOKENS = 120;
+
+function parseBookingRelationJson(content: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content.trim());
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const raw = (parsed as { relation_en?: unknown }).relation_en;
+  if (raw === null) return null;
+  if (typeof raw !== 'string') return null;
+  const t = raw.replace(/\s+/g, ' ').trim().toLowerCase();
+  if (t.length < 2 || t.length > 48) return null;
+  if (/[0-9=@]/.test(t)) return null;
+  return t;
+}
+
+/**
+ * LLM fallback for relation label when keyword lists miss the phrasing (Hinglish, rare kin terms).
+ * Returns null when disabled, on failure, or when unclear.
+ */
+export async function resolveBookingTargetRelationForDm(
+  messageText: string,
+  correlationId: string
+): Promise<string | null> {
+  if (!env.BOOKING_RELATION_LLM_ENABLED) {
+    return null;
+  }
+  const trimmed = messageText.trim();
+  if (trimmed.length < 6 || trimmed.length > 280) {
+    return null;
+  }
+  const client = getOpenAIClient();
+  const config = getOpenAIConfig();
+  if (!client) {
+    return null;
+  }
+
+  const redacted = redactPhiForAI(trimmed);
+  if (redacted.trim().length < 6) {
+    return null;
+  }
+
+  try {
+    const completion = await client.chat.completions.create({
+      model: config.model,
+      max_completion_tokens: BOOKING_RELATION_LLM_MAX_TOKENS,
+      temperature: 0.1,
+      response_format: { type: 'json_object' as const },
+      messages: [
+        { role: 'system', content: BOOKING_RELATION_LLM_SYSTEM },
+        { role: 'user', content: redacted },
+      ],
+    });
+    const raw = completion.choices[0]?.message?.content;
+    const usage = completion.usage;
+    if (!raw?.trim()) {
+      await logAIClassification({
+        correlationId,
+        model: config.model,
+        redactionApplied: true,
+        status: 'failure',
+        tokens: usage?.total_tokens,
+        errorMessage: 'booking_relation_empty_completion',
+      });
+      return null;
+    }
+    const relation = parseBookingRelationJson(raw);
+    if (!relation) {
+      await logAIClassification({
+        correlationId,
+        model: config.model,
+        redactionApplied: true,
+        status: 'failure',
+        tokens: usage?.total_tokens,
+        errorMessage: 'booking_relation_invalid_json',
+      });
+      return null;
+    }
+    await logAIClassification({
+      correlationId,
+      model: config.model,
+      redactionApplied: true,
+      status: 'success',
+      tokens: usage?.total_tokens,
+    });
+    return relation;
+  } catch (err) {
+    logger.warn({ correlationId, err }, 'booking_relation_llm_failed');
+    await logAIClassification({
+      correlationId,
+      model: config.model,
+      redactionApplied: true,
+      status: 'failure',
+      errorMessage: err instanceof Error ? err.message : 'request_failed',
+    });
+    return null;
+  }
 }
 
 function isCheckAppointmentStatus(text: string): boolean {
@@ -792,6 +939,150 @@ export async function resolvePostMedicalPaymentExistenceAck(
     await logAuditEvent({
       correlationId,
       action: 'ai_post_med_ack_localize',
+      resourceType: 'ai',
+      status: 'failure',
+      errorMessage: err instanceof Error ? err.message : 'request_failed',
+      metadata: { model: config.model, redactionApplied: true },
+    });
+    return fallback;
+  }
+}
+
+// ============================================================================
+// Reason-first triage: AI visit-reason snippet (deterministic fallback)
+// ============================================================================
+
+const VISIT_REASON_SNIPPET_MAX_COMPLETION_TOKENS = 500;
+
+const VISIT_REASON_SNIPPET_SYSTEM = `You extract what the patient wants the doctor to address at this visit. Output ONLY valid JSON — no markdown code fences, no preamble.
+
+Required shape: {"reasons": string[]}
+
+Each string is one distinct reason. Keep the patient's own wording when possible (only remove obvious filler: greetings, fee/price questions, "how do I fix this" requests for advice, pure small talk).
+
+INCLUDE: symptoms, concerns, readings with numbers if given, chronic issues they want reviewed, medication concerns they describe.
+EXCLUDE: scheduling/fee/payment, "how much", "is it free", greetings, "how are you", meta questions to the bot.
+NEVER invent symptoms, diagnoses, or advice. Do not add clinical labels the patient did not imply.
+Preserve Hinglish or other languages in Latin script as the patient wrote them.
+Order: follow the patient's order when clear; otherwise put the main concern first.
+At most 12 strings; merge duplicates meaningfully.
+If there is no clinical reason left after exclusions, return {"reasons": []}.`;
+
+function parseVisitReasonSnippetJson(content: string): string[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content.trim());
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const raw = (parsed as { reasons?: unknown }).reasons;
+  if (!Array.isArray(raw)) return null;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const x of raw) {
+    if (typeof x !== 'string') continue;
+    let t = x.replace(/\s+/g, ' ').trim();
+    if (t.length < 2) continue;
+    if (t.length > 280) t = `${t.slice(0, 277).trimEnd()}…`;
+    const k = t.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+    if (out.length >= 12) break;
+  }
+  return out.length > 0 ? out : null;
+}
+
+/**
+ * Patient-facing reason summary for reason-first triage bridges / confirm / reasonForVisit seed.
+ * Uses OpenAI JSON extraction when enabled and client available; otherwise deterministic distillation.
+ */
+export async function resolveVisitReasonSnippetForTriage(
+  recentMessages: { sender_type: string; content: string }[],
+  currentText: string,
+  correlationId: string
+): Promise<string> {
+  const fallback = buildConsolidatedReasonSnippetFromMessages(recentMessages, currentText);
+
+  if (!env.VISIT_REASON_SNIPPET_AI_ENABLED) {
+    return fallback;
+  }
+
+  const client = getOpenAIClient();
+  const config = getOpenAIConfig();
+  if (!client) {
+    return fallback;
+  }
+
+  const parts = collectPatientReasonPartsForTriage(recentMessages, currentText);
+  if (parts.length === 0) {
+    return fallback;
+  }
+
+  const redactedLines = parts.map((p) => redactPhiForAI(p).trim()).filter(Boolean);
+  if (redactedLines.length === 0) {
+    return fallback;
+  }
+
+  const userPayload = JSON.stringify({ patient_messages: redactedLines });
+
+  try {
+    const completion = await client.chat.completions.create({
+      model: config.model,
+      max_completion_tokens: VISIT_REASON_SNIPPET_MAX_COMPLETION_TOKENS,
+      temperature: 0.2,
+      response_format: { type: 'json_object' as const },
+      messages: [
+        { role: 'system', content: VISIT_REASON_SNIPPET_SYSTEM },
+        { role: 'user', content: userPayload },
+      ],
+    });
+    const raw = completion.choices[0]?.message?.content;
+    const usage = completion.usage;
+
+    if (!raw?.trim()) {
+      await logAuditEvent({
+        correlationId,
+        action: 'ai_visit_reason_snippet',
+        resourceType: 'ai',
+        status: 'failure',
+        errorMessage: 'empty_completion',
+        metadata: { model: config.model, redactionApplied: true, tokens: usage?.total_tokens },
+      });
+      return fallback;
+    }
+
+    const reasons = parseVisitReasonSnippetJson(raw);
+    if (!reasons) {
+      logger.warn({ correlationId }, 'visit_reason_snippet: invalid JSON or empty reasons');
+      await logAuditEvent({
+        correlationId,
+        action: 'ai_visit_reason_snippet',
+        resourceType: 'ai',
+        status: 'failure',
+        errorMessage: 'invalid_or_empty_reasons_json',
+        metadata: { model: config.model, redactionApplied: true, tokens: usage?.total_tokens },
+      });
+      return fallback;
+    }
+
+    const snippet = truncateReasonSnippetToMax(formatVisitReasonItemsForSnippet(reasons));
+
+    await logAuditEvent({
+      correlationId,
+      action: 'ai_visit_reason_snippet',
+      resourceType: 'ai',
+      status: 'success',
+      metadata: { model: config.model, redactionApplied: true, tokens: usage?.total_tokens },
+    });
+
+    return snippet;
+  } catch (err) {
+    logger.warn({ correlationId, err }, 'visit_reason_snippet: OpenAI failed; using deterministic');
+    await logAuditEvent({
+      correlationId,
+      action: 'ai_visit_reason_snippet',
       resourceType: 'ai',
       status: 'failure',
       errorMessage: err instanceof Error ? err.message : 'request_failed',

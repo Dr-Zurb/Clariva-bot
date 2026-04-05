@@ -114,6 +114,7 @@ describe('reason-first-triage', () => {
 
   it('userMessageSuggestsClinicalReason matches common symptoms', () => {
     expect(userMessageSuggestsClinicalReason('my blood sugar is 300')).toBe(true);
+    expect(userMessageSuggestsClinicalReason('hypertension follow-up')).toBe(true);
     expect(userMessageSuggestsClinicalReason('how much')).toBe(false);
   });
 
@@ -180,6 +181,23 @@ describe('reason-first-triage', () => {
   it('feeFollowUpAnaphora treats typo how muc as fee follow-up', () => {
     const bot = 'Yes — there is a consultation fee for this visit.';
     expect(feeFollowUpAnaphora('how muc', bot)).toBe(true);
+  });
+
+  it('distills checked/came-out-to-be blood sugar phrasing and drops how are you', () => {
+    const snippet = buildConsolidatedReasonSnippetFromMessages(
+      [
+        {
+          sender_type: 'patient',
+          content:
+            'hello doc how are you ? i checked my blood sugar today it came out to be 199 , how do i fix it ?',
+        },
+      ],
+      ''
+    );
+    expect(snippet).toBe('blood sugar - 199');
+    expect(snippet).not.toMatch(/how are you/i);
+    expect(snippet).not.toMatch(/i checked my/i);
+    expect(snippet).not.toMatch(/came out to be/i);
   });
 
   it('strips embedded pricing typo from a single clinical message', () => {

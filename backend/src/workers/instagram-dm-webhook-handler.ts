@@ -5,13 +5,14 @@
  * RBH-17 (three layers):
  * - **Understand:** `classifyIntent` (+ `applyIntentPostClassificationPolicy`) — LLM intent; optional regex fast-paths in ai-service.
  * - **Decide:** This file's branch chain (after classify) — which flow runs; state transitions.
- * - **Say:** Templates / `composeIdleFeeQuoteDmWithMeta` / `composeMidCollectionFeeQuoteDmWithMeta` / `resolveSafetyMessage` / `generateResponse` — tone via LLM, but ₹ + URLs must come from code (see `DoctorContext`, formatters).
+ * - **Say:** Templates / `composeIdleFeeQuoteDmWithMetaAsync` / `composeMidCollectionFeeQuoteDmWithMetaAsync` / `resolveSafetyMessage` / `generateResponse` — tone via LLM, but ₹ + URLs must come from code (see `DoctorContext`, formatters).
  *
  * **Branch order** (keep stable; doc: docs/Reference/RECEPTIONIST_BOT_DM_BRANCH_INVENTORY.md):
  * revoke → paused → cancel/reschedule step gates → emergency → staff review → consultation channel pick → **reason-first triage (e-task-dm-04)** when `reasonFirstTriagePhase` set → medical (idle) → fee quote (idle) → greeting (idle) → status/cancel/reschedule/book_other → match/consent/collection → default AI.
  */
 
 import { logger } from '../config/logger';
+import { env } from '../config/env';
 import { logAuditEvent } from '../utils/audit-logger';
 import { markWebhookProcessed, markWebhookFailed } from '../services/webhook-idempotency-service';
 import {
@@ -53,7 +54,10 @@ import {
   intentSignalsFeeOrPricing,
   redactPhiForAI,
   resolvePostMedicalPaymentExistenceAck,
+  resolveVisitReasonSnippetForTriage,
   parseMultiPersonBooking,
+  extractBookForSomeoneElseRelationKeyword,
+  resolveBookingTargetRelationForDm,
   AI_RECENT_MESSAGES_LIMIT,
 } from '../services/ai-service';
 import { isEmergencyUserMessage, resolveSafetyMessage } from '../utils/safety-messages';
@@ -125,8 +129,8 @@ import {
   parseConsultationChannelUserReply,
 } from '../utils/dm-consultation-channel';
 import {
-  composeIdleFeeQuoteDmWithMeta,
-  composeMidCollectionFeeQuoteDmWithMeta,
+  composeIdleFeeQuoteDmWithMetaAsync,
+  composeMidCollectionFeeQuoteDmWithMetaAsync,
 } from '../utils/dm-reply-composer';
 import { logInstagramDmRouting } from '../utils/log-instagram-dm-routing';
 import {
@@ -137,7 +141,6 @@ import {
 import { upsertPendingStaffServiceReviewRequest } from '../services/service-staff-review-service';
 import { buildFeeCatalogMatchText } from '../utils/dm-turn-context';
 import {
-  buildConsolidatedReasonSnippetFromMessages,
   clinicalLedFeeThread,
   feeFollowUpAnaphora,
   formatReasonFirstAskMoreQuestion,
@@ -1212,6 +1215,25 @@ export async function processInstagramDmWebhook(params: {
     const feeComposerClinicalOpts = clinicalLedForFees
       ? ({ clinicalLedFeeThread: true } as const)
       : {};
+    /** Clinical-led + multi-row catalog: allow one LLM catalog narrow before staff deferral (see `FEE_DM_CATALOG_LLM_NARROW_ENABLED`). */
+    const feeComposerOpts = {
+      ...feeComposerClinicalOpts,
+      ...(clinicalLedForFees && teleconsultCatalogRowCount > 1
+        ? {
+            llmCatalogNarrow: {
+              correlationId,
+              recentUserMessages: recentMessages
+                .filter((m) => m.sender_type === 'patient')
+                .slice(-8)
+                .map((m) => redactPhiForAI(m.content ?? '')),
+              doctorProfile: {
+                practiceName: doctorSettings?.practice_name ?? null,
+                specialty: doctorSettings?.specialty ?? null,
+              },
+            },
+          }
+        : {}),
+    };
 
     // -------------------------------------------------------------------------
     // RBH-17: Main reply decision tree (Decide + Say). Understand already ran above.
@@ -1538,11 +1560,11 @@ export async function processInstagramDmWebhook(params: {
         sender_type: m.sender_type,
         content: m.content ?? '',
       }));
-      const runReasonFirstFullFeeEscape = (): void => {
+      const runReasonFirstFullFeeEscape = async (): Promise<void> => {
         const feeThread = buildFeeCatalogMatchText(text, recentMessages);
-        const idleFeeOut = composeIdleFeeQuoteDmWithMeta(doctorSettings, text, {
+        const idleFeeOut = await composeIdleFeeQuoteDmWithMetaAsync(doctorSettings, text, {
           catalogMatchText: feeThread,
-          ...feeComposerClinicalOpts,
+          ...feeComposerOpts,
         });
         replyText = idleFeeOut.reply;
         if (idleFeeOut.feeAmbiguousStaffReview) {
@@ -1569,14 +1591,16 @@ export async function processInstagramDmWebhook(params: {
           : 'fee_deterministic_idle';
       };
 
-      const runReasonFirstFeeNarrowFromTriage = (): void => {
+      const runReasonFirstFeeNarrowFromTriage = async (): Promise<void> => {
         const feeThreadRf = buildFeeCatalogMatchText(text, recentMessages);
-        const idleFeeOutRf = composeIdleFeeQuoteDmWithMeta(doctorSettings, text, {
+        const idleFeeOutRf = await composeIdleFeeQuoteDmWithMetaAsync(doctorSettings, text, {
           catalogMatchText: feeThreadRf,
-          ...feeComposerClinicalOpts,
+          ...feeComposerOpts,
         });
         replyText = idleFeeOutRf.reply;
-        const consolidated = buildConsolidatedReasonSnippetFromMessages(recentForTriage, '').trim();
+        const consolidated = (
+          await resolveVisitReasonSnippetForTriage(recentForTriage, '', correlationId)
+        ).trim();
         const reasonSeed =
           consolidated && consolidated !== 'what you shared' ? consolidated : undefined;
         if (idleFeeOutRf.feeAmbiguousStaffReview) {
@@ -1604,12 +1628,14 @@ export async function processInstagramDmWebhook(params: {
       };
 
       if (userWantsExplicitFullFeeList(text)) {
-        runReasonFirstFullFeeEscape();
+        await runReasonFirstFullFeeEscape();
       } else if (state.reasonFirstTriagePhase === 'ask_more') {
         // Do not quote fees from ask_more: confirm reason (+ anything else) first; fee table runs after confirm (yes) or from confirm phase.
         if (signalsFeePricing && !userExplicitlyWantsToBookNow(text)) {
           dmRoutingBranch = 'reason_first_triage_ask_more_payment_bridge';
-          const bridgeSnippet = buildConsolidatedReasonSnippetFromMessages(recentForTriage, '').trim();
+          const bridgeSnippet = (
+            await resolveVisitReasonSnippetForTriage(recentForTriage, '', correlationId)
+          ).trim();
           replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(text, {
             reasonSnippet: bridgeSnippet,
             recentPostMedicalFeeAck: state.postMedicalConsultFeeAckSent === true,
@@ -1622,9 +1648,11 @@ export async function processInstagramDmWebhook(params: {
           };
         } else {
           dmRoutingBranch = 'reason_first_triage_confirm';
-          const snippet = parseNothingElseOrSameOnly(text)
-            ? buildConsolidatedReasonSnippetFromMessages(recentForTriage, '')
-            : buildConsolidatedReasonSnippetFromMessages(recentForTriage, text);
+          const snippet = await resolveVisitReasonSnippetForTriage(
+            recentForTriage,
+            parseNothingElseOrSameOnly(text) ? '' : text,
+            correlationId
+          );
           replyText = formatReasonFirstConfirmQuestion(text, snippet);
           state = {
             ...state,
@@ -1636,9 +1664,9 @@ export async function processInstagramDmWebhook(params: {
         }
       } else if (state.reasonFirstTriagePhase === 'confirm') {
         if (signalsFeePricing && !userExplicitlyWantsToBookNow(text)) {
-          runReasonFirstFeeNarrowFromTriage();
+          await runReasonFirstFeeNarrowFromTriage();
         } else if (parseReasonTriageConfirmYes(text)) {
-          runReasonFirstFeeNarrowFromTriage();
+          await runReasonFirstFeeNarrowFromTriage();
         } else if (parseReasonTriageNegationForClarify(text)) {
           dmRoutingBranch = 'reason_first_triage_confirm';
           replyText = formatReasonFirstConfirmClarify(text);
@@ -1650,7 +1678,11 @@ export async function processInstagramDmWebhook(params: {
           };
         } else {
           dmRoutingBranch = 'reason_first_triage_confirm';
-          const snippetReplay = buildConsolidatedReasonSnippetFromMessages(recentForTriage, text);
+          const snippetReplay = await resolveVisitReasonSnippetForTriage(
+            recentForTriage,
+            text,
+            correlationId
+          );
           replyText = formatReasonFirstConfirmQuestion(text, snippetReplay);
           state = {
             ...state,
@@ -1685,10 +1717,10 @@ export async function processInstagramDmWebhook(params: {
       // RBH-18/19: Pricing during intake — deterministic fee + localized continue line; optional AI bridge (env).
       dmRoutingBranch = 'fee_deterministic_mid_collection';
       const feeThreadMid = buildFeeCatalogMatchText(text, recentMessages);
-      const midFeeOut = composeMidCollectionFeeQuoteDmWithMeta(doctorSettings, text, {
+      const midFeeOut = await composeMidCollectionFeeQuoteDmWithMetaAsync(doctorSettings, text, {
         collectedFields: state.collectedFields,
         catalogMatchText: feeThreadMid,
-        ...feeComposerClinicalOpts,
+        ...feeComposerOpts,
       });
       if (midFeeOut.feeAmbiguousStaffReview) {
         replyText = midFeeOut.reply;
@@ -1730,7 +1762,9 @@ export async function processInstagramDmWebhook(params: {
       if (deferRf) {
         // e-task-dm-04: symptom-led thread — confirm reasons before fee amounts; acknowledge fee asks naturally (incl. after post-med pay-existence ack).
         dmRoutingBranch = 'reason_first_triage_ask_more';
-        const bridgeSnippetDefer = buildConsolidatedReasonSnippetFromMessages(recentForDefer, '').trim();
+        const bridgeSnippetDefer = (
+          await resolveVisitReasonSnippetForTriage(recentForDefer, '', correlationId)
+        ).trim();
         replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(text, {
           reasonSnippet: bridgeSnippetDefer,
           recentPostMedicalFeeAck: state.postMedicalConsultFeeAckSent === true,
@@ -1748,9 +1782,9 @@ export async function processInstagramDmWebhook(params: {
           ? 'fee_follow_up_anaphora_idle'
           : 'fee_deterministic_idle';
         const feeThreadIdle = buildFeeCatalogMatchText(text, recentMessages);
-        const idleFeeOut = composeIdleFeeQuoteDmWithMeta(doctorSettings, text, {
+        const idleFeeOut = await composeIdleFeeQuoteDmWithMetaAsync(doctorSettings, text, {
           catalogMatchText: feeThreadIdle,
-          ...feeComposerClinicalOpts,
+          ...feeComposerOpts,
         });
         replyText = idleFeeOut.reply;
         if (idleFeeOut.feeAmbiguousStaffReview) {
@@ -1951,8 +1985,17 @@ export async function processInstagramDmWebhook(params: {
       } else {
         // Single-person book for someone else
         await clearCollectedData(conversation.id);
-        const relationMatch = text.match(/\b(?:my\s+)?(mother|father|mom|dad|wife|husband|son|daughter|sister|brother|parent|spouse)\b/i);
-        const relation = relationMatch ? relationMatch[1].toLowerCase() : 'them';
+        const explicitSomeoneElse = /\bsomeone\s+else\b/i.test(text);
+        let relation: string | null = explicitSomeoneElse
+          ? 'them'
+          : extractBookForSomeoneElseRelationKeyword(text);
+        const needsLlmRelation =
+          env.BOOKING_RELATION_LLM_ENABLED && (relation == null || relation === 'them') && !explicitSomeoneElse;
+        if (needsLlmRelation) {
+          const aiRel = await resolveBookingTargetRelationForDm(text, correlationId);
+          if (aiRel) relation = aiRel;
+        }
+        if (relation == null) relation = 'them';
         const relationPhrase = relation === 'them' ? 'them' : `your ${relation}`;
         state = {
           ...state,
@@ -2579,9 +2622,9 @@ export async function processInstagramDmWebhook(params: {
         // RBH-13/19: "How much..." misclassified as book_appointment with empty step - fee answer, not intake.
         dmRoutingBranch = 'fee_book_misclassified_idle';
         const feeThreadBookMis = buildFeeCatalogMatchText(text, recentMessages);
-        const misFeeOut = composeIdleFeeQuoteDmWithMeta(doctorSettings, text, {
+        const misFeeOut = await composeIdleFeeQuoteDmWithMetaAsync(doctorSettings, text, {
           catalogMatchText: feeThreadBookMis,
-          ...feeComposerClinicalOpts,
+          ...feeComposerOpts,
         });
         replyText = misFeeOut.reply;
         if (misFeeOut.feeAmbiguousStaffReview) {
@@ -2756,9 +2799,9 @@ export async function processInstagramDmWebhook(params: {
           };
         } else {
           const feeThreadBook = buildFeeCatalogMatchText(text, recentMessages);
-          const bookIdleFeeOut = composeIdleFeeQuoteDmWithMeta(doctorSettings, text, {
+          const bookIdleFeeOut = await composeIdleFeeQuoteDmWithMetaAsync(doctorSettings, text, {
             catalogMatchText: feeThreadBook,
-            ...feeComposerClinicalOpts,
+            ...feeComposerOpts,
           });
           replyText = bookIdleFeeOut.reply;
           if (bookIdleFeeOut.feeAmbiguousStaffReview) {

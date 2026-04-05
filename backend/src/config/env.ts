@@ -178,6 +178,33 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => !(v === 'false' || v === '0')),
+
+  /**
+   * When true (default), reason-first “noted reasons” / confirm snippets use OpenAI extraction + deterministic fallback.
+   * Set false to force rule-based distillation only (no extra API call).
+   */
+  VISIT_REASON_SNIPPET_AI_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => !(v === 'false' || v === '0')),
+
+  /**
+   * When true (default), clinical-led fee DMs that would defer to staff for ambiguous catalog match
+   * first try `matchServiceCatalogOffering` (LLM allowlist) once before showing the deferral block.
+   */
+  FEE_DM_CATALOG_LLM_NARROW_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => !(v === 'false' || v === '0')),
+
+  /**
+   * When true (default), book_for_someone_else flows that lack a regex kin match call OpenAI once
+   * for a short English relation label (e.g. grandmother, child, friend).
+   */
+  BOOKING_RELATION_LLM_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => !(v === 'false' || v === '0')),
 });
 
 /**

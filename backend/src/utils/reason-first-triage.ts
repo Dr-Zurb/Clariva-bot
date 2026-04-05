@@ -11,7 +11,7 @@ import { POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN } from './post-medical-
 
 /** Roman + common message cues that the user is describing a health concern (not pure pricing). */
 const CLINICAL_OR_CONCERN_RE =
-  /\b(blood\s*sugar|glucose|diabet|hypert|blood\s*pressure|\bbp\b|fever|temperature|pain|ache|hurt|hurts|cough|cold|flu|rash|skin|swelling|infection|symptom|nausea|vomit|dizzy|headache|migraine|chest|stomach|abdomen|loose\s*motion|constipat|uti|burning|bleed|wound|medicine|medication|dose|tablet|insulin|reading|test\s+result|lab\s+result|report|scan|x-?ray|feel\s+sick|unwell|worried\s+about|check\s+my|guide\s+me|what\s+should\s+i\s+do)\b/i;
+  /\b(blood\s*sugar|glucose|diabet|hypert(?:ension)?|blood\s*pressure|\bbp\b|fever|temperature|pain|ache|hurt|hurts|cough|cold|flu|rash|skin|swelling|infection|symptom|nausea|vomit|dizzy|headache|migraine|chest|stomach|abdomen|loose\s*motion|constipat|uti|burning|bleed|wound|medicine|medication|dose|tablet|insulin|reading|test\s+result|lab\s+result|report|scan|x-?ray|feel\s+sick|unwell|worried\s+about|check\s+my|guide\s+me|what\s+should\s+i\s+do)\b/i;
 
 const EXPLICIT_FULL_FEE_LIST_RE =
   /\b(all\s+(your\s+)?(fees|prices|services|consultation\s+types|consultation\s+fees|consultation\s+prices)|every\s+(fee|price|service)|full\s+(fee\s+)?list|complete\s+(price|fee)|what\s+are\s+all\s+(the\s+)?(your\s+)?(fees|prices|services))\b/i;
@@ -210,7 +210,7 @@ export function parseReasonTriageNegationForClarify(text: string): boolean {
   return NEGATION_CLARIFY_RE.test(t);
 }
 
-const SNIPPET_MAX = 360;
+export const REASON_SNIPPET_MAX_LEN = 360;
 
 /** Normalized key for deduping distilled reason lines. */
 function normalizeReasonKey(s: string): string {
@@ -220,9 +220,27 @@ function normalizeReasonKey(s: string): string {
 const GREETING_PREFIX_RE =
   /^(?:(?:hello|hi|hey)\s*,?\s*(?:doc|doctor|dr\.?)\s*[,.]?\s+|(?:hello|hi|hey)\s*[,.]?\s+)/i;
 
-/** Blood glucose reading phrasing (English) — extract number + optional fasting context. */
-const BLOOD_SUGAR_PHRASE_RE =
-  /(?:today\s+i\s+)?(?:checked\s+)?(?:my\s+)?blood\s+sugar\s+(?:to\s+be\s+|is\s+|was\s+|at\s+)?(\d+)/i;
+/**
+ * English glucose phrases — order matters: prefer the full “i checked my …” span so we do not
+ * leave leading filler like “today i checked my” in the remainder.
+ * Capture group 1 is the numeric reading.
+ */
+const BLOOD_SUGAR_PHRASE_RES: RegExp[] = [
+  /(?:today\s+)?i\s+checked\s+my\s+blood\s+sugar\s+(?:today\s+)?(?:it\s+)?(?:came\s+out\s+to\s+be\s+|turned\s+out\s+to\s+be\s+|to\s+be\s+|is\s+|was\s+|at\s+)(\d+)/i,
+  /blood\s+sugar\s+(?:today\s+)?(?:it\s+)?(?:came\s+out\s+to\s+be\s+|turned\s+out\s+to\s+be\s+|to\s+be\s+|is\s+|was\s+|at\s+)(\d+)/i,
+  /(?:today\s+i\s+)?(?:checked\s+)?(?:my\s+)?blood\s+sugar\s+(?:to\s+be\s+|is\s+|was\s+|at\s+)?(\d+)/i,
+];
+
+/** Polite small talk — not visit reasons (strip only clear social openers). */
+function stripSmallTalkPhrases(s: string): string {
+  let t = s;
+  t = t.replace(/\bhow\s+are\s+you\s*\?\s*/gi, ' ');
+  t = t.replace(/\bhow\s+are\s+you\s*,\s*/gi, ' ');
+  t = t.replace(/\bhow\s+are\s+you\s+(?=i\s+)/gi, ' ');
+  t = t.replace(/\bhow\s+do\s+you\s+do\s*\?\s*/gi, ' ');
+  t = t.replace(/\bgood\s+(?:morning|afternoon|evening)\s*[,.]?\s*/gi, ' ');
+  return t.replace(/\s+/g, ' ').trim();
+}
 
 function stripGreetingPrefix(s: string): string {
   let t = s;
@@ -245,18 +263,36 @@ function extractBloodSugarSummary(text: string): { summary: string; remainder: s
     /\bfasting\b/i.test(t) ||
     /\bit\s+was\s+fasting\b/i.test(t) ||
     /\bwhile\s+fasting\b/i.test(t);
-  const m = t.match(BLOOD_SUGAR_PHRASE_RE);
-  if (!m) return null;
-  const n = m[1];
-  let remainder = t.replace(BLOOD_SUGAR_PHRASE_RE, ' ');
-  remainder = remainder.replace(/\b(?:it\s+was\s+)?fasting\b/gi, ' ');
-  remainder = remainder.replace(/\s*,\s*/g, ' ').replace(/\s+/g, ' ').trim();
-  const summary = fasting ? `fasting blood sugar - ${n}` : `blood sugar - ${n}`;
-  return { summary, remainder };
+
+  for (const re of BLOOD_SUGAR_PHRASE_RES) {
+    const m = re.exec(t);
+    if (!m) continue;
+    const n = m[1];
+    const full = m[0];
+    const idx = m.index ?? 0;
+    let remainder = `${t.slice(0, idx)} ${t.slice(idx + full.length)}`;
+    remainder = remainder.replace(/\b(?:it\s+was\s+)?fasting\b/gi, ' ');
+    remainder = remainder.replace(/\s*,\s*\bit\s+was\s+fasting\b/gi, ' ');
+    remainder = remainder.replace(/^\s*\bit\s+was\s+fasting\b\s*[,.]?\s*/i, '');
+    remainder = remainder.replace(/\s*,\s*/g, ' ').replace(/\s+/g, ' ').trim();
+    const summary = fasting ? `fasting blood sugar - ${n}` : `blood sugar - ${n}`;
+    return { summary, remainder };
+  }
+  return null;
 }
 
 function stripLeadingIHavePhrases(s: string): string {
   return s.replace(/^(i\s+also\s+have\s+|i\s+have\s+)/i, '').trim();
+}
+
+/** Leftovers from partial glucose regex matches — do not surface as visit reasons. */
+function isJunkReasonFragment(t: string): boolean {
+  const u = t.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (u.length < 2) return true;
+  if (/^(today|yesterday|tomorrow)$/.test(u)) return true;
+  if (/^it\s+was\s+fasting$/.test(u)) return true;
+  if (/^i\s+checked\s+my$/.test(u)) return true;
+  return false;
 }
 
 function splitCommaClinicalSegments(s: string): string[] {
@@ -291,6 +327,7 @@ export function distillPatientReasonLinesFromMessage(raw: string): string[] {
   if (!s) return [];
 
   s = stripGreetingPrefix(s);
+  s = stripSmallTalkPhrases(s);
   s = s.replace(/\bhow\s+do\s+i\s+fix\s+it\b[?.!]*\s*/gi, ' ');
   s = s.replace(/\s*,\s*how\s+do\s+i\s+fix\s+it\b[?.!]*/gi, ', ');
   s = stripStandalonePricingPhrases(s);
@@ -323,7 +360,9 @@ export function distillPatientReasonLinesFromMessage(raw: string): string[] {
         out.push(bs2.summary);
         continue;
       }
+      if (isJunkReasonFragment(t)) continue;
       if (isPricingInquiryMessage(t) && !userMessageSuggestsClinicalReason(t)) continue;
+      if (!userMessageSuggestsClinicalReason(t) && !/\d/.test(t)) continue;
       out.push(t.replace(/\s+/g, ' ').trim());
     }
   }
@@ -331,28 +370,29 @@ export function distillPatientReasonLinesFromMessage(raw: string): string[] {
   return dedupePreserveOrderLocal(out);
 }
 
-/** Merge multiple patient turns into a patient-facing reason summary (numbered when 2+ items). */
-export function distillReasonSnippetFromPatientParts(patientParts: string[]): string {
-  const items: string[] = [];
-  const seen = new Set<string>();
-  for (const p of patientParts) {
-    for (const line of distillPatientReasonLinesFromMessage(p)) {
-      const k = normalizeReasonKey(line);
-      if (!k || seen.has(k)) continue;
-      seen.add(k);
-      items.push(line);
-    }
-  }
-  if (items.length === 0) return 'what you shared';
-  if (items.length === 1) return items[0];
-  return items.map((t, i) => `${i + 1}) ${t}`).join('\n');
+/** Format distilled reason lines for DM/staff preview (numbered when 2+ items). */
+export function formatVisitReasonItemsForSnippet(items: string[]): string {
+  const cleaned = items.map((t) => t.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  if (cleaned.length === 0) return 'what you shared';
+  if (cleaned.length === 1) return cleaned[0];
+  return cleaned.map((t, i) => `${i + 1}) ${t}`).join('\n');
 }
 
-/** Patient-visible summary from prior patient lines (no PHI logging here). */
-export function buildConsolidatedReasonSnippetFromMessages(
+/** Apply max length for Instagram / DB preview fields. */
+export function truncateReasonSnippetToMax(snippet: string): string {
+  const s = (snippet || '').trim() || 'what you shared';
+  if (s.length <= REASON_SNIPPET_MAX_LEN) return s;
+  return `${s.slice(0, REASON_SNIPPET_MAX_LEN - 1).trimEnd()}…`;
+}
+
+/**
+ * Patient DM lines that contribute to reason-first triage (before distillation / LLM).
+ * Exported for AI snippet resolver + tests.
+ */
+export function collectPatientReasonPartsForTriage(
   recentMessages: { sender_type: string; content: string }[],
   currentText: string
-): string {
+): string[] {
   const parts: string[] = [];
   for (const m of recentMessages) {
     if (m.sender_type !== 'patient') continue;
@@ -369,9 +409,32 @@ export function buildConsolidatedReasonSnippetFromMessages(
   ) {
     parts.push(cur);
   }
-  let out = distillReasonSnippetFromPatientParts(parts);
-  if (out.length > SNIPPET_MAX) out = `${out.slice(0, SNIPPET_MAX - 1).trimEnd()}…`;
-  return out || 'what you shared';
+  return parts;
+}
+
+/** Merge multiple patient turns into a patient-facing reason summary (numbered when 2+ items). */
+export function distillReasonSnippetFromPatientParts(patientParts: string[]): string {
+  const items: string[] = [];
+  const seen = new Set<string>();
+  for (const p of patientParts) {
+    for (const line of distillPatientReasonLinesFromMessage(p)) {
+      const k = normalizeReasonKey(line);
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      items.push(line);
+    }
+  }
+  return formatVisitReasonItemsForSnippet(items);
+}
+
+/** Patient-visible summary from prior patient lines — deterministic distillation only (fallback / tests). */
+export function buildConsolidatedReasonSnippetFromMessages(
+  recentMessages: { sender_type: string; content: string }[],
+  currentText: string
+): string {
+  const parts = collectPatientReasonPartsForTriage(recentMessages, currentText);
+  const out = distillReasonSnippetFromPatientParts(parts);
+  return truncateReasonSnippetToMax(out || 'what you shared');
 }
 
 function askMoreEnglish(): string {

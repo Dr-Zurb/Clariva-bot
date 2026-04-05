@@ -10,9 +10,12 @@ import {
   type ConsultationFeeAmbiguousStaffReview,
   type ConsultationFeeQuoteMatcherFinalize,
   type ConsultationFeesDmSettings,
+  type ServiceCatalogDmFormatOpts,
   formatConsultationFeesForDmWithMeta,
+  formatConsultationFeesForDmWithMetaAsync,
   formatFeeBookingCtaForDm,
 } from './consultation-fees';
+import type { MatchServiceCatalogDoctorProfile } from '../services/service-catalog-matcher';
 import type { PatientCollectionField } from './validation';
 import { REQUIRED_COLLECTION_FIELDS } from './validation';
 
@@ -103,6 +106,49 @@ export function composeIdleFeeQuoteDmWithMeta(
   };
 }
 
+/** Async: clinical-led fee threads may run catalog LLM narrowing when `llmCatalogNarrow` is set. */
+export async function composeIdleFeeQuoteDmWithMetaAsync(
+  settings: DoctorSettingsRow | null,
+  userText: string,
+  opts?: {
+    catalogMatchText?: string;
+    clinicalLedFeeThread?: boolean;
+    llmCatalogNarrow?: {
+      correlationId: string;
+      recentUserMessages?: string[];
+      doctorProfile?: MatchServiceCatalogDoctorProfile | null;
+    };
+  }
+): Promise<{
+  reply: string;
+  feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;
+  feeAmbiguousStaffReview?: ConsultationFeeAmbiguousStaffReview;
+}> {
+  const catalogOpts: ServiceCatalogDmFormatOpts | undefined =
+    opts?.clinicalLedFeeThread !== undefined || opts?.llmCatalogNarrow
+      ? {
+          clinicalLedFeeThread: opts.clinicalLedFeeThread,
+          llmNarrow: opts.llmCatalogNarrow,
+        }
+      : undefined;
+  const fee = await formatConsultationFeesForDmWithMetaAsync(
+    feeQuoteSettingsFromDoctorRow(settings),
+    userText,
+    opts?.catalogMatchText,
+    catalogOpts
+  );
+  if (fee.feeAmbiguousStaffReview) {
+    return { reply: fee.markdown.trim(), feeAmbiguousStaffReview: fee.feeAmbiguousStaffReview };
+  }
+  return {
+    reply: composeDmReplySegments([
+      { kind: 'fee_body', markdown: fee.markdown },
+      { kind: 'booking_cta', userText },
+    ]),
+    feeQuoteMatcherFinalize: fee.feeQuoteMatcherFinalize,
+  };
+}
+
 /** Mid-intake pricing: fee block + localized “continue sharing details” (+ optional missing fields). */
 export function composeMidCollectionFeeQuoteDm(
   settings: DoctorSettingsRow | null,
@@ -132,6 +178,54 @@ export function composeMidCollectionFeeQuoteDmWithMeta(
     opts?.clinicalLedFeeThread !== undefined
       ? { clinicalLedFeeThread: opts.clinicalLedFeeThread }
       : undefined
+  );
+  if (fee.feeAmbiguousStaffReview) {
+    return { reply: fee.markdown.trim(), feeAmbiguousStaffReview: fee.feeAmbiguousStaffReview };
+  }
+  const missing = computeMissingCollectionFields(opts?.collectedFields);
+  return {
+    reply: composeDmReplySegments([
+      { kind: 'fee_body', markdown: fee.markdown },
+      {
+        kind: 'mid_collection_continue',
+        userText,
+        missingFieldKeys: missing.length > 0 ? missing : undefined,
+      },
+    ]),
+    feeQuoteMatcherFinalize: fee.feeQuoteMatcherFinalize,
+  };
+}
+
+export async function composeMidCollectionFeeQuoteDmWithMetaAsync(
+  settings: DoctorSettingsRow | null,
+  userText: string,
+  opts?: {
+    collectedFields?: string[] | null;
+    catalogMatchText?: string;
+    clinicalLedFeeThread?: boolean;
+    llmCatalogNarrow?: {
+      correlationId: string;
+      recentUserMessages?: string[];
+      doctorProfile?: MatchServiceCatalogDoctorProfile | null;
+    };
+  }
+): Promise<{
+  reply: string;
+  feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;
+  feeAmbiguousStaffReview?: ConsultationFeeAmbiguousStaffReview;
+}> {
+  const catalogOpts: ServiceCatalogDmFormatOpts | undefined =
+    opts?.clinicalLedFeeThread !== undefined || opts?.llmCatalogNarrow
+      ? {
+          clinicalLedFeeThread: opts.clinicalLedFeeThread,
+          llmNarrow: opts.llmCatalogNarrow,
+        }
+      : undefined;
+  const fee = await formatConsultationFeesForDmWithMetaAsync(
+    feeQuoteSettingsFromDoctorRow(settings),
+    userText,
+    opts?.catalogMatchText,
+    catalogOpts
   );
   if (fee.feeAmbiguousStaffReview) {
     return { reply: fee.markdown.trim(), feeAmbiguousStaffReview: fee.feeAmbiguousStaffReview };
