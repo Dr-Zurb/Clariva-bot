@@ -3,6 +3,7 @@ import {
   buildConsolidatedReasonSnippetFromMessages,
   clinicalLedFeeThread,
   feeFollowUpAnaphora,
+  formatReasonFirstFeePatienceBridgeWhileAskMore,
   isAmountSeekingPricingQuestion,
   isVagueConsultationPaymentExistenceQuestion,
   lastAssistantDmContent,
@@ -169,6 +170,28 @@ describe('reason-first-triage', () => {
     expect(feeFollowUpAnaphora('what is it then ? the fee?', bot)).toBe(true);
     expect(feeFollowUpAnaphora('what is it?', 'Hello — how can I help?')).toBe(false);
     expect(feeFollowUpAnaphora('book appointment', bot)).toBe(false);
+  });
+
+  it('fee patience bridge embeds reason snippet and short head after post-med ack', () => {
+    const snippet = 'hello doc , so i check my blood sugar today it came out to be 199 , how do i fix it';
+    const out = formatReasonFirstFeePatienceBridgeWhileAskMore('so what is it then ? the fee ?', {
+      reasonSnippet: snippet,
+      recentPostMedicalFeeAck: true,
+    });
+    expect(out).toContain('**So far we\'ve noted:**');
+    expect(out).toContain('199');
+    expect(out).toContain('**Understood**');
+    expect(out).toContain('before we share the fee');
+    expect(out).not.toMatch(/Absolutely — we share the \*\*fee\*\* as soon as we've \*\*confirmed your reason for visit\*\*/);
+  });
+
+  it('fee patience bridge uses longer preamble when no post-med ack flag', () => {
+    const out = formatReasonFirstFeePatienceBridgeWhileAskMore('how much is consult', {
+      reasonSnippet: 'knee pain',
+      recentPostMedicalFeeAck: false,
+    });
+    expect(out).toContain('**Absolutely**');
+    expect(out).toContain('**knee pain**');
   });
 
   it('clinicalLedFeeThread when triage, clinical patient line, or related state flags', () => {

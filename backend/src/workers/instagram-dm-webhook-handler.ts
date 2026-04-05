@@ -1609,7 +1609,11 @@ export async function processInstagramDmWebhook(params: {
         // Do not quote fees from ask_more: confirm reason (+ anything else) first; fee table runs after confirm (yes) or from confirm phase.
         if (signalsFeePricing && !userExplicitlyWantsToBookNow(text)) {
           dmRoutingBranch = 'reason_first_triage_ask_more_payment_bridge';
-          replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(text);
+          const bridgeSnippet = buildConsolidatedReasonSnippetFromMessages(recentForTriage, '').trim();
+          replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(text, {
+            reasonSnippet: bridgeSnippet,
+            recentPostMedicalFeeAck: state.postMedicalConsultFeeAckSent === true,
+          });
           state = {
             ...state,
             lastIntent: intentResult.intent,
@@ -1726,7 +1730,11 @@ export async function processInstagramDmWebhook(params: {
       if (deferRf) {
         // e-task-dm-04: symptom-led thread — confirm reasons before fee amounts; acknowledge fee asks naturally (incl. after post-med pay-existence ack).
         dmRoutingBranch = 'reason_first_triage_ask_more';
-        replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(text);
+        const bridgeSnippetDefer = buildConsolidatedReasonSnippetFromMessages(recentForDefer, '').trim();
+        replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(text, {
+          reasonSnippet: bridgeSnippetDefer,
+          recentPostMedicalFeeAck: state.postMedicalConsultFeeAckSent === true,
+        });
         state = {
           ...state,
           lastIntent: intentResult.intent,

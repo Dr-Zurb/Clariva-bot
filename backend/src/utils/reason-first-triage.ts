@@ -273,27 +273,91 @@ export function formatPostMedicalPaymentExistenceAck(_userText: string): string 
   return POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN;
 }
 
-/** User asked pricing during ask_more; keep triage — no fee table until confirm. */
-export function formatReasonFirstFeePatienceBridgeWhileAskMore(userText: string): string {
+/** Optional thread + ack context for fee patience bridge (e-task-dm-08 natural triage copy). */
+export interface FeePatienceBridgeOptions {
+  /** From {@link buildConsolidatedReasonSnippetFromMessages} (e.g. current pricing line omitted). */
+  reasonSnippet?: string;
+  /** Patient already received post–medical payment-existence ack — shorten fee-timing preamble. */
+  recentPostMedicalFeeAck?: boolean;
+}
+
+function usableReasonSnippetForBridge(raw: string | undefined): string | undefined {
+  const t = (raw ?? '').trim();
+  if (t.length < 4) return undefined;
+  if (t === 'what you shared') return undefined;
+  return t;
+}
+
+function bridgeClosingEnglish(snippet?: string): string {
+  if (snippet) {
+    return (
+      `**So far we've noted:** **${snippet}**.\n\n` +
+      "**Is there anything else** you'd like the doctor to address at this visit? Please let us know **before we share the fee** — you can say **nothing else** if that covers it."
+    );
+  }
+  return askMoreEnglish();
+}
+
+function bridgeClosingHi(snippet?: string): string {
+  if (snippet) {
+    return (
+      `**Ab tak note kiya:** **${snippet}**.\n\n` +
+      '**Kya aur kuch** hai jo aap is visit par doctor se discuss karna chahte hain? **Fee batane se pehle** bata dein — agar bas yahi hai to **nothing else** likh sakte hain.'
+    );
+  }
+  return askMoreHi();
+}
+
+function bridgeClosingPa(snippet?: string): string {
+  if (snippet) {
+    return (
+      `**Haje tak note kita:** **${snippet}**.\n\n` +
+      '**Hor kuj** hai je tu is visit te doctor naal discuss karna chahe? **Fee dasan to pehla** das de — je bas ohi hai ta **nothing else** likh sakde o.'
+    );
+  }
+  return askMorePa();
+}
+
+/** User asked pricing during ask_more (or defer-to-triage); keep fee table until confirm — natural, thread-aware copy. */
+export function formatReasonFirstFeePatienceBridgeWhileAskMore(
+  userText: string,
+  options?: FeePatienceBridgeOptions
+): string {
   const loc = detectSafetyMessageLocale(userText || '');
   const hasDe = /[\u0900-\u097F]/.test(userText || '');
   const hasPa = /[\u0A00-\u0A7F]/.test(userText || '');
+  const snippet = usableReasonSnippetForBridge(options?.reasonSnippet);
+  const postAck = options?.recentPostMedicalFeeAck === true;
+
   if (loc === 'hi' && !hasDe) {
-    return (
-      '**Bilkul** — **exact fee** tabhi batate hain jab **visit ka reason** aur **aur kuch discuss karna hai ya nahi** clear ho jaye. Yeh visit **paid** hai.\n\n' +
-      askMoreHi()
-    );
+    const head = snippet
+      ? postAck
+        ? '**Theek hai** — **exact fee** tab batayenge jab **saari baatein** clear hon.\n\n'
+        : '**Bilkul** — **exact fee** tab batate hain jab **visit ka reason** aur **aur kuch discuss karna hai ya nahi** clear ho jaye. Yeh visit **paid** hai.\n\n'
+      : postAck
+        ? '**Theek hai** — **exact fee** tab batayenge jab **saari baatein** clear hon.\n\n'
+        : '**Bilkul** — **exact fee** tabhi batate hain jab **visit ka reason** aur **aur kuch** clear ho. Yeh visit **paid** hai.\n\n';
+    return head + bridgeClosingHi(snippet);
   }
   if (loc === 'pa' && !hasPa) {
-    return (
-      '**Bilkul** — **exact fee** tab dasange jad **visit da reason** aur **hor kuj discuss karna hai ya nahi** clear ho jave. Eh visit **paid** hai.\n\n' +
-      askMorePa()
-    );
+    const head = snippet
+      ? postAck
+        ? '**Theek aa** — **exact fee** tab dasange jad **saari gallan** clear hon.\n\n'
+        : '**Bilkul** — **exact fee** tab dasange jad **visit da reason** aur **hor kuj discuss karna hai ya nahi** clear ho jave. Eh visit **paid** hai.\n\n'
+      : postAck
+        ? '**Theek aa** — **exact fee** tab dasange jad **saari gallan** clear hon.\n\n'
+        : '**Bilkul** — **exact fee** tab dasange jad **visit da reason** te **hor kuj** clear ho. Eh visit **paid** hai.\n\n';
+    return head + bridgeClosingPa(snippet);
   }
-  return (
-    "**Absolutely** — we share the **fee** as soon as we've **confirmed your reason for visit** and whether **there's anything else** you want the doctor to address (fees follow what you're seeing them about).\n\n" +
-    askMoreEnglish()
-  );
+
+  const headEn = snippet
+    ? postAck
+      ? "**Understood** — we'll share the **fee** once we know **everything** you want the doctor to address.\n\n"
+      : "**Absolutely** — we share the **fee** as soon as we've **confirmed what you want the doctor to address** (fees follow what you're seeing them about).\n\n"
+    : postAck
+      ? "**Understood** — we'll share the **fee** once we've captured **everything** for this visit.\n\n"
+      : "**Absolutely** — we share the **fee** as soon as we've **confirmed your reason for visit** and whether **there's anything else** you want the doctor to address (fees follow what you're seeing them about).\n\n";
+  return headEn + bridgeClosingEnglish(snippet);
 }
 
 function confirmTemplateEnglish(snippet: string): string {
