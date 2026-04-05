@@ -183,6 +183,26 @@ describe('reason-first-triage', () => {
     expect(feeFollowUpAnaphora('how muc', bot)).toBe(true);
   });
 
+  it('merges current patient bubble with history (fee-bridge must pass current text, not empty string)', () => {
+    const recent = [
+      {
+        sender_type: 'patient',
+        content:
+          'hello doc, my blood sugar today came out to be 208, guide me towards managing it, this was fasting sugar',
+      },
+    ];
+    const followUp =
+      'i have hypertension too and sometimes there is burning feel in my stomach i feel lethargic often too';
+    const withoutCurrent = buildConsolidatedReasonSnippetFromMessages(recent, '');
+    const withCurrent = buildConsolidatedReasonSnippetFromMessages(recent, followUp);
+    expect(withoutCurrent.toLowerCase()).toContain('208');
+    expect(withoutCurrent.toLowerCase()).not.toContain('hypertension');
+    expect(withCurrent.toLowerCase()).toContain('208');
+    expect(withCurrent.toLowerCase()).toContain('hypertension');
+    expect(withCurrent.toLowerCase()).toMatch(/burn|stomach/);
+    expect(withCurrent.toLowerCase()).toMatch(/lethargic|fatigue|tired/);
+  });
+
   it('distills checked/came-out-to-be blood sugar phrasing and drops how are you', () => {
     const snippet = buildConsolidatedReasonSnippetFromMessages(
       [

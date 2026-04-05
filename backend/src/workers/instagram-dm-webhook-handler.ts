@@ -1599,7 +1599,7 @@ export async function processInstagramDmWebhook(params: {
         });
         replyText = idleFeeOutRf.reply;
         const consolidated = (
-          await resolveVisitReasonSnippetForTriage(recentForTriage, '', correlationId)
+          await resolveVisitReasonSnippetForTriage(recentForTriage, text, correlationId)
         ).trim();
         const reasonSeed =
           consolidated && consolidated !== 'what you shared' ? consolidated : undefined;
@@ -1634,7 +1634,7 @@ export async function processInstagramDmWebhook(params: {
         if (signalsFeePricing && !userExplicitlyWantsToBookNow(text)) {
           dmRoutingBranch = 'reason_first_triage_ask_more_payment_bridge';
           const bridgeSnippet = (
-            await resolveVisitReasonSnippetForTriage(recentForTriage, '', correlationId)
+            await resolveVisitReasonSnippetForTriage(recentForTriage, text, correlationId)
           ).trim();
           replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(text, {
             reasonSnippet: bridgeSnippet,
@@ -1763,7 +1763,7 @@ export async function processInstagramDmWebhook(params: {
         // e-task-dm-04: symptom-led thread — confirm reasons before fee amounts; acknowledge fee asks naturally (incl. after post-med pay-existence ack).
         dmRoutingBranch = 'reason_first_triage_ask_more';
         const bridgeSnippetDefer = (
-          await resolveVisitReasonSnippetForTriage(recentForDefer, '', correlationId)
+          await resolveVisitReasonSnippetForTriage(recentForDefer, text, correlationId)
         ).trim();
         replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(text, {
           reasonSnippet: bridgeSnippetDefer,

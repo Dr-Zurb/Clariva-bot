@@ -11,7 +11,7 @@ import { POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN } from './post-medical-
 
 /** Roman + common message cues that the user is describing a health concern (not pure pricing). */
 const CLINICAL_OR_CONCERN_RE =
-  /\b(blood\s*sugar|glucose|diabet|hypert(?:ension)?|blood\s*pressure|\bbp\b|fever|temperature|pain|ache|hurt|hurts|cough|cold|flu|rash|skin|swelling|infection|symptom|nausea|vomit|dizzy|headache|migraine|chest|stomach|abdomen|loose\s*motion|constipat|uti|burning|bleed|wound|medicine|medication|dose|tablet|insulin|reading|test\s+result|lab\s+result|report|scan|x-?ray|feel\s+sick|unwell|worried\s+about|check\s+my|guide\s+me|what\s+should\s+i\s+do)\b/i;
+  /\b(blood\s*sugar|glucose|diabet|hypert(?:ension)?|blood\s*pressure|\bbp\b|fever|temperature|pain|ache|hurt|hurts|cough|cold|flu|rash|skin|swelling|infection|symptom|nausea|vomit|dizzy|headache|migraine|chest|stomach|abdomen|loose\s*motion|constipat|uti|burning|bleed|wound|medicine|medication|dose|tablet|insulin|reading|test\s+result|lab\s+result|report|scan|x-?ray|feel\s+sick|unwell|lethargic|fatigue|fatigued|tired|exhausted|low\s+energy|weakness|worried\s+about|check\s+my|guide\s+me|what\s+should\s+i\s+do)\b/i;
 
 const EXPLICIT_FULL_FEE_LIST_RE =
   /\b(all\s+(your\s+)?(fees|prices|services|consultation\s+types|consultation\s+fees|consultation\s+prices)|every\s+(fee|price|service)|full\s+(fee\s+)?list|complete\s+(price|fee)|what\s+are\s+all\s+(the\s+)?(your\s+)?(fees|prices|services))\b/i;
