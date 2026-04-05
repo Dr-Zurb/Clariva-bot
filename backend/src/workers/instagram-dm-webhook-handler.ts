@@ -8,7 +8,7 @@
  * - **Say:** Templates / `composeIdleFeeQuoteDmWithMetaAsync` / `composeMidCollectionFeeQuoteDmWithMetaAsync` / `resolveSafetyMessage` / `generateResponse` — tone via LLM, but ₹ + URLs must come from code (see `DoctorContext`, formatters).
  *
  * **Branch order** (keep stable; doc: docs/Reference/RECEPTIONIST_BOT_DM_BRANCH_INVENTORY.md):
- * revoke → paused → cancel/reschedule step gates → emergency → staff review → consultation channel pick → **reason-first triage (e-task-dm-04)** when `reasonFirstTriagePhase` set → medical (idle) → fee quote (idle) → greeting (idle) → status/cancel/reschedule/book_other → match/consent/collection → default AI.
+ * revoke → paused → cancel/reschedule step gates → emergency → staff review → consultation channel pick → **reason-first triage (e-task-dm-04)** when `reasonFirstTriagePhase` set or when booking/channel intake would skip confirmed visit reasons → medical (idle) → fee quote (idle) → greeting (idle) → status/cancel/reschedule/book_other → match/consent/collection → default AI. Waiting on **channel pick alone** does not block medical/reason-first (`inCollection` uses resolved pick only).
  */
 
 import { logger } from '../config/logger';
@@ -141,12 +141,14 @@ import {
 import { upsertPendingStaffServiceReviewRequest } from '../services/service-staff-review-service';
 import { buildFeeCatalogMatchText } from '../utils/dm-turn-context';
 import {
+  bookingShouldDeferToReasonFirstTriage,
   clinicalLedFeeThread,
   feeFollowUpAnaphora,
-  formatReasonFirstAskMoreQuestion,
+  formatClinicalReasonAskMoreAfterDeflection,
   formatReasonFirstConfirmClarify,
   formatReasonFirstConfirmQuestion,
   formatReasonFirstFeePatienceBridgeWhileAskMore,
+  formatReasonFirstGateBeforeIntake,
   isVagueConsultationPaymentExistenceQuestion,
   lastAssistantDmContent,
   parseNothingElseOrSameOnly,
@@ -154,6 +156,7 @@ import {
   parseReasonTriageNegationForClarify,
   recentPatientThreadHasClinicalReason,
   shouldDeferIdleFeeForReasonFirstTriage,
+  userMessageSuggestsClinicalReason,
   userWantsExplicitFullFeeList,
 } from '../utils/reason-first-triage';
 
@@ -794,6 +797,13 @@ async function buildAiContextForResponse(
       ctx.idleDialogueHint =
         'Thread note: The user recently got the standard message that specific medical advice cannot be given here. Help with booking, fees, or general practice info is appropriate; do not diagnose or treat.';
     }
+    const suppressIdleFees =
+      !feeIdle &&
+      !state.reasonForVisit?.trim() &&
+      clinicalLedFeeThread({ state, recentMessages });
+    if (suppressIdleFees) {
+      ctx.suppressConsultationFeeFacts = true;
+    }
     return ctx;
   }
 
@@ -811,6 +821,18 @@ async function buildAiContextForResponse(
   if (state.bookingForSomeoneElse) {
     ctx.bookingForSomeoneElse = true;
     if (state.relation) ctx.relation = state.relation;
+  }
+
+  const reasonInRedis =
+    collected &&
+    typeof (collected as Record<string, unknown>).reason_for_visit === 'string' &&
+    String((collected as Record<string, unknown>).reason_for_visit).trim().length > 0;
+  const reasonCollected =
+    collectedFields.includes('reason_for_visit') ||
+    reasonInRedis ||
+    Boolean(state.reasonForVisit?.trim());
+  if (clinicalLedFeeThread({ state, recentMessages }) && !reasonCollected) {
+    ctx.suppressConsultationFeeFacts = true;
   }
 
   return ctx;
@@ -1247,6 +1269,10 @@ export async function processInstagramDmWebhook(params: {
     const lastBotAskedForDetails = effectiveAskedForDetails(state, recentMessages);
     const lastBotAskedChannelPick = lastBotAskedForConsultationChannel(recentMessages);
     const channelReplyPick = lastBotAskedChannelPick ? parseConsultationChannelUserReply(text) : null;
+    /**
+     * Outstanding channel prompt alone is not "collecting PHI" — must not block medical_query / reason-first
+     * when the patient sends symptoms instead of text/voice/video.
+     */
     const inCollection =
       state.step?.startsWith('collecting_') ||
       state.step === 'consent' ||
@@ -1254,7 +1280,7 @@ export async function processInstagramDmWebhook(params: {
       state.step === 'awaiting_match_confirmation' ||
       state.step === 'awaiting_staff_service_confirmation' ||
       lastBotAskedForDetails ||
-      lastBotAskedChannelPick ||
+      (lastBotAskedChannelPick && channelReplyPick != null) ||
       state.lastPromptKind === 'collect_details' ||
       state.lastPromptKind === 'consent' ||
       state.lastPromptKind === 'confirm_details' ||
@@ -1497,37 +1523,61 @@ export async function processInstagramDmWebhook(params: {
       } else {
         const nextModality: 'text' | 'voice' | 'video' | undefined =
           pick === 'in_clinic' ? undefined : pick;
-        const nextStep =
-          state.step === 'collecting_all' || state.step?.startsWith('collecting_')
-            ? state.step!
-            : 'collecting_all';
-        state = {
-          ...state,
-          consultationType: pick,
-          consultationModality: nextModality,
-          step: nextStep,
-          collectedFields: state.collectedFields ?? [],
-          lastIntent: intentResult.intent,
-          updatedAt: new Date().toISOString(),
-        };
-        const aiContext = await buildAiContextForResponse(
-          conversation.id,
+        const recentChannel = recentMessages.map((m) => ({
+          sender_type: m.sender_type,
+          content: m.content ?? '',
+        }));
+        const deferIntakeForReasonFirst = bookingShouldDeferToReasonFirstTriage({
           state,
-          recentMessages,
-          correlationId,
           text,
-          teleconsultCatalogRowCount
-        );
-        replyText = await runGenerateResponse({
-          conversationId: conversation.id,
-          currentIntent: 'book_appointment',
-          state,
-          recentMessages,
-          currentUserMessage: text,
-          correlationId,
-          doctorContext,
-          context: aiContext,
+          recentMessages: recentChannel,
         });
+        if (deferIntakeForReasonFirst) {
+          dmRoutingBranch = 'consultation_channel_pick_reason_first';
+          const snippet = await resolveVisitReasonSnippetForTriage(recentChannel, text, correlationId);
+          replyText = formatReasonFirstGateBeforeIntake(text, snippet);
+          state = {
+            ...state,
+            consultationType: pick,
+            consultationModality: nextModality,
+            step: 'responded',
+            lastIntent: intentResult.intent,
+            reasonFirstTriagePhase: 'ask_more',
+            updatedAt: new Date().toISOString(),
+          };
+        } else {
+          const nextStep =
+            state.step === 'collecting_all' || state.step?.startsWith('collecting_')
+              ? state.step!
+              : 'collecting_all';
+          state = {
+            ...state,
+            consultationType: pick,
+            consultationModality: nextModality,
+            step: nextStep,
+            collectedFields: state.collectedFields ?? [],
+            lastIntent: intentResult.intent,
+            updatedAt: new Date().toISOString(),
+          };
+          const aiContext = await buildAiContextForResponse(
+            conversation.id,
+            state,
+            recentMessages,
+            correlationId,
+            text,
+            teleconsultCatalogRowCount
+          );
+          replyText = await runGenerateResponse({
+            conversationId: conversation.id,
+            currentIntent: 'book_appointment',
+            state,
+            recentMessages,
+            currentUserMessage: text,
+            correlationId,
+            doctorContext,
+            context: aiContext,
+          });
+        }
       }
     } else if (
       !inCollection &&
@@ -1700,12 +1750,23 @@ export async function processInstagramDmWebhook(params: {
       // inCollection = we asked for details; their reply is data. No field-count heuristic (unreliable:
       // a patient could send details + "what should I do?" without booking intent).
       replyText = resolveSafetyMessage('medical_query', text);
+      const recentMed = recentMessages.map((m) => ({
+        sender_type: m.sender_type,
+        content: m.content ?? '',
+      }));
+      let phase: ConversationState['reasonFirstTriagePhase'] = undefined;
+      if (userMessageSuggestsClinicalReason(text)) {
+        const snippetMed = await resolveVisitReasonSnippetForTriage(recentMed, text, correlationId);
+        replyText = `${replyText}\n\n${formatClinicalReasonAskMoreAfterDeflection(text, snippetMed)}`;
+        phase = 'ask_more';
+      }
       state = {
         ...state,
         lastIntent: intentResult.intent,
         step: 'responded',
         lastMedicalDeflectionAt: new Date().toISOString(),
         postMedicalConsultFeeAckSent: undefined,
+        ...(phase ? { reasonFirstTriagePhase: phase } : { reasonFirstTriagePhase: undefined }),
         updatedAt: new Date().toISOString(),
       };
       await updateConversationState(conversation.id, state, correlationId);
@@ -2610,7 +2671,11 @@ export async function processInstagramDmWebhook(params: {
       });
       if (deferBookMis) {
         dmRoutingBranch = 'reason_first_triage_ask_more';
-        replyText = formatReasonFirstAskMoreQuestion(text);
+        const snippetBookMis = await resolveVisitReasonSnippetForTriage(recentBookMis, text, correlationId);
+        replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(text, {
+          reasonSnippet: snippetBookMis.trim(),
+          recentPostMedicalFeeAck: state.postMedicalConsultFeeAckSent === true,
+        });
         state = {
           ...state,
           lastIntent: intentResult.intent,
@@ -2650,33 +2715,64 @@ export async function processInstagramDmWebhook(params: {
       // Note: consent, confirm_details, collecting_all are handled above (regardless of intent).
       dmRoutingBranch = justStartingCollection ? 'booking_start_ai' : 'booking_continue_ai';
       if (justStartingCollection) {
-        const reasonSeedFields = await seedCollectedReasonFromStateIfValid(
-          conversation.id,
-          state.reasonForVisit
-        );
-        state = {
-          ...state,
-          lastIntent: intentResult.intent,
-          step: getInitialCollectionStep(),
-          collectedFields:         reasonSeedFields,
-          lastMedicalDeflectionAt: undefined,
-          reasonFirstTriagePhase: undefined,
-          postMedicalConsultFeeAckSent: undefined,
-          updatedAt: new Date().toISOString(),
-        };
-        await updateConversationState(conversation.id, state, correlationId);
-        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text, teleconsultCatalogRowCount);
-        replyText = await runGenerateResponse({
-          conversationId: conversation.id,
-          currentIntent: intentResult.intent,
-          state,
-          recentMessages,
-          currentUserMessage: text,
-          correlationId,
-          doctorContext,
-          context: aiContext,
-        });
-              } else {
+        const recentStart = recentMessages.map((m) => ({
+          sender_type: m.sender_type,
+          content: m.content ?? '',
+        }));
+        if (
+          bookingShouldDeferToReasonFirstTriage({
+            state,
+            text,
+            recentMessages: recentStart,
+          })
+        ) {
+          dmRoutingBranch = 'booking_start_reason_first';
+          const snippetStart = await resolveVisitReasonSnippetForTriage(recentStart, text, correlationId);
+          replyText = formatReasonFirstGateBeforeIntake(text, snippetStart);
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'responded',
+            reasonFirstTriagePhase: 'ask_more',
+            updatedAt: new Date().toISOString(),
+          };
+          await updateConversationState(conversation.id, state, correlationId);
+        } else {
+          const reasonSeedFields = await seedCollectedReasonFromStateIfValid(
+            conversation.id,
+            state.reasonForVisit
+          );
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: getInitialCollectionStep(),
+            collectedFields: reasonSeedFields,
+            lastMedicalDeflectionAt: undefined,
+            reasonFirstTriagePhase: undefined,
+            postMedicalConsultFeeAckSent: undefined,
+            updatedAt: new Date().toISOString(),
+          };
+          await updateConversationState(conversation.id, state, correlationId);
+          const aiContext = await buildAiContextForResponse(
+            conversation.id,
+            state,
+            recentMessages,
+            correlationId,
+            text,
+            teleconsultCatalogRowCount
+          );
+          replyText = await runGenerateResponse({
+            conversationId: conversation.id,
+            currentIntent: intentResult.intent,
+            state,
+            recentMessages,
+            currentUserMessage: text,
+            correlationId,
+            doctorContext,
+            context: aiContext,
+          });
+        }
+      } else {
         const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text, teleconsultCatalogRowCount);
         replyText = await runGenerateResponse({
           conversationId: conversation.id,
@@ -2789,7 +2885,11 @@ export async function processInstagramDmWebhook(params: {
         });
         if (deferBookPricing) {
           dmRoutingBranch = 'reason_first_triage_ask_more';
-          replyText = formatReasonFirstAskMoreQuestion(text);
+          const snippetBookIdle = await resolveVisitReasonSnippetForTriage(recentBookIdle, text, correlationId);
+          replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(text, {
+            reasonSnippet: snippetBookIdle.trim(),
+            recentPostMedicalFeeAck: state.postMedicalConsultFeeAckSent === true,
+          });
           state = {
             ...state,
             lastIntent: intentResult.intent,
@@ -2846,26 +2946,49 @@ export async function processInstagramDmWebhook(params: {
           };
         }
       } else {
-        const reasonSeedBook = await seedCollectedReasonFromStateIfValid(
-          conversation.id,
-          state.reasonForVisit
-        );
-        state = {
-          ...state,
-          lastIntent: intentResult.intent,
-          step: getInitialCollectionStep(),
-          collectedFields: reasonSeedBook,
-          activeFlow: undefined,
-          lastMedicalDeflectionAt: undefined,
-          reasonFirstTriagePhase: undefined,
-          postMedicalConsultFeeAckSent: undefined,
-          updatedAt: new Date().toISOString(),
-        };
-        const practiceName = doctorContext?.practice_name?.trim() || 'the clinic';
-        replyText =
-          reasonSeedBook.length > 0
-            ? `Sure - happy to help you book at **${practiceName}**. We already have your **reason for visit** from our earlier messages. Please share: Full name, Age, Gender, Mobile number. Email (optional) for receipts.`
-            : `Sure - happy to help you book at **${practiceName}**. Please share: Full name, Age, Gender, Mobile number, Reason for visit. Email (optional) for receipts.`;
+        const recentBookResp = recentMessages.map((m) => ({
+          sender_type: m.sender_type,
+          content: m.content ?? '',
+        }));
+        if (
+          bookingShouldDeferToReasonFirstTriage({
+            state,
+            text,
+            recentMessages: recentBookResp,
+          })
+        ) {
+          dmRoutingBranch = 'book_responded_reason_first';
+          const snippetBook = await resolveVisitReasonSnippetForTriage(recentBookResp, text, correlationId);
+          replyText = formatReasonFirstGateBeforeIntake(text, snippetBook);
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'responded',
+            reasonFirstTriagePhase: 'ask_more',
+            updatedAt: new Date().toISOString(),
+          };
+        } else {
+          const reasonSeedBook = await seedCollectedReasonFromStateIfValid(
+            conversation.id,
+            state.reasonForVisit
+          );
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: getInitialCollectionStep(),
+            collectedFields: reasonSeedBook,
+            activeFlow: undefined,
+            lastMedicalDeflectionAt: undefined,
+            reasonFirstTriagePhase: undefined,
+            postMedicalConsultFeeAckSent: undefined,
+            updatedAt: new Date().toISOString(),
+          };
+          const practiceName = doctorContext?.practice_name?.trim() || 'the clinic';
+          replyText =
+            reasonSeedBook.length > 0
+              ? `Sure - happy to help you book at **${practiceName}**. We already have your **reason for visit** from our earlier messages. Please share: Full name, Age, Gender, Mobile number. Email (optional) for receipts.`
+              : `Sure - happy to help you book at **${practiceName}**. Please share: Full name, Age, Gender, Mobile number, Reason for visit. Email (optional) for receipts.`;
+        }
       }
       await updateConversationState(conversation.id, state, correlationId);
     } else {

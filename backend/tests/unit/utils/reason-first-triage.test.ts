@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  bookingShouldDeferToReasonFirstTriage,
   buildConsolidatedReasonSnippetFromMessages,
   clinicalLedFeeThread,
   feeFollowUpAnaphora,
@@ -116,6 +117,46 @@ describe('reason-first-triage', () => {
     expect(userMessageSuggestsClinicalReason('my blood sugar is 300')).toBe(true);
     expect(userMessageSuggestsClinicalReason('hypertension follow-up')).toBe(true);
     expect(userMessageSuggestsClinicalReason('how much')).toBe(false);
+  });
+
+  it('bookingShouldDeferToReasonFirstTriage when clinical in thread and reason not finalized', () => {
+    expect(
+      bookingShouldDeferToReasonFirstTriage({
+        state: {},
+        text: 'please book',
+        recentMessages: [{ sender_type: 'patient', content: 'fasting blood sugar 208' }],
+      })
+    ).toBe(true);
+  });
+
+  it('bookingShouldDeferToReasonFirstTriage false when reasonForVisit already set', () => {
+    expect(
+      bookingShouldDeferToReasonFirstTriage({
+        state: { reasonForVisit: 'diabetes follow-up' },
+        text: 'book now',
+        recentMessages: [{ sender_type: 'patient', content: 'fasting blood sugar 208' }],
+      })
+    ).toBe(false);
+  });
+
+  it('bookingShouldDeferToReasonFirstTriage false when triage phase active', () => {
+    expect(
+      bookingShouldDeferToReasonFirstTriage({
+        state: { reasonFirstTriagePhase: 'ask_more' },
+        text: 'book',
+        recentMessages: [],
+      })
+    ).toBe(false);
+  });
+
+  it('bookingShouldDeferToReasonFirstTriage true when current line is clinical', () => {
+    expect(
+      bookingShouldDeferToReasonFirstTriage({
+        state: {},
+        text: 'blood sugar 180 and I want to book',
+        recentMessages: [],
+      })
+    ).toBe(true);
   });
 
   it('parseReasonTriageConfirmYes and negation', () => {

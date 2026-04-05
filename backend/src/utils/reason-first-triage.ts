@@ -465,6 +465,118 @@ export function formatReasonFirstAskMoreQuestion(userText: string): string {
   return askMoreEnglish();
 }
 
+function clinicalDeflectionAskMoreEnglish(snippet: string): string {
+  const s = truncateReasonSnippetToMax(snippet.trim() || 'what you shared');
+  if (s === 'what you shared') {
+    return (
+      "**Is there anything else** you'd like the doctor to address at this visit? Reply **nothing else** if what you shared is the full picture — then we can help with **booking** or **fees** next."
+    );
+  }
+  if (s.includes('\n')) {
+    return (
+      `**So far we've noted:**\n\n${s}\n\n` +
+      "**Is there anything else** you'd like the doctor to address? Reply **nothing else** if that covers it — then we can move to **booking** or **fees**."
+    );
+  }
+  return (
+    `**So far we've noted:** **${s}**.\n\n` +
+    "**Is there anything else** you'd like the doctor to address? Reply **nothing else** if that covers it — then we can move to **booking** or **fees**."
+  );
+}
+
+function clinicalDeflectionAskMoreHi(snippet: string): string {
+  const s = truncateReasonSnippetToMax(snippet.trim() || 'what you shared');
+  if (s === 'what you shared') {
+    return (
+      '**Kya aur kuch** hai jo aap doctor se discuss karna chahte hain? Agar bas wahi hai jo aapne bataya to **nothing else** likhein — phir **booking** ya **fees** par aage badh sakte hain.'
+    );
+  }
+  if (s.includes('\n')) {
+    return (
+      `**Ab tak note kiya:**\n\n${s}\n\n` +
+      '**Kya aur kuch** add karna hai? Bas yahi hai to **nothing else** likhein — phir **booking** ya **fees**.'
+    );
+  }
+  return (
+    `**Ab tak note kiya:** **${s}**.\n\n` +
+    '**Kya aur kuch** add karna hai? Bas yahi hai to **nothing else** likhein — phir **booking** ya **fees**.'
+  );
+}
+
+function clinicalDeflectionAskMorePa(snippet: string): string {
+  const s = truncateReasonSnippetToMax(snippet.trim() || 'what you shared');
+  if (s === 'what you shared') {
+    return (
+      '**Hor kuj** hai je tu doctor naal discuss karna chahe? Je bas ohi hai jo dasyaa ta **nothing else** likh — phir **booking** ya **fees**.'
+    );
+  }
+  if (s.includes('\n')) {
+    return (
+      `**Haje tak note kita:**\n\n${s}\n\n` +
+      '**Hor kuj** add karna hai? Bas ohi hai ta **nothing else** — phir **booking** ya **fees**.'
+    );
+  }
+  return (
+    `**Haje tak note kita:** **${s}**.\n\n` +
+    '**Hor kuj** add karna hai? Bas ohi hai ta **nothing else** — phir **booking** ya **fees**.'
+  );
+}
+
+/**
+ * After idle medical-safety deflection: replay distilled reasons (if any) and enter reason-first ask_more.
+ */
+export function formatClinicalReasonAskMoreAfterDeflection(userText: string, snippet: string): string {
+  const loc = detectSafetyMessageLocale(userText || '');
+  if (loc === 'hi') return clinicalDeflectionAskMoreHi(snippet);
+  if (loc === 'pa') return clinicalDeflectionAskMorePa(snippet);
+  return clinicalDeflectionAskMoreEnglish(snippet);
+}
+
+function gateBeforeIntakeEnglish(snippet: string): string {
+  const head =
+    "**Before we collect your booking details**, please confirm **everything** you'd like the doctor to address at this visit.\n\n";
+  return head + bridgeClosingEnglish(usableReasonSnippetForBridge(snippet) ? snippet : undefined);
+}
+
+function gateBeforeIntakeHi(snippet: string): string {
+  const head =
+    '**Booking details lene se pehle**, kripya **saari baatein** confirm kar dein jo aap doctor se is visit mein discuss karna chahte hain.\n\n';
+  return head + bridgeClosingHi(usableReasonSnippetForBridge(snippet) ? snippet : undefined);
+}
+
+function gateBeforeIntakePa(snippet: string): string {
+  const head =
+    '**Booking details lain to pehlan**, meharbani karke **saari gallan** confirm kar deo je tu doctor naal is visit te discuss karna chauna.\n\n';
+  return head + bridgeClosingPa(usableReasonSnippetForBridge(snippet) ? snippet : undefined);
+}
+
+/**
+ * User asked to book (or picked a channel) while the thread has clinical content but `reasonForVisit` is not finalized yet.
+ */
+export function formatReasonFirstGateBeforeIntake(userText: string, snippet: string): string {
+  const loc = detectSafetyMessageLocale(userText || '');
+  if (loc === 'hi') return gateBeforeIntakeHi(snippet);
+  if (loc === 'pa') return gateBeforeIntakePa(snippet);
+  return gateBeforeIntakeEnglish(snippet);
+}
+
+/**
+ * True when starting intake/booking would skip reason-first: thread or current line is clinical but `reasonForVisit` is not set yet.
+ * Caller should not defer if {@link ConversationState.reasonFirstTriagePhase} is already active (handled by the triage branch).
+ */
+export function bookingShouldDeferToReasonFirstTriage(params: {
+  state: Pick<ConversationState, 'reasonForVisit' | 'reasonFirstTriagePhase'>;
+  text: string;
+  recentMessages: { sender_type: string; content: string }[];
+}): boolean {
+  if (params.state.reasonFirstTriagePhase) return false;
+  if (params.state.reasonForVisit?.trim()) return false;
+  return (
+    recentPatientThreadHasClinicalReason(params.recentMessages) ||
+    userMessageSuggestsClinicalReason(params.text)
+  );
+}
+
 /**
  * After medical deflection: English canonical only (sync fallback).
  * Prefer `resolvePostMedicalPaymentExistenceAck` in ai-service for AI localization from this text.

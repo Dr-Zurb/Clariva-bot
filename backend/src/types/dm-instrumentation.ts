@@ -42,14 +42,20 @@ export type DmHandlerBranch =
   | 'consent_flow'
   | 'staff_service_review_pending'
   | 'consultation_channel_pick'
+  /** Channel chosen but clinical thread needs reason-first before collecting_all / AI intake */
+  | 'consultation_channel_pick_reason_first'
   | 'booking_collection'
   | 'confirm_details'
   | 'post_booking_ack'
   | 'fee_book_misclassified_idle'
   | 'booking_start_ai'
+  /** Fresh book intent with clinical thread — reason-first gate before collection */
+  | 'booking_start_reason_first'
   | 'booking_continue_ai'
   | 'slot_selection'
   | 'book_responded'
+  /** book_appointment while step responded — clinical thread needs reason-first before deterministic intake */
+  | 'book_responded_reason_first'
   | 'ai_open_response'
   /** Should not appear in production — indicates a missed assignment */
   | 'unknown'

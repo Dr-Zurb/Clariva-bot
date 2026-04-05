@@ -1502,6 +1502,10 @@ export interface GenerateResponseContext {
    * (no verbatim multi-tier catalog; practice confirms visit type).
    */
   silentAssignmentStrict?: boolean;
+  /**
+   * When true, omit SYSTEM FACTS — FEES / catalog amounts for this turn (clinical thread before visit reason is finalized in metadata/extraction).
+   */
+  suppressConsultationFeeFacts?: boolean;
 }
 
 export interface GenerateResponseInput {
@@ -1532,15 +1536,18 @@ export interface GenerateResponseInput {
 export type BuildResponseSystemPromptOptions = {
   competingVisitTypeBuckets?: boolean;
   silentAssignmentStrict?: boolean;
+  suppressConsultationFeeFacts?: boolean;
 };
 
 function buildResponseSystemPrompt(
   doctorContext?: DoctorContext,
   promptOpts?: BuildResponseSystemPromptOptions
 ): string {
+  const suppressAllConsultationFees = promptOpts?.suppressConsultationFeeFacts === true;
   const suppressMultiTierFeeCatalog =
-    promptOpts?.competingVisitTypeBuckets === true ||
-    promptOpts?.silentAssignmentStrict === true;
+    !suppressAllConsultationFees &&
+    (promptOpts?.competingVisitTypeBuckets === true ||
+      promptOpts?.silentAssignmentStrict === true);
   const practiceName = doctorContext?.practice_name?.trim() || 'Clariva Care';
   let prompt = RESPONSE_SYSTEM_PROMPT_BASE.replace(
     /practice's assistant/g,
@@ -1564,36 +1571,40 @@ function buildResponseSystemPrompt(
   }
 
   const feeFacts: string[] = [];
-  const catalogSummary = doctorContext?.service_catalog_summary_for_ai?.trim();
-  const cur = (doctorContext?.appointment_fee_currency || 'INR').trim().toUpperCase() || 'INR';
-  if (cur !== 'INR') {
-    feeFacts.push(
-      `Practice currency: ${cur}. Treat catalog and on-file amounts as being in this currency unless a line states otherwise.`
-    );
-  }
-  if (catalogSummary) {
-    if (suppressMultiTierFeeCatalog) {
+  if (!suppressAllConsultationFees) {
+    const catalogSummary = doctorContext?.service_catalog_summary_for_ai?.trim();
+    const cur = (doctorContext?.appointment_fee_currency || 'INR').trim().toUpperCase() || 'INR';
+    if (cur !== 'INR') {
       feeFacts.push(
-        `Teleconsult catalog: this practice has multiple visit types and prices on file, but **this thread is flagged** — do **not** paste, list, or compare specific prices for different visit types; do **not** ask the patient to pick a fee tier or service row. Acknowledge warmly; if booking fields are missing, continue intake; for fee questions say **the practice will confirm the correct visit type** and then the exact fee — **no multi-tier amounts or comparisons in this reply**.`
+        `Practice currency: ${cur}. Treat catalog and on-file amounts as being in this currency unless a line states otherwise.`
       );
-    } else {
+    }
+    if (catalogSummary) {
+      if (suppressMultiTierFeeCatalog) {
+        feeFacts.push(
+          `Teleconsult catalog: this practice has multiple visit types and prices on file, but **this thread is flagged** — do **not** paste, list, or compare specific prices for different visit types; do **not** ask the patient to pick a fee tier or service row. Acknowledge warmly; if booking fields are missing, continue intake; for fee questions say **the practice will confirm the correct visit type** and then the exact fee — **no multi-tier amounts or comparisons in this reply**.`
+        );
+      } else {
+        feeFacts.push(
+          `Teleconsult fee schedule from practice catalog (verbatim; do not invent or change amounts): ${catalogSummary}`
+        );
+      }
+    }
+    const feeSummary = doctorContext?.appointment_fee_summary?.trim();
+    if (feeSummary) feeFacts.push(feeSummary);
+    const consultRaw = doctorContext?.consultation_types?.trim();
+    if (consultRaw && !suppressMultiTierFeeCatalog) {
+      const legacyNote = catalogSummary
+        ? ' Supplemental notes only — teleconsult/modality prices in the catalog above take precedence when both apply.'
+        : '';
       feeFacts.push(
-        `Teleconsult fee schedule from practice catalog (verbatim; do not invent or change amounts): ${catalogSummary}`
+        `Legacy consultation types / per-visit notes exactly as stored: ${consultRaw}.${legacyNote} Use any amounts or labels you find here verbatim; do not invent prices.`
       );
     }
   }
-  const feeSummary = doctorContext?.appointment_fee_summary?.trim();
-  if (feeSummary) feeFacts.push(feeSummary);
-  const consultRaw = doctorContext?.consultation_types?.trim();
-  if (consultRaw && !suppressMultiTierFeeCatalog) {
-    const legacyNote = catalogSummary
-      ? ' Supplemental notes only — teleconsult/modality prices in the catalog above take precedence when both apply.'
-      : '';
-    feeFacts.push(
-      `Legacy consultation types / per-visit notes exactly as stored: ${consultRaw}.${legacyNote} Use any amounts or labels you find here verbatim; do not invent prices.`
-    );
-  }
-  if (feeFacts.length > 0) {
+  if (suppressAllConsultationFees) {
+    prompt += `\n\nPRICING (this turn — server rule): Do **not** quote specific consultation fees, paste the fee catalog, or give rupee amounts. The practice shares the exact fee after visit reasons are confirmed via the receptionist flow. Continue with booking intake (missing fields), modality choice if needed, or brief reassurance — without inventing prices. If the user asks "how much", say you'll confirm everything they want addressed first, then the practice will give the exact fee.`;
+  } else if (feeFacts.length > 0) {
     const pricingGuardrails = suppressMultiTierFeeCatalog
       ? `CRITICAL pricing guardrails (this turn): Visit type must be **set by the practice** from what the patient described — do **not** quote, list, or compare prices for **different** visit types or ask the patient to choose a tier. Say **the practice will confirm the correct visit type** and then the exact fee. Do not invent rupee amounts. A single legacy flat fee line above (if any) is not a substitute for resolving which teleconsult row applies.`
       : `CRITICAL pricing guardrails: When the user asks about cost, fees, charges, money, paise, kitna/kitne, phone/video consult price, etc., quote the lines above exactly when they contain amounts. NEVER say the exact fee is missing, not visible, or not in the system when this block lists an amount. Prefer **catalog** modality lines for text/voice/video when present. If there is no matching amount for their exact scenario, say the clinic can confirm — but still state any on-file or catalog amount that does apply. Do not invent follow-up discounts beyond what the catalog follow-up hints say.`;
@@ -1606,12 +1617,16 @@ ${pricingGuardrails}`;
   if (
     doctorContext?.teleconsultCatalogAuthoritative &&
     doctorContext?.service_catalog_summary_for_ai?.trim() &&
-    !suppressMultiTierFeeCatalog
+    !suppressMultiTierFeeCatalog &&
+    !suppressAllConsultationFees
   ) {
     prompt += `\n\nTELECONSULT-ONLY (product rule): This practice uses the **teleconsult catalog** above for visit types (text / voice / video only). Do **not** offer in-clinic or in-person appointments, do **not** quote a street address for booking, and do **not** invite users to visit the clinic physically—unless the Practice info block above explicitly states otherwise (it should not when this rule appears). When asking how to consult, only reference modalities present in the catalog (e.g. video, voice, text chat).`;
   }
   if (doctorContext?.teleconsultCatalogAuthoritative && suppressMultiTierFeeCatalog) {
     prompt += `\n\nTELECONSULT-ONLY (product rule): This practice offers **text / voice / video** teleconsult only — do not offer in-clinic visits unless Practice info explicitly says otherwise. While visit type is ambiguous, do not steer the user using price differences between catalog rows.`;
+  }
+  if (doctorContext?.teleconsultCatalogAuthoritative && suppressAllConsultationFees) {
+    prompt += `\n\nTELECONSULT-ONLY (product rule): This practice offers **text / voice / video** teleconsult only — do not offer in-clinic visits unless Practice info explicitly says otherwise. Do **not** quote catalog prices this turn.`;
   }
 
   return prompt;
@@ -1711,9 +1726,12 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
   const systemPrompt = buildResponseSystemPrompt(doctorContext, {
     competingVisitTypeBuckets: aiContext?.competingVisitTypeBuckets === true,
     silentAssignmentStrict: aiContext?.silentAssignmentStrict === true,
+    suppressConsultationFeeFacts: aiContext?.suppressConsultationFeeFacts === true,
   });
   const suppressFeeMenu =
-    aiContext?.competingVisitTypeBuckets === true || aiContext?.silentAssignmentStrict === true;
+    aiContext?.suppressConsultationFeeFacts === true ||
+    aiContext?.competingVisitTypeBuckets === true ||
+    aiContext?.silentAssignmentStrict === true;
   const pricingFocusHint =
     (classifierSignalsFeeQuestion === true || isPricingInquiryMessage(redactedCurrent)) &&
     !userExplicitlyWantsToBookNow(redactedCurrent)
