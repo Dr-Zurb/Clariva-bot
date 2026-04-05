@@ -396,7 +396,7 @@ describe('consultation-fees (RBH-13)', () => {
     expect(pick.services[0]!.service_key).toBe('non_communicable_diseases');
   });
 
-  it('e-task-dm-05: clinical-led narrow fee shows one default modality, not text+voice+video menu', () => {
+  it('e-task-dm-07b: clinical-led narrow fee lists every enabled modality; patient picks mode at booking', () => {
     const thread =
       'hello doctor i have high blood sugar , on empty stomach it came out to 188 today , how do i manage it , please guide me';
     const meta = formatServiceCatalogForDmWithMeta(
@@ -413,8 +413,9 @@ describe('consultation-fees (RBH-13)', () => {
       { clinicalLedFeeThread: true }
     );
     expect(meta.markdown).toMatch(/\*\*Text\*\*:/);
-    expect(meta.markdown).not.toMatch(/\*\*Voice\*\*:/);
-    expect(meta.markdown).not.toMatch(/\*\*Video\*\*:/);
+    expect(meta.markdown).toMatch(/\*\*Voice\*\*:/);
+    expect(meta.markdown).toMatch(/\*\*Video\*\*:/);
+    expect(meta.markdown).toMatch(/choose \*\*text\*\*, \*\*voice\*\*, or \*\*video\*\*/i);
     expect(meta.markdown).not.toContain("If your visit type isn't listed");
   });
 

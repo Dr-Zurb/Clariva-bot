@@ -46,7 +46,6 @@ import {
   appendOptionalDmReplyBridge,
   buildClassifyIntentContext,
   classifyIntent,
-  classifierSignalsAmountSeeking,
   classifierSignalsFeeThreadContinuation,
   classifierSignalsPaymentExistence,
   generateResponse,
@@ -141,7 +140,6 @@ import {
   buildConsolidatedReasonSnippetFromMessages,
   clinicalLedFeeThread,
   feeFollowUpAnaphora,
-  isAmountSeekingPricingQuestion,
   formatReasonFirstAskMoreQuestion,
   formatReasonFirstConfirmClarify,
   formatReasonFirstConfirmQuestion,
@@ -1608,17 +1606,8 @@ export async function processInstagramDmWebhook(params: {
       if (userWantsExplicitFullFeeList(text)) {
         runReasonFirstFullFeeEscape();
       } else if (state.reasonFirstTriagePhase === 'ask_more') {
-        const amountSeeking =
-          isAmountSeekingPricingQuestion(text) || classifierSignalsAmountSeeking(intentResult);
-        const feeAnaphora =
-          feeFollowUpAnaphora(text, lastAssistantRawForFee) || classifierFeeThreadCont;
-        const narrowFeeFromAskMore =
-          signalsFeePricing &&
-          !userExplicitlyWantsToBookNow(text) &&
-          (amountSeeking || feeAnaphora);
-        if (narrowFeeFromAskMore) {
-          runReasonFirstFeeNarrowFromTriage();
-        } else if (signalsFeePricing && !userExplicitlyWantsToBookNow(text)) {
+        // Do not quote fees from ask_more: confirm reason (+ anything else) first; fee table runs after confirm (yes) or from confirm phase.
+        if (signalsFeePricing && !userExplicitlyWantsToBookNow(text)) {
           dmRoutingBranch = 'reason_first_triage_ask_more_payment_bridge';
           replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(text);
           state = {
@@ -1735,9 +1724,9 @@ export async function processInstagramDmWebhook(params: {
         recentMessages: recentForDefer,
       });
       if (deferRf) {
-        // e-task-dm-04: symptom-led thread — confirm reasons before full fee menu.
+        // e-task-dm-04: symptom-led thread — confirm reasons before fee amounts; acknowledge fee asks naturally (incl. after post-med pay-existence ack).
         dmRoutingBranch = 'reason_first_triage_ask_more';
-        replyText = formatReasonFirstAskMoreQuestion(text);
+        replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(text);
         state = {
           ...state,
           lastIntent: intentResult.intent,

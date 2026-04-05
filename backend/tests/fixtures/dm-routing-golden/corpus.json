@@ -83,7 +83,7 @@
       ],
       "text": "how much for video consult",
       "intentResult": { "intent": "ask_question", "confidence": 0.89, "is_fee_question": true },
-      "expected_branch": "reason_first_triage_fee_narrow"
+      "expected_branch": "reason_first_triage_ask_more_payment_bridge"
     },
     {
       "id": "reason_first_ask_more_narrow_classifier_amount",
@@ -100,7 +100,7 @@
         "confidence": 0.86,
         "pricing_signal_kind": "amount_seeking"
       },
-      "expected_branch": "reason_first_triage_fee_narrow"
+      "expected_branch": "reason_first_triage_ask_more_payment_bridge"
     },
     {
       "id": "reason_first_confirm_yes_narrow",
@@ -165,7 +165,7 @@
       ],
       "text": "what is it?",
       "intentResult": { "intent": "ask_question", "confidence": 0.6 },
-      "expected_branch": "reason_first_triage_fee_narrow"
+      "expected_branch": "reason_first_triage_ask_more_payment_bridge"
     },
     {
       "id": "skipped_when_in_collection",

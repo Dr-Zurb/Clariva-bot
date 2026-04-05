@@ -166,6 +166,7 @@ describe('reason-first-triage', () => {
     expect(feeFollowUpAnaphora('what is it?', bot)).toBe(true);
     expect(feeFollowUpAnaphora("what's that?", bot)).toBe(true);
     expect(feeFollowUpAnaphora('how much?', bot)).toBe(true);
+    expect(feeFollowUpAnaphora('what is it then ? the fee?', bot)).toBe(true);
     expect(feeFollowUpAnaphora('what is it?', 'Hello — how can I help?')).toBe(false);
     expect(feeFollowUpAnaphora('book appointment', bot)).toBe(false);
   });

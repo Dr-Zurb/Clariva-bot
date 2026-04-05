@@ -9,7 +9,6 @@ import type { DmHandlerBranch } from '../types/dm-instrumentation';
 import type { ConversationState } from '../types/conversation';
 import { isRecentMedicalDeflectionWindow } from '../types/conversation';
 import {
-  classifierSignalsAmountSeeking,
   classifierSignalsFeeThreadContinuation,
   classifierSignalsPaymentExistence,
   intentSignalsFeeOrPricing,
@@ -17,7 +16,6 @@ import {
 import { userExplicitlyWantsToBookNow } from './consultation-fees';
 import {
   feeFollowUpAnaphora,
-  isAmountSeekingPricingQuestion,
   isVagueConsultationPaymentExistenceQuestion,
   lastAssistantDmContent,
   parseReasonTriageConfirmYes,
@@ -78,17 +76,6 @@ export function previewClinicalIdleDmBranch(params: {
     }
 
     if (state.reasonFirstTriagePhase === 'ask_more') {
-      const amountSeeking =
-        isAmountSeekingPricingQuestion(text) || classifierSignalsAmountSeeking(intentResult);
-      const feeAnaphora =
-        feeFollowUpAnaphora(text, lastAssistantRawForFee) || classifierFeeThreadCont;
-      const narrowFeeFromAskMore =
-        signalsFeePricing &&
-        !userExplicitlyWantsToBookNow(text) &&
-        (amountSeeking || feeAnaphora);
-      if (narrowFeeFromAskMore) {
-        return 'reason_first_triage_fee_narrow';
-      }
       if (signalsFeePricing && !userExplicitlyWantsToBookNow(text)) {
         return 'reason_first_triage_ask_more_payment_bridge';
       }

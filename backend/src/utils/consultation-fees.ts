@@ -239,16 +239,6 @@ const MODALITY_DM_LABEL: Record<'text' | 'voice' | 'video', string> = {
   video: 'Video',
 };
 
-/** Prefer text → voice → video for clinical-led single-line fee (e-task-dm-05). */
-function pickDefaultNarrowModalityForDm(
-  offering: ServiceCatalogV1['services'][number]
-): 'text' | 'voice' | 'video' | undefined {
-  for (const mod of ['text', 'voice', 'video'] as const) {
-    if (offering.modalities[mod]?.enabled === true) return mod;
-  }
-  return undefined;
-}
-
 function formatMinorCurrencyDm(minor: number, currency: string | null | undefined): string {
   const cur = (currency || 'INR').toUpperCase();
   const main = minor / 100;
@@ -732,22 +722,17 @@ export function formatServiceCatalogForDmWithMeta(
     opts?.clinicalLedFeeThread === true &&
     rows.length === 1 &&
     rows[0] != null;
+  const multiModalityHint =
+    clinicalNarrowSingle &&
+    rows[0] != null &&
+    (['text', 'voice', 'video'] as const).filter((m) => rows[0]!.modalities[m]?.enabled === true)
+      .length > 1;
   const lines: string[] = [];
 
   for (const s of rows) {
     const modParts: string[] = [];
-    const modalityOrder: readonly ('text' | 'voice' | 'video')[] = clinicalNarrowSingle
-      ? (() => {
-          const chosen =
-            feeQuoteMatcherFinalize?.matcherProposedConsultationModality ??
-            pickSuggestedModality(s) ??
-            pickDefaultNarrowModalityForDm(s);
-          if (chosen && s.modalities[chosen]?.enabled === true) {
-            return [chosen];
-          }
-          return ['text', 'voice', 'video'] as const;
-        })()
-      : (['text', 'voice', 'video'] as const);
+    /** e-task-dm-07b: practice assigns visit type; patient chooses text/voice/video — never collapse to one default modality in DM. */
+    const modalityOrder: readonly ('text' | 'voice' | 'video')[] = ['text', 'voice', 'video'];
     for (const mod of modalityOrder) {
       const slot = s.modalities[mod];
       if (slot?.enabled === true) {
@@ -777,6 +762,19 @@ export function formatServiceCatalogForDmWithMeta(
         )
       : localizeCatalogIntro(practiceName, locale);
   let body = `${intro}${lines.join('\n\n')}`;
+
+  if (multiModalityHint) {
+    if (locale === 'hi' && !hasDevanagari) {
+      body +=
+        '\n\n*Jab aap book karein, **text**, **voice**, ya **video** chun sakte hain — upar har mode ki fee hai.*';
+    } else if (locale === 'pa' && !hasGurmukhi) {
+      body +=
+        '\n\n*Jad tu book karein, **text**, **voice**, ja **video** chun sakde o — uthar har mode di fee hai.*';
+    } else {
+      body +=
+        '\n\n*When you book, you can choose **text**, **voice**, or **video** — the amounts above are per mode.*';
+    }
+  }
 
   /** Catalog path lists text/voice/video only — do not append legacy “in-clinic” flat fee (misleading when teleconsult-only). */
 

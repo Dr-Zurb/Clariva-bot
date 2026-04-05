@@ -51,6 +51,7 @@ export function feeFollowUpAnaphora(userText: string, lastBotMessage: string | u
   if (/^(the\s+)?fee(s)?\??\s*$/i.test(t)) return true;
   if (/^kitna\??\s*$/i.test(t)) return true;
   if (/^what\s+about\s+(the\s+)?(fee|price|cost)\??\s*$/i.test(t)) return true;
+  if (/\bwhat\s+is\s+it\b/i.test(t) && /\b(fee|fees|price|prices|cost|amount)\b/i.test(t)) return true;
   return false;
 }
 
@@ -279,18 +280,18 @@ export function formatReasonFirstFeePatienceBridgeWhileAskMore(userText: string)
   const hasPa = /[\u0A00-\u0A7F]/.test(userText || '');
   if (loc === 'hi' && !hasDe) {
     return (
-      '**Haan**, yeh visit **paid** hai. Pehle confirm kar lein kya-kya discuss karna hai — phir **exact fee** aapke reason ke hisaab se bata dunga.\n\n' +
+      '**Bilkul** — **exact fee** tabhi batate hain jab **visit ka reason** aur **aur kuch discuss karna hai ya nahi** clear ho jaye. Yeh visit **paid** hai.\n\n' +
       askMoreHi()
     );
   }
   if (loc === 'pa' && !hasPa) {
     return (
-      '**Haan ji**, eh visit **paid** hai. Pehla confirm kar lao ki ki-ki discuss karna hai — phir **exact fee** tere reason mutabik das ditta jaavega.\n\n' +
+      '**Bilkul** — **exact fee** tab dasange jad **visit da reason** aur **hor kuj discuss karna hai ya nahi** clear ho jave. Eh visit **paid** hai.\n\n' +
       askMorePa()
     );
   }
   return (
-    "**Yes**—there's a **consultation fee**. I'll share the **exact amount** once we confirm what you'd like the doctor to address.\n\n" +
+    "**Absolutely** — we share the **fee** as soon as we've **confirmed your reason for visit** and whether **there's anything else** you want the doctor to address (fees follow what you're seeing them about).\n\n" +
     askMoreEnglish()
   );
 }
