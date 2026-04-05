@@ -949,24 +949,34 @@ export async function resolvePostMedicalPaymentExistenceAck(
 }
 
 // ============================================================================
-// Reason-first triage: AI visit-reason snippet (deterministic fallback)
+// Reason-first triage: AI visit-reason snippet (canonical path)
+// Fallback: buildConsolidatedReasonSnippetFromMessages — best-effort only; do not duplicate
+// open-ended extraction there (see docs/Reference/AI_BOT_BUILDING_PHILOSOPHY.md).
 // ============================================================================
 
 const VISIT_REASON_SNIPPET_MAX_COMPLETION_TOKENS = 500;
 
-const VISIT_REASON_SNIPPET_SYSTEM = `You extract what the patient wants the doctor to address at this visit. Output ONLY valid JSON — no markdown code fences, no preamble.
+const VISIT_REASON_SNIPPET_SYSTEM = `You extract distinct visit reasons for a doctor consult. Output ONLY valid JSON — no markdown code fences, no preamble.
 
 Required shape: {"reasons": string[]}
 
-Each string is one distinct reason. Keep the patient's own wording when possible (only remove obvious filler: greetings, fee/price questions, "how do I fix this" requests for advice, pure small talk).
+Each string is ONE concise, patient-facing reason — a **short clinical phrase**, not a chatty sentence.
 
-INCLUDE: symptoms, concerns, readings with numbers if given, chronic issues they want reviewed, medication concerns they describe.
-EXCLUDE: scheduling/fee/payment, "how much", "is it free", greetings, "how are you", meta questions to the bot.
-NEVER invent symptoms, diagnoses, or advice. Do not add clinical labels the patient did not imply.
-Preserve Hinglish or other languages in Latin script as the patient wrote them.
-Order: follow the patient's order when clear; otherwise put the main concern first.
-At most 12 strings; merge duplicates meaningfully.
-If there is no clinical reason left after exclusions, return {"reasons": []}.`;
+STYLE (mandatory):
+- Aim for **about 3–14 words** per item (hard max ~18 words). Do not cram several complaints into one item; **split** into separate reasons.
+- **Strip** discourse filler and meta talk: e.g. "uh yes", "I would like to discuss", "please guide", "I want to", "there is", redundant "I also".
+- **Keep** clinically useful qualifiers: fasting, often, sometimes, today, numeric readings, body locations.
+- Use **plain clinical wording** when clearly implied (e.g. hypertension / high blood pressure; lethargy / fatigue / feeling lethargic compressed to "Lethargy (often)" if they said often). Do not invent symptoms.
+- **Sentence case**; no trailing period.
+- Preserve **Hinglish or other languages in Latin script** when the patient used them, but still **compress** filler.
+
+INCLUDE: symptoms, concerns, numbers they gave, chronic issues, side effects they describe.
+EXCLUDE: scheduling, fees, payment, "how much", greetings, pure small talk to the bot.
+NEVER invent diagnoses or advice. Never add reasons not supported by the messages.
+
+Order: same order as the patient raised them when clear; otherwise main concern first.
+At most 12 strings; merge duplicates.
+If nothing clinical remains after exclusions, return {"reasons": []}.`;
 
 function parseVisitReasonSnippetJson(content: string): string[] | null {
   let parsed: unknown;

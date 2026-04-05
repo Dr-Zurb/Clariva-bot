@@ -3,6 +3,7 @@ import {
   bookingShouldDeferToReasonFirstTriage,
   buildConsolidatedReasonSnippetFromMessages,
   clinicalLedFeeThread,
+  distillPatientReasonLinesFromMessage,
   feeFollowUpAnaphora,
   formatReasonFirstFeePatienceBridgeWhileAskMore,
   isAmountSeekingPricingQuestion,
@@ -176,10 +177,10 @@ describe('reason-first-triage', () => {
       ],
       'nothing else'
     );
-    expect(s).toContain('fever');
-    expect(s).toContain('cough');
-    expect(s).toMatch(/1\)\s*fever/);
-    expect(s).toMatch(/2\)\s*cough/);
+    expect(s.toLowerCase()).toContain('fever');
+    expect(s.toLowerCase()).toContain('cough');
+    expect(s).toMatch(/1\)\s*fever/i);
+    expect(s).toMatch(/2\)\s*cough/i);
     expect(s).not.toContain('nothing else');
     const withPay = buildConsolidatedReasonSnippetFromMessages(
       [
@@ -188,11 +189,11 @@ describe('reason-first-triage', () => {
       ],
       ''
     );
-    expect(withPay).toContain('blood sugar');
+    expect(withPay.toLowerCase()).toContain('blood sugar');
     expect(withPay).not.toContain('how much');
   });
 
-  it('distills core reasons, drops greeting/meta/pricing typos, numbers multiple issues', () => {
+  it('fallback snippet: one line per patient bubble, light strips only (LLM owns splitting)', () => {
     const snippet = buildConsolidatedReasonSnippetFromMessages(
       [
         {
@@ -208,15 +209,16 @@ describe('reason-first-triage', () => {
       ],
       ''
     );
-    expect(snippet).toContain('fasting blood sugar - 199');
-    expect(snippet).toContain('hypertension');
-    expect(snippet).toContain('burning sensation in my stomach');
+    expect(snippet.toLowerCase()).toMatch(/199/);
+    expect(snippet.toLowerCase()).toMatch(/blood\s*sugar/);
+    expect(snippet.toLowerCase()).toMatch(/fasting/);
+    expect(snippet.toLowerCase()).toContain('hypertension');
+    expect(snippet.toLowerCase()).toContain('burning');
     expect(snippet).not.toContain('hello doc');
     expect(snippet).not.toContain('how do i fix');
     expect(snippet).not.toMatch(/how\s+muc/i);
-    expect(snippet).toMatch(/1\)\s*fasting blood sugar/);
-    expect(snippet).toMatch(/2\)\s*hypertension/);
-    expect(snippet).toMatch(/3\)\s*burning/);
+    expect(snippet).toMatch(/1\)\s*.+199/is);
+    expect(snippet.toLowerCase()).toMatch(/2\)\s*.+hypertension/s);
   });
 
   it('feeFollowUpAnaphora treats typo how muc as fee follow-up', () => {
@@ -241,10 +243,10 @@ describe('reason-first-triage', () => {
     expect(withCurrent.toLowerCase()).toContain('208');
     expect(withCurrent.toLowerCase()).toContain('hypertension');
     expect(withCurrent.toLowerCase()).toMatch(/burn|stomach/);
-    expect(withCurrent.toLowerCase()).toMatch(/lethargic|fatigue|tired/);
+    expect(withCurrent.toLowerCase()).toMatch(/lethargy|lethargic|lethagic|fatigue|tired/);
   });
 
-  it('distills checked/came-out-to-be blood sugar phrasing and drops how are you', () => {
+  it('fallback keeps clinical wording; strips greeting and small talk only', () => {
     const snippet = buildConsolidatedReasonSnippetFromMessages(
       [
         {
@@ -255,10 +257,10 @@ describe('reason-first-triage', () => {
       ],
       ''
     );
-    expect(snippet).toBe('blood sugar - 199');
+    expect(snippet.toLowerCase()).toMatch(/199/);
+    expect(snippet.toLowerCase()).toMatch(/blood\s*sugar/);
     expect(snippet).not.toMatch(/how are you/i);
-    expect(snippet).not.toMatch(/i checked my/i);
-    expect(snippet).not.toMatch(/came out to be/i);
+    expect(snippet).not.toContain('how do i fix');
   });
 
   it('strips embedded pricing typo from a single clinical message', () => {
@@ -273,8 +275,9 @@ describe('reason-first-triage', () => {
       ],
       ''
     );
-    expect(oneBubble).toContain('fasting blood sugar - 199');
-    expect(oneBubble).toContain('hypertension');
+    expect(oneBubble.toLowerCase()).toMatch(/199/);
+    expect(oneBubble.toLowerCase()).toMatch(/fasting|blood\s*sugar/);
+    expect(oneBubble.toLowerCase()).toContain('hypertension');
     expect(oneBubble).not.toMatch(/how\s+muc/i);
   });
 
@@ -322,6 +325,17 @@ describe('reason-first-triage', () => {
     });
     expect(out).toContain('**Absolutely**');
     expect(out).toContain('**knee pain**');
+  });
+
+  it('fallback: single bubble stays one line (LLM splits multi-clause text when enabled)', () => {
+    const raw =
+      "sometimes i also feels burning sensation in my stomach, uh yes, i would like to discuss my hypertension, i have fast also, there is sometimes there's burning feeling in my stomach, i also often feel lethagic too";
+    const lines = distillPatientReasonLinesFromMessage(raw);
+    expect(lines.length).toBe(1);
+    const flat = lines[0].toLowerCase();
+    expect(flat).toContain('hypertension');
+    expect(flat).toMatch(/burning/);
+    expect(flat).toMatch(/lethagic/);
   });
 
   it('clinicalLedFeeThread when triage, clinical patient line, or related state flags', () => {

@@ -180,8 +180,9 @@ const envSchema = z.object({
     .transform((v) => !(v === 'false' || v === '0')),
 
   /**
-   * When true (default), reason-first “noted reasons” / confirm snippets use OpenAI extraction + deterministic fallback.
-   * Set false to force rule-based distillation only (no extra API call).
+   * When true (default, unset env): reason-first “noted reasons” / confirm snippets use OpenAI JSON extraction
+   * (`resolveVisitReasonSnippetForTriage`). Set false only for tests or cost debugging — not as the primary
+   * way to handle new patient phrasings (see AI_BOT_BUILDING_PHILOSOPHY.md).
    */
   VISIT_REASON_SNIPPET_AI_ENABLED: z
     .string()

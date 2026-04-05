@@ -107,7 +107,7 @@ Use this when triaging refactors or new features—**not** exhaustive, but the u
 | Area | Typical files | Bias |
 |------|----------------|------|
 | Intent + comment classification | `ai-service.ts` | LLM + small fast paths |
-| Visit reason / triage snippet | `reason-first-triage.ts`, `resolveVisitReasonSnippetForTriage` | LLM primary; thin deterministic fallback |
+| Visit reason / triage snippet | `resolveVisitReasonSnippetForTriage` (`ai-service.ts`); `reason-first-triage.ts` for routing/deferral + **fallback** distillation only | **LLM primary** (structured `reasons[]`). **Do not** add per-symptom / per-phrase regex in `reason-first-triage.ts` to chase new complaints — update the visit-reason system prompt + regression tests instead (§4.1). Fallback stays minimal and best-effort. |
 | Fee tier / fee thread | `consultation-fees.ts`, `dm-turn-context`, DM webhook | Structured signals; avoid keyword arms race |
 | Service catalog match | `service-catalog-deterministic-match.ts` | Hybrid: high-confidence deterministic + LLM map-to-id when needed |
 | Patient fields | `collection-service`, `extract-patient-fields.ts` | AI extraction first; regex fallback bounded |

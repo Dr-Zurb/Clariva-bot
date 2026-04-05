@@ -1,6 +1,16 @@
 /**
  * e-task-dm-04: Reason-first triage — defer full fee catalog until other reasons are confirmed.
- * Detection uses generic clinical / concern cues (no per-service labels in code).
+ *
+ * IMPORTANT (see docs/Reference/AI_BOT_BUILDING_PHILOSOPHY.md §3–4.1):
+ * - **Patient visit reasons / confirm snippets** are interpreted by **`resolveVisitReasonSnippetForTriage`**
+ *   in `ai-service.ts` (structured JSON) when `VISIT_REASON_SNIPPET_AI_ENABLED` is on (default).
+ * - This file’s distillation (`distillPatientReasonLinesFromMessage`, etc.) is **fallback only**
+ *   (flag off, API down, empty JSON). Do **not** add new per-phrase regex or symptom variants here
+ *   to “fix” wording — extend the LLM system prompt + tests instead. Regex cannot cover infinite
+ *   complaints; growing this path creates regressions and contradicts product philosophy.
+ *
+ * OK here: closed routing (yes/no), deferral heuristics, fee-thread helpers, **broad** clinical
+ * cue checks for gating — not open-ended symptom normalization.
  */
 
 import type { ConversationState } from '../types/conversation';
@@ -11,7 +21,7 @@ import { POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN } from './post-medical-
 
 /** Roman + common message cues that the user is describing a health concern (not pure pricing). */
 const CLINICAL_OR_CONCERN_RE =
-  /\b(blood\s*sugar|glucose|diabet|hypert(?:ension)?|blood\s*pressure|\bbp\b|fever|temperature|pain|ache|hurt|hurts|cough|cold|flu|rash|skin|swelling|infection|symptom|nausea|vomit|dizzy|headache|migraine|chest|stomach|abdomen|loose\s*motion|constipat|uti|burning|bleed|wound|medicine|medication|dose|tablet|insulin|reading|test\s+result|lab\s+result|report|scan|x-?ray|feel\s+sick|unwell|lethargic|fatigue|fatigued|tired|exhausted|low\s+energy|weakness|worried\s+about|check\s+my|guide\s+me|what\s+should\s+i\s+do)\b/i;
+  /\b(blood\s*sugar|glucose|diabet|hypert(?:ension)?|blood\s*pressure|\bbp\b|fever|temperature|pain|ache|hurt|hurts|cough|cold|flu|rash|skin|swelling|infection|symptom|nausea|vomit|dizzy|headache|migraine|chest|stomach|abdomen|loose\s*motion|constipat|uti|burning|bleed|wound|medicine|medication|dose|tablet|insulin|reading|test\s+result|lab\s+result|report|scan|x-?ray|feel\s+sick|unwell|lethargic|lethagic|fatigue|fatigued|tired|exhausted|low\s+energy|weakness|worried\s+about|check\s+my|guide\s+me|what\s+should\s+i\s+do)\b/i;
 
 const EXPLICIT_FULL_FEE_LIST_RE =
   /\b(all\s+(your\s+)?(fees|prices|services|consultation\s+types|consultation\s+fees|consultation\s+prices)|every\s+(fee|price|service)|full\s+(fee\s+)?list|complete\s+(price|fee)|what\s+are\s+all\s+(the\s+)?(your\s+)?(fees|prices|services))\b/i;
@@ -220,16 +230,8 @@ function normalizeReasonKey(s: string): string {
 const GREETING_PREFIX_RE =
   /^(?:(?:hello|hi|hey)\s*,?\s*(?:doc|doctor|dr\.?)\s*[,.]?\s+|(?:hello|hi|hey)\s*[,.]?\s+)/i;
 
-/**
- * English glucose phrases — order matters: prefer the full “i checked my …” span so we do not
- * leave leading filler like “today i checked my” in the remainder.
- * Capture group 1 is the numeric reading.
- */
-const BLOOD_SUGAR_PHRASE_RES: RegExp[] = [
-  /(?:today\s+)?i\s+checked\s+my\s+blood\s+sugar\s+(?:today\s+)?(?:it\s+)?(?:came\s+out\s+to\s+be\s+|turned\s+out\s+to\s+be\s+|to\s+be\s+|is\s+|was\s+|at\s+)(\d+)/i,
-  /blood\s+sugar\s+(?:today\s+)?(?:it\s+)?(?:came\s+out\s+to\s+be\s+|turned\s+out\s+to\s+be\s+|to\s+be\s+|is\s+|was\s+|at\s+)(\d+)/i,
-  /(?:today\s+i\s+)?(?:checked\s+)?(?:my\s+)?blood\s+sugar\s+(?:to\s+be\s+|is\s+|was\s+|at\s+)?(\d+)/i,
-];
+/** Max chars per patient bubble on deterministic fallback (LLM path is authoritative for quality). */
+const FALLBACK_REASON_LINE_MAX = 280;
 
 /** Polite small talk — not visit reasons (strip only clear social openers). */
 function stripSmallTalkPhrases(s: string): string {
@@ -257,55 +259,6 @@ function stripStandalonePricingPhrases(s: string): string {
   return t.replace(/\s+/g, ' ').trim();
 }
 
-function extractBloodSugarSummary(text: string): { summary: string; remainder: string } | null {
-  const t = text.trim();
-  const fasting =
-    /\bfasting\b/i.test(t) ||
-    /\bit\s+was\s+fasting\b/i.test(t) ||
-    /\bwhile\s+fasting\b/i.test(t);
-
-  for (const re of BLOOD_SUGAR_PHRASE_RES) {
-    const m = re.exec(t);
-    if (!m) continue;
-    const n = m[1];
-    const full = m[0];
-    const idx = m.index ?? 0;
-    let remainder = `${t.slice(0, idx)} ${t.slice(idx + full.length)}`;
-    remainder = remainder.replace(/\b(?:it\s+was\s+)?fasting\b/gi, ' ');
-    remainder = remainder.replace(/\s*,\s*\bit\s+was\s+fasting\b/gi, ' ');
-    remainder = remainder.replace(/^\s*\bit\s+was\s+fasting\b\s*[,.]?\s*/i, '');
-    remainder = remainder.replace(/\s*,\s*/g, ' ').replace(/\s+/g, ' ').trim();
-    const summary = fasting ? `fasting blood sugar - ${n}` : `blood sugar - ${n}`;
-    return { summary, remainder };
-  }
-  return null;
-}
-
-function stripLeadingIHavePhrases(s: string): string {
-  return s.replace(/^(i\s+also\s+have\s+|i\s+have\s+)/i, '').trim();
-}
-
-/** Leftovers from partial glucose regex matches — do not surface as visit reasons. */
-function isJunkReasonFragment(t: string): boolean {
-  const u = t.trim().toLowerCase().replace(/\s+/g, ' ');
-  if (u.length < 2) return true;
-  if (/^(today|yesterday|tomorrow)$/.test(u)) return true;
-  if (/^it\s+was\s+fasting$/.test(u)) return true;
-  if (/^i\s+checked\s+my$/.test(u)) return true;
-  return false;
-}
-
-function splitCommaClinicalSegments(s: string): string[] {
-  return s
-    .split(/\s*,\s*/)
-    .map((x) => x.trim())
-    .filter((x) => {
-      if (x.length < 2) return false;
-      if (isPricingInquiryMessage(x) && !userMessageSuggestsClinicalReason(x)) return false;
-      return true;
-    });
-}
-
 function dedupePreserveOrderLocal(items: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -319,8 +272,8 @@ function dedupePreserveOrderLocal(items: string[]): string[] {
 }
 
 /**
- * Distill one patient DM into discrete visit-reason lines: drop filler, keep wording where possible.
- * Exported for unit tests.
+ * Deterministic fallback: one cleaned line per patient bubble when the LLM snippet path is off
+ * or unavailable. Does **not** parse open-ended complaints (see file header).
  */
 export function distillPatientReasonLinesFromMessage(raw: string): string[] {
   let s = raw.trim();
@@ -331,43 +284,17 @@ export function distillPatientReasonLinesFromMessage(raw: string): string[] {
   s = s.replace(/\bhow\s+do\s+i\s+fix\s+it\b[?.!]*\s*/gi, ' ');
   s = s.replace(/\s*,\s*how\s+do\s+i\s+fix\s+it\b[?.!]*/gi, ', ');
   s = stripStandalonePricingPhrases(s);
+  s = s.replace(/\s+/g, ' ').trim();
+  if (s.length < 3) return [];
 
-  const out: string[] = [];
-  const bs = extractBloodSugarSummary(s);
-  if (bs) {
-    out.push(bs.summary);
-    s = bs.remainder;
+  if (isPricingInquiryMessage(s) && !userMessageSuggestsClinicalReason(s)) return [];
+  if (!userMessageSuggestsClinicalReason(s) && !/\d/.test(s)) return [];
+
+  if (s.length > FALLBACK_REASON_LINE_MAX) {
+    s = `${s.slice(0, FALLBACK_REASON_LINE_MAX - 1).trimEnd()}…`;
   }
-
-  s = s.trim();
-  if (!s) return dedupePreserveOrderLocal(out);
-
-  const splitAlso = s.split(/\s+i\s+also\s+have\s+/i).map((x) => x.trim()).filter(Boolean);
-  const toProcess = splitAlso.length ? splitAlso : [s];
-
-  for (const seg of toProcess) {
-    let piece = stripLeadingIHavePhrases(seg);
-    if (!piece) continue;
-
-    const commaParts = splitCommaClinicalSegments(piece);
-    const chunks = commaParts.length ? commaParts : [piece];
-
-    for (const ch of chunks) {
-      const t = ch.trim();
-      if (t.length < 2) continue;
-      const bs2 = extractBloodSugarSummary(t);
-      if (bs2 && !bs2.remainder.trim()) {
-        out.push(bs2.summary);
-        continue;
-      }
-      if (isJunkReasonFragment(t)) continue;
-      if (isPricingInquiryMessage(t) && !userMessageSuggestsClinicalReason(t)) continue;
-      if (!userMessageSuggestsClinicalReason(t) && !/\d/.test(t)) continue;
-      out.push(t.replace(/\s+/g, ' ').trim());
-    }
-  }
-
-  return dedupePreserveOrderLocal(out);
+  const line = s.charAt(0).toUpperCase() + s.slice(1);
+  return dedupePreserveOrderLocal([line]);
 }
 
 /** Format distilled reason lines for DM/staff preview (numbered when 2+ items). */
