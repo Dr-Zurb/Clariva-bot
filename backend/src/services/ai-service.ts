@@ -32,6 +32,7 @@ import {
   isEmergencyUserMessage,
   MEDICAL_QUERY_RESPONSE_EN,
 } from '../utils/safety-messages';
+import { POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN } from '../utils/post-medical-ack-copy';
 
 // ============================================================================
 // Constants
@@ -675,6 +676,129 @@ export function applyIntentPostClassificationPolicy(
       : {}),
     ...(result.fee_thread_continuation === true ? { fee_thread_continuation: true } : {}),
   };
+}
+
+const POST_MED_ACK_LOCALIZE_MAX_COMPLETION_TOKENS = 400;
+
+const POST_MED_ACK_LOCALIZE_SYSTEM = `You localize fixed patient-facing chat copy for a medical practice.
+
+Adapt SOURCE into the language and register that best match USER_MESSAGE_REDACTED (any language or mixed register, e.g. English, Hindi, Hinglish, Punjabi in Latin script).
+
+Output ONLY the localized message. No preamble, labels, or surrounding quotes.
+
+Rules:
+- Preserve **double-asterisk bold** around the same ideas; adjust spans so they read naturally in the target language.
+- NEVER add currency symbols, ₹, dollar signs, or digits used as prices or fees. NEVER invent amounts.
+- NEVER add medical advice, diagnoses, guarantees, or policies not stated in SOURCE.
+- Keep the same paragraph structure as SOURCE: same number of blocks separated by one blank line (two newlines).
+- If USER_MESSAGE_REDACTED is empty or clearly English-only, output natural English faithful to SOURCE (light polish ok).`;
+
+function stripPostMedAckLocalizeWrapper(text: string): string {
+  let t = text.trim();
+  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith('“') && t.endsWith('”'))) {
+    t = t.slice(1, -1).trim();
+  }
+  if (t.startsWith('```')) {
+    const lines = t.split('\n');
+    if (lines.length >= 2) {
+      lines.shift();
+      const last = lines[lines.length - 1]?.trim();
+      if (last === '```') lines.pop();
+      t = lines.join('\n').trim();
+    }
+  }
+  return t;
+}
+
+/**
+ * Returns the post–medical-deflection payment-existence ack: canonical English, or AI-localized
+ * when POST_MEDICAL_ACK_AI_LOCALIZE is enabled and OpenAI is available. Redacts PHI from the
+ * user text before using it as a language hint only.
+ */
+export async function resolvePostMedicalPaymentExistenceAck(
+  messageText: string,
+  correlationId: string
+): Promise<string> {
+  const fallback = POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN;
+  if (!env.POST_MEDICAL_ACK_AI_LOCALIZE) {
+    return fallback;
+  }
+  const client = getOpenAIClient();
+  const config = getOpenAIConfig();
+  if (!client) {
+    logger.warn(
+      { correlationId },
+      'Post-med payment-existence ack localize skipped: no OpenAI client'
+    );
+    return fallback;
+  }
+
+  const redactedHint = redactPhiForAI(messageText).trim().slice(0, 280);
+  const userPayload =
+    `SOURCE:\n"""\n${fallback}\n"""\n\n` +
+    `USER_MESSAGE_REDACTED (language/register hint only):\n"""\n${redactedHint || '(none)'}\n"""`;
+
+  try {
+    const completion = await client.chat.completions.create({
+      model: config.model,
+      max_completion_tokens: POST_MED_ACK_LOCALIZE_MAX_COMPLETION_TOKENS,
+      temperature: 0.25,
+      messages: [
+        { role: 'system', content: POST_MED_ACK_LOCALIZE_SYSTEM },
+        { role: 'user', content: userPayload },
+      ],
+    });
+    const raw = completion.choices[0]?.message?.content;
+    const content = raw ? stripPostMedAckLocalizeWrapper(raw) : '';
+    const usage = completion.usage;
+
+    if (!content || content.length < 20) {
+      logger.warn(
+        { correlationId, len: content?.length ?? 0 },
+        'Post-med ack localize: empty or too short; using canonical EN'
+      );
+      await logAuditEvent({
+        correlationId,
+        action: 'ai_post_med_ack_localize',
+        resourceType: 'ai',
+        status: 'failure',
+        errorMessage: 'empty_or_short_completion',
+        metadata: {
+          model: config.model,
+          redactionApplied: true,
+          tokens: usage?.total_tokens,
+        },
+      });
+      return fallback;
+    }
+
+    await logAuditEvent({
+      correlationId,
+      action: 'ai_post_med_ack_localize',
+      resourceType: 'ai',
+      status: 'success',
+      metadata: {
+        model: config.model,
+        redactionApplied: true,
+        tokens: usage?.total_tokens,
+      },
+    });
+    return content;
+  } catch (err) {
+    logger.warn(
+      { correlationId, err },
+      'Post-med ack localize failed; using canonical EN'
+    );
+    await logAuditEvent({
+      correlationId,
+      action: 'ai_post_med_ack_localize',
+      resourceType: 'ai',
+      status: 'failure',
+      errorMessage: err instanceof Error ? err.message : 'request_failed',
+      metadata: { model: config.model, redactionApplied: true },
+    });
+    return fallback;
+  }
 }
 
 export interface ClassifyIntentOptions {

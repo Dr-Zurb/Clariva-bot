@@ -5,19 +5,26 @@
  * retry behavior, and audit (metadata only). All tests mock OpenAI and audit logger.
  */
 
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach, beforeAll, afterAll } from '@jest/globals';
 import {
   buildClassifyIntentContext,
   classifyIntent,
   redactPhiForAI,
   generateResponse,
+  resolvePostMedicalPaymentExistenceAck,
 } from '../../../src/services/ai-service';
+import { env } from '../../../src/config/env';
+import { POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN } from '../../../src/utils/post-medical-ack-copy';
 import type { ConversationState } from '../../../src/types/conversation';
 import * as openaiConfig from '../../../src/config/openai';
 import * as auditLogger from '../../../src/utils/audit-logger';
 
 jest.mock('../../../src/config/openai');
-jest.mock('../../../src/utils/audit-logger');
+jest.mock('../../../src/utils/audit-logger', () => ({
+  logAIClassification: jest.fn(),
+  logAIResponseGeneration: jest.fn(),
+  logAuditEvent: jest.fn().mockImplementation(() => Promise.resolve()),
+}));
 jest.mock('../../../src/config/logger', () => ({
   logger: {
     warn: jest.fn(),
@@ -38,15 +45,25 @@ type MockCompletion = {
 
 describe('AI Service', () => {
   const correlationId = 'test-correlation-id';
+  let savedPostMedAckLocalize: boolean;
+
+  beforeAll(() => {
+    savedPostMedAckLocalize = env.POST_MEDICAL_ACK_AI_LOCALIZE;
+  });
+
+  afterAll(() => {
+    env.POST_MEDICAL_ACK_AI_LOCALIZE = savedPostMedAckLocalize;
+  });
 
   beforeEach(() => {
     jest.resetAllMocks();
-    (mockedAudit.logAIClassification as jest.Mock) = jest
-      .fn()
-      .mockImplementation(() => Promise.resolve());
-    (mockedAudit.logAIResponseGeneration as jest.Mock) = jest
-      .fn()
-      .mockImplementation(() => Promise.resolve());
+    env.POST_MEDICAL_ACK_AI_LOCALIZE = savedPostMedAckLocalize;
+    mockedAudit.logAIClassification.mockReset();
+    mockedAudit.logAIResponseGeneration.mockReset();
+    mockedAudit.logAuditEvent.mockReset();
+    mockedAudit.logAIClassification.mockImplementation(() => Promise.resolve());
+    mockedAudit.logAIResponseGeneration.mockImplementation(() => Promise.resolve());
+    mockedAudit.logAuditEvent.mockImplementation(() => Promise.resolve());
   });
 
   describe('redactPhiForAI', () => {
@@ -611,6 +628,103 @@ describe('AI Service', () => {
         expect.objectContaining({
           status: 'failure',
           errorMessage: 'response_generation_failed_after_retries',
+        })
+      );
+    });
+  });
+
+  describe('resolvePostMedicalPaymentExistenceAck', () => {
+    it('returns canonical English when AI localize is disabled', async () => {
+      env.POST_MEDICAL_ACK_AI_LOCALIZE = false;
+      const mockCreate = jest.fn();
+      mockedOpenai.getOpenAIClient.mockReturnValue({
+        chat: { completions: { create: mockCreate } },
+      } as any);
+
+      const out = await resolvePostMedicalPaymentExistenceAck(
+        'kya consultation free hai',
+        correlationId
+      );
+
+      expect(out).toBe(POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN);
+      expect(mockCreate).not.toHaveBeenCalled();
+      expect(mockedAudit.logAuditEvent).not.toHaveBeenCalled();
+    });
+
+    it('returns canonical when OpenAI client is missing', async () => {
+      env.POST_MEDICAL_ACK_AI_LOCALIZE = true;
+      mockedOpenai.getOpenAIClient.mockReturnValue(null);
+      mockedOpenai.getOpenAIConfig.mockReturnValue({
+        model: 'gpt-5.2',
+        maxTokens: 256,
+      });
+
+      const out = await resolvePostMedicalPaymentExistenceAck('hello', correlationId);
+
+      expect(out).toBe(POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN);
+      expect(mockedAudit.logAuditEvent).not.toHaveBeenCalled();
+    });
+
+    it('returns model output and audits success when localize succeeds', async () => {
+      env.POST_MEDICAL_ACK_AI_LOCALIZE = true;
+      const localized =
+        '**हाँ** — **डॉक्टर से कंसल्टेशन सशुल्क है**; ये **मुफ़्त** नहीं है।\n\n' +
+        'हम आपकी बात के आधार पर **सही विज़िट प्रकार** तय करते हैं। चैट में आपसे **फीस पैकेज चुनने** नहीं कहा जाएगा।\n\n' +
+        'जब आप **राशि** जानना चाहें, तो **फीस** या **कीमत** बता दीजिए।';
+      const mockCreate = jest.fn<() => Promise<MockCompletion>>().mockResolvedValue({
+        choices: [{ message: { content: localized } }],
+        usage: { total_tokens: 42 },
+      });
+      mockedOpenai.getOpenAIClient.mockReturnValue({
+        chat: { completions: { create: mockCreate } },
+      } as any);
+      mockedOpenai.getOpenAIConfig.mockReturnValue({
+        model: 'gpt-5.2',
+        maxTokens: 256,
+      });
+
+      const out = await resolvePostMedicalPaymentExistenceAck(
+        'kya ye free consultation hai',
+        correlationId
+      );
+
+      expect(out).toBe(localized);
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+      expect(mockedAudit.logAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          correlationId,
+          action: 'ai_post_med_ack_localize',
+          status: 'success',
+          metadata: expect.objectContaining({
+            model: 'gpt-5.2',
+            redactionApplied: true,
+            tokens: 42,
+          }),
+        })
+      );
+    });
+
+    it('returns canonical and audits failure when completion is too short', async () => {
+      env.POST_MEDICAL_ACK_AI_LOCALIZE = true;
+      const mockCreate = jest.fn<() => Promise<MockCompletion>>().mockResolvedValue({
+        choices: [{ message: { content: 'short' } }],
+        usage: { total_tokens: 5 },
+      });
+      mockedOpenai.getOpenAIClient.mockReturnValue({
+        chat: { completions: { create: mockCreate } },
+      } as any);
+      mockedOpenai.getOpenAIConfig.mockReturnValue({
+        model: 'gpt-5.2',
+        maxTokens: 256,
+      });
+
+      const out = await resolvePostMedicalPaymentExistenceAck('hi', correlationId);
+
+      expect(out).toBe(POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN);
+      expect(mockedAudit.logAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'failure',
+          errorMessage: 'empty_or_short_completion',
         })
       );
     });

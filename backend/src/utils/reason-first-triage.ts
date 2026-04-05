@@ -7,6 +7,7 @@ import type { ConversationState } from '../types/conversation';
 import { isRecentMedicalDeflectionWindow } from '../types/conversation';
 import { isPricingInquiryMessage, normalizePatientPricingText } from './consultation-fees';
 import { detectSafetyMessageLocale } from './safety-messages';
+import { POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN } from './post-medical-ack-copy';
 
 /** Roman + common message cues that the user is describing a health concern (not pure pricing). */
 const CLINICAL_OR_CONCERN_RE =
@@ -263,39 +264,12 @@ export function formatReasonFirstAskMoreQuestion(userText: string): string {
   return askMoreEnglish();
 }
 
-/** After medical deflection: short “visits are paid” — **no** rupee amounts (e-task-dm-04b). */
-export function formatPostMedicalPaymentExistenceAck(userText: string): string {
-  const loc = detectSafetyMessageLocale(userText || '');
-  const hasDe = /[\u0900-\u097F]/.test(userText || '');
-  const hasPa = /[\u0A00-\u0A7F]/.test(userText || '');
-  if (loc === 'hi' && !hasDe) {
-    return (
-      '**Haan** — doctor se **teleconsult / visit** paid hota hai. **Visit type** practice aapke concern ke hisaab **match** karti hai — chat mein fee tiers **choose** karne ki zaroorat nahi.\n\n' +
-      'Jab aap **exact amount** jaanna chahein, **kitna** ya **fee kya hai** likhein — hum aapke visit reason ke hisaab se bata denge.'
-    );
-  }
-  if (loc === 'hi' && hasDe) {
-    return (
-      '**हाँ** — डॉक्टर से **टेलीकंसल्ट / विज़िट** के लिए **शुल्क** लगता है। **विज़िट प्रकार** आपकी समस्या के अनुसार **प्रैक्टिस तय** करती है — चैट में फीस श्रेणी **चुनने** की ज़रूरत नहीं।\n\n' +
-      'जब **सटीक राशि** जाननी हो, **कितना** या **फीस क्या है** लिखें — हम आपके विज़िट के कारण के अनुसार बताएँगे।'
-    );
-  }
-  if (loc === 'pa' && !hasPa) {
-    return (
-      '**Haan ji** — doctor naal **visit / teleconsult** paid hunda hai. **Visit type** practice tere concern mutabik **match** kardi — chat vich fee tiers **chun**n di lorh nahi.\n\n' +
-      'Jadon **exact paisa** pannaa hove, **kitna** ya **fee ki hai** likho — asi visit di wajah de hisaab naal dassaange.'
-    );
-  }
-  if (loc === 'pa' && hasPa) {
-    return (
-      '**ਹਾਂ** — ਡਾਕਟਰ ਨਾਲ **ਵਿਜ਼ਿਟ / ਟੈਲੀਕੰਸਲਟ** ਲਈ **ਫੀਸ** ਲਗਦੀ ਹੈ। **ਵਿਜ਼ਿਟ ਟਾਈਪ** ਤੁਹਾਡੀ ਸਮਸਿਆ ਮੁਤਾਬਕ **ਪ੍ਰੈਕਟਿਸ ਤੈਅ** ਕਰਦੀ ਹੈ — ਚੈਟ ਵਿਚ ਫੀਸ **ਚੁਣੋ** ਨਹੀਂ ਕਹਿੰਦੇ।\n\n' +
-      'ਜਦੋਂ **ਸਹੀ ਰਕਮ** ਚਾਹੀਦੀ ਹੋਵੇ, **kitna** ਜਾਂ **fee ki hai** ਲਿਖੋ — ਅਸੀਂ ਵਿਜ਼ਿਟ ਦੀ ਵਜ੍ਹਾ ਮੁਤਾਬਕ ਦੱਸਾਂਗੇ।'
-    );
-  }
-  return (
-    '**Yes**—**consultations with the doctor are paid.** We match what you describe to the **right visit type** — you **don’t need to pick fee options** in chat.\n\n' +
-      'When you want the **exact fee**, ask **how much** or **what\'s the fee**, and we\'ll align it with what you\'re seeing the doctor for.'
-  );
+/**
+ * After medical deflection: English canonical only (sync fallback).
+ * Prefer `resolvePostMedicalPaymentExistenceAck` in ai-service for AI localization from this text.
+ */
+export function formatPostMedicalPaymentExistenceAck(_userText: string): string {
+  return POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN;
 }
 
 /** User asked pricing during ask_more; keep triage — no fee table until confirm. */

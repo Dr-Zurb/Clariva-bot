@@ -169,6 +169,15 @@ const envSchema = z.object({
       if (!Number.isFinite(n)) return 0.62;
       return Math.min(1, Math.max(0, n));
     }),
+
+  /**
+   * When true (default), post-medical payment-existence ack is localized from canonical EN via OpenAI.
+   * Set false for airgapped tests or to force English-only without an API call.
+   */
+  POST_MEDICAL_ACK_AI_LOCALIZE: z
+    .string()
+    .optional()
+    .transform((v) => !(v === 'false' || v === '0')),
 });
 
 /**

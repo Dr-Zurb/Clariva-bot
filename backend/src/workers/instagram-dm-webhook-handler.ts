@@ -53,6 +53,7 @@ import {
   generateResponseWithActions,
   intentSignalsFeeOrPricing,
   redactPhiForAI,
+  resolvePostMedicalPaymentExistenceAck,
   parseMultiPersonBooking,
   AI_RECENT_MESSAGES_LIMIT,
 } from '../services/ai-service';
@@ -141,7 +142,6 @@ import {
   clinicalLedFeeThread,
   feeFollowUpAnaphora,
   isAmountSeekingPricingQuestion,
-  formatPostMedicalPaymentExistenceAck,
   formatReasonFirstAskMoreQuestion,
   formatReasonFirstConfirmClarify,
   formatReasonFirstConfirmQuestion,
@@ -1522,7 +1522,7 @@ export async function processInstagramDmWebhook(params: {
       )
     ) {
       dmRoutingBranch = 'post_medical_payment_existence_ack';
-      replyText = formatPostMedicalPaymentExistenceAck(text);
+      replyText = await resolvePostMedicalPaymentExistenceAck(text, correlationId);
       state = {
         ...state,
         lastIntent: intentResult.intent,
