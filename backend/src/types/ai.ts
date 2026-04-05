@@ -101,6 +101,24 @@ export function isIntentTopic(value: string): value is IntentTopic {
   return (INTENT_TOPIC_VALUES as readonly string[]).includes(value);
 }
 
+/** e-task-dm-06: classifier granularity for pricing DM routing (Understand layer). */
+export type PricingSignalKind =
+  | 'amount_seeking'
+  | 'payment_existence'
+  | 'generic_fee_interest'
+  | 'none';
+
+export const PRICING_SIGNAL_KIND_VALUES: readonly PricingSignalKind[] = [
+  'amount_seeking',
+  'payment_existence',
+  'generic_fee_interest',
+  'none',
+] as const;
+
+export function isPricingSignalKind(value: string): value is PricingSignalKind {
+  return (PRICING_SIGNAL_KIND_VALUES as readonly string[]).includes(value);
+}
+
 /**
  * Result of intent detection: intent plus optional confidence.
  * Used by ai-service (Task 2) return type.
@@ -114,6 +132,10 @@ export interface IntentDetectionResult {
   is_fee_question?: boolean;
   /** Classifier: thematic buckets (may be empty array from model) */
   topics?: IntentTopic[];
+  /** e-task-dm-06: payment vs amount vs generic fee wording (trusted when confidence ≥ threshold) */
+  pricing_signal_kind?: PricingSignalKind;
+  /** e-task-dm-06: short follow-up continuing a fee/payment thread */
+  fee_thread_continuation?: boolean;
 }
 
 // ============================================================================

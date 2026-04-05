@@ -5,7 +5,7 @@
 
 import type { ConversationState } from '../types/conversation';
 import { isRecentMedicalDeflectionWindow } from '../types/conversation';
-import { isPricingInquiryMessage } from './consultation-fees';
+import { isPricingInquiryMessage, normalizePatientPricingText } from './consultation-fees';
 import { detectSafetyMessageLocale } from './safety-messages';
 
 /** Roman + common message cues that the user is describing a health concern (not pure pricing). */
@@ -30,12 +30,18 @@ export function lastAssistantDmContent(
 const LAST_BOT_FEE_TOPIC_RE =
   /\b(fee|fees|price|prices|cost|pay|paid|payment|consult|consultation|amount|kitna|kitne|teleconsult|booking\s+fee|\u20b9|rupees?|rs\.?)\b/i;
 
+/** e-task-dm-06: last assistant line discussed fees/pricing (for classifier fee-thread continuation gate). */
+export function lastBotDiscussesFeesTopic(lastBotMessage: string | undefined): boolean {
+  const bot = (lastBotMessage ?? '').trim();
+  if (!bot) return false;
+  return LAST_BOT_FEE_TOPIC_RE.test(bot);
+}
+
 /**
  * e-task-dm-05: short reply continuing a fee/payment turn (e.g. after post-medical ack) without pricing keywords.
  */
 export function feeFollowUpAnaphora(userText: string, lastBotMessage: string | undefined): boolean {
-  const bot = (lastBotMessage ?? '').trim();
-  if (!bot || !LAST_BOT_FEE_TOPIC_RE.test(bot)) return false;
+  if (!lastBotDiscussesFeesTopic(lastBotMessage)) return false;
   const t = userText.trim();
   if (t.length < 2 || t.length > 96) return false;
   if (/^what\s+is\s+(it|that)\??\s*$/i.test(t)) return true;
@@ -94,7 +100,7 @@ const AMOUNT_SEEKING_PRICING_RE =
 
 /** Amount-seeking during reason-first triage — route to narrow fee, not ask-more patience loop (e-task-dm-05). */
 export function isAmountSeekingPricingQuestion(text: string): boolean {
-  const t = text.trim();
+  const t = normalizePatientPricingText(text);
   if (t.length < 3) return false;
   return AMOUNT_SEEKING_PRICING_RE.test(t);
 }
@@ -103,17 +109,32 @@ export function isAmountSeekingPricingQuestion(text: string): boolean {
  * “Do I have to pay?” style — **yes/no fee existence**, not “how much?” (handled by reason-first after ack).
  */
 export function isVagueConsultationPaymentExistenceQuestion(text: string): boolean {
-  const t = text.trim();
+  const t = normalizePatientPricingText(text);
   if (t.length < 3) return false;
   if (userWantsExplicitFullFeeList(t)) return false;
   if (AMOUNT_SEEKING_PRICING_RE.test(t)) return false;
-  if (!isPricingInquiryMessage(t)) return false;
+
+  const mentionsPaidVsFree =
+    /\bno\s+free\s+(advice|consult(ation)?)\b/i.test(t) ||
+    /\bis(n't| not)\s+(it|this)\s+free\b/i.test(t);
+
+  const pricingish =
+    isPricingInquiryMessage(t) ||
+    mentionsPaidVsFree ||
+    /\bfree\s+advice\b/i.test(t);
+
+  if (!pricingish) return false;
+
   return (
     /\b(do\s+i\s+(have\s+)?(to|need\s+to)\s+pay|have\s+to\s+pay|need\s+to\s+pay|will\s+i\s+pay)\b/i.test(t) ||
     /\bso\s+i\s+have\s+to\s+pay\b/i.test(t) ||
     /\bso\s+i\s+pay\b/i.test(t) || // "oh/okay so i pay?" — existence, not amount
     /\b(is\s+there\s+(a\s+)?(fee|charge|payment)|is\s+it\s+(paid|free))\b/i.test(t) ||
-    /\b(am\s+i\s+supposed\s+to\s+pay|do\s+i\s+pay)\b/i.test(t)
+    /\b(am\s+i\s+supposed\s+to\s+pay|do\s+i\s+pay)\b/i.test(t) ||
+    /\b(oh\s+)?so\s+there\s+is\s+(a\s+)?(fee|charge|payment)\b/i.test(t) ||
+    /\bthere\s+is\s+(a\s+)?(fee|charge|payment)\b/i.test(t) ||
+    /\bthere'?s\s+(a\s+)?(fee|charge|payment)\b/i.test(t) ||
+    mentionsPaidVsFree
   );
 }
 
@@ -137,7 +158,8 @@ export function shouldDeferIdleFeeForReasonFirstTriage(params: {
 }): boolean {
   const { state, text, recentMessages } = params;
   if (state.reasonFirstTriagePhase) return false;
-  if (userWantsExplicitFullFeeList(text)) return false;
+  const tNorm = normalizePatientPricingText(text);
+  if (userWantsExplicitFullFeeList(tNorm)) return false;
 
   const threadClinical = recentPatientThreadHasClinicalReason(recentMessages);
   const currentClinical = userMessageSuggestsClinicalReason(text);
@@ -145,12 +167,13 @@ export function shouldDeferIdleFeeForReasonFirstTriage(params: {
   const clinicalContext = postDeflect || threadClinical || currentClinical;
 
   if (!clinicalContext) {
-    if (isPricingInquiryMessage(text)) return false;
+    if (isPricingInquiryMessage(tNorm)) return false;
     return false;
   }
 
   // Post-deflection / symptom-led: defer full catalog until reason-first triage + confirm.
-  if (isPricingInquiryMessage(text)) {
+  // Use typo-normalized line so "payemnt" still matches pricing keywords (e-task-dm-05).
+  if (isPricingInquiryMessage(tNorm)) {
     if (!state.postMedicalConsultFeeAckSent && isVagueConsultationPaymentExistenceQuestion(text)) {
       return false;
     }

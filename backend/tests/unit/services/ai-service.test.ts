@@ -130,7 +130,7 @@ describe('AI Service', () => {
           messages: { content: string }[];
         };
         expect(callArg.model).toBe('gpt-5.2');
-        expect(callArg.max_completion_tokens).toBe(120);
+        expect(callArg.max_completion_tokens).toBe(140);
         expect(callArg.messages[1].content).not.toContain('@');
         expect(mockedAudit.logAIClassification).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -179,6 +179,48 @@ describe('AI Service', () => {
             status: 'success',
             intentTopics: ['pricing', 'hours'],
             isFeeQuestion: true,
+          })
+        );
+      });
+
+      it('e-task-dm-06: parses pricing_signal and fee_thread_continuation', async () => {
+        const res: MockCompletion = {
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  intent: 'ask_question',
+                  confidence: 0.87,
+                  topics: [],
+                  is_fee_question: false,
+                  pricing_signal: 'payment_existence',
+                  fee_thread_continuation: false,
+                }),
+              },
+            },
+          ],
+          usage: { total_tokens: 52 },
+        };
+        const mockCreate = jest.fn<() => Promise<MockCompletion>>().mockResolvedValue(res);
+        mockedOpenai.getOpenAIClient.mockReturnValue({
+          chat: { completions: { create: mockCreate } },
+        } as any);
+        mockedOpenai.getOpenAIConfig.mockReturnValue({
+          model: 'gpt-5.2',
+          maxTokens: 256,
+        });
+
+        const result = await classifyIntent('Do I need to pay for the visit or is it free', correlationId);
+
+        expect(result.pricing_signal_kind).toBe('payment_existence');
+        expect(result.is_fee_question).toBe(true);
+        expect(result.topics).toContain('pricing');
+        expect(result.fee_thread_continuation).toBeUndefined();
+        expect(mockedAudit.logAIClassification).toHaveBeenCalledWith(
+          expect.objectContaining({
+            status: 'success',
+            isFeeQuestion: true,
+            pricingSignalKind: 'payment_existence',
           })
         );
       });

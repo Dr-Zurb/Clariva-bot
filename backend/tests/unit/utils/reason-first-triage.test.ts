@@ -25,6 +25,28 @@ describe('reason-first-triage', () => {
     expect(defer).toBe(false);
   });
 
+  it('treats “there is payment” / typos / “no free advice” as vague pay-existence (post-deflection)', () => {
+    const line =
+      'oh so there is payemnt ? no free advice ?';
+    expect(isVagueConsultationPaymentExistenceQuestion(line)).toBe(true);
+    expect(
+      isVagueConsultationPaymentExistenceQuestion(
+        'so there is a payment for this visit?'
+      )
+    ).toBe(true);
+    expect(isVagueConsultationPaymentExistenceQuestion('no free advice here?')).toBe(true);
+    const state: ConversationState = {};
+    expect(
+      shouldDeferIdleFeeForReasonFirstTriage({
+        state,
+        text: line,
+        recentMessages: [
+          { sender_type: 'patient', content: 'blood sugar was 199 fasting' },
+        ],
+      })
+    ).toBe(false);
+  });
+
   it('treats colloquial "so i pay" as vague pay-existence (not reason-first deferral)', () => {
     expect(isVagueConsultationPaymentExistenceQuestion('oh so i pay ?')).toBe(true);
     expect(isVagueConsultationPaymentExistenceQuestion('so i pay?')).toBe(true);

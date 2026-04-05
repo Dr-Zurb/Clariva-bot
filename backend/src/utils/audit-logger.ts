@@ -283,6 +283,8 @@ export async function logAIClassification(params: {
   intentTopics?: string[];
   /** RBH-18 */
   isFeeQuestion?: boolean;
+  /** e-task-dm-06: pricing_signal enum from classifier (no PHI) */
+  pricingSignalKind?: string;
 }): Promise<void> {
   await logAuditEvent({
     correlationId: params.correlationId,
@@ -297,6 +299,7 @@ export async function logAIClassification(params: {
       ...(params.tokens !== undefined ? { tokens: params.tokens } : {}),
       ...(params.intentTopics?.length ? { intentTopics: params.intentTopics } : {}),
       ...(params.isFeeQuestion === true ? { isFeeQuestion: true } : {}),
+      ...(params.pricingSignalKind ? { pricingSignalKind: params.pricingSignalKind } : {}),
     },
   });
 }

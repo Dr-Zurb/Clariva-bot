@@ -15,7 +15,7 @@ import type {
   IntentTopic,
   CommentIntentDetectionResult,
 } from '../types/ai';
-import { toIntent, toCommentIntent, isIntentTopic } from '../types/ai';
+import { toIntent, toCommentIntent, isIntentTopic, isPricingSignalKind } from '../types/ai';
 import { isRecentMedicalDeflectionWindow, type ConversationState } from '../types/conversation';
 import type { Message } from '../types';
 import type { AIResponseWithActions, ToolCallFromAI } from '../types/system-actions';
@@ -26,6 +26,7 @@ import {
   isPricingInquiryMessage,
   userExplicitlyWantsToBookNow,
 } from '../utils/consultation-fees';
+import { lastBotDiscussesFeesTopic } from '../utils/reason-first-triage';
 import {
   EMERGENCY_RESPONSE_EN,
   isEmergencyUserMessage,
@@ -40,14 +41,14 @@ const MAX_RETRIES = 3;
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
 
 /** RBH-12: Intent output is small JSON; lower cap reduces generation latency vs full DM max_tokens. */
-const INTENT_CLASSIFICATION_MAX_COMPLETION_TOKENS = 120;
+const INTENT_CLASSIFICATION_MAX_COMPLETION_TOKENS = 140;
 
 /** In-memory cache TTL (ms). Key = redacted text; cache hit = no OpenAI call, no audit. */
 const INTENT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 /** Max cache entries; evict oldest when full (Map insertion order). */
 const INTENT_CACHE_MAX_SIZE = 500;
-/** RBH-18: bump prefix when classifier JSON schema changes (invalidates stale cache entries). */
-const INTENT_CACHE_KEY_PREFIX = 'rbh18:';
+/** RBH-18 + e-task-dm-06: bump prefix when classifier JSON schema changes (invalidates stale cache entries). */
+const INTENT_CACHE_KEY_PREFIX = 'rbh18dm06:';
 
 interface CacheEntry {
   result: IntentDetectionResult;
@@ -58,9 +59,10 @@ interface CacheEntry {
 const intentCache = new Map<string, CacheEntry>();
 
 function getCachedIntent(redactedText: string): IntentDetectionResult | null {
-  const entry = intentCache.get(INTENT_CACHE_KEY_PREFIX + redactedText);
+  const key = INTENT_CACHE_KEY_PREFIX + redactedText;
+  const entry = intentCache.get(key);
   if (!entry || Date.now() > entry.expiresAt) {
-    if (entry) intentCache.delete(redactedText);
+    if (entry) intentCache.delete(key);
     return null;
   }
   return entry.result;
@@ -188,8 +190,14 @@ Respond with a single JSON object (required keys):
   - Include "pricing" when the user asks about cost, fees, charges, money, payment, insurance, cash, card, discount, "kitna"/"kitne" in a money sense, paise, rupaye, consultation/visit/video/phone/online appointment price, etc., in **any** language.
   - "hours" = opening times / when open / availability in general; "location" = address / where / directions; "booking_howto" = how to book / process (not asking to book right now).
 - "is_fee_question": boolean — true if the message is partly or wholly asking what they pay / fee amount / price to consult or book; false otherwise. If "pricing" is in topics, set this to true.
+- "pricing_signal": exactly one of: "amount_seeking", "payment_existence", "generic_fee_interest", "none"
+  - "amount_seeking": they want a **number/rate** (how much, exact fee, kitna in money sense, breakdown).
+  - "payment_existence": **whether** payment applies / is it paid / is there a charge — **not** primarily asking for the amount.
+  - "generic_fee_interest": fee/pricing/money topic without a clear amount vs existence split.
+  - "none": not about fees/payment/pricing **unless** other keys already set pricing (then prefer the more specific signal).
+- "fee_thread_continuation": boolean — true only if conversation context shows the assistant was discussing fees/pricing and the current message is a **short follow-up** in that thread (e.g. clarifying visit type, "what about video", anaphoric "how much is it"); false otherwise.
 
-Example: {"intent":"ask_question","confidence":0.92,"topics":["pricing"],"is_fee_question":true}
+Example: {"intent":"ask_question","confidence":0.92,"topics":["pricing"],"is_fee_question":true,"pricing_signal":"amount_seeking","fee_thread_continuation":false}
 
 Use "unknown" for intent only when the message does not clearly match any other intent.`;
 
@@ -299,6 +307,59 @@ function normalizeIntentAuxFields(
   if (isFee) out.is_fee_question = true;
   else if (parsed.is_fee_question === false) out.is_fee_question = false;
   return out;
+}
+
+/** e-task-dm-06: optional structured pricing sub-signals from model JSON (backward compatible if omitted). */
+function mergeClassifierPricingSubsignals(
+  parsed: Record<string, unknown>,
+  base: IntentDetectionResult
+): void {
+  const raw = parsed.pricing_signal;
+  if (typeof raw === 'string' && isPricingSignalKind(raw)) {
+    base.pricing_signal_kind = raw;
+    if (raw !== 'none') {
+      base.is_fee_question = true;
+      const topicSet = new Set(base.topics ?? []);
+      topicSet.add('pricing');
+      base.topics = [...topicSet];
+    }
+  }
+  if (parsed.fee_thread_continuation === true) {
+    base.fee_thread_continuation = true;
+  }
+}
+
+function pricingSubsignalConfidenceTrusted(confidence: number): boolean {
+  return confidence >= env.DM_CLASSIFIER_PRICING_SIGNAL_MIN_CONFIDENCE;
+}
+
+/** e-task-dm-06: trusted classifier — user asking if payment/fee applies (yes/no), not amount. */
+export function classifierSignalsPaymentExistence(result: IntentDetectionResult): boolean {
+  return (
+    pricingSubsignalConfidenceTrusted(result.confidence) &&
+    result.pricing_signal_kind === 'payment_existence'
+  );
+}
+
+/** e-task-dm-06: trusted classifier — user wants amount/rate. */
+export function classifierSignalsAmountSeeking(result: IntentDetectionResult): boolean {
+  return (
+    pricingSubsignalConfidenceTrusted(result.confidence) &&
+    result.pricing_signal_kind === 'amount_seeking'
+  );
+}
+
+/**
+ * e-task-dm-06: model judges short fee-thread follow-up; requires recent bot line about fees (no orphan triggers).
+ */
+export function classifierSignalsFeeThreadContinuation(
+  result: IntentDetectionResult,
+  lastBotMessage: string | undefined
+): boolean {
+  if (!pricingSubsignalConfidenceTrusted(result.confidence) || result.fee_thread_continuation !== true) {
+    return false;
+  }
+  return lastBotDiscussesFeesTopic(lastBotMessage);
 }
 
 /**
@@ -609,6 +670,10 @@ export function applyIntentPostClassificationPolicy(
     confidence: Math.min(result.confidence, 0.88),
     is_fee_question: true,
     topics: [...topicSet],
+    ...(result.pricing_signal_kind !== undefined
+      ? { pricing_signal_kind: result.pricing_signal_kind }
+      : {}),
+    ...(result.fee_thread_continuation === true ? { fee_thread_continuation: true } : {}),
   };
 }
 
@@ -728,6 +793,7 @@ export async function classifyIntent(
       );
       const aux = normalizeIntentAuxFields(parsed);
       const result: IntentDetectionResult = { intent, confidence, ...aux };
+      mergeClassifierPricingSubsignals(parsed, result);
 
       await logAIClassification({
         correlationId,
@@ -737,6 +803,7 @@ export async function classifyIntent(
         tokens: usage?.total_tokens ?? undefined,
         intentTopics: result.topics,
         isFeeQuestion: result.is_fee_question === true,
+        pricingSignalKind: result.pricing_signal_kind,
       });
 
       if (!skipIntentCache) {

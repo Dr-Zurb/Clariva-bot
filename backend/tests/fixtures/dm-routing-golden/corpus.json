@@ -1,0 +1,181 @@
+{
+  "version": "1",
+  "description": "Synthetic anonymized DM scenarios for routing regression (e-task-ops-02). No PHI.",
+  "notes": [
+    "Use lastMedicalDeflectionAt: \"__RECENT__\" for scenarios that need an active deflection window; tests inject now-relative ISO time.",
+    "expected_branch is what previewClinicalIdleDmBranch returns; full handler may still route to fee_ambiguous_visit_type_staff after composer."
+  ],
+  "scenarios": [
+    {
+      "id": "post_med_vague_pay_after_symptom",
+      "flags": ["clinical_thread", "deflection_window", "payment_existence"],
+      "inCollection": false,
+      "state": { "step": "responded", "lastMedicalDeflectionAt": "__RECENT__" },
+      "recentMessages": [
+        { "sender_type": "patient", "content": "I have bad headache since yesterday" },
+        { "sender_type": "system", "content": "Short safety line — we cannot diagnose in chat." }
+      ],
+      "text": "ok but do i need to pay for the visit or is it free",
+      "intentResult": { "intent": "ask_question", "confidence": 0.88, "is_fee_question": true },
+      "expected_branch": "post_medical_payment_existence_ack"
+    },
+    {
+      "id": "post_med_classifier_payment_existence",
+      "flags": ["classifier_led", "deflection_window"],
+      "inCollection": false,
+      "state": { "step": "responded", "lastMedicalDeflectionAt": "__RECENT__" },
+      "recentMessages": [
+        { "sender_type": "patient", "content": "chest feels tight off and on" },
+        { "sender_type": "system", "content": "Please seek urgent care if severe; chat cannot replace exam." }
+      ],
+      "text": "Is consultation paid or complimentary",
+      "intentResult": {
+        "intent": "ask_question",
+        "confidence": 0.85,
+        "pricing_signal_kind": "payment_existence"
+      },
+      "expected_branch": "post_medical_payment_existence_ack"
+    },
+    {
+      "id": "medical_safety_idle",
+      "flags": ["symptom", "no_collection"],
+      "inCollection": false,
+      "state": { "step": "responded" },
+      "recentMessages": [],
+      "text": "my throat is burning and fever since morning",
+      "intentResult": { "intent": "medical_query", "confidence": 0.9 },
+      "expected_branch": "medical_safety"
+    },
+    {
+      "id": "reason_first_ask_more_to_confirm",
+      "flags": ["reason_first", "no_pricing_keyword"],
+      "inCollection": false,
+      "state": { "step": "responded", "reasonFirstTriagePhase": "ask_more" },
+      "recentMessages": [
+        { "sender_type": "patient", "content": "Sugar levels high and foot tingling" },
+        { "sender_type": "system", "content": "Anything else to cover at the visit?" }
+      ],
+      "text": "nothing else doctor",
+      "intentResult": { "intent": "ask_question", "confidence": 0.55 },
+      "expected_branch": "reason_first_triage_confirm"
+    },
+    {
+      "id": "reason_first_ask_more_payment_bridge",
+      "flags": ["reason_first", "pricing_before_confirm"],
+      "inCollection": false,
+      "state": { "step": "responded", "reasonFirstTriagePhase": "ask_more" },
+      "recentMessages": [
+        { "sender_type": "patient", "content": "HbA1c was 8" },
+        { "sender_type": "system", "content": "What else should we address?" }
+      ],
+      "text": "also what is your consultation fee roughly",
+      "intentResult": { "intent": "ask_question", "confidence": 0.9, "is_fee_question": true },
+      "expected_branch": "reason_first_triage_ask_more_payment_bridge"
+    },
+    {
+      "id": "reason_first_ask_more_narrow_amount",
+      "flags": ["reason_first", "amount_seeking"],
+      "inCollection": false,
+      "state": { "step": "responded", "reasonFirstTriagePhase": "ask_more" },
+      "recentMessages": [
+        { "sender_type": "patient", "content": "Follow up for thyroid" },
+        { "sender_type": "system", "content": "Anything else to add?" }
+      ],
+      "text": "how much for video consult",
+      "intentResult": { "intent": "ask_question", "confidence": 0.89, "is_fee_question": true },
+      "expected_branch": "reason_first_triage_fee_narrow"
+    },
+    {
+      "id": "reason_first_ask_more_narrow_classifier_amount",
+      "flags": ["classifier_led", "amount_seeking"],
+      "inCollection": false,
+      "state": { "step": "responded", "reasonFirstTriagePhase": "ask_more" },
+      "recentMessages": [
+        { "sender_type": "patient", "content": "skin rash spreading" },
+        { "sender_type": "system", "content": "Anything else?" }
+      ],
+      "text": "kitna lagega online dikhane pe",
+      "intentResult": {
+        "intent": "ask_question",
+        "confidence": 0.86,
+        "pricing_signal_kind": "amount_seeking"
+      },
+      "expected_branch": "reason_first_triage_fee_narrow"
+    },
+    {
+      "id": "reason_first_confirm_yes_narrow",
+      "flags": ["reason_first", "confirm_yes"],
+      "inCollection": false,
+      "state": { "step": "responded", "reasonFirstTriagePhase": "confirm" },
+      "recentMessages": [
+        { "sender_type": "patient", "content": "knee pain and swelling" },
+        { "sender_type": "system", "content": "So we note knee pain and swelling — correct?" }
+      ],
+      "text": "yes correct",
+      "intentResult": { "intent": "ask_question", "confidence": 0.7 },
+      "expected_branch": "reason_first_triage_fee_narrow"
+    },
+    {
+      "id": "reason_first_confirm_pricing_narrow",
+      "flags": ["reason_first", "pricing_at_confirm"],
+      "inCollection": false,
+      "state": { "step": "responded", "reasonFirstTriagePhase": "confirm" },
+      "recentMessages": [
+        { "sender_type": "patient", "content": "migraine and nausea" },
+        { "sender_type": "system", "content": "Confirm migraine and nausea for the visit?" }
+      ],
+      "text": "yes also how much is the fee",
+      "intentResult": { "intent": "ask_question", "confidence": 0.88, "is_fee_question": true },
+      "expected_branch": "reason_first_triage_fee_narrow"
+    },
+    {
+      "id": "reason_first_confirm_clarify",
+      "flags": ["reason_first", "negation"],
+      "inCollection": false,
+      "state": { "step": "responded", "reasonFirstTriagePhase": "confirm" },
+      "recentMessages": [
+        { "sender_type": "patient", "content": "cold and cough" },
+        { "sender_type": "system", "content": "So cold and cough — right?" }
+      ],
+      "text": "no i also have fever now",
+      "intentResult": { "intent": "ask_question", "confidence": 0.75 },
+      "expected_branch": "reason_first_triage_confirm"
+    },
+    {
+      "id": "reason_first_full_fee_list_escape",
+      "flags": ["explicit_catalog_ask"],
+      "inCollection": false,
+      "state": { "step": "responded", "reasonFirstTriagePhase": "ask_more" },
+      "recentMessages": [
+        { "sender_type": "patient", "content": "routine diabetes review" },
+        { "sender_type": "system", "content": "Anything else?" }
+      ],
+      "text": "what are all your consultation fees and services",
+      "intentResult": { "intent": "ask_question", "confidence": 0.9, "is_fee_question": true },
+      "expected_branch": "fee_deterministic_idle"
+    },
+    {
+      "id": "reason_first_anaphora_after_fee_line",
+      "flags": ["fee_thread", "short_follow_up"],
+      "inCollection": false,
+      "state": { "step": "responded", "reasonFirstTriagePhase": "ask_more" },
+      "recentMessages": [
+        { "sender_type": "patient", "content": "GERD symptoms" },
+        { "sender_type": "system", "content": "Yes — there is a consultation fee for this visit." }
+      ],
+      "text": "what is it?",
+      "intentResult": { "intent": "ask_question", "confidence": 0.6 },
+      "expected_branch": "reason_first_triage_fee_narrow"
+    },
+    {
+      "id": "skipped_when_in_collection",
+      "flags": ["guard", "collection"],
+      "inCollection": true,
+      "state": { "step": "collecting_all", "reasonFirstTriagePhase": "ask_more" },
+      "recentMessages": [],
+      "text": "how much fee",
+      "intentResult": { "intent": "ask_question", "confidence": 0.9, "is_fee_question": true },
+      "expected_branch": null
+    }
+  ]
+}

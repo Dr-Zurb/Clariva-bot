@@ -6,6 +6,9 @@ import { describe, expect, it } from '@jest/globals';
 import {
   applyIntentPostClassificationPolicy,
   buildClassifyIntentContext,
+  classifierSignalsAmountSeeking,
+  classifierSignalsFeeThreadContinuation,
+  classifierSignalsPaymentExistence,
   intentSignalsFeeOrPricing,
 } from '../../../src/services/ai-service';
 import type { ConversationState } from '../../../src/types/conversation';
@@ -182,6 +185,59 @@ describe('RBH-14 intent routing', () => {
           'how much is the consultation fee'
         )
       ).toBe(true);
+    });
+  });
+
+  describe('e-task-dm-06 classifier pricing sub-signals', () => {
+    it('classifierSignalsPaymentExistence when confident and kind matches', () => {
+      expect(
+        classifierSignalsPaymentExistence({
+          intent: 'ask_question',
+          confidence: 0.85,
+          pricing_signal_kind: 'payment_existence',
+        })
+      ).toBe(true);
+    });
+
+    it('classifierSignalsPaymentExistence false when confidence below threshold', () => {
+      expect(
+        classifierSignalsPaymentExistence({
+          intent: 'ask_question',
+          confidence: 0.4,
+          pricing_signal_kind: 'payment_existence',
+        })
+      ).toBe(false);
+    });
+
+    it('classifierSignalsAmountSeeking when confident', () => {
+      expect(
+        classifierSignalsAmountSeeking({
+          intent: 'ask_question',
+          confidence: 0.9,
+          pricing_signal_kind: 'amount_seeking',
+        })
+      ).toBe(true);
+    });
+
+    it('classifierSignalsFeeThreadContinuation requires fee-thread flag and fee bot line', () => {
+      expect(
+        classifierSignalsFeeThreadContinuation(
+          { intent: 'ask_question', confidence: 0.88, fee_thread_continuation: true },
+          'Video consult is ₹400.'
+        )
+      ).toBe(true);
+      expect(
+        classifierSignalsFeeThreadContinuation(
+          { intent: 'ask_question', confidence: 0.88, fee_thread_continuation: true },
+          'Hello — how can I help?'
+        )
+      ).toBe(false);
+      expect(
+        classifierSignalsFeeThreadContinuation(
+          { intent: 'ask_question', confidence: 0.88, fee_thread_continuation: false },
+          'Consultation fee applies.'
+        )
+      ).toBe(false);
     });
   });
 });

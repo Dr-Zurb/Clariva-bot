@@ -368,6 +368,13 @@ Emitted as structured **INFO** / **WARN** logs with `context: 'webhook_metric'` 
 **Example queries (log aggregation):**
 
 - Routing mix: count `instagram_dm_routing` group by `branch` (sanity: `fee_deterministic_idle` + `fee_deterministic_mid_collection` for pricing; `unknown` should be near zero).
+- **DM routing quality (e-task-ops-02):** Maintain a versioned **golden corpus** under `backend/tests/fixtures/dm-routing-golden/corpus.json` (synthetic / redacted only). Pure preview used in CI: `previewClinicalIdleDmBranch` in `backend/src/utils/dm-routing-clinical-idle-preview.ts` (post-medical ack, reason-first phases, `medical_safety` — does not simulate `fee_ambiguous_visit_type_staff`). Misroute triage: `backend/tests/fixtures/dm-routing-golden/MISROUTE_PLAYBOOK.md`.
+- **Suggested regressions / dashboards** (adapt field names to your log pipeline; no PHI in queries):
+  - **Unknown branch rate:** `count(branch == unknown) / count(*)` on `instagram_dm_routing` for production — sustained spike vs prior week → investigate classifier / handler gaps. Many orgs aim for **under 1–2%** but baseline is practice-dependent.
+  - **After-deflection flow:** For the same `conversationId`, sequence `medical_safety` → next turn’s `branch` — watch for unexpected **`unknown`** or missing **`post_medical_payment_existence_ack`** / fee bridge when the next turn is clearly pricing (manual spot-check; no raw message in logs).
+  - **Reason-first mix:** Weekly trend of `reason_first_triage_ask_more`, `reason_first_triage_confirm`, `reason_first_triage_ask_more_payment_bridge`, `reason_first_triage_fee_narrow` — large shifts after a deploy warrant comparison to the golden corpus + staging replay.
+  - **Optional:** If `ai_classification` metadata includes `pricingSignalKind` (e-task-dm-06), cross-tab fee-related `branch` values vs signal to catch classifier/handler drift.
+- **Healthy ranges:** Compare to a **rolling baseline** (same doctor cohort, same week-of-year if seasonal). Absolute percentages vary with specialty, teleconsult share, and catalog complexity.
 - Conflict recovery: filter `branch = conflict_recovery_ai`.
 - DM failure rate: count lines where `msg ~ webhook_metric_webhook_instagram_dm_delivery_total` and `outcome = failure`, group by `reason`.
 - Comment outreach: count `webhook_comment_pipeline_total` with `highIntent = true`, compare `dmSent` / `publicReplySent`.

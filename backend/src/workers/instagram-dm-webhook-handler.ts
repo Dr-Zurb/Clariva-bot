@@ -46,6 +46,9 @@ import {
   appendOptionalDmReplyBridge,
   buildClassifyIntentContext,
   classifyIntent,
+  classifierSignalsAmountSeeking,
+  classifierSignalsFeeThreadContinuation,
+  classifierSignalsPaymentExistence,
   generateResponse,
   generateResponseWithActions,
   intentSignalsFeeOrPricing,
@@ -1239,12 +1242,19 @@ export async function processInstagramDmWebhook(params: {
       state.lastPromptKind === 'staff_service_pending';
     const justStartingCollection =
       isBookIntent && !state.step && !(state.collectedFields?.length);
-    /** RBH-18: Classifier topics / is_fee_question OR keyword fallback; e-task-dm-05: fee anaphora after bot fee line */
+    /** RBH-18: Classifier topics / is_fee_question OR keyword fallback; e-task-dm-05/06: regex anaphora + classifier fee-thread continuation */
     const classifierSignalsFeePricing = intentSignalsFeeOrPricing(intentResult, text);
+    const classifierFeeThreadCont = classifierSignalsFeeThreadContinuation(
+      intentResult,
+      lastAssistantRawForFee
+    );
     const signalsFeePricing =
-      classifierSignalsFeePricing || feeFollowUpAnaphora(text, lastAssistantRawForFee);
+      classifierSignalsFeePricing ||
+      feeFollowUpAnaphora(text, lastAssistantRawForFee) ||
+      classifierFeeThreadCont;
     const feeIdleRoutedByAnaphora =
-      !classifierSignalsFeePricing && feeFollowUpAnaphora(text, lastAssistantRawForFee);
+      !classifierSignalsFeePricing &&
+      (feeFollowUpAnaphora(text, lastAssistantRawForFee) || classifierFeeThreadCont);
 
     const runGenerateResponse = async (input: Parameters<typeof generateResponse>[0]) => {
       const t = Date.now();
@@ -1505,7 +1515,8 @@ export async function processInstagramDmWebhook(params: {
       isRecentMedicalDeflectionWindow(state) &&
       !state.reasonFirstTriagePhase &&
       !state.postMedicalConsultFeeAckSent &&
-      isVagueConsultationPaymentExistenceQuestion(text) &&
+      (isVagueConsultationPaymentExistenceQuestion(text) ||
+        classifierSignalsPaymentExistence(intentResult)) &&
       recentPatientThreadHasClinicalReason(
         recentMessages.map((m) => ({ sender_type: m.sender_type, content: m.content ?? '' }))
       )
@@ -1597,11 +1608,14 @@ export async function processInstagramDmWebhook(params: {
       if (userWantsExplicitFullFeeList(text)) {
         runReasonFirstFullFeeEscape();
       } else if (state.reasonFirstTriagePhase === 'ask_more') {
+        const amountSeeking =
+          isAmountSeekingPricingQuestion(text) || classifierSignalsAmountSeeking(intentResult);
+        const feeAnaphora =
+          feeFollowUpAnaphora(text, lastAssistantRawForFee) || classifierFeeThreadCont;
         const narrowFeeFromAskMore =
           signalsFeePricing &&
           !userExplicitlyWantsToBookNow(text) &&
-          (isAmountSeekingPricingQuestion(text) ||
-            feeFollowUpAnaphora(text, lastAssistantRawForFee));
+          (amountSeeking || feeAnaphora);
         if (narrowFeeFromAskMore) {
           runReasonFirstFeeNarrowFromTriage();
         } else if (signalsFeePricing && !userExplicitlyWantsToBookNow(text)) {
@@ -3014,6 +3028,15 @@ export async function processInstagramDmWebhook(params: {
             text,
             conflictRecoveryCatalogRows
           );
+          const recentDmConflict = recentMessages.map((m) => ({
+            sender_type: m.sender_type,
+            content: m.content ?? '',
+          }));
+          const lastAssistantConflict = lastAssistantDmContent(recentDmConflict);
+          const conflictClassifierFee =
+            intentSignalsFeeOrPricing(intentResult, text) ||
+            feeFollowUpAnaphora(text, lastAssistantConflict) ||
+            classifierSignalsFeeThreadContinuation(intentResult, lastAssistantConflict);
           const replyText =
             (await generateResponse({
               conversationId: conversation.id,
@@ -3024,7 +3047,7 @@ export async function processInstagramDmWebhook(params: {
               correlationId,
               doctorContext: getDoctorContextFromSettings(conflictRecoveryDoctorSettings),
               context: aiContext,
-              classifierSignalsFeeQuestion: intentSignalsFeeOrPricing(intentResult, text),
+              classifierSignalsFeeQuestion: conflictClassifierFee,
             })) || FALLBACK_REPLY;
           logInstagramDmRouting({
             correlationId,

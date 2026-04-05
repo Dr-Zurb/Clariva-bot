@@ -43,6 +43,24 @@ const PRICING_KEYWORDS =
   /\b(fee|fees|price|prices|pricing|cost|costs|charge|charges|pay|paid|payment|payments|paying|how\s+much|kitna|kitni|kitne|कितना|rupee|rupees|paise|paisa|rs\.?|inr|₹|consultation\s+fee|doctor\s+fee|appointment\s+fee)\b/i;
 
 /**
+ * Normalize common patient typos before keyword / regex fee heuristics.
+ * Keeps a **single** place for this (avoid divergent copies in triage vs fees).
+ */
+export function normalizePricingKeywordTypos(text: string): string {
+  return text
+    .replace(/\bpayemnt\b/gi, 'payment')
+    .replace(/\bpaymnt\b/gi, 'payment')
+    .replace(/\bpament\b/gi, 'payment');
+}
+
+/**
+ * e-task-dm-06: single entry for patient text before pricing/fee heuristics (trim + typo normalization).
+ */
+export function normalizePatientPricingText(text: string): string {
+  return normalizePricingKeywordTypos(text.trim());
+}
+
+/**
  * One-line fee facts for OpenAI system prompt (authoritative; from DB only).
  * Used so the model never claims “fee not in system” when Booking Rules has a value.
  */
@@ -73,7 +91,7 @@ export function formatAppointmentFeeForAiContext(
 
 /** User message looks like a pricing question (EN + common Roman Hindi). */
 export function isPricingInquiryMessage(text: string): boolean {
-  const t = text.trim();
+  const t = normalizePatientPricingText(text);
   if (t.length < 3) return false;
   return PRICING_KEYWORDS.test(t);
 }

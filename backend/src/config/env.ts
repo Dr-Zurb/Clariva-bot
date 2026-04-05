@@ -155,6 +155,20 @@ const envSchema = z.object({
       if (!Number.isFinite(n) || n < 1) return 50;
       return Math.min(500, n);
     }),
+
+  /**
+   * e-task-dm-06: min classify confidence (0–1) to trust `pricing_signal` / `fee_thread_continuation`
+   * for DM routing; below this, regex / keyword fallbacks apply.
+   */
+  DM_CLASSIFIER_PRICING_SIGNAL_MIN_CONFIDENCE: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === '') return 0.62;
+      const n = parseFloat(v);
+      if (!Number.isFinite(n)) return 0.62;
+      return Math.min(1, Math.max(0, n));
+    }),
 });
 
 /**
