@@ -50,7 +50,10 @@ export function normalizePricingKeywordTypos(text: string): string {
   return text
     .replace(/\bpayemnt\b/gi, 'payment')
     .replace(/\bpaymnt\b/gi, 'payment')
-    .replace(/\bpament\b/gi, 'payment');
+    .replace(/\bpament\b/gi, 'payment')
+    // Common truncations so `isPricingInquiryMessage` / amount-seeking still match (reason-first snippet omission).
+    .replace(/\bhow\s+muc\b/gi, 'how much')
+    .replace(/\bhow\s+mch\b/gi, 'how much');
 }
 
 /**

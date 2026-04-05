@@ -48,6 +48,7 @@ export function feeFollowUpAnaphora(userText: string, lastBotMessage: string | u
   if (/^what\s+is\s+(it|that)\??\s*$/i.test(t)) return true;
   if (/^what'?s\s+(it|that)\??\s*$/i.test(t)) return true;
   if (/^how\s+much(\s+(is\s+it|for\s+that))?\??\s*$/i.test(t)) return true;
+  if (/^how\s+muc\??\s*$/i.test(t)) return true;
   if (/^(the\s+)?fee(s)?\??\s*$/i.test(t)) return true;
   if (/^kitna\??\s*$/i.test(t)) return true;
   if (/^what\s+about\s+(the\s+)?(fee|price|cost)\??\s*$/i.test(t)) return true;
@@ -211,6 +212,142 @@ export function parseReasonTriageNegationForClarify(text: string): boolean {
 
 const SNIPPET_MAX = 360;
 
+/** Normalized key for deduping distilled reason lines. */
+function normalizeReasonKey(s: string): string {
+  return s.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+const GREETING_PREFIX_RE =
+  /^(?:(?:hello|hi|hey)\s*,?\s*(?:doc|doctor|dr\.?)\s*[,.]?\s+|(?:hello|hi|hey)\s*[,.]?\s+)/i;
+
+/** Blood glucose reading phrasing (English) — extract number + optional fasting context. */
+const BLOOD_SUGAR_PHRASE_RE =
+  /(?:today\s+i\s+)?(?:checked\s+)?(?:my\s+)?blood\s+sugar\s+(?:to\s+be\s+|is\s+|was\s+|at\s+)?(\d+)/i;
+
+function stripGreetingPrefix(s: string): string {
+  let t = s;
+  while (GREETING_PREFIX_RE.test(t)) {
+    t = t.replace(GREETING_PREFIX_RE, '').trim();
+  }
+  return t;
+}
+
+/** Remove standalone “how much” / fee fragments (after typo normalize); avoids leaking pricing into clinical summaries. */
+function stripStandalonePricingPhrases(s: string): string {
+  let t = normalizePatientPricingText(s);
+  t = t.replace(/\s*\bhow\s+much\b\??\s*/gi, ' ');
+  return t.replace(/\s+/g, ' ').trim();
+}
+
+function extractBloodSugarSummary(text: string): { summary: string; remainder: string } | null {
+  const t = text.trim();
+  const fasting =
+    /\bfasting\b/i.test(t) ||
+    /\bit\s+was\s+fasting\b/i.test(t) ||
+    /\bwhile\s+fasting\b/i.test(t);
+  const m = t.match(BLOOD_SUGAR_PHRASE_RE);
+  if (!m) return null;
+  const n = m[1];
+  let remainder = t.replace(BLOOD_SUGAR_PHRASE_RE, ' ');
+  remainder = remainder.replace(/\b(?:it\s+was\s+)?fasting\b/gi, ' ');
+  remainder = remainder.replace(/\s*,\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  const summary = fasting ? `fasting blood sugar - ${n}` : `blood sugar - ${n}`;
+  return { summary, remainder };
+}
+
+function stripLeadingIHavePhrases(s: string): string {
+  return s.replace(/^(i\s+also\s+have\s+|i\s+have\s+)/i, '').trim();
+}
+
+function splitCommaClinicalSegments(s: string): string[] {
+  return s
+    .split(/\s*,\s*/)
+    .map((x) => x.trim())
+    .filter((x) => {
+      if (x.length < 2) return false;
+      if (isPricingInquiryMessage(x) && !userMessageSuggestsClinicalReason(x)) return false;
+      return true;
+    });
+}
+
+function dedupePreserveOrderLocal(items: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items) {
+    const k = normalizeReasonKey(item);
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push(item.replace(/\s+/g, ' ').trim());
+  }
+  return out;
+}
+
+/**
+ * Distill one patient DM into discrete visit-reason lines: drop filler, keep wording where possible.
+ * Exported for unit tests.
+ */
+export function distillPatientReasonLinesFromMessage(raw: string): string[] {
+  let s = raw.trim();
+  if (!s) return [];
+
+  s = stripGreetingPrefix(s);
+  s = s.replace(/\bhow\s+do\s+i\s+fix\s+it\b[?.!]*\s*/gi, ' ');
+  s = s.replace(/\s*,\s*how\s+do\s+i\s+fix\s+it\b[?.!]*/gi, ', ');
+  s = stripStandalonePricingPhrases(s);
+
+  const out: string[] = [];
+  const bs = extractBloodSugarSummary(s);
+  if (bs) {
+    out.push(bs.summary);
+    s = bs.remainder;
+  }
+
+  s = s.trim();
+  if (!s) return dedupePreserveOrderLocal(out);
+
+  const splitAlso = s.split(/\s+i\s+also\s+have\s+/i).map((x) => x.trim()).filter(Boolean);
+  const toProcess = splitAlso.length ? splitAlso : [s];
+
+  for (const seg of toProcess) {
+    let piece = stripLeadingIHavePhrases(seg);
+    if (!piece) continue;
+
+    const commaParts = splitCommaClinicalSegments(piece);
+    const chunks = commaParts.length ? commaParts : [piece];
+
+    for (const ch of chunks) {
+      const t = ch.trim();
+      if (t.length < 2) continue;
+      const bs2 = extractBloodSugarSummary(t);
+      if (bs2 && !bs2.remainder.trim()) {
+        out.push(bs2.summary);
+        continue;
+      }
+      if (isPricingInquiryMessage(t) && !userMessageSuggestsClinicalReason(t)) continue;
+      out.push(t.replace(/\s+/g, ' ').trim());
+    }
+  }
+
+  return dedupePreserveOrderLocal(out);
+}
+
+/** Merge multiple patient turns into a patient-facing reason summary (numbered when 2+ items). */
+export function distillReasonSnippetFromPatientParts(patientParts: string[]): string {
+  const items: string[] = [];
+  const seen = new Set<string>();
+  for (const p of patientParts) {
+    for (const line of distillPatientReasonLinesFromMessage(p)) {
+      const k = normalizeReasonKey(line);
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      items.push(line);
+    }
+  }
+  if (items.length === 0) return 'what you shared';
+  if (items.length === 1) return items[0];
+  return items.map((t, i) => `${i + 1}) ${t}`).join('\n');
+}
+
 /** Patient-visible summary from prior patient lines (no PHI logging here). */
 export function buildConsolidatedReasonSnippetFromMessages(
   recentMessages: { sender_type: string; content: string }[],
@@ -232,7 +369,7 @@ export function buildConsolidatedReasonSnippetFromMessages(
   ) {
     parts.push(cur);
   }
-  let out = parts.join(' ').replace(/\s+/g, ' ').trim();
+  let out = distillReasonSnippetFromPatientParts(parts);
   if (out.length > SNIPPET_MAX) out = `${out.slice(0, SNIPPET_MAX - 1).trimEnd()}…`;
   return out || 'what you shared';
 }
@@ -290,8 +427,11 @@ function usableReasonSnippetForBridge(raw: string | undefined): string | undefin
 
 function bridgeClosingEnglish(snippet?: string): string {
   if (snippet) {
+    const noted = snippet.includes('\n')
+      ? `**So far we've noted:**\n\n${snippet}\n\n`
+      : `**So far we've noted:** **${snippet}**.\n\n`;
     return (
-      `**So far we've noted:** **${snippet}**.\n\n` +
+      noted +
       "**Is there anything else** you'd like the doctor to address at this visit? Please let us know **before we share the fee** — you can say **nothing else** if that covers it."
     );
   }
@@ -300,8 +440,11 @@ function bridgeClosingEnglish(snippet?: string): string {
 
 function bridgeClosingHi(snippet?: string): string {
   if (snippet) {
+    const noted = snippet.includes('\n')
+      ? `**Ab tak note kiya:**\n\n${snippet}\n\n`
+      : `**Ab tak note kiya:** **${snippet}**.\n\n`;
     return (
-      `**Ab tak note kiya:** **${snippet}**.\n\n` +
+      noted +
       '**Kya aur kuch** hai jo aap is visit par doctor se discuss karna chahte hain? **Fee batane se pehle** bata dein — agar bas yahi hai to **nothing else** likh sakte hain.'
     );
   }
@@ -310,8 +453,11 @@ function bridgeClosingHi(snippet?: string): string {
 
 function bridgeClosingPa(snippet?: string): string {
   if (snippet) {
+    const noted = snippet.includes('\n')
+      ? `**Haje tak note kita:**\n\n${snippet}\n\n`
+      : `**Haje tak note kita:** **${snippet}**.\n\n`;
     return (
-      `**Haje tak note kita:** **${snippet}**.\n\n` +
+      noted +
       '**Hor kuj** hai je tu is visit te doctor naal discuss karna chahe? **Fee dasan to pehla** das de — je bas ohi hai ta **nothing else** likh sakde o.'
     );
   }
@@ -361,16 +507,23 @@ export function formatReasonFirstFeePatienceBridgeWhileAskMore(
 }
 
 function confirmTemplateEnglish(snippet: string): string {
-  return (
-    `So we're booking to discuss: **${snippet}** — **is that right?** Reply **yes** to continue, or tell me what to change.`
-  );
+  if (snippet.includes('\n')) {
+    return `So we're booking to discuss:\n\n${snippet}\n\n**Is that right?** Reply **yes** to continue, or tell me what to change.`;
+  }
+  return `So we're booking to discuss: **${snippet}** — **is that right?** Reply **yes** to continue, or tell me what to change.`;
 }
 
 function confirmTemplateHi(snippet: string): string {
+  if (snippet.includes('\n')) {
+    return `Toh is visit par discuss karne ke liye:\n\n${snippet}\n\n**sahi hai?** Aage badhne ke liye **yes** likhein, ya batayein kya change karna hai.`;
+  }
   return `Toh is visit par discuss karne ke liye: **${snippet}** — **sahi hai?** Aage badhne ke liye **yes** likhein, ya batayein kya change karna hai.`;
 }
 
 function confirmTemplatePa(snippet: string): string {
+  if (snippet.includes('\n')) {
+    return `Is visit te discuss karan layi:\n\n${snippet}\n\n**theek hai?** Agge layi **yes** likho, ya daso ki badalna hai.`;
+  }
   return `Is visit te discuss karan layi: **${snippet}** — **theek hai?** Agge layi **yes** likho, ya daso ki badalna hai.`;
 }
 

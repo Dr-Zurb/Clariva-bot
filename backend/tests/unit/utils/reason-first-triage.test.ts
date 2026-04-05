@@ -136,6 +136,8 @@ describe('reason-first-triage', () => {
     );
     expect(s).toContain('fever');
     expect(s).toContain('cough');
+    expect(s).toMatch(/1\)\s*fever/);
+    expect(s).toMatch(/2\)\s*cough/);
     expect(s).not.toContain('nothing else');
     const withPay = buildConsolidatedReasonSnippetFromMessages(
       [
@@ -146,6 +148,55 @@ describe('reason-first-triage', () => {
     );
     expect(withPay).toContain('blood sugar');
     expect(withPay).not.toContain('how much');
+  });
+
+  it('distills core reasons, drops greeting/meta/pricing typos, numbers multiple issues', () => {
+    const snippet = buildConsolidatedReasonSnippetFromMessages(
+      [
+        {
+          sender_type: 'patient',
+          content:
+            'hello doc, today i checked my blood sugar to be 199 , how do i fix it , it was fasting',
+        },
+        { sender_type: 'patient', content: 'how muc' },
+        {
+          sender_type: 'patient',
+          content: 'i also have hypertension , burning sensation in my stomach',
+        },
+      ],
+      ''
+    );
+    expect(snippet).toContain('fasting blood sugar - 199');
+    expect(snippet).toContain('hypertension');
+    expect(snippet).toContain('burning sensation in my stomach');
+    expect(snippet).not.toContain('hello doc');
+    expect(snippet).not.toContain('how do i fix');
+    expect(snippet).not.toMatch(/how\s+muc/i);
+    expect(snippet).toMatch(/1\)\s*fasting blood sugar/);
+    expect(snippet).toMatch(/2\)\s*hypertension/);
+    expect(snippet).toMatch(/3\)\s*burning/);
+  });
+
+  it('feeFollowUpAnaphora treats typo how muc as fee follow-up', () => {
+    const bot = 'Yes — there is a consultation fee for this visit.';
+    expect(feeFollowUpAnaphora('how muc', bot)).toBe(true);
+  });
+
+  it('strips embedded pricing typo from a single clinical message', () => {
+    const oneBubble = buildConsolidatedReasonSnippetFromMessages(
+      [
+        {
+          sender_type: 'patient',
+          content:
+            'hello doc, today i checked my blood sugar to be 199 , it was fasting how muc',
+        },
+        { sender_type: 'patient', content: 'i also have hypertension' },
+      ],
+      ''
+    );
+    expect(oneBubble).toContain('fasting blood sugar - 199');
+    expect(oneBubble).toContain('hypertension');
+    expect(oneBubble).not.toMatch(/how\s+muc/i);
   });
 
   it('lastAssistantDmContent returns latest non-patient message with text', () => {
