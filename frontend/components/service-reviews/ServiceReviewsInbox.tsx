@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type {
   ServiceStaffReviewListItem,
@@ -14,6 +14,13 @@ import {
   postConfirmServiceStaffReview,
   postReassignServiceStaffReview,
 } from "@/lib/api";
+import {
+  formatCandidateSummary,
+  matchExplanationSummary,
+  matchReasonChipMeta,
+  parseCandidateLabels,
+  parseMatchReasonCodes,
+} from "@/lib/staff-review-match-explain";
 
 function slaTimeRemainingLabel(iso: string): string {
   const end = new Date(iso).getTime();
@@ -106,8 +113,10 @@ export function ServiceReviewsInbox({
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [expandedReviewId, setExpandedReviewId] = useState<string | null>(null);
 
   const isPendingTab = activeTab === "pending";
+  const tableColCount = isPendingTab ? 6 : 7;
   /** Avoid empty state + wrong columns while the list for the selected tab is still in flight. */
   const dataStale = refreshing && activeTab !== dataTab;
 
@@ -314,8 +323,8 @@ export function ServiceReviewsInbox({
                     Final visit type
                   </th>
                 )}
-                <th scope="col" className="px-4 py-3 font-medium text-gray-700">
-                  Confidence
+                <th scope="col" className="min-w-[14rem] px-4 py-3 font-medium text-gray-700">
+                  Match (AI signals)
                 </th>
                 <th scope="col" className="px-4 py-3 font-medium text-gray-700">
                   {isPendingTab ? "SLA" : "Resolved"}
@@ -336,8 +345,13 @@ export function ServiceReviewsInbox({
                   r.patient_display_name?.trim() ||
                   (r.patient_id ? `Patient ${r.patient_id.slice(0, 8)}…` : "—");
                 const disabled = busyId === r.id;
+                const reasonCodes = parseMatchReasonCodes(r.match_reason_codes);
+                const candidates = parseCandidateLabels(r.candidate_labels);
+                const matchSummary = matchExplanationSummary(reasonCodes, r.match_confidence);
+                const candidateLine = formatCandidateSummary(candidates);
                 return (
-                  <tr key={r.id}>
+                  <Fragment key={r.id}>
+                  <tr>
                     {!isPendingTab && (
                       <td className="px-4 py-3 text-gray-700">
                         <span className="text-xs font-medium text-gray-600">{rowStatusLabel(r.status)}</span>
@@ -376,12 +390,46 @@ export function ServiceReviewsInbox({
                         )}
                       </td>
                     )}
-                    <td className="px-4 py-3">
+                    <td className="max-w-[17rem] px-4 py-3 align-top text-gray-800">
                       <span
                         className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${confidenceClass(r.match_confidence)}`}
                       >
                         {r.match_confidence}
                       </span>
+                      <p className="mt-1.5 text-xs leading-snug text-gray-600">{matchSummary}</p>
+                      {reasonCodes.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1" role="list" aria-label="Match reason codes">
+                          {reasonCodes.map((code) => {
+                            const m = matchReasonChipMeta(code);
+                            return (
+                              <span
+                                key={code}
+                                role="listitem"
+                                title={m.detail}
+                                className="inline-flex max-w-full cursor-help rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-medium text-gray-800"
+                              >
+                                {m.label}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {candidateLine && (
+                        <p className="mt-1.5 text-[11px] leading-snug text-gray-500">
+                          <span className="font-medium text-gray-600">Alternatives: </span>
+                          {candidateLine}
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        className="mt-1.5 text-left text-[11px] font-medium text-blue-700 hover:underline"
+                        aria-expanded={expandedReviewId === r.id}
+                        onClick={() =>
+                          setExpandedReviewId((id) => (id === r.id ? null : r.id))
+                        }
+                      >
+                        {expandedReviewId === r.id ? "Hide technical detail" : "Show technical detail"}
+                      </button>
                     </td>
                     <td className="px-4 py-3 text-gray-700">
                       {isPendingTab
@@ -419,6 +467,48 @@ export function ServiceReviewsInbox({
                       </td>
                     )}
                   </tr>
+                  {expandedReviewId === r.id && (
+                    <tr className="bg-slate-50">
+                      <td colSpan={tableColCount} className="px-4 py-3 text-sm text-gray-800">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                          Matcher signals (technical)
+                        </p>
+                        {reasonCodes.length === 0 ? (
+                          <p className="mt-2 text-sm text-gray-600">No reason codes stored.</p>
+                        ) : (
+                          <ul className="mt-2 list-disc space-y-1.5 pl-5 text-sm text-gray-700">
+                            {reasonCodes.map((code) => {
+                              const m = matchReasonChipMeta(code);
+                              return (
+                                <li key={code}>
+                                  <code className="rounded bg-gray-100 px-1 py-0.5 text-xs text-gray-800">
+                                    {code}
+                                  </code>
+                                  <span className="font-medium"> — {m.label}.</span> {m.detail}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                        {candidates.length > 0 && (
+                          <>
+                            <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                              Candidate services considered
+                            </p>
+                            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-gray-700">
+                              {candidates.map((c) => (
+                                <li key={`${c.service_key}-${c.label}`}>
+                                  {c.label}{" "}
+                                  <span className="text-gray-500">({c.service_key})</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })}
             </tbody>
