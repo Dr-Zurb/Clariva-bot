@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from '@jest/globals';
 import {
+  appendMatcherHintFields,
   parseServiceCatalogV1,
   safeParseServiceCatalogV1FromDb,
 } from '../../../src/utils/service-catalog-schema';
@@ -37,6 +38,28 @@ function minimalCatalog() {
     ],
   };
 }
+
+describe('appendMatcherHintFields', () => {
+  it('appends with separator and preserves existing keys', () => {
+    const out = appendMatcherHintFields(
+      { keywords: 'a', include_when: 'x' },
+      { keywords: 'b', exclude_when: 'no labs' }
+    );
+    expect(out.keywords).toBe('a; b');
+    expect(out.include_when).toBe('x');
+    expect(out.exclude_when).toBe('no labs');
+  });
+
+  it('starts fresh when no existing hints', () => {
+    expect(appendMatcherHintFields(undefined, { keywords: 'foo' })).toEqual({ keywords: 'foo' });
+  });
+
+  it('truncates merged string to max length', () => {
+    const long = 'x'.repeat(500);
+    const out = appendMatcherHintFields({ keywords: 'y'.repeat(350) }, { keywords: long });
+    expect(out.keywords!.length).toBe(400);
+  });
+});
 
 describe('parseServiceCatalogV1', () => {
   it('accepts minimal valid catalog', () => {

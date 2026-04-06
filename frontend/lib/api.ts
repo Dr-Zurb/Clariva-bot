@@ -1445,6 +1445,12 @@ export async function postReassignServiceStaffReview(
     catalogServiceId?: string;
     consultationModality?: "text" | "voice" | "video";
     note?: string;
+    updateCatalogMatcherHints?: boolean;
+    matcherHintsPatch?: {
+      keywords?: string;
+      include_when?: string;
+      exclude_when?: string;
+    };
   }
 ): Promise<ApiSuccess<{ review: ServiceStaffReviewListItem }>> {
   const res = await fetch(

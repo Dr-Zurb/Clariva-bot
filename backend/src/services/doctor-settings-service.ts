@@ -15,6 +15,7 @@ import { getSupabaseAdminClient } from '../config/database';
 import type { DoctorSettingsRow, OpdMode, PayoutSchedule } from '../types/doctor-settings';
 import { mergeServiceCatalogOnSave } from '../utils/service-catalog-normalize';
 import {
+  appendMatcherHintFields,
   hydrateServiceCatalogServiceIds,
   parseServiceCatalogIncoming,
   parseServiceCatalogTemplatesJson,
@@ -163,6 +164,83 @@ function normalizeUserTemplatesInRow(row: DoctorSettingsRow): DoctorSettingsRow 
 
 function normalizeDoctorSettingsApiRow(row: DoctorSettingsRow): DoctorSettingsRow {
   return normalizeUserTemplatesInRow(normalizeServiceOfferingsInRow(row));
+}
+
+export type MatcherHintsAppendPatch = {
+  keywords?: string;
+  include_when?: string;
+  exclude_when?: string;
+};
+
+/**
+ * Append matcher hint text onto one catalog offering and persist `service_offerings_json`.
+ * Used when staff reassign a visit type and optionally teach the matcher (no PHI in hints).
+ */
+export async function appendMatcherHintsToDoctorCatalogOffering(
+  doctorId: string,
+  correlationId: string,
+  serviceKey: string,
+  patch: MatcherHintsAppendPatch
+): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) {
+    throw new InternalError('Database not available');
+  }
+
+  const { data: row, error: selErr } = await supabase
+    .from('doctor_settings')
+    .select('service_offerings_json')
+    .eq('doctor_id', doctorId)
+    .maybeSingle();
+
+  if (selErr) handleSupabaseError(selErr, correlationId);
+  if (!row?.service_offerings_json) {
+    throw new ValidationError('Practice has no service catalog');
+  }
+
+  const previousCatalog = safeParseServiceCatalogV1FromDb(
+    row.service_offerings_json as unknown,
+    doctorId
+  );
+  if (!previousCatalog) {
+    throw new ValidationError('Invalid service catalog');
+  }
+
+  const keyNorm = serviceKey.trim().toLowerCase();
+  const idx = previousCatalog.services.findIndex(
+    (s) => s.service_key.trim().toLowerCase() === keyNorm
+  );
+  if (idx < 0) {
+    throw new ValidationError('Service not found in catalog');
+  }
+
+  const offering = previousCatalog.services[idx]!;
+  const newHints = appendMatcherHintFields(offering.matcher_hints, patch);
+  const nextOffering = {
+    ...offering,
+    matcher_hints: Object.keys(newHints).length > 0 ? newHints : undefined,
+  };
+  const nextServices = [...previousCatalog.services];
+  nextServices[idx] = nextOffering;
+  const incoming: ServiceCatalogV1 = { ...previousCatalog, services: nextServices };
+
+  const hydrated = hydrateServiceCatalogServiceIds(doctorId, incoming);
+  const strict = serviceCatalogV1Schema.safeParse(hydrated);
+  if (!strict.success) {
+    const first = strict.error.issues[0];
+    throw new ValidationError(
+      first ? `${first.path.join('.')}: ${first.message}` : 'Invalid catalog after hint update'
+    );
+  }
+
+  const merged = mergeServiceCatalogOnSave(doctorId, strict.data, previousCatalog);
+
+  const { error: updErr } = await supabase
+    .from('doctor_settings')
+    .update({ service_offerings_json: merged })
+    .eq('doctor_id', doctorId);
+
+  if (updErr) handleSupabaseError(updErr, correlationId);
 }
 
 /** Payload for partial update of doctor settings. */

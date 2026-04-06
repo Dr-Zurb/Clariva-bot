@@ -127,6 +127,47 @@ export const serviceMatcherHintsV1Schema = z
 
 export type ServiceMatcherHintsV1 = z.infer<typeof serviceMatcherHintsV1Schema>;
 
+/** Max lengths for matcher hint strings (must match `serviceMatcherHintsV1Schema`). */
+export const MATCHER_HINT_KEYWORDS_MAX = 400;
+export const MATCHER_HINT_INCLUDE_EXCLUDE_MAX = 800;
+
+const MATCHER_HINT_SEP = '; ';
+
+/**
+ * Append plain-language matcher hint fragments to an offering (semicolon-separated).
+ * Trims inputs; truncates merged values to schema max lengths. Empty `patch` fields are ignored.
+ */
+export function appendMatcherHintFields(
+  existing: ServiceMatcherHintsV1 | undefined,
+  patch: { keywords?: string; include_when?: string; exclude_when?: string }
+): ServiceMatcherHintsV1 {
+  const mergeOne = (max: number, prev: string | undefined, add: string | undefined): string | undefined => {
+    const a = add?.trim();
+    if (!a) return prev?.trim() || undefined;
+    const p = prev?.trim();
+    const combined = p ? `${p}${MATCHER_HINT_SEP}${a}` : a;
+    return combined.length > max ? combined.slice(0, max) : combined;
+  };
+
+  const keywords = mergeOne(MATCHER_HINT_KEYWORDS_MAX, existing?.keywords, patch.keywords);
+  const include_when = mergeOne(
+    MATCHER_HINT_INCLUDE_EXCLUDE_MAX,
+    existing?.include_when,
+    patch.include_when
+  );
+  const exclude_when = mergeOne(
+    MATCHER_HINT_INCLUDE_EXCLUDE_MAX,
+    existing?.exclude_when,
+    patch.exclude_when
+  );
+
+  const out: ServiceMatcherHintsV1 = {};
+  if (keywords) out.keywords = keywords;
+  if (include_when) out.include_when = include_when;
+  if (exclude_when) out.exclude_when = exclude_when;
+  return out;
+}
+
 const serviceOfferingCoreSchema = z.object({
   service_key: z
     .string()
