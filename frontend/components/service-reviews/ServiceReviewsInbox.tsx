@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type {
   ServiceStaffReviewListItem,
@@ -474,12 +474,10 @@ function ReassignDialog({
     catalogServiceKey: string;
     catalogServiceId?: string;
     consultationModality?: "text" | "voice" | "video";
-    note?: string;
-    updateCatalogMatcherHints?: boolean;
-    matcherHintsPatch?: {
-      keywords?: string;
-      include_when?: string;
-      exclude_when?: string;
+    matcherHints: {
+      keywords: string;
+      include_when: string;
+      exclude_when: string;
     };
   }) => Promise<void>;
 }) {
@@ -493,40 +491,40 @@ function ReassignDialog({
   const [modality, setModality] = useState<"" | "text" | "voice" | "video">(
     review.proposed_consultation_modality ?? ""
   );
-  const [note, setNote] = useState("");
-  const [updateCatalogMatcherHints, setUpdateCatalogMatcherHints] = useState(false);
   const [hintKeywords, setHintKeywords] = useState("");
   const [hintInclude, setHintInclude] = useState("");
   const [hintExclude, setHintExclude] = useState("");
   const [saving, setSaving] = useState(false);
 
   const selectedOffering = services.find((s) => s.service_key === serviceKey.trim().toLowerCase());
-  const hasAnyHint =
-    hintKeywords.trim().length > 0 ||
-    hintInclude.trim().length > 0 ||
-    hintExclude.trim().length > 0;
-  const hintBlockInvalid = updateCatalogMatcherHints && !hasAnyHint;
+  const catalogReady = Boolean(catalog?.services?.length);
+
+  /** Refill from catalog when the selected service changes or catalog first becomes available (not on every catalog object identity change). */
+  useEffect(() => {
+    if (!catalog?.services?.length) return;
+    const o = catalog.services.find(
+      (s) => s.service_key.trim().toLowerCase() === serviceKey.trim().toLowerCase()
+    );
+    const h = o?.matcher_hints;
+    setHintKeywords(h?.keywords ?? "");
+    setHintInclude(h?.include_when ?? "");
+    setHintExclude(h?.exclude_when ?? "");
+  }, [serviceKey, catalogReady]);
 
   const submit = async () => {
     const key = serviceKey.trim().toLowerCase();
-    if (!selectedOffering || hintBlockInvalid) return;
+    if (!selectedOffering) return;
     setSaving(true);
     try {
       await onSubmit({
         catalogServiceKey: key,
         catalogServiceId: selectedOffering.service_id,
         consultationModality: modality || undefined,
-        note: note.trim() || undefined,
-        ...(updateCatalogMatcherHints && hasAnyHint
-          ? {
-              updateCatalogMatcherHints: true,
-              matcherHintsPatch: {
-                ...(hintKeywords.trim() ? { keywords: hintKeywords.trim() } : {}),
-                ...(hintInclude.trim() ? { include_when: hintInclude.trim() } : {}),
-                ...(hintExclude.trim() ? { exclude_when: hintExclude.trim() } : {}),
-              },
-            }
-          : {}),
+        matcherHints: {
+          keywords: hintKeywords,
+          include_when: hintInclude,
+          exclude_when: hintExclude,
+        },
       });
     } finally {
       setSaving(false);
@@ -587,94 +585,68 @@ function ReassignDialog({
               <option value="voice">Voice</option>
               <option value="video">Video</option>
             </select>
-            <label className="block text-sm font-medium text-gray-700" htmlFor="reassign-note">
-              Internal note (optional)
-            </label>
-            <textarea
-              id="reassign-note"
-              rows={2}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="For your team only"
-            />
             <div className="rounded-md border border-gray-200 bg-gray-50/80 p-3">
-              <label className="flex cursor-pointer items-start gap-2">
-                <input
-                  type="checkbox"
-                  className="mt-1 rounded border-gray-300"
-                  checked={updateCatalogMatcherHints}
-                  onChange={(e) => setUpdateCatalogMatcherHints(e.target.checked)}
-                />
-                <span className="text-sm text-gray-800">
-                  Update matching hints for this catalog service (optional). New text is appended to
-                  your existing hints to help the AI match similar cases later.
-                </span>
-              </label>
-              <p className="mt-2 text-xs text-amber-800">
-                Use plain-language phrases only. Do not include patient names, identifiers, or other
-                PHI—the same rules as the service catalog editor.
+              <p className="text-sm font-medium text-gray-900">Matching hints (catalog)</p>
+              <p className="mt-1 text-sm text-gray-700">
+                Same fields as Practice setup for this visit type. Edits here update your service
+                catalog and help the AI map patients to the right service.
               </p>
-              {updateCatalogMatcherHints && (
-                <div className="mt-3 space-y-3">
-                  <div>
-                    <label
-                      className="block text-xs font-medium text-gray-700"
-                      htmlFor="reassign-hint-kw"
-                    >
-                      Keywords ({hintKeywords.length}/{MATCHER_KW_MAX})
-                    </label>
-                    <textarea
-                      id="reassign-hint-kw"
-                      rows={2}
-                      maxLength={MATCHER_KW_MAX}
-                      className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      value={hintKeywords}
-                      onChange={(e) => setHintKeywords(e.target.value)}
-                      placeholder="e.g. skin rash, tele-derm"
-                    />
-                  </div>
-                  <div>
-                    <label
-                      className="block text-xs font-medium text-gray-700"
-                      htmlFor="reassign-hint-inc"
-                    >
-                      Include when ({hintInclude.length}/{MATCHER_TX_MAX})
-                    </label>
-                    <textarea
-                      id="reassign-hint-inc"
-                      rows={2}
-                      maxLength={MATCHER_TX_MAX}
-                      className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      value={hintInclude}
-                      onChange={(e) => setHintInclude(e.target.value)}
-                      placeholder="When this visit type should be preferred"
-                    />
-                  </div>
-                  <div>
-                    <label
-                      className="block text-xs font-medium text-gray-700"
-                      htmlFor="reassign-hint-exc"
-                    >
-                      Exclude when ({hintExclude.length}/{MATCHER_TX_MAX})
-                    </label>
-                    <textarea
-                      id="reassign-hint-exc"
-                      rows={2}
-                      maxLength={MATCHER_TX_MAX}
-                      className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      value={hintExclude}
-                      onChange={(e) => setHintExclude(e.target.value)}
-                      placeholder="When another service is a better fit"
-                    />
-                  </div>
-                  {hintBlockInvalid && (
-                    <p className="text-xs text-red-700">
-                      Add text in at least one field above, or turn off the checkbox.
-                    </p>
-                  )}
+              <p className="mt-2 text-xs text-amber-800">
+                Plain language only. Do not include patient names, identifiers, or other PHI.
+              </p>
+              <div className="mt-3 space-y-3">
+                <div>
+                  <label
+                    className="block text-xs font-medium text-gray-700"
+                    htmlFor="reassign-hint-kw"
+                  >
+                    Keywords ({hintKeywords.length}/{MATCHER_KW_MAX})
+                  </label>
+                  <textarea
+                    id="reassign-hint-kw"
+                    rows={2}
+                    maxLength={MATCHER_KW_MAX}
+                    className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    value={hintKeywords}
+                    onChange={(e) => setHintKeywords(e.target.value)}
+                    placeholder="e.g. skin rash, tele-derm"
+                  />
                 </div>
-              )}
+                <div>
+                  <label
+                    className="block text-xs font-medium text-gray-700"
+                    htmlFor="reassign-hint-inc"
+                  >
+                    Include when ({hintInclude.length}/{MATCHER_TX_MAX})
+                  </label>
+                  <textarea
+                    id="reassign-hint-inc"
+                    rows={2}
+                    maxLength={MATCHER_TX_MAX}
+                    className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    value={hintInclude}
+                    onChange={(e) => setHintInclude(e.target.value)}
+                    placeholder="When this visit type should be preferred"
+                  />
+                </div>
+                <div>
+                  <label
+                    className="block text-xs font-medium text-gray-700"
+                    htmlFor="reassign-hint-exc"
+                  >
+                    Exclude when ({hintExclude.length}/{MATCHER_TX_MAX})
+                  </label>
+                  <textarea
+                    id="reassign-hint-exc"
+                    rows={2}
+                    maxLength={MATCHER_TX_MAX}
+                    className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    value={hintExclude}
+                    onChange={(e) => setHintExclude(e.target.value)}
+                    placeholder="When another service is a better fit"
+                  />
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -688,7 +660,7 @@ function ReassignDialog({
           </button>
           <button
             type="button"
-            disabled={saving || services.length === 0 || !selectedOffering || hintBlockInvalid}
+            disabled={saving || services.length === 0 || !selectedOffering}
             onClick={() => void submit()}
             className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
           >

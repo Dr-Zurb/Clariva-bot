@@ -1444,12 +1444,11 @@ export async function postReassignServiceStaffReview(
     catalogServiceKey: string;
     catalogServiceId?: string;
     consultationModality?: "text" | "voice" | "video";
-    note?: string;
-    updateCatalogMatcherHints?: boolean;
-    matcherHintsPatch?: {
-      keywords?: string;
-      include_when?: string;
-      exclude_when?: string;
+    /** Same fields as practice catalog; replaces offering `matcher_hints` for the selected service. */
+    matcherHints: {
+      keywords: string;
+      include_when: string;
+      exclude_when: string;
     };
   }
 ): Promise<ApiSuccess<{ review: ServiceStaffReviewListItem }>> {

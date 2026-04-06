@@ -27,10 +27,7 @@ import {
 import { getInstagramAccessTokenForDoctor } from './instagram-connect-service';
 import { sendInstagramMessage } from './instagram-service';
 import { createMessage } from './message-service';
-import {
-  appendMatcherHintsToDoctorCatalogOffering,
-  getDoctorSettings,
-} from './doctor-settings-service';
+import { getDoctorSettings, setMatcherHintsOnDoctorCatalogOffering } from './doctor-settings-service';
 import { findServiceOfferingByKey, getActiveServiceCatalog } from '../utils/service-catalog-helpers';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { ConflictError, InternalError, NotFoundError, ValidationError } from '../utils/errors';
@@ -604,9 +601,7 @@ export async function reassignServiceStaffReviewRequest(params: {
   catalogServiceKey: string;
   catalogServiceId?: string;
   consultationModality?: 'text' | 'voice' | 'video';
-  note?: string;
-  updateCatalogMatcherHints?: boolean;
-  matcherHintsPatch?: { keywords?: string; include_when?: string; exclude_when?: string };
+  matcherHints: { keywords: string; include_when: string; exclude_when: string };
 }): Promise<ServiceStaffReviewRequestRow> {
   const row = await getServiceStaffReviewRequestForDoctor(params.reviewId, params.doctorId, params.correlationId);
   if (row.status !== 'pending') {
@@ -630,20 +625,17 @@ export async function reassignServiceStaffReviewRequest(params: {
     }
   }
 
-  if (params.updateCatalogMatcherHints && params.matcherHintsPatch) {
-    await appendMatcherHintsToDoctorCatalogOffering(
-      params.doctorId,
-      params.correlationId,
-      offering.service_key,
-      params.matcherHintsPatch
-    );
-  }
+  const catalogHintsUpdated = await setMatcherHintsOnDoctorCatalogOffering(
+    params.doctorId,
+    params.correlationId,
+    offering.service_key,
+    params.matcherHints
+  );
 
   const admin = getSupabaseAdminClient();
   if (!admin) throw new InternalError('Service role client not available');
 
   const now = new Date().toISOString();
-  const note = trimNote(params.note);
   const modality = params.consultationModality ?? undefined;
 
   const { data: updated, error } = await admin
@@ -655,7 +647,7 @@ export async function reassignServiceStaffReviewRequest(params: {
       final_catalog_service_key: offering.service_key,
       final_catalog_service_id: offering.service_id,
       final_consultation_modality: modality ?? null,
-      resolution_internal_note: note ?? null,
+      resolution_internal_note: null,
     })
     .eq('id', row.id)
     .eq('status', 'pending')
@@ -664,16 +656,6 @@ export async function reassignServiceStaffReviewRequest(params: {
 
   if (error) handleSupabaseError(error, params.correlationId);
   if (!updated) throw new ConflictError('Could not reassign review (state changed?)');
-
-  const patch = params.matcherHintsPatch;
-  const catalogMatcherHintsAppended =
-    params.updateCatalogMatcherHints && patch
-      ? {
-          keywords: Boolean(patch.keywords?.trim()),
-          include_when: Boolean(patch.include_when?.trim()),
-          exclude_when: Boolean(patch.exclude_when?.trim()),
-        }
-      : undefined;
 
   await insertAuditEvent({
     reviewRequestId: row.id,
@@ -684,10 +666,7 @@ export async function reassignServiceStaffReviewRequest(params: {
       final_catalog_service_key: offering.service_key,
       final_catalog_service_id: offering.service_id,
       final_consultation_modality: modality ?? null,
-      resolution_internal_note: note ?? null,
-      ...(catalogMatcherHintsAppended
-        ? { catalog_matcher_hints_appended: catalogMatcherHintsAppended }
-        : {}),
+      ...(catalogHintsUpdated ? { catalog_matcher_hints_updated: true } : {}),
     },
     correlationId: params.correlationId,
   });

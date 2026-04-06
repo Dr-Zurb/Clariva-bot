@@ -15,7 +15,6 @@ import { getSupabaseAdminClient } from '../config/database';
 import type { DoctorSettingsRow, OpdMode, PayoutSchedule } from '../types/doctor-settings';
 import { mergeServiceCatalogOnSave } from '../utils/service-catalog-normalize';
 import {
-  appendMatcherHintFields,
   hydrateServiceCatalogServiceIds,
   parseServiceCatalogIncoming,
   parseServiceCatalogTemplatesJson,
@@ -23,6 +22,7 @@ import {
   serviceCatalogTemplatesJsonSchema,
   serviceCatalogV1Schema,
   type ServiceCatalogV1,
+  type ServiceMatcherHintsV1,
 } from '../utils/service-catalog-schema';
 import { validateOwnership } from '../utils/db-helpers';
 import { handleSupabaseError } from '../utils/db-helpers';
@@ -166,22 +166,23 @@ function normalizeDoctorSettingsApiRow(row: DoctorSettingsRow): DoctorSettingsRo
   return normalizeUserTemplatesInRow(normalizeServiceOfferingsInRow(row));
 }
 
-export type MatcherHintsAppendPatch = {
-  keywords?: string;
-  include_when?: string;
-  exclude_when?: string;
+export type MatcherHintsReplacePayload = {
+  keywords: string;
+  include_when: string;
+  exclude_when: string;
 };
 
 /**
- * Append matcher hint text onto one catalog offering and persist `service_offerings_json`.
- * Used when staff reassign a visit type and optionally teach the matcher (no PHI in hints).
+ * Replace `matcher_hints` on one catalog offering (same fields as practice setup) and persist.
+ * Skips write if trimmed values match the row. No PHI in hints.
+ * @returns whether `doctor_settings.service_offerings_json` was updated.
  */
-export async function appendMatcherHintsToDoctorCatalogOffering(
+export async function setMatcherHintsOnDoctorCatalogOffering(
   doctorId: string,
   correlationId: string,
   serviceKey: string,
-  patch: MatcherHintsAppendPatch
-): Promise<void> {
+  hints: MatcherHintsReplacePayload
+): Promise<boolean> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) {
     throw new InternalError('Database not available');
@@ -215,7 +216,24 @@ export async function appendMatcherHintsToDoctorCatalogOffering(
   }
 
   const offering = previousCatalog.services[idx]!;
-  const newHints = appendMatcherHintFields(offering.matcher_hints, patch);
+  const kw = hints.keywords.trim();
+  const inc = hints.include_when.trim();
+  const exc = hints.exclude_when.trim();
+
+  const prev = offering.matcher_hints;
+  const unchanged =
+    (prev?.keywords ?? '') === kw &&
+    (prev?.include_when ?? '') === inc &&
+    (prev?.exclude_when ?? '') === exc;
+  if (unchanged) {
+    return false;
+  }
+
+  const newHints: ServiceMatcherHintsV1 = {};
+  if (kw) newHints.keywords = kw;
+  if (inc) newHints.include_when = inc;
+  if (exc) newHints.exclude_when = exc;
+
   const nextOffering = {
     ...offering,
     matcher_hints: Object.keys(newHints).length > 0 ? newHints : undefined,
@@ -241,6 +259,7 @@ export async function appendMatcherHintsToDoctorCatalogOffering(
     .eq('doctor_id', doctorId);
 
   if (updErr) handleSupabaseError(updErr, correlationId);
+  return true;
 }
 
 /** Payload for partial update of doctor settings. */

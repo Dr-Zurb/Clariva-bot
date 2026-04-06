@@ -1148,11 +1148,12 @@ export function validateConfirmServiceStaffReviewBody(body: unknown): ConfirmSer
   return result.data;
 }
 
-const reassignMatcherHintsPatchSchema = z
+/** Same shape as practice catalog `matcher_hints` (replace on reassign). */
+const reassignMatcherHintsSchema = z
   .object({
-    keywords: z.string().max(400).optional(),
-    include_when: z.string().max(800).optional(),
-    exclude_when: z.string().max(800).optional(),
+    keywords: z.string().max(400),
+    include_when: z.string().max(800),
+    exclude_when: z.string().max(800),
   })
   .strict();
 
@@ -1161,34 +1162,9 @@ export const reassignServiceStaffReviewBodySchema = z
     catalogServiceKey: z.string().min(1).max(64).trim(),
     catalogServiceId: z.string().uuid().optional(),
     consultationModality: z.enum(['text', 'voice', 'video']).optional(),
-    note: serviceStaffResolutionNoteSchema,
-    updateCatalogMatcherHints: z.boolean().optional(),
-    matcherHintsPatch: reassignMatcherHintsPatchSchema.optional(),
+    matcherHints: reassignMatcherHintsSchema,
   })
-  .strict()
-  .superRefine((data, ctx) => {
-    if (!data.updateCatalogMatcherHints) return;
-    const p = data.matcherHintsPatch;
-    if (!p) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'matcherHintsPatch is required when updateCatalogMatcherHints is true',
-        path: ['matcherHintsPatch'],
-      });
-      return;
-    }
-    const has =
-      (p.keywords?.trim().length ?? 0) > 0 ||
-      (p.include_when?.trim().length ?? 0) > 0 ||
-      (p.exclude_when?.trim().length ?? 0) > 0;
-    if (!has) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Provide at least one non-empty matcher hint when updating catalog hints',
-        path: ['matcherHintsPatch'],
-      });
-    }
-  });
+  .strict();
 
 export type ReassignServiceStaffReviewBody = z.infer<typeof reassignServiceStaffReviewBodySchema>;
 
