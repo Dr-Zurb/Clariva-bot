@@ -51,6 +51,50 @@ function catalogSkinGpOther(): ServiceCatalogV1 {
 describe('service-catalog-matcher (ARM-04)', () => {
   const correlationId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 
+  it('buildServiceCatalogLlmSystemPrompt includes doctor_matcher_hints when set', () => {
+    const cat = catalogSkinGpOther();
+    const gp = cat.services.find((s) => s.service_key === 'gp');
+    expect(gp).toBeDefined();
+    gp!.matcher_hints = {
+      keywords: 'checkup, fatigue',
+      include_when: 'Prefer this row when multiple chronic and acute issues together',
+    };
+    const p = buildServiceCatalogLlmSystemPrompt(cat);
+    expect(p).toContain('doctor_matcher_hints');
+    expect(p).toContain('checkup');
+    expect(p).toContain('include_when=');
+  });
+
+  it('buildServiceCatalogLlmSystemPrompt includes competing_visit_type line when prefer key set', () => {
+    const cat: ServiceCatalogV1 = {
+      ...catalogSkinGpOther(),
+      competing_visit_type_prefer_service_key: 'gp',
+    };
+    const p = buildServiceCatalogLlmSystemPrompt(cat);
+    expect(p).toContain('prefer service_key "gp"');
+  });
+
+  it('skipLlm: competing buckets + catalog prefer key maps to preferred row', async () => {
+    const catalog: ServiceCatalogV1 = {
+      ...catalogSkinGpOther(),
+      competing_visit_type_prefer_service_key: 'gp',
+    };
+    const r = await matchServiceCatalogOffering(
+      {
+        catalog,
+        reasonForVisitText: 'fasting blood sugar 209 and burning stomach pain',
+        correlationId,
+      },
+      { skipLlm: true }
+    );
+    expect(r?.catalogServiceKey).toBe('gp');
+    expect(r?.reasonCodes).toContain(
+      SERVICE_CATALOG_MATCH_REASON_CODES.COMPETING_BUCKETS_PRACTICE_PREFERENCE
+    );
+    expect(r?.autoFinalize).toBe(true);
+    expect(r?.pendingStaffReview).toBe(false);
+  });
+
   it('returns null for empty catalog', async () => {
     const r = await matchServiceCatalogOffering(
       {

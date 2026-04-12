@@ -112,9 +112,15 @@ export function mergeServiceCatalogOnSave(
     };
   });
 
+  const mergedPrefer =
+    incoming.competing_visit_type_prefer_service_key !== undefined
+      ? incoming.competing_visit_type_prefer_service_key
+      : prevHydrated?.competing_visit_type_prefer_service_key;
+
   const out: ServiceCatalogV1 = hydrateCatalogPerModalityFollowUp({
     version: incoming.version,
     services: nextServices,
+    ...(mergedPrefer !== undefined ? { competing_visit_type_prefer_service_key: mergedPrefer } : {}),
   });
   const parsed = serviceCatalogV1Schema.safeParse(out);
   if (!parsed.success) {

@@ -396,8 +396,25 @@ function buildModalities(d: ServiceOfferingDraft): ServiceOfferingV1["modalities
   return modalities;
 }
 
+/** Optional catalog-level fields edited alongside service rows (Practice Setup). */
+export type DraftsToCatalogOptions = {
+  competing_visit_type_prefer_service_key?: string | null;
+};
+
+/** Read practice preference for NCD vs acute/general bucket conflicts from a parsed catalog. */
+export function competingVisitTypePreferKeyFromCatalog(
+  catalog: ServiceCatalogV1 | null | undefined
+): string {
+  const k = catalog?.competing_visit_type_prefer_service_key?.trim().toLowerCase();
+  if (!k || k === CATALOG_CATCH_ALL_SERVICE_KEY) return "";
+  return k;
+}
+
 /** Build API payload from drafts. Returns null if user cleared all services (legacy-only). */
-export function draftsToCatalogOrNull(services: ServiceOfferingDraft[]): ServiceCatalogV1 | null {
+export function draftsToCatalogOrNull(
+  services: ServiceOfferingDraft[],
+  opts?: DraftsToCatalogOptions
+): ServiceCatalogV1 | null {
   if (services.length === 0) {
     return null;
   }
@@ -460,8 +477,21 @@ export function draftsToCatalogOrNull(services: ServiceOfferingDraft[]): Service
     );
   }
 
-  return {
+  const out: ServiceCatalogV1 = {
     version: SERVICE_CATALOG_VERSION,
     services: offerings,
   };
+
+  const pref = opts?.competing_visit_type_prefer_service_key?.trim();
+  if (pref) {
+    const pk = pref.toLowerCase();
+    if (pk !== CATALOG_CATCH_ALL_SERVICE_KEY) {
+      const ok = offerings.some((o) => o.service_key.trim().toLowerCase() === pk);
+      if (ok) {
+        out.competing_visit_type_prefer_service_key = pk;
+      }
+    }
+  }
+
+  return out;
 }

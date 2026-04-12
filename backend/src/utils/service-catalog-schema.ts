@@ -252,16 +252,72 @@ export const serviceCatalogV1BaseSchema = z
   .object({
     version: z.literal(SERVICE_CATALOG_VERSION),
     services: z.array(serviceOfferingV1Schema).min(1).max(MAX_SERVICE_OFFERINGS),
+    /**
+     * When the thread matches both chronic/NCD-style and acute/general signals, prefer this
+     * service_key instead of catch-all `other` (fee DM + booking matcher). Must be a non-other row in `services`.
+     */
+    competing_visit_type_prefer_service_key: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(serviceKeyRegex)
+      .optional(),
   })
-  .superRefine((data, ctx) => refineCatalogUniqueKeysAndIds(data, ctx, true));
+  .superRefine((data, ctx) => refineCatalogUniqueKeysAndIds(data, ctx, true))
+  .superRefine((data, ctx) => {
+    const k = data.competing_visit_type_prefer_service_key?.trim();
+    if (!k) return;
+    if (k.toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `competing_visit_type_prefer_service_key cannot be "${CATALOG_CATCH_ALL_SERVICE_KEY}"`,
+        path: ['competing_visit_type_prefer_service_key'],
+      });
+      return;
+    }
+    const found = data.services.some((s) => s.service_key.trim().toLowerCase() === k.toLowerCase());
+    if (!found) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'competing_visit_type_prefer_service_key must match a service_key in services',
+        path: ['competing_visit_type_prefer_service_key'],
+      });
+    }
+  });
 
 export const serviceCatalogIncomingSchema = z
   .object({
     version: z.literal(SERVICE_CATALOG_VERSION),
     services: z.array(serviceOfferingIncomingSchema).min(1).max(MAX_SERVICE_OFFERINGS),
+    competing_visit_type_prefer_service_key: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(serviceKeyRegex)
+      .optional(),
   })
   .superRefine((data, ctx) => refineCatalogUniqueKeysAndIds(data, ctx, false))
-  .superRefine((data, ctx) => refineCatalogRequiresCatchAllOffering(data, ctx));
+  .superRefine((data, ctx) => refineCatalogRequiresCatchAllOffering(data, ctx))
+  .superRefine((data, ctx) => {
+    const k = data.competing_visit_type_prefer_service_key?.trim();
+    if (!k) return;
+    if (k.toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `competing_visit_type_prefer_service_key cannot be "${CATALOG_CATCH_ALL_SERVICE_KEY}"`,
+        path: ['competing_visit_type_prefer_service_key'],
+      });
+      return;
+    }
+    const found = data.services.some((s) => s.service_key.trim().toLowerCase() === k.toLowerCase());
+    if (!found) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'competing_visit_type_prefer_service_key must match a service_key in services',
+        path: ['competing_visit_type_prefer_service_key'],
+      });
+    }
+  });
 
 /** Live `service_offerings_json`: must include catch-all `other` (ARM-01). */
 export const serviceCatalogV1Schema = serviceCatalogV1BaseSchema.superRefine((data, ctx) =>

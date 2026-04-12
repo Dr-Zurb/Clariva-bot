@@ -40,6 +40,12 @@ export const MATCH_REASON_META: Record<string, MatchReasonMeta> = {
       "The thread matched signals for different visit-type buckets (e.g. routine vs acute). Staff should pick the right catalog row.",
     summaryLine: "Different visit-type buckets both matched; needs a clear choice.",
   },
+  competing_buckets_practice_preference: {
+    label: "Practice preference",
+    detail:
+      "Conflicting visit-type signals were resolved using your catalog’s “ambiguous visit-type routing” preference (non–catch-all service).",
+    summaryLine: "Conflicting visit types used your practice’s preferred service.",
+  },
   clinical_led_visit_type_unclear: {
     label: "Clinical unclear",
     detail:
@@ -93,6 +99,7 @@ const SUMMARY_PRIORITY: string[] = [
   "matcher_error",
   "no_catalog_match",
   "clinical_led_visit_type_unclear",
+  "competing_buckets_practice_preference",
   "competing_visit_type_buckets",
   "ambiguous_complaint",
   "service_match_llm",

@@ -89,6 +89,11 @@ export const SERVICE_CATALOG_MATCH_REASON_CODES = {
   AUTO_FINALIZED_HIGH_CONFIDENCE: 'auto_finalized_high_confidence',
   /** ARM-04: validated choice produced by LLM stage (key still allowlisted). */
   SERVICE_MATCH_LLM: 'service_match_llm',
+  /**
+   * Practice catalog `competing_visit_type_prefer_service_key` resolved a mixed NCD+acute/general
+   * thread to that row instead of catch-all / low-confidence ambiguity.
+   */
+  COMPETING_BUCKETS_PRACTICE_PREFERENCE: 'competing_buckets_practice_preference',
   /** ARM-06: staff closed review without confirming matcher proposal. */
   STAFF_REVIEW_CANCELLED_BY_STAFF: 'staff_review_cancelled_by_staff',
   /** ARM-06 / ARM-08: SLA elapsed before staff action. */

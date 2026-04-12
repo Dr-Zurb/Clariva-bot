@@ -168,7 +168,7 @@ function mergeFeeQuoteMatcherIntoState(
     matcherProposedCatalogServiceKey: string;
     matcherProposedCatalogServiceId: string;
     matcherProposedConsultationModality?: 'text' | 'voice' | 'video';
-    serviceCatalogMatchConfidence: 'high';
+    serviceCatalogMatchConfidence: 'high' | 'medium' | 'low';
     serviceCatalogMatchReasonCodes: string[];
   }
 ): ConversationState {
