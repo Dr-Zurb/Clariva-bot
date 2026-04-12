@@ -141,7 +141,61 @@ const ALL_EMERGENCY_PATTERNS: RegExp[] = [
 ];
 
 /**
- * True when message should be treated as emergency (same signals as intent fast-path).
+ * Plausible BP readings from patient text (slash or hyphen). Filters obvious non-BP pairs (dates, 24/7).
+ * When multiple pairs exist, callers should prefer the **last** pair — patients often report crisis first, then current.
+ *
+ * **Scope:** Used only for `applyEmergencyIntentPostPolicy` (avoid wrongly downgrading **repeat** emergency
+ * when crisis-level vitals are still present). **Primary** routing for “is this an emergency?” is the
+ * intent classifier with **conversation context** — not this parser (see AI_BOT_BUILDING_PHILOSOPHY.md §2–3).
+ */
+export function parsePlausibleBloodPressurePairs(text: string): { systolic: number; diastolic: number }[] {
+  const t = text.trim();
+  if (t.length < 3) return [];
+  const out: { systolic: number; diastolic: number }[] = [];
+  const re = /\b(\d{2,3})\s*[/\-]\s*(\d{2,3})\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t)) !== null) {
+    let sys = parseInt(m[1]!, 10);
+    let dia = parseInt(m[2]!, 10);
+    if (Number.isNaN(sys) || Number.isNaN(dia)) continue;
+    // Typical typo: values reversed (e.g. 110/200 meant 200/110)
+    if (dia > sys) {
+      [sys, dia] = [dia, sys];
+    }
+    if (sys < 40 || sys > 300 || dia < 30 || dia > 200) continue;
+    if (sys < dia) continue;
+    out.push({ systolic: sys, diastolic: dia });
+  }
+  return out;
+}
+
+/** Hypertensive crisis–range BP (common threshold: systolic ≥180 and/or diastolic ≥120). */
+const CRISIS_SYS = 180;
+const CRISIS_DIA = 120;
+
+export function bloodPressurePairIsHypertensiveCrisis(pair: {
+  systolic: number;
+  diastolic: number;
+}): boolean {
+  return pair.systolic >= CRISIS_SYS || pair.diastolic >= CRISIS_DIA;
+}
+
+/**
+ * True when the patient's **current** reported BP (last plausible pair in the message) is in hypertensive crisis range.
+ * If two pairs appear (e.g. "was 200/100, now 135/85"), the last pair wins so stabilization routes to medical_query / booking, not EMS.
+ */
+export function messageHasHypertensiveCrisisBloodPressureReading(text: string): boolean {
+  const pairs = parsePlausibleBloodPressurePairs(text);
+  if (pairs.length === 0) return false;
+  const last = pairs[pairs.length - 1]!;
+  return bloodPressurePairIsHypertensiveCrisis(last);
+}
+
+/**
+ * Deterministic **acute-phrase** emergency signals (latency, obvious EMS language).
+ * Does **not** include BP numbers — vitals/crisis vs stable vs booking-safe is assessed by the **intent
+ * classifier** using full-thread context (LLM). See `messageHasHypertensiveCrisisBloodPressureReading` only
+ * for post-escalation repeat policy.
  */
 export function isEmergencyUserMessage(text: string): boolean {
   const t = text.trim();

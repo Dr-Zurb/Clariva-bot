@@ -39,6 +39,7 @@ import {
   EMERGENCY_RESPONSE_EN,
   isEmergencyUserMessage,
   MEDICAL_QUERY_RESPONSE_EN,
+  messageHasHypertensiveCrisisBloodPressureReading,
   recentThreadHasAssistantEmergencyEscalation,
 } from '../utils/safety-messages';
 import { POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN } from '../utils/post-medical-ack-copy';
@@ -321,8 +322,8 @@ Intent rules:
 - greeting: Use when message is ONLY a greeting with no explicit request (e.g. "hello", "hi", "good morning"). NEVER classify simple greetings as book_appointment.
 - book_for_someone_else: Use when user wants to book for ANOTHER person (e.g. "book for my mother", "schedule appointment for my wife", "I want to book for my dad", "book for someone else").
 - book_appointment: Use when user explicitly asks to book for THEMSELVES (e.g. "book", "schedule", "I want an appointment", "can I book"). NOT when they say "for my mother" etc.
-- medical_query: User describes symptoms, chief complaints, asks for medical advice/prescription, **or** reports blood pressure / glucose readings and wants guidance (including hypertension, "what do I do", "need doctor's guidance"). Redirect to doctor/clinic; never diagnose.
-- emergency: **Only** for **acute crisis** language that implies **immediate** EMS/hospital: chest pain, can't breathe, stroke symptoms, unconscious, severe bleeding, major trauma, poisoning, **or** clear worsening ("getting worse", "worsening"). **Do NOT** use emergency for: routine BP/glucose numbers alone, hypertension management questions, follow-ups that **only** report **improved or lower** readings, say they are **stable**, or seek **guidance** after sharing a reading — classify those as **medical_query**. Numbers like 200/100 without simultaneous acute crisis wording are **medical_query**, not emergency.
+- medical_query: User describes symptoms, asks for advice, **or** (with **thread context**) a situation that is **not** an **immediate** EMS/hospital crisis **right now** — e.g. **follow-up after** a crisis was discussed, **improved or controlled** vitals, **stable** state, routine guidance, booking/fees, or non–acute readings. Use **conversation history** to tell **past** vs **present** vs **resolved**.
+- emergency: **Immediate** EMS/hospital crisis **in the current situation** (acute symptoms, severe danger, **or** life-threatening vitals such as **hypertensive crisis–level BP** when that is what the patient is **currently** reporting as their state). **You must interpret the full thread:** e.g. first message "BP 200/100 this morning" may be **emergency**; a **later** message "I'm stable now, 150/90" means the **current** situation is **not** an ongoing same-turn crisis → **medical_query** (safe to move toward teleconsult/booking), **not** emergency. If the **latest** vitals in the **current** message are clearly **below** common crisis thresholds and the user describes **stability/improvement**, prefer **medical_query**. If **[Assistant_context]** says 112/108 was already sent and the patient **only** reports **non-crisis** readings or stability — **medical_query**, not emergency — unless **new** acute crisis wording or **new** crisis-level vitals appear in the **current** message.
 - ask_question: General questions (price, timings, location, consultation type). Answer from practice info. Use ask_question for fee/pricing/cost questions even if the user mentions "consultation" or "appointment" without clearly asking to schedule (e.g. "how much is consultation fee", "what are your charges").
 - revoke_consent: User wants to delete data or revoke consent (e.g. "delete my data", "revoke consent").
 - check_appointment_status: User asks if appointment is confirmed, when is visit.
@@ -330,9 +331,9 @@ Intent rules:
 
 After the user asked about fees/pricing, a short follow-up like "general consultation" or "video consult" is still ask_question (clarifying visit type / pricing), NOT book_appointment, unless they clearly ask to book (e.g. "book appointment", "schedule me").
 
-Examples: "hello" → greeting; "book appointment" → book_appointment; "book for my mother" → book_for_someone_else; "I have fever" → medical_query; "chest pain" → emergency; "my BP was 200/100 what do I do" → medical_query; "it's 140/80 now" (after discussing BP) → medical_query; "how much is the consultation fee" → ask_question; "general consultation" (right after a fee discussion) → ask_question.
+Examples: "hello" → greeting; "book appointment" → book_appointment; "book for my mother" → book_for_someone_else; "I have fever" → medical_query; "chest pain" → emergency; "my BP was 200/100 earlier today" (no prior context) → emergency; after that thread, "I'm stable now BP 150/90" → medical_query; "how much is the consultation fee" → ask_question; "general consultation" (right after a fee discussion) → ask_question.
 
-Multi-turn input: You may receive a [Conversation context] block and/or "Recent conversation (redacted)" lines followed by "Current user message:". Always classify **only** the current user message, using prior turns to disambiguate (e.g. after a fee reply, "general consultation please" → ask_question, not book_appointment). If **[Assistant_context]** says the assistant already sent an emergency escalation (112/108), and the patient **only** updates vitals, says they are stable, or asks for guidance — classify **medical_query**, not emergency, unless they add **new** acute crisis symptoms.
+Multi-turn input: You may receive a [Conversation context] block and/or "Recent conversation (redacted)" lines followed by "Current user message:". **Situational assessment is required:** use prior turns to decide whether the patient describes an **ongoing emergency now** vs **recovery/stability** vs **routine** questions — not keyword matching alone. Classify **only** the current user message, but **ground** it in the thread (e.g. after a fee reply, "general consultation please" → ask_question, not book_appointment). If **[Assistant_context]** says the assistant already sent an emergency escalation (112/108), and the patient **only** updates with **improved/non-crisis** vitals, says they are stable, or seeks booking/guidance without new acute crisis — classify **medical_query**, not emergency, unless they add **new** acute crisis symptoms or **new** crisis-level vitals in the **current** message.
 
 Respond with a single JSON object (required keys):
 - "intent": one of the valid intent strings
@@ -801,7 +802,7 @@ function buildIntentClassificationUserContent(
       .find((t) => t.role === 'assistant' && assistantMessageIsEmergencyEscalationCopy(t.content));
     if (assistantEmergencyFollowUp) {
       blocks.push(
-        '[Assistant_context: The assistant already sent a standard emergency escalation message (e.g. call 112/108 or go to hospital). If the patient\'s CURRENT message only updates readings (e.g. lower BP), says they are stable, seeks guidance, or argues it is not an emergency — classify as medical_query, not emergency — unless they report new acute crisis symptoms (chest pain, can\'t breathe, worsening as in intent rules).]'
+        '[Assistant_context: The assistant already sent a standard emergency escalation message (e.g. call 112/108 or go to hospital). Read the **whole thread**: if the patient\'s **current** message indicates **resolved/improved** situation, **stable** vitals, **non-crisis** readings, or they want **booking/fees/guidance** without reporting a **new** ongoing crisis — classify **medical_query**, not emergency. If they still describe **immediate** danger or **crisis-level** vitals as their **present** state, **emergency** may still apply. Do not repeat emergency for a **pure** stability/update turn.]'
       );
     }
     blocks.push(
@@ -860,7 +861,9 @@ export function applyIntentPostClassificationPolicy(
 
 /**
  * e-task-dm-08: After the assistant sent canonical emergency escalation, do not repeat the same
- * emergency branch on follow-ups that lack deterministic acute keywords (model may still return emergency).
+ * emergency branch when the model wrongly keeps returning emergency on **stability** follow-ups.
+ * **Primary** disambiguation is the classifier + thread context (LLM). The BP helper below is only a
+ * narrow guard so we do not downgrade when **crisis-level vitals** are still present in the message.
  */
 export function applyEmergencyIntentPostPolicy(
   result: IntentDetectionResult,
@@ -869,7 +872,12 @@ export function applyEmergencyIntentPostPolicy(
 ): IntentDetectionResult {
   if (result.intent !== 'emergency') return result;
   if (!recentThreadHasAssistantEmergencyEscalation(recentMessages)) return result;
-  if (isEmergencyUserMessage(messageText)) return result;
+  if (
+    isEmergencyUserMessage(messageText) ||
+    messageHasHypertensiveCrisisBloodPressureReading(messageText)
+  ) {
+    return result;
+  }
   return {
     ...result,
     intent: 'medical_query',

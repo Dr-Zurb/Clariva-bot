@@ -149,6 +149,20 @@ describe('RBH-14 intent routing', () => {
       );
       expect(out.intent).toBe('medical_query');
     });
+
+    it('does not downgrade when crisis-level BP is still present in the message', () => {
+      const emergency =
+        'Please call emergency services (in India: **112** or **108**) or go to the nearest hospital immediately.';
+      const out = applyEmergencyIntentPostPolicy(
+        { intent: 'emergency', confidence: 0.92 },
+        'still 200/100 please help',
+        [
+          { sender_type: 'patient', content: 'chest ok' },
+          { sender_type: 'system', content: emergency },
+        ]
+      );
+      expect(out.intent).toBe('emergency');
+    });
   });
 
   describe('buildClassifyIntentContext', () => {

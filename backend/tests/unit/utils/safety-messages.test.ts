@@ -4,6 +4,8 @@ import {
   MEDICAL_QUERY_RESPONSE_EN,
   detectSafetyMessageLocale,
   isEmergencyUserMessage,
+  messageHasHypertensiveCrisisBloodPressureReading,
+  parsePlausibleBloodPressurePairs,
   recentThreadHasAssistantEmergencyEscalation,
   resolveSafetyMessage,
 } from '../../../src/utils/safety-messages';
@@ -126,6 +128,35 @@ describe('safety-messages (RBH-15)', () => {
 
     it('matches getting worse as escalation cue', () => {
       expect(isEmergencyUserMessage('It is getting worse')).toBe(true);
+    });
+
+    it('does not use deterministic BP for isEmergencyUserMessage (LLM + context routes vitals)', () => {
+      expect(
+        isEmergencyUserMessage(
+          'hello how are you ? my BP came out to be 200/100 earlier today'
+        )
+      ).toBe(false);
+    });
+
+    it('exposes crisis BP for repeat-escalation policy only', () => {
+      expect(messageHasHypertensiveCrisisBloodPressureReading('bp 200/100')).toBe(true);
+    });
+
+    it('uses last BP pair when user reports improvement (crisis then better)', () => {
+      expect(
+        messageHasHypertensiveCrisisBloodPressureReading(
+          'earlier 200/100 now 135/85'
+        )
+      ).toBe(false);
+      expect(parsePlausibleBloodPressurePairs('earlier 200/100 now 135/85')).toEqual([
+        { systolic: 200, diastolic: 100 },
+        { systolic: 135, diastolic: 85 },
+      ]);
+    });
+
+    it('does not treat normotensive readings as BP emergency', () => {
+      expect(isEmergencyUserMessage('my bp is 128/82')).toBe(false);
+      expect(messageHasHypertensiveCrisisBloodPressureReading('130/85')).toBe(false);
     });
   });
 
