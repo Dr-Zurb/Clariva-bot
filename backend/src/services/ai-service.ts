@@ -27,6 +27,7 @@ import {
   userExplicitlyWantsToBookNow,
 } from '../utils/consultation-fees';
 import {
+  lastAssistantDmContent,
   lastBotDiscussesFeesTopic,
   collectPatientReasonPartsForTriage,
   formatVisitReasonItemsForSnippet,
@@ -35,6 +36,7 @@ import {
   parseNothingElseOrSameOnly,
 } from '../utils/reason-first-triage';
 import {
+  assistantMessageIsEmergencyEscalationCopy,
   EMERGENCY_RESPONSE_EN,
   isEmergencyUserMessage,
   MEDICAL_QUERY_RESPONSE_EN,
@@ -319,8 +321,8 @@ Intent rules:
 - greeting: Use when message is ONLY a greeting with no explicit request (e.g. "hello", "hi", "good morning"). NEVER classify simple greetings as book_appointment.
 - book_for_someone_else: Use when user wants to book for ANOTHER person (e.g. "book for my mother", "schedule appointment for my wife", "I want to book for my dad", "book for someone else").
 - book_appointment: Use when user explicitly asks to book for THEMSELVES (e.g. "book", "schedule", "I want an appointment", "can I book"). NOT when they say "for my mother" etc.
-- medical_query: User describes symptoms, chief complaints, or asks for medical advice/prescription. Redirect to doctor/clinic; never diagnose.
-- emergency: Urgent/emergency language (chest pain, can't breathe, accident). Redirect to emergency services.
+- medical_query: User describes symptoms, chief complaints, asks for medical advice/prescription, **or** reports blood pressure / glucose readings and wants guidance (including hypertension, "what do I do", "need doctor's guidance"). Redirect to doctor/clinic; never diagnose.
+- emergency: **Only** for **acute crisis** language that implies **immediate** EMS/hospital: chest pain, can't breathe, stroke symptoms, unconscious, severe bleeding, major trauma, poisoning, **or** clear worsening ("getting worse", "worsening"). **Do NOT** use emergency for: routine BP/glucose numbers alone, hypertension management questions, follow-ups that **only** report **improved or lower** readings, say they are **stable**, or seek **guidance** after sharing a reading — classify those as **medical_query**. Numbers like 200/100 without simultaneous acute crisis wording are **medical_query**, not emergency.
 - ask_question: General questions (price, timings, location, consultation type). Answer from practice info. Use ask_question for fee/pricing/cost questions even if the user mentions "consultation" or "appointment" without clearly asking to schedule (e.g. "how much is consultation fee", "what are your charges").
 - revoke_consent: User wants to delete data or revoke consent (e.g. "delete my data", "revoke consent").
 - check_appointment_status: User asks if appointment is confirmed, when is visit.
@@ -328,9 +330,9 @@ Intent rules:
 
 After the user asked about fees/pricing, a short follow-up like "general consultation" or "video consult" is still ask_question (clarifying visit type / pricing), NOT book_appointment, unless they clearly ask to book (e.g. "book appointment", "schedule me").
 
-Examples: "hello" → greeting; "book appointment" → book_appointment; "book for my mother" → book_for_someone_else; "I have fever" → medical_query; "chest pain" → emergency; "how much is the consultation fee" → ask_question; "general consultation" (right after a fee discussion) → ask_question.
+Examples: "hello" → greeting; "book appointment" → book_appointment; "book for my mother" → book_for_someone_else; "I have fever" → medical_query; "chest pain" → emergency; "my BP was 200/100 what do I do" → medical_query; "it's 140/80 now" (after discussing BP) → medical_query; "how much is the consultation fee" → ask_question; "general consultation" (right after a fee discussion) → ask_question.
 
-Multi-turn input: You may receive a [Conversation context] block and/or "Recent conversation (redacted)" lines followed by "Current user message:". Always classify **only** the current user message, using prior turns to disambiguate (e.g. after a fee reply, "general consultation please" → ask_question, not book_appointment).
+Multi-turn input: You may receive a [Conversation context] block and/or "Recent conversation (redacted)" lines followed by "Current user message:". Always classify **only** the current user message, using prior turns to disambiguate (e.g. after a fee reply, "general consultation please" → ask_question, not book_appointment). If **[Assistant_context]** says the assistant already sent an emergency escalation (112/108), and the patient **only** updates vitals, says they are stable, or asks for guidance — classify **medical_query**, not emergency, unless they add **new** acute crisis symptoms.
 
 Respond with a single JSON object (required keys):
 - "intent": one of the valid intent strings
@@ -794,6 +796,14 @@ function buildIntentClassificationUserContent(
     );
   }
   if (ctx.recentTurns?.length) {
+    const assistantEmergencyFollowUp = [...ctx.recentTurns]
+      .reverse()
+      .find((t) => t.role === 'assistant' && assistantMessageIsEmergencyEscalationCopy(t.content));
+    if (assistantEmergencyFollowUp) {
+      blocks.push(
+        '[Assistant_context: The assistant already sent a standard emergency escalation message (e.g. call 112/108 or go to hospital). If the patient\'s CURRENT message only updates readings (e.g. lower BP), says they are stable, seeks guidance, or argues it is not an emergency — classify as medical_query, not emergency — unless they report new acute crisis symptoms (chest pain, can\'t breathe, worsening as in intent rules).]'
+      );
+    }
     blocks.push(
       `Recent conversation (redacted, oldest first):\n${ctx.recentTurns.map((t) => `${t.role}: ${t.content}`).join('\n')}`
     );
@@ -845,6 +855,26 @@ export function applyIntentPostClassificationPolicy(
       ? { pricing_signal_kind: result.pricing_signal_kind }
       : {}),
     ...(result.fee_thread_continuation === true ? { fee_thread_continuation: true } : {}),
+  };
+}
+
+/**
+ * e-task-dm-08: After the assistant sent canonical emergency escalation, do not repeat the same
+ * emergency branch on follow-ups that lack deterministic acute keywords (model may still return emergency).
+ */
+export function applyEmergencyIntentPostPolicy(
+  result: IntentDetectionResult,
+  messageText: string,
+  recentMessages: { sender_type: string; content: string }[]
+): IntentDetectionResult {
+  if (result.intent !== 'emergency') return result;
+  const lastBot = lastAssistantDmContent(recentMessages);
+  if (!lastBot || !assistantMessageIsEmergencyEscalationCopy(lastBot)) return result;
+  if (isEmergencyUserMessage(messageText)) return result;
+  return {
+    ...result,
+    intent: 'medical_query',
+    confidence: Math.min(result.confidence, 0.9),
   };
 }
 
@@ -999,6 +1029,9 @@ NEVER invent diagnoses or advice. Never add reasons not supported by the message
 
 Order: same order as the patient raised them when clear; otherwise main concern first.
 At most 12 strings; merge duplicates.
+
+**Vital-sign updates (mandatory):** If the patient sent **multiple readings of the same vital** in the thread (e.g. several blood pressure values like 200/100, then 160/80, then 140/80), output **one** reason line — use the **latest** reading and optionally one short parenthetical for context (e.g. "High blood pressure — 140/80 today (earlier readings were higher)"). Do **not** list each reading as a separate array item.
+
 If nothing clinical remains after exclusions, return {"reasons": []}.`;
 
 function parseVisitReasonSnippetJson(content: string): string[] | null {

@@ -43,6 +43,7 @@ import {
 } from '../services/conversation-service';
 import { createMessage, getRecentMessages, getSenderIdByPlatformMessageId } from '../services/message-service';
 import {
+  applyEmergencyIntentPostPolicy,
   applyIntentPostClassificationPolicy,
   appendOptionalDmReplyBridge,
   buildClassifyIntentContext,
@@ -1220,6 +1221,7 @@ export async function processInstagramDmWebhook(params: {
       classifyCtx ? { classifyContext: classifyCtx } : undefined
     );
     intentResult = applyIntentPostClassificationPolicy(intentResult, text, state);
+    intentResult = applyEmergencyIntentPostPolicy(intentResult, text, recentMessages);
     const intentMs = Date.now() - intentStartedAt;
 
     const platformMessageId = mid ?? `evt-${eventId}`;
@@ -3249,6 +3251,7 @@ export async function processInstagramDmWebhook(params: {
             classifyCtx ? { classifyContext: classifyCtx } : undefined
           );
           intentResult = applyIntentPostClassificationPolicy(intentResult, text, state);
+          intentResult = applyEmergencyIntentPostPolicy(intentResult, text, recentMessages);
           const conflictRecoveryDoctorSettings = await getDoctorSettings(doctorId);
           const conflictRecoveryCatalogRows = teleconsultCatalogServiceRowCount(
             conflictRecoveryDoctorSettings?.service_offerings_json

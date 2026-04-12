@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  assistantMessageIsEmergencyEscalationCopy,
   MEDICAL_QUERY_RESPONSE_EN,
   detectSafetyMessageLocale,
   isEmergencyUserMessage,
@@ -120,6 +121,28 @@ describe('safety-messages (RBH-15)', () => {
 
     it('does not match urgent appointment', () => {
       expect(isEmergencyUserMessage('Need urgent appointment slot')).toBe(false);
+    });
+
+    it('matches getting worse as escalation cue', () => {
+      expect(isEmergencyUserMessage('It is getting worse')).toBe(true);
+    });
+  });
+
+  describe('assistantMessageIsEmergencyEscalationCopy', () => {
+    it('matches canonical EN emergency line', () => {
+      expect(
+        assistantMessageIsEmergencyEscalationCopy(
+          'Please call emergency services (in India: **112** or **108**) or go to the nearest hospital immediately.'
+        )
+      ).toBe(true);
+    });
+
+    it('rejects generic assistant text', () => {
+      expect(
+        assistantMessageIsEmergencyEscalationCopy(
+          "I'm the scheduling assistant. Book a teleconsult through this chat."
+        )
+      ).toBe(false);
     });
   });
 });

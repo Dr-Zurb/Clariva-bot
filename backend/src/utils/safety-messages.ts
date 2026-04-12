@@ -100,6 +100,7 @@ export function resolveSafetyMessage(kind: SafetyMessageKind, userText: string):
 
 const EMERGENCY_PATTERNS_EN: RegExp[] = [
   /\b(chest\s+pain|can'?t\s+breathe|cannot\s+breathe|difficulty\s+breathing)\b/i,
+  /\b(getting\s+worse|worsening|feel\s+worse|much\s+worse)\b/i,
   /\b(heart\s+attack|stroke|unconscious)\b/i,
   /\b(bleeding\s+heavily|uncontrolled\s+bleeding)\b/i,
   /\b(severe\s+pain|critical\s+condition)\b/i,
@@ -148,4 +149,14 @@ export function isEmergencyUserMessage(text: string): boolean {
   if (/\bemergency\s+appointment\b/i.test(t)) return false;
   if (/\burgent\s+appointment\b/i.test(t)) return false;
   return ALL_EMERGENCY_PATTERNS.some((p) => p.test(t));
+}
+
+/**
+ * True when an assistant line is the standard emergency escalation (India 112/108 + hospital),
+ * including localized variants that still mention those numbers.
+ */
+export function assistantMessageIsEmergencyEscalationCopy(text: string): boolean {
+  const c = text.trim().toLowerCase();
+  if (c.length < 15) return false;
+  return /\b(112|108)\b/.test(c) && /\b(emergency|hospital)\b/i.test(c);
 }

@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from '@jest/globals';
 import {
+  applyEmergencyIntentPostPolicy,
   applyIntentPostClassificationPolicy,
   buildClassifyIntentContext,
   classifierSignalsAmountSeeking,
@@ -90,6 +91,47 @@ describe('RBH-14 intent routing', () => {
         state
       );
       expect(out.intent).toBe('book_appointment');
+    });
+  });
+
+  describe('applyEmergencyIntentPostPolicy (e-task-dm-08)', () => {
+    const emergencyBot =
+      'Please call emergency services (in India: **112** or **108**) or go to the nearest hospital immediately.';
+
+    it('downgrades LLM emergency to medical_query when last assistant sent escalation and message lacks acute keywords', () => {
+      const out = applyEmergencyIntentPostPolicy(
+        { intent: 'emergency', confidence: 0.92 },
+        'its 140/80 now',
+        [
+          { sender_type: 'patient', content: 'bp was 200/100' },
+          { sender_type: 'system', content: emergencyBot },
+        ]
+      );
+      expect(out.intent).toBe('medical_query');
+    });
+
+    it('keeps emergency when user adds acute wording', () => {
+      const out = applyEmergencyIntentPostPolicy(
+        { intent: 'emergency', confidence: 0.95 },
+        'chest pain now',
+        [
+          { sender_type: 'patient', content: 'headache' },
+          { sender_type: 'system', content: emergencyBot },
+        ]
+      );
+      expect(out.intent).toBe('emergency');
+    });
+
+    it('does not downgrade when last assistant was not emergency escalation', () => {
+      const out = applyEmergencyIntentPostPolicy(
+        { intent: 'emergency', confidence: 0.9 },
+        '160/80',
+        [
+          { sender_type: 'patient', content: 'hello' },
+          { sender_type: 'system', content: 'How can I help you today?' },
+        ]
+      );
+      expect(out.intent).toBe('emergency');
     });
   });
 
