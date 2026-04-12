@@ -25,7 +25,7 @@ export interface ServiceStaffReviewListItem {
   match_confidence: string;
   match_reason_codes: unknown;
   candidate_labels: unknown;
-  sla_deadline_at: string;
+  sla_deadline_at?: string | null;
   created_at: string;
   updated_at: string;
   resolved_at: string | null;

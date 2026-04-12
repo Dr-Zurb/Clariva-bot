@@ -20,7 +20,6 @@ import {
 } from './service-catalog-schema';
 import type { DoctorSettingsRow } from '../types/doctor-settings';
 import { SERVICE_CATALOG_MATCH_REASON_CODES } from '../types/conversation';
-import { staffServiceReviewSlaHours } from './staff-service-review-dm';
 import {
   pickSuggestedModality,
   runDeterministicServiceCatalogMatchStageA,
@@ -321,8 +320,6 @@ function formatCompetingVisitTypeDeferToStaffDm(
   hasGurmukhi: boolean,
   hoursSummary: string
 ): string {
-  const hours = staffServiceReviewSlaHours();
-  const hoursLabel = hours === 24 ? '24 hours' : `${hours} hours`;
   const p = practiceName.trim() || 'the clinic';
   const hoursSuffix = formatHoursHintLine(locale, hoursSummary, hasDevanagari, hasGurmukhi);
   const tail = hoursSuffix ? `\n\n${hoursSuffix}` : '';
@@ -330,30 +327,30 @@ function formatCompetingVisitTypeDeferToStaffDm(
   if (locale === 'hi' && !hasDevanagari) {
     return (
       `Aapne jo bataya usse **${p}** ko pehle **visit type confirm** karna hoga, uske baad exact fee / booking — aapki baat **ek se zyada consult bucket** mein fit ho sakti hai, isliye hum fee options patient se **choose** nahi karwate.\n\n` +
-      `Team **${hoursLabel}** ke andar (aksar jaldi) yahan reply karegi. **Abhi payment ki zaroorat nahi.** Visit type clear hote hi aage badhenge.${tail}`
+      `Team **jaldi** yahan reply karegi. **Abhi payment ki zaroorat nahi.** Visit type clear hote hi aage badhenge.${tail}`
     );
   }
   if (locale === 'hi' && hasDevanagari) {
     return (
       `आपने जो बताया, **${p}** को पहले **विज़िट टाइप तय** करना होगा, फिर सटीक फी / बुकिंग — कारण **एक से ज़्यादा प्रकार** से मेल खा सकते हैं; हम चैट में फी विकल्प **चुनने** नहीं कहते।\n\n` +
-      `टीम **${hoursLabel}** में (आमतौर पर पहले) यहाँ जवाब देगी। **अभी भुगतान की ज़रूरत नहीं।**${tail}`
+      `टीम **जल्द** यहाँ जवाब देगी। **अभी भुगतान की ज़रूरत नहीं।**${tail}`
     );
   }
   if (locale === 'pa' && !hasGurmukhi) {
     return (
       `Jo tu dassya, **${p}** nu pehlan **visit type fix** karna paina — tere reasons **ek ton wadh consult bucket** vich ja sakde ne, asi patient kolon fee **choose** nahi karaunde.\n\n` +
-      `Team **${hoursLabel}** ch (aksar jaldi) ithe reply karegi. **Hun payment di lorh nahi.**${tail}`
+      `Team **jaldi** ithe reply karegi. **Hun payment di lorh nahi.**${tail}`
     );
   }
   if (locale === 'pa' && hasGurmukhi) {
     return (
       `ਜੋ ਤੁਸੀਂ ਦੱਸਿਆ, **${p}** ਨੂੰ ਪਹਿਲਾਂ **ਵਿਜ਼ਿਟ ਟਾਈਪ ਤੈਯ** ਕਰਨਾ ਪਵੇਗਾ — ਕਾਰਨ **ਇੱਕ ਤੋਂ ਵੱਧ ਕਿਸਮ** ਨਾਲ ਮੇਲ ਖਾ ਸਕਦੇ ਹਨ; ਅਸੀਂ ਮਰੀਜ਼ ਨੂੰ ਫੀ **ਚੁਣੋ** ਨਹੀਂ ਕਹਿੰਦੇ।\n\n` +
-      `ਟੀਮ **${hoursLabel}** ਵਿੱਚ (ਆਮ ਤੌਰ ’ਤੇ ਜਲਦੀ) ਇੱਥੇ ਜਵਾਬ ਦੇਵੇਗੀ। **ਹੁਣ ਭੁਗਤਾਨ ਦੀ ਲੋੜ ਨਹੀਂ।**${tail}`
+      `ਟੀਮ **ਜਲਦੀ** ਇੱਥੇ ਜਵਾਬ ਦੇਵੇਗੀ। **ਹੁਣ ਭੁਗਤਾਨ ਦੀ ਲੋੜ ਨਹੀਂ।**${tail}`
     );
   }
   return (
     `Thanks for sharing what you're dealing with. **${p}** needs to **confirm which visit type applies** before we quote an exact fee or open scheduling — what you described could fit **more than one kind of consult**, and we **don't ask patients to pick between fee options** in chat.\n\n` +
-    `Our team will review and reply here within **${hoursLabel}** (usually sooner). **You don't need to pay yet.** We'll message you when visit type is set so you can continue.${tail}`
+    `Our team will review and reply here **soon**. **You don't need to pay yet.** We'll message you when visit type is set so you can continue.${tail}`
   );
 }
 

@@ -136,7 +136,6 @@ import { logInstagramDmRouting } from '../utils/log-instagram-dm-routing';
 import {
   formatAwaitingStaffServiceConfirmationDm,
   formatStaffServiceReviewStillPendingDm,
-  staffServiceReviewDeadlineIsoFromNow,
 } from '../utils/staff-service-review-dm';
 import { upsertPendingStaffServiceReviewRequest } from '../services/service-staff-review-service';
 import { buildFeeCatalogMatchText } from '../utils/dm-turn-context';
@@ -201,7 +200,6 @@ function mergeStateForFeeAmbiguousStaffReview(
       finalizeSelection: false,
     }),
     step: 'awaiting_staff_service_confirmation',
-    staffServiceReviewDeadlineAt: staffServiceReviewDeadlineIsoFromNow(),
     activeFlow: undefined,
     reasonFirstTriagePhase: undefined,
     postMedicalConsultFeeAckSent: undefined,
@@ -282,7 +280,6 @@ function transitionToAwaitingStaffServiceConfirmation(
     ...patch,
     lastIntent: intent,
     step: 'awaiting_staff_service_confirmation',
-    staffServiceReviewDeadlineAt: staffServiceReviewDeadlineIsoFromNow(),
     updatedAt: new Date().toISOString(),
   };
   return {
@@ -3050,21 +3047,17 @@ export async function processInstagramDmWebhook(params: {
       stateToPersist.matcherProposedCatalogServiceKey?.trim()
     ) {
       try {
-        const deadlineIso =
-          stateToPersist.staffServiceReviewDeadlineAt ?? staffServiceReviewDeadlineIsoFromNow();
         const ensured = await upsertPendingStaffServiceReviewRequest({
           doctorId,
           conversationId: conversation.id,
           patientId: conversation.patient_id ?? null,
           correlationId,
           state: stateToPersist,
-          slaDeadlineIso: deadlineIso,
           candidateLabels: [],
         });
         stateToPersist = {
           ...stateToPersist,
           staffServiceReviewRequestId: ensured.id,
-          staffServiceReviewDeadlineAt: ensured.slaDeadlineIso,
         };
       } catch (err) {
         logger.error(

@@ -1,8 +1,8 @@
 /**
  * ARM-05: Patient-facing copy when teleconsult visit type awaits staff confirmation (no slot/payment yet).
+ * No fixed SLA window — staff confirm when they can; future notification system may nudge clinicians.
  */
 
-import { env } from '../config/env';
 import type { DoctorSettingsRow } from '../types/doctor-settings';
 import type { ConversationState } from '../types/conversation';
 import { findServiceOfferingByKey, getActiveServiceCatalog } from './service-catalog-helpers';
@@ -22,28 +22,17 @@ export function resolveVisitTypeLabelForDm(
   return row?.label?.trim() || undefined;
 }
 
-export function staffServiceReviewSlaHours(): number {
-  return env.STAFF_SERVICE_REVIEW_SLA_HOURS;
-}
-
-export function staffServiceReviewDeadlineIsoFromNow(): string {
-  const h = staffServiceReviewSlaHours();
-  return new Date(Date.now() + h * 3600 * 1000).toISOString();
-}
-
 /** First message after consent / match when scheduling is gated (server-owned copy; no invented fees). */
 export function formatAwaitingStaffServiceConfirmationDm(
   settings: DoctorSettingsRow | null,
   state: ConversationState
 ): string {
-  const hours = staffServiceReviewSlaHours();
   const practice = settings?.practice_name?.trim() || 'the clinic';
   const visit = resolveVisitTypeLabelForDm(settings, state);
   const visitClause = visit ? ` We've noted your request as **${visit}**.` : '';
-  const hoursLabel = hours === 24 ? '24 hours' : `${hours} hours`;
   return (
     `Thanks — **${practice}** will confirm your visit type before we open scheduling.${visitClause} ` +
-    `Our team will reply here within **${hoursLabel}** (usually sooner). ` +
+    `Our team will reply here **soon**. ` +
     `You do **not** need to pay yet. We'll message you when you can pick a time.`
   );
 }
@@ -52,11 +41,9 @@ export function formatAwaitingStaffServiceConfirmationDm(
 export function formatStaffServiceReviewStillPendingDm(
   settings: DoctorSettingsRow | null
 ): string {
-  const hours = staffServiceReviewSlaHours();
   const practice = settings?.practice_name?.trim() || 'the clinic';
-  const hoursLabel = hours === 24 ? '24 hours' : `${hours} hours`;
   return (
-    `We're still confirming with **${practice}**. You'll get a message here when you can choose a time — typically within **${hoursLabel}**. ` +
+    `We're still confirming with **${practice}**. You'll get a message here when you can choose a time. ` +
     `Thanks for your patience.`
   );
 }
@@ -77,14 +64,5 @@ export function formatStaffReviewResolvedContinueBookingDm(
   return (
     `${intro} You can **pick a time and complete booking** here — tap to open: ${bookingUrl}\n\n` +
     `If something looks wrong, just reply here in this chat.`
-  );
-}
-
-/** ARM-08: proactive DM when staff SLA elapsed without confirmation (no charge on this path). */
-export function formatStaffServiceReviewSlaTimeoutDm(settings: DoctorSettingsRow | null): string {
-  const practice = settings?.practice_name?.trim() || 'the clinic';
-  return (
-    `We're sorry — **${practice}** wasn't able to confirm your visit type in time, so we've closed this request. ` +
-    `**You have not been charged.** Reply here if you'd still like to book — we can help you pick a time.`
   );
 }

@@ -18,13 +18,12 @@ describe('service-staff-review-service', () => {
 
   it('upsertPendingStaffServiceReviewRequest returns existing pending row (idempotent)', async () => {
     const existingId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-    const deadline = '2026-04-03T12:00:00.000Z';
 
     const chain: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
       maybeSingle: jest.fn().mockResolvedValue({
-        data: { id: existingId, sla_deadline_at: deadline, status: 'pending' },
+        data: { id: existingId, status: 'pending' },
         error: null,
       } as never),
     };
@@ -43,11 +42,9 @@ describe('service-staff-review-service', () => {
       patientId: null,
       correlationId: 'corr-arm06',
       state,
-      slaDeadlineIso: deadline,
     });
 
     expect(out.id).toBe(existingId);
-    expect(out.slaDeadlineIso).toBe(deadline);
     expect(from).toHaveBeenCalledWith('service_staff_review_requests');
   });
 });

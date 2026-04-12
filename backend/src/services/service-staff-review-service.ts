@@ -6,12 +6,8 @@
  */
 
 import { getSupabaseAdminClient } from '../config/database';
-import { env } from '../config/env';
 import { logger } from '../config/logger';
-import {
-  formatStaffReviewResolvedContinueBookingDm,
-  formatStaffServiceReviewSlaTimeoutDm,
-} from '../utils/staff-service-review-dm';
+import { formatStaffReviewResolvedContinueBookingDm } from '../utils/staff-service-review-dm';
 import {
   applyFinalCatalogServiceSelection,
   applyStaffReviewGateCancellationToConversationState,
@@ -53,7 +49,7 @@ export interface ServiceStaffReviewRequestRow {
   match_confidence: ServiceCatalogMatchConfidence;
   match_reason_codes: unknown;
   candidate_labels: unknown;
-  sla_deadline_at: string;
+  sla_deadline_at: string | null;
   created_at: string;
   updated_at: string;
   resolved_at: string | null;
@@ -65,13 +61,6 @@ export interface ServiceStaffReviewRequestRow {
   sla_timeout_notified_at?: string | null;
 }
 
-export type StaffReviewTimeoutNotifyOutcome =
-  | 'sent'
-  | 'skipped_non_ig'
-  | 'skipped_no_conversation'
-  | 'failed_no_token'
-  | 'failed_send';
-
 export interface StaffReviewTimeoutJobResult {
   closed: number;
   notifySent: number;
@@ -80,118 +69,6 @@ export interface StaffReviewTimeoutJobResult {
   notifyFailedNoToken: number;
   notifyFailedSend: number;
   phase2NotifyAttempts: number;
-}
-
-async function markStaffReviewSlaTimeoutNotified(
-  reviewRequestId: string,
-  correlationId: string
-): Promise<boolean> {
-  const admin = getSupabaseAdminClient();
-  if (!admin) throw new InternalError('Service role client not available');
-  const nowIso = new Date().toISOString();
-  const { data, error } = await admin
-    .from('service_staff_review_requests')
-    .update({ sla_timeout_notified_at: nowIso })
-    .eq('id', reviewRequestId)
-    .is('sla_timeout_notified_at', null)
-    .select('id')
-    .maybeSingle();
-
-  if (error) handleSupabaseError(error, correlationId);
-  return !!data?.id;
-}
-
-/**
- * ARM-08: one proactive Instagram DM when SLA timed out (or mark N/A for non-Instagram / missing channel).
- * Does not transition row status (expects caller already set cancelled_timeout).
- */
-async function deliverStaffReviewTimeoutPatientNotify(
-  params: { reviewRequestId: string; conversationId: string; doctorId: string },
-  correlationId: string
-): Promise<StaffReviewTimeoutNotifyOutcome> {
-  const conv = await findConversationById(params.conversationId, correlationId);
-  if (!conv) {
-    await markStaffReviewSlaTimeoutNotified(params.reviewRequestId, correlationId);
-    return 'skipped_no_conversation';
-  }
-  if (conv.platform !== 'instagram') {
-    await markStaffReviewSlaTimeoutNotified(params.reviewRequestId, correlationId);
-    return 'skipped_non_ig';
-  }
-  const recipientId = conv.platform_conversation_id?.trim();
-  if (!recipientId) {
-    await markStaffReviewSlaTimeoutNotified(params.reviewRequestId, correlationId);
-    return 'skipped_no_conversation';
-  }
-
-  const token = await getInstagramAccessTokenForDoctor(params.doctorId, correlationId);
-  if (!token?.trim()) {
-    logger.warn(
-      { correlationId, reviewRequestId: params.reviewRequestId, doctorId: params.doctorId },
-      'staff_review_timeout_notify_failed_no_token'
-    );
-    return 'failed_no_token';
-  }
-
-  const settings = await getDoctorSettings(params.doctorId);
-  const text = formatStaffServiceReviewSlaTimeoutDm(settings);
-
-  try {
-    const res = await sendInstagramMessage(recipientId, text, correlationId, token.trim());
-    await markStaffReviewSlaTimeoutNotified(params.reviewRequestId, correlationId);
-    try {
-      await createMessage(
-        {
-          conversation_id: params.conversationId,
-          platform_message_id: res.message_id,
-          sender_type: 'system',
-          content: text,
-        },
-        correlationId
-      );
-    } catch (e) {
-      logger.warn(
-        { correlationId, reviewRequestId: params.reviewRequestId, err: e },
-        'staff_review_timeout_notify_message_persist_failed'
-      );
-    }
-    return 'sent';
-  } catch (e) {
-    logger.warn(
-      {
-        correlationId,
-        reviewRequestId: params.reviewRequestId,
-        err: e instanceof Error ? e.message : String(e),
-      },
-      'staff_review_timeout_notify_send_failed'
-    );
-    return 'failed_send';
-  }
-}
-
-function accumulateStaffReviewNotifyMetrics(
-  result: StaffReviewTimeoutJobResult,
-  outcome: StaffReviewTimeoutNotifyOutcome
-): void {
-  switch (outcome) {
-    case 'sent':
-      result.notifySent += 1;
-      break;
-    case 'skipped_non_ig':
-      result.notifySkippedNonIg += 1;
-      break;
-    case 'skipped_no_conversation':
-      result.notifySkippedNoConversation += 1;
-      break;
-    case 'failed_no_token':
-      result.notifyFailedNoToken += 1;
-      break;
-    case 'failed_send':
-      result.notifyFailedSend += 1;
-      break;
-    default:
-      break;
-  }
 }
 
 const NOTE_MAX = 2000;
@@ -241,9 +118,8 @@ export async function upsertPendingStaffServiceReviewRequest(params: {
   patientId?: string | null;
   correlationId: string;
   state: ConversationState;
-  slaDeadlineIso: string;
   candidateLabels?: Array<{ service_key: string; label: string }>;
-}): Promise<{ id: string; slaDeadlineIso: string }> {
+}): Promise<{ id: string }> {
   const admin = getSupabaseAdminClient();
   if (!admin) throw new InternalError('Service role client not available');
 
@@ -258,7 +134,7 @@ export async function upsertPendingStaffServiceReviewRequest(params: {
 
   const { data: existing, error: selErr } = await admin
     .from('service_staff_review_requests')
-    .select('id, sla_deadline_at, status')
+    .select('id, status')
     .eq('conversation_id', params.conversationId)
     .eq('status', 'pending')
     .maybeSingle();
@@ -273,7 +149,7 @@ export async function upsertPendingStaffServiceReviewRequest(params: {
       },
       'service_staff_review_pending_exists'
     );
-    return { id: existing.id as string, slaDeadlineIso: existing.sla_deadline_at as string };
+    return { id: existing.id as string };
   }
 
   const insertPayload = {
@@ -288,26 +164,26 @@ export async function upsertPendingStaffServiceReviewRequest(params: {
     match_confidence: confidence,
     match_reason_codes: asJsonArray(params.state.serviceCatalogMatchReasonCodes),
     candidate_labels: params.candidateLabels?.length ? params.candidateLabels : [],
-    sla_deadline_at: params.slaDeadlineIso,
+    sla_deadline_at: null,
   };
 
   const { data: created, error: insErr } = await admin
     .from('service_staff_review_requests')
     .insert(insertPayload)
-    .select('id, sla_deadline_at')
+    .select('id')
     .single();
 
   if (insErr) {
     if ((insErr as { code?: string }).code === '23505') {
       const { data: again, error: againErr } = await admin
         .from('service_staff_review_requests')
-        .select('id, sla_deadline_at')
+        .select('id')
         .eq('conversation_id', params.conversationId)
         .eq('status', 'pending')
         .maybeSingle();
       if (againErr) handleSupabaseError(againErr, params.correlationId);
       if (again?.id) {
-        return { id: again.id as string, slaDeadlineIso: again.sla_deadline_at as string };
+        return { id: again.id as string };
       }
     }
     handleSupabaseError(insErr, params.correlationId);
@@ -332,7 +208,7 @@ export async function upsertPendingStaffServiceReviewRequest(params: {
     'service_staff_review_created'
   );
 
-  return { id: created.id as string, slaDeadlineIso: created.sla_deadline_at as string };
+  return { id: created.id as string };
 }
 
 export async function listPendingServiceStaffReviewRequestsForDoctor(
@@ -352,7 +228,7 @@ export async function listPendingServiceStaffReviewRequestsForDoctor(
     .eq('doctor_id', doctorId)
     .in('status', statuses);
   q = pendingOnly
-    ? q.order('sla_deadline_at', { ascending: true })
+    ? q.order('created_at', { ascending: true })
     : q.order('resolved_at', { ascending: false });
 
   const { data, error } = await q;
@@ -749,18 +625,11 @@ export async function cancelServiceStaffReviewRequestByStaff(params: {
 }
 
 /**
- * ARM-08: batch timeout closer + patient notify (Instagram), retry-safe across ticks.
- *
- * Phase 1: pending + past SLA → cancelled_timeout, audit, conversation unlock, notify attempt.
- * Phase 2: cancelled_timeout with sla_timeout_notified_at still null → retry notify only (crash recovery).
+ * Legacy: SLA auto-cancel + timeout DM removed. Endpoint kept; returns zeros (no DB changes).
  */
 export async function runStaffReviewTimeoutJob(correlationId: string): Promise<StaffReviewTimeoutJobResult> {
-  const admin = getSupabaseAdminClient();
-  if (!admin) throw new InternalError('Service role client not available');
-
-  const batch = env.STAFF_REVIEW_TIMEOUT_BATCH_SIZE;
-  const nowIso = new Date().toISOString();
-  const result: StaffReviewTimeoutJobResult = {
+  void correlationId;
+  return {
     closed: 0,
     notifySent: 0,
     notifySkippedNonIg: 0,
@@ -769,123 +638,6 @@ export async function runStaffReviewTimeoutJob(correlationId: string): Promise<S
     notifyFailedSend: 0,
     phase2NotifyAttempts: 0,
   };
-
-  const phase1Ids = new Set<string>();
-
-  const { data: pendingExpired, error: selErr } = await admin
-    .from('service_staff_review_requests')
-    .select('id, conversation_id, doctor_id, proposed_catalog_service_key')
-    .eq('status', 'pending')
-    .lt('sla_deadline_at', nowIso)
-    .order('sla_deadline_at', { ascending: true })
-    .limit(batch);
-
-  if (selErr) handleSupabaseError(selErr, correlationId);
-
-  for (const raw of pendingExpired ?? []) {
-    const r = raw as {
-      id: string;
-      conversation_id: string;
-      doctor_id: string;
-      proposed_catalog_service_key: string;
-    };
-    phase1Ids.add(r.id);
-
-    const { data: updated, error: updErr } = await admin
-      .from('service_staff_review_requests')
-      .update({
-        status: 'cancelled_timeout',
-        resolved_at: nowIso,
-        resolved_by_user_id: null,
-      })
-      .eq('id', r.id)
-      .eq('status', 'pending')
-      .select('id')
-      .maybeSingle();
-
-    if (updErr) handleSupabaseError(updErr, correlationId);
-    if (!updated?.id) continue;
-
-    result.closed += 1;
-    await insertAuditEvent({
-      reviewRequestId: r.id,
-      eventType: 'cancelled_timeout',
-      actorUserId: null,
-      metadata: {
-        proposed_catalog_service_key: r.proposed_catalog_service_key,
-      },
-      correlationId,
-    });
-
-    try {
-      const convState = await getConversationState(r.conversation_id, correlationId);
-      const nextState = applyStaffReviewGateCancellationToConversationState(
-        convState,
-        SERVICE_CATALOG_MATCH_REASON_CODES.STAFF_REVIEW_TIMED_OUT
-      );
-      await updateConversationState(r.conversation_id, nextState, correlationId);
-    } catch (e) {
-      logger.error(
-        { correlationId, conversationId: r.conversation_id, reviewId: r.id, err: e },
-        'service_staff_review_timeout_conversation_sync_failed'
-      );
-    }
-
-    const notifyOutcome = await deliverStaffReviewTimeoutPatientNotify(
-      {
-        reviewRequestId: r.id,
-        conversationId: r.conversation_id,
-        doctorId: r.doctor_id,
-      },
-      correlationId
-    );
-    accumulateStaffReviewNotifyMetrics(result, notifyOutcome);
-  }
-
-  const { data: retryRows, error: retryErr } = await admin
-    .from('service_staff_review_requests')
-    .select('id, conversation_id, doctor_id')
-    .eq('status', 'cancelled_timeout')
-    .is('sla_timeout_notified_at', null)
-    .order('resolved_at', { ascending: true })
-    .limit(batch);
-
-  if (retryErr) handleSupabaseError(retryErr, correlationId);
-
-  for (const raw of retryRows ?? []) {
-    const r = raw as { id: string; conversation_id: string; doctor_id: string };
-    if (phase1Ids.has(r.id)) continue;
-    result.phase2NotifyAttempts += 1;
-    const notifyOutcome = await deliverStaffReviewTimeoutPatientNotify(
-      { reviewRequestId: r.id, conversationId: r.conversation_id, doctorId: r.doctor_id },
-      correlationId
-    );
-    accumulateStaffReviewNotifyMetrics(result, notifyOutcome);
-  }
-
-  if (
-    result.closed > 0 ||
-    result.notifySent > 0 ||
-    result.phase2NotifyAttempts > 0 ||
-    result.notifyFailedNoToken > 0 ||
-    result.notifyFailedSend > 0
-  ) {
-    logger.info(
-      {
-        correlationId,
-        staff_review_timeout_closed: result.closed,
-        staff_review_timeout_notify_sent: result.notifySent,
-        staff_review_timeout_notify_skipped_non_ig: result.notifySkippedNonIg,
-        staff_review_timeout_notify_skipped_no_conversation: result.notifySkippedNoConversation,
-        staff_review_timeout_notify_failed_no_token: result.notifyFailedNoToken,
-        staff_review_timeout_notify_failed_send: result.notifyFailedSend,
-        staff_review_timeout_phase2_attempts: result.phase2NotifyAttempts,
-      },
-      'staff_review_timeout_job'
-    );
-  }
-
-  return result;
 }
 
 /**

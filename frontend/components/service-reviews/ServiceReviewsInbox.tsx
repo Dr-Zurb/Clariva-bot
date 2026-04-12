@@ -22,18 +22,10 @@ import {
   parseMatchReasonCodes,
 } from "@/lib/staff-review-match-explain";
 
-function slaTimeRemainingLabel(iso: string): string {
-  const end = new Date(iso).getTime();
-  const now = Date.now();
-  const ms = end - now;
-  if (Number.isNaN(end)) return "—";
-  if (ms <= 0) return "Overdue";
-  const h = Math.floor(ms / 3600000);
-  const m = Math.floor((ms % 3600000) / 60000);
-  if (h >= 72) return `${Math.ceil(h / 24)} days left`;
-  if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h left`;
-  if (h >= 1) return `${h}h ${m}m left`;
-  return `${Math.max(1, m)} min left`;
+function formatQueuedAt(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "—";
+  return new Date(iso).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
 }
 
 function labelForServiceKey(
@@ -299,7 +291,7 @@ export function ServiceReviewsInbox({
           >
             <caption className="sr-only">
               {isPendingTab
-                ? "Pending reviews sorted by SLA deadline"
+                ? "Pending reviews (oldest first)"
                 : "Resolved reviews sorted by resolved time"}
             </caption>
             <thead className="bg-gray-50">
@@ -327,7 +319,7 @@ export function ServiceReviewsInbox({
                   Match (AI signals)
                 </th>
                 <th scope="col" className="px-4 py-3 font-medium text-gray-700">
-                  {isPendingTab ? "SLA" : "Resolved"}
+                  {isPendingTab ? "Queued" : "Resolved"}
                 </th>
                 {isPendingTab && (
                   <th scope="col" className="px-4 py-3 font-medium text-gray-700">
@@ -433,7 +425,7 @@ export function ServiceReviewsInbox({
                     </td>
                     <td className="px-4 py-3 text-gray-700">
                       {isPendingTab
-                        ? slaTimeRemainingLabel(r.sla_deadline_at)
+                        ? formatQueuedAt(r.created_at)
                         : formatResolvedAt(r.resolved_at)}
                     </td>
                     {isPendingTab && (

@@ -2,7 +2,6 @@ import { describe, it, expect } from '@jest/globals';
 import {
   formatAwaitingStaffServiceConfirmationDm,
   formatStaffReviewResolvedContinueBookingDm,
-  formatStaffServiceReviewSlaTimeoutDm,
   formatStaffServiceReviewStillPendingDm,
   resolveVisitTypeLabelForDm,
 } from '../../../src/utils/staff-service-review-dm';
@@ -48,13 +47,13 @@ describe('staff-service-review-dm (ARM-05)', () => {
     expect(label).toBe('Dermatology consult');
   });
 
-  it('formatAwaitingStaffServiceConfirmationDm includes practice and SLA wording', () => {
+  it('formatAwaitingStaffServiceConfirmationDm includes practice and soft timing (no fixed SLA)', () => {
     const settingsWithCatalog = { ...settings, service_offerings_json: catalog };
     const s = formatAwaitingStaffServiceConfirmationDm(settingsWithCatalog, {
       matcherProposedCatalogServiceKey: 'skin',
     });
     expect(s).toContain('Demo Clinic');
-    expect(s).toContain('24 hours');
+    expect(s).toMatch(/soon/i);
     expect(s).toMatch(/not need to pay|pay yet/i);
     expect(s).toContain('Dermatology consult');
   });
@@ -62,14 +61,7 @@ describe('staff-service-review-dm (ARM-05)', () => {
   it('formatStaffServiceReviewStillPendingDm is a short reassurance', () => {
     const s = formatStaffServiceReviewStillPendingDm(settings);
     expect(s).toContain('Demo Clinic');
-    expect(s).toContain('24 hours');
-  });
-
-  it('formatStaffServiceReviewSlaTimeoutDm states closure, no charge, and re-engagement (ARM-08)', () => {
-    const s = formatStaffServiceReviewSlaTimeoutDm(settings);
-    expect(s).toContain('Demo Clinic');
-    expect(s).toMatch(/not been charged|haven't been charged|have not been charged/i);
-    expect(s).toMatch(/closed|close/i);
+    expect(s).not.toMatch(/\b\d+\s*hours?\b/i);
   });
 
   it('formatStaffReviewResolvedContinueBookingDm includes booking URL and visit label', () => {
