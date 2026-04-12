@@ -12,6 +12,18 @@ export type ServiceStaffReviewStatus =
 /** GET /service-staff-reviews?status= — `cancelled` returns staff-cancelled + SLA timeout rows. */
 export type ServiceStaffReviewListQueryStatus = ServiceStaffReviewStatus | "cancelled";
 
+/** learn-05: aggregated hints from prior staff resolutions (same structured pattern). */
+export interface ServiceMatchAssistHint {
+  pattern_key: string;
+  feature_snapshot_hash: string;
+  total_resolutions: number;
+  top_resolutions: Array<{
+    final_catalog_service_key: string;
+    count: number;
+    label: string | null;
+  }>;
+}
+
 export interface ServiceStaffReviewListItem {
   id: string;
   doctor_id: string;
@@ -36,4 +48,5 @@ export interface ServiceStaffReviewListItem {
   resolution_internal_note: string | null;
   patient_display_name: string | null;
   reason_for_visit_preview: string | null;
+  assist_hint?: ServiceMatchAssistHint | null;
 }

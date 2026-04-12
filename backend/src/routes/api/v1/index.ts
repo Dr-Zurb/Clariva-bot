@@ -12,6 +12,7 @@ import blockedTimesRoutes from './blocked-times';
 import prescriptionRoutes from './prescriptions';
 import opdRoutes from './opd';
 import serviceStaffReviewRoutes from './service-staff-reviews';
+import serviceMatchLearningRoutes from './service-match-learning';
 
 const router = Router();
 
@@ -64,5 +65,8 @@ router.use('/opd', opdRoutes);
 
 // ARM-06: Pending service catalog staff reviews (inbox / resolve)
 router.use('/service-staff-reviews', serviceStaffReviewRoutes);
+
+// learn-04: Policy suggestions + autobook policies (doctor opt-in)
+router.use('/service-match-learning', serviceMatchLearningRoutes);
 
 export default router;

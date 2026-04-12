@@ -8,6 +8,7 @@
 - [RECEPTIONIST_BOT_CONVERSATION_RULES.md](./RECEPTIONIST_BOT_CONVERSATION_RULES.md) — intent map, three-layer pattern, anti-patterns (keep in sync mentally with this doc)
 - [PRIVACY_BY_DESIGN.md](./PRIVACY_BY_DESIGN.md), [COMPLIANCE.md](./COMPLIANCE.md) — PHI, safety copy, consent
 - [DECISION_RULES.md](./DECISION_RULES.md) — when docs conflict, resolution order
+- [STAFF_FEEDBACK_LEARNING_INITIATIVE.md](../task-management/STAFF_FEEDBACK_LEARNING_INITIATIVE.md) — learning from staff confirm/reassign (opt-in autobook; privacy-first)
 
 ---
 
@@ -97,6 +98,7 @@ If you are unsure whether the domain is closed: assume it is **open** and protot
 - [ ] Is there a **flagged fallback** and **logging/audit** for the AI path?
 - [ ] Did we add or extend a **regression test or corpus entry** for routing quality (see ops tasks under `docs/Development/Daily-plans`)?
 - [ ] Does this duplicate logic elsewhere? If yes, **consolidate** the source of truth.
+- [ ] Does this touch **staff-feedback learning** or autobook? If yes, follow **§9** and [STAFF_FEEDBACK_LEARNING_INITIATIVE.md](../task-management/STAFF_FEEDBACK_LEARNING_INITIATIVE.md) (privacy charter, opt-in, no raw PHI by default).
 
 ---
 
@@ -119,3 +121,22 @@ Use this when triaging refactors or new features—**not** exhaustive, but the u
 ## 8. Revision policy
 
 When product priorities change (e.g. stricter cost caps), **update this file** and [RECEPTIONIST_BOT_CONVERSATION_RULES.md](./RECEPTIONIST_BOT_CONVERSATION_RULES.md) together so “quality first” vs “cost first” does not fork across docs.
+
+When **staff-feedback learning** behavior or **autobook thresholds** change, update **§9** and [STAFF_FEEDBACK_LEARNING_INITIATIVE.md](../task-management/STAFF_FEEDBACK_LEARNING_INITIATIVE.md) so manual catalog rules vs learned policies stay aligned.
+
+---
+
+## 9. Learning from staff feedback (smart receptionist v2)
+
+**Not a replacement** for §2–3: the model still **interprets**; the platform **executes**. Learning **labels** come from **staff confirm / reassign** (and optional short internal notes), not from inventing rules per phrase.
+
+| Rule | Why |
+|------|-----|
+| **Generalize, don’t memorize** | Prefer **structured** matcher outputs (reason codes, candidates, modalities, bucket flags) for “similar case.” **Do not** ship v1 learning that stores **raw patient** messages in new tables without a **privacy + legal** sign-off ([PRIVACY_BY_DESIGN.md](./PRIVACY_BY_DESIGN.md)). |
+| **Enough examples** | No **auto-finalize** / autobook until **thresholds** are met; cold start stays on matcher + staff review. |
+| **Consent before automation** | **Notify** the doctor when a **stable pattern** exists; **explicit opt-in** before any behavior that skips staff review or auto-applies a visit type. |
+| **Audit** | Every auto decision must be **explainable** (policy id, pattern summary, counts) and **reversible** (disable policy). |
+| **No silent global training** | Cross-tenant learning is **out of scope** unless separately productized; default is **per-doctor** (or per-practice) scope. |
+| **Structured-first learning** | v1 **does not** require a learning-specific LLM: aggregation and policy match use **structured** fields + counts. **Optional** semantic similarity (embeddings / LLM) is **gated**. Open-ended **patient** text is still handled by the **existing** matcher NLU where appropriate — see [plan §1a](../Development/Daily-plans/April%202026/12-04-2026/plan-staff-feedback-learning-system.md#1a-structured-first-vs-optional-nl--ai-clarify-scope). |
+
+**Plan:** [plan-staff-feedback-learning-system.md](../Development/Daily-plans/April%202026/12-04-2026/plan-staff-feedback-learning-system.md) — **tasks:** [e-task-learn-01](../Development/Daily-plans/April%202026/12-04-2026/tasks/e-task-learn-01-privacy-and-data-contract.md) … [e-task-learn-05](../Development/Daily-plans/April%202026/12-04-2026/tasks/e-task-learn-05-assist-ui-and-gated-autobook.md).

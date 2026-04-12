@@ -65,20 +65,8 @@ describe('service-catalog-matcher (ARM-04)', () => {
     expect(p).toContain('include_when=');
   });
 
-  it('buildServiceCatalogLlmSystemPrompt includes competing_visit_type line when prefer key set', () => {
-    const cat: ServiceCatalogV1 = {
-      ...catalogSkinGpOther(),
-      competing_visit_type_prefer_service_key: 'gp',
-    };
-    const p = buildServiceCatalogLlmSystemPrompt(cat);
-    expect(p).toContain('prefer service_key "gp"');
-  });
-
-  it('skipLlm: competing buckets + catalog prefer key maps to preferred row', async () => {
-    const catalog: ServiceCatalogV1 = {
-      ...catalogSkinGpOther(),
-      competing_visit_type_prefer_service_key: 'gp',
-    };
+  it('skipLlm: competing buckets text falls back to catch-all without LLM', async () => {
+    const catalog = catalogSkinGpOther();
     const r = await matchServiceCatalogOffering(
       {
         catalog,
@@ -87,12 +75,9 @@ describe('service-catalog-matcher (ARM-04)', () => {
       },
       { skipLlm: true }
     );
-    expect(r?.catalogServiceKey).toBe('gp');
-    expect(r?.reasonCodes).toContain(
-      SERVICE_CATALOG_MATCH_REASON_CODES.COMPETING_BUCKETS_PRACTICE_PREFERENCE
-    );
-    expect(r?.autoFinalize).toBe(true);
-    expect(r?.pendingStaffReview).toBe(false);
+    expect(r?.catalogServiceKey).toBe('other');
+    expect(r?.pendingStaffReview).toBe(true);
+    expect(r?.reasonCodes).toContain(SERVICE_CATALOG_MATCH_REASON_CODES.NO_CATALOG_MATCH);
   });
 
   it('returns null for empty catalog', async () => {

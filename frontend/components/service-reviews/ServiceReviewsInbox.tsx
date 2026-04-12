@@ -369,6 +369,24 @@ export function ServiceReviewsInbox({
                       <span className="ml-2 text-xs text-gray-500">
                         ({r.proposed_catalog_service_key})
                       </span>
+                      {isPendingTab &&
+                        r.assist_hint &&
+                        r.assist_hint.top_resolutions.length > 0 && (
+                          <p className="mt-2 max-w-[18rem] rounded-md border border-sky-100 bg-sky-50/90 px-2 py-1.5 text-[11px] leading-snug text-sky-950">
+                            <span className="font-semibold text-sky-900">Assist: </span>
+                            Similar cases were resolved as{" "}
+                            {r.assist_hint.top_resolutions.slice(0, 3).map((h, i) => (
+                              <Fragment key={h.final_catalog_service_key}>
+                                {i > 0 ? "; " : null}
+                                <strong>{h.label ?? h.final_catalog_service_key}</strong> ({h.count}×)
+                              </Fragment>
+                            ))}
+                            {r.assist_hint.total_resolutions > 0 && (
+                              <span className="text-sky-800"> — {r.assist_hint.total_resolutions} total</span>
+                            )}
+                            . You still choose Confirm / Reassign / Cancel.
+                          </p>
+                        )}
                     </td>
                     {!isPendingTab && (
                       <td className="px-4 py-3 text-gray-800">

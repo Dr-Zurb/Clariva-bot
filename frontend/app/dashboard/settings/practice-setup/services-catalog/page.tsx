@@ -9,15 +9,11 @@ import { getDoctorSettings, patchDoctorSettings } from "@/lib/api";
 import {
   catalogToServiceDrafts,
   catchAllServiceDraft,
-  competingVisitTypePreferKeyFromCatalog,
   draftsSaveBlockingReason,
   draftsToCatalogOrNull,
   type ServiceOfferingDraft,
 } from "@/lib/service-catalog-drafts";
-import {
-  CATALOG_CATCH_ALL_SERVICE_KEY,
-  safeParseServiceCatalogV1,
-} from "@/lib/service-catalog-schema";
+import { safeParseServiceCatalogV1 } from "@/lib/service-catalog-schema";
 import { createClient } from "@/lib/supabase/client";
 import { UnsavedLeaveGuard } from "@/components/ui/UnsavedLeaveGuard";
 import type {
@@ -26,8 +22,8 @@ import type {
   ServiceCatalogTemplatesJsonV1,
 } from "@/types/doctor-settings";
 
-function snapshot(services: ServiceOfferingDraft[], competingVisitTypePreferKey: string): string {
-  return JSON.stringify({ services, competingVisitTypePreferKey });
+function snapshot(services: ServiceOfferingDraft[]): string {
+  return JSON.stringify({ services });
 }
 
 export default function ServicesCatalogPage() {
@@ -43,8 +39,6 @@ export default function ServicesCatalogPage() {
   const [saveTemplateModalOpen, setSaveTemplateModalOpen] = useState(false);
   const [myTemplatesModalOpen, setMyTemplatesModalOpen] = useState(false);
   const [userTemplatesBusy, setUserTemplatesBusy] = useState(false);
-  /** When chronic vs acute/general signals compete, prefer this non-`other` service_key (optional). */
-  const [competingVisitTypePreferKey, setCompetingVisitTypePreferKey] = useState("");
 
   const fetchSettings = useCallback(async () => {
     const supabase = createClient();
@@ -68,12 +62,8 @@ export default function ServicesCatalogPage() {
       if (!cat && serverDrafts.length === 0) {
         displayDrafts = [catchAllServiceDraft()];
       }
-      const parsedCat = cat ? safeParseServiceCatalogV1(cat) : null;
-      const preferKey =
-        parsedCat?.ok === true ? competingVisitTypePreferKeyFromCatalog(parsedCat.data) : "";
-      setCompetingVisitTypePreferKey(preferKey);
       setServices(displayDrafts);
-      setLastSaved(snapshot(displayDrafts, preferKey));
+      setLastSaved(snapshot(displayDrafts));
       setSaveSuccess(false);
       setClientError(null);
     } catch (err) {
@@ -90,20 +80,9 @@ export default function ServicesCatalogPage() {
   }, [fetchSettings]);
 
   const isDirty = useMemo(
-    () =>
-      lastSaved !== "" &&
-      snapshot(services, competingVisitTypePreferKey) !== lastSaved,
-    [services, competingVisitTypePreferKey, lastSaved]
+    () => lastSaved !== "" && snapshot(services) !== lastSaved,
+    [services, lastSaved]
   );
-
-  useEffect(() => {
-    const keys = new Set(services.map((s) => s.service_key.trim().toLowerCase()));
-    setCompetingVisitTypePreferKey((prev) => {
-      const pref = prev.trim().toLowerCase();
-      if (pref && !keys.has(pref)) return "";
-      return prev;
-    });
-  }, [services]);
 
   const saveDisableReason = useMemo(
     () => (isDirty ? draftsSaveBlockingReason(services) : null),
@@ -149,9 +128,7 @@ export default function ServicesCatalogPage() {
 
     let catalog: ReturnType<typeof draftsToCatalogOrNull>;
     try {
-      catalog = draftsToCatalogOrNull(services, {
-        competing_visit_type_prefer_service_key: competingVisitTypePreferKey.trim() || null,
-      });
+      catalog = draftsToCatalogOrNull(services);
     } catch (err) {
       setClientError(err instanceof Error ? err.message : "Check your service rows and follow-up fields.");
       return false;
@@ -185,12 +162,8 @@ export default function ServicesCatalogPage() {
       if (!catNext && serverDrafts.length === 0) {
         displayDrafts = [catchAllServiceDraft()];
       }
-      const parsedNext = catNext ? safeParseServiceCatalogV1(catNext) : null;
-      const preferNext =
-        parsedNext?.ok === true ? competingVisitTypePreferKeyFromCatalog(parsedNext.data) : "";
-      setCompetingVisitTypePreferKey(preferNext);
       setServices(displayDrafts);
-      setLastSaved(snapshot(displayDrafts, preferNext));
+      setLastSaved(snapshot(displayDrafts));
       setSaveSuccess(true);
       return true;
     } catch (err) {
@@ -200,7 +173,7 @@ export default function ServicesCatalogPage() {
     } finally {
       setSaving(false);
     }
-  }, [services, competingVisitTypePreferKey]);
+  }, [services]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -228,9 +201,8 @@ export default function ServicesCatalogPage() {
     try {
       const res = await patchDoctorSettings(token, { service_offerings_json: null });
       setSettings(res.data.settings);
-      setCompetingVisitTypePreferKey("");
       setServices([catchAllServiceDraft()]);
-      setLastSaved(snapshot([catchAllServiceDraft()], ""));
+      setLastSaved(snapshot([catchAllServiceDraft()]));
       setSaveSuccess(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Could not clear catalog";
@@ -293,7 +265,6 @@ export default function ServicesCatalogPage() {
           open={saveTemplateModalOpen}
           onClose={() => setSaveTemplateModalOpen(false)}
           currentServices={services}
-          competingVisitTypePreferKey={competingVisitTypePreferKey}
           templates={userSavedTemplates}
           onTemplatesChange={handleTemplatesLibraryChange}
           busy={userTemplatesBusy}
@@ -303,9 +274,8 @@ export default function ServicesCatalogPage() {
           open={myTemplatesModalOpen}
           onClose={() => setMyTemplatesModalOpen(false)}
           currentServicesCount={services.length}
-          onApplyCatalog={(next, preferKey) => {
+          onApplyCatalog={(next) => {
             setServices(next);
-            setCompetingVisitTypePreferKey(preferKey ?? "");
             setSaveSuccess(false);
             setClientError(null);
           }}
@@ -322,42 +292,6 @@ export default function ServicesCatalogPage() {
             setServices(next);
           }}
         />
-
-        <div className="rounded-lg border border-gray-200 bg-white p-4">
-          <h2 className="text-sm font-medium text-gray-900">Ambiguous visit-type routing</h2>
-          <p className="mt-1 text-sm text-gray-600">
-            When a patient message mixes chronic follow-up and acute or general visit signals, the assistant can use
-            this preference to pick a single consultation type. Leave unset to use default routing.
-          </p>
-          <label htmlFor="competing-visit-prefer" className="mt-3 block text-sm font-medium text-gray-800">
-            Prefer service
-          </label>
-          <select
-            id="competing-visit-prefer"
-            className="mt-1 block w-full max-w-md rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            value={competingVisitTypePreferKey}
-            onChange={(e) => {
-              setCompetingVisitTypePreferKey(e.target.value);
-              setSaveSuccess(false);
-              setClientError(null);
-            }}
-          >
-            <option value="">No preference</option>
-            {services
-              .filter((s) => {
-                const k = s.service_key.trim().toLowerCase();
-                return k.length > 0 && k !== CATALOG_CATCH_ALL_SERVICE_KEY;
-              })
-              .map((s) => {
-                const k = s.service_key.trim().toLowerCase();
-                return (
-                  <option key={s.id} value={k}>
-                    {s.label.trim() || k} ({k})
-                  </option>
-                );
-              })}
-          </select>
-        </div>
 
         {(clientError || error) && (
           <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900" role="alert">

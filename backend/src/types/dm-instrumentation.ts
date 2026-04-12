@@ -41,6 +41,8 @@ export type DmHandlerBranch =
   | 'patient_match_confirmation'
   | 'consent_flow'
   | 'staff_service_review_pending'
+  /** learn-05: enabled autobook policy matched; staff review row skipped */
+  | 'learning_policy_autobook'
   | 'consultation_channel_pick'
   /** Channel chosen but clinical thread needs reason-first before collecting_all / AI intake */
   | 'consultation_channel_pick_reason_first'

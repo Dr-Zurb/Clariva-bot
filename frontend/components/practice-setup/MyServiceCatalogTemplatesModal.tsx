@@ -5,7 +5,6 @@ import {
   catalogMissingCatchAllOffering,
   catalogToServiceDrafts,
   catchAllServiceDraft,
-  competingVisitTypePreferKeyFromCatalog,
   type ServiceOfferingDraft,
 } from "@/lib/service-catalog-drafts";
 import { confirmReplaceServiceCatalogIfNeeded } from "@/lib/confirm-replace-service-catalog";
@@ -13,7 +12,6 @@ import {
   listTemplateRowDetails,
   summarizeUserSavedTemplate,
 } from "@/lib/service-catalog-template-summary";
-import { safeParseServiceCatalogV1 } from "@/lib/service-catalog-schema";
 import {
   MAX_USER_SAVED_SERVICE_TEMPLATES,
   type ServiceCatalogTemplatesJsonV1,
@@ -24,7 +22,7 @@ type Props = {
   open: boolean;
   onClose: () => void;
   currentServicesCount: number;
-  onApplyCatalog: (drafts: ServiceOfferingDraft[], preferKey?: string) => void;
+  onApplyCatalog: (drafts: ServiceOfferingDraft[]) => void;
   templates: UserSavedServiceTemplateV1[];
   onTemplatesChange: (next: ServiceCatalogTemplatesJsonV1) => Promise<void>;
   busy?: boolean;
@@ -72,9 +70,7 @@ export function MyServiceCatalogTemplatesModal({
     if (catalogMissingCatchAllOffering(drafts)) {
       drafts = [catchAllServiceDraft(), ...drafts];
     }
-    const parsed = safeParseServiceCatalogV1(t.catalog);
-    const preferKey = parsed.ok ? competingVisitTypePreferKeyFromCatalog(parsed.data) : "";
-    onApplyCatalog(drafts, preferKey);
+    onApplyCatalog(drafts);
     onClose();
   };
 

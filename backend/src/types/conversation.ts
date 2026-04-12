@@ -89,15 +89,12 @@ export const SERVICE_CATALOG_MATCH_REASON_CODES = {
   AUTO_FINALIZED_HIGH_CONFIDENCE: 'auto_finalized_high_confidence',
   /** ARM-04: validated choice produced by LLM stage (key still allowlisted). */
   SERVICE_MATCH_LLM: 'service_match_llm',
-  /**
-   * Practice catalog `competing_visit_type_prefer_service_key` resolved a mixed NCD+acute/general
-   * thread to that row instead of catch-all / low-confidence ambiguity.
-   */
-  COMPETING_BUCKETS_PRACTICE_PREFERENCE: 'competing_buckets_practice_preference',
   /** ARM-06: staff closed review without confirming matcher proposal. */
   STAFF_REVIEW_CANCELLED_BY_STAFF: 'staff_review_cancelled_by_staff',
   /** ARM-06 / ARM-08: SLA elapsed before staff action. */
   STAFF_REVIEW_TIMED_OUT: 'staff_review_timed_out',
+  /** learn-05: opt-in policy matched structured pattern; auto-finalized without staff review row. */
+  LEARNING_POLICY_AUTOBOOK: 'learning_policy_autobook',
 } as const;
 
 export type PatientCollectionStep =
@@ -159,6 +156,11 @@ export interface ConversationState {
   serviceCatalogMatchConfidence?: ServiceCatalogMatchConfidence;
   /** ARM-03: machine-readable codes for logs/metrics — no free-text patient content */
   serviceCatalogMatchReasonCodes?: string[];
+  /**
+   * learn-05: catalog candidate rows shown to matcher (keys + labels only) for deterministic pattern_key.
+   * Omitted when unknown; empty array is valid.
+   */
+  matcherCandidateLabels?: Array<{ service_key: string; label: string }>;
   /** ARM-03: patient must not get slot/payment until staff resolves (ARM-05/06) */
   pendingStaffServiceReview?: boolean;
   /** ARM-03 / ARM-06: id of pending review row */
@@ -256,6 +258,7 @@ export function applyMatcherProposalToConversationState(
     staffServiceReviewDeadlineAt?: string;
     /** High-confidence path: copy proposal into final `catalog*` fields and set finalized */
     finalizeSelection?: boolean;
+    matcherCandidateLabels?: Array<{ service_key: string; label: string }>;
   }
 ): ConversationState {
   const next: ConversationState = {
@@ -264,6 +267,9 @@ export function applyMatcherProposalToConversationState(
     serviceCatalogMatchConfidence: proposal.serviceCatalogMatchConfidence,
   };
 
+  if (proposal.matcherCandidateLabels !== undefined) {
+    next.matcherCandidateLabels = proposal.matcherCandidateLabels;
+  }
   if (proposal.matcherProposedCatalogServiceId !== undefined) {
     next.matcherProposedCatalogServiceId = proposal.matcherProposedCatalogServiceId;
   }
@@ -300,6 +306,7 @@ export function applyMatcherProposalToConversationState(
     next.pendingStaffServiceReview = false;
     next.staffServiceReviewRequestId = undefined;
     next.staffServiceReviewDeadlineAt = undefined;
+    next.matcherCandidateLabels = undefined;
   }
 
   return next;
@@ -344,6 +351,7 @@ export function applyFinalCatalogServiceSelection(
     next.matcherProposedCatalogServiceKey = undefined;
     next.matcherProposedCatalogServiceId = undefined;
     next.matcherProposedConsultationModality = undefined;
+    next.matcherCandidateLabels = undefined;
   }
 
   return next;

@@ -448,36 +448,6 @@ describe('consultation-fees (RBH-13)', () => {
     expect(meta.feeQuoteMatcherFinalize).toBeUndefined();
   });
 
-  it('competing NCD + acute/general + catalog competing_visit_type_prefer_service_key → finalize preferred row', () => {
-    const thread =
-      'high blood sugar , also i have cough cold , i sometimes have pain in my stomach too like burning';
-    expect(feeThreadHasCompetingVisitTypeBuckets(thread)).toBe(true);
-    const catalogWithPrefer: ServiceCatalogV1 = {
-      ...catalogFourDrZurbStyle,
-      competing_visit_type_prefer_service_key: 'general_checkup',
-    };
-    const meta = formatServiceCatalogForDmWithMeta(
-      catalogWithPrefer,
-      {
-        practice_name: 'Dr Zurb Clinic',
-        consultation_types: null,
-        business_hours_summary: null,
-        appointment_fee_minor: null,
-        appointment_fee_currency: 'INR',
-      },
-      'how much is video consult',
-      thread
-    );
-    expect(meta.feeQuoteMatcherFinalize?.matcherProposedCatalogServiceKey).toBe('general_checkup');
-    expect(meta.feeQuoteMatcherFinalize?.serviceCatalogMatchReasonCodes).toEqual(
-      expect.arrayContaining([
-        SERVICE_CATALOG_MATCH_REASON_CODES.COMPETING_VISIT_TYPE_BUCKETS,
-        SERVICE_CATALOG_MATCH_REASON_CODES.COMPETING_BUCKETS_PRACTICE_PREFERENCE,
-      ])
-    );
-    expect(meta.feeAmbiguousStaffReview).toBeUndefined();
-  });
-
   it('e-task-dm-04: skin-led thread + pricing line does not force NCD bucket', () => {
     const thread = 'i have a bad rash on my arm getting worse';
     const meta = formatServiceCatalogForDmWithMeta(

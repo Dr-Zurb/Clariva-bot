@@ -113,7 +113,10 @@ import {
 } from '../types/conversation';
 import type { Message } from '../types';
 import { getActiveServiceCatalog } from '../utils/service-catalog-helpers';
-import { matchServiceCatalogOffering } from '../services/service-catalog-matcher';
+import {
+  candidateLabelsForCatalog,
+  matchServiceCatalogOffering,
+} from '../services/service-catalog-matcher';
 import {
   type ConsultationFeeAmbiguousStaffReview,
   feeThreadHasCompetingVisitTypeBuckets,
@@ -137,6 +140,7 @@ import {
   formatAwaitingStaffServiceConfirmationDm,
   formatStaffServiceReviewStillPendingDm,
 } from '../utils/staff-service-review-dm';
+import { tryApplyLearningPolicyAutobook } from '../services/service-match-learning-autobook';
 import { upsertPendingStaffServiceReviewRequest } from '../services/service-staff-review-service';
 import { buildFeeCatalogMatchText } from '../utils/dm-turn-context';
 import {
@@ -187,7 +191,8 @@ function mergeFeeQuoteMatcherIntoState(
 function mergeStateForFeeAmbiguousStaffReview(
   state: ConversationState,
   review: ConsultationFeeAmbiguousStaffReview,
-  extra: Partial<ConversationState>
+  extra: Partial<ConversationState>,
+  candidateLabels?: Array<{ service_key: string; label: string }>
 ): ConversationState {
   const merged = { ...state, ...extra };
   return {
@@ -196,6 +201,7 @@ function mergeStateForFeeAmbiguousStaffReview(
       matcherProposedCatalogServiceId: review.matcherProposedCatalogServiceId,
       serviceCatalogMatchConfidence: review.serviceCatalogMatchConfidence,
       serviceCatalogMatchReasonCodes: review.serviceCatalogMatchReasonCodes,
+      matcherCandidateLabels: candidateLabels,
       pendingStaffServiceReview: true,
       finalizeSelection: false,
     }),
@@ -205,6 +211,15 @@ function mergeStateForFeeAmbiguousStaffReview(
     postMedicalConsultFeeAckSent: undefined,
     updatedAt: new Date().toISOString(),
   };
+}
+
+/** Fee-deferral staff gate: full-catalog candidate slice for learn-05 pattern_key parity. */
+function matcherCandidateLabelsForFeeStaffReview(
+  doctorSettings: DoctorSettingsRow | null
+): Array<{ service_key: string; label: string }> | undefined {
+  const catalog = getActiveServiceCatalog(doctorSettings);
+  if (!catalog?.services?.length) return undefined;
+  return candidateLabelsForCatalog(catalog);
 }
 
 /** ARM-04: After details confirm → consent, map reason for visit to catalog row (deterministic + LLM). */
@@ -263,6 +278,7 @@ async function enrichStateWithServiceCatalogMatch(
     matcherProposedConsultationModality: match.suggestedModality,
     serviceCatalogMatchConfidence: match.confidence,
     serviceCatalogMatchReasonCodes: match.reasonCodes,
+    matcherCandidateLabels: match.candidateLabels,
     pendingStaffServiceReview: match.pendingStaffReview,
     finalizeSelection: match.autoFinalize,
   });
@@ -1615,9 +1631,14 @@ export async function processInstagramDmWebhook(params: {
         });
         replyText = idleFeeOut.reply;
         if (idleFeeOut.feeAmbiguousStaffReview) {
-          state = mergeStateForFeeAmbiguousStaffReview(state, idleFeeOut.feeAmbiguousStaffReview, {
-            lastIntent: intentResult.intent,
-          });
+          state = mergeStateForFeeAmbiguousStaffReview(
+            state,
+            idleFeeOut.feeAmbiguousStaffReview,
+            {
+              lastIntent: intentResult.intent,
+            },
+            matcherCandidateLabelsForFeeStaffReview(doctorSettings)
+          );
           dmRoutingBranch = 'fee_ambiguous_visit_type_staff';
           return;
         }
@@ -1651,10 +1672,15 @@ export async function processInstagramDmWebhook(params: {
         const reasonSeed =
           consolidated && consolidated !== 'what you shared' ? consolidated : undefined;
         if (idleFeeOutRf.feeAmbiguousStaffReview) {
-          state = mergeStateForFeeAmbiguousStaffReview(state, idleFeeOutRf.feeAmbiguousStaffReview, {
-            lastIntent: intentResult.intent,
-            ...(reasonSeed ? { reasonForVisit: reasonSeed } : {}),
-          });
+          state = mergeStateForFeeAmbiguousStaffReview(
+            state,
+            idleFeeOutRf.feeAmbiguousStaffReview,
+            {
+              lastIntent: intentResult.intent,
+              ...(reasonSeed ? { reasonForVisit: reasonSeed } : {}),
+            },
+            matcherCandidateLabelsForFeeStaffReview(doctorSettings)
+          );
           dmRoutingBranch = 'fee_ambiguous_visit_type_staff';
           return;
         }
@@ -1782,9 +1808,14 @@ export async function processInstagramDmWebhook(params: {
       });
       if (midFeeOut.feeAmbiguousStaffReview) {
         replyText = midFeeOut.reply;
-        state = mergeStateForFeeAmbiguousStaffReview(state, midFeeOut.feeAmbiguousStaffReview, {
-          lastIntent: intentResult.intent,
-        });
+        state = mergeStateForFeeAmbiguousStaffReview(
+          state,
+          midFeeOut.feeAmbiguousStaffReview,
+          {
+            lastIntent: intentResult.intent,
+          },
+          matcherCandidateLabelsForFeeStaffReview(doctorSettings)
+        );
         dmRoutingBranch = 'fee_ambiguous_visit_type_staff';
       } else {
         replyText = await appendOptionalDmReplyBridge({
@@ -1846,9 +1877,14 @@ export async function processInstagramDmWebhook(params: {
         });
         replyText = idleFeeOut.reply;
         if (idleFeeOut.feeAmbiguousStaffReview) {
-          state = mergeStateForFeeAmbiguousStaffReview(state, idleFeeOut.feeAmbiguousStaffReview, {
-            lastIntent: intentResult.intent,
-          });
+          state = mergeStateForFeeAmbiguousStaffReview(
+            state,
+            idleFeeOut.feeAmbiguousStaffReview,
+            {
+              lastIntent: intentResult.intent,
+            },
+            matcherCandidateLabelsForFeeStaffReview(doctorSettings)
+          );
           dmRoutingBranch = 'fee_ambiguous_visit_type_staff';
         } else {
           state = {
@@ -2690,9 +2726,14 @@ export async function processInstagramDmWebhook(params: {
         });
         replyText = misFeeOut.reply;
         if (misFeeOut.feeAmbiguousStaffReview) {
-          state = mergeStateForFeeAmbiguousStaffReview(state, misFeeOut.feeAmbiguousStaffReview, {
-            lastIntent: intentResult.intent,
-          });
+          state = mergeStateForFeeAmbiguousStaffReview(
+            state,
+            misFeeOut.feeAmbiguousStaffReview,
+            {
+              lastIntent: intentResult.intent,
+            },
+            matcherCandidateLabelsForFeeStaffReview(doctorSettings)
+          );
           dmRoutingBranch = 'fee_ambiguous_visit_type_staff';
         } else {
           state = {
@@ -2902,9 +2943,14 @@ export async function processInstagramDmWebhook(params: {
           });
           replyText = bookIdleFeeOut.reply;
           if (bookIdleFeeOut.feeAmbiguousStaffReview) {
-            state = mergeStateForFeeAmbiguousStaffReview(state, bookIdleFeeOut.feeAmbiguousStaffReview, {
-              lastIntent: intentResult.intent,
-            });
+            state = mergeStateForFeeAmbiguousStaffReview(
+              state,
+              bookIdleFeeOut.feeAmbiguousStaffReview,
+              {
+                lastIntent: intentResult.intent,
+              },
+              matcherCandidateLabelsForFeeStaffReview(doctorSettings)
+            );
             dmRoutingBranch = 'fee_ambiguous_visit_type_staff';
           } else {
             state = {
@@ -3003,6 +3049,32 @@ export async function processInstagramDmWebhook(params: {
       });
     }
 
+    if (
+      state.step === 'awaiting_staff_service_confirmation' &&
+      state.pendingStaffServiceReview === true &&
+      state.matcherProposedCatalogServiceKey?.trim()
+    ) {
+      try {
+        const ab = await tryApplyLearningPolicyAutobook({
+          doctorId,
+          conversationId: conversation.id,
+          state,
+          candidateLabels: state.matcherCandidateLabels ?? [],
+          correlationId,
+        });
+        if (ab.applied) {
+          state = ab.nextState;
+          replyText = ab.replyText;
+          dmRoutingBranch = 'learning_policy_autobook';
+        }
+      } catch (e) {
+        logger.warn(
+          { correlationId, err: e instanceof Error ? e.message : String(e) },
+          'learning_policy_autobook_failed'
+        );
+      }
+    }
+
     const botMessageId = `sys-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     await createMessage(
       {
@@ -3053,7 +3125,7 @@ export async function processInstagramDmWebhook(params: {
           patientId: conversation.patient_id ?? null,
           correlationId,
           state: stateToPersist,
-          candidateLabels: [],
+          candidateLabels: stateToPersist.matcherCandidateLabels ?? [],
         });
         stateToPersist = {
           ...stateToPersist,

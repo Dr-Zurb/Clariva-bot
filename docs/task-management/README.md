@@ -169,6 +169,15 @@ Follow-ups from receptionist DM discussions: **thread-aware teleconsult fees**, 
 - **Tasks:** [e-task-dm-06 classifier-led payment/fee routing](../Development/Daily-plans/April%202026/05-04-2026/tasks/e-task-dm-06-classifier-led-payment-fee-routing.md), [e-task-ops-02 DM routing quality & corpus](../Development/Daily-plans/April%202026/05-04-2026/tasks/e-task-ops-02-dm-routing-quality-regression-corpus.md)
 - **Golden corpus (shipped):** [backend/tests/fixtures/dm-routing-golden/](../../backend/tests/fixtures/dm-routing-golden/README.md) — `corpus.json`, misroute playbook, Jest regression (`dm-routing-golden-corpus.test.ts`), preview helper `dm-routing-clinical-idle-preview.ts`
 
+### Staff feedback learning — smart receptionist v2 (2026-04-12)
+
+Learn from **staff confirm / reassign / optional notes** with **shadow evaluation**, **doctor notification**, **explicit opt-in before autobook**, and **privacy-first** storage (structured features; no raw patient text in v1 without legal sign-off).
+
+- **Philosophy:** [AI_BOT_BUILDING_PHILOSOPHY.md](../Reference/AI_BOT_BUILDING_PHILOSOPHY.md) §9
+- **Daily plan:** [docs/Development/Daily-plans/April 2026/12-04-2026/README.md](../Development/Daily-plans/April%202026/12-04-2026/README.md)
+- **Initiative:** [STAFF_FEEDBACK_LEARNING_INITIATIVE.md](./STAFF_FEEDBACK_LEARNING_INITIATIVE.md)
+- **Tasks:** [e-task-learn-01](../Development/Daily-plans/April%202026/12-04-2026/tasks/e-task-learn-01-privacy-and-data-contract.md) … [e-task-learn-05](../Development/Daily-plans/April%202026/12-04-2026/tasks/e-task-learn-05-assist-ui-and-gated-autobook.md)
+
 ### AI Receptionist — Human-Like Bot (2026-03-26)
 
 Transform the bot from regex-heavy to AI-first: understand conversations, store data intelligently, respond like a human receptionist.
@@ -264,5 +273,5 @@ Tasks: e-task-1 (prescription migration), e-task-2 (prescription service & API),
 
 ---
 
-**Last Updated:** 2026-05-04  
-**Version:** 2.11.0 (Daily plan 2026-05-04: classifier-led routing + DM routing quality tasks)
+**Last Updated:** 2026-03-31  
+**Version:** 2.12.1 (Staff feedback learning: plan phase mapping, pattern-key doc path, ops notes)

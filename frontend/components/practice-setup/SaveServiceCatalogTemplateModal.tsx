@@ -16,8 +16,6 @@ type Props = {
   open: boolean;
   onClose: () => void;
   currentServices: ServiceOfferingDraft[];
-  /** Optional catalog-level field; included in saved template JSON. */
-  competingVisitTypePreferKey?: string;
   templates: UserSavedServiceTemplateV1[];
   onTemplatesChange: (next: ServiceCatalogTemplatesJsonV1) => Promise<void>;
   busy?: boolean;
@@ -27,7 +25,6 @@ export function SaveServiceCatalogTemplateModal({
   open,
   onClose,
   currentServices,
-  competingVisitTypePreferKey = "",
   templates,
   onTemplatesChange,
   busy = false,
@@ -72,9 +69,7 @@ export function SaveServiceCatalogTemplateModal({
     }
     let catalog: ReturnType<typeof draftsToCatalogOrNull>;
     try {
-      catalog = draftsToCatalogOrNull(currentServices, {
-        competing_visit_type_prefer_service_key: competingVisitTypePreferKey.trim() || null,
-      });
+      catalog = draftsToCatalogOrNull(currentServices);
     } catch (e) {
       setLocalError(e instanceof Error ? e.message : "Invalid catalog rows.");
       return;

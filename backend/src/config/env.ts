@@ -186,6 +186,56 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => !(v === 'false' || v === '0')),
+
+  /**
+   * learn-02: write service_match_learning_examples on staff confirm/reassign.
+   * Set false to disable ingest without deploy rollback.
+   */
+  SERVICE_MATCH_LEARNING_INGEST_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => !(v === 'false' || v === '0')),
+
+  /**
+   * learn-03: compute and store shadow suggestion when a pending staff review row is created.
+   */
+  SHADOW_LEARNING_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => !(v === 'false' || v === '0')),
+
+  /** learn-04: min reassignment count per pattern to suggest policy (RPC + job). */
+  LEARNING_POLICY_MIN_RESOLUTIONS: z
+    .string()
+    .default('5')
+    .transform((v) => Math.max(1, parseInt(v, 10) || 5)),
+
+  /** learn-04: rolling window (days) for stability RPC. */
+  LEARNING_POLICY_WINDOW_DAYS: z
+    .string()
+    .default('30')
+    .transform((v) => Math.max(1, parseInt(v, 10) || 30)),
+
+  /** learn-04: default snooze duration when doctor snoozes a suggestion. */
+  LEARNING_POLICY_SNOOZE_DAYS: z
+    .string()
+    .default('14')
+    .transform((v) => Math.min(365, Math.max(1, parseInt(v, 10) || 14))),
+
+  /** learn-04: send Resend email when a new suggestion is created (optional; in-app is primary). */
+  LEARNING_POLICY_SUGGESTION_EMAIL_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
+
+  /**
+   * learn-05: when true (default), apply enabled `service_match_autobook_policies` to skip staff review
+   * when structured pattern matches. Set false for instant kill switch.
+   */
+  LEARNING_AUTOBOOK_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => !(v === 'false' || v === '0')),
 });
 
 /**

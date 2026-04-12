@@ -1193,3 +1193,94 @@ export function validateCancelServiceStaffReviewBody(body: unknown): CancelServi
   }
   return result.data;
 }
+
+// --- learn-04: service match learning policy suggestions ---
+
+export const policySuggestionIdParamsSchema = z.object({
+  id: z.string().uuid('Invalid suggestion ID'),
+});
+
+export type PolicySuggestionIdParams = z.infer<typeof policySuggestionIdParamsSchema>;
+
+export function validatePolicySuggestionIdParams(params: unknown): PolicySuggestionIdParams {
+  const result = policySuggestionIdParamsSchema.safeParse(params);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid suggestion ID');
+  }
+  return result.data;
+}
+
+const listPolicySuggestionsQuerySchema = z.object({
+  status: z.enum(['pending', 'declined', 'accepted', 'snoozed', 'superseded', 'all']).optional(),
+});
+
+export type ListPolicySuggestionsQuery = z.infer<typeof listPolicySuggestionsQuerySchema>;
+
+export function validateListPolicySuggestionsQuery(
+  query: Record<string, string | string[] | undefined>
+): ListPolicySuggestionsQuery {
+  const normalized: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(query)) {
+    normalized[k] = typeof v === 'string' ? v : Array.isArray(v) ? String(v[0]) : undefined;
+  }
+  const result = listPolicySuggestionsQuerySchema.safeParse(normalized);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid query');
+  }
+  return result.data;
+}
+
+const listAutobookPoliciesQuerySchema = z.object({
+  activeOnly: z.enum(['true', 'false']).optional(),
+});
+
+export type ListAutobookPoliciesQuery = z.infer<typeof listAutobookPoliciesQuerySchema>;
+
+export function validateListAutobookPoliciesQuery(
+  query: Record<string, string | string[] | undefined>
+): ListAutobookPoliciesQuery {
+  const normalized: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(query)) {
+    normalized[k] = typeof v === 'string' ? v : Array.isArray(v) ? String(v[0]) : undefined;
+  }
+  const result = listAutobookPoliciesQuerySchema.safeParse(normalized);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid query');
+  }
+  return result.data;
+}
+
+export const snoozePolicySuggestionBodySchema = z
+  .object({
+    snoozeDays: z.coerce.number().int().min(1).max(365).optional(),
+  })
+  .strict();
+
+export type SnoozePolicySuggestionBody = z.infer<typeof snoozePolicySuggestionBodySchema>;
+
+export function validateSnoozePolicySuggestionBody(body: unknown): SnoozePolicySuggestionBody {
+  const result = snoozePolicySuggestionBodySchema.safeParse(body ?? {});
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+export const autobookPolicyIdParamsSchema = z.object({
+  id: z.string().uuid('Invalid autobook policy ID'),
+});
+
+export type AutobookPolicyIdParams = z.infer<typeof autobookPolicyIdParamsSchema>;
+
+export function validateAutobookPolicyIdParams(params: unknown): AutobookPolicyIdParams {
+  const result = autobookPolicyIdParamsSchema.safeParse(params);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid policy ID');
+  }
+  return result.data;
+}

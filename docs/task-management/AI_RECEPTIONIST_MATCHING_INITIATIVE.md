@@ -41,6 +41,7 @@
 ## Related
 
 - [AI_RECEPTIONIST_PLAN.md](./AI_RECEPTIONIST_PLAN.md) — broader human-like bot (extraction/response); **orthogonal** to this initiative’s **service routing + staff queue**.
+- [STAFF_FEEDBACK_LEARNING_INITIATIVE.md](./STAFF_FEEDBACK_LEARNING_INITIATIVE.md) — **v2**: learn from staff confirm/reassign over time (shadow → opt-in autobook); builds on ARM-06 data.
 - SFU catalog / quote: `docs/Development/Daily-plans/March 2026/2026-03-27/services-and-follow-ups/`
 
 ---

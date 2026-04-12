@@ -34,7 +34,7 @@ export type NotificationRecipientType = 'doctor' | 'patient';
 /**
  * Resolve doctor email: Supabase auth.users (admin) or env DEFAULT_DOCTOR_EMAIL.
  */
-async function getDoctorEmail(doctorId: string, _correlationId: string): Promise<string | null> {
+export async function getDoctorEmail(doctorId: string, _correlationId: string): Promise<string | null> {
   const fallback = env.DEFAULT_DOCTOR_EMAIL?.trim();
   const admin = getSupabaseAdminClient();
   if (!admin) {

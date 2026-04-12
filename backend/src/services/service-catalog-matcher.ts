@@ -9,7 +9,6 @@ import type { ServiceCatalogMatchConfidence } from '../types/conversation';
 import { SERVICE_CATALOG_MATCH_REASON_CODES } from '../types/conversation';
 import { redactPhiForAI } from './ai-service';
 import { logAIClassification } from '../utils/audit-logger';
-import { feeThreadHasCompetingVisitTypeBuckets } from '../utils/consultation-fees';
 import { findServiceOfferingByKey } from '../utils/service-catalog-helpers';
 import type { ServiceCatalogV1, ServiceOfferingV1 } from '../utils/service-catalog-schema';
 import { CATALOG_CATCH_ALL_SERVICE_KEY } from '../utils/service-catalog-schema';
@@ -100,7 +99,8 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function candidateLabelsForCatalog(catalog: ServiceCatalogV1): ServiceCatalogMatchResult['candidateLabels'] {
+/** learn-05: deterministic candidate keys for pattern_key (full catalog slice; PHI-free). */
+export function candidateLabelsForCatalog(catalog: ServiceCatalogV1): ServiceCatalogMatchResult['candidateLabels'] {
   return [...catalog.services]
     .sort((a, b) => a.service_key.localeCompare(b.service_key))
     .map((s) => ({ service_key: s.service_key, label: s.label }));
@@ -159,14 +159,8 @@ export function buildServiceCatalogLlmSystemPrompt(
       ? `\nPractice context (use to interpret symptoms; do not invent services):\n${contextLines.join('\n')}\n`
       : '\nPractice context was not provided; use only the patient text and the catalog below.\n';
 
-  const preferKey = catalog.competing_visit_type_prefer_service_key?.trim();
-  const competingPreferLine =
-    preferKey && preferKey.toLowerCase() !== CATALOG_CATCH_ALL_SERVICE_KEY
-      ? `\n- When the patient text mixes chronic/metabolic follow-up signals (e.g. blood sugar, BP, thyroid) with acute or general symptoms (e.g. stomach pain, fever, check-up), prefer service_key "${preferKey}" if that row plausibly fits unless another non-other row is clearly better.\n`
-      : '';
-
   return `You map a patient's reason for visit to ONE teleconsult service_key from the practice catalog.
-${contextBlock}${competingPreferLine}
+${contextBlock}
 Rules:
 - Output JSON only, no markdown.
 - service_key MUST be copied exactly from the allowed list below.
@@ -288,50 +282,6 @@ function normalizeLlmConfidence(raw: string | undefined): ServiceCatalogMatchCon
 }
 
 /**
- * When the thread has competing NCD vs acute/general signals and the catalog names a preferred
- * non-catch-all row, use it instead of `other` or weak LLM picks.
- */
-function applyCompetingVisitTypeCatalogPreference(
-  catalog: ServiceCatalogV1,
-  mergedReasonText: string,
-  result: ServiceCatalogMatchResult
-): ServiceCatalogMatchResult {
-  const prefKey = catalog.competing_visit_type_prefer_service_key?.trim();
-  if (!prefKey || !feeThreadHasCompetingVisitTypeBuckets(mergedReasonText)) {
-    return result;
-  }
-  const preferred = resolveCatalogOfferingByKey(catalog, prefKey);
-  if (!preferred || preferred.service_key.trim().toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY) {
-    return result;
-  }
-  const resKey = result.catalogServiceKey.trim().toLowerCase();
-  const isOther = resKey === CATALOG_CATCH_ALL_SERVICE_KEY;
-  const lowOrMed = result.confidence === 'low' || result.confidence === 'medium';
-  if (!isOther && result.confidence === 'high') {
-    return result;
-  }
-  if (!isOther && !lowOrMed) {
-    return result;
-  }
-  const mod = pickSuggestedModality(preferred.offering);
-  return {
-    ...result,
-    catalogServiceKey: preferred.service_key,
-    catalogServiceId: preferred.service_id,
-    suggestedModality: mod,
-    confidence: 'medium',
-    reasonCodes: [
-      ...new Set([
-        ...result.reasonCodes,
-        SERVICE_CATALOG_MATCH_REASON_CODES.COMPETING_BUCKETS_PRACTICE_PREFERENCE,
-      ]),
-    ],
-    pendingStaffReview: false,
-    autoFinalize: true,
-  };
-}
-
-/**
  * Full matcher: Stage A (rules + ARM-02 hints), Stage B (LLM with allowlist), validated fallback to `other`.
  */
 export async function matchServiceCatalogOffering(
@@ -361,7 +311,6 @@ export async function matchServiceCatalogOffering(
 
   const reasonRedacted = redactPhiForAI(reasonForVisitText);
   const recentRedacted = (recentUserMessages ?? []).map((m) => redactPhiForAI(m ?? '')).filter(Boolean);
-  const mergedForCompetingBuckets = [...recentRedacted, reasonRedacted].filter(Boolean).join('\n');
 
   const stageA = runDeterministicServiceCatalogMatchStageA(catalog, reasonRedacted);
   if (stageA) {
@@ -392,7 +341,7 @@ export async function matchServiceCatalogOffering(
 
   if (skipLlm || !canRunLlm) {
     const fb = catchAll ?? resolveCatalogOfferingByKey(catalog, catalog.services[0]!.service_key)!;
-    const rawResult: ServiceCatalogMatchResult = {
+    const result: ServiceCatalogMatchResult = {
       catalogServiceKey: fb.service_key,
       catalogServiceId: fb.service_id,
       suggestedModality: pickSuggestedModality(fb.offering),
@@ -403,11 +352,6 @@ export async function matchServiceCatalogOffering(
       pendingStaffReview: true,
       autoFinalize: false,
     };
-    const result = applyCompetingVisitTypeCatalogPreference(
-      catalog,
-      mergedForCompetingBuckets,
-      rawResult
-    );
     emit({
       source: result.source,
       confidence: result.confidence,
@@ -438,7 +382,7 @@ export async function matchServiceCatalogOffering(
   if (!resolved) {
     llmParseFailed = true;
     const fb = catchAll ?? resolveCatalogOfferingByKey(catalog, catalog.services[0]!.service_key)!;
-    const rawResult: ServiceCatalogMatchResult = {
+    const result: ServiceCatalogMatchResult = {
       catalogServiceKey: fb.service_key,
       catalogServiceId: fb.service_id,
       suggestedModality: pickSuggestedModality(fb.offering),
@@ -451,11 +395,6 @@ export async function matchServiceCatalogOffering(
       pendingStaffReview: true,
       autoFinalize: false,
     };
-    const result = applyCompetingVisitTypeCatalogPreference(
-      catalog,
-      mergedForCompetingBuckets,
-      rawResult
-    );
     emit({
       source: result.source,
       confidence: result.confidence,
@@ -481,7 +420,7 @@ export async function matchServiceCatalogOffering(
   const conf = normalizeLlmConfidence(parsed!.match_confidence);
   const autoFinalize = conf === 'high';
 
-  const rawResult: ServiceCatalogMatchResult = {
+  const result: ServiceCatalogMatchResult = {
     catalogServiceKey: resolved.service_key,
     catalogServiceId: resolved.service_id,
     suggestedModality: modality,
@@ -495,12 +434,6 @@ export async function matchServiceCatalogOffering(
     pendingStaffReview: !autoFinalize,
     autoFinalize,
   };
-
-  const result = applyCompetingVisitTypeCatalogPreference(
-    catalog,
-    mergedForCompetingBuckets,
-    rawResult
-  );
 
   logger.info(
     {

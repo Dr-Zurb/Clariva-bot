@@ -510,30 +510,6 @@ export function pickCatalogServicesForFeeDm(
   const merged = mergeFeeCatalogMatchText(userText, catalogMatchText);
 
   if (catalog.services.length > 1 && feeThreadHasCompetingVisitTypeBuckets(merged)) {
-    const prefKey = catalog.competing_visit_type_prefer_service_key?.trim();
-    if (prefKey) {
-      const preferred = catalog.services.find(
-        (s) => s.service_key.trim().toLowerCase() === prefKey.toLowerCase()
-      );
-      if (
-        preferred &&
-        preferred.service_key.trim().toLowerCase() !== CATALOG_CATCH_ALL_SERVICE_KEY
-      ) {
-        return {
-          services: [preferred],
-          feeQuoteMatcherFinalize: {
-            matcherProposedCatalogServiceKey: preferred.service_key,
-            matcherProposedCatalogServiceId: preferred.service_id,
-            matcherProposedConsultationModality: pickSuggestedModality(preferred),
-            serviceCatalogMatchConfidence: 'medium',
-            serviceCatalogMatchReasonCodes: [
-              SERVICE_CATALOG_MATCH_REASON_CODES.COMPETING_VISIT_TYPE_BUCKETS,
-              SERVICE_CATALOG_MATCH_REASON_CODES.COMPETING_BUCKETS_PRACTICE_PREFERENCE,
-            ],
-          },
-        };
-      }
-    }
     const placeholder = catalog.services.find(
       (s) => s.service_key.trim().toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY
     );

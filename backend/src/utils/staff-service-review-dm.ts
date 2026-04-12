@@ -53,14 +53,16 @@ export function formatStaffReviewResolvedContinueBookingDm(
   settings: DoctorSettingsRow | null,
   visitLabel: string,
   bookingUrl: string,
-  kind: 'confirmed' | 'reassigned'
+  kind: 'confirmed' | 'reassigned' | 'learning_policy_autobook'
 ): string {
   const practice = settings?.practice_name?.trim() || 'the clinic';
   const label = visitLabel.trim() || 'your visit';
   const intro =
     kind === 'confirmed'
       ? `**${practice}** has confirmed your visit type: **${label}**.`
-      : `**${practice}** has updated your visit type to **${label}**.`;
+      : kind === 'learning_policy_autobook'
+        ? `**${practice}** has applied your saved visit-type preference: **${label}**.`
+        : `**${practice}** has updated your visit type to **${label}**.`;
   return (
     `${intro} You can **pick a time and complete booking** here — tap to open: ${bookingUrl}\n\n` +
     `If something looks wrong, just reply here in this chat.`

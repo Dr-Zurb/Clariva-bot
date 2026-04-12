@@ -28,6 +28,9 @@ import { findServiceOfferingByKey, getActiveServiceCatalog } from '../utils/serv
 import { handleSupabaseError } from '../utils/db-helpers';
 import { ConflictError, InternalError, NotFoundError, ValidationError } from '../utils/errors';
 import { buildBookingPageUrl } from './slot-selection-service';
+import { ingestServiceMatchLearningExample } from './service-match-learning-ingest';
+import { recordShadowEvaluationForNewPendingReview } from './service-match-learning-shadow';
+import { fetchAssistHintForReviewRow, type ServiceMatchAssistHint } from './service-match-learning-assist';
 
 export type ServiceStaffReviewStatus =
   | 'pending'
@@ -163,7 +166,11 @@ export async function upsertPendingStaffServiceReviewRequest(params: {
     proposed_consultation_modality: modality ?? null,
     match_confidence: confidence,
     match_reason_codes: asJsonArray(params.state.serviceCatalogMatchReasonCodes),
-    candidate_labels: params.candidateLabels?.length ? params.candidateLabels : [],
+    candidate_labels: (() => {
+      if (params.candidateLabels?.length) return params.candidateLabels;
+      if (params.state.matcherCandidateLabels?.length) return params.state.matcherCandidateLabels;
+      return [];
+    })(),
     sla_deadline_at: null,
   };
 
@@ -208,6 +215,25 @@ export async function upsertPendingStaffServiceReviewRequest(params: {
     'service_staff_review_created'
   );
 
+  try {
+    await recordShadowEvaluationForNewPendingReview({
+      doctorId: params.doctorId,
+      conversationId: params.conversationId,
+      reviewRequestId: created.id as string,
+      state: params.state,
+      candidateLabels: params.candidateLabels,
+      correlationId: params.correlationId,
+    });
+  } catch (e) {
+    logger.warn(
+      {
+        correlationId: params.correlationId,
+        err: e instanceof Error ? e.message : String(e),
+      },
+      'service_match_shadow_record_failed'
+    );
+  }
+
   return { id: created.id as string };
 }
 
@@ -241,6 +267,8 @@ export async function listPendingServiceStaffReviewRequestsForDoctor(
 export interface ServiceStaffReviewListItem extends ServiceStaffReviewRequestRow {
   patient_display_name: string | null;
   reason_for_visit_preview: string | null;
+  /** learn-05: prior-resolution hints for inbox assist (pending tab only; null when no data). */
+  assist_hint?: ServiceMatchAssistHint | null;
 }
 
 const REASON_PREVIEW_MAX = 120;
@@ -301,22 +329,51 @@ export async function listEnrichedServiceStaffReviewsForDoctor(
     }
   }
 
-  return rows.map((r) => ({
-    ...r,
-    patient_display_name: r.patient_id ? patientMap.get(r.patient_id) ?? null : null,
-    reason_for_visit_preview: reasonMap.get(r.conversation_id) ?? null,
-  }));
+  const pendingOnly =
+    Array.isArray(status) && status.length === 1 && status[0] === 'pending'
+      ? true
+      : !Array.isArray(status) && status === 'pending';
+
+  const settings = pendingOnly ? await getDoctorSettings(doctorId) : null;
+  const catalog = settings ? getActiveServiceCatalog(settings) : null;
+  const catalogLabelByKey = new Map<string, string>();
+  if (catalog?.services?.length) {
+    for (const s of catalog.services) {
+      const k = s.service_key.trim().toLowerCase();
+      catalogLabelByKey.set(k, s.label?.trim() || k);
+    }
+  }
+
+  return Promise.all(
+    rows.map(async (r) => {
+      const base: ServiceStaffReviewListItem = {
+        ...r,
+        patient_display_name: r.patient_id ? patientMap.get(r.patient_id) ?? null : null,
+        reason_for_visit_preview: reasonMap.get(r.conversation_id) ?? null,
+      };
+      if (!pendingOnly) {
+        return { ...base, assist_hint: null };
+      }
+      const assist_hint = await fetchAssistHintForReviewRow({
+        row: r,
+        doctorId,
+        correlationId,
+        catalogLabelByKey,
+      });
+      return { ...base, assist_hint };
+    })
+  );
 }
 
 /**
  * Instagram: booking link DM after staff confirms or reassigns visit type (best-effort; DB update already succeeded).
  */
-async function sendInstagramBookingLinkAfterStaffReviewResolution(params: {
+export async function sendInstagramBookingLinkAfterStaffReviewResolution(params: {
   doctorId: string;
   conversationId: string;
   correlationId: string;
   finalCatalogServiceKey: string;
-  kind: 'confirmed' | 'reassigned';
+  kind: 'confirmed' | 'reassigned' | 'learning_policy_autobook';
 }): Promise<void> {
   const conv = await findConversationById(params.conversationId, params.correlationId);
   if (!conv || conv.platform !== 'instagram') {
@@ -458,6 +515,13 @@ export async function confirmServiceStaffReviewRequest(params: {
   nextState = mergeSlotStepAfterStaffResolution(nextState);
   await updateConversationState(row.conversation_id, nextState, params.correlationId);
 
+  await ingestServiceMatchLearningExample({
+    row: updated as ServiceStaffReviewRequestRow,
+    conversationStateAfterResolution: nextState,
+    action: 'confirmed',
+    correlationId: params.correlationId,
+  });
+
   await sendInstagramBookingLinkAfterStaffReviewResolution({
     doctorId: params.doctorId,
     conversationId: row.conversation_id,
@@ -557,6 +621,13 @@ export async function reassignServiceStaffReviewRequest(params: {
   });
   nextState = mergeSlotStepAfterStaffResolution(nextState);
   await updateConversationState(row.conversation_id, nextState, params.correlationId);
+
+  await ingestServiceMatchLearningExample({
+    row: updated as ServiceStaffReviewRequestRow,
+    conversationStateAfterResolution: nextState,
+    action: 'reassigned',
+    correlationId: params.correlationId,
+  });
 
   await sendInstagramBookingLinkAfterStaffReviewResolution({
     doctorId: params.doctorId,
