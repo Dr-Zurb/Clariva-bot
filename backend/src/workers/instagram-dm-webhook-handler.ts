@@ -150,13 +150,16 @@ import {
   clinicalLedFeeThread,
   feeFollowUpAnaphora,
   formatClinicalReasonAskMoreAfterDeflection,
+  formatReasonFirstAskWhatElseToAdd,
   formatReasonFirstConfirmClarify,
   formatReasonFirstConfirmQuestion,
   formatReasonFirstFeePatienceBridgeWhileAskMore,
   formatReasonFirstGateBeforeIntake,
   isVagueConsultationPaymentExistenceQuestion,
   lastAssistantDmContent,
+  lastBotAskedAnythingElseBeforeFee,
   parseNothingElseOrSameOnly,
+  parseReasonFirstAskMoreAmbiguousYes,
   parseReasonTriageConfirmYes,
   parseReasonTriageNegationForClarify,
   recentPatientThreadHasClinicalReason,
@@ -1707,7 +1710,21 @@ export async function processInstagramDmWebhook(params: {
         await runReasonFirstFullFeeEscape();
       } else if (state.reasonFirstTriagePhase === 'ask_more') {
         // Do not quote fees from ask_more: confirm reason (+ anything else) first; fee table runs after confirm (yes) or from confirm phase.
+        const lastBotAskMore = lastAssistantDmContent(recentForTriage);
         if (
+          lastBotAskedAnythingElseBeforeFee(lastBotAskMore) &&
+          parseReasonFirstAskMoreAmbiguousYes(text) &&
+          !userMessageSuggestsClinicalReason(text)
+        ) {
+          dmRoutingBranch = 'reason_first_triage_ask_more_ambiguous_yes';
+          replyText = formatReasonFirstAskWhatElseToAdd(text);
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'responded',
+            updatedAt: new Date().toISOString(),
+          };
+        } else if (
           signalsFeePricing &&
           !userExplicitlyWantsToBookNow(text) &&
           !userSignalsReasonFirstWrapUp(text, intentResult)

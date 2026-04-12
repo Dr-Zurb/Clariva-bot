@@ -103,6 +103,17 @@ export function isPricingInquiryMessage(text: string): boolean {
   return PRICING_KEYWORDS.test(t);
 }
 
+/** User is asking for an amount / rate, not merely whether payment applies. */
+const AMOUNT_SEEKING_PRICING_RE =
+  /\b(how\s+much|how\s+many\s+rupees|what\s*('|’)?s\s+the\s+(fee|price|cost|charge|amount|payment\b)|what\s+(is|are)\s+the\s+(fee|fees|price|prices|charges)|kitna|kitne|kitni|कितना|exact(\s+(fee|price|amount))?|breakdown|quote|fee\s+for|price\s+for)\b/i;
+
+/** Amount-seeking during reason-first triage — route to narrow fee, not ask-more patience loop (e-task-dm-05). */
+export function isAmountSeekingPricingQuestion(text: string): boolean {
+  const t = normalizePatientPricingText(text);
+  if (t.length < 3) return false;
+  return AMOUNT_SEEKING_PRICING_RE.test(t);
+}
+
 /**
  * Strong booking intent - user wants to start scheduling, not only clarify visit type for fees.
  */
@@ -119,8 +130,12 @@ export function isConsultationTypePricingFollowUp(text: string): boolean {
 export function userExplicitlyWantsToBookNow(text: string): boolean {
   const t = text.trim();
   if (t.length < 4) return false;
+  // "How much for video consult" matches modality + consult but is fee-seeking, not booking.
+  if (isAmountSeekingPricingQuestion(t)) return false;
   return (
     /\b(book|schedule)\s+(?:an\s+)?(?:appointment|visit|consultation)\b/i.test(t) ||
+    /\bbook\s+(?:a\s+)?(video|voice|text)\b/i.test(t) ||
+    /\b(video|voice|text)\s+(consult|appointment|slot)\b/i.test(t) ||
     /\b(want|need|would\s+like)\s+to\s+book\b/i.test(t) ||
     /\bbook\s+(?:me|us|an\s+appointment|a\s+slot)\b/i.test(t) ||
     /\b(start|begin)\ba?\s+booking\b/i.test(t) ||

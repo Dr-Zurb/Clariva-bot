@@ -58,6 +58,10 @@ describe('consultation-fees (RBH-13)', () => {
 
   it('userExplicitlyWantsToBookNow detects real booking intent', () => {
     expect(userExplicitlyWantsToBookNow('I want to book an appointment')).toBe(true);
+    expect(userExplicitlyWantsToBookNow('book video')).toBe(true);
+    expect(userExplicitlyWantsToBookNow('book voice consult')).toBe(true);
+    expect(userExplicitlyWantsToBookNow('video appointment tomorrow')).toBe(true);
+    expect(userExplicitlyWantsToBookNow('how much for video consult')).toBe(false);
     expect(userExplicitlyWantsToBookNow('how much do you charge')).toBe(false);
   });
 

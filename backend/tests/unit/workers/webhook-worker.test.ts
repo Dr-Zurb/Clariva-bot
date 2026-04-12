@@ -105,10 +105,16 @@ jest.mock('../../../src/services/message-service', () => ({
   createMessage: jest.fn(),
   getRecentMessages: jest.fn(),
 }));
-jest.mock('../../../src/services/ai-service', () => ({
-  classifyIntent: jest.fn(),
-  generateResponse: jest.fn(),
-}));
+jest.mock('../../../src/services/ai-service', () => {
+  const actual = jest.requireActual('../../../src/services/ai-service') as typeof import(
+    '../../../src/services/ai-service'
+  );
+  return {
+    ...actual,
+    classifyIntent: jest.fn(),
+    generateResponse: jest.fn(),
+  };
+});
 jest.mock('../../../src/services/collection-service', () => ({
   getNextCollectionField: jest.fn(),
   validateAndApply: jest.fn(),

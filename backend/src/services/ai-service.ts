@@ -27,7 +27,6 @@ import {
   userExplicitlyWantsToBookNow,
 } from '../utils/consultation-fees';
 import {
-  lastAssistantDmContent,
   lastBotDiscussesFeesTopic,
   collectPatientReasonPartsForTriage,
   formatVisitReasonItemsForSnippet,
@@ -40,6 +39,7 @@ import {
   EMERGENCY_RESPONSE_EN,
   isEmergencyUserMessage,
   MEDICAL_QUERY_RESPONSE_EN,
+  recentThreadHasAssistantEmergencyEscalation,
 } from '../utils/safety-messages';
 import { POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN } from '../utils/post-medical-ack-copy';
 
@@ -868,8 +868,7 @@ export function applyEmergencyIntentPostPolicy(
   recentMessages: { sender_type: string; content: string }[]
 ): IntentDetectionResult {
   if (result.intent !== 'emergency') return result;
-  const lastBot = lastAssistantDmContent(recentMessages);
-  if (!lastBot || !assistantMessageIsEmergencyEscalationCopy(lastBot)) return result;
+  if (!recentThreadHasAssistantEmergencyEscalation(recentMessages)) return result;
   if (isEmergencyUserMessage(messageText)) return result;
   return {
     ...result,
@@ -1031,6 +1030,8 @@ Order: same order as the patient raised them when clear; otherwise main concern 
 At most 12 strings; merge duplicates.
 
 **Vital-sign updates (mandatory):** If the patient sent **multiple readings of the same vital** in the thread (e.g. several blood pressure values like 200/100, then 160/80, then 140/80), output **one** reason line — use the **latest** reading and optionally one short parenthetical for context (e.g. "High blood pressure — 140/80 today (earlier readings were higher)"). Do **not** list each reading as a separate array item.
+
+**Meta + same topic:** If the patient asked whether a reading is an emergency and also gave vitals, **merge** into that one hypertension/BP line — do **not** add a separate bullet that only restates the question.
 
 If nothing clinical remains after exclusions, return {"reasons": []}.`;
 

@@ -4,6 +4,7 @@ import {
   MEDICAL_QUERY_RESPONSE_EN,
   detectSafetyMessageLocale,
   isEmergencyUserMessage,
+  recentThreadHasAssistantEmergencyEscalation,
   resolveSafetyMessage,
 } from '../../../src/utils/safety-messages';
 
@@ -125,6 +126,21 @@ describe('safety-messages (RBH-15)', () => {
 
     it('matches getting worse as escalation cue', () => {
       expect(isEmergencyUserMessage('It is getting worse')).toBe(true);
+    });
+  });
+
+  describe('recentThreadHasAssistantEmergencyEscalation', () => {
+    it('finds escalation when it is not the last assistant line', () => {
+      const emergency =
+        'Please call emergency services (in India: **112** or **108**) or go to the nearest hospital immediately.';
+      expect(
+        recentThreadHasAssistantEmergencyEscalation([
+          { sender_type: 'patient', content: 'bp high' },
+          { sender_type: 'system', content: emergency },
+          { sender_type: 'patient', content: 'stable now' },
+          { sender_type: 'system', content: 'How can I help further?' },
+        ])
+      ).toBe(true);
     });
   });
 

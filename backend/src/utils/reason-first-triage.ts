@@ -15,7 +15,11 @@
 
 import type { ConversationState } from '../types/conversation';
 import { isRecentMedicalDeflectionWindow } from '../types/conversation';
-import { isPricingInquiryMessage, normalizePatientPricingText } from './consultation-fees';
+import {
+  isAmountSeekingPricingQuestion,
+  isPricingInquiryMessage,
+  normalizePatientPricingText,
+} from './consultation-fees';
 import { detectSafetyMessageLocale } from './safety-messages';
 import { POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN } from './post-medical-ack-copy';
 
@@ -108,17 +112,6 @@ export function userWantsExplicitFullFeeList(text: string): boolean {
   return EXPLICIT_FULL_FEE_LIST_RE.test(text.trim());
 }
 
-/** User is asking for an amount / rate, not merely whether payment applies. */
-const AMOUNT_SEEKING_PRICING_RE =
-  /\b(how\s+much|how\s+many\s+rupees|what\s*('|’)?s\s+the\s+(fee|price|cost|charge|amount|payment\b)|what\s+(is|are)\s+the\s+(fee|fees|price|prices|charges)|kitna|kitne|kitni|कितना|exact(\s+(fee|price|amount))?|breakdown|quote|fee\s+for|price\s+for)\b/i;
-
-/** Amount-seeking during reason-first triage — route to narrow fee, not ask-more patience loop (e-task-dm-05). */
-export function isAmountSeekingPricingQuestion(text: string): boolean {
-  const t = normalizePatientPricingText(text);
-  if (t.length < 3) return false;
-  return AMOUNT_SEEKING_PRICING_RE.test(t);
-}
-
 /**
  * “Do I have to pay?” style — **yes/no fee existence**, not “how much?” (handled by reason-first after ack).
  */
@@ -126,7 +119,7 @@ export function isVagueConsultationPaymentExistenceQuestion(text: string): boole
   const t = normalizePatientPricingText(text);
   if (t.length < 3) return false;
   if (userWantsExplicitFullFeeList(t)) return false;
-  if (AMOUNT_SEEKING_PRICING_RE.test(t)) return false;
+  if (isAmountSeekingPricingQuestion(t)) return false;
 
   const mentionsPaidVsFree =
     /\bno\s+free\s+(advice|consult(ation)?)\b/i.test(t) ||
@@ -209,6 +202,37 @@ export function parseReasonTriageConfirmYes(text: string): boolean {
   if (isPricingInquiryMessage(t)) return false;
   if (isAmountSeekingPricingQuestion(t)) return false;
   return CONFIRM_YES_RE.test(t);
+}
+
+/** Last assistant line asked whether anything else should be covered before sharing the fee (reason-first ask_more). */
+export function lastBotAskedAnythingElseBeforeFee(lastBotMessage: string | undefined): boolean {
+  if (!lastBotMessage?.trim()) return false;
+  const c = lastBotMessage.toLowerCase();
+  return (
+    /\banything\s+else\b/i.test(c) &&
+    /\b(before\s+we\s+share|share\s+the\s+fee|fee)\b/i.test(c)
+  );
+}
+
+/**
+ * Short bare "yes" after "anything else?" — means "I have more to add", not confirm/done.
+ * e-task-dm-09: avoid advancing to confirm when user meant to add another concern.
+ */
+export function parseReasonFirstAskMoreAmbiguousYes(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 2 || t.length > 40) return false;
+  return /^(yes|yeah|yep|yup|haan|haan\s*ji)\s*[!.]*\s*$/i.test(t);
+}
+
+export function formatReasonFirstAskWhatElseToAdd(userText: string): string {
+  const loc = detectSafetyMessageLocale(userText || '');
+  if (loc === 'hi') {
+    return 'Theek — **aur kya** add karna chahte ho jo doctor is visit mein cover karein? Ek short line mein likh dein. Agar **kuch aur nahi**, to **nothing else** likhein.';
+  }
+  if (loc === 'pa') {
+    return 'Theek — **hor ki** add karna chauna doctor is visit te? Ik chhoti line vich likho. Je **kuch hor nahi**, ta **nothing else** likho.';
+  }
+  return 'Got it. Please tell me **what else** you’d like the doctor to address at this visit (a short line). If you’re **done** listing concerns, say **nothing else**.';
 }
 
 const NEGATION_CLARIFY_RE =
@@ -647,3 +671,5 @@ export function formatReasonFirstConfirmClarify(userText: string): string {
   }
   return 'Got it. Please send a **short line** with the correct reason for the visit, and I will confirm again. Or reply **yes** if the earlier summary was fine.';
 }
+
+export { isAmountSeekingPricingQuestion };

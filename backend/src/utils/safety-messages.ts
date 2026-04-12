@@ -160,3 +160,15 @@ export function assistantMessageIsEmergencyEscalationCopy(text: string): boolean
   if (c.length < 15) return false;
   return /\b(112|108)\b/.test(c) && /\b(emergency|hospital)\b/i.test(c);
 }
+
+/** True if any assistant/system line in the thread is canonical emergency escalation (not only the last bot line). */
+export function recentThreadHasAssistantEmergencyEscalation(
+  recentMessages: { sender_type: string; content: string }[]
+): boolean {
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    if (recentMessages[i].sender_type === 'patient') continue;
+    const c = (recentMessages[i].content ?? '').trim();
+    if (c && assistantMessageIsEmergencyEscalationCopy(c)) return true;
+  }
+  return false;
+}

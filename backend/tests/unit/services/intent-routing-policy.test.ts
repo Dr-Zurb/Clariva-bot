@@ -133,6 +133,22 @@ describe('RBH-14 intent routing', () => {
       );
       expect(out.intent).toBe('emergency');
     });
+
+    it('downgrades when escalation appears earlier in thread (not only last bot line)', () => {
+      const emergency =
+        'Please call emergency services (in India: **112** or **108**) or go to the nearest hospital immediately.';
+      const out = applyEmergencyIntentPostPolicy(
+        { intent: 'emergency', confidence: 0.91 },
+        'its 130 now',
+        [
+          { sender_type: 'patient', content: 'bp 200/100' },
+          { sender_type: 'system', content: emergency },
+          { sender_type: 'patient', content: 'stable' },
+          { sender_type: 'system', content: 'Anything else before we share the fee?' },
+        ]
+      );
+      expect(out.intent).toBe('medical_query');
+    });
   });
 
   describe('buildClassifyIntentContext', () => {

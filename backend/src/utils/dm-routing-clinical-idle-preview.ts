@@ -19,9 +19,12 @@ import {
   feeFollowUpAnaphora,
   isVagueConsultationPaymentExistenceQuestion,
   lastAssistantDmContent,
+  lastBotAskedAnythingElseBeforeFee,
+  parseReasonFirstAskMoreAmbiguousYes,
   parseReasonTriageConfirmYes,
   parseReasonTriageNegationForClarify,
   recentPatientThreadHasClinicalReason,
+  userMessageSuggestsClinicalReason,
   userWantsExplicitFullFeeList,
 } from './reason-first-triage';
 
@@ -77,6 +80,13 @@ export function previewClinicalIdleDmBranch(params: {
     }
 
     if (state.reasonFirstTriagePhase === 'ask_more') {
+      if (
+        lastBotAskedAnythingElseBeforeFee(lastAssistantRawForFee) &&
+        parseReasonFirstAskMoreAmbiguousYes(text) &&
+        !userMessageSuggestsClinicalReason(text)
+      ) {
+        return 'reason_first_triage_ask_more_ambiguous_yes';
+      }
       if (
         signalsFeePricing &&
         !userExplicitlyWantsToBookNow(text) &&

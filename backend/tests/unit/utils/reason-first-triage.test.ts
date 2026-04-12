@@ -9,6 +9,8 @@ import {
   isAmountSeekingPricingQuestion,
   isVagueConsultationPaymentExistenceQuestion,
   lastAssistantDmContent,
+  lastBotAskedAnythingElseBeforeFee,
+  parseReasonFirstAskMoreAmbiguousYes,
   parseReasonTriageConfirmYes,
   parseReasonTriageNegationForClarify,
   shouldDeferIdleFeeForReasonFirstTriage,
@@ -19,6 +21,23 @@ import {
 import type { ConversationState } from '../../../src/types/conversation';
 
 describe('reason-first-triage', () => {
+  describe('lastBotAskedAnythingElseBeforeFee + parseReasonFirstAskMoreAmbiguousYes', () => {
+    it('detects the pre-fee anything-else prompt', () => {
+      expect(
+        lastBotAskedAnythingElseBeforeFee(
+          'Anything else before we share the fee for this visit?'
+        )
+      ).toBe(true);
+      expect(lastBotAskedAnythingElseBeforeFee('How can I help?')).toBe(false);
+    });
+
+    it('bare yes/yep means more to add, not confirm', () => {
+      expect(parseReasonFirstAskMoreAmbiguousYes('yes')).toBe(true);
+      expect(parseReasonFirstAskMoreAmbiguousYes('yeah!')).toBe(true);
+      expect(parseReasonFirstAskMoreAmbiguousYes('yes please book')).toBe(false);
+    });
+  });
+
   describe('parseNothingElseOrSameOnly', () => {
     it('treats "thats it thanks" and "that\'s it" as wrap-up (closed dialog acts)', () => {
       expect(parseNothingElseOrSameOnly('thats it thanks')).toBe(true);

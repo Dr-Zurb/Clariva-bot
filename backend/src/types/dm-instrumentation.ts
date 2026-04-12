@@ -26,6 +26,8 @@ export type DmHandlerBranch =
   | 'fee_ambiguous_visit_type_staff'
   /** Ask-more: user asked pricing before confirm — bridge copy, stay in ask_more */
   | 'reason_first_triage_ask_more_payment_bridge'
+  /** e-task-dm-09: bare "yes" after "anything else?" — ask what to add, stay in ask_more */
+  | 'reason_first_triage_ask_more_ambiguous_yes'
   /** e-task-dm-04: deferred full catalog — ask-more copy */
   | 'reason_first_triage_ask_more'
   /** e-task-dm-04: confirm / clarify / replay consolidated reason */
