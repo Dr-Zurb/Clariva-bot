@@ -136,6 +136,11 @@ export interface IntentDetectionResult {
   pricing_signal_kind?: PricingSignalKind;
   /** e-task-dm-06: short follow-up continuing a fee/payment thread */
   fee_thread_continuation?: boolean;
+  /**
+   * e-task-dm-07: User is done listing visit concerns / nothing more to add before fee (natural language).
+   * Set by classifier when assistant asked "anything else" before fee; mutually exclusive with fee_thread_continuation in merge.
+   */
+  reason_first_done_adding?: boolean;
 }
 
 // ============================================================================

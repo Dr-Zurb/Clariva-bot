@@ -53,6 +53,7 @@ import {
   generateResponseWithActions,
   intentSignalsFeeOrPricing,
   redactPhiForAI,
+  userSignalsReasonFirstWrapUp,
   resolvePostMedicalPaymentExistenceAck,
   resolveVisitReasonSnippetForTriage,
   parseMultiPersonBooking,
@@ -1704,7 +1705,11 @@ export async function processInstagramDmWebhook(params: {
         await runReasonFirstFullFeeEscape();
       } else if (state.reasonFirstTriagePhase === 'ask_more') {
         // Do not quote fees from ask_more: confirm reason (+ anything else) first; fee table runs after confirm (yes) or from confirm phase.
-        if (signalsFeePricing && !userExplicitlyWantsToBookNow(text)) {
+        if (
+          signalsFeePricing &&
+          !userExplicitlyWantsToBookNow(text) &&
+          !userSignalsReasonFirstWrapUp(text, intentResult)
+        ) {
           dmRoutingBranch = 'reason_first_triage_ask_more_payment_bridge';
           const bridgeSnippet = (
             await resolveVisitReasonSnippetForTriage(recentForTriage, text, correlationId)

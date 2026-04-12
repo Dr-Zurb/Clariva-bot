@@ -81,8 +81,9 @@ export function clinicalLedFeeThread(params: {
   return false;
 }
 
+/** Closed dialog acts only (not open symptom vocabulary). Includes "thats it thanks" style wrap-ups. */
 const NOTHING_ELSE_RE =
-  /^(no|nope|nothing\s+else|not\s+really|that's\s+all|thats\s+all|just\s+that|only\s+this|same\s+thing|only\s+what\s+i\s+said|bas|sirf\s+itna|nai|nahi\s+aur)\b/i;
+  /^(no|nope|nothing\s+else|not\s+really|that's\s+all|thats\s+all|(?:that'?s|thats)\s+it|just\s+that|only\s+this|same\s+thing|only\s+what\s+i\s+said|bas|sirf\s+itna|nai|nahi\s+aur)\b/i;
 
 const CONFIRM_YES_RE =
   /^(yes|yeah|yep|yup|ok|okay|sure|correct|right|exactly|confirmed|haan|haan\s*ji|han\s*ji|ji|theek|thik|sahi)\b/i;

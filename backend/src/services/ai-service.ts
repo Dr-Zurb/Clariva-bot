@@ -32,6 +32,7 @@ import {
   formatVisitReasonItemsForSnippet,
   truncateReasonSnippetToMax,
   buildConsolidatedReasonSnippetFromMessages,
+  parseNothingElseOrSameOnly,
 } from '../utils/reason-first-triage';
 import {
   EMERGENCY_RESPONSE_EN,
@@ -344,8 +345,9 @@ Respond with a single JSON object (required keys):
   - "generic_fee_interest": fee/pricing/money topic without a clear amount vs existence split.
   - "none": not about fees/payment/pricing **unless** other keys already set pricing (then prefer the more specific signal).
 - "fee_thread_continuation": boolean — true only if conversation context shows the assistant was discussing fees/pricing and the current message is a **short follow-up** in that thread (e.g. clarifying visit type, "what about video", anaphoric "how much is it"); false otherwise.
+- "reason_first_done_adding": boolean — true only when the assistant asked whether **anything else** should be addressed at the visit (or similar) **before sharing the fee**, and the user is **only** signaling they are finished listing concerns — no new symptoms, no amount-seeking fee question. Natural paraphrases: "that's it", "thats it thanks", "nothing else", "I'm good", "nahi aur", "bas", "all set". false when they add symptoms, ask how much the fee is, or ask a new pricing question. **If true, set "fee_thread_continuation" to false** (wrap-up overrides fee-thread continuation).
 
-Example: {"intent":"ask_question","confidence":0.92,"topics":["pricing"],"is_fee_question":true,"pricing_signal":"amount_seeking","fee_thread_continuation":false}
+Example: {"intent":"ask_question","confidence":0.92,"topics":["pricing"],"is_fee_question":true,"pricing_signal":"amount_seeking","fee_thread_continuation":false,"reason_first_done_adding":false}
 
 Use "unknown" for intent only when the message does not clearly match any other intent.`;
 
@@ -475,6 +477,10 @@ function mergeClassifierPricingSubsignals(
   if (parsed.fee_thread_continuation === true) {
     base.fee_thread_continuation = true;
   }
+  if (parsed.reason_first_done_adding === true) {
+    base.reason_first_done_adding = true;
+    base.fee_thread_continuation = false;
+  }
 }
 
 function pricingSubsignalConfidenceTrusted(confidence: number): boolean {
@@ -508,6 +514,23 @@ export function classifierSignalsFeeThreadContinuation(
     return false;
   }
   return lastBotDiscussesFeesTopic(lastBotMessage);
+}
+
+/**
+ * e-task-dm-07: Classifier says user finished listing concerns before fee (trusted confidence).
+ */
+export function classifierSignalsReasonFirstDoneAdding(result: IntentDetectionResult): boolean {
+  return (
+    pricingSubsignalConfidenceTrusted(result.confidence) &&
+    result.reason_first_done_adding === true
+  );
+}
+
+/**
+ * Wrap-up before fee: structured classifier and/or closed regex fallback (see reason-first-triage).
+ */
+export function userSignalsReasonFirstWrapUp(text: string, result: IntentDetectionResult): boolean {
+  return parseNothingElseOrSameOnly(text) || classifierSignalsReasonFirstDoneAdding(result);
 }
 
 /**
@@ -757,7 +780,7 @@ function buildIntentClassificationUserContent(
   const blocks: string[] = [];
   if (ctx.conversationGoal === 'reason_first_triage') {
     blocks.push(
-      '[Conversation context: The assistant is asking whether anything else should be addressed at the visit and/or confirming a short summary of concerns before quoting fees. Replies like "nothing else", "yes", small corrections, or brief add-ons fit this flow; pure pricing clarification may be ask_question unless the user explicitly starts booking.]'
+      '[Conversation context: The assistant is asking whether anything else should be addressed at the visit and/or confirming a short summary of concerns before quoting fees. Set "reason_first_done_adding" true when the user only signals they are done (any natural wording). Set "fee_thread_continuation" false when they are done. Replies like "nothing else", "that\'s it thanks", "yes", small corrections, or brief add-ons fit this flow; pure pricing clarification may be ask_question unless the user explicitly starts booking.]'
     );
   }
   if (ctx.conversationGoal === 'fee_quote') {

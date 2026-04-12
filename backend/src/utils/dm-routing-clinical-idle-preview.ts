@@ -12,6 +12,7 @@ import {
   classifierSignalsFeeThreadContinuation,
   classifierSignalsPaymentExistence,
   intentSignalsFeeOrPricing,
+  userSignalsReasonFirstWrapUp,
 } from '../services/ai-service';
 import { userExplicitlyWantsToBookNow } from './consultation-fees';
 import {
@@ -76,7 +77,11 @@ export function previewClinicalIdleDmBranch(params: {
     }
 
     if (state.reasonFirstTriagePhase === 'ask_more') {
-      if (signalsFeePricing && !userExplicitlyWantsToBookNow(text)) {
+      if (
+        signalsFeePricing &&
+        !userExplicitlyWantsToBookNow(text) &&
+        !userSignalsReasonFirstWrapUp(text, intentResult)
+      ) {
         return 'reason_first_triage_ask_more_payment_bridge';
       }
       return 'reason_first_triage_confirm';

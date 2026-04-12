@@ -60,6 +60,25 @@
       "expected_branch": "reason_first_triage_confirm"
     },
     {
+      "id": "reason_first_ask_more_wrap_up_natural_language",
+      "flags": ["reason_first", "wrap_up", "fee_signals_without_bridge"],
+      "inCollection": false,
+      "state": { "step": "responded", "reasonFirstTriagePhase": "ask_more" },
+      "recentMessages": [
+        { "sender_type": "patient", "content": "Sugar levels high" },
+        { "sender_type": "system", "content": "We will share the fee once confirmed. Anything else before we share the fee?" }
+      ],
+      "text": "thats it thanks",
+      "intentResult": {
+        "intent": "ask_question",
+        "confidence": 0.88,
+        "is_fee_question": true,
+        "topics": ["pricing"],
+        "fee_thread_continuation": true
+      },
+      "expected_branch": "reason_first_triage_confirm"
+    },
+    {
       "id": "reason_first_ask_more_payment_bridge",
       "flags": ["reason_first", "pricing_before_confirm"],
       "inCollection": false,

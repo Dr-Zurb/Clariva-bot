@@ -13,6 +13,7 @@ import {
   generateResponse,
   resolvePostMedicalPaymentExistenceAck,
   resolveVisitReasonSnippetForTriage,
+  userSignalsReasonFirstWrapUp,
 } from '../../../src/services/ai-service';
 import { buildConsolidatedReasonSnippetFromMessages } from '../../../src/utils/reason-first-triage';
 import { env } from '../../../src/config/env';
@@ -70,6 +71,38 @@ describe('AI Service', () => {
     mockedAudit.logAIClassification.mockImplementation(() => Promise.resolve());
     mockedAudit.logAIResponseGeneration.mockImplementation(() => Promise.resolve());
     mockedAudit.logAuditEvent.mockImplementation(() => Promise.resolve());
+  });
+
+  describe('userSignalsReasonFirstWrapUp', () => {
+    it('is true when classifier sets reason_first_done_adding with trusted confidence', () => {
+      expect(
+        userSignalsReasonFirstWrapUp('anything else?', {
+          intent: 'ask_question',
+          confidence: 0.9,
+          reason_first_done_adding: true,
+        })
+      ).toBe(true);
+    });
+
+    it('is false when only classifier signals wrap-up but confidence is below threshold (regex does not match)', () => {
+      expect(
+        userSignalsReasonFirstWrapUp('all done for now', {
+          intent: 'ask_question',
+          confidence: 0.5,
+          reason_first_done_adding: true,
+        })
+      ).toBe(false);
+    });
+
+    it('still matches "thats it" via regex when classifier confidence is low', () => {
+      expect(
+        userSignalsReasonFirstWrapUp('thats it', {
+          intent: 'ask_question',
+          confidence: 0.5,
+          reason_first_done_adding: true,
+        })
+      ).toBe(true);
+    });
   });
 
   describe('redactPhiForAI', () => {
@@ -164,6 +197,39 @@ describe('AI Service', () => {
             tokens: 50,
           })
         );
+      });
+
+      it('merges reason_first_done_adding and clears fee_thread_continuation', async () => {
+        const res: MockCompletion = {
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  intent: 'ask_question',
+                  confidence: 0.91,
+                  topics: ['pricing'],
+                  is_fee_question: true,
+                  fee_thread_continuation: true,
+                  reason_first_done_adding: true,
+                }),
+              },
+            },
+          ],
+          usage: { total_tokens: 55 },
+        };
+        const mockCreate = jest.fn<() => Promise<MockCompletion>>().mockResolvedValue(res);
+        mockedOpenai.getOpenAIClient.mockReturnValue({
+          chat: { completions: { create: mockCreate } },
+        } as any);
+        mockedOpenai.getOpenAIConfig.mockReturnValue({
+          model: 'gpt-5.2',
+          maxTokens: 256,
+        });
+
+        const result = await classifyIntent('thats it thanks', correlationId);
+
+        expect(result.reason_first_done_adding).toBe(true);
+        expect(result.fee_thread_continuation).toBe(false);
       });
 
       it('RBH-18: parses topics and is_fee_question from model JSON', async () => {

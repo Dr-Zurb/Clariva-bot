@@ -14,10 +14,19 @@ import {
   shouldDeferIdleFeeForReasonFirstTriage,
   userMessageSuggestsClinicalReason,
   userWantsExplicitFullFeeList,
+  parseNothingElseOrSameOnly,
 } from '../../../src/utils/reason-first-triage';
 import type { ConversationState } from '../../../src/types/conversation';
 
 describe('reason-first-triage', () => {
+  describe('parseNothingElseOrSameOnly', () => {
+    it('treats "thats it thanks" and "that\'s it" as wrap-up (closed dialog acts)', () => {
+      expect(parseNothingElseOrSameOnly('thats it thanks')).toBe(true);
+      expect(parseNothingElseOrSameOnly("that's it")).toBe(true);
+      expect(parseNothingElseOrSameOnly('thats it.')).toBe(true);
+    });
+  });
+
   it('does not defer vague pay-existence until short ack is sent (clinical thread)', () => {
     const state: ConversationState = {};
     const defer = shouldDeferIdleFeeForReasonFirstTriage({
