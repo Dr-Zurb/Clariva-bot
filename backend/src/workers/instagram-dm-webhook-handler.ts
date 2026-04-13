@@ -62,7 +62,12 @@ import {
   resolveBookingTargetRelationForDm,
   AI_RECENT_MESSAGES_LIMIT,
 } from '../services/ai-service';
-import { isEmergencyUserMessage, resolveSafetyMessage } from '../utils/safety-messages';
+import {
+  isEmergencyUserMessage,
+  recentThreadHasAssistantEmergencyEscalation,
+  resolveSafetyMessage,
+  userMessageSignalsPostEmergencyStability,
+} from '../utils/safety-messages';
 import {
   executeAction,
   parseToolCallToAction,
@@ -1506,8 +1511,18 @@ export async function processInstagramDmWebhook(params: {
         replyText = `Please reply 1, 2, or ${ids.length}.`;
         await updateConversationState(conversation.id, state, correlationId);
       }
-    } else if (isEmergencyUserMessage(text) || intentResult.intent === 'emergency') {
+    } else if (
+      (isEmergencyUserMessage(text) || intentResult.intent === 'emergency') &&
+      !(
+        inCollection &&
+        intentResult.intent === 'emergency' &&
+        !isEmergencyUserMessage(text)
+      )
+    ) {
       // RBH-15: Pattern-based emergency wins over misclassified medical_query; message in user's language.
+      // During booking intake, LLM-only "emergency" on vitals/reason replies is suppressed so we treat
+      // the message as collection data (e.g. "200/100 this morning" when we asked for highest BP).
+      // Deterministic acute phrases (chest pain, can't breathe, …) always escalate.
       dmRoutingBranch = 'emergency_safety';
       replyText = resolveSafetyMessage('emergency', text);
       state = {
@@ -1790,6 +1805,46 @@ export async function processInstagramDmWebhook(params: {
         }
       }
       await updateConversationState(conversation.id, state, correlationId);
+    } else if (
+      intentResult.intent === 'medical_query' &&
+      !inCollection &&
+      recentThreadHasAssistantEmergencyEscalation(recentDmForClinical) &&
+      userMessageSignalsPostEmergencyStability(text)
+    ) {
+      dmRoutingBranch = 'booking_resume_after_emergency';
+      state = {
+        ...state,
+        lastIntent: intentResult.intent,
+        step: 'collecting_all',
+        reasonFirstTriagePhase: undefined,
+        postMedicalConsultFeeAckSent: undefined,
+        updatedAt: new Date().toISOString(),
+      };
+      await updateConversationState(conversation.id, state, correlationId);
+      const baseCtx = await buildAiContextForResponse(
+        conversation.id,
+        state,
+        recentMessages,
+        correlationId,
+        text,
+        teleconsultCatalogRowCount
+      );
+      const resumeHint =
+        'Thread note: The patient previously received emergency (112/108) escalation. They now describe stable or non-crisis vitals. Briefly acknowledge—do NOT repeat emergency instructions unless they report new crisis symptoms or crisis-level readings. Invite them to book a teleconsult: ask for full name, age, gender, mobile, and reason for visit (include current BP if relevant) in one message when details are still missing.';
+      const aiContext: GenerateResponseContext = {
+        ...baseCtx,
+        idleDialogueHint: [baseCtx.idleDialogueHint, resumeHint].filter(Boolean).join('\n'),
+      };
+      replyText = await runGenerateResponse({
+        conversationId: conversation.id,
+        currentIntent: 'book_appointment',
+        state,
+        recentMessages,
+        currentUserMessage: text,
+        correlationId,
+        doctorContext,
+        context: aiContext,
+      });
     } else if (intentResult.intent === 'medical_query' && !inCollection) {
       dmRoutingBranch = 'medical_safety';
       // Only deflect when NOT in collection flow. Context matters: if we asked for "reason for visit"

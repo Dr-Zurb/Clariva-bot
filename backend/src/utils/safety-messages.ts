@@ -192,6 +192,27 @@ export function messageHasHypertensiveCrisisBloodPressureReading(text: string): 
 }
 
 /**
+ * After an emergency escalation in-thread, patient clarifies **stability** or gives **non-crisis** vitals.
+ * Used to route to booking resume (AI) instead of generic medical deflection. Not a clinical diagnosis.
+ */
+export function userMessageSignalsPostEmergencyStability(text: string): boolean {
+  if (messageHasHypertensiveCrisisBloodPressureReading(text)) return false;
+  const t = text.trim().toLowerCase();
+  if (t.length < 3) return false;
+  if (
+    /\b(stable|stabilized|better|improved|ok now|fine now|under control|feeling better|no other symptom|now its okay|now it's okay|now okay|okay now|all good|its okay|it's okay)\b/.test(
+      t
+    )
+  ) {
+    return true;
+  }
+  const pairs = parsePlausibleBloodPressurePairs(text);
+  if (pairs.length === 0) return false;
+  const last = pairs[pairs.length - 1]!;
+  return !bloodPressurePairIsHypertensiveCrisis(last);
+}
+
+/**
  * Deterministic **acute-phrase** emergency signals (latency, obvious EMS language).
  * Does **not** include BP numbers — vitals/crisis vs stable vs booking-safe is assessed by the **intent
  * classifier** using full-thread context (LLM). See `messageHasHypertensiveCrisisBloodPressureReading` only

@@ -49,6 +49,8 @@ export type DmHandlerBranch =
   /** Channel chosen but clinical thread needs reason-first before collecting_all / AI intake */
   | 'consultation_channel_pick_reason_first'
   | 'booking_collection'
+  /** After 112/108, patient reports stable / non-crisis vitals — resume toward teleconsult booking (AI) */
+  | 'booking_resume_after_emergency'
   | 'confirm_details'
   | 'post_booking_ack'
   | 'fee_book_misclassified_idle'

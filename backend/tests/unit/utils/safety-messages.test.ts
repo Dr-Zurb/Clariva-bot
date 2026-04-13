@@ -8,6 +8,7 @@ import {
   parsePlausibleBloodPressurePairs,
   recentThreadHasAssistantEmergencyEscalation,
   resolveSafetyMessage,
+  userMessageSignalsPostEmergencyStability,
 } from '../../../src/utils/safety-messages';
 
 describe('safety-messages (RBH-15)', () => {
@@ -157,6 +158,46 @@ describe('safety-messages (RBH-15)', () => {
     it('does not treat normotensive readings as BP emergency', () => {
       expect(isEmergencyUserMessage('my bp is 128/82')).toBe(false);
       expect(messageHasHypertensiveCrisisBloodPressureReading('130/85')).toBe(false);
+    });
+  });
+
+  describe('userMessageSignalsPostEmergencyStability', () => {
+    it('returns false when last plausible BP is still crisis-range', () => {
+      expect(userMessageSignalsPostEmergencyStability('bp 200/100')).toBe(false);
+      expect(userMessageSignalsPostEmergencyStability('now 185/95')).toBe(false);
+    });
+
+    it('returns true for stability keywords without crisis vitals', () => {
+      expect(userMessageSignalsPostEmergencyStability('I am stable now')).toBe(true);
+      expect(userMessageSignalsPostEmergencyStability('feeling better, no chest pain')).toBe(
+        true
+      );
+    });
+
+    it('returns true when only non-crisis BP is present', () => {
+      expect(userMessageSignalsPostEmergencyStability('my bp is 140/90 now')).toBe(true);
+      expect(userMessageSignalsPostEmergencyStability('128/82')).toBe(true);
+    });
+
+    it('returns false when last pair is crisis after earlier stable pair', () => {
+      expect(
+        userMessageSignalsPostEmergencyStability('was 130/85 but now spiked to 200/100')
+      ).toBe(false);
+    });
+
+    it('returns true when last pair is non-crisis after earlier crisis pair', () => {
+      expect(
+        userMessageSignalsPostEmergencyStability('earlier 200/100 now 135/85')
+      ).toBe(true);
+    });
+
+    it('returns false for empty or too-short text', () => {
+      expect(userMessageSignalsPostEmergencyStability('')).toBe(false);
+      expect(userMessageSignalsPostEmergencyStability('ok')).toBe(false);
+    });
+
+    it('returns false when there is no BP and no stability keywords', () => {
+      expect(userMessageSignalsPostEmergencyStability('what should I eat')).toBe(false);
     });
   });
 
