@@ -47,6 +47,10 @@ import {
   recentThreadHasAssistantEmergencyEscalation,
 } from '../utils/safety-messages';
 import { POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN } from '../utils/post-medical-ack-copy';
+import {
+  isOptionalExtrasConsentPrompt,
+  isSkipExtrasReply,
+} from '../utils/booking-consent-context';
 
 // ============================================================================
 // Constants
@@ -1348,10 +1352,14 @@ const CONSENT_REPLY_SEMANTIC_SYSTEM = `You classify whether the patient is grant
 
 The assistant asked them to agree to share details / consent (any language: English, Hindi, Punjabi, etc.).
 
+IMPORTANT — Read the assistant message context:
+- If the assistant asked ONLY for **optional** extras (e.g. "Anything else you'd like the doctor to know before your visit? optional") and the patient says they have nothing to add ("no", "no that's it", "nothing else", "that's all"), that means they are **continuing** — classify as **granted** (they are not refusing data consent).
+- If they clearly refuse consent to use their details for scheduling ("don't use my number", "I don't consent", "delete my data"), classify as **denied**.
+
 Return JSON only: {"decision":"granted"|"denied"|"unclear","confidence":0-1}
 
 - granted: they agree — yes, okay, sure, proceed, I consent, go ahead, haan, ji, theek hai, ठीक है, हाँ, etc.
-- denied: they refuse — no, don't share, stop, nahi, मना, etc.
+- denied: they refuse consent to share contact details — not "no extra notes" when the question was optional.
 - unclear: unrelated question, or not answering the consent question
 
 Short affirmatives after a consent question count as granted.`;
@@ -1505,13 +1513,21 @@ export async function classifyConfirmDetailsReplySemantic(
 }
 
 /**
- * Keyword pass first; then semantic LLM for consent (any phrasing / language).
+ * Context before keywords: optional-extras prompts must not treat "no / that's it" as consent denial.
+ * Skip phrases → granted; clear "yes" → granted without LLM; else semantic when assistant asked optional extras.
+ * Otherwise: keyword pass, then semantic LLM.
  */
 export async function resolveConsentReplyForBooking(
   text: string,
   lastAssistantMessage: string | undefined,
   correlationId: string
 ): Promise<ConsentParseResult> {
+  if (isOptionalExtrasConsentPrompt(lastAssistantMessage)) {
+    if (isSkipExtrasReply(text)) return 'granted';
+    const fastExtras = parseConsentReply(text);
+    if (fastExtras === 'granted') return 'granted';
+    return classifyConsentReplySemantic(text, lastAssistantMessage, correlationId);
+  }
   const fast = parseConsentReply(text);
   if (fast !== 'unclear') return fast;
   return classifyConsentReplySemantic(text, lastAssistantMessage, correlationId);

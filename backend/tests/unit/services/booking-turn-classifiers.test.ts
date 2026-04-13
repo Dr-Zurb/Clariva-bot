@@ -26,12 +26,27 @@ describe('booking turn classifiers (deterministic fast path)', () => {
   });
 
   describe('resolveConsentReplyForBooking', () => {
+    const optionalExtrasPrompt =
+      "Anything else you'd like the doctor to know before your visit? (optional) Reply with your extras, or say Yes to continue.";
+
     it('grants on keyword yes', async () => {
       expect(await resolveConsentReplyForBooking('yes', 'consent?', 't4')).toBe('granted');
     });
 
-    it('denies on keyword no', async () => {
+    it('denies on keyword no for bare consent question', async () => {
       expect(await resolveConsentReplyForBooking('no thanks', 'consent?', 't5')).toBe('denied');
+    });
+
+    it('grants no thats it when assistant asked optional extras (context before keywords)', async () => {
+      expect(await resolveConsentReplyForBooking('no thats it', optionalExtrasPrompt, 't6')).toBe(
+        'granted'
+      );
+    });
+
+    it('grants yes on optional extras without requiring semantic', async () => {
+      expect(await resolveConsentReplyForBooking('yes', optionalExtrasPrompt, 't7')).toBe(
+        'granted'
+      );
     });
   });
 });

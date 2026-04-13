@@ -23,6 +23,8 @@
 
 We ship a receptionist that feels intelligent; the **primary** tool is the model, not a growing rules engine.
 
+**Conversation sense (like modern LLMs):** Treat user messages as **replies to the last assistant turn** in the same thread. Prefer **structured LLM + last-message context** over isolated keyword matching for routing decisions (consent, confirm details, optional notes). See §4.8.
+
 ---
 
 ## 2. What works: LLM-first understanding, system-first facts
@@ -91,6 +93,14 @@ These patterns look productive in the short term and become technical debt immed
 - **Why it breaks:** Feels dumb, increases drop-off; fights the “intelligent receptionist” stance in §1.
 - **Instead:** **Summarize or quote** what you already have; ask only for **genuinely missing** fields. Pass a **consolidated reason snippet** (from state + recent messages) into prompts, not a blank form every time.
 
+### 4.8 Keyword-first routing without **dialog context** (same word, different meaning)
+
+- Applying a global rule like “`no` = deny consent” **before** knowing **what the assistant last asked**. Example: after *“Anything else you’d like the doctor to know? (optional)”*, the user says *“no that’s it”* meaning *no extra notes* — not *deny using my contact details*. Keyword-only logic clears data and ships the wrong reply.
+- **Why it breaks:** Humans (and LLMs) resolve meaning from **last question + thread**; a static keyword list does not.
+- **Instead:** **Context before keywords:** pass the **last assistant message** (or structured `lastPromptKind`) into classifiers; detect **optional-extras** vs **bare consent** (`booking-consent-context.ts`, `resolveConsentReplyForBooking` in `ai-service.ts`). Use **skip-extras** phrases and **semantic consent JSON** when the fast path would confuse *decline* with *refuse consent*. Same pattern for confirm-details vs other “yes/no” steps.
+
+**Human-like bar:** The bot should behave like a good receptionist: **understand the turn**, then act — not fire the first keyword match in the file.
+
 ---
 
 ## 5. When deterministic logic is still correct
@@ -115,6 +125,7 @@ If you are unsure whether the domain is closed: assume it is **open** and protot
 - [ ] Does this duplicate logic elsewhere? If yes, **consolidate** the source of truth.
 - [ ] Does this touch **staff-feedback learning** or autobook? If yes, follow **§9** and [STAFF_FEEDBACK_LEARNING_INITIATIVE.md](../task-management/STAFF_FEEDBACK_LEARNING_INITIATIVE.md) (privacy charter, opt-in, no raw PHI by default).
 - [ ] **Booking intake:** Does extraction use **thread context** for visit reason where the user already explained symptoms/BP/meds? Are **confirmation replies** routed **before** slot merge so they do not overwrite **name** / **reason**?
+- [ ] **Consent / optional extras:** Does routing use **last assistant message** (or `lastPromptKind`) so **“no / that’s it”** after an **optional extras** question is not treated as **deny consent** (§4.8)?
 - [ ] **Consent / detail confirmation:** Prefer **semantic classification** (paraphrase, multilingual) for “yes / I consent / yes correct” rather than **exact-string-only** gates that drop into free-form generation without the real **booking URL** (see `resolveConsentReplyForBooking`, `resolveConfirmDetailsReplyForBooking` in `ai-service.ts`).
 
 ---
@@ -131,7 +142,7 @@ Use this when triaging refactors or new features—**not** exhaustive, but the u
 | Service catalog match | `service-catalog-deterministic-match.ts` | Hybrid: high-confidence deterministic + LLM map-to-id when needed |
 | Patient fields | `collection-service` (`validateAndApplyExtracted`), `extract-patient-fields.ts` | **Structured LLM extraction first** whenever slots are missing; `extract-patient-fields.ts` is **fallback** if the model returns nothing (no API key, empty JSON). Do **not** extend regex heuristics in `extract-patient-fields.ts` unless explicitly asked—prefer prompt + tests in `extractFieldsWithAI`. Merge **validation** in code (symptom/gender guards), not new keyword lists for NLU. |
 | Time / date NL | `date-time-parser.ts` | Parser + optional LLM for hard cases |
-| Consent & confirm replies | `consent-service.ts` (`parseConsentReply` fast path), `ai-service.ts` (`resolveConsentReplyForBooking`, `resolveConfirmDetailsReplyForBooking`) | **Hybrid:** obvious keywords stay fast; **LLM JSON** for unclear / multilingual / “yes correct” so routing reaches **deterministic booking URL** (`formatBookingLinkDm`) instead of the model inventing slots or links. |
+| Consent & confirm replies | `consent-service.ts` (`parseConsentReply` fast path), `utils/booking-consent-context.ts`, `ai-service.ts` (`resolveConsentReplyForBooking`, `resolveConfirmDetailsReplyForBooking`) | **Context first:** optional-extras vs bare consent (§4.8); then keywords; **LLM JSON** when unclear so “no that’s it” doesn’t become consent denial. |
 
 ---
 

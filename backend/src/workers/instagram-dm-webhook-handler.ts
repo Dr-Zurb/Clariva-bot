@@ -84,6 +84,7 @@ import {
   seedCollectedReasonFromStateIfValid,
 } from '../services/collection-service';
 import { extractFieldsFromMessage, type ExtractedFields } from '../utils/extract-patient-fields';
+import { isSkipExtrasReply } from '../utils/booking-consent-context';
 import { REQUIRED_COLLECTION_FIELDS } from '../utils/validation';
 import {
   persistPatientAfterConsent,
@@ -605,18 +606,6 @@ function getLastBotMessage(
     }
   }
   return undefined;
-}
-
-/** Skip phrases for optional "Anything else?" - user declines to add extras. */
-const SKIP_EXTRAS_PHRASES = [
-  'nothing', 'skip', 'nope', 'no thanks', 'no thank you', 'all good', "that's all",
-  'thats all', 'no', 'that\'s it', 'thats it', 'none', 'no extras', 'im good', "i'm good",
-];
-
-function isSkipExtrasReply(text: string): boolean {
-  const t = text.trim().toLowerCase();
-  if (!t) return true;
-  return SKIP_EXTRAS_PHRASES.some((p) => t === p || t === p + '.' || t.startsWith(p + ','));
 }
 
 /** Extract patient extras from consent reply. Returns trimmed string or undefined if none. */
