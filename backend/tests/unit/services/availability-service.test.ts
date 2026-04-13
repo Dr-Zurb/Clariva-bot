@@ -70,6 +70,13 @@ describe('Availability Service - getAvailableSlots', () => {
     (mockedAudit.logAuditEvent as jest.Mock) = jest
       .fn()
       .mockImplementation(() => Promise.resolve());
+    // Slots must be in the future vs "now" (service filters past starts)
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-01-10T12:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it('returns [] when no availability for date', async () => {

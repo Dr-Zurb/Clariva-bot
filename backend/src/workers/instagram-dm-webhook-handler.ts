@@ -61,6 +61,8 @@ import {
   extractBookForSomeoneElseRelationKeyword,
   resolveBookingTargetRelationForDm,
   AI_RECENT_MESSAGES_LIMIT,
+  resolveConsentReplyForBooking,
+  resolveConfirmDetailsReplyForBooking,
 } from '../services/ai-service';
 import {
   isEmergencyUserMessage,
@@ -84,7 +86,6 @@ import {
 import { extractFieldsFromMessage, type ExtractedFields } from '../utils/extract-patient-fields';
 import { REQUIRED_COLLECTION_FIELDS } from '../utils/validation';
 import {
-  parseConsentReply,
   persistPatientAfterConsent,
   handleConsentDenied,
   handleRevocation,
@@ -482,7 +483,15 @@ function lastBotMessageAskedForConsent(
         c.includes('ready to pick a time') ||
         c.includes('do i have your consent') ||
         c.includes('consent to use these details') ||
-        (c.includes('anything else') && c.includes('say yes to continue'))
+        (c.includes('anything else') && c.includes('say yes to continue')) ||
+        (c.includes('consent') &&
+          (c.includes('reply') ||
+            c.includes('share') ||
+            c.includes('scheduling') ||
+            c.includes('appointment') ||
+            c.includes('details') ||
+            c.includes('clinic'))) ||
+        /\b(i consent|say yes to consent|grant consent)\b/.test(c)
       );
     }
   }
@@ -2292,14 +2301,20 @@ export async function processInstagramDmWebhook(params: {
         state = { ...state, updatedAt: new Date().toISOString() };
         await updateConversationState(conversation.id, state, correlationId);
       }
-    } else if (state.step === 'consent' || (effectiveAskedForConsent(state, recentMessages) && parseConsentReply(text) === 'granted')) {
+    } else if (state.step === 'consent' || effectiveAskedForConsent(state, recentMessages)) {
       dmRoutingBranch = 'consent_flow';
-      // Handle consent reply regardless of intent. Fallback: last bot asked for consent + user said yes.
+      // Handle consent reply regardless of intent (keywords + semantic LLM for paraphrases / any language).
       if (!state.step) {
         state = { ...state, step: 'consent', updatedAt: new Date().toISOString() };
         await updateConversationState(conversation.id, state, correlationId);
       }
-        const consentResult = parseConsentReply(text);
+      const tConsentResolve = Date.now();
+      const consentResult = await resolveConsentReplyForBooking(
+        text,
+        getLastBotMessage(recentMessages),
+        correlationId
+      );
+      dmGenerateMs += Date.now() - tConsentResolve;
       // Denied is handled below; granted + any unclear (incl. "nothing"/skip extras) proceeds to slot link.
       const hasExtrasOrGranted = consentResult === 'granted' || consentResult === 'unclear';
       if (hasExtrasOrGranted) {
@@ -2602,18 +2617,26 @@ export async function processInstagramDmWebhook(params: {
       }
     } else if (
       state.step === 'confirm_details' ||
-      (effectiveAskedForConfirm(state, recentMessages) &&
-        /^(yes|yeah|yep|ok|okay|correct|looks good|confirmed)$/.test(text.trim().toLowerCase()))
+      (effectiveAskedForConfirm(state, recentMessages) && text.trim().length > 0)
     ) {
       dmRoutingBranch = 'confirm_details';
-      // Handle confirm reply regardless of intent. Fallback: last bot asked for confirm + user said yes.
+      // Deterministic patterns + semantic LLM for multilingual / "yes correct" / paraphrases.
       if (!state.step) {
         state = { ...state, step: 'confirm_details', updatedAt: new Date().toISOString() };
         await updateConversationState(conversation.id, state, correlationId);
       }
-      const trimmed = text.trim().toLowerCase();
-      const isYes = /^(yes|yeah|yep|ok|okay|correct|looks good|confirmed)$/.test(trimmed);
-      const isCorrection = /^(no|nope|change|correct)\s*[,:]/i.test(text.trim()) || /^(actually|no,)\s+/i.test(text.trim());
+      const tConfirmResolve = Date.now();
+      const confirmResolution = await resolveConfirmDetailsReplyForBooking(
+        text,
+        getLastBotMessage(recentMessages),
+        correlationId
+      );
+      dmGenerateMs += Date.now() - tConfirmResolve;
+      const isCorrectionLegacy =
+        /^(no|nope|change|correct)\s*[,:]/i.test(text.trim()) ||
+        /^(actually|no,)\s+/i.test(text.trim());
+      const isYes = confirmResolution === 'confirm';
+      const isCorrection = confirmResolution === 'correction' || isCorrectionLegacy;
       if (isYes) {
         let collected = await getCollectedData(conversation.id);
         if (!collected?.name || !collected?.phone) {

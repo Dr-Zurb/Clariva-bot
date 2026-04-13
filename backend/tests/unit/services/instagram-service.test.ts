@@ -157,10 +157,11 @@ describe('Instagram Service', () => {
           'https://graph.facebook.com/v18.0/me/messages',
           {
             recipient: { id: validRecipientId },
+            messaging_type: 'RESPONSE',
             message: { text: validMessage },
           },
           expect.objectContaining({
-            params: { access_token: 'test-access-token' },
+            headers: { Authorization: 'Bearer test-access-token' },
             timeout: 10000,
           })
         );
@@ -169,7 +170,6 @@ describe('Instagram Service', () => {
             correlationId,
             action: 'send_message',
             resourceType: 'instagram_message',
-            resourceId: validResponse.message_id,
             status: 'success',
             metadata: expect.objectContaining({
               recipient_id: validRecipientId,
@@ -225,14 +225,15 @@ describe('Instagram Service', () => {
           code: 190,
         });
 
-        mockedAxiosPost.mockRejectedValueOnce(error);
+        // Code 190: try graph.facebook.com then graph.instagram.com fallback
+        mockedAxiosPost.mockRejectedValueOnce(error).mockRejectedValueOnce(error);
 
         // Act & Assert
         await expect(
           sendInstagramMessage(validRecipientId, validMessage, correlationId)
         ).rejects.toThrow(UnauthorizedError);
 
-        expect(mockedAxiosPost).toHaveBeenCalledTimes(1);
+        expect(mockedAxiosPost).toHaveBeenCalledTimes(2);
         expect(mockedAuditLogger.logAuditEvent).toHaveBeenCalledWith(
           expect.objectContaining({
             correlationId,
@@ -408,15 +409,17 @@ describe('Instagram Service', () => {
           code: 190,
         });
 
-        mockedAxiosPost.mockRejectedValueOnce(unauthorizedError);
+        mockedAxiosPost
+          .mockRejectedValueOnce(unauthorizedError)
+          .mockRejectedValueOnce(unauthorizedError);
 
         // Act & Assert
         await expect(
           sendInstagramMessage(validRecipientId, validMessage, correlationId)
         ).rejects.toThrow(UnauthorizedError);
 
-        // Should only be called once (no retries)
-        expect(mockedAxiosPost).toHaveBeenCalledTimes(1);
+        // Facebook + Instagram fallback, no retry loop for 401
+        expect(mockedAxiosPost).toHaveBeenCalledTimes(2);
       });
 
       it('should not retry on 404 Not Found error', async () => {
@@ -449,7 +452,7 @@ describe('Instagram Service', () => {
           code: 190,
         });
 
-        mockedAxiosPost.mockRejectedValueOnce(error);
+        mockedAxiosPost.mockRejectedValueOnce(error).mockRejectedValueOnce(error);
 
         await expect(
           sendInstagramMessage(validRecipientId, validMessage, correlationId)
@@ -550,7 +553,6 @@ describe('Instagram Service', () => {
             correlationId,
             action: 'send_message',
             resourceType: 'instagram_message',
-            resourceId: validResponse.message_id,
             status: 'success',
             metadata: expect.objectContaining({
               recipient_id: validRecipientId,
@@ -569,7 +571,7 @@ describe('Instagram Service', () => {
           code: 190,
         });
 
-        mockedAxiosPost.mockRejectedValueOnce(error);
+        mockedAxiosPost.mockRejectedValueOnce(error).mockRejectedValueOnce(error);
 
         // Act
         await expect(

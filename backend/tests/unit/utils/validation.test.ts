@@ -54,26 +54,18 @@ describe('validatePatientField', () => {
     });
   });
 
-  describe('date_of_birth', () => {
-    it('accepts ISO date', () => {
-      expect(validatePatientField('date_of_birth', '1990-01-15')).toBe(
-        '1990-01-15'
-      );
+  describe('age', () => {
+    it('accepts numeric age string or number', () => {
+      expect(validatePatientField('age', '45')).toBe(45);
+      expect(validatePatientField('age', '  30  ')).toBe(30);
     });
 
-    it('accepts US-style M/D/YYYY', () => {
-      expect(validatePatientField('date_of_birth', '1/15/1990')).toBe(
-        '1990-01-15'
-      );
-    });
-
-    it('rejects invalid dates', () => {
-      expect(() =>
-        validatePatientField('date_of_birth', 'not-a-date')
-      ).toThrow(ValidationError);
-      expect(() => validatePatientField('date_of_birth', '')).toThrow(
+    it('rejects out-of-range or non-numeric age', () => {
+      expect(() => validatePatientField('age', 'not-a-number')).toThrow(
         ValidationError
       );
+      expect(() => validatePatientField('age', '')).toThrow(ValidationError);
+      expect(() => validatePatientField('age', '0')).toThrow(ValidationError);
     });
   });
 
@@ -161,6 +153,7 @@ describe('validateBookAppointment (e-task-2)', () => {
     patientName: 'PATIENT_TEST',
     patientPhone: '+10000000000',
     appointmentDate: futureDate.toISOString(),
+    reasonForVisit: 'Follow-up visit',
   };
 
   it('accepts valid body', () => {

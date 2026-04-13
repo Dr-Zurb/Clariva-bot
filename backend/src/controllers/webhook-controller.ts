@@ -269,6 +269,15 @@ export const handleInstagramWebhook = asyncHandler(
           res.status(200).json(successResponse({ message: 'OK' }, req));
           return;
         }
+        // Bare instagram entry (e.g. subscription ping) with no actionable messaging — reject.
+        await logSecurityEvent(
+          correlationId,
+          undefined,
+          'webhook_signature_failed',
+          'high',
+          req.ip
+        );
+        throw new UnauthorizedError('Invalid webhook signature');
       } else {
         if (len >= 300 && len <= 320) {
           const structure = getInstagramPayloadStructure(req.body);

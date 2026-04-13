@@ -61,7 +61,7 @@ describe('Consent Service', () => {
       mockedCollection.getCollectedData.mockResolvedValue({
         name: 'PATIENT_TEST',
         phone: '+10000000000',
-        date_of_birth: '1990-01-15',
+        age: 35,
         gender: 'female',
       });
       mockedCollection.clearCollectedData.mockResolvedValue(undefined);

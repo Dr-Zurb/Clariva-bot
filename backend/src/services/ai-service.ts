@@ -20,6 +20,10 @@ import { isRecentMedicalDeflectionWindow, type ConversationState } from '../type
 import type { Message } from '../types';
 import type { AIResponseWithActions, ToolCallFromAI } from '../types/system-actions';
 import { logAIClassification, logAIResponseGeneration, logAuditEvent } from '../utils/audit-logger';
+import {
+  parseConsentReply,
+  type ConsentParseResult,
+} from './consent-service';
 import type { CollectedPatientData } from '../utils/validation';
 import {
   isConsultationTypePricingFollowUp,
@@ -53,6 +57,9 @@ const RETRY_DELAYS_MS = [1000, 2000, 4000];
 
 /** RBH-12: Intent output is small JSON; lower cap reduces generation latency vs full DM max_tokens. */
 const INTENT_CLASSIFICATION_MAX_COMPLETION_TOKENS = 140;
+
+/** Booking consent / detail-confirm classifiers — same small JSON shape. */
+const BOOKING_TURN_CLASSIFICATION_MAX_COMPLETION_TOKENS = 160;
 
 /** In-memory cache TTL (ms). Key = redacted text; cache hit = no OpenAI call, no audit. */
 const INTENT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -1329,6 +1336,196 @@ export async function classifyIntent(
   }
 
   return { intent: 'unknown', confidence: 0 };
+}
+
+// ---------------------------------------------------------------------------
+// Booking flow: semantic consent + detail confirmation (LLM, JSON)
+// ---------------------------------------------------------------------------
+
+const CONSENT_REPLY_SEMANTIC_SYSTEM = `You classify whether the patient is granting or denying consent to use their contact details for appointment scheduling.
+
+The assistant asked them to agree to share details / consent (any language: English, Hindi, Punjabi, etc.).
+
+Return JSON only: {"decision":"granted"|"denied"|"unclear","confidence":0-1}
+
+- granted: they agree — yes, okay, sure, proceed, I consent, go ahead, haan, ji, theek hai, ठीक है, हाँ, etc.
+- denied: they refuse — no, don't share, stop, nahi, मना, etc.
+- unclear: unrelated question, or not answering the consent question
+
+Short affirmatives after a consent question count as granted.`;
+
+const CONFIRM_DETAILS_SEMANTIC_SYSTEM = `You classify the patient's reply to a summary of their booking details (name, phone, reason for visit, etc.).
+
+The assistant asked them to confirm the summary is correct before scheduling.
+
+Return JSON only: {"decision":"confirm"|"correction"|"unclear","confidence":0-1}
+
+- confirm: they confirm the summary is accurate — yes, correct, yes correct, that's right, haan, sahi hai, ठीक है, etc.
+- correction: they want to change something — no, wrong, actually my name is..., incorrect
+- unclear: off-topic, asking a different question, or ambiguous`;
+
+async function callBookingTurnClassifier(
+  systemPrompt: string,
+  userContent: string,
+  correlationId: string
+): Promise<Record<string, unknown> | null> {
+  const config = getOpenAIConfig();
+  const client = getOpenAIClient();
+  if (!client) {
+    logger.warn({ correlationId }, 'Booking turn classification skipped: OPENAI_API_KEY not set');
+    return null;
+  }
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const completion = await client.chat.completions.create({
+        model: config.model,
+        max_completion_tokens: BOOKING_TURN_CLASSIFICATION_MAX_COMPLETION_TOKENS,
+        response_format: { type: 'json_object' as const },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userContent },
+        ],
+      });
+      const content = completion.choices[0]?.message?.content;
+      const usage = completion.usage;
+      if (!content) {
+        await logAIClassification({
+          correlationId,
+          model: config.model,
+          redactionApplied: true,
+          status: 'failure',
+          tokens: usage?.total_tokens ?? undefined,
+          errorMessage: 'booking_turn_empty_completion',
+        });
+        return null;
+      }
+      const parsed = JSON.parse(content) as Record<string, unknown>;
+      await logAIClassification({
+        correlationId,
+        model: config.model,
+        redactionApplied: true,
+        status: 'success',
+        tokens: usage?.total_tokens ?? undefined,
+      });
+      return parsed;
+    } catch (err) {
+      const isLast = attempt === MAX_RETRIES - 1;
+      logger.warn(
+        { correlationId, attempt: attempt + 1, err: err instanceof Error ? err.message : 'unknown' },
+        'Booking turn classification attempt failed'
+      );
+      if (isLast) {
+        await logAIClassification({
+          correlationId,
+          model: config.model,
+          redactionApplied: true,
+          status: 'failure',
+          errorMessage: 'booking_turn_classification_failed',
+        });
+        return null;
+      }
+      const delayMs = RETRY_DELAYS_MS[attempt] ?? 4000;
+      await sleep(delayMs);
+    }
+  }
+  return null;
+}
+
+/**
+ * LLM consent when keyword matching is unclear. PHI redacted.
+ */
+export async function classifyConsentReplySemantic(
+  userMessage: string,
+  lastAssistantMessage: string | undefined,
+  correlationId: string
+): Promise<ConsentParseResult> {
+  const redactedUser = redactPhiForAI(userMessage);
+  const redactedAssistant = lastAssistantMessage
+    ? redactPhiForAI(lastAssistantMessage).slice(0, 1200)
+    : '';
+  const userContent = redactedAssistant
+    ? `Last assistant message (context):\n${redactedAssistant}\n\nPatient reply:\n${redactedUser}`
+    : `Patient reply:\n${redactedUser}`;
+  const parsed = await callBookingTurnClassifier(
+    CONSENT_REPLY_SEMANTIC_SYSTEM,
+    userContent,
+    correlationId
+  );
+  if (!parsed) return 'unclear';
+  const d = typeof parsed.decision === 'string' ? parsed.decision.toLowerCase() : '';
+  if (d === 'granted' || d === 'denied' || d === 'unclear') return d;
+  return 'unclear';
+}
+
+/** Result of classifying a reply to "are these details correct?" */
+export type ConfirmDetailsReplyResult = 'confirm' | 'correction' | 'unclear';
+
+function confirmDetailsDeterministic(text: string): ConfirmDetailsReplyResult | null {
+  const raw = text.trim();
+  if (!raw) return 'unclear';
+  const s = raw.toLowerCase();
+  if (/^(no|nope|wrong|incorrect)\b/i.test(raw)) return 'correction';
+  if (/^(actually|no,)\s+/i.test(raw)) return 'correction';
+  if (/^(yes|yeah|yep|ok|okay|correct|looks good|confirmed)$/.test(s)) return 'confirm';
+  if (
+    /^(yes|yeah|yep|ok|okay)\s*[,!.]?\s*(correct|right|that'?s|that is|good|confirmed)\s*\.?$/i.test(s)
+  ) {
+    return 'confirm';
+  }
+  if (/^(correct|right|that'?s right|that is correct)\s*[!.]?\s*$/i.test(raw)) return 'confirm';
+  return null;
+}
+
+/**
+ * LLM when deterministic patterns do not match (multilingual / paraphrases).
+ */
+export async function classifyConfirmDetailsReplySemantic(
+  userMessage: string,
+  lastAssistantMessage: string | undefined,
+  correlationId: string
+): Promise<ConfirmDetailsReplyResult> {
+  const redactedUser = redactPhiForAI(userMessage);
+  const redactedAssistant = lastAssistantMessage
+    ? redactPhiForAI(lastAssistantMessage).slice(0, 1200)
+    : '';
+  const userContent = redactedAssistant
+    ? `Last assistant message (context):\n${redactedAssistant}\n\nPatient reply:\n${redactedUser}`
+    : `Patient reply:\n${redactedUser}`;
+  const parsed = await callBookingTurnClassifier(
+    CONFIRM_DETAILS_SEMANTIC_SYSTEM,
+    userContent,
+    correlationId
+  );
+  if (!parsed) return 'unclear';
+  const d = typeof parsed.decision === 'string' ? parsed.decision.toLowerCase() : '';
+  if (d === 'confirm' || d === 'correction' || d === 'unclear') return d;
+  return 'unclear';
+}
+
+/**
+ * Keyword pass first; then semantic LLM for consent (any phrasing / language).
+ */
+export async function resolveConsentReplyForBooking(
+  text: string,
+  lastAssistantMessage: string | undefined,
+  correlationId: string
+): Promise<ConsentParseResult> {
+  const fast = parseConsentReply(text);
+  if (fast !== 'unclear') return fast;
+  return classifyConsentReplySemantic(text, lastAssistantMessage, correlationId);
+}
+
+/**
+ * Deterministic patterns first; then semantic LLM for detail confirmation.
+ */
+export async function resolveConfirmDetailsReplyForBooking(
+  text: string,
+  lastAssistantMessage: string | undefined,
+  correlationId: string
+): Promise<ConfirmDetailsReplyResult> {
+  const det = confirmDetailsDeterministic(text);
+  if (det !== null) return det;
+  return classifyConfirmDetailsReplySemantic(text, lastAssistantMessage, correlationId);
 }
 
 /**
