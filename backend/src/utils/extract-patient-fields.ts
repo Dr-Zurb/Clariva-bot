@@ -1,6 +1,10 @@
 /**
  * Extract patient fields from free-form message (e-task-2)
  *
+ * **Fallback only:** Used when `extractFieldsWithAI` returns nothing (no API key, empty JSON).
+ * Prefer extending the LLM prompt in `ai-service` / `extractFieldsWithAI` for new behaviors—do not
+ * grow regex here unless the product owner explicitly asks for a deterministic path.
+ *
  * Regex-based extraction for common formats. Handles:
  * - "Name: X", "Age: 25", "Phone: 8264602737", "Reason: fever"
  * - Comma/semicolon/newline separated: "Abhishek Sahil\n26M\n8264602737\ni have pain..."
@@ -283,27 +287,4 @@ export function extractFieldsFromMessage(
   }
 
   return result;
-}
-
-/**
- * True when the message is only booking confirmation / affirmation (no new patient slots).
- * Prevents LLM/merge from treating "yes confirm that" as name or reason.
- */
-export function isBookingConfirmationOnlyMessage(text: string): boolean {
-  const t = text.trim();
-  if (!t || t.length > 120) return false;
-  if (/\b(i\s+have|i\s+took|pain|diabetic|stomach|consult|fever|checkup|@\d{3,})\b/i.test(t)) return false;
-  if (/\d{1,3}\s*(?:y|yrs|years?)\b/i.test(t)) return false;
-  if (/^[A-Z][a-z]+\s+[A-Z][a-z]+\s+\d/.test(t)) return false;
-  const lower = t.toLowerCase();
-  if (
-    /^(?:yes|yeah|yep|yup|ok|okay|sure|correct|right)(?:\s+(?:please|confirm|that|confirm\s+that|that'?s\s+correct|that\s+is\s+correct|correct|fine|good|right|perfect|sounds\s+good|all\s+good|exactly|for\s+that|i\s+confirm))*[\s.,!]*$/.test(
-      lower
-    )
-  ) {
-    return true;
-  }
-  if (/^(?:that'?s\s+)?(?:correct|right|fine|good|perfect)[\s.,!]*$/.test(lower)) return true;
-  if (/^(?:yes|yeah|yep),\s*(?:that'?s\s+)?(?:correct|right|fine|good|perfect)[\s.,!]*$/.test(lower)) return true;
-  return false;
 }

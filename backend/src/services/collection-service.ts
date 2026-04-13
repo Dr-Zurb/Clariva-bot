@@ -17,12 +17,7 @@ import {
 } from '../utils/validation';
 import { logPatientDataCollection } from '../utils/audit-logger';
 import { getWebhookQueue, getQueueConnection, isQueueEnabled } from '../config/queue';
-import {
-  extractFieldsFromMessage,
-  extractPhoneAndEmail,
-  isBookingConfirmationOnlyMessage,
-  type ExtractedFields,
-} from '../utils/extract-patient-fields';
+import { extractFieldsFromMessage, extractPhoneAndEmail, type ExtractedFields } from '../utils/extract-patient-fields';
 import { isMetaBookingOrFeeReasonText } from '../utils/consultation-fees';
 import { extractFieldsWithAI, redactPhiForAI, type ExtractionContext } from '../services/ai-service';
 
@@ -307,17 +302,6 @@ export interface ValidateAndApplyExtractedResult {
   replyOverride?: string;
 }
 
-/** Trivial single-value replies — skip AI extraction (regex is enough). */
-function isTrivialSingleValue(text: string): boolean {
-  const t = text.trim();
-  if (!t || t.length > 30) return false;
-  if (/^(yes|no|yeah|nope|ok|okay)$/i.test(t)) return true;
-  if (/^(male|female|m|f)$/i.test(t)) return true;
-  if (/^\d{10}$/.test(t.replace(/\D/g, '')) && t.replace(/\D/g, '').length === 10) return true;
-  if (/^\d{1,3}$/.test(t) && parseInt(t, 10) >= 1 && parseInt(t, 10) <= 120) return true;
-  return false;
-}
-
 export interface ValidateAndApplyExtractedOptions {
   lastBotMessage?: string;
   recentMessages?: { sender_type: string; content: string }[];
@@ -326,7 +310,8 @@ export interface ValidateAndApplyExtractedOptions {
 /**
  * Extract fields from message, validate each, merge into store.
  * Returns new state with collectedFields; if all required present, step = 'confirm_details'.
- * AI Receptionist: When we have narrow context (1–2 missing fields) and message is not simple, use AI-first.
+ * AI-first: structured LLM extraction whenever slots are still missing; regex/heuristics in
+ * `extract-patient-fields` are fallback only (no API key or empty model JSON).
  */
 export async function validateAndApplyExtracted(
   conversationId: string,
@@ -338,18 +323,13 @@ export async function validateAndApplyExtracted(
   const missingFields = REQUIRED_COLLECTION_FIELDS.filter(
     (f) => !currentState.collectedFields?.includes(f)
   );
-  const isTrivial = isTrivialSingleValue(text);
-  const isShortReply = /^(yes|no|yeah|nope|my\s+sister\?|sister\s+first)$/i.test(text.trim());
-  const isConfirmationOnly = isBookingConfirmationOnlyMessage(text);
-  const isSubstantive =
-    text.trim().length > 15 && !isShortReply && !isTrivial && !isConfirmationOnly;
 
-  // LLM-first: Use AI for name/age/gender/reason when message is substantive. Regex only for phone/email (structured).
   const phoneEmail = extractPhoneAndEmail(text);
-
   let extracted: Partial<CollectedPatientData> = { ...phoneEmail };
 
-  if (isSubstantive) {
+  const shouldTryAi = missingFields.length > 0 && text.trim().length > 0;
+
+  if (shouldTryAi) {
     const allFields = ['name', 'phone', 'age', 'gender', 'reason_for_visit', 'email'] as const;
     const collectedSummary = allFields
       .map((f) => `${f}: ${currentState.collectedFields?.includes(f) ? 'provided' : 'missing'}`)
@@ -379,15 +359,14 @@ export async function validateAndApplyExtracted(
     if (Object.keys(aiExtracted).length > 0) {
       Object.assign(extracted, aiExtracted);
     } else {
-      // AI returned nothing — fallback to regex for name/age/gender/reason
       const regexFallback = extractFieldsFromMessage(text) as Partial<CollectedPatientData>;
       if (regexFallback.name) extracted.name = regexFallback.name;
       if (regexFallback.age !== undefined) extracted.age = regexFallback.age;
       if (regexFallback.gender) extracted.gender = regexFallback.gender;
       if (regexFallback.reason_for_visit) extracted.reason_for_visit = regexFallback.reason_for_visit;
+      if (regexFallback.email) extracted.email = regexFallback.email;
     }
   } else {
-    // Trivial or short — regex only (phone/email already in extracted)
     const regexResult = extractFieldsFromMessage(text) as Partial<CollectedPatientData>;
     Object.assign(extracted, regexResult);
   }
@@ -408,20 +387,12 @@ export async function validateAndApplyExtracted(
     /\b(?:male|female)\s+obviously\s*$/i.test(s.trim());
   /** Never use standalone gender as name (e.g. user said "male" for gender, not name) */
   const isGenderOnly = (s: string) => /^(male|female|m|f)$/i.test(s.trim());
-  /** Affirmation-shaped strings must not become name or reason (LLM edge cases). */
-  const isAffirmationSlotValue = (s: string) => isBookingConfirmationOnlyMessage(s);
 
   for (const [key, value] of Object.entries(extracted)) {
     if (value === undefined || value === '') continue;
     const field = key as keyof ExtractedFields;
     if (field === 'name' && typeof value === 'string') {
-      if (
-        isSymptomLike(value) ||
-        isRelationshipOrGenderLike(value) ||
-        isGenderOnly(value) ||
-        isAffirmationSlotValue(value)
-      )
-        continue;
+      if (isSymptomLike(value) || isRelationshipOrGenderLike(value) || isGenderOnly(value)) continue;
       try {
         const v = validatePatientField('name', value);
         if (v) updates.name = v as string;
@@ -450,8 +421,7 @@ export async function validateAndApplyExtracted(
         // skip invalid
       }
     } else if (field === 'reason_for_visit' && typeof value === 'string') {
-      if (isRelationshipOrGenderLike(value) || isMetaBookingOrFeeReasonText(value) || isAffirmationSlotValue(value))
-        continue;
+      if (isRelationshipOrGenderLike(value) || isMetaBookingOrFeeReasonText(value)) continue;
       try {
         const v = validatePatientField('reason_for_visit', value);
         if (v !== undefined && typeof v === 'string') updates.reason_for_visit = v;

@@ -1,8 +1,10 @@
 # AI Bot Building Philosophy (Clariva Receptionist)
 
-**Purpose:** Stable reference for *how* we build conversational and classification logic so we do not drift into brittle, unmaintainable strategies. Read this before adding regex lists, keyword matchers, or new LLM calls.
+**When to use this file:** **Optional.** Open it only when the product owner or lead **explicitly** asks to align a change with this document. It is **not** a default gate for every PR or agent turn—follow team instructions and tickets first.
 
-**Audience:** Engineers and AI agents editing `backend` DM/comment flows, `ai-service`, triage, fees, and catalog matching.
+**Purpose:** Reference for *how* we prefer to build conversational and classification logic: **LLM-first**, deterministic code for execution and facts. Use it to avoid drifting into brittle regex sprawl—**not** as permission to add new regex or keyword lists unless explicitly requested for that task.
+
+**Audience:** Engineers and AI agents who were asked to read it for a specific refactor or design review.
 
 **Related:**
 - [RECEPTIONIST_BOT_CONVERSATION_RULES.md](./RECEPTIONIST_BOT_CONVERSATION_RULES.md) — intent map, three-layer pattern, anti-patterns (keep in sync mentally with this doc)
@@ -12,13 +14,14 @@
 
 ---
 
-## 1. Product stance: quality over cheap heuristics
+## 1. Product stance: AI first, regex only when explicitly requested
 
-- **Open-ended patient language is effectively infinite.** Regex and fixed synonym lists cannot keep up; every “improvement” becomes another branch and another regression.
-- **Prefer spending model tokens** on understanding and structuring user input where the alternative is an ever-growing pattern file.
-- **Do not optimize for minimal API calls** at the expense of nonsensical summaries, wrong fee routing, or dropped intent. Cost controls should use flags, caching, smaller/faster models, and *narrow* prompts—not pretending English+Hinglish+typos are finite.
+- **Default:** Use **structured LLM calls** (JSON / `json_object`) to interpret open-ended user text—intent, slots, visit reasons, confirmations, multi-field blobs. Extend **prompts + regression tests**, not pattern files.
+- **Regex, hardcoded keyword lists, and brittle `if (text matches X)` chains** are **not** the default way to ship behavior. Add or extend them **only when the product owner explicitly asks** for that approach on a given task (e.g. a closed menu, latency-critical emergency phrase, or compliance-mandated copy).
+- **Open-ended patient language is effectively infinite.** Regex-only extraction for reasons, names, and mixed one-line messages is a **fallback** when the model is unavailable or returns nothing—not the primary path.
+- **Cost:** Prefer flags, caching, smaller models, and narrow prompts over saving tokens at the cost of wrong routing or empty slots.
 
-This is a deliberate tradeoff: we ship a receptionist that feels intelligent, not a whack-a-mole rules engine.
+We ship a receptionist that feels intelligent; the **primary** tool is the model, not a growing rules engine.
 
 ---
 
@@ -34,13 +37,13 @@ This is a deliberate tradeoff: we ship a receptionist that feels intelligent, no
 
 ---
 
-## 3. Hybrid pattern (recommended default)
+## 3. Recommended default: LLM primary, minimal deterministic fallback
 
-1. **Optional fast path** — Only where latency or cost justifies it: very short messages (e.g. pure greeting), obvious emergency keywords, trivial yes/no parsers. Keep these **small** and **length-bounded** so they cannot swallow nuanced messages.
-2. **Primary path** — LLM → structured fields (intent, reasons[], fee_hint, `dialog_action`, etc.).
-3. **Fallback** — Deterministic parser or conservative default when the model errors, times out, or feature flag is off. Fallbacks should be **minimal**, tested, and logged—not a second copy of the whole problem in regex.
+1. **Primary path** — LLM → structured fields (intent, reasons[], patient slots, `dialog_action`, etc.) whenever the input is natural language or could mix several intents.
+2. **Fallback** — Regex or lightweight parsers **only** when the API is down, the model returns empty, or a feature flag disables AI—keep fallback **small** and **best-effort**, not a parallel rules engine.
+3. **Optional fast path** — Only if **explicitly** specified for that surface: e.g. fixed emergency keywords, strict grammars (phone normalization, ISO dates). Not a substitute for understanding user text.
 
-Feature flags (e.g. per-surface “AI snippet on/off”) should flip primary vs fallback, not scatter conflicting behaviors.
+Feature flags should flip AI vs fallback—not duplicate logic in three keyword files.
 
 ---
 
@@ -103,7 +106,7 @@ If you are unsure whether the domain is closed: assume it is **open** and protot
 
 ---
 
-## 6. Implementation checklist (before merging)
+## 6. Implementation checklist (use only when someone asked you to follow this doc)
 
 - [ ] Is this message class **open-ended**? If yes, is there a **structured LLM** path rather than new regex?
 - [ ] Do ₹ amounts / URLs / legal text come from **server or DB**, not raw model output?
@@ -126,13 +129,15 @@ Use this when triaging refactors or new features—**not** exhaustive, but the u
 | Visit reason / triage snippet | `resolveVisitReasonSnippetForTriage` (`ai-service.ts`); `reason-first-triage.ts` for routing/deferral + **fallback** distillation only | **LLM primary** (structured `reasons[]`). **Do not** add per-symptom / per-phrase regex in `reason-first-triage.ts` to chase new complaints — update the visit-reason system prompt + regression tests instead (§4.1). Fallback stays minimal and best-effort. |
 | Fee tier / fee thread | `consultation-fees.ts`, `dm-turn-context`, DM webhook | Structured signals; avoid keyword arms race |
 | Service catalog match | `service-catalog-deterministic-match.ts` | Hybrid: high-confidence deterministic + LLM map-to-id when needed |
-| Patient fields | `collection-service` (`validateAndApplyExtracted`), `extract-patient-fields.ts` | **Structured LLM extraction** when the message is substantive; regex as **fallback only**. Guardrails: do not overwrite **name** with symptom-like or **affirmation** text; treat **meds / “i took …”** and **thread context** as first-class inputs for **reason_for_visit**—not only `i have …` keyword paths. |
+| Patient fields | `collection-service` (`validateAndApplyExtracted`), `extract-patient-fields.ts` | **Structured LLM extraction first** whenever slots are missing; `extract-patient-fields.ts` is **fallback** if the model returns nothing (no API key, empty JSON). Do **not** extend regex heuristics in `extract-patient-fields.ts` unless explicitly asked—prefer prompt + tests in `extractFieldsWithAI`. Merge **validation** in code (symptom/gender guards), not new keyword lists for NLU. |
 | Time / date NL | `date-time-parser.ts` | Parser + optional LLM for hard cases |
 | Consent & confirm replies | `consent-service.ts` (`parseConsentReply` fast path), `ai-service.ts` (`resolveConsentReplyForBooking`, `resolveConfirmDetailsReplyForBooking`) | **Hybrid:** obvious keywords stay fast; **LLM JSON** for unclear / multilingual / “yes correct” so routing reaches **deterministic booking URL** (`formatBookingLinkDm`) instead of the model inventing slots or links. |
 
 ---
 
 ## 8. Revision policy
+
+This file is **not** automatically part of every release checklist—update it when someone explicitly uses it for a design decision or when the lead asks to refresh it.
 
 When product priorities change (e.g. stricter cost caps), **update this file** and [RECEPTIONIST_BOT_CONVERSATION_RULES.md](./RECEPTIONIST_BOT_CONVERSATION_RULES.md) together so “quality first” vs “cost first” does not fork across docs.
 

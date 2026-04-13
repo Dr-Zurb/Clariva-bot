@@ -38,7 +38,6 @@ import {
   buildConsolidatedReasonSnippetFromMessages,
   parseNothingElseOrSameOnly,
 } from '../utils/reason-first-triage';
-import { isBookingConfirmationOnlyMessage } from '../utils/extract-patient-fields';
 import {
   assistantMessageIsEmergencyEscalationCopy,
   EMERGENCY_RESPONSE_EN,
@@ -613,10 +612,7 @@ export async function extractFieldsWithAI(
 ): Promise<Partial<CollectedPatientData>> {
   const client = getOpenAIClient();
   const config = getOpenAIConfig();
-  if (!client || !redactedText?.trim() || redactedText.length < 15) {
-    return {};
-  }
-  if (isBookingConfirmationOnlyMessage(redactedText)) {
+  if (!client || !redactedText?.trim()) {
     return {};
   }
 
@@ -678,10 +674,7 @@ Return JSON only.`;
 
     if (typeof parsed.name === 'string' && parsed.name.trim().length >= 2) {
       const name = parsed.name.trim();
-      if (
-        !/^\s*(i\s+have|i\s+took|i've\s+got|she\s+has|he\s+has|having|suffering)\b/i.test(name) &&
-        !isBookingConfirmationOnlyMessage(name)
-      ) {
+      if (!/^\s*(i\s+have|i\s+took|i've\s+got|she\s+has|he\s+has|having|suffering)\b/i.test(name)) {
         result.name = name;
       }
     }
@@ -695,10 +688,7 @@ Return JSON only.`;
       result.gender = parsed.gender.toLowerCase();
     }
     if (typeof parsed.reason_for_visit === 'string' && parsed.reason_for_visit.trim().length >= 2) {
-      const r = parsed.reason_for_visit.trim().slice(0, 500);
-      if (!isBookingConfirmationOnlyMessage(r)) {
-        result.reason_for_visit = r;
-      }
+      result.reason_for_visit = parsed.reason_for_visit.trim().slice(0, 500);
     }
     if (typeof parsed.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parsed.email.trim())) {
       result.email = parsed.email.trim().toLowerCase();
