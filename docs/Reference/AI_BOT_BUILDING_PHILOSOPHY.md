@@ -76,6 +76,18 @@ These patterns look productive in the short term and become technical debt immed
 - **Why it breaks:** Contradictory behavior by branch order; impossible to reason about.
 - **Instead:** One canonical classifier output or shared helper; handler consumes structured result.
 
+### 4.6 Regex-only extraction for “reason for visit” and multi-field blobs
+
+- Guessing **visit reason** from a few keywords (`i have …`, symptom lists) while **ignoring** “i took …”, medication names, or **single-line** messages that start with `Firstname Lastname` (the whole line can be misclassified as “name-like,” so **reason never fills**).
+- **Why it breaks:** Real patients send **one message** with name + age + phone + meds; regex order and `split()` heuristics are not a substitute for understanding.
+- **Instead:** **Structured LLM extraction** with **thread context** (prior turns already contain BP story, stability, tablets). Merge with **guards**: never treat **affirmation** (“yes confirm that”, “correct”) as `name` or `reason_for_visit`. Prefer **`dialog_act`: `provide_details` vs `confirm_summary`** before overwriting slots.
+
+### 4.7 Asking the user to repeat what the thread already contains
+
+- Rigid templates (“send **all** of these in one message”) that re-ask for BP / tablets when the user **just said** them in the same conversation.
+- **Why it breaks:** Feels dumb, increases drop-off; fights the “intelligent receptionist” stance in §1.
+- **Instead:** **Summarize or quote** what you already have; ask only for **genuinely missing** fields. Pass a **consolidated reason snippet** (from state + recent messages) into prompts, not a blank form every time.
+
 ---
 
 ## 5. When deterministic logic is still correct
@@ -99,6 +111,8 @@ If you are unsure whether the domain is closed: assume it is **open** and protot
 - [ ] Did we add or extend a **regression test or corpus entry** for routing quality (see ops tasks under `docs/Development/Daily-plans`)?
 - [ ] Does this duplicate logic elsewhere? If yes, **consolidate** the source of truth.
 - [ ] Does this touch **staff-feedback learning** or autobook? If yes, follow **§9** and [STAFF_FEEDBACK_LEARNING_INITIATIVE.md](../task-management/STAFF_FEEDBACK_LEARNING_INITIATIVE.md) (privacy charter, opt-in, no raw PHI by default).
+- [ ] **Booking intake:** Does extraction use **thread context** for visit reason where the user already explained symptoms/BP/meds? Are **confirmation replies** routed **before** slot merge so they do not overwrite **name** / **reason**?
+- [ ] **Consent / detail confirmation:** Prefer **semantic classification** (paraphrase, multilingual) for “yes / I consent / yes correct” rather than **exact-string-only** gates that drop into free-form generation without the real **booking URL** (see `resolveConsentReplyForBooking`, `resolveConfirmDetailsReplyForBooking` in `ai-service.ts`).
 
 ---
 
@@ -112,9 +126,9 @@ Use this when triaging refactors or new features—**not** exhaustive, but the u
 | Visit reason / triage snippet | `resolveVisitReasonSnippetForTriage` (`ai-service.ts`); `reason-first-triage.ts` for routing/deferral + **fallback** distillation only | **LLM primary** (structured `reasons[]`). **Do not** add per-symptom / per-phrase regex in `reason-first-triage.ts` to chase new complaints — update the visit-reason system prompt + regression tests instead (§4.1). Fallback stays minimal and best-effort. |
 | Fee tier / fee thread | `consultation-fees.ts`, `dm-turn-context`, DM webhook | Structured signals; avoid keyword arms race |
 | Service catalog match | `service-catalog-deterministic-match.ts` | Hybrid: high-confidence deterministic + LLM map-to-id when needed |
-| Patient fields | `collection-service`, `extract-patient-fields.ts` | AI extraction first; regex fallback bounded |
+| Patient fields | `collection-service` (`validateAndApplyExtracted`), `extract-patient-fields.ts` | **Structured LLM extraction** when the message is substantive; regex as **fallback only**. Guardrails: do not overwrite **name** with symptom-like or **affirmation** text; treat **meds / “i took …”** and **thread context** as first-class inputs for **reason_for_visit**—not only `i have …` keyword paths. |
 | Time / date NL | `date-time-parser.ts` | Parser + optional LLM for hard cases |
-| Consent | `consent-service.ts` | Keywords OK for obvious cases; consider LLM for paraphrase if mis-detection hurts |
+| Consent & confirm replies | `consent-service.ts` (`parseConsentReply` fast path), `ai-service.ts` (`resolveConsentReplyForBooking`, `resolveConfirmDetailsReplyForBooking`) | **Hybrid:** obvious keywords stay fast; **LLM JSON** for unclear / multilingual / “yes correct” so routing reaches **deterministic booking URL** (`formatBookingLinkDm`) instead of the model inventing slots or links. |
 
 ---
 

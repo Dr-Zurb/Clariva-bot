@@ -38,6 +38,7 @@ import {
   buildConsolidatedReasonSnippetFromMessages,
   parseNothingElseOrSameOnly,
 } from '../utils/reason-first-triage';
+import { isBookingConfirmationOnlyMessage } from '../utils/extract-patient-fields';
 import {
   assistantMessageIsEmergencyEscalationCopy,
   EMERGENCY_RESPONSE_EN,
@@ -580,7 +581,9 @@ Valid fields to extract: name, age, gender, reason_for_visit.
 - age: Number 1-120. "60 Y M" or "60 years male" → age is 60.
 - gender: male, female, or other. "60 Y M" or "M" → male; "60 Y F" → female.
 - reason_for_visit: Chief complaint, symptom, or reason. "diabetic checkup", "stomach pain", "get her checked for diabetes" → extract as reason. NEVER use name/age/gender as reason.
+- Medication / intake phrases ("i took amlodipine", "i have metformin", "started taking X") → reason_for_visit (clinical reason), NOT name.
 - NEVER set reason_for_visit for meta questions about fees, price, or how to book (e.g. "how much is consultation", "what is the fee", "how do I book") - return {} for those.
+- Pure confirmations ("yes confirm that", "yes that's correct", "correct", "ok") contain NO new patient fields — return {}.
 
 IGNORE: [REDACTED_PHONE] and [REDACTED_EMAIL] - we extract those separately. Do not include phone or email in your output.
 
@@ -611,6 +614,9 @@ export async function extractFieldsWithAI(
   const client = getOpenAIClient();
   const config = getOpenAIConfig();
   if (!client || !redactedText?.trim() || redactedText.length < 15) {
+    return {};
+  }
+  if (isBookingConfirmationOnlyMessage(redactedText)) {
     return {};
   }
 
@@ -672,7 +678,10 @@ Return JSON only.`;
 
     if (typeof parsed.name === 'string' && parsed.name.trim().length >= 2) {
       const name = parsed.name.trim();
-      if (!/^\s*(i\s+have|i've\s+got|she\s+has|he\s+has|having|suffering)\b/i.test(name)) {
+      if (
+        !/^\s*(i\s+have|i\s+took|i've\s+got|she\s+has|he\s+has|having|suffering)\b/i.test(name) &&
+        !isBookingConfirmationOnlyMessage(name)
+      ) {
         result.name = name;
       }
     }
@@ -686,7 +695,10 @@ Return JSON only.`;
       result.gender = parsed.gender.toLowerCase();
     }
     if (typeof parsed.reason_for_visit === 'string' && parsed.reason_for_visit.trim().length >= 2) {
-      result.reason_for_visit = parsed.reason_for_visit.trim().slice(0, 500);
+      const r = parsed.reason_for_visit.trim().slice(0, 500);
+      if (!isBookingConfirmationOnlyMessage(r)) {
+        result.reason_for_visit = r;
+      }
     }
     if (typeof parsed.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parsed.email.trim())) {
       result.email = parsed.email.trim().toLowerCase();

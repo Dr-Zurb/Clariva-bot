@@ -17,7 +17,12 @@ import {
 } from '../utils/validation';
 import { logPatientDataCollection } from '../utils/audit-logger';
 import { getWebhookQueue, getQueueConnection, isQueueEnabled } from '../config/queue';
-import { extractFieldsFromMessage, extractPhoneAndEmail, type ExtractedFields } from '../utils/extract-patient-fields';
+import {
+  extractFieldsFromMessage,
+  extractPhoneAndEmail,
+  isBookingConfirmationOnlyMessage,
+  type ExtractedFields,
+} from '../utils/extract-patient-fields';
 import { isMetaBookingOrFeeReasonText } from '../utils/consultation-fees';
 import { extractFieldsWithAI, redactPhiForAI, type ExtractionContext } from '../services/ai-service';
 
@@ -335,7 +340,9 @@ export async function validateAndApplyExtracted(
   );
   const isTrivial = isTrivialSingleValue(text);
   const isShortReply = /^(yes|no|yeah|nope|my\s+sister\?|sister\s+first)$/i.test(text.trim());
-  const isSubstantive = text.trim().length > 15 && !isShortReply && !isTrivial;
+  const isConfirmationOnly = isBookingConfirmationOnlyMessage(text);
+  const isSubstantive =
+    text.trim().length > 15 && !isShortReply && !isTrivial && !isConfirmationOnly;
 
   // LLM-first: Use AI for name/age/gender/reason when message is substantive. Regex only for phone/email (structured).
   const phoneEmail = extractPhoneAndEmail(text);
@@ -401,12 +408,20 @@ export async function validateAndApplyExtracted(
     /\b(?:male|female)\s+obviously\s*$/i.test(s.trim());
   /** Never use standalone gender as name (e.g. user said "male" for gender, not name) */
   const isGenderOnly = (s: string) => /^(male|female|m|f)$/i.test(s.trim());
+  /** Affirmation-shaped strings must not become name or reason (LLM edge cases). */
+  const isAffirmationSlotValue = (s: string) => isBookingConfirmationOnlyMessage(s);
 
   for (const [key, value] of Object.entries(extracted)) {
     if (value === undefined || value === '') continue;
     const field = key as keyof ExtractedFields;
     if (field === 'name' && typeof value === 'string') {
-      if (isSymptomLike(value) || isRelationshipOrGenderLike(value) || isGenderOnly(value)) continue;
+      if (
+        isSymptomLike(value) ||
+        isRelationshipOrGenderLike(value) ||
+        isGenderOnly(value) ||
+        isAffirmationSlotValue(value)
+      )
+        continue;
       try {
         const v = validatePatientField('name', value);
         if (v) updates.name = v as string;
@@ -435,7 +450,8 @@ export async function validateAndApplyExtracted(
         // skip invalid
       }
     } else if (field === 'reason_for_visit' && typeof value === 'string') {
-      if (isRelationshipOrGenderLike(value) || isMetaBookingOrFeeReasonText(value)) continue;
+      if (isRelationshipOrGenderLike(value) || isMetaBookingOrFeeReasonText(value) || isAffirmationSlotValue(value))
+        continue;
       try {
         const v = validatePatientField('reason_for_visit', value);
         if (v !== undefined && typeof v === 'string') updates.reason_for_visit = v;

@@ -194,12 +194,19 @@ export function extractFieldsFromMessage(
     if (reason.length >= 2 && !isMetaBookingOrFeeReasonText(reason)) result.reason_for_visit = reason;
   } else if (!fastPathOnly) {
     const iHaveMatch = trimmed.match(/\bi\s+have\s+([^.@,\n]+?)(?=\s*(?:,|@|\n|$))/i);
+    const iTookMatch = trimmed.match(/\bi\s+took\s+([^.@,\n]+?)(?=\s*(?:,|@|\n|$))/i);
     if (
       iHaveMatch &&
       iHaveMatch[1].trim().length >= 3 &&
       !isMetaBookingOrFeeReasonText(iHaveMatch[1].trim())
     ) {
       result.reason_for_visit = iHaveMatch[1].trim();
+    } else if (
+      iTookMatch &&
+      iTookMatch[1].trim().length >= 3 &&
+      !isMetaBookingOrFeeReasonText(iTookMatch[1].trim())
+    ) {
+      result.reason_for_visit = `Taking ${iTookMatch[1].trim()}`;
     } else {
       const heIsMatch = trimmed.match(/\b(?:he|she|him|her)\s+is\s+([^.@,\n]+?)(?=\s*(?:,|@|\n|$|so\s))/i);
       if (heIsMatch && heIsMatch[1].trim().length >= 2) {
@@ -217,18 +224,29 @@ export function extractFieldsFromMessage(
           result.reason_for_visit = getCheckedMatch[1].trim();
         } else {
           const parts = trimmed.split(/[\n,;]+/).map((p) => p.trim()).filter(Boolean);
-          /** Skip parts that look like name (contain age+gender, or "FirstName LastName" with no medical keywords) */
+          /** Skip parts that look like name-only; composite one-line intakes are NOT name-only (see AI_BOT_BUILDING_PHILOSOPHY). */
           const isNameLikePart = (s: string) => {
+            if (/\b(i\s+took|i\s+have|started\s+taking)\b/i.test(s)) return false;
+            if (/\b(mg|tablet|tablets|capsule|medicine|meds|prescription)\b/i.test(s)) return false;
             const digits = s.replace(/\D/g, '');
             if (digits.length >= 10 && /^[6-9]/.test(digits)) return true;
             if (EMAIL_REGEX.test(s)) return true;
             if (AGE_GENDER_COMBO.test(s) || AGE_YEARS_GENDER.test(s)) return true;
             if (/\d{1,3}\s*(?:y|yrs?|years?)\s*[mf]?/i.test(s)) return true;
-            if (/^[A-Z][a-z]+\s+[A-Z][a-z]/.test(s) && !/\b(diabetic|diabetes|checkup|pain|fever|cough|stomach|consultation)\b/i.test(s)) return true;
+            if (
+              /^[A-Z][a-z]+\s+[A-Z][a-z]/.test(s) &&
+              !/\b(diabetic|diabetes|checkup|pain|fever|cough|stomach|consultation)\b/i.test(s)
+            ) {
+              const afterTwo = s.replace(/^[A-Z][a-z]+\s+[A-Z][a-z]+/, '').trim();
+              if (afterTwo.length > 0) return false;
+              return true;
+            }
             return false;
           };
           const isReasonLike = (s: string) =>
-            /\b(diabetic|diabetes|checkup|check\s*up|pain|fever|cough|stomach|headache|consultation|follow\s*up|general)\b/i.test(s);
+            /\b(diabetic|diabetes|checkup|check\s*up|pain|fever|cough|stomach|headache|consultation|follow\s*up|general|amlodipine|telmisartan|metformin|tablet|medicine)\b/i.test(
+              s
+            );
           for (const p of parts) {
             const digits = p.replace(/\D/g, '');
             const isPhone = digits.length >= 10 && /^[6-9]/.test(digits);
@@ -239,7 +257,10 @@ export function extractFieldsFromMessage(
               !isPhone &&
               !AGE_GENDER_COMBO.test(p) &&
               !isNameLikePart(p) &&
-              (p.toLowerCase().startsWith('i have') || isReasonLike(p) || p.length >= 5)
+              (p.toLowerCase().startsWith('i have') ||
+                p.toLowerCase().startsWith('i took') ||
+                isReasonLike(p) ||
+                p.length >= 5)
             ) {
               if (!isMetaBookingOrFeeReasonText(p)) {
                 result.reason_for_visit = p;
@@ -262,4 +283,27 @@ export function extractFieldsFromMessage(
   }
 
   return result;
+}
+
+/**
+ * True when the message is only booking confirmation / affirmation (no new patient slots).
+ * Prevents LLM/merge from treating "yes confirm that" as name or reason.
+ */
+export function isBookingConfirmationOnlyMessage(text: string): boolean {
+  const t = text.trim();
+  if (!t || t.length > 120) return false;
+  if (/\b(i\s+have|i\s+took|pain|diabetic|stomach|consult|fever|checkup|@\d{3,})\b/i.test(t)) return false;
+  if (/\d{1,3}\s*(?:y|yrs|years?)\b/i.test(t)) return false;
+  if (/^[A-Z][a-z]+\s+[A-Z][a-z]+\s+\d/.test(t)) return false;
+  const lower = t.toLowerCase();
+  if (
+    /^(?:yes|yeah|yep|yup|ok|okay|sure|correct|right)(?:\s+(?:please|confirm|that|confirm\s+that|that'?s\s+correct|that\s+is\s+correct|correct|fine|good|right|perfect|sounds\s+good|all\s+good|exactly|for\s+that|i\s+confirm))*[\s.,!]*$/.test(
+      lower
+    )
+  ) {
+    return true;
+  }
+  if (/^(?:that'?s\s+)?(?:correct|right|fine|good|perfect)[\s.,!]*$/.test(lower)) return true;
+  if (/^(?:yes|yeah|yep),\s*(?:that'?s\s+)?(?:correct|right|fine|good|perfect)[\s.,!]*$/.test(lower)) return true;
+  return false;
 }
