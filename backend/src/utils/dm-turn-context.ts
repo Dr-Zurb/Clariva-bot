@@ -1,6 +1,11 @@
 /**
- * e-task-dm-03: Per-inbound DM turn — assemble thread-derived inputs once for fee narrowing,
- * classification memory, and future consumers. No logging of patient text here.
+ * e-task-dm-03 / e-task-phil-06: Per-inbound DM turn — assemble thread-derived inputs once for fee
+ * narrowing, classification memory, and future consumers. No logging of patient text here.
+ *
+ * **`buildDmTurnContext`** is the single assembly point (`feeCatalogMatchText` + `recentMedicalDeflection`).
+ * The Instagram DM handler still calls **`buildFeeCatalogMatchText`** inline at several branches; a future
+ * refactor should hoist one `buildDmTurnContext(text, recentMessages, state)` per turn to avoid drift.
+ * Approved/forbidden triage + fee extension points: `reason-first-triage.ts` header → rt-04 planning §5.
  */
 
 import { redactPhiForAI } from '../services/ai-service';

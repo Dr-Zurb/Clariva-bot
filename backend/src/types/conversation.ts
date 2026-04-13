@@ -26,9 +26,13 @@ import type { Intent } from './ai';
 export type ConversationLastPromptKind =
   | 'collect_details'
   | 'consent'
+  /** Consent step but last bot line was optional-extras ("say Yes to continue") — RBH-07 / philosophy §4.8. */
+  | 'consent_optional_extras'
   | 'confirm_details'
   | 'match_pick'
   | 'cancel_confirm'
+  /** User was asked to pick tele / in-clinic / modality (substring fallback exists for legacy). */
+  | 'consultation_channel_pick'
   /** ARM-05: Visit type pending staff confirmation — no slot/payment CTA yet. */
   | 'staff_service_pending'
   /** RBH-13: Last assistant turn was a structured fee quote (not collecting PHI). */

@@ -11,12 +11,14 @@ import {
   hasAllRequiredFields,
   parseMessageForField,
   validateAndApply,
+  validateAndApplyExtracted,
   getCollectedData,
   setCollectedData,
   clearCollectedData,
   COLLECTION_ORDER,
   getInitialCollectionStep,
 } from '../../../src/services/collection-service';
+import type { ConversationState } from '../../../src/types/conversation';
 import { REQUIRED_COLLECTION_FIELDS } from '../../../src/utils/validation';
 import * as auditLogger from '../../../src/utils/audit-logger';
 
@@ -284,6 +286,28 @@ describe('Collection Service', () => {
   describe('getInitialCollectionStep', () => {
     it('returns collecting_all', () => {
       expect(getInitialCollectionStep()).toBe('collecting_all');
+    });
+  });
+
+  describe('validateAndApplyExtracted (e-task-phil-08 multi-field blob)', () => {
+    it('extracts name and phone from one message when both missing (regex fallback)', async () => {
+      const state: ConversationState = {
+        step: 'collecting_all',
+        collectedFields: [],
+        updatedAt: new Date().toISOString(),
+      };
+      const result = await validateAndApplyExtracted(
+        conversationId,
+        'Rahul Sharma 9876543210',
+        state,
+        correlationId
+      );
+      expect(result.success).toBe(true);
+      expect(result.newState.collectedFields).toEqual(expect.arrayContaining(['name', 'phone']));
+      const stored = await getCollectedData(conversationId);
+      expect(stored?.name).toMatch(/Rahul/i);
+      expect(stored?.phone).toBeDefined();
+      expect(String(stored?.phone).replace(/\D/g, '').length).toBeGreaterThanOrEqual(10);
     });
   });
 });

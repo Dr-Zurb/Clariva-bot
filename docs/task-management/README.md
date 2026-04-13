@@ -28,6 +28,8 @@ This folder contains task management documentation and templates.
 
 4. **[SILENT_FEE_ASSIGNMENT_POLICY.md](./SILENT_FEE_ASSIGNMENT_POLICY.md)** - DM receptionist: reason-first fees, **no patient tier menu**; two outcomes (narrow quote or staff SLA). Implementation: [e-task-dm-05](../Development/Daily-plans/April%202026/04-04-2026/tasks/e-task-dm-05-silent-fee-menu-closure.md).
 
+5. **[BOT_PHILOSOPHY_ELITE_AUDIT_2026.md](./BOT_PHILOSOPHY_ELITE_AUDIT_2026.md)** — Full-bot read-through vs [AI_BOT_BUILDING_PHILOSOPHY.md](../Reference/AI_BOT_BUILDING_PHILOSOPHY.md); reading tasks under [13-04-2026](../Development/Daily-plans/April%202026/13-04-2026/); execution epics: [tasks/tm-bot-audit-*.md](./tasks/) (gated on audit completion).
+
 ---
 
 ## 🎯 Quick Start

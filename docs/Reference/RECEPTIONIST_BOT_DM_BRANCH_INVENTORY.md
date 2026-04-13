@@ -21,6 +21,8 @@
 11. **Transactional:** `check_appointment_status`, `cancel_appointment`, `reschedule_appointment`, `book_for_someone_else`, match confirmation, consent, `collecting_all`, …  
 12. **Default:** `generateResponse` / `generateResponseWithActions` (LLM **Say** + injected **facts** in system prompt)
 
+**Note:** When **not** in reason-first phase, a narrow branch **`post_medical_payment_existence_ack`** may run **before** the main reason-first block: idle, recent medical-deflection window, vague “do you charge / payment” style question + clinical thread → short ack (`resolvePostMedicalPaymentExistenceAck`), then fee/reason-first can proceed without repeating the full deflection. See handler `dmRoutingBranch = 'post_medical_payment_existence_ack'`.
+
 ---
 
 ## Branch table (approximate top-to-bottom order)
@@ -36,6 +38,7 @@
 | 6 | Emergency | pattern / intent | handler | `resolveSafetyMessage('emergency')` |
 | 7 | `awaiting_staff_service_confirmation` | step | handler | staff-review pending copy |
 | 8 | Consultation channel pick | last bot + parse | handler | templates / AI |
+| 8b | Post-medical payment-existence ack | deflection window + vague fee ask + clinical thread | handler | `resolvePostMedicalPaymentExistenceAck` |
 | 9 | Reason-first triage (`reasonFirstTriagePhase`) | state + idle | handler | `reason-first-triage.ts` + `composeIdleFeeQuoteDmWithMeta` |
 | 10 | `medical_query` !collection | intent | handler | `resolveSafetyMessage('medical_query')` |
 | 11 | Pricing & idle | regex + intent | handler | `composeIdleFeeQuoteDmWithMeta` (or defer → row 9) |
@@ -48,6 +51,9 @@
 | 18 | Consent | `parseConsentReply` | persist + DB | `formatBookingLinkDm` or AI |
 | 19 | `collecting_all` / details | intent + extraction | collection service | **mostly AI** + extraction |
 | 20 | Rest / book / availability | intent | state machine | **AI** (`generateResponse`) |
+| 21 | **`booking_resume_after_emergency`** | `medical_query` + post–emergency-escalation thread + stability heuristic | handler | `generateResponse` with resume hint → **`collecting_all`** |
+| 22 | **`learning_policy_autobook`** | `awaiting_staff_service_confirmation` + pending staff review + matcher proposal | `tryApplyLearningPolicyAutobook` | Deterministic reply when policy applies |
+| 23 | **`awaiting_reschedule_slot`** (step gate) | user picked slot window / numeric choice | handler | Reschedule link or slot copy — same **step-gate** family as cancel/reschedule choices |
 
 Rows are **guidance**; inner branches may call AI for ambiguous cancel consent.
 
@@ -72,4 +78,4 @@ Keep these in sync when changing product behavior.
 - [RECEPTIONIST_BOT_CONVERSATION_RULES.md](./RECEPTIONIST_BOT_CONVERSATION_RULES.md) — principles and intent map  
 - Task [RBH-17](../Development/Daily-plans/March%202026/2026-03-25/Receptionist%20Bot%20improvements/Tasks/e-task-rbh-17-receptionist-architecture-llm-vs-system-actions.md)
 
-**Last updated:** 2026-03-31 (e-task-dm-04 reason-first triage branches)
+**Last updated:** 2026-03-31 (RT-09 / philosophy audit: emergency resume, learning autobook, reschedule slot row)

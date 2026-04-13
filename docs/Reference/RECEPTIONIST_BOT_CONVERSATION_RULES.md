@@ -66,7 +66,7 @@ sequenceDiagram
 
 3. **RBH-16 (copy encoding):** Deterministic DM/booking strings prefer **ASCII `-` / ` - `** in templates so fixed copy does not show **mojibake** in Instagram or other clients.
 4. **Medical boundary:** Never diagnose, prescribe, or give medical advice. Redirect medical/chief-complaint messages.
-5. **Emergency handling:** Detect emergency language → redirect to emergency services immediately.
+5. **Emergency handling:** Detect emergency language → redirect to emergency services immediately. If the patient later returns with **non-crisis** vitals after an in-chat **112/108** style escalation, the handler may resume booking (**`booking_resume_after_emergency`**) — see [RECEPTIONIST_BOT_DM_BRANCH_INVENTORY.md](./RECEPTIONIST_BOT_DM_BRANCH_INVENTORY.md).
 6. **Language matching:** Respond in the same language the user types in (English, Hinglish, Hindi written in English) — reinforced in the receptionist system prompt; optional locale helpers for **fixed** safety strings (RBH-15).
 7. **Graceful degradation:** For unclear messages, stay polite and offer clear next steps.
 

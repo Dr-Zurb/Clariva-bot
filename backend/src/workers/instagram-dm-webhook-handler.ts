@@ -118,6 +118,7 @@ import {
   conversationLastPromptKindForStep,
   isRecentMedicalDeflectionWindow,
   isSlotBookingBlockedPendingStaffReview,
+  type ConversationLastPromptKind,
   type ConversationState,
 } from '../types/conversation';
 import type { Message } from '../types';
@@ -151,6 +152,7 @@ import {
 } from '../utils/staff-service-review-dm';
 import { tryApplyLearningPolicyAutobook } from '../services/service-match-learning-autobook';
 import { upsertPendingStaffServiceReviewRequest } from '../services/service-staff-review-service';
+/** Fee thread text for catalog narrowing — see `buildDmTurnContext` in `dm-turn-context.ts` for the intended single assembly point (philosophy audit e-task-phil-06). */
 import { buildFeeCatalogMatchText } from '../utils/dm-turn-context';
 import {
   bookingShouldDeferToReasonFirstTriage,
@@ -553,7 +555,11 @@ function effectiveAskedForConsent(
   state: ConversationState,
   recentMessages: { sender_type: string; content: string }[]
 ): boolean {
-  return state.lastPromptKind === 'consent' || lastBotMessageAskedForConsent(recentMessages);
+  return (
+    state.lastPromptKind === 'consent' ||
+    state.lastPromptKind === 'consent_optional_extras' ||
+    lastBotMessageAskedForConsent(recentMessages)
+  );
 }
 
 function effectiveAskedForConfirm(
@@ -1305,6 +1311,7 @@ export async function processInstagramDmWebhook(params: {
       (lastBotAskedChannelPick && channelReplyPick != null) ||
       state.lastPromptKind === 'collect_details' ||
       state.lastPromptKind === 'consent' ||
+      state.lastPromptKind === 'consent_optional_extras' ||
       state.lastPromptKind === 'confirm_details' ||
       state.lastPromptKind === 'match_pick' ||
       state.lastPromptKind === 'staff_service_pending';
@@ -1550,6 +1557,7 @@ export async function processInstagramDmWebhook(params: {
         state = {
           ...state,
           lastIntent: intentResult.intent,
+          lastPromptKind: 'consultation_channel_pick',
           updatedAt: new Date().toISOString(),
         };
       } else {
@@ -2706,6 +2714,9 @@ export async function processInstagramDmWebhook(params: {
             updatedAt: now,
             reasonForVisit: collected?.reason_for_visit,
             age: collected?.age,
+            ...(state.bookingForSomeoneElse
+              ? {}
+              : { lastPromptKind: 'consent_optional_extras' as const }),
           };
           state = await enrichStateWithServiceCatalogMatch(
             state,
@@ -3196,12 +3207,21 @@ export async function processInstagramDmWebhook(params: {
             step: 'responded',
             updatedAt: new Date().toISOString(),
           };
+    const stepDerivedKind = conversationLastPromptKindForStep(
+      stateToPersistRaw.step,
+      stateToPersistRaw.activeFlow
+    );
+    const granularPersistKinds: ConversationLastPromptKind[] = [
+      'consent_optional_extras',
+      'consultation_channel_pick',
+    ];
+    const explicitKind = stateToPersistRaw.lastPromptKind;
+    const lastPromptKindResolved =
+      explicitKind && granularPersistKinds.includes(explicitKind) ? explicitKind : stepDerivedKind;
+
     let stateToPersist = {
       ...stateToPersistRaw,
-      lastPromptKind: conversationLastPromptKindForStep(
-        stateToPersistRaw.step,
-        stateToPersistRaw.activeFlow
-      ),
+      lastPromptKind: lastPromptKindResolved,
     };
 
     if (

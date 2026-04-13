@@ -30,6 +30,8 @@ const SKIP_EXTRAS_EXACT: readonly string[] = [
   'no extras',
   'im good',
   "i'm good",
+  'bas',
+  'nahi bas',
 ];
 
 /**

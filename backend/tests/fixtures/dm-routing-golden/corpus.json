@@ -79,6 +79,32 @@
       "expected_branch": "reason_first_triage_confirm"
     },
     {
+      "id": "reason_first_ask_more_ambiguous_yes",
+      "flags": ["reason_first", "bare_yes"],
+      "inCollection": false,
+      "state": { "step": "responded", "reasonFirstTriagePhase": "ask_more" },
+      "recentMessages": [
+        { "sender_type": "patient", "content": "Headache and stiffness in neck" },
+        { "sender_type": "system", "content": "Anything else you want covered before we share the fee?" }
+      ],
+      "text": "yes",
+      "intentResult": { "intent": "ask_question", "confidence": 0.55 },
+      "expected_branch": "reason_first_triage_ask_more_ambiguous_yes"
+    },
+    {
+      "id": "reason_first_ask_more_hinglish_bas_wrap_up",
+      "flags": ["reason_first", "hinglish", "wrap_up"],
+      "inCollection": false,
+      "state": { "step": "responded", "reasonFirstTriagePhase": "ask_more" },
+      "recentMessages": [
+        { "sender_type": "patient", "content": "Follow up for diabetes" },
+        { "sender_type": "system", "content": "Anything else before we share the fee?" }
+      ],
+      "text": "bas",
+      "intentResult": { "intent": "ask_question", "confidence": 0.7 },
+      "expected_branch": "reason_first_triage_confirm"
+    },
+    {
       "id": "reason_first_ask_more_payment_bridge",
       "flags": ["reason_first", "pricing_before_confirm"],
       "inCollection": false,
@@ -172,6 +198,23 @@
       "text": "what are all your consultation fees and services",
       "intentResult": { "intent": "ask_question", "confidence": 0.9, "is_fee_question": true },
       "expected_branch": "fee_deterministic_idle"
+    },
+    {
+      "id": "reason_first_explicit_catalog_fee_thread_anaphora",
+      "flags": ["reason_first", "explicit_catalog", "fee_thread_continuation"],
+      "inCollection": false,
+      "state": { "step": "responded", "reasonFirstTriagePhase": "ask_more" },
+      "recentMessages": [
+        { "sender_type": "patient", "content": "routine diabetes review" },
+        { "sender_type": "system", "content": "Yes — there is a consultation fee for this visit." }
+      ],
+      "text": "list every service please",
+      "intentResult": {
+        "intent": "ask_question",
+        "confidence": 0.92,
+        "fee_thread_continuation": true
+      },
+      "expected_branch": "fee_follow_up_anaphora_idle"
     },
     {
       "id": "reason_first_anaphora_after_fee_line",

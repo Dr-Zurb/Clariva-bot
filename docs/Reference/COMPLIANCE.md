@@ -321,7 +321,7 @@
 - **MUST NOT** log patient names, phones, DOBs, or other PHI
 - **MUST** log only IDs + metadata (correlationId, userId, resourceId, action)
 - **MUST** redact PHI from AI prompts before sending to external AI services
-- **MUST** use `redactPHI()` utility (when implemented) before external AI calls
+- **MUST** use **`redactPhiForAI`** in `backend/src/services/ai-service.ts` (and related call sites such as `buildFeeCatalogMatchText` in `dm-turn-context.ts`) before external AI calls — replaces the legacy “`redactPHI()` when implemented” placeholder
 - **MUST NOT** persist raw AI prompts/responses if they may contain PHI
 
 **For AI Agents:** See STANDARDS.md "PII Redaction Rule" section for implementation details and code examples.

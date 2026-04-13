@@ -2,7 +2,7 @@
 
 **Status:** Engineering draft — **requires product + legal async sign-off** before learn-02 migrations ship.  
 **Supersedes:** Nothing (first version).  
-**Related:** [PRIVACY_BY_DESIGN.md](./PRIVACY_BY_DESIGN.md) · [COMPLIANCE.md](./COMPLIANCE.md) · [DATA_RETENTION.md](./DATA_RETENTION.md) · [plan §1a](../Development/Daily-plans/April%202026/12-04-2026/plan-staff-feedback-learning-system.md#1a-structured-first-vs-optional-nl--ai-clarify-scope)
+**Related:** [PRIVACY_BY_DESIGN.md](./PRIVACY_BY_DESIGN.md) · [COMPLIANCE.md](./COMPLIANCE.md) · [DATA_RETENTION.md](./DATA_RETENTION.md) · [plan §1a](../Development/Daily-plans/April%202026/12-04-2026/plan-staff-feedback-learning-system.md#1a-structured-first-vs-optional-nl--ai-clarify-scope) · Matcher implementation (ARM-04): [`backend/src/services/service-catalog-matcher.ts`](../../backend/src/services/service-catalog-matcher.ts) · [README-matcher.md](../../backend/src/services/README-matcher.md)
 
 **Cite in code / PRs:** Use IDs in the first column (e.g. `DC-ALLOW`, `DC-DENY`).
 

@@ -48,5 +48,12 @@ describe('booking turn classifiers (deterministic fast path)', () => {
         'granted'
       );
     });
+
+    it('grants nahi bas / bas as skip-extras (Hinglish) without denying consent', async () => {
+      expect(await resolveConsentReplyForBooking('nahi bas', optionalExtrasPrompt, 't8')).toBe(
+        'granted'
+      );
+      expect(await resolveConsentReplyForBooking('bas', optionalExtrasPrompt, 't9')).toBe('granted');
+    });
   });
 });

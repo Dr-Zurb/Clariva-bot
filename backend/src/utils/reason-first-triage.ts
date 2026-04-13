@@ -11,6 +11,9 @@
  *
  * OK here: closed routing (yes/no), deferral heuristics, fee-thread helpers, **broad** clinical
  * cue checks for gating — not open-ended symptom normalization.
+ *
+ * **Approved / forbidden extension points** (triage + fees): see
+ * `docs/Development/Daily-plans/April 2026/13-04-2026/planning/rt-04-triage-fees-dm-context-findings-and-planned-changes.md` §5.
  */
 
 import type { ConversationState } from '../types/conversation';

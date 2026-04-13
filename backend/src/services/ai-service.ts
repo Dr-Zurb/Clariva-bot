@@ -51,6 +51,7 @@ import {
   isOptionalExtrasConsentPrompt,
   isSkipExtrasReply,
 } from '../utils/booking-consent-context';
+import { BOOKING_RELATION_KIN_PATTERN } from '../utils/booking-relation-terms';
 
 // ============================================================================
 // Constants
@@ -69,7 +70,11 @@ const BOOKING_TURN_CLASSIFICATION_MAX_COMPLETION_TOKENS = 160;
 const INTENT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 /** Max cache entries; evict oldest when full (Map insertion order). */
 const INTENT_CACHE_MAX_SIZE = 500;
-/** RBH-18 + e-task-dm-06: bump prefix when classifier JSON schema changes (invalidates stale cache entries). */
+/**
+ * RBH-18 + e-task-dm-06: bump prefix when classifier JSON schema changes (invalidates stale cache entries).
+ * **Contract:** Entries apply only when `classifyIntent` does **not** set `skipIntentCache` (no thread / goal
+ * context). When context is present, cache is skipped — same text can mean different intents per thread.
+ */
 const INTENT_CACHE_KEY_PREFIX = 'rbh18dm06:';
 
 interface CacheEntry {
@@ -127,18 +132,23 @@ function setCachedCommentIntent(redactedText: string, result: CommentIntentDetec
 // ============================================================================
 // Deterministic Intent Rules (before AI) - e-task-1 receptionist conversation rules
 // ============================================================================
+//
+// **Philosophy (AI_BOT_BUILDING_PHILOSOPHY.md §5):** These shortcuts are intentional:
+// - **Latency / safety:** `isEmergencyUserMessage`, simple greeting regex — keep bounded.
+// - **Product / closed menu:** `isBookForSomeoneElse`, `isCheckAppointmentStatus` — fast paths for clear UX.
+// - **Kin phrasing:** terms live in `booking-relation-terms.ts`; for wording not in the list, use
+//   `resolveBookingTargetRelationForDm` (LLM) when `BOOKING_RELATION_LLM_ENABLED` — do not grow regex lists
+//   for every new kin term without product sign-off.
+//
+// ============================================================================
 
 /** Simple greetings only (no mixed content). Match → greeting, skip AI. */
 const SIMPLE_GREETING_REGEX = /^(hi|hello|hey|hiya|howdy|namaste|नमस्ते|good\s*morning|good\s*afternoon|good\s*evening|good\s*day)[\s!?.]*$/i;
 
-/** Kin / role terms for "book for my …" / "me and my …" (EN + common desi English). */
-const BOOKING_RELATION_KIN =
-  'mother|father|mom|dad|mummy|papa|amma|appa|wife|husband|son|daughter|sister|brother|parent|parents|spouse|grandmother|grandma|grandfather|grandpa|nani|nana|dadi|dada|grandchild|grandson|granddaughter|kid|kids|child|children|baby|partner|friend|boss|colleague|coworker|uncle|aunt|cousin|nephew|niece|father-in-law|mother-in-law|brother-in-law|sister-in-law|fiancé|fiance|mentor';
-
 /** e-task-4: Multi-person "me and my X". Must run before BOOK_FOR_SOMEONE_ELSE. */
 const MULTI_PERSON_BOOKING_REGEX = new RegExp(
   '\\b(?:book|schedule|appointment|want\\s+to\\s+book)\\s+(?:an?\\s+)?(?:appointment\\s+)?(?:for\\s+)?(?:me|myself|us)\\s+and\\s+(?:my\\s+)?(' +
-    BOOKING_RELATION_KIN +
+    BOOKING_RELATION_KIN_PATTERN +
     ')\\b',
   'i'
 );
@@ -146,7 +156,7 @@ const MULTI_PERSON_BOOKING_REGEX = new RegExp(
 /** Book for someone else (e.g. "book for my mother/sister"). Match → book_for_someone_else. */
 const BOOK_FOR_SOMEONE_ELSE_REGEX = new RegExp(
   '\\b(book|schedule|appointment|want\\s+to\\s+book)\\s+(?:an?\\s+)?(?:appointment\\s+)?(?:for\\s+)?(?:my\\s+)?(' +
-    BOOKING_RELATION_KIN +
+    BOOKING_RELATION_KIN_PATTERN +
     '|someone\\s+else|them)\\b',
   'i'
 );
@@ -174,7 +184,7 @@ export function parseMultiPersonBooking(text: string): { relation: string } | nu
 }
 
 const BOOKING_RELATION_KEYWORD_RE = new RegExp(
-  '\\b(?:my\\s+)?(' + BOOKING_RELATION_KIN + ')\\b',
+  '\\b(?:my\\s+)?(' + BOOKING_RELATION_KIN_PATTERN + ')\\b',
   'i'
 );
 
@@ -557,7 +567,18 @@ export function intentSignalsFeeOrPricing(
 ): boolean {
   if (result.is_fee_question === true) return true;
   if (result.topics?.includes('pricing')) return true;
-  return isPricingInquiryMessage(messageText);
+  if (isPricingInquiryMessage(messageText)) {
+    logger.debug(
+      {
+        intent_fee_pricing_keyword_fallback: true,
+        intent: result.intent,
+        has_topics: Boolean(result.topics?.length),
+      },
+      'intentSignalsFeeOrPricing: keyword fallback (classifier omitted fee flags)'
+    );
+    return true;
+  }
+  return false;
 }
 
 /**

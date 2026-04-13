@@ -16,6 +16,7 @@ import {
   validatePatientField,
 } from '../utils/validation';
 import { logPatientDataCollection } from '../utils/audit-logger';
+import { logger } from '../config/logger';
 import { getWebhookQueue, getQueueConnection, isQueueEnabled } from '../config/queue';
 import { extractFieldsFromMessage, extractPhoneAndEmail, type ExtractedFields } from '../utils/extract-patient-fields';
 import { isMetaBookingOrFeeReasonText } from '../utils/consultation-fees';
@@ -392,7 +393,13 @@ export async function validateAndApplyExtracted(
     if (value === undefined || value === '') continue;
     const field = key as keyof ExtractedFields;
     if (field === 'name' && typeof value === 'string') {
-      if (isSymptomLike(value) || isRelationshipOrGenderLike(value) || isGenderOnly(value)) continue;
+      if (isSymptomLike(value) || isRelationshipOrGenderLike(value) || isGenderOnly(value)) {
+        logger.debug(
+          { collection_extraction_guard_dropped: 'name', reason: 'symptom_relation_or_gender_like' },
+          'validateAndApplyExtracted: skipped name candidate'
+        );
+        continue;
+      }
       try {
         const v = validatePatientField('name', value);
         if (v) updates.name = v as string;
