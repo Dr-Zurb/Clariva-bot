@@ -822,7 +822,7 @@ function buildIntentClassificationUserContent(
   }
   if (ctx.conversationGoal === 'fee_quote') {
     blocks.push(
-      '[Conversation context: The assistant is discussing consultation fees or pricing with this user. Short follow-ups that only name or clarify a visit type/channel (e.g. "general consultation", "video please") are ask_question, not book_appointment, unless they clearly ask to book or schedule.]'
+      '[Conversation context: The assistant is discussing consultation fees or pricing with this user. Short follow-ups that only name a visit type (e.g. "general consultation") are ask_question. However, if the user picks a modality (e.g. "video", "do it video", "text please", "voice") after fees were shown, treat it as book_appointment — they are choosing how to consult and want to proceed.]'
     );
   }
   if (ctx.conversationGoal === 'post_medical_deflection') {
@@ -1931,13 +1931,13 @@ ${pricingGuardrails}`;
     !suppressMultiTierFeeCatalog &&
     !suppressAllConsultationFees
   ) {
-    prompt += `\n\nTELECONSULT-ONLY (product rule): This practice uses the **teleconsult catalog** above for visit types (text / voice / video only). Do **not** offer in-clinic or in-person appointments, do **not** quote a street address for booking, and do **not** invite users to visit the clinic physically—unless the Practice info block above explicitly states otherwise (it should not when this rule appears). When asking how to consult, only reference modalities present in the catalog (e.g. video, voice, text chat).`;
+    prompt += `\n\nTELECONSULT-ONLY (product rule): This practice uses the **teleconsult catalog** above for visit types (text / voice / video only). Do **not** offer in-clinic or in-person appointments, do **not** quote a street address for booking, and do **not** invite users to visit the clinic physically—unless the Practice info block above explicitly states otherwise (it should not when this rule appears). Do **not** ask the user to choose between text, voice, or video in this chat — they will pick their consultation mode on the booking page when they select a slot.`;
   }
   if (doctorContext?.teleconsultCatalogAuthoritative && suppressMultiTierFeeCatalog) {
-    prompt += `\n\nTELECONSULT-ONLY (product rule): This practice offers **text / voice / video** teleconsult only — do not offer in-clinic visits unless Practice info explicitly says otherwise. While visit type is ambiguous, do not steer the user using price differences between catalog rows.`;
+    prompt += `\n\nTELECONSULT-ONLY (product rule): This practice offers **text / voice / video** teleconsult only — do not offer in-clinic visits unless Practice info explicitly says otherwise. While visit type is ambiguous, do not steer the user using price differences between catalog rows. Do **not** ask the user to choose between text, voice, or video in this chat — they will pick their consultation mode on the booking page.`;
   }
   if (doctorContext?.teleconsultCatalogAuthoritative && suppressAllConsultationFees) {
-    prompt += `\n\nTELECONSULT-ONLY (product rule): This practice offers **text / voice / video** teleconsult only — do not offer in-clinic visits unless Practice info explicitly says otherwise. Do **not** quote catalog prices this turn.`;
+    prompt += `\n\nTELECONSULT-ONLY (product rule): This practice offers **text / voice / video** teleconsult only — do not offer in-clinic visits unless Practice info explicitly says otherwise. Do **not** quote catalog prices this turn. Do **not** ask the user to choose between text, voice, or video in this chat — they will pick on the booking page.`;
   }
 
   return prompt;

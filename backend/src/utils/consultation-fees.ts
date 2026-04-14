@@ -130,7 +130,6 @@ export function isConsultationTypePricingFollowUp(text: string): boolean {
 export function userExplicitlyWantsToBookNow(text: string): boolean {
   const t = text.trim();
   if (t.length < 4) return false;
-  // "How much for video consult" matches modality + consult but is fee-seeking, not booking.
   if (isAmountSeekingPricingQuestion(t)) return false;
   return (
     /\b(book|schedule)\s+(?:an\s+)?(?:appointment|visit|consultation)\b/i.test(t) ||
@@ -139,7 +138,9 @@ export function userExplicitlyWantsToBookNow(text: string): boolean {
     /\b(want|need|would\s+like)\s+to\s+book\b/i.test(t) ||
     /\bbook\s+(?:me|us|an\s+appointment|a\s+slot)\b/i.test(t) ||
     /\b(start|begin)\ba?\s+booking\b/i.test(t) ||
-    /\bplease\s+book\b/i.test(t)
+    /\bplease\s+book\b/i.test(t) ||
+    /\b(do\s+it|go\s+with|go\s+for|let'?s?\s+do|i'?ll?\s+take|i\s+choose|i\s+pick|i\s+want)\s+(video|voice|text)\b/i.test(t) ||
+    /^(video|voice|text)\s*(please|pls)?\s*$/i.test(t)
   );
 }
 

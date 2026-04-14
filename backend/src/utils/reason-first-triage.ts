@@ -168,6 +168,8 @@ export function shouldDeferIdleFeeForReasonFirstTriage(params: {
 }): boolean {
   const { state, text, recentMessages } = params;
   if (state.reasonFirstTriagePhase) return false;
+  // Fees already shown (activeFlow === 'fee_quote') — never re-enter triage (migration 046 era fix).
+  if (state.activeFlow === 'fee_quote') return false;
   const tNorm = normalizePatientPricingText(text);
   if (userWantsExplicitFullFeeList(tNorm)) return false;
 
