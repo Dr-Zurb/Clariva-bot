@@ -104,7 +104,8 @@ import type { DoctorSettingsRow } from '../types/doctor-settings';
 import type { DmHandlerBranch } from '../types/dm-instrumentation';
 import type { DoctorContext, GenerateResponseContext } from '../services/ai-service';
 import { getInstagramPageId, getInstagramPageIds } from '../utils/webhook-event-id';
-import { tryAcquireConversationLock, releaseConversationLock } from '../config/queue';
+import { tryAcquireConversationLock, releaseConversationLock, tryAcquireThrottleAck } from '../config/queue';
+import { localizeReply, detectPatientLanguageHint } from '../utils/localize-reply';
 import { sendInstagramDmWithLocksAndFallback } from './webhook-dm-send';
 import {
   classifyInstagramDmFailureReason,
@@ -333,7 +334,7 @@ function resolveInstagramReceptionistPauseMessage(settings: DoctorSettingsRow | 
 
 function parseInstagramMessage(
   payload: InstagramWebhookPayload
-): { senderId: string; text: string; mid?: string } | null {
+): { senderId: string; text: string; mid?: string; hasNonTextContent?: boolean } | null {
   const entries = payload.entry;
   if (!entries?.length) return null;
 
@@ -390,12 +391,23 @@ function parseInstagramMessage(
       if (m.message) {
         const text = m.message.text ?? '';
         const mid = m.message.mid;
-        return { senderId: String(senderId), text, mid };
+        const msg = m.message as Record<string, unknown>;
+        const hasNonTextContent = !text.trim() && (
+          Array.isArray(msg.attachments) ||
+          msg.sticker_id != null ||
+          msg.reaction != null ||
+          msg.referral != null
+        );
+        return { senderId: String(senderId), text, mid, hasNonTextContent: hasNonTextContent || undefined };
       }
       if (m.message_edit) {
         const text = m.message_edit.text ?? '';
         const mid = m.message_edit.mid;
         return { senderId: String(senderId), text, mid };
+      }
+      // Reaction event (standalone, not inside message)
+      if ((m as Record<string, unknown>).reaction != null) {
+        return { senderId: String(senderId), text: '', hasNonTextContent: true };
       }
     }
   }
@@ -960,24 +972,29 @@ function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): Docto
   };
 }
 
-/** Format appointment status for check_appointment_status: "Tue, Mar 14, 2026 at 2:00 PM (pending)" */
+/** Format appointment status: "Tue, 14 Mar 2026, 2:00 PM (pending)" — uses locale-neutral ordering. */
 function formatAppointmentStatusLine(
   isoDate: string,
   status: string,
-  timezone: string = 'Asia/Kolkata'
+  timezone: string = 'Asia/Kolkata',
+  tokenNumber?: string | number | null
 ): string {
   const d = new Date(isoDate);
-  const dateTimeStr = new Intl.DateTimeFormat('en-US', {
+  const dateTimeStr = new Intl.DateTimeFormat('en-GB', {
     timeZone: timezone,
     weekday: 'short',
-    month: 'short',
     day: 'numeric',
+    month: 'short',
     year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
   }).format(d);
-  return `${dateTimeStr} (${status})`;
+  let line = `${dateTimeStr} (${status})`;
+  if (tokenNumber != null) {
+    line += ` — Token: #${tokenNumber}`;
+  }
+  return line;
 }
 
 export async function processInstagramDmWebhook(params: {
@@ -1078,7 +1095,30 @@ export async function processInstagramDmWebhook(params: {
     return;
   }
 
-  const { senderId, text, mid } = parsed;
+  const { senderId, text, mid, hasNonTextContent } = parsed;
+
+  // Non-text messages (images, stickers, reactions): acknowledge with a polite "text only" reply.
+  if (!text?.trim() && hasNonTextContent) {
+    logger.info(
+      { eventId, provider, correlationId, senderId },
+      'Non-text message received (attachment/sticker/reaction); sending text-only acknowledgement'
+    );
+    const pageIds = getInstagramPageIds(instagramPayload);
+    const doctorId = await getDoctorIdByPageIds(pageIds, correlationId);
+    if (doctorId) {
+      const doctorToken = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
+      if (doctorToken) {
+        const nonTextAck = "I can only process text messages right now. Please type your request and I'll help you.";
+        try {
+          await sendInstagramMessage(senderId, nonTextAck, correlationId, doctorToken);
+        } catch (e) {
+          logger.warn({ err: e, correlationId }, 'Failed to send non-text ack DM');
+        }
+      }
+    }
+    await markWebhookProcessed(eventId, provider);
+    return;
+  }
 
   // Skip blank messages (e-task-2): prevents "message came through blank" from duplicate/empty webhooks
   if (!text?.trim()) {
@@ -1268,6 +1308,7 @@ export async function processInstagramDmWebhook(params: {
     /** Clinical-led + multi-row catalog: allow one LLM catalog narrow before staff deferral (see `FEE_DM_CATALOG_LLM_NARROW_ENABLED`). */
     const feeComposerOpts = {
       ...feeComposerClinicalOpts,
+      showModalityBreakdown: true as const,
       ...(clinicalLedForFees && teleconsultCatalogRowCount > 1
         ? {
             llmCatalogNarrow: {
@@ -1536,6 +1577,7 @@ export async function processInstagramDmWebhook(params: {
         step: 'responded',
         reasonFirstTriagePhase: undefined,
         postMedicalConsultFeeAckSent: undefined,
+        lastMedicalDeflectionAt: undefined,
         updatedAt: new Date().toISOString(),
       };
       await updateConversationState(conversation.id, state, correlationId);
@@ -1561,8 +1603,12 @@ export async function processInstagramDmWebhook(params: {
           updatedAt: new Date().toISOString(),
         };
       } else {
+        // Only auto-set modality when there's a single teleconsult option;
+        // when multiple modalities exist, the booking page is the source of truth.
         const nextModality: 'text' | 'voice' | 'video' | undefined =
           pick === 'in_clinic' ? undefined : pick;
+        const hasMultipleModalities = teleOnly && teleconsultCatalogRowCount == null;
+        const modalityForState = hasMultipleModalities ? undefined : nextModality;
         const recentChannel = recentMessages.map((m) => ({
           sender_type: m.sender_type,
           content: m.content ?? '',
@@ -1579,7 +1625,7 @@ export async function processInstagramDmWebhook(params: {
           state = {
             ...state,
             consultationType: pick,
-            consultationModality: nextModality,
+            consultationModality: modalityForState,
             step: 'responded',
             lastIntent: intentResult.intent,
             reasonFirstTriagePhase: 'ask_more',
@@ -1593,7 +1639,7 @@ export async function processInstagramDmWebhook(params: {
           state = {
             ...state,
             consultationType: pick,
-            consultationModality: nextModality,
+            consultationModality: modalityForState,
             step: nextStep,
             collectedFields: state.collectedFields ?? [],
             lastIntent: intentResult.intent,
@@ -1993,17 +2039,26 @@ export async function processInstagramDmWebhook(params: {
       !inCollection &&
       (!state.step || state.step === 'responded')
     ) {
-      // RBH-12: Skip second OpenAI call for idle greetings (classify may already be regex-fast).
       dmRoutingBranch = 'greeting_template';
-      greetingFastPath = true;
-      const practiceName = doctorContext?.practice_name?.trim() || 'the clinic';
-      replyText = `Hello! I'm the assistant at **${practiceName}**. How can I help you today - would you like to **book an appointment**, **check availability**, or ask a **general question**?`;
       state = {
         ...state,
         lastIntent: intentResult.intent,
         step: 'responded',
         updatedAt: new Date().toISOString(),
       };
+      const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text, teleconsultCatalogRowCount);
+      const tGreeting = Date.now();
+      replyText = await runGenerateResponse({
+        conversationId: conversation.id,
+        currentIntent: intentResult.intent,
+        state,
+        recentMessages,
+        currentUserMessage: text,
+        correlationId,
+        doctorContext,
+        context: aiContext,
+      });
+      dmGenerateMs += Date.now() - tGreeting;
       await updateConversationState(conversation.id, state, correlationId);
     } else if (intentResult.intent === 'check_appointment_status') {
       dmRoutingBranch = 'check_appointment_status';
@@ -2030,8 +2085,10 @@ export async function processInstagramDmWebhook(params: {
       };
       const hasSelfAppointment = upcoming.some((a) => a.patient_id === conversation.patient_id);
       if (upcoming.length === 0) {
-        replyText =
-          "You don't have any upcoming appointments. Say 'book appointment' to schedule one.";
+        replyText = await localizeReply(
+          "You don't have any upcoming appointments. Say 'book appointment' to schedule one.",
+          {}, detectPatientLanguageHint(text), correlationId
+        );
       } else if (askingForSelfOnly && !hasSelfAppointment) {
         const other = upcoming[0];
         const iso = typeof other.appointment_date === 'string' ? other.appointment_date : other.appointment_date.toISOString();
@@ -2043,9 +2100,17 @@ export async function processInstagramDmWebhook(params: {
         const displayStatus = await resolveStatus(a);
         replyText = `Your next appointment is on ${formatWithName(a, displayStatus)}.`;
       } else {
-        const a = upcoming[0];
-        const displayStatus = await resolveStatus(a);
-        replyText = `You have ${upcoming.length} upcoming appointments. Next: ${formatWithName(a, displayStatus)}.`;
+        const capped = upcoming.slice(0, 10);
+        const statusLines: string[] = [];
+        for (let idx = 0; idx < capped.length; idx++) {
+          const a = capped[idx]!;
+          const displayStatus = await resolveStatus(a);
+          statusLines.push(`${idx + 1}. ${formatWithName(a, displayStatus)}`);
+        }
+        replyText = `You have ${upcoming.length} upcoming appointment${upcoming.length > 1 ? 's' : ''}:\n\n${statusLines.join('\n')}`;
+        if (upcoming.length > 10) {
+          replyText += `\n\n(showing first 10)`;
+        }
       }
       state = {
         ...state,
@@ -2302,6 +2367,32 @@ export async function processInstagramDmWebhook(params: {
         await updateConversationState(conversation.id, state, correlationId);
       }
     } else if (state.step === 'consent' || effectiveAskedForConsent(state, recentMessages)) {
+      // Detect correction intent before running consent classifier.
+      const CORRECTION_RE = /\b(wait|wrong|not\s+right|change\s+my|correct\s+my|actually\s+it'?s|my\s+name\s+is|my\s+phone\s+is|my\s+number\s+is|update\s+my)\b/i;
+      if (CORRECTION_RE.test(text.trim())) {
+        dmRoutingBranch = 'consent_correction_back';
+        state = {
+          ...state,
+          step: 'confirm_details',
+          lastPromptKind: 'confirm_details' as const,
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text, teleconsultCatalogRowCount);
+        replyText = await runGenerateResponse({
+          conversationId: conversation.id,
+          currentIntent: 'book_appointment',
+          state,
+          recentMessages,
+          currentUserMessage: text,
+          correlationId,
+          doctorContext,
+          context: {
+            ...aiContext,
+            idleDialogueHint: 'The patient wants to correct their details before consenting. Ask them to provide the corrected information, then re-confirm all details.',
+          },
+        });
+      } else {
       dmRoutingBranch = 'consent_flow';
       // Handle consent reply regardless of intent (keywords + semantic LLM for paraphrases / any language).
       if (!state.step) {
@@ -2315,8 +2406,7 @@ export async function processInstagramDmWebhook(params: {
         correlationId
       );
       dmGenerateMs += Date.now() - tConsentResolve;
-      // Denied is handled below; granted + any unclear (incl. "nothing"/skip extras) proceeds to slot link.
-      const hasExtrasOrGranted = consentResult === 'granted' || consentResult === 'unclear';
+      const hasExtrasOrGranted = consentResult === 'granted';
       if (hasExtrasOrGranted) {
         const extraNotes = extractExtraNotesFromConsentReply(text, consentResult);
         let collectedBeforePersist = await getCollectedData(conversation.id);
@@ -2447,18 +2537,17 @@ export async function processInstagramDmWebhook(params: {
           };
           await updateConversationState(conversation.id, state, correlationId);
         } else {
-        const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text, teleconsultCatalogRowCount);
-          replyText = await runGenerateResponse({
-            conversationId: conversation.id,
-            currentIntent: intentResult.intent,
-            state,
-            recentMessages,
-            currentUserMessage: text,
-            correlationId,
-          doctorContext,
-          context: aiContext,
-        });
+          // Consent reply was unclear — re-prompt instead of proceeding.
+          replyText = await localizeReply(
+            "I didn't catch that — please reply **Yes** to consent and continue, or **No** to cancel.",
+            {},
+            detectPatientLanguageHint(text),
+            correlationId
+          );
+          state = { ...state, step: 'consent', updatedAt: new Date().toISOString() };
+          await updateConversationState(conversation.id, state, correlationId);
       }
+      } // close correction else
     } else if (
       (state.step === 'collecting_all' || (lastBotAskedForDetails && !state.step)) &&
       !(
@@ -2651,61 +2740,45 @@ export async function processInstagramDmWebhook(params: {
         const phone = collected?.phone?.trim() || '';
         const phoneDisplay = phone ? `**${phone}**` : 'your number';
 
-        if (state.bookingForSomeoneElse && collected?.name?.trim() && collected?.phone?.trim()) {
-          // e-task-5: Match check before consent. If matches -> awaiting_match_confirmation; else -> consent.
-          const matches = await findPossiblePatientMatches(
-            doctorId,
-            collected.phone.trim(),
-            collected.name.trim(),
-            collected.age,
-            collected.gender,
+        // Duplicate check for both self-booking and book-for-others.
+        const matchName = collected?.name?.trim() ?? '';
+        const matchPhone = collected?.phone?.trim() ?? '';
+        const matches = matchName && matchPhone
+          ? await findPossiblePatientMatches(
+              doctorId,
+              matchPhone,
+              matchName,
+              collected?.age,
+              collected?.gender,
+              correlationId
+            )
+          : [];
+        if (matches.length > 0) {
+          const ids = matches.slice(0, 2).map((m) => m.patientId);
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'awaiting_match_confirmation',
+            pendingMatchPatientIds: ids,
+            reasonForVisit: collected?.reason_for_visit,
+            age: collected?.age,
+            updatedAt: new Date().toISOString(),
+          };
+          state = await enrichStateWithServiceCatalogMatch(
+            state,
+            doctorSettings,
+            collected?.reason_for_visit,
+            recentMessages,
             correlationId
           );
-          if (matches.length > 0) {
-            const ids = matches.slice(0, 2).map((m) => m.patientId);
-            state = {
-              ...state,
-              lastIntent: intentResult.intent,
-              step: 'awaiting_match_confirmation',
-              pendingMatchPatientIds: ids,
-              reasonForVisit: collected?.reason_for_visit,
-              age: collected?.age,
-              updatedAt: new Date().toISOString(),
-            };
-            state = await enrichStateWithServiceCatalogMatch(
-              state,
-              doctorSettings,
-              collected?.reason_for_visit,
-              recentMessages,
-              correlationId
-            );
-            await updateConversationState(conversation.id, state, correlationId);
-            if (matches.length === 1) {
-              replyText = `We found a record for **${matches[0]!.name}** with this number. Same person? Reply Yes or No.`;
+          await updateConversationState(conversation.id, state, correlationId);
+          if (matches.length === 1) {
+            replyText = state.bookingForSomeoneElse
+              ? `We found a record for **${matches[0]!.name}** with this number. Same person? Reply Yes or No.`
+              : `We found an existing record matching your details (**${matches[0]!.name}**). Is this you? Reply Yes or No.`;
           } else {
-              const list = matches.slice(0, 2).map((m, i) => `${i + 1}. ${m.name}${m.age != null ? ` (${m.age})` : ''}`).join(', ');
-              replyText = `We found ${matches.length} records: ${list}. Which one? Reply 1 or 2, or No for new patient.`;
-          }
-        } else {
-            const now = new Date().toISOString();
-            state = {
-              ...state,
-              lastIntent: intentResult.intent,
-              step: 'consent',
-              consent_requested_at: now,
-              updatedAt: now,
-              reasonForVisit: collected?.reason_for_visit,
-              age: collected?.age,
-            };
-            state = await enrichStateWithServiceCatalogMatch(
-              state,
-              doctorSettings,
-              collected?.reason_for_visit,
-              recentMessages,
-              correlationId
-            );
-            await updateConversationState(conversation.id, state, correlationId);
-            replyText = `Thanks. We'll use ${phoneDisplay} to confirm the appointment for **${name}**. Do I have your consent to use these details to schedule? Reply Yes to continue.`;
+            const list = matches.slice(0, 2).map((m, i) => `${i + 1}. ${m.name}${m.age != null ? ` (${m.age})` : ''}`).join(', ');
+            replyText = `We found ${matches.length} records: ${list}. Which one? Reply 1 or 2, or No for new patient.`;
           }
         } else {
           const now = new Date().toISOString();
@@ -3227,6 +3300,13 @@ export async function processInstagramDmWebhook(params: {
       lastPromptKind: lastPromptKindResolved,
     };
 
+    // Track when a booking link was sent for the abandoned booking reminder cron.
+    if (stateToPersist.step === 'awaiting_slot_selection' && !stateToPersist.bookingLinkSentAt) {
+      stateToPersist = { ...stateToPersist, bookingLinkSentAt: new Date().toISOString(), bookingReminderSent: undefined };
+    } else if (stateToPersist.step !== 'awaiting_slot_selection' && stateToPersist.bookingLinkSentAt) {
+      stateToPersist = { ...stateToPersist, bookingLinkSentAt: undefined, bookingReminderSent: undefined };
+    }
+
     if (
       stateToPersist.step === 'awaiting_staff_service_confirmation' &&
       stateToPersist.pendingStaffServiceReview === true &&
@@ -3302,6 +3382,17 @@ export async function processInstagramDmWebhook(params: {
         throttleSkipped: dmSend.status === 'throttle_skipped',
       });
       if (dmSend.status === 'throttle_skipped') {
+        // Send a one-time "please wait" ack on first throttle in a burst.
+        if (pageIdForDm) {
+          const shouldAck = await tryAcquireThrottleAck(pageIdForDm, senderId);
+          if (shouldAck) {
+            try {
+              await sendInstagramMessage(senderId, "I see your messages — give me a moment to respond.", correlationId, doctorToken);
+            } catch (ackErr) {
+              logger.warn({ err: ackErr, correlationId }, 'Failed to send throttle ack DM');
+            }
+          }
+        }
         return;
       }
       logWebhookInstagramDmDelivery({

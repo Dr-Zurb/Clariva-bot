@@ -63,6 +63,7 @@ export type DmHandlerBranch =
   /** book_appointment while step responded — clinical thread needs reason-first before deterministic intake */
   | 'book_responded_reason_first'
   | 'ai_open_response'
+  | 'consent_correction_back'
   /** Should not appear in production — indicates a missed assignment */
   | 'unknown'
   /** Conflict recovery path re-runs generateResponse */

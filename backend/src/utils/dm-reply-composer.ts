@@ -113,6 +113,7 @@ export async function composeIdleFeeQuoteDmWithMetaAsync(
   opts?: {
     catalogMatchText?: string;
     clinicalLedFeeThread?: boolean;
+    showModalityBreakdown?: boolean;
     llmCatalogNarrow?: {
       correlationId: string;
       recentUserMessages?: string[];
@@ -125,10 +126,11 @@ export async function composeIdleFeeQuoteDmWithMetaAsync(
   feeAmbiguousStaffReview?: ConsultationFeeAmbiguousStaffReview;
 }> {
   const catalogOpts: ServiceCatalogDmFormatOpts | undefined =
-    opts?.clinicalLedFeeThread !== undefined || opts?.llmCatalogNarrow
+    opts?.clinicalLedFeeThread !== undefined || opts?.llmCatalogNarrow || opts?.showModalityBreakdown != null
       ? {
-          clinicalLedFeeThread: opts.clinicalLedFeeThread,
-          llmNarrow: opts.llmCatalogNarrow,
+          clinicalLedFeeThread: opts?.clinicalLedFeeThread,
+          showModalityBreakdown: opts?.showModalityBreakdown,
+          llmNarrow: opts?.llmCatalogNarrow,
         }
       : undefined;
   const fee = await formatConsultationFeesForDmWithMetaAsync(
@@ -203,6 +205,7 @@ export async function composeMidCollectionFeeQuoteDmWithMetaAsync(
     collectedFields?: string[] | null;
     catalogMatchText?: string;
     clinicalLedFeeThread?: boolean;
+    showModalityBreakdown?: boolean;
     llmCatalogNarrow?: {
       correlationId: string;
       recentUserMessages?: string[];
@@ -215,10 +218,11 @@ export async function composeMidCollectionFeeQuoteDmWithMetaAsync(
   feeAmbiguousStaffReview?: ConsultationFeeAmbiguousStaffReview;
 }> {
   const catalogOpts: ServiceCatalogDmFormatOpts | undefined =
-    opts?.clinicalLedFeeThread !== undefined || opts?.llmCatalogNarrow
+    opts?.clinicalLedFeeThread !== undefined || opts?.llmCatalogNarrow || opts?.showModalityBreakdown != null
       ? {
-          clinicalLedFeeThread: opts.clinicalLedFeeThread,
-          llmNarrow: opts.llmCatalogNarrow,
+          clinicalLedFeeThread: opts?.clinicalLedFeeThread,
+          showModalityBreakdown: opts?.showModalityBreakdown,
+          llmNarrow: opts?.llmCatalogNarrow,
         }
       : undefined;
   const fee = await formatConsultationFeesForDmWithMetaAsync(

@@ -11,6 +11,7 @@ import { env } from '../config/env';
 import { processBatchedPayouts } from '../services/payout-service';
 import { runStaffReviewTimeoutJob } from '../services/service-staff-review-service';
 import { runStablePatternDetectionJob } from '../services/service-match-learning-policy-service';
+import { runAbandonedBookingReminderJob } from '../services/abandoned-booking-reminder';
 import { logger } from '../config/logger';
 
 const router = Router();
@@ -179,6 +180,35 @@ router.post('/learning-policy-detection', async (req: Request, res: Response) =>
     return res.status(500).json({
       success: false,
       error: { code: 'InternalError', message: 'Learning policy detection job failed' },
+    });
+  }
+});
+
+/**
+ * POST /cron/abandoned-booking-reminders
+ *
+ * Send one-time reminder DM ~1 hour after booking link was sent with no payment.
+ * Schedule externally (e.g. every 10 minutes) with same CRON_SECRET.
+ */
+router.post('/abandoned-booking-reminders', async (req: Request, res: Response) => {
+  if (!verifyCronAuth(req)) {
+    return res.status(401).json({
+      success: false,
+      error: { code: 'Unauthorized', message: 'Invalid or missing cron secret' },
+    });
+  }
+
+  const correlationId = `cron-abandoned-booking-${Date.now()}`;
+
+  try {
+    const data = await runAbandonedBookingReminderJob(correlationId);
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ correlationId, error: msg }, 'Cron abandoned booking reminders failed');
+    return res.status(500).json({
+      success: false,
+      error: { code: 'InternalError', message: 'Abandoned booking reminder job failed' },
     });
   }
 });

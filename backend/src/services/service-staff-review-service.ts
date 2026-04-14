@@ -53,6 +53,7 @@ export interface ServiceStaffReviewRequestRow {
   match_reason_codes: unknown;
   candidate_labels: unknown;
   sla_deadline_at: string | null;
+  sla_breached_at: string | null;
   created_at: string;
   updated_at: string;
   resolved_at: string | null;
@@ -171,7 +172,7 @@ export async function upsertPendingStaffServiceReviewRequest(params: {
       if (params.state.matcherCandidateLabels?.length) return params.state.matcherCandidateLabels;
       return [];
     })(),
-    sla_deadline_at: null,
+    sla_deadline_at: new Date(Date.now() + 30 * 60_000).toISOString(),
   };
 
   const { data: created, error: insErr } = await admin
@@ -696,19 +697,59 @@ export async function cancelServiceStaffReviewRequestByStaff(params: {
 }
 
 /**
- * Legacy: SLA auto-cancel + timeout DM removed. Endpoint kept; returns zeros (no DB changes).
+ * SLA timeout: find pending reviews past sla_deadline_at, mark sla_breached_at, notify patient + staff.
  */
 export async function runStaffReviewTimeoutJob(correlationId: string): Promise<StaffReviewTimeoutJobResult> {
-  void correlationId;
-  return {
-    closed: 0,
-    notifySent: 0,
-    notifySkippedNonIg: 0,
-    notifySkippedNoConversation: 0,
-    notifyFailedNoToken: 0,
-    notifyFailedSend: 0,
-    phase2NotifyAttempts: 0,
-  };
+  const admin = getSupabaseAdminClient();
+  if (!admin) return { closed: 0, notifySent: 0, notifySkippedNonIg: 0, notifySkippedNoConversation: 0, notifyFailedNoToken: 0, notifyFailedSend: 0, phase2NotifyAttempts: 0 };
+
+  const { data: rows, error } = await admin
+    .from('service_staff_review_requests')
+    .select('id, doctor_id, conversation_id, proposed_catalog_service_key')
+    .eq('status', 'pending')
+    .not('sla_deadline_at', 'is', null)
+    .is('sla_breached_at', null)
+    .lt('sla_deadline_at', new Date().toISOString())
+    .limit(50);
+
+  if (error || !rows?.length) {
+    if (error) logger.warn({ correlationId, err: error }, 'Staff review timeout query failed');
+    return { closed: 0, notifySent: 0, notifySkippedNonIg: 0, notifySkippedNoConversation: 0, notifyFailedNoToken: 0, notifyFailedSend: 0, phase2NotifyAttempts: 0 };
+  }
+
+  let notifySent = 0;
+  let notifySkippedNonIg = 0;
+  let notifySkippedNoConversation = 0;
+  let notifyFailedNoToken = 0;
+  let notifyFailedSend = 0;
+
+  for (const row of rows) {
+    const r = row as { id: string; doctor_id: string; conversation_id: string; proposed_catalog_service_key: string | null };
+    // Mark breached first (idempotent guard).
+    await admin
+      .from('service_staff_review_requests')
+      .update({ sla_breached_at: new Date().toISOString() })
+      .eq('id', r.id);
+
+    if (!r.conversation_id) { notifySkippedNoConversation++; continue; }
+    const conv = await findConversationById(r.conversation_id, correlationId);
+    if (!conv) { notifySkippedNoConversation++; continue; }
+    if (conv.platform !== 'instagram') { notifySkippedNonIg++; continue; }
+
+    const token = await getInstagramAccessTokenForDoctor(r.doctor_id, correlationId);
+    if (!token) { notifyFailedNoToken++; continue; }
+
+    try {
+      const ack = "Our team hasn't responded to your booking review yet — we're following up now. You can also try again later or ask to book.";
+      await sendInstagramMessage(conv.platform_conversation_id, ack, correlationId, token);
+      notifySent++;
+    } catch (e) {
+      logger.warn({ err: e, correlationId, reviewId: r.id }, 'Staff review timeout DM failed');
+      notifyFailedSend++;
+    }
+  }
+
+  return { closed: rows.length, notifySent, notifySkippedNonIg, notifySkippedNoConversation, notifyFailedNoToken, notifyFailedSend, phase2NotifyAttempts: 0 };
 }
 
 /**

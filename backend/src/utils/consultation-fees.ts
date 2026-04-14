@@ -140,7 +140,11 @@ export function userExplicitlyWantsToBookNow(text: string): boolean {
     /\b(start|begin)\ba?\s+booking\b/i.test(t) ||
     /\bplease\s+book\b/i.test(t) ||
     /\b(do\s+it|go\s+with|go\s+for|let'?s?\s+do|i'?ll?\s+take|i\s+choose|i\s+pick|i\s+want)\s+(video|voice|text)\b/i.test(t) ||
-    /^(video|voice|text)\s*(please|pls)?\s*$/i.test(t)
+    /^(video|voice|text)\s*(please|pls)?\s*$/i.test(t) ||
+    /\b(ok(ay)?|sure|yes)\s*,?\s*book\b/i.test(t) ||
+    /\blet'?s?\s+go\b/i.test(t) ||
+    /\bgo\s+ahead\b/i.test(t) ||
+    /\bproceed\b/i.test(t)
   );
 }
 
@@ -667,6 +671,7 @@ export function formatServiceCatalogForDm(
 /** Options for teleconsult fee catalog DM; `llmNarrow` is used only by the async formatter. */
 export type ServiceCatalogDmFormatOpts = {
   clinicalLedFeeThread?: boolean;
+  showModalityBreakdown?: boolean;
   llmNarrow?: {
     correlationId: string;
     recentUserMessages?: string[];
@@ -680,7 +685,7 @@ function buildServiceCatalogFeeDmResultFromPick(
   settings: ConsultationFeesDmSettings,
   userText: string,
   pick: PickCatalogForFeeDmResult,
-  opts?: { clinicalLedFeeThread?: boolean }
+  opts?: { clinicalLedFeeThread?: boolean; showModalityBreakdown?: boolean }
 ): {
   markdown: string;
   feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;
@@ -751,32 +756,48 @@ function buildServiceCatalogFeeDmResultFromPick(
     rows[0] != null;
   const lines: string[] = [];
 
+  const MODALITY_LABEL: Record<string, string> = { text: 'Text', voice: 'Voice', video: 'Video' };
+
   for (const s of rows) {
-    const enabledPrices: number[] = [];
-    let anyFollowUp: string | null = null;
+    const enabledSlots: { mod: string; price: number; followup: string | null }[] = [];
     const modalityOrder: readonly ('text' | 'voice' | 'video')[] = ['text', 'voice', 'video'];
     for (const mod of modalityOrder) {
       const slot = s.modalities[mod];
       if (slot?.enabled === true) {
-        enabledPrices.push(slot.price_minor);
-        if (!anyFollowUp) {
-          anyFollowUp = formatFollowUpPolicyHint(slot.followup_policy ?? null, cur);
-        }
+        enabledSlots.push({
+          mod,
+          price: slot.price_minor,
+          followup: formatFollowUpPolicyHint(slot.followup_policy ?? null, cur),
+        });
       }
     }
-    if (enabledPrices.length === 0) continue;
+    if (enabledSlots.length === 0) continue;
 
-    const minPrice = Math.min(...enabledPrices);
-    const maxPrice = Math.max(...enabledPrices);
-    const priceStr = minPrice === maxPrice
-      ? formatMinorCurrencyDm(minPrice, cur)
-      : `${formatMinorCurrencyDm(minPrice, cur)} – ${formatMinorCurrencyDm(maxPrice, cur)}`;
+    const anyFollowUp = enabledSlots.find((sl) => sl.followup)?.followup ?? null;
 
-    let line = `**${s.label}** (\`${s.service_key}\`): ${priceStr}`;
-    if (anyFollowUp) {
-      line += `\n  - Follow-ups (on file): ${anyFollowUp}`;
+    if (opts?.showModalityBreakdown === true && enabledSlots.length > 1) {
+      let line = `**${s.label}** (\`${s.service_key}\`):`;
+      for (const sl of enabledSlots) {
+        line += `\n  - **${MODALITY_LABEL[sl.mod] ?? sl.mod}**: ${formatMinorCurrencyDm(sl.price, cur)}`;
+      }
+      if (anyFollowUp) {
+        line += `\n  - Follow-ups (on file): ${anyFollowUp}`;
+      }
+      lines.push(line);
+    } else {
+      const prices = enabledSlots.map((sl) => sl.price);
+      const minPrice = Math.min(...prices);
+      const maxPrice = Math.max(...prices);
+      const priceStr = minPrice === maxPrice
+        ? formatMinorCurrencyDm(minPrice, cur)
+        : `${formatMinorCurrencyDm(minPrice, cur)} – ${formatMinorCurrencyDm(maxPrice, cur)}`;
+
+      let line = `**${s.label}** (\`${s.service_key}\`): ${priceStr}`;
+      if (anyFollowUp) {
+        line += `\n  - Follow-ups (on file): ${anyFollowUp}`;
+      }
+      lines.push(line);
     }
-    lines.push(line);
   }
 
   if (lines.length === 0) {
@@ -809,7 +830,7 @@ export function formatServiceCatalogForDmWithMeta(
   settings: ConsultationFeesDmSettings,
   userText: string = '',
   catalogMatchText?: string,
-  opts?: { clinicalLedFeeThread?: boolean }
+  opts?: { clinicalLedFeeThread?: boolean; showModalityBreakdown?: boolean }
 ): {
   markdown: string;
   feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;

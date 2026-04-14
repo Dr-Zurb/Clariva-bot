@@ -255,6 +255,32 @@ export async function tryAcquireReplyThrottle(
   }
 }
 
+/** Throttle ack: once per burst, send a "please wait" before skipping. TTL 60s. */
+const THROTTLE_ACK_SEC = 60;
+
+/**
+ * Returns true if this is the first throttle skip in a burst for this sender.
+ * When true the caller should send the "please wait" ack. Subsequent calls
+ * within THROTTLE_ACK_SEC return false (already ack'd).
+ * Fail-open: returns false (don't ack) if Redis unavailable.
+ */
+export async function tryAcquireThrottleAck(
+  pageId: string,
+  senderId: string
+): Promise<boolean> {
+  if (!isQueueEnabled()) return false;
+  getWebhookQueue();
+  const conn = getQueueConnection();
+  if (!conn) return false;
+  const key = `ig:throttle_ack:${pageId}:${senderId}`;
+  try {
+    const result = await conn.set(key, '1', 'EX', THROTTLE_ACK_SEC, 'NX');
+    return result === 'OK';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Try to acquire a send lock before sending a reply. Prevents spam when multiple jobs
  * run for the SAME user message (Meta sends message + message_edit with different mids).

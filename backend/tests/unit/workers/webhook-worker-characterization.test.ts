@@ -46,6 +46,7 @@ jest.mock('../../../src/config/queue', () => ({
   tryAcquireInstagramSendLock: jest.fn(async () => true),
   tryAcquireReplyThrottle: jest.fn(async () => true),
   tryAcquireInstagramDedupLock: jest.fn(async () => true),
+  tryAcquireThrottleAck: jest.fn(async () => false),
 }));
 jest.mock('../../../src/services/webhook-metrics', () => ({
   classifyInstagramDmFailureReason: jest.fn().mockReturnValue('unknown'),
@@ -385,7 +386,7 @@ describe('RBH-02 webhook worker characterization', () => {
       expect(mockMarkProcessed).toHaveBeenCalledWith('evt-consent-1', 'instagram');
     });
 
-    it('unclear consent (e.g. skip-extras) still persists and sends booking URL', async () => {
+    it('unclear consent re-prompts instead of proceeding (Task B4)', async () => {
       jest.mocked(conversationService.getConversationState).mockResolvedValue({
         step: 'consent',
         bookingForSomeoneElse: false,
@@ -399,15 +400,6 @@ describe('RBH-02 webhook worker characterization', () => {
         },
       ] as never);
       jest.mocked(consentService.parseConsentReply).mockReturnValue('unclear' as never);
-      jest.mocked(collectionService.getCollectedData).mockResolvedValue({
-        name: 'Test Patient',
-        phone: '5550001234',
-        reason_for_visit: 'annual check',
-      } as never);
-      jest.mocked(consentService.persistPatientAfterConsent).mockResolvedValue({ success: true } as never);
-      jest.mocked(patientService.findPatientByIdWithAdmin).mockResolvedValue({
-        medical_record_number: 'MRN-CH',
-      } as never);
       jest.mocked(aiService.classifyIntent).mockResolvedValue({ intent: 'greeting', confidence: 1 } as never);
 
       await processWebhookJob(
@@ -419,17 +411,10 @@ describe('RBH-02 webhook worker characterization', () => {
         })
       );
 
-      expect(consentService.persistPatientAfterConsent).toHaveBeenCalled();
-      expect(slotSelectionService.buildBookingPageUrl).toHaveBeenCalledWith(TEST_CONV_ID, TEST_DOCTOR_ID);
-      expect(mockSendMessage).toHaveBeenCalledWith(
-        '987654321012345',
-        expect.stringContaining('https://book.test/link'),
-        'corr-consent-u',
-        'doctor-token'
-      );
+      expect(consentService.persistPatientAfterConsent).not.toHaveBeenCalled();
       expect(conversationService.updateConversationState).toHaveBeenCalledWith(
         TEST_CONV_ID,
-        expect.objectContaining({ step: 'awaiting_slot_selection' }),
+        expect.objectContaining({ step: 'consent' }),
         'corr-consent-u'
       );
     });

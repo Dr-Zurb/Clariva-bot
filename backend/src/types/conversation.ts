@@ -225,6 +225,10 @@ export interface ConversationState {
    * Next pricing turns defer to reason-first triage, then narrow fee after confirm. Cleared on new deflection / fee shown / intake start.
    */
   postMedicalConsultFeeAckSent?: boolean;
+  /** When a booking link was sent (ISO); used by abandoned booking reminder cron. */
+  bookingLinkSentAt?: string;
+  /** Set to true after the 1-hour abandoned booking reminder DM has been sent. */
+  bookingReminderSent?: boolean;
 }
 
 /** e-task-dm-03: TTL for treating `lastMedicalDeflectionAt` as active routing memory. */
