@@ -776,7 +776,7 @@ function buildServiceCatalogFeeDmResultFromPick(
     const anyFollowUp = enabledSlots.find((sl) => sl.followup)?.followup ?? null;
 
     if (opts?.showModalityBreakdown === true && enabledSlots.length > 1) {
-      let line = `**${s.label}** (\`${s.service_key}\`):`;
+      let line = `**${s.label}**:`;
       for (const sl of enabledSlots) {
         line += `\n  - **${MODALITY_LABEL[sl.mod] ?? sl.mod}**: ${formatMinorCurrencyDm(sl.price, cur)}`;
       }
@@ -792,7 +792,7 @@ function buildServiceCatalogFeeDmResultFromPick(
         ? formatMinorCurrencyDm(minPrice, cur)
         : `${formatMinorCurrencyDm(minPrice, cur)} – ${formatMinorCurrencyDm(maxPrice, cur)}`;
 
-      let line = `**${s.label}** (\`${s.service_key}\`): ${priceStr}`;
+      let line = `**${s.label}**: ${priceStr}`;
       if (anyFollowUp) {
         line += `\n  - Follow-ups (on file): ${anyFollowUp}`;
       }

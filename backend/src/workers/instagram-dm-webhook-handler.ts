@@ -1098,21 +1098,46 @@ export async function processInstagramDmWebhook(params: {
   const { senderId, text, mid, hasNonTextContent } = parsed;
 
   // Non-text messages (images, stickers, reactions): acknowledge with a polite "text only" reply.
+  // Guard: skip ack if conversation is in an active flow (Instagram can send a
+  // separate attachment-only webhook for auto-detected phone/contact links alongside
+  // the real text message — we must not reply "text only" mid-collection).
   if (!text?.trim() && hasNonTextContent) {
-    logger.info(
-      { eventId, provider, correlationId, senderId },
-      'Non-text message received (attachment/sticker/reaction); sending text-only acknowledgement'
-    );
     const pageIds = getInstagramPageIds(instagramPayload);
     const doctorId = await getDoctorIdByPageIds(pageIds, correlationId);
+
+    // Instagram can fire a separate attachment-only webhook when it auto-detects
+    // a phone number or link inside a text message. If the patient already has an
+    // active conversation mid-flow, silently ignore the phantom attachment event.
+    let suppressAck = false;
     if (doctorId) {
-      const doctorToken = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
-      if (doctorToken) {
-        const nonTextAck = "I can only process text messages right now. Please type your request and I'll help you.";
-        try {
-          await sendInstagramMessage(senderId, nonTextAck, correlationId, doctorToken);
-        } catch (e) {
-          logger.warn({ err: e, correlationId }, 'Failed to send non-text ack DM');
+      const existing = await findConversationByPlatformId(doctorId, 'instagram', senderId, correlationId);
+      if (existing) {
+        const cs = await getConversationState(existing.id, correlationId);
+        const activeStep = cs?.step;
+        if (activeStep && activeStep !== 'responded') {
+          suppressAck = true;
+          logger.info(
+            { eventId, provider, correlationId, senderId, step: activeStep },
+            'Suppressing non-text ack — conversation is in active flow; likely phantom attachment webhook'
+          );
+        }
+      }
+    }
+
+    if (!suppressAck) {
+      logger.info(
+        { eventId, provider, correlationId, senderId },
+        'Non-text message received (attachment/sticker/reaction); sending text-only acknowledgement'
+      );
+      if (doctorId) {
+        const doctorToken = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
+        if (doctorToken) {
+          const nonTextAck = "I can only process text messages right now. Please type your request and I'll help you.";
+          try {
+            await sendInstagramMessage(senderId, nonTextAck, correlationId, doctorToken);
+          } catch (e) {
+            logger.warn({ err: e, correlationId }, 'Failed to send non-text ack DM');
+          }
         }
       }
     }
@@ -1306,24 +1331,30 @@ export async function processInstagramDmWebhook(params: {
       ? ({ clinicalLedFeeThread: true } as const)
       : {};
     /** Clinical-led + multi-row catalog: allow one LLM catalog narrow before staff deferral (see `FEE_DM_CATALOG_LLM_NARROW_ENABLED`). */
+    const feeComposerLlmNarrow = clinicalLedForFees && teleconsultCatalogRowCount > 1
+      ? {
+          llmCatalogNarrow: {
+            correlationId,
+            recentUserMessages: recentMessages
+              .filter((m) => m.sender_type === 'patient')
+              .slice(-8)
+              .map((m) => redactPhiForAI(m.content ?? '')),
+            doctorProfile: {
+              practiceName: doctorSettings?.practice_name ?? null,
+              specialty: doctorSettings?.specialty ?? null,
+            },
+          },
+        }
+      : {};
     const feeComposerOpts = {
       ...feeComposerClinicalOpts,
       showModalityBreakdown: true as const,
-      ...(clinicalLedForFees && teleconsultCatalogRowCount > 1
-        ? {
-            llmCatalogNarrow: {
-              correlationId,
-              recentUserMessages: recentMessages
-                .filter((m) => m.sender_type === 'patient')
-                .slice(-8)
-                .map((m) => redactPhiForAI(m.content ?? '')),
-              doctorProfile: {
-                practiceName: doctorSettings?.practice_name ?? null,
-                specialty: doctorSettings?.specialty ?? null,
-              },
-            },
-          }
-        : {}),
+      ...feeComposerLlmNarrow,
+    };
+    const bookingFeeComposerOpts = {
+      ...feeComposerClinicalOpts,
+      showModalityBreakdown: false as const,
+      ...feeComposerLlmNarrow,
     };
 
     // -------------------------------------------------------------------------
@@ -1736,7 +1767,7 @@ export async function processInstagramDmWebhook(params: {
         const feeThreadRf = buildFeeCatalogMatchText(text, recentMessages);
         const idleFeeOutRf = await composeIdleFeeQuoteDmWithMetaAsync(doctorSettings, text, {
           catalogMatchText: feeThreadRf,
-          ...feeComposerOpts,
+          ...bookingFeeComposerOpts,
         });
         replyText = idleFeeOutRf.reply;
         const consolidated = (
@@ -2900,7 +2931,7 @@ export async function processInstagramDmWebhook(params: {
         const feeThreadBookMis = buildFeeCatalogMatchText(text, recentMessages);
         const misFeeOut = await composeIdleFeeQuoteDmWithMetaAsync(doctorSettings, text, {
           catalogMatchText: feeThreadBookMis,
-          ...feeComposerOpts,
+          ...bookingFeeComposerOpts,
         });
         replyText = misFeeOut.reply;
         if (misFeeOut.feeAmbiguousStaffReview) {
@@ -3117,7 +3148,7 @@ export async function processInstagramDmWebhook(params: {
           const feeThreadBook = buildFeeCatalogMatchText(text, recentMessages);
           const bookIdleFeeOut = await composeIdleFeeQuoteDmWithMetaAsync(doctorSettings, text, {
             catalogMatchText: feeThreadBook,
-            ...feeComposerOpts,
+            ...bookingFeeComposerOpts,
           });
           replyText = bookIdleFeeOut.reply;
           if (bookIdleFeeOut.feeAmbiguousStaffReview) {

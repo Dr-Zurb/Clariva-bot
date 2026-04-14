@@ -178,7 +178,7 @@ describe('consultation-fees (RBH-13)', () => {
       business_hours_summary: 'Mon–Fri',
     });
     expect(out).toContain('Dermatology');
-    expect(out).toContain('`skin`');
+    expect(out).not.toContain('`skin`');
     expect(out).toContain('₹50');
     expect(out).toContain('₹100');
     expect(out).toContain('General');
@@ -265,7 +265,7 @@ describe('consultation-fees (RBH-13)', () => {
       appointment_fee_currency: 'INR',
     }, 'price for gp visit');
     expect(body).toContain('General');
-    expect(body).toContain('`gp`');
+    expect(body).not.toContain('`gp`');
     expect(body).not.toContain('Dermatology');
   });
 
@@ -392,7 +392,7 @@ describe('consultation-fees (RBH-13)', () => {
       thread
     );
     expect(meta.markdown).toContain('Non Communicable');
-    expect(meta.markdown).toContain('non_communicable_diseases');
+    expect(meta.markdown).not.toContain('non_communicable_diseases');
     expect(meta.markdown).not.toContain('Skin Problems');
     expect(meta.markdown).not.toContain('General Checkup');
     expect(meta.feeQuoteMatcherFinalize?.matcherProposedCatalogServiceKey).toBe(
