@@ -7,6 +7,15 @@
 export function isOptionalExtrasConsentPrompt(assistantMessage: string | undefined): boolean {
   if (!assistantMessage?.trim()) return false;
   const c = assistantMessage.toLowerCase();
+  // Current copy: special notes / allergies / medications (distinct from reason-for-visit triage)
+  if (
+    c.includes('special notes') &&
+    c.includes('doctor') &&
+    (c.includes('optional') || c.includes('say yes to continue'))
+  ) {
+    return true;
+  }
+  // Legacy copy: "Anything else you'd like the doctor to know..."
   return (
     (c.includes('anything else') && (c.includes('doctor') || c.includes('optional'))) ||
     (c.includes('anything else') && c.includes('say yes to continue')) ||

@@ -9,7 +9,7 @@ describe('booking-consent-context', () => {
     it('detects optional doctor extras copy', () => {
       expect(
         isOptionalExtrasConsentPrompt(
-          "Anything else you'd like the doctor to know before your visit? (optional) Reply with your extras, or say Yes to continue."
+          "Got it! Any special notes for the doctor — like allergies, medications, or preferences? (optional) Or just say Yes to continue."
         )
       ).toBe(true);
     });

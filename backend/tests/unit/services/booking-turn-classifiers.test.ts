@@ -27,7 +27,7 @@ describe('booking turn classifiers (deterministic fast path)', () => {
 
   describe('resolveConsentReplyForBooking', () => {
     const optionalExtrasPrompt =
-      "Anything else you'd like the doctor to know before your visit? (optional) Reply with your extras, or say Yes to continue.";
+      "Got it! Any special notes for the doctor — like allergies, medications, or preferences? (optional) Or just say Yes to continue.";
 
     it('grants on keyword yes', async () => {
       expect(await resolveConsentReplyForBooking('yes', 'consent?', 't4')).toBe('granted');

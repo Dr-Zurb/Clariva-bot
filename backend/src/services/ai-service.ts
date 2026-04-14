@@ -1374,7 +1374,7 @@ const CONSENT_REPLY_SEMANTIC_SYSTEM = `You classify whether the patient is grant
 The assistant asked them to agree to share details / consent (any language: English, Hindi, Punjabi, etc.).
 
 IMPORTANT — Read the assistant message context:
-- If the assistant asked ONLY for **optional** extras (e.g. "Anything else you'd like the doctor to know before your visit? optional") and the patient says they have nothing to add ("no", "no that's it", "nothing else", "that's all"), that means they are **continuing** — classify as **granted** (they are not refusing data consent).
+- If the assistant asked ONLY for **optional** extras (e.g. special notes for the doctor — allergies, medications, preferences — "optional" / "say Yes to continue") and the patient says they have nothing to add ("no", "no that's it", "nothing else", "that's all"), that means they are **continuing** — classify as **granted** (they are not refusing data consent).
 - If they clearly refuse consent to use their details for scheduling ("don't use my number", "I don't consent", "delete my data"), classify as **denied**.
 
 Return JSON only: {"decision":"granted"|"denied"|"unclear","confidence":0-1}

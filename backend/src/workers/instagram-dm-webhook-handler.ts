@@ -2836,7 +2836,7 @@ export async function processInstagramDmWebhook(params: {
           if (state.bookingForSomeoneElse) {
             replyText = `Thanks. We'll use ${phoneDisplay} to confirm the appointment for **${name}**. Do I have your consent to use these details to schedule? Reply Yes to continue.`;
           } else {
-            replyText = `Thanks, ${name}. We'll use ${phoneDisplay} to confirm your appointment by call or text. Anything else you'd like the doctor to know before your visit? (optional) Reply with your extras, or say Yes to continue.`;
+            replyText = `Thanks, ${name}. We'll use ${phoneDisplay} to confirm your appointment by call or text. Got it! Any special notes for the doctor — like allergies, medications, or preferences? (optional) Or just say Yes to continue.`;
           }
         }
       } else if (isCorrection) {
