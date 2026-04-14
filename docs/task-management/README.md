@@ -180,6 +180,13 @@ Learn from **staff confirm / reassign / optional notes** with **shadow evaluatio
 - **Initiative:** [STAFF_FEEDBACK_LEARNING_INITIATIVE.md](./STAFF_FEEDBACK_LEARNING_INITIATIVE.md)
 - **Tasks:** [e-task-learn-01](../Development/Daily-plans/April%202026/12-04-2026/tasks/e-task-learn-01-privacy-and-data-contract.md) … [e-task-learn-05](../Development/Daily-plans/April%202026/12-04-2026/tasks/e-task-learn-05-assist-ui-and-gated-autobook.md)
 
+### Patient ID (P-xxxxx) after payment — DM & booking copy (2026-04-14)
+
+Show **human-readable Patient ID** only **after successful payment**, not bundled with pre-payment booking DMs (preferred: **Option A** — messaging + post-payment send; optional **Option B** — defer DB MRN in `tm` file).
+
+- **Daily plan:** [docs/Development/Daily-plans/April 2026/14-04-2026/README.md](../Development/Daily-plans/April%202026/14-04-2026/README.md)
+- **Task file:** [tasks/tm-patient-mrn-post-payment-dm.md](./tasks/tm-patient-mrn-post-payment-dm.md)
+
 ### AI Receptionist — Human-Like Bot (2026-03-26)
 
 Transform the bot from regex-heavy to AI-first: understand conversations, store data intelligently, respond like a human receptionist.

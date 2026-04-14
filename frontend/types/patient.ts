@@ -33,7 +33,7 @@ export interface PatientSummary {
   phone: string;
   age?: number | null;
   gender?: string | null;
-  medical_record_number?: string;
+  medical_record_number?: string | null;
   last_appointment_date?: string | null;
   created_at: string;
 }

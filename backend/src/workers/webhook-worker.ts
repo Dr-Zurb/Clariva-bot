@@ -14,6 +14,7 @@ import { logger } from '../config/logger';
 import { markWebhookProcessed } from '../services/webhook-idempotency-service';
 import { storeDeadLetterWebhook } from '../services/dead-letter-service';
 import { getAppointmentByIdForWorker } from '../services/appointment-service';
+import { assignMrnAfterPayment } from '../services/patient-service';
 import { processPaymentSuccess } from '../services/payment-service';
 import {
   sendNewAppointmentToDoctor,
@@ -72,14 +73,19 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
       paymentAppointmentId = result?.appointmentId;
       if (result?.appointmentId) {
         getAppointmentByIdForWorker(result.appointmentId, correlationId)
-          .then((appointment) => {
+          .then(async (appointment) => {
             if (!appointment) return;
+
+            const patientMrn = appointment.patient_id
+              ? await assignMrnAfterPayment(appointment.patient_id, correlationId)
+              : null;
+
             const dateIso =
               typeof appointment.appointment_date === 'string'
                 ? appointment.appointment_date
                 : (appointment.appointment_date as Date).toISOString();
             return Promise.all([
-              sendPaymentConfirmationToPatient(result.appointmentId, dateIso, correlationId),
+              sendPaymentConfirmationToPatient(result.appointmentId, dateIso, correlationId, patientMrn),
               sendPaymentReceivedToDoctor(
                 appointment.doctor_id,
                 result.appointmentId,

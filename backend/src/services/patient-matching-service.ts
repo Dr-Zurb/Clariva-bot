@@ -17,7 +17,7 @@ export interface PossiblePatientMatch {
   phone: string;
   age?: number | null;
   gender?: string | null;
-  medicalRecordNumber?: string;
+  medicalRecordNumber?: string | null;
   confidence: number;
 }
 
@@ -189,7 +189,7 @@ export interface DuplicateGroupPatient {
   phone: string;
   age?: number | null;
   gender?: string | null;
-  medicalRecordNumber?: string;
+  medicalRecordNumber?: string | null;
 }
 
 /**

@@ -11,6 +11,7 @@ Tasks and operational work we've intentionally postponed. When you're ready to r
 | [PAYOUT_OPERATIONAL_SETUP](./PAYOUT_OPERATIONAL_SETUP_2026-03.md) | App not production-ready; focus on core features first | App has paying users; ready to move money to doctors |
 | [RLS Testing](./deferred-rls-testing-2026-01-20.md) | No frontend/auth yet | Frontend with auth + doctor user creation exists |
 | [Service matcher phases B–D](./deferred-service-matcher-intelligence-bcd-2026-03.md) | Phase A shipped; B/C/D need metrics, policy toggles, and/or schema work | You want more autobook, override analytics, or default-row behavior |
+| [IG DM interim “please wait”](./deferred-instagram-dm-interim-please-wait-2026-04.md) | UX/throttle/dedupe review; extra Graph send per slow turn | You want perceived-latency improvement on slow IG replies |
 
 ---
 
@@ -22,4 +23,4 @@ Tasks and operational work we've intentionally postponed. When you're ready to r
 
 ---
 
-**Last Updated:** 2026-03-31
+**Last Updated:** 2026-04-14

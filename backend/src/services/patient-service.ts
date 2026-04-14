@@ -19,7 +19,7 @@ export interface PatientSummary {
   phone: string;
   age?: number | null;
   gender?: string | null;
-  medical_record_number?: string;
+  medical_record_number?: string | null;
   last_appointment_date?: string | null;
   created_at: string;
 }
@@ -254,7 +254,7 @@ export async function listPatientsForDoctor(
       phone: string;
       age?: number | null;
       gender?: string | null;
-      medical_record_number?: string;
+      medical_record_number?: string | null;
       created_at: string;
     };
     return {
@@ -558,6 +558,49 @@ export async function mergePatients(
     status: 'success',
     metadata: { sourcePatientId, targetPatientId },
   });
+}
+
+/**
+ * Assign MRN to a patient after their first successful payment (migration 046).
+ * No-op if patient already has an MRN (returning patient).
+ * Uses raw SQL nextval('patient_mrn_seq') to guarantee unique sequential IDs.
+ *
+ * @returns The MRN (newly assigned or pre-existing), or null if patient not found.
+ */
+export async function assignMrnAfterPayment(
+  patientId: string,
+  correlationId: string
+): Promise<string | null> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) throw new InternalError('Service role client not available');
+
+  const { data: patient, error: fetchErr } = await admin
+    .from('patients')
+    .select('id, medical_record_number')
+    .eq('id', patientId)
+    .single();
+
+  if (fetchErr || !patient) return null;
+
+  if (patient.medical_record_number) return patient.medical_record_number;
+
+  const { data: seqRow, error: seqErr } = await admin.rpc('assign_patient_mrn', {
+    p_patient_id: patientId,
+  });
+
+  if (seqErr) {
+    handleSupabaseError(seqErr, correlationId);
+  }
+
+  const mrn: string | null = typeof seqRow === 'string' ? seqRow : (seqRow as any)?.mrn ?? null;
+
+  if (mrn) {
+    await logDataModification(correlationId, undefined as any, 'update', 'patient', patientId, [
+      'medical_record_number',
+    ]);
+  }
+
+  return mrn;
 }
 
 /**

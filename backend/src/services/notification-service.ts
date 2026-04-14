@@ -97,16 +97,19 @@ async function auditNotificationSent(
  * Send payment confirmation DM to patient after payment webhook.
  * Resolves patient via appointment.patient_id -> patients.platform_external_id;
  * only sends Instagram DM when platform is instagram.
+ * Includes newly assigned Patient ID (P-xxxxx) when provided (migration 046).
  *
  * @param appointmentId - Appointment ID (confirmed after payment)
  * @param appointmentDateIso - Appointment date (ISO string) for message
  * @param correlationId - Request correlation ID
+ * @param patientMrn - Newly assigned or existing MRN to include in message (optional)
  * @returns true if sent or skipped (no patient/platform); false on send failure (logged)
  */
 export async function sendPaymentConfirmationToPatient(
   appointmentId: string,
   appointmentDateIso: string,
-  correlationId: string
+  correlationId: string,
+  patientMrn?: string | null
 ): Promise<boolean> {
   const admin = getSupabaseAdminClient();
   if (!admin) {
@@ -171,7 +174,10 @@ export async function sendPaymentConfirmationToPatient(
     : null;
   const timezone = doctorSettings?.timezone ?? 'Asia/Kolkata';
   const dateStr = formatAppointmentDate(appointmentDateIso, timezone);
-  const message = `Payment received. Your appointment on ${dateStr} is confirmed. We'll send a reminder before your visit.`;
+  const idLine = patientMrn?.trim()
+    ? `\n\nYour patient ID: **${patientMrn.trim()}**. Save this for future bookings.`
+    : '';
+  const message = `Payment received. Your appointment on ${dateStr} is confirmed.${idLine}\n\nWe'll send a reminder before your visit.`;
 
   const doctorToken = appointment.doctor_id
     ? await getInstagramAccessTokenForDoctor(appointment.doctor_id, correlationId)
