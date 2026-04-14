@@ -256,11 +256,7 @@ export function formatMatcherHintsForAiContext(hints: ServiceMatcherHintsV1 | un
   return `${joined.slice(0, MATCHER_HINTS_AI_PER_SERVICE_MAX - 1).trimEnd()}…`;
 }
 
-const MODALITY_DM_LABEL: Record<'text' | 'voice' | 'video', string> = {
-  text: 'Text',
-  voice: 'Voice',
-  video: 'Video',
-};
+// Modality labels (Text/Voice/Video) shown on /book page only, not in DM fee table.
 
 function formatMinorCurrencyDm(minor: number, currency: string | null | undefined): string {
   const cur = (currency || 'INR').toUpperCase();
@@ -753,31 +749,34 @@ function buildServiceCatalogFeeDmResultFromPick(
     opts?.clinicalLedFeeThread === true &&
     rows.length === 1 &&
     rows[0] != null;
-  const multiModalityHint =
-    clinicalNarrowSingle &&
-    rows[0] != null &&
-    (['text', 'voice', 'video'] as const).filter((m) => rows[0]!.modalities[m]?.enabled === true)
-      .length > 1;
   const lines: string[] = [];
 
   for (const s of rows) {
-    const modParts: string[] = [];
-    /** e-task-dm-07b: practice assigns visit type; patient chooses text/voice/video — never collapse to one default modality in DM. */
+    const enabledPrices: number[] = [];
+    let anyFollowUp: string | null = null;
     const modalityOrder: readonly ('text' | 'voice' | 'video')[] = ['text', 'voice', 'video'];
     for (const mod of modalityOrder) {
       const slot = s.modalities[mod];
       if (slot?.enabled === true) {
-        const price = `**${MODALITY_DM_LABEL[mod]}**: ${formatMinorCurrencyDm(slot.price_minor, cur)}`;
-        const fu = formatFollowUpPolicyHint(slot.followup_policy ?? null, cur);
-        modParts.push(
-          fu ? `${price}\n  - Follow-ups (on file): ${fu}` : price
-        );
+        enabledPrices.push(slot.price_minor);
+        if (!anyFollowUp) {
+          anyFollowUp = formatFollowUpPolicyHint(slot.followup_policy ?? null, cur);
+        }
       }
     }
-    if (modParts.length === 0) {
-      continue;
+    if (enabledPrices.length === 0) continue;
+
+    const minPrice = Math.min(...enabledPrices);
+    const maxPrice = Math.max(...enabledPrices);
+    const priceStr = minPrice === maxPrice
+      ? formatMinorCurrencyDm(minPrice, cur)
+      : `${formatMinorCurrencyDm(minPrice, cur)} – ${formatMinorCurrencyDm(maxPrice, cur)}`;
+
+    let line = `**${s.label}** (\`${s.service_key}\`): ${priceStr}`;
+    if (anyFollowUp) {
+      line += `\n  - Follow-ups (on file): ${anyFollowUp}`;
     }
-    lines.push(`**${s.label}** (\`${s.service_key}\`)\n${modParts.map((p) => `- ${p}`).join('\n')}`);
+    lines.push(line);
   }
 
   if (lines.length === 0) {
@@ -793,19 +792,6 @@ function buildServiceCatalogFeeDmResultFromPick(
         )
       : localizeCatalogIntro(practiceName, locale);
   let body = `${intro}${lines.join('\n\n')}`;
-
-  if (multiModalityHint) {
-    if (locale === 'hi' && !hasDevanagari) {
-      body +=
-        '\n\n*Jab aap book karein, **text**, **voice**, ya **video** chun sakte hain — upar har mode ki fee hai.*';
-    } else if (locale === 'pa' && !hasGurmukhi) {
-      body +=
-        '\n\n*Jad tu book karein, **text**, **voice**, ja **video** chun sakde o — uthar har mode di fee hai.*';
-    } else {
-      body +=
-        '\n\n*When you book, you can choose **text**, **voice**, or **video** — the amounts above are per mode.*';
-    }
-  }
 
   /** Catalog path lists text/voice/video only — do not append legacy “in-clinic” flat fee (misleading when teleconsult-only). */
 

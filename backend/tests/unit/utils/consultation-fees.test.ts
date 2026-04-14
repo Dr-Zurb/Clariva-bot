@@ -180,7 +180,6 @@ describe('consultation-fees (RBH-13)', () => {
     expect(out).toContain('Dermatology');
     expect(out).toContain('`skin`');
     expect(out).toContain('₹50');
-    expect(out).toContain('₹80');
     expect(out).toContain('₹100');
     expect(out).toContain('General');
     expect(out).toContain('₹200');
@@ -188,6 +187,10 @@ describe('consultation-fees (RBH-13)', () => {
     expect(out).not.toContain('In-clinic');
     expect(out).not.toContain('999');
     expect(out).not.toContain('Legacy');
+    // Per-modality breakdown removed; modality chosen on /book page
+    expect(out).not.toContain('**Text**:');
+    expect(out).not.toContain('**Voice**:');
+    expect(out).not.toContain('**Video**:');
   });
 
   it('SFU-08: legacy path unchanged when catalog null', () => {
@@ -400,7 +403,7 @@ describe('consultation-fees (RBH-13)', () => {
     expect(pick.services[0]!.service_key).toBe('non_communicable_diseases');
   });
 
-  it('e-task-dm-07b: clinical-led narrow fee lists every enabled modality; patient picks mode at booking', () => {
+  it('e-task-dm-07b: clinical-led narrow fee shows single price (modality chosen on /book page)', () => {
     const thread =
       'hello doctor i have high blood sugar , on empty stomach it came out to 188 today , how do i manage it , please guide me';
     const meta = formatServiceCatalogForDmWithMeta(
@@ -416,10 +419,13 @@ describe('consultation-fees (RBH-13)', () => {
       thread,
       { clinicalLedFeeThread: true }
     );
-    expect(meta.markdown).toMatch(/\*\*Text\*\*:/);
-    expect(meta.markdown).toMatch(/\*\*Voice\*\*:/);
-    expect(meta.markdown).toMatch(/\*\*Video\*\*:/);
-    expect(meta.markdown).toMatch(/choose \*\*text\*\*, \*\*voice\*\*, or \*\*video\*\*/i);
+    expect(meta.markdown).toContain('Non Communicable diseases');
+    expect(meta.markdown).toContain('₹1000');
+    // Per-modality breakdown removed; modality chosen on /book page
+    expect(meta.markdown).not.toMatch(/\*\*Text\*\*:/);
+    expect(meta.markdown).not.toMatch(/\*\*Voice\*\*:/);
+    expect(meta.markdown).not.toMatch(/\*\*Video\*\*:/);
+    expect(meta.markdown).not.toMatch(/choose \*\*text\*\*, \*\*voice\*\*, or \*\*video\*\*/i);
     expect(meta.markdown).not.toContain("If your visit type isn't listed");
   });
 

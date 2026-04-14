@@ -586,20 +586,20 @@ function parseMatchConfirmationReply(text: string, matchCount: number): 'yes' | 
   return 'unclear';
 }
 
-/** e-task-7: Build Patient ID hint when MRN available. */
-function formatPatientIdHint(mrn?: string | null): string {
-  if (!mrn?.trim()) return '';
-  return `\n\nYour patient ID: **${mrn}**. Save this for future bookings.`;
+/**
+ * Patient ID hint — disabled in pre-payment DMs (migration 046).
+ * MRN is now communicated only in the post-payment confirmation DM
+ * (notification-service.ts → sendPaymentConfirmationToPatient).
+ */
+function formatPatientIdHint(_mrn?: string | null): string {
+  return '';
 }
 
-/** e-task-7: Fetch patient and return MRN hint for slot message. */
 async function getPatientIdHintForSlot(
-  patientId: string | undefined,
-  correlationId: string
+  _patientId: string | undefined,
+  _correlationId: string
 ): Promise<string> {
-  if (!patientId) return '';
-  const patient = await findPatientByIdWithAdmin(patientId, correlationId);
-  return formatPatientIdHint(patient?.medical_record_number);
+  return '';
 }
 /** AI Receptionist: Get last bot message content for extraction context. */
 function getLastBotMessage(
@@ -1764,6 +1764,9 @@ export async function processInstagramDmWebhook(params: {
             step: 'responded',
             updatedAt: new Date().toISOString(),
           };
+        } else if (userSignalsReasonFirstWrapUp(text, intentResult)) {
+          // "nothing else" / "that's it" — skip confirm, go straight to fees
+          await runReasonFirstFeeNarrowFromTriage();
         } else {
           dmRoutingBranch = 'reason_first_triage_confirm';
           const snippet = await resolveVisitReasonSnippetForTriage(

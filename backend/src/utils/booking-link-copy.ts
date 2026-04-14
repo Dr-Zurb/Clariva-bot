@@ -7,17 +7,18 @@ import { resolveOpdModeFromSettings } from '../services/opd/opd-mode-service';
 
 /**
  * Primary booking link message after patient details are ready.
+ * mrnHint parameter kept for signature compatibility but always empty (migration 046: MRN shown post-payment only).
  */
 export function formatBookingLinkDm(
   slotLink: string,
-  mrnHint: string,
+  _mrnHint: string,
   doctorSettings: DoctorSettingsRow | null | undefined
 ): string {
   const mode = resolveOpdModeFromSettings(doctorSettings);
   if (mode === 'queue') {
-    return `Join the queue for your visit here: ${slotLink}\n\nChoose a day, then confirm - you'll get a token number. Wait times are approximate.${mrnHint}`;
+    return `Join the queue for your visit here: ${slotLink}\n\nChoose a day, then confirm - you'll get a token number. Wait times are approximate.`;
   }
-  return `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.${mrnHint}`;
+  return `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`;
 }
 
 /**
