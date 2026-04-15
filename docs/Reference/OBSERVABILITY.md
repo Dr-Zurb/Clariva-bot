@@ -29,6 +29,7 @@ This file governs what to log, what to never log, metrics, tracing rules, and al
 - [COMPLIANCE.md](./COMPLIANCE.md) - PHI handling and audit requirements
 - [RECIPES.md](./RECIPES.md) - Logging implementation patterns
 - [ERROR_CATALOG.md](./ERROR_CATALOG.md) - Error classes and status codes
+- [ANALYTICS_INTAKE_VS_REGISTERED.md](./ANALYTICS_INTAKE_VS_REGISTERED.md) - Backlog: funnel metrics (intake vs registered); existing signals vs DB-derived queries
 
 ---
 

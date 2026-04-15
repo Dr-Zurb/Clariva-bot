@@ -19,7 +19,7 @@ import { getDoctorSettings } from './doctor-settings-service';
 import type { DoctorSettingsRow } from '../types/doctor-settings';
 import type { ConversationState } from '../types/conversation';
 import type { ServiceCatalogV1 } from '../utils/service-catalog-schema';
-import { findPatientByIdWithAdmin } from './patient-service';
+import { ensurePatientMrnIfEligible, findPatientByIdWithAdmin } from './patient-service';
 import { getActiveEpisodeForPatientDoctorService } from './care-episode-service';
 import {
   findServiceOfferingByKey,
@@ -697,6 +697,7 @@ export async function processSlotSelectionAndPay(
   const successCallbackUrl = `${baseUrl.replace(/\/$/, '')}/success?token=${token}`;
 
   if (!amountMinor || amountMinor <= 0) {
+    await ensurePatientMrnIfEligible(patient.id, correlationId);
     await saveSlotSelection(conversationId, doctorId, slotStart, correlationId);
     const newState = {
       ...state,

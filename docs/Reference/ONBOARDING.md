@@ -4,7 +4,7 @@
 
 **Audience:** New developers, AI agents, or returning developers after a break.
 
-**Related:** [ARCHITECTURE.md](./ARCHITECTURE.md) | [AI_BOT_BUILDING_PHILOSOPHY.md](./AI_BOT_BUILDING_PHILOSOPHY.md) | [README.md](../../README.md) | [BUSINESS_PLAN.md](../Business files/BUSINESS_PLAN.md)
+**Related:** [ARCHITECTURE.md](./ARCHITECTURE.md) | [AI_BOT_BUILDING_PHILOSOPHY.md](./AI_BOT_BUILDING_PHILOSOPHY.md) | [PATIENT_REGISTRATION_AND_ROSTER.md](./PATIENT_REGISTRATION_AND_ROSTER.md) (who appears in doctor **Patients** vs early intake) | [README.md](../../README.md) | [BUSINESS_PLAN.md](../Business files/BUSINESS_PLAN.md)
 
 ---
 

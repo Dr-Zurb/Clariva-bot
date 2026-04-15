@@ -96,6 +96,8 @@ backend/src/
 └── index.ts             ← Server entry point
 ```
 
+**See also:** [PATIENT_REGISTRATION_AND_ROSTER.md](./PATIENT_REGISTRATION_AND_ROSTER.md) — early bot intake vs **registered** patient (MRN) and doctor **Patients** list visibility.
+
 ---
 
 ## 🏗️ Layer Boundaries

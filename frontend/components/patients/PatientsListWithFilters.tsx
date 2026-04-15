@@ -122,11 +122,25 @@ export default function PatientsListWithFilters({
 
       <h1 className="text-2xl font-semibold text-gray-900">Patients</h1>
       {filtered.length === 0 ? (
-        <p className="mt-4 text-gray-600" role="status">
-          {patients.length === 0
-            ? "No patients yet. Patients will appear here after they book appointments."
-            : "No patients match the current filters."}
-        </p>
+        patients.length === 0 ? (
+          <div
+            className="mt-4 rounded-lg border border-gray-200 bg-gray-50/80 p-6 sm:p-8"
+            role="status"
+            aria-live="polite"
+          >
+            <p className="text-base font-medium text-gray-900">No registered patients yet</p>
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-gray-600">
+              This list shows people who have completed registration with your practice—usually after
+              their first successful payment, or when a no-fee or zero-fee booking is confirmed.
+              Conversations still in progress may not appear here until registration completes; that
+              is expected.
+            </p>
+          </div>
+        ) : (
+          <p className="mt-4 text-gray-600" role="status">
+            No patients match the current filters.
+          </p>
+        )
       ) : (
         <ul className="mt-4 space-y-2" role="list">
           {filtered.map((patient) => (

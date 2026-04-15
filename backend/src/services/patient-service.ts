@@ -174,7 +174,8 @@ export async function findPatientByMrn(
 
 /**
  * List patients for a doctor (e-task-3).
- * Returns distinct patients linked via appointments or conversations.
+ * Returns distinct patients linked via appointments or conversations who have a
+ * medical record number (registered after first successful payment path).
  * Ordered by last appointment date desc, then created_at desc.
  *
  * @param doctorId - Doctor UUID
@@ -247,7 +248,12 @@ export async function listPatientsForDoctor(
       p.name !== '[Merged]' && !(p.phone ?? '').startsWith('merged-')
   );
 
-  const summaries: PatientSummary[] = activePatients.map((p) => {
+  const registeredPatients = activePatients.filter(
+    (p: { medical_record_number?: string | null }) =>
+      p.medical_record_number != null && String(p.medical_record_number).trim() !== ''
+  );
+
+  const summaries: PatientSummary[] = registeredPatients.map((p) => {
     const patient = p as {
       id: string;
       name: string;
@@ -601,6 +607,18 @@ export async function assignMrnAfterPayment(
   }
 
   return mrn;
+}
+
+/**
+ * Idempotent registration: assign MRN when missing (same RPC as `assignMrnAfterPayment`).
+ * Call after booking completes without payment (zero-fee catalog, free-of-cost, queue with no charge)
+ * or keep using `assignMrnAfterPayment` from the payment webhook for paid flows.
+ */
+export async function ensurePatientMrnIfEligible(
+  patientId: string,
+  correlationId: string
+): Promise<string | null> {
+  return assignMrnAfterPayment(patientId, correlationId);
 }
 
 /**

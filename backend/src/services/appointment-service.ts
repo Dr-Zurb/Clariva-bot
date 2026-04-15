@@ -39,6 +39,7 @@ import {
 import { assertSlotJoinAllowedForPatient } from './opd/opd-policy-service';
 import { recordOpdBookingTotal } from './opd/opd-metrics';
 import { syncCareEpisodeLifecycleOnAppointmentCompleted } from './care-episode-service';
+import { ensurePatientMrnIfEligible } from './patient-service';
 
 const SLOT_INTERVAL_MS = env.SLOT_INTERVAL_MINUTES * 60 * 1000;
 
@@ -189,6 +190,10 @@ export async function bookAppointment(
 
   if (error || !appointment) {
     handleSupabaseError(error, correlationId);
+  }
+
+  if (data.freeOfCost && data.patientId) {
+    await ensurePatientMrnIfEligible(data.patientId, correlationId);
   }
 
   if (opdMode === 'queue') {

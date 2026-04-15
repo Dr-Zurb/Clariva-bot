@@ -12,6 +12,7 @@ Tasks and operational work we've intentionally postponed. When you're ready to r
 | [RLS Testing](./deferred-rls-testing-2026-01-20.md) | No frontend/auth yet | Frontend with auth + doctor user creation exists |
 | [Service matcher phases B–D](./deferred-service-matcher-intelligence-bcd-2026-03.md) | Phase A shipped; B/C/D need metrics, policy toggles, and/or schema work | You want more autobook, override analytics, or default-row behavior |
 | [IG DM interim “please wait”](./deferred-instagram-dm-interim-please-wait-2026-04.md) | UX/throttle/dedupe review; extra Graph send per slow turn | You want perceived-latency improvement on slow IG replies |
+| [Doctor UI — add patient (manual)](./deferred-doctor-ui-add-patient-2026-04.md) | No dashboard “add patient” yet; defer until roster/MRN rules for non-bot paths are settled | After [15 Apr patient visibility plan](../Daily-plans/April%202026/15-04-2026/README.md) Phase A–B; ready to design create-patient API + UI |
 
 ---
 
@@ -23,4 +24,4 @@ Tasks and operational work we've intentionally postponed. When you're ready to r
 
 ---
 
-**Last Updated:** 2026-04-14
+**Last Updated:** 2026-04-15

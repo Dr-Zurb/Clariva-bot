@@ -16,9 +16,13 @@ import { ConflictError, NotFoundError, ValidationError } from '../../../src/util
 import * as database from '../../../src/config/database';
 import * as auditLogger from '../../../src/utils/audit-logger';
 import * as doctorSettings from '../../../src/services/doctor-settings-service';
+import { ensurePatientMrnIfEligible } from '../../../src/services/patient-service';
 
 jest.mock('../../../src/config/database');
 jest.mock('../../../src/utils/audit-logger');
+jest.mock('../../../src/services/patient-service', () => ({
+  ensurePatientMrnIfEligible: jest.fn().mockImplementation(async () => 'P-00001'),
+}));
 jest.mock('../../../src/services/doctor-settings-service', () => ({
   getDoctorSettings: jest.fn(async () => null),
 }));
@@ -30,8 +34,10 @@ jest.mock('../../../src/services/care-episode-service', () => ({
 const mockedDb = database as jest.Mocked<typeof database>;
 const mockedAudit = auditLogger as jest.Mocked<typeof auditLogger>;
 const mockedDoctorSettings = doctorSettings as jest.Mocked<typeof doctorSettings>;
+const mockEnsureMrn = ensurePatientMrnIfEligible as jest.MockedFunction<typeof ensurePatientMrnIfEligible>;
 
 const doctorId = '550e8400-e29b-41d4-a716-446655440000';
+const patientIdForFree = '660e8400-e29b-41d4-a716-446655440099';
 const userId = '550e8400-e29b-41d4-a716-446655440001';
 const correlationId = 'corr-123';
 const futureDate = new Date();
@@ -104,6 +110,8 @@ describe('Appointment Service (e-task-2)', () => {
       .fn()
       .mockImplementation(() => Promise.resolve());
     mockedDoctorSettings.getDoctorSettings.mockResolvedValue(null);
+    mockEnsureMrn.mockClear();
+    mockEnsureMrn.mockImplementation(async () => 'P-00001');
   });
 
   describe('bookAppointment', () => {
@@ -157,6 +165,40 @@ describe('Appointment Service (e-task-2)', () => {
           status: 'success',
         })
       );
+      expect(mockEnsureMrn).not.toHaveBeenCalled();
+    });
+
+    it('calls ensurePatientMrnIfEligible when freeOfCost and patientId are set', async () => {
+      const createdAppointment = {
+        id: 'apt-free',
+        doctor_id: doctorId,
+        patient_id: patientIdForFree,
+        patient_name: validBookInput.patientName,
+        patient_phone: validBookInput.patientPhone,
+        appointment_date: futureDate.toISOString(),
+        status: 'confirmed',
+        reason_for_visit: validBookInput.reasonForVisit,
+        notes: validBookInput.notes,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+      const mockAdmin = createMockAdmin([
+        { data: [], error: null },
+        { data: createdAppointment, error: null },
+      ]);
+      mockedDb.getSupabaseAdminClient.mockReturnValue(mockAdmin as any);
+
+      await bookAppointment(
+        {
+          ...validBookInput,
+          patientId: patientIdForFree,
+          freeOfCost: true,
+        },
+        correlationId
+      );
+
+      expect(mockEnsureMrn).toHaveBeenCalledTimes(1);
+      expect(mockEnsureMrn).toHaveBeenCalledWith(patientIdForFree, correlationId);
     });
   });
 
