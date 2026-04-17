@@ -5,8 +5,8 @@
 
 import type { ServiceCatalogMatchConfidence } from '../types/conversation';
 import { SERVICE_CATALOG_MATCH_REASON_CODES } from '../types/conversation';
-import type { ServiceCatalogV1, ServiceOfferingV1 } from './service-catalog-schema';
-import { CATALOG_CATCH_ALL_SERVICE_KEY } from './service-catalog-schema';
+import type { ScopeMode, ServiceCatalogV1, ServiceOfferingV1 } from './service-catalog-schema';
+import { CATALOG_CATCH_ALL_SERVICE_KEY, resolveServiceScopeMode } from './service-catalog-schema';
 
 export const MODALITIES = ['text', 'voice', 'video'] as const;
 
@@ -17,21 +17,42 @@ export function pickSuggestedModality(
   return enabled.length === 1 ? enabled[0] : undefined;
 }
 
+/**
+ * Returns true only when `hint` has meaningful content that overlaps with `reason`.
+ * An empty / whitespace-only / sub-3-char-token hint is treated as "no signal" and
+ * returns `false` — never match everything. This prevents services with blank
+ * `matcher_hints` from inheriting scores from unrelated patient complaints.
+ */
 function hasLooseOverlap(reason: string, hint: string): boolean {
   const r = reason.toLowerCase();
   const h = hint.toLowerCase().trim();
-  if (!h) return true;
+  if (!h) return false;
   if (h.length <= 48 && r.includes(h)) return true;
   const tokens = h.split(/\W+/).filter((w) => w.length >= 3);
   if (tokens.length === 0) {
-    return r.includes(h);
+    return false;
   }
   return tokens.some((w) => r.includes(w));
+}
+
+function hasAnyMatcherHintContent(offering: ServiceOfferingV1): boolean {
+  const h = offering.matcher_hints;
+  if (!h) return false;
+  return Boolean(
+    h.keywords?.trim() ||
+      h.include_when?.trim() ||
+      h.exclude_when?.trim()
+  );
+}
+
+function scopeOf(offering: ServiceOfferingV1): ScopeMode {
+  return resolveServiceScopeMode(offering.scope_mode);
 }
 
 function matcherHintScore(offering: ServiceOfferingV1, reasonLower: string): number {
   const h = offering.matcher_hints;
   if (!h) return 0;
+  if (!hasAnyMatcherHintContent(offering)) return 0;
   if (h.exclude_when?.trim() && hasLooseOverlap(reasonLower, h.exclude_when)) {
     return -1;
   }
@@ -48,7 +69,26 @@ function matcherHintScore(offering: ServiceOfferingV1, reasonLower: string): num
       }
     }
   }
+  /**
+   * SFU-18: strict services only earn a positive deterministic score when a keyword
+   * hit is present. An `include_when` overlap alone (which otherwise passes the
+   * negative-penalty gate above) is not sufficient — the complaint must actually
+   * contain one of the doctor's keywords. Flexible / undefined services keep the
+   * existing behavior (include_when overlap with 0 keyword hits yields 0 anyway).
+   */
+  if (scopeOf(offering) === 'strict' && score <= 0) {
+    return 0;
+  }
   return score;
+}
+
+/**
+ * SFU-18: strict services with no hint corroboration (keyword hit) should not
+ * auto-finalize on a bare label / description substring match. Returns `true`
+ * only when the fast-path label/desc hit also has a positive `matcherHintScore`.
+ */
+function hasStrictHintCorroboration(offering: ServiceOfferingV1, reasonLower: string): boolean {
+  return matcherHintScore(offering, reasonLower) > 0;
 }
 
 function labelOrKeyHits(catalog: ServiceCatalogV1, userText: string): ServiceOfferingV1[] {
@@ -109,11 +149,20 @@ export function runDeterministicServiceCatalogMatchStageA(
 
   const labelHits = labelOrKeyHits(catalog, reasonForVisitRedacted);
   if (labelHits.length === 1) {
+    const hit = labelHits[0]!;
+    /**
+     * SFU-18: strict services should not auto-finalize on a label-only match —
+     * require hint corroboration (keyword hit) to stay at `high`. Without
+     * corroboration, drop to `medium` + `autoFinalize: false` so the staff
+     * review inbox sees it. Flexible / undefined preserves the prior behavior.
+     */
+    const strictWithoutCorroboration =
+      scopeOf(hit) === 'strict' && !hasStrictHintCorroboration(hit, reasonLower);
     return {
-      offering: labelHits[0]!,
-      confidence: 'high',
+      offering: hit,
+      confidence: strictWithoutCorroboration ? 'medium' : 'high',
       reasonCodes: [SERVICE_CATALOG_MATCH_REASON_CODES.CATALOG_ALLOWLIST_MATCH],
-      autoFinalize: true,
+      autoFinalize: !strictWithoutCorroboration,
     };
   }
 

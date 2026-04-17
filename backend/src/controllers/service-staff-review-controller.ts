@@ -80,7 +80,8 @@ export const reassignServiceStaffReviewHandler = asyncHandler(async (req: Reques
     catalogServiceKey: body.catalogServiceKey,
     catalogServiceId: body.catalogServiceId,
     consultationModality: body.consultationModality,
-    matcherHints: body.matcherHints,
+    correctServiceHintAppend: body.correctServiceHintAppend,
+    wrongServiceHintAppend: body.wrongServiceHintAppend,
   });
 
   res.status(200).json(successResponse({ review }, req));

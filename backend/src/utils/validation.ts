@@ -15,6 +15,7 @@ import {
   serviceCatalogIncomingSchema,
   serviceCatalogTemplatesJsonSchema,
 } from './service-catalog-schema';
+import { CATALOG_MODES } from '../types/doctor-settings';
 
 // ============================================================================
 // Constants (RECIPES: E.164-like phone)
@@ -767,6 +768,13 @@ export const patchDoctorSettingsSchema = z
     /** RBH-09: Pause Instagram DM + comment automation */
     instagram_receptionist_paused: z.boolean().optional(),
     instagram_receptionist_pause_message: z.string().max(500).trim().nullable().optional(),
+    /**
+     * Plan 03 · Task 08: how the doctor charges. `null` clears the field
+     * (only meaningful for doctors who haven't picked yet). Unknown values
+     * fail strict parsing. Task 09 hooks into the service layer to react to
+     * this transition; this schema is strictly shape-validation.
+     */
+    catalog_mode: z.enum(CATALOG_MODES).nullable().optional(),
   })
   .strict();
 
@@ -1148,12 +1156,17 @@ export function validateConfirmServiceStaffReviewBody(body: unknown): ConfirmSer
   return result.data;
 }
 
-/** Same shape as practice catalog `matcher_hints` (replace on reassign). */
-const reassignMatcherHintsSchema = z
+/**
+ * Append-patch shape for doctor catalog `matcher_hints`. All fields are optional; empty
+ * / whitespace-only fields are treated as "no change". Unlike the old replace payload,
+ * this never clears existing hints — it only appends (semicolon-separated, schema-capped
+ * server-side via `appendMatcherHintFields`). Plan 01 / Task 03.
+ */
+const reassignMatcherHintAppendSchema = z
   .object({
-    keywords: z.string().max(400),
-    include_when: z.string().max(800),
-    exclude_when: z.string().max(800),
+    keywords: z.string().max(400).optional(),
+    include_when: z.string().max(800).optional(),
+    exclude_when: z.string().max(800).optional(),
   })
   .strict();
 
@@ -1162,7 +1175,16 @@ export const reassignServiceStaffReviewBodySchema = z
     catalogServiceKey: z.string().min(1).max(64).trim(),
     catalogServiceId: z.string().uuid().optional(),
     consultationModality: z.enum(['text', 'voice', 'video']).optional(),
-    matcherHints: reassignMatcherHintsSchema,
+    /**
+     * Fragments to APPEND to the reassigned-TO service's matcher hints. Optional;
+     * omit (or send all-empty fields) to skip hint learning on the destination service.
+     */
+    correctServiceHintAppend: reassignMatcherHintAppendSchema.optional(),
+    /**
+     * Fragments to APPEND to the reassigned-FROM service's matcher hints. Typically an
+     * `exclude_when` signal saying "this patient's reason should NOT route here". Optional.
+     */
+    wrongServiceHintAppend: reassignMatcherHintAppendSchema.optional(),
   })
   .strict();
 

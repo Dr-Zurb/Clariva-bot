@@ -19,6 +19,7 @@ import { formatStaffReviewResolvedContinueBookingDm } from '../utils/staff-servi
 import { findServiceOfferingByKey, getActiveServiceCatalog } from '../utils/service-catalog-helpers';
 import { buildBookingPageUrl } from './slot-selection-service';
 import { getDoctorSettings } from './doctor-settings-service';
+import { isLearningActiveForDoctor, logSingleFeeSkip } from '../utils/catalog-mode-guard';
 import {
   buildPatternKeyFromInputs,
   extractCandidateServiceKeysFromLabels,
@@ -79,6 +80,17 @@ export async function tryApplyLearningPolicyAutobook(params: {
   correlationId: string;
 }): Promise<LearningPolicyAutobookDmResult | LearningPolicyAutobookDmNone> {
   if (!env.LEARNING_AUTOBOOK_ENABLED) {
+    return { applied: false };
+  }
+
+  // Task 10 (Plan 03): single-fee doctors have one service and no pending staff review is ever
+  // enqueued. Short-circuit defensively before any DB work + policy lookups.
+  if (!(await isLearningActiveForDoctor(params.doctorId, params.correlationId))) {
+    logSingleFeeSkip('learning.autobook', {
+      doctorId: params.doctorId,
+      correlationId: params.correlationId,
+      conversationId: params.conversationId,
+    });
     return { applied: false };
   }
 

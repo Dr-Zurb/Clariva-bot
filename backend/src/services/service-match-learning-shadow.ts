@@ -13,6 +13,7 @@ import {
   extractCandidateServiceKeysFromLabels,
   normalizeMatchReasonCodes,
 } from './service-match-learning-pattern';
+import { isLearningActiveForDoctor, logSingleFeeSkip } from '../utils/catalog-mode-guard';
 
 const SHADOW_EXAMPLE_LIMIT = 50;
 
@@ -102,6 +103,18 @@ export async function recordShadowEvaluationForNewPendingReview(params: {
   correlationId: string;
 }): Promise<void> {
   if (!env.SHADOW_LEARNING_ENABLED) {
+    return;
+  }
+
+  // Task 10 (Plan 03): single-fee doctors do not enqueue review rows, so shadow rows for them
+  // would be orphaned. Short-circuit defensively.
+  if (!(await isLearningActiveForDoctor(params.doctorId, params.correlationId))) {
+    logSingleFeeSkip('learning.shadow', {
+      doctorId: params.doctorId,
+      correlationId: params.correlationId,
+      conversationId: params.conversationId,
+      reviewRequestId: params.reviewRequestId,
+    });
     return;
   }
 

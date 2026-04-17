@@ -1883,32 +1883,32 @@ function buildResponseSystemPrompt(
 
   const feeFacts: string[] = [];
   if (!suppressAllConsultationFees) {
-    const catalogSummary = doctorContext?.service_catalog_summary_for_ai?.trim();
+  const catalogSummary = doctorContext?.service_catalog_summary_for_ai?.trim();
     const cur = (doctorContext?.appointment_fee_currency || 'INR').trim().toUpperCase() || 'INR';
     if (cur !== 'INR') {
       feeFacts.push(
         `Practice currency: ${cur}. Treat catalog and on-file amounts as being in this currency unless a line states otherwise.`
       );
     }
-    if (catalogSummary) {
+  if (catalogSummary) {
       if (suppressMultiTierFeeCatalog) {
         feeFacts.push(
           `Teleconsult catalog: this practice has multiple visit types and prices on file, but **this thread is flagged** — do **not** paste, list, or compare specific prices for different visit types; do **not** ask the patient to pick a fee tier or service row. Acknowledge warmly; if booking fields are missing, continue intake; for fee questions say **the practice will confirm the correct visit type** and then the exact fee — **no multi-tier amounts or comparisons in this reply**.`
         );
       } else {
-        feeFacts.push(
-          `Teleconsult fee schedule from practice catalog (verbatim; do not invent or change amounts): ${catalogSummary}`
-        );
+    feeFacts.push(
+      `Teleconsult fee schedule from practice catalog (verbatim; do not invent or change amounts): ${catalogSummary}`
+    );
       }
-    }
-    const feeSummary = doctorContext?.appointment_fee_summary?.trim();
-    if (feeSummary) feeFacts.push(feeSummary);
-    const consultRaw = doctorContext?.consultation_types?.trim();
+  }
+  const feeSummary = doctorContext?.appointment_fee_summary?.trim();
+  if (feeSummary) feeFacts.push(feeSummary);
+  const consultRaw = doctorContext?.consultation_types?.trim();
     if (consultRaw && !suppressMultiTierFeeCatalog) {
       const legacyNote = catalogSummary
         ? ' Supplemental notes only — teleconsult/modality prices in the catalog above take precedence when both apply.'
         : '';
-      feeFacts.push(
+    feeFacts.push(
         `Legacy consultation types / per-visit notes exactly as stored: ${consultRaw}.${legacyNote} Use any amounts or labels you find here verbatim; do not invent prices.`
       );
     }

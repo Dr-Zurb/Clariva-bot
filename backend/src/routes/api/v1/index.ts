@@ -13,6 +13,7 @@ import prescriptionRoutes from './prescriptions';
 import opdRoutes from './opd';
 import serviceStaffReviewRoutes from './service-staff-reviews';
 import serviceMatchLearningRoutes from './service-match-learning';
+import catalogRoutes from './catalog';
 
 const router = Router();
 
@@ -68,5 +69,8 @@ router.use('/service-staff-reviews', serviceStaffReviewRoutes);
 
 // learn-04: Policy suggestions + autobook policies (doctor opt-in)
 router.use('/service-match-learning', serviceMatchLearningRoutes);
+
+// Plan 02 / Task 06: AI auto-fill for service catalog cards (POST /catalog/ai-suggest)
+router.use('/catalog', catalogRoutes);
 
 export default router;

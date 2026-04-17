@@ -12,6 +12,7 @@ import {
   normalizeMatchReasonCodes,
 } from './service-match-learning-pattern';
 import type { ServiceStaffReviewRequestRow } from './service-staff-review-service';
+import { isLearningActiveForDoctor, logSingleFeeSkip } from '../utils/catalog-mode-guard';
 
 export type ServiceMatchAssistResolutionHint = {
   final_catalog_service_key: string;
@@ -55,6 +56,16 @@ export async function fetchAssistHintForReviewRow(params: {
 }): Promise<ServiceMatchAssistHint | null> {
   const admin = getSupabaseAdminClient();
   if (!admin) throw new InternalError('Service role client not available');
+
+  // Task 10 (Plan 03): single-fee doctors have no review rows and no historical learning examples
+  // to aggregate. Short-circuit before issuing the examples query for safety + observability.
+  if (!(await isLearningActiveForDoctor(params.doctorId, params.correlationId, admin))) {
+    logSingleFeeSkip('learning.assist', {
+      doctorId: params.doctorId,
+      correlationId: params.correlationId,
+    });
+    return null;
+  }
 
   const proposed = params.row.proposed_catalog_service_key?.trim().toLowerCase();
   if (!proposed) return null;

@@ -12,9 +12,17 @@
  */
 
 import { getSupabaseAdminClient } from '../config/database';
-import type { DoctorSettingsRow, OpdMode, PayoutSchedule } from '../types/doctor-settings';
+import { logger } from '../config/logger';
+import {
+  CATALOG_MODES,
+  type CatalogMode,
+  type DoctorSettingsRow,
+  type OpdMode,
+  type PayoutSchedule,
+} from '../types/doctor-settings';
 import { mergeServiceCatalogOnSave } from '../utils/service-catalog-normalize';
 import {
+  appendMatcherHintFields,
   hydrateServiceCatalogServiceIds,
   parseServiceCatalogIncoming,
   parseServiceCatalogTemplatesJson,
@@ -24,6 +32,10 @@ import {
   type ServiceCatalogV1,
   type ServiceMatcherHintsV1,
 } from '../utils/service-catalog-schema';
+import {
+  buildSingleFeePersistedJson,
+  SINGLE_FEE_BACKUP_KEY,
+} from '../utils/single-fee-catalog';
 import { validateOwnership } from '../utils/db-helpers';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataAccess, logDataModification, logAuditEvent } from '../utils/audit-logger';
@@ -37,6 +49,7 @@ const SELECT_COLUMNS =
   'payout_schedule, payout_minor, razorpay_linked_account_id, ' +
   'opd_mode, opd_policies, ' +
   'instagram_receptionist_paused, instagram_receptionist_pause_message, ' +
+  'catalog_mode, ' +
   'created_at, updated_at';
 
 /** Default values when no row exists (for API GET response). */
@@ -68,6 +81,7 @@ const DEFAULT_SETTINGS: DoctorSettingsRow = {
   opd_policies: null,
   instagram_receptionist_paused: false,
   instagram_receptionist_pause_message: null,
+  catalog_mode: null,
   created_at: '',
   updated_at: '',
 };
@@ -94,7 +108,9 @@ export async function getDoctorSettings(doctorId: string): Promise<DoctorSetting
   if (!data) {
     return null;
   }
-  return normalizeDoctorSettingsApiRow(data as unknown as DoctorSettingsRow);
+  const row = data as unknown as DoctorSettingsRow;
+  const materialized = await ensureSingleFeeCatalogMaterialized(row);
+  return normalizeDoctorSettingsApiRow(materialized);
 }
 
 /**
@@ -133,7 +149,9 @@ export async function getDoctorSettingsForUser(
   if (!data) {
     return { ...DEFAULT_SETTINGS, doctor_id: doctorId };
   }
-  return normalizeDoctorSettingsApiRow(data as unknown as DoctorSettingsRow);
+  const row = data as unknown as DoctorSettingsRow;
+  const materialized = await ensureSingleFeeCatalogMaterialized(row);
+  return normalizeDoctorSettingsApiRow(materialized);
 }
 
 /** Valid slot interval range: 1–60 minutes. */
@@ -262,6 +280,115 @@ export async function setMatcherHintsOnDoctorCatalogOffering(
   return true;
 }
 
+export type MatcherHintsAppendPayload = {
+  keywords?: string;
+  include_when?: string;
+  exclude_when?: string;
+};
+
+/**
+ * Append plain-language fragments to the `matcher_hints` of one catalog offering
+ * (semicolon-separated, schema-capped). Unlike `setMatcherHintsOnDoctorCatalogOffering`
+ * (full replace), this is the feedback-loop entry point used when staff corrects a
+ * service routing on the review inbox — the patient's sanitized complaint fragment is
+ * appended to the destination service's `include_when` (and the source service's
+ * `exclude_when`) so future deterministic + LLM matching improves automatically.
+ *
+ * Empty / whitespace-only fields in `patch` are ignored. The merged value is
+ * length-capped via {@link appendMatcherHintFields}. Skips the write when the merge
+ * produces no change (idempotent on repeat corrections).
+ *
+ * @returns whether `doctor_settings.service_offerings_json` was updated.
+ */
+export async function appendMatcherHintsOnDoctorCatalogOffering(
+  doctorId: string,
+  correlationId: string,
+  serviceKey: string,
+  patch: MatcherHintsAppendPayload
+): Promise<boolean> {
+  const kw = patch.keywords?.trim() ?? '';
+  const inc = patch.include_when?.trim() ?? '';
+  const exc = patch.exclude_when?.trim() ?? '';
+  if (!kw && !inc && !exc) {
+    return false;
+  }
+
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) {
+    throw new InternalError('Database not available');
+  }
+
+  const { data: row, error: selErr } = await supabase
+    .from('doctor_settings')
+    .select('service_offerings_json')
+    .eq('doctor_id', doctorId)
+    .maybeSingle();
+
+  if (selErr) handleSupabaseError(selErr, correlationId);
+  if (!row?.service_offerings_json) {
+    throw new ValidationError('Practice has no service catalog');
+  }
+
+  const previousCatalog = safeParseServiceCatalogV1FromDb(
+    row.service_offerings_json as unknown,
+    doctorId
+  );
+  if (!previousCatalog) {
+    throw new ValidationError('Invalid service catalog');
+  }
+
+  const keyNorm = serviceKey.trim().toLowerCase();
+  const idx = previousCatalog.services.findIndex(
+    (s) => s.service_key.trim().toLowerCase() === keyNorm
+  );
+  if (idx < 0) {
+    throw new ValidationError('Service not found in catalog');
+  }
+
+  const offering = previousCatalog.services[idx]!;
+  const merged = appendMatcherHintFields(offering.matcher_hints, {
+    keywords: kw || undefined,
+    include_when: inc || undefined,
+    exclude_when: exc || undefined,
+  });
+
+  const prev = offering.matcher_hints;
+  const unchanged =
+    (prev?.keywords ?? '') === (merged.keywords ?? '') &&
+    (prev?.include_when ?? '') === (merged.include_when ?? '') &&
+    (prev?.exclude_when ?? '') === (merged.exclude_when ?? '');
+  if (unchanged) {
+    return false;
+  }
+
+  const nextHints: ServiceMatcherHintsV1 | undefined =
+    Object.keys(merged).length > 0 ? merged : undefined;
+
+  const nextOffering = { ...offering, matcher_hints: nextHints };
+  const nextServices = [...previousCatalog.services];
+  nextServices[idx] = nextOffering;
+  const incoming: ServiceCatalogV1 = { ...previousCatalog, services: nextServices };
+
+  const hydrated = hydrateServiceCatalogServiceIds(doctorId, incoming);
+  const strict = serviceCatalogV1Schema.safeParse(hydrated);
+  if (!strict.success) {
+    const first = strict.error.issues[0];
+    throw new ValidationError(
+      first ? `${first.path.join('.')}: ${first.message}` : 'Invalid catalog after hint append'
+    );
+  }
+
+  const mergedCatalog = mergeServiceCatalogOnSave(doctorId, strict.data, previousCatalog);
+
+  const { error: updErr } = await supabase
+    .from('doctor_settings')
+    .update({ service_offerings_json: mergedCatalog })
+    .eq('doctor_id', doctorId);
+
+  if (updErr) handleSupabaseError(updErr, correlationId);
+  return true;
+}
+
 /** Payload for partial update of doctor settings. */
 export interface UpdateDoctorSettingsPayload {
   practice_name?: string | null;
@@ -284,7 +411,14 @@ export interface UpdateDoctorSettingsPayload {
     | import('../utils/service-catalog-schema').ServiceCatalogTemplatesJsonV1
     | null;
   default_notes?: string | null;
-  /** Appointment fee in smallest unit (paise INR, cents USD). e.g. 50000 = ₹500 */
+  /**
+   * Appointment fee in smallest unit (paise INR, cents USD). e.g. 50000 = ₹500.
+   * @deprecated Plan 03 · Task 11 — PATCH the catalog (`service_offerings_json`)
+   * instead for multi-service doctors; for single-fee doctors, Task 09 rebuilds
+   * the catalog from this field automatically. Planned removal: **Phase 3**
+   * (see
+   * `docs/Development/Architecture/legacy-appointment-fee-minor-deprecation.md`).
+   */
   appointment_fee_minor?: number | null;
   /** Currency code e.g. INR, USD */
   appointment_fee_currency?: string | null;
@@ -300,6 +434,13 @@ export interface UpdateDoctorSettingsPayload {
   instagram_receptionist_paused?: boolean;
   /** Optional custom DM when paused (nullable to clear). */
   instagram_receptionist_pause_message?: string | null;
+  /**
+   * Plan 03 · Task 08: catalog-charging mode. `null` clears the field (only
+   * meaningful for doctors who haven't picked yet). Unknown values are 400s.
+   * Strictly data-only in Task 08 — Task 09 hooks into PATCH to materialize /
+   * back up `service_offerings_json` when this flag flips.
+   */
+  catalog_mode?: CatalogMode | null;
 }
 
 /**
@@ -370,6 +511,15 @@ export async function updateDoctorSettings(
   ) {
     throw new ValidationError('instagram_receptionist_pause_message must be at most 500 characters');
   }
+  if (
+    payload.catalog_mode !== undefined &&
+    payload.catalog_mode !== null &&
+    !(CATALOG_MODES as readonly string[]).includes(payload.catalog_mode)
+  ) {
+    throw new ValidationError(
+      `catalog_mode must be one of: ${CATALOG_MODES.join(', ')}`
+    );
+  }
 
   const supabase = getSupabaseAdminClient();
   if (!supabase) {
@@ -400,6 +550,7 @@ export async function updateDoctorSettings(
     'opd_policies',
     'instagram_receptionist_paused',
     'instagram_receptionist_pause_message',
+    'catalog_mode',
   ];
   for (const key of allowedKeys) {
     if (key in payload) {
@@ -407,17 +558,26 @@ export async function updateDoctorSettings(
     }
   }
 
+  // Plan 03 · Task 09: single pre-fetch for (a) existence, (b) catalog merge,
+  // (c) single-fee sync triggers. Pull every field any downstream branch needs.
+  // Cast via `unknown` — Supabase's inline multi-column select returns an
+  // opaque `GenericStringError` type; the SELECT columns are known-good here.
+  const { data: existingRowRaw } = await supabase
+    .from('doctor_settings')
+    .select(
+      'doctor_id, catalog_mode, appointment_fee_minor, consultation_types, ' +
+        'practice_name, service_offerings_json'
+    )
+    .eq('doctor_id', doctorId)
+    .maybeSingle();
+  const existingRow = (existingRowRaw as unknown as SingleFeeSyncExistingRow | null) ?? null;
+
   if ('service_offerings_json' in payload) {
     if (payload.service_offerings_json === null) {
       updateData.service_offerings_json = null;
     } else {
-      const { data: existingSnap } = await supabase
-        .from('doctor_settings')
-        .select('service_offerings_json')
-        .eq('doctor_id', doctorId)
-        .maybeSingle();
-      const previousCatalog = existingSnap?.service_offerings_json
-        ? safeParseServiceCatalogV1FromDb(existingSnap.service_offerings_json as unknown, doctorId)
+      const previousCatalog = existingRow?.service_offerings_json
+        ? safeParseServiceCatalogV1FromDb(existingRow.service_offerings_json as unknown, doctorId)
         : null;
       const incomingLoose = parseServiceCatalogIncoming(payload.service_offerings_json);
       const incomingHydrated = hydrateServiceCatalogServiceIds(
@@ -451,16 +611,25 @@ export async function updateDoctorSettings(
     }
   }
 
+  // Plan 03 · Task 09: sync `service_offerings_json` with the single-fee builder
+  // when any of (mode flip → single_fee, appointment_fee_minor change in
+  // single_fee, consultation_types change in single_fee) fires. Skips when the
+  // same PATCH already supplied an explicit catalog — caller wins.
+  const singleFeeSync = computeSingleFeeCatalogSyncUpdate({
+    doctorId,
+    payload,
+    existingRow,
+  });
+  if (singleFeeSync.didSync) {
+    updateData.service_offerings_json = singleFeeSync.newServiceOfferingsJson;
+  }
+
   if (Object.keys(updateData).length === 0) {
     const existing = await getDoctorSettingsForUser(doctorId, userId, correlationId);
     return existing;
   }
 
-  const { data: existing } = await supabase
-    .from('doctor_settings')
-    .select('doctor_id')
-    .eq('doctor_id', doctorId)
-    .maybeSingle();
+  const existing = existingRow ? { doctor_id: existingRow.doctor_id } : null;
 
   let result: DoctorSettingsRow;
 
@@ -515,4 +684,171 @@ export async function updateDoctorSettings(
   }
 
   return normalizeDoctorSettingsApiRow(result);
+}
+
+// ---------------------------------------------------------------------------
+// Plan 03 · Task 09: single-fee catalog sync (PATCH + lazy read)
+// ---------------------------------------------------------------------------
+
+/** Minimal shape `computeSingleFeeCatalogSyncUpdate` pulls from the DB. */
+export type SingleFeeSyncExistingRow = Pick<
+  DoctorSettingsRow,
+  | 'doctor_id'
+  | 'catalog_mode'
+  | 'appointment_fee_minor'
+  | 'consultation_types'
+  | 'practice_name'
+  | 'service_offerings_json'
+>;
+
+export interface SingleFeeSyncResult {
+  didSync: boolean;
+  newServiceOfferingsJson: Record<string, unknown> | null;
+}
+
+/**
+ * Decide whether a PATCH should auto-(re)build the single-fee catalog and, if
+ * so, return the JSON blob to write into `service_offerings_json`.
+ *
+ * Triggers (all gated on the *effective* `catalog_mode === 'single_fee'`
+ * after the PATCH is applied):
+ *   A. Mode transitioned to `'single_fee'` — snapshots the previous catalog
+ *      into `_backup_pre_single_fee` (Task 12 round-trip).
+ *   B. `appointment_fee_minor` changes while already in single_fee.
+ *   C. `consultation_types` changes while already in single_fee.
+ *
+ * Skipped entirely when:
+ *   - The same PATCH already supplied `service_offerings_json` (manual wins).
+ *   - Effective mode is NOT `'single_fee'` (multi_service / null are no-ops —
+ *     Task 12 owns the `single_fee → multi_service` promotion flow).
+ */
+export function computeSingleFeeCatalogSyncUpdate(params: {
+  doctorId: string;
+  payload: UpdateDoctorSettingsPayload;
+  existingRow: SingleFeeSyncExistingRow | null;
+}): SingleFeeSyncResult {
+  const { doctorId, payload, existingRow } = params;
+
+  // Caller wins: an explicit catalog in the same PATCH disables auto-sync.
+  if ('service_offerings_json' in payload) {
+    return { didSync: false, newServiceOfferingsJson: null };
+  }
+
+  const prevMode = existingRow?.catalog_mode ?? null;
+  const effectiveMode = 'catalog_mode' in payload
+    ? payload.catalog_mode ?? null
+    : prevMode;
+
+  if (effectiveMode !== 'single_fee') {
+    return { didSync: false, newServiceOfferingsJson: null };
+  }
+
+  const modeTransitionedToSingleFee = prevMode !== 'single_fee';
+  const feeChanged =
+    'appointment_fee_minor' in payload &&
+    payload.appointment_fee_minor !== (existingRow?.appointment_fee_minor ?? null);
+  const typesChanged =
+    'consultation_types' in payload &&
+    payload.consultation_types !== (existingRow?.consultation_types ?? null);
+
+  if (!modeTransitionedToSingleFee && !feeChanged && !typesChanged) {
+    return { didSync: false, newServiceOfferingsJson: null };
+  }
+
+  const effectiveFee = 'appointment_fee_minor' in payload
+    ? payload.appointment_fee_minor ?? null
+    : existingRow?.appointment_fee_minor ?? null;
+  const effectiveTypes = 'consultation_types' in payload
+    ? payload.consultation_types ?? null
+    : existingRow?.consultation_types ?? null;
+  const effectivePracticeName = 'practice_name' in payload
+    ? payload.practice_name ?? null
+    : existingRow?.practice_name ?? null;
+
+  // Backup preservation:
+  //   - Mode transition: the pre-transition catalog (whatever it was) becomes
+  //     the Task-12-visible backup.
+  //   - Already-single_fee trigger (B/C): keep whatever backup is already in
+  //     the JSON root so the original multi-service catalog survives fee /
+  //     consultation_types churn.
+  let backup: unknown = null;
+  const prevJson = existingRow?.service_offerings_json as unknown;
+  if (modeTransitionedToSingleFee) {
+    backup = prevJson ?? null;
+  } else if (prevJson && typeof prevJson === 'object' && !Array.isArray(prevJson)) {
+    const existingBackup = (prevJson as Record<string, unknown>)[SINGLE_FEE_BACKUP_KEY];
+    backup = existingBackup ?? null;
+  }
+
+  const newJson = buildSingleFeePersistedJson(
+    {
+      doctor_id: doctorId,
+      practice_name: effectivePracticeName,
+      appointment_fee_minor: effectiveFee,
+      consultation_types: effectiveTypes,
+    },
+    { preserveBackup: backup }
+  );
+
+  return { didSync: true, newServiceOfferingsJson: newJson };
+}
+
+/**
+ * Lazy materialization for Task 08 back-filled rows.
+ *
+ * Migration `048_catalog_mode.sql` set `catalog_mode = 'single_fee'` for
+ * legacy flat-fee doctors but left `service_offerings_json` untouched. On
+ * first read, build the single-entry catalog and persist it so every other
+ * reader (matcher skip, fee DM, booking) sees the canonical shape.
+ *
+ * Concurrency: two parallel requests may both materialize. The builder is
+ * deterministic, so both writes produce identical JSON — last-writer-wins is
+ * safe. If the write fails, we still return an enriched in-memory row so the
+ * caller isn't blocked on a transient DB error.
+ */
+export async function ensureSingleFeeCatalogMaterialized(
+  row: DoctorSettingsRow
+): Promise<DoctorSettingsRow> {
+  if (row.catalog_mode !== 'single_fee' || row.service_offerings_json != null) {
+    return row;
+  }
+  if (!row.doctor_id) {
+    return row;
+  }
+
+  const newJson = buildSingleFeePersistedJson({
+    doctor_id: row.doctor_id,
+    practice_name: row.practice_name,
+    appointment_fee_minor: row.appointment_fee_minor,
+    consultation_types: row.consultation_types,
+  });
+
+  const supabase = getSupabaseAdminClient();
+  if (supabase) {
+    const { error: updErr } = await supabase
+      .from('doctor_settings')
+      .update({ service_offerings_json: newJson })
+      .eq('doctor_id', row.doctor_id)
+      .is('service_offerings_json', null);
+
+    if (updErr) {
+      logger.warn(
+        {
+          doctorId: row.doctor_id,
+          err: updErr.message,
+        },
+        'catalog_mode.single_fee.materialize.failed'
+      );
+    } else {
+      logger.info(
+        { doctorId: row.doctor_id },
+        'catalog_mode.single_fee.materialized'
+      );
+    }
+  }
+
+  return {
+    ...row,
+    service_offerings_json: newJson as unknown as DoctorSettingsRow['service_offerings_json'],
+  };
 }

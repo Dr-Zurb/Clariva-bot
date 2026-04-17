@@ -236,6 +236,19 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => !(v === 'false' || v === '0')),
+
+  /**
+   * Plan 03 · Task 11 (legacy `appointment_fee_minor` deprecation, Phase 1).
+   * When true, `warnDeprecation()` emits a once-per-process structured log line
+   * for each classified legacy call site so developers notice migration work.
+   * Default false — production stays quiet while Phase 2 migrations are in
+   * flight. Flip `true` in dev/staging only.
+   * See `docs/Development/Architecture/legacy-appointment-fee-minor-deprecation.md`.
+   */
+  DEPRECATION_WARNINGS_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
 });
 
 /**

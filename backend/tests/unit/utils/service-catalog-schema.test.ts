@@ -6,6 +6,7 @@ import { describe, it, expect } from '@jest/globals';
 import {
   appendMatcherHintFields,
   parseServiceCatalogV1,
+  resolveServiceScopeMode,
   safeParseServiceCatalogV1FromDb,
 } from '../../../src/utils/service-catalog-schema';
 import { getActiveServiceCatalog, findServiceOfferingByKey } from '../../../src/utils/service-catalog-helpers';
@@ -58,6 +59,17 @@ describe('appendMatcherHintFields', () => {
     const long = 'x'.repeat(500);
     const out = appendMatcherHintFields({ keywords: 'y'.repeat(350) }, { keywords: long });
     expect(out.keywords!.length).toBe(400);
+  });
+});
+
+describe('resolveServiceScopeMode (SFU-18)', () => {
+  it('returns "flexible" for undefined (legacy rows)', () => {
+    expect(resolveServiceScopeMode(undefined)).toBe('flexible');
+  });
+
+  it('returns the stored mode when set', () => {
+    expect(resolveServiceScopeMode('strict')).toBe('strict');
+    expect(resolveServiceScopeMode('flexible')).toBe('flexible');
   });
 });
 
@@ -218,6 +230,51 @@ describe('parseServiceCatalogV1', () => {
       ],
     });
     expect(out.services[0]!.followup_policy?.discount_tiers).toHaveLength(2);
+  });
+
+  it('SFU-18: accepts offerings without scope_mode (legacy compat)', () => {
+    const out = parseServiceCatalogV1(minimalCatalog());
+    expect(out.services[0]!.scope_mode).toBeUndefined();
+    expect(out.services[1]!.scope_mode).toBeUndefined();
+  });
+
+  it('SFU-18: accepts scope_mode values "strict" and "flexible"', () => {
+    const out = parseServiceCatalogV1({
+      version: 1,
+      services: [
+        {
+          service_id: SVC_ID_A,
+          service_key: 'derm',
+          label: 'Derm',
+          scope_mode: 'strict',
+          modalities: { video: { enabled: true, price_minor: 100 } },
+        },
+        {
+          ...catchAllOffering(SVC_ID_B),
+          scope_mode: 'flexible',
+        },
+      ],
+    });
+    expect(out.services[0]!.scope_mode).toBe('strict');
+    expect(out.services[1]!.scope_mode).toBe('flexible');
+  });
+
+  it('SFU-18: rejects invalid scope_mode enum values', () => {
+    expect(() =>
+      parseServiceCatalogV1({
+        version: 1,
+        services: [
+          {
+            service_id: SVC_ID_A,
+            service_key: 'derm',
+            label: 'Derm',
+            scope_mode: 'loose',
+            modalities: { video: { enabled: true, price_minor: 100 } },
+          },
+          catchAllOffering(SVC_ID_B),
+        ],
+      })
+    ).toThrow(ValidationError);
   });
 
   it('ARM-02: accepts optional matcher_hints on offerings', () => {

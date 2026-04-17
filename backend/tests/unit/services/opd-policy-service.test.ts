@@ -39,6 +39,7 @@ function baseSettings(overrides: Partial<DoctorSettingsRow> = {}): DoctorSetting
     opd_policies: null,
     instagram_receptionist_paused: false,
     instagram_receptionist_pause_message: null,
+    catalog_mode: null,
     created_at: '',
     updated_at: '',
     ...overrides,

@@ -459,7 +459,7 @@ describe('RBH-02 webhook worker characterization', () => {
       );
       expect(mockSendMessage).toHaveBeenCalledWith(
         '987654321012345',
-        expect.stringMatching(/Anything else|extras/i),
+        expect.stringMatching(/special notes|allergies|Anything else|extras/i),
         'corr-confirm',
         'doctor-token'
       );

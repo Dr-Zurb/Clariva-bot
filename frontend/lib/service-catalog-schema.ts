@@ -112,6 +112,21 @@ export const serviceMatcherHintsV1Schema = z
 
 export type ServiceMatcherHintsV1 = z.infer<typeof serviceMatcherHintsV1Schema>;
 
+/**
+ * SFU-18 (Plan 01 Phase C): per-offering matching scope mode (mirror of backend schema).
+ * `strict`   — only match listed keywords / include_when conditions.
+ * `flexible` — broader category matching; preserves pre-SFU-18 behavior.
+ * Absent/undefined is treated as `flexible` everywhere for backward compatibility.
+ */
+export const SERVICE_SCOPE_MODES = ["strict", "flexible"] as const;
+export const scopeModeSchema = z.enum(SERVICE_SCOPE_MODES);
+export type ScopeMode = z.infer<typeof scopeModeSchema>;
+
+/** Single normalization point: undefined → 'flexible'. */
+export function resolveServiceScopeMode(scopeMode: ScopeMode | undefined): ScopeMode {
+  return scopeMode ?? "flexible";
+}
+
 const serviceOfferingCoreSchema = z.object({
   service_key: z
     .string()
@@ -121,6 +136,8 @@ const serviceOfferingCoreSchema = z.object({
   label: z.string().min(1).max(200).trim(),
   description: z.string().max(500).trim().nullable().optional(),
   matcher_hints: serviceMatcherHintsV1Schema.optional(),
+  /** SFU-18: optional per-offering scope mode; `undefined` resolves to `flexible`. */
+  scope_mode: scopeModeSchema.optional(),
   modalities: serviceModalitiesSchema,
   followup_policy: followUpPolicyV1Schema.nullable().optional(),
 });

@@ -19,6 +19,7 @@ import {
   extractCandidateServiceKeysFromLabels,
   normalizeMatchReasonCodes,
 } from './service-match-learning-pattern';
+import { isLearningActiveForDoctor, logSingleFeeSkip } from '../utils/catalog-mode-guard';
 
 /** Subset of review row fields used for learning (avoids circular imports). */
 export type ServiceStaffReviewRowForLearning = {
@@ -98,6 +99,17 @@ export async function ingestServiceMatchLearningExample(params: {
   correlationId: string;
 }): Promise<void> {
   if (!env.SERVICE_MATCH_LEARNING_INGEST_ENABLED) {
+    return;
+  }
+
+  // Task 10 (Plan 03): single-fee doctors never produce a staff-review row, so this path should
+  // not normally be reached. Guard defensively for safety + observability.
+  if (!(await isLearningActiveForDoctor(params.row.doctor_id, params.correlationId))) {
+    logSingleFeeSkip('learning.ingest', {
+      doctorId: params.row.doctor_id,
+      correlationId: params.correlationId,
+      reviewRequestId: params.row.id,
+    });
     return;
   }
 

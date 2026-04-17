@@ -36,7 +36,9 @@ export type ConversationLastPromptKind =
   /** ARM-05: Visit type pending staff confirmation — no slot/payment CTA yet. */
   | 'staff_service_pending'
   /** RBH-13: Last assistant turn was a structured fee quote (not collecting PHI). */
-  | 'fee_quote';
+  | 'fee_quote'
+  /** Task 05: Bot asked the patient to narrow down multiple unrelated complaints before matching a service. */
+  | 'complaint_clarification';
 
 /** RBH-13: Sub-flow stored in metadata alongside `step`. */
 export type ConversationActiveFlow = 'fee_quote';
@@ -61,6 +63,7 @@ export function conversationLastPromptKindForStep(
   if (step === 'awaiting_match_confirmation') return 'match_pick';
   if (step === 'awaiting_cancel_confirmation') return 'cancel_confirm';
   if (step === 'awaiting_staff_service_confirmation') return 'staff_service_pending';
+  if (step === 'awaiting_complaint_clarification') return 'complaint_clarification';
   return undefined;
 }
 
@@ -99,6 +102,12 @@ export const SERVICE_CATALOG_MATCH_REASON_CODES = {
   STAFF_REVIEW_TIMED_OUT: 'staff_review_timed_out',
   /** learn-05: opt-in policy matched structured pattern; auto-finalized without staff review row. */
   LEARNING_POLICY_AUTOBOOK: 'learning_policy_autobook',
+  /** Task 05: LLM flagged unrelated mixed complaints; bot asked patient to narrow focus. */
+  MIXED_COMPLAINTS_CLARIFICATION_REQUESTED: 'mixed_complaints_clarification_requested',
+  /** Task 05: Clarification attempt cap reached — handing off to staff review. */
+  MIXED_COMPLAINTS_CLARIFICATION_EXHAUSTED: 'mixed_complaints_clarification_exhausted',
+  /** Plan 03 / Task 10: doctor is in `catalog_mode='single_fee'`; matcher returned the lone service directly. */
+  SINGLE_FEE_MODE: 'single_fee_mode',
 } as const;
 
 export type PatientCollectionStep =
@@ -116,6 +125,8 @@ export type PatientCollectionStep =
   | 'awaiting_slot_selection'
   /** ARM-05: Matcher medium/low — clinic must confirm service before slot link. */
   | 'awaiting_staff_service_confirmation'
+  /** Task 05: LLM flagged mixed unrelated complaints; bot asked patient which one to focus on. */
+  | 'awaiting_complaint_clarification'
   | 'confirming_slot'
   | 'selecting_slot'
   | string;
@@ -229,6 +240,36 @@ export interface ConversationState {
   bookingLinkSentAt?: string;
   /** Set to true after the 1-hour abandoned booking reminder DM has been sent. */
   bookingReminderSent?: boolean;
+  /**
+   * Task 05: Full original `reason_for_visit` captured before we asked the patient to narrow mixed
+   * complaints. Preserved so the doctor still sees every complaint the patient mentioned at booking,
+   * even though the matcher re-runs with the narrowed reply. **May contain PHI** — same compliance
+   * posture as `reasonForVisit` (not a new PHI surface; just a stash slot).
+   */
+  originalReasonForVisit?: string;
+  /**
+   * Task 05: Number of clarification replies we've already processed in `awaiting_complaint_clarification`.
+   * First reply triggers a re-match; subsequent replies hit the cap and escalate to staff review.
+   * Reset to 0 whenever we re-enter the clarification state (new mixed-complaints event).
+   */
+  complaintClarificationAttemptCount?: number;
+  /**
+   * Task 05: ISO timestamp when we last asked the patient to clarify mixed complaints. Used for
+   * observability / debugging. No PHI.
+   */
+  complaintClarificationRequestedAt?: string;
+  /**
+   * Task 05: Matcher proposal we would fall back to if clarification is exhausted — keys only, no PHI.
+   * Lets us skip re-running the matcher on the exhausted path and hand straight to staff review with
+   * the best original guess.
+   */
+  complaintClarificationFallbackMatch?: {
+    catalogServiceKey: string;
+    catalogServiceId?: string;
+    consultationModality?: 'text' | 'voice' | 'video';
+    confidence: ServiceCatalogMatchConfidence;
+    candidateLabels?: Array<{ service_key: string; label: string }>;
+  };
 }
 
 /** e-task-dm-03: TTL for treating `lastMedicalDeflectionAt` as active routing memory. */

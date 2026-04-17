@@ -119,6 +119,7 @@ import {
   conversationLastPromptKindForStep,
   isRecentMedicalDeflectionWindow,
   isSlotBookingBlockedPendingStaffReview,
+  SERVICE_CATALOG_MATCH_REASON_CODES,
   type ConversationLastPromptKind,
   type ConversationState,
 } from '../types/conversation';
@@ -127,7 +128,14 @@ import { getActiveServiceCatalog } from '../utils/service-catalog-helpers';
 import {
   candidateLabelsForCatalog,
   matchServiceCatalogOffering,
+  type ServiceCatalogMatchResult,
 } from '../services/service-catalog-matcher';
+import {
+  COMPLAINT_CLARIFICATION_MAX_ATTEMPTS,
+  resolveComplaintClarificationMessage,
+  shouldRequestComplaintClarification,
+} from '../utils/complaint-clarification';
+import { isSingleFeeMode, logSingleFeeSkip } from '../utils/catalog-mode-guard';
 import {
   type ConsultationFeeAmbiguousStaffReview,
   feeThreadHasCompetingVisitTypeBuckets,
@@ -244,17 +252,17 @@ async function enrichStateWithServiceCatalogMatch(
   reasonForVisit: string | null | undefined,
   recentMessages: Message[],
   correlationId: string
-): Promise<ConversationState> {
+): Promise<{ state: ConversationState; match: ServiceCatalogMatchResult | null }> {
   const trimmed = reasonForVisit?.trim();
   if (!trimmed) {
-    return baseState;
+    return { state: baseState, match: null };
   }
   if (!doctorSettings) {
-    return baseState;
+    return { state: baseState, match: null };
   }
   const catalog = getActiveServiceCatalog(doctorSettings);
   if (!catalog?.services.length) {
-    return baseState;
+    return { state: baseState, match: null };
   }
   const recentPatient = recentMessages
     .filter((m) => m.sender_type === 'patient')
@@ -270,10 +278,12 @@ async function enrichStateWithServiceCatalogMatch(
       practiceName: doctorSettings.practice_name,
       specialty: doctorSettings.specialty,
     },
+    catalogMode: doctorSettings.catalog_mode,
+    doctorId: doctorSettings.doctor_id,
   });
 
   if (!match) {
-    return baseState;
+    return { state: baseState, match: null };
   }
 
   logger.info(
@@ -283,11 +293,12 @@ async function enrichStateWithServiceCatalogMatch(
       serviceCatalogMatchConfidence: match.confidence,
       catalogServiceKey: match.catalogServiceKey,
       pendingStaffReview: match.pendingStaffReview,
+      mixedComplaints: match.mixedComplaints,
     },
     'instagram_dm_service_catalog_match'
   );
 
-  return applyMatcherProposalToConversationState(baseState, {
+  const enriched = applyMatcherProposalToConversationState(baseState, {
     matcherProposedCatalogServiceKey: match.catalogServiceKey,
     matcherProposedCatalogServiceId: match.catalogServiceId,
     matcherProposedConsultationModality: match.suggestedModality,
@@ -297,6 +308,93 @@ async function enrichStateWithServiceCatalogMatch(
     pendingStaffServiceReview: match.pendingStaffReview,
     finalizeSelection: match.autoFinalize,
   });
+
+  return { state: enriched, match };
+}
+
+/**
+ * Task 05: If the LLM matcher flagged unrelated mixed complaints at low confidence AND the catalog has
+ * more than one real service, pivot the collection flow to `awaiting_complaint_clarification` instead of
+ * proceeding to consent / staff review. Returns the mutated state + clarification reply when triggered,
+ * otherwise returns the caller's `nextReply` unchanged.
+ *
+ * We stash the full original `reason_for_visit` under `originalReasonForVisit` so the booking record
+ * still surfaces every complaint the patient mentioned (doctor retains context). The matcher proposal
+ * stays in state as our fallback if the patient gives up / exhausts the clarification cap.
+ */
+function maybeTriggerComplaintClarification(
+  state: ConversationState,
+  match: ServiceCatalogMatchResult | null,
+  doctorSettings: DoctorSettingsRow | null,
+  originalReasonText: string | null | undefined,
+  userText: string,
+  correlationId: string,
+  nextReply: string
+): { state: ConversationState; replyText: string; triggered: boolean } {
+  const trimmedOriginal = originalReasonText?.trim();
+  if (!match || !trimmedOriginal) {
+    return { state, replyText: nextReply, triggered: false };
+  }
+  const catalog = getActiveServiceCatalog(doctorSettings);
+  if (!catalog?.services.length) {
+    return { state, replyText: nextReply, triggered: false };
+  }
+  const gate = shouldRequestComplaintClarification({
+    mixedComplaints: match.mixedComplaints === true,
+    confidence: match.confidence,
+    catalog,
+    pendingStaffServiceReview: state.pendingStaffServiceReview === true,
+    attemptCount: state.complaintClarificationAttemptCount ?? 0,
+    catalogMode: doctorSettings?.catalog_mode ?? null,
+  });
+  if (!gate) {
+    // Task 10 (Plan 03): emit a breadcrumb when single_fee short-circuits so skips are observable
+    // separately from the generic "gate returned false" path (mixed=false, confidence!=low, ...).
+    if (isSingleFeeMode(doctorSettings?.catalog_mode)) {
+      logSingleFeeSkip('clarification', {
+        doctorId: doctorSettings?.doctor_id ?? null,
+        correlationId,
+      });
+    }
+    return { state, replyText: nextReply, triggered: false };
+  }
+
+  const now = new Date().toISOString();
+  const nextState: ConversationState = {
+    ...state,
+    step: 'awaiting_complaint_clarification',
+    lastPromptKind: 'complaint_clarification',
+    originalReasonForVisit: trimmedOriginal,
+    complaintClarificationAttemptCount: state.complaintClarificationAttemptCount ?? 0,
+    complaintClarificationRequestedAt: now,
+    complaintClarificationFallbackMatch: {
+      catalogServiceKey: match.catalogServiceKey,
+      catalogServiceId: match.catalogServiceId,
+      consultationModality: match.suggestedModality,
+      confidence: match.confidence,
+      candidateLabels: match.candidateLabels,
+    },
+    // Consent has not been given yet — clear the "consent requested" mark if we set it earlier
+    // in the same tick; consent will be re-issued after the patient narrows their complaint.
+    consent_requested_at: undefined,
+    updatedAt: now,
+  };
+
+  logger.info(
+    {
+      correlationId,
+      conversationStep: 'awaiting_complaint_clarification',
+      matcherConfidence: match.confidence,
+      fallbackCatalogServiceKey: match.catalogServiceKey,
+    },
+    'instagram_dm_mixed_complaints_clarification_requested'
+  );
+
+  return {
+    state: nextState,
+    replyText: resolveComplaintClarificationMessage(userText),
+    triggered: true,
+  };
 }
 
 /** ARM-05: intake complete but matcher requires staff — no slot link yet. */
@@ -1379,6 +1477,7 @@ export async function processInstagramDmWebhook(params: {
       state.step === 'confirm_details' ||
       state.step === 'awaiting_match_confirmation' ||
       state.step === 'awaiting_staff_service_confirmation' ||
+      state.step === 'awaiting_complaint_clarification' ||
       lastBotAskedForDetails ||
       (lastBotAskedChannelPick && channelReplyPick != null) ||
       state.lastPromptKind === 'collect_details' ||
@@ -1386,7 +1485,8 @@ export async function processInstagramDmWebhook(params: {
       state.lastPromptKind === 'consent_optional_extras' ||
       state.lastPromptKind === 'confirm_details' ||
       state.lastPromptKind === 'match_pick' ||
-      state.lastPromptKind === 'staff_service_pending';
+      state.lastPromptKind === 'staff_service_pending' ||
+      state.lastPromptKind === 'complaint_clarification';
     const justStartingCollection =
       isBookIntent && !state.step && !(state.collectedFields?.length);
     /** RBH-18: Classifier topics / is_fee_question OR keyword fallback; e-task-dm-05/06: regex anaphora + classifier fee-thread continuation */
@@ -1617,6 +1717,94 @@ export async function processInstagramDmWebhook(params: {
       replyText = formatStaffServiceReviewStillPendingDm(doctorSettings);
       state = { ...state, updatedAt: new Date().toISOString() };
       await updateConversationState(conversation.id, state, correlationId);
+    } else if (state.step === 'awaiting_complaint_clarification') {
+      // Task 05: Patient is replying after we asked them to narrow unrelated mixed complaints.
+      // First reply re-runs the matcher with the narrowed text. Subsequent replies (cap reached)
+      // escalate straight to staff review with the original fallback proposal — no ping-pong.
+      dmRoutingBranch = 'complaint_clarification_reply';
+      const prevAttempts = state.complaintClarificationAttemptCount ?? 0;
+      const nextAttempts = prevAttempts + 1;
+      const capReached = prevAttempts >= COMPLAINT_CLARIFICATION_MAX_ATTEMPTS;
+
+      if (capReached) {
+        // Already used our one clarification round — fall back to the stashed proposal.
+        const gate = transitionToAwaitingStaffServiceConfirmation(
+          state,
+          doctorSettings,
+          intentResult.intent,
+          {
+            pendingStaffServiceReview: true,
+            complaintClarificationAttemptCount: nextAttempts,
+            serviceCatalogMatchReasonCodes: [
+              ...new Set([
+                ...(state.serviceCatalogMatchReasonCodes ?? []),
+                SERVICE_CATALOG_MATCH_REASON_CODES.MIXED_COMPLAINTS_CLARIFICATION_EXHAUSTED,
+              ]),
+            ],
+          }
+        );
+        state = gate.state;
+        replyText = gate.replyText;
+        await updateConversationState(conversation.id, state, correlationId);
+      } else {
+        // First clarification reply: re-run matcher using the narrowed text, keep the full original
+        // `reason_for_visit` untouched so `appointment.reason_for_visit` still captures every complaint.
+        const narrowedReason = text.trim();
+        const reRun = await enrichStateWithServiceCatalogMatch(
+          state,
+          doctorSettings,
+          narrowedReason || state.originalReasonForVisit || state.reasonForVisit,
+          recentMessages,
+          correlationId
+        );
+        state = {
+          ...reRun.state,
+          complaintClarificationAttemptCount: nextAttempts,
+        };
+        const reMatch = reRun.match;
+
+        if (reMatch && reMatch.autoFinalize && !reMatch.pendingStaffReview) {
+          // High-confidence narrowed match — resume normal consent collection.
+          const now = new Date().toISOString();
+          const collected = await getCollectedData(conversation.id);
+          const name = collected?.name?.trim() || 'there';
+          const phone = collected?.phone?.trim() || '';
+          const phoneDisplay = phone ? `**${phone}**` : 'your number';
+          state = {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'consent',
+            consent_requested_at: now,
+            updatedAt: now,
+            lastPromptKind: state.bookingForSomeoneElse
+              ? undefined
+              : ('consent_optional_extras' as const),
+          };
+          replyText = state.bookingForSomeoneElse
+            ? `Thanks. We'll use ${phoneDisplay} to confirm the appointment for **${name}**. Do I have your consent to use these details to schedule? Reply Yes to continue.`
+            : `Thanks, ${name}. We'll use ${phoneDisplay} to confirm your appointment by call or text. Got it! Any special notes for the doctor — like allergies, medications, or preferences? (optional) Or just say Yes to continue.`;
+          await updateConversationState(conversation.id, state, correlationId);
+        } else {
+          // Still ambiguous (medium/low or LLM failed) — escalate to staff review with the best proposal.
+          const gate = transitionToAwaitingStaffServiceConfirmation(
+            state,
+            doctorSettings,
+            intentResult.intent,
+            {
+              pendingStaffServiceReview: true,
+              serviceCatalogMatchReasonCodes: [
+                ...new Set([
+                  ...(state.serviceCatalogMatchReasonCodes ?? []),
+                  SERVICE_CATALOG_MATCH_REASON_CODES.MIXED_COMPLAINTS_CLARIFICATION_REQUESTED,
+                ]),
+              ],
+            }
+          );
+          state = gate.state;
+          replyText = gate.replyText;
+          await updateConversationState(conversation.id, state, correlationId);
+        }
+      }
     } else if (channelReplyPick) {
       dmRoutingBranch = 'consultation_channel_pick';
       const pick = channelReplyPick;
@@ -2795,22 +2983,35 @@ export async function processInstagramDmWebhook(params: {
             age: collected?.age,
             updatedAt: new Date().toISOString(),
           };
-          state = await enrichStateWithServiceCatalogMatch(
+          const enrichedForMatch = await enrichStateWithServiceCatalogMatch(
             state,
             doctorSettings,
             collected?.reason_for_visit,
             recentMessages,
             correlationId
           );
+          state = enrichedForMatch.state;
+          const defaultReplyForMatch: string =
+            matches.length === 1
+              ? state.bookingForSomeoneElse
+                ? `We found a record for **${matches[0]!.name}** with this number. Same person? Reply Yes or No.`
+                : `We found an existing record matching your details (**${matches[0]!.name}**). Is this you? Reply Yes or No.`
+              : `We found ${matches.length} records: ${matches
+                  .slice(0, 2)
+                  .map((m, i) => `${i + 1}. ${m.name}${m.age != null ? ` (${m.age})` : ''}`)
+                  .join(', ')}. Which one? Reply 1 or 2, or No for new patient.`;
+          const clarifyForMatch = maybeTriggerComplaintClarification(
+            state,
+            enrichedForMatch.match,
+            doctorSettings,
+            collected?.reason_for_visit,
+            text,
+            correlationId,
+            defaultReplyForMatch
+          );
+          state = clarifyForMatch.state;
           await updateConversationState(conversation.id, state, correlationId);
-          if (matches.length === 1) {
-            replyText = state.bookingForSomeoneElse
-              ? `We found a record for **${matches[0]!.name}** with this number. Same person? Reply Yes or No.`
-              : `We found an existing record matching your details (**${matches[0]!.name}**). Is this you? Reply Yes or No.`;
-          } else {
-            const list = matches.slice(0, 2).map((m, i) => `${i + 1}. ${m.name}${m.age != null ? ` (${m.age})` : ''}`).join(', ');
-            replyText = `We found ${matches.length} records: ${list}. Which one? Reply 1 or 2, or No for new patient.`;
-          }
+          replyText = clarifyForMatch.replyText;
         } else {
           const now = new Date().toISOString();
           state = {
@@ -2825,19 +3026,29 @@ export async function processInstagramDmWebhook(params: {
               ? {}
               : { lastPromptKind: 'consent_optional_extras' as const }),
           };
-          state = await enrichStateWithServiceCatalogMatch(
+          const enrichedForConsent = await enrichStateWithServiceCatalogMatch(
             state,
             doctorSettings,
             collected?.reason_for_visit,
             recentMessages,
             correlationId
           );
+          state = enrichedForConsent.state;
+          const defaultReplyForConsent: string = state.bookingForSomeoneElse
+            ? `Thanks. We'll use ${phoneDisplay} to confirm the appointment for **${name}**. Do I have your consent to use these details to schedule? Reply Yes to continue.`
+            : `Thanks, ${name}. We'll use ${phoneDisplay} to confirm your appointment by call or text. Got it! Any special notes for the doctor — like allergies, medications, or preferences? (optional) Or just say Yes to continue.`;
+          const clarifyForConsent = maybeTriggerComplaintClarification(
+            state,
+            enrichedForConsent.match,
+            doctorSettings,
+            collected?.reason_for_visit,
+            text,
+            correlationId,
+            defaultReplyForConsent
+          );
+          state = clarifyForConsent.state;
           await updateConversationState(conversation.id, state, correlationId);
-          if (state.bookingForSomeoneElse) {
-            replyText = `Thanks. We'll use ${phoneDisplay} to confirm the appointment for **${name}**. Do I have your consent to use these details to schedule? Reply Yes to continue.`;
-          } else {
-            replyText = `Thanks, ${name}. We'll use ${phoneDisplay} to confirm your appointment by call or text. Got it! Any special notes for the doctor — like allergies, medications, or preferences? (optional) Or just say Yes to continue.`;
-          }
+          replyText = clarifyForConsent.replyText;
         }
       } else if (isCorrection) {
         const extractResult = await validateAndApplyExtracted(
@@ -3306,7 +3517,8 @@ export async function processInstagramDmWebhook(params: {
       state.step === 'awaiting_cancel_confirmation' ||
       state.step === 'awaiting_reschedule_choice' ||
       state.step === 'awaiting_reschedule_slot' ||
-      state.step === 'awaiting_staff_service_confirmation'
+      state.step === 'awaiting_staff_service_confirmation' ||
+      state.step === 'awaiting_complaint_clarification'
         ? state
         : {
             ...state,
@@ -3351,11 +3563,14 @@ export async function processInstagramDmWebhook(params: {
           correlationId,
           state: stateToPersist,
           candidateLabels: stateToPersist.matcherCandidateLabels ?? [],
+          catalogMode: doctorSettings?.catalog_mode ?? null,
         });
-        stateToPersist = {
-          ...stateToPersist,
-          staffServiceReviewRequestId: ensured.id,
-        };
+        if (ensured.id) {
+          stateToPersist = {
+            ...stateToPersist,
+            staffServiceReviewRequestId: ensured.id,
+          };
+        }
       } catch (err) {
         logger.error(
           { correlationId, conversationId: conversation.id, err },

@@ -561,6 +561,24 @@ export function ServiceReviewsInbox({
   );
 }
 
+/**
+ * Client-side sanitizer for the patient reason preview before it becomes suggested
+ * matcher-hint content. Kept in sync with `sanitizeReasonForHintContent` on the backend
+ * (which runs defensively again before persisting).
+ */
+function sanitizeReasonForHintSuggestion(raw: string | null | undefined): string {
+  if (typeof raw !== "string") return "";
+  let s = raw.trim();
+  if (!s) return "";
+  s = s.replace(/\b[\w.+-]+@[\w-]+\.[\w.-]+\b/g, "");
+  s = s.replace(/\d{6,}/g, "");
+  s = s.toLowerCase();
+  s = s.replace(/\s+/g, " ").trim();
+  s = s.replace(/[.,;:!?\-]+$/g, "").trim();
+  if (s.length > 200) s = s.slice(0, 200).trim();
+  return s;
+}
+
 function ReassignDialog({
   catalog,
   review,
@@ -574,14 +592,18 @@ function ReassignDialog({
     catalogServiceKey: string;
     catalogServiceId?: string;
     consultationModality?: "text" | "voice" | "video";
-    matcherHints: {
-      keywords: string;
-      include_when: string;
-      exclude_when: string;
+    correctServiceHintAppend?: {
+      keywords?: string;
+      include_when?: string;
+      exclude_when?: string;
+    };
+    wrongServiceHintAppend?: {
+      keywords?: string;
+      include_when?: string;
+      exclude_when?: string;
     };
   }) => Promise<void>;
 }) {
-  const MATCHER_KW_MAX = 400;
   const MATCHER_TX_MAX = 800;
   const services = catalog?.services ?? [];
   const want = review.proposed_catalog_service_key.trim().toLowerCase();
@@ -591,40 +613,61 @@ function ReassignDialog({
   const [modality, setModality] = useState<"" | "text" | "voice" | "video">(
     review.proposed_consultation_modality ?? ""
   );
-  const [hintKeywords, setHintKeywords] = useState("");
-  const [hintInclude, setHintInclude] = useState("");
-  const [hintExclude, setHintExclude] = useState("");
+
+  // Task 03 / Plan 01: reassign is a teaching moment. Pre-fill hint suggestions from
+  // the sanitized reason-for-visit preview so doctors can one-tap Accept (or Edit/Skip)
+  // to improve future matching.
+  const suggestionSeed = sanitizeReasonForHintSuggestion(review.reason_for_visit_preview);
+  const wrongOffering = services.find((s) => s.service_key === want);
+  const wrongServiceLabel = wrongOffering?.label ?? review.proposed_catalog_service_key;
+
+  const [skipTeaching, setSkipTeaching] = useState(false);
+  const [correctIncludeWhen, setCorrectIncludeWhen] = useState(suggestionSeed);
+  const [wrongExcludeWhen, setWrongExcludeWhen] = useState(suggestionSeed);
   const [saving, setSaving] = useState(false);
 
   const selectedOffering = services.find((s) => s.service_key === serviceKey.trim().toLowerCase());
-  const catalogReady = Boolean(catalog?.services?.length);
+  const selectedIsSameAsProposed =
+    Boolean(selectedOffering) && selectedOffering!.service_key.trim().toLowerCase() === want;
 
-  /** Refill from catalog when the selected service changes or catalog first becomes available (not on every catalog object identity change). */
+  // Reset edits when the doctor switches which service they are reassigning to, so
+  // suggestion text stays relevant to the *current* pick.
   useEffect(() => {
-    if (!catalog?.services?.length) return;
-    const o = catalog.services.find(
-      (s) => s.service_key.trim().toLowerCase() === serviceKey.trim().toLowerCase()
-    );
-    const h = o?.matcher_hints;
-    setHintKeywords(h?.keywords ?? "");
-    setHintInclude(h?.include_when ?? "");
-    setHintExclude(h?.exclude_when ?? "");
-  }, [serviceKey, catalogReady]);
+    setCorrectIncludeWhen(suggestionSeed);
+    setWrongExcludeWhen(suggestionSeed);
+  }, [serviceKey, suggestionSeed]);
 
   const submit = async () => {
     const key = serviceKey.trim().toLowerCase();
     if (!selectedOffering) return;
     setSaving(true);
     try {
+      // Build append patches. Omit entirely when Skip is on, when the doctor cleared
+      // the text, or (for the wrong-service patch) when the chosen service equals the
+      // originally-proposed one (nothing was actually mis-routed to teach against).
+      let correctServiceHintAppend:
+        | { keywords?: string; include_when?: string; exclude_when?: string }
+        | undefined;
+      let wrongServiceHintAppend:
+        | { keywords?: string; include_when?: string; exclude_when?: string }
+        | undefined;
+
+      if (!skipTeaching) {
+        const inc = correctIncludeWhen.trim();
+        if (inc) correctServiceHintAppend = { include_when: inc };
+
+        if (!selectedIsSameAsProposed) {
+          const exc = wrongExcludeWhen.trim();
+          if (exc) wrongServiceHintAppend = { exclude_when: exc };
+        }
+      }
+
       await onSubmit({
         catalogServiceKey: key,
         catalogServiceId: selectedOffering.service_id,
         consultationModality: modality || undefined,
-        matcherHints: {
-          keywords: hintKeywords,
-          include_when: hintInclude,
-          exclude_when: hintExclude,
-        },
+        correctServiceHintAppend,
+        wrongServiceHintAppend,
       });
     } finally {
       setSaving(false);
@@ -685,69 +728,87 @@ function ReassignDialog({
               <option value="voice">Voice</option>
               <option value="video">Video</option>
             </select>
-            <div className="rounded-md border border-gray-200 bg-gray-50/80 p-3">
-              <p className="text-sm font-medium text-gray-900">Matching hints (catalog)</p>
-              <p className="mt-1 text-sm text-gray-700">
-                Same fields as Practice setup for this visit type. Edits here update your service
-                catalog and help the AI map patients to the right service.
-              </p>
-              <p className="mt-2 text-xs text-amber-800">
-                Plain language only. Do not include patient names, identifiers, or other PHI.
-              </p>
-              <div className="mt-3 space-y-3">
-                <div>
-                  <label
-                    className="block text-xs font-medium text-gray-700"
-                    htmlFor="reassign-hint-kw"
-                  >
-                    Keywords ({hintKeywords.length}/{MATCHER_KW_MAX})
+            {suggestionSeed ? (
+              <div className="rounded-md border border-gray-200 bg-gray-50/80 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">Suggested learning</p>
+                    <p className="mt-1 text-sm text-gray-700">
+                      Save what you picked so the AI routes this kind of complaint correctly next
+                      time. Edit the text or skip if the suggestions don&apos;t fit.
+                    </p>
+                  </div>
+                  <label className="flex shrink-0 items-center gap-2 text-xs text-gray-700">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      checked={skipTeaching}
+                      onChange={(e) => setSkipTeaching(e.target.checked)}
+                    />
+                    Skip teaching
                   </label>
-                  <textarea
-                    id="reassign-hint-kw"
-                    rows={2}
-                    maxLength={MATCHER_KW_MAX}
-                    className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    value={hintKeywords}
-                    onChange={(e) => setHintKeywords(e.target.value)}
-                    placeholder="e.g. skin rash, tele-derm"
-                  />
                 </div>
-                <div>
-                  <label
-                    className="block text-xs font-medium text-gray-700"
-                    htmlFor="reassign-hint-inc"
-                  >
-                    Include when ({hintInclude.length}/{MATCHER_TX_MAX})
-                  </label>
-                  <textarea
-                    id="reassign-hint-inc"
-                    rows={2}
-                    maxLength={MATCHER_TX_MAX}
-                    className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    value={hintInclude}
-                    onChange={(e) => setHintInclude(e.target.value)}
-                    placeholder="When this visit type should be preferred"
-                  />
-                </div>
-                <div>
-                  <label
-                    className="block text-xs font-medium text-gray-700"
-                    htmlFor="reassign-hint-exc"
-                  >
-                    Exclude when ({hintExclude.length}/{MATCHER_TX_MAX})
-                  </label>
-                  <textarea
-                    id="reassign-hint-exc"
-                    rows={2}
-                    maxLength={MATCHER_TX_MAX}
-                    className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    value={hintExclude}
-                    onChange={(e) => setHintExclude(e.target.value)}
-                    placeholder="When another service is a better fit"
-                  />
+                <p className="mt-2 text-xs text-amber-800">
+                  Plain language only. Do not include patient names, identifiers, or other PHI.
+                </p>
+                <div
+                  className={`mt-3 space-y-3 ${
+                    skipTeaching ? "opacity-50 pointer-events-none" : ""
+                  }`}
+                >
+                  <div>
+                    <label
+                      className="block text-xs font-medium text-gray-700"
+                      htmlFor="reassign-teach-correct"
+                    >
+                      Book {selectedOffering?.label ?? serviceKey} when… (
+                      {correctIncludeWhen.length}/{MATCHER_TX_MAX})
+                    </label>
+                    <textarea
+                      id="reassign-teach-correct"
+                      rows={2}
+                      maxLength={MATCHER_TX_MAX}
+                      className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      value={correctIncludeWhen}
+                      onChange={(e) => setCorrectIncludeWhen(e.target.value)}
+                      placeholder="Appended to this service's Include-when hint."
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      Appended to <span className="font-medium">{selectedOffering?.label ?? serviceKey}</span> —
+                      Include-when.
+                    </p>
+                  </div>
+                  {!selectedIsSameAsProposed && (
+                    <div>
+                      <label
+                        className="block text-xs font-medium text-gray-700"
+                        htmlFor="reassign-teach-wrong"
+                      >
+                        Not {wrongServiceLabel} when… ({wrongExcludeWhen.length}/{MATCHER_TX_MAX})
+                      </label>
+                      <textarea
+                        id="reassign-teach-wrong"
+                        rows={2}
+                        maxLength={MATCHER_TX_MAX}
+                        className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        value={wrongExcludeWhen}
+                        onChange={(e) => setWrongExcludeWhen(e.target.value)}
+                        placeholder="Appended to the originally-proposed service's Exclude-when hint."
+                      />
+                      <p className="mt-1 text-xs text-gray-500">
+                        Appended to <span className="font-medium">{wrongServiceLabel}</span> —
+                        Exclude-when.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
-            </div>
+            ) : (
+              <p className="rounded-md border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600">
+                No reason text available to suggest a learning update — just reassigning the
+                service will still train the learning log.
+              </p>
+            )}
           </div>
         )}
         <div className="mt-6 flex justify-end gap-2">

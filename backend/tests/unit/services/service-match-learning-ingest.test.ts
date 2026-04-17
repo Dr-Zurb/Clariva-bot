@@ -123,4 +123,47 @@ describe('service-match-learning-ingest', () => {
     expect(typeof payload.pattern_key).toBe('string');
     expect((payload.pattern_key as string).length).toBe(64);
   });
+
+  // Task 10 (Plan 03): ingest is gated by `isLearningActiveForDoctor` which reads
+  // `doctor_settings.catalog_mode`. For single-fee doctors we must NOT insert a learning example,
+  // even if an (orphan) review row somehow made it through.
+  it('Task 10: skips insert when doctor_settings.catalog_mode === "single_fee"', async () => {
+    const insert = jest.fn().mockResolvedValue({ error: null } as never);
+    const from = jest.fn().mockImplementation((table) => {
+      if (table === 'doctor_settings') {
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          maybeSingle: jest
+            .fn()
+            .mockResolvedValue({ data: { catalog_mode: 'single_fee' }, error: null } as never),
+        };
+      }
+      return { insert };
+    });
+    mockedDb.getSupabaseAdminClient.mockReturnValue({ from } as never);
+
+    await ingestServiceMatchLearningExample({
+      row: {
+        id: 'rr-3',
+        doctor_id: 'd-single-fee',
+        correlation_id: null,
+        proposed_catalog_service_key: 'consultation',
+        proposed_catalog_service_id: null,
+        proposed_consultation_modality: null,
+        match_confidence: 'high',
+        match_reason_codes: [],
+        candidate_labels: [],
+        final_catalog_service_key: 'consultation',
+        final_catalog_service_id: null,
+        final_consultation_modality: null,
+        resolved_at: '2026-04-16T12:00:00.000Z',
+      },
+      conversationStateAfterResolution: {},
+      action: 'confirmed',
+      correlationId: 'corr-t10-ingest-skip',
+    });
+
+    expect(insert).not.toHaveBeenCalled();
+  });
 });

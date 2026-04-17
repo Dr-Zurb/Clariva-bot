@@ -11,6 +11,12 @@ import { handleSupabaseError } from '../utils/db-helpers';
 import { ConflictError, InternalError, NotFoundError, ValidationError } from '../utils/errors';
 import { logAuditEvent } from '../utils/audit-logger';
 import { getDoctorEmail } from './notification-service';
+import {
+  fetchDoctorCatalogMode,
+  isSingleFeeMode,
+  logSingleFeeSkip,
+} from '../utils/catalog-mode-guard';
+import type { CatalogMode } from '../types/doctor-settings';
 
 export type StablePatternCandidateRow = {
   doctor_id: string;
@@ -155,11 +161,31 @@ export async function runStablePatternDetectionJob(correlationId: string): Promi
   let inserted = 0;
   let skipped = 0;
 
+  // Task 10 (Plan 03): per-job cache so we only issue one `catalog_mode` lookup per doctor even
+  // when the cron returns many candidate rows for the same practice.
+  const modeCache = new Map<string, CatalogMode | null>();
+
   for (const row of rows) {
     const pk = row.pattern_key?.trim();
     const prop = row.proposed_catalog_service_key?.trim().toLowerCase();
     const fin = row.final_catalog_service_key?.trim().toLowerCase();
     if (!pk || !prop || !fin) {
+      skipped += 1;
+      continue;
+    }
+
+    // Task 10: skip single-fee doctors entirely — their pattern rows (if any) are stale/orphaned.
+    let mode = modeCache.get(row.doctor_id);
+    if (mode === undefined) {
+      mode = await fetchDoctorCatalogMode(row.doctor_id, correlationId, admin);
+      modeCache.set(row.doctor_id, mode);
+    }
+    if (isSingleFeeMode(mode)) {
+      logSingleFeeSkip('learning.policy', {
+        doctorId: row.doctor_id,
+        correlationId,
+        patternKey: pk,
+      });
       skipped += 1;
       continue;
     }

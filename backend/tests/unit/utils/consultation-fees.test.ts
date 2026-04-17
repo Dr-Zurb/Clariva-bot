@@ -218,6 +218,34 @@ describe('consultation-fees (RBH-13)', () => {
     expect(isTeleconsultCatalogAuthoritative({ service_offerings_json: null })).toBe(false);
   });
 
+  // Task 10 (Plan 03): single-fee doctors ship a synthetic one-entry catalog (see Task 09).
+  // The authority predicate must still return `true` — the check is on catalog presence, not
+  // cardinality. Lock this down so a future refactor (e.g. "require ≥2 services") doesn't
+  // silently break the single-fee path by falling back to the legacy flat-fee formatter.
+  it('isTeleconsultCatalogAuthoritative returns true for a single-entry single-fee catalog', () => {
+    const singleFeeCatalog: ServiceCatalogV1 = {
+      version: 1,
+      services: [
+        {
+          service_id: sid('consultation'),
+          service_key: 'consultation',
+          label: 'Consultation',
+          modalities: {
+            text: { enabled: true, price_minor: 500_00 },
+            voice: { enabled: true, price_minor: 500_00 },
+            video: { enabled: true, price_minor: 500_00 },
+          },
+        },
+      ],
+    };
+    expect(
+      isTeleconsultCatalogAuthoritative({
+        service_offerings_json: singleFeeCatalog,
+        appointment_fee_currency: 'INR',
+      })
+    ).toBe(true);
+  });
+
   it('SFU-08: formatServiceCatalogForAiContext compact line', () => {
     const s = formatServiceCatalogForAiContext({
       service_offerings_json: catalogTwoServices,

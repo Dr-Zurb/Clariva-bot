@@ -20,8 +20,31 @@ export type PayoutSchedule = 'per_appointment' | 'daily' | 'weekly' | 'monthly';
 /** OPD scheduling mode (migration 028, e-task-opd-01). */
 export type OpdMode = 'slot' | 'queue';
 
+/**
+ * Plan 03 · Task 08 — how the doctor charges for consultations.
+ *   - `single_fee`   : one flat fee (legacy `appointment_fee_minor`); Task 09 materializes a single-entry catalog internally.
+ *   - `multi_service`: explicit service catalog in `service_offerings_json`.
+ *   - `null`         : undecided (fresh onboarding); Task 12 prompts the mode selector.
+ *
+ * The CHECK constraint in `048_catalog_mode.sql` enforces the same set of allowed values
+ * at the database layer. Keep `CATALOG_MODES` in sync with the frontend mirror in
+ * `frontend/types/doctor-settings.ts`.
+ */
+export const CATALOG_MODES = ['single_fee', 'multi_service'] as const;
+export type CatalogMode = (typeof CATALOG_MODES)[number];
+
 export interface DoctorSettingsRow {
   doctor_id: string;
+  /**
+   * @deprecated Plan 03 · Task 11 — use `service_offerings_json` (per-modality
+   * pricing) instead. Planned removal: **Phase 3** (see
+   * `docs/Development/Architecture/legacy-appointment-fee-minor-deprecation.md`).
+   *
+   * NOT dead yet: remains the **seed** for `catalog_mode === 'single_fee'`
+   * doctors' auto-materialized single-entry catalog (Task 09). Phase 2 migrations
+   * must replace *reader* sites (render / comparison / quote / gate); the seed
+   * site in `single-fee-catalog.ts` stays until Phase 3 cutover.
+   */
   appointment_fee_minor: number | null;
   appointment_fee_currency: string | null;
   country: string | null;
@@ -48,6 +71,11 @@ export interface DoctorSettingsRow {
    * normalized `{ templates: [] }` after `normalizeDoctorSettingsApiRow`.
    */
   service_catalog_templates_json?: ServiceCatalogTemplatesJsonV1;
+  /**
+   * Plan 03 · Task 08: how this doctor charges for consultations. `null` means undecided
+   * (fresh onboarding row post-migration). See {@link CatalogMode}.
+   */
+  catalog_mode: CatalogMode | null;
   default_notes: string | null;
   /** When doctor receives payouts. Migration 025. */
   payout_schedule: PayoutSchedule | null;

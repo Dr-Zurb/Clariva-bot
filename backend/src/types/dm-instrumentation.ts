@@ -43,6 +43,8 @@ export type DmHandlerBranch =
   | 'patient_match_confirmation'
   | 'consent_flow'
   | 'staff_service_review_pending'
+  /** Task 05: Reply received while awaiting_complaint_clarification — re-match or escalate. */
+  | 'complaint_clarification_reply'
   /** learn-05: enabled autobook policy matched; staff review row skipped */
   | 'learning_policy_autobook'
   | 'consultation_channel_pick'

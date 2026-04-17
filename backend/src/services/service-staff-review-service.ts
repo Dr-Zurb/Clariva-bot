@@ -23,14 +23,21 @@ import {
 import { getInstagramAccessTokenForDoctor } from './instagram-connect-service';
 import { sendInstagramMessage } from './instagram-service';
 import { createMessage } from './message-service';
-import { getDoctorSettings, setMatcherHintsOnDoctorCatalogOffering } from './doctor-settings-service';
+import {
+  appendMatcherHintsOnDoctorCatalogOffering,
+  getDoctorSettings,
+  type MatcherHintsAppendPayload,
+} from './doctor-settings-service';
 import { findServiceOfferingByKey, getActiveServiceCatalog } from '../utils/service-catalog-helpers';
+import { isSingleFeeMode, logSingleFeeSkip } from '../utils/catalog-mode-guard';
 import { handleSupabaseError } from '../utils/db-helpers';
+import type { CatalogMode } from '../types/doctor-settings';
 import { ConflictError, InternalError, NotFoundError, ValidationError } from '../utils/errors';
 import { buildBookingPageUrl } from './slot-selection-service';
 import { ingestServiceMatchLearningExample } from './service-match-learning-ingest';
 import { recordShadowEvaluationForNewPendingReview } from './service-match-learning-shadow';
 import { fetchAssistHintForReviewRow, type ServiceMatchAssistHint } from './service-match-learning-assist';
+import { sanitizeHintAppendPatch } from '../utils/service-match-hint-sanitize';
 
 export type ServiceStaffReviewStatus =
   | 'pending'
@@ -123,7 +130,22 @@ export async function upsertPendingStaffServiceReviewRequest(params: {
   correlationId: string;
   state: ConversationState;
   candidateLabels?: Array<{ service_key: string; label: string }>;
-}): Promise<{ id: string }> {
+  /**
+   * Task 10 (Plan 03): the doctor's `catalog_mode`. When `'single_fee'` the enqueue is a no-op —
+   * single-fee doctors have exactly one service and nothing to review. Returns `{ id: null }` and
+   * emits a `review.skip.single_fee` breadcrumb. `null`/`'multi_service'` run the existing path.
+   */
+  catalogMode?: CatalogMode | null;
+}): Promise<{ id: string | null }> {
+  if (isSingleFeeMode(params.catalogMode)) {
+    logSingleFeeSkip('review', {
+      doctorId: params.doctorId,
+      correlationId: params.correlationId,
+      conversationId: params.conversationId,
+    });
+    return { id: null };
+  }
+
   const admin = getSupabaseAdminClient();
   if (!admin) throw new InternalError('Service role client not available');
 
@@ -542,7 +564,17 @@ export async function reassignServiceStaffReviewRequest(params: {
   catalogServiceKey: string;
   catalogServiceId?: string;
   consultationModality?: 'text' | 'voice' | 'video';
-  matcherHints: { keywords: string; include_when: string; exclude_when: string };
+  /**
+   * Optional fragments to APPEND (not replace) to the reassigned-TO service's
+   * `matcher_hints`. Sanitized defensively server-side. Task 03 / Plan 01.
+   */
+  correctServiceHintAppend?: MatcherHintsAppendPayload;
+  /**
+   * Optional fragments to APPEND to the reassigned-FROM service's `matcher_hints`
+   * (typically `exclude_when` = patient's sanitized complaint). Lets future matching
+   * learn from this correction automatically.
+   */
+  wrongServiceHintAppend?: MatcherHintsAppendPayload;
 }): Promise<ServiceStaffReviewRequestRow> {
   const row = await getServiceStaffReviewRequestForDoctor(params.reviewId, params.doctorId, params.correlationId);
   if (row.status !== 'pending') {
@@ -566,12 +598,39 @@ export async function reassignServiceStaffReviewRequest(params: {
     }
   }
 
-  const catalogHintsUpdated = await setMatcherHintsOnDoctorCatalogOffering(
-    params.doctorId,
-    params.correlationId,
-    offering.service_key,
-    params.matcherHints
-  );
+  // Append hint fragments to the CORRECT (reassigned-TO) service. Sanitizer runs
+  // defensively even though the frontend already sanitizes — matcher_hints is
+  // long-lived routing metadata so we scrub once more before persisting.
+  const correctCleaned = params.correctServiceHintAppend
+    ? sanitizeHintAppendPatch(params.correctServiceHintAppend)
+    : null;
+  const correctHintsUpdated = correctCleaned
+    ? await appendMatcherHintsOnDoctorCatalogOffering(
+        params.doctorId,
+        params.correlationId,
+        offering.service_key,
+        correctCleaned
+      )
+    : false;
+
+  // Append hint fragments to the WRONG (reassigned-FROM) service. Skip if the target
+  // is the same as the source (defensive: shouldn't happen but callers could pass it).
+  const wrongServiceKey = row.proposed_catalog_service_key.trim().toLowerCase();
+  const correctServiceKey = offering.service_key.trim().toLowerCase();
+  const wrongCleaned =
+    params.wrongServiceHintAppend && wrongServiceKey && wrongServiceKey !== correctServiceKey
+      ? sanitizeHintAppendPatch(params.wrongServiceHintAppend)
+      : null;
+  const wrongHintsUpdated = wrongCleaned
+    ? await appendMatcherHintsOnDoctorCatalogOffering(
+        params.doctorId,
+        params.correlationId,
+        wrongServiceKey,
+        wrongCleaned
+      )
+    : false;
+
+  const catalogHintsUpdated = correctHintsUpdated || wrongHintsUpdated;
 
   const admin = getSupabaseAdminClient();
   if (!admin) throw new InternalError('Service role client not available');
@@ -608,6 +667,8 @@ export async function reassignServiceStaffReviewRequest(params: {
       final_catalog_service_id: offering.service_id,
       final_consultation_modality: modality ?? null,
       ...(catalogHintsUpdated ? { catalog_matcher_hints_updated: true } : {}),
+      ...(correctHintsUpdated ? { correct_service_hints_appended: true } : {}),
+      ...(wrongHintsUpdated ? { wrong_service_hints_appended: true } : {}),
     },
     correlationId: params.correlationId,
   });

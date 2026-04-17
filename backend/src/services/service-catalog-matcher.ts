@@ -7,11 +7,16 @@ import { getOpenAIClient, getOpenAIConfig } from '../config/openai';
 import { logger } from '../config/logger';
 import type { ServiceCatalogMatchConfidence } from '../types/conversation';
 import { SERVICE_CATALOG_MATCH_REASON_CODES } from '../types/conversation';
+import type { CatalogMode } from '../types/doctor-settings';
 import { redactPhiForAI } from './ai-service';
 import { logAIClassification } from '../utils/audit-logger';
+import { isSingleFeeMode, logSingleFeeSkip } from '../utils/catalog-mode-guard';
 import { findServiceOfferingByKey } from '../utils/service-catalog-helpers';
 import type { ServiceCatalogV1, ServiceOfferingV1 } from '../utils/service-catalog-schema';
-import { CATALOG_CATCH_ALL_SERVICE_KEY } from '../utils/service-catalog-schema';
+import {
+  CATALOG_CATCH_ALL_SERVICE_KEY,
+  resolveServiceScopeMode,
+} from '../utils/service-catalog-schema';
 import {
   MODALITIES,
   pickSuggestedModality,
@@ -38,6 +43,13 @@ export interface ServiceCatalogMatchResult {
   source: 'deterministic' | 'llm' | 'fallback';
   pendingStaffReview: boolean;
   autoFinalize: boolean;
+  /**
+   * Task 05: LLM signal that the patient listed multiple clinically unrelated complaints
+   * (e.g. "diabetes, cough, skin rash"). The handler decides whether to ask for clarification
+   * based on confidence + catalog shape; this flag is advisory. Always `false` from the
+   * deterministic / fallback paths (they never see the full LLM context).
+   */
+  mixedComplaints: boolean;
 }
 
 /** Non-PHI practice context for smarter routing (LLM + prompt only). */
@@ -54,6 +66,15 @@ export interface MatchServiceCatalogInput {
   correlationId: string;
   /** Optional; when set, included in the LLM system prompt so specialty informs classification. */
   doctorProfile?: MatchServiceCatalogDoctorProfile | null;
+  /**
+   * Task 10 (Plan 03): doctor's `catalog_mode`. When `'single_fee'` the matcher short-circuits
+   * before any deterministic or LLM work — the synthetic consultation catalog (Task 09) has a
+   * single entry and no meaningful disambiguation to perform. `null`/`'multi_service'` run the
+   * existing path unchanged.
+   */
+  catalogMode?: CatalogMode | null;
+  /** Task 10: the doctor's `doctor_id`, used only for structured skip logs. Optional. */
+  doctorId?: string | null;
 }
 
 export interface ServiceCatalogMatchMetricEvent {
@@ -137,8 +158,10 @@ function buildAllowlistPromptLines(catalog: ServiceCatalogV1): string {
     const desc = typeof s.description === 'string' ? s.description.trim() : '';
     const descSeg = desc ? ` | doctor_note: ${JSON.stringify(desc)}` : '';
     const hintSeg = matcherHintsSnippetForLlm(s);
+    /** SFU-18: annotate each row so the LLM can honor strict vs flexible routing per service. */
+    const scopeSeg = ` [scope: ${resolveServiceScopeMode(s.scope_mode)}]`;
     lines.push(
-      `- ${s.service_key}: ${JSON.stringify(s.label)}${descSeg}${hintSeg} [modalities enabled: ${mods || 'none'}]`
+      `- ${s.service_key}: ${JSON.stringify(s.label)}${scopeSeg}${descSeg}${hintSeg} [modalities enabled: ${mods || 'none'}]`
     );
   }
   return lines.join('\n');
@@ -161,18 +184,36 @@ export function buildServiceCatalogLlmSystemPrompt(
 
   return `You map a patient's reason for visit to ONE teleconsult service_key from the practice catalog.
 ${contextBlock}
-Rules:
+Output rules:
 - Output JSON only, no markdown.
 - service_key MUST be copied exactly from the allowed list below.
 - modality must be one of the enabled modalities for that service, or null if unsure.
-- match_confidence: "high" if clear fit, "medium" if plausible, "low" if weak or unclear.
-- Rows may include doctor_matcher_hints (keywords, include_when, exclude_when). These are the practice's own routing notes—follow them when they fit the patient text; they are not shown to patients.
-- Prefer the best-fitting row other than "other" whenever it reasonably applies. Use service_key "other" only when no non-other row plausibly fits, or the visit is clearly outside every listed service.
-- If specialty suggests broad primary or general care (e.g. general medicine, family medicine, internal medicine, GP), nonspecific acute complaints (headache, fever, cold, fatigue, general pain, "not feeling well", routine checkup) usually belong in a general consult or checkup row if one exists — not "other".
-- If specialty is narrow (e.g. dermatology, cardiology), match chief complaints to that scope first; use "other" when the complaint is clearly outside it and no listed row fits.
+
+Matching policy (apply in order):
+1. Each allowed row may optionally carry doctor_matcher_hints (keywords, include_when, exclude_when). These are the practice's own routing notes and are NOT shown to patients.
+2. When a row HAS doctor_matcher_hints: follow them strictly. include_when defines what belongs; exclude_when defines what does not. Only map the patient to that row if their complaint aligns with the hints and does not hit exclude_when. Do not guess beyond the hints.
+3. Each row also declares a scope mode via a "[scope: strict]" or "[scope: flexible]" tag in its allowlist entry:
+   - [scope: strict] — map a patient to this row ONLY when their complaint directly matches the row's keywords or include_when hints (or is an unambiguous synonym). Do not generalize from the label, description, or doctor specialty. If the complaint is outside the listed items, pick a different row or "other". Rule 2's exclude_when still applies.
+   - [scope: flexible] — broader category matching is allowed: the row may cover complaints that plausibly fit the service's general category, even if not explicitly listed in the hints. Rules 2 and 4 still constrain it; the scope tag only loosens rule 5 for this row.
+4. When a row has NO doctor_matcher_hints: match only if the service label (and doctor_note, if present) is an unambiguous, specific fit for the patient's primary complaint. Do NOT infer a broader scope from the label name alone (e.g. a row titled "NCD follow-up" without hints is not a catch-all for every chronic symptom). When in doubt, use "other". If that row is also [scope: strict], prefer "other" unless the complaint is a clear synonym of the label itself.
+5. If the patient lists multiple unrelated complaints, match based on the single most prominent or first-mentioned complaint, not the union of the list. Never stretch one row to cover an unrelated symptom just because it appears in the same message.
+6. Specialty-aware defaults:
+   - If specialty suggests broad primary or general care (general medicine, family medicine, internal medicine, GP), nonspecific acute complaints (headache, fever, cold, fatigue, general pain, "not feeling well", routine checkup) usually belong in a general consult or checkup row if one exists — not "other". A [scope: strict] row does not count as such a general row unless its hints explicitly cover the complaint.
+   - If specialty is narrow (e.g. dermatology, cardiology), match chief complaints to that scope first; use "other" when the complaint is clearly outside it and no listed row fits.
+7. Use service_key "other" when no non-other row plausibly fits after applying rules 1–6, or the visit is clearly outside every listed service. Do NOT force-fit a complaint into a named row just to avoid "other".
+
+Confidence calibration:
+- "high": only when the chosen row HAS doctor_matcher_hints AND the patient's complaint is corroborated by those hints (keywords or include_when). A label-only match — however intuitive — is not sufficient for "high".
+- "medium": the row is a reasonable fit by label/description but there are no hints to corroborate, or hints are only partially aligned.
+- "low": the fit is weak, unclear, the patient text is vague, or the match would require stretching the label beyond its stated scope.
+
+Mixed-complaint flag:
+- Set "mixed_complaints": true ONLY when the patient text lists two or more clinically UNRELATED conditions that would normally be handled in separate consultations (e.g. "diabetes" + "cough" + "skin rash", or "hypertension" + "headache" + "stomach pain").
+- Set "mixed_complaints": false for related symptom clusters (e.g. "cough + fever + sore throat" are all respiratory; "BP 160/100 and headache" is one hypertension thread).
+- This flag is advisory only. Still choose the best service_key for the primary/first-mentioned complaint per rule 5; the flag tells the downstream system the patient may need a clarifying question.
 
 Schema:
-{"service_key":"<slug>","modality":"text"|"voice"|"video"|null,"match_confidence":"high"|"medium"|"low"}
+{"service_key":"<slug>","modality":"text"|"voice"|"video"|null,"match_confidence":"high"|"medium"|"low","mixed_complaints":true|false}
 
 Allowed service_key values:
 ${buildAllowlistPromptLines(catalog)}`;
@@ -261,16 +302,27 @@ function parseLlmJson(content: string): {
   service_key?: string;
   modality?: string | null;
   match_confidence?: string;
+  mixed_complaints?: unknown;
 } | null {
   try {
     return JSON.parse(content) as {
       service_key?: string;
       modality?: string | null;
       match_confidence?: string;
+      mixed_complaints?: unknown;
     };
   } catch {
     return null;
   }
+}
+
+/** Task 05: be tolerant of "true"/"false" strings; default to false when absent or malformed. */
+function normalizeLlmMixedComplaints(raw: unknown): boolean {
+  if (raw === true) return true;
+  if (typeof raw === 'string') {
+    return raw.trim().toLowerCase() === 'true';
+  }
+  return false;
 }
 
 function normalizeLlmConfidence(raw: string | undefined): ServiceCatalogMatchConfidence {
@@ -300,6 +352,43 @@ export async function matchServiceCatalogOffering(
     return null;
   }
 
+  /**
+   * Task 10 (Plan 03): single-fee short-circuit. When the doctor's `catalog_mode === 'single_fee'`
+   * the Task-09 synthetic catalog contains exactly one entry (`service_key = 'consultation'`),
+   * every patient complaint trivially maps to it. Skip the deterministic + LLM stages entirely:
+   * no OpenAI call, no Stage A regex work, no catch-all bookkeeping. Returns `high` confidence so
+   * the downstream handler auto-finalizes without a staff review row. Strict `=== 'single_fee'`
+   * so `null` (undecided) keeps today's multi-service behavior.
+   */
+  if (isSingleFeeMode(input.catalogMode)) {
+    const offering = catalog.services[0]!;
+    const result: ServiceCatalogMatchResult = {
+      catalogServiceKey: offering.service_key,
+      catalogServiceId: offering.service_id,
+      suggestedModality: pickSuggestedModality(offering),
+      confidence: 'high',
+      reasonCodes: [SERVICE_CATALOG_MATCH_REASON_CODES.SINGLE_FEE_MODE],
+      candidateLabels: candidateLabelsForCatalog(catalog),
+      source: 'deterministic',
+      pendingStaffReview: false,
+      autoFinalize: true,
+      mixedComplaints: false,
+    };
+    logSingleFeeSkip('matcher', {
+      doctorId: input.doctorId ?? null,
+      correlationId,
+      serviceKey: offering.service_key,
+      serviceId: offering.service_id,
+    });
+    emit({
+      source: 'deterministic',
+      confidence: 'high',
+      fallbackToOther: false,
+      llmParseFailed: false,
+    });
+    return result;
+  }
+
   const candidates = candidateLabelsForCatalog(catalog);
   const catchAll = resolveCatalogOfferingByKey(catalog, CATALOG_CATCH_ALL_SERVICE_KEY);
   if (!catchAll) {
@@ -325,6 +414,7 @@ export async function matchServiceCatalogOffering(
       source: 'deterministic',
       pendingStaffReview: !stageA.autoFinalize,
       autoFinalize: stageA.autoFinalize,
+      mixedComplaints: false,
     };
     emit({
       source: 'deterministic',
@@ -351,6 +441,7 @@ export async function matchServiceCatalogOffering(
       source: 'fallback',
       pendingStaffReview: true,
       autoFinalize: false,
+      mixedComplaints: false,
     };
     emit({
       source: result.source,
@@ -394,6 +485,7 @@ export async function matchServiceCatalogOffering(
       source: 'fallback',
       pendingStaffReview: true,
       autoFinalize: false,
+      mixedComplaints: false,
     };
     emit({
       source: result.source,
@@ -419,6 +511,7 @@ export async function matchServiceCatalogOffering(
 
   const conf = normalizeLlmConfidence(parsed!.match_confidence);
   const autoFinalize = conf === 'high';
+  const mixedComplaints = normalizeLlmMixedComplaints(parsed!.mixed_complaints);
 
   const result: ServiceCatalogMatchResult = {
     catalogServiceKey: resolved.service_key,
@@ -433,6 +526,7 @@ export async function matchServiceCatalogOffering(
     source: 'llm',
     pendingStaffReview: !autoFinalize,
     autoFinalize,
+    mixedComplaints,
   };
 
   logger.info(

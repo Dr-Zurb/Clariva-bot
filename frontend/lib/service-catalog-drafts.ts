@@ -4,6 +4,7 @@
 
 import type {
   FollowUpPolicyV1,
+  ScopeMode,
   ServiceCatalogV1,
   ServiceOfferingV1,
 } from "@/lib/service-catalog-schema";
@@ -11,9 +12,39 @@ import {
   CATALOG_CATCH_ALL_LABEL_DEFAULT,
   CATALOG_CATCH_ALL_SERVICE_KEY,
   SERVICE_CATALOG_VERSION,
+  resolveServiceScopeMode,
 } from "@/lib/service-catalog-schema";
 
 export type DiscountTypeOption = FollowUpPolicyV1["discount_type"];
+
+/**
+ * Plan 02 / Task 06: client-only badge attached to a draft when its fields were
+ * populated by `POST /api/v1/catalog/ai-suggest`. The UI renders an "AI suggestion"
+ * pill, optional warning callouts (e.g. price clamped), and an "Accept all" /
+ * "Discard suggestion" pair. This field is intentionally NOT serialized into the
+ * `ServiceOfferingV1` payload (`draftsToCatalogOrNull` ignores it) and is stripped
+ * by `offeringToDraft` whenever a fresh server payload is loaded.
+ */
+export interface AiSuggestionDraftMeta {
+  /** Which trigger produced this suggestion. */
+  source: "single_card" | "starter" | "review_apply";
+  /** ISO timestamp when the suggestion was applied to the draft. */
+  appliedAt: string;
+  /** Per-field flag so the UI can highlight only what the AI changed. */
+  fieldsTouched: {
+    description?: boolean;
+    scopeMode?: boolean;
+    matcherKeywords?: boolean;
+    matcherIncludeWhen?: boolean;
+    matcherExcludeWhen?: boolean;
+    modalities?: boolean;
+  };
+  /** Warnings returned by the backend (price clamped, modality disabled, …). PHI-free. */
+  warnings: ReadonlyArray<{
+    kind: string;
+    message: string;
+  }>;
+}
 
 /** Per-modality follow-up policy (max, window, and discount). */
 export interface ModalityFollowUpDiscountDraft {
@@ -39,6 +70,12 @@ export interface ServiceOfferingDraft {
   matcherIncludeWhen: string;
   /** When to choose a different service or catch-all. */
   matcherExcludeWhen: string;
+  /**
+   * SFU-18: `strict` (default for new services) only routes listed conditions;
+   * `flexible` allows broader category matching. Catch-all is forced to `flexible`
+   * on save. Legacy offerings load as `flexible` to preserve pre-SFU-18 behavior.
+   */
+  scopeMode: ScopeMode;
   textEnabled: boolean;
   voiceEnabled: boolean;
   videoEnabled: boolean;
@@ -49,6 +86,13 @@ export interface ServiceOfferingDraft {
   textFollowUp: ModalityFollowUpDiscountDraft;
   voiceFollowUp: ModalityFollowUpDiscountDraft;
   videoFollowUp: ModalityFollowUpDiscountDraft;
+  /**
+   * Plan 02 / Task 06: present only on cards that were just populated by the AI
+   * auto-fill endpoint. Always `undefined` after a save round-trip — the field is
+   * stripped on load by {@link offeringToDraft} and never serialized by
+   * {@link draftsToCatalogOrNull}.
+   */
+  aiSuggestionMeta?: AiSuggestionDraftMeta;
 }
 
 export interface FollowUpFormDraft {
@@ -105,6 +149,8 @@ export function emptyServiceDraft(): ServiceOfferingDraft {
     matcherKeywords: "",
     matcherIncludeWhen: "",
     matcherExcludeWhen: "",
+    /** SFU-18: new services default to strict so the assistant only routes listed conditions. */
+    scopeMode: "strict",
     textEnabled: false,
     voiceEnabled: false,
     videoEnabled: true,
@@ -137,6 +183,8 @@ export function catchAllServiceDraft(): ServiceOfferingDraft {
     label: CATALOG_CATCH_ALL_LABEL_DEFAULT,
     service_key: CATALOG_CATCH_ALL_SERVICE_KEY,
     description: CATALOG_CATCH_ALL_DESCRIPTION_DEFAULT,
+    /** SFU-18: catch-all is always flexible — it must be able to absorb anything. */
+    scopeMode: "flexible",
     textEnabled: false,
     voiceEnabled: false,
     videoEnabled: true,
@@ -203,6 +251,15 @@ export function offeringToDraft(o: ServiceOfferingV1): ServiceOfferingDraft {
     description = CATALOG_CATCH_ALL_DESCRIPTION_DEFAULT;
   }
 
+  /**
+   * SFU-18: catch-all is forced to `flexible` regardless of stored value. For every
+   * other offering, honor the saved `scope_mode` when present. Legacy offerings
+   * with `scope_mode: undefined` load as `flexible` so pre-SFU-18 catalogs keep
+   * their broader matching behavior until the doctor explicitly tightens a row.
+   */
+  const isCatchAll = o.service_key.trim().toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY;
+  const scopeMode: ScopeMode = isCatchAll ? "flexible" : resolveServiceScopeMode(o.scope_mode);
+
   return {
     id: newId(),
     service_id: sid,
@@ -212,6 +269,7 @@ export function offeringToDraft(o: ServiceOfferingV1): ServiceOfferingDraft {
     matcherKeywords: o.matcher_hints?.keywords?.trim() ?? "",
     matcherIncludeWhen: o.matcher_hints?.include_when?.trim() ?? "",
     matcherExcludeWhen: o.matcher_hints?.exclude_when?.trim() ?? "",
+    scopeMode,
     textEnabled: !!text?.enabled,
     voiceEnabled: !!voice?.enabled,
     videoEnabled: !!video?.enabled,
@@ -424,12 +482,22 @@ export function draftsToCatalogOrNull(services: ServiceOfferingDraft[]): Service
     try {
       const modalities = buildModalities(d);
       const key = d.service_key.trim().toLowerCase() || slugifyLabelToServiceKey(d.label);
+      /**
+       * SFU-18: always persist `scope_mode` on save so legacy rows (which loaded as
+       * `flexible` from `undefined`) now materialize the field explicitly. Catch-all
+       * is forced to `flexible` here to match {@link catchAllServiceDraft} — never
+       * trust the draft value for the catch-all row.
+       */
+      const scopeMode: ScopeMode = key === CATALOG_CATCH_ALL_SERVICE_KEY
+        ? "flexible"
+        : resolveServiceScopeMode(d.scopeMode);
       const base: ServiceOfferingV1 = {
         service_id: d.service_id.trim(),
         service_key: key,
         label: d.label.trim(),
         modalities,
         followup_policy: null,
+        scope_mode: scopeMode,
       };
       const desc = d.description.trim();
       if (desc) {
@@ -464,4 +532,143 @@ export function draftsToCatalogOrNull(services: ServiceOfferingDraft[]): Service
     version: SERVICE_CATALOG_VERSION,
     services: offerings,
   };
+}
+
+// ============================================================================
+// Plan 02 / Task 06 — AI auto-fill helpers
+// ============================================================================
+
+/** Subset of {@link ServiceOfferingV1} the AI suggest endpoint sends back. */
+export interface AiSuggestedCardV1 {
+  service_id?: string;
+  service_key: string;
+  label: string;
+  description?: string;
+  scope_mode?: ScopeMode;
+  matcher_hints?: {
+    keywords?: string;
+    include_when?: string;
+    exclude_when?: string;
+  };
+  modalities: ServiceOfferingV1["modalities"];
+}
+
+/**
+ * Convert a server-returned AI card into a fresh draft. Used by the "Generate a
+ * starter catalog" flow where every card is brand new (no doctor edits to
+ * preserve). Returns a draft with `aiSuggestionMeta.source = 'starter'`.
+ */
+export function aiSuggestedCardToDraft(
+  card: AiSuggestedCardV1,
+  warnings: AiSuggestionDraftMeta["warnings"] = []
+): ServiceOfferingDraft {
+  const seed = emptyServiceDraft();
+  const isCatchAll = card.service_key.trim().toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY;
+  const text = card.modalities.text;
+  const voice = card.modalities.voice;
+  const video = card.modalities.video;
+  return {
+    ...seed,
+    service_id: card.service_id?.trim() || seed.service_id,
+    label: card.label,
+    service_key: card.service_key,
+    description: card.description?.trim() ?? "",
+    matcherKeywords: card.matcher_hints?.keywords?.trim() ?? "",
+    matcherIncludeWhen: card.matcher_hints?.include_when?.trim() ?? "",
+    matcherExcludeWhen: card.matcher_hints?.exclude_when?.trim() ?? "",
+    scopeMode: isCatchAll ? "flexible" : resolveServiceScopeMode(card.scope_mode),
+    textEnabled: !!text?.enabled,
+    voiceEnabled: !!voice?.enabled,
+    videoEnabled: !!video?.enabled,
+    textPriceMain: text?.enabled ? minorToMain(text.price_minor) : "",
+    voicePriceMain: voice?.enabled ? minorToMain(voice.price_minor) : "",
+    videoPriceMain: video?.enabled ? minorToMain(video.price_minor) : "",
+    aiSuggestionMeta: {
+      source: "starter",
+      appliedAt: new Date().toISOString(),
+      fieldsTouched: {
+        description: !!card.description?.trim(),
+        scopeMode: true,
+        matcherKeywords: !!card.matcher_hints?.keywords?.trim(),
+        matcherIncludeWhen: !!card.matcher_hints?.include_when?.trim(),
+        matcherExcludeWhen: !!card.matcher_hints?.exclude_when?.trim(),
+        modalities: true,
+      },
+      warnings,
+    },
+  };
+}
+
+/**
+ * Merge an AI-suggested card onto an existing draft (single_card flow). Preserves
+ * doctor-typed `id`, `service_id`, `service_key`, and `label` so the row stays the
+ * same in the editor list — the AI only ever fills the matcher hints, scope_mode,
+ * description, and modality price/enable defaults. Always overwrites the whole
+ * `aiSuggestionMeta` so re-running the AI gives a fresh meta with current
+ * timestamp + warnings.
+ */
+export function applyAiSuggestionToDraft(
+  draft: ServiceOfferingDraft,
+  card: AiSuggestedCardV1,
+  source: AiSuggestionDraftMeta["source"],
+  warnings: AiSuggestionDraftMeta["warnings"] = []
+): ServiceOfferingDraft {
+  const isCatchAll = draft.service_key.trim().toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY;
+
+  const newDescription = card.description?.trim() ?? draft.description;
+  const newKeywords = card.matcher_hints?.keywords?.trim() ?? draft.matcherKeywords;
+  const newIncludeWhen = card.matcher_hints?.include_when?.trim() ?? draft.matcherIncludeWhen;
+  const newExcludeWhen = card.matcher_hints?.exclude_when?.trim() ?? draft.matcherExcludeWhen;
+  const newScope: ScopeMode = isCatchAll ? "flexible" : resolveServiceScopeMode(card.scope_mode);
+
+  // Modality overlay: trust the AI for enabled flags + prices, but only when it
+  // emitted a value. Modalities the AI omitted entirely keep the doctor's prior choice.
+  const text = card.modalities.text;
+  const voice = card.modalities.voice;
+  const video = card.modalities.video;
+
+  const next: ServiceOfferingDraft = {
+    ...draft,
+    description: newDescription,
+    matcherKeywords: newKeywords,
+    matcherIncludeWhen: newIncludeWhen,
+    matcherExcludeWhen: newExcludeWhen,
+    scopeMode: newScope,
+    textEnabled: text?.enabled ?? draft.textEnabled,
+    voiceEnabled: voice?.enabled ?? draft.voiceEnabled,
+    videoEnabled: video?.enabled ?? draft.videoEnabled,
+    textPriceMain:
+      text?.enabled && typeof text.price_minor === "number"
+        ? minorToMain(text.price_minor)
+        : draft.textPriceMain,
+    voicePriceMain:
+      voice?.enabled && typeof voice.price_minor === "number"
+        ? minorToMain(voice.price_minor)
+        : draft.voicePriceMain,
+    videoPriceMain:
+      video?.enabled && typeof video.price_minor === "number"
+        ? minorToMain(video.price_minor)
+        : draft.videoPriceMain,
+    aiSuggestionMeta: {
+      source,
+      appliedAt: new Date().toISOString(),
+      fieldsTouched: {
+        description: newDescription !== draft.description,
+        scopeMode: newScope !== draft.scopeMode,
+        matcherKeywords: newKeywords !== draft.matcherKeywords,
+        matcherIncludeWhen: newIncludeWhen !== draft.matcherIncludeWhen,
+        matcherExcludeWhen: newExcludeWhen !== draft.matcherExcludeWhen,
+        modalities: !!(text || voice || video),
+      },
+      warnings,
+    },
+  };
+  return next;
+}
+
+/** Drop the suggestion badge (e.g. user clicked "Discard suggestion" or accepted it). */
+export function clearAiSuggestionMeta(draft: ServiceOfferingDraft): ServiceOfferingDraft {
+  if (!draft.aiSuggestionMeta) return draft;
+  const { aiSuggestionMeta: _omit, ...rest } = draft;
+  return { ...rest } as ServiceOfferingDraft;
 }

@@ -1437,6 +1437,13 @@ export async function postConfirmServiceStaffReview(
   return json as ApiSuccess<{ review: ServiceStaffReviewListItem }>;
 }
 
+/** Append patch for one service's `matcher_hints`. Empty / omitted fields are ignored server-side. */
+export type ServiceHintAppendPatch = {
+  keywords?: string;
+  include_when?: string;
+  exclude_when?: string;
+};
+
 export async function postReassignServiceStaffReview(
   token: string,
   reviewId: string,
@@ -1444,12 +1451,16 @@ export async function postReassignServiceStaffReview(
     catalogServiceKey: string;
     catalogServiceId?: string;
     consultationModality?: "text" | "voice" | "video";
-    /** Same fields as practice catalog; replaces offering `matcher_hints` for the selected service. */
-    matcherHints: {
-      keywords: string;
-      include_when: string;
-      exclude_when: string;
-    };
+    /**
+     * Optional fragments to APPEND to the reassigned-TO service's `matcher_hints`.
+     * Omit (or send an object with only empty fields) to skip hint learning on this side.
+     */
+    correctServiceHintAppend?: ServiceHintAppendPatch;
+    /**
+     * Optional fragments to APPEND to the reassigned-FROM service's `matcher_hints`
+     * (typically an `exclude_when` signal = patient's sanitized complaint).
+     */
+    wrongServiceHintAppend?: ServiceHintAppendPatch;
   }
 ): Promise<ApiSuccess<{ review: ServiceStaffReviewListItem }>> {
   const res = await fetch(
@@ -1513,4 +1524,150 @@ export async function postCancelServiceStaffReview(
     throw err;
   }
   return json as ApiSuccess<{ review: ServiceStaffReviewListItem }>;
+}
+
+// ============================================================================
+// Plan 02 / Task 06 — POST /api/v1/catalog/ai-suggest
+// ============================================================================
+
+export type AiSuggestMode = "single_card" | "starter" | "review";
+
+export interface AiSuggestSingleCardPayload {
+  label?: string;
+  freeformDescription?: string;
+  existingHints?: {
+    keywords?: string;
+    include_when?: string;
+    exclude_when?: string;
+  };
+}
+
+export interface AiSuggestRequest {
+  mode: AiSuggestMode;
+  payload?: AiSuggestSingleCardPayload;
+}
+
+export type AiSuggestWarning =
+  | {
+      kind: "price_clamped";
+      service_key: string;
+      modality: "text" | "voice" | "video";
+      original_minor: number;
+      clamped_minor: number;
+      currency: string | null;
+    }
+  | {
+      kind: "modality_disabled_no_global_setup";
+      service_key: string;
+      modality: "text" | "voice" | "video";
+      reason: string;
+    }
+  | {
+      kind: "keyword_overlap_with_sibling";
+      service_key: string;
+      sibling_service_key: string;
+      overlap_ratio: number;
+    }
+  | {
+      kind: "catch_all_scope_forced_flexible";
+      service_key: string;
+    };
+
+/** Server-validated catalog card returned by the AI suggest endpoint. */
+export interface AiSuggestCardV1 {
+  service_id?: string;
+  service_key: string;
+  label: string;
+  description?: string;
+  scope_mode?: "strict" | "flexible";
+  matcher_hints?: {
+    keywords?: string;
+    include_when?: string;
+    exclude_when?: string;
+  };
+  modalities: {
+    text?: { enabled: boolean; price_minor: number };
+    voice?: { enabled: boolean; price_minor: number };
+    video?: { enabled: boolean; price_minor: number };
+  };
+}
+
+export interface AiSuggestCardResponse {
+  mode: "single_card" | "starter";
+  cards: AiSuggestCardV1[];
+  warnings: AiSuggestWarning[];
+}
+
+// Plan 02 / Task 07: `review` mode now returns a rich `QualityIssue[]` shared
+// with the backend via `lib/catalog-quality-issues.ts`. The old
+// `AiCatalogReviewIssue` / `AiCatalogReviewIssueKind` types were removed; nothing
+// in the app consumed them yet, so there is no migration path to preserve.
+import type { QualityIssue } from "./catalog-quality-issues";
+export type {
+  QualityIssue,
+  QualityIssueAction,
+  QualityIssueSeverity,
+  QualityIssueSuggestion,
+  QualityIssueSuggestedCard,
+  QualityIssueType,
+} from "./catalog-quality-issues";
+
+export interface AiSuggestReviewResponse {
+  mode: "review";
+  issues: QualityIssue[];
+  warnings: AiSuggestWarning[];
+}
+
+export type AiSuggestResponse = AiSuggestCardResponse | AiSuggestReviewResponse;
+
+/** PHI-safe doctor-facing copy for warnings shown next to AI-filled drafts. */
+export function describeAiSuggestWarning(w: AiSuggestWarning): string {
+  switch (w.kind) {
+    case "price_clamped":
+      return `${w.modality} price was outside the typical range and clamped to ${(w.clamped_minor / 100).toFixed(2)} ${w.currency ?? ""}.`.trim();
+    case "modality_disabled_no_global_setup":
+      return `${w.modality} was disabled because that channel is not part of your configured consultation types.`;
+    case "keyword_overlap_with_sibling":
+      return `Keywords overlap heavily with "${w.sibling_service_key}" (${Math.round(w.overlap_ratio * 100)}%) — consider tightening one of the cards.`;
+    case "catch_all_scope_forced_flexible":
+      return `The catch-all card was kept on flexible scope so it can absorb anything.`;
+    default:
+      return "";
+  }
+}
+
+/**
+ * Plan 02 / Task 06: POST /api/v1/catalog/ai-suggest.
+ * Backend validates the LLM output (`serviceOfferingV1Schema`) before returning.
+ */
+export async function postCatalogAiSuggest(
+  token: string,
+  body: AiSuggestRequest
+): Promise<ApiSuccess<AiSuggestResponse>> {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/catalog/ai-suggest`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<AiSuggestResponse>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "AI suggestion request failed";
+    const err = new Error(message) as Error & { status?: number; body?: unknown };
+    err.status = res.status;
+    err.body = json;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number; body?: unknown };
+    err.status = json.error.statusCode ?? 500;
+    err.body = json;
+    throw err;
+  }
+  return json as ApiSuccess<AiSuggestResponse>;
 }

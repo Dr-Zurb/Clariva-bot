@@ -131,6 +131,22 @@ export type ServiceMatcherHintsV1 = z.infer<typeof serviceMatcherHintsV1Schema>;
 export const MATCHER_HINT_KEYWORDS_MAX = 400;
 export const MATCHER_HINT_INCLUDE_EXCLUDE_MAX = 800;
 
+/**
+ * SFU-18 (Plan 01 Phase C): per-offering matching scope mode.
+ * `strict`   — only match when patient complaint aligns with `matcher_hints` (keywords / include_when).
+ *              Label-only inference and blank-hint matching are suppressed.
+ * `flexible` — broader category matching allowed (preserves pre-SFU-18 behavior).
+ * Absent/undefined is treated as `flexible` everywhere for backward compatibility.
+ */
+export const SERVICE_SCOPE_MODES = ['strict', 'flexible'] as const;
+export const scopeModeSchema = z.enum(SERVICE_SCOPE_MODES);
+export type ScopeMode = z.infer<typeof scopeModeSchema>;
+
+/** Single normalization point: undefined → 'flexible'. Keep consumers from duplicating this default. */
+export function resolveServiceScopeMode(scopeMode: ScopeMode | undefined): ScopeMode {
+  return scopeMode ?? 'flexible';
+}
+
 const MATCHER_HINT_SEP = '; ';
 
 /**
@@ -177,6 +193,8 @@ const serviceOfferingCoreSchema = z.object({
   label: z.string().min(1).max(200).trim(),
   description: z.string().max(500).trim().nullable().optional(),
   matcher_hints: serviceMatcherHintsV1Schema.optional(),
+  /** SFU-18: optional per-offering scope mode; `undefined` resolves to `flexible` (see {@link resolveServiceScopeMode}). */
+  scope_mode: scopeModeSchema.optional(),
   modalities: serviceModalitiesSchema,
   followup_policy: followUpPolicyV1Schema.nullable().optional(),
 });

@@ -65,6 +65,102 @@ describe('service-catalog-matcher (ARM-04)', () => {
     expect(p).toContain('include_when=');
   });
 
+  it('buildServiceCatalogLlmSystemPrompt encodes strict hint-aware matching policy', () => {
+    const cat = catalogSkinGpOther();
+    const p = buildServiceCatalogLlmSystemPrompt(cat);
+
+    expect(p).toContain('When a row HAS doctor_matcher_hints');
+    expect(p).toContain('follow them strictly');
+    expect(p).toContain('When a row has NO doctor_matcher_hints');
+    expect(p).toContain('unambiguous, specific fit');
+    expect(p).toContain('Do NOT infer a broader scope from the label name alone');
+  });
+
+  it('buildServiceCatalogLlmSystemPrompt includes mixed-complaint guidance', () => {
+    const cat = catalogSkinGpOther();
+    const p = buildServiceCatalogLlmSystemPrompt(cat);
+
+    expect(p).toContain('multiple unrelated complaints');
+    expect(p).toContain('most prominent or first-mentioned complaint');
+    expect(p).toMatch(/Never stretch one row|do not stretch one row/i);
+  });
+
+  it('buildServiceCatalogLlmSystemPrompt caps high confidence on hint corroboration', () => {
+    const cat = catalogSkinGpOther();
+    const p = buildServiceCatalogLlmSystemPrompt(cat);
+
+    expect(p).toContain('Confidence calibration');
+    expect(p).toMatch(/"high"[^\n]*doctor_matcher_hints/);
+    expect(p).toContain('label-only match');
+    expect(p).toContain('is not sufficient for "high"');
+    expect(p).toMatch(/"medium":[^\n]*no hints to corroborate/);
+  });
+
+  it('buildServiceCatalogLlmSystemPrompt forbids force-fitting to avoid "other"', () => {
+    const cat = catalogSkinGpOther();
+    const p = buildServiceCatalogLlmSystemPrompt(cat);
+
+    expect(p).toContain('Do NOT force-fit');
+    expect(p).toContain('just to avoid "other"');
+  });
+
+  it('buildServiceCatalogLlmSystemPrompt keeps specialty-aware rules for GP and narrow', () => {
+    const cat = catalogSkinGpOther();
+    const p = buildServiceCatalogLlmSystemPrompt(cat);
+
+    expect(p).toContain('general medicine, family medicine, internal medicine, GP');
+    expect(p).toContain('dermatology, cardiology');
+    expect(p).toMatch(/general consult or checkup row if one exists/);
+  });
+
+  it('SFU-18: prompt tags every allowlist line with [scope: strict|flexible]', () => {
+    const cat = catalogSkinGpOther();
+    // skin: strict, gp: flexible, other: undefined (→ flexible default)
+    const skin = cat.services.find((s) => s.service_key === 'skin')!;
+    skin.scope_mode = 'strict';
+    const gp = cat.services.find((s) => s.service_key === 'gp')!;
+    gp.scope_mode = 'flexible';
+
+    const p = buildServiceCatalogLlmSystemPrompt(cat);
+    const lines = p.split('\n');
+    const skinLine = lines.find((ln) => ln.trim().startsWith('- skin:'));
+    const gpLine = lines.find((ln) => ln.trim().startsWith('- gp:'));
+    const otherLine = lines.find((ln) => ln.trim().startsWith('- other:'));
+
+    expect(skinLine).toBeDefined();
+    expect(skinLine).toContain('[scope: strict]');
+    expect(gpLine).toBeDefined();
+    expect(gpLine).toContain('[scope: flexible]');
+    // Undefined → normalized to flexible in prompt
+    expect(otherLine).toBeDefined();
+    expect(otherLine).toContain('[scope: flexible]');
+  });
+
+  it('SFU-18: prompt explains scope modes and composes with hint policy', () => {
+    const cat = catalogSkinGpOther();
+    const p = buildServiceCatalogLlmSystemPrompt(cat);
+
+    // Scope-mode rule block exists and explains both modes
+    expect(p).toContain('[scope: strict]');
+    expect(p).toContain('[scope: flexible]');
+    expect(p).toMatch(/ONLY when their complaint directly matches.*keywords or include_when hints/);
+    expect(p).toContain('broader category matching is allowed');
+    // Strict reinforces the "no label-only inference" rule
+    expect(p).toMatch(/If that row is also \[scope: strict\]/);
+    // Flexible still defers to exclude_when (rule 2)
+    expect(p).toMatch(/exclude_when still applies/i);
+  });
+
+  it('buildServiceCatalogLlmSystemPrompt omits doctor_matcher_hints segment when all hints blank', () => {
+    const cat = catalogSkinGpOther();
+    const gp = cat.services.find((s) => s.service_key === 'gp')!;
+    gp.matcher_hints = { keywords: '', include_when: '', exclude_when: '' };
+    const p = buildServiceCatalogLlmSystemPrompt(cat);
+    const gpLine = p.split('\n').find((ln) => ln.trim().startsWith('- gp:'));
+    expect(gpLine).toBeDefined();
+    expect(gpLine).not.toContain('doctor_matcher_hints');
+  });
+
   it('skipLlm: competing buckets text falls back to catch-all without LLM', async () => {
     const catalog = catalogSkinGpOther();
     const r = await matchServiceCatalogOffering(
@@ -207,6 +303,81 @@ describe('service-catalog-matcher (ARM-04)', () => {
     expect(r?.reasonCodes).toContain(SERVICE_CATALOG_MATCH_REASON_CODES.SERVICE_MATCH_LLM);
   });
 
+  it('Task 05: prompt schema and rules include mixed_complaints flag', () => {
+    const cat = catalogSkinGpOther();
+    const p = buildServiceCatalogLlmSystemPrompt(cat);
+
+    // Schema line explicitly contains the field.
+    expect(p).toMatch(/"mixed_complaints":\s*true\|false/);
+    // Rule explains when to set it true (unrelated) vs false (related symptom cluster).
+    expect(p).toMatch(/mixed_complaints"?:\s*true/i);
+    expect(p).toMatch(/clinically UNRELATED/i);
+    expect(p).toMatch(/cough\s*\+\s*fever\s*\+\s*sore throat/);
+    expect(p).toMatch(/advisory/i);
+  });
+
+  it('Task 05: LLM response with mixed_complaints=true surfaces flag on result', async () => {
+    const catalog = catalogSkinGpOther();
+    const r = await matchServiceCatalogOffering(
+      {
+        catalog,
+        reasonForVisitText: 'multiple unrelated concerns today',
+        correlationId,
+      },
+      {
+        skipLlm: false,
+        runLlm: async () =>
+          JSON.stringify({
+            service_key: 'gp',
+            modality: 'video',
+            match_confidence: 'low',
+            mixed_complaints: true,
+          }),
+      }
+    );
+    expect(r?.source).toBe('llm');
+    expect(r?.catalogServiceKey).toBe('gp');
+    expect(r?.confidence).toBe('low');
+    expect(r?.mixedComplaints).toBe(true);
+  });
+
+  it('Task 05: LLM response without mixed_complaints defaults to false', async () => {
+    const catalog = catalogSkinGpOther();
+    const r = await matchServiceCatalogOffering(
+      {
+        catalog,
+        reasonForVisitText: 'cough and fever',
+        correlationId,
+      },
+      {
+        skipLlm: false,
+        runLlm: async () =>
+          JSON.stringify({
+            service_key: 'gp',
+            modality: 'video',
+            match_confidence: 'medium',
+            // mixed_complaints omitted
+          }),
+      }
+    );
+    expect(r?.source).toBe('llm');
+    expect(r?.mixedComplaints).toBe(false);
+  });
+
+  it('Task 05: deterministic path always reports mixedComplaints=false', async () => {
+    const catalog = catalogSkinGpOther();
+    const r = await matchServiceCatalogOffering(
+      {
+        catalog,
+        reasonForVisitText: 'I need dermatology for a rash',
+        correlationId,
+      },
+      { skipLlm: true }
+    );
+    expect(r?.source).toBe('deterministic');
+    expect(r?.mixedComplaints).toBe(false);
+  });
+
   it('mock LLM returns hallucinated key → fallback other', async () => {
     const catalog = catalogSkinGpOther();
     const r = await matchServiceCatalogOffering(
@@ -314,5 +485,101 @@ describe('service-catalog-matcher (ARM-04)', () => {
     );
     expect(seen).toContain('General medicine');
     expect(seen).toContain('Clinic A');
+  });
+
+  // Task 10 (Plan 03): mode-aware short-circuit. Single-fee doctors get a synthetic one-entry
+  // catalog (Task 09) — the matcher must return that entry immediately with `SINGLE_FEE_MODE`
+  // reason code and never invoke the deterministic/LLM paths.
+  describe('Task 10: catalog_mode="single_fee" short-circuit', () => {
+    function catalogSingleFee(): ServiceCatalogV1 {
+      return {
+        version: 1,
+        services: [
+          {
+            service_id: sid('consultation'),
+            service_key: 'consultation',
+            label: 'Consultation',
+            modalities: {
+              text: { enabled: true, price_minor: 500_00 },
+              voice: { enabled: true, price_minor: 500_00 },
+              video: { enabled: true, price_minor: 500_00 },
+            },
+          },
+        ],
+      };
+    }
+
+    it('returns the synthetic single-service result without invoking the LLM', async () => {
+      const catalog = catalogSingleFee();
+      let llmCalls = 0;
+      const r = await matchServiceCatalogOffering(
+        {
+          catalog,
+          reasonForVisitText: 'I have a rash and also some back pain',
+          correlationId,
+          catalogMode: 'single_fee',
+          doctorId: 'doc-single-fee',
+        },
+        {
+          skipLlm: false,
+          runLlm: async () => {
+            llmCalls += 1;
+            return JSON.stringify({ service_key: 'other', modality: null, match_confidence: 'high' });
+          },
+        }
+      );
+      expect(r).not.toBeNull();
+      expect(r!.catalogServiceKey).toBe('consultation');
+      expect(r!.confidence).toBe('high');
+      expect(r!.source).toBe('deterministic');
+      expect(r!.autoFinalize).toBe(true);
+      expect(r!.pendingStaffReview).toBe(false);
+      expect(r!.mixedComplaints).toBe(false);
+      expect(r!.reasonCodes).toContain(SERVICE_CATALOG_MATCH_REASON_CODES.SINGLE_FEE_MODE);
+      expect(llmCalls).toBe(0);
+    });
+
+    it('keeps the existing (deterministic/LLM) path for catalog_mode="multi_service"', async () => {
+      const catalog = catalogSkinGpOther();
+      const r = await matchServiceCatalogOffering(
+        {
+          catalog,
+          reasonForVisitText: 'dermatology rash',
+          correlationId,
+          catalogMode: 'multi_service',
+        },
+        { skipLlm: true }
+      );
+      expect(r?.source).toBe('deterministic');
+      expect(r?.reasonCodes).not.toContain(SERVICE_CATALOG_MATCH_REASON_CODES.SINGLE_FEE_MODE);
+    });
+
+    it('keeps the existing path when catalog_mode is null/undefined', async () => {
+      const catalog = catalogSkinGpOther();
+      const rNull = await matchServiceCatalogOffering(
+        {
+          catalog,
+          reasonForVisitText: 'dermatology rash',
+          correlationId,
+          catalogMode: null,
+        },
+        { skipLlm: true }
+      );
+      expect(rNull?.reasonCodes).not.toContain(
+        SERVICE_CATALOG_MATCH_REASON_CODES.SINGLE_FEE_MODE
+      );
+
+      const rMissing = await matchServiceCatalogOffering(
+        {
+          catalog,
+          reasonForVisitText: 'dermatology rash',
+          correlationId,
+        },
+        { skipLlm: true }
+      );
+      expect(rMissing?.reasonCodes).not.toContain(
+        SERVICE_CATALOG_MATCH_REASON_CODES.SINGLE_FEE_MODE
+      );
+    });
   });
 });
