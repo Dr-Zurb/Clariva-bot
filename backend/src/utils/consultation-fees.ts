@@ -28,7 +28,6 @@ import {
   runDeterministicServiceCatalogMatchStageA,
 } from './service-catalog-deterministic-match';
 import { env } from '../config/env';
-import { warnDeprecation } from './deprecation-warning';
 import type { MatchServiceCatalogDoctorProfile } from '../services/service-catalog-matcher';
 
 /** Optional compact JSON in consultation_types (keep under doctor_settings max length). Example:
