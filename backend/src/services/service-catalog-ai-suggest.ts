@@ -89,6 +89,33 @@ export interface AiSuggestRequest {
   mode: AiSuggestMode;
   /** Only set when mode === 'single_card'. Validated upstream by the route schema. */
   payload?: AiSuggestSingleCardPayload;
+  /**
+   * Optional unsaved-draft override of the doctor's `service_offerings_json`.
+   *
+   * Why: the editor mutates a local React draft (`add_card`, `switch_to_strict`,
+   * sparkle fills, manual edits) without auto-saving to the DB. Before this
+   * field existed, every review/single-card LLM call rehydrated the catalog
+   * from `doctor_settings.service_offerings_json`, so the AI critiqued a
+   * stale snapshot — re-running review after `add_card` would re-suggest the
+   * same card, fill_with_ai couldn't see brand-new sibling cards, etc.
+   *
+   * Contract:
+   *   - `undefined`              → fall back to DB (legacy behavior; used by
+   *                                non-editor callers and integration smoke).
+   *   - `null`                   → "the on-screen draft is empty" — equivalent
+   *                                to a doctor with no catalog. Used so the
+   *                                deterministic `missing_catchall` issue
+   *                                still fires for an empty editor.
+   *   - `ServiceCatalogV1`       → use exactly this. Route schema validates
+   *                                it through `serviceCatalogV1BaseSchema`
+   *                                (must be structurally valid + have unique
+   *                                keys/ids; catch-all is checked by the
+   *                                review itself, not by the schema, so an
+   *                                in-progress draft missing the catch-all
+   *                                still gets reviewed and surfaces the
+   *                                deterministic issue).
+   */
+  catalog?: ServiceCatalogV1 | null;
 }
 
 /** Cards return one of these warnings; `kind` lets the UI render specific copy. */
@@ -294,14 +321,37 @@ function clampString(value: string | undefined, max: number): string | undefined
 }
 
 /**
+ * Optional knob for {@link loadAiSuggestContext} so the editor can hand the
+ * AI its current on-screen draft instead of the persisted catalog. See
+ * {@link AiSuggestRequest.catalog} for the contract. Logged at info so we
+ * can spot when the editor stops sending the override unexpectedly.
+ */
+export interface LoadAiSuggestContextOptions {
+  /**
+   * Three-state override:
+   *   - `undefined`        → use DB (legacy default).
+   *   - `null`             → treat the catalog as empty without touching the DB.
+   *   - `ServiceCatalogV1` → use this exact catalog.
+   */
+  catalogOverride?: ServiceCatalogV1 | null;
+}
+
+/**
  * Pull the doctor's settings via the existing service (RLS-validated by `validateOwnership`)
  * and project only the AI-relevant fields. Throws {@link AiSuggestProfileIncompleteError}
  * when essentials are missing — the route maps that to 422.
+ *
+ * When `options.catalogOverride` is set (including `null`), the catalog field
+ * comes from the caller instead of `service_offerings_json`. This is how the
+ * services-catalog editor keeps the LLM critique aligned with the on-screen
+ * draft after `add_card` / sparkle / manual edits — see the field doc on
+ * {@link AiSuggestRequest.catalog}.
  */
 export async function loadAiSuggestContext(
   doctorId: string,
   userId: string,
-  correlationId: string
+  correlationId: string,
+  options: LoadAiSuggestContextOptions = {}
 ): Promise<AiSuggestContext> {
   const settings = await getDoctorSettingsForUser(doctorId, userId, correlationId);
 
@@ -312,7 +362,24 @@ export async function loadAiSuggestContext(
     throw new AiSuggestProfileIncompleteError(missing);
   }
 
-  const catalog = safeParseServiceCatalogV1FromDb(settings.service_offerings_json, doctorId);
+  const usingOverride = options.catalogOverride !== undefined;
+  const catalog = usingOverride
+    ? options.catalogOverride ?? null
+    : safeParseServiceCatalogV1FromDb(settings.service_offerings_json, doctorId);
+
+  // Telemetry: distinguish editor-driven (client_draft) from DB-loaded reviews
+  // so we can confirm the editor is sending the override and spot regressions
+  // (e.g. a future caller forgetting it). PHI-safe — only counts and the
+  // service_keys, no patient text.
+  logger.info(
+    {
+      correlationId,
+      doctorId,
+      catalogSource: usingOverride ? 'client_draft' : 'db',
+      serviceCount: catalog?.services.length ?? 0,
+    },
+    'service_catalog_ai_suggest: catalog source resolved'
+  );
 
   return {
     doctorId,
@@ -1173,7 +1240,12 @@ export async function generateAiCatalogSuggestion(
   if (!AI_SUGGEST_MODES.includes(request.mode)) {
     throw new ValidationError(`Unknown ai-suggest mode: ${String(request.mode)}`);
   }
-  const ctx = await loadAiSuggestContext(doctorId, userId, correlationId);
+  const ctx = await loadAiSuggestContext(doctorId, userId, correlationId, {
+    // `request.catalog === undefined` keeps the DB path (legacy callers, smoke
+    // tests). `null` and a populated catalog are both meaningful overrides and
+    // are forwarded as-is — see {@link AiSuggestRequest.catalog}.
+    ...(request.catalog !== undefined ? { catalogOverride: request.catalog } : {}),
+  });
   const runLlm = options.runLlm ?? defaultRunAiSuggestLlm;
 
   switch (request.mode) {

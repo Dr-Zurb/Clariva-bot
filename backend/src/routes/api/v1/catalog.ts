@@ -31,6 +31,7 @@ import {
   generateAiCatalogSuggestion,
   type AiSuggestRequest,
 } from '../../../services/service-catalog-ai-suggest';
+import { serviceCatalogV1BaseSchema } from '../../../utils/service-catalog-schema';
 
 const router = Router();
 
@@ -49,10 +50,21 @@ const singleCardPayloadSchema = z
   })
   .strict();
 
+/**
+ * Optional unsaved-draft override the editor sends so the AI critiques the
+ * current on-screen catalog instead of `service_offerings_json`. We use
+ * `serviceCatalogV1BaseSchema` (no catch-all enforcement) on purpose —
+ * an in-progress draft that's missing the catch-all is exactly the kind of
+ * thing the deterministic review should flag (`missing_catchall`), so we
+ * must let the request through. See `AiSuggestRequest.catalog`.
+ */
+const aiSuggestCatalogOverrideSchema = serviceCatalogV1BaseSchema;
+
 const aiSuggestRequestSchema = z
   .object({
     mode: z.enum(AI_SUGGEST_MODES),
     payload: singleCardPayloadSchema.optional(),
+    catalog: aiSuggestCatalogOverrideSchema.nullable().optional(),
   })
   .strict()
   .superRefine((value, ctx) => {

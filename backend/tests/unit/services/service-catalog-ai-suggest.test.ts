@@ -942,3 +942,207 @@ describe('generateAiCatalogSuggestion — input validation (Task 06)', () => {
     ).rejects.toBeInstanceOf(AiSuggestProfileIncompleteError);
   });
 });
+
+/**
+ * Bug-fix (post Plan 04): the editor sends its current on-screen draft so the
+ * AI critiques the unsaved state, not `service_offerings_json`. These tests
+ * lock the contract on `AiSuggestRequest.catalog`:
+ *   - `undefined` → DB load (legacy path, must keep working).
+ *   - `null`      → empty-catalog signal without touching the DB.
+ *   - object      → exact override; DB column is ignored.
+ *
+ * Both `loadAiSuggestContext` (unit-level) and `generateAiCatalogSuggestion`
+ * (end-to-end via review mode) are covered so we catch regressions at either
+ * layer if a future caller drops the override accidentally.
+ */
+describe('catalog override (post-Plan-04 bug-fix)', () => {
+  const dbCatalog: ServiceCatalogV1 = {
+    version: 1,
+    services: [
+      {
+        service_id: '11111111-1111-4111-8111-111111111111',
+        service_key: 'db_card',
+        label: 'DB Card',
+        scope_mode: 'flexible',
+        matcher_hints: { keywords: 'db, card' },
+        modalities: { video: { enabled: true, price_minor: 50000 } },
+      },
+      {
+        service_id: '22222222-2222-4222-8222-222222222222',
+        service_key: CATALOG_CATCH_ALL_SERVICE_KEY,
+        label: 'Other',
+        scope_mode: 'flexible',
+        modalities: { video: { enabled: true, price_minor: 50000 } },
+      },
+    ],
+  };
+
+  const draftCatalog: ServiceCatalogV1 = {
+    version: 1,
+    services: [
+      {
+        service_id: '33333333-3333-4333-8333-333333333333',
+        service_key: 'draft_card',
+        label: 'Draft Card',
+        scope_mode: 'flexible',
+        matcher_hints: { keywords: 'draft, only, in, editor' },
+        modalities: { video: { enabled: true, price_minor: 50000 } },
+      },
+      {
+        service_id: '44444444-4444-4444-8444-444444444444',
+        service_key: CATALOG_CATCH_ALL_SERVICE_KEY,
+        label: 'Other',
+        scope_mode: 'flexible',
+        modalities: { video: { enabled: true, price_minor: 50000 } },
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    mockedGetDoctorSettingsForUser.mockResolvedValue(
+      settingsFixture({ service_offerings_json: dbCatalog }) as never
+    );
+  });
+
+  it('loadAiSuggestContext: undefined override falls back to DB', async () => {
+    const ctx = await loadAiSuggestContext(doctorId, doctorId, correlationId);
+    expect(ctx.catalog?.services.map((s) => s.service_key)).toEqual([
+      'db_card',
+      CATALOG_CATCH_ALL_SERVICE_KEY,
+    ]);
+  });
+
+  it('loadAiSuggestContext: object override is used verbatim, DB column ignored', async () => {
+    const ctx = await loadAiSuggestContext(doctorId, doctorId, correlationId, {
+      catalogOverride: draftCatalog,
+    });
+    expect(ctx.catalog?.services.map((s) => s.service_key)).toEqual([
+      'draft_card',
+      CATALOG_CATCH_ALL_SERVICE_KEY,
+    ]);
+  });
+
+  it('loadAiSuggestContext: null override means empty draft (no DB read for catalog)', async () => {
+    const ctx = await loadAiSuggestContext(doctorId, doctorId, correlationId, {
+      catalogOverride: null,
+    });
+    expect(ctx.catalog).toBeNull();
+  });
+
+  it(
+    'generateAiCatalogSuggestion (review): override drives the LLM prompt and ' +
+      'deterministic checks, not the DB row',
+    async () => {
+      // Spy on the prompt the LLM sees so we can assert the draft summary made
+      // it through and the DB summary did not.
+      const seenPrompts: string[] = [];
+      const runLlm: AiSuggestRunLlm = jest.fn(
+        async (params: { systemPrompt: string; correlationId: string }) => {
+          seenPrompts.push(params.systemPrompt);
+          return JSON.stringify({ issues: [] });
+        }
+      ) as unknown as AiSuggestRunLlm;
+
+      const result = await generateAiCatalogSuggestion(
+        doctorId,
+        doctorId,
+        { mode: 'review', catalog: draftCatalog },
+        correlationId,
+        { runLlm }
+      );
+
+      if (result.mode !== 'review') throw new Error('unreachable');
+      expect(seenPrompts).toHaveLength(1);
+      expect(seenPrompts[0]).toContain('draft_card');
+      expect(seenPrompts[0]).not.toContain('db_card');
+      // No `missing_catchall` because the override carries the catch-all.
+      expect(result.issues.find((i) => i.type === 'missing_catchall')).toBeUndefined();
+    }
+  );
+
+  it(
+    'generateAiCatalogSuggestion (review): null override fires deterministic ' +
+      'missing_catchall and skips the LLM call entirely',
+    async () => {
+      const runLlm = jest.fn(async () => null) as unknown as AiSuggestRunLlm;
+
+      const result = await generateAiCatalogSuggestion(
+        doctorId,
+        doctorId,
+        { mode: 'review', catalog: null },
+        correlationId,
+        { runLlm }
+      );
+
+      if (result.mode !== 'review') throw new Error('unreachable');
+      expect(runLlm).not.toHaveBeenCalled();
+      expect(result.issues.some((i) => i.type === 'missing_catchall')).toBe(true);
+    }
+  );
+
+  it(
+    'generateAiCatalogSuggestion (review): omitted catalog (legacy callers) ' +
+      'still loads from the DB',
+    async () => {
+      const seenPrompts: string[] = [];
+      const runLlm: AiSuggestRunLlm = jest.fn(
+        async (params: { systemPrompt: string; correlationId: string }) => {
+          seenPrompts.push(params.systemPrompt);
+          return JSON.stringify({ issues: [] });
+        }
+      ) as unknown as AiSuggestRunLlm;
+
+      await generateAiCatalogSuggestion(
+        doctorId,
+        doctorId,
+        { mode: 'review' },
+        correlationId,
+        { runLlm }
+      );
+
+      expect(seenPrompts[0]).toContain('db_card');
+      expect(seenPrompts[0]).not.toContain('draft_card');
+    }
+  );
+
+  it(
+    'generateAiCatalogSuggestion (single_card): override flows into the ' +
+      'sibling-summary block of the prompt',
+    async () => {
+      const seenPrompts: string[] = [];
+      const runLlm: AiSuggestRunLlm = jest.fn(
+        async (params: { systemPrompt: string; correlationId: string }) => {
+          seenPrompts.push(params.systemPrompt);
+          return JSON.stringify({
+            cards: [
+              {
+                service_key: 'new_followup',
+                label: 'New follow-up',
+                scope_mode: 'strict',
+                matcher_hints: { keywords: 'follow up, review, recheck' },
+                modalities: { video: { enabled: true, price_minor: 50000 } },
+              },
+            ],
+          });
+        }
+      ) as unknown as AiSuggestRunLlm;
+
+      const result = await generateAiCatalogSuggestion(
+        doctorId,
+        doctorId,
+        {
+          mode: 'single_card',
+          payload: { label: 'Follow-up' },
+          catalog: draftCatalog,
+        },
+        correlationId,
+        { runLlm }
+      );
+
+      if (result.mode !== 'single_card') throw new Error('unreachable');
+      expect(seenPrompts[0]).toContain('draft_card');
+      expect(seenPrompts[0]).not.toContain('db_card');
+      expect(result.cards[0]?.service_key).toBe('new_followup');
+    }
+  );
+});

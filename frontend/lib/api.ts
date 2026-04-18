@@ -1542,9 +1542,28 @@ export interface AiSuggestSingleCardPayload {
   };
 }
 
+// Imported here (mid-file) so the AiSuggestRequest interface below can name it
+// without forcing a re-shuffle of every export at the top of this big file.
+import type { ServiceCatalogV1 } from "./service-catalog-schema";
+export type { ServiceCatalogV1 } from "./service-catalog-schema";
+
 export interface AiSuggestRequest {
   mode: AiSuggestMode;
   payload?: AiSuggestSingleCardPayload;
+  /**
+   * Optional unsaved-draft catalog the editor hands to the backend so the AI
+   * critiques what is currently on screen rather than the persisted
+   * `service_offerings_json`. The backend route validates the shape with
+   * `serviceCatalogV1BaseSchema` and the service swaps it in for the DB row.
+   *
+   * - `undefined` → backend uses DB (default for non-editor callers).
+   * - `null`      → editor signals "draft is empty" (no services yet).
+   * - object      → use this exact catalog (must be structurally valid; the
+   *                 catch-all check is performed by the review itself, so
+   *                 in-progress drafts missing the catch-all are still
+   *                 reviewable and surface `missing_catchall`).
+   */
+  catalog?: ServiceCatalogV1 | null;
 }
 
 export type AiSuggestWarning =

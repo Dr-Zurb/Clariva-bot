@@ -22,7 +22,10 @@ import {
   normalizeDraftOrder,
   type ServiceOfferingDraft,
 } from "@/lib/service-catalog-drafts";
-import { safeParseServiceCatalogV1 } from "@/lib/service-catalog-schema";
+import {
+  safeParseServiceCatalogV1,
+  type ServiceCatalogV1,
+} from "@/lib/service-catalog-schema";
 import { createClient } from "@/lib/supabase/client";
 import { UnsavedLeaveGuard } from "@/components/ui/UnsavedLeaveGuard";
 import type {
@@ -267,12 +270,57 @@ export default function ServicesCatalogPage() {
    * Plan 02 / Task 07: runs the full catalog review through the AI endpoint.
    * Merges server-reviewed issues into {@link serverReviewIssues}; the memoized
    * {@link mergedIssues} combines them with local deterministic ones.
+   *
+   * Bug-fix (post Plan 04): we always send the current on-screen draft in the
+   * `catalog` field. Previously the backend reloaded `service_offerings_json`
+   * from the DB every call, so a doctor could `add_card` from the review
+   * panel, click "Review again", and get the same gap suggestion back —
+   * because the suggested card lived only in local React state until they
+   * hit Save. Sending the draft makes the review a critique of "what's on
+   * the doctor's screen right now" instead of "what's in the DB".
+   *
+   * Validation symmetry: we run the same `draftsToCatalogOrNull` +
+   * `safeParseServiceCatalogV1` pipeline as `performSave`. If the draft
+   * fails validation mid-edit (e.g. the doctor cleared the catch-all row,
+   * or a card has an empty label), we refuse the round-trip and surface the
+   * error in the review panel rather than silently stripping invalid rows
+   * and shipping a misleading critique. The deterministic `localIssues`
+   * panel still renders, so the doctor isn't left without feedback.
    */
   const runServerReview = useCallback(async (): Promise<QualityIssue[] | null> => {
     setReviewError(null);
+
+    // Build the override payload from the current draft. The three explicit
+    // states map 1:1 to the backend contract on `AiSuggestRequest.catalog`:
+    //   - empty editor → send `null` so the backend treats the doctor as
+    //                    having no catalog (deterministic `missing_catchall`
+    //                    fires from server-side review).
+    //   - valid draft  → send the parsed `ServiceCatalogV1`.
+    //   - invalid draft → bail with a doctor-facing error (no network call).
+    let catalogOverride: ServiceCatalogV1 | null;
+    try {
+      const built = draftsToCatalogOrNull(services);
+      if (built === null) {
+        catalogOverride = null;
+      } else {
+        const parsed = safeParseServiceCatalogV1(built);
+        if (!parsed.ok) {
+          setReviewError(parsed.message);
+          setServerReviewIssues([]);
+          return null;
+        }
+        catalogOverride = parsed.data;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Could not read your current draft.";
+      setReviewError(msg);
+      setServerReviewIssues([]);
+      return null;
+    }
+
     setReviewLoading(true);
     try {
-      const res = await handleAiSuggest({ mode: "review" });
+      const res = await handleAiSuggest({ mode: "review", catalog: catalogOverride });
       if (res.data.mode !== "review") {
         throw new Error("Unexpected AI response for review mode");
       }
@@ -289,7 +337,7 @@ export default function ServicesCatalogPage() {
     } finally {
       setReviewLoading(false);
     }
-  }, [handleAiSuggest]);
+  }, [handleAiSuggest, services]);
 
   const performSave = useCallback(async (options?: { bypassGate?: boolean }): Promise<boolean> => {
     setClientError(null);
