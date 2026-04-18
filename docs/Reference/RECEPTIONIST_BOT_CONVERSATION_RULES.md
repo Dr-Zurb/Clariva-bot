@@ -141,6 +141,10 @@ When multiple intents could apply: **emergency > medical_query > book_appointmen
 | `medical_query` | **RBH-15:** Localized via `resolveSafetyMessage('medical_query', userText)` — English, **Devanagari Hindi**, **Gurmukhi Punjabi**, or **Roman Hindi / Punjabi** from script + simple keyword cues. Same meaning: scheduling assistant only; see doctor / call clinic. |
 | `emergency` | **RBH-15:** Localized emergency redirect + **India 112/108** in `resolveSafetyMessage('emergency', userText)`. **Pattern-based emergency** (`isEmergencyUserMessage`) runs **before** `medical_query` so Indic chest pain / breathless / poison phrases are not deflected as generic medical_query. Booking phrases `emergency appointment` / `urgent appointment` are excluded. |
 
+### Patient-facing DM copy (single source of truth)
+
+New patient-facing DM strings (intake ask, confirm-details read-back, consent, payment confirmation, booking reminders, cancel picker, staff-review resolved, non-text ack, etc.) live in [`backend/src/utils/dm-copy.ts`](../../backend/src/utils/dm-copy.ts). Keep builders there **pure** — input → string, no I/O or logger — and cover every rendered shape with a snapshot entry in [`backend/tests/unit/utils/dm-copy.snap.test.ts`](../../backend/tests/unit/utils/dm-copy.snap.test.ts) so copy edits surface as a reviewable diff. Safety / localized templates (`resolveSafetyMessage`) continue to live in `safety-messages.ts`; `dm-copy.ts` does **not** duplicate them. Migration plan: [`docs/Development/Daily-plans/April 2026/18-04-2026/plan-patient-dm-copy-polish.md`](../Development/Daily-plans/April%202026/18-04-2026/plan-patient-dm-copy-polish.md).
+
 ---
 
-**Last Updated:** 2026-03-28 (RBH-17: anti-patterns, keyword policy, mermaid, DM branch inventory link)
+**Last Updated:** 2026-04-18 (DM copy: `dm-copy.ts` single-source-of-truth note added)

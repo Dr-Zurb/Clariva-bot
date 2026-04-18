@@ -17,6 +17,7 @@ import { sendSms } from './twilio-sms-service';
 import { getInstagramAccessTokenForDoctor } from './instagram-connect-service';
 import { getDoctorSettings } from './doctor-settings-service';
 import { logAuditEvent } from '../utils/audit-logger';
+import { buildPaymentConfirmationMessage } from '../utils/dm-copy';
 import { logger } from '../config/logger';
 import { redactPhiForAI } from './ai-service';
 import { createAttachmentSignedUrlForDelivery } from './prescription-attachment-service';
@@ -174,10 +175,10 @@ export async function sendPaymentConfirmationToPatient(
     : null;
   const timezone = doctorSettings?.timezone ?? 'Asia/Kolkata';
   const dateStr = formatAppointmentDate(appointmentDateIso, timezone);
-  const idLine = patientMrn?.trim()
-    ? `\n\nYour patient ID: **${patientMrn.trim()}**. Save this for future bookings.`
-    : '';
-  const message = `Payment received. Your appointment on ${dateStr} is confirmed.${idLine}\n\nWe'll send a reminder before your visit.`;
+  const message = buildPaymentConfirmationMessage({
+    appointmentDateDisplay: dateStr,
+    patientMrn: patientMrn?.trim() || undefined,
+  });
 
   const doctorToken = appointment.doctor_id
     ? await getInstagramAccessTokenForDoctor(appointment.doctor_id, correlationId)

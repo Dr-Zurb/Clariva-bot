@@ -420,7 +420,7 @@ NEVER ask "what date/time?" or "share two date/time options" - we use a slot-sel
 
 CRITICAL - NEVER output placeholder text like "[Slot selection link]", "[link]", or "**[Slot selection link]**". The system injects the real URL when needed. You do not have access to it. If you mention a link, do not invent one - the system handles it.
 
-CRITICAL - When state shows collecting_all or confirm_details with collectedFields, the user has ALREADY shared details. NEVER repeat "Please share: Full name, Age, Mobile, Reason for visit". Acknowledge what they said, ask for missing fields only, or move to confirmation. If they refine the reason (e.g. "i wanna get her checked for diabetes"), treat it as updating the reason - do NOT start over.
+CRITICAL - When state shows collecting_all or confirm_details with collectedFields, the user has ALREADY shared details. NEVER repeat the full intake request (the bulleted "Please share these details" list with Full name / Age / Gender / Mobile number / Reason for visit / Email rows). Acknowledge what they said, ask for missing fields only, or move to confirmation. If they refine the reason (e.g. "i wanna get her checked for diabetes"), treat it as updating the reason - do NOT start over.
 
 VISIT TYPE / PRICING — Do **not** ask the patient to **choose between two or more priced consultation categories** (e.g. different teleconsult service rows or fee tiers) when their reasons could reasonably fit **more than one** category (for example chronic/metabolic concerns together with acute symptoms). The clinic assigns the correct visit type. Do not present side-by-side fee menus for competing categories so the patient can pick the cheaper option—defer to staff confirmation when ambiguous.
 
@@ -1374,7 +1374,7 @@ const CONSENT_REPLY_SEMANTIC_SYSTEM = `You classify whether the patient is grant
 The assistant asked them to agree to share details / consent (any language: English, Hindi, Punjabi, etc.).
 
 IMPORTANT — Read the assistant message context:
-- If the assistant asked ONLY for **optional** extras (e.g. special notes for the doctor — allergies, medications, preferences — "optional" / "say Yes to continue") and the patient says they have nothing to add ("no", "no that's it", "nothing else", "that's all"), that means they are **continuing** — classify as **granted** (they are not refusing data consent).
+- If the assistant asked ONLY for **optional** extras (e.g. notes for the doctor — allergies, current medicines, anything else — "(optional)" / "Reply Yes when you're ready to pick a time") and the patient says they have nothing to add ("no", "no that's it", "nothing else", "that's all"), that means they are **continuing** — classify as **granted** (they are not refusing data consent).
 - If they clearly refuse consent to use their details for scheduling ("don't use my number", "I don't consent", "delete my data"), classify as **denied**.
 
 Return JSON only: {"decision":"granted"|"denied"|"unclear","confidence":0-1}
@@ -2019,8 +2019,8 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
   const collectingAllHint =
     state?.step === 'collecting_all'
       ? aiContext?.missingFields?.length
-        ? ' The user just shared some details. Acknowledge briefly, then ask for ALL remaining missing fields at once. Example: "Got it. Still need: age, reason for visit. Please share." If only one missing: "Just need your age." NEVER ask for one field, wait, then ask for the next - always list all missing at once.'
-        : ' Ask for ALL details at once: Full name, Age, Gender, Mobile number, Reason for visit. Email optional. Example: "To book your appointment, please share: Full name, Age, Gender, Mobile number, Reason for visit. Email (optional) for receipts."'
+        ? ' The user just shared some details. Acknowledge briefly, then ask for ALL remaining missing fields at once as a short bulleted list with bolded labels (one per line, no comma list). Example: "Got it. Still need these details:\\n- **Age**\\n- **Reason for visit**\\n\\nYou can paste them in one message." If only one missing: "Just need your **age**." NEVER ask for one field, wait, then ask for the next - always list all missing at once.'
+        : ' Ask for ALL details at once as a short bulleted list with bolded labels (one per line, no comma list). Example: "Sure — happy to help. Please share these details:\\n- **Full name**\\n- **Age**\\n- **Gender**\\n- **Mobile number**\\n- **Reason for visit**\\n- **Email** *(optional, for receipts)*"'
       : '';
   const collectionHint =
     state?.step?.startsWith('collecting_') && state?.step !== 'collecting_all'

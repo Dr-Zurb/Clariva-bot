@@ -5,6 +5,7 @@
 
 import type { DoctorSettingsRow } from '../types/doctor-settings';
 import type { ConversationState } from '../types/conversation';
+import { buildStaffReviewResolvedBookingMessage } from './dm-copy';
 import { findServiceOfferingByKey, getActiveServiceCatalog } from './service-catalog-helpers';
 
 export function resolveVisitTypeLabelForDm(
@@ -48,23 +49,26 @@ export function formatStaffServiceReviewStillPendingDm(
   );
 }
 
-/** After staff confirms or reassigns visit type: patient can open booking page (matches prior “we’ll message you” promise). */
+/**
+ * After staff confirms or reassigns visit type (or the learning-policy
+ * autobook path fires): patient can open the booking page.
+ *
+ * Layout / copy is owned by `buildStaffReviewResolvedBookingMessage` in
+ * `dm-copy.ts` (Task 08 — URL on its own line for reliable tap targets).
+ * This wrapper is kept as the ARM-05 entry point so existing call sites
+ * (`service-staff-review-service.ts`, `service-match-learning-autobook.ts`)
+ * don't need to know about the `dm-copy` module.
+ */
 export function formatStaffReviewResolvedContinueBookingDm(
   settings: DoctorSettingsRow | null,
   visitLabel: string,
   bookingUrl: string,
   kind: 'confirmed' | 'reassigned' | 'learning_policy_autobook'
 ): string {
-  const practice = settings?.practice_name?.trim() || 'the clinic';
-  const label = visitLabel.trim() || 'your visit';
-  const intro =
-    kind === 'confirmed'
-      ? `**${practice}** has confirmed your visit type: **${label}**.`
-      : kind === 'learning_policy_autobook'
-        ? `**${practice}** has applied your saved visit-type preference: **${label}**.`
-        : `**${practice}** has updated your visit type to **${label}**.`;
-  return (
-    `${intro} You can **pick a time and complete booking** here — tap to open: ${bookingUrl}\n\n` +
-    `If something looks wrong, just reply here in this chat.`
-  );
+  return buildStaffReviewResolvedBookingMessage({
+    practiceName: settings?.practice_name ?? undefined,
+    visitLabel,
+    bookingUrl,
+    kind,
+  });
 }

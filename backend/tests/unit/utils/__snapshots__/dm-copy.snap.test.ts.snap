@@ -1,0 +1,580 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`dm-copy snapshots abandoned-reminder / default (URL on its own line) 1`] = `
+"Just checking in — your booking link is still active.
+
+Pick a time here:
+https://book.clariva.app/pick-slot?token=abc123
+
+Reply here anytime if you need help."
+`;
+
+exports[`dm-copy snapshots cancel-list / 1 item / video — confirm-by-Yes shape 1`] = `
+"You have one upcoming appointment: **Tue, Apr 29 · 4:30 PM — Video consult**.
+
+Reply **Yes** to cancel it, or tell me what else to do."
+`;
+
+exports[`dm-copy snapshots cancel-list / 2 items / mixed modalities — "Reply 1 or 2" 1`] = `
+"Which appointment would you like to cancel?
+
+**1.** Tue, Apr 29 · 4:30 PM — Video consult
+**2.** Fri, May 2 · 10:00 AM — In-person
+
+Reply **1** or **2**."
+`;
+
+exports[`dm-copy snapshots cancel-list / 3 items / all video — "Reply a number from 1 to 3" 1`] = `
+"Which appointment would you like to cancel?
+
+**1.** Tue, Apr 29 · 4:30 PM — Video consult
+**2.** Fri, May 2 · 10:00 AM — Video consult
+**3.** Mon, May 5 · 2:00 PM — Video consult
+
+Reply a number from **1** to **3**."
+`;
+
+exports[`dm-copy snapshots cancel-list / 5 items / mixed + some unknown modality (suffix omitted) 1`] = `
+"Which appointment would you like to cancel?
+
+**1.** Tue, Apr 29 · 4:30 PM — Video consult
+**2.** Fri, May 2 · 10:00 AM — In-person
+**3.** Mon, May 5 · 2:00 PM — Text consult
+**4.** Thu, May 8 · 11:15 AM
+**5.** Mon, May 12 · 9:00 AM
+
+Reply a number from **1** to **5**."
+`;
+
+exports[`dm-copy snapshots clarification / en / 1 concern → falls back to open-ended 1`] = `"You've mentioned a few concerns. Which one would you like to consult about first? We can address the others in a follow-up visit."`;
+
+exports[`dm-copy snapshots clarification / en / 2 concerns 1`] = `
+"You've mentioned a few concerns:
+
+**1.** Headache
+**2.** Diabetes follow-up
+
+Which one is the main reason for this visit? Reply **1** or **2** — we can handle the rest in a follow-up."
+`;
+
+exports[`dm-copy snapshots clarification / en / 3 concerns 1`] = `
+"You've mentioned a few concerns:
+
+**1.** Headache
+**2.** Diabetes follow-up
+**3.** Knee pain
+
+Which one is the main reason for this visit? Reply **1**, **2**, or **3** — we can handle the rest in a follow-up."
+`;
+
+exports[`dm-copy snapshots clarification / en / 5 concerns 1`] = `
+"You've mentioned a few concerns:
+
+**1.** Headache
+**2.** Diabetes follow-up
+**3.** Knee pain
+**4.** Skin rash
+**5.** Back pain
+
+Which one is the main reason for this visit? Reply **1**, **2**, **3**, **4**, or **5** — we can handle the rest in a follow-up."
+`;
+
+exports[`dm-copy snapshots clarification / en / 6 concerns → falls back to open-ended 1`] = `"You've mentioned a few concerns. Which one would you like to consult about first? We can address the others in a follow-up visit."`;
+
+exports[`dm-copy snapshots clarification / hi Devanagari / 3 concerns (English labels under Hindi intro + CTA) 1`] = `
+"आपने कई चीज़ें बताई हैं:
+
+**1.** Headache
+**2.** Diabetes follow-up
+**3.** Knee pain
+
+इस विज़िट का मुख्य कारण कौन-सा है? **1**, **2**, या **3** भेजें — बाकी के लिए फ़ॉलो-अप रख लेंगे।"
+`;
+
+exports[`dm-copy snapshots clarification / latin-hi / 3 concerns (Hinglish intro + CTA) 1`] = `
+"Aapne kai concerns bataaye hain:
+
+**1.** Headache
+**2.** Diabetes follow-up
+**3.** Knee pain
+
+Is visit ka main reason kaunsa hai? **1**, **2**, or **3** reply karein — baaki ke liye follow-up rakh lenge."
+`;
+
+exports[`dm-copy snapshots clarification / latin-pa / 3 concerns (Roman Punjabi intro + CTA) 1`] = `
+"Tussi kai concerns dasse ne:
+
+**1.** Headache
+**2.** Diabetes follow-up
+**3.** Knee pain
+
+Is visit da main reason kehda hai? **1**, **2**, or **3** reply karo — baaki layi follow-up rakh laange."
+`;
+
+exports[`dm-copy snapshots clarification / pa Gurmukhi / 3 concerns (English labels under Punjabi intro + CTA) 1`] = `
+"ਤੁਸੀਂ ਕਈ ਗੱਲਾਂ ਦੱਸੀਆਂ ਹਨ:
+
+**1.** Headache
+**2.** Diabetes follow-up
+**3.** Knee pain
+
+ਇਸ ਵਿਜ਼ਟ ਦਾ ਮੁੱਖ ਕਾਰਨ ਕਿਹੜਾ ਹੈ? **1**, **2**, ਜਾਂ **3** ਭੇਜੋ — ਬਾਕੀ ਲਈ ਫਾਲੋ-ਅੱਪ ਰੱਖ ਲਵਾਂਗੇ।"
+`;
+
+exports[`dm-copy snapshots confirm-details / all fields 1`] = `
+"Here's what I have so far:
+
+**Name:** Abhishek Sahil
+**Age:** 35
+**Gender:** Male
+**Mobile:** 8264602737
+**Reason:** headache
+**Email:** abhishek@example.com
+
+Is everything correct? Reply **Yes** to see available slots, or tell me what to change."
+`;
+
+exports[`dm-copy snapshots confirm-details / female gender (lowercase input) 1`] = `
+"Here's what I have so far:
+
+**Name:** Abhishek Sahil
+**Age:** 35
+**Gender:** Female
+**Mobile:** 8264602737
+**Reason:** headache
+**Email:** abhishek@example.com
+
+Is everything correct? Reply **Yes** to see available slots, or tell me what to change."
+`;
+
+exports[`dm-copy snapshots confirm-details / gender mixed case normalizes to Title Case 1`] = `
+"Here's what I have so far:
+
+**Name:** Abhishek Sahil
+**Age:** 35
+**Gender:** Male
+**Mobile:** 8264602737
+**Reason:** headache
+**Email:** abhishek@example.com
+
+Is everything correct? Reply **Yes** to see available slots, or tell me what to change."
+`;
+
+exports[`dm-copy snapshots confirm-details / long reason stays on one line 1`] = `
+"Here's what I have so far:
+
+**Name:** Abhishek Sahil
+**Age:** 35
+**Gender:** Male
+**Mobile:** 8264602737
+**Reason:** persistent throbbing headache for the last three days, worse in the mornings, plus intermittent dizziness when standing up quickly — also due for a diabetes follow-up
+**Email:** abhishek@example.com
+
+Is everything correct? Reply **Yes** to see available slots, or tell me what to change."
+`;
+
+exports[`dm-copy snapshots confirm-details / missing email 1`] = `
+"Here's what I have so far:
+
+**Name:** Abhishek Sahil
+**Age:** 35
+**Gender:** Male
+**Mobile:** 8264602737
+**Reason:** headache
+**Email:** Not provided
+
+Is everything correct? Reply **Yes** to see available slots, or tell me what to change."
+`;
+
+exports[`dm-copy snapshots confirm-details / missing reason and email 1`] = `
+"Here's what I have so far:
+
+**Name:** Abhishek Sahil
+**Age:** 35
+**Gender:** Male
+**Mobile:** 8264602737
+**Reason:** Not provided
+**Email:** Not provided
+
+Is everything correct? Reply **Yes** to see available slots, or tell me what to change."
+`;
+
+exports[`dm-copy snapshots confirm-details / whitespace-only reason becomes Not provided 1`] = `
+"Here's what I have so far:
+
+**Name:** Abhishek Sahil
+**Age:** 35
+**Gender:** Male
+**Mobile:** 8264602737
+**Reason:** Not provided
+**Email:** abhishek@example.com
+
+Is everything correct? Reply **Yes** to see available slots, or tell me what to change."
+`;
+
+exports[`dm-copy snapshots consent / self / "there" sentinel treated as missing name 1`] = `
+"Thanks.
+We'll use **8264602737** to confirm your appointment by call or text.
+
+Any notes for the doctor? _(allergies, current medicines, anything else — optional)_
+
+Reply **Yes** when you're ready to pick a time."
+`;
+
+exports[`dm-copy snapshots consent / self / happy path (name + bolded phone) 1`] = `
+"Thanks, **Abhishek**.
+We'll use **8264602737** to confirm your appointment by call or text.
+
+Any notes for the doctor? _(allergies, current medicines, anything else — optional)_
+
+Reply **Yes** when you're ready to pick a time."
+`;
+
+exports[`dm-copy snapshots consent / self / missing patientName (renders plain "Thanks.") 1`] = `
+"Thanks.
+We'll use **8264602737** to confirm your appointment by call or text.
+
+Any notes for the doctor? _(allergies, current medicines, anything else — optional)_
+
+Reply **Yes** when you're ready to pick a time."
+`;
+
+exports[`dm-copy snapshots consent / self / missing phone falls back to "your number" 1`] = `
+"Thanks, **Abhishek**.
+We'll use your number to confirm your appointment by call or text.
+
+Any notes for the doctor? _(allergies, current medicines, anything else — optional)_
+
+Reply **Yes** when you're ready to pick a time."
+`;
+
+exports[`dm-copy snapshots consent / someone-else / happy path 1`] = `
+"Thanks.
+We'll use **8264602737** to confirm the appointment for **Priya**.
+
+Do I have your consent to use these details to schedule?
+
+Reply **Yes** to continue."
+`;
+
+exports[`dm-copy snapshots consent / someone-else / phone fallback + relation-booking name 1`] = `
+"Thanks.
+We'll use your number to confirm the appointment for **Priya Sharma**.
+
+Do I have your consent to use these details to schedule?
+
+Reply **Yes** to continue."
+`;
+
+exports[`dm-copy snapshots intake / initial / custom intro (two-person self+other framing) 1`] = `
+"I'll help you book for you and your **mother**. Let's take them one at a time — your **mother** first, then you. Please share their details:
+- **Full name**
+- **Age**
+- **Mobile number**
+- **Reason for visit**
+- **Email** *(optional, for receipts)*
+
+Example:
+> Abhishek Sahil
+> 35, male
+> 8264602737
+> headache + diabetes follow-up"
+`;
+
+exports[`dm-copy snapshots intake / initial / empty practiceName falls back to "the clinic" 1`] = `
+"Sure — happy to help you book at **the clinic**.
+
+Please share these details (you can paste them all in one message):
+- **Full name**
+- **Age**
+- **Gender**
+- **Mobile number**
+- **Reason for visit**
+- **Email** *(optional, for receipts)*
+
+Example:
+> Abhishek Sahil
+> 35, male
+> 8264602737
+> headache + diabetes follow-up"
+`;
+
+exports[`dm-copy snapshots intake / initial / missing input order is normalized to canonical order 1`] = `
+"Sure — happy to help you book at **Dr Zurb's Clinic**.
+
+Please share these details (you can paste them all in one message):
+- **Full name**
+- **Age**
+- **Gender**
+- **Mobile number**
+- **Reason for visit**
+- **Email** *(optional, for receipts)*
+
+Example:
+> Abhishek Sahil
+> 35, male
+> 8264602737
+> headache + diabetes follow-up"
+`;
+
+exports[`dm-copy snapshots intake / initial / no relation / all fields (self-booking, Dr Zurb's Clinic) 1`] = `
+"Sure — happy to help you book at **Dr Zurb's Clinic**.
+
+Please share these details (you can paste them all in one message):
+- **Full name**
+- **Age**
+- **Gender**
+- **Mobile number**
+- **Reason for visit**
+- **Email** *(optional, for receipts)*
+
+Example:
+> Abhishek Sahil
+> 35, male
+> 8264602737
+> headache + diabetes follow-up"
+`;
+
+exports[`dm-copy snapshots intake / initial / no relation / alreadyHaveReason (reason row suppressed) 1`] = `
+"Sure — happy to help you book at **Dr Zurb's Clinic**.
+
+We already have your **reason for visit** from earlier. Just need a few more:
+- **Full name**
+- **Age**
+- **Gender**
+- **Mobile number**
+- **Email** *(optional, for receipts)*
+
+Example:
+> Abhishek Sahil
+> 35, male
+> 8264602737
+> headache + diabetes follow-up"
+`;
+
+exports[`dm-copy snapshots intake / initial / relation: mother / all fields (no gender, for-other) 1`] = `
+"I'll help you book for your **mother**. Please share their details:
+- **Full name**
+- **Age**
+- **Mobile number**
+- **Reason for visit**
+- **Email** *(optional, for receipts)*
+
+Example:
+> Abhishek Sahil
+> 35, male
+> 8264602737
+> headache + diabetes follow-up"
+`;
+
+exports[`dm-copy snapshots intake / initial / relation: son / alreadyHaveReason 1`] = `
+"Sure — happy to help you book at **the clinic**.
+
+We already have your **reason for visit** from earlier. Just need a few more:
+- **Full name**
+- **Age**
+- **Mobile number**
+- **Email** *(optional, for receipts)*
+
+Example:
+> Abhishek Sahil
+> 35, male
+> 8264602737
+> headache + diabetes follow-up"
+`;
+
+exports[`dm-copy snapshots intake / retry-not-received / no relation 1`] = `
+"I didn't catch your details — could you resend them?
+- **Full name**
+- **Age**
+- **Mobile number**
+- **Reason for visit**
+- **Email** *(optional, for receipts)*"
+`;
+
+exports[`dm-copy snapshots intake / retry-not-received / relation: father 1`] = `
+"I didn't catch the details for your **father** — could you resend them?
+- **Full name**
+- **Age**
+- **Mobile number**
+- **Reason for visit**
+- **Email** *(optional, for receipts)*"
+`;
+
+exports[`dm-copy snapshots intake / still-need / missing: age, reason_for_visit 1`] = `
+"Got it. Still need these details:
+- **Age**
+- **Reason for visit**
+
+You can paste them in one message."
+`;
+
+exports[`dm-copy snapshots intake / still-need / missing: all five required (includeEmail=false) 1`] = `
+"Got it. Still need these details:
+- **Full name**
+- **Age**
+- **Gender**
+- **Mobile number**
+- **Reason for visit**
+
+You can paste them in one message."
+`;
+
+exports[`dm-copy snapshots intake / still-need / missing: email only (all required captured) 1`] = `
+"Got it. Still need these details:
+- **Email** *(optional, for receipts)*
+
+You can paste them in one message."
+`;
+
+exports[`dm-copy snapshots nonTextAck / default 1`] = `"I can't read images or voice notes yet — could you type your message instead? I'll take it from there."`;
+
+exports[`dm-copy snapshots payment / MRN has surrounding whitespace (trims before rendering) 1`] = `
+"✅ **Payment received.**
+
+Your appointment is confirmed for **Tue, Apr 29 · 4:30 PM**.
+
+🆔 **Patient ID:** CLR-00123
+_Save this for future bookings._
+
+We'll send a reminder before your visit. Reply here anytime if you need to reschedule or have questions."
+`;
+
+exports[`dm-copy snapshots payment / with MRN (happy path, year-stripped middot date) 1`] = `
+"✅ **Payment received.**
+
+Your appointment is confirmed for **Tue, Apr 29 · 4:30 PM**.
+
+🆔 **Patient ID:** CLR-00123
+_Save this for future bookings._
+
+We'll send a reminder before your visit. Reply here anytime if you need to reschedule or have questions."
+`;
+
+exports[`dm-copy snapshots payment / without MRN (shorter variant) 1`] = `
+"✅ **Payment received.**
+
+Your appointment is confirmed for **Tue, Apr 29 · 4:30 PM**.
+
+We'll send a reminder before your visit. Reply here anytime if you need to reschedule or have questions."
+`;
+
+exports[`dm-copy snapshots staff-review-resolved / confirmed / practice + label present 1`] = `
+"**Dr Zurb's Clinic** has confirmed your visit type: **General consultation**.
+
+Pick a time and complete your booking here:
+https://book.clariva.app/pick-slot?token=abc123
+
+If something looks wrong, just reply here in this chat."
+`;
+
+exports[`dm-copy snapshots staff-review-resolved / confirmed / practice missing → "the clinic" 1`] = `
+"**the clinic** has confirmed your visit type: **General consultation**.
+
+Pick a time and complete your booking here:
+https://book.clariva.app/pick-slot?token=abc123
+
+If something looks wrong, just reply here in this chat."
+`;
+
+exports[`dm-copy snapshots staff-review-resolved / confirmed / visit label empty → "your visit" 1`] = `
+"**Dr Zurb's Clinic** has confirmed your visit type: **your visit**.
+
+Pick a time and complete your booking here:
+https://book.clariva.app/pick-slot?token=abc123
+
+If something looks wrong, just reply here in this chat."
+`;
+
+exports[`dm-copy snapshots staff-review-resolved / learning_policy_autobook / practice + label present 1`] = `
+"**Dr Zurb's Clinic** has applied your saved visit-type preference: **General consultation**.
+
+Pick a time and complete your booking here:
+https://book.clariva.app/pick-slot?token=abc123
+
+If something looks wrong, just reply here in this chat."
+`;
+
+exports[`dm-copy snapshots staff-review-resolved / reassigned / practice + label present 1`] = `
+"**Dr Zurb's Clinic** has updated your visit type to **Cardiology consultation**.
+
+Pick a time and complete your booking here:
+https://book.clariva.app/pick-slot?token=abc123
+
+If something looks wrong, just reply here in this chat."
+`;
+
+exports[`dm-copy snapshots triage / en / blank snippet 1`] = `
+"**Is there anything else** you'd like the doctor to address at this visit?
+
+If that's the full picture, reply **nothing else** and we'll move to **booking** or **fees**."
+`;
+
+exports[`dm-copy snapshots triage / en / multi-line numbered snippet 1`] = `
+"**So far we've noted:**
+
+1) Headache for 3 days
+2) Diabetes follow-up
+
+**Is there anything else** you'd like the doctor to address?
+
+If that covers it, reply **nothing else** and we'll move to **booking** or **fees**."
+`;
+
+exports[`dm-copy snapshots triage / en / single-line snippet 1`] = `
+"**So far we've noted:** **Headache for 3 days**.
+
+**Is there anything else** you'd like the doctor to address?
+
+If that covers it, reply **nothing else** and we'll move to **booking** or **fees**."
+`;
+
+exports[`dm-copy snapshots triage / hi / blank snippet 1`] = `
+"**Kya aur kuch** hai jo aap doctor se discuss karna chahte hain?
+
+Agar bas wahi hai jo aapne bataya to **nothing else** likhein — phir **booking** ya **fees** par aage badh sakte hain."
+`;
+
+exports[`dm-copy snapshots triage / hi / multi-line numbered snippet 1`] = `
+"**Ab tak note kiya:**
+
+1) Sir mein dard
+2) Sugar follow-up
+
+**Kya aur kuch** add karna hai?
+
+Bas yahi hai to **nothing else** likhein — phir **booking** ya **fees**."
+`;
+
+exports[`dm-copy snapshots triage / hi / single-line snippet 1`] = `
+"**Ab tak note kiya:** **Sir mein dard hai**.
+
+**Kya aur kuch** add karna hai?
+
+Bas yahi hai to **nothing else** likhein — phir **booking** ya **fees**."
+`;
+
+exports[`dm-copy snapshots triage / pa / blank snippet 1`] = `
+"**Hor kuj** hai je tu doctor naal discuss karna chahe?
+
+Je bas ohi hai jo dasyaa ta **nothing else** likh — phir **booking** ya **fees**."
+`;
+
+exports[`dm-copy snapshots triage / pa / multi-line numbered snippet 1`] = `
+"**Haje tak note kita:**
+
+1) Sir vich dard
+2) Sugar follow-up
+
+**Hor kuj** add karna hai?
+
+Bas ohi hai ta **nothing else** — phir **booking** ya **fees**."
+`;
+
+exports[`dm-copy snapshots triage / pa / single-line snippet 1`] = `
+"**Haje tak note kita:** **Sir vich dard**.
+
+**Hor kuj** add karna hai?
+
+Bas ohi hai ta **nothing else** — phir **booking** ya **fees**."
+`;

@@ -7,7 +7,17 @@
 export function isOptionalExtrasConsentPrompt(assistantMessage: string | undefined): boolean {
   if (!assistantMessage?.trim()) return false;
   const c = assistantMessage.toLowerCase();
-  // Current copy: special notes / allergies / medications (distinct from reason-for-visit triage)
+  // Current copy (2026-04-18, Task 04): "Any notes for the doctor? (allergies, current medicines,
+  // anything else — optional) / Reply **Yes** when you're ready to pick a time."
+  if (
+    c.includes('notes for the doctor') &&
+    (c.includes('optional') || c.includes('ready to pick a time'))
+  ) {
+    return true;
+  }
+  // Previous copy (pre-2026-04-18): "Got it! Any special notes for the doctor — like allergies,
+  // medications, or preferences? (optional) Or just say Yes to continue." — still in conversation
+  // history for conversations that started before the Task 04 rollout.
   if (
     c.includes('special notes') &&
     c.includes('doctor') &&

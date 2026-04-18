@@ -7,7 +7,9 @@ import { getSupabaseAdminClient } from '../config/database';
 import { logger } from '../config/logger';
 import { getInstagramAccessTokenForDoctor } from './instagram-connect-service';
 import { sendInstagramMessage } from './instagram-service';
+import { buildBookingPageUrl } from './slot-selection-service';
 import type { ConversationState } from '../types/conversation';
+import { buildAbandonedBookingReminderMessage } from '../utils/dm-copy';
 
 const REMINDER_DELAY_MS = 60 * 60_000; // 1 hour
 
@@ -56,7 +58,8 @@ export async function runAbandonedBookingReminderJob(
     if (!token) { skipped++; continue; }
 
     try {
-      const msg = "Just checking in — your booking link is still active if you'd like to complete it. Reply anytime if you need help.";
+      const bookingUrl = buildBookingPageUrl(row.id, row.doctor_id);
+      const msg = buildAbandonedBookingReminderMessage({ bookingUrl });
       await sendInstagramMessage(row.platform_conversation_id, msg, correlationId, token);
 
       // Mark reminder sent in metadata.

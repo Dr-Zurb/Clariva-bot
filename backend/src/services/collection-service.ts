@@ -278,23 +278,13 @@ export async function seedCollectedReasonFromStateIfValid(
 }
 
 /**
- * Build the confirm_details message (read-back summary).
+ * Re-export `buildConfirmDetailsMessage` so existing callers
+ * (`instagram-dm-webhook-handler.ts`, tests that mock this module) keep
+ * working unchanged. The actual string is built in `dm-copy.ts` per the
+ * 2026-04-18 "Patient DM copy polish" plan — see
+ * `backend/src/utils/dm-copy.ts` for the layout contract and snapshot.
  */
-export function buildConfirmDetailsMessage(collected: CollectedPatientData): string {
-  const parts: string[] = [];
-  if (collected.name) parts.push(`**${collected.name}**`);
-  if (collected.age !== undefined) parts.push(`**${collected.age}**`);
-  if (collected.gender) parts.push(`**${collected.gender}**`);
-  if (collected.phone) parts.push(`**${collected.phone}**`);
-  const reason = collected.reason_for_visit || 'not provided';
-  parts.push(`reason: ${reason}`);
-  const email = collected.email ? collected.email : 'not provided';
-  parts.push(`Email: ${email}`);
-  return (
-    `Let me confirm: ${parts.join(', ')}. ` +
-    'Is this correct? Reply Yes to see available slots, or tell me what to change.'
-  );
-}
+export { buildConfirmDetailsMessage } from '../utils/dm-copy';
 
 export interface ValidateAndApplyExtractedResult {
   success: boolean;

@@ -376,6 +376,167 @@ describe('service-catalog-matcher (ARM-04)', () => {
     );
     expect(r?.source).toBe('deterministic');
     expect(r?.mixedComplaints).toBe(false);
+    expect(r?.concerns).toBeUndefined();
+  });
+
+  it('Task 09: prompt schema and rules include concerns array spec', () => {
+    const cat = catalogSkinGpOther();
+    const p = buildServiceCatalogLlmSystemPrompt(cat);
+    expect(p).toMatch(/"concerns":\s*\["<label1>"/);
+    expect(p).toMatch(/≤\s*40\s*characters/i);
+    expect(p).toMatch(/only when mixed_complaints is true/i);
+    expect(p).toMatch(/omit the "concerns" field entirely/i);
+  });
+
+  it('Task 09: LLM response with mixed_complaints=true + concerns surfaces the list', async () => {
+    const catalog = catalogSkinGpOther();
+    const r = await matchServiceCatalogOffering(
+      {
+        catalog,
+        // Neutral reason text so Stage A doesn't short-circuit into a deterministic match; we
+        // need the LLM path here to exercise `concerns` surfacing.
+        reasonForVisitText: 'multiple things to discuss',
+        correlationId,
+      },
+      {
+        skipLlm: false,
+        runLlm: async () =>
+          JSON.stringify({
+            service_key: 'gp',
+            modality: 'video',
+            match_confidence: 'low',
+            mixed_complaints: true,
+            concerns: ['Headache', 'Diabetes follow-up', 'Skin rash'],
+          }),
+      }
+    );
+    expect(r?.mixedComplaints).toBe(true);
+    expect(r?.concerns).toEqual(['Headache', 'Diabetes follow-up', 'Skin rash']);
+  });
+
+  it('Task 09: LLM concerns list is trimmed to ≤ 40 chars per entry and capped at 5', async () => {
+    const catalog = catalogSkinGpOther();
+    const longLabel = 'This is a very long complaint description that absolutely must be truncated';
+    const r = await matchServiceCatalogOffering(
+      {
+        catalog,
+        reasonForVisitText: 'lots of things',
+        correlationId,
+      },
+      {
+        skipLlm: false,
+        runLlm: async () =>
+          JSON.stringify({
+            service_key: 'gp',
+            modality: 'video',
+            match_confidence: 'low',
+            mixed_complaints: true,
+            concerns: [longLabel, 'A', 'B', 'C', 'D', 'E', 'F'],
+          }),
+      }
+    );
+    expect(r?.concerns).toBeDefined();
+    expect(r!.concerns!.length).toBeLessThanOrEqual(5);
+    for (const c of r!.concerns!) {
+      expect(c.length).toBeLessThanOrEqual(40);
+    }
+    expect(r!.concerns![0].endsWith('…')).toBe(true);
+  });
+
+  it('Task 09: LLM concerns list is deduped case-insensitively (first occurrence wins)', async () => {
+    const catalog = catalogSkinGpOther();
+    const r = await matchServiceCatalogOffering(
+      {
+        catalog,
+        reasonForVisitText: 'duplicates in llm output',
+        correlationId,
+      },
+      {
+        skipLlm: false,
+        runLlm: async () =>
+          JSON.stringify({
+            service_key: 'gp',
+            modality: 'video',
+            match_confidence: 'low',
+            mixed_complaints: true,
+            concerns: ['Headache', 'headache', 'HEADACHE', 'Back pain'],
+          }),
+      }
+    );
+    expect(r?.concerns).toEqual(['Headache', 'Back pain']);
+  });
+
+  it('Task 09: concerns is ignored when mixed_complaints=false (hallucinated list)', async () => {
+    const catalog = catalogSkinGpOther();
+    const r = await matchServiceCatalogOffering(
+      {
+        catalog,
+        reasonForVisitText: 'cough and fever',
+        correlationId,
+      },
+      {
+        skipLlm: false,
+        runLlm: async () =>
+          JSON.stringify({
+            service_key: 'gp',
+            modality: 'video',
+            match_confidence: 'medium',
+            mixed_complaints: false,
+            concerns: ['Headache', 'Back pain'],
+          }),
+      }
+    );
+    expect(r?.mixedComplaints).toBe(false);
+    expect(r?.concerns).toBeUndefined();
+  });
+
+  it('Task 09: concerns drops non-string / empty entries and returns undefined when < 2 valid remain', async () => {
+    const catalog = catalogSkinGpOther();
+    const r = await matchServiceCatalogOffering(
+      {
+        catalog,
+        reasonForVisitText: 'edge case',
+        correlationId,
+      },
+      {
+        skipLlm: false,
+        runLlm: async () =>
+          JSON.stringify({
+            service_key: 'gp',
+            modality: 'video',
+            match_confidence: 'low',
+            mixed_complaints: true,
+            concerns: ['Headache', 42, '', '   ', null],
+          }),
+      }
+    );
+    expect(r?.mixedComplaints).toBe(true);
+    expect(r?.concerns).toBeUndefined();
+  });
+
+  it('Task 09: single-fee short-circuit reports concerns=undefined', async () => {
+    const catalog: ServiceCatalogV1 = {
+      version: 1,
+      services: [
+        {
+          service_id: sid('consultation'),
+          service_key: 'consultation',
+          label: 'Consultation',
+          modalities: { video: { enabled: true, price_minor: 100_00 } },
+        },
+      ],
+    };
+    const r = await matchServiceCatalogOffering(
+      {
+        catalog,
+        reasonForVisitText: 'anything',
+        correlationId,
+        catalogMode: 'single_fee',
+      },
+      { skipLlm: true }
+    );
+    expect(r?.mixedComplaints).toBe(false);
+    expect(r?.concerns).toBeUndefined();
   });
 
   it('mock LLM returns hallucinated key → fallback other', async () => {

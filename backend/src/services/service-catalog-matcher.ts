@@ -50,7 +50,27 @@ export interface ServiceCatalogMatchResult {
    * deterministic / fallback paths (they never see the full LLM context).
    */
   mixedComplaints: boolean;
+
+  /**
+   * Task 09 (Plan 04 — Patient DM copy polish): short noun-phrase labels (≤ 40 chars each,
+   * up to 5 items) that the LLM extracted for the distinct concerns it detected when
+   * `mixedComplaints === true`. These are echoed back to the patient as a numbered list so
+   * they can reply with a number (`"2"`) instead of re-typing their complaint. Always
+   * `undefined` on deterministic / fallback / single-fee paths and on LLM paths where
+   * `mixedComplaints === false`. Entries are already normalized (`normalizeLlmConcerns`):
+   * trimmed, non-empty, deduped, each ≤ 40 chars, and capped at 5.
+   */
+  concerns?: string[];
 }
+
+/**
+ * Task 09: render-safety cap on the matcher-emitted concerns list. Kept here (not in the
+ * DM copy module) so every caller that consumes `ServiceCatalogMatchResult.concerns` sees
+ * the same contract: at most 5 entries, each ≤ 40 chars. The copy builder then decides how
+ * to present them; the handler decides how to persist them.
+ */
+export const SERVICE_MATCH_MAX_CONCERNS = 5;
+export const SERVICE_MATCH_CONCERN_MAX_CHARS = 40;
 
 /** Non-PHI practice context for smarter routing (LLM + prompt only). */
 export interface MatchServiceCatalogDoctorProfile {
@@ -212,8 +232,14 @@ Mixed-complaint flag:
 - Set "mixed_complaints": false for related symptom clusters (e.g. "cough + fever + sore throat" are all respiratory; "BP 160/100 and headache" is one hypertension thread).
 - This flag is advisory only. Still choose the best service_key for the primary/first-mentioned complaint per rule 5; the flag tells the downstream system the patient may need a clarifying question.
 
+Concerns list (only when mixed_complaints is true):
+- Include a "concerns": ["...","..."] array with 2–5 short English noun-phrase labels, one per distinct clinically UNRELATED concern the patient mentioned, in the order the patient listed them. These are echoed back verbatim to the patient as a numbered pick-list, so keep each label short, specific, and free of sentence structure.
+- Each label MUST be ≤ 40 characters. Prefer 2–4 words. Examples of good labels: "Headache", "Diabetes follow-up", "Knee pain", "Skin rash", "Chest pain". Bad labels: full sentences, punctuation-laden fragments, or generic placeholders like "issue 1".
+- Do NOT include narrative sentences, dates, names, medications, dosages, numbers, or any other PHI beyond the concern noun phrase itself.
+- When "mixed_complaints" is false, OMIT the "concerns" field entirely (or set it to an empty array). Never invent concerns to pad the list.
+
 Schema:
-{"service_key":"<slug>","modality":"text"|"voice"|"video"|null,"match_confidence":"high"|"medium"|"low","mixed_complaints":true|false}
+{"service_key":"<slug>","modality":"text"|"voice"|"video"|null,"match_confidence":"high"|"medium"|"low","mixed_complaints":true|false,"concerns":["<label1>","<label2>",...]}
 
 Allowed service_key values:
 ${buildAllowlistPromptLines(catalog)}`;
@@ -303,6 +329,7 @@ function parseLlmJson(content: string): {
   modality?: string | null;
   match_confidence?: string;
   mixed_complaints?: unknown;
+  concerns?: unknown;
 } | null {
   try {
     return JSON.parse(content) as {
@@ -310,6 +337,7 @@ function parseLlmJson(content: string): {
       modality?: string | null;
       match_confidence?: string;
       mixed_complaints?: unknown;
+      concerns?: unknown;
     };
   } catch {
     return null;
@@ -323,6 +351,41 @@ function normalizeLlmMixedComplaints(raw: unknown): boolean {
     return raw.trim().toLowerCase() === 'true';
   }
   return false;
+}
+
+/**
+ * Task 09: accept the LLM `concerns` field only when it's an array of non-empty strings. Each
+ * entry is trimmed, clamped to `SERVICE_MATCH_CONCERN_MAX_CHARS` (40) with a trailing ellipsis
+ * when truncation is needed, deduped case-insensitively (first occurrence wins), and the
+ * overall list is capped at `SERVICE_MATCH_MAX_CONCERNS` (5). Returns `undefined` when the
+ * input isn't an array, when it has < 2 valid entries (single-entry lists are indistinguishable
+ * from "no mixed complaints" for UX purposes), or when every entry ends up blank after
+ * normalization — the caller should then render the existing open-ended clarification copy.
+ *
+ * We DO NOT attempt semantic merging here (e.g. "headache" + "migraine" stay separate). That's
+ * a matcher-quality concern, not a rendering concern, and the gating predicate already prevents
+ * clarification from firing when the matcher is confident enough to collapse them upstream.
+ */
+function normalizeLlmConcerns(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    if (typeof entry !== 'string') continue;
+    let trimmed = entry.trim();
+    if (!trimmed) continue;
+    if (trimmed.length > SERVICE_MATCH_CONCERN_MAX_CHARS) {
+      // Leave room for the ellipsis inside the 40-char budget so the rendered label stays within cap.
+      trimmed = `${trimmed.slice(0, SERVICE_MATCH_CONCERN_MAX_CHARS - 1).trimEnd()}…`;
+    }
+    const dedupKey = trimmed.toLowerCase();
+    if (seen.has(dedupKey)) continue;
+    seen.add(dedupKey);
+    out.push(trimmed);
+    if (out.length >= SERVICE_MATCH_MAX_CONCERNS) break;
+  }
+  if (out.length < 2) return undefined;
+  return out;
 }
 
 function normalizeLlmConfidence(raw: string | undefined): ServiceCatalogMatchConfidence {
@@ -512,6 +575,10 @@ export async function matchServiceCatalogOffering(
   const conf = normalizeLlmConfidence(parsed!.match_confidence);
   const autoFinalize = conf === 'high';
   const mixedComplaints = normalizeLlmMixedComplaints(parsed!.mixed_complaints);
+  // Task 09: only surface `concerns` when the LLM itself flagged mixed complaints.
+  // If the model sends a list alongside `mixed_complaints:false` we treat it as a hallucination
+  // and drop it silently — the gating predicate wouldn't fire clarification in that case anyway.
+  const concerns = mixedComplaints ? normalizeLlmConcerns(parsed!.concerns) : undefined;
 
   const result: ServiceCatalogMatchResult = {
     catalogServiceKey: resolved.service_key,
@@ -527,6 +594,7 @@ export async function matchServiceCatalogOffering(
     pendingStaffReview: !autoFinalize,
     autoFinalize,
     mixedComplaints,
+    concerns,
   };
 
   logger.info(

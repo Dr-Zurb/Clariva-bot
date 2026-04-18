@@ -132,10 +132,20 @@ import {
 } from '../services/service-catalog-matcher';
 import {
   COMPLAINT_CLARIFICATION_MAX_ATTEMPTS,
+  resolveClarificationNumericReply,
   resolveComplaintClarificationMessage,
   shouldRequestComplaintClarification,
 } from '../utils/complaint-clarification';
 import { isSingleFeeMode, logSingleFeeSkip } from '../utils/catalog-mode-guard';
+import {
+  appointmentConsultationTypeToLabel,
+  buildCancelChoiceListMessage,
+  buildConsentOptionalExtrasMessage,
+  buildIntakeRequestMessage,
+  buildNonTextAckMessage,
+  formatAppointmentChoiceDate,
+  type CancelChoiceItem,
+} from '../utils/dm-copy';
 import {
   type ConsultationFeeAmbiguousStaffReview,
   feeThreadHasCompetingVisitTypeBuckets,
@@ -360,6 +370,13 @@ function maybeTriggerComplaintClarification(
   }
 
   const now = new Date().toISOString();
+  // Task 09: persist matcher-emitted concerns so a numeric reply ("2") can resolve back to the
+  // concern label without re-calling the LLM. The matcher already normalized these
+  // (normalizeLlmConcerns: trimmed, non-empty, deduped, ≤ 40 chars, ≤ 5 items) — we just mirror
+  // that contract onto state. If the matcher didn't emit a list (deterministic / fallback paths,
+  // or LLM-path mixed_complaints=false) this stays undefined and the reply-handler falls back to
+  // the pre-Task-09 free-text re-match flow.
+  const concernsForState = match.concerns && match.concerns.length >= 2 ? match.concerns : undefined;
   const nextState: ConversationState = {
     ...state,
     step: 'awaiting_complaint_clarification',
@@ -374,6 +391,7 @@ function maybeTriggerComplaintClarification(
       confidence: match.confidence,
       candidateLabels: match.candidateLabels,
     },
+    pendingClarificationConcerns: concernsForState,
     // Consent has not been given yet — clear the "consent requested" mark if we set it earlier
     // in the same tick; consent will be re-issued after the patient narrows their complaint.
     consent_requested_at: undefined,
@@ -386,13 +404,15 @@ function maybeTriggerComplaintClarification(
       conversationStep: 'awaiting_complaint_clarification',
       matcherConfidence: match.confidence,
       fallbackCatalogServiceKey: match.catalogServiceKey,
+      // Count only — never log the concern labels themselves (potential PHI adjacency).
+      clarificationConcernCount: concernsForState?.length ?? 0,
     },
     'instagram_dm_mixed_complaints_clarification_requested'
   );
 
   return {
     state: nextState,
-    replyText: resolveComplaintClarificationMessage(userText),
+    replyText: resolveComplaintClarificationMessage(userText, concernsForState),
     triggered: true,
   };
 }
@@ -1230,7 +1250,7 @@ export async function processInstagramDmWebhook(params: {
       if (doctorId) {
         const doctorToken = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
         if (doctorToken) {
-          const nonTextAck = "I can only process text messages right now. Please type your request and I'll help you.";
+          const nonTextAck = buildNonTextAckMessage();
           try {
             await sendInstagramMessage(senderId, nonTextAck, correlationId, doctorToken);
           } catch (e) {
@@ -1735,6 +1755,9 @@ export async function processInstagramDmWebhook(params: {
           {
             pendingStaffServiceReview: true,
             complaintClarificationAttemptCount: nextAttempts,
+            // Task 09: clear the pending concerns so a stale list never leaks into a future
+            // clarification round for a different complaint set.
+            pendingClarificationConcerns: undefined,
             serviceCatalogMatchReasonCodes: [
               ...new Set([
                 ...(state.serviceCatalogMatchReasonCodes ?? []),
@@ -1749,7 +1772,28 @@ export async function processInstagramDmWebhook(params: {
       } else {
         // First clarification reply: re-run matcher using the narrowed text, keep the full original
         // `reason_for_visit` untouched so `appointment.reason_for_visit` still captures every complaint.
-        const narrowedReason = text.trim();
+        //
+        // Task 09: if the patient replied with a digit ("2") AND we have a pending concerns list
+        // on state, resolve the digit to the matching concern label and pass THAT as the narrowed
+        // reason. Free-text replies fall through unchanged — same contract as before. Invalid
+        // digits ("9" when only 3 concerns) resolve to null and we use the raw reply text, which
+        // will typically produce a low-confidence match → staff review on this attempt.
+        const rawReply = text.trim();
+        const mappedConcern = resolveClarificationNumericReply(
+          rawReply,
+          state.pendingClarificationConcerns,
+        );
+        const narrowedReason = mappedConcern ?? rawReply;
+        if (mappedConcern !== null) {
+          logger.info(
+            {
+              correlationId,
+              conversationStep: 'awaiting_complaint_clarification',
+              clarificationReplyShape: 'numeric',
+            },
+            'instagram_dm_mixed_complaints_clarification_numeric_reply',
+          );
+        }
         const reRun = await enrichStateWithServiceCatalogMatch(
           state,
           doctorSettings,
@@ -1760,6 +1804,10 @@ export async function processInstagramDmWebhook(params: {
         state = {
           ...reRun.state,
           complaintClarificationAttemptCount: nextAttempts,
+          // Task 09: clear regardless of outcome — we only echoed this list once, and any
+          // subsequent reply (after a rematch escalates to staff review) is no longer scoped
+          // to the original numbered choices.
+          pendingClarificationConcerns: undefined,
         };
         const reMatch = reRun.match;
 
@@ -1780,9 +1828,15 @@ export async function processInstagramDmWebhook(params: {
               ? undefined
               : ('consent_optional_extras' as const),
           };
-          replyText = state.bookingForSomeoneElse
-            ? `Thanks. We'll use ${phoneDisplay} to confirm the appointment for **${name}**. Do I have your consent to use these details to schedule? Reply Yes to continue.`
-            : `Thanks, ${name}. We'll use ${phoneDisplay} to confirm your appointment by call or text. Got it! Any special notes for the doctor — like allergies, medications, or preferences? (optional) Or just say Yes to continue.`;
+          {
+            const resolvedName = collected?.name?.trim() || undefined;
+            replyText = buildConsentOptionalExtrasMessage({
+              patientName: state.bookingForSomeoneElse ? undefined : resolvedName,
+              phoneDisplay,
+              bookingForSomeoneElse: !!state.bookingForSomeoneElse,
+              bookingForName: state.bookingForSomeoneElse ? resolvedName ?? name : undefined,
+            });
+          }
           await updateConversationState(conversation.id, state, correlationId);
         } else {
           // Still ambiguous (medium/low or LLM failed) — escalate to staff review with the best proposal.
@@ -2354,8 +2408,11 @@ export async function processInstagramDmWebhook(params: {
       } else if (upcoming.length === 1) {
         const a = upcoming[0]!;
         const iso = typeof a.appointment_date === 'string' ? a.appointment_date : (a.appointment_date as Date).toISOString();
-        const dateStr = formatAppointmentStatusLine(iso, '', tz).replace(' ()', '');
-        replyText = `Your appointment is on ${dateStr}. Reply **Yes** to cancel, or **No** to keep it.`;
+        const item: CancelChoiceItem = {
+          dateDisplay: formatAppointmentChoiceDate(iso, tz),
+          modalityLabel: appointmentConsultationTypeToLabel(a.consultation_type ?? undefined),
+        };
+        replyText = buildCancelChoiceListMessage({ items: [item] });
         state = {
           ...state,
           lastIntent: intentResult.intent,
@@ -2366,11 +2423,14 @@ export async function processInstagramDmWebhook(params: {
         };
         await updateConversationState(conversation.id, state, correlationId);
       } else {
-        const lines = upcoming.map((a, i) => {
+        const items: CancelChoiceItem[] = upcoming.map((a) => {
           const iso = typeof a.appointment_date === 'string' ? a.appointment_date : (a.appointment_date as Date).toISOString();
-          return `${i + 1}) ${formatAppointmentStatusLine(iso, '', tz).replace(' ()', '')}`;
+          return {
+            dateDisplay: formatAppointmentChoiceDate(iso, tz),
+            modalityLabel: appointmentConsultationTypeToLabel(a.consultation_type ?? undefined),
+          };
         });
-        replyText = `Which appointment would you like to cancel?\n\n${lines.join('\n')}\n\nReply 1, 2, or ${upcoming.length}.`;
+        replyText = buildCancelChoiceListMessage({ items });
         state = {
           ...state,
           lastIntent: intentResult.intent,
@@ -2430,7 +2490,6 @@ export async function processInstagramDmWebhook(params: {
         // e-task-4: Multi-person "me and my X" - other first, then offer self
         await clearCollectedData(conversation.id);
         const relation = multiPerson.relation;
-        const relationPhrase = `your ${relation}`;
         state = {
           ...state,
           lastIntent: intentResult.intent,
@@ -2447,7 +2506,12 @@ export async function processInstagramDmWebhook(params: {
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
-        replyText = `I'll help you book for both. Let's do one at a time - ${relationPhrase} first, then you. Please share: Full name, Age, Mobile, Reason for visit for your ${relation}. Email (optional).`;
+        replyText = buildIntakeRequestMessage({
+          variant: 'initial',
+          forRelation: relation,
+          missing: ['name', 'age', 'phone', 'reason_for_visit'],
+          intro: `I'll help you book for you and your **${relation}**. Let's take them one at a time — your **${relation}** first, then you. Please share their details:`,
+        });
       } else {
         // Single-person book for someone else
         await clearCollectedData(conversation.id);
@@ -2462,7 +2526,6 @@ export async function processInstagramDmWebhook(params: {
           if (aiRel) relation = aiRel;
         }
         if (relation == null) relation = 'them';
-        const relationPhrase = relation === 'them' ? 'them' : `your ${relation}`;
         state = {
           ...state,
           lastIntent: intentResult.intent,
@@ -2477,7 +2540,15 @@ export async function processInstagramDmWebhook(params: {
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
-        replyText = `I'll help you book for ${relationPhrase}. Please share: Full name, Age, Mobile, Reason for visit for the person you're booking for. Email (optional).`;
+        replyText = buildIntakeRequestMessage({
+          variant: 'initial',
+          forRelation: relation === 'them' ? undefined : relation,
+          missing: ['name', 'age', 'phone', 'reason_for_visit'],
+          intro:
+            relation === 'them'
+              ? "I'll help you book for **them**. Please share their details:"
+              : undefined,
+        });
       }
     } else if (
       state.step === 'awaiting_match_confirmation' ||
@@ -2533,8 +2604,10 @@ export async function processInstagramDmWebhook(params: {
           if (recovered) collectedBeforePersist = await getCollectedData(conversation.id);
         }
         if (!collectedBeforePersist?.name?.trim() || !collectedBeforePersist?.phone?.trim()) {
-          replyText =
-            "I didn't receive the details. Please share: Full name, Age, Mobile, Reason for visit.";
+          replyText = buildIntakeRequestMessage({
+            variant: 'retry-not-received',
+            missing: ['name', 'age', 'phone', 'reason_for_visit'],
+          });
           state = { ...state, updatedAt: new Date().toISOString() };
           await updateConversationState(conversation.id, state, correlationId);
         } else {
@@ -2641,8 +2714,20 @@ export async function processInstagramDmWebhook(params: {
             if (recovered) collectedBeforePersist = await getCollectedData(conversation.id);
           }
           if (!collectedBeforePersist?.name?.trim() || !collectedBeforePersist?.phone?.trim()) {
-            replyText =
-              "I didn't receive the details for the person you're booking for. Please share: Full name, Age, Mobile, Reason for visit.";
+            {
+              const knownRelation =
+                state.relation && state.relation.toLowerCase() !== 'them'
+                  ? state.relation
+                  : undefined;
+              replyText = buildIntakeRequestMessage({
+                variant: 'retry-not-received',
+                forRelation: knownRelation,
+                missing: ['name', 'age', 'phone', 'reason_for_visit'],
+                intro: knownRelation
+                  ? undefined
+                  : "I didn't catch the details for the person you're booking for — could you resend them?",
+              });
+            }
             state = { ...state, updatedAt: new Date().toISOString() };
             await updateConversationState(conversation.id, state, correlationId);
           } else {
@@ -2853,7 +2938,12 @@ export async function processInstagramDmWebhook(params: {
           updatedAt: new Date().toISOString(),
           };
           await updateConversationState(conversation.id, state, correlationId);
-        replyText = `Got it, just your ${relation} then. Please share: Full name, Age, Mobile, Reason for visit for your ${relation}. Email (optional).`;
+        replyText = buildIntakeRequestMessage({
+          variant: 'initial',
+          forRelation: relation,
+          missing: ['name', 'age', 'phone', 'reason_for_visit'],
+          intro: `Got it, just your **${relation}** then. Please share their details:`,
+        });
       } else {
       const extracted = extractFieldsFromMessage(text);
       if (isAmbiguousCollectionMessage(text, extracted)) {
@@ -2915,10 +3005,11 @@ export async function processInstagramDmWebhook(params: {
           replyText =
             aiReply && aiReply.length > 20 && !aiReply.includes("didn't quite get that")
               ? aiReply
-              : (() => {
-                  const labels: Record<string, string> = { name: 'full name', phone: 'phone number', age: 'age', gender: 'gender', reason_for_visit: 'reason for visit' };
-                  return `Got it. Still need: ${extractResult.missingFields.map((f) => labels[f] ?? f).join(', ')}. Please share.`;
-                })();
+              : buildIntakeRequestMessage({
+                  variant: 'still-need',
+                  missing: extractResult.missingFields,
+                  includeEmail: false,
+                });
         }
       }
       }
@@ -3034,9 +3125,13 @@ export async function processInstagramDmWebhook(params: {
             correlationId
           );
           state = enrichedForConsent.state;
-          const defaultReplyForConsent: string = state.bookingForSomeoneElse
-            ? `Thanks. We'll use ${phoneDisplay} to confirm the appointment for **${name}**. Do I have your consent to use these details to schedule? Reply Yes to continue.`
-            : `Thanks, ${name}. We'll use ${phoneDisplay} to confirm your appointment by call or text. Got it! Any special notes for the doctor — like allergies, medications, or preferences? (optional) Or just say Yes to continue.`;
+          const resolvedConsentName = collected?.name?.trim() || undefined;
+          const defaultReplyForConsent: string = buildConsentOptionalExtrasMessage({
+            patientName: state.bookingForSomeoneElse ? undefined : resolvedConsentName,
+            phoneDisplay,
+            bookingForSomeoneElse: !!state.bookingForSomeoneElse,
+            bookingForName: state.bookingForSomeoneElse ? resolvedConsentName ?? name : undefined,
+          });
           const clarifyForConsent = maybeTriggerComplaintClarification(
             state,
             enrichedForConsent.match,
@@ -3075,11 +3170,15 @@ export async function processInstagramDmWebhook(params: {
             doctorContext,
             context: { ...aiContext, missingFields: extractResult.missingFields },
           });
-          const labels: Record<string, string> = { name: 'full name', phone: 'phone number', age: 'age', gender: 'gender', reason_for_visit: 'reason for visit' };
           replyText =
             aiReply && aiReply.length > 20 && !aiReply.includes("didn't quite get that")
               ? aiReply
-              : `Still need: ${extractResult.missingFields.map((f) => labels[f] ?? f).join(', ')}. Please share.`;
+              : buildIntakeRequestMessage({
+                  variant: 'still-need',
+                  missing: extractResult.missingFields,
+                  includeEmail: false,
+                  intro: 'Still need these details:',
+                });
         }
           } else {
         const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text, teleconsultCatalogRowCount);
@@ -3276,7 +3375,12 @@ export async function processInstagramDmWebhook(params: {
           updatedAt: new Date().toISOString(),
         };
         await updateConversationState(conversation.id, state, correlationId);
-        replyText = `Got it. Please share: Full name, Age, Mobile, Reason for visit for your ${relation}. Email (optional).`;
+        replyText = buildIntakeRequestMessage({
+          variant: 'initial',
+          forRelation: relation,
+          missing: ['name', 'age', 'phone', 'reason_for_visit'],
+          intro: `Got it. I'll help you book for your **${relation}** next. Please share their details:`,
+        });
       } else if (wantsSelfBooking) {
         // e-task-4: User said yes to booking for self after first booking
         await clearCollectedData(conversation.id);
@@ -3447,10 +3551,12 @@ export async function processInstagramDmWebhook(params: {
             updatedAt: new Date().toISOString(),
           };
           const practiceName = doctorContext?.practice_name?.trim() || 'the clinic';
-          replyText =
-            reasonSeedBook.length > 0
-              ? `Sure - happy to help you book at **${practiceName}**. We already have your **reason for visit** from our earlier messages. Please share: Full name, Age, Gender, Mobile number. Email (optional) for receipts.`
-              : `Sure - happy to help you book at **${practiceName}**. Please share: Full name, Age, Gender, Mobile number, Reason for visit. Email (optional) for receipts.`;
+          replyText = buildIntakeRequestMessage({
+            variant: 'initial',
+            practiceName,
+            alreadyHaveReason: reasonSeedBook.length > 0,
+            missing: ['name', 'age', 'gender', 'phone', 'reason_for_visit'],
+          });
         }
       }
       await updateConversationState(conversation.id, state, correlationId);

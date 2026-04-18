@@ -426,18 +426,21 @@ function clinicalDeflectionAskMoreEnglish(snippet: string): string {
   const s = truncateReasonSnippetToMax(snippet.trim() || 'what you shared');
   if (s === 'what you shared') {
     return (
-      "**Is there anything else** you'd like the doctor to address at this visit? Reply **nothing else** if what you shared is the full picture — then we can help with **booking** or **fees** next."
+      "**Is there anything else** you'd like the doctor to address at this visit?\n\n" +
+      "If that's the full picture, reply **nothing else** and we'll move to **booking** or **fees**."
     );
   }
   if (s.includes('\n')) {
     return (
       `**So far we've noted:**\n\n${s}\n\n` +
-      "**Is there anything else** you'd like the doctor to address? Reply **nothing else** if that covers it — then we can move to **booking** or **fees**."
+      "**Is there anything else** you'd like the doctor to address?\n\n" +
+      "If that covers it, reply **nothing else** and we'll move to **booking** or **fees**."
     );
   }
   return (
     `**So far we've noted:** **${s}**.\n\n` +
-    "**Is there anything else** you'd like the doctor to address? Reply **nothing else** if that covers it — then we can move to **booking** or **fees**."
+    "**Is there anything else** you'd like the doctor to address?\n\n" +
+    "If that covers it, reply **nothing else** and we'll move to **booking** or **fees**."
   );
 }
 
@@ -445,18 +448,21 @@ function clinicalDeflectionAskMoreHi(snippet: string): string {
   const s = truncateReasonSnippetToMax(snippet.trim() || 'what you shared');
   if (s === 'what you shared') {
     return (
-      '**Kya aur kuch** hai jo aap doctor se discuss karna chahte hain? Agar bas wahi hai jo aapne bataya to **nothing else** likhein — phir **booking** ya **fees** par aage badh sakte hain.'
+      '**Kya aur kuch** hai jo aap doctor se discuss karna chahte hain?\n\n' +
+      'Agar bas wahi hai jo aapne bataya to **nothing else** likhein — phir **booking** ya **fees** par aage badh sakte hain.'
     );
   }
   if (s.includes('\n')) {
     return (
       `**Ab tak note kiya:**\n\n${s}\n\n` +
-      '**Kya aur kuch** add karna hai? Bas yahi hai to **nothing else** likhein — phir **booking** ya **fees**.'
+      '**Kya aur kuch** add karna hai?\n\n' +
+      'Bas yahi hai to **nothing else** likhein — phir **booking** ya **fees**.'
     );
   }
   return (
     `**Ab tak note kiya:** **${s}**.\n\n` +
-    '**Kya aur kuch** add karna hai? Bas yahi hai to **nothing else** likhein — phir **booking** ya **fees**.'
+    '**Kya aur kuch** add karna hai?\n\n' +
+    'Bas yahi hai to **nothing else** likhein — phir **booking** ya **fees**.'
   );
 }
 
@@ -464,18 +470,21 @@ function clinicalDeflectionAskMorePa(snippet: string): string {
   const s = truncateReasonSnippetToMax(snippet.trim() || 'what you shared');
   if (s === 'what you shared') {
     return (
-      '**Hor kuj** hai je tu doctor naal discuss karna chahe? Je bas ohi hai jo dasyaa ta **nothing else** likh — phir **booking** ya **fees**.'
+      '**Hor kuj** hai je tu doctor naal discuss karna chahe?\n\n' +
+      'Je bas ohi hai jo dasyaa ta **nothing else** likh — phir **booking** ya **fees**.'
     );
   }
   if (s.includes('\n')) {
     return (
       `**Haje tak note kita:**\n\n${s}\n\n` +
-      '**Hor kuj** add karna hai? Bas ohi hai ta **nothing else** — phir **booking** ya **fees**.'
+      '**Hor kuj** add karna hai?\n\n' +
+      'Bas ohi hai ta **nothing else** — phir **booking** ya **fees**.'
     );
   }
   return (
     `**Haje tak note kita:** **${s}**.\n\n` +
-    '**Hor kuj** add karna hai? Bas ohi hai ta **nothing else** — phir **booking** ya **fees**.'
+    '**Hor kuj** add karna hai?\n\n' +
+    'Bas ohi hai ta **nothing else** — phir **booking** ya **fees**.'
   );
 }
 

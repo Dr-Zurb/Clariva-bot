@@ -270,6 +270,25 @@ export interface ConversationState {
     confidence: ServiceCatalogMatchConfidence;
     candidateLabels?: Array<{ service_key: string; label: string }>;
   };
+  /**
+   * Task 09 (Plan 04): concerns the LLM matcher extracted when `mixed_complaints === true`, in the
+   * exact order they were echoed back to the patient as a numbered pick-list. Lets the webhook
+   * handler resolve a numeric reply (`"2"`) to `pendingClarificationConcerns[1]` and re-run the
+   * matcher with that label as the narrowed reason — so the patient doesn't have to re-type.
+   *
+   * Persistence contract:
+   *  - Set by `maybeTriggerComplaintClarification` in the same tick it transitions to
+   *    `step = 'awaiting_complaint_clarification'`; undefined when the matcher didn't emit a list
+   *    (in which case the handler falls back to the pre-Task-09 free-text flow).
+   *  - Cleared when leaving `awaiting_complaint_clarification` (consent, staff review, or cap hit)
+   *    so stale concerns never leak into a later clarification round with a different complaint set.
+   *  - Max 5 entries, each ≤ 40 chars — already enforced by `normalizeLlmConcerns` at the matcher
+   *    boundary; this field just mirrors that contract onto persisted state.
+   *
+   * **May contain PHI** — same compliance posture as `originalReasonForVisit`. Do NOT log at
+   * `info`. `debug` with redaction only.
+   */
+  pendingClarificationConcerns?: string[];
 }
 
 /** e-task-dm-03: TTL for treating `lastMedicalDeflectionAt` as active routing memory. */
