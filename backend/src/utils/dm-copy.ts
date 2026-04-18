@@ -116,13 +116,21 @@ export const INTAKE_FIELD_LABELS: Readonly<Record<IntakeField, string>> = {
   email: 'Email',
 };
 
+/**
+ * Shorthand hint on the **Reason for visit** bullet only. We deliberately avoid
+ * a separate "Example:" block with a full fake patient — other fields do not
+ * need inline samples; one short, plain-language cue on this line is enough.
+ */
+const INTAKE_REASON_VISIT_INLINE_EXAMPLES = 'e.g. **headache**, **fever**';
+
 export interface IntakeRequestInput {
   /**
    * Which flavor of ask this is.
    *   - `'initial'`              — first ask (self or relation booking). Renders
-   *                                the greeting, the bulleted list, and an
-   *                                example block so the patient can copy the
-   *                                layout.
+   *                                the greeting and the bulleted list. The
+   *                                **Reason for visit** line includes a short
+   *                                inline hint (e.g. headache, fever); there is no
+   *                                separate example block for the whole form.
    *   - `'still-need'`           — partial follow-up after the extractor parsed
    *                                some fields. Tight header + list + "paste
    *                                in one message" footer, no example block.
@@ -256,9 +264,9 @@ function defaultIntakeIntro(params: {
  *     comma-joined shorthand anywhere — every field gets its own line.
  *   - `Email` row always renders with the ``*(optional, for receipts)*``
  *     italic suffix when included.
- *   - `'initial'` variant appends an `Example:` block to help the patient
- *     shape their one-message paste. Retries and `'still-need'` skip the
- *     example (they already have conversational context).
+ *   - When **Reason for visit** is in the list, that bullet includes a short
+ *     inline hint (`e.g. **headache**, **fever**`). No separate `Example:` block with
+ *     sample patient lines — other fields do not get inline examples.
  *   - `'still-need'` appends a `You can paste them in one message.` footer.
  *   - Deterministic output order regardless of input order — safe to feed
  *     `extractResult.missingFields` (whose order is driven by the extractor).
@@ -304,18 +312,16 @@ export function buildIntakeRequestMessage(input: IntakeRequestInput): string {
   for (const f of fields) {
     if (f === 'email') {
       lines.push(`- **${INTAKE_FIELD_LABELS.email}** *(optional, for receipts)*`);
+    } else if (f === 'reason_for_visit') {
+      lines.push(
+        `- **${INTAKE_FIELD_LABELS.reason_for_visit}** — ${INTAKE_REASON_VISIT_INLINE_EXAMPLES}`,
+      );
     } else {
       lines.push(`- **${INTAKE_FIELD_LABELS[f]}**`);
     }
   }
 
-  if (input.variant === 'initial') {
-    lines.push('', 'Example:');
-    lines.push('> Abhishek Sahil');
-    lines.push('> 35, male');
-    lines.push('> 8264602737');
-    lines.push('> headache + diabetes follow-up');
-  } else if (input.variant === 'still-need') {
+  if (input.variant === 'still-need') {
     lines.push('', 'You can paste them in one message.');
   }
 

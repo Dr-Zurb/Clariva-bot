@@ -549,6 +549,25 @@ describe('buildIntakeRequestMessage invariants', () => {
     expect(out).toContain(`**${expected}**`);
     expect(out).not.toContain(long); // full string never leaks through
   });
+
+  it('initial variant has no bottom Example block; reason line carries inline headache/fever hint', () => {
+    const out = buildIntakeRequestMessage({
+      variant: 'initial',
+      practiceName: "Dr Zurb's Clinic",
+    });
+    expect(out).not.toMatch(/\nExample:\n/);
+    expect(out).not.toMatch(/^> /m);
+    expect(out).toContain('- **Reason for visit** — e.g. **headache**, **fever**');
+  });
+
+  it('still-need variant keeps reason inline hint when reason is missing', () => {
+    const out = buildIntakeRequestMessage({
+      variant: 'still-need',
+      missing: ['age', 'reason_for_visit'],
+    });
+    expect(out).toContain('- **Reason for visit** — e.g. **headache**, **fever**');
+    expect(out).not.toMatch(/\nExample:\n/);
+  });
 });
 
 describe('buildConsentOptionalExtrasMessage invariants', () => {

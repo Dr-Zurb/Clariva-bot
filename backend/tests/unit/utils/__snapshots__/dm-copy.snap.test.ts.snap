@@ -271,14 +271,8 @@ exports[`dm-copy snapshots intake / initial / custom intro (two-person self+othe
 - **Full name**
 - **Age**
 - **Mobile number**
-- **Reason for visit**
-- **Email** *(optional, for receipts)*
-
-Example:
-> Abhishek Sahil
-> 35, male
-> 8264602737
-> headache + diabetes follow-up"
+- **Reason for visit** — e.g. **headache**, **fever**
+- **Email** *(optional, for receipts)*"
 `;
 
 exports[`dm-copy snapshots intake / initial / empty practiceName falls back to "the clinic" 1`] = `
@@ -289,14 +283,8 @@ Please share these details (you can paste them all in one message):
 - **Age**
 - **Gender**
 - **Mobile number**
-- **Reason for visit**
-- **Email** *(optional, for receipts)*
-
-Example:
-> Abhishek Sahil
-> 35, male
-> 8264602737
-> headache + diabetes follow-up"
+- **Reason for visit** — e.g. **headache**, **fever**
+- **Email** *(optional, for receipts)*"
 `;
 
 exports[`dm-copy snapshots intake / initial / missing input order is normalized to canonical order 1`] = `
@@ -307,14 +295,8 @@ Please share these details (you can paste them all in one message):
 - **Age**
 - **Gender**
 - **Mobile number**
-- **Reason for visit**
-- **Email** *(optional, for receipts)*
-
-Example:
-> Abhishek Sahil
-> 35, male
-> 8264602737
-> headache + diabetes follow-up"
+- **Reason for visit** — e.g. **headache**, **fever**
+- **Email** *(optional, for receipts)*"
 `;
 
 exports[`dm-copy snapshots intake / initial / no relation / all fields (self-booking, Dr Zurb's Clinic) 1`] = `
@@ -325,14 +307,8 @@ Please share these details (you can paste them all in one message):
 - **Age**
 - **Gender**
 - **Mobile number**
-- **Reason for visit**
-- **Email** *(optional, for receipts)*
-
-Example:
-> Abhishek Sahil
-> 35, male
-> 8264602737
-> headache + diabetes follow-up"
+- **Reason for visit** — e.g. **headache**, **fever**
+- **Email** *(optional, for receipts)*"
 `;
 
 exports[`dm-copy snapshots intake / initial / no relation / alreadyHaveReason (reason row suppressed) 1`] = `
@@ -343,13 +319,7 @@ We already have your **reason for visit** from earlier. Just need a few more:
 - **Age**
 - **Gender**
 - **Mobile number**
-- **Email** *(optional, for receipts)*
-
-Example:
-> Abhishek Sahil
-> 35, male
-> 8264602737
-> headache + diabetes follow-up"
+- **Email** *(optional, for receipts)*"
 `;
 
 exports[`dm-copy snapshots intake / initial / relation: mother / all fields (no gender, for-other) 1`] = `
@@ -357,14 +327,8 @@ exports[`dm-copy snapshots intake / initial / relation: mother / all fields (no 
 - **Full name**
 - **Age**
 - **Mobile number**
-- **Reason for visit**
-- **Email** *(optional, for receipts)*
-
-Example:
-> Abhishek Sahil
-> 35, male
-> 8264602737
-> headache + diabetes follow-up"
+- **Reason for visit** — e.g. **headache**, **fever**
+- **Email** *(optional, for receipts)*"
 `;
 
 exports[`dm-copy snapshots intake / initial / relation: son / alreadyHaveReason 1`] = `
@@ -374,13 +338,7 @@ We already have your **reason for visit** from earlier. Just need a few more:
 - **Full name**
 - **Age**
 - **Mobile number**
-- **Email** *(optional, for receipts)*
-
-Example:
-> Abhishek Sahil
-> 35, male
-> 8264602737
-> headache + diabetes follow-up"
+- **Email** *(optional, for receipts)*"
 `;
 
 exports[`dm-copy snapshots intake / retry-not-received / no relation 1`] = `
@@ -388,7 +346,7 @@ exports[`dm-copy snapshots intake / retry-not-received / no relation 1`] = `
 - **Full name**
 - **Age**
 - **Mobile number**
-- **Reason for visit**
+- **Reason for visit** — e.g. **headache**, **fever**
 - **Email** *(optional, for receipts)*"
 `;
 
@@ -397,14 +355,14 @@ exports[`dm-copy snapshots intake / retry-not-received / relation: father 1`] = 
 - **Full name**
 - **Age**
 - **Mobile number**
-- **Reason for visit**
+- **Reason for visit** — e.g. **headache**, **fever**
 - **Email** *(optional, for receipts)*"
 `;
 
 exports[`dm-copy snapshots intake / still-need / missing: age, reason_for_visit 1`] = `
 "Got it. Still need these details:
 - **Age**
-- **Reason for visit**
+- **Reason for visit** — e.g. **headache**, **fever**
 
 You can paste them in one message."
 `;
@@ -415,7 +373,7 @@ exports[`dm-copy snapshots intake / still-need / missing: all five required (inc
 - **Age**
 - **Gender**
 - **Mobile number**
-- **Reason for visit**
+- **Reason for visit** — e.g. **headache**, **fever**
 
 You can paste them in one message."
 `;
