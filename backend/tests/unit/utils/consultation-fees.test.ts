@@ -138,6 +138,37 @@ describe('consultation-fees (RBH-13)', () => {
     expect(isMetaBookingOrFeeReasonText('general consultation')).toBe(false);
   });
 
+  it('isMetaBookingOrFeeReasonText blocks polite booking-intent phrasings', () => {
+    // Natural wrappers the old anchored regex missed (DM bug on 2026-04-18 —
+    // "i'd like to book an appointment" captured as name + reason).
+    expect(isMetaBookingOrFeeReasonText("i'd like to book an appointment")).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('id like to book an appoinment')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('i would like to book')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('i want to book an appointment')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('i want to book')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('i need to book')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('i need an appointment')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('i want an appointment')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('please book an appointment')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('can you book me an appointment')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('could you schedule a visit')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('please schedule me an apointment')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('help me book an appointment')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('i am looking to book')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('book me an appointment')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('make an appointment')).toBe(true);
+  });
+
+  it('isMetaBookingOrFeeReasonText preserves legitimate chief-complaint text', () => {
+    // Must NOT block real symptoms, even if they contain "i have" or "need".
+    expect(isMetaBookingOrFeeReasonText('i have stomach pain for 3 days')).toBe(false);
+    expect(isMetaBookingOrFeeReasonText('i have htn, dmt2, cough sneezing')).toBe(false);
+    expect(isMetaBookingOrFeeReasonText('i need medicine for my diabetes')).toBe(false);
+    expect(isMetaBookingOrFeeReasonText('diabetes follow up')).toBe(false);
+    expect(isMetaBookingOrFeeReasonText('Abhishek Sahil')).toBe(false);
+    expect(isMetaBookingOrFeeReasonText('fever and headache')).toBe(false);
+  });
+
   it('isConsultationTypePricingFollowUp (RBH-14)', () => {
     expect(isConsultationTypePricingFollowUp('general consultation please')).toBe(true);
     expect(isConsultationTypePricingFollowUp('video consult')).toBe(true);

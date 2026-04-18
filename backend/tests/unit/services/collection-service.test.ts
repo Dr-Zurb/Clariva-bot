@@ -309,5 +309,38 @@ describe('Collection Service', () => {
       expect(stored?.phone).toBeDefined();
       expect(String(stored?.phone).replace(/\D/g, '').length).toBeGreaterThanOrEqual(10);
     });
+
+    it('self-heals stale booking-intent name/reason before re-extraction', async () => {
+      // Reproduces the DM bug on 2026-04-18 where a prior turn captured the phrase
+      // "i'd like to book an appointment" as both `name` and `reason_for_visit`, and
+      // the follow-up compound intake ("Abhishek Sahil / 35 / male / 8264602737 /
+      // i have htn, dmt2, ... / <email>") never overwrote the bad values because
+      // those fields were excluded from `missingFields`.
+      await setCollectedData(conversationId, {
+        name: "i'd like to book an appointment",
+        reason_for_visit: "i'd like to book an appointment",
+      });
+      const state: ConversationState = {
+        step: 'collecting_all',
+        collectedFields: ['name', 'reason_for_visit'],
+        updatedAt: new Date().toISOString(),
+      };
+      const compoundIntake =
+        'Abhishek Sahil\n35\nmale\n8264602737\ni have htn, dmt2, cough sneezing\nas.sahilabhi2937@gmail.com';
+      const result = await validateAndApplyExtracted(
+        conversationId,
+        compoundIntake,
+        state,
+        correlationId
+      );
+      expect(result.success).toBe(true);
+      const stored = await getCollectedData(conversationId);
+      // Bad values must be gone.
+      expect(stored?.name).not.toMatch(/book/i);
+      expect(stored?.reason_for_visit).not.toMatch(/book/i);
+      // Phone/email are picked up deterministically from the compound message.
+      expect(stored?.phone).toBe('8264602737');
+      expect(stored?.email).toBe('as.sahilabhi2937@gmail.com');
+    });
   });
 });

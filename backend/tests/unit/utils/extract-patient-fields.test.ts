@@ -20,4 +20,22 @@ describe('extractFieldsFromMessage (fallback)', () => {
     const r = extractFieldsFromMessage(msg);
     expect(r.reason_for_visit).toMatch(/metformin|Taking/i);
   });
+
+  it('does not capture booking-intent phrasings as name or reason', () => {
+    // DM bug 2026-04-18: "i'd like to book an appointment" was captured as both
+    // `name` and `reason_for_visit`, then the bot later confirmed
+    // "Let me confirm: i d like to book an appoinment ..." instead of the user's real name.
+    for (const msg of [
+      "i'd like to book an appointment",
+      'id like to book an appoinment',
+      'i would like to book',
+      'i want to book an appointment',
+      'please book an appointment',
+      'can you book me an appointment',
+    ]) {
+      const r = extractFieldsFromMessage(msg);
+      expect(r.name).toBeUndefined();
+      expect(r.reason_for_visit).toBeUndefined();
+    }
+  });
 });

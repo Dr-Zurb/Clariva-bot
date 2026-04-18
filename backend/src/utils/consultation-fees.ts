@@ -1392,7 +1392,15 @@ export async function formatConsultationFeesForDmWithMetaAsync(
 }
 
 /**
- * RBH-13: Meta phrases about fees/booking - must not become `reason_for_visit` during intake.
+ * RBH-13: Meta phrases about fees/booking - must not become `reason_for_visit` (or `name`) during intake.
+ *
+ * Handles common soft phrasings the old anchored `^(book|schedule)...$` regex missed, e.g.
+ * `"i'd like to book an appointment"`, `"id like to book an appoinment"` (typo),
+ * `"please schedule a visit"`, `"can you book me an appointment"`, `"i need an appointment"`.
+ *
+ * Also used via {@link extractFieldsFromMessage} (`isNameLike`) to keep booking-intent
+ * sentences from being captured as a patient name when the user types their intent first
+ * and the actual details in a later turn.
  */
 export function isMetaBookingOrFeeReasonText(text: string): boolean {
   const t = text.trim();
@@ -1401,7 +1409,38 @@ export function isMetaBookingOrFeeReasonText(text: string): boolean {
   if (userDeclinesBookingIntent(t)) return true;
   const low = t.toLowerCase();
   if (/\b(how\s+do\s+i|how\s+to)\s+(book|schedule)\b/.test(low)) return true;
-  if (/^(book|schedule)\s+(an?\s+)?(appointment|visit)\??$/i.test(low)) return true;
-  if (/\b(consultation|appointment)\s+fee(s)?\b/i.test(low)) return true;
+  if (/\b(consultation|appointment)\s+fee(s)?\b/.test(low)) return true;
+
+  // Polite/intent wrappers + book/schedule/arrange verbs.
+  // e.g. "i'd like to book", "i want to book", "i need to schedule", "i am looking to book".
+  // Straight apostrophe and curly apostrophe both covered; `(?:['\u2019]?[a-z]{1,2})?` also
+  // tolerates "id like to" and "ill book" style contractions without an apostrophe.
+  if (
+    /\bi(?:['\u2019]?[a-z]{1,2})?\s+(?:(?:would\s+|really\s+|just\s+)?(?:like|love|want|wish|need|hope|plan|planning|looking|hoping)(?:\s+to)?|(?:would\s+like|wanna|gotta|need|have|got)\s+to|am\s+(?:looking|trying|hoping|here)\s+to)\s+(?:book(?:ing)?|schedule|fix|arrange|set\s*up|reserve|make|get)\b/i.test(
+      t
+    )
+  ) {
+    return true;
+  }
+
+  // Direct requests / imperatives: "please book", "can you book", "could you schedule", "help me book".
+  if (
+    /\b(?:please|kindly|can\s+(?:you|i)|could\s+(?:you|i)|would\s+you|may\s+i|help\s+me(?:\s+to)?)\s+(?:(?:please|kindly)\s+)?(?:book(?:ing)?|schedule|fix|arrange|set\s*up|reserve|make)\b/i.test(
+      t
+    )
+  ) {
+    return true;
+  }
+
+  // Booking-noun phrase: verb + (optional filler) + appointment|consultation|slot|booking|visit.
+  // Tolerates common misspellings: "appoinment", "apointment", "apoinment".
+  if (
+    /\b(?:book(?:ing)?|schedul(?:e|ing)|make|get|set\s*(?:up)?|fix|reserve|need|needed|want|wanted|looking\s+for|after)\s+(?:me\s+)?(?:(?:an?|the|my|some|another)\s+)?(?:app?oint?ment|app?oinment|apointment|apoinment|consult(?:ation)?|slot|booking|visit)\b/i.test(
+      t
+    )
+  ) {
+    return true;
+  }
+
   return false;
 }

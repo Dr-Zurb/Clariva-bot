@@ -152,23 +152,48 @@ export function extractFieldsFromMessage(
       !AGE_GENDER_COMBO.test(s) &&
       !/^(male|female|m|f)$/i.test(s.trim()) &&
       !isSymptomLike(s) &&
-      !isRelationshipOrGenderLike(s);
+      !isRelationshipOrGenderLike(s) &&
+      // Booking/fee-intent phrases ("i'd like to book an appointment", "please schedule a visit",
+      // "how much is the consultation fee") must never land in `name`.
+      !isMetaBookingOrFeeReasonText(s);
     if (firstPart && isNameLike(firstPart)) {
       let cleaned = firstPart
         .replace(/^my\s+name\s+is\s+/i, '')
         .replace(/^name\s*:\s*/i, '')
         .replace(TRAILING_AGE_GENDER, '')
         .trim();
-      if (cleaned.length >= 2 && !isSymptomLike(cleaned) && !isRelationshipOrGenderLike(cleaned)) result.name = cleaned;
+      if (
+        cleaned.length >= 2 &&
+        !isSymptomLike(cleaned) &&
+        !isRelationshipOrGenderLike(cleaned) &&
+        !isMetaBookingOrFeeReasonText(cleaned)
+      ) {
+        result.name = cleaned;
+      }
     } else {
       const beforeNumber = trimmed.split(/\d{5,}/)[0]?.trim().replace(/,\s*$/, '');
-      if (beforeNumber && beforeNumber.length >= 2 && !beforeNumber.match(/^(age|phone|reason|email)/i) && !isSymptomLike(beforeNumber) && !isRelationshipOrGenderLike(beforeNumber)) {
+      if (
+        beforeNumber &&
+        beforeNumber.length >= 2 &&
+        !beforeNumber.match(/^(age|phone|reason|email)/i) &&
+        !isSymptomLike(beforeNumber) &&
+        !isRelationshipOrGenderLike(beforeNumber) &&
+        !isMetaBookingOrFeeReasonText(beforeNumber)
+      ) {
         const cleaned = beforeNumber
           .replace(/^my\s+name\s+is\s+/i, '')
           .replace(/^name\s*:\s*/i, '')
           .replace(TRAILING_AGE_GENDER, '')
           .trim();
-        if (cleaned.length >= 2 && !AGE_GENDER_COMBO.test(cleaned) && !isSymptomLike(cleaned) && !isRelationshipOrGenderLike(cleaned)) result.name = cleaned;
+        if (
+          cleaned.length >= 2 &&
+          !AGE_GENDER_COMBO.test(cleaned) &&
+          !isSymptomLike(cleaned) &&
+          !isRelationshipOrGenderLike(cleaned) &&
+          !isMetaBookingOrFeeReasonText(cleaned)
+        ) {
+          result.name = cleaned;
+        }
       }
     }
   }

@@ -321,8 +321,42 @@ export async function validateAndApplyExtracted(
   correlationId: string,
   options?: ValidateAndApplyExtractedOptions
 ): Promise<ValidateAndApplyExtractedResult> {
+  // Self-heal: older turns may have persisted a booking-intent phrase
+  // ("i'd like to book an appointment", "please schedule a visit", etc.) as
+  // `name` and/or `reason_for_visit` before the broader guard landed. Drop
+  // those stale values so `missingFields` re-includes them and the AI gets
+  // a fresh chance to extract real values from the incoming message.
+  const existing = (await getCollectedData(conversationId)) ?? {};
+  const droppedStaleFields: PatientCollectionField[] = [];
+  let healedExisting: Partial<CollectedPatientData> = existing;
+  const hasStaleName =
+    typeof existing.name === 'string' && isMetaBookingOrFeeReasonText(existing.name);
+  const hasStaleReason =
+    typeof existing.reason_for_visit === 'string' &&
+    isMetaBookingOrFeeReasonText(existing.reason_for_visit);
+  if (hasStaleName || hasStaleReason) {
+    healedExisting = { ...existing };
+    if (hasStaleName) {
+      delete healedExisting.name;
+      droppedStaleFields.push('name');
+    }
+    if (hasStaleReason) {
+      delete healedExisting.reason_for_visit;
+      droppedStaleFields.push('reason_for_visit');
+    }
+    await setCollectedData(conversationId, healedExisting);
+    logger.info(
+      { correlationId, conversationId, droppedStaleFields },
+      'validateAndApplyExtracted: healed stale booking-intent fields before extraction'
+    );
+  }
+
+  const healedCollectedFields = (currentState.collectedFields ?? []).filter(
+    (f) => !droppedStaleFields.includes(f as PatientCollectionField)
+  );
+
   const missingFields = REQUIRED_COLLECTION_FIELDS.filter(
-    (f) => !currentState.collectedFields?.includes(f)
+    (f) => !healedCollectedFields.includes(f)
   );
 
   const phoneEmail = extractPhoneAndEmail(text);
@@ -372,8 +406,7 @@ export async function validateAndApplyExtracted(
     Object.assign(extracted, regexResult);
   }
 
-  const existing = (await getCollectedData(conversationId)) ?? {};
-  const merged: Partial<CollectedPatientData> = { ...existing };
+  const merged: Partial<CollectedPatientData> = { ...healedExisting };
   const updates: Partial<CollectedPatientData> = {};
 
   /** Never overwrite valid name with symptom-like text (e.g. "i have stomach pain") */
@@ -393,9 +426,19 @@ export async function validateAndApplyExtracted(
     if (value === undefined || value === '') continue;
     const field = key as keyof ExtractedFields;
     if (field === 'name' && typeof value === 'string') {
-      if (isSymptomLike(value) || isRelationshipOrGenderLike(value) || isGenderOnly(value)) {
+      if (
+        isSymptomLike(value) ||
+        isRelationshipOrGenderLike(value) ||
+        isGenderOnly(value) ||
+        isMetaBookingOrFeeReasonText(value)
+      ) {
         logger.debug(
-          { collection_extraction_guard_dropped: 'name', reason: 'symptom_relation_or_gender_like' },
+          {
+            collection_extraction_guard_dropped: 'name',
+            reason: isMetaBookingOrFeeReasonText(value)
+              ? 'meta_booking_or_fee_like'
+              : 'symptom_relation_or_gender_like',
+          },
           'validateAndApplyExtracted: skipped name candidate'
         );
         continue;
