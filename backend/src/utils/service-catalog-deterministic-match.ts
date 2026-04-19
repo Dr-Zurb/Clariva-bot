@@ -1,12 +1,15 @@
 /**
  * Pure deterministic Stage A for service catalog (ARM-04). Lives in `utils/` so callers like
  * `consultation-fees` avoid importing `service-catalog-matcher` → `ai-service` → `consultation-fees`.
+ *
+ * @see ../../../docs/Development/service-catalog-matching-stages.md — Stage A vs Stage B (LLM runs only if this returns null).
  */
 
 import type { ServiceCatalogMatchConfidence } from '../types/conversation';
 import { SERVICE_CATALOG_MATCH_REASON_CODES } from '../types/conversation';
 import type { ScopeMode, ServiceCatalogV1, ServiceOfferingV1 } from './service-catalog-schema';
 import { CATALOG_CATCH_ALL_SERVICE_KEY, resolveServiceScopeMode } from './service-catalog-schema';
+import { resolveMatcherRouting, type ResolvedRoutingHints } from './matcher-routing-resolve';
 
 export const MODALITIES = ['text', 'voice', 'video'] as const;
 
@@ -35,13 +38,17 @@ function hasLooseOverlap(reason: string, hint: string): boolean {
   return tokens.some((w) => r.includes(w));
 }
 
-function hasAnyMatcherHintContent(offering: ServiceOfferingV1): boolean {
-  const h = offering.matcher_hints;
-  if (!h) return false;
-  return Boolean(
-    h.keywords?.trim() ||
-      h.include_when?.trim() ||
-      h.exclude_when?.trim()
+/**
+ * Routing v2: a row "has hint content" iff `resolveMatcherRouting` produced any signal —
+ * an example phrase (v2 `examples` or legacy keyword fragments), a legacy `include_when`
+ * gate, or an `exclude_when` red-flag. Mirrors the pre-resolver predicate on legacy rows;
+ * for v2 rows it cleanly excludes "examples present but normalize to empty" cases.
+ */
+function hasAnyResolvedHintContent(resolved: ResolvedRoutingHints): boolean {
+  return (
+    resolved.examplePhrases.length > 0 ||
+    Boolean(resolved.legacyIncludeWhen) ||
+    Boolean(resolved.excludeWhen)
   );
 }
 
@@ -49,32 +56,42 @@ function scopeOf(offering: ServiceOfferingV1): ScopeMode {
   return resolveServiceScopeMode(offering.scope_mode);
 }
 
+/**
+ * Stage A scoring (routing v2): all routing signal flows through `resolveMatcherRouting`
+ * — this function never reads `matcher_hints.keywords` / `include_when` directly.
+ *
+ * - `excludeWhen` overlap → hard `-1` (red flag).
+ * - `legacyIncludeWhen` (legacy rows only) acts as a loose-overlap gate; if patient text
+ *   doesn't overlap, return `-1` so the row drops out. v2 rows with `examples` skip the
+ *   gate entirely — `examples` are the source of truth.
+ * - `examplePhrases` (v2 examples or legacy keyword CSV split) score `+4` per substring hit.
+ * - **Strict** (`scope_mode: 'strict'`): require at least one positive `examplePhrases` hit;
+ *   a bare `legacyIncludeWhen` overlap is not enough on a strict row.
+ */
 function matcherHintScore(offering: ServiceOfferingV1, reasonLower: string): number {
-  const h = offering.matcher_hints;
-  if (!h) return 0;
-  if (!hasAnyMatcherHintContent(offering)) return 0;
-  if (h.exclude_when?.trim() && hasLooseOverlap(reasonLower, h.exclude_when)) {
+  const resolved = resolveMatcherRouting(offering);
+  if (!hasAnyResolvedHintContent(resolved)) return 0;
+  if (resolved.excludeWhen && hasLooseOverlap(reasonLower, resolved.excludeWhen)) {
     return -1;
   }
-  if (h.include_when?.trim() && !hasLooseOverlap(reasonLower, h.include_when)) {
+  if (resolved.legacyIncludeWhen && !hasLooseOverlap(reasonLower, resolved.legacyIncludeWhen)) {
     return -1;
   }
   let score = 0;
-  const kw = h.keywords?.trim();
-  if (kw) {
-    for (const part of kw.split(/[,;]+/)) {
-      const k = part.trim().toLowerCase();
-      if (k.length >= 2 && reasonLower.includes(k)) {
-        score += 4;
-      }
+  for (const phrase of resolved.examplePhrases) {
+    const p = phrase.toLowerCase();
+    if (p.length >= 2 && reasonLower.includes(p)) {
+      score += 4;
     }
   }
   /**
-   * SFU-18: strict services only earn a positive deterministic score when a keyword
-   * hit is present. An `include_when` overlap alone (which otherwise passes the
-   * negative-penalty gate above) is not sufficient — the complaint must actually
-   * contain one of the doctor's keywords. Flexible / undefined services keep the
-   * existing behavior (include_when overlap with 0 keyword hits yields 0 anyway).
+   * SFU-18 (preserved across routing v2): strict services only earn a positive
+   * deterministic score when an example-phrase hit is present. An `include_when`
+   * overlap alone (which otherwise passes the negative-penalty gate above) is not
+   * sufficient — the complaint must actually contain one of the doctor's example
+   * phrases (v2 `examples` or, for legacy rows, a comma-token from `keywords`).
+   * Flexible / undefined services keep the existing behavior (`include_when`
+   * overlap with 0 phrase hits yields 0 anyway).
    */
   if (scopeOf(offering) === 'strict' && score <= 0) {
     return 0;
@@ -123,7 +140,38 @@ export type DeterministicMatchInner =
     }
   | null;
 
-/** Exported for unit tests — pure Stage A (expects caller-redacted text when used after patient input). */
+/**
+ * Stage A — pure deterministic match.
+ *
+ * Routing v2 / Phase 2 product-intent matrix (Plan 19-04, Task 08). Cell IDs match
+ * the test block `runDeterministicServiceCatalogMatchStageA — Phase 2 matrix
+ * (Routing v2, Plan 19-04, Task 08)`.
+ *
+ * | Cell | scope    | resolved hints                                | patient text                         | Stage A result                                  | Path |
+ * |------|----------|-----------------------------------------------|--------------------------------------|-------------------------------------------------|------|
+ * | A1   | strict   | examples=['htn check']                        | contains "htn check"                 | match `medium` + `autoFinalize=false`           | KEYWORD_HINT_MATCH |
+ * | A2   | strict   | examples=['htn check']                        | NO overlap                           | `null` → Stage B                                | no signal |
+ * | A3   | strict   | examples=['htn'], exclude_when='pregnancy'    | "htn during pregnancy"               | `null` (excluded)                               | exclude_when red flag |
+ * | B1   | flexible | examples=['htn check']                        | contains "htn check"                 | match `medium` + `autoFinalize=false`           | KEYWORD_HINT_MATCH |
+ * | B2   | flexible | examples=['htn check']                        | NO overlap                           | `null` → Stage B                                | no signal |
+ * | B3   | flexible | (no hints) label='General physician'          | contains "general physician"         | match `high` + `autoFinalize=true`              | label fast path |
+ * | C1   | strict   | (no hints) label='General physician'          | contains "general physician"         | match `medium` + `autoFinalize=false`           | label fast path with strict downgrade |
+ * | C2   | strict   | legacy include_when='diabetes htn' only       | "htn please"                         | `null` → Stage B                                | strict requires example-phrase corroboration |
+ * | C3   | flexible | legacy include_when='diabetes htn' only       | "htn please"                         | `null` → Stage B                                | `legacy_merge` with empty `examplePhrases` → score 0 |
+ *
+ * Cells already covered by the **SFU-18 scope_mode** block (kept verbatim for regression):
+ * A1 ≈ "routing v2 (strict): examples-only hit yields a positive score"; A3 ≈ "routing v2:
+ * examples-only row still honors exclude_when"; B3 ≈ "flexible label-only match preserves
+ * high"; C1 ≈ "strict label-only match downgrades to medium"; C2 ≈ "strict with
+ * include_when-only overlap (no keyword hit) yields no deterministic match".
+ *
+ * **Out of scope (deferred):** "Prefer assistant matching" product flag (more Stage B even
+ * when Stage A would match). When/if added, it lands as a doctor-settings boolean that
+ * forces this function to return `null` for non-fast-path cells; the matrix stays the
+ * same for the default flag-off behavior.
+ *
+ * @see ../../../docs/Development/service-catalog-matching-stages.md — full narrative + FAQ
+ */
 export function runDeterministicServiceCatalogMatchStageA(
   catalog: ServiceCatalogV1,
   reasonForVisitRedacted: string

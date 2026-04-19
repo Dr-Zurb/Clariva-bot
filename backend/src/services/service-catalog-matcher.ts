@@ -1,6 +1,9 @@
 /**
  * ARM-04: Deterministic-first, LLM-assisted service_key matcher against `service_offerings_json`.
  * Patient text is redacted before any LLM call. Logs only correlationId, keys, confidence, source.
+ *
+ * @see ../../../docs/Development/service-catalog-matching-stages.md — Stage A vs Stage B order of execution;
+ *   when Stage A returns a match, the LLM (Stage B) is not called.
  */
 
 import { getOpenAIClient, getOpenAIConfig } from '../config/openai';
@@ -17,6 +20,7 @@ import {
   CATALOG_CATCH_ALL_SERVICE_KEY,
   resolveServiceScopeMode,
 } from '../utils/service-catalog-schema';
+import { resolveMatcherRouting } from '../utils/matcher-routing-resolve';
 import {
   MODALITIES,
   pickSuggestedModality,
@@ -153,19 +157,32 @@ function truncateForMatcherPrompt(s: string, max: number): string {
   return `${t.slice(0, max)}…`;
 }
 
-/** Non-PHI snippets from matcher_hints for LLM allowlist (Stage B sees practice "training" text). */
+/**
+ * Non-PHI snippets from matcher hints for the LLM allowlist (Stage B sees practice "training"
+ * text). Routing v2: built from `resolveMatcherRouting` so v2 (`examples`) and legacy rows feed
+ * the prompt through one path. The LLM-facing vocabulary (`keywords=…; include_when=…;
+ * exclude_when=…`) is intentionally **unchanged** so the existing matching-policy rules in the
+ * system prompt continue to bind — only the data source flips. Concretely:
+ *
+ * - `keywords=` ← `resolved.examplePhrases.join(', ')` (v2 examples or legacy keyword CSV split,
+ *   each phrase clipped to MATCHER_HINT_EXAMPLE_MAX_CHARS by the resolver).
+ * - `include_when=` ← `resolved.legacyIncludeWhen` (legacy rows only — v2 rows omit it).
+ * - `exclude_when=` ← `resolved.excludeWhen` (unchanged trim).
+ *
+ * v2 rows that only set `examples` therefore produce `keywords=…; exclude_when=…?`. The LLM
+ * still treats these as "the doctor's anchor phrases for this row" per rule 2 of the prompt.
+ */
 function matcherHintsSnippetForLlm(offering: ServiceOfferingV1): string {
-  const h = offering.matcher_hints;
-  if (!h) return '';
+  const resolved = resolveMatcherRouting(offering);
   const parts: string[] = [];
-  if (h.keywords?.trim()) {
-    parts.push(`keywords=${truncateForMatcherPrompt(h.keywords, 280)}`);
+  if (resolved.examplePhrases.length > 0) {
+    parts.push(`keywords=${truncateForMatcherPrompt(resolved.examplePhrases.join(', '), 280)}`);
   }
-  if (h.include_when?.trim()) {
-    parts.push(`include_when=${truncateForMatcherPrompt(h.include_when, 400)}`);
+  if (resolved.legacyIncludeWhen) {
+    parts.push(`include_when=${truncateForMatcherPrompt(resolved.legacyIncludeWhen, 400)}`);
   }
-  if (h.exclude_when?.trim()) {
-    parts.push(`exclude_when=${truncateForMatcherPrompt(h.exclude_when, 280)}`);
+  if (resolved.excludeWhen) {
+    parts.push(`exclude_when=${truncateForMatcherPrompt(resolved.excludeWhen, 280)}`);
   }
   if (parts.length === 0) return '';
   return ` | doctor_matcher_hints: ${parts.join('; ')}`;
@@ -185,6 +202,128 @@ function buildAllowlistPromptLines(catalog: ServiceCatalogV1): string {
     );
   }
   return lines.join('\n');
+}
+
+/**
+ * Routing v2 / Phase 3 (Plan 19-04, Task 09 — hybrid): detect tokens that appear in the
+ * resolved example phrases of **two or more** non-catch-all rows. Used to inject a
+ * lightweight "Disambiguation hints" block into the LLM system prompt so the model
+ * can apply the sibling tie-breaker rule deliberately rather than guess.
+ *
+ * Conservative on purpose:
+ * - tokens are lowercased + must be **≥ 4 chars** (filters most stop-words and short noise)
+ * - additional small stop-word list for high-frequency English words that survive the length filter
+ * - **catch-all row** (`service_key === 'other'`) is excluded — it's not a sibling
+ * - rows with no resolved example phrases contribute nothing (so legacy `include_when`-only
+ *   rows don't synthesize false-positive overlaps)
+ * - capped at `MAX_OVERLAP_TOKENS` entries to keep the prompt budget bounded
+ *
+ * The function reads through `resolveMatcherRouting` so v2 (`examples`) and legacy
+ * (`keywords` CSV) rows are treated uniformly — same source of truth as Stage A and the
+ * per-row LLM snippet.
+ *
+ * @returns Stable, deterministic list (sorted by token asc, service_keys per token asc).
+ */
+const SIBLING_OVERLAP_STOPWORDS: ReadonlySet<string> = new Set([
+  'this',
+  'that',
+  'with',
+  'from',
+  'have',
+  'when',
+  'will',
+  'your',
+  'their',
+  'them',
+  'they',
+  'were',
+  'been',
+  'being',
+  'into',
+  'over',
+  'after',
+  'before',
+  'about',
+  'just',
+  'more',
+  'most',
+  'only',
+  'some',
+  'such',
+  'than',
+  'then',
+  'these',
+  'those',
+  'very',
+  'what',
+  'where',
+  'which',
+  'while',
+  'would',
+  'could',
+  'should',
+  'first',
+  'last',
+  'next',
+  'patient',
+  'patients',
+  'service',
+  'doctor',
+  'visit',
+  'please',
+  'today',
+  'tomorrow',
+]);
+const SIBLING_OVERLAP_MIN_TOKEN_LEN = 4;
+const SIBLING_OVERLAP_MAX_TOKENS = 5;
+
+/** Exported for unit tests. Pure function over the resolved routing view of the catalog. */
+export function detectSiblingExampleOverlaps(
+  catalog: ServiceCatalogV1
+): Array<{ token: string; serviceKeys: string[] }> {
+  const tokenToKeys = new Map<string, Set<string>>();
+  for (const s of catalog.services) {
+    if (s.service_key.trim().toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY) continue;
+    const resolved = resolveMatcherRouting(s);
+    if (resolved.examplePhrases.length === 0) continue;
+    const tokensInRow = new Set<string>();
+    for (const phrase of resolved.examplePhrases) {
+      for (const raw of phrase.toLowerCase().split(/\W+/)) {
+        if (raw.length < SIBLING_OVERLAP_MIN_TOKEN_LEN) continue;
+        if (SIBLING_OVERLAP_STOPWORDS.has(raw)) continue;
+        tokensInRow.add(raw);
+      }
+    }
+    for (const t of tokensInRow) {
+      let bucket = tokenToKeys.get(t);
+      if (!bucket) {
+        bucket = new Set();
+        tokenToKeys.set(t, bucket);
+      }
+      bucket.add(s.service_key);
+    }
+  }
+  const out: Array<{ token: string; serviceKeys: string[] }> = [];
+  for (const [token, keys] of tokenToKeys) {
+    if (keys.size < 2) continue;
+    out.push({ token, serviceKeys: [...keys].sort() });
+  }
+  out.sort((a, b) => a.token.localeCompare(b.token));
+  return out.slice(0, SIBLING_OVERLAP_MAX_TOKENS);
+}
+
+/**
+ * Render the sibling-disambiguation block for the LLM system prompt. Returns an empty
+ * string when no overlapping tokens were detected — the caller then emits no extra
+ * section, which keeps prompts clean for catalogs that have no boundary risk.
+ */
+function buildSiblingDisambiguationBlock(catalog: ServiceCatalogV1): string {
+  const overlaps = detectSiblingExampleOverlaps(catalog);
+  if (overlaps.length === 0) return '';
+  const lines = overlaps.map(
+    (o) => `- "${o.token}" appears in example phrases of rows: ${o.serviceKeys.join(', ')}`
+  );
+  return `\nDisambiguation hints (rows whose example phrases share a token — apply the sibling tie-breaker rule, pick by the patient's most specific cue):\n${lines.join('\n')}\n`;
 }
 
 /** Exported for unit tests — full LLM system prompt (catalog allowlist + rules + optional profile). */
@@ -217,10 +356,11 @@ Matching policy (apply in order):
    - [scope: flexible] — broader category matching is allowed: the row may cover complaints that plausibly fit the service's general category, even if not explicitly listed in the hints. Rules 2 and 4 still constrain it; the scope tag only loosens rule 5 for this row.
 4. When a row has NO doctor_matcher_hints: match only if the service label (and doctor_note, if present) is an unambiguous, specific fit for the patient's primary complaint. Do NOT infer a broader scope from the label name alone (e.g. a row titled "NCD follow-up" without hints is not a catch-all for every chronic symptom). When in doubt, use "other". If that row is also [scope: strict], prefer "other" unless the complaint is a clear synonym of the label itself.
 5. If the patient lists multiple unrelated complaints, match based on the single most prominent or first-mentioned complaint, not the union of the list. Never stretch one row to cover an unrelated symptom just because it appears in the same message.
-6. Specialty-aware defaults:
+6. Sibling tie-breaker (Plan 19-04, Task 09): when two or more allowed rows could plausibly fit — especially when their hints share a phrase listed in the optional "Disambiguation hints" section below — prefer the row whose hints contain the more specific phrase that the patient text matched verbatim. If the patient's complaint is equally specific to two rows, prefer the row whose [scope: strict] hints fully cover the complaint over a [scope: flexible] row matched only by general overlap. If still tied after both checks, pick "other" rather than guessing between siblings. Never split the difference by routing a sibling-overlapping complaint to a third unrelated row.
+7. Specialty-aware defaults:
    - If specialty suggests broad primary or general care (general medicine, family medicine, internal medicine, GP), nonspecific acute complaints (headache, fever, cold, fatigue, general pain, "not feeling well", routine checkup) usually belong in a general consult or checkup row if one exists — not "other". A [scope: strict] row does not count as such a general row unless its hints explicitly cover the complaint.
    - If specialty is narrow (e.g. dermatology, cardiology), match chief complaints to that scope first; use "other" when the complaint is clearly outside it and no listed row fits.
-7. Use service_key "other" when no non-other row plausibly fits after applying rules 1–6, or the visit is clearly outside every listed service. Do NOT force-fit a complaint into a named row just to avoid "other".
+8. Use service_key "other" when no non-other row plausibly fits after applying rules 1–7, or the visit is clearly outside every listed service. Do NOT force-fit a complaint into a named row just to avoid "other".
 
 Confidence calibration:
 - "high": only when the chosen row HAS doctor_matcher_hints AND the patient's complaint is corroborated by those hints (keywords or include_when). A label-only match — however intuitive — is not sufficient for "high".
@@ -240,7 +380,7 @@ Concerns list (only when mixed_complaints is true):
 
 Schema:
 {"service_key":"<slug>","modality":"text"|"voice"|"video"|null,"match_confidence":"high"|"medium"|"low","mixed_complaints":true|false,"concerns":["<label1>","<label2>",...]}
-
+${buildSiblingDisambiguationBlock(catalog)}
 Allowed service_key values:
 ${buildAllowlistPromptLines(catalog)}`;
 }

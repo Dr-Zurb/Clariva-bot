@@ -315,6 +315,85 @@ describe('consultation-fees (RBH-13)', () => {
     expect(s).toContain('exclude_when=');
   });
 
+  it('routing v2 (Task 05): formatServiceCatalogForAiContext renders v2 examples-only row via resolver', () => {
+    // examples-only row → keywords= sourced from resolved.examplePhrases; legacy
+    // include_when= must NOT appear (resolver omits legacyIncludeWhen for v2 rows).
+    const catalog: ServiceCatalogV1 = {
+      version: 1,
+      services: [
+        {
+          service_id: sid('skin'),
+          service_key: 'skin',
+          label: 'Dermatology',
+          matcher_hints: {
+            examples: ['my skin is breaking out', 'painful red bumps'],
+            exclude_when: 'chest pain emergency',
+          },
+          modalities: { video: { enabled: true, price_minor: 100_00 } },
+        },
+      ],
+    };
+    const s = formatServiceCatalogForAiContext({
+      service_offerings_json: catalog,
+      appointment_fee_currency: 'INR',
+    });
+    expect(s).toContain('keywords=my skin is breaking out, painful red bumps');
+    expect(s).not.toContain('include_when=');
+    expect(s).toContain('exclude_when=chest pain emergency');
+  });
+
+  it('routing v2 (Task 05): legacy keywords + include_when row still produces backward-compatible snippet', () => {
+    // Pre-v2 snippet shape must survive byte-for-byte for legacy rows so the
+    // existing AI-context prompt rules continue to bind.
+    const catalog: ServiceCatalogV1 = {
+      version: 1,
+      services: [
+        {
+          service_id: sid('skin'),
+          service_key: 'skin',
+          label: 'Dermatology',
+          matcher_hints: {
+            keywords: 'rash, acne, eczema',
+            include_when: 'visible skin lesions or rashes',
+          },
+          modalities: { video: { enabled: true, price_minor: 100_00 } },
+        },
+      ],
+    };
+    const s = formatServiceCatalogForAiContext({
+      service_offerings_json: catalog,
+      appointment_fee_currency: 'INR',
+    });
+    expect(s).toContain('keywords=rash, acne, eczema');
+    expect(s).toContain('include_when=visible skin lesions or rashes');
+  });
+
+  it('routing v2 (Task 05): v2 row with both examples and legacy keywords prefers examples (no legacy bleed)', () => {
+    const catalog: ServiceCatalogV1 = {
+      version: 1,
+      services: [
+        {
+          service_id: sid('skin'),
+          service_key: 'skin',
+          label: 'Dermatology',
+          matcher_hints: {
+            examples: ['v2 phrase'],
+            keywords: 'legacy ignored',
+            include_when: 'legacy include ignored',
+          },
+          modalities: { video: { enabled: true, price_minor: 100_00 } },
+        },
+      ],
+    };
+    const s = formatServiceCatalogForAiContext({
+      service_offerings_json: catalog,
+      appointment_fee_currency: 'INR',
+    });
+    expect(s).toContain('keywords=v2 phrase');
+    expect(s).not.toContain('legacy ignored');
+    expect(s).not.toContain('include_when=');
+  });
+
   it('SFU-08: formatServiceCatalogForDm uses narrow pick', () => {
     const body = formatServiceCatalogForDm(catalogTwoServices, {
       practice_name: 'X',

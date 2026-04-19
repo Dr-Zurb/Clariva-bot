@@ -53,6 +53,7 @@ import {
   type ServiceCatalogV1,
 } from '../../../src/utils/service-catalog-schema';
 import * as doctorSettingsService from '../../../src/services/doctor-settings-service';
+import { aiSuggestRequestSchemaForTests } from '../../../src/routes/api/v1/catalog';
 
 const mockedGetDoctorSettingsForUser = (
   doctorSettingsService as unknown as { getDoctorSettingsForUser: jest.Mock }
@@ -1145,4 +1146,271 @@ describe('catalog override (post-Plan-04 bug-fix)', () => {
       expect(result.cards[0]?.service_key).toBe('new_followup');
     }
   );
+});
+
+// ----------------------------------------------------------------------------
+// Plan service-catalog-matcher-routing-v2 — Task 05
+// AI suggest + review consume `resolveMatcherRouting` (no direct keywords reads)
+// ----------------------------------------------------------------------------
+
+describe('routing v2 — AI suggest + review use resolveMatcherRouting (Task 05)', () => {
+  it('summarizeExistingCatalogForLlm renders v2 examples-only row as keywords="…"', async () => {
+    mockedGetDoctorSettingsForUser.mockResolvedValue(
+      settingsFixture({
+        service_offerings_json: {
+          version: 1,
+          services: [
+            {
+              service_id: '11111111-1111-4111-8111-111111111111',
+              service_key: 'acne_card',
+              label: 'Acne consult',
+              scope_mode: 'strict',
+              matcher_hints: { examples: ['my acne is flaring', 'pimples on my chin'] },
+              modalities: { video: { enabled: true, price_minor: 50000 } },
+            },
+          ],
+        },
+      }) as never
+    );
+    const ctx = await loadAiSuggestContext(doctorId, doctorId, correlationId);
+    const prompt = buildSingleCardPrompt(ctx, { label: 'Hair fall' });
+    expect(prompt).toContain('- acne_card [scope:strict]');
+    expect(prompt).toContain('keywords="my acne is flaring, pimples on my chin"');
+  });
+
+  it('summarizeExistingCatalogForLlm prefers v2 examples over legacy keywords on the same row', async () => {
+    mockedGetDoctorSettingsForUser.mockResolvedValue(
+      settingsFixture({
+        service_offerings_json: {
+          version: 1,
+          services: [
+            {
+              service_id: '11111111-1111-4111-8111-111111111111',
+              service_key: 'mixed_card',
+              label: 'Mixed',
+              scope_mode: 'strict',
+              matcher_hints: {
+                examples: ['v2 phrase one', 'v2 phrase two'],
+                keywords: 'legacy, kw, ignored',
+                include_when: 'legacy include ignored for v2 row',
+              },
+              modalities: { video: { enabled: true, price_minor: 50000 } },
+            },
+          ],
+        },
+      }) as never
+    );
+    const ctx = await loadAiSuggestContext(doctorId, doctorId, correlationId);
+    const prompt = buildStarterCatalogPrompt(ctx);
+    expect(prompt).toContain('keywords="v2 phrase one, v2 phrase two"');
+    expect(prompt).not.toContain('legacy, kw, ignored');
+  });
+
+  it('runDeterministicCatalogReview: v2 examples-only row with thin examples fires strict_thin_keywords', () => {
+    const issues = runDeterministicCatalogReview(
+      catalogFixture([
+        cardFixture({
+          service_key: 'thin_v2',
+          label: 'Thin v2',
+          scope_mode: 'strict',
+          matcher_hints: { examples: ['only one phrase'] }, // 1 < 3 phrases
+        }),
+        CATCH_ALL_CARD,
+      ])
+    );
+    const thin = issues.find((i) => i.type === 'strict_thin_keywords');
+    expect(thin).toBeDefined();
+    expect(thin?.services).toEqual(['thin_v2']);
+  });
+
+  it('runDeterministicCatalogReview: v2 examples-only row with enough examples does NOT fire strict_thin_keywords', () => {
+    const issues = runDeterministicCatalogReview(
+      catalogFixture([
+        cardFixture({
+          service_key: 'rich_v2',
+          label: 'Rich v2',
+          scope_mode: 'strict',
+          matcher_hints: {
+            examples: ['phrase one', 'phrase two', 'phrase three', 'phrase four'],
+          },
+        }),
+        CATCH_ALL_CARD,
+      ])
+    );
+    expect(issues.some((i) => i.type === 'strict_thin_keywords' && i.services.includes('rich_v2'))).toBe(false);
+    expect(issues.some((i) => i.type === 'strict_empty_hints' && i.services.includes('rich_v2'))).toBe(false);
+  });
+
+  it('runDeterministicCatalogReview: strict_empty_hints is NOT raised on a v2 examples-only row', () => {
+    // Pre-v2, "empty" only checked legacy keywords + include_when. Routing v2 must
+    // also count `examples[]` as routing signal so a strict v2 card with examples
+    // doesn't get flagged as empty.
+    const issues = runDeterministicCatalogReview(
+      catalogFixture([
+        cardFixture({
+          service_key: 'v2_filled',
+          label: 'V2 Filled',
+          scope_mode: 'strict',
+          matcher_hints: { examples: ['p1', 'p2', 'p3'] },
+        }),
+        CATCH_ALL_CARD,
+      ])
+    );
+    expect(issues.some((i) => i.type === 'strict_empty_hints' && i.services.includes('v2_filled'))).toBe(false);
+  });
+
+  it('runDeterministicCatalogReview: strict card with only exclude_when is still treated as empty', () => {
+    // exclude_when is a red-flag filter, not a positive routing signal — preserves
+    // the pre-v2 asymmetry now that the resolver explicitly omits exclude_when from
+    // the empty-check.
+    const issues = runDeterministicCatalogReview(
+      catalogFixture([
+        cardFixture({
+          service_key: 'only_exclude',
+          label: 'Only exclude',
+          scope_mode: 'strict',
+          matcher_hints: { exclude_when: 'never route here for chest pain' },
+        }),
+        CATCH_ALL_CARD,
+      ])
+    );
+    expect(issues.some((i) => i.type === 'strict_empty_hints' && i.services.includes('only_exclude'))).toBe(true);
+  });
+
+  it('maxSiblingKeywordOverlap: v2 examples-only siblings still trigger overlap warning', async () => {
+    mockedGetDoctorSettingsForUser.mockResolvedValue(
+      settingsFixture({
+        service_offerings_json: {
+          version: 1,
+          services: [
+            {
+              service_id: '11111111-1111-4111-8111-111111111111',
+              service_key: 'sibling_a',
+              label: 'Sibling A',
+              scope_mode: 'strict',
+              matcher_hints: { examples: ['acne flare', 'pimples breakout', 'oily skin'] },
+              modalities: { video: { enabled: true, price_minor: 50000 } },
+            },
+            {
+              service_id: '22222222-2222-4222-8222-222222222222',
+              service_key: CATALOG_CATCH_ALL_SERVICE_KEY,
+              label: 'Other',
+              scope_mode: 'flexible',
+              modalities: { video: { enabled: true, price_minor: 50000 } },
+            },
+          ],
+        },
+      }) as never
+    );
+    // LLM emits a near-duplicate examples-only card → resolver-driven token overlap
+    // should flag the sibling collision.
+    const llmJson = JSON.stringify({
+      cards: [
+        {
+          service_key: 'sibling_b',
+          label: 'Sibling B',
+          scope_mode: 'strict',
+          matcher_hints: { examples: ['acne flare', 'pimples breakout', 'oily skin'] },
+          modalities: { video: { enabled: true, price_minor: 50000 } },
+        },
+      ],
+    });
+    const result = await generateAiCatalogSuggestion(
+      doctorId,
+      doctorId,
+      { mode: 'single_card', payload: { label: 'Acne look-alike' } },
+      correlationId,
+      { runLlm: makeStubLlm({ single_card: llmJson }) }
+    );
+    if (result.mode !== 'single_card') throw new Error('unreachable');
+    const overlap = result.warnings.find((w) => w.kind === 'keyword_overlap_with_sibling');
+    expect(overlap).toBeDefined();
+    expect(overlap?.service_key).toBe('sibling_b');
+    expect(overlap?.sibling_service_key).toBe('sibling_a');
+  });
+});
+
+// ============================================================================
+// Routing v2 Task 06 — existingHints.examples plumbed into single_card prompt
+// ============================================================================
+
+describe('buildSingleCardPrompt — existingHints.examples (Routing v2 Task 06)', () => {
+  const ctx: AiSuggestContext = {
+    doctorId: 'doc-001',
+    specialty: 'Dermatology',
+    practiceName: 'Test Clinic',
+    addressSummary: 'Bengaluru, KA',
+    country: 'IN',
+    consultationTypes: 'Video, Voice',
+    appointmentFeeMinor: 50000,
+    appointmentFeeCurrency: 'INR',
+    catalog: null,
+  };
+
+  it('renders examples on a dedicated line and suppresses legacy keywords/include_when when both are sent', () => {
+    // Frontend may legitimately ship both `examples` and the legacy fields during
+    // the migration window (un-saved drafts that haven't been round-tripped).
+    // Routing v2 contract: the prompt prefers `examples` so the LLM never sees
+    // two competing routing vocabularies for the same card.
+    const out = buildSingleCardPrompt(ctx, {
+      label: 'Acne consult',
+      existingHints: {
+        examples: ['my acne is flaring', 'pimples on my chin'],
+        keywords: 'legacy, kw, ignored',
+        include_when: 'legacy include ignored',
+        exclude_when: 'pregnancy',
+      },
+    });
+    expect(out).toContain('examples: my acne is flaring | pimples on my chin');
+    expect(out).toContain('exclude_when: pregnancy');
+    expect(out).not.toContain('keywords: legacy, kw, ignored');
+    expect(out).not.toContain('include_when: legacy include ignored');
+  });
+
+  it('falls back to legacy keywords/include_when when examples is absent or empty', () => {
+    const outAbsent = buildSingleCardPrompt(ctx, {
+      label: 'Acne consult',
+      existingHints: {
+        keywords: 'acne, pimples',
+        include_when: 'breakouts',
+      },
+    });
+    expect(outAbsent).toContain('keywords: acne, pimples');
+    expect(outAbsent).toContain('include_when: breakouts');
+
+    const outEmpty = buildSingleCardPrompt(ctx, {
+      label: 'Acne consult',
+      existingHints: {
+        examples: [],
+        keywords: 'acne, pimples',
+      },
+    });
+    expect(outEmpty).toContain('keywords: acne, pimples');
+  });
+
+  it('aiSuggestRequestSchema accepts existingHints.examples and counts it toward "has input"', () => {
+    const ok = aiSuggestRequestSchemaForTests.safeParse({
+      mode: 'single_card',
+      payload: {
+        existingHints: {
+          examples: ['phrase A', 'phrase B'],
+        },
+      },
+    });
+    expect(ok.success).toBe(true);
+  });
+
+  it('aiSuggestRequestSchema rejects unknown matcher-hint fields (strict)', () => {
+    const bad = aiSuggestRequestSchemaForTests.safeParse({
+      mode: 'single_card',
+      payload: {
+        label: 'X',
+        existingHints: {
+          examples: ['p1'],
+          unknown_field: 'nope',
+        } as unknown as { examples: string[] },
+      },
+    });
+    expect(bad.success).toBe(false);
+  });
 });

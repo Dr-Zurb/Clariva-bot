@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ServiceCatalogEditor } from "@/components/practice-setup/ServiceCatalogEditor";
+import { hasUnmigratedLegacyHints } from "@/components/practice-setup/ServiceOfferingDetailDrawer";
 import { MyServiceCatalogTemplatesModal } from "@/components/practice-setup/MyServiceCatalogTemplatesModal";
 import { SaveServiceCatalogTemplateModal } from "@/components/practice-setup/SaveServiceCatalogTemplateModal";
 import { SaveButton } from "@/components/ui/SaveButton";
@@ -45,6 +46,7 @@ import {
 } from "@/lib/catalog-quality-local";
 import { CatalogReviewPanel } from "@/components/practice-setup/CatalogReviewPanel";
 import { CatalogModeSelector } from "@/components/practice-setup/CatalogModeSelector";
+import { CatalogPreviewMatchPanel } from "@/components/practice-setup/CatalogPreviewMatchPanel";
 import { SingleFeeCatalogEditor } from "@/components/practice-setup/SingleFeeCatalogEditor";
 import {
   ModeSwitchConfirmDialog,
@@ -79,6 +81,27 @@ export default function ServicesCatalogPage() {
   const [fixInFlightKey, setFixInFlightKey] = useState<string | null>(null);
   /** After the user hits "Save anyway" during the save-gated review flow. */
   const [bypassSaveGate, setBypassSaveGate] = useState(false);
+
+  /**
+   * Plan service-catalog-matcher-routing-v2 / Task 07 — catalog-level
+   * migration banner for un-migrated legacy `keywords` / `include_when`
+   * rows. Persisted per-browser via `localStorage` so each doctor sees the
+   * dismiss persist across sessions on the same machine. Resets implicitly
+   * when there are no legacy-only rows (the banner just doesn't render).
+   */
+  const ROUTING_V2_BANNER_DISMISS_KEY = "clariva.routing-v2-migration-banner.dismissed";
+  const [routingV2BannerDismissed, setRoutingV2BannerDismissed] = useState<boolean>(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      setRoutingV2BannerDismissed(
+        window.localStorage.getItem(ROUTING_V2_BANNER_DISMISS_KEY) === "1"
+      );
+    } catch {
+      // localStorage may throw in private mode / quota errors — fail open
+      // (banner shows). Non-fatal.
+    }
+  }, []);
 
   // Plan 03 / Task 12 — catalog-mode selection + mode-switch flows.
   /** Non-null while a mode-change PATCH (null → mode OR single↔multi) is in flight. */
@@ -224,6 +247,70 @@ export default function ServicesCatalogPage() {
     }
     return m;
   }, [services]);
+
+  /**
+   * Plan service-catalog-matcher-routing-v2 / Task 07 — number of services
+   * that still carry only legacy `keywords` / `include_when` matcher hints
+   * with no v2 `examples` yet. Drives the catalog-level migration banner;
+   * banner hides automatically once this hits 0 (e.g. after the doctor uses
+   * the per-card "Convert to example phrases" CTA on every legacy row).
+   */
+  const legacyOnlyHintsCount = useMemo(
+    () => services.filter(hasUnmigratedLegacyHints).length,
+    [services]
+  );
+
+  /**
+   * Plan service-catalog-matcher-routing-v2 / Task 10 (Phase 4 hybrid):
+   * "Try as patient" preview is mounted only when:
+   *   - the env flag is on (defaults to dev), AND
+   *   - we're in `multi_service` mode (single-fee mode has nothing to route).
+   *
+   * Reading `process.env.NEXT_PUBLIC_*` at module scope inlines the value at
+   * build time, which is exactly the gating semantics we want — no runtime
+   * toggle, no risk of leaking the panel into a production build that didn't
+   * opt in.
+   */
+  const previewMatchEnabled =
+    process.env.NEXT_PUBLIC_CATALOG_PREVIEW_MATCH_ENABLED === "true" ||
+    process.env.NODE_ENV === "development";
+
+  /**
+   * Build the catalog passed to the preview endpoint from the current draft —
+   * mirrors the `runServerReview` pattern so the doctor previews their unsaved
+   * edits, not the persisted DB row. Returns `null` while the draft is empty
+   * or fails strict schema validation; the panel renders a disabled state in
+   * that case rather than spamming network calls.
+   */
+  const previewCatalog = useMemo<ServiceCatalogV1 | null>(() => {
+    if (!previewMatchEnabled) return null;
+    try {
+      const built = draftsToCatalogOrNull(services);
+      if (built === null) return null;
+      const parsed = safeParseServiceCatalogV1(built);
+      return parsed.ok ? parsed.data : null;
+    } catch {
+      return null;
+    }
+  }, [previewMatchEnabled, services]);
+
+  const previewDoctorProfile = useMemo(
+    () => ({
+      practiceName: settings?.practice_name ?? null,
+      specialty: settings?.specialty ?? null,
+    }),
+    [settings?.practice_name, settings?.specialty]
+  );
+
+  const dismissRoutingV2Banner = useCallback(() => {
+    setRoutingV2BannerDismissed(true);
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(ROUTING_V2_BANNER_DISMISS_KEY, "1");
+    } catch {
+      // see useEffect above — non-fatal.
+    }
+  }, []);
 
   const handleTemplatesLibraryChange = async (next: ServiceCatalogTemplatesJsonV1) => {
     const supabase = createClient();
@@ -529,6 +616,10 @@ export default function ServicesCatalogPage() {
                 label: targetDraft.label.trim() || targetDraft.service_key,
                 freeformDescription: targetDraft.description.trim() || undefined,
                 existingHints: {
+                  examples:
+                    targetDraft.matcherExamples.length > 0
+                      ? [...targetDraft.matcherExamples]
+                      : undefined,
                   keywords: targetDraft.matcherKeywords.trim() || undefined,
                   include_when: targetDraft.matcherIncludeWhen.trim() || undefined,
                   exclude_when: targetDraft.matcherExcludeWhen.trim() || undefined,
@@ -943,6 +1034,44 @@ export default function ServicesCatalogPage() {
 
       {catalogMode === "multi_service" && (
         <form onSubmit={handleSave} className="mt-6 space-y-4">
+        {/*
+         * Plan service-catalog-matcher-routing-v2 / Task 07 — catalog-level
+         * migration banner. Shown only when:
+         *  - the doctor has at least one row with only legacy hints, AND
+         *  - they haven't dismissed it on this browser before.
+         * Copy is intentionally non-alarming — the resolver keeps routing
+         * legacy rows correctly (Task 03) until the doctor migrates each card.
+         */}
+        {legacyOnlyHintsCount > 0 && !routingV2BannerDismissed && (
+          <div
+            role="status"
+            data-testid="catalog-routing-v2-migration-banner"
+            className="flex flex-wrap items-start justify-between gap-2 rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-950"
+          >
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold">
+                {legacyOnlyHintsCount === 1
+                  ? "1 service still uses older matching hints"
+                  : `${legacyOnlyHintsCount} services still use older matching hints`}
+              </p>
+              <p className="mt-0.5 leading-snug text-amber-900/90">
+                Matching keeps working — the assistant uses the legacy{" "}
+                <em>Keywords</em> / <em>Book this service when…</em> text on each card
+                until you replace them with Example phrases. Open a card to convert it
+                in one tap.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={dismissRoutingV2Banner}
+              className="shrink-0 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              data-testid="catalog-routing-v2-migration-banner-dismiss"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
           <button
             type="button"
@@ -1006,6 +1135,13 @@ export default function ServicesCatalogPage() {
           qualityIssues={mergedIssues}
           onOpenReview={handleOpenReview}
         />
+
+        {previewMatchEnabled && (
+          <CatalogPreviewMatchPanel
+            catalog={previewCatalog}
+            doctorProfile={previewDoctorProfile}
+          />
+        )}
 
         <CatalogReviewPanel
           open={reviewPanelOpen}

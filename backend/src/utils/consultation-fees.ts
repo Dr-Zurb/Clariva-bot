@@ -11,13 +11,14 @@ import {
 import type {
   FollowUpPolicyV1,
   ServiceCatalogV1,
-  ServiceMatcherHintsV1,
+  ServiceOfferingV1,
 } from './service-catalog-schema';
 import {
   CATALOG_CATCH_ALL_SERVICE_KEY,
   SERVICE_CATALOG_VERSION,
   safeParseServiceCatalogV1FromDb,
 } from './service-catalog-schema';
+import { resolveMatcherRouting } from './matcher-routing-resolve';
 import type { DoctorSettingsRow } from '../types/doctor-settings';
 import {
   SERVICE_CATALOG_MATCH_REASON_CODES,
@@ -241,18 +242,26 @@ function truncateForAiContext(s: string, max: number): string {
   return `${t.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
 }
 
-/** Compact matcher metadata for system prompt only (not for patient DMs). */
-export function formatMatcherHintsForAiContext(hints: ServiceMatcherHintsV1 | undefined): string {
-  if (!hints) return '';
+/**
+ * Compact matcher metadata for system prompt only (not for patient DMs).
+ *
+ * Routing v2 (Task 05): sources phrases from {@link resolveMatcherRouting} so v2
+ * `matcher_hints.examples[]` rows feed `keywords=…` and the LLM never sees raw
+ * legacy strings. Vocabulary (`keywords=…; include_when=…; exclude_when=…`) is
+ * intentionally preserved for prompt-rule binding compatibility.
+ */
+export function formatMatcherHintsForAiContext(offering: ServiceOfferingV1): string {
+  if (!offering.matcher_hints) return '';
+  const resolved = resolveMatcherRouting(offering);
   const parts: string[] = [];
-  if (hints.keywords?.trim()) {
-    parts.push(`keywords=${truncateForAiContext(hints.keywords, 140)}`);
+  if (resolved.examplePhrases.length > 0) {
+    parts.push(`keywords=${truncateForAiContext(resolved.examplePhrases.join(', '), 140)}`);
   }
-  if (hints.include_when?.trim()) {
-    parts.push(`include_when=${truncateForAiContext(hints.include_when, 220)}`);
+  if (resolved.legacyIncludeWhen) {
+    parts.push(`include_when=${truncateForAiContext(resolved.legacyIncludeWhen, 220)}`);
   }
-  if (hints.exclude_when?.trim()) {
-    parts.push(`exclude_when=${truncateForAiContext(hints.exclude_when, 220)}`);
+  if (resolved.excludeWhen) {
+    parts.push(`exclude_when=${truncateForAiContext(resolved.excludeWhen, 220)}`);
   }
   if (parts.length === 0) return '';
   const joined = parts.join('; ');
@@ -938,7 +947,7 @@ export function formatServiceCatalogForAiContext(settings: {
       }
     }
     if (mods.length > 0) {
-      const mh = formatMatcherHintsForAiContext(s.matcher_hints);
+      const mh = formatMatcherHintsForAiContext(s);
       const core = `${s.label} [service_key=${s.service_key}]: ${mods.join(', ')}`;
       chunks.push(mh ? `${core} [matcher: ${mh}]` : core);
     }

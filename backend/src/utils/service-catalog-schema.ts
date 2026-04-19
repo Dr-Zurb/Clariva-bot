@@ -116,10 +116,24 @@ export const serviceModalitiesSchema = z
 /**
  * ARM-02: Optional doctor-entered text for AI service-key matching only.
  * Do not put patient PHI here. Omitted from patient-facing fee DMs (`formatServiceCatalogForDm`).
+ *
+ * Routing v2 (Plan 19-04): **`examples`** — patient-style phrases (primary for future resolver +
+ * Stage A). **`keywords`** / **`include_when`** remain **legacy** routing fields until the editor
+ * migrates doctors to `examples` only; new matcher logic must read hints through `resolveMatcherRouting` (Task 03), not these strings directly.
  */
+export const MATCHER_HINT_EXAMPLE_MAX_CHARS = 120;
+export const MATCHER_HINT_EXAMPLES_MAX_COUNT = 24;
+
 export const serviceMatcherHintsV1Schema = z
   .object({
+    /** Patient-style phrases for service matching (routing v2). Optional; legacy rows omit this. */
+    examples: z
+      .array(z.string().trim().min(1).max(MATCHER_HINT_EXAMPLE_MAX_CHARS))
+      .max(MATCHER_HINT_EXAMPLES_MAX_COUNT)
+      .optional(),
+    /** @deprecated Legacy routing — prefer `examples` once Task 03+ lands; kept for DB compatibility. */
     keywords: z.string().trim().max(400).optional(),
+    /** @deprecated Legacy routing — prefer `examples`; kept for DB compatibility. */
     include_when: z.string().trim().max(800).optional(),
     exclude_when: z.string().trim().max(800).optional(),
   })
@@ -133,7 +147,8 @@ export const MATCHER_HINT_INCLUDE_EXCLUDE_MAX = 800;
 
 /**
  * SFU-18 (Plan 01 Phase C): per-offering matching scope mode.
- * `strict`   — only match when patient complaint aligns with `matcher_hints` (keywords / include_when).
+ * `strict`   — only match when patient complaint aligns with `matcher_hints` (resolved examples and/or
+ *              legacy keywords / include_when — see matcher routing v2 plan).
  *              Label-only inference and blank-hint matching are suppressed.
  * `flexible` — broader category matching allowed (preserves pre-SFU-18 behavior).
  * Absent/undefined is treated as `flexible` everywhere for backward compatibility.
@@ -178,6 +193,9 @@ export function appendMatcherHintFields(
   );
 
   const out: ServiceMatcherHintsV1 = {};
+  if (existing?.examples?.length) {
+    out.examples = [...existing.examples];
+  }
   if (keywords) out.keywords = keywords;
   if (include_when) out.include_when = include_when;
   if (exclude_when) out.exclude_when = exclude_when;

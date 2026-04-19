@@ -5,9 +5,12 @@
 import { describe, it, expect } from '@jest/globals';
 import {
   appendMatcherHintFields,
+  MATCHER_HINT_EXAMPLE_MAX_CHARS,
+  MATCHER_HINT_EXAMPLES_MAX_COUNT,
   parseServiceCatalogV1,
   resolveServiceScopeMode,
   safeParseServiceCatalogV1FromDb,
+  serviceMatcherHintsV1Schema,
 } from '../../../src/utils/service-catalog-schema';
 import { getActiveServiceCatalog, findServiceOfferingByKey } from '../../../src/utils/service-catalog-helpers';
 import { ValidationError } from '../../../src/utils/errors';
@@ -59,6 +62,88 @@ describe('appendMatcherHintFields', () => {
     const long = 'x'.repeat(500);
     const out = appendMatcherHintFields({ keywords: 'y'.repeat(350) }, { keywords: long });
     expect(out.keywords!.length).toBe(400);
+  });
+
+  it('preserves examples when appending legacy keyword fragments (routing v2)', () => {
+    const out = appendMatcherHintFields(
+      { examples: ['rash', 'itching'], keywords: 'a' },
+      { keywords: 'b' }
+    );
+    expect(out.examples).toEqual(['rash', 'itching']);
+    expect(out.keywords).toBe('a; b');
+  });
+});
+
+describe('matcher_hints.examples (routing v2 schema)', () => {
+  it('parseServiceCatalogV1 accepts catalog with examples on a service', () => {
+    const out = parseServiceCatalogV1({
+      version: 1,
+      services: [
+        {
+          service_id: SVC_ID_A,
+          service_key: 'general',
+          label: 'General consult',
+          modalities: { text: { enabled: true, price_minor: 100 } },
+          matcher_hints: {
+            examples: ['headache', 'fever 3 days'],
+            exclude_when: 'emergency',
+          },
+        },
+        catchAllOffering(SVC_ID_B),
+      ],
+    });
+    expect(out.services[0]!.matcher_hints?.examples).toEqual(['headache', 'fever 3 days']);
+    expect(out.services[0]!.matcher_hints?.exclude_when).toBe('emergency');
+  });
+
+  it('legacy catalog without examples still parses', () => {
+    const out = parseServiceCatalogV1(minimalCatalog());
+    expect(out.services[0]!.matcher_hints).toBeUndefined();
+  });
+
+  it('rejects more than MATCHER_HINT_EXAMPLES_MAX_COUNT examples', () => {
+    expect(() =>
+      parseServiceCatalogV1({
+        version: 1,
+        services: [
+          {
+            service_id: SVC_ID_A,
+            service_key: 'general',
+            label: 'General consult',
+            modalities: { text: { enabled: true, price_minor: 100 } },
+            matcher_hints: {
+              examples: Array.from({ length: MATCHER_HINT_EXAMPLES_MAX_COUNT + 1 }, (_, i) => `e${i}`),
+            },
+          },
+          catchAllOffering(SVC_ID_B),
+        ],
+      })
+    ).toThrow(ValidationError);
+  });
+
+  it('rejects example phrase longer than MATCHER_HINT_EXAMPLE_MAX_CHARS', () => {
+    expect(() =>
+      parseServiceCatalogV1({
+        version: 1,
+        services: [
+          {
+            service_id: SVC_ID_A,
+            service_key: 'general',
+            label: 'General consult',
+            modalities: { text: { enabled: true, price_minor: 100 } },
+            matcher_hints: {
+              examples: ['x'.repeat(MATCHER_HINT_EXAMPLE_MAX_CHARS + 1)],
+            },
+          },
+          catchAllOffering(SVC_ID_B),
+        ],
+      })
+    ).toThrow(ValidationError);
+  });
+
+  it('serviceMatcherHintsV1Schema rejects empty example string after trim', () => {
+    const r = serviceMatcherHintsV1Schema.safeParse({ examples: ['   '] });
+    expect(r.success).toBe(false);
   });
 });
 

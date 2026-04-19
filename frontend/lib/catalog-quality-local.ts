@@ -37,7 +37,24 @@ function keywordTokenCount(keywords: string | undefined | null): number {
   return c;
 }
 
+/**
+ * Routing v2 (Task 06) — resolver-style "phrase" count for the local badge.
+ * Mirrors `backend/src/utils/matcher-routing-resolve.ts`: prefer v2 `examples`
+ * when present (each phrase counts as one keyword token), otherwise fall back
+ * to tokenizing the legacy `keywords` CSV.
+ */
+function resolvedKeywordCount(d: ServiceOfferingDraft): number {
+  if (d.matcherExamples.length > 0) return d.matcherExamples.length;
+  return keywordTokenCount(d.matcherKeywords);
+}
+
+/**
+ * Routing v2 (Task 06): empty-hint check now considers `examples` as routing
+ * material. Matches the backend resolver's "no positive routing hints" rule
+ * used by `runDeterministicCatalogReview`.
+ */
 function hasEmptyHints(d: ServiceOfferingDraft): boolean {
+  if (d.matcherExamples.length > 0) return false;
   const kw = d.matcherKeywords.trim();
   const iw = d.matcherIncludeWhen.trim();
   return kw.length === 0 && iw.length === 0;
@@ -91,8 +108,15 @@ export function runLocalCatalogChecks(services: ServiceOfferingDraft[]): Quality
     if (isCatchAll) continue;
 
     const empty = hasEmptyHints(draft);
-    const kwCount = keywordTokenCount(draft.matcherKeywords);
-    const includeWhen = draft.matcherIncludeWhen.trim();
+    /**
+     * Routing v2 (Task 06) — `kwCount` matches the backend resolver: v2 example
+     * phrases contribute directly, otherwise we fall back to the legacy CSV
+     * tokenizer. `includeWhen` only counts when no `examples` exist (the
+     * resolver suppresses legacy `include_when` once `examples` is populated).
+     */
+    const kwCount = resolvedKeywordCount(draft);
+    const includeWhen =
+      draft.matcherExamples.length > 0 ? "" : draft.matcherIncludeWhen.trim();
     const label = draft.label.trim() || "(Untitled service)";
 
     // Empty `service_key` means the doctor hasn't typed a label yet — the

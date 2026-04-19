@@ -7,6 +7,7 @@
 **Audience:** Engineers and AI agents who were asked to read it for a specific refactor or design review.
 
 **Related:**
+- [Service catalog matching — Stage A and Stage B](../Development/service-catalog-matching-stages.md) — **exception to “LLM first” for visit→service routing:** deterministic pass runs first; LLM allowlist only when Stage A returns no match (see doc for code map).
 - [RECEPTIONIST_BOT_CONVERSATION_RULES.md](./RECEPTIONIST_BOT_CONVERSATION_RULES.md) — intent map, three-layer pattern, anti-patterns (keep in sync mentally with this doc)
 - [PRIVACY_BY_DESIGN.md](./PRIVACY_BY_DESIGN.md), [COMPLIANCE.md](./COMPLIANCE.md) — PHI, safety copy, consent
 - [DECISION_RULES.md](./DECISION_RULES.md) — when docs conflict, resolution order

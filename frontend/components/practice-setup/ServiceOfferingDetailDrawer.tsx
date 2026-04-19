@@ -3,10 +3,16 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { FieldLabel } from "@/components/ui/FieldLabel";
 import type { ServiceOfferingDraft } from "@/lib/service-catalog-drafts";
-import { applyAiSuggestionToDraft } from "@/lib/service-catalog-drafts";
+import {
+  applyAiSuggestionToDraft,
+  convertLegacyHintsToExamples,
+  exampleListToText,
+  exampleTextToList,
+} from "@/lib/service-catalog-drafts";
 import {
   CATALOG_CATCH_ALL_LABEL_DEFAULT,
   CATALOG_CATCH_ALL_SERVICE_KEY,
+  MATCHER_HINT_EXAMPLES_MAX_COUNT,
 } from "@/lib/service-catalog-schema";
 
 export { formatServiceChannelSummary } from "@/lib/service-catalog-channel-format";
@@ -39,7 +45,27 @@ export type DetailDrawerProps = {
 
 export function hasMatcherHints(s: ServiceOfferingDraft): boolean {
   return Boolean(
-    s.matcherKeywords.trim() || s.matcherIncludeWhen.trim() || s.matcherExcludeWhen.trim()
+    s.matcherExamples.length > 0 ||
+      s.matcherKeywords.trim() ||
+      s.matcherIncludeWhen.trim() ||
+      s.matcherExcludeWhen.trim()
+  );
+}
+
+/**
+ * Routing v2 (Task 06 / Task 07): true when this row still carries un-migrated
+ * legacy matcher hints (`keywords` / `include_when`) but no v2 `examples` yet.
+ * Drives the per-card migration callout in the drawer (Task 07) and the
+ * catalog-level banner on the services-catalog page (Task 07).
+ *
+ * Exported so the page can count legacy-only rows without having to re-derive
+ * the same boolean (and so this stays a single source of truth — the resolver
+ * uses the equivalent precedence on the backend).
+ */
+export function hasUnmigratedLegacyHints(s: ServiceOfferingDraft): boolean {
+  return (
+    s.matcherExamples.length === 0 &&
+    Boolean(s.matcherKeywords.trim() || s.matcherIncludeWhen.trim())
   );
 }
 
@@ -130,6 +156,7 @@ export function ServiceOfferingDetailDrawer({
     !s.label.trim() &&
     !s.description.trim() &&
     !cardHasHints;
+  const cardHasLegacyOnly = hasUnmigratedLegacyHints(s);
 
   /** Common AI call path used by both the inline banner and the sparkle button. */
   const requestSingleCard = async (
@@ -194,6 +221,7 @@ export function ServiceOfferingDetailDrawer({
       label: s.label.trim() || undefined,
       freeformDescription: s.description.trim() || undefined,
       existingHints: {
+        examples: s.matcherExamples.length > 0 ? [...s.matcherExamples] : undefined,
         keywords: s.matcherKeywords.trim() || undefined,
         include_when: s.matcherIncludeWhen.trim() || undefined,
         exclude_when: s.matcherExcludeWhen.trim() || undefined,
@@ -511,48 +539,21 @@ export function ServiceOfferingDetailDrawer({
                 </p>
               )}
               <p className="text-[11px] leading-snug text-violet-900/85">
-                Optional hints for the assistant so patient questions line up with the right service. Not shown in
-                patient fee messages. Use words patients actually type (e.g. blood sugar, diabetes, high BP)—not only
-                clinical abbreviations—unless your patients use those abbreviations too. Short rules in plain language;
-                never put patient names or PHI here.
+                List a few short example phrases your patients might actually send, one per line. These are the words
+                the assistant looks for when routing a chat to this service. Not shown in patient fee messages. Never
+                put patient names or PHI here.
               </p>
-              <div className="min-w-0">
-                <FieldLabel
-                  htmlFor={`drawer-svc-mkw-${s.id}`}
-                  tooltip="Synonyms patients might type—e.g. skin rash, eczema; or for chronic care: blood sugar, diabetes, high BP, hypertension"
-                >
-                  Keywords / synonyms
-                </FieldLabel>
-                <textarea
-                  id={`drawer-svc-mkw-${s.id}`}
-                  value={s.matcherKeywords}
-                  onChange={(e) =>
-                    onServicesChange(updateService(services, s.id, { matcherKeywords: e.target.value }))
-                  }
-                  rows={2}
-                  maxLength={400}
-                  wrap="soft"
-                  placeholder="e.g. fever 3 days, blood sugar, diabetes follow-up, high BP, dressing change"
-                  className="mt-0.5 w-full resize-y rounded-md border border-violet-200/80 bg-white px-2 py-1.5 text-sm leading-snug"
-                />
-              </div>
-              <div className="min-w-0">
-                <FieldLabel htmlFor={`drawer-svc-minc-${s.id}`} tooltip="When this row is the right teleconsult service">
-                  Book this service when…
-                </FieldLabel>
-                <textarea
-                  id={`drawer-svc-minc-${s.id}`}
-                  value={s.matcherIncludeWhen}
-                  onChange={(e) =>
-                    onServicesChange(updateService(services, s.id, { matcherIncludeWhen: e.target.value }))
-                  }
-                  rows={2}
-                  maxLength={800}
-                  wrap="soft"
-                  placeholder="e.g. Chronic condition follow-up already diagnosed; medication adjustment questions."
-                  className="mt-0.5 w-full resize-y rounded-md border border-violet-200/80 bg-white px-2 py-1.5 text-sm leading-snug"
-                />
-              </div>
+              <p className="text-[11px] leading-snug text-violet-900/80">
+                Matching runs in two steps: the system first checks if a patient&apos;s message overlaps with your
+                example phrases (fast). If that isn&apos;t enough to pick a service confidently, the assistant uses
+                your full service list and these phrases together in a second step — so the more natural wording you
+                add here, the better the matches.
+              </p>
+              <ExamplePhrasesField
+                draft={s}
+                services={services}
+                onServicesChange={onServicesChange}
+              />
               <div className="min-w-0">
                 <FieldLabel htmlFor={`drawer-svc-mexc-${s.id}`} tooltip="Steer away from this row when…">
                   Not this service when…
@@ -570,6 +571,104 @@ export function ServiceOfferingDetailDrawer({
                   className="mt-0.5 w-full resize-y rounded-md border border-violet-200/80 bg-white px-2 py-1.5 text-sm leading-snug"
                 />
               </div>
+
+              {/* Routing v2 (Task 07): always-visible migration callout for rows
+                  that still have only legacy hints. Three pieces:
+                    1. Non-alarming explainer — routing keeps working via the
+                       resolver until the doctor saves with examples.
+                    2. One-tap "Convert to example phrases" CTA — splits
+                       legacy text into the v2 list (and zeros legacy fields).
+                       Doctor still must hit Save on the page.
+                    3. Editable legacy textareas — kept open (not behind a
+                       <details>) so legacy-only rows are never blank-looking
+                       in the new UI (Task 07 acceptance: "no empty matcher
+                       UX for legacy-only rows").
+                  Hidden once the row has at least one example phrase, since
+                  draftsToCatalogOrNull then drops legacy on save anyway. */}
+              {cardHasLegacyOnly && (
+                <div
+                  className="min-w-0 rounded-md border border-amber-200 bg-amber-50/70 px-2.5 py-2 text-[11px] text-amber-900"
+                  data-testid="drawer-legacy-hints-migration-callout"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold">
+                        This service still uses older matching hints
+                      </p>
+                      <p className="mt-0.5 leading-snug text-amber-900/90">
+                        Routing keeps working — the assistant uses your{" "}
+                        <em>Keywords</em> and <em>Book this service when…</em> text below
+                        until you add Example phrases above. One-tap below copies them
+                        into Example phrases for you.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onServicesChange(
+                          services.map((row) =>
+                            row.id === s.id ? convertLegacyHintsToExamples(row) : row
+                          )
+                        )
+                      }
+                      className="shrink-0 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      data-testid="drawer-convert-legacy-hints"
+                    >
+                      Convert to example phrases
+                    </button>
+                  </div>
+                  <div className="mt-2 flex flex-col gap-2">
+                    <div className="min-w-0">
+                      <FieldLabel
+                        htmlFor={`drawer-svc-mkw-${s.id}`}
+                        tooltip="Legacy synonyms field — superseded by Example phrases above."
+                      >
+                        Keywords / synonyms (legacy)
+                      </FieldLabel>
+                      <textarea
+                        id={`drawer-svc-mkw-${s.id}`}
+                        value={s.matcherKeywords}
+                        onChange={(e) =>
+                          onServicesChange(
+                            updateService(services, s.id, { matcherKeywords: e.target.value })
+                          )
+                        }
+                        rows={2}
+                        maxLength={400}
+                        wrap="soft"
+                        placeholder="e.g. fever 3 days, blood sugar, diabetes follow-up"
+                        className="mt-0.5 w-full resize-y rounded-md border border-amber-200 bg-white px-2 py-1.5 text-sm leading-snug"
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <FieldLabel
+                        htmlFor={`drawer-svc-minc-${s.id}`}
+                        tooltip="Legacy free-text rule — superseded by Example phrases above."
+                      >
+                        Book this service when… (legacy)
+                      </FieldLabel>
+                      <textarea
+                        id={`drawer-svc-minc-${s.id}`}
+                        value={s.matcherIncludeWhen}
+                        onChange={(e) =>
+                          onServicesChange(
+                            updateService(services, s.id, { matcherIncludeWhen: e.target.value })
+                          )
+                        }
+                        rows={2}
+                        maxLength={800}
+                        wrap="soft"
+                        placeholder="e.g. Chronic condition follow-up already diagnosed; medication adjustment questions."
+                        className="mt-0.5 w-full resize-y rounded-md border border-amber-200 bg-white px-2 py-1.5 text-sm leading-snug"
+                      />
+                    </div>
+                  </div>
+                  <p className="mt-1.5 text-[10px] leading-snug text-amber-900/75">
+                    On save, once Example phrases above has at least one entry, these
+                    legacy fields are dropped from the saved catalog automatically.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* SFU-18: per-service scope mode control. Catch-all is locked to flexible. */}
@@ -738,6 +837,7 @@ export function ServiceOfferingDetailDrawer({
 type DiffField =
   | "scope_mode"
   | "description"
+  | "matcherExamples"
   | "matcherKeywords"
   | "matcherIncludeWhen"
   | "matcherExcludeWhen";
@@ -761,10 +861,17 @@ function AiSuggestionDiffModal({
   onApplyPartial,
 }: DiffModalProps) {
   // Default: every changed field is "accepted"; doctor can opt-out per field.
+  const suggestedExamples = useMemo(
+    () => (suggestion.matcher_hints?.examples ?? []).map((p) => p.trim()).filter((p) => p.length > 0),
+    [suggestion]
+  );
   const initialKeep: Record<DiffField, boolean> = useMemo(
     () => ({
       scope_mode: (suggestion.scope_mode ?? null) !== current.scopeMode,
       description: (suggestion.description?.trim() ?? "") !== current.description.trim(),
+      matcherExamples:
+        suggestedExamples.length > 0 &&
+        JSON.stringify(suggestedExamples) !== JSON.stringify(current.matcherExamples),
       matcherKeywords:
         (suggestion.matcher_hints?.keywords?.trim() ?? "") !== current.matcherKeywords.trim(),
       matcherIncludeWhen:
@@ -772,13 +879,14 @@ function AiSuggestionDiffModal({
       matcherExcludeWhen:
         (suggestion.matcher_hints?.exclude_when?.trim() ?? "") !== current.matcherExcludeWhen.trim(),
     }),
-    [current, suggestion]
+    [current, suggestion, suggestedExamples]
   );
   const [keep, setKeep] = useState<Record<DiffField, boolean>>(initialKeep);
 
   const anyChange =
     initialKeep.scope_mode ||
     initialKeep.description ||
+    initialKeep.matcherExamples ||
     initialKeep.matcherKeywords ||
     initialKeep.matcherIncludeWhen ||
     initialKeep.matcherExcludeWhen;
@@ -798,6 +906,18 @@ function AiSuggestionDiffModal({
       patch.description = current.description;
     }
     const hints: NonNullable<AiSuggestCardV1["matcher_hints"]> = {};
+    /**
+     * Routing v2 (Task 06) — when the doctor opts to keep AI-suggested
+     * `examples`, hand them through verbatim so {@link applyAiSuggestionToDraft}
+     * adopts the v2 list (and consequently zeros the legacy fields). When the
+     * doctor opts out, echo back the current draft examples so the apply path
+     * leaves them alone.
+     */
+    if (keep.matcherExamples && suggestedExamples.length > 0) {
+      hints.examples = suggestedExamples;
+    } else if (current.matcherExamples.length > 0) {
+      hints.examples = [...current.matcherExamples];
+    }
     hints.keywords = keep.matcherKeywords
       ? suggestion.matcher_hints?.keywords ?? current.matcherKeywords
       : current.matcherKeywords;
@@ -880,6 +1000,17 @@ function AiSuggestionDiffModal({
               onToggle={() => setKeep((p) => ({ ...p, description: !p.description }))}
             />
           )}
+          {initialKeep.matcherExamples && (
+            <DiffRow
+              label="Example phrases"
+              currentText={
+                current.matcherExamples.length > 0 ? current.matcherExamples.join("\n") : "(empty)"
+              }
+              suggestedText={suggestedExamples.join("\n")}
+              keepSuggestion={keep.matcherExamples}
+              onToggle={() => setKeep((p) => ({ ...p, matcherExamples: !p.matcherExamples }))}
+            />
+          )}
           {initialKeep.matcherKeywords && (
             <DiffRow
               label="Keywords"
@@ -939,6 +1070,122 @@ function AiSuggestionDiffModal({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Routing v2 (Task 06) — Example phrases primary input
+// ============================================================================
+
+/**
+ * Newline-separated textarea editor for `matcherExamples`. Local state keeps
+ * the raw textarea contents so an in-progress phrase isn't dropped while the
+ * user is typing; we re-normalize into the draft array on every change so
+ * downstream consumers always see schema-valid (trimmed, deduped, clamped)
+ * phrases. The chip preview underneath the textarea makes the array shape
+ * visible to the doctor and lets them see when a duplicate or empty line was
+ * collapsed away.
+ */
+function ExamplePhrasesField({
+  draft,
+  services,
+  onServicesChange,
+}: {
+  draft: ServiceOfferingDraft;
+  services: ServiceOfferingDraft[];
+  onServicesChange: (next: ServiceOfferingDraft[]) => void;
+}) {
+  const inputId = `drawer-svc-mexamples-${draft.id}`;
+  const [text, setText] = useState<string>(() => exampleListToText(draft.matcherExamples));
+  const lastSyncedListRef = useRef<string>(JSON.stringify(draft.matcherExamples));
+
+  // Re-sync when the parent draft changes from outside (e.g. AI suggest applied).
+  useEffect(() => {
+    const incoming = JSON.stringify(draft.matcherExamples);
+    if (incoming !== lastSyncedListRef.current) {
+      lastSyncedListRef.current = incoming;
+      setText(exampleListToText(draft.matcherExamples));
+    }
+  }, [draft.matcherExamples]);
+
+  const phrases = useMemo(() => exampleTextToList(text), [text]);
+  const remaining = MATCHER_HINT_EXAMPLES_MAX_COUNT - phrases.length;
+  const hitCap = phrases.length >= MATCHER_HINT_EXAMPLES_MAX_COUNT;
+
+  const handleChange = (next: string) => {
+    setText(next);
+    const normalized = exampleTextToList(next);
+    const serialized = JSON.stringify(normalized);
+    if (serialized !== JSON.stringify(draft.matcherExamples)) {
+      lastSyncedListRef.current = serialized;
+      onServicesChange(updateService(services, draft.id, { matcherExamples: normalized }));
+    }
+  };
+
+  const handleRemoveChip = (idx: number) => {
+    const next = phrases.filter((_, i) => i !== idx);
+    setText(exampleListToText(next));
+    lastSyncedListRef.current = JSON.stringify(next);
+    onServicesChange(updateService(services, draft.id, { matcherExamples: next }));
+  };
+
+  return (
+    <div className="min-w-0">
+      <FieldLabel
+        htmlFor={inputId}
+        tooltip="Short patient-style phrases — one per line. Example: 'fever for 3 days' or 'sugar going up'."
+      >
+        Example phrases
+      </FieldLabel>
+      <textarea
+        id={inputId}
+        value={text}
+        onChange={(e) => handleChange(e.target.value)}
+        rows={4}
+        wrap="soft"
+        placeholder={
+          "One phrase per line, e.g.\n" +
+          "fever for 3 days\n" +
+          "sugar going up\n" +
+          "BP medicine refill"
+        }
+        className="mt-0.5 w-full resize-y rounded-md border border-violet-200/80 bg-white px-2 py-1.5 text-sm leading-snug"
+        data-testid="drawer-example-phrases-input"
+      />
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-1.5 text-[11px] text-violet-900/80">
+        <span>
+          {phrases.length} phrase{phrases.length === 1 ? "" : "s"}
+          {hitCap ? " (max reached)" : remaining <= 5 ? ` · ${remaining} left` : ""}
+        </span>
+        <span className="text-violet-900/60">Patients&apos; words work better than clinical jargon.</span>
+      </div>
+      {phrases.length > 0 && (
+        <ul
+          className="mt-1.5 flex flex-wrap gap-1"
+          aria-label="Current example phrases"
+          data-testid="drawer-example-phrases-chips"
+        >
+          {phrases.map((p, i) => (
+            <li
+              key={`${i}-${p}`}
+              className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] text-violet-900"
+            >
+              <span className="max-w-[18ch] truncate" title={p}>
+                {p}
+              </span>
+              <button
+                type="button"
+                onClick={() => handleRemoveChip(i)}
+                aria-label={`Remove example phrase: ${p}`}
+                className="rounded text-violet-700 hover:text-violet-900 focus:outline-none focus:ring-1 focus:ring-violet-500"
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

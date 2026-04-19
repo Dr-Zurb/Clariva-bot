@@ -298,6 +298,20 @@ export type MatcherHintsAppendPayload = {
  * length-capped via {@link appendMatcherHintFields}. Skips the write when the merge
  * produces no change (idempotent on repeat corrections).
  *
+ * **Routing v2 note (Plan 19-04, Task 04):** this learning-feedback writer still targets
+ * the **legacy** `keywords` / `include_when` / `exclude_when` fields rather than pushing
+ * the patient fragment into `matcher_hints.examples`. Two reasons we intentionally hold
+ * off until Task 06 (frontend example-phrases UI) ships:
+ *   1. Doctors haven't migrated yet — appending to `examples` while the editor still
+ *      surfaces only the legacy text areas would silently dual-write and bury hint
+ *      provenance in two places.
+ *   2. The reader path is now safe via {@link resolveMatcherRouting}: a row with only
+ *      legacy hints still routes correctly, so deferring the writer doesn't gate Task 04.
+ * Once the editor emits `examples`, this function should be updated to: if
+ * `offering.matcher_hints.examples?.length > 0`, push the sanitized fragment as a new
+ * example (after dedupe / max-cap checks); otherwise keep the current legacy-append
+ * fallback for not-yet-migrated rows.
+ *
  * @returns whether `doctor_settings.service_offerings_json` was updated.
  */
 export async function appendMatcherHintsOnDoctorCatalogOffering(

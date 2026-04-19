@@ -289,6 +289,89 @@ describe('runDeterministicServiceCatalogMatchStageA — SFU-18 scope_mode', () =
     expect(r?.autoFinalize).toBe(false);
   });
 
+  /**
+   * Routing v2 (Plan 19-04, Task 04): Stage A now reads via `resolveMatcherRouting`.
+   * v2 rows that only set `matcher_hints.examples` should score and win the same way
+   * legacy `keywords` rows did, including under strict mode.
+   */
+  it('routing v2 (strict): examples-only hit yields a positive score and matches', () => {
+    const catalog = catalogNcdGpOther();
+    catalog.services[0]!.scope_mode = 'strict';
+    catalog.services[0]!.matcher_hints = {
+      examples: ['hypertension follow-up', 'diabetes review', 'thyroid recheck'],
+    };
+
+    const r = runDeterministicServiceCatalogMatchStageA(
+      catalog,
+      'I need a hypertension follow-up please'
+    );
+
+    expect(r?.offering.service_key).toBe('ncd');
+    expect(r?.confidence).toBe('medium');
+    expect(r?.autoFinalize).toBe(false);
+  });
+
+  it('routing v2: examples win over legacy keywords/include_when on the same row', () => {
+    const catalog = catalogNcdGpOther();
+    catalog.services[0]!.matcher_hints = {
+      examples: ['blood pressure check'],
+      keywords: 'fever, cough',
+      include_when: 'totally unrelated topic',
+    };
+
+    const r = runDeterministicServiceCatalogMatchStageA(
+      catalog,
+      'I need a blood pressure check tomorrow'
+    );
+
+    expect(r?.offering.service_key).toBe('ncd');
+    expect(r?.confidence).toBe('medium');
+  });
+
+  it('routing v2: examples-only row ignores legacy include_when gate (no penalty)', () => {
+    const catalog = catalogNcdGpOther();
+    catalog.services[0]!.matcher_hints = {
+      examples: ['diabetes'],
+      include_when: 'something completely off-topic',
+    };
+
+    const r = runDeterministicServiceCatalogMatchStageA(catalog, 'diabetes review please');
+
+    expect(r?.offering.service_key).toBe('ncd');
+  });
+
+  it('routing v2: examples-only row still honors exclude_when red flag', () => {
+    const catalog = catalogNcdGpOther();
+    catalog.services[0]!.matcher_hints = {
+      examples: ['diabetes'],
+      exclude_when: 'pregnancy',
+    };
+
+    const r = runDeterministicServiceCatalogMatchStageA(
+      catalog,
+      'diabetes during pregnancy'
+    );
+
+    expect(r).toBeNull();
+  });
+
+  it('routing v2 (strict): empty/blank examples fall through to legacy_merge keyword path', () => {
+    const catalog = catalogNcdGpOther();
+    catalog.services[0]!.scope_mode = 'strict';
+    catalog.services[0]!.matcher_hints = {
+      examples: ['   '],
+      keywords: 'hypertension, diabetes',
+    };
+
+    const r = runDeterministicServiceCatalogMatchStageA(
+      catalog,
+      'hypertension follow-up review'
+    );
+
+    expect(r?.offering.service_key).toBe('ncd');
+    expect(r?.confidence).toBe('medium');
+  });
+
   it('strict + single-non-catch-offering fast path still routes (only-option wins)', () => {
     const catalog: ServiceCatalogV1 = {
       version: 1,
@@ -316,5 +399,156 @@ describe('runDeterministicServiceCatalogMatchStageA — SFU-18 scope_mode', () =
     expect(r?.offering.service_key).toBe('only_svc');
     expect(r?.confidence).toBe('high');
     expect(r?.autoFinalize).toBe(true);
+  });
+});
+
+/**
+ * Routing v2 / Phase 2 — Plan 19-04, Task 08.
+ *
+ * Pins the strict/flexible × resolved-hints matrix on the Stage A entry point so
+ * any regression on a documented cell points the reviewer at one named test.
+ * The full table also lives in the JSDoc on `runDeterministicServiceCatalogMatchStageA`
+ * and in `docs/Development/service-catalog-matching-stages.md` — keep all three in sync.
+ *
+ * To force a third Stage A code path through the multi-row catalog (and avoid the
+ * "single non-catch offering" shortcut at the top of `runDeterministic…`) every
+ * test below uses three rows: the row under test (`ncd`), an inert sibling
+ * (`gp`), and the mandatory `other`.
+ */
+describe('runDeterministicServiceCatalogMatchStageA — Phase 2 matrix (Routing v2, Plan 19-04, Task 08)', () => {
+  // --- Cells A1–A3: strict + v2 examples ---
+
+  it('A1: strict + examples + patient text contains an example phrase → match medium, autoFinalize=false', () => {
+    const catalog = catalogNcdGpOther();
+    catalog.services[0]!.scope_mode = 'strict';
+    catalog.services[0]!.matcher_hints = { examples: ['htn check'] };
+
+    const r = runDeterministicServiceCatalogMatchStageA(
+      catalog,
+      'i need htn check tomorrow morning'
+    );
+
+    expect(r?.offering.service_key).toBe('ncd');
+    expect(r?.confidence).toBe('medium');
+    expect(r?.autoFinalize).toBe(false);
+    expect(r?.reasonCodes).toEqual(
+      expect.arrayContaining(['keyword_hint_match', 'catalog_allowlist_match'])
+    );
+  });
+
+  it('A2: strict + examples + patient text has NO overlap → null (Stage B will handle)', () => {
+    const catalog = catalogNcdGpOther();
+    catalog.services[0]!.scope_mode = 'strict';
+    catalog.services[0]!.matcher_hints = { examples: ['htn check'] };
+
+    const r = runDeterministicServiceCatalogMatchStageA(
+      catalog,
+      'completely unrelated complaint about something else'
+    );
+
+    expect(r).toBeNull();
+  });
+
+  it('A3: strict + examples + exclude_when overlap → null (excluded; red flag wins over example hit)', () => {
+    const catalog = catalogNcdGpOther();
+    catalog.services[0]!.scope_mode = 'strict';
+    catalog.services[0]!.matcher_hints = {
+      examples: ['htn'],
+      exclude_when: 'pregnancy',
+    };
+
+    const r = runDeterministicServiceCatalogMatchStageA(catalog, 'htn during pregnancy');
+
+    expect(r).toBeNull();
+  });
+
+  // --- Cells B1–B3: flexible (no strict gating) ---
+
+  it('B1: flexible + examples + patient text contains an example phrase → match medium', () => {
+    const catalog = catalogNcdGpOther();
+    catalog.services[0]!.scope_mode = 'flexible';
+    catalog.services[0]!.matcher_hints = { examples: ['htn check'] };
+
+    const r = runDeterministicServiceCatalogMatchStageA(
+      catalog,
+      'i need htn check tomorrow morning'
+    );
+
+    expect(r?.offering.service_key).toBe('ncd');
+    expect(r?.confidence).toBe('medium');
+    expect(r?.autoFinalize).toBe(false);
+  });
+
+  it('B2: flexible + examples + patient text has NO overlap → null (Stage B will handle)', () => {
+    const catalog = catalogNcdGpOther();
+    catalog.services[0]!.scope_mode = 'flexible';
+    catalog.services[0]!.matcher_hints = { examples: ['htn check'] };
+
+    const r = runDeterministicServiceCatalogMatchStageA(
+      catalog,
+      'completely unrelated complaint about something else'
+    );
+
+    expect(r).toBeNull();
+  });
+
+  it('B3: flexible + label-only (no hints) + patient text contains label → match high, autoFinalize=true', () => {
+    const catalog = catalogNcdGpOther();
+    catalog.services[1]!.scope_mode = 'flexible'; // gp row, label "General physician"
+
+    const r = runDeterministicServiceCatalogMatchStageA(
+      catalog,
+      'I need general physician for a quick check'
+    );
+
+    expect(r?.offering.service_key).toBe('gp');
+    expect(r?.confidence).toBe('high');
+    expect(r?.autoFinalize).toBe(true);
+  });
+
+  // --- Cells C1–C3: strict downgrade + legacy include_when asymmetry ---
+
+  it('C1: strict + label-only (no hints) + patient text contains label → match medium, autoFinalize=false (downgrade)', () => {
+    const catalog = catalogNcdGpOther();
+    catalog.services[1]!.scope_mode = 'strict';
+
+    const r = runDeterministicServiceCatalogMatchStageA(
+      catalog,
+      'I need general physician for a quick check'
+    );
+
+    expect(r?.offering.service_key).toBe('gp');
+    expect(r?.confidence).toBe('medium');
+    expect(r?.autoFinalize).toBe(false);
+  });
+
+  it('C2: strict + legacy include_when only + overlap → null (no example-phrase corroboration)', () => {
+    const catalog = catalogNcdGpOther();
+    catalog.services[0]!.scope_mode = 'strict';
+    catalog.services[0]!.matcher_hints = {
+      include_when: 'diabetes hypertension hypothyroidism',
+    };
+
+    const r = runDeterministicServiceCatalogMatchStageA(catalog, 'hypertension follow-up review');
+
+    expect(r).toBeNull();
+  });
+
+  it('C3: flexible + legacy include_when only + overlap (no examples, no label hit) → null (legacy_merge yields 0 score)', () => {
+    const catalog = catalogNcdGpOther();
+    catalog.services[0]!.scope_mode = 'flexible';
+    catalog.services[0]!.matcher_hints = {
+      include_when: 'diabetes hypertension hypothyroidism',
+    };
+
+    // Patient text overlaps `include_when` ('hypertension') but has no label/desc
+    // hit and no example-phrase hit. Resolver returns examplePhrases=[] (legacy
+    // keywords absent), so matcherHintScore loops over zero phrases → score 0
+    // → falls through to `null` even though legacyIncludeWhen *did* pass the
+    // overlap gate. This pins the documented asymmetry: include_when is a gate,
+    // never a positive signal.
+    const r = runDeterministicServiceCatalogMatchStageA(catalog, 'hypertension please');
+
+    expect(r).toBeNull();
   });
 });

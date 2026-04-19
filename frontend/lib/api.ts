@@ -1536,6 +1536,12 @@ export interface AiSuggestSingleCardPayload {
   label?: string;
   freeformDescription?: string;
   existingHints?: {
+    /**
+     * Routing v2 (Task 06): primary patient-style phrase list. Backend echoes
+     * legacy `keywords` / `include_when` only when `examples` is empty so the
+     * LLM doesn't get duplicated routing material.
+     */
+    examples?: string[];
     keywords?: string;
     include_when?: string;
     exclude_when?: string;
@@ -1600,6 +1606,12 @@ export interface AiSuggestCardV1 {
   description?: string;
   scope_mode?: "strict" | "flexible";
   matcher_hints?: {
+    /**
+     * Routing v2 (Task 06): primary patient-style phrase list. Always present
+     * when the backend has v2 examples to emit; the legacy fields below remain
+     * for un-migrated rows / older AI runs.
+     */
+    examples?: string[];
     keywords?: string;
     include_when?: string;
     exclude_when?: string;
@@ -1689,4 +1701,69 @@ export async function postCatalogAiSuggest(
     throw err;
   }
   return json as ApiSuccess<AiSuggestResponse>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plan service-catalog-matcher-routing-v2 / Task 10 (Phase 4 hybrid):
+// dev-only "Try as patient" preview helper. The route is mounted only when
+// `CATALOG_PREVIEW_MATCH_ENABLED` is true on the backend (default: enabled
+// off-prod). The frontend gates the UI separately via
+// `NEXT_PUBLIC_CATALOG_PREVIEW_MATCH_ENABLED`. A 404 here = backend disabled.
+// ─────────────────────────────────────────────────────────────────────────────
+export type PreviewMatchPath = "stage_a" | "stage_b" | "fallback" | "single_fee";
+
+export interface PreviewMatchRequest {
+  catalog: ServiceCatalogV1;
+  reasonForVisitText: string;
+  recentUserMessages?: string[];
+  doctorProfile?: { practiceName?: string | null; specialty?: string | null } | null;
+}
+
+export interface PreviewMatchResponse {
+  path: PreviewMatchPath;
+  matchedServiceKey: string;
+  matchedLabel: string;
+  suggestedModality: "text" | "voice" | "video" | null;
+  confidence: "high" | "medium" | "low";
+  autoFinalize: boolean;
+  mixedComplaints: boolean;
+  reasonCodes: string[];
+  llmAvailable: boolean;
+}
+
+export async function postCatalogPreviewMatch(
+  token: string,
+  body: PreviewMatchRequest
+): Promise<ApiSuccess<PreviewMatchResponse>> {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/catalog/preview-match`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<PreviewMatchResponse>
+    | ApiError;
+  if (!res.ok) {
+    const message =
+      res.status === 404
+        ? "Preview is not enabled on this backend (set CATALOG_PREVIEW_MATCH_ENABLED=true)."
+        : isApiError(json)
+          ? json.error.message
+          : "Preview request failed";
+    const err = new Error(message) as Error & { status?: number; body?: unknown };
+    err.status = res.status;
+    err.body = json;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number; body?: unknown };
+    err.status = json.error.statusCode ?? 500;
+    err.body = json;
+    throw err;
+  }
+  return json as ApiSuccess<PreviewMatchResponse>;
 }

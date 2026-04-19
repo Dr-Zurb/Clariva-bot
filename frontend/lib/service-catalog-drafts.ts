@@ -11,6 +11,8 @@ import type {
 import {
   CATALOG_CATCH_ALL_LABEL_DEFAULT,
   CATALOG_CATCH_ALL_SERVICE_KEY,
+  MATCHER_HINT_EXAMPLE_MAX_CHARS,
+  MATCHER_HINT_EXAMPLES_MAX_COUNT,
   SERVICE_CATALOG_VERSION,
   resolveServiceScopeMode,
 } from "@/lib/service-catalog-schema";
@@ -34,6 +36,9 @@ export interface AiSuggestionDraftMeta {
   fieldsTouched: {
     description?: boolean;
     scopeMode?: boolean;
+    /** Routing v2 (Task 06): primary phrase list. */
+    matcherExamples?: boolean;
+    /** Legacy — remains tracked while un-migrated rows exist. */
     matcherKeywords?: boolean;
     matcherIncludeWhen?: boolean;
     matcherExcludeWhen?: boolean;
@@ -64,9 +69,17 @@ export interface ServiceOfferingDraft {
   /** Internal slug for API payload (server may preserve per service_id) */
   service_key: string;
   description: string;
-  /** ARM-02: AI matching only — keywords / synonyms (comma or free text). */
+  /**
+   * Routing v2 (Task 06): primary patient-style phrase list shown in the editor
+   * as the **Example phrases** input. Mirrors backend `matcher_hints.examples[]`.
+   * On save, when this list is non-empty {@link draftsToCatalogOrNull} writes
+   * only `examples` + `exclude_when` and intentionally drops legacy
+   * `keywords` / `include_when` so the resolver has a single source of truth.
+   */
+  matcherExamples: string[];
+  /** @deprecated Routing v2 (Task 06) — retained for legacy load + transition save only. */
   matcherKeywords: string;
-  /** When this service is the right choice (complaint patterns). */
+  /** @deprecated Routing v2 (Task 06) — retained for legacy load + transition save only. */
   matcherIncludeWhen: string;
   /** When to choose a different service or catch-all. */
   matcherExcludeWhen: string;
@@ -125,6 +138,83 @@ export function slugifyLabelToServiceKey(label: string): string {
   return s;
 }
 
+/**
+ * Routing v2 (Task 06) — normalize incoming `matcher_hints.examples` for the
+ * draft. Trims, drops empties, dedupes case-insensitively (preserves first
+ * occurrence's casing), and clamps length / count to schema limits so the
+ * editor never holds a list that would fail `safeParseServiceCatalogV1`.
+ *
+ * Mirrors `backend/src/utils/matcher-routing-resolve.ts#normalizeMatcherExamplePhrases`.
+ */
+export function normalizeMatcherExamplesDraft(input: ReadonlyArray<string>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of input) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const clamped =
+      trimmed.length > MATCHER_HINT_EXAMPLE_MAX_CHARS
+        ? trimmed.slice(0, MATCHER_HINT_EXAMPLE_MAX_CHARS)
+        : trimmed;
+    const key = clamped.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(clamped);
+    if (out.length >= MATCHER_HINT_EXAMPLES_MAX_COUNT) break;
+  }
+  return out;
+}
+
+/** Parse the editor's newline-separated textarea contents into the draft array shape. */
+export function exampleTextToList(text: string): string[] {
+  return normalizeMatcherExamplesDraft(text.split(/\r?\n/));
+}
+
+/** Render a draft `matcherExamples` array back into the editor textarea. */
+export function exampleListToText(list: ReadonlyArray<string>): string {
+  return list.join("\n");
+}
+
+/**
+ * Routing v2 (Task 07) — one-tap migration from legacy `matcherKeywords` /
+ * `matcherIncludeWhen` to a normalized `matcherExamples` list.
+ *
+ * Splitting rules:
+ *  - `matcherKeywords` is treated as a delimited list (commas, semicolons, or
+ *    newlines) — already the doctor's mental model from the pre-v2 UI label
+ *    "Keywords / synonyms".
+ *  - `matcherIncludeWhen` is treated as one phrase per non-empty line. Long
+ *    sentences are clamped to {@link MATCHER_HINT_EXAMPLE_MAX_CHARS} by the
+ *    normalizer; the doctor can edit / drop them via the chip × afterward.
+ *
+ * Both legacy fields are zeroed in the returned draft so the next save
+ * persists the v2 shape only (matches `draftsToCatalogOrNull`'s precedence
+ * rule: any non-empty `examples` drops legacy `keywords` / `include_when`).
+ *
+ * Pure: caller swaps the returned draft into state. Doctor must still hit
+ * Save on the catalog page for the change to round-trip to the server.
+ */
+export function convertLegacyHintsToExamples(
+  draft: ServiceOfferingDraft
+): ServiceOfferingDraft {
+  const seeds: string[] = [];
+  if (draft.matcherKeywords.trim()) {
+    seeds.push(...draft.matcherKeywords.split(/[\n,;]+/));
+  }
+  if (draft.matcherIncludeWhen.trim()) {
+    seeds.push(...draft.matcherIncludeWhen.split(/\r?\n/));
+  }
+  // Merge with any existing examples so the conversion is additive (preserves
+  // first-seen order; the normalizer dedupes case-insensitively).
+  const merged = [...draft.matcherExamples, ...seeds];
+  return {
+    ...draft,
+    matcherExamples: normalizeMatcherExamplesDraft(merged),
+    matcherKeywords: "",
+    matcherIncludeWhen: "",
+  };
+}
+
 function defaultModalityFollowUpDiscount(): ModalityFollowUpDiscountDraft {
   return {
     followUpDiscountEnabled: false,
@@ -146,6 +236,7 @@ export function emptyServiceDraft(): ServiceOfferingDraft {
     label: "",
     service_key: "",
     description: "",
+    matcherExamples: [],
     matcherKeywords: "",
     matcherIncludeWhen: "",
     matcherExcludeWhen: "",
@@ -266,6 +357,7 @@ export function offeringToDraft(o: ServiceOfferingV1): ServiceOfferingDraft {
     label: o.label,
     service_key: o.service_key,
     description,
+    matcherExamples: normalizeMatcherExamplesDraft(o.matcher_hints?.examples ?? []),
     matcherKeywords: o.matcher_hints?.keywords?.trim() ?? "",
     matcherIncludeWhen: o.matcher_hints?.include_when?.trim() ?? "",
     matcherExcludeWhen: o.matcher_hints?.exclude_when?.trim() ?? "",
@@ -503,15 +595,36 @@ export function draftsToCatalogOrNull(services: ServiceOfferingDraft[]): Service
       if (desc) {
         base.description = desc;
       }
-      const mk = d.matcherKeywords.trim();
-      const mi = d.matcherIncludeWhen.trim();
+      /**
+       * Routing v2 (Task 06) — single-source-of-truth save:
+       * - When the doctor has at least one **example phrase**, persist only
+       *   `examples` + `exclude_when`. The legacy `keywords` / `include_when`
+       *   draft fields are intentionally NOT written: the resolver
+       *   (`backend/src/utils/matcher-routing-resolve.ts`) already prefers
+       *   `examples` when present, so emitting both would be a silent
+       *   dual-write and re-introduce the keywords/include_when overlap this
+       *   plan exists to remove.
+       * - When `matcherExamples` is empty (un-migrated row), preserve the
+       *   pre-v2 behavior so legacy catalogs round-trip byte-for-byte until the
+       *   doctor edits them.
+       */
+      const examples = normalizeMatcherExamplesDraft(d.matcherExamples);
       const me = d.matcherExcludeWhen.trim();
-      if (mk || mi || me) {
+      if (examples.length > 0) {
         base.matcher_hints = {
-          ...(mk ? { keywords: mk } : {}),
-          ...(mi ? { include_when: mi } : {}),
+          examples,
           ...(me ? { exclude_when: me } : {}),
         };
+      } else {
+        const mk = d.matcherKeywords.trim();
+        const mi = d.matcherIncludeWhen.trim();
+        if (mk || mi || me) {
+          base.matcher_hints = {
+            ...(mk ? { keywords: mk } : {}),
+            ...(mi ? { include_when: mi } : {}),
+            ...(me ? { exclude_when: me } : {}),
+          };
+        }
       }
       return base;
     } catch (e) {
@@ -546,6 +659,8 @@ export interface AiSuggestedCardV1 {
   description?: string;
   scope_mode?: ScopeMode;
   matcher_hints?: {
+    /** Routing v2 (Task 06): primary phrase list. */
+    examples?: string[];
     keywords?: string;
     include_when?: string;
     exclude_when?: string;
@@ -567,14 +682,24 @@ export function aiSuggestedCardToDraft(
   const text = card.modalities.text;
   const voice = card.modalities.voice;
   const video = card.modalities.video;
+  /**
+   * Routing v2 (Task 06): when the AI emits both `examples` and legacy fields
+   * we prefer `examples` (matches the resolver's precedence) and stash legacy
+   * fields as empty so save-time serialization writes the v2 shape only.
+   */
+  const aiExamples = normalizeMatcherExamplesDraft(card.matcher_hints?.examples ?? []);
+  const aiKeywords = card.matcher_hints?.keywords?.trim() ?? "";
+  const aiIncludeWhen = card.matcher_hints?.include_when?.trim() ?? "";
+  const preferExamples = aiExamples.length > 0;
   return {
     ...seed,
     service_id: card.service_id?.trim() || seed.service_id,
     label: card.label,
     service_key: card.service_key,
     description: card.description?.trim() ?? "",
-    matcherKeywords: card.matcher_hints?.keywords?.trim() ?? "",
-    matcherIncludeWhen: card.matcher_hints?.include_when?.trim() ?? "",
+    matcherExamples: aiExamples,
+    matcherKeywords: preferExamples ? "" : aiKeywords,
+    matcherIncludeWhen: preferExamples ? "" : aiIncludeWhen,
     matcherExcludeWhen: card.matcher_hints?.exclude_when?.trim() ?? "",
     scopeMode: isCatchAll ? "flexible" : resolveServiceScopeMode(card.scope_mode),
     textEnabled: !!text?.enabled,
@@ -589,8 +714,9 @@ export function aiSuggestedCardToDraft(
       fieldsTouched: {
         description: !!card.description?.trim(),
         scopeMode: true,
-        matcherKeywords: !!card.matcher_hints?.keywords?.trim(),
-        matcherIncludeWhen: !!card.matcher_hints?.include_when?.trim(),
+        matcherExamples: aiExamples.length > 0,
+        matcherKeywords: !preferExamples && !!aiKeywords,
+        matcherIncludeWhen: !preferExamples && !!aiIncludeWhen,
         matcherExcludeWhen: !!card.matcher_hints?.exclude_when?.trim(),
         modalities: true,
       },
@@ -616,8 +742,22 @@ export function applyAiSuggestionToDraft(
   const isCatchAll = draft.service_key.trim().toLowerCase() === CATALOG_CATCH_ALL_SERVICE_KEY;
 
   const newDescription = card.description?.trim() ?? draft.description;
-  const newKeywords = card.matcher_hints?.keywords?.trim() ?? draft.matcherKeywords;
-  const newIncludeWhen = card.matcher_hints?.include_when?.trim() ?? draft.matcherIncludeWhen;
+  /**
+   * Routing v2 (Task 06) — the AI may now emit `matcher_hints.examples`. When it
+   * does we adopt the v2 list and zero out the legacy text fields so the next
+   * save uses the v2 shape only. If the AI emitted legacy fields only (back-compat
+   * with un-migrated prompts), fall back to the prior behavior so we don't drop
+   * the suggestion on the floor.
+   */
+  const aiExamples = normalizeMatcherExamplesDraft(card.matcher_hints?.examples ?? []);
+  const aiEmittedExamples = aiExamples.length > 0;
+  const newExamples = aiEmittedExamples ? aiExamples : draft.matcherExamples;
+  const newKeywords = aiEmittedExamples
+    ? ""
+    : (card.matcher_hints?.keywords?.trim() ?? draft.matcherKeywords);
+  const newIncludeWhen = aiEmittedExamples
+    ? ""
+    : (card.matcher_hints?.include_when?.trim() ?? draft.matcherIncludeWhen);
   const newExcludeWhen = card.matcher_hints?.exclude_when?.trim() ?? draft.matcherExcludeWhen;
   const newScope: ScopeMode = isCatchAll ? "flexible" : resolveServiceScopeMode(card.scope_mode);
 
@@ -630,6 +770,7 @@ export function applyAiSuggestionToDraft(
   const next: ServiceOfferingDraft = {
     ...draft,
     description: newDescription,
+    matcherExamples: newExamples,
     matcherKeywords: newKeywords,
     matcherIncludeWhen: newIncludeWhen,
     matcherExcludeWhen: newExcludeWhen,
@@ -655,6 +796,7 @@ export function applyAiSuggestionToDraft(
       fieldsTouched: {
         description: newDescription !== draft.description,
         scopeMode: newScope !== draft.scopeMode,
+        matcherExamples: aiEmittedExamples,
         matcherKeywords: newKeywords !== draft.matcherKeywords,
         matcherIncludeWhen: newIncludeWhen !== draft.matcherIncludeWhen,
         matcherExcludeWhen: newExcludeWhen !== draft.matcherExcludeWhen,

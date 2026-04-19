@@ -101,9 +101,20 @@ export const serviceModalitiesSchema = z
     }
   });
 
-/** ARM-02: optional matcher metadata (AI routing only; not for patient fee DMs). */
+/** Max per example phrase and max count — must match `backend/src/utils/service-catalog-schema.ts`. */
+export const MATCHER_HINT_EXAMPLE_MAX_CHARS = 120;
+export const MATCHER_HINT_EXAMPLES_MAX_COUNT = 24;
+
+/**
+ * ARM-02: optional matcher metadata (AI routing only; not for patient fee DMs).
+ * Routing v2: `examples` is primary; `keywords` / `include_when` are legacy (mirror backend).
+ */
 export const serviceMatcherHintsV1Schema = z
   .object({
+    examples: z
+      .array(z.string().trim().min(1).max(MATCHER_HINT_EXAMPLE_MAX_CHARS))
+      .max(MATCHER_HINT_EXAMPLES_MAX_COUNT)
+      .optional(),
     keywords: z.string().trim().max(400).optional(),
     include_when: z.string().trim().max(800).optional(),
     exclude_when: z.string().trim().max(800).optional(),
@@ -114,7 +125,7 @@ export type ServiceMatcherHintsV1 = z.infer<typeof serviceMatcherHintsV1Schema>;
 
 /**
  * SFU-18 (Plan 01 Phase C): per-offering matching scope mode (mirror of backend schema).
- * `strict`   — only match listed keywords / include_when conditions.
+ * `strict` — only match resolved hints (examples and/or legacy keywords / include_when).
  * `flexible` — broader category matching; preserves pre-SFU-18 behavior.
  * Absent/undefined is treated as `flexible` everywhere for backward compatibility.
  */

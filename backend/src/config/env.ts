@@ -238,6 +238,26 @@ const envSchema = z.object({
     .transform((v) => !(v === 'false' || v === '0')),
 
   /**
+   * Plan service-catalog-matcher-routing-v2 · Task 10 (preview widget, Phase 4 hybrid).
+   * Gates the dev-facing `POST /api/v1/catalog/preview-match` endpoint that lets
+   * a doctor (or us during dev) paste a sample patient message and see which
+   * Stage (A — instant rules, or B — assistant) won, without sending a real
+   * Instagram DM. Default behavior:
+   *   - unset / `'auto'` → enabled when `NODE_ENV !== 'production'`
+   *   - `'true'` / `'1'` → force-enable (e.g. enable on a staging build)
+   *   - `'false'` / `'0'` → force-disable
+   * The route never logs raw input beyond the matcher's existing PHI redaction
+   * (`redactPhiForAI`) and is auth-gated by `authenticateToken` regardless.
+   */
+  CATALOG_PREVIEW_MATCH_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === '' || v === 'auto') return undefined;
+      return v === 'true' || v === '1';
+    }),
+
+  /**
    * Plan 03 · Task 11 (legacy `appointment_fee_minor` deprecation, Phase 1).
    * When true, `warnDeprecation()` emits a once-per-process structured log line
    * for each classified legacy call site so developers notice migration work.

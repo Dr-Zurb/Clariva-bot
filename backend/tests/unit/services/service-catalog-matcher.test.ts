@@ -5,6 +5,7 @@ import {
   runDeterministicServiceCatalogMatchStageA,
   pickSuggestedModality,
   buildServiceCatalogLlmSystemPrompt,
+  detectSiblingExampleOverlaps,
   type ServiceCatalogMatchMetricEvent,
 } from '../../../src/services/service-catalog-matcher';
 import { SERVICE_CATALOG_MATCH_REASON_CODES } from '../../../src/types/conversation';
@@ -159,6 +160,257 @@ describe('service-catalog-matcher (ARM-04)', () => {
     const gpLine = p.split('\n').find((ln) => ln.trim().startsWith('- gp:'));
     expect(gpLine).toBeDefined();
     expect(gpLine).not.toContain('doctor_matcher_hints');
+  });
+
+  /**
+   * Routing v2 (Plan 19-04, Task 04): the LLM-facing snippet now flows through
+   * `resolveMatcherRouting`. v2 rows that only set `matcher_hints.examples` should
+   * still feed the existing `keywords=…` channel so the prompt's matching policy
+   * keeps binding without prompt-text changes.
+   */
+  it('routing v2: examples-only row serializes into keywords= for the LLM (no include_when leak)', () => {
+    const cat = catalogSkinGpOther();
+    const gp = cat.services.find((s) => s.service_key === 'gp')!;
+    gp.matcher_hints = {
+      examples: ['fever for 3 days', 'sore throat and cough', 'general checkup'],
+    };
+    const p = buildServiceCatalogLlmSystemPrompt(cat);
+    const gpLine = p.split('\n').find((ln) => ln.trim().startsWith('- gp:'));
+    expect(gpLine).toBeDefined();
+    expect(gpLine).toContain('doctor_matcher_hints');
+    expect(gpLine).toContain('keywords=fever for 3 days, sore throat and cough, general checkup');
+    expect(gpLine).not.toContain('include_when=');
+  });
+
+  it('routing v2: examples win over legacy keywords/include_when (no dual-feed in snippet)', () => {
+    const cat = catalogSkinGpOther();
+    const gp = cat.services.find((s) => s.service_key === 'gp')!;
+    gp.matcher_hints = {
+      examples: ['routine checkup', 'fatigue'],
+      keywords: 'flu, viral',
+      include_when: 'symptoms older than 1 day',
+    };
+    const p = buildServiceCatalogLlmSystemPrompt(cat);
+    const gpLine = p.split('\n').find((ln) => ln.trim().startsWith('- gp:'));
+    expect(gpLine).toBeDefined();
+    expect(gpLine).toContain('keywords=routine checkup, fatigue');
+    expect(gpLine).not.toContain('flu');
+    expect(gpLine).not.toContain('viral');
+    expect(gpLine).not.toContain('include_when=');
+  });
+
+  it('routing v2: legacy-only row keeps the include_when= snippet (back-compat)', () => {
+    const cat = catalogSkinGpOther();
+    const gp = cat.services.find((s) => s.service_key === 'gp')!;
+    gp.matcher_hints = {
+      keywords: 'fever, cough',
+      include_when: 'first-time visit',
+      exclude_when: 'requires in-person exam',
+    };
+    const p = buildServiceCatalogLlmSystemPrompt(cat);
+    const gpLine = p.split('\n').find((ln) => ln.trim().startsWith('- gp:'));
+    expect(gpLine).toBeDefined();
+    expect(gpLine).toContain('keywords=fever, cough');
+    expect(gpLine).toContain('include_when=first-time visit');
+    expect(gpLine).toContain('exclude_when=requires in-person exam');
+  });
+
+  /**
+   * Routing v2 / Phase 3 — Plan 19-04, Task 09 (hybrid).
+   *
+   * Phase 3 ships **prompt-only** sibling boundaries: a tie-breaker rule (rule 6) plus
+   * an automatic "Disambiguation hints" section that surfaces tokens shared across two
+   * or more rows' resolved example phrases. No new doctor-facing schema fields — the
+   * LLM uses existing `examples` on each row plus the new contrast block to disambiguate.
+   * The schema half (`confused_with_service_keys`, `prefer_other_when`) is deferred with
+   * rationale in the plan; tests below pin the prompt-only behavior.
+   */
+  describe('Phase 3 sibling tie-breaker + disambiguation hints (Routing v2, Plan 19-04, Task 09)', () => {
+    function catalogTwoSkinSiblings(): ServiceCatalogV1 {
+      return {
+        version: 1,
+        services: [
+          {
+            service_id: sid('skin_consult'),
+            service_key: 'skin_consult',
+            label: 'Skin consultation',
+            modalities: { video: { enabled: true, price_minor: 100_00 } },
+            matcher_hints: { examples: ['skin issue', 'skin rash', 'acne flare'] },
+          },
+          {
+            service_id: sid('skin_hair_combo'),
+            service_key: 'skin_hair_combo',
+            label: 'Skin + Hair combo',
+            modalities: { video: { enabled: true, price_minor: 150_00 } },
+            matcher_hints: { examples: ['skin and hair issue', 'hair fall with skin rash'] },
+          },
+          {
+            service_id: sid('other'),
+            service_key: 'other',
+            label: 'Other / not listed',
+            modalities: { video: { enabled: true, price_minor: 90_00 } },
+          },
+        ],
+      };
+    }
+
+    it('detectSiblingExampleOverlaps: returns shared tokens with the rows that contain them, sorted', () => {
+      const cat = catalogTwoSkinSiblings();
+      const overlaps = detectSiblingExampleOverlaps(cat);
+
+      const tokens = overlaps.map((o) => o.token);
+      // Both "skin" and "rash" appear in both sibling rows; "issue" too. "acne", "hair",
+      // "fall", "flare" only in one each → not surfaced.
+      expect(tokens).toEqual(expect.arrayContaining(['skin', 'rash', 'issue']));
+      const skin = overlaps.find((o) => o.token === 'skin');
+      expect(skin?.serviceKeys).toEqual(['skin_consult', 'skin_hair_combo']);
+      // Stable order: tokens sorted asc, service keys per token sorted asc.
+      expect([...tokens].sort()).toEqual(tokens);
+    });
+
+    it('detectSiblingExampleOverlaps: excludes the catch-all row from overlap candidates', () => {
+      const cat = catalogTwoSkinSiblings();
+      cat.services.push({
+        service_id: sid('other_dup'),
+        service_key: 'other',
+        label: 'Other (duplicate)',
+        modalities: { video: { enabled: true, price_minor: 90_00 } },
+        matcher_hints: { examples: ['skin issue'] },
+      } as ServiceCatalogV1['services'][number]);
+
+      const overlaps = detectSiblingExampleOverlaps(cat);
+      const skin = overlaps.find((o) => o.token === 'skin');
+      // Only the two real sibling rows — the catch-all (`other`) is filtered out even
+      // when it carries example phrases that would otherwise match.
+      expect(skin?.serviceKeys).toEqual(['skin_consult', 'skin_hair_combo']);
+    });
+
+    it('detectSiblingExampleOverlaps: returns empty when catalog has no overlapping tokens', () => {
+      const cat = catalogSkinGpOther();
+      const skin = cat.services.find((s) => s.service_key === 'skin')!;
+      skin.matcher_hints = { examples: ['acne flare'] };
+      const gp = cat.services.find((s) => s.service_key === 'gp')!;
+      gp.matcher_hints = { examples: ['fever for three days'] };
+
+      const overlaps = detectSiblingExampleOverlaps(cat);
+      expect(overlaps).toEqual([]);
+    });
+
+    it('detectSiblingExampleOverlaps: ignores rows with no resolved example phrases (legacy include_when only does NOT synthesize overlap)', () => {
+      const cat = catalogSkinGpOther();
+      const skin = cat.services.find((s) => s.service_key === 'skin')!;
+      skin.matcher_hints = { include_when: 'skin and hair issue' };
+      const gp = cat.services.find((s) => s.service_key === 'gp')!;
+      gp.matcher_hints = { include_when: 'skin issue and fever' };
+
+      // Resolver yields examplePhrases=[] for both legacy include_when-only rows, so
+      // the overlap detector must NOT promote `include_when` prose into shared tokens.
+      const overlaps = detectSiblingExampleOverlaps(cat);
+      expect(overlaps).toEqual([]);
+    });
+
+    it('detectSiblingExampleOverlaps: stop-words and short tokens are excluded', () => {
+      const cat = catalogSkinGpOther();
+      const skin = cat.services.find((s) => s.service_key === 'skin')!;
+      // "the", "and", "for" are short or stop-words; "appointment" is shared and meaningful.
+      skin.matcher_hints = { examples: ['the appointment for tomorrow'] };
+      const gp = cat.services.find((s) => s.service_key === 'gp')!;
+      gp.matcher_hints = { examples: ['the appointment for today'] };
+
+      const tokens = detectSiblingExampleOverlaps(cat).map((o) => o.token);
+      expect(tokens).toContain('appointment');
+      // Filtered out: 'the' (3 chars), 'for' (3 chars), 'today'/'tomorrow' (stop-words).
+      expect(tokens).not.toContain('the');
+      expect(tokens).not.toContain('for');
+      expect(tokens).not.toContain('today');
+      expect(tokens).not.toContain('tomorrow');
+    });
+
+    it('detectSiblingExampleOverlaps: caps at 5 entries with deterministic ordering', () => {
+      const tokens = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf'];
+      const cat: ServiceCatalogV1 = {
+        version: 1,
+        services: [
+          {
+            service_id: sid('row_a'),
+            service_key: 'row_a',
+            label: 'A',
+            modalities: { video: { enabled: true, price_minor: 100_00 } },
+            matcher_hints: { examples: tokens.map((t) => `${t} thing`) },
+          },
+          {
+            service_id: sid('row_b'),
+            service_key: 'row_b',
+            label: 'B',
+            modalities: { video: { enabled: true, price_minor: 100_00 } },
+            matcher_hints: { examples: tokens.map((t) => `${t} other`) },
+          },
+          {
+            service_id: sid('other'),
+            service_key: 'other',
+            label: 'Other',
+            modalities: { video: { enabled: true, price_minor: 90_00 } },
+          },
+        ],
+      };
+
+      const overlaps = detectSiblingExampleOverlaps(cat);
+      expect(overlaps).toHaveLength(5);
+      // Deterministic: token-asc order, first 5 of the alphabet.
+      expect(overlaps.map((o) => o.token)).toEqual(['alpha', 'bravo', 'charlie', 'delta', 'echo']);
+    });
+
+    it('buildServiceCatalogLlmSystemPrompt: injects "Disambiguation hints" block when sibling overlap exists', () => {
+      const cat = catalogTwoSkinSiblings();
+      const p = buildServiceCatalogLlmSystemPrompt(cat);
+
+      // Rule 6 mentions "Disambiguation hints" in prose, so we anchor on the block-only
+      // parenthetical header to prove the actual block was rendered.
+      expect(p).toContain('Disambiguation hints (rows whose');
+      expect(p).toContain("apply the sibling tie-breaker rule");
+      // Block lists the shared token + the rows that share it.
+      expect(p).toMatch(/"skin" appears in example phrases of rows: skin_consult, skin_hair_combo/);
+      expect(p).toMatch(/"rash" appears in example phrases of rows: skin_consult, skin_hair_combo/);
+    });
+
+    it('buildServiceCatalogLlmSystemPrompt: omits "Disambiguation hints" block when no overlap (clean catalogs stay clean)', () => {
+      const cat = catalogSkinGpOther();
+      // Default catalog has no example phrases on any row → no overlap → no block.
+      // Rule 6 still mentions "Disambiguation hints" in prose; we anchor on the
+      // block-only parenthetical header that only appears when the block renders.
+      const p = buildServiceCatalogLlmSystemPrompt(cat);
+      expect(p).not.toContain('Disambiguation hints (rows whose');
+    });
+
+    it('buildServiceCatalogLlmSystemPrompt: encodes the new sibling tie-breaker rule (rule 6) and renumbers downstream rules', () => {
+      const cat = catalogSkinGpOther();
+      const p = buildServiceCatalogLlmSystemPrompt(cat);
+
+      // Rule 6 is the new sibling tie-breaker.
+      expect(p).toMatch(/6\. Sibling tie-breaker/);
+      expect(p).toContain('more specific phrase that the patient text matched verbatim');
+      expect(p).toContain('split the difference');
+      // Rule 7 is now specialty-aware (was rule 6).
+      expect(p).toMatch(/7\. Specialty-aware defaults/);
+      expect(p).toContain('general medicine, family medicine, internal medicine, GP');
+      // Rule 8 is now the "use other" fallback (was rule 7), and references rules 1–7.
+      expect(p).toMatch(/8\. Use service_key "other" when no non-other row plausibly fits after applying rules 1–7/);
+    });
+
+    it('buildServiceCatalogLlmSystemPrompt: disambiguation block is positioned between Schema and Allowed service_key values', () => {
+      const cat = catalogTwoSkinSiblings();
+      const p = buildServiceCatalogLlmSystemPrompt(cat);
+
+      const schemaIdx = p.indexOf('Schema:');
+      // The literal block header is unique — rule 6 mentions "Disambiguation hints"
+      // in prose, but only the rendered block has the parenthetical "(rows whose…".
+      const disambigIdx = p.indexOf('Disambiguation hints (rows whose');
+      const allowlistIdx = p.indexOf('Allowed service_key values:');
+
+      expect(schemaIdx).toBeGreaterThan(-1);
+      expect(disambigIdx).toBeGreaterThan(schemaIdx);
+      expect(allowlistIdx).toBeGreaterThan(disambigIdx);
+    });
   });
 
   it('skipLlm: competing buckets text falls back to catch-all without LLM', async () => {

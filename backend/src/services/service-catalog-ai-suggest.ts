@@ -64,6 +64,7 @@ import {
   deriveAllowedModalitiesFromConsultationTypes,
   type AllowedModalities,
 } from '../utils/consultation-types';
+import { resolveMatcherRouting } from '../utils/matcher-routing-resolve';
 
 // ----------------------------------------------------------------------------
 // Public types
@@ -79,6 +80,8 @@ export interface AiSuggestSingleCardPayload {
   freeformDescription?: string;
   /** Optional existing matcher hints (used by re-run / refine flow). */
   existingHints?: {
+    /** Routing v2 (Task 06): primary patient-style phrase list. */
+    examples?: string[];
     keywords?: string;
     include_when?: string;
     exclude_when?: string;
@@ -427,7 +430,10 @@ function summarizeExistingCatalogForLlm(catalog: ServiceCatalogV1 | null): strin
     const mods = (['text', 'voice', 'video'] as const)
       .filter((m) => s.modalities[m]?.enabled === true)
       .join(',');
-    const kw = s.matcher_hints?.keywords?.trim() ?? '';
+    // Routing v2 (Task 05): source phrases via resolver so v2 `examples[]` rows
+    // surface here too. Vocabulary kept as `keywords="..."` for prompt stability.
+    const resolved = resolveMatcherRouting(s);
+    const kw = resolved.examplePhrases.join(', ');
     return `- ${s.service_key} [scope:${scope}] label="${s.label}" modalities=${mods || 'none'} keywords="${kw.slice(0, 120)}"`;
   });
   return `Existing catalog (do NOT duplicate these unless explicitly asked):\n${lines.join('\n')}`;
@@ -441,11 +447,26 @@ export function buildSingleCardPrompt(
   const desc = clampString(payload?.freeformDescription, SAFE_INPUT_DESC_MAX) ?? '(not provided)';
   const existingHintsLines: string[] = [];
   if (payload?.existingHints) {
-    const kw = clampString(payload.existingHints.keywords, SAFE_INPUT_HINT_MAX);
-    const iw = clampString(payload.existingHints.include_when, SAFE_INPUT_HINT_MAX);
+    /**
+     * Routing v2 (Task 06): when the editor sends `examples` we render them as
+     * the primary list and intentionally suppress the legacy `keywords` /
+     * `include_when` lines so the LLM doesn't see two competing routing
+     * vocabularies for the same card. `exclude_when` is orthogonal and stays.
+     */
+    const exRaw = payload.existingHints.examples ?? [];
+    const examples = exRaw
+      .map((p) => clampString(p, SAFE_INPUT_HINT_MAX))
+      .filter((p): p is string => !!p)
+      .slice(0, 24);
     const ew = clampString(payload.existingHints.exclude_when, SAFE_INPUT_HINT_MAX);
-    if (kw) existingHintsLines.push(`  keywords: ${kw}`);
-    if (iw) existingHintsLines.push(`  include_when: ${iw}`);
+    if (examples.length > 0) {
+      existingHintsLines.push(`  examples: ${examples.join(' | ')}`);
+    } else {
+      const kw = clampString(payload.existingHints.keywords, SAFE_INPUT_HINT_MAX);
+      const iw = clampString(payload.existingHints.include_when, SAFE_INPUT_HINT_MAX);
+      if (kw) existingHintsLines.push(`  keywords: ${kw}`);
+      if (iw) existingHintsLines.push(`  include_when: ${iw}`);
+    }
     if (ew) existingHintsLines.push(`  exclude_when: ${ew}`);
   }
   const existingHintsBlock =
@@ -805,9 +826,18 @@ function normalizeAndValidateCard(
     typeof matcherHintsRaw.exclude_when === 'string'
       ? matcherHintsRaw.exclude_when.trim().slice(0, 800)
       : '';
+  // Routing v2 (Task 05): pass through `examples[]` if the LLM emits it. Final
+  // length / count caps are enforced downstream by `serviceMatcherHintsV1Schema`.
+  const examples = Array.isArray(matcherHintsRaw.examples)
+    ? matcherHintsRaw.examples
+        .filter((e): e is string => typeof e === 'string')
+        .map((e) => e.trim())
+        .filter((e) => e.length > 0)
+    : [];
   const matcher_hints =
-    keywords || include_when || exclude_when
+    keywords || include_when || exclude_when || examples.length > 0
       ? {
+          ...(examples.length > 0 ? { examples } : {}),
           ...(keywords ? { keywords } : {}),
           ...(include_when ? { include_when } : {}),
           ...(exclude_when ? { exclude_when } : {}),
@@ -842,10 +872,16 @@ function normalizeAndValidateCard(
 
 const KEYWORD_SPLIT_RE = /[\s,;]+/;
 
-function tokenizeKeywords(s: string | undefined): Set<string> {
-  if (!s) return new Set();
+/**
+ * Routing v2 (Task 05): tokenize a card's resolved phrases into ≥3-char word tokens.
+ * Drives sibling-overlap warnings; v2 `examples[]` rows participate via the resolver.
+ */
+function tokenizeOfferingKeywords(card: ServiceOfferingV1): Set<string> {
+  const resolved = resolveMatcherRouting(card);
+  if (resolved.examplePhrases.length === 0) return new Set();
   return new Set(
-    s
+    resolved.examplePhrases
+      .join(' ')
       .toLowerCase()
       .split(KEYWORD_SPLIT_RE)
       .map((t) => t.trim())
@@ -858,12 +894,12 @@ function maxSiblingKeywordOverlap(
   catalog: ServiceCatalogV1 | null
 ): { sibling_service_key: string; ratio: number } | null {
   if (!catalog) return null;
-  const own = tokenizeKeywords(card.matcher_hints?.keywords);
+  const own = tokenizeOfferingKeywords(card);
   if (own.size === 0) return null;
   let best: { sibling_service_key: string; ratio: number } | null = null;
   for (const sib of catalog.services) {
     if (sib.service_key === card.service_key) continue;
-    const sibTokens = tokenizeKeywords(sib.matcher_hints?.keywords);
+    const sibTokens = tokenizeOfferingKeywords(sib);
     if (sibTokens.size === 0) continue;
     let inter = 0;
     for (const t of own) if (sibTokens.has(t)) inter += 1;
@@ -985,19 +1021,14 @@ const NARROW_CLINICAL_NOUN_RE =
   /\b(acne|diabetes|hypertension|asthma|thyroid|psoriasis|eczema|arthritis|migraine|anxiety|depression|adhd|pcos|fertility|infertility|anemia|kidney|liver|cholesterol|obesity)\b/i;
 const BROAD_LABEL_RE = /\b(general|consultation|consult|followup|follow-up|initial|visit|review|check-?up|check\s*up|teleconsult)\b/i;
 
-function keywordTokenCount(keywords: string | undefined): number {
-  if (!keywords) return 0;
-  let c = 0;
-  for (const raw of keywords.split(KEYWORD_SPLIT_RE)) {
-    if (raw.trim().length >= 3) c += 1;
-  }
-  return c;
-}
-
+/**
+ * Routing v2 (Task 05): "empty" means neither resolved example phrases nor a
+ * legacy `include_when` blob — exclude_when alone doesn't count as a routing
+ * signal for review purposes (preserves the pre-v2 asymmetry).
+ */
 function hasEmptyMatcherHints(card: ServiceOfferingV1): boolean {
-  const kw = card.matcher_hints?.keywords?.trim() ?? '';
-  const iw = card.matcher_hints?.include_when?.trim() ?? '';
-  return kw.length === 0 && iw.length === 0;
+  const resolved = resolveMatcherRouting(card);
+  return resolved.examplePhrases.length === 0 && !resolved.legacyIncludeWhen;
 }
 
 interface PriceAnomalyObservation {
@@ -1097,8 +1128,9 @@ export function runDeterministicCatalogReview(
     if (isCatchAll) continue; // catch-all is forced flexible; no hint checks
 
     const scope = resolveServiceScopeMode(card.scope_mode);
-    const kwCount = keywordTokenCount(card.matcher_hints?.keywords);
-    const includeWhen = card.matcher_hints?.include_when?.trim() ?? '';
+    const resolvedHints = resolveMatcherRouting(card);
+    const kwCount = resolvedHints.examplePhrases.length;
+    const includeWhen = resolvedHints.legacyIncludeWhen ?? '';
     const empty = hasEmptyMatcherHints(card);
 
     // --- strict_empty_hints -------------------------------------------------
