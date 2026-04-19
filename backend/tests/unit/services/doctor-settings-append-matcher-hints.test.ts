@@ -14,11 +14,16 @@
 
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import {
+  appendExamplesEntry,
   appendMatcherHintsOnDoctorCatalogOffering,
   type MatcherHintsAppendPayload,
 } from '../../../src/services/doctor-settings-service';
 import * as database from '../../../src/config/database';
 import { InternalError, ValidationError } from '../../../src/utils/errors';
+import {
+  MATCHER_HINT_EXAMPLE_MAX_CHARS,
+  MATCHER_HINT_EXAMPLES_MAX_COUNT,
+} from '../../../src/utils/service-catalog-schema';
 
 jest.mock('../../../src/config/database', () => ({
   getSupabaseAdminClient: jest.fn(),
@@ -35,7 +40,12 @@ type CatalogOfferingInput = {
   service_id: string;
   service_key: string;
   label: string;
-  matcher_hints?: { keywords?: string; include_when?: string; exclude_when?: string };
+  matcher_hints?: {
+    examples?: string[];
+    keywords?: string;
+    include_when?: string;
+    exclude_when?: string;
+  };
 };
 
 function makeCatalog(offerings: CatalogOfferingInput[]) {
@@ -69,7 +79,12 @@ function buildSupabaseMock(selectRow: unknown, updateError: unknown = null) {
 }
 
 function validCatchAllAndOne(
-  existingHintsOnA?: { keywords?: string; include_when?: string; exclude_when?: string }
+  existingHintsOnA?: {
+    examples?: string[];
+    keywords?: string;
+    include_when?: string;
+    exclude_when?: string;
+  }
 ) {
   return makeCatalog([
     {
@@ -223,6 +238,43 @@ describe('appendMatcherHintsOnDoctorCatalogOffering', () => {
     expect(mocks.update).toHaveBeenCalledTimes(1);
   });
 
+  it('legacy-only offering (no examples) preserves the existing legacy-append behavior (Task 13 back-compat regression)', async () => {
+    // Pre-Task-13 contract: when an offering has no `examples`, the writer falls
+    // back to the legacy `appendMatcherHintFields` path byte-for-byte. This test
+    // pins the back-compat branch so a future cleanup (deleting the legacy branch
+    // once telemetry shows zero v1-only hits in 30 days — see Task 13 Decision log)
+    // doesn't silently regress the un-migrated catalogs that still exist.
+    const catalog = validCatchAllAndOne({ keywords: 'acne', include_when: 'pimples' });
+    const { client, mocks } = buildSupabaseMock({ service_offerings_json: catalog });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(client as never);
+
+    const result = await appendMatcherHintsOnDoctorCatalogOffering(
+      doctorId,
+      correlationId,
+      'acne_treatment',
+      { keywords: 'cystic', include_when: 'severe acne' }
+    );
+    expect(result).toBe(true);
+
+    const updateArg = (mocks.update.mock.calls[0]![0] ?? {}) as {
+      service_offerings_json?: {
+        services?: { service_key: string; matcher_hints?: unknown }[];
+      };
+    };
+    const saved = updateArg.service_offerings_json!.services!.find(
+      (s) => s.service_key === 'acne_treatment'
+    ) as {
+      matcher_hints?: {
+        examples?: string[];
+        keywords?: string;
+        include_when?: string;
+      };
+    };
+    expect(saved.matcher_hints?.examples).toBeUndefined();
+    expect(saved.matcher_hints?.keywords).toBe('acne; cystic');
+    expect(saved.matcher_hints?.include_when).toBe('pimples; severe acne');
+  });
+
   it('is idempotent: skips DB write and returns false when merge yields unchanged hints', async () => {
     // Edge: only whitespace-after-trim input doesn't even reach the DB (covered by empty-patch
     // test above). This test forces the "unchanged" branch by providing a fragment that
@@ -245,5 +297,234 @@ describe('appendMatcherHintsOnDoctorCatalogOffering', () => {
     );
     expect(result).toBe(false);
     expect(mocks.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('appendExamplesEntry (Task 13 — pure helper)', () => {
+  it('appends a new fragment, trims whitespace, returns changed=true', () => {
+    const { next, changed } = appendExamplesEntry(
+      ['acne on my back', 'cystic pimples'],
+      '   severe acne breakout   '
+    );
+    expect(changed).toBe(true);
+    expect(next).toEqual(['acne on my back', 'cystic pimples', 'severe acne breakout']);
+  });
+
+  it('is idempotent / case-insensitive on duplicates: returns changed=false and the original list', () => {
+    const existing = ['acne on my back', 'CYSTIC pimples'];
+    const { next, changed } = appendExamplesEntry(existing, '  cystic PIMPLES  ');
+    expect(changed).toBe(false);
+    expect(next).toEqual(existing);
+  });
+
+  it('truncates fragments that exceed maxLen (defaults to MATCHER_HINT_EXAMPLE_MAX_CHARS)', () => {
+    const long = 'x'.repeat(MATCHER_HINT_EXAMPLE_MAX_CHARS + 50);
+    const { next, changed } = appendExamplesEntry(['seed'], long);
+    expect(changed).toBe(true);
+    expect(next[1]!.length).toBe(MATCHER_HINT_EXAMPLE_MAX_CHARS);
+  });
+
+  it('returns changed=false for empty / whitespace-only fragments without writing', () => {
+    const existing = ['seed'];
+    expect(appendExamplesEntry(existing, '').changed).toBe(false);
+    expect(appendExamplesEntry(existing, '   ').changed).toBe(false);
+  });
+
+  it('FIFO-evicts the oldest entry when adding past the cap (Task 13 Decision log)', () => {
+    const full = Array.from({ length: MATCHER_HINT_EXAMPLES_MAX_COUNT }, (_, i) => `phrase-${i}`);
+    const { next, changed } = appendExamplesEntry(full, 'newest patient phrase');
+    expect(changed).toBe(true);
+    expect(next.length).toBe(MATCHER_HINT_EXAMPLES_MAX_COUNT);
+    expect(next[0]).toBe('phrase-1');
+    expect(next[next.length - 1]).toBe('newest patient phrase');
+  });
+});
+
+describe('appendMatcherHintsOnDoctorCatalogOffering — Routing v2 examples-aware branch (Task 13)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('v2 offering + new fragment → fragment appended to examples[], legacy fields stay absent', async () => {
+    const catalog = validCatchAllAndOne({ examples: ['acne on my back', 'cystic pimples'] });
+    const { client, mocks } = buildSupabaseMock({ service_offerings_json: catalog });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(client as never);
+
+    const result = await appendMatcherHintsOnDoctorCatalogOffering(
+      doctorId,
+      correlationId,
+      'acne_treatment',
+      { include_when: 'severe acne breakout' }
+    );
+    expect(result).toBe(true);
+    expect(mocks.update).toHaveBeenCalledTimes(1);
+
+    const updateArg = (mocks.update.mock.calls[0]![0] ?? {}) as {
+      service_offerings_json?: {
+        services?: { service_key: string; matcher_hints?: unknown }[];
+      };
+    };
+    const saved = updateArg.service_offerings_json!.services!.find(
+      (s) => s.service_key === 'acne_treatment'
+    ) as {
+      matcher_hints?: {
+        examples?: string[];
+        keywords?: string;
+        include_when?: string;
+        exclude_when?: string;
+      };
+    };
+    expect(saved.matcher_hints?.examples).toEqual([
+      'acne on my back',
+      'cystic pimples',
+      'severe acne breakout',
+    ]);
+    expect(saved.matcher_hints?.keywords).toBeUndefined();
+    expect(saved.matcher_hints?.include_when).toBeUndefined();
+  });
+
+  it('v2 offering + already-present fragment (case-insensitive) → no DB write, returns false', async () => {
+    const catalog = validCatchAllAndOne({ examples: ['acne on my back', 'cystic pimples'] });
+    const { client, mocks } = buildSupabaseMock({ service_offerings_json: catalog });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(client as never);
+
+    const result = await appendMatcherHintsOnDoctorCatalogOffering(
+      doctorId,
+      correlationId,
+      'acne_treatment',
+      { include_when: '  CYSTIC pimples  ' }
+    );
+    expect(result).toBe(false);
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it('v2 offering at the 24-entry cap + new fragment → oldest entry dropped, total stays ≤ 24', async () => {
+    const fullExamples = Array.from(
+      { length: MATCHER_HINT_EXAMPLES_MAX_COUNT },
+      (_, i) => `existing-phrase-${i}`
+    );
+    const catalog = validCatchAllAndOne({ examples: fullExamples });
+    const { client, mocks } = buildSupabaseMock({ service_offerings_json: catalog });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(client as never);
+
+    const result = await appendMatcherHintsOnDoctorCatalogOffering(
+      doctorId,
+      correlationId,
+      'acne_treatment',
+      { include_when: 'newest learner phrase' }
+    );
+    expect(result).toBe(true);
+
+    const updateArg = (mocks.update.mock.calls[0]![0] ?? {}) as {
+      service_offerings_json?: {
+        services?: { service_key: string; matcher_hints?: { examples?: string[] } }[];
+      };
+    };
+    const saved = updateArg.service_offerings_json!.services!.find(
+      (s) => s.service_key === 'acne_treatment'
+    )!;
+    const examples = saved.matcher_hints!.examples!;
+    expect(examples.length).toBe(MATCHER_HINT_EXAMPLES_MAX_COUNT);
+    expect(examples[0]).toBe('existing-phrase-1');
+    expect(examples[examples.length - 1]).toBe('newest learner phrase');
+  });
+
+  it('mixed-shape offering (examples + legacy keywords) + new fragment → appended to examples only, legacy keywords byte-identical', async () => {
+    const catalog = validCatchAllAndOne({
+      examples: ['acne on my back'],
+      keywords: 'acne, pimples, dermatology',
+      include_when: 'on the face',
+    });
+    const { client, mocks } = buildSupabaseMock({ service_offerings_json: catalog });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(client as never);
+
+    const result = await appendMatcherHintsOnDoctorCatalogOffering(
+      doctorId,
+      correlationId,
+      'acne_treatment',
+      { include_when: 'cystic acne breakout' }
+    );
+    expect(result).toBe(true);
+
+    const updateArg = (mocks.update.mock.calls[0]![0] ?? {}) as {
+      service_offerings_json?: {
+        services?: { service_key: string; matcher_hints?: unknown }[];
+      };
+    };
+    const saved = updateArg.service_offerings_json!.services!.find(
+      (s) => s.service_key === 'acne_treatment'
+    ) as {
+      matcher_hints?: {
+        examples?: string[];
+        keywords?: string;
+        include_when?: string;
+      };
+    };
+    expect(saved.matcher_hints?.examples).toEqual([
+      'acne on my back',
+      'cystic acne breakout',
+    ]);
+    expect(saved.matcher_hints?.keywords).toBe('acne, pimples, dermatology');
+    expect(saved.matcher_hints?.include_when).toBe('on the face');
+  });
+
+  it('v2 offering + only exclude_when payload → routes through single-string merge (same field in v1/v2)', async () => {
+    const catalog = validCatchAllAndOne({
+      examples: ['acne on my back'],
+      exclude_when: 'hair loss',
+    });
+    const { client, mocks } = buildSupabaseMock({ service_offerings_json: catalog });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(client as never);
+
+    const result = await appendMatcherHintsOnDoctorCatalogOffering(
+      doctorId,
+      correlationId,
+      'acne_treatment',
+      { exclude_when: 'wig consultation' }
+    );
+    expect(result).toBe(true);
+
+    const updateArg = (mocks.update.mock.calls[0]![0] ?? {}) as {
+      service_offerings_json?: {
+        services?: { service_key: string; matcher_hints?: unknown }[];
+      };
+    };
+    const saved = updateArg.service_offerings_json!.services!.find(
+      (s) => s.service_key === 'acne_treatment'
+    ) as {
+      matcher_hints?: { examples?: string[]; exclude_when?: string };
+    };
+    expect(saved.matcher_hints?.examples).toEqual(['acne on my back']);
+    expect(saved.matcher_hints?.exclude_when).toBe('hair loss; wig consultation');
+  });
+
+  it('v2 offering + keywords-only payload (caller fallback path) → folds kw into a single examples entry', async () => {
+    const catalog = validCatchAllAndOne({ examples: ['acne on my back'] });
+    const { client, mocks } = buildSupabaseMock({ service_offerings_json: catalog });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(client as never);
+
+    const result = await appendMatcherHintsOnDoctorCatalogOffering(
+      doctorId,
+      correlationId,
+      'acne_treatment',
+      { keywords: 'persistent hormonal acne' }
+    );
+    expect(result).toBe(true);
+
+    const updateArg = (mocks.update.mock.calls[0]![0] ?? {}) as {
+      service_offerings_json?: {
+        services?: { service_key: string; matcher_hints?: unknown }[];
+      };
+    };
+    const saved = updateArg.service_offerings_json!.services!.find(
+      (s) => s.service_key === 'acne_treatment'
+    ) as {
+      matcher_hints?: { examples?: string[]; keywords?: string };
+    };
+    expect(saved.matcher_hints?.examples).toEqual([
+      'acne on my back',
+      'persistent hormonal acne',
+    ]);
+    expect(saved.matcher_hints?.keywords).toBeUndefined();
   });
 });

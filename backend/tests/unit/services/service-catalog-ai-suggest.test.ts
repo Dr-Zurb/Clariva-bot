@@ -28,7 +28,27 @@ jest.mock('../../../src/utils/audit-logger', () => ({
   logAIClassification: jest.fn(async () => undefined),
 }));
 
+// Plan service-catalog-matcher-routing-v2 / Task 12: tests below exercise the
+// real `defaultRunAiSuggestLlm` path (per-mode `max_completion_tokens` lookup +
+// `finish_reason: 'length'` truncation handling). We mock the OpenAI config so
+// `getOpenAIClient()` returns a stub whose `chat.completions.create` we can
+// program per-test without an API key. Tests that inject `runLlm` via options
+// are unaffected — they bypass the default runner entirely.
+// Cast through `unknown` so per-test `mockResolvedValue` calls accept any
+// completion shape — the real OpenAI SDK return type is large and we only
+// project a handful of fields in `defaultRunAiSuggestLlm`.
+const mockChatCompletionsCreate = jest.fn(
+  async (_args: unknown): Promise<unknown> => undefined
+);
+jest.mock('../../../src/config/openai', () => ({
+  getOpenAIClient: jest.fn(() => ({
+    chat: { completions: { create: mockChatCompletionsCreate } },
+  })),
+  getOpenAIConfig: jest.fn(() => ({ model: 'gpt-test', maxTokens: 256 })),
+}));
+
 import {
+  AI_SUGGEST_MAX_COMPLETION_TOKENS_BY_MODE,
   AiSuggestProfileIncompleteError,
   buildReviewPrompt,
   buildSingleCardPrompt,
@@ -43,6 +63,7 @@ import {
   type AiSuggestContext,
   type AiSuggestRunLlm,
 } from '../../../src/services/service-catalog-ai-suggest';
+import * as auditLogger from '../../../src/utils/audit-logger';
 import {
   DETERMINISTIC_ISSUE_TYPES,
   LLM_ISSUE_TYPES,
@@ -1154,7 +1175,7 @@ describe('catalog override (post-Plan-04 bug-fix)', () => {
 // ----------------------------------------------------------------------------
 
 describe('routing v2 — AI suggest + review use resolveMatcherRouting (Task 05)', () => {
-  it('summarizeExistingCatalogForLlm renders v2 examples-only row as keywords="…"', async () => {
+  it('summarizeExistingCatalogForLlm renders v2 examples-only row as examples="…" (Task 11 label flip)', async () => {
     mockedGetDoctorSettingsForUser.mockResolvedValue(
       settingsFixture({
         service_offerings_json: {
@@ -1175,7 +1196,9 @@ describe('routing v2 — AI suggest + review use resolveMatcherRouting (Task 05)
     const ctx = await loadAiSuggestContext(doctorId, doctorId, correlationId);
     const prompt = buildSingleCardPrompt(ctx, { label: 'Hair fall' });
     expect(prompt).toContain('- acne_card [scope:strict]');
-    expect(prompt).toContain('keywords="my acne is flaring, pimples on my chin"');
+    expect(prompt).toContain('examples="my acne is flaring, pimples on my chin"');
+    // Legacy label must be gone from the catalog summary line on a v2 row.
+    expect(prompt).not.toContain('keywords="my acne is flaring');
   });
 
   it('summarizeExistingCatalogForLlm prefers v2 examples over legacy keywords on the same row', async () => {
@@ -1202,7 +1225,7 @@ describe('routing v2 — AI suggest + review use resolveMatcherRouting (Task 05)
     );
     const ctx = await loadAiSuggestContext(doctorId, doctorId, correlationId);
     const prompt = buildStarterCatalogPrompt(ctx);
-    expect(prompt).toContain('keywords="v2 phrase one, v2 phrase two"');
+    expect(prompt).toContain('examples="v2 phrase one, v2 phrase two"');
     expect(prompt).not.toContain('legacy, kw, ignored');
   });
 
@@ -1367,7 +1390,10 @@ describe('buildSingleCardPrompt — existingHints.examples (Routing v2 Task 06)'
     expect(out).not.toContain('include_when: legacy include ignored');
   });
 
-  it('falls back to legacy keywords/include_when when examples is absent or empty', () => {
+  it('falls back to legacy keywords/include_when (under a legacy header) when examples is absent or empty', () => {
+    // Task 11: when the editor sends only legacy fields (un-migrated row), the
+    // prompt now renders them under a "legacy — please convert to examples"
+    // header so the LLM is explicitly told to migrate, not to mirror.
     const outAbsent = buildSingleCardPrompt(ctx, {
       label: 'Acne consult',
       existingHints: {
@@ -1375,8 +1401,9 @@ describe('buildSingleCardPrompt — existingHints.examples (Routing v2 Task 06)'
         include_when: 'breakouts',
       },
     });
-    expect(outAbsent).toContain('keywords: acne, pimples');
-    expect(outAbsent).toContain('include_when: breakouts');
+    expect(outAbsent).toContain('keywords (legacy): acne, pimples');
+    expect(outAbsent).toContain('include_when (legacy): breakouts');
+    expect(outAbsent).toContain('please convert to `examples[]`');
 
     const outEmpty = buildSingleCardPrompt(ctx, {
       label: 'Acne consult',
@@ -1385,7 +1412,8 @@ describe('buildSingleCardPrompt — existingHints.examples (Routing v2 Task 06)'
         keywords: 'acne, pimples',
       },
     });
-    expect(outEmpty).toContain('keywords: acne, pimples');
+    expect(outEmpty).toContain('keywords (legacy): acne, pimples');
+    expect(outEmpty).toContain('please convert to `examples[]`');
   });
 
   it('aiSuggestRequestSchema accepts existingHints.examples and counts it toward "has input"', () => {
@@ -1412,5 +1440,557 @@ describe('buildSingleCardPrompt — existingHints.examples (Routing v2 Task 06)'
       },
     });
     expect(bad.success).toBe(false);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Plan service-catalog-matcher-routing-v2 — Task 12
+// Per-mode `max_completion_tokens` + `finish_reason: 'length'` truncation
+// surfaces a doctor-facing error instead of "AI returned malformed JSON".
+//
+// These tests exercise the real `defaultRunAiSuggestLlm` (no `runLlm` injection)
+// against a mocked `chat.completions.create` so we can assert the per-mode cap
+// is wired correctly, the truncation marker reaches the audit logger, and the
+// success / malformed-JSON / empty-completion paths still behave as before.
+// ----------------------------------------------------------------------------
+
+describe('Task 12 — per-mode token budget + truncation handling', () => {
+  const mockedLogAIClassification = (
+    auditLogger as unknown as { logAIClassification: jest.Mock }
+  ).logAIClassification;
+
+  beforeEach(() => {
+    mockedGetDoctorSettingsForUser.mockResolvedValue(settingsFixture() as never);
+    mockChatCompletionsCreate.mockReset();
+    mockedLogAIClassification.mockClear();
+  });
+
+  /**
+   * The per-mode cap map is the contract — pin it explicitly so a future
+   * accidental edit (e.g. dropping `starter` back to 1500 to "save tokens")
+   * fails CI rather than silently re-introducing the truncation bug.
+   */
+  it('AI_SUGGEST_MAX_COMPLETION_TOKENS_BY_MODE has the expected per-mode caps', () => {
+    expect(AI_SUGGEST_MAX_COMPLETION_TOKENS_BY_MODE).toEqual({
+      single_card: 1500,
+      starter: 6000,
+      review: 4000,
+    });
+  });
+
+  it('passes max_completion_tokens=1500 to OpenAI for single_card mode', async () => {
+    mockChatCompletionsCreate.mockResolvedValue({
+      choices: [
+        {
+          finish_reason: 'stop',
+          message: {
+            content: JSON.stringify({
+              cards: [
+                {
+                  service_key: 'acne_consult',
+                  label: 'Acne consultation',
+                  scope_mode: 'strict',
+                  matcher_hints: { keywords: 'acne' },
+                  modalities: { video: { enabled: true, price_minor: 50000 } },
+                },
+              ],
+            }),
+          },
+        },
+      ],
+      usage: { total_tokens: 800 },
+    });
+
+    await generateAiCatalogSuggestion(
+      doctorId,
+      doctorId,
+      { mode: 'single_card', payload: { label: 'Acne' } },
+      correlationId
+    );
+
+    expect(mockChatCompletionsCreate).toHaveBeenCalledTimes(1);
+    expect(mockChatCompletionsCreate.mock.calls[0]![0]).toMatchObject({
+      max_completion_tokens: 1500,
+      response_format: { type: 'json_object' },
+    });
+  });
+
+  it('passes max_completion_tokens=6000 to OpenAI for starter mode', async () => {
+    mockChatCompletionsCreate.mockResolvedValue({
+      choices: [
+        {
+          finish_reason: 'stop',
+          message: {
+            content: JSON.stringify({
+              cards: [
+                {
+                  service_key: CATALOG_CATCH_ALL_SERVICE_KEY,
+                  label: 'Other',
+                  scope_mode: 'flexible',
+                  modalities: { video: { enabled: true, price_minor: 50000 } },
+                },
+              ],
+            }),
+          },
+        },
+      ],
+      usage: { total_tokens: 4000 },
+    });
+
+    await generateAiCatalogSuggestion(doctorId, doctorId, { mode: 'starter' }, correlationId);
+
+    expect(mockChatCompletionsCreate.mock.calls[0]![0]).toMatchObject({
+      max_completion_tokens: 6000,
+    });
+  });
+
+  it('passes max_completion_tokens=4000 to OpenAI for review mode', async () => {
+    mockedGetDoctorSettingsForUser.mockResolvedValue(
+      settingsFixture({
+        service_offerings_json: {
+          version: 1,
+          services: [
+            {
+              service_id: '11111111-1111-4111-8111-111111111111',
+              service_key: 'acne_card',
+              label: 'Acne consult',
+              scope_mode: 'strict',
+              matcher_hints: { examples: ['my acne is flaring'] },
+              modalities: { video: { enabled: true, price_minor: 50000 } },
+            },
+            {
+              service_id: '22222222-2222-4222-8222-222222222222',
+              service_key: CATALOG_CATCH_ALL_SERVICE_KEY,
+              label: 'Other',
+              scope_mode: 'flexible',
+              modalities: { video: { enabled: true, price_minor: 50000 } },
+            },
+          ],
+        },
+      }) as never
+    );
+    mockChatCompletionsCreate.mockResolvedValue({
+      choices: [
+        {
+          finish_reason: 'stop',
+          message: { content: JSON.stringify({ issues: [] }) },
+        },
+      ],
+      usage: { total_tokens: 2200 },
+    });
+
+    await generateAiCatalogSuggestion(doctorId, doctorId, { mode: 'review' }, correlationId);
+
+    expect(mockChatCompletionsCreate.mock.calls[0]![0]).toMatchObject({
+      max_completion_tokens: 4000,
+    });
+  });
+
+  it('finish_reason="length" throws a doctor-facing truncation error (not "malformed JSON")', async () => {
+    // Valid JSON prefix that abruptly ends mid-string — exactly what we'd see
+    // from OpenAI when `max_completion_tokens` is hit while emitting a value.
+    const truncatedPrefix = '{"cards":[{"service_key":"acne","label":"Acn';
+    mockChatCompletionsCreate.mockResolvedValue({
+      choices: [
+        {
+          finish_reason: 'length',
+          message: { content: truncatedPrefix },
+        },
+      ],
+      usage: { total_tokens: 1500 },
+    });
+
+    await expect(
+      generateAiCatalogSuggestion(
+        doctorId,
+        doctorId,
+        { mode: 'single_card', payload: { label: 'Acne' } },
+        correlationId
+      )
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('cut short'),
+    });
+
+    await expect(
+      generateAiCatalogSuggestion(
+        doctorId,
+        doctorId,
+        { mode: 'single_card', payload: { label: 'Acne' } },
+        correlationId
+      )
+    ).rejects.toBeInstanceOf(InternalError);
+  });
+
+  it('finish_reason="length" emits service_catalog_ai_suggest_truncated to the audit log', async () => {
+    mockChatCompletionsCreate.mockResolvedValue({
+      choices: [
+        {
+          finish_reason: 'length',
+          message: { content: '{"cards":[{"service_key":"x"' },
+        },
+      ],
+      usage: { total_tokens: 1500 },
+    });
+
+    await expect(
+      generateAiCatalogSuggestion(
+        doctorId,
+        doctorId,
+        { mode: 'single_card', payload: { label: 'Acne' } },
+        correlationId
+      )
+    ).rejects.toThrow();
+
+    // The truncation branch must log the new marker (and not the legacy
+    // *_openai_error or *_empty_completion markers).
+    expect(mockedLogAIClassification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'failure',
+        errorMessage: 'service_catalog_ai_suggest_truncated',
+        tokens: 1500,
+      })
+    );
+    const calls = mockedLogAIClassification.mock.calls.flat();
+    for (const c of calls) {
+      const obj = c as { errorMessage?: string };
+      expect(obj.errorMessage).not.toBe('service_catalog_ai_suggest_openai_error');
+      expect(obj.errorMessage).not.toBe('service_catalog_ai_suggest_empty_completion');
+    }
+  });
+
+  it('finish_reason="stop" with valid JSON: success path is unchanged (no truncation marker)', async () => {
+    mockChatCompletionsCreate.mockResolvedValue({
+      choices: [
+        {
+          finish_reason: 'stop',
+          message: {
+            content: JSON.stringify({
+              cards: [
+                {
+                  service_key: 'acne_consult',
+                  label: 'Acne',
+                  scope_mode: 'strict',
+                  matcher_hints: { keywords: 'acne' },
+                  modalities: { video: { enabled: true, price_minor: 50000 } },
+                },
+              ],
+            }),
+          },
+        },
+      ],
+      usage: { total_tokens: 600 },
+    });
+
+    const result = await generateAiCatalogSuggestion(
+      doctorId,
+      doctorId,
+      { mode: 'single_card', payload: { label: 'Acne' } },
+      correlationId
+    );
+
+    if (result.mode !== 'single_card') throw new Error('unreachable');
+    expect(result.cards).toHaveLength(1);
+    expect(result.cards[0]?.service_key).toBe('acne_consult');
+
+    // Audit log got a success row — never a truncation marker.
+    expect(mockedLogAIClassification).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'success', tokens: 600 })
+    );
+    for (const c of mockedLogAIClassification.mock.calls.flat()) {
+      expect((c as { errorMessage?: string }).errorMessage).not.toBe(
+        'service_catalog_ai_suggest_truncated'
+      );
+    }
+  });
+
+  it('finish_reason="stop" with invalid JSON: still surfaces "malformed JSON" (truncation branch is not triggered)', async () => {
+    // The model finished cleanly (`stop`) but emitted non-JSON. This is a true
+    // model bug (not truncation) — keep the existing "malformed JSON" copy and
+    // do NOT log the truncation marker.
+    mockChatCompletionsCreate.mockResolvedValue({
+      choices: [
+        {
+          finish_reason: 'stop',
+          message: { content: 'definitely not json' },
+        },
+      ],
+      usage: { total_tokens: 200 },
+    });
+
+    await expect(
+      generateAiCatalogSuggestion(
+        doctorId,
+        doctorId,
+        { mode: 'single_card', payload: { label: 'Acne' } },
+        correlationId
+      )
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('malformed JSON'),
+    });
+
+    for (const c of mockedLogAIClassification.mock.calls.flat()) {
+      expect((c as { errorMessage?: string }).errorMessage).not.toBe(
+        'service_catalog_ai_suggest_truncated'
+      );
+    }
+  });
+
+  it('empty completion (null content, finish_reason="stop"): existing *_empty_completion marker preserved', async () => {
+    mockChatCompletionsCreate.mockResolvedValue({
+      choices: [{ finish_reason: 'stop', message: { content: null } }],
+      usage: { total_tokens: 0 },
+    });
+
+    await expect(
+      generateAiCatalogSuggestion(
+        doctorId,
+        doctorId,
+        { mode: 'single_card', payload: { label: 'Acne' } },
+        correlationId
+      )
+    ).rejects.toThrow();
+
+    expect(mockedLogAIClassification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'failure',
+        errorMessage: 'service_catalog_ai_suggest_empty_completion',
+      })
+    );
+  });
+
+  it('SDK throws (network / 5xx): existing *_openai_error marker preserved + ServiceUnavailableError', async () => {
+    mockChatCompletionsCreate.mockRejectedValue(new Error('socket hang up'));
+
+    await expect(
+      generateAiCatalogSuggestion(
+        doctorId,
+        doctorId,
+        { mode: 'single_card', payload: { label: 'Acne' } },
+        correlationId
+      )
+    ).rejects.toMatchObject({
+      // ServiceUnavailableError surfaces this exact copy today.
+      message: expect.stringContaining('AI suggestion service is unavailable'),
+    });
+
+    expect(mockedLogAIClassification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'failure',
+        errorMessage: 'service_catalog_ai_suggest_openai_error',
+      })
+    );
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Plan service-catalog-matcher-routing-v2 — Task 11
+// AI suggest prompts emit `matcher_hints.examples[]`, not legacy keywords /
+// include_when. Closes the autofill loop so AI-generated cards never re-create
+// legacy-shaped hints after the editor + resolver + matcher already migrated.
+// ----------------------------------------------------------------------------
+
+describe('Task 11 — AI suggest prompts emit examples[] (no legacy keywords/include_when)', () => {
+  const ctx: AiSuggestContext = {
+    doctorId,
+    specialty: 'Dermatology',
+    practiceName: 'Test Clinic',
+    addressSummary: 'Bengaluru, KA',
+    country: 'IN',
+    consultationTypes: 'Video, Voice',
+    appointmentFeeMinor: 50000,
+    appointmentFeeCurrency: 'INR',
+    catalog: null,
+  };
+
+  // ---------------------- Schema-block flips ----------------------
+
+  it('SCOPE_MODE_RULE_BLOCK references `examples[]`, not "keywords / include_when"', () => {
+    expect(SCOPE_MODE_RULE_BLOCK).toContain('concrete `examples[]`');
+    expect(SCOPE_MODE_RULE_BLOCK).toContain('non-empty `examples[]` array');
+    // The v1 wording referenced "concrete keywords / include_when" — must be gone
+    // so the LLM no longer sees it embedded in every prompt.
+    expect(SCOPE_MODE_RULE_BLOCK).not.toContain('concrete keywords / include_when');
+    expect(SCOPE_MODE_RULE_BLOCK).not.toContain('non-empty keywords or include_when');
+  });
+
+  it('single_card prompt: schema instructs `matcher_hints.examples` and forbids legacy keys', () => {
+    const out = buildSingleCardPrompt(ctx, { label: 'Acne consult' });
+    // Positive: the new schema field is present in the JSON-only schema block.
+    expect(out).toContain('"examples":');
+    expect(out).toContain('"matcher_hints"');
+    expect(out).toContain('Do NOT emit "keywords" or "include_when"');
+    // Negative: the legacy schema sub-keys (`"keywords":` and `"include_when":`)
+    // must not appear inside the JSON schema block. We anchor on the colon to
+    // avoid false-positives on prose mentions elsewhere in the prompt.
+    expect(out).not.toMatch(/"keywords"\s*:\s*"/);
+    expect(out).not.toMatch(/"include_when"\s*:\s*"/);
+  });
+
+  it('starter prompt: schema instructs `matcher_hints.examples` and forbids legacy keys', () => {
+    const out = buildStarterCatalogPrompt(ctx);
+    expect(out).toContain('"examples":');
+    expect(out).toContain('Do NOT emit "keywords" or "include_when"');
+    expect(out).not.toMatch(/"keywords"\s*:\s*"/);
+    expect(out).not.toMatch(/"include_when"\s*:\s*"/);
+  });
+
+  it('review prompt: suggestedCard.matcher_hints uses `examples`, not legacy keys', () => {
+    const out = buildReviewPrompt(ctx);
+    // The review schema's `suggestedCard` block must carry the examples array.
+    expect(out).toMatch(/"matcher_hints"\s*:\s*\{\s*"examples"\s*:/);
+    // The literal legacy KV pair (`"keywords": "..."`) inside the suggestedCard
+    // block must be gone. Note: the prose `overlap` description still mentions
+    // "legacy keywords / include_when text" for un-migrated rows — that's
+    // intentional context, not a schema instruction. We anchor on the JSON
+    // KV form so prose mentions don't trip the assertion.
+    expect(out).not.toMatch(/"keywords"\s*:\s*"\.{3}"/);
+    expect(out).not.toMatch(/"include_when"\s*:\s*"\.{3}"/);
+  });
+
+  // ---------------------- Existing-hints rendering ----------------------
+
+  it('single_card existing-hints block: legacy-only payload renders under a "please convert" header', () => {
+    const out = buildSingleCardPrompt(ctx, {
+      label: 'Acne consult',
+      existingHints: { keywords: 'acne, pimples', include_when: 'breakouts' },
+    });
+    expect(out).toContain('legacy — please convert to `examples[]`');
+    expect(out).toContain('keywords (legacy): acne, pimples');
+    expect(out).toContain('include_when (legacy): breakouts');
+    // Without the legacy header, pre-Task-11 the LLM routinely mirrored these
+    // back as `keywords` / `include_when` on the generated card.
+  });
+
+  it('single_card existing-hints block: examples-bearing payload does NOT render the legacy header', () => {
+    const out = buildSingleCardPrompt(ctx, {
+      label: 'Acne consult',
+      existingHints: { examples: ['my acne keeps flaring'] },
+    });
+    expect(out).not.toContain('legacy — please convert');
+    expect(out).toContain('examples: my acne keeps flaring');
+  });
+
+  // ---------------------- Normalizer defense ----------------------
+
+  it('normalizer defense: when LLM emits BOTH examples + legacy keywords/include_when, the saved card keeps only examples', async () => {
+    // A model that ignores the new schema and emits both shapes must not be
+    // allowed to silently re-introduce dual-write. The normalizer drops the
+    // legacy fields whenever `examples` is present.
+    mockedGetDoctorSettingsForUser.mockResolvedValue(settingsFixture() as never);
+    const llmJson = JSON.stringify({
+      cards: [
+        {
+          service_key: 'acne_consult',
+          label: 'Acne consultation',
+          scope_mode: 'strict',
+          matcher_hints: {
+            examples: ['my acne keeps flaring', 'pimples on my chin'],
+            keywords: 'acne, pimples, breakouts',
+            include_when: 'patient describes acne or pimples',
+            exclude_when: 'pregnancy',
+          },
+          modalities: { video: { enabled: true, price_minor: 50000 } },
+        },
+      ],
+    });
+
+    const result = await generateAiCatalogSuggestion(
+      doctorId,
+      doctorId,
+      { mode: 'single_card', payload: { label: 'Acne' } },
+      correlationId,
+      { runLlm: makeStubLlm({ single_card: llmJson }) }
+    );
+
+    if (result.mode !== 'single_card') throw new Error('unreachable');
+    const hints = result.cards[0]?.matcher_hints;
+    expect(hints?.examples).toEqual(['my acne keeps flaring', 'pimples on my chin']);
+    expect(hints?.exclude_when).toBe('pregnancy');
+    // The defense: legacy fields stripped even though the LLM emitted them.
+    expect(hints?.keywords).toBeUndefined();
+    expect(hints?.include_when).toBeUndefined();
+  });
+
+  it('normalizer back-compat: when LLM emits only legacy keywords (no examples), legacy fields still flow through', async () => {
+    // The migration-window contract: an old or schema-ignoring model that emits
+    // only legacy fields must still produce a savable card. The doctor will see
+    // the amber "older matching hints" callout (Task 07) and can convert with
+    // one tap. Pre-Task-13 the staff-feedback writer still appends to legacy
+    // fields too, so dropping legacy entirely here would lose data.
+    mockedGetDoctorSettingsForUser.mockResolvedValue(settingsFixture() as never);
+    const llmJson = JSON.stringify({
+      cards: [
+        {
+          service_key: 'old_school',
+          label: 'Old school card',
+          scope_mode: 'strict',
+          matcher_hints: {
+            keywords: 'legacy, kw, only',
+            include_when: 'no examples here',
+          },
+          modalities: { video: { enabled: true, price_minor: 50000 } },
+        },
+      ],
+    });
+
+    const result = await generateAiCatalogSuggestion(
+      doctorId,
+      doctorId,
+      { mode: 'single_card', payload: { label: 'Old' } },
+      correlationId,
+      { runLlm: makeStubLlm({ single_card: llmJson }) }
+    );
+
+    if (result.mode !== 'single_card') throw new Error('unreachable');
+    const hints = result.cards[0]?.matcher_hints;
+    expect(hints?.examples).toBeUndefined();
+    expect(hints?.keywords).toBe('legacy, kw, only');
+    expect(hints?.include_when).toBe('no examples here');
+  });
+
+  // ---------------------- End-to-end single_card v2 ----------------------
+
+  it('end-to-end single_card: a v2-shaped LLM response round-trips cleanly with examples[] only', async () => {
+    mockedGetDoctorSettingsForUser.mockResolvedValue(settingsFixture() as never);
+    const llmJson = JSON.stringify({
+      cards: [
+        {
+          service_key: 'eczema_consult',
+          label: 'Eczema consultation',
+          description: 'Initial eczema workup',
+          scope_mode: 'strict',
+          matcher_hints: {
+            examples: [
+              'my eczema is flaring up',
+              'itchy patches on my arms',
+              'dry red skin behind my knees',
+            ],
+            exclude_when: 'open wounds, infected skin',
+          },
+          modalities: { video: { enabled: true, price_minor: 50000 } },
+        },
+      ],
+    });
+
+    const result = await generateAiCatalogSuggestion(
+      doctorId,
+      doctorId,
+      { mode: 'single_card', payload: { label: 'Eczema' } },
+      correlationId,
+      { runLlm: makeStubLlm({ single_card: llmJson }) }
+    );
+
+    if (result.mode !== 'single_card') throw new Error('unreachable');
+    const card = result.cards[0]!;
+    expect(card.service_key).toBe('eczema_consult');
+    expect(card.scope_mode).toBe('strict');
+    expect(card.matcher_hints?.examples).toEqual([
+      'my eczema is flaring up',
+      'itchy patches on my arms',
+      'dry red skin behind my knees',
+    ]);
+    expect(card.matcher_hints?.exclude_when).toBe('open wounds, infected skin');
+    expect(card.matcher_hints?.keywords).toBeUndefined();
+    expect(card.matcher_hints?.include_when).toBeUndefined();
   });
 });

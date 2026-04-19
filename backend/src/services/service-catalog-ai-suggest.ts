@@ -205,12 +205,19 @@ export class AiSuggestProfileIncompleteError extends AppError {
  * SCOPE_MODE_RULE_BLOCK mirrors the policy already in
  * `service-catalog-matcher.ts`'s system prompt (Plan 01 Task 04). Keeping the
  * generation-side and matching-side rules in one constant prevents drift.
+ *
+ * Routing v2 wording (Plan 19-04, Task 11): the v1 form referenced "concrete
+ * keywords / include_when" because the legacy schema split routing into two
+ * fields; v2 unifies both into a single `matcher_hints.examples[]` patient-
+ * phrase list, so the rule below references it by name. This is the single
+ * source of truth for "what does a strict card need" — both the matcher prompt
+ * and the AI-suggest prompt embed this constant verbatim.
  */
 export const SCOPE_MODE_RULE_BLOCK = `Scope mode rules (set "scope_mode" on every card):
-- "strict" — pick ONLY when the card targets a specific clinical condition or workflow that the matcher should refuse to broaden (e.g. "Diabetes follow-up", "Acne consultation", "Post-op wound check"). Strict cards must always carry concrete keywords / include_when so the matcher has something to anchor to. New named services default to strict.
+- "strict" — pick ONLY when the card targets a specific clinical condition or workflow that the matcher should refuse to broaden (e.g. "Diabetes follow-up", "Acne consultation", "Post-op wound check"). Strict cards must always carry a concrete \`examples[]\` list so the matcher has something to anchor to. New named services default to strict.
 - "flexible" — pick for broad / general-category cards (e.g. "General consultation", "Internal medicine follow-up") OR the mandatory catch-all "Other" row. Flexible cards may match plausibly-related complaints even without exhaustive hints.
 - The catch-all card with service_key "${CATALOG_CATCH_ALL_SERVICE_KEY}" MUST be "flexible" — it is the safety net.
-- A strict card with empty matcher_hints is a configuration bug; if you produce strict, also produce non-empty keywords or include_when.`;
+- A strict card with empty matcher_hints is a configuration bug; if you produce strict, also produce a non-empty \`examples[]\` array.`;
 
 export const MODALITY_RULE_BLOCK = `Modality selection rules ("modalities.text|voice|video.enabled"):
 - Use "text" for asynchronous chat-style follow-ups (medication adjustments, lab review questions, brief check-ins).
@@ -237,6 +244,17 @@ const ALL_RULE_BLOCKS = [
   REGIONAL_TERMINOLOGY_RULE_BLOCK,
 ];
 
+/**
+ * Routing v2 (Plan 19-04, Task 11): the schema below tells the LLM to emit
+ * `matcher_hints.examples` (an array of patient-style phrases) plus the
+ * orthogonal `exclude_when` red-flag string. The legacy `keywords` /
+ * `include_when` fields are intentionally absent — Tasks 02/03/06 collapsed
+ * those two parallel string fields into a single `examples[]` list and the
+ * editor + resolver + matcher already consume v2 end-to-end. The normalizer
+ * (`normalizeRawLlmCard`) defensively drops any legacy fields the LLM still
+ * leaks alongside `examples[]` so a model that ignores this schema can never
+ * silently re-introduce dual-write.
+ */
 const SCHEMA_BLOCK_FOR_CARDS = `Output schema (JSON only, no markdown):
 {
   "cards": [
@@ -246,8 +264,7 @@ const SCHEMA_BLOCK_FOR_CARDS = `Output schema (JSON only, no markdown):
       "description": "<optional short description, max 500 chars>",
       "scope_mode": "strict" | "flexible",
       "matcher_hints": {
-        "keywords": "<comma-separated synonyms patients actually type>",
-        "include_when": "<short phrases of when to pick this card>",
+        "examples": ["<short patient-style phrase>", "..."],
         "exclude_when": "<short phrases of when NOT to pick this card>"
       },
       "modalities": {
@@ -259,6 +276,7 @@ const SCHEMA_BLOCK_FOR_CARDS = `Output schema (JSON only, no markdown):
   ]
 }
 - "service_key" MUST be a stable lowercase slug (e.g. "diabetes_followup", "skin_consult"). Reserved key "${CATALOG_CATCH_ALL_SERVICE_KEY}" is for the catch-all.
+- "matcher_hints.examples": 4–12 entries, lower-case, patient words not clinical jargon, no PHI, ≤ 120 chars each, deduped. Each entry should read like something a patient would actually type in a DM ("my acne keeps coming back", "follow up for my diabetes", "knee hurts when I climb stairs"). Do NOT emit "keywords" or "include_when" — those legacy fields have been retired.
 - Always include at least one enabled modality per card.
 - Do NOT include any "service_id" field — the server assigns UUIDs.`;
 
@@ -287,7 +305,7 @@ const SCHEMA_BLOCK_FOR_REVIEW = `Output schema (JSON only, no markdown):
         "label": "...",
         "description": "...",
         "scope_mode": "strict" | "flexible",
-        "matcher_hints": { "keywords": "...", "include_when": "...", "exclude_when": "..." },
+        "matcher_hints": { "examples": ["<patient-style phrase>", "..."], "exclude_when": "..." },
         "modalities": { "text": {"enabled":true,"price_minor":0}, "voice": {"enabled":false,"price_minor":0}, "video": {"enabled":true,"price_minor":0} }
       },
       "autoFixAvailable": true | false
@@ -296,7 +314,7 @@ const SCHEMA_BLOCK_FOR_REVIEW = `Output schema (JSON only, no markdown):
 }
 
 - "type" rules:
-  - "overlap": two existing cards share too many keywords / include_when phrases — the matcher will be ambiguous. "services" MUST list both affected service_keys.
+  - "overlap": two existing cards share too many \`examples[]\` phrases (or, on un-migrated rows, legacy keywords / include_when text) — the matcher will be ambiguous. "services" MUST list both affected service_keys.
   - "gap": a common complaint pattern for this specialty is not represented anywhere in the catalog. "services" is []; include a "suggestedCard" so the UI can drop it into drafts.
   - "contradiction": a card's include_when and exclude_when contradict each other (or contradict another card's stated scope).
   - "modality_mismatch": a card enables a clinically inappropriate modality (e.g. "Skin biopsy review" on text-only; "Long-term follow-up" on video only).
@@ -430,11 +448,18 @@ function summarizeExistingCatalogForLlm(catalog: ServiceCatalogV1 | null): strin
     const mods = (['text', 'voice', 'video'] as const)
       .filter((m) => s.modalities[m]?.enabled === true)
       .join(',');
-    // Routing v2 (Task 05): source phrases via resolver so v2 `examples[]` rows
-    // surface here too. Vocabulary kept as `keywords="..."` for prompt stability.
+    /**
+     * Routing v2 (Plan 19-04, Task 11): the data already comes from
+     * `resolveMatcherRouting` (which prefers v2 `examples[]` and falls back to
+     * legacy fields), but the rendered label flipped from `keywords="…"` to
+     * `examples="…"` so the LLM sees the same vocabulary the schema asks it to
+     * emit. Pre-Task-11 the misleading legacy label was biasing the model
+     * back into emitting `keywords` / `include_when` even after Tasks 02–07
+     * had migrated everything else.
+     */
     const resolved = resolveMatcherRouting(s);
-    const kw = resolved.examplePhrases.join(', ');
-    return `- ${s.service_key} [scope:${scope}] label="${s.label}" modalities=${mods || 'none'} keywords="${kw.slice(0, 120)}"`;
+    const phrases = resolved.examplePhrases.join(', ');
+    return `- ${s.service_key} [scope:${scope}] label="${s.label}" modalities=${mods || 'none'} examples="${phrases.slice(0, 120)}"`;
   });
   return `Existing catalog (do NOT duplicate these unless explicitly asked):\n${lines.join('\n')}`;
 }
@@ -445,14 +470,27 @@ export function buildSingleCardPrompt(
 ): string {
   const label = clampString(payload?.label, SAFE_INPUT_LABEL_MAX) ?? '(not provided)';
   const desc = clampString(payload?.freeformDescription, SAFE_INPUT_DESC_MAX) ?? '(not provided)';
+  /**
+   * Routing v2 (Plan 19-04, Tasks 06 + 11): three rendering branches.
+   *
+   *   - `examples[]` non-empty (migrated row) → render under the
+   *     "existing hints" header. The LLM keeps refining the same vocabulary
+   *     it's about to emit.
+   *   - `examples[]` absent / empty AND legacy `keywords` / `include_when`
+   *     present (un-migrated row) → render under a **legacy** header that
+   *     explicitly tells the LLM to *convert* these into `examples[]` in its
+   *     output. Pre-Task-11 the LLM saw these under the same neutral header
+   *     and routinely mirrored them back, re-introducing legacy fields on the
+   *     generated card. Now we name the migration explicitly in the prompt.
+   *   - Neither → "no hints yet" copy unchanged.
+   *
+   * `exclude_when` is orthogonal (red flags, not routing vocabulary) and
+   * always renders inside the same block when present.
+   */
   const existingHintsLines: string[] = [];
+  let existingHintsHeader = `Doctor's existing hints for this card (refine or extend; do not silently drop them):`;
+  let usingLegacyOnly = false;
   if (payload?.existingHints) {
-    /**
-     * Routing v2 (Task 06): when the editor sends `examples` we render them as
-     * the primary list and intentionally suppress the legacy `keywords` /
-     * `include_when` lines so the LLM doesn't see two competing routing
-     * vocabularies for the same card. `exclude_when` is orthogonal and stays.
-     */
     const exRaw = payload.existingHints.examples ?? [];
     const examples = exRaw
       .map((p) => clampString(p, SAFE_INPUT_HINT_MAX))
@@ -464,14 +502,23 @@ export function buildSingleCardPrompt(
     } else {
       const kw = clampString(payload.existingHints.keywords, SAFE_INPUT_HINT_MAX);
       const iw = clampString(payload.existingHints.include_when, SAFE_INPUT_HINT_MAX);
-      if (kw) existingHintsLines.push(`  keywords: ${kw}`);
-      if (iw) existingHintsLines.push(`  include_when: ${iw}`);
+      if (kw) existingHintsLines.push(`  keywords (legacy): ${kw}`);
+      if (iw) existingHintsLines.push(`  include_when (legacy): ${iw}`);
+      if (kw || iw) {
+        usingLegacyOnly = true;
+        existingHintsHeader = `Doctor's existing matching cues (legacy — please convert to \`examples[]\` in the output, do not echo \`keywords\` / \`include_when\`):`;
+      }
     }
     if (ew) existingHintsLines.push(`  exclude_when: ${ew}`);
   }
+  // `usingLegacyOnly` exists so future call sites (logging, snapshot diffs,
+  // dashboards) can tell legacy-converted runs from clean v2 runs without
+  // re-parsing the prompt string. Reading it as JSDoc keeps the variable in
+  // play even though the only consumer right now is the header switch above.
+  void usingLegacyOnly;
   const existingHintsBlock =
     existingHintsLines.length > 0
-      ? `Doctor's existing hints for this card (refine or extend; do not silently drop them):\n${existingHintsLines.join('\n')}`
+      ? `${existingHintsHeader}\n${existingHintsLines.join('\n')}`
       : 'Doctor has not entered any matcher hints for this card yet.';
 
   return `You generate ONE service card for a doctor's teleconsultation catalog.
@@ -544,11 +591,44 @@ ${SCHEMA_BLOCK_FOR_REVIEW}`;
 // LLM call
 // ----------------------------------------------------------------------------
 
-const AI_SUGGEST_MAX_COMPLETION_TOKENS = 1500;
+/**
+ * Plan service-catalog-matcher-routing-v2 / Task 12: per-mode `max_completion_tokens`.
+ *
+ * Pre-Task 12 the cap was a single global `1500` for every mode, which silently
+ * truncated `review` and `starter` outputs (the LLM returned valid-prefix JSON
+ * up to the cut, then ended mid-string → `JSON.parse` threw → the doctor saw a
+ * generic "AI returned malformed JSON" error). `response_format: 'json_object'`
+ * does NOT auto-close the JSON when the model hits the cap.
+ *
+ * Sizing rationale (each mode = the schema it actually emits):
+ *   - `single_card` → 1500. One card, the cap that worked pre-Task 12.
+ *   - `starter`     → 6000. 4–6 named cards + the catch-all, each carrying
+ *                     `matcher_hints` + 3 modalities + prices.
+ *   - `review`      → 4000. LLM-only issue types (`overlap | gap | …`) — `gap`
+ *                     and `service_suggestion` carry a full `suggestedCard`,
+ *                     and a 2-row catalog routinely wants to suggest 3–5.
+ *
+ * If telemetry shows a mode consistently capping out (`finish_reason: 'length'`
+ * surfaces `service_catalog_ai_suggest_truncated` in audit logs), bump that
+ * specific mode here rather than re-raising the global cap.
+ */
+export const AI_SUGGEST_MAX_COMPLETION_TOKENS_BY_MODE: Record<AiSuggestMode, number> = {
+  single_card: 1500,
+  starter: 6000,
+  review: 4000,
+};
 
 export interface AiSuggestRunLlmParams {
   systemPrompt: string;
   correlationId: string;
+  /**
+   * Plan service-catalog-matcher-routing-v2 / Task 12: drives the per-mode
+   * `max_completion_tokens` lookup in {@link AI_SUGGEST_MAX_COMPLETION_TOKENS_BY_MODE}.
+   * The dispatcher (`generateSingleCard` / `generateStarterCatalog` /
+   * `runLlmCatalogReview`) already knows which mode it is — passing it here
+   * keeps the runner pure and lets test stubs assert on it.
+   */
+  mode: AiSuggestMode;
 }
 
 export type AiSuggestRunLlm = (params: AiSuggestRunLlmParams) => Promise<string | null>;
@@ -557,21 +637,56 @@ async function defaultRunAiSuggestLlm(params: AiSuggestRunLlmParams): Promise<st
   const client = getOpenAIClient();
   if (!client) {
     logger.warn(
-      { correlationId: params.correlationId },
+      { correlationId: params.correlationId, mode: params.mode },
       'service_catalog_ai_suggest: no OpenAI client'
     );
     return null;
   }
   const config = getOpenAIConfig();
+  const maxCompletionTokens = AI_SUGGEST_MAX_COMPLETION_TOKENS_BY_MODE[params.mode];
   try {
     const completion = await client.chat.completions.create({
       model: config.model,
-      max_completion_tokens: AI_SUGGEST_MAX_COMPLETION_TOKENS,
+      max_completion_tokens: maxCompletionTokens,
       response_format: { type: 'json_object' as const },
       messages: [{ role: 'system', content: params.systemPrompt }],
     });
-    const content = completion.choices[0]?.message?.content ?? null;
+    const choice = completion.choices[0];
+    const content = choice?.message?.content ?? null;
+    const finishReason = choice?.finish_reason;
     const usage = completion.usage;
+
+    /**
+     * Task 12: the model hit the cap. Output is valid JSON up to the cut and
+     * then ends mid-string — `JSON.parse` would throw downstream. Surface a
+     * doctor-facing error that's specific (so they don't blame the model) and
+     * audit-log a distinct marker so we can count truncations independently
+     * from real model bugs (`*_openai_error`) and empty completions
+     * (`*_empty_completion`). Logged at `info` not `warn` because it's an
+     * expected boundary condition at the cap, not a defect.
+     */
+    if (finishReason === 'length') {
+      logger.info(
+        {
+          correlationId: params.correlationId,
+          mode: params.mode,
+          maxCompletionTokens,
+          totalTokens: usage?.total_tokens,
+        },
+        'service_catalog_ai_suggest: response truncated at max_completion_tokens'
+      );
+      await logAIClassification({
+        correlationId: params.correlationId,
+        model: config.model,
+        redactionApplied: false,
+        status: 'failure',
+        tokens: usage?.total_tokens,
+        errorMessage: 'service_catalog_ai_suggest_truncated',
+      });
+      throw new InternalError(
+        'AI response was cut short — the catalog or request is large for this mode. Please try again.'
+      );
+    }
 
     await logAIClassification({
       correlationId: params.correlationId,
@@ -584,9 +699,15 @@ async function defaultRunAiSuggestLlm(params: AiSuggestRunLlmParams): Promise<st
 
     return content;
   } catch (err) {
+    /**
+     * Re-throw the truncation `InternalError` we just minted (above) without
+     * remapping it to a generic OpenAI failure. Any other error came from the
+     * SDK / network layer and gets the existing `*_openai_error` audit marker.
+     */
+    if (err instanceof InternalError) throw err;
     const message = err instanceof Error ? err.message : 'unknown_openai_error';
     logger.warn(
-      { correlationId: params.correlationId, err: message },
+      { correlationId: params.correlationId, mode: params.mode, err: message },
       'service_catalog_ai_suggest: openai call failed'
     );
     await logAIClassification({
@@ -826,23 +947,52 @@ function normalizeAndValidateCard(
     typeof matcherHintsRaw.exclude_when === 'string'
       ? matcherHintsRaw.exclude_when.trim().slice(0, 800)
       : '';
-  // Routing v2 (Task 05): pass through `examples[]` if the LLM emits it. Final
-  // length / count caps are enforced downstream by `serviceMatcherHintsV1Schema`.
+  /**
+   * Routing v2 normalizer (Plan 19-04, Tasks 05 + 11):
+   *   - Pass through `examples[]` when the LLM emits it (final length / count
+   *     caps live in `serviceMatcherHintsV1Schema`).
+   *   - **Defense (Task 11):** when `examples.length > 0`, drop any legacy
+   *     `keywords` / `include_when` even if the LLM leaked them. The Task 11
+   *     prompt schema explicitly forbids those fields, but a model that
+   *     ignores the schema must never silently re-introduce dual-write — the
+   *     editor + matcher already prefer `examples[]`, so leaving legacy
+   *     duplicates in the persisted row would only mislead the migration UX
+   *     (Task 07's amber callout) and the staff-feedback writer (Task 13).
+   *   - When `examples[]` is empty, the un-migrated path stays available so
+   *     legacy callers and existing tests continue to round-trip.
+   */
   const examples = Array.isArray(matcherHintsRaw.examples)
     ? matcherHintsRaw.examples
         .filter((e): e is string => typeof e === 'string')
         .map((e) => e.trim())
         .filter((e) => e.length > 0)
     : [];
-  const matcher_hints =
-    keywords || include_when || exclude_when || examples.length > 0
-      ? {
-          ...(examples.length > 0 ? { examples } : {}),
-          ...(keywords ? { keywords } : {}),
-          ...(include_when ? { include_when } : {}),
-          ...(exclude_when ? { exclude_when } : {}),
-        }
-      : undefined;
+  let matcher_hints: ServiceOfferingV1['matcher_hints'];
+  if (examples.length > 0) {
+    matcher_hints = {
+      examples,
+      ...(exclude_when ? { exclude_when } : {}),
+    };
+    if (keywords || include_when) {
+      logger.info(
+        {
+          service_key,
+          legacyKeywordsLen: keywords.length,
+          legacyIncludeWhenLen: include_when.length,
+          examplesCount: examples.length,
+        },
+        'service_catalog_ai_suggest: dropped legacy matcher_hints fields in favour of examples[] (Task 11 defense)'
+      );
+    }
+  } else if (keywords || include_when || exclude_when) {
+    matcher_hints = {
+      ...(keywords ? { keywords } : {}),
+      ...(include_when ? { include_when } : {}),
+      ...(exclude_when ? { exclude_when } : {}),
+    };
+  } else {
+    matcher_hints = undefined;
+  }
 
   const description =
     typeof raw.description === 'string' && raw.description.trim()
@@ -922,7 +1072,7 @@ async function generateSingleCard(
   runLlm: AiSuggestRunLlm
 ): Promise<AiSuggestCardResponse> {
   const systemPrompt = buildSingleCardPrompt(ctx, payload);
-  const content = await runLlm({ systemPrompt, correlationId });
+  const content = await runLlm({ systemPrompt, correlationId, mode: 'single_card' });
   const parsed = parseLlmJson(content, 'single_card');
   const rawCards = asCardArray(parsed);
   if (rawCards.length === 0) {
@@ -954,7 +1104,7 @@ async function generateStarterCatalog(
   runLlm: AiSuggestRunLlm
 ): Promise<AiSuggestCardResponse> {
   const systemPrompt = buildStarterCatalogPrompt(ctx);
-  const content = await runLlm({ systemPrompt, correlationId });
+  const content = await runLlm({ systemPrompt, correlationId, mode: 'starter' });
   const parsed = parseLlmJson(content, 'starter');
   const rawCards = asCardArray(parsed);
   if (rawCards.length === 0) {
@@ -1232,7 +1382,7 @@ export async function runLlmCatalogReview(
     return [];
   }
   const systemPrompt = buildReviewPrompt(ctx);
-  const content = await runLlm({ systemPrompt, correlationId });
+  const content = await runLlm({ systemPrompt, correlationId, mode: 'review' });
   const parsed = parseLlmJson(content, 'review');
   return parseLlmIssues(parsed);
 }

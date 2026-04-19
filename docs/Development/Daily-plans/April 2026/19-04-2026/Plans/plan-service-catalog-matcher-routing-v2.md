@@ -181,8 +181,11 @@ This plan explicitly chooses **Option B** for Phase 1: **new structured fields**
 | [08](../Tasks/task-08-strict-flexible-deterministic-matrix.md) | 2 | Strict + deterministic matrix + tests | Align with examples |
 | [09](../Tasks/task-09-sibling-boundary-schema-prompt.md) | 3 | Sibling boundary schema + prompt injection | Optional |
 | [10](../Tasks/task-10-preview-widget-stage-a-vs-b.md) ✅ (hybrid) | 4 | Preview widget (Stage A vs B indicator) | Dev-flag-gated; telemetry deferred |
+| [11](../Tasks/task-11-ai-suggest-emits-examples-v2.md) ✅ | 1.6 | AI suggest prompts emit `examples[]` (close the autofill loop) | Single-card / starter / review schema flip + normalizer defense (shipped 2026-04-19) |
+| [12](../Tasks/task-12-ai-suggest-token-budget-and-truncation.md) ✅ | 1.6 | AI suggest per-mode token budget + clear truncation error | Fixes "AI returned malformed JSON" on Review my catalog (shipped 2026-04-19) |
+| [13](../Tasks/task-13-feedback-learner-writes-examples.md) ✅ | 1.7 | Staff feedback learner writes into `matcher_hints.examples` | v2 branch + mixed-shape defense + FIFO eviction at 24-cap (shipped 2026-04-19) |
 
-Suggested implementation order: **01** (parallel) → **02** → **03** → **04** + **05** (04 first or single PR with 05) → **06** + **07** → **08** → **09** (optional) → **10** (optional).
+Suggested implementation order: **01** (parallel) → **02** → **03** → **04** + **05** (04 first or single PR with 05) → **06** + **07** → **08** → **09** (optional) → **10** (optional) → **11** + **12** (independent; ship together) → **13** (after **11** lands so AI autofill doesn't undo learner writes).
 
 ---
 

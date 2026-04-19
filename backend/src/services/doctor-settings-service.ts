@@ -24,6 +24,8 @@ import { mergeServiceCatalogOnSave } from '../utils/service-catalog-normalize';
 import {
   appendMatcherHintFields,
   hydrateServiceCatalogServiceIds,
+  MATCHER_HINT_EXAMPLE_MAX_CHARS,
+  MATCHER_HINT_EXAMPLES_MAX_COUNT,
   parseServiceCatalogIncoming,
   parseServiceCatalogTemplatesJson,
   safeParseServiceCatalogV1FromDb,
@@ -287,30 +289,73 @@ export type MatcherHintsAppendPayload = {
 };
 
 /**
- * Append plain-language fragments to the `matcher_hints` of one catalog offering
- * (semicolon-separated, schema-capped). Unlike `setMatcherHintsOnDoctorCatalogOffering`
- * (full replace), this is the feedback-loop entry point used when staff corrects a
- * service routing on the review inbox — the patient's sanitized complaint fragment is
- * appended to the destination service's `include_when` (and the source service's
- * `exclude_when`) so future deterministic + LLM matching improves automatically.
+ * Append a single patient-style example phrase to an existing `examples[]` list,
+ * honoring the schema caps from `serviceMatcherHintsV1Schema`:
+ *   - {@link MATCHER_HINT_EXAMPLE_MAX_CHARS} per entry (truncate on overflow);
+ *   - {@link MATCHER_HINT_EXAMPLES_MAX_COUNT} entries total (FIFO eviction).
  *
- * Empty / whitespace-only fields in `patch` are ignored. The merged value is
- * length-capped via {@link appendMatcherHintFields}. Skips the write when the merge
- * produces no change (idempotent on repeat corrections).
+ * Trim + case-insensitive dedupe on the merged fragment vs every existing entry —
+ * staff repeatedly clicking the same correction in the review inbox must not bloat
+ * the list nor produce a redundant DB write (the caller treats `changed: false` as
+ * "skip the update entirely" — same idempotency contract as the legacy path).
  *
- * **Routing v2 note (Plan 19-04, Task 04):** this learning-feedback writer still targets
- * the **legacy** `keywords` / `include_when` / `exclude_when` fields rather than pushing
- * the patient fragment into `matcher_hints.examples`. Two reasons we intentionally hold
- * off until Task 06 (frontend example-phrases UI) ships:
- *   1. Doctors haven't migrated yet — appending to `examples` while the editor still
- *      surfaces only the legacy text areas would silently dual-write and bury hint
- *      provenance in two places.
- *   2. The reader path is now safe via {@link resolveMatcherRouting}: a row with only
- *      legacy hints still routes correctly, so deferring the writer doesn't gate Task 04.
- * Once the editor emits `examples`, this function should be updated to: if
- * `offering.matcher_hints.examples?.length > 0`, push the sanitized fragment as a new
- * example (after dedupe / max-cap checks); otherwise keep the current legacy-append
- * fallback for not-yet-migrated rows.
+ * **Eviction strategy:** when adding the new fragment would exceed the 24-entry cap,
+ * we drop the **oldest** entry (`shift()`). Rationale captured in Task 13's Decision
+ * log: corrections from this week are more relevant than corrections from last
+ * quarter; alternative provenance-aware eviction (drop oldest *learner-added* entry
+ * only) would require a per-entry source field — deliberately deferred until we
+ * have a UI badge to surface that provenance to the doctor.
+ *
+ * Pure / no I/O — easy to unit-test in isolation.
+ */
+export function appendExamplesEntry(
+  existing: readonly string[],
+  fragment: string,
+  maxCount: number = MATCHER_HINT_EXAMPLES_MAX_COUNT,
+  maxLen: number = MATCHER_HINT_EXAMPLE_MAX_CHARS
+): { next: string[]; changed: boolean } {
+  const trimmed = fragment.trim().slice(0, maxLen);
+  if (!trimmed) {
+    return { next: [...existing], changed: false };
+  }
+  const lowered = trimmed.toLowerCase();
+  if (existing.some((e) => e.trim().toLowerCase() === lowered)) {
+    return { next: [...existing], changed: false };
+  }
+  const next = [...existing, trimmed];
+  while (next.length > maxCount) next.shift();
+  return { next, changed: true };
+}
+
+/**
+ * Append plain-language fragments to the `matcher_hints` of one catalog offering and
+ * persist the result. Unlike `setMatcherHintsOnDoctorCatalogOffering` (full replace),
+ * this is the **staff-feedback learning writer** invoked when staff corrects a service
+ * routing on the review inbox — the patient's sanitized complaint fragment is appended
+ * to the **destination** service's matcher hints (so future routing learns from the
+ * correction) and the source service's `exclude_when` (so it doesn't repeat the
+ * mistake). Empty / whitespace-only fields in `patch` are ignored; idempotent on
+ * repeat corrections.
+ *
+ * **Routing v2 contract (Plan 19-04, Task 13 — un-defers the Task-04 hold):**
+ *   - **v2 branch** — when `offering.matcher_hints.examples?.length > 0`, the
+ *     fragment is collapsed into a single `examples[]` entry (preferring `inc` over
+ *     `kw` since `examples` is example-phrase-shaped, not keyword-token-shaped) via
+ *     {@link appendExamplesEntry}. Existing legacy `keywords` / `include_when` are
+ *     preserved **byte-identical** — we never re-introduce dual-write here even on
+ *     mixed-shape rows. `exclude_when` flows through {@link appendMatcherHintFields}'s
+ *     single-string semicolon merge regardless of branch (same field in v1 and v2).
+ *   - **Legacy fallback** — when `examples` is absent or empty, the original
+ *     {@link appendMatcherHintFields} path runs unchanged. This stays for
+ *     not-yet-migrated rows; doctors can graduate them via the Task 07 per-card
+ *     "Convert to example phrases" CTA.
+ *
+ * Pre-Task-13 this function unconditionally targeted the legacy fields, which meant
+ * Task 06's editor + Task 11's AI suggest produced v2 cards but staff corrections
+ * landed in the legacy fields right alongside — silent dual-write, the exact problem
+ * Routing v2 exists to remove. The deferral was safe to hold until Tasks 06 + 11
+ * shipped because the reader path went through {@link resolveMatcherRouting} from
+ * Task 03 onward and tolerated either shape.
  *
  * @returns whether `doctor_settings.service_offerings_json` was updated.
  */
@@ -360,23 +405,74 @@ export async function appendMatcherHintsOnDoctorCatalogOffering(
   }
 
   const offering = previousCatalog.services[idx]!;
-  const merged = appendMatcherHintFields(offering.matcher_hints, {
-    keywords: kw || undefined,
-    include_when: inc || undefined,
-    exclude_when: exc || undefined,
-  });
+  const existingHints = offering.matcher_hints;
+  const existingExamples = existingHints?.examples ?? [];
+  const usingV2 = existingExamples.length > 0;
 
-  const prev = offering.matcher_hints;
-  const unchanged =
-    (prev?.keywords ?? '') === (merged.keywords ?? '') &&
-    (prev?.include_when ?? '') === (merged.include_when ?? '') &&
-    (prev?.exclude_when ?? '') === (merged.exclude_when ?? '');
-  if (unchanged) {
-    return false;
+  let nextHints: ServiceMatcherHintsV1 | undefined;
+  if (usingV2) {
+    /**
+     * v2 branch (Task 13).
+     *
+     * - Collapse the legacy-shaped patch (`kw` token-style + `inc` phrase-style)
+     *   into a single `examples[]` entry. v2 has no asymmetry between the two —
+     *   both are patient-style phrases — so we prefer `inc` (already phrase-shaped)
+     *   and fall back to `kw` if only that's set. The caller's
+     *   {@link sanitizeHintAppendPatch} usually populates `inc` from the patient's
+     *   complaint fragment, so `inc || kw` is the intuitive precedence.
+     * - Preserve any pre-existing legacy `keywords` / `include_when` strings
+     *   **byte-identical** (mixed-shape defense — re-touching them here would
+     *   re-introduce dual-write, the exact problem Task 11 + Task 13 exist to
+     *   remove). The reader path via {@link resolveMatcherRouting} ignores legacy
+     *   fields when `examples[]` is non-empty, so the un-migrated text is inert
+     *   until the doctor explicitly converts via the Task 07 per-card CTA.
+     * - `exclude_when` flows through {@link appendMatcherHintFields}'s single-string
+     *   merge regardless of branch — same field in v1 and v2 shapes.
+     */
+    const fragment = inc || kw;
+    const { next: nextExamples, changed: examplesChanged } = fragment
+      ? appendExamplesEntry(existingExamples, fragment)
+      : { next: [...existingExamples], changed: false };
+
+    const mergedExclude = exc
+      ? appendMatcherHintFields(
+          { exclude_when: existingHints?.exclude_when },
+          { exclude_when: exc }
+        ).exclude_when
+      : existingHints?.exclude_when;
+    const excludeChanged =
+      (existingHints?.exclude_when ?? '') !== (mergedExclude ?? '');
+
+    if (!examplesChanged && !excludeChanged) {
+      return false;
+    }
+
+    nextHints = {
+      ...(existingHints ?? {}),
+      examples: nextExamples,
+    };
+    if (mergedExclude) {
+      nextHints.exclude_when = mergedExclude;
+    } else {
+      delete nextHints.exclude_when;
+    }
+  } else {
+    const merged = appendMatcherHintFields(existingHints, {
+      keywords: kw || undefined,
+      include_when: inc || undefined,
+      exclude_when: exc || undefined,
+    });
+
+    const unchanged =
+      (existingHints?.keywords ?? '') === (merged.keywords ?? '') &&
+      (existingHints?.include_when ?? '') === (merged.include_when ?? '') &&
+      (existingHints?.exclude_when ?? '') === (merged.exclude_when ?? '');
+    if (unchanged) {
+      return false;
+    }
+
+    nextHints = Object.keys(merged).length > 0 ? merged : undefined;
   }
-
-  const nextHints: ServiceMatcherHintsV1 | undefined =
-    Object.keys(merged).length > 0 ? merged : undefined;
 
   const nextOffering = { ...offering, matcher_hints: nextHints };
   const nextServices = [...previousCatalog.services];
