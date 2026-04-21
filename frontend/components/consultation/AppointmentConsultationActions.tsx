@@ -1,11 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { startConsultation, getConsultationToken } from "@/lib/api";
 import type { Appointment } from "@/types/appointment";
-import VideoRoom from "./VideoRoom";
-import PatientJoinLink from "./PatientJoinLink";
+import ConsultationLauncher from "./ConsultationLauncher";
 import MarkCompletedForm from "./MarkCompletedForm";
 import PrescriptionForm from "./PrescriptionForm";
 import PreviousPrescriptions from "./PreviousPrescriptions";
@@ -15,132 +12,47 @@ interface AppointmentConsultationActionsProps {
   token: string;
 }
 
-interface ConsultationData {
-  doctorToken: string;
-  roomName: string;
-  patientJoinUrl: string;
-}
-
 /**
- * Client component: Start consultation, video room, patient link, mark completed.
- * @see e-task-6
+ * Appointment-detail-page consultation surface.
+ *
+ * Plan 03 · Task 20 split this component:
+ *   - The "Start consultation" CTA + token fetch + room mount + patient join
+ *     link moved into `<ConsultationLauncher>` so the new modality buttons
+ *     row + future Text/Voice rooms have a clean home.
+ *   - The clinical write-up surfaces (PrescriptionForm, MarkCompletedForm,
+ *     PreviousPrescriptions) stay here — they are post-consult write paths,
+ *     not consultation-launcher concerns, and exposing them when the
+ *     appointment is in a sane status (independent of any in-memory session
+ *     state) preserves today's behaviour.
+ *
+ * Task-20 spec called this a "thin pass-through wrapper", but a literal
+ * pass-through would regress the prescription / mark-completed surfaces this
+ * file already hosts. The launcher-at-top + write-surfaces-below split keeps
+ * the diff surgical without breaking those flows.
+ *
+ * @see docs/Development/Daily-plans/April 2026/19-04-2026/Tasks/task-20-consultation-launcher-and-live-panel.md
+ * @see e-task-6 (original component history)
  */
 export default function AppointmentConsultationActions({
   appointment,
   token,
 }: AppointmentConsultationActionsProps) {
   const router = useRouter();
-  const [consultationData, setConsultationData] = useState<ConsultationData | null>(null);
-  const [starting, setStarting] = useState(false);
-  const [startError, setStartError] = useState<string | null>(null);
+  const handleRefresh = () => router.refresh();
 
-  const canStartConsultation =
-    (appointment.status === "pending" || appointment.status === "confirmed") &&
-    !appointment.consultation_room_sid;
-
-  const consultationStarted = !!(
-    consultationData || appointment.consultation_room_sid
-  );
-
-  // When room already exists (e.g. page refresh), fetch token to join
-  useEffect(() => {
-    if (
-      appointment.consultation_room_sid &&
-      !consultationData &&
-      (appointment.status === "pending" || appointment.status === "confirmed")
-    ) {
-      const fetchToken = async () => {
-        try {
-          const res = await startConsultation(token, appointment.id);
-          setConsultationData({
-            doctorToken: res.data.doctorToken,
-            roomName: res.data.roomName,
-            patientJoinUrl: res.data.patientJoinUrl,
-          });
-        } catch {
-          // Fallback: try getConsultationToken (doctor path)
-          try {
-            const tokenRes = await getConsultationToken(token, appointment.id);
-            setConsultationData({
-              doctorToken: tokenRes.data.token,
-              roomName: tokenRes.data.roomName,
-              patientJoinUrl: "", // Will show config message
-            });
-          } catch {
-            // Ignore
-          }
-        }
-      };
-      fetchToken();
-    }
-  }, [appointment.consultation_room_sid, appointment.id, appointment.status, consultationData, token]);
-
-  const handleStartConsultation = async () => {
-    setStartError(null);
-    setStarting(true);
-    try {
-      const res = await startConsultation(token, appointment.id);
-      setConsultationData({
-        doctorToken: res.data.doctorToken,
-        roomName: res.data.roomName,
-        patientJoinUrl: res.data.patientJoinUrl,
-      });
-    } catch (err) {
-      setStartError(err instanceof Error ? err.message : "Failed to start consultation");
-    } finally {
-      setStarting(false);
-    }
-  };
-
-  const handleRefresh = () => {
-    router.refresh();
-  };
-
-  const handleDisconnect = () => {
-    // Defer refresh to avoid remount during React update cycle
-    setTimeout(() => router.refresh(), 150);
-  };
+  // `consultation_session.provider_session_id` is the persistent server-side
+  // flag (post-Task-35 replacement for the dropped `consultation_room_sid`
+  // column). We use it (not in-memory state) to decide whether write
+  // surfaces should be visible for an appointment that's already had a
+  // consultation started — survives page refresh and matches the legacy
+  // behaviour of the OR'd boolean that previously combined this with the
+  // in-memory `consultationData`.
+  const consultationStarted = !!appointment.consultation_session?.provider_session_id;
 
   return (
     <div className="mt-6 space-y-6">
-      {/* Start consultation button */}
-      {canStartConsultation && !consultationData && (
-        <div>
-          <button
-            type="button"
-            onClick={handleStartConsultation}
-            disabled={starting}
-            className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
-          >
-            {starting ? "Starting…" : "Start consultation"}
-          </button>
-          {startError && (
-            <p role="alert" className="mt-2 text-sm text-red-600">
-              {startError}
-            </p>
-          )}
-        </div>
-      )}
+      <ConsultationLauncher appointment={appointment} token={token} />
 
-      {/* Video room + patient link when consultation started */}
-      {consultationData && (
-        <>
-          <div>
-            <h2 className="mb-3 text-lg font-semibold text-gray-900">Video call</h2>
-            <VideoRoom
-              accessToken={consultationData.doctorToken}
-              roomName={consultationData.roomName}
-              onDisconnect={handleDisconnect}
-            />
-          </div>
-          <div>
-            <h2 className="mb-3 text-lg font-semibold text-gray-900">Patient join link</h2>
-            <PatientJoinLink patientJoinUrl={consultationData.patientJoinUrl} />
-          </div>
-        </>
-      )}
-
-      {/* Previous prescriptions - only when patient linked */}
       {appointment.patient_id && (
         <PreviousPrescriptions
           patientId={appointment.patient_id}
@@ -150,14 +62,13 @@ export default function AppointmentConsultationActions({
         />
       )}
 
-      {/* Prescription & clinical note - show when consultation started or status allows */}
       {(consultationStarted ||
         appointment.status === "pending" ||
         appointment.status === "confirmed" ||
         appointment.status === "completed") && (
         <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
           <h2 className="mb-3 text-lg font-semibold text-gray-900">
-            Prescription & clinical note
+            Prescription &amp; clinical note
           </h2>
           <PrescriptionForm
             appointmentId={appointment.id}
@@ -168,7 +79,6 @@ export default function AppointmentConsultationActions({
         </div>
       )}
 
-      {/* Mark as completed - show when consultation started or for in-clinic */}
       {(consultationStarted || appointment.status !== "completed") && (
         <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
           <h2 className="mb-3 text-lg font-semibold text-gray-900">Mark as completed</h2>

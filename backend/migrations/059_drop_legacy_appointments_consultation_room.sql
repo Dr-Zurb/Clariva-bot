@@ -1,0 +1,55 @@
+-- ============================================================================
+-- Drop legacy appointments.consultation_room_* columns post-cutover
+-- ============================================================================
+-- Migration: 059_drop_legacy_appointments_consultation_room.sql
+-- Date: 2026-04-19
+-- Task: 35 (Drop legacy appointments.consultation_room_* columns post-cutover)
+-- Description:
+--   Drops three columns that were added in migration 021 and are now fully
+--   replaced by `consultation_sessions` (introduced in migration 049 by
+--   Task 15):
+--     - appointments.consultation_room_sid       → consultation_sessions.provider_session_id
+--     - appointments.consultation_started_at     → consultation_sessions.actual_started_at
+--     - appointments.consultation_ended_at       → consultation_sessions.actual_ended_at
+--
+--   The remaining teleconsultation-related columns from 021 are intentionally
+--   kept on `appointments` (doctor_joined_at, patient_joined_at,
+--   consultation_duration_seconds, verified_at, clinical_notes) because
+--   they are read by payout-verification and other flows that treat
+--   `appointments` as the source of truth. See
+--   docs/Development/Daily-plans/April 2026/19-04-2026/Tasks/task-35-drop-legacy-appointments-consultation-room-columns.md
+--   for full rationale.
+--
+-- Prerequisites (must be green before deploying this migration to prod):
+--   1. Task 15 (migration 049) landed ≥ 14 days ago AND
+--   2. No reader/writer in the codebase references these three columns
+--      (verified via `git grep` at merge time). The migration that adds
+--      the `consultation_session` enrichment to the Appointment API
+--      response is part of the same PR.
+--
+-- Backward compatibility:
+--   The application code migrated to read `consultation_sessions` in the
+--   same PR that ships this migration. Old clients that still expect the
+--   `consultation_room_sid` / `consultation_started_at` /
+--   `consultation_ended_at` fields on appointment payloads should read
+--   `appointment.consultation_session.{provider_session_id,
+--   actual_started_at, actual_ended_at}` instead.
+--
+-- Reverse migration:
+--   See 060_rollback_drop_legacy_appointments_consultation_room.sql which
+--   re-adds the columns AS NULL and (if needed) back-fills from
+--   `consultation_sessions` for any rows written between cutover and
+--   rollback.
+-- ============================================================================
+
+ALTER TABLE appointments DROP COLUMN IF EXISTS consultation_room_sid;
+ALTER TABLE appointments DROP COLUMN IF EXISTS consultation_started_at;
+ALTER TABLE appointments DROP COLUMN IF EXISTS consultation_ended_at;
+
+-- ============================================================================
+-- Migration Complete
+-- ============================================================================
+-- RLS: No policies reference the dropped columns; no policy change needed.
+-- Indexes/Views: No indexes or views reference the dropped columns (grep
+-- verified at authoring time).
+-- ============================================================================

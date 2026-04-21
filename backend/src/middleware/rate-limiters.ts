@@ -48,6 +48,60 @@ export const webhookLimiter = rateLimit({
 });
 
 /**
+ * Replay-mint (Plan 07 · Task 29).
+ *
+ * `POST /api/v1/consultation/:sessionId/replay/audio/mint` is the
+ * costly endpoint — it writes an audit row and (on grant) calls Twilio
+ * for a signed URL. Legitimate playback re-mints at most ~4 times per
+ * hour (15-min URL TTL); 10 gives headroom for reconnects + speed-
+ * scrubbing. Beyond 10 → 429.
+ *
+ * Rationale: protect against a malicious loop trying to enumerate /
+ * stress the audit log. Doesn't gate `getReplayAvailability` —
+ * that's the read-only preflight and stays cheap.
+ *
+ * Keying: by IP (covers the unauthenticated-spam case) + sessionId
+ * from the URL (covers the rare legit cross-IP doctor-on-mobile
+ * pattern). One window per `(ip, sessionId)` pair so a single
+ * mis-behaving session doesn't lock a doctor out of OTHER consults.
+ */
+export const replayMintLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10,
+  keyGenerator: (req: Request) => {
+    const ip = ipKeyGenerator(req.ip || req.socket.remoteAddress || 'unknown', false);
+    const sessionId = (req.params as { sessionId?: string }).sessionId ?? 'unknown';
+    return `${ip}:${sessionId}`;
+  },
+  handler: async (req: Request, res: Response) => {
+    await logSecurityEvent(
+      req.correlationId || 'unknown',
+      undefined,
+      'rate_limit_exceeded',
+      'medium',
+      req.ip,
+      'Replay mint rate limit exceeded'
+    );
+    const error = new TooManyRequestsError(
+      'Too many replay requests for this consultation; please wait and try again.'
+    );
+    return res.status(429).json(
+      errorResponse(
+        {
+          code: 'TooManyRequestsError',
+          message: error.message,
+          statusCode: 429,
+        },
+        req
+      )
+    );
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+});
+
+/**
  * Public OPD session snapshot / early-join (e-task-opd-04).
  * Token auth; limit by IP per RATE_LIMITING.md (public unauthenticated API).
  */

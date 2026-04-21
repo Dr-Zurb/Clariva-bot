@@ -1,7 +1,14 @@
 /**
- * Consultation Verification Service Unit Tests (e-task-3, e-task-4)
+ * Consultation Verification Service Unit Tests (e-task-3, e-task-4, Task 35)
  *
- * Tests handleParticipantConnected, handleParticipantDisconnected, tryMarkVerified, handleTwilioStatusCallback.
+ * Tests handleParticipantConnected, handleParticipantDisconnected,
+ * tryMarkVerified, handleTwilioStatusCallback.
+ *
+ * Post-Task-35: the webhook's RoomSid → appointment lookup path goes
+ * through `findSessionByProviderSessionId`, and the room-ended timestamp
+ * lives on `consultation_sessions.actual_ended_at`. This test file mocks
+ * the consultation-session-service facade so the tests stay table-mock
+ * focused and aren't coupled to the session-row persistence path.
  */
 // @ts-nocheck - Jest mock types cause strict inference issues
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
@@ -44,60 +51,154 @@ jest.mock('../../../src/services/care-episode-service', () => ({
   syncCareEpisodeLifecycleOnAppointmentCompleted: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock('../../../src/services/opd/opd-queue-service', () => ({
+  syncOpdQueueEntryOnAppointmentStatus: jest.fn().mockResolvedValue(undefined),
+}));
+
+/**
+ * Task 35: the webhook's RoomSid → appointment lookup goes through the
+ * consultation-session-service facade. Each test pre-sets what
+ * `findSessionByProviderSessionId` should return. The default stub ties
+ * any RoomSid to appointment `apt-1` / session `sess-1`.
+ */
+const findSessionByProviderSessionId = jest.fn();
+const markParticipantJoined = jest.fn().mockResolvedValue(undefined);
+const updateSessionStatus = jest.fn().mockResolvedValue(undefined);
+
+jest.mock('../../../src/services/consultation-session-service', () => ({
+  findSessionByProviderSessionId: (...args: unknown[]) =>
+    findSessionByProviderSessionId(...args),
+  markParticipantJoined: (...args: unknown[]) => markParticipantJoined(...args),
+  updateSessionStatus: (...args: unknown[]) => updateSessionStatus(...args),
+}));
+
 const correlationId = 'corr-123';
 
 /**
- * Creates a chain that supports:
- * - appointments: select->eq->single, update
- * - payments: select->eq->eq->or->order->limit->maybeSingle
- * - doctor_settings: select->eq->maybeSingle
- * Payments/doctor_settings return { data: null } so payout trigger exits early.
+ * Build the default `appointments`-chain mock used by the webhook handlers.
+ * The shape matches what `.from('appointments').select(...).eq(...).limit(...)`
+ * resolves to for the participant-connected / -disconnected paths.
  */
-function createTryMarkVerifiedChain(apt: Record<string, unknown>, disableUpdate = false) {
-  const maybeSingle = jest.fn().mockResolvedValue({ data: null, error: null });
-  const limit = jest.fn().mockReturnValue({ maybeSingle });
-  const order = jest.fn().mockReturnValue({ limit });
-  const or = jest.fn().mockReturnValue({ order });
-  const eq2 = jest.fn().mockReturnValue({ or });
-  const eqWithSingle = jest.fn().mockReturnValue({
-    eq: eq2,
-    single: jest.fn().mockResolvedValue({ data: apt, error: null }),
-    maybeSingle,
-  });
-  const mockUpdate = disableUpdate
-    ? jest.fn()
-    : jest.fn().mockReturnValue({
-        eq: jest.fn().mockReturnValue({
-          select: jest.fn().mockReturnValue({
-            single: jest.fn().mockResolvedValue({
-              data: {
-                ...apt,
-                status: 'completed',
-                verified_at: apt.consultation_ended_at,
-              },
-              error: null,
+function appointmentsLookupChain(apt: Record<string, unknown> | null) {
+  return {
+    select: jest.fn().mockReturnValue({
+      eq: jest.fn().mockReturnValue({
+        limit: jest.fn().mockResolvedValue({ data: apt ? [apt] : [], error: null }),
+      }),
+    }),
+    update: jest.fn().mockReturnValue({
+      eq: jest.fn().mockResolvedValue({ error: null }),
+    }),
+  };
+}
+
+/**
+ * Build the full query router used by the handler + tryMarkVerified tests.
+ *
+ * Routes by table name:
+ *   - `appointments`   → participant-connected/disconnected chain OR tryMarkVerified chain (depending on method: `.single()` / `.limit()`).
+ *   - `consultation_sessions` → returns the pre-set `actual_ended_at` for `tryMarkVerified`'s post-fetch.
+ *   - `payments`       → `null` so the per-appointment payout skips.
+ *   - `doctor_settings`→ `null` so payout schedule is the default ('weekly').
+ */
+function buildRouter(opts: {
+  apt: Record<string, unknown> | null;
+  actualEndedAt?: string | null;
+  disableUpdate?: boolean;
+  updatedApt?: Record<string, unknown>;
+}) {
+  const aptSingleChain = () => {
+    const maybeSingleNull = jest.fn().mockResolvedValue({ data: null, error: null });
+    const limitNull = jest.fn().mockReturnValue({ maybeSingle: maybeSingleNull });
+    const orderNull = jest.fn().mockReturnValue({ limit: limitNull });
+    const orForPayments = jest.fn().mockReturnValue({ order: orderNull });
+    const eqForPaymentsStatus = jest.fn().mockReturnValue({ or: orForPayments });
+    const eqWithSingle = jest.fn().mockReturnValue({
+      eq: eqForPaymentsStatus,
+      single: jest.fn().mockResolvedValue({ data: opts.apt, error: null }),
+      maybeSingle: maybeSingleNull,
+      limit: jest.fn().mockResolvedValue({ data: opts.apt ? [opts.apt] : [], error: null }),
+    });
+    const updateChain = opts.disableUpdate
+      ? jest.fn()
+      : jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({
+            select: jest.fn().mockReturnValue({
+              single: jest.fn().mockResolvedValue({
+                data:
+                  opts.updatedApt ?? {
+                    ...opts.apt,
+                    status: 'completed',
+                    verified_at: opts.actualEndedAt ?? null,
+                  },
+                error: null,
+              }),
             }),
           }),
-        }),
-      });
-  return {
-    select: jest.fn().mockReturnValue({ eq: eqWithSingle }),
-    update: mockUpdate,
-    eq: eqWithSingle,
+        });
+    return {
+      select: jest.fn().mockReturnValue({ eq: eqWithSingle }),
+      update: updateChain,
+      eq: eqWithSingle,
+    };
   };
+
+  const sessionEndedChain = () => {
+    const maybeSingle = jest.fn().mockResolvedValue({
+      data: opts.actualEndedAt === null || opts.actualEndedAt === undefined
+        ? null
+        : { actual_ended_at: opts.actualEndedAt },
+      error: null,
+    });
+    const limit = jest.fn().mockReturnValue({ maybeSingle });
+    const order = jest.fn().mockReturnValue({ limit });
+    const not = jest.fn().mockReturnValue({ order });
+    const eq = jest.fn().mockReturnValue({ not });
+    return {
+      select: jest.fn().mockReturnValue({ eq }),
+    };
+  };
+
+  const paymentsAndSettingsChain = () => {
+    const maybeSingle = jest.fn().mockResolvedValue({ data: null, error: null });
+    const limit = jest.fn().mockReturnValue({ maybeSingle });
+    const order = jest.fn().mockReturnValue({ limit });
+    const or = jest.fn().mockReturnValue({ order });
+    const eq2 = jest.fn().mockReturnValue({ or, maybeSingle });
+    const eq1 = jest.fn().mockReturnValue({ eq: eq2, maybeSingle });
+    return {
+      select: jest.fn().mockReturnValue({ eq: eq1 }),
+    };
+  };
+
+  const appointmentsChain = aptSingleChain();
+
+  mockFrom.mockImplementation((table: string) => {
+    if (table === 'appointments') return appointmentsChain;
+    if (table === 'consultation_sessions') return sessionEndedChain();
+    if (table === 'payments' || table === 'doctor_settings') return paymentsAndSettingsChain();
+    return appointmentsLookupChain(null);
+  });
+
+  return appointmentsChain;
 }
 
 describe('Consultation Verification Service', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockFrom.mockReturnValue({
-      select: jest.fn().mockReturnValue({
-        eq: jest.fn().mockReturnValue({
-          limit: jest.fn().mockResolvedValue({ data: [], error: null }),
-        }),
-      }),
-      update: jest.fn().mockReturnValue({ eq: jest.fn().mockResolvedValue({ error: null }) }),
+    findSessionByProviderSessionId.mockResolvedValue({
+      id: 'sess-1',
+      appointmentId: 'apt-1',
+      doctorId: 'doc-1',
+      patientId: null,
+      modality: 'video',
+      status: 'scheduled',
+      provider: 'twilio_video',
+      providerSessionId: 'RM123',
+      scheduledStartAt: new Date('2026-03-21T12:00:00.000Z'),
+      expectedEndAt: new Date('2026-03-21T12:30:00.000Z'),
     });
+    mockFrom.mockReturnValue(appointmentsLookupChain(null));
   });
 
   describe('handleParticipantConnected', () => {
@@ -108,17 +209,10 @@ describe('Consultation Verification Service', () => {
         doctor_joined_at: null,
         patient_joined_at: null,
       };
-      const chain = {
-        select: jest.fn().mockReturnValue({
-          eq: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue({ data: [apt], error: null }),
-          }),
-        }),
-        update: jest.fn().mockReturnValue({
-          eq: jest.fn().mockResolvedValue({ error: null }),
-        }),
-      };
-      mockFrom.mockReturnValue(chain);
+      const chain = appointmentsLookupChain(apt);
+      mockFrom.mockImplementation((table: string) =>
+        table === 'appointments' ? chain : appointmentsLookupChain(null)
+      );
 
       await handleParticipantConnected(
         {
@@ -131,6 +225,11 @@ describe('Consultation Verification Service', () => {
       );
 
       expect(chain.update).toHaveBeenCalledWith({ doctor_joined_at: '2026-03-21T12:00:00.000Z' });
+      expect(markParticipantJoined).toHaveBeenCalledWith(
+        'sess-1',
+        'doctor',
+        new Date('2026-03-21T12:00:00.000Z')
+      );
     });
 
     it('sets patient_joined_at when patient connects', async () => {
@@ -140,17 +239,10 @@ describe('Consultation Verification Service', () => {
         doctor_joined_at: '2026-03-21T12:00:00.000Z',
         patient_joined_at: null,
       };
-      const chain = {
-        select: jest.fn().mockReturnValue({
-          eq: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue({ data: [apt], error: null }),
-          }),
-        }),
-        update: jest.fn().mockReturnValue({
-          eq: jest.fn().mockResolvedValue({ error: null }),
-        }),
-      };
-      mockFrom.mockReturnValue(chain);
+      const chain = appointmentsLookupChain(apt);
+      mockFrom.mockImplementation((table: string) =>
+        table === 'appointments' ? chain : appointmentsLookupChain(null)
+      );
 
       await handleParticipantConnected(
         {
@@ -172,15 +264,11 @@ describe('Consultation Verification Service', () => {
         doctor_joined_at: '2026-03-21T11:59:00.000Z',
         patient_joined_at: null,
       };
-      const chain = {
-        select: jest.fn().mockReturnValue({
-          eq: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue({ data: [apt], error: null }),
-          }),
-        }),
-        update: jest.fn(),
-      };
-      mockFrom.mockReturnValue(chain);
+      const chain = appointmentsLookupChain(apt);
+      chain.update = jest.fn();
+      mockFrom.mockImplementation((table: string) =>
+        table === 'appointments' ? chain : appointmentsLookupChain(null)
+      );
 
       await handleParticipantConnected(
         {
@@ -194,6 +282,27 @@ describe('Consultation Verification Service', () => {
 
       expect(chain.update).not.toHaveBeenCalled();
     });
+
+    it('exits early when no consultation_session exists for the RoomSid', async () => {
+      findSessionByProviderSessionId.mockResolvedValueOnce(null);
+      const chain = appointmentsLookupChain(null);
+      mockFrom.mockImplementation((table: string) =>
+        table === 'appointments' ? chain : appointmentsLookupChain(null)
+      );
+
+      await handleParticipantConnected(
+        {
+          RoomSid: 'RM_UNKNOWN',
+          ParticipantIdentity: 'doctor-doc-1',
+          Timestamp: '2026-03-21T12:00:00.000Z',
+          StatusCallbackEvent: 'participant-connected',
+        },
+        correlationId
+      );
+
+      expect(chain.select).not.toHaveBeenCalled();
+      expect(chain.update).not.toHaveBeenCalled();
+    });
   });
 
   describe('handleParticipantDisconnected', () => {
@@ -204,17 +313,10 @@ describe('Consultation Verification Service', () => {
         doctor_left_at: null,
         patient_left_at: null,
       };
-      const chain = {
-        select: jest.fn().mockReturnValue({
-          eq: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue({ data: [apt], error: null }),
-          }),
-        }),
-        update: jest.fn().mockReturnValue({
-          eq: jest.fn().mockResolvedValue({ error: null }),
-        }),
-      };
-      mockFrom.mockReturnValue(chain);
+      const chain = appointmentsLookupChain(apt);
+      mockFrom.mockImplementation((table: string) =>
+        table === 'appointments' ? chain : appointmentsLookupChain(null)
+      );
 
       await handleParticipantDisconnected(
         {
@@ -236,17 +338,10 @@ describe('Consultation Verification Service', () => {
         doctor_left_at: null,
         patient_left_at: null,
       };
-      const chain = {
-        select: jest.fn().mockReturnValue({
-          eq: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue({ data: [apt], error: null }),
-          }),
-        }),
-        update: jest.fn().mockReturnValue({
-          eq: jest.fn().mockResolvedValue({ error: null }),
-        }),
-      };
-      mockFrom.mockReturnValue(chain);
+      const chain = appointmentsLookupChain(apt);
+      mockFrom.mockImplementation((table: string) =>
+        table === 'appointments' ? chain : appointmentsLookupChain(null)
+      );
 
       await handleParticipantDisconnected(
         {
@@ -268,15 +363,11 @@ describe('Consultation Verification Service', () => {
         doctor_left_at: '2026-03-21T12:34:00.000Z',
         patient_left_at: null,
       };
-      const chain = {
-        select: jest.fn().mockReturnValue({
-          eq: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue({ data: [apt], error: null }),
-          }),
-        }),
-        update: jest.fn(),
-      };
-      mockFrom.mockReturnValue(chain);
+      const chain = appointmentsLookupChain(apt);
+      chain.update = jest.fn();
+      mockFrom.mockImplementation((table: string) =>
+        table === 'appointments' ? chain : appointmentsLookupChain(null)
+      );
 
       await handleParticipantDisconnected(
         {
@@ -301,13 +392,11 @@ describe('Consultation Verification Service', () => {
         patient_joined_at: null,
         doctor_left_at: null,
         patient_left_at: null,
-        consultation_ended_at: '2026-03-21T12:35:00.000Z',
         consultation_duration_seconds: 2100,
         verified_at: null,
         status: 'confirmed',
       };
-      const chain = createTryMarkVerifiedChain(apt);
-      mockFrom.mockReturnValue(chain);
+      const chain = buildRouter({ apt, actualEndedAt: '2026-03-21T12:35:00.000Z' });
 
       await tryMarkVerified('apt-1', correlationId);
 
@@ -325,13 +414,11 @@ describe('Consultation Verification Service', () => {
         patient_joined_at: '2026-03-21T12:01:00.000Z',
         doctor_left_at: '2026-03-21T12:35:00.000Z',
         patient_left_at: '2026-03-21T12:30:00.000Z',
-        consultation_ended_at: '2026-03-21T12:35:00.000Z',
         consultation_duration_seconds: 2040,
         verified_at: null,
         status: 'confirmed',
       };
-      const chain = createTryMarkVerifiedChain(apt);
-      mockFrom.mockReturnValue(chain);
+      const chain = buildRouter({ apt, actualEndedAt: '2026-03-21T12:35:00.000Z' });
 
       await tryMarkVerified('apt-1', correlationId);
 
@@ -349,13 +436,11 @@ describe('Consultation Verification Service', () => {
         patient_joined_at: '2026-03-21T12:01:00.000Z',
         doctor_left_at: '2026-03-21T12:02:00.000Z',
         patient_left_at: '2026-03-21T12:35:00.000Z',
-        consultation_ended_at: '2026-03-21T12:35:00.000Z',
         consultation_duration_seconds: 2040,
         verified_at: null,
         status: 'confirmed',
       };
-      const chain = createTryMarkVerifiedChain(apt);
-      mockFrom.mockReturnValue(chain);
+      const chain = buildRouter({ apt, actualEndedAt: '2026-03-21T12:35:00.000Z' });
 
       await tryMarkVerified('apt-1', correlationId);
 
@@ -373,13 +458,11 @@ describe('Consultation Verification Service', () => {
         patient_joined_at: '2026-03-21T12:01:00.000Z',
         doctor_left_at: '2026-03-21T12:01:45.000Z',
         patient_left_at: '2026-03-21T12:35:00.000Z',
-        consultation_ended_at: '2026-03-21T12:35:00.000Z',
         consultation_duration_seconds: 2040,
         verified_at: null,
         status: 'confirmed',
       };
-      const chain = createTryMarkVerifiedChain(apt, true);
-      mockFrom.mockReturnValue(chain);
+      const chain = buildRouter({ apt, actualEndedAt: '2026-03-21T12:35:00.000Z', disableUpdate: true });
 
       await tryMarkVerified('apt-1', correlationId);
 
@@ -394,13 +477,11 @@ describe('Consultation Verification Service', () => {
         patient_joined_at: '2026-03-21T12:01:00.000Z',
         doctor_left_at: null,
         patient_left_at: null,
-        consultation_ended_at: '2026-03-21T12:35:00.000Z',
         consultation_duration_seconds: 2040,
         verified_at: null,
         status: 'confirmed',
       };
-      const chain = createTryMarkVerifiedChain(apt);
-      mockFrom.mockReturnValue(chain);
+      const chain = buildRouter({ apt, actualEndedAt: '2026-03-21T12:35:00.000Z' });
 
       await tryMarkVerified('apt-1', correlationId);
 
@@ -418,13 +499,15 @@ describe('Consultation Verification Service', () => {
         patient_joined_at: '2026-03-21T12:01:00.000Z',
         doctor_left_at: null,
         patient_left_at: null,
-        consultation_ended_at: '2026-03-21T12:02:00.000Z',
         consultation_duration_seconds: 30,
         verified_at: null,
         status: 'confirmed',
       };
-      const chain = createTryMarkVerifiedChain(apt, true);
-      mockFrom.mockReturnValue(chain);
+      const chain = buildRouter({
+        apt,
+        actualEndedAt: '2026-03-21T12:02:00.000Z',
+        disableUpdate: true,
+      });
 
       await tryMarkVerified('apt-1', correlationId);
 
@@ -437,13 +520,34 @@ describe('Consultation Verification Service', () => {
         doctor_id: 'doc-1',
         doctor_joined_at: '2026-03-21T12:00:00.000Z',
         patient_joined_at: '2026-03-21T12:01:00.000Z',
-        consultation_ended_at: '2026-03-21T12:35:00.000Z',
         consultation_duration_seconds: 2040,
         verified_at: '2026-03-21T12:35:00.000Z',
         status: 'completed',
       };
-      const chain = createTryMarkVerifiedChain(apt, true);
-      mockFrom.mockReturnValue(chain);
+      const chain = buildRouter({
+        apt,
+        actualEndedAt: '2026-03-21T12:35:00.000Z',
+        disableUpdate: true,
+      });
+
+      await tryMarkVerified('apt-1', correlationId);
+
+      expect(chain.update).not.toHaveBeenCalled();
+    });
+
+    it('does not update when consultation_sessions has no actual_ended_at yet', async () => {
+      const apt = {
+        id: 'apt-1',
+        doctor_id: 'doc-1',
+        doctor_joined_at: '2026-03-21T12:00:00.000Z',
+        patient_joined_at: '2026-03-21T12:01:00.000Z',
+        doctor_left_at: null,
+        patient_left_at: null,
+        consultation_duration_seconds: 2040,
+        verified_at: null,
+        status: 'confirmed',
+      };
+      const chain = buildRouter({ apt, actualEndedAt: null, disableUpdate: true });
 
       await tryMarkVerified('apt-1', correlationId);
 
@@ -459,17 +563,10 @@ describe('Consultation Verification Service', () => {
         doctor_joined_at: null,
         patient_joined_at: null,
       };
-      const chain = {
-        select: jest.fn().mockReturnValue({
-          eq: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue({ data: [apt], error: null }),
-          }),
-        }),
-        update: jest.fn().mockReturnValue({
-          eq: jest.fn().mockResolvedValue({ error: null }),
-        }),
-      };
-      mockFrom.mockReturnValue(chain);
+      const chain = appointmentsLookupChain(apt);
+      mockFrom.mockImplementation((table: string) =>
+        table === 'appointments' ? chain : appointmentsLookupChain(null)
+      );
 
       await handleTwilioStatusCallback(
         {
@@ -491,17 +588,10 @@ describe('Consultation Verification Service', () => {
         doctor_left_at: null,
         patient_left_at: null,
       };
-      const chain = {
-        select: jest.fn().mockReturnValue({
-          eq: jest.fn().mockReturnValue({
-            limit: jest.fn().mockResolvedValue({ data: [apt], error: null }),
-          }),
-        }),
-        update: jest.fn().mockReturnValue({
-          eq: jest.fn().mockResolvedValue({ error: null }),
-        }),
-      };
-      mockFrom.mockReturnValue(chain);
+      const chain = appointmentsLookupChain(apt);
+      mockFrom.mockImplementation((table: string) =>
+        table === 'appointments' ? chain : appointmentsLookupChain(null)
+      );
 
       await handleTwilioStatusCallback(
         {
@@ -517,11 +607,11 @@ describe('Consultation Verification Service', () => {
     });
 
     it('ignores unknown events', async () => {
-      const chain = {
-        select: jest.fn(),
-        update: jest.fn(),
-      };
-      mockFrom.mockReturnValue(chain);
+      const appointmentsChain = appointmentsLookupChain(null);
+      const sessionsChain = { select: jest.fn(), update: jest.fn() };
+      mockFrom.mockImplementation((table: string) =>
+        table === 'appointments' ? appointmentsChain : sessionsChain
+      );
 
       await handleTwilioStatusCallback(
         {
@@ -531,8 +621,9 @@ describe('Consultation Verification Service', () => {
         correlationId
       );
 
-      expect(chain.select).not.toHaveBeenCalled();
-      expect(chain.update).not.toHaveBeenCalled();
+      expect(appointmentsChain.select).not.toHaveBeenCalled();
+      expect(appointmentsChain.update).not.toHaveBeenCalled();
+      expect(findSessionByProviderSessionId).not.toHaveBeenCalled();
     });
   });
 });

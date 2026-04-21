@@ -20,6 +20,21 @@ const mockedDoctorSettings = doctorSettings as jest.Mocked<typeof doctorSettings
 const mockedOpdMode = opdMode as jest.Mocked<typeof opdMode>;
 const mockedOpdQueue = opdQueue as jest.Mocked<typeof opdQueue>;
 
+/**
+ * Post-Task-35: `buildPatientOpdSnapshot` issues 2-3 lookups through the
+ * admin client:
+ *   1. `appointments`         → primary appt row
+ *   2. `consultation_sessions`→ latest session (for actual_started_at /
+ *                                actual_ended_at — replaces the dropped
+ *                                `consultation_started_at` /
+ *                                `consultation_ended_at` columns).
+ *   3. `consultation_sessions`→ any other-patient live session for
+ *                                `inferDoctorBusySnapshot` (only called when
+ *                                the caller's own session isn't live).
+ * A single `appointmentsChain` serves both appointments AND
+ * consultation_sessions in these tests; the `maybeSingle` sequence pops
+ * per call in order.
+ */
 function makeAdminMock(sequences: { appointments: unknown[]; queue?: unknown[] }) {
   let aptIdx = 0;
   let qIdx = 0;
@@ -29,6 +44,7 @@ function makeAdminMock(sequences: { appointments: unknown[]; queue?: unknown[] }
     neq: jest.fn().mockReturnThis(),
     not: jest.fn().mockReturnThis(),
     is: jest.fn().mockReturnThis(),
+    order: jest.fn().mockReturnThis(),
     limit: jest.fn().mockReturnThis(),
     maybeSingle: jest.fn().mockImplementation(() => {
       const v = sequences.appointments[aptIdx];
@@ -60,11 +76,13 @@ describe('buildPatientOpdSnapshot', () => {
     patient_id: 'p1',
     appointment_date: future.toISOString(),
     status: 'confirmed',
-    consultation_started_at: null,
-    consultation_ended_at: null,
     opd_early_invite_expires_at: null,
     opd_early_invite_response: null,
     opd_session_delay_minutes: null,
+  };
+  const baseSession = {
+    actual_started_at: null,
+    actual_ended_at: null,
   };
 
   beforeEach(() => {
@@ -85,7 +103,11 @@ describe('buildPatientOpdSnapshot', () => {
 
   it('returns slot-shaped snapshot when opd_mode is slot', async () => {
     const { from } = makeAdminMock({
-      appointments: [{ data: baseApt, error: null }, { data: null, error: null }],
+      appointments: [
+        { data: baseApt, error: null },
+        { data: baseSession, error: null },
+        { data: null, error: null },
+      ],
     });
     mockedDb.getSupabaseAdminClient.mockReturnValue({ from } as any);
 
@@ -109,7 +131,11 @@ describe('buildPatientOpdSnapshot', () => {
     mockedOpdMode.resolveOpdModeFromSettings.mockReturnValue('queue');
 
     const { from } = makeAdminMock({
-      appointments: [{ data: baseApt, error: null }, { data: null, error: null }],
+      appointments: [
+        { data: baseApt, error: null },
+        { data: baseSession, error: null },
+        { data: null, error: null },
+      ],
       queue: [{ data: { token_number: 3 }, error: null }],
     });
     mockedDb.getSupabaseAdminClient.mockReturnValue({ from } as any);

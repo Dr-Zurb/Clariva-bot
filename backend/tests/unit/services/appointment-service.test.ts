@@ -31,6 +31,22 @@ jest.mock('../../../src/services/care-episode-service', () => ({
   syncCareEpisodeLifecycleOnAppointmentCompleted: jest.fn(async () => {}),
 }));
 
+// Post-Task-35: appointment-service enriches every Appointment it returns
+// with a `consultation_session` summary fetched via these helpers. The
+// getAppointmentById / bookAppointment paths in this test don't care about
+// that enrichment so we stub both helpers to a no-op (returns null / empty
+// map) to keep the existing lightweight mock admin chain viable.
+jest.mock('../../../src/services/consultation-session-service', () => {
+  const actual = jest.requireActual(
+    '../../../src/services/consultation-session-service'
+  ) as object;
+  return {
+    ...actual,
+    findLatestAppointmentSessionSummary: jest.fn(async () => null),
+    findLatestAppointmentSessionSummariesBulk: jest.fn(async () => new Map()),
+  };
+});
+
 const mockedDb = database as jest.Mocked<typeof database>;
 const mockedAudit = auditLogger as jest.Mocked<typeof auditLogger>;
 const mockedDoctorSettings = doctorSettings as jest.Mocked<typeof doctorSettings>;

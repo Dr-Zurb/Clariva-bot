@@ -34,6 +34,7 @@ import {
 import type { WebhookJobData } from '../types/queue';
 import { processInstagramCommentWebhook } from './instagram-comment-webhook-handler';
 import { processInstagramDmWebhook } from './instagram-dm-webhook-handler';
+import { handleModalityChangePaymentCapturedHook } from '../controllers/modality-change-controller';
 
 let workerConnection: IORedis | null = null;
 let workerInstance: Worker<WebhookJobData> | null = null;
@@ -59,6 +60,54 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
 
   if (provider === 'razorpay' || provider === 'paypal') {
     const adapter = provider === 'razorpay' ? razorpayAdapter : paypalAdapter;
+
+    // Plan 09 Task 49: Razorpay Orders API mid-consult upgrade webhooks
+    // carry `notes.kind = 'mid_consult_upgrade'`. Route these to the
+    // modality state-machine hook BEFORE the booking-time path runs —
+    // the payload shape overlaps (same `payment.captured` event) but
+    // the handlers are different. Booking-time `processPaymentSuccess`
+    // would fail a lookup for the order id (no matching payment_link)
+    // and no-op silently, so routing first is defensive.
+    if (provider === 'razorpay') {
+      const midConsult = extractMidConsultUpgradeNotes(payload);
+      if (midConsult) {
+        try {
+          await handleModalityChangePaymentCapturedHook({
+            razorpayOrderId:   midConsult.razorpayOrderId,
+            razorpayPaymentId: midConsult.razorpayPaymentId,
+            amountPaiseEcho:   midConsult.amountPaiseEcho,
+            correlationId:     midConsult.correlationId ?? correlationId,
+          });
+          logger.info(
+            {
+              correlationId,
+              eventId,
+              provider,
+              razorpayOrderId: midConsult.razorpayOrderId,
+            },
+            'Webhook routed: mid_consult_upgrade payment.captured',
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.error(
+            {
+              correlationId,
+              eventId,
+              provider,
+              razorpayOrderId: midConsult.razorpayOrderId,
+              error: msg,
+            },
+            'Webhook: mid_consult_upgrade handler threw — compensating refund + dead-letter',
+          );
+          // Re-throw so BullMQ retries; after max attempts the dead-
+          // letter queue will persist the payload for ops inspection.
+          throw err;
+        }
+        await markWebhookProcessed(eventId, provider);
+        return;
+      }
+    }
+
     const parsed = adapter.parseSuccessPayload(payload);
     let paymentAppointmentId: string | undefined;
     if (parsed) {
@@ -138,6 +187,67 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
   }
 
   await processInstagramDmWebhook({ eventId, correlationId, provider, payload });
+}
+
+/**
+ * Plan 09 Task 49. Detect Razorpay `payment.captured` webhook payloads
+ * produced by our mid-consult Orders API flow. The upgrade capture
+ * writes `notes.kind = 'mid_consult_upgrade'` onto the order; the
+ * `payment` entity + `order` entity both surface those notes. Returns
+ * the minimal context the state-machine hook needs, or `null` if
+ * the payload is a booking-time payment link capture.
+ */
+function extractMidConsultUpgradeNotes(payload: unknown): {
+  razorpayOrderId:   string;
+  razorpayPaymentId: string;
+  amountPaiseEcho:   number;
+  correlationId:     string | null;
+} | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const p = payload as {
+    event?: string;
+    payload?: {
+      payment?: {
+        entity?: {
+          id?: string;
+          order_id?: string;
+          amount?: number;
+          notes?: Record<string, unknown>;
+        };
+      };
+      order?: {
+        entity?: {
+          id?: string;
+          amount?: number;
+          amount_paid?: number;
+          notes?: Record<string, unknown>;
+        };
+      };
+    };
+  };
+  if (p.event !== 'payment.captured') return null;
+
+  const payment = p.payload?.payment?.entity;
+  const order   = p.payload?.order?.entity;
+  const notes   = (payment?.notes ?? order?.notes ?? {}) as Record<string, unknown>;
+  if (notes.kind !== 'mid_consult_upgrade') return null;
+
+  const razorpayOrderId   = (payment?.order_id ?? order?.id) as string | undefined;
+  const razorpayPaymentId = payment?.id as string | undefined;
+  if (!razorpayOrderId || !razorpayPaymentId) return null;
+
+  const amountPaiseEcho =
+    typeof payment?.amount === 'number'
+      ? payment.amount
+      : typeof order?.amount_paid === 'number'
+      ? order.amount_paid
+      : typeof order?.amount === 'number'
+      ? order.amount
+      : 0;
+
+  const correlationId =
+    typeof notes.correlationId === 'string' ? (notes.correlationId as string) : null;
+  return { razorpayOrderId, razorpayPaymentId, amountPaiseEcho, correlationId };
 }
 
 /** After max retries: dead letter queue. Exported for unit tests. */

@@ -1,10 +1,16 @@
 "use client";
 
 import { LogoutButton } from "@/components/LogoutButton";
+import { DashboardEventsBell } from "@/components/dashboard/DashboardEventsBell";
 import { cn } from "@/lib/utils";
 
 interface HeaderProps {
   userEmail?: string | null;
+  /**
+   * Plan 07 · Task 30: Supabase access token forwarded to the
+   * notifications bell. Empty string suppresses the bell entirely.
+   */
+  token?: string;
   onMenuToggle?: () => void;
 }
 
@@ -12,7 +18,7 @@ interface HeaderProps {
  * Dashboard header: user display, logout, mobile menu toggle.
  * @see e-task-3; FRONTEND_COMPLIANCE (email for identity only)
  */
-export function Header({ userEmail, onMenuToggle }: HeaderProps) {
+export function Header({ userEmail, token, onMenuToggle }: HeaderProps) {
   return (
     <header className="flex shrink-0 items-center justify-between border-b border-gray-200 bg-white px-4 py-3">
       <div className="flex items-center gap-3">
@@ -34,7 +40,10 @@ export function Header({ userEmail, onMenuToggle }: HeaderProps) {
           )}
         </span>
       </div>
-      <LogoutButton />
+      <div className="flex items-center gap-2">
+        {token ? <DashboardEventsBell token={token} /> : null}
+        <LogoutButton />
+      </div>
     </header>
   );
 }

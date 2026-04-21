@@ -28,9 +28,14 @@ import {
   validateDoctorCreateAppointment,
   validateGetAppointmentParams,
   validatePatchAppointmentBody,
+  validateRecordingConsentBody,
 } from '../utils/validation';
-import { UnauthorizedError } from '../utils/errors';
+import { NotFoundError, UnauthorizedError } from '../utils/errors';
 import { getPatientForDoctor } from '../services/patient-service';
+import { captureBookingConsent } from '../services/recording-consent-service';
+import { verifyBookingToken } from '../utils/booking-token';
+import { getSupabaseAdminClient } from '../config/database';
+import { logger } from '../config/logger';
 
 /**
  * Get available slots
@@ -179,4 +184,83 @@ export const patchAppointmentByIdHandler = asyncHandler(async (req: Request, res
   const appointment = await updateAppointment(id, updates, correlationId, userId);
 
   res.status(200).json(successResponse({ appointment }, req));
+});
+
+/**
+ * Record recording-consent decision for an appointment (Plan 02 · Task 27).
+ * POST /api/v1/appointments/:id/recording-consent
+ *
+ * Body: { decision: boolean, consentVersion: string, bookingToken?: string }
+ * Auth: Either (a) authenticated doctor who owns the appointment, OR
+ *       (b) valid booking token whose conversation owns the appointment
+ *           (public /book page flow — patients are not logged in).
+ *
+ * Response: 204 No Content.
+ */
+export const postRecordingConsentHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const { id: appointmentId } = validateGetAppointmentParams(req.params);
+  const { decision, consentVersion, bookingToken } = validateRecordingConsentBody(req.body);
+
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new UnauthorizedError('Recording consent capture not available');
+  }
+
+  const { data: apptRow, error: apptErr } = await admin
+    .from('appointments')
+    .select('id, doctor_id, conversation_id')
+    .eq('id', appointmentId)
+    .maybeSingle();
+
+  if (apptErr) {
+    logger.error(
+      { correlationId, appointmentId, error: apptErr.message },
+      'recording_consent_appointment_lookup_failed'
+    );
+    throw new NotFoundError('Appointment not found');
+  }
+  if (!apptRow) {
+    throw new NotFoundError('Appointment not found');
+  }
+
+  const authedUserId = req.user?.id;
+  let authorized = false;
+
+  if (authedUserId && apptRow.doctor_id === authedUserId) {
+    authorized = true;
+  } else if (bookingToken) {
+    try {
+      const verified = verifyBookingToken(bookingToken);
+      if (
+        apptRow.conversation_id &&
+        verified.conversationId === apptRow.conversation_id &&
+        verified.doctorId === apptRow.doctor_id
+      ) {
+        authorized = true;
+      }
+    } catch (err) {
+      logger.warn(
+        {
+          correlationId,
+          appointmentId,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        'recording_consent_booking_token_rejected'
+      );
+    }
+  }
+
+  if (!authorized) {
+    throw new UnauthorizedError('Not authorized to set consent for this appointment');
+  }
+
+  await captureBookingConsent({
+    appointmentId,
+    decision,
+    consentVersion,
+    correlationId,
+  });
+
+  res.status(204).send();
 });

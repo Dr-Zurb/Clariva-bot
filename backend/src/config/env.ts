@@ -21,6 +21,16 @@ const envSchema = z.object({
   SUPABASE_URL: z.string().url('Invalid Supabase URL'),
   SUPABASE_ANON_KEY: z.string().min(1, 'Supabase anonymous key is required'),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1, 'Supabase service role key is required'),
+  /**
+   * Supabase project JWT secret (from Project Settings → API → JWT Secret).
+   * Used by `services/supabase-jwt-mint.ts` (Plan 04 · Task 18) to sign
+   * scoped patient + doctor JWTs for the text-consult Realtime channel.
+   * Optional at startup — text-consult code-paths fail-fast at call time
+   * with a clear error if missing, so non-text deployments (video-only,
+   * pre-Plan-04) keep working without this var. Once Plan 04 ships in
+   * production, treat this as effectively required.
+   */
+  SUPABASE_JWT_SECRET: z.string().min(16, 'SUPABASE_JWT_SECRET must be at least 16 chars when set').optional(),
 
   // OpenAI Configuration (optional at startup; required when AI features are invoked)
   // AI routes or worker MUST fail fast if key is missing when calling OpenAI (see config/openai.ts)
@@ -269,6 +279,217 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => v === 'true' || v === '1'),
+
+  /**
+   * Plan 01 · Task 16 — `sendConsultationReadyToPatient` dedup window.
+   *
+   * Second call into the helper for the same `consultation_sessions.id` within
+   * this many seconds short-circuits with `FanOutResult { anySent: false,
+   * channels: [], reason: 'recent_duplicate' }`. Default: 60s — long enough to
+   * absorb double-fires from the post-session cron + manual launcher click,
+   * short enough that a legitimate retry after a transient failure still ships.
+   * Set to 0 to disable dedup entirely (not recommended in production).
+   */
+  CONSULTATION_READY_NOTIFY_DEDUP_SECONDS: z
+    .string()
+    .default('60')
+    .transform((v) => Math.max(0, parseInt(v, 10) || 60)),
+
+  /**
+   * Plan 01 · Task 16 — base URL for the patient-facing prescription view used
+   * by `sendPrescriptionReadyToPatient`. When set, the urgent-moment ping
+   * includes a deep link `${PRESCRIPTION_VIEW_BASE_URL}/${prescriptionId}`.
+   * When unset, the helper sends a URL-less ping ("your prescription is ready
+   * — check your messages"); the existing `sendPrescriptionToPatient` already
+   * delivered the content body so the patient still has the prescription.
+   * No PDF infra is shipped in this task — Plan 02 / 07 own that.
+   */
+  PRESCRIPTION_VIEW_BASE_URL: z.string().url().optional(),
+
+  /**
+   * Plan 04 · Task 18 — patient-facing app base URL for the text-consult
+   * join page (`/c/text/{sessionId}?token=...`). When set, the text adapter
+   * builds the patient join URL using this base; when unset, the adapter
+   * returns a token-only `JoinToken` (no `url`) and the fan-out helper
+   * skips the text-modality CTA gracefully (logs + returns empty).
+   *
+   * Distinct from `CONSULTATION_JOIN_BASE_URL` (which today serves the
+   * video flat-URL `?token=` shape) so we can migrate text to a clean
+   * route convention without disrupting the live video flow. Once Plan 09
+   * mid-consult switching ships, both modalities will likely converge on
+   * `APP_BASE_URL` + per-modality path segments.
+   */
+  APP_BASE_URL: z.string().url().optional(),
+
+  /**
+   * Plan 04 · Task 18 — pre-consult cron lead time. Every minute the cron
+   * picks up sessions whose `scheduled_start_at` is within this many
+   * minutes of `now()` and provisions them via the facade. Default 5 min
+   * is a happy medium between "too early — patient ignores the ping" and
+   * "too late — patient misses the consult". Tune via env without deploy.
+   */
+  CONSULTATION_PRE_PING_LEAD_MINUTES: z
+    .string()
+    .default('5')
+    .transform((v) => Math.max(1, Math.min(60, parseInt(v, 10) || 5))),
+
+  /**
+   * Plan 04 · Task 18 — text-consult JWT lifetime (minutes after the
+   * session's scheduled end). Default 30 min — covers slot overrun + a
+   * grace window for the patient to read the final transcript before the
+   * token expires. Capped at 240 min so a misconfigured production env
+   * doesn't mint multi-hour bearer tokens.
+   */
+  TEXT_CONSULT_JWT_TTL_MINUTES_AFTER_END: z
+    .string()
+    .default('30')
+    .transform((v) => Math.max(5, Math.min(240, parseInt(v, 10) || 30))),
+
+  /**
+   * Plan 04 · Task 18 — per-sender per-session sliding-window message rate
+   * limit. Defaults: 60 messages per 60-second window. The limiter is
+   * **in-memory per backend pod** — with N pods the effective ceiling is
+   * `60 × N` per minute. Acceptable for v1 (low pod count); promote to
+   * Redis in a follow-up if traffic warrants.
+   */
+  CONSULTATION_MESSAGE_RATE_LIMIT_MAX: z
+    .string()
+    .default('60')
+    .transform((v) => Math.max(1, parseInt(v, 10) || 60)),
+  CONSULTATION_MESSAGE_RATE_LIMIT_WINDOW_SECONDS: z
+    .string()
+    .default('60')
+    .transform((v) => Math.max(1, parseInt(v, 10) || 60)),
+
+  /**
+   * Plan 02 · Task 33 — soft-delete grace window for patient account
+   * deletion, in days. `requestAccountDeletion` writes
+   * `grace_window_until = now() + this many days`; the nightly cron finalizes
+   * only after the cutoff passes, giving a patient a chance to log back in
+   * and cancel. Default 7 days matches the doctrine locked in the task.
+   *
+   * `0` is accepted for tests (so the suite can exercise the finalize path
+   * without waiting), but a production startup assertion (see
+   * `assertProductionEnvSafety` below) fails fast if `NODE_ENV ===
+   * 'production'` and this value is 0 — belt-and-suspenders because a
+   * zero-day grace on a real deployment would let an accidentally-tapped
+   * "delete my account" request finalize before the patient could
+   * retract it.
+   */
+  ACCOUNT_DELETION_GRACE_DAYS: z
+    .string()
+    .default('7')
+    .transform((v) => {
+      const n = parseInt(v, 10);
+      return Math.max(0, Number.isNaN(n) ? 7 : n);
+    }),
+
+  /**
+   * Plan 02 · Task 34 — archival worker hard-delete kill switch.
+   *
+   * When `'true'`, the nightly archival cron's hard-delete phase actually
+   * removes storage objects and stamps `hard_deleted_at` on
+   * `recording_artifact_index`. When any other value (default `'false'`),
+   * the hard-delete phase runs in dry-run mode only: it scans for
+   * candidates and logs the structured `event: 'archival_dry_run',
+   * phase: 'delete'` payload, but does not mutate anything.
+   *
+   * Shipped as `'false'` in production for the first 30 days post-deploy
+   * — the ops runbook (see task-34-regulatory-retention-policy-and-
+   * archival-worker.md Note 3) describes the flag-flip ritual once the
+   * dry-run output has been stable and the seed policy values have been
+   * legal-reviewed. The hide phase (reversible) is never gated by this
+   * flag.
+   */
+  ARCHIVAL_HARD_DELETE_ENABLED: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true'),
+
+  /**
+   * Plan 02 · Task 34 — dry-run preview horizon.
+   *
+   * How many days of upcoming hide-phase and hard-delete-phase candidates
+   * `GET /api/v1/admin/archival-preview` returns by default. Callers can
+   * override per-request via `?days=N` up to a hard cap enforced in the
+   * route. Increasing this is cheap (it widens the WHERE clause) but the
+   * response payload grows linearly in candidates — 7 days is enough for
+   * an ops weekly review cadence.
+   */
+  ARCHIVAL_DRY_RUN_REPORT_DAYS: z
+    .string()
+    .default('7')
+    .transform((v) => {
+      const n = parseInt(v, 10);
+      return Math.max(1, Number.isNaN(n) ? 7 : n);
+    }),
+
+  // ==========================================================================
+  // Plan 05 · Task 25 — Voice transcription pipeline
+  // ==========================================================================
+  /**
+   * Deepgram Nova-2 API key. Required when `selectProvider` routes a Hindi /
+   * Hinglish consult to Deepgram. If missing, `transcribeWithDeepgram`
+   * throws a TranscriptionPermanentError at call time — the worker marks
+   * the row `'failed'` (retry cannot recover from a missing credential).
+   * Non-Hindi deployments (English-only) can leave this unset.
+   */
+  DEEPGRAM_API_KEY: z.string().optional(),
+
+  /**
+   * Master kill-switch for the post-consult transcription pipeline. When
+   * `false`, `enqueueVoiceTranscription` is a no-op that logs and returns —
+   * the voice adapter keeps working, just nothing lands in
+   * `consultation_transcripts`. Used for staging environments without
+   * provider credentials, and as an ops emergency brake if provider costs
+   * spike.
+   */
+  VOICE_TRANSCRIPTION_ENABLED: z
+    .string()
+    .default('true')
+    .transform((v) => v !== 'false' && v !== '0'),
+
+  /**
+   * Worker polling interval in seconds. The worker wakes, pulls up to
+   * `VOICE_TRANSCRIPTION_WORKER_BATCH_SIZE` queued rows, and processes
+   * them. Default 30s balances Composition-readiness latency (Twilio
+   * finalises 5-30s after room close) against the feedback loop.
+   */
+  VOICE_TRANSCRIPTION_POLL_INTERVAL_SEC: z
+    .string()
+    .default('30')
+    .transform((v) => {
+      const n = parseInt(v, 10);
+      return Math.max(5, Number.isNaN(n) ? 30 : n);
+    }),
+
+  /**
+   * Max rows per worker tick. Small to keep the cron run bounded; the
+   * worker runs frequently so throughput is `batch × (60 / poll)` per
+   * minute.
+   */
+  VOICE_TRANSCRIPTION_WORKER_BATCH_SIZE: z
+    .string()
+    .default('25')
+    .transform((v) => {
+      const n = parseInt(v, 10);
+      return Math.max(1, Math.min(100, Number.isNaN(n) ? 25 : n));
+    }),
+
+  /**
+   * Retry cap before a row flips from `'queued'` to `'failed'`. The worker
+   * increments `retry_count` on each transient-failure cycle. Backoff
+   * table is hardcoded in `voice-transcription-worker.ts` (1m, 5m, 15m,
+   * 1h, 6h) so a retry only fires once enough time has elapsed since the
+   * last attempt — the cap is the second, belt-and-braces guard.
+   */
+  VOICE_TRANSCRIPTION_MAX_RETRIES: z
+    .string()
+    .default('5')
+    .transform((v) => {
+      const n = parseInt(v, 10);
+      return Math.max(0, Number.isNaN(n) ? 5 : n);
+    }),
 });
 
 /**
@@ -287,6 +508,36 @@ const envSchema = z.object({
  * ```
  */
 export const env = envSchema.parse(process.env);
+
+/**
+ * Plan 02 · Task 33 — production-only env guardrails.
+ *
+ * Zod gets us type-level + default-value validation, but a few settings
+ * have a *runtime* semantic that only matters in production: "this must
+ * not be 0 on a real deployment". We collect those checks here, call
+ * them once at module load, and let the process fail fast with a clear
+ * message rather than boot into a subtly-broken configuration.
+ *
+ * Add new assertions sparingly — for a setting to belong here it should
+ * be something where (a) the schema allows a value that breaks an
+ * invariant only in production, and (b) we cannot reasonably express
+ * the constraint in the schema itself (because tests rely on the
+ * "unsafe" default).
+ */
+function assertProductionEnvSafety(): void {
+  if (env.NODE_ENV !== 'production') return;
+
+  if (env.ACCOUNT_DELETION_GRACE_DAYS === 0) {
+    throw new Error(
+      'ACCOUNT_DELETION_GRACE_DAYS must be > 0 in production. ' +
+        'Zero-day grace means a single accidental tap on "delete my account" ' +
+        'finalizes irreversibly before the patient can retract. Set to 7 ' +
+        '(the task default) or higher. See task-33-account-deletion-revocation-list.md.',
+    );
+  }
+}
+
+assertProductionEnvSafety();
 
 /**
  * Type for environment variables

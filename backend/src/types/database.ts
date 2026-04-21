@@ -90,14 +90,12 @@ export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6;
  * @property reason_for_visit - Patient main complaint/symptom (required for new bookings; migration 016)
  * @property notes - Optional patient extras + doctor default_notes (migration 016)
  * @property consultation_type - Teleconsult modality or in-clinic: 'text'|'voice'|'video'|'in_clinic' (e-task-2, SFU-07)
- * @property consultation_room_sid - Twilio Video room SID (migration 021)
- * @property consultation_started_at - When room was created (migration 021)
- * @property doctor_joined_at - When doctor connected (migration 021)
- * @property patient_joined_at - When patient connected (migration 021)
- * @property consultation_ended_at - When room ended (migration 021)
- * @property consultation_duration_seconds - Call duration in seconds (migration 021)
+ * @property doctor_joined_at - When doctor connected (migration 021; partially superseded by consultation_sessions — still read by payout verification)
+ * @property patient_joined_at - When patient connected (migration 021; partially superseded by consultation_sessions — still read by payout verification)
+ * @property consultation_duration_seconds - Call duration in seconds (migration 021; set by Twilio webhook for payout eligibility)
  * @property verified_at - When consultation was verified for payout (migration 021)
  * @property clinical_notes - Doctor notes; in-clinic or post-call (migration 021)
+ * @property consultation_session - Derived nested summary from the most-recent `consultation_sessions` row for this appointment. Populated by the appointment-service enrichment layer (Task 35). Not a real column on `appointments`.
  * @property created_at - Timestamp when appointment was created
  * @property updated_at - Timestamp when appointment was last updated
  */
@@ -113,12 +111,25 @@ export interface Appointment {
   reason_for_visit?: string | null;  // Patient main complaint (migration 016)
   notes?: string | null;  // Optional patient extras + doctor default_notes (migration 016)
   consultation_type?: string | null;  // e.g. 'text', 'voice', 'video', 'in_clinic' (e-task-2, SFU-07)
-  consultation_room_sid?: string | null;  // Twilio Video room SID (migration 021)
-  consultation_started_at?: Date | string | null;  // When room was created (migration 021)
-  doctor_joined_at?: Date | string | null;  // When doctor connected (migration 021)
-  patient_joined_at?: Date | string | null;  // When patient connected (migration 021)
-  consultation_ended_at?: Date | string | null;  // When room ended (migration 021)
-  consultation_duration_seconds?: number | null;  // Call duration in seconds (migration 021)
+  doctor_joined_at?: Date | string | null;  // When doctor connected (migration 021; still written by Twilio webhook for payout verification)
+  patient_joined_at?: Date | string | null;  // When patient connected (migration 021; still written by Twilio webhook for payout verification)
+  consultation_duration_seconds?: number | null;  // Call duration in seconds (migration 021; set by Twilio webhook for payout eligibility)
+  /**
+   * Compact consultation_sessions summary for the latest session row on
+   * this appointment. Populated by appointment-service.ts enrichment layer
+   * (Task 35). Replaces the dropped legacy columns
+   * `consultation_room_sid` / `consultation_started_at` /
+   * `consultation_ended_at`. Not a DB column — added post-fetch.
+   */
+  consultation_session?: {
+    id: string;
+    modality: 'text' | 'voice' | 'video';
+    status: 'scheduled' | 'live' | 'ended' | 'no_show' | 'cancelled';
+    provider: string;
+    provider_session_id: string | null;
+    actual_started_at: string | null;
+    actual_ended_at: string | null;
+  } | null;
   doctor_left_at?: Date | string | null;  // When doctor disconnected; for "who left first" (migration 023)
   patient_left_at?: Date | string | null;  // When patient disconnected; for "who left first" (migration 023)
   verified_at?: Date | string | null;  // When consultation was verified (migration 021)

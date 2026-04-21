@@ -28,6 +28,10 @@ export type ConversationLastPromptKind =
   | 'consent'
   /** Consent step but last bot line was optional-extras ("say Yes to continue") — RBH-07 / philosophy §4.8. */
   | 'consent_optional_extras'
+  /** Plan 02 · Task 27 — bot asked "OK to record?" (pre-re-pitch). */
+  | 'recording_consent_ask'
+  /** Plan 02 · Task 27 — bot sent the soft re-pitch after a first decline. */
+  | 'recording_consent_re_pitch'
   | 'confirm_details'
   | 'match_pick'
   | 'cancel_confirm'
@@ -60,6 +64,7 @@ export function conversationLastPromptKindForStep(
   if (step === 'collecting_all' || step.startsWith('collecting_')) return 'collect_details';
   if (step === 'confirm_details') return 'confirm_details';
   if (step === 'consent') return 'consent';
+  if (step === 'recording_consent') return 'recording_consent_ask';
   if (step === 'awaiting_match_confirmation') return 'match_pick';
   if (step === 'awaiting_cancel_confirmation') return 'cancel_confirm';
   if (step === 'awaiting_staff_service_confirmation') return 'staff_service_pending';
@@ -121,6 +126,18 @@ export type PatientCollectionStep =
   | 'confirm_details'
   | 'awaiting_match_confirmation'
   | 'consent'
+  /**
+   * Plan 02 · Task 27 · Decision 4 LOCKED.
+   * Step after `consent` (schedule-this-appointment) and before
+   * `awaiting_date_time` / `awaiting_slot_selection`. Handler asks
+   * "are you OK with this consult being recorded?" and accepts one
+   * soft re-pitch before persisting the answer to
+   * `ConversationState.recordingConsent*` (the appointment row doesn't
+   * exist yet; the decision is copied onto
+   * `appointments.recording_consent_*` inside
+   * `processSlotSelectionAndPay` when the appointment is created).
+   */
+  | 'recording_consent'
   | 'awaiting_date_time'
   | 'awaiting_slot_selection'
   /** ARM-05: Matcher medium/low — clinic must confirm service before slot link. */
@@ -270,6 +287,37 @@ export interface ConversationState {
     confidence: ServiceCatalogMatchConfidence;
     candidateLabels?: Array<{ service_key: string; label: string }>;
   };
+  /**
+   * Plan 02 · Task 27 · Decision 4 LOCKED.
+   * Patient's recording-consent answer captured during the IG-bot
+   * `recording_consent` step. Persisted into
+   * `appointments.recording_consent_decision` at appointment creation
+   * time (inside `processSlotSelectionAndPay`) — the appointment row
+   * doesn't exist while the IG flow is asking, so we stash here in
+   * metadata and copy across on booking.
+   *   - `undefined` → not yet asked (or in a conversation flow that
+   *     predates Task 27).
+   *   - `true`      → opted in.
+   *   - `false`     → declined (post re-pitch). Booking still proceeds.
+   * Cleared alongside `bookingForPatientId` / `slotToConfirm` when the
+   * booking finalizes, so a later booking in the same thread starts
+   * fresh.
+   */
+  recordingConsentDecision?: boolean;
+  /**
+   * Plan 02 · Task 27 — snapshot of `RECORDING_CONSENT_VERSION` the
+   * patient saw when they answered. Copied onto
+   * `appointments.recording_consent_version` at booking time. Never
+   * overwritten on later body bumps.
+   */
+  recordingConsentVersion?: string;
+  /**
+   * Plan 02 · Task 27 — true once we've shown the soft re-pitch after
+   * a first "no". Stops us from re-asking more than once per decline
+   * cycle (Decision 4 caps the re-pitch at 1). Reset when the decision
+   * resolves (yes or second no).
+   */
+  recordingConsentRePitched?: boolean;
   /**
    * Task 09 (Plan 04): concerns the LLM matcher extracted when `mixed_complaints === true`, in the
    * exact order they were echoed back to the patient as a numbered pick-list. Lets the webhook

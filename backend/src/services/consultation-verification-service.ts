@@ -1,12 +1,24 @@
 /**
- * Consultation Verification Service (e-task-4)
+ * Consultation Verification Service (e-task-4, Task 35 cutover)
  *
  * Handles Twilio Video room/participant status callbacks.
- * Updates appointment: doctor_joined_at, patient_joined_at, consultation_ended_at.
+ * Updates appointment: doctor_joined_at, patient_joined_at (still on
+ * `appointments` for payout verification).
+ * Mirrors lifecycle into `consultation_sessions` (actual_started_at,
+ * actual_ended_at, status, join timestamps).
  * Marks verified and completed when both joined + duration >= threshold.
  * Triggers per-appointment payout when doctor has payout_schedule='per_appointment'.
  *
  * Identity convention (from e-task-3): doctor-{doctorId}, patient-{appointmentId}
+ *
+ * Task 35: the legacy `appointments.consultation_room_sid` column was
+ * dropped. The only RoomSid → appointment lookup path now goes through
+ * `consultation_sessions.provider_session_id` → `appointment_id` via
+ * `findSessionByProviderSessionId`. Legacy
+ * `consultation_started_at` / `consultation_ended_at` columns were also
+ * dropped; the Twilio `room-ended` timestamp now lives on
+ * `consultation_sessions.actual_ended_at`, and the `tryMarkVerified`
+ * pipeline reads it from there.
  *
  * @see TELECONSULTATION_PLAN.md
  * @see https://www.twilio.com/docs/video/api/status-callbacks
@@ -21,6 +33,11 @@ import type { Appointment } from '../types/database';
 import { processPayoutForPayment } from './payout-service';
 import { syncOpdQueueEntryOnAppointmentStatus } from './opd/opd-queue-service';
 import { syncCareEpisodeLifecycleOnAppointmentCompleted } from './care-episode-service';
+import {
+  findSessionByProviderSessionId,
+  markParticipantJoined,
+  updateSessionStatus,
+} from './consultation-session-service';
 
 const MIN_VERIFIED_SEC = env.MIN_VERIFIED_CONSULTATION_SECONDS;
 const DEFAULT_PAYOUT_SCHEDULE = 'weekly';
@@ -46,6 +63,23 @@ export interface TwilioRoomCallbackPayload {
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/**
+ * Resolve a Twilio RoomSid to its `consultation_sessions` row + the
+ * appointment id. Task 35 makes this the sole resolution path — the
+ * legacy `appointments.consultation_room_sid` column is gone.
+ *
+ * Returns `null` when no session row matches the sid (either truly unknown
+ * or a race where Twilio's callback beat our row insert). Callers warn
+ * and exit early in that case.
+ */
+async function resolveAppointmentIdByRoomSid(
+  roomSid: string
+): Promise<{ appointmentId: string; sessionId: string } | null> {
+  const session = await findSessionByProviderSessionId('twilio_video', roomSid);
+  if (!session) return null;
+  return { appointmentId: session.appointmentId, sessionId: session.id };
+}
 
 function parsePayload(body: Record<string, unknown>): TwilioRoomCallbackPayload {
   return {
@@ -81,14 +115,20 @@ export async function handleParticipantConnected(
   const admin = getSupabaseAdminClient();
   if (!admin) return;
 
+  const resolved = await resolveAppointmentIdByRoomSid(payload.RoomSid);
+  if (!resolved) {
+    logger.warn({ correlationId, roomSid: payload.RoomSid }, 'No consultation_session for participant callback');
+    return;
+  }
+
   const { data: appointments, error: fetchError } = await admin
     .from('appointments')
     .select('id, doctor_id, doctor_joined_at, patient_joined_at')
-    .eq('consultation_room_sid', payload.RoomSid)
+    .eq('id', resolved.appointmentId)
     .limit(1);
 
   if (fetchError || !appointments?.length) {
-    logger.warn({ correlationId, roomSid: payload.RoomSid }, 'No appointment for participant callback');
+    logger.warn({ correlationId, roomSid: payload.RoomSid, appointmentId: resolved.appointmentId }, 'Appointment missing for participant callback');
     return;
   }
 
@@ -109,6 +149,7 @@ export async function handleParticipantConnected(
         await logDataModification(correlationId, undefined as any, 'update', 'appointment', apt.id, [
           'doctor_joined_at',
         ]);
+        await mirrorJoinEventToSession(resolved.sessionId, 'doctor', new Date(timestamp));
       }
     }
   } else if (identity.startsWith('patient-')) {
@@ -125,6 +166,7 @@ export async function handleParticipantConnected(
         await logDataModification(correlationId, undefined as any, 'update', 'appointment', apt.id, [
           'patient_joined_at',
         ]);
+        await mirrorJoinEventToSession(resolved.sessionId, 'patient', new Date(timestamp));
       }
     }
   }
@@ -145,14 +187,20 @@ export async function handleParticipantDisconnected(
   const admin = getSupabaseAdminClient();
   if (!admin) return;
 
+  const resolved = await resolveAppointmentIdByRoomSid(payload.RoomSid);
+  if (!resolved) {
+    logger.warn({ correlationId, roomSid: payload.RoomSid }, 'No consultation_session for participant-disconnected callback');
+    return;
+  }
+
   const { data: appointments, error: fetchError } = await admin
     .from('appointments')
     .select('id, doctor_id, doctor_left_at, patient_left_at')
-    .eq('consultation_room_sid', payload.RoomSid)
+    .eq('id', resolved.appointmentId)
     .limit(1);
 
   if (fetchError || !appointments?.length) {
-    logger.warn({ correlationId, roomSid: payload.RoomSid }, 'No appointment for participant-disconnected callback');
+    logger.warn({ correlationId, roomSid: payload.RoomSid, appointmentId: resolved.appointmentId }, 'Appointment missing for participant-disconnected callback');
     return;
   }
 
@@ -196,7 +244,10 @@ export async function handleParticipantDisconnected(
 
 /**
  * Handle room-ended event.
- * Sets consultation_ended_at, consultation_duration_seconds, calls tryMarkVerified.
+ * Post-Task-35: writes end timestamp to `consultation_sessions.actual_ended_at`
+ * (no longer mirrored onto `appointments.consultation_ended_at`). The
+ * call-duration denormalization stays on `appointments` for the payout
+ * verification pipeline.
  */
 export async function handleRoomEnded(
   payload: TwilioRoomCallbackPayload,
@@ -205,47 +256,68 @@ export async function handleRoomEnded(
   const admin = getSupabaseAdminClient();
   if (!admin) return;
 
-  const { data: appointments, error: fetchError } = await admin
-    .from('appointments')
-    .select('id')
-    .eq('consultation_room_sid', payload.RoomSid)
-    .limit(1);
-
-  if (fetchError || !appointments?.length) {
-    logger.warn({ correlationId, roomSid: payload.RoomSid }, 'No appointment for room-ended callback');
+  const resolved = await resolveAppointmentIdByRoomSid(payload.RoomSid);
+  if (!resolved) {
+    logger.warn({ correlationId, roomSid: payload.RoomSid }, 'No consultation_session for room-ended callback');
     return;
   }
 
-  const apt = appointments[0]!;
   const endedAt = payload.Timestamp || new Date().toISOString();
   const durationSec = payload.RoomDuration ? parseInt(payload.RoomDuration, 10) : null;
 
+  // Stamp duration on the appointment row (payout verification reads it).
   const { error } = await admin
     .from('appointments')
     .update({
-      consultation_ended_at: endedAt,
       consultation_duration_seconds: durationSec,
     })
-    .eq('id', apt.id);
+    .eq('id', resolved.appointmentId);
 
   if (error) handleSupabaseError(error, correlationId);
   else {
     logger.info(
-      { correlationId, appointmentId: apt.id, roomSid: payload.RoomSid, durationSec },
-      'consultation_ended_at set'
+      { correlationId, appointmentId: resolved.appointmentId, roomSid: payload.RoomSid, durationSec },
+      'consultation_duration_seconds set'
     );
-    await logDataModification(correlationId, undefined as any, 'update', 'appointment', apt.id, [
-      'consultation_ended_at',
+    await logDataModification(correlationId, undefined as any, 'update', 'appointment', resolved.appointmentId, [
       'consultation_duration_seconds',
     ]);
+    await updateSessionStatus(resolved.sessionId, 'ended', { actualEndedAt: new Date(endedAt) });
   }
 
-  await tryMarkVerified(apt.id, correlationId);
+  await tryMarkVerified(resolved.appointmentId, correlationId);
+}
+
+/**
+ * Mirror a participant-join event into `consultation_sessions`: stamp the
+ * matching join timestamp and transition the row to `live` on the first
+ * connect. Idempotent and non-fatal.
+ */
+async function mirrorJoinEventToSession(
+  sessionId: string,
+  role: 'doctor' | 'patient',
+  at: Date
+): Promise<void> {
+  try {
+    await markParticipantJoined(sessionId, role, at);
+    await updateSessionStatus(sessionId, 'live', { actualStartedAt: at });
+  } catch (err) {
+    logger.warn(
+      { sessionId, role, error: err instanceof Error ? err.message : String(err) },
+      'consultation_sessions mirror write failed (non-fatal)'
+    );
+  }
 }
 
 /**
  * Mark appointment as verified and completed using "who left first" rules.
  * Doctor gets verified if: patient no-show, or patient left first, or doctor left first but overlap >= MIN_VERIFIED_SEC.
+ *
+ * Post-Task-35: the room-ended timestamp comes from
+ * `consultation_sessions.actual_ended_at` (legacy column dropped). All
+ * other lifecycle fields (`doctor_joined_at`, `patient_joined_at`,
+ * `doctor_left_at`, `patient_left_at`, `verified_at`,
+ * `consultation_duration_seconds`) stay on `appointments`.
  *
  * @see CONSULTATION_VERIFICATION_STRATEGY.md
  */
@@ -259,7 +331,7 @@ export async function tryMarkVerified(
   const { data: apt, error: fetchError } = await admin
     .from('appointments')
     .select(
-      'id, doctor_id, doctor_joined_at, patient_joined_at, doctor_left_at, patient_left_at, consultation_ended_at, consultation_duration_seconds, verified_at, status'
+      'id, doctor_id, doctor_joined_at, patient_joined_at, doctor_left_at, patient_left_at, consultation_duration_seconds, verified_at, status'
     )
     .eq('id', appointmentId)
     .single();
@@ -268,9 +340,30 @@ export async function tryMarkVerified(
 
   if (apt.verified_at || apt.status === 'completed') return;
 
-  if (!apt.doctor_joined_at || !apt.consultation_ended_at) return;
+  if (!apt.doctor_joined_at) return;
 
-  const verifiedAt = apt.consultation_ended_at;
+  // Read the room-ended timestamp from `consultation_sessions.actual_ended_at`
+  // (Task 35 replaced the legacy `appointments.consultation_ended_at` column).
+  const { data: sessionRow, error: sessionError } = await admin
+    .from('consultation_sessions')
+    .select('actual_ended_at')
+    .eq('appointment_id', appointmentId)
+    .not('actual_ended_at', 'is', null)
+    .order('actual_ended_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (sessionError) {
+    logger.warn(
+      { correlationId, appointmentId, error: sessionError.message },
+      'consultation_sessions actual_ended_at lookup failed'
+    );
+    return;
+  }
+  const consultationEndedAt = (sessionRow?.actual_ended_at as string | null) ?? null;
+  if (!consultationEndedAt) return;
+
+  const verifiedAt = consultationEndedAt;
   const previousStatus = apt.status;
   const performUpdate = async (): Promise<boolean> => {
     const { data: updated, error } = await admin

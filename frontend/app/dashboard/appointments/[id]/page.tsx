@@ -4,6 +4,7 @@ import { getAppointmentById } from "@/lib/api";
 import { redirect } from "next/navigation";
 import { cn } from "@/lib/utils";
 import AppointmentConsultationActions from "@/components/consultation/AppointmentConsultationActions";
+import ConsultArtifactsPanel from "@/components/consultation/ConsultArtifactsPanel";
 import DoctorOpdSlotActions from "@/components/opd/DoctorOpdSlotActions";
 
 interface PageProps {
@@ -158,6 +159,73 @@ export default async function AppointmentDetailPage({ params }: PageProps) {
         appointment={appointment}
         token={token}
       />
+
+      {/*
+       * Plan 07 · Task 29 — once the consult ends, surface the artifact
+       * panel so the doctor can replay the audio and (later) read the
+       * transcript / chat export. Voice is the v1 modality with audio;
+       * we render for any ended session that has a session row, and
+       * the panel itself handles the "no recording / patient declined
+       * consent" empty state via `getReplayStatus`.
+       */}
+      {appointment.consultation_session?.status === "ended" &&
+        appointment.consultation_session.id && (
+          <div className="mt-6">
+            <ConsultArtifactsPanel
+              sessionId={appointment.consultation_session.id}
+              token={token}
+              callerRole="doctor"
+              callerLabel="Doctor view"
+            />
+          </div>
+        )}
+
+      {/*
+       * Plan 07 · Task 31 — "View conversation" link.
+       *
+       * Renders only when a `consultation_sessions` row exists for the
+       * appointment (per task spec Notes #10: the session row is the
+       * authoritative "there was a chat to view" check post-Plan-06).
+       * In-clinic appointments never have a session row so the link is
+       * hidden naturally — no extra modality gate needed.
+       *
+       * No status filter beyond "row exists" — Decision 1 sub-decision
+       * LOCKED gives indefinite read access; even a `cancelled` /
+       * `no_show` session has at least the system banners worth
+       * surfacing if any chat happened before the status flip.
+       *
+       * Visual neighbor of `<ConsultArtifactsPanel>` — both surfaces
+       * are post-consult artifacts; clustering them at the bottom of
+       * the page mirrors the doctor's mental "what happened during
+       * this consult?" workflow.
+       */}
+      {appointment.consultation_session?.id && (
+        <div className="mt-4">
+          <Link
+            href={`/dashboard/appointments/${appointment.id}/chat-history`}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50",
+              "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
+            )}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+            View conversation
+          </Link>
+        </div>
+      )}
     </div>
   );
 }

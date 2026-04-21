@@ -17,10 +17,14 @@ import { ConflictError, InternalError, NotFoundError, ValidationError } from '..
 import { handleSupabaseError, validateOwnership } from '../utils/db-helpers';
 import { logDataModification, logDataAccess, logAuditEvent } from '../utils/audit-logger';
 import {
-  createTwilioRoom,
-  generateVideoAccessToken,
-  isTwilioVideoConfigured,
-} from './consultation-room-service';
+  createSession as createConsultationSession,
+  findActiveSessionByAppointment,
+  findLatestAppointmentSessionSummariesBulk,
+  findLatestAppointmentSessionSummary,
+  getJoinTokenForAppointment,
+  isVideoModalityConfigured,
+} from './consultation-session-service';
+import type { AppointmentConsultationSessionSummary } from './consultation-session-service';
 import {
   generateConsultationToken,
   verifyConsultationToken,
@@ -42,6 +46,36 @@ import { syncCareEpisodeLifecycleOnAppointmentCompleted } from './care-episode-s
 import { ensurePatientMrnIfEligible } from './patient-service';
 
 const SLOT_INTERVAL_MS = env.SLOT_INTERVAL_MINUTES * 60 * 1000;
+
+// ============================================================================
+// Consultation-session enrichment (Task 35)
+// ----------------------------------------------------------------------------
+// Post-Task-35 the legacy `appointments.consultation_room_sid` /
+// `consultation_started_at` / `consultation_ended_at` columns are gone. The
+// frontend (and any API caller) reads the equivalent state off a nested
+// `consultation_session` field populated here from `consultation_sessions`.
+// ============================================================================
+
+function attachConsultationSession(
+  appointment: Appointment,
+  summary: AppointmentConsultationSessionSummary | null
+): Appointment {
+  return { ...appointment, consultation_session: summary };
+}
+
+async function enrichAppointmentWithSession(appointment: Appointment): Promise<Appointment> {
+  const summary = await findLatestAppointmentSessionSummary(appointment.id);
+  return attachConsultationSession(appointment, summary);
+}
+
+async function enrichAppointmentsWithSessions(
+  appointments: Appointment[]
+): Promise<Appointment[]> {
+  if (appointments.length === 0) return appointments;
+  const ids = appointments.map((a) => a.id);
+  const summaries = await findLatestAppointmentSessionSummariesBulk(ids);
+  return appointments.map((a) => attachConsultationSession(a, summaries.get(a.id) ?? null));
+}
 
 /**
  * Create a new appointment
@@ -399,7 +433,7 @@ export async function getAppointmentById(
 
   await logDataAccess(correlationId, userId, 'appointment', id);
 
-  return appointment as Appointment;
+  return enrichAppointmentWithSession(appointment as Appointment);
 }
 
 /**
@@ -458,7 +492,7 @@ export async function getDoctorAppointments(
   // Audit log (read access)
   await logDataAccess(correlationId, userId, 'appointment', undefined);
 
-  return (appointments || []) as Appointment[];
+  return enrichAppointmentsWithSessions((appointments || []) as Appointment[]);
 }
 
 /**
@@ -491,7 +525,7 @@ export async function listAppointmentsForPatient(
     handleSupabaseError(error, correlationId);
   }
 
-  return (appointments || []) as Appointment[];
+  return enrichAppointmentsWithSessions((appointments || []) as Appointment[]);
 }
 
 /**
@@ -523,7 +557,7 @@ export async function listAppointmentsForDoctor(
 
   await logDataAccess(correlationId, userId, 'appointment', undefined);
 
-  return (appointments || []) as Appointment[];
+  return enrichAppointmentsWithSessions((appointments || []) as Appointment[]);
 }
 
 /**
@@ -863,6 +897,30 @@ export interface StartConsultationResult {
   patientJoinUrl: string;
   patientJoinToken: string;
   expiresAt: string;
+  /**
+   * Plan 06 · Task 36 · Decision 9 LOCKED — companion text channel
+   * surface for the video session. Populated on a fresh `createSession`
+   * (the facade's lifecycle hook mints it post-persist); absent on the
+   * idempotent rejoin path (the first `startConsultation` call already
+   * returned it to the doctor; a second call that finds the existing
+   * room row skips the facade + its hook entirely).
+   *
+   * Frontend code (Tasks 38 + 24c) reads this to mount `<TextConsultRoom>`
+   * inside the `<VideoRoom>` side panel. Handle the undefined branch —
+   * it means either "this is a rejoin" or "companion provisioning failed".
+   */
+  companion?: {
+    /**
+     * Task 38: `consultation_sessions.id` surfaced alongside the URL +
+     * token so the doctor-side `<VideoRoom>` companion panel (which uses
+     * dashboard auth, not the HMAC URL) knows which session row to chat
+     * against. Mirrors `SessionRecord.companion.sessionId`.
+     */
+    sessionId: string;
+    patientJoinUrl: string | null;
+    patientToken: string | null;
+    expiresAt: string;
+  };
 }
 
 /**
@@ -885,50 +943,72 @@ export async function startConsultation(
     throw new ValidationError('Only pending or confirmed appointments can start a consultation');
   }
 
-  if (!isTwilioVideoConfigured()) {
+  if (!isVideoModalityConfigured()) {
     throw new ValidationError('Video consultation is not configured');
   }
 
   const roomName = `appointment-${appointmentId}`;
-  let roomSid = appointment.consultation_room_sid ?? null;
 
-  // Idempotent: create room only if not already started
+  // Idempotency source-of-truth: an existing live `consultation_sessions`
+  // row for this appointment. Task 35 dropped the legacy
+  // `appointments.consultation_room_sid` column that previously served
+  // this role, so the session lookup is now the only path.
+  const existingSession = await findActiveSessionByAppointment(appointmentId, 'video');
+  let roomSid = existingSession?.providerSessionId ?? null;
+  // Plan 06 · Task 36: only populated on the fresh-create branch. The
+  // rejoin path short-circuits through the facade's early-return, which
+  // intentionally does NOT re-provision the companion channel (see
+  // task-36 Notes #2 for the acceptable-v1 trade-off).
+  let companion: StartConsultationResult['companion'];
+
   if (!roomSid) {
-    const createResult = await createTwilioRoom(roomName, correlationId);
-    if (!createResult) {
+    const scheduledStartAt =
+      appointment.appointment_date instanceof Date
+        ? appointment.appointment_date
+        : new Date(appointment.appointment_date as unknown as string);
+    // No `duration_minutes` column on `appointments` today; derive from
+    // env-configured slot interval (defaults to 30 min). When Plan 02 adds
+    // an explicit per-appointment duration, swap this default out.
+    const expectedEndAt = new Date(
+      scheduledStartAt.getTime() + env.SLOT_INTERVAL_MINUTES * 60 * 1000
+    );
+
+    const session = await createConsultationSession(
+      {
+        appointmentId,
+        doctorId: appointment.doctor_id,
+        patientId: appointment.patient_id ?? null,
+        modality: 'video',
+        scheduledStartAt,
+        expectedEndAt,
+      },
+      correlationId
+    );
+    if (!session.providerSessionId) {
       throw new InternalError('Failed to create video room');
     }
-    roomSid = createResult.roomSid;
+    roomSid = session.providerSessionId;
+    companion = session.companion;
 
-    const admin = getSupabaseAdminClient();
-    if (!admin) {
-      throw new InternalError('Service role client not available');
-    }
-
-    const startedAt = new Date().toISOString();
-    const { error } = await admin
-      .from('appointments')
-      .update({
-        consultation_room_sid: roomSid,
-        consultation_started_at: startedAt,
-      })
-      .eq('id', appointmentId);
-
-    if (error) {
-      handleSupabaseError(error, correlationId);
-    }
-
-    await logDataModification(correlationId, userId, 'update', 'appointment', appointmentId, [
-      'consultation_room_sid',
-      'consultation_started_at',
-    ]);
+    await logDataModification(
+      correlationId,
+      userId,
+      'create',
+      'consultation_session',
+      session.id,
+      ['provider_session_id']
+    );
   }
 
-  const doctorIdentity = `doctor-${appointment.doctor_id}`;
-  const doctorToken = generateVideoAccessToken(doctorIdentity, roomName, correlationId);
-  if (!doctorToken) {
-    throw new InternalError('Failed to generate doctor token');
-  }
+  const doctorJoinToken = await getJoinTokenForAppointment(
+    {
+      appointmentId,
+      doctorId: appointment.doctor_id,
+      modality: 'video',
+      role: 'doctor',
+    },
+    correlationId
+  );
 
   const patientJoinToken = generateConsultationToken(appointmentId);
   const baseUrl = env.CONSULTATION_JOIN_BASE_URL?.trim();
@@ -945,15 +1025,134 @@ export async function startConsultation(
     }
   }
 
-  const expiresAt = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString();
+  return {
+    roomSid,
+    roomName,
+    doctorToken: doctorJoinToken.token,
+    patientJoinUrl,
+    patientJoinToken,
+    expiresAt: doctorJoinToken.expiresAt.toISOString(),
+    ...(companion ? { companion } : {}),
+  };
+}
+
+// ============================================================================
+// Voice consultation (Plan 05 · Task 24)
+// ============================================================================
+
+/**
+ * Start a voice consultation for an appointment.
+ *
+ * Mirrors `startConsultation` (video) but with two differences:
+ *   1. The facade routes through `voiceSessionTwilioAdapter` (audio-only
+ *      Recording Rules applied at room-create time; Task 23 + Decision 2).
+ *   2. Patient join URL targets `/c/voice/{sessionId}?t={hmac}` — Principle
+ *      8 LOCKED ("audio-only web call, not a phone call"; see Task 26 and
+ *      `buildConsultationReadyDm` voice branch).
+ *
+ * Idempotent on `(appointmentId, modality='voice')`. Re-calls return the
+ * existing room/session without re-provisioning; `companion` is only
+ * populated on the fresh-create branch (facade lifecycle hook).
+ */
+export async function startVoiceConsultation(
+  appointmentId: string,
+  correlationId: string,
+  userId: string
+): Promise<StartConsultationResult> {
+  const appointment = await getAppointmentById(appointmentId, correlationId, userId);
+
+  if (appointment.status !== 'pending' && appointment.status !== 'confirmed') {
+    throw new ValidationError('Only pending or confirmed appointments can start a consultation');
+  }
+
+  // Voice rides the same Twilio Video stack as video, so the same
+  // configuration gate applies.
+  if (!isVideoModalityConfigured()) {
+    throw new ValidationError('Voice consultation is not configured (Twilio Video required)');
+  }
+
+  const roomName = `appointment-voice-${appointmentId}`;
+  const existingSession = await findActiveSessionByAppointment(appointmentId, 'voice');
+  let roomSid = existingSession?.providerSessionId ?? null;
+  let sessionId = existingSession?.id ?? null;
+  let companion: StartConsultationResult['companion'];
+
+  if (!roomSid || !sessionId) {
+    const scheduledStartAt =
+      appointment.appointment_date instanceof Date
+        ? appointment.appointment_date
+        : new Date(appointment.appointment_date as unknown as string);
+    const expectedEndAt = new Date(
+      scheduledStartAt.getTime() + env.SLOT_INTERVAL_MINUTES * 60 * 1000
+    );
+
+    const session = await createConsultationSession(
+      {
+        appointmentId,
+        doctorId: appointment.doctor_id,
+        patientId: appointment.patient_id ?? null,
+        modality: 'voice',
+        scheduledStartAt,
+        expectedEndAt,
+      },
+      correlationId
+    );
+    if (!session.providerSessionId) {
+      throw new InternalError('Failed to create voice room');
+    }
+    roomSid = session.providerSessionId;
+    sessionId = session.id;
+    companion = session.companion;
+
+    await logDataModification(
+      correlationId,
+      userId,
+      'create',
+      'consultation_session',
+      session.id,
+      ['provider_session_id']
+    );
+  }
+
+  const doctorJoinToken = await getJoinTokenForAppointment(
+    {
+      appointmentId,
+      doctorId: appointment.doctor_id,
+      modality: 'voice',
+      role: 'doctor',
+    },
+    correlationId
+  );
+
+  const patientJoinToken = generateConsultationToken(appointmentId);
+  // Patient join URL targets the voice-specific patient route. Uses
+  // `APP_BASE_URL` (same base as `/c/text/*`) rather than the legacy
+  // video-only `CONSULTATION_JOIN_BASE_URL`, since the `/c/voice/*` path
+  // is served by the Next.js app, not a standalone consult URL.
+  const appBase = (env.APP_BASE_URL ?? env.CONSULTATION_JOIN_BASE_URL)?.trim();
+  const patientJoinUrl = appBase
+    ? `${appBase.replace(/\/$/, '')}/c/voice/${sessionId}?t=${patientJoinToken}`
+    : '';
+
+  if (patientJoinUrl) {
+    try {
+      await sendConsultationLinkToPatient(appointmentId, patientJoinUrl, correlationId);
+    } catch (err) {
+      logger.warn(
+        { correlationId, appointmentId, error: err instanceof Error ? err.message : String(err) },
+        'Voice consultation link send failed (doctor can copy link)'
+      );
+    }
+  }
 
   return {
     roomSid,
     roomName,
-    doctorToken,
+    doctorToken: doctorJoinToken.token,
     patientJoinUrl,
     patientJoinToken,
-    expiresAt,
+    expiresAt: doctorJoinToken.expiresAt.toISOString(),
+    ...(companion ? { companion } : {}),
   };
 }
 
@@ -979,7 +1178,7 @@ export async function getConsultationToken(
 
   const { data: appointment, error } = await admin
     .from('appointments')
-    .select('id, doctor_id, consultation_room_sid')
+    .select('id, doctor_id')
     .eq('id', appointmentId)
     .single();
 
@@ -987,8 +1186,12 @@ export async function getConsultationToken(
     throw new NotFoundError('Appointment not found');
   }
 
-  const roomSid = appointment.consultation_room_sid;
-  if (!roomSid) {
+  // Gate: consultation must have been started. Post-Task-35 the single
+  // source of truth is the presence of a live `consultation_sessions`
+  // row for this appointment (legacy `consultation_room_sid` column was
+  // dropped).
+  const startedSession = await findActiveSessionByAppointment(appointmentId, 'video');
+  if (!startedSession?.providerSessionId) {
     throw new ValidationError('Consultation has not been started yet');
   }
 
@@ -998,12 +1201,16 @@ export async function getConsultationToken(
     if (appointment.doctor_id !== options.userId) {
       throw new NotFoundError('Appointment not found');
     }
-    const identity = `doctor-${options.userId}`;
-    const token = generateVideoAccessToken(identity, roomName, correlationId);
-    if (!token) {
-      throw new InternalError('Failed to generate doctor token');
-    }
-    return { token, roomName };
+    const joinToken = await getJoinTokenForAppointment(
+      {
+        appointmentId,
+        doctorId: appointment.doctor_id,
+        modality: 'video',
+        role: 'doctor',
+      },
+      correlationId
+    );
+    return { token: joinToken.token, roomName };
   }
 
   const verified = verifyConsultationToken(options.patientToken);
@@ -1013,12 +1220,16 @@ export async function getConsultationToken(
 
   await assertSlotJoinAllowedForPatient(appointmentId, correlationId);
 
-  const identity = `patient-${appointmentId}`;
-  const token = generateVideoAccessToken(identity, roomName, correlationId);
-  if (!token) {
-    throw new InternalError('Failed to generate patient token');
-  }
-  return { token, roomName };
+  const joinToken = await getJoinTokenForAppointment(
+    {
+      appointmentId,
+      doctorId: appointment.doctor_id,
+      modality: 'video',
+      role: 'patient',
+    },
+    correlationId
+  );
+  return { token: joinToken.token, roomName };
 }
 
 /**

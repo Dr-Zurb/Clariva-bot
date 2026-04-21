@@ -53,6 +53,14 @@ export interface ApiError {
     code: string;
     message: string;
     statusCode?: number;
+    /**
+     * Optional structured detail payload. Backends surface per-error
+     * hints here — e.g. `{ retry_after_seconds: 120 }` for rate-limit
+     * responses and `{ lastVerifiedAt: ISO|null }` for the Plan 08
+     * Task 44 `video_otp_required` gate. Shape is per-code and the
+     * caller is responsible for a narrowing check.
+     */
+    details?: Record<string, unknown>;
   };
   meta: ApiMeta;
 }
@@ -879,6 +887,163 @@ export async function selectSlotAndPay(
 }
 
 /**
+ * Plan 02 · Task 27 — Persist the patient's recording-consent decision.
+ *
+ * Fires AFTER `selectSlotAndPay` returns (which gives us `appointmentId`)
+ * and BEFORE the frontend redirects to the payment URL. Uses the booking
+ * token from the URL for auth (patients are not logged in).
+ *
+ * Returns void on success (backend returns 204). Caller should catch and
+ * log errors but should not block the payment redirect on failure — a
+ * missed consent write still leaves the row in the default-NULL state,
+ * which Plan 04 / 05 handle as "no explicit opt-out = proceed".
+ */
+export async function postRecordingConsent(
+  bookingToken: string,
+  appointmentId: string,
+  decision: boolean,
+  consentVersion: string
+): Promise<void> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/appointments/${encodeURIComponent(appointmentId)}/recording-consent`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision, consentVersion, bookingToken }),
+      cache: "no-store",
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    let message = "Failed to record consent";
+    try {
+      const parsed = JSON.parse(text) as ApiError;
+      if (isApiError(parsed)) {
+        message = parsed.error.message;
+      }
+    } catch {
+      // swallow parse failure; use default message
+    }
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+}
+
+/**
+ * Plan 02 · Task 27 — Read recording-consent decision for a session.
+ * Doctor-only (requires auth). Used by the `<SessionStartBanner>` to
+ * decide whether to render the "patient declined recording" notice.
+ */
+export interface RecordingConsentForSessionData {
+  decision: boolean | null;
+  capturedAt: string | null;
+  version: string | null;
+}
+
+export async function getRecordingConsentForSession(
+  token: string,
+  sessionId: string
+): Promise<ApiSuccess<RecordingConsentForSessionData>> {
+  return request<RecordingConsentForSessionData>(
+    `/api/v1/consultation/${encodeURIComponent(sessionId)}/recording-consent`,
+    { token }
+  );
+}
+
+/**
+ * Plan 02 · Task 33 — Request patient account deletion.
+ *
+ * Two auth shapes; the backend resolves internally:
+ *   - Doctor JWT path:  pass `token` + `patientId`.
+ *   - Booking-token path: pass `bookingToken` (from the patient's
+ *     recent slot-picker URL). The backend resolves `patient_id`
+ *     from the conversation the booking token binds to.
+ *
+ * Returns the server-computed `graceWindowUntil` (ISO timestamp) so
+ * the UI can render "your account is scheduled for deletion on X".
+ * `reused = true` means there was already a pending request — the
+ * UI should treat this as an idempotent success, not an error.
+ */
+export interface AccountDeletionResponse {
+  graceWindowUntil: string;
+  reused: boolean;
+}
+
+export async function postAccountDeletion(params: {
+  token?: string;
+  bookingToken?: string;
+  patientId?: string;
+  reason?: string;
+}): Promise<AccountDeletionResponse> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (params.token) headers.Authorization = `Bearer ${params.token}`;
+  const body: Record<string, unknown> = {};
+  if (params.patientId) body.patientId = params.patientId;
+  if (params.bookingToken) body.bookingToken = params.bookingToken;
+  if (params.reason) body.reason = params.reason;
+
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/me/account-deletion`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const text = await res.text().catch(() => "");
+  if (!res.ok) {
+    let message = "Failed to submit account-deletion request";
+    try {
+      const parsed = JSON.parse(text) as ApiError;
+      if (isApiError(parsed)) message = parsed.error.message;
+    } catch {
+      // fall through
+    }
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  const parsed = JSON.parse(text) as { success: true; data: AccountDeletionResponse };
+  return parsed.data;
+}
+
+/**
+ * Plan 02 · Task 33 — Cancel a pending account-deletion request.
+ * Same auth matrix as `postAccountDeletion`. Throws if no pending
+ * request exists or the grace window has already expired.
+ */
+export async function postAccountRecovery(params: {
+  token?: string;
+  bookingToken?: string;
+  patientId?: string;
+}): Promise<void> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (params.token) headers.Authorization = `Bearer ${params.token}`;
+  const body: Record<string, unknown> = {};
+  if (params.patientId) body.patientId = params.patientId;
+  if (params.bookingToken) body.bookingToken = params.bookingToken;
+
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/me/account-recovery`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    let message = "Failed to cancel account-deletion request";
+    try {
+      const parsed = JSON.parse(text) as ApiError;
+      if (isApiError(parsed)) message = parsed.error.message;
+    } catch {
+      // fall through
+    }
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+}
+
+/**
  * Get redirect URL for success page (Instagram DM).
  * Allows expired token so user can redirect after payment.
  */
@@ -982,6 +1147,25 @@ export interface StartConsultationData {
   patientJoinUrl: string;
   patientJoinToken: string;
   expiresAt: string;
+  /**
+   * Plan 06 · Task 36 · Decision 9 LOCKED — companion text channel
+   * surface for the video session. Populated on a fresh `createSession`;
+   * absent on the idempotent rejoin path (see `StartConsultationResult`
+   * on the backend for the trade-off doc). Tasks 38 + 24c consume this
+   * to mount `<TextConsultRoom>` inside `<VideoRoom>` / `<VoiceConsultRoom>`.
+   */
+  companion?: {
+    /**
+     * Task 38: `consultation_sessions.id` — the canonical session UUID
+     * the doctor-side `<VideoRoom>` companion chat panel mounts against.
+     * Mirrored from `SessionRecord.companion.sessionId` on the backend
+     * so frontend code doesn't have to parse `patientJoinUrl` to find it.
+     */
+    sessionId: string;
+    patientJoinUrl: string | null;
+    patientToken: string | null;
+    expiresAt: string;
+  };
 }
 
 export interface GetConsultationTokenData {
@@ -1082,6 +1266,784 @@ export async function getConsultationTokenForPatient(
     throw err;
   }
   return json as ApiSuccess<GetConsultationTokenData>;
+}
+
+// -----------------------------------------------------------------------------
+// Voice consultation (Plan 05 · Task 24)
+// -----------------------------------------------------------------------------
+
+/**
+ * Start a voice consultation. Mirrors `startConsultation` (video) but the
+ * returned `doctorToken` connects to a Twilio Video room where recording
+ * rules enforce audio-only (Principle 8 LOCKED — "audio only web call,
+ * not a phone call"). The patient join URL targets `/c/voice/[sessionId]`.
+ */
+export async function startVoiceConsultation(
+  token: string,
+  appointmentId: string,
+): Promise<ApiSuccess<StartConsultationData>> {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/consultation/start-voice`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ appointmentId }),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<StartConsultationData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<StartConsultationData>;
+}
+
+export interface VoiceConsultTokenExchangeData {
+  /** Twilio Video access token — null when session is ended/cancelled. */
+  token: string | null;
+  /** Twilio room name (`appointment-voice-{appointmentId}`). */
+  roomName: string;
+  /** Expiry of the Twilio token. Null when `token` is null. */
+  expiresAt: string | null;
+  sessionStatus: TextConsultSessionStatus;
+  scheduledStartAt: string;
+  expectedEndAt: string;
+  practiceName?: string;
+}
+
+/**
+ * Exchange the HMAC consultation-token (from the patient voice join URL)
+ * for a Twilio access token + session metadata. Public endpoint — no
+ * Bearer header; the HMAC is the proof of authority.
+ */
+export async function requestVoiceSessionToken(
+  sessionId: string,
+  urlToken: string,
+): Promise<ApiSuccess<VoiceConsultTokenExchangeData>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/consultation/${encodeURIComponent(sessionId)}/voice-token`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: urlToken }),
+      cache: "no-store",
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<VoiceConsultTokenExchangeData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<VoiceConsultTokenExchangeData>;
+}
+
+/**
+ * Re-send the patient join link for a voice/video consultation. Doctor
+ * only (Bearer auth required). The `channel` hint narrows the dispatch
+ * target (advisory in v1 — backend currently fans to all configured
+ * channels; the field is forwarded for audit).
+ */
+export async function resendConsultationLink(
+  token: string,
+  sessionId: string,
+  channel?: "sms" | "ig_dm" | "email",
+): Promise<ApiSuccess<{ sent: boolean; reason?: string }>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/consultation/${encodeURIComponent(sessionId)}/resend-link`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(channel ? { channel } : {}),
+      cache: "no-store",
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ sent: boolean; reason?: string }>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<{ sent: boolean; reason?: string }>;
+}
+
+// -----------------------------------------------------------------------------
+// Recording pause / resume / state inspector (Plan 07 · Task 28 · Decision 4)
+// -----------------------------------------------------------------------------
+
+/**
+ * Response shape from `GET /api/v1/consultation/:sessionId/recording/state`.
+ * Mirrors the backend `RecordingState` type; fields are ISO strings over
+ * the wire and are parsed back into `Date` at render time if needed.
+ */
+export interface RecordingStateData {
+  sessionId:   string;
+  paused:      boolean;
+  pausedAt?:   string;
+  pausedBy?:   string;
+  pauseReason?: string;
+  resumedAt?:  string;
+}
+
+/**
+ * POST /api/v1/consultation/:sessionId/recording/pause — doctor-only.
+ *
+ * Decision 4 LOCKED: a reason ≥5 / ≤200 chars is required. The backend
+ * enforces the same bounds; this helper does NOT pre-validate so all
+ * validation errors surface via the standardised API error envelope
+ * (keeps the copy consistent between client + server without duplication).
+ */
+export async function pauseRecording(
+  token: string,
+  sessionId: string,
+  reason: string,
+): Promise<ApiSuccess<null>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/consultation/${encodeURIComponent(sessionId)}/recording/pause`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ reason }),
+      cache: "no-store",
+    },
+  );
+  if (res.status === 204) {
+    return { success: true, data: null } as ApiSuccess<null>;
+  }
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<null>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<null>;
+}
+
+/**
+ * POST /api/v1/consultation/:sessionId/recording/resume — doctor-only.
+ * No body; resume has no reason requirement (Decision 4).
+ */
+export async function resumeRecording(
+  token: string,
+  sessionId: string,
+): Promise<ApiSuccess<null>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/consultation/${encodeURIComponent(sessionId)}/recording/resume`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    },
+  );
+  if (res.status === 204) {
+    return { success: true, data: null } as ApiSuccess<null>;
+  }
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<null>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<null>;
+}
+
+/**
+ * GET /api/v1/consultation/:sessionId/recording/state — either participant.
+ *
+ * Used by `<RecordingControls>` + `<RecordingPausedIndicator>` to get
+ * the authoritative initial state on mount. After mount, both components
+ * tap into the companion-chat Realtime system-message stream to stay
+ * fresh without polling.
+ */
+export async function getRecordingState(
+  token: string,
+  sessionId: string,
+): Promise<ApiSuccess<RecordingStateData>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/consultation/${encodeURIComponent(sessionId)}/recording/state`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<RecordingStateData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<RecordingStateData>;
+}
+
+// -----------------------------------------------------------------------------
+// Recording replay (Plan 07 · Task 29 · Decision 4 + 10 LOCKED)
+// -----------------------------------------------------------------------------
+
+/**
+ * Patient HMAC-exchange — `POST /api/v1/consultation/:sessionId/replay-token`.
+ *
+ * The patient receives a join link of shape
+ * `/c/replay/[sessionId]?t=<HMAC-consultation-token>`. The HMAC binds
+ * to the session's `appointmentId`; this endpoint verifies the HMAC and
+ * mints a 15-minute Supabase JWT scoped to the session (custom claims
+ * `consult_role: 'patient'` + `session_id`). The frontend then uses
+ * this JWT as the Bearer for `/replay/audio/mint` and `/replay/status`.
+ *
+ * Public endpoint — no Bearer auth header. The HMAC IS the proof of authority.
+ */
+export interface ReplayTokenExchangeData {
+  /** Patient-scoped Supabase JWT, valid for 15 minutes. */
+  token: string;
+  /** ISO-8601 expiry. */
+  expiresAt: string;
+}
+
+export async function exchangeReplayToken(
+  sessionId: string,
+  urlToken: string,
+): Promise<ApiSuccess<ReplayTokenExchangeData>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/consultation/${encodeURIComponent(sessionId)}/replay-token`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: urlToken }),
+      cache: "no-store",
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<ReplayTokenExchangeData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<ReplayTokenExchangeData>;
+}
+
+/**
+ * Subset of `MintReplayErrorCode` from the backend service. The frontend
+ * uses this to switch on empty-state copy (revoked vs. expired vs.
+ * still-processing) without re-doing the message-string match.
+ */
+export type ReplayDenyReason =
+  | "not_a_participant"
+  | "beyond_self_serve_window"
+  | "revoked"
+  | "artifact_not_ready"
+  | "artifact_not_found"
+  // Plan 08 · Task 44 · Decision 10 LOCKED — video replay gated on
+  // 30-day-rolling SMS OTP. Client renders the OTP modal on this code.
+  | "no_video_artifact"
+  | "video_otp_required";
+
+export interface ReplayMintData {
+  signedUrl: string;
+  /** ISO-8601; Twilio's signed URL TTL is 15 minutes. */
+  expiresAt: string;
+  /** Twilio Composition SID; surfaced for client-side cache-busting. */
+  artifactRef: string;
+  /**
+   * Echoes the `artifactKind` that was actually minted. Lets the UI
+   * assert "we asked for video and got video" (and re-render the
+   * `<video>` element vs swapping the `<audio>` src). Plan 08 · Task 44.
+   */
+  artifactKind?: "audio" | "video";
+}
+
+/**
+ * Mint a fresh signed URL for the audio recording.
+ * `POST /api/v1/consultation/:sessionId/replay/audio/mint`.
+ *
+ * The `token` here is either:
+ *   - A doctor's normal Supabase session JWT (from `useSession()`), OR
+ *   - A patient-scoped JWT from `exchangeReplayToken` above.
+ *
+ * Both flows are supported by the backend's `resolveReplayCaller`
+ * middleware. The mint is rate-limited (10 / hour / IP+session) so the
+ * caller should re-mint only on first play and on `audio` element
+ * `error` (signed URL expired). On a denial (403 / 404 / 409 / 410),
+ * the thrown `Error` carries `.status` and the `ReplayDenyReason` is
+ * available as `.code`.
+ */
+export async function mintReplayAudioUrl(
+  token: string,
+  sessionId: string,
+  /**
+   * Plan 08 · Task 44: opt-in `artifactKind` query param. Defaults to
+   * `'audio'` so every existing caller keeps its current behaviour;
+   * `<RecordingReplayPlayer>` passes `'video'` once the patient has
+   * toggled "Show video" AND cleared the OTP gate (either inside the
+   * 30-day window or just verified via `verifyVideoReplayOtp`).
+   */
+  artifactKind: "audio" | "video" = "audio",
+): Promise<ApiSuccess<ReplayMintData>> {
+  const qs = artifactKind === "video" ? "?artifactKind=video" : "";
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/consultation/${encodeURIComponent(sessionId)}/replay/audio/mint${qs}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<ReplayMintData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & {
+      status?: number;
+      code?: ReplayDenyReason | string;
+      details?: Record<string, unknown>;
+    };
+    err.status = res.status;
+    if (isApiError(json)) {
+      err.code = json.error.code;
+      // 403 `video_otp_required` carries `{ lastVerifiedAt: ISO|null }`
+      // in details; the caller uses it to copy "last verified N days
+      // ago" into the OTP modal preamble.
+      if (json.error.details && typeof json.error.details === "object") {
+        err.details = json.error.details as Record<string, unknown>;
+      }
+    }
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & {
+      status?: number;
+      code?: ReplayDenyReason | string;
+    };
+    err.status = json.error.statusCode ?? 500;
+    err.code = json.error.code;
+    throw err;
+  }
+  return json as ApiSuccess<ReplayMintData>;
+}
+
+export interface ReplayStatusData {
+  available: boolean;
+  /** Set when `available === false`. */
+  reason?: ReplayDenyReason;
+  /** Set for patients when `available === true`. ISO-8601. */
+  selfServeExpiresAt?: string;
+  /**
+   * Plan 08 · Task 44: `true` when at least one completed video
+   * composition exists for this session. Drives the "Show video"
+   * toggle on `<RecordingReplayPlayer>`. Never an access gate — a
+   * patient with `hasVideo=true` may still be blocked at mint time
+   * by the 30-day OTP window.
+   */
+  hasVideo?: boolean;
+}
+
+/**
+ * Preflight — does the player have something to play, and is the
+ * caller allowed to play it? Read-only; does NOT write an audit row,
+ * so safe to call on mount of the player (or every time the user
+ * navigates to the artifacts panel).
+ *
+ * `GET /api/v1/consultation/:sessionId/replay/status`.
+ */
+export async function getReplayStatus(
+  token: string,
+  sessionId: string,
+): Promise<ApiSuccess<ReplayStatusData>> {
+  return request<ReplayStatusData>(
+    `/api/v1/consultation/${encodeURIComponent(sessionId)}/replay/status`,
+    { token },
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Text consultation token exchange (Plan 04 · Task 19 — patient flow)
+// -----------------------------------------------------------------------------
+
+/**
+ * Lifecycle status of a consultation session — mirrors the backend
+ * `SessionStatus` type so the frontend can drive pre/live/post UI states
+ * from a single source of truth.
+ */
+export type TextConsultSessionStatus =
+  | "scheduled"
+  | "live"
+  | "ended"
+  | "no_show"
+  | "cancelled";
+
+export interface TextConsultTokenExchangeData {
+  /** Supabase JWT scoped to this session. `null` once the session has ended/cancelled. */
+  token: string | null;
+  /** Expiry of the JWT in ISO-8601. `null` when `token` is null. */
+  expiresAt: string | null;
+  /**
+   * UUID the patient should put into `consultation_messages.sender_id` on
+   * INSERT (and that the chat UI uses for self-vs-counterparty bubble
+   * alignment). Backend derives this from `consultation_sessions.patient_id`,
+   * falling back to `consultation_sessions.appointment_id` when the
+   * patient row hasn't been linked yet (bot-booked guests).
+   */
+  currentUserId: string;
+  sessionStatus: TextConsultSessionStatus;
+  scheduledStartAt: string;
+  expectedEndAt: string;
+  /** Practice (clinic) name for the chat header. Optional. */
+  practiceName?: string;
+}
+
+/**
+ * Exchange the HMAC consultation-token (carried in the patient join URL
+ * query string as `?t=...`) for a session-scoped Supabase JWT plus the
+ * session metadata the chat UI needs to render the right state.
+ *
+ * Public endpoint — no Bearer auth header. The HMAC consultation-token
+ * IS the proof of authority. The backend re-issues the JWT on every
+ * call, so this also doubles as the token-refresh path when the prior
+ * JWT is about to expire (or after a 401 from Supabase).
+ *
+ * @param sessionId - UUID of the `consultation_sessions` row, taken from
+ *                    the URL path segment.
+ * @param urlToken  - HMAC consultation-token from `?t=` query param.
+ */
+export async function requestTextSessionToken(
+  sessionId: string,
+  urlToken: string,
+): Promise<ApiSuccess<TextConsultTokenExchangeData>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/consultation/${encodeURIComponent(sessionId)}/text-token`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: urlToken }),
+      cache: "no-store",
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<TextConsultTokenExchangeData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<TextConsultTokenExchangeData>;
+}
+
+// =============================================================================
+// Plan 07 · Task 31 — post-consult chat-history token exchange
+// =============================================================================
+
+export interface ChatHistoryTokenExchangeData {
+  /** 90-day patient-scoped Supabase JWT for chat-history reads. */
+  accessToken: string;
+  /** ISO-8601 expiry of the JWT. */
+  expiresAt: string;
+  /**
+   * UUID for self-vs-counterparty bubble alignment in `<TextConsultRoom>`.
+   * Backend derives from `consultation_sessions.patient_id`, falling
+   * back to `appointment_id` for bot patients (no patient row linked).
+   */
+  currentUserId: string;
+  /**
+   * Session status — for the readonly chat-history surface, this is
+   * almost always `'ended'`, but exposed verbatim so the frontend
+   * doesn't have to assume.
+   */
+  sessionStatus: TextConsultSessionStatus;
+  /**
+   * ISO-8601 timestamp of `consultation_sessions.actual_ended_at`.
+   * Drives the readonly watermark date. Null when the session was
+   * never explicitly ended (cancelled / no_show); the watermark falls
+   * back to a generic "Read-only" label in that case.
+   */
+  consultEndedAt: string | null;
+  /** Practice name for the chat header. Optional. */
+  practiceName?: string;
+}
+
+/**
+ * Exchange the HMAC consultation-token (carried in the post-consult
+ * DM link as `?t=...`) for a 90-day patient-scoped Supabase JWT plus
+ * the metadata needed to mount `<TextConsultRoom mode='readonly'>`.
+ *
+ * Public endpoint — no Bearer auth header. The HMAC is the proof of
+ * authority; the backend re-issues a fresh JWT on every call so the
+ * patient can re-tap the original DM link any time within 90 days
+ * and obtain a fresh JWT (no support round-trip needed).
+ *
+ * @param sessionId - UUID of the `consultation_sessions` row from URL.
+ * @param hmacToken - HMAC consultation-token from `?t=` query param.
+ */
+export async function requestChatHistoryToken(
+  sessionId: string,
+  hmacToken: string,
+): Promise<ApiSuccess<ChatHistoryTokenExchangeData>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/consultation/${encodeURIComponent(sessionId)}/chat-history-token`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hmacToken }),
+      cache: "no-store",
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<ChatHistoryTokenExchangeData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<ChatHistoryTokenExchangeData>;
+}
+
+// =============================================================================
+// Plan 07 · Task 32 — Transcript PDF export
+// =============================================================================
+
+/**
+ * Subset of `TranscriptExportErrorCode` from the backend. Surfaced on
+ * thrown errors as `.code` so the UI can branch on a machine-readable
+ * reason without substring-matching error messages.
+ */
+export type TranscriptExportDenyReason =
+  | "not_a_participant"
+  | "session_not_ended"
+  | "beyond_self_serve_window"
+  | "revoked"
+  | "support_reason_required"
+  | "internal_error";
+
+export interface TranscriptTokenExchangeData {
+  /** 15-minute patient-scoped Supabase JWT for the PDF route. */
+  accessToken: string;
+  /** ISO-8601 expiry — frontend re-exchanges ahead of this. */
+  expiresAt: string;
+}
+
+/**
+ * Exchange the HMAC consultation-token (carried as `?t=...` on the
+ * post-consult DM link) for a **15-minute** patient-scoped JWT that
+ * authorises the transcript PDF download.
+ *
+ * Mirrors `exchangeReplayToken` / `requestChatHistoryToken`: body
+ * accepts `{ hmacToken }` (the backend route also accepts `{ token }`
+ * for legacy parity with Task 29; we pick the newer field here).
+ *
+ * Public endpoint — no Bearer auth header. The HMAC IS the proof of
+ * authority. Every call mints a fresh JWT, so the patient can retry
+ * after a cold start without losing access.
+ *
+ * @param sessionId - UUID of the `consultation_sessions` row.
+ * @param hmacToken - HMAC consultation-token from `?t=` query param.
+ */
+export async function requestTranscriptToken(
+  sessionId: string,
+  hmacToken: string,
+): Promise<ApiSuccess<TranscriptTokenExchangeData>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/consultation/${encodeURIComponent(sessionId)}/transcript-token`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hmacToken }),
+      cache: "no-store",
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<TranscriptTokenExchangeData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & {
+      status?: number;
+      code?: string;
+    };
+    err.status = res.status;
+    if (isApiError(json)) err.code = json.error.code;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & {
+      status?: number;
+      code?: string;
+    };
+    err.status = json.error.statusCode ?? 500;
+    err.code = json.error.code;
+    throw err;
+  }
+  return json as ApiSuccess<TranscriptTokenExchangeData>;
+}
+
+export interface TranscriptDownloadData {
+  /**
+   * Time-limited Supabase Storage signed URL. Carries `download=<filename>`
+   * so `Content-Disposition: attachment` lands naturally when the
+   * browser navigates to it.
+   */
+  signedUrl: string;
+  /** ISO-8601 expiry (15-minute Storage TTL). */
+  expiresAt: string;
+  /**
+   * `true` when the PDF was served from the Storage cache (i.e. not
+   * re-rendered). Surfaced for telemetry / debugging; the UI doesn't
+   * need to differentiate.
+   */
+  cacheHit: boolean;
+  /** Friendly save-as filename (e.g. `transcript-11111111.pdf`). */
+  filename: string;
+}
+
+/**
+ * Request a signed URL for the transcript PDF.
+ *
+ * `GET /api/v1/consultation/:sessionId/transcript.pdf` runs the
+ * policy pipeline (authZ → session-ended → revocation → cache check
+ * → compose-if-miss → upload → mint signed URL → audit → notify) and
+ * responds with JSON `{ signedUrl, expiresAt, cacheHit, filename }`.
+ *
+ * **Why JSON instead of a 302 redirect**: this GET is Bearer-authed,
+ * and browser navigations don't replay the `Authorization` header.
+ * Returning the signed URL lets the frontend `window.location.assign`
+ * directly to Supabase Storage (which carries its own token in the
+ * URL, no header needed).
+ *
+ * Typical flow from `<TranscriptDownloadButton>`:
+ *   const { data } = await downloadTranscript(token, sessionId);
+ *   window.location.assign(data.signedUrl);  // triggers save-to-disk
+ *
+ * Denials (403 / 409 / 410 / 404) throw `Error` with `.code` set to
+ * the machine-readable `TranscriptExportDenyReason` and `.status` set
+ * to the HTTP code — callers branch on `.code` for empty-state copy.
+ *
+ * @param token      - Doctor's Supabase session JWT OR patient-scoped
+ *                     JWT (from `requestTranscriptToken` /
+ *                     `requestChatHistoryToken` / `exchangeReplayToken`
+ *                     — all three have the same `consult_role:'patient'`
+ *                     + `session_id` claim shape).
+ * @param sessionId  - `consultation_sessions.id`.
+ */
+export async function downloadTranscript(
+  token: string,
+  sessionId: string,
+): Promise<ApiSuccess<TranscriptDownloadData>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/consultation/${encodeURIComponent(sessionId)}/transcript.pdf`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<TranscriptDownloadData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & {
+      status?: number;
+      code?: TranscriptExportDenyReason | string;
+    };
+    err.status = res.status;
+    if (isApiError(json)) err.code = json.error.code;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & {
+      status?: number;
+      code?: TranscriptExportDenyReason | string;
+    };
+    err.status = json.error.statusCode ?? 500;
+    err.code = json.error.code;
+    throw err;
+  }
+  return json as ApiSuccess<TranscriptDownloadData>;
 }
 
 // =============================================================================
@@ -1766,4 +2728,101 @@ export async function postCatalogPreviewMatch(
     throw err;
   }
   return json as ApiSuccess<PreviewMatchResponse>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plan 07 / Task 30: Doctor dashboard event feed (mutual replay notifications).
+//
+// `getDashboardEvents` lists the doctor's feed (defaults to unread-first). The
+// nextCursor is opaque — clients must treat it as a string and feed it back
+// in verbatim. `acknowledgeDashboardEvent` marks one event read; the response
+// is 204 (no body), modeled here as `void`.
+//
+// Backend: backend/src/controllers/dashboard-events-controller.ts
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Pinned payload shape for `event_kind === 'patient_replayed_recording'`. */
+export interface PatientReplayedRecordingPayload {
+  artifact_type: "audio" | "transcript";
+  recording_access_audit_id: string;
+  patient_display_name: string;
+  replayed_at: string;
+  consult_date: string | null;
+  accessed_by_role: "patient" | "support_staff";
+  accessed_by_user_id: string;
+  escalation_reason?: string;
+}
+
+export type DashboardEventKind = "patient_replayed_recording";
+
+export interface DashboardEvent {
+  id: string;
+  eventKind: DashboardEventKind;
+  sessionId: string | null;
+  payload: PatientReplayedRecordingPayload;
+  acknowledgedAt: string | null;
+  createdAt: string;
+}
+
+export interface DashboardEventsResponse {
+  events: DashboardEvent[];
+  nextCursor?: string;
+}
+
+export interface GetDashboardEventsOptions {
+  unreadOnly?: boolean;
+  limit?: number;
+  cursor?: string;
+}
+
+export async function getDashboardEvents(
+  token: string,
+  options: GetDashboardEventsOptions = {}
+): Promise<ApiSuccess<DashboardEventsResponse>> {
+  const params = new URLSearchParams();
+  if (options.unreadOnly) params.set("unread", "true");
+  if (typeof options.limit === "number") {
+    params.set("limit", String(options.limit));
+  }
+  if (options.cursor) params.set("cursor", options.cursor);
+  const qs = params.toString();
+  const path = qs.length > 0
+    ? `/api/v1/dashboard/events?${qs}`
+    : "/api/v1/dashboard/events";
+  return request<DashboardEventsResponse>(path, { token });
+}
+
+export async function acknowledgeDashboardEvent(
+  token: string,
+  eventId: string
+): Promise<void> {
+  if (!eventId) throw new Error("eventId is required");
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/dashboard/events/${encodeURIComponent(eventId)}/acknowledge`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    }
+  );
+  if (res.status === 204) return;
+  // Anything else is an error — try to extract a message from a JSON body.
+  const text = await res.text();
+  let parsed: unknown = {};
+  if (text.length > 0) {
+    try {
+      parsed = JSON.parse(text) as unknown;
+    } catch {
+      parsed = {};
+    }
+  }
+  const json = parsed as ApiError | Record<string, unknown>;
+  const message = isApiError(json) ? json.error.message : "Acknowledge failed";
+  const err = new Error(message) as Error & { status?: number; body?: unknown };
+  err.status = res.status;
+  err.body = json;
+  throw err;
 }

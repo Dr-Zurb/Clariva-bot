@@ -143,7 +143,10 @@ import {
   buildConsentOptionalExtrasMessage,
   buildIntakeRequestMessage,
   buildNonTextAckMessage,
+  buildRecordingConsentAskMessage,
+  buildRecordingConsentExplainer,
   formatAppointmentChoiceDate,
+  RECORDING_CONSENT_COPY_VERSION,
   type CancelChoiceItem,
 } from '../utils/dm-copy';
 import {
@@ -730,6 +733,69 @@ async function getPatientIdHintForSlot(
   _correlationId: string
 ): Promise<string> {
   return '';
+}
+
+/**
+ * Plan 02 · Task 27 — resolve a patient's reply to the recording-consent
+ * ask / re-pitch into a three-way signal. Keyword-based (no LLM) because:
+ *   - The ask is a binary Yes/No with explicit copy — false-positive risk
+ *     is low and the patient just read the exact words `**Yes**` /
+ *     `**No**` a turn ago.
+ *   - Going to the LLM would add latency + cost to every recording-consent
+ *     turn; the booking flow is already chatty.
+ *   - Anything ambiguous falls through to `'unclear'` and the handler
+ *     re-prompts with the same ask — no stuck state.
+ *
+ * Matches the same yes/no vocabulary the rest of the DM flow accepts
+ * (see `resolveConsentReplyForBooking` in ai-service for parity). Kept
+ * local to this file instead of promoted into ai-service because the
+ * recording-consent surface is copy-controlled end-to-end and we don't
+ * want the ai-service yes/no classifier's safety fallback behavior here.
+ */
+function resolveRecordingConsentReply(text: string): 'yes' | 'no' | 'unclear' {
+  const trimmed = (text ?? '').trim().toLowerCase();
+  if (!trimmed) return 'unclear';
+  if (/^(no|nope|nah|n)[.!,]?$/.test(trimmed)) return 'no';
+  if (/^(yes|yeah|yep|yup|ok|okay|sure|y)[.!,]?$/.test(trimmed)) return 'yes';
+  if (/\b(i\s*do\s*not|i\s*don'?t|don'?t\s+record|no\s+recording|decline|disagree|refuse|reject)\b/.test(trimmed)) {
+    return 'no';
+  }
+  if (/\b(i\s+agree|agree|i\s+consent|consent|continue\s+without\s+recording)\b/.test(trimmed)) {
+    // "continue without recording" is the booking-page CTA copy. A patient
+    // typing it verbatim into DM is declining — check that branch first.
+    if (/continue\s+without\s+recording/.test(trimmed)) return 'no';
+    return 'yes';
+  }
+  if (/\b(keep\s+recording\s+on|record\s+it|go\s+ahead|proceed)\b/.test(trimmed)) return 'yes';
+  return 'unclear';
+}
+
+/**
+ * Plan 02 · Task 27 — rebuild the "here's your booking link" reply shape
+ * used by the post-consent-granted paths, including the
+ * `pendingSelfBooking` / `pendingOtherBooking` follow-up nudge. The
+ * reason we need this helper: the recording-consent detour defers the
+ * booking-link send by one turn, and on resumption we need to reproduce
+ * the exact reply shape the original consent-granted branch would have
+ * produced. The pending follow-up state is already preserved in
+ * `ConversationState` across the detour, so the only thing to recompute
+ * is the URL + base copy.
+ */
+function buildBookingLinkReplyWithFollowUp(
+  state: ConversationState,
+  conversationId: string,
+  doctorId: string,
+  doctorSettings: DoctorSettingsRow | null | undefined,
+): string {
+  const slotLink = buildBookingPageUrl(conversationId, doctorId);
+  const baseSlotMsg = formatBookingLinkDm(slotLink, '', doctorSettings);
+  if (state.pendingSelfBooking) {
+    return `${baseSlotMsg}\n\nWould you like to book one for yourself now?`;
+  }
+  if (state.pendingOtherBooking?.relation) {
+    return `${baseSlotMsg}\n\nWould you like to book for your ${state.pendingOtherBooking.relation} now?`;
+  }
+  return baseSlotMsg;
 }
 /** AI Receptionist: Get last bot message content for extraction context. */
 function getLastBotMessage(
@@ -2658,6 +2724,75 @@ export async function processInstagramDmWebhook(params: {
         state = { ...state, updatedAt: new Date().toISOString() };
         await updateConversationState(conversation.id, state, correlationId);
       }
+    } else if (state.step === 'recording_consent') {
+      // Plan 02 · Task 27 — recording-consent step handler.
+      //
+      // Decision tree (Decision 4 LOCKED):
+      //   Yes                → stash decision=true + version, send booking link
+      //                        reply (re-deriving via `buildBookingLinkReplyWithFollowUp`
+      //                        so pendingSelfBooking / pendingOtherBooking follow-ups
+      //                        still fire), step → 'awaiting_slot_selection'.
+      //   No (1st)           → send `buildRecordingConsentExplainer`, mark
+      //                        recordingConsentRePitched=true, stay in
+      //                        'recording_consent'.
+      //   No (2nd / post-re-pitch)
+      //                      → stash decision=false + version, send booking
+      //                        link reply, step → 'awaiting_slot_selection'.
+      //                        Consult proceeds; recording is gated off by
+      //                        `recording_consent_decision=false` on the
+      //                        appointment row (written at appointment
+      //                        creation from ConversationState).
+      //   unclear            → re-prompt with the same ask copy; no state
+      //                        change beyond `updatedAt`.
+      //
+      // This branch is intentionally placed BEFORE the `consent` branch so
+      // `effectiveAskedForConsent`'s substring heuristic doesn't mis-route
+      // replies that follow the re-pitch (the re-pitch trailer mentions
+      // "consent version:" which would otherwise tick the legacy consent
+      // classifier).
+      dmRoutingBranch = 'recording_consent_flow';
+      const decision = resolveRecordingConsentReply(text);
+      if (decision === 'unclear') {
+        replyText = buildRecordingConsentAskMessage({
+          practiceName: doctorContext?.practice_name ?? undefined,
+        });
+        state = { ...state, updatedAt: new Date().toISOString() };
+        await updateConversationState(conversation.id, state, correlationId);
+      } else if (decision === 'no' && state.recordingConsentRePitched !== true) {
+        replyText = buildRecordingConsentExplainer({
+          version: RECORDING_CONSENT_COPY_VERSION,
+          practiceName: doctorContext?.practice_name ?? undefined,
+        });
+        state = {
+          ...state,
+          recordingConsentRePitched: true,
+          lastPromptKind: 'recording_consent_re_pitch',
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+      } else {
+        // Yes, or second No after re-pitch → finalize and move to slot
+        // selection. The decision lives on ConversationState until
+        // `processSlotSelectionAndPay` copies it onto
+        // `appointments.recording_consent_*` at appointment creation.
+        const captured = decision === 'yes';
+        replyText = buildBookingLinkReplyWithFollowUp(
+          state,
+          conversation.id,
+          doctorId,
+          doctorSettings,
+        );
+        state = {
+          ...state,
+          recordingConsentDecision: captured,
+          recordingConsentVersion: RECORDING_CONSENT_COPY_VERSION,
+          recordingConsentRePitched: undefined,
+          step: 'awaiting_slot_selection',
+          lastPromptKind: undefined,
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+      }
     } else if (state.step === 'consent' || effectiveAskedForConsent(state, recentMessages)) {
       // Detect correction intent before running consent classifier.
       const CORRECTION_RE = /\b(wait|wrong|not\s+right|change\s+my|correct\s+my|actually\s+it'?s|my\s+name\s+is|my\s+phone\s+is|my\s+number\s+is|update\s+my)\b/i;
@@ -3619,6 +3754,7 @@ export async function processInstagramDmWebhook(params: {
       state.step === 'confirm_details' ||
       state.step === 'awaiting_match_confirmation' ||
       state.step === 'consent' ||
+      state.step === 'recording_consent' ||
       state.step === 'awaiting_cancel_choice' ||
       state.step === 'awaiting_cancel_confirmation' ||
       state.step === 'awaiting_reschedule_choice' ||
@@ -3683,6 +3819,39 @@ export async function processInstagramDmWebhook(params: {
           'instagram_dm_staff_review_upsert_failed'
         );
       }
+    }
+
+    // Plan 02 · Task 27 — recording-consent detour.
+    //
+    // Any path that transitions the conversation to
+    // `awaiting_slot_selection` without a prior recording-consent answer
+    // gets intercepted here: we swap the reply to the recording-consent
+    // ask and park the state in `recording_consent` instead. On the next
+    // turn the dedicated branch above resolves Yes/No and re-derives the
+    // booking-link reply, so no path loses its intended content.
+    //
+    // Intercepting at the persist point (rather than at each consent-
+    // granted / match-confirmation termination site) keeps the recording-
+    // consent detour a one-line invariant: "if we are about to send a
+    // booking link and haven't asked about recording, ask now." The
+    // invariant survives future handler rewrites that add new paths to
+    // `awaiting_slot_selection` without knowing about Task 27.
+    if (
+      stateToPersist.step === 'awaiting_slot_selection' &&
+      stateToPersist.recordingConsentDecision === undefined
+    ) {
+      replyText = buildRecordingConsentAskMessage({
+        practiceName: doctorContext?.practice_name ?? undefined,
+      });
+      stateToPersist = {
+        ...stateToPersist,
+        step: 'recording_consent',
+        lastPromptKind: 'recording_consent_ask',
+        bookingLinkSentAt: undefined,
+        bookingReminderSent: undefined,
+        updatedAt: new Date().toISOString(),
+      };
+      dmRoutingBranch = 'recording_consent_injected';
     }
 
     logInstagramDmRouting({

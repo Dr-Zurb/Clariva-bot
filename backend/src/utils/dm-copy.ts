@@ -23,6 +23,10 @@
  */
 
 import type { CollectedPatientData, PatientCollectionField } from './validation';
+import {
+  RECORDING_CONSENT_BODY_V1,
+  RECORDING_CONSENT_VERSION,
+} from '../constants/recording-consent';
 
 /**
  * Acknowledgement sent when the patient's inbound message is not text
@@ -436,6 +440,17 @@ export function buildConsentOptionalExtrasMessage(input: ConsentMessageInput): s
 // Payment confirmation (Task 05 — happy-path payment DM sectioning)
 // ---------------------------------------------------------------------------
 
+/**
+ * Modality union accepted by `PaymentConfirmationInput.modality`. Deliberately
+ * a **superset** of `ConsultationModality` (declared below) because the
+ * booking-confirmation DM fires for in-clinic appointments too — whereas
+ * `buildConsultationReadyDm` is teleconsult-only (no `in_clinic` branch
+ * there, by design). Keeping the two unions distinct avoids accidentally
+ * widening `ConsultationModality` and breaking the exhaustive switch in
+ * `buildConsultationReadyDm`.
+ */
+export type PaymentConfirmationModality = ConsultationModality | 'in_clinic';
+
 export interface PaymentConfirmationInput {
   /**
    * Pre-formatted appointment date/time string produced by the caller (usually
@@ -451,6 +466,18 @@ export interface PaymentConfirmationInput {
    * the value before rendering so callers can pass raw DB values.
    */
   readonly patientMrn?: string;
+
+  /**
+   * Booked consultation modality — drives Principle 8 disambiguation copy
+   * (plan-multi-modality-consultations.md). Only `'voice'` triggers a copy
+   * variant today (audio-only disambiguation paragraph before the closing
+   * line); the other values render the existing all-purpose copy unchanged.
+   *
+   * Optional + backward-compatible: existing callers that don't pass
+   * `modality` get byte-identical output to the pre-Plan-05 helper (pinned
+   * by the `dm-copy.snap.test.ts` regression fixtures).
+   */
+  readonly modality?: PaymentConfirmationModality;
 }
 
 /**
@@ -495,6 +522,15 @@ export function formatDateWithMiddot(input: string): string {
  *
  * No emojis outside of `✅` and `🆔`. No booking / cancel links in the body.
  * No amount/currency (avoid source-of-truth drift with the provider UI).
+ *
+ * Principle 8 LOCKED disambiguation (Plan 05 · Task 26): when `input.modality
+ * === 'voice'`, a short paragraph is inserted **before** the closing line
+ * telling the patient the consult is an audio-only web link — *not* a phone
+ * call. This prevents the "but the doctor never called me" support ticket
+ * in markets (notably India) where "voice consult" defaults to "phone call".
+ * See `plan-multi-modality-consultations.md` Principle 8 for the rationale.
+ * All non-voice modalities (including `undefined`) render byte-identically
+ * to the pre-Plan-05 output — pinned by regression snapshots.
  */
 export function buildPaymentConfirmationMessage(input: PaymentConfirmationInput): string {
   const parts: string[] = [
@@ -506,6 +542,13 @@ export function buildPaymentConfirmationMessage(input: PaymentConfirmationInput)
   const mrn = input.patientMrn?.trim();
   if (mrn) {
     parts.push('', `🆔 **Patient ID:** ${mrn}`, '_Save this for future bookings._');
+  }
+
+  if (input.modality === 'voice') {
+    parts.push(
+      '',
+      "Note: voice consults happen via a web link from your browser — audio only, no phone call. We'll text + IG-DM the join link 5 min before.",
+    );
   }
 
   parts.push(
@@ -567,6 +610,275 @@ export function buildAbandonedBookingReminderMessage(
     url,
     '',
     'Reply here anytime if you need help.',
+  ].join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Consultation-ready urgent ping (Plan 01 · Task 16)
+// ---------------------------------------------------------------------------
+
+/**
+ * Modality token shared between booking, consultation_sessions, and the
+ * fan-out builders below. Mirrors the union in
+ * `backend/src/types/consultation-session.ts#Modality`. Re-declared locally
+ * (not imported) so `dm-copy.ts` stays import-free of services / configs —
+ * the file's contract is "pure functions, no side imports".
+ */
+export type ConsultationModality = 'text' | 'voice' | 'video';
+
+export interface ConsultationReadyDmInput {
+  /**
+   * Which delivery rail this consult uses. The video branch ships in this
+   * task. The text branch ships in Plan 04 (`text-consult` adapter); the
+   * voice branch ships in Plan 05 (Principle 8 disambiguation copy). Until
+   * those plans wire their copy in, this builder throws on the un-implemented
+   * branches — quieter would let the caller silently ship a video-shaped
+   * message for a voice consult, which is exactly what Decision 11 (mid-
+   * consult mode switching) is designed to avoid.
+   */
+  readonly modality: ConsultationModality;
+
+  /**
+   * Doctor's practice name. Empty / whitespace falls back to
+   * `"your doctor"` — same convention as the legacy
+   * `sendConsultationLinkToPatient` so the rendered string stays stable
+   * when migrating call sites.
+   */
+  readonly practiceName?: string;
+
+  /**
+   * Fully-qualified join URL — for video, the patient signed-token URL
+   * minted by `getJoinTokenForAppointment`. The helper throws on empty so
+   * a config bug (missing `CONSULTATION_JOIN_BASE_URL`) surfaces here
+   * rather than shipping a CTA-less DM.
+   */
+  readonly joinUrl: string;
+}
+
+/**
+ * Render the urgent-moment "your consult is ready, here's the link" DM.
+ *
+ * This is intentionally distinct from `sendConsultationLinkToPatient`'s
+ * inline string — that one fires at booking-confirmation time with
+ * "you've booked, save this link". This one fires at consult-start time
+ * with "join NOW".
+ *
+ * Layout (video branch):
+ *   - Paragraph 1: trust signal + modality label (`Video consult`).
+ *   - Paragraph 2: bare URL on its own line — Instagram + SMS clients
+ *     auto-linkify raw URLs more reliably than markdown. Blank line
+ *     above keeps the URL isolated as a tappable target (same convention
+ *     as `buildAbandonedBookingReminderMessage` and
+ *     `buildStaffReviewResolvedBookingMessage`).
+ *   - Paragraph 3: "reply here if anything's wrong" closing — important
+ *     because urgent fan-outs hit SMS where the patient can't reply to the
+ *     bot. The line points them back to the IG / app thread.
+ *
+ * @throws when `joinUrl` is empty (always a caller bug — the fan-out
+ *   helper computes the URL via the consultation-session-service before
+ *   calling).
+ */
+export function buildConsultationReadyDm(input: ConsultationReadyDmInput): string {
+  const url = input.joinUrl?.trim();
+  if (!url) {
+    throw new Error(
+      'buildConsultationReadyDm: joinUrl is required (the fan-out helper computes the patient join URL via consultation-session-service before calling — empty here means an upstream config / token-mint bug).',
+    );
+  }
+  const practice = input.practiceName?.trim() || 'your doctor';
+
+  switch (input.modality) {
+    case 'video':
+      return [
+        `Your video consult with **${practice}** is starting.`,
+        '',
+        'Join here:',
+        url,
+        '',
+        'Reply in this thread if anything looks wrong.',
+      ].join('\n');
+
+    // Plan 04 · Task 21 — text branch lit up. Mirrors the video branch's
+    // shape (paragraph 1: trust signal + modality label, paragraph 2: bare
+    // URL on its own line for IG/SMS auto-linkification, paragraph 3:
+    // fallback closing). Wording differs only at:
+    //   · "video consult" → "text consult"
+    //   · "Join here:"    → "Open the chat:"  (text consult IS the chat;
+    //                                          "join" implies leaving
+    //                                          somewhere, which it isn't.)
+    //   · The closing stays "Reply in this thread …" because the urgent
+    //     fan-out hits SMS where they can't reply to the bot — pointing
+    //     them back to the IG / app thread is still the right escape valve
+    //     if the link itself is broken.
+    case 'text':
+      return [
+        `Your text consult with **${practice}** is starting.`,
+        '',
+        'Open the chat:',
+        url,
+        '',
+        'Reply in this thread if anything looks wrong.',
+      ].join('\n');
+
+    // Plan 05 · Task 26 — voice branch lit up. Principle 8 LOCKED: voice
+    // consult DMs MUST explicitly disambiguate "audio only, no phone call".
+    // Without this, patients in markets where "voice consult" defaults to
+    // "phone call" (especially India) sit waiting for a ring that never
+    // comes → "but the doctor never called me" support tickets.
+    //
+    // Structure mirrors the video + text branches (trust signal → bare URL
+    // → fallback closing) but **adds** a dedicated disambiguation paragraph
+    // between the opener and the URL. The "audio only" + "NOT a phone call"
+    // substrings are load-bearing — dropped assertions in the snapshot test
+    // catch any copy-tweak that removes either keyword.
+    case 'voice':
+      return [
+        `Your voice consult with **${practice}** is starting.`,
+        '',
+        '👉 This is an internet voice call (audio only) — NOT a phone call. Tap the link below to join from this device.',
+        '',
+        url,
+        '',
+        'Reply in this thread if anything looks wrong.',
+      ].join('\n');
+
+    default: {
+      // Compile-time exhaustiveness check — TS will error if a new modality
+      // is added without a branch here.
+      const _exhaustive: never = input.modality;
+      throw new Error(`buildConsultationReadyDm: unhandled modality ${String(_exhaustive)}`);
+    }
+  }
+}
+
+export interface PrescriptionReadyPingDmInput {
+  /**
+   * Doctor's practice name. Empty / whitespace falls back to `"your doctor"`.
+   */
+  readonly practiceName?: string;
+
+  /**
+   * Optional patient-facing prescription view URL. When present, the ping
+   * includes a deep link on its own line. When `undefined` (no
+   * `PRESCRIPTION_VIEW_BASE_URL` configured), the ping is URL-less — the
+   * existing `sendPrescriptionToPatient` already delivered the prescription
+   * content body, so the patient still has the prescription either way.
+   */
+  readonly viewUrl?: string;
+}
+
+/**
+ * Render the urgent-moment "your prescription is ready" ping. This is the
+ * companion to `sendPrescriptionToPatient` (which delivers the actual
+ * content) — fires ~30s later from the post-prescription worker so the
+ * patient notices, even if they missed the first message in a busy IG inbox.
+ *
+ * Deliberately short — three lines max. The patient already received the
+ * content; this is a notification, not a re-delivery.
+ */
+export function buildPrescriptionReadyPingDm(
+  input: PrescriptionReadyPingDmInput,
+): string {
+  const practice = input.practiceName?.trim() || 'your doctor';
+  const url = input.viewUrl?.trim();
+
+  if (url) {
+    return [
+      `Your prescription from **${practice}** is ready.`,
+      '',
+      'View it here:',
+      url,
+    ].join('\n');
+  }
+
+  return `Your prescription from **${practice}** is ready — check your messages above.`;
+}
+
+// ---------------------------------------------------------------------------
+// Inline-in-chat prescription delivery (Plan 04 · Task 21)
+// ---------------------------------------------------------------------------
+
+export interface PrescriptionReadyDmInput {
+  /**
+   * Doctor's display name (e.g. `'Dr. Sharma'`). Empty / whitespace falls
+   * back to `'your doctor'` — same convention as the rest of the dm-copy
+   * builders.
+   */
+  readonly doctorName?: string;
+
+  /**
+   * Stable prescription identifier — quoted in the body so the patient can
+   * cite it in any later support query. Required; empty throws.
+   */
+  readonly prescriptionId: string;
+
+  /**
+   * Signed URL to the prescription PDF. Required; empty throws. The
+   * upstream `prescription-attachment-service` mints the signed URL before
+   * this builder is invoked.
+   */
+  readonly pdfUrl: string;
+}
+
+/**
+ * Render the **inline-in-chat** prescription-ready message. This is the
+ * companion to `buildPrescriptionReadyPingDm`:
+ *
+ *   · `buildPrescriptionReadyPingDm` is the urgent fan-out **ping** sent
+ *     across SMS / IG-DM / email — it must fit an SMS, so it's three
+ *     lines max and treats the link as glanceable.
+ *
+ *   · `buildPrescriptionReadyDm` (this one) is the **inline message body**
+ *     posted into the active `<TextConsultRoom>` chat at consult-end (Plan
+ *     04 lifecycle wiring). The patient is already in a real conversation,
+ *     so the message can afford to include the reference ID and a
+ *     two-bullet next-steps list.
+ *
+ * Both can fire on the same prescription event — they're complementary
+ * surfaces, not redundant.
+ *
+ * The "Reply here in the chat …" closing intentionally points back to the
+ * same chat thread the message lands in. Decision 5 LOCKED makes text
+ * consults live-only, so this only works **before** `endSession` fires.
+ * Plan 04's chat-end flow posts this message **just before** the session
+ * status flips to `'ended'`. If the patient races their reply past
+ * `endSession`, the RLS INSERT policy rejects it and the chat client must
+ * surface the "this consult has ended" state — documented as a known v1
+ * trade-off in Plan 04 Task 19's notes.
+ *
+ * @throws when `pdfUrl` or `prescriptionId` is empty (always a caller bug
+ *   — `prescription-attachment-service` mints the signed URL and the
+ *   prescription row supplies the ID; either being absent here means an
+ *   upstream wiring problem).
+ */
+export function buildPrescriptionReadyDm(
+  input: PrescriptionReadyDmInput,
+): string {
+  const pdf = input.pdfUrl?.trim();
+  if (!pdf) {
+    throw new Error(
+      'buildPrescriptionReadyDm: pdfUrl is required (upstream prescription-attachment-service must mint the signed URL before this helper is called — empty here means an upstream wiring bug).',
+    );
+  }
+  const id = input.prescriptionId?.trim();
+  if (!id) {
+    throw new Error(
+      'buildPrescriptionReadyDm: prescriptionId is required (the prescription row supplies it — empty here means an upstream wiring bug).',
+    );
+  }
+  const doctor = input.doctorName?.trim() || 'your doctor';
+
+  return [
+    `Prescription from **${doctor}**`,
+    '',
+    'Your prescription is ready. View or download the PDF here:',
+    pdf,
+    '',
+    `Reference ID: ${id}`,
+    '',
+    'Next steps:',
+    '• Save the PDF for your pharmacy.',
+    '• Reply here in the chat if you have any questions about your prescription.',
   ].join('\n');
 }
 
@@ -838,3 +1150,520 @@ export function buildStaffReviewResolvedBookingMessage(
     'If something looks wrong, just reply here in this chat.',
   ].join('\n');
 }
+
+// ---------------------------------------------------------------------------
+// Recording-consent ask + soft re-pitch (Plan 02 · Task 27 · Decision 4 LOCKED)
+// ---------------------------------------------------------------------------
+
+/**
+ * Shape shared by the two recording-consent builders. `practiceName` is
+ * the only optional field because it is the only one that could drive a
+ * second variant later (per-clinic copy tweaks); keeping the typed-input
+ * discipline consistent with the rest of `dm-copy.ts` makes adding
+ * variants a type change instead of a new exported symbol.
+ */
+export interface BuildRecordingConsentAskInput {
+  /**
+   * Doctor's practice name. Empty / whitespace falls back to `"this
+   * clinic"` rather than `"the clinic"` to stay grammatical in
+   * `"being recorded for <clinic>'s medical records"` — legacy builders
+   * in this file use `"the clinic"` / `"your doctor"` depending on
+   * sentence shape.
+   */
+  readonly practiceName?: string;
+}
+
+/**
+ * Initial ask the IG bot sends when entering the `recording_consent`
+ * step — between `consent` (schedule-this-appointment) and
+ * `awaiting_date_time` / `awaiting_slot_selection`.
+ *
+ * Kept deliberately short: the full explainer only surfaces on the
+ * first decline (`buildRecordingConsentExplainer`). The ask itself has
+ * to fit the "one question per turn" DM norm and present an obvious
+ * Yes / No reply shape.
+ *
+ * Copy rationale (Task 27 seed):
+ *   - Lead with the practice context so the patient anchors recording
+ *     to this specific clinic, not the bot platform.
+ *   - Name the action ("recording this consult") with no euphemism —
+ *     the re-pitch adds the "for medical records and quality" framing
+ *     only if the patient declines.
+ *   - Bold the reply tokens (`**Yes**` / `**No**`) to match the
+ *     existing consent builder shape (e-task-3 consent ask uses the
+ *     same convention).
+ */
+export function buildRecordingConsentAskMessage(
+  input: BuildRecordingConsentAskInput = {},
+): string {
+  const practice = input.practiceName?.trim() || 'this clinic';
+  return [
+    `Before we book, one quick thing from ${practice}:`,
+    '',
+    'Are you OK with this consult being recorded? Reply **Yes** or **No**.',
+  ].join('\n');
+}
+
+export interface BuildRecordingConsentExplainerInput {
+  /**
+   * Version token for the consent body. Callers pass
+   * `RECORDING_CONSENT_VERSION` from
+   * `backend/src/constants/recording-consent.ts`. Surfaced in the
+   * explainer tail so the patient's audit trail lines up with the
+   * exact copy they read — if the legal body bumps to `v1.1`, older
+   * conversations still show `v1.0` in the DM history, which is the
+   * legal-defensibility property Decision 4 locked.
+   */
+  readonly version: string;
+  readonly practiceName?: string;
+}
+
+/**
+ * Soft re-pitch sent after the patient's first "no". Embeds
+ * `RECORDING_CONSENT_BODY_V1` verbatim (single source of truth lives in
+ * `constants/recording-consent.ts`) so the booking page modal and the
+ * IG DM never drift.
+ *
+ * Decision 4 caps the re-pitch at one — this builder renders that one
+ * message. The IG handler is responsible for tracking that the re-pitch
+ * has already been shown and not re-invoking this helper on a second
+ * decline. If the patient declines again after seeing this explainer
+ * we record `decision = false`, show the doctor-side banner, and let
+ * the consult proceed (recording is gated off).
+ *
+ * Copy contract:
+ *   - Opens with an implicit "no pressure" framing so the patient
+ *     doesn't feel the bot is trying to override their first answer.
+ *   - Body is the verbatim legal copy from `constants/` — this is the
+ *     surface the audit log points at.
+ *   - Ends with a binary choice that matches the booking page modal's
+ *     two buttons: `[Keep recording on]` / `[Continue without
+ *     recording]`. DM shape uses words (the channel doesn't support
+ *     quick-reply buttons uniformly across Instagram clients).
+ *   - Trailer line names the `version` token so the patient's DM
+ *     history serves as a self-contained audit artifact.
+ */
+export function buildRecordingConsentExplainer(
+  input: BuildRecordingConsentExplainerInput,
+): string {
+  const version = input.version?.trim();
+  if (!version) {
+    throw new Error(
+      'buildRecordingConsentExplainer: version is required (pass RECORDING_CONSENT_VERSION from constants/recording-consent — empty means an upstream wiring bug).',
+    );
+  }
+  const practice = input.practiceName?.trim() || 'the clinic';
+  return [
+    `No problem — before you decide, here's what recording means at ${practice}:`,
+    '',
+    RECORDING_CONSENT_BODY_V1,
+    '',
+    'Reply **Yes** to keep recording on, or **No** to continue without recording.',
+    '',
+    `(Consent version: ${version})`,
+  ].join('\n');
+}
+
+/**
+ * Re-exported for call sites that want to build the explainer with the
+ * current default version without pulling the constants import in
+ * themselves. The IG handler uses this to keep the version stamp and
+ * the copy atomic at the DM boundary.
+ */
+export const RECORDING_CONSENT_COPY_VERSION = RECORDING_CONSENT_VERSION;
+
+// ---------------------------------------------------------------------------
+// Account deletion — Plan 02 · Task 33
+// ---------------------------------------------------------------------------
+
+export interface BuildAccountDeletionExplainerDmInput {
+  /**
+   * Legal citation string shown verbatim to the patient so they know which
+   * retention doctrine keeps their clinical records alive after account
+   * deletion. Caller owns the wording; this builder only lays it out. For
+   * DPDP Act 2023 + GDPR Article 9 deployments, pass something like
+   * `"DPDP Act 2023 §9 / GDPR Article 9(3)"`.
+   *
+   * We do NOT default this — passing a citation is the caller's proof
+   * that the DM is being sent in the intended legal context. An empty /
+   * whitespace string throws so misconfigured call sites surface loudly.
+   */
+  readonly citation: string;
+  /**
+   * When the deletion finalized (cron writes `finalized_at`). Used to tell
+   * the patient the removal has already happened ("your access was
+   * removed on {date}"); also the timestamp the audit row points at.
+   * Rendered as a short ISO date (`YYYY-MM-DD`) because that's the only
+   * disambiguation a patient needs for a one-shot DM — timezone semantics
+   * do not matter here.
+   */
+  readonly finalizedAt: Date;
+}
+
+/**
+ * One-shot explainer sent to the patient after their account-deletion
+ * request has been finalized (grace expired + revocation rows written +
+ * PII scrub complete). Non-urgent informational DM — NOT routed through
+ * the urgent-moment fan-out. Sent via the existing best-channel cascade
+ * (see `notification-service.ts`) so the patient gets it on whatever
+ * channel they were reachable on at deletion time.
+ *
+ * Copy rationale:
+ *   - Lead with the confirmation ("Your account is closed") so the patient
+ *     knows the state change is terminal, not pending.
+ *   - Spell out the two separable consequences — patient access revoked,
+ *     clinical records retained — because conflating them is the #1
+ *     DPDP / GDPR complaint vector ("you said you deleted my data but
+ *     the doctor still sees it"). The legal-basis citation is the
+ *     anchor that makes the second point defensible.
+ *   - Close with the doctor-side note so the patient understands that
+ *     clinical follow-up can still happen; we do not promise "nothing
+ *     will ever reach you again", we promise "your *access* is gone
+ *     and your clinical records are preserved per law".
+ *   - No call-to-action. The patient made a terminal decision and we
+ *     respect it. Recovery is out of scope for the explainer (they can
+ *     request a new account through the normal booking flow; that's a
+ *     separate surface).
+ */
+export function buildAccountDeletionExplainerDm(
+  input: BuildAccountDeletionExplainerDmInput,
+): string {
+  const citation = input.citation?.trim();
+  if (!citation) {
+    throw new Error(
+      'buildAccountDeletionExplainerDm: citation is required (pass the DPDP / GDPR citation string — empty means an upstream wiring bug).',
+    );
+  }
+  if (!(input.finalizedAt instanceof Date) || Number.isNaN(input.finalizedAt.getTime())) {
+    throw new Error(
+      'buildAccountDeletionExplainerDm: finalizedAt must be a valid Date (caller passed an invalid value).',
+    );
+  }
+  const finalizedDate = input.finalizedAt.toISOString().slice(0, 10);
+  return [
+    'Your account is closed.',
+    '',
+    `We've removed your access to your recordings and chats as of ${finalizedDate}.`,
+    `Your medical records are retained per ${citation} and are not deleted — this is a legal requirement for clinical records.`,
+    '',
+    'Your doctor still has access to those records for clinical follow-up if needed. ' +
+      "You will not receive further messages from us unless your doctor's clinic reaches out about your prior care.",
+  ].join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Mutual replay notification — Plan 07 · Task 30 · Decision 4 LOCKED
+// ---------------------------------------------------------------------------
+
+/**
+ * Artifact-type discriminator for the recording-replayed-by-doctor DM.
+ *
+ * v1 ships `'audio'` (Plan 07's audio baseline) and `'transcript'` (Task
+ * 32's read-only transcript surface — the doctor "reading the transcript"
+ * still triggers the same accountability DM because the transcript is
+ * derived from the recording). Plan 08 Task 44 additively widens with
+ * `'video'`; the body prepends a 🎥 indicator so patients can visually
+ * distinguish the higher-sensitivity video replay from routine audio
+ * access in their DM feed. All three share a single builder so the
+ * "non-alarming framing" + "every access is audited" lines stay in lock-step.
+ */
+export type RecordingReplayedArtifactType = 'audio' | 'transcript' | 'video';
+
+export interface BuildRecordingReplayedNotificationDmInput {
+  /**
+   * Doctor's practice / clinic name (e.g. `"Dr. Sharma's Clinic"`). Empty
+   * / whitespace falls back to `"your doctor's clinic"`. Patient-facing —
+   * we anchor the framing on the clinic the patient knows about, not on
+   * the support-staff person who may have triggered the replay (Decision
+   * 4 principle 8: support-staff replays still attribute the action to
+   * the clinic from the patient's POV; the doctor's dashboard event is
+   * where the support-staff identity surfaces).
+   */
+  readonly practiceName?: string;
+
+  /**
+   * Pre-formatted consult date label (e.g. `"19 Apr 2026"`). Caller owns
+   * the timezone math — the helper renders the string verbatim. Required
+   * because the DM is meaningless without a date anchor ("doctor reviewed
+   * the audio of your consult" → which consult?). Empty / whitespace
+   * throws; the call site (`notifyPatientOfDoctorReplay`) always derives
+   * this from `session.actual_ended_at` so an empty value signals a
+   * caller bug we want surfaced.
+   */
+  readonly consultDateLabel: string;
+
+  readonly artifactType: RecordingReplayedArtifactType;
+}
+
+/**
+ * Render the DM the patient receives when the doctor (or support-staff
+ * acting on the doctor's behalf) replays the recording of their consult.
+ *
+ * Decision 4 LOCKED principle 8 mandates the **non-alarming framing**:
+ * doctors revisit consults to refine the clinical plan; that is what
+ * good care looks like, not "something went wrong". The "this is a
+ * normal part of care" sentence is intentional and load-bearing — the
+ * snapshot test pins it so a future copy-tweak can't accidentally drop
+ * it and re-introduce the "patient panic" failure mode.
+ *
+ * Two-paragraph layout (audio variant):
+ *
+ *   ```
+ *   Your doctor at {practiceName} reviewed the audio of your consult on {consultDateLabel}.
+ *
+ *   This is a normal part of care (doctors often revisit consults to refine their plan).
+ *   Every access is audited, and you can ask support for the access log anytime.
+ *   ```
+ *
+ * The transcript variant is byte-identical except `audio` → `transcript`
+ * — the variant logic lives **inside this builder**, not at call sites,
+ * so the audit-log copy and Plan 08's eventual video copy stay
+ * synchronized as a single edit point.
+ *
+ * No emoji in v1 (Plan 08 adds 🎥 to the video variant when it ships).
+ * No CTA — there's nothing for the patient to do; this is a transparency
+ * pulse, not a request. The "ask support for the access log anytime"
+ * line is the implicit recourse path.
+ *
+ * @throws when `consultDateLabel` resolves empty / whitespace — caller
+ *   bug; the fan-out helper computes this from `session.actual_ended_at`
+ *   before invoking the builder.
+ */
+export function buildRecordingReplayedNotificationDm(
+  input: BuildRecordingReplayedNotificationDmInput,
+): string {
+  const dateLabel = input.consultDateLabel?.trim();
+  if (!dateLabel) {
+    throw new Error(
+      'buildRecordingReplayedNotificationDm: consultDateLabel is required ' +
+        '(notifyPatientOfDoctorReplay computes this from session.actual_ended_at — ' +
+        'empty here means an upstream wiring bug or a session row missing actual_ended_at).',
+    );
+  }
+  const practice = input.practiceName?.trim() || "your doctor's clinic";
+  const artifactWord: RecordingReplayedArtifactType = input.artifactType;
+
+  // Plan 08 Task 44: video carries a 🎥 prefix so it's scannable in
+  // the patient's DM feed. Audio + transcript stay plain text (no
+  // emoji) to match the v1 baseline pinned in the snapshot tests.
+  const leadPrefix = artifactWord === 'video' ? '🎥 ' : '';
+
+  return [
+    `${leadPrefix}Your doctor at ${practice} reviewed the ${artifactWord} of your consult on ${dateLabel}.`,
+    '',
+    'This is a normal part of care (doctors often revisit consults to refine their plan).',
+    'Every access is audited, and you can ask support for the access log anytime.',
+  ].join('\n');
+}
+
+// ============================================================================
+// Plan 07 · Task 31 — post-consult chat-history DM
+// ============================================================================
+
+export interface BuildPostConsultChatLinkDmInput {
+  /**
+   * Doctor's practice / clinic label (e.g. `"Dr. Sharma's practice"`).
+   * Empty / whitespace falls back to `"your doctor's practice"` so the
+   * patient sees a coherent sentence even when the upstream
+   * `doctor_settings.practice_name` lookup misses.
+   */
+  readonly practiceName?: string;
+
+  /**
+   * Absolute URL to `/c/history/{sessionId}?t={hmacToken}` — the patient
+   * tap-target. Required; the DM is meaningless without the link. Empty
+   * / whitespace throws so a wiring bug in `sendPostConsultChatHistoryDm`
+   * surfaces immediately rather than silently shipping a dead-end DM.
+   */
+  readonly joinUrl: string;
+
+  /**
+   * Pre-formatted consult date label (e.g. `"19 Apr 2026"`). Caller owns
+   * the timezone math — the helper renders the string verbatim. Required;
+   * an empty value indicates an upstream bug (the call site derives this
+   * from `consultation_sessions.actual_ended_at`).
+   */
+  readonly consultDateLabel: string;
+}
+
+/**
+ * Render the post-consult chat-history DM the patient receives at
+ * `endSession`.
+ *
+ * Decision 1 sub-decision LOCKED: indefinite read access to the chat
+ * thread for both parties after a consult ends. The DM hands the patient
+ * a stable, re-tappable link to `<TextConsultRoom mode='readonly'>` with
+ * the full conversation, attachments, and system banners.
+ *
+ * Copy doctrine:
+ *
+ *   - **Closure first.** The opening line states the consult is complete
+ *     so the patient has a clear "this is over" anchor before the link
+ *     itself.
+ *   - **What's behind the link, not just "open the link".** The middle
+ *     line spells out chat + attachments + system notes so the patient
+ *     knows there is something substantive on the other side and they
+ *     don't dismiss the DM as a duplicate booking confirmation.
+ *   - **Bounded TTL with a graceful re-mint path.** The closing line is
+ *     honest about the 90-day patient-self-serve window and surfaces
+ *     support as the recourse (matches the recording-replay 90-day TTL
+ *     from Decision 4 — same mental model). The *underlying access
+ *     right* is indefinite per Decision 1; only the URL TTL is bounded.
+ *
+ * No CTA other than the link itself — there's nothing for the patient
+ * to do beyond reading. No emoji in v1.
+ *
+ * **Pin in a snapshot test** so drift is deliberate.
+ *
+ * @throws when `joinUrl` or `consultDateLabel` resolves empty / whitespace
+ *   — caller bug; `sendPostConsultChatHistoryDm` always supplies both.
+ */
+export function buildPostConsultChatLinkDm(
+  input: BuildPostConsultChatLinkDmInput,
+): string {
+  const joinUrl = input.joinUrl?.trim();
+  if (!joinUrl) {
+    throw new Error(
+      'buildPostConsultChatLinkDm: joinUrl is required ' +
+        '(sendPostConsultChatHistoryDm composes this from APP_BASE_URL + sessionId + HMAC token — ' +
+        'empty here means an upstream wiring bug).',
+    );
+  }
+  const dateLabel = input.consultDateLabel?.trim();
+  if (!dateLabel) {
+    throw new Error(
+      'buildPostConsultChatLinkDm: consultDateLabel is required ' +
+        '(sendPostConsultChatHistoryDm derives this from session.actual_ended_at — ' +
+        'empty here means the session row is missing actual_ended_at).',
+    );
+  }
+  const practice = input.practiceName?.trim() || "your doctor's practice";
+
+  return [
+    `Your consultation with ${practice} on ${dateLabel} is complete.`,
+    '',
+    'View the full conversation (chat, attachments, and system notes) any time:',
+    joinUrl,
+    '',
+    'Available for 90 days. After that, contact support to re-open the link.',
+  ].join('\n');
+}
+
+// ============================================================================
+// Plan 07 · Task 32 — transcript-downloaded DM
+// ============================================================================
+
+export interface BuildTranscriptDownloadedNotificationDmInput {
+  /**
+   * Doctor's practice / clinic name (e.g. `"Dr. Sharma's Clinic"`). Empty
+   * / whitespace falls back to `"your doctor's clinic"`. Mirrors the
+   * fallback in `buildRecordingReplayedNotificationDm` so the patient sees
+   * one consistent voice across the replay / transcript channels.
+   */
+  readonly practiceName?: string;
+
+  /**
+   * Pre-formatted consult date label (e.g. `"19 Apr 2026"`). Caller owns
+   * the timezone math. Empty / whitespace throws — the DM is meaningless
+   * without a date anchor.
+   */
+  readonly consultDateLabel: string;
+}
+
+/**
+ * Render the DM the patient receives when the doctor (or support-staff
+ * acting on the doctor's behalf) *downloads* the written PDF transcript of
+ * the consult.
+ *
+ * Decision 4 LOCKED principle 8 + Task 32 copy-pin: this is a distinct DM
+ * body from `buildRecordingReplayedNotificationDm({ artifactType: 'transcript' })`
+ * because "reviewed" ≠ "downloaded". The replay DM fires when a doctor
+ * listens to the audio with the transcript on-screen; the *download* DM
+ * fires when the PDF leaves the platform (higher-sensitivity signal — the
+ * artifact is now offline-legible, so the transparency pulse matters
+ * more). Two builders, one audit-log story, and the patient gets a clear
+ * description of what actually happened each time.
+ *
+ * Body (pinned in a snapshot test):
+ *
+ *   Your doctor at {practiceName} downloaded the written transcript of your consult on {consultDateLabel}.
+ *
+ *   This is a normal part of care (doctors often review transcripts to confirm the plan).
+ *   Every access is audited, and you can ask support for the access log anytime.
+ *
+ * No CTA — the recourse path ("ask support for the access log") is the
+ * implicit CTA. The language uses "doctor" even for support-staff
+ * downloads (support-staff identity surfaces on the doctor's dashboard
+ * event, not in the patient's DM) — mirrors `buildRecordingReplayedNotificationDm`.
+ *
+ * @throws when `consultDateLabel` resolves empty / whitespace — caller
+ *   bug (the fan-out helper computes this from `session.actual_ended_at`
+ *   before invoking the builder).
+ */
+export function buildTranscriptDownloadedNotificationDm(
+  input: BuildTranscriptDownloadedNotificationDmInput,
+): string {
+  const dateLabel = input.consultDateLabel?.trim();
+  if (!dateLabel) {
+    throw new Error(
+      'buildTranscriptDownloadedNotificationDm: consultDateLabel is required ' +
+        '(notifyPatientOfDoctorReplay derives this from session.actual_ended_at — ' +
+        'empty here signals an upstream wiring bug or a session row missing actual_ended_at).',
+    );
+  }
+  const practice = input.practiceName?.trim() || "your doctor's clinic";
+
+  return [
+    `Your doctor at ${practice} downloaded the written transcript of your consult on ${dateLabel}.`,
+    '',
+    'This is a normal part of care (doctors often review transcripts to confirm the plan).',
+    'Every access is audited, and you can ask support for the access log anytime.',
+  ].join('\n');
+}
+
+
+// ============================================================================
+// Plan 09 · Task 49 — mid-consult refund status copy
+// ============================================================================
+
+export interface BuildRefundProcessingDmInput {
+  /** Refund amount in rupees (paise ÷ 100). Displayed as `₹{amountInr}`. */
+  amountInr: number;
+  /** Expected settlement window in business days. Razorpay's `speed: 'normal'` ≈ 3. */
+  expectedDays?: number;
+}
+
+/**
+ * Decision 11 resilience copy. Written by the refund retry worker
+ * on first attempt (regardless of outcome) so the patient sees
+ * confirmation even if Razorpay's first try failed.
+ */
+export function buildRefundProcessingDm(input: BuildRefundProcessingDmInput): string {
+  const amount = Math.max(0, Math.round(input.amountInr));
+  const days = input.expectedDays && input.expectedDays > 0 ? input.expectedDays : 3;
+  return `Your refund of ₹${amount} is processing and should reach you within ${days} business days.`;
+}
+
+export interface BuildRefundFailedDmInput {
+  amountInr: number;
+  /** Optional support URL / handle surface. Defaults to a generic "Contact support" line. */
+  supportUrl?: string;
+}
+
+/**
+ * Emitted by the refund retry worker once it sentinels a row as
+ * permanently stuck (after 7 failed attempts / ≥ 24h). Ops
+ * simultaneously gets an `admin_payment_alerts` row; the patient
+ * gets this visible message.
+ */
+export function buildRefundFailedDm(input: BuildRefundFailedDmInput): string {
+  const amount = Math.max(0, Math.round(input.amountInr));
+  const supportBit = input.supportUrl?.trim()
+    ? `Contact support at ${input.supportUrl.trim()} if you don't see a refund within 3 business days.`
+    : `Contact support if you don't see a refund within 3 business days.`;
+  return (
+    `We couldn't automatically refund ₹${amount} yet. Our team is reviewing the transaction. ` +
+    supportBit
+  );
+}
+

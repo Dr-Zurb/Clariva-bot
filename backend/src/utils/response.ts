@@ -59,6 +59,14 @@ export function errorResponse(
     code: string;
     message: string;
     statusCode: number;
+    /**
+     * Optional structured detail payload. Per-error hints used by
+     * the client to render nuanced UI — e.g. `{ retry_after_seconds: 120 }`
+     * on rate-limit 429s or `{ lastVerifiedAt: ISO|null }` on the
+     * Plan 08 Task 44 `video_otp_required` gate. Shape is per-code;
+     * the client must narrow before reading.
+     */
+    details?: Record<string, unknown>;
   },
   req: Request,
   meta?: Record<string, unknown>
@@ -68,6 +76,7 @@ export function errorResponse(
     code: string;
     message: string;
     statusCode: number;
+    details?: Record<string, unknown>;
   };
   meta: {
     timestamp: string;

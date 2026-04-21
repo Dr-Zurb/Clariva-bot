@@ -66,6 +66,10 @@ export type DmHandlerBranch =
   | 'book_responded_reason_first'
   | 'ai_open_response'
   | 'consent_correction_back'
+  /** Plan 02 · Task 27 — patient-reply handled inside the `recording_consent` step. */
+  | 'recording_consent_flow'
+  /** Plan 02 · Task 27 — detour injected just before `awaiting_slot_selection`. */
+  | 'recording_consent_injected'
   /** Should not appear in production — indicates a missed assignment */
   | 'unknown'
   /** Conflict recovery path re-runs generateResponse */

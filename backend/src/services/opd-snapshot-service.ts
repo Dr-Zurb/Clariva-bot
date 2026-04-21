@@ -51,13 +51,19 @@ async function inferDoctorBusySnapshot(
     return undefined;
   }
 
+  // Post-Task-35: consultation lifecycle lives on `consultation_sessions`
+  // (legacy `appointments.consultation_started_at` / `consultation_ended_at`
+  // columns were dropped). A "doctor is busy with another patient" signal
+  // is any consultation_sessions row for this doctor whose status is
+  // 'live' (actual_started_at is set, actual_ended_at is null) and whose
+  // appointment isn't the caller's own.
   const { data: other, error } = await admin
-    .from('appointments')
-    .select('id, patient_id')
+    .from('consultation_sessions')
+    .select('appointment_id')
     .eq('doctor_id', doctorId)
-    .neq('id', myId)
-    .not('consultation_started_at', 'is', null)
-    .is('consultation_ended_at', null)
+    .neq('appointment_id', myId)
+    .not('actual_started_at', 'is', null)
+    .is('actual_ended_at', null)
     .limit(1)
     .maybeSingle();
 
@@ -95,7 +101,7 @@ export async function buildPatientOpdSnapshot(
   const { data: apt, error } = await admin
     .from('appointments')
     .select(
-      'id, doctor_id, patient_id, appointment_date, status, consultation_started_at, consultation_ended_at, opd_early_invite_expires_at, opd_early_invite_response, opd_session_delay_minutes'
+      'id, doctor_id, patient_id, appointment_date, status, opd_early_invite_expires_at, opd_early_invite_response, opd_session_delay_minutes'
     )
     .eq('id', appointmentId)
     .maybeSingle();
@@ -106,6 +112,25 @@ export async function buildPatientOpdSnapshot(
   if (!apt) {
     throw new NotFoundError('Appointment not found');
   }
+
+  // Post-Task-35: the legacy `appointments.consultation_started_at` /
+  // `consultation_ended_at` columns were dropped. Their equivalents live
+  // on `consultation_sessions.actual_started_at` /
+  // `actual_ended_at`. Fetch the most-recent session row for this
+  // appointment and derive the "is my consultation running?" signal
+  // from it.
+  const { data: session, error: sessionError } = await admin
+    .from('consultation_sessions')
+    .select('actual_started_at, actual_ended_at')
+    .eq('appointment_id', appointmentId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (sessionError) {
+    handleSupabaseError(sessionError, correlationId);
+  }
+  const myStarted = (session?.actual_started_at as string | null | undefined) ?? null;
+  const myEnded = (session?.actual_ended_at as string | null | undefined) ?? null;
 
   const settings = await getDoctorSettings(apt.doctor_id);
   const opdMode = resolveOpdModeFromSettings(settings);
@@ -118,8 +143,8 @@ export async function buildPatientOpdSnapshot(
     apt.doctor_id,
     apt.id,
     apt.patient_id,
-    apt.consultation_started_at,
-    apt.consultation_ended_at,
+    myStarted,
+    myEnded,
     correlationId
   );
 
@@ -127,7 +152,7 @@ export async function buildPatientOpdSnapshot(
     apt.status,
     appointmentDate,
     now,
-    apt.consultation_started_at
+    myStarted
   );
   const doctorDelay =
     apt.opd_session_delay_minutes != null ? Number(apt.opd_session_delay_minutes) : null;

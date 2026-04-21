@@ -37,6 +37,7 @@ import {
   updateAppointmentDateForPatient,
 } from './appointment-service';
 import { createPaymentLink } from './payment-service';
+import { captureBookingConsent } from './recording-consent-service';
 import { verifyBookingToken, generateBookingToken } from '../utils/booking-token';
 import { sendAppointmentRescheduledToDoctor } from './notification-service';
 import { logger } from '../config/logger';
@@ -678,6 +679,32 @@ export async function processSlotSelectionAndPay(
     correlationId,
     undefined
   );
+
+  // Plan 02 · Task 27 — persist recording-consent decision captured during
+  // the IG bot flow (see conversation.ts `recordingConsentDecision`).
+  // Fail-open: we log and continue. The appointment row is still booked,
+  // and the frontend /book page (or the standalone
+  // `POST /:id/recording-consent` route) can still write the value later.
+  if (state.recordingConsentDecision !== undefined) {
+    try {
+      await captureBookingConsent({
+        appointmentId: appointment.id,
+        decision: state.recordingConsentDecision,
+        consentVersion:
+          state.recordingConsentVersion ?? 'v1.0',
+        correlationId,
+      });
+    } catch (err) {
+      logger.warn(
+        {
+          correlationId,
+          appointmentId: appointment.id,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        'recording_consent_persist_on_booking_failed'
+      );
+    }
+  }
 
   const opdMode = resolveOpdModeFromSettings(doctorSettings);
   let tokenNumber: number | undefined;

@@ -11,7 +11,7 @@
  */
 
 import { Router } from 'express';
-import { authenticateToken } from '../../../middleware/auth';
+import { authenticateToken, optionalAuthenticateToken } from '../../../middleware/auth';
 import {
   getAvailableSlotsHandler,
   bookAppointmentHandler,
@@ -19,6 +19,7 @@ import {
   listAppointmentsHandler,
   getAppointmentByIdHandler,
   patchAppointmentByIdHandler,
+  postRecordingConsentHandler,
 } from '../../../controllers/appointment-controller';
 
 const router = Router();
@@ -29,5 +30,12 @@ router.post('/', authenticateToken, createAppointmentHandler);
 router.get('/', authenticateToken, listAppointmentsHandler);
 router.get('/:id', authenticateToken, getAppointmentByIdHandler);
 router.patch('/:id', authenticateToken, patchAppointmentByIdHandler);
+// Plan 02 · Task 27 — recording consent capture. Dual-auth: doctor JWT OR
+// booking token in body (optional auth so patient booking flow works).
+router.post(
+  '/:id/recording-consent',
+  optionalAuthenticateToken,
+  postRecordingConsentHandler
+);
 
 export default router;

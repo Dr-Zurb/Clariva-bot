@@ -14,6 +14,9 @@ import opdRoutes from './opd';
 import serviceStaffReviewRoutes from './service-staff-reviews';
 import serviceMatchLearningRoutes from './service-match-learning';
 import catalogRoutes from './catalog';
+import meRoutes from './me';
+import adminRoutes from './admin';
+import dashboardEventsRoutes from './dashboard-events';
 
 const router = Router();
 
@@ -72,5 +75,18 @@ router.use('/service-match-learning', serviceMatchLearningRoutes);
 
 // Plan 02 / Task 06: AI auto-fill for service catalog cards (POST /catalog/ai-suggest)
 router.use('/catalog', catalogRoutes);
+
+// Plan 02 / Task 33: Patient-self routes (account-deletion, recovery).
+// Auth is resolved per-handler (doctor JWT OR booking token).
+router.use('/me', meRoutes);
+
+// Plan 02 / Task 34: ops-facing admin endpoints (archival preview).
+// Gated by CRON_SECRET shared-secret until a proper admin-role
+// middleware lands.
+router.use('/admin', adminRoutes);
+
+// Plan 07 / Task 30: doctor dashboard event feed (recording-replay
+// notifications today; widens additively in Plans 08/09).
+router.use('/dashboard/events', dashboardEventsRoutes);
 
 export default router;

@@ -390,6 +390,35 @@ export function validatePatchAppointmentBody(body: unknown): PatchAppointmentBod
 }
 
 // ============================================================================
+// Recording Consent Body (Plan 02 · Task 27)
+// ============================================================================
+
+export const recordingConsentBodySchema = z.object({
+  decision: z.boolean({ message: 'decision must be a boolean' }),
+  consentVersion: z
+    .string({ message: 'consentVersion must be a string' })
+    .min(1, 'consentVersion must not be empty')
+    .max(32, 'consentVersion is too long'),
+  bookingToken: z
+    .string({ message: 'bookingToken must be a string' })
+    .min(10, 'bookingToken must be a valid token')
+    .max(2048, 'bookingToken is too long')
+    .optional(),
+});
+
+export type RecordingConsentBody = z.infer<typeof recordingConsentBodySchema>;
+
+export function validateRecordingConsentBody(body: unknown): RecordingConsentBody {
+  const result = recordingConsentBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+// ============================================================================
 // Consultation Schemas (e-task-3 - teleconsultation)
 // ============================================================================
 

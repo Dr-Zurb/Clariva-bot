@@ -371,16 +371,22 @@ describe('RBH-02 webhook worker characterization', () => {
       await processWebhookJob(job);
 
       expect(consentService.persistPatientAfterConsent).toHaveBeenCalled();
-      expect(slotSelectionService.buildBookingPageUrl).toHaveBeenCalledWith(TEST_CONV_ID, TEST_DOCTOR_ID);
+      // Plan 02 · Task 27 — after consent grant, the handler redirects to
+      // ask the recording-consent question instead of sending the booking
+      // link directly. The booking URL is built (pre-intercept) but the
+      // outbound message is the recording-consent ask.
       expect(mockSendMessage).toHaveBeenCalledWith(
         '987654321012345',
-        expect.stringContaining('https://book.test/link'),
+        expect.stringContaining('being recorded'),
         'corr-consent',
         'doctor-token'
       );
       expect(conversationService.updateConversationState).toHaveBeenCalledWith(
         TEST_CONV_ID,
-        expect.objectContaining({ step: 'awaiting_slot_selection' }),
+        expect.objectContaining({
+          step: 'recording_consent',
+          lastPromptKind: 'recording_consent_ask',
+        }),
         'corr-consent'
       );
       expect(mockMarkProcessed).toHaveBeenCalledWith('evt-consent-1', 'instagram');
@@ -492,18 +498,20 @@ describe('RBH-02 webhook worker characterization', () => {
       );
 
       expect(collectionService.clearCollectedData).toHaveBeenCalledWith(TEST_CONV_ID);
-      expect(slotSelectionService.buildBookingPageUrl).toHaveBeenCalledWith(TEST_CONV_ID, TEST_DOCTOR_ID);
+      // Plan 02 · Task 27 — match-confirmation "yes" also routes through
+      // the recording-consent detour before the booking link is sent.
       expect(mockSendMessage).toHaveBeenCalledWith(
         '987654321012345',
-        expect.stringContaining('https://book.test/link'),
+        expect.stringContaining('being recorded'),
         'corr-match',
         'doctor-token'
       );
       expect(conversationService.updateConversationState).toHaveBeenCalledWith(
         TEST_CONV_ID,
         expect.objectContaining({
-          step: 'awaiting_slot_selection',
+          step: 'recording_consent',
           bookingForPatientId: matchA,
+          lastPromptKind: 'recording_consent_ask',
         }),
         'corr-match'
       );

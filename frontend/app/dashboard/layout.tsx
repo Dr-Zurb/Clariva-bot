@@ -20,5 +20,19 @@ export default async function DashboardLayout({
 
   const userEmail = user.email ?? null;
 
-  return <DashboardShell userEmail={userEmail}>{children}</DashboardShell>;
+  // Plan 07 · Task 30: pass the access token through so the header bell
+  // (`<DashboardEventsBell>`) can poll `/dashboard/events` for unread
+  // counts. The shell is a client boundary, so we read the session
+  // here in the server layout (one extra round-trip; getSession is
+  // cheap because the cookie store is already loaded).
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const token = session?.access_token ?? "";
+
+  return (
+    <DashboardShell userEmail={userEmail} token={token}>
+      {children}
+    </DashboardShell>
+  );
 }
