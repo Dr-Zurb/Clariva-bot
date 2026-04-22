@@ -755,18 +755,34 @@ async function getPatientIdHintForSlot(
 function resolveRecordingConsentReply(text: string): 'yes' | 'no' | 'unclear' {
   const trimmed = (text ?? '').trim().toLowerCase();
   if (!trimmed) return 'unclear';
-  if (/^(no|nope|nah|n)[.!,]?$/.test(trimmed)) return 'no';
-  if (/^(yes|yeah|yep|yup|ok|okay|sure|y)[.!,]?$/.test(trimmed)) return 'yes';
-  if (/\b(i\s*do\s*not|i\s*don'?t|don'?t\s+record|no\s+recording|decline|disagree|refuse|reject)\b/.test(trimmed)) {
-    return 'no';
+  const classify = (input: string): 'yes' | 'no' | 'unclear' => {
+    if (/^(no|nope|nah|n)[.!,]?$/.test(input)) return 'no';
+    if (/^(yes|yeah|yep|yup|ok|okay|sure|y)[.!,]?$/.test(input)) return 'yes';
+    if (/\b(i\s*do\s*not|i\s*don'?t|don'?t\s+record|no\s+recording|decline|disagree|refuse|reject)\b/.test(input)) {
+      return 'no';
+    }
+    if (/\b(i\s+agree|agree|i\s+consent|consent|continue\s+without\s+recording)\b/.test(input)) {
+      // "continue without recording" is the booking-page CTA copy. A patient
+      // typing it verbatim into DM is declining — check that branch first.
+      if (/continue\s+without\s+recording/.test(input)) return 'no';
+      return 'yes';
+    }
+    if (/\b(keep\s+recording\s+on|record\s+it|go\s+ahead|proceed)\b/.test(input)) return 'yes';
+    return 'unclear';
+  };
+  const direct = classify(trimmed);
+  if (direct !== 'unclear') return direct;
+  // Typo-tolerance fallback: collapse runs of repeated characters so common
+  // thumb-slips (`yyes`, `yees`, `yess`, `nno`, `nooo`, `yyup`) still resolve
+  // instead of falling through to the generic intent classifier — which at
+  // this step tends to mis-route short replies to `check_appointment_status`
+  // and trap the patient with the default "no upcoming appointments" copy.
+  // Applied ONLY after the literal classifier returns 'unclear' so we never
+  // mis-read a real word (e.g. "please", "cancel", "book").
+  const collapsed = trimmed.replace(/([a-z])\1+/g, '$1');
+  if (collapsed !== trimmed) {
+    return classify(collapsed);
   }
-  if (/\b(i\s+agree|agree|i\s+consent|consent|continue\s+without\s+recording)\b/.test(trimmed)) {
-    // "continue without recording" is the booking-page CTA copy. A patient
-    // typing it verbatim into DM is declining — check that branch first.
-    if (/continue\s+without\s+recording/.test(trimmed)) return 'no';
-    return 'yes';
-  }
-  if (/\b(keep\s+recording\s+on|record\s+it|go\s+ahead|proceed)\b/.test(trimmed)) return 'yes';
   return 'unclear';
 }
 
@@ -2399,6 +2415,78 @@ export async function processInstagramDmWebhook(params: {
       });
       dmGenerateMs += Date.now() - tGreeting;
       await updateConversationState(conversation.id, state, correlationId);
+    } else if (state.step === 'recording_consent') {
+      // Plan 02 · Task 27 — recording-consent step handler.
+      //
+      // Decision tree (Decision 4 LOCKED):
+      //   Yes                → stash decision=true + version, send booking link
+      //                        reply (re-deriving via `buildBookingLinkReplyWithFollowUp`
+      //                        so pendingSelfBooking / pendingOtherBooking follow-ups
+      //                        still fire), step → 'awaiting_slot_selection'.
+      //   No (1st)           → send `buildRecordingConsentExplainer`, mark
+      //                        recordingConsentRePitched=true, stay in
+      //                        'recording_consent'.
+      //   No (2nd / post-re-pitch)
+      //                      → stash decision=false + version, send booking
+      //                        link reply, step → 'awaiting_slot_selection'.
+      //                        Consult proceeds; recording is gated off by
+      //                        `recording_consent_decision=false` on the
+      //                        appointment row (written at appointment
+      //                        creation from ConversationState).
+      //   unclear            → re-prompt with the same ask copy; no state
+      //                        change beyond `updatedAt`.
+      //
+      // ORDERING NOTE: placed BEFORE the `check_appointment_status` /
+      // `cancel_appointment` / `reschedule_appointment` / `book_for_someone_else`
+      // intent-classifier branches. Short typo replies ("yyes", "yees", "y")
+      // were previously being mis-classified as `check_appointment_status`,
+      // which trapped the patient with the default "no upcoming appointments"
+      // copy and stranded the consent step. Medical-safety (`medical_query`)
+      // intentionally stays ABOVE this guard so clinical-red-flag phrases
+      // during the consent ask still trigger safety deflection.
+      dmRoutingBranch = 'recording_consent_flow';
+      const decision = resolveRecordingConsentReply(text);
+      if (decision === 'unclear') {
+        replyText = buildRecordingConsentAskMessage({
+          practiceName: doctorContext?.practice_name ?? undefined,
+        });
+        state = { ...state, updatedAt: new Date().toISOString() };
+        await updateConversationState(conversation.id, state, correlationId);
+      } else if (decision === 'no' && state.recordingConsentRePitched !== true) {
+        replyText = buildRecordingConsentExplainer({
+          version: RECORDING_CONSENT_COPY_VERSION,
+          practiceName: doctorContext?.practice_name ?? undefined,
+        });
+        state = {
+          ...state,
+          recordingConsentRePitched: true,
+          lastPromptKind: 'recording_consent_re_pitch',
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+      } else {
+        // Yes, or second No after re-pitch → finalize and move to slot
+        // selection. The decision lives on ConversationState until
+        // `processSlotSelectionAndPay` copies it onto
+        // `appointments.recording_consent_*` at appointment creation.
+        const captured = decision === 'yes';
+        replyText = buildBookingLinkReplyWithFollowUp(
+          state,
+          conversation.id,
+          doctorId,
+          doctorSettings,
+        );
+        state = {
+          ...state,
+          recordingConsentDecision: captured,
+          recordingConsentVersion: RECORDING_CONSENT_COPY_VERSION,
+          recordingConsentRePitched: undefined,
+          step: 'awaiting_slot_selection',
+          lastPromptKind: undefined,
+          updatedAt: new Date().toISOString(),
+        };
+        await updateConversationState(conversation.id, state, correlationId);
+      }
     } else if (intentResult.intent === 'check_appointment_status') {
       dmRoutingBranch = 'check_appointment_status';
       const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
@@ -2722,75 +2810,6 @@ export async function processInstagramDmWebhook(params: {
         replyText =
           "Please reply Yes to use the existing record, or No to create a new patient. Reply 1 or 2 if we found multiple matches.";
         state = { ...state, updatedAt: new Date().toISOString() };
-        await updateConversationState(conversation.id, state, correlationId);
-      }
-    } else if (state.step === 'recording_consent') {
-      // Plan 02 · Task 27 — recording-consent step handler.
-      //
-      // Decision tree (Decision 4 LOCKED):
-      //   Yes                → stash decision=true + version, send booking link
-      //                        reply (re-deriving via `buildBookingLinkReplyWithFollowUp`
-      //                        so pendingSelfBooking / pendingOtherBooking follow-ups
-      //                        still fire), step → 'awaiting_slot_selection'.
-      //   No (1st)           → send `buildRecordingConsentExplainer`, mark
-      //                        recordingConsentRePitched=true, stay in
-      //                        'recording_consent'.
-      //   No (2nd / post-re-pitch)
-      //                      → stash decision=false + version, send booking
-      //                        link reply, step → 'awaiting_slot_selection'.
-      //                        Consult proceeds; recording is gated off by
-      //                        `recording_consent_decision=false` on the
-      //                        appointment row (written at appointment
-      //                        creation from ConversationState).
-      //   unclear            → re-prompt with the same ask copy; no state
-      //                        change beyond `updatedAt`.
-      //
-      // This branch is intentionally placed BEFORE the `consent` branch so
-      // `effectiveAskedForConsent`'s substring heuristic doesn't mis-route
-      // replies that follow the re-pitch (the re-pitch trailer mentions
-      // "consent version:" which would otherwise tick the legacy consent
-      // classifier).
-      dmRoutingBranch = 'recording_consent_flow';
-      const decision = resolveRecordingConsentReply(text);
-      if (decision === 'unclear') {
-        replyText = buildRecordingConsentAskMessage({
-          practiceName: doctorContext?.practice_name ?? undefined,
-        });
-        state = { ...state, updatedAt: new Date().toISOString() };
-        await updateConversationState(conversation.id, state, correlationId);
-      } else if (decision === 'no' && state.recordingConsentRePitched !== true) {
-        replyText = buildRecordingConsentExplainer({
-          version: RECORDING_CONSENT_COPY_VERSION,
-          practiceName: doctorContext?.practice_name ?? undefined,
-        });
-        state = {
-          ...state,
-          recordingConsentRePitched: true,
-          lastPromptKind: 'recording_consent_re_pitch',
-          updatedAt: new Date().toISOString(),
-        };
-        await updateConversationState(conversation.id, state, correlationId);
-      } else {
-        // Yes, or second No after re-pitch → finalize and move to slot
-        // selection. The decision lives on ConversationState until
-        // `processSlotSelectionAndPay` copies it onto
-        // `appointments.recording_consent_*` at appointment creation.
-        const captured = decision === 'yes';
-        replyText = buildBookingLinkReplyWithFollowUp(
-          state,
-          conversation.id,
-          doctorId,
-          doctorSettings,
-        );
-        state = {
-          ...state,
-          recordingConsentDecision: captured,
-          recordingConsentVersion: RECORDING_CONSENT_COPY_VERSION,
-          recordingConsentRePitched: undefined,
-          step: 'awaiting_slot_selection',
-          lastPromptKind: undefined,
-          updatedAt: new Date().toISOString(),
-        };
         await updateConversationState(conversation.id, state, correlationId);
       }
     } else if (state.step === 'consent' || effectiveAskedForConsent(state, recentMessages)) {
