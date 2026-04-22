@@ -723,6 +723,11 @@ async function persistSessionRow(
       doctor_id: input.doctorId,
       patient_id: input.patientId,
       modality: input.modality,
+      // Plan 09 · Migration 075 made `current_modality` NOT NULL with no
+      // default. On fresh sessions the live modality equals the booked
+      // modality; mid-consult switches update it via the state machine
+      // (`executeAndCommitTransition` in modality-change-service.ts).
+      current_modality: input.modality,
       provider: adapter.provider,
       provider_session_id: providerSessionId ?? null,
       scheduled_start_at: input.scheduledStartAt.toISOString(),

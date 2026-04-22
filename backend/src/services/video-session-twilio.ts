@@ -133,6 +133,48 @@ export async function createTwilioRoom(
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+
+    // Idempotency: if a room with this uniqueName is already in-progress
+    // (Twilio error 53113 "Room exists"), fetch + return it instead of
+    // failing. This recovers gracefully from cases where a previous
+    // `/consultation/start` created the Twilio room but the downstream
+    // `consultation_sessions` insert threw — without this, every retry
+    // 500s on the orphan room until Twilio ages it out (~5 min TTL).
+    if (message.includes('53113') || /room exists/i.test(message)) {
+      try {
+        const existing = await client.video.v1.rooms(trimmed).fetch();
+        if (existing.status === 'in-progress') {
+          logger.warn(
+            { correlationId, roomSid: existing.sid, roomName: trimmed },
+            'Twilio Video room reused (recovered from orphan)'
+          );
+          return {
+            roomSid: existing.sid,
+            roomName: existing.uniqueName ?? trimmed,
+          };
+        }
+        // Room exists but is 'completed' / 'failed' — Twilio keeps the
+        // uniqueName reserved for ~5 min after the room terminates.
+        // Surfacing a clearer message lets the doctor retry shortly.
+        logger.error(
+          { correlationId, roomName: trimmed, status: existing.status },
+          'Twilio Video room uniqueName reserved by terminated room'
+        );
+        throw new InternalError(
+          'This consult room is still winding down on the video provider — please wait ~30 seconds and try again.'
+        );
+      } catch (fetchErr) {
+        if (fetchErr instanceof InternalError) throw fetchErr;
+        const fetchMsg =
+          fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+        logger.error(
+          { correlationId, roomName: trimmed, error: fetchMsg },
+          'Twilio Video room reuse-fetch failed'
+        );
+        throw new InternalError('Failed to create video room');
+      }
+    }
+
     logger.error(
       { correlationId, roomName: trimmed, error: message },
       'Twilio Video room creation failed'
