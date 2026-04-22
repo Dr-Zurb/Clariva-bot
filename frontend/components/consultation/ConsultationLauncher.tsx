@@ -1,16 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   startConsultation,
   getConsultationToken,
   startVoiceConsultation,
+  startTextConsultation,
   resendConsultationLink,
 } from "@/lib/api";
 import type { Appointment, ConsultationModality } from "@/types/appointment";
+import { createClient } from "@/lib/supabase/client";
 import VideoRoom from "./VideoRoom";
 import VoiceConsultRoom from "./VoiceConsultRoom";
+import TextConsultRoom from "./TextConsultRoom";
 import PatientJoinLink from "./PatientJoinLink";
 import LiveConsultPanel from "./LiveConsultPanel";
 import ModalityChangeLauncher from "./ModalityChangeLauncher";
@@ -56,6 +59,23 @@ export interface ConsultationLauncherProps {
  * launcher discriminates on `bookedModality` at render time to pick
  * `<VideoRoom>` vs `<VoiceConsultRoom>`.
  */
+/**
+ * Plan 04 · Task 20 (deferred wiring) — doctor-side text consult session.
+ * Unlike video / voice this doesn't carry a Twilio `doctorToken` or
+ * `patientJoinUrl` — the patient side is bot-DMed a join link out of
+ * band (see `notification-service#sendConsultationReadyToPatient`) and
+ * `<TextConsultRoom>` authenticates against Supabase directly. What we
+ * hold onto here is the session UUID + the doctor's Supabase JWT +
+ * doctor UUID (for bubble self-vs-counterparty alignment). We use the
+ * same pattern `<VideoRoom>` uses for its companion-chat side panel so
+ * RLS (migration 052's `auth.uid() = doctor_id`) succeeds.
+ */
+interface LiveTextSession {
+  sessionId: string;
+  accessToken: string;
+  currentUserId: string;
+}
+
 interface LiveSession {
   doctorToken: string;
   roomName: string;
@@ -116,6 +136,7 @@ export default function ConsultationLauncher({
   );
 
   const [liveSession, setLiveSession] = useState<LiveSession | null>(null);
+  const [textSession, setTextSession] = useState<LiveTextSession | null>(null);
   const [sessionId, setSessionId]     = useState<string | null>(null);
   const [starting, setStarting]         = useState(false);
   const [startError, setStartError]     = useState<string | null>(null);
@@ -133,6 +154,47 @@ export default function ConsultationLauncher({
   const canStartConsultation =
     (appointment.status === "pending" || appointment.status === "confirmed") &&
     !existingProviderSessionId;
+
+  /**
+   * Resolve the doctor's Supabase session into the pair `<TextConsultRoom>`
+   * needs: the access token (fed into the scoped Supabase client) and
+   * the user UUID (used for bubble self-vs-counterparty alignment, and
+   * matched by RLS predicate `auth.uid() = doctor_id` on migration 052).
+   *
+   * Mirrors the identical resolver inside `<VideoRoom>` for the
+   * companion chat panel — kept inline here (rather than factored into a
+   * shared hook) because there's only two call-sites today and the
+   * hook would be one-line thin.
+   */
+  const resolveDoctorSupabaseAuth = useCallback(async (): Promise<
+    { accessToken: string; currentUserId: string } | null
+  > => {
+    try {
+      const sb = createClient();
+      const { data, error } = await sb.auth.getSession();
+      if (error || !data.session) return null;
+      return {
+        accessToken: data.session.access_token,
+        currentUserId: data.session.user.id,
+      };
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const handleTextTokenRefresh = useCallback(async (): Promise<string> => {
+    const sb = createClient();
+    const { data, error } = await sb.auth.refreshSession();
+    const session = data.session;
+    if (error || !session) {
+      throw new Error("Unable to refresh doctor dashboard session");
+    }
+    const accessToken = session.access_token;
+    setTextSession((prev) =>
+      prev ? { ...prev, accessToken } : prev,
+    );
+    return accessToken;
+  }, []);
 
   // Re-hydrate the in-memory session on page refresh when a Twilio room
   // already exists for this appointment. Mirrors the legacy effect that
@@ -196,6 +258,76 @@ export default function ConsultationLauncher({
     token,
   ]);
 
+  /**
+   * Plan 04 · Task 20 (deferred wiring) — text-consult rehydrate on
+   * page refresh. `POST /start-text` is idempotent (Plan 01 facade
+   * short-circuits on an existing `consultation_sessions` row), so the
+   * same handler doubles as the rejoin path.
+   *
+   * Text sessions (Supabase adapter) return `provider_session_id=null`
+   * because there's no Twilio room SID to stash, so we cannot reuse
+   * the video/voice `existingProviderSessionId` gate. Instead, we key
+   * the rehydrate off the enriched `consultation_session` summary
+   * (Task 35) — `id` is populated whenever a row exists, regardless
+   * of modality. We skip rehydrate if the existing session is already
+   * `ended` / `cancelled` (otherwise the doctor would re-open a closed
+   * room on every page load).
+   */
+  const existingTextSessionId = useMemo(() => {
+    const s = appointment.consultation_session;
+    if (!s || s.modality !== "text") return null;
+    if (s.status === "ended" || s.status === "cancelled" || s.status === "no_show") {
+      return null;
+    }
+    return s.id;
+  }, [appointment.consultation_session]);
+
+  useEffect(() => {
+    if (bookedModality !== "text") return;
+    if (!existingTextSessionId) return;
+    if (textSession) return;
+    if (appointment.status !== "pending" && appointment.status !== "confirmed") return;
+
+    let cancelled = false;
+    const rehydrate = async () => {
+      try {
+        const [res, auth] = await Promise.all([
+          startTextConsultation(token, appointment.id),
+          resolveDoctorSupabaseAuth(),
+        ]);
+        if (cancelled) return;
+        if (!auth) {
+          // No dashboard session → can't mount the chat room. Leave the
+          // launcher in its pre-Start state and let the doctor retry
+          // (the Start button stays enabled). Matches how
+          // `<VideoRoom>`'s companion chat degrades.
+          return;
+        }
+        setTextSession({
+          sessionId: res.data.sessionId,
+          accessToken: auth.accessToken,
+          currentUserId: auth.currentUserId,
+        });
+        setSessionId(res.data.sessionId);
+      } catch {
+        // Swallow — doctor sees Start button instead. Matches legacy
+        // voice/video rehydrate-error behaviour above.
+      }
+    };
+    void rehydrate();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    bookedModality,
+    existingTextSessionId,
+    appointment.id,
+    appointment.status,
+    textSession,
+    token,
+    resolveDoctorSupabaseAuth,
+  ]);
+
   useEffect(() => {
     return () => {
       if (comingSoonTimer.current) {
@@ -229,6 +361,34 @@ export default function ConsultationLauncher({
       setSessionId(res.data.companion?.sessionId ?? null);
     } catch (err) {
       setStartError(err instanceof Error ? err.message : "Failed to start consultation");
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const handleStartText = async () => {
+    setStartError(null);
+    setStarting(true);
+    try {
+      const [res, auth] = await Promise.all([
+        startTextConsultation(token, appointment.id),
+        resolveDoctorSupabaseAuth(),
+      ]);
+      if (!auth) {
+        throw new Error(
+          "Couldn't resolve your dashboard session. Please refresh and try again.",
+        );
+      }
+      setTextSession({
+        sessionId: res.data.sessionId,
+        accessToken: auth.accessToken,
+        currentUserId: auth.currentUserId,
+      });
+      setSessionId(res.data.sessionId);
+    } catch (err) {
+      setStartError(
+        err instanceof Error ? err.message : "Failed to start text consultation",
+      );
     } finally {
       setStarting(false);
     }
@@ -299,20 +459,23 @@ export default function ConsultationLauncher({
       void handleStartVoice();
       return;
     }
-    flashComingSoon(
-      "Text consultations launch alongside text — your patients will see this option once it's live.",
-    );
+    if (m === "text") {
+      void handleStartText();
+      return;
+    }
   };
 
   const handleSecondaryClick = () => {
     flashComingSoon("Coming soon");
   };
 
-  // Show the live panel for the booked modality the moment a Twilio
-  // session exists for video or voice. Text stays "Coming soon" in this
-  // launcher — Plan 04 wires its own surface.
+  // Show the live panel for the booked modality the moment a session
+  // exists. Video / voice key off the Twilio-backed `liveSession`
+  // record; text keys off the Supabase-backed `textSession` record
+  // (Plan 04 · Task 20).
   const sessionLive =
-    (bookedModality === "video" || bookedModality === "voice") && !!liveSession;
+    ((bookedModality === "video" || bookedModality === "voice") && !!liveSession) ||
+    (bookedModality === "text" && !!textSession);
 
   return (
     <section
@@ -341,24 +504,28 @@ export default function ConsultationLauncher({
           const meta = MODALITY_META[m];
 
           // Disable when:
-          //  - secondary modality (always disabled in v1; Plan 09 enables)
-          //  - primary video and the room is already started (no double-start)
-          //  - primary video and not in a startable status (e.g. completed)
+          //  - secondary modality (always disabled on the initial launcher;
+          //    mid-consult switching ships via `<ModalityChangeLauncher>`
+          //    inside the live room — Plan 09)
+          //  - primary and the room is already started (no double-start)
+          //  - primary and not in a startable status (e.g. completed)
+          const primaryStarted =
+            (m === "video" || m === "voice") ? !!liveSession
+            : m === "text"                    ? !!textSession
+            : false;
           const disabledReason = !isPrimary
             ? "Coming soon — modality switching ships in Plan 09"
-            : m === "video" || m === "voice"
-              ? liveSession
-                ? "Consultation already started"
-                : !canStartConsultation
-                  ? appointment.status === "completed"
-                    ? "Consultation already completed"
-                    : appointment.status === "cancelled"
-                      ? "Appointment cancelled"
-                      : "Cannot start in this state"
-                  : starting
-                    ? "Starting…"
-                    : null
-              : null; // text primary: enabled, but click → "Coming soon"
+            : primaryStarted
+              ? "Consultation already started"
+              : !canStartConsultation
+                ? appointment.status === "completed"
+                  ? "Consultation already completed"
+                  : appointment.status === "cancelled"
+                    ? "Appointment cancelled"
+                    : "Cannot start in this state"
+                : starting
+                  ? "Starting…"
+                  : null;
 
           const isDisabled = disabledReason !== null;
 
@@ -404,8 +571,13 @@ export default function ConsultationLauncher({
       )}
 
       {/* Live panel — only mounted once a session exists. Empty state is the
-          modality buttons row above; the panel is the post-Start surface. */}
-      {sessionLive && liveSession && (
+          modality buttons row above; the panel is the post-Start surface.
+          Video / voice key off the Twilio-backed `liveSession` record;
+          text keys off the Supabase-backed `textSession` record. The two
+          branches share the same `<LiveConsultPanel>` shell so banners /
+          recording affordances / modality-switch launchers render
+          identically across modalities. */}
+      {sessionLive && liveSession && (bookedModality === "video" || bookedModality === "voice") && (
         <LiveConsultPanel
           appointment={appointment}
           token={token}
@@ -526,6 +698,74 @@ export default function ConsultationLauncher({
                   Patient join link
                 </h3>
                 <PatientJoinLink patientJoinUrl={liveSession.patientJoinUrl} />
+              </div>
+            </div>
+          }
+        />
+      )}
+
+      {/* Plan 04 · Task 20 (deferred wiring) — text-consult branch.
+          Kept separate from the video / voice branch above because
+          `<TextConsultRoom>` takes a fundamentally different shape
+          (Supabase-scoped `accessToken` + `currentUserId` + sessionId)
+          rather than Twilio's (doctorToken + roomName + companion)
+          triplet. Sharing the `<LiveConsultPanel>` shell keeps banners
+          / modality-switcher slot placement identical across
+          modalities. */}
+      {sessionLive && textSession && bookedModality === "text" && (
+        <LiveConsultPanel
+          appointment={appointment}
+          token={token}
+          modality="text"
+          sessionId={textSession.sessionId}
+          modalitySwitchSlot={
+            <ModalityChangeLauncher
+              sessionId={textSession.sessionId}
+              token={token}
+              userRole="doctor"
+              patientDisplayName={appointment.patient_name ?? undefined}
+            />
+          }
+          roomSlot={
+            <div>
+              <h3 className="mb-3 text-base font-semibold text-gray-900">
+                Text chat
+              </h3>
+              {resendNotice && (
+                <p
+                  role="status"
+                  aria-live="polite"
+                  className="mb-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800"
+                >
+                  {resendNotice}
+                </p>
+              )}
+              <TextConsultRoom
+                sessionId={textSession.sessionId}
+                currentUserId={textSession.currentUserId}
+                currentUserRole="doctor"
+                accessToken={textSession.accessToken}
+                sessionStatus="live"
+                counterpartyName={appointment.patient_name ?? undefined}
+                onRequestTokenRefresh={handleTextTokenRefresh}
+              />
+              <div className="mt-4 flex flex-col gap-2">
+                <h3 className="text-base font-semibold text-gray-900">
+                  Patient join link
+                </h3>
+                <p className="text-sm text-gray-600">
+                  Your patient has been DMed a join link on the channel they
+                  booked from. Use the button below to resend it if they
+                  haven&apos;t received it yet.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void handleResendLink()}
+                  disabled={resendBusy}
+                  className="w-fit rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {resendBusy ? "Resending…" : "Resend join link"}
+                </button>
               </div>
             </div>
           }

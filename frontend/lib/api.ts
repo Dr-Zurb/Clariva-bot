@@ -1308,6 +1308,70 @@ export async function startVoiceConsultation(
   return json as ApiSuccess<StartConsultationData>;
 }
 
+// -----------------------------------------------------------------------------
+// Text consultation — doctor-side start (Plan 04 · Task 18)
+// -----------------------------------------------------------------------------
+
+/**
+ * Response envelope returned by `POST /api/v1/consultation/start-text`.
+ *
+ * Unlike video / voice, text consults don't involve a Twilio room — the
+ * backend provisions a `consultation_sessions` row (Supabase Realtime
+ * is the transport) and returns the session UUID. The doctor's
+ * `<TextConsultRoom>` then authenticates directly against Supabase
+ * using the doctor's dashboard JWT (RLS keys on `auth.uid() =
+ * doctor_id`), so there is no separate "doctor token" in the response.
+ *
+ * The handler also flips the session from `scheduled → live` as part
+ * of the start-text call (doctor hitting Start = "we are live"), so
+ * `status` is typically `'live'` on success. See
+ * `backend/src/controllers/consultation-controller.ts#startTextConsultationHandler`.
+ */
+export interface StartTextConsultationData {
+  sessionId: string;
+  modality: "text";
+  status: TextConsultSessionStatus;
+}
+
+/**
+ * Start a text consultation for an appointment. Requires a doctor
+ * Supabase Bearer JWT.
+ *
+ * Idempotent: re-calling for the same appointment returns the existing
+ * session row (Plan 01 facade short-circuit). Safe to invoke on page
+ * refresh as a rejoin path when the doctor re-opens the appointment
+ * detail page mid-consult.
+ */
+export async function startTextConsultation(
+  token: string,
+  appointmentId: string,
+): Promise<ApiSuccess<StartTextConsultationData>> {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/consultation/start-text`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ appointmentId }),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<StartTextConsultationData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<StartTextConsultationData>;
+}
+
 export interface VoiceConsultTokenExchangeData {
   /** Twilio Video access token — null when session is ended/cancelled. */
   token: string | null;

@@ -21,6 +21,8 @@ import {
   createSession as facadeCreateSession,
   getJoinToken as facadeGetJoinToken,
   findSessionById,
+  markParticipantJoined,
+  updateSessionStatus,
 } from '../services/consultation-session-service';
 import { getConsentForSession } from '../services/recording-consent-service';
 import {
@@ -200,6 +202,56 @@ export const startTextConsultationHandler = asyncHandler(
       correlationId,
     );
 
+    // Text consults have no Twilio room, so there's no
+    // `mirrorJoinEventToSession` webhook callback that flips the session
+    // status from `scheduled → live` on doctor-join (see
+    // `consultation-verification-service.ts`). Doctor hitting "Start text"
+    // is the explicit "we are live now" signal — without this bump the
+    // patient page (`/c/text/[sessionId]`) stays on its holding screen
+    // forever because it polls for `sessionStatus === 'live'` before
+    // mounting `<TextConsultRoom>`.
+    //
+    // `updateSessionStatus` is called ONLY when the row is still
+    // `scheduled` so idempotent rejoin requests (Plan 01's facade
+    // short-circuits on existing session rows) can't resurrect an
+    // ended / cancelled session. `markParticipantJoined` is already
+    // `IS NULL`-guarded at the SQL layer (first write wins).
+    let liveStatus: typeof session.status = session.status;
+    if (session.status === 'scheduled') {
+      const startedAt = new Date();
+      try {
+        await updateSessionStatus(session.id, 'live', { actualStartedAt: startedAt });
+        await markParticipantJoined(session.id, 'doctor', startedAt);
+        liveStatus = 'live';
+      } catch (err) {
+        logger.warn(
+          {
+            correlationId,
+            sessionId: session.id,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          'start-text: live-transition write failed (doctor still receives sessionId; patient may see holding screen briefly)',
+        );
+      }
+    } else if (session.status === 'live') {
+      // Idempotent rejoin on an already-live row. Still stamp
+      // `doctor_joined_at` in case the previous start-text call crashed
+      // mid-flight before that column was written. `markParticipantJoined`
+      // is first-write-wins so this is a no-op on the happy rejoin.
+      try {
+        await markParticipantJoined(session.id, 'doctor', new Date());
+      } catch (err) {
+        logger.warn(
+          {
+            correlationId,
+            sessionId: session.id,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          'start-text: doctor_joined_at stamp on rejoin failed (non-fatal)',
+        );
+      }
+    }
+
     // Fire patient fan-out (best-effort — doctor still gets sessionId
     // even if fan-out fails).
     try {
@@ -223,7 +275,7 @@ export const startTextConsultationHandler = asyncHandler(
         {
           sessionId: session.id,
           modality:  session.modality,
-          status:    session.status,
+          status:    liveStatus,
         },
         req,
       ),
