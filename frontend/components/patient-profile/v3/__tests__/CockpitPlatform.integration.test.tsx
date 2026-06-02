@@ -38,10 +38,6 @@ import {
   v4TreeLayoutStorageKey,
 } from "@/lib/patient-profile/useShellLayout";
 import {
-  cockpitV3Enabled,
-  setCockpitV3KillSwitchEngaged,
-} from "@/lib/patient-profile/v3/flags";
-import {
   RxFormActionsBridgeProvider,
   useRegisterRxFormActions,
 } from "@/components/cockpit/rx/RxFormActionsContext";
@@ -412,29 +408,12 @@ describe("CockpitPlatform integration (cv3p-04 gate)", () => {
     );
   });
 
-  it("kill-switch — legacy shell path still mounts (P0-DL-1 / P4-DL-2)", () => {
-    setCockpitV3KillSwitchEngaged(true);
-    expect(cockpitV3Enabled()).toBe(false);
-
+  it("v3 mounts unconditionally — no flag branch / legacy shell (cv3x-03)", () => {
     const pagePath = path.resolve(__dirname, "../../PatientProfilePage.tsx");
     const source = fs.readFileSync(pagePath, "utf8");
-    expect(source).toMatch(/cockpitV3Enabled\(\)\s*\?/);
-    expect(source).toContain("PatientProfileShell");
     expect(source).toContain("CockpitV3Shell");
-
-    function FlagBranchStub() {
-      return cockpitV3Enabled() ? (
-        <div data-testid="p1-cockpit-v3-shell-desktop">v3</div>
-      ) : (
-        <div data-testid="patient-profile-shell-stub">legacy</div>
-      );
-    }
-
-    render(<FlagBranchStub />);
-    expect(screen.getByTestId("patient-profile-shell-stub")).toBeInTheDocument();
-    expect(screen.queryByTestId("p1-cockpit-v3-shell-desktop")).toBeNull();
-
-    setCockpitV3KillSwitchEngaged(false);
+    expect(source).not.toMatch(/cockpitV3Enabled/);
+    expect(source).not.toContain("PatientProfileShell");
   });
 
   it("anti-goals — v3 path has no customize / PaneDropOverlay imports", () => {

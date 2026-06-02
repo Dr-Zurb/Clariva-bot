@@ -25,10 +25,6 @@ import CockpitHeader, {
   shouldOfferMarkNoShowInReady,
 } from "@/components/patient-profile/PatientProfileHeader";
 import type { CockpitHeaderProps } from "@/components/patient-profile/PatientProfileHeader";
-import {
-  BUILT_IN_PRESETS,
-  COLUMN_ORDER_PERMUTATIONS,
-} from "@/components/consultation/cockpit/preset-types";
 import type { Appointment } from "@/types/appointment";
 import type { CockpitState } from "@/lib/patient-profile/state";
 
@@ -485,88 +481,6 @@ describe("Mark no-show kebab item", () => {
     expect(
       screen.getByText("Mark no-show").closest("[aria-keyshortcuts='m']"),
     ).toBeInTheDocument();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// cc-06: Layout dropdown menu — behaviour tests
-// ---------------------------------------------------------------------------
-
-/**
- * Open a Radix UI DropdownMenu trigger in jsdom.
- * Radix listens for `pointerdown` (not `click`) to toggle the overlay.
- * We fire both events so the component's compound handler runs correctly.
- */
-function openDropdown(trigger: Element) {
-  fireEvent.pointerDown(trigger, {
-    button: 0,
-    ctrlKey: false,
-    bubbles: true,
-    cancelable: true,
-  });
-  fireEvent.click(trigger);
-}
-
-describe("Layout dropdown menu", () => {
-  const onApplyPreset = vi.fn();
-  const onApplyColumnOrder = vi.fn();
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("renders the Layout button and opens the menu", () => {
-    renderHeader("ready", {}, { onApplyPreset, onApplyColumnOrder });
-    const layoutBtn = screen.getByRole("button", { name: /layout/i });
-    expect(layoutBtn).toBeInTheDocument();
-    openDropdown(layoutBtn);
-    expect(screen.getByText("Built-in presets")).toBeInTheDocument();
-    expect(screen.getByText("Column order")).toBeInTheDocument();
-    expect(screen.getByText("Custom presets")).toBeInTheDocument();
-  });
-
-  it("does not render the Layout button when onApplyPreset is absent", () => {
-    renderHeader("ready", {}, { onApplyPreset: undefined });
-    expect(
-      screen.queryByRole("button", { name: /layout/i }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("marks the active built-in preset with a Check icon", () => {
-    renderHeader(
-      "ready",
-      {},
-      {
-        onApplyPreset,
-        onApplyColumnOrder,
-        currentLayout: BUILT_IN_PRESETS.triage.layout,
-      },
-    );
-    openDropdown(screen.getByRole("button", { name: /layout/i }));
-    // Find the "Triage" menu item and confirm it contains a check svg
-    const triageItem = screen.getByText("Triage").closest("[role='menuitem']");
-    expect(triageItem).toBeInTheDocument();
-    // The Lucide Check icon renders as an svg inside the item
-    expect(triageItem!.querySelector("svg")).not.toBeNull();
-  });
-
-  it("calls onApplyPreset with the preset layout when a built-in item is selected", () => {
-    renderHeader("ready", {}, { onApplyPreset, onApplyColumnOrder });
-    openDropdown(screen.getByRole("button", { name: /layout/i }));
-    fireEvent.click(screen.getByText("Triage").closest("[role='menuitem']")!);
-    expect(onApplyPreset).toHaveBeenCalledTimes(1);
-    expect(onApplyPreset).toHaveBeenCalledWith(BUILT_IN_PRESETS.triage.layout);
-  });
-
-  it("calls onApplyColumnOrder with the permutation when a column-order item is selected", () => {
-    renderHeader("ready", {}, { onApplyPreset, onApplyColumnOrder });
-    openDropdown(screen.getByRole("button", { name: /layout/i }));
-    const permLabel = COLUMN_ORDER_PERMUTATIONS[3].label; // "Body · Rx · Chart"
-    fireEvent.click(screen.getByText(permLabel).closest("[role='menuitem']")!);
-    expect(onApplyColumnOrder).toHaveBeenCalledTimes(1);
-    expect(onApplyColumnOrder).toHaveBeenCalledWith(
-      COLUMN_ORDER_PERMUTATIONS[3].slots,
-    );
   });
 });
 

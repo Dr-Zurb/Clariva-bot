@@ -9,7 +9,6 @@ import "@testing-library/jest-dom";
 import fs from "node:fs";
 import path from "node:path";
 import CockpitV3Shell from "../CockpitV3Shell";
-import { cockpitV3Enabled } from "@/lib/patient-profile/v3/flags";
 import type { PaneDefinition } from "@/lib/patient-profile/v3/foundation";
 
 vi.mock("@/hooks/useMediaQuery", () => ({
@@ -111,18 +110,16 @@ describe("CockpitV3Shell integration (cv3c-04)", () => {
     expect(screen.getByTestId("cockpit-v3-empty-state")).toBeInTheDocument();
   });
 
-  it("default-on — PatientProfilePage branch keeps both shell paths (cv3x-02)", () => {
-    expect(cockpitV3Enabled()).toBe(true);
-
+  it("v3 mounts unconditionally — PatientProfilePage has no flag branch (cv3x-03)", () => {
     const pagePath = path.resolve(
       __dirname,
       "../../PatientProfilePage.tsx",
     );
     const source = fs.readFileSync(pagePath, "utf8");
-    expect(source).toMatch(/cockpitV3Enabled\(\)\s*\?/);
     expect(source).toContain("CockpitV3Shell");
-    expect(source).toContain("PatientProfileShell");
-    expect(source).toContain("trackCockpitV3ShellRendered");
+    expect(source).not.toMatch(/cockpitV3Enabled/);
+    expect(source).not.toContain("PatientProfileShell");
+    expect(source).not.toContain("trackCockpitV3ShellRendered");
   });
 
   it("build-up adds panes and shows them in the canvas", () => {

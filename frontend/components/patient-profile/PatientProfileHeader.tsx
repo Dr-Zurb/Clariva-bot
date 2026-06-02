@@ -38,15 +38,11 @@ import {
   Check,
   CheckCircle,
   Copy,
-  LayoutGrid,
   MessageSquare,
   Mic,
   MoreHorizontal,
   Phone,
   RefreshCw,
-  Save,
-  Settings,
-  SlidersHorizontal,
   UserX,
   Video,
   X,
@@ -79,23 +75,12 @@ import {
   primaryCtaFor,
   type CockpitState,
 } from "@/lib/patient-profile/state";
-import {
-  BUILT_IN_PRESETS,
-  COLUMN_ORDER_PERMUTATIONS,
-  labelForOrder,
-  layoutsEqual,
-  permutations,
-  slotsEqualOrder,
-  type CockpitLayout,
-  type ColumnSlots,
-} from "@/components/consultation/cockpit/preset-types";
 import type {
   Appointment,
   AppointmentStatus,
   ConsultationModality,
 } from "@/types/appointment";
 import { resendConsultationLink } from "@/lib/api";
-import type { PresetsState } from "@/components/consultation/cockpit/preset-types";
 import { formatDateTime, formatTime } from "@/lib/format-date";
 import {
   appendCockpitOriginFromSearchParams,
@@ -104,7 +89,6 @@ import {
 } from "@/lib/cockpit/back-target";
 import { RunningBehindBadge } from "@/components/consultation/cockpit/RunningBehindBadge";
 import { CockpitQueueRail } from "./PatientProfileQueueRail";
-import PresetPicker, { type PresetPickerProps } from "./PresetPicker";
 
 // ---------------------------------------------------------------------------
 // Status badge token mapping (A1 semantic colors)
@@ -277,67 +261,6 @@ export interface CockpitHeaderProps {
    * call. Shown in `lobby` and `live` (text & in-clinic) states.
    */
   onMarkNoShow?: () => void | Promise<void>;
-  // ── cc-06: Layout dropdown ────────────────────────────────────────────────
-  /**
-   * The currently active cockpit layout — used to mark the active preset /
-   * column-order permutation with a check icon in the Layout dropdown.
-   * When absent the dropdown renders without any check marks.
-   */
-  currentLayout?: CockpitLayout;
-  /** Called when the doctor picks a built-in preset or custom preset. */
-  onApplyPreset?: (layout: CockpitLayout) => void;
-  /** Called when the doctor picks a column-order permutation. */
-  onApplyColumnOrder?: (slots: ColumnSlots) => void;
-  /**
-   * Currently-visible pane ids in display order. When provided the
-   * "Column order" section in the Layout dropdown shows only the
-   * permutations that make sense for the visible panes (2 visible →
-   * 2 items; 3 visible → 6 items; 1 visible → section hidden).
-   * Omit to use the v1 hardcoded 6-permutation list.
-   */
-  visiblePaneIds?: string[];
-  /**
-   * Pane ids that are currently hidden. Appended after visible ids
-   * when calling `onApplyColumnOrder` so the handler always receives
-   * a full-length array with hidden panes trailing.
-   */
-  hiddenPaneIds?: string[];
-  /**
-   * Called when the doctor clicks "Save current layout…".
-   * cc-06 ships a no-op stub; cc-10 replaces with the real dialog.
-   */
-  onOpenSavePresetDialog?: () => void;
-  /**
-   * State from `useCockpitPresets` — passed down from `<ConsultationCockpit>`
-   * (the hook can't be called inside `<CockpitHeader>` because apply-preset
-   * needs the full `setLayout` context that lives in the parent).
-   * When absent the custom-presets section shows the cc-06 placeholder.
-   */
-  presetsState?: PresetsState;
-  /**
-   * Called when the doctor clicks "Manage presets…".
-   * Only shown when there is at least one saved preset.
-   */
-  onOpenManagePresetsDialog?: () => void;
-  /**
-   * Optional node rendered in the center of the header's primary row.
-   * Used by ppr-15c to mount `<PaneToggleBar>` in the v2 patient-profile
-   * shell. When absent (all v1 callsites), the header falls back to its
-   * existing two-group layout — no visual change for v1.
-   */
-  centerSlot?: React.ReactNode;
-  /**
-   * When set, renders the R-LAYOUT-UX tree preset picker instead of the
-   * legacy v1 flat layout dropdown (clpm-05).
-   */
-  layoutTreeUx?: PresetPickerProps;
-  /**
-   * cpfc-01: Customize-layout mode toggle. When `onToggleCustomizeMode` is
-   * provided, the header renders a "Customize" toggle in the right cluster.
-   * `customizeMode` drives its pressed/active state. The hotkey hint is Cmd+Shift+L.
-   */
-  customizeMode?: boolean;
-  onToggleCustomizeMode?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -356,18 +279,6 @@ export default function CockpitHeader({
   onFinishVisit,
   finishBusy,
   nextSlotAt,
-  currentLayout,
-  onApplyPreset,
-  onApplyColumnOrder,
-  visiblePaneIds,
-  hiddenPaneIds,
-  onOpenSavePresetDialog,
-  presetsState,
-  onOpenManagePresetsDialog,
-  centerSlot,
-  layoutTreeUx,
-  customizeMode,
-  onToggleCustomizeMode,
 }: CockpitHeaderProps) {
   const [visitDetailsOpen, setVisitDetailsOpen] = useState(false);
   const [copiedPhone, setCopiedPhone] = useState(false);
@@ -658,44 +569,6 @@ export default function CockpitHeader({
               <div className="flex shrink-0 items-center gap-2 ml-auto">
                 <RunningBehindBadge nextSlotAt={nextSlotAt} />
                 {primaryCta}
-                {onToggleCustomizeMode && (
-                  <TooltipProvider delayDuration={400}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant={customizeMode ? "default" : "ghost"}
-                          size="sm"
-                          aria-pressed={customizeMode}
-                          onClick={onToggleCustomizeMode}
-                          className="gap-2"
-                        >
-                          <SlidersHorizontal className="h-4 w-4" aria-hidden />
-                          <span className="hidden lg:inline">Customize</span>
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {customizeMode ? "Exit customize" : "Customize layout"} · ⌘⇧L
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                )}
-                {layoutTreeUx ? (
-                  <PresetPicker {...layoutTreeUx} />
-                ) : (
-                  onApplyPreset && (
-                    <LayoutDropdownMenu
-                      currentLayout={currentLayout}
-                      onApplyPreset={onApplyPreset}
-                      onApplyColumnOrder={onApplyColumnOrder}
-                      visiblePaneIds={visiblePaneIds}
-                      hiddenPaneIds={hiddenPaneIds}
-                      onOpenSavePresetDialog={onOpenSavePresetDialog}
-                      presetsState={presetsState}
-                      onOpenManagePresetsDialog={onOpenManagePresetsDialog}
-                    />
-                  )
-                )}
                 <KebabMenu
                   appointment={appointment}
                   state={state}
@@ -801,20 +674,6 @@ export default function CockpitHeader({
           </div>
         )}
 
-        {/* Center slot overlay — absolutely centred in the header band so the
-            toggle icons always sit at the exact vertical midpoint of the
-            header regardless of how tall the two-row identity block is.
-            `pointer-events-none` on the overlay + `pointer-events-auto` on
-            the inner div ensures clicks on the left/right clusters aren't
-            accidentally intercepted. Only rendered when a slot is provided
-            (v2 patient-profile page). */}
-        {centerSlot && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="pointer-events-auto">
-              {centerSlot}
-            </div>
-          </div>
-        )}
       </header>
 
       {/* Queue rail — sticky strip docked directly below this header (pf-08) */}
@@ -834,196 +693,6 @@ export default function CockpitHeader({
         </DialogContent>
       </Dialog>
     </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// cc-06: Layout dropdown menu
-// ---------------------------------------------------------------------------
-
-interface LayoutDropdownMenuProps {
-  currentLayout?: CockpitLayout;
-  onApplyPreset: (layout: CockpitLayout) => void;
-  onApplyColumnOrder?: (slots: ColumnSlots) => void;
-  onOpenSavePresetDialog?: () => void;
-  presetsState?: PresetsState;
-  onOpenManagePresetsDialog?: () => void;
-  /**
-   * Currently-visible pane ids in left-to-right order. When provided,
-   * the "Column order" section shows only the permutations of the
-   * visible panes (1 pane → section hidden; 2 panes → 2 entries;
-   * 3 panes → 6 entries). Falls back to the hardcoded
-   * `COLUMN_ORDER_PERMUTATIONS` constant for the v1 cockpit which
-   * never passes this prop.
-   */
-  visiblePaneIds?: string[];
-  /**
-   * Pane ids that are currently hidden. Appended at the end of the
-   * `slots` array when `onApplyColumnOrder` is called so the handler
-   * always receives a full-length array with hidden panes trailing.
-   */
-  hiddenPaneIds?: string[];
-}
-
-function LayoutDropdownMenu({
-  currentLayout,
-  onApplyPreset,
-  onApplyColumnOrder,
-  onOpenSavePresetDialog,
-  presetsState,
-  onOpenManagePresetsDialog,
-  visiblePaneIds,
-  hiddenPaneIds,
-}: LayoutDropdownMenuProps) {
-  const customPresets =
-    presetsState?.status === "ready" ? presetsState.presets : null;
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="gap-2">
-          <LayoutGrid className="h-4 w-4" aria-hidden />
-          Layout
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-72">
-        <DropdownMenuLabel>Built-in presets</DropdownMenuLabel>
-        {Object.values(BUILT_IN_PRESETS).map((p) => {
-          const isActive =
-            currentLayout != null && layoutsEqual(currentLayout, p.layout as CockpitLayout);
-          return (
-            <DropdownMenuItem
-              key={p.id}
-              onSelect={() => onApplyPreset(p.layout as CockpitLayout)}
-              className="flex items-center justify-between"
-            >
-              <span className="flex items-center gap-2">
-                {isActive && <Check className="h-3 w-3 shrink-0" aria-hidden />}
-                {!isActive && <span className="h-3 w-3 shrink-0" aria-hidden />}
-                <span>{p.label}</span>
-              </span>
-              <kbd className="text-xs text-muted-foreground">
-                {`⌘⇧${p.hotkey.at(-1)}`}
-              </kbd>
-            </DropdownMenuItem>
-          );
-        })}
-
-        <DropdownMenuSeparator />
-        {/* Column order — dynamic based on currently-visible panes.
-            When `visiblePaneIds` is provided (v2 patient-profile page):
-              • 1 visible pane  → section hidden (single permutation is trivial)
-              • 2 visible panes → 2 entries (e.g. "Chart · Body", "Body · Chart")
-              • 3 visible panes → all 6 entries
-            When not provided (v1 cockpit): falls back to the hardcoded
-            COLUMN_ORDER_PERMUTATIONS constant so v1 behaviour is unchanged.
-        */}
-        {(visiblePaneIds == null || visiblePaneIds.length >= 2) && (
-          <>
-            <DropdownMenuLabel>Column order</DropdownMenuLabel>
-            {visiblePaneIds != null
-              ? permutations(visiblePaneIds).map((order) => {
-                  const hidden = hiddenPaneIds ?? [];
-                  // Full slots array: visible portion first, hidden pane(s)
-                  // appended so the handler always receives a complete list.
-                  const fullSlots = [...order, ...hidden] as unknown as ColumnSlots;
-                  // Active when the live visible order matches this entry.
-                  const isActive =
-                    visiblePaneIds.length === order.length &&
-                    order.every((id, i) => visiblePaneIds[i] === id);
-                  return (
-                    <DropdownMenuItem
-                      key={order.join("-")}
-                      onSelect={() => onApplyColumnOrder?.(fullSlots)}
-                      className="flex items-center gap-2"
-                    >
-                      {isActive ? (
-                        <Check className="h-3 w-3 shrink-0" aria-hidden />
-                      ) : (
-                        <span className="h-3 w-3 shrink-0" aria-hidden />
-                      )}
-                      <span>{labelForOrder(order)}</span>
-                    </DropdownMenuItem>
-                  );
-                })
-              : COLUMN_ORDER_PERMUTATIONS.map(({ slots, label }) => {
-                  const isActive =
-                    currentLayout != null &&
-                    slotsEqualOrder(currentLayout.slots, slots as unknown as ColumnSlots);
-                  return (
-                    <DropdownMenuItem
-                      key={slots.join("-")}
-                      onSelect={() => onApplyColumnOrder?.(slots as unknown as ColumnSlots)}
-                      className="flex items-center gap-2"
-                    >
-                      {isActive ? (
-                        <Check className="h-3 w-3 shrink-0" aria-hidden />
-                      ) : (
-                        <span className="h-3 w-3 shrink-0" aria-hidden />
-                      )}
-                      <span>{label}</span>
-                    </DropdownMenuItem>
-                  );
-                })}
-          </>
-        )}
-
-        <DropdownMenuSeparator />
-        <DropdownMenuLabel>Custom presets</DropdownMenuLabel>
-
-        {/* Loading */}
-        {presetsState?.status === "loading" && (
-          <DropdownMenuItem disabled>Loading presets…</DropdownMenuItem>
-        )}
-
-        {/* Error */}
-        {presetsState?.status === "error" && (
-          <DropdownMenuItem disabled className="text-destructive">
-            Could not load presets
-          </DropdownMenuItem>
-        )}
-
-        {/* Empty */}
-        {(presetsState == null || (presetsState.status === "ready" && presetsState.presets.length === 0)) && (
-          <DropdownMenuItem disabled className="text-xs text-muted-foreground">
-            No custom presets yet
-          </DropdownMenuItem>
-        )}
-
-        {/* Preset list */}
-        {customPresets != null &&
-          customPresets.map((p) => (
-            <DropdownMenuItem
-              key={p.id}
-              onSelect={() => onApplyPreset(p.layout)}
-              className="flex items-center gap-2"
-            >
-              {currentLayout != null && layoutsEqual(currentLayout, p.layout) ? (
-                <Check className="h-3 w-3 shrink-0" aria-hidden />
-              ) : (
-                <span className="h-3 w-3 shrink-0" aria-hidden />
-              )}
-              <span className="flex-1 truncate">{p.name}</span>
-            </DropdownMenuItem>
-          ))}
-
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => onOpenSavePresetDialog?.()} className="gap-2">
-          <Save className="h-3 w-3" aria-hidden />
-          Save current layout…
-        </DropdownMenuItem>
-
-        {customPresets != null && customPresets.length > 0 && (
-          <DropdownMenuItem
-            onSelect={() => onOpenManagePresetsDialog?.()}
-            className="gap-2"
-          >
-            <Settings className="h-3 w-3" aria-hidden />
-            Manage presets…
-          </DropdownMenuItem>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }
 

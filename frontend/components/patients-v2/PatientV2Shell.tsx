@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback } from "react";
 import {
   Activity,
   CalendarDays,
@@ -11,8 +11,6 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import PatientProfileShell from "@/components/patient-profile/Shell";
-import type { PaneDefinition } from "@/lib/patient-profile/types";
 import { usePatientOverviewQuery } from "@/hooks/queries/usePatientOverviewQuery";
 import { cn } from "@/lib/utils";
 import type { Patient } from "@/types/patient";
@@ -142,20 +140,6 @@ export function PatientV2Shell({ patient, token, userId }: PatientV2ShellProps) 
     [patient.id, token, visitFocus],
   );
 
-  const panes: PaneDefinition[] = useMemo(
-    () =>
-      PATIENT_V2_TABS.map((t) => ({
-        id: t.id,
-        title: t.title,
-        minSizePct: 25,
-        naturalSizePct: 100 / PATIENT_V2_TABS.length,
-        canCollapse: false,
-        render: () => (activeTab === t.id ? renderTabContent(t.id) : null),
-        collapsedRender: () => null,
-      })),
-    [activeTab, renderTabContent],
-  );
-
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <PatientIdentityStrip
@@ -193,11 +177,8 @@ export function PatientV2Shell({ patient, token, userId }: PatientV2ShellProps) 
         ))}
       </div>
 
-      <div className="min-h-0 flex-1">
-        <PatientProfileShell
-          panes={panes}
-          storageKey={`patient-v2/${patient.id}/layout`}
-        />
+      <div className="min-h-0 flex-1 overflow-auto">
+        {renderTabContent(activeTab)}
       </div>
     </div>
   );

@@ -11,7 +11,7 @@
 >
 > **Canonical reference:** [`docs/Reference/product/cockpit/COCKPIT.md`](../../Reference/product/cockpit/COCKPIT.md) is the live single source of truth for cockpit behaviour and will be updated at v3 cutover.
 >
-> **Status:** `Drafted (live)` — Phase 0 open for planning. No implementation until promotion to a daily-plans batch (see §13).
+> **Status:** **Shipped** (2026-06-02) — Phases 0–5 + Phase 4 cutover complete (`cv3x-03` deletion, `cv3x-04` docs). v3 is the only live cockpit on `/dashboard/appointments/[id]`.
 >
 > **Status legend:** `Drafted` → `Selected` → `Committed` → `Shipped` / `Deferred` / `Killed`.
 
@@ -101,13 +101,16 @@ The Strangler Fig from ppr and cockpit-v2 applies again: build the new shell sid
 - `frontend/components/patient-profile/PatientProfileHeader.tsx` — host the pane palette; drop the Customize toggle and preset/customize affordances in the v3 path.
 - Persistence read-path (`useShellLayout` lineage) — accept and hydrate the same `PaneTreeNode`; one-shot migration if needed (v3-DL-10).
 
-### 🗑️ Deleted (at cutover — v3-DL-9)
+### 🗑️ Deleted (cutover complete — v3-DL-9, cv3x-03 2026-06-02)
 
-- The old `Shell.tsx` desktop renderer (kept until parity).
+- `Shell.tsx` (`PatientProfileShell`) and `PatientProfileShellHandle`.
 - `customize-mode-context.tsx`, `CustomizeBar.tsx`, and all customize-mode gating.
-- The old `PaneDropOverlay.tsx` (5-zone).
-- The fixed template **pre-fill** path in `templates.tsx` (the factory machinery may be repurposed for the deferred seed; the *automatic pre-fill on open* goes away).
-- `PaneToggleBar.tsx` if fully superseded by the palette.
+- `PaneDropOverlay.tsx` (5-zone overlay).
+- `flags.ts` / `cockpitV3Enabled()` / `NEXT_PUBLIC_COCKPIT_V3` and the page branch.
+- Header preset/layout customize UI (`PresetPicker`, save/manage preset dialogs on the old path).
+- `PaneToggleBar.tsx`, `PaneTabStrip.tsx` (old shell), preset hooks superseded by v3 palette.
+
+**Still deferred (not on v3 mount path):** `templates.tsx` column factories, `InvestigationsAutoMerge.tsx`, `middle-bottom` wrapper — see capture inbox handoff.
 
 ---
 
@@ -168,7 +171,7 @@ Seven R-items across four phases. Each: Why / What / Acceptance / Effort / Depen
 
 **Effort:** 6–8 days (largest item). **Dependencies:** v3-DL-1 (kept model). **Files:** new `CockpitGroupView` + forked tab strip; reads `layout-tree.ts`.
 
-**Decision:** [ ] Yes  [ ] No  [ ] Modify
+**Decision:** [x] Yes  [ ] No  [ ] Modify — shipped Phase 1 (`p1-shell/`, cv3c-01..04).
 
 ---
 
@@ -212,7 +215,7 @@ Seven R-items across four phases. Each: Why / What / Acceptance / Effort / Depen
 
 **Effort:** 3–4 days. **Dependencies:** R-SHELL3. **Files:** new palette (evolves `PaneToggleBar`); header wiring.
 
-**Decision:** [ ] Yes  [ ] No  [ ] Modify
+**Decision:** [x] Yes  [ ] No  [ ] Modify — shipped Phase 1 palette + Phase 5 flat registry (`p1-shell/`, `p5-tab-model/`).
 
 ---
 
@@ -327,19 +330,19 @@ Four phases. Within a phase, items can run in parallel chats.
 
 **Gate:** safety chrome unhideable in every arrangement; saved layouts load; mobile flat.
 
-### Phase 4 — Cutover
+### Phase 4 — Cutover ✅ (2026-06-02)
 | R-item | Effort | Notes |
 |---|---|---|
-| R-CUTOVER | 3–4d | Parity matrix, flag flip, delete old |
+| R-CUTOVER | 3–4d | Parity matrix, flag flip, delete old, docs |
 
-**Gate:** flag default-on, kill-switch live, old shell + customize mode + 5-zone overlay deleted, `COCKPIT.md` updated.
+**Gate:** ✅ flag removed; old shell + customize mode + 5-zone overlay deleted; `COCKPIT.md` updated to v3 (cv3x-03 + cv3x-04). Kill-switch retired with the flag.
 
-### Phase 5 — Tab model *(inserted into the cutover, ahead of the soak — see R-CUTOVER decision note)*
+### Phase 5 — Tab model *(inserted into the cutover, ahead of the soak — see R-CUTOVER decision note)* ✅
 | Theme | Effort | Notes |
 |---|---|---|
 | Flatten columns → uniform flat tab registry (`buildCockpitTabs`); fix the build-up canvas (palette/seed on real leaves); decouple Plan/Investigations; relabel body → "Consult" / "Visit summary"; re-prove parity | ~1–1.5d | cv3t-01..03 in [`p5-tab-model/`](../Daily-plans/May%202026/30-05-2026/cockpit-v3/p5-tab-model/plan-p5-cockpit-v3-tab-model-batch.md). Port by reference (no body rewrites); legacy templates untouched until cv3x-03. Realises **v3-DL-2** (every pane is a tab; no pane is special). |
 
-**Gate:** the v3 palette lists the eight real tabs; adding any one mounts real content; Plan/Investigations are independent tabs sharing one form field; the parity matrix is green on the flat structure **including the build-up path** (P5-DL-5). Then Phase 4's soak → cv3x-03 → cv3x-04 resume.
+**Gate:** ✅ green ([`PARITY-MATRIX-cv3t-03.md`](../Daily-plans/May%202026/30-05-2026/cockpit-v3/p5-tab-model/PARITY-MATRIX-cv3t-03.md), 2026-05-31). Phase 4 tail (cv3x-03 → cv3x-04) completed 2026-06-02.
 
 ### Total effort estimate
 **~21–30 dev-days serial** (~3–4.5 weeks one engineer; ~2.5–3 weeks with two parallelising Phase 1/2). The kept model (v3-DL-1) is what keeps this materially smaller than v2's 30–35 days despite being framed as a "rewrite."
@@ -479,7 +482,7 @@ No PHI columns, no RLS redesign, no new persisted schema (v3-DL-10), no novel se
 ---
 
 **Created:** 2026-05-30.  
-**Status:** `Drafted (live)`.  
+**Status:** **Shipped** (2026-06-02).  
 **Owner:** TBD.  
-**Promoted to:** _(daily-plans batch TBD once Phase 1 R-items are all decided)_.  
-**Relationship:** Supersedes the cockpit pane-freedom *interaction layer*; reuses its model + mutation engine (v3-DL-1).
+**Promoted to:** [`docs/Work/Daily-plans/May 2026/30-05-2026/cockpit-v3/`](../Daily-plans/May%202026/30-05-2026/cockpit-v3/) (Phases 0–5).  
+**Relationship:** Supersedes the cockpit pane-freedom *interaction layer*; reuses its model + mutation engine (v3-DL-1). Live reference: [`docs/Reference/product/cockpit/COCKPIT.md`](../../Reference/product/cockpit/COCKPIT.md).

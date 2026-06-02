@@ -22,7 +22,6 @@ import { DndContext, PointerSensor, useSensor, useSensors } from "@dnd-kit/core"
 import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
 import CockpitV3Shell from "../CockpitV3Shell";
 import PaneTabStripV3 from "../PaneTabStripV3";
-import { cockpitV3Enabled } from "@/lib/patient-profile/v3/flags";
 import {
   dropPaneIntoZone,
   paneTreeToFlat,
@@ -150,14 +149,12 @@ describe("CockpitDnd integration (cv3d-04)", () => {
     );
   });
 
-  it("default-on — PatientProfilePage keeps both shell paths (cv3x-02)", () => {
-    expect(cockpitV3Enabled()).toBe(true);
-
+  it("v3 mounts unconditionally — PatientProfilePage has no flag branch (cv3x-03)", () => {
     const pagePath = path.resolve(__dirname, "../../PatientProfilePage.tsx");
     const source = fs.readFileSync(pagePath, "utf8");
-    expect(source).toMatch(/cockpitV3Enabled\(\)\s*\?/);
-    expect(source).toContain("PatientProfileShell");
     expect(source).toContain("CockpitV3Shell");
+    expect(source).not.toMatch(/cockpitV3Enabled/);
+    expect(source).not.toContain("PatientProfileShell");
   });
 
   it("drag build-up persists across reload via useShellLayout (Phase 2 gate)", async () => {

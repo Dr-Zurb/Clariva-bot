@@ -92,10 +92,6 @@ describe("CockpitV3Shell", () => {
 
 describe("CockpitV3Shell forbidden imports (P0-DL-4)", () => {
   const v3Dir = path.resolve(__dirname, "..");
-  const flagsPath = path.resolve(
-    __dirname,
-    "../../../../lib/patient-profile/v3/flags.ts",
-  );
 
   const forbiddenImportPatterns = [
     /from\s+["']@\/components\/patient-profile\/Shell/,
@@ -104,8 +100,8 @@ describe("CockpitV3Shell forbidden imports (P0-DL-4)", () => {
     /from\s+["'][^"']*PaneDropOverlay/,
   ];
 
-  for (const file of ["CockpitV3Shell.tsx", "flags.ts"]) {
-    const filePath = file === "flags.ts" ? flagsPath : path.join(v3Dir, file);
+  for (const file of ["CockpitV3Shell.tsx"]) {
+    const filePath = path.join(v3Dir, file);
     it(`${file} does not import forbidden modules`, () => {
       const source = fs.readFileSync(filePath, "utf8");
       for (const pattern of forbiddenImportPatterns) {

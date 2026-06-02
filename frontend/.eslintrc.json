@@ -16,7 +16,7 @@
                   "**/ResizablePanelGroup",
                   "@/components/ui/resizable"
                 ],
-                "message": "Direct use of <ResizablePanelGroup> is forbidden outside the patient-profile Shell. Mount <PatientProfileShell> with a PaneDefinition[] instead. See cv2-01's ESLint rule."
+                "message": "Direct use of <ResizablePanelGroup> is forbidden. The cockpit v3 shell (CockpitV3Shell / CockpitGroupView) owns resizable layout. See cv2-01's ESLint rule."
               }
             ],
             "paths": []
@@ -25,10 +25,7 @@
       }
     },
     {
-      "files": [
-        "components/patient-profile/Shell.tsx",
-        "lib/patient-profile/**"
-      ],
+      "files": ["lib/patient-profile/**"],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -62,7 +59,6 @@
         "tools/**/*.ts"
       ],
       "excludedFiles": [
-        "components/patient-profile/Shell.tsx",
         "components/patient-profile/v3/CockpitGroupView.tsx",
         "components/ui/resizable.tsx"
       ],
@@ -71,7 +67,7 @@
           "error",
           {
             "selector": "JSXOpeningElement[name.name='ResizablePanelGroup']",
-            "message": "cv2-01: <ResizablePanelGroup> must only be mounted inside <PatientProfileShell> (Shell.tsx). Use <PatientProfileShell> with a PaneDefinition tree — set `children?: PaneDefinition[]` on a node to nest a resizable group. The shell's correctness guarantees (cascade handles, rebalance gates, size snapshots) only hold inside the shell. See docs/Work/Daily-plans/May 2026/17-05-2026/cockpit-v2/plan-cockpit-v2-batch.md."
+            "message": "cv2-01: <ResizablePanelGroup> must only be mounted inside the cockpit v3 shell (CockpitGroupView.tsx). Set `children?: PaneDefinition[]` on a node to nest a resizable group. The shell's correctness guarantees (cascade handles, rebalance gates, size snapshots) only hold inside the shell."
           }
         ]
       }
