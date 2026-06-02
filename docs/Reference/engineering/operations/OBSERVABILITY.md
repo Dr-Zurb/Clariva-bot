@@ -1,0 +1,551 @@
+# Observability Guide
+## Debugging Without Leaking Data
+
+**⚠️ CRITICAL: Observability is essential for production systems, but must never leak PHI/PII.**
+
+---
+
+## 🎯 Purpose
+
+This file governs what to log, what to never log, metrics, tracing rules, and alert thresholds.
+
+**This file owns:**
+- What to log
+- What to never log
+- Metrics collection
+- Tracing rules
+- Alert thresholds
+
+**This file MUST NOT contain:**
+- Logging implementation (see RECIPES.md)
+- PII redaction rules (see STANDARDS.md)
+- Compliance requirements (see COMPLIANCE.md)
+
+---
+
+## 📋 Related Files
+
+- [STANDARDS.md](../development/STANDARDS.md) - PII redaction rules and logging standards
+- [COMPLIANCE.md](../compliance/COMPLIANCE.md) - PHI handling and audit requirements
+- [RECIPES.md](../development/RECIPES.md) - Logging implementation patterns
+- [ERROR_CATALOG.md](../development/ERROR_CATALOG.md) - Error classes and status codes
+- [ANALYTICS_INTAKE_VS_REGISTERED.md](../../product/patients-and-practice/ANALYTICS_INTAKE_VS_REGISTERED.md) - Backlog: funnel metrics (intake vs registered); existing signals vs DB-derived queries
+
+---
+
+## 📊 What to Log (MANDATORY)
+
+**Logger usage:** Use only the structured logger from `config/logger.ts` (e.g. `logger.info`, `logger.error`, `logger.warn`). Import it where needed. Do not use deprecated or ad-hoc error-logging helpers; log all errors and events through this logger with the standard fields below.
+
+### Standard Log Fields (REQUIRED)
+
+**All logs MUST include these fields:**
+
+```typescript
+{
+  correlationId: string;    // Request correlation ID (UUID)
+  path: string;            // Request path (e.g., '/appointments')
+  method: string;          // HTTP method (e.g., 'GET', 'POST')
+  statusCode: number;      // HTTP status code (e.g., 200, 400, 500)
+  durationMs?: number;     // Request duration in milliseconds
+  timestamp: string;       // ISO 8601 timestamp
+}
+```
+
+**Note:** Timestamp may be logger-generated automatically (e.g., Pino). If so, do NOT add manually (avoids double timestamps).
+
+**Rationale:**
+- Enables request tracing across services
+- Enables performance analysis
+- Enables error correlation
+- Required for production debugging
+
+**See:** [STANDARDS.md](../development/STANDARDS.md) "Standard Log Fields" section
+
+---
+
+### Business Events (INFO Level)
+
+**Log business events with IDs and metadata:**
+
+```typescript
+// ✅ CORRECT - Business event logging
+logger.info('Appointment created', {
+  correlationId: req.correlationId,
+  path: req.path,
+  method: req.method,
+  statusCode: 201,
+  durationMs: Date.now() - req.startTime,
+  appointmentId: appointment.id,
+  doctorId: appointment.doctorId,
+  // ❌ NEVER: patientName, patientPhone, patientDob
+});
+```
+
+**Allowed Fields:**
+- Resource IDs (`appointmentId`, `doctorId`, `userId`)
+- Status (`status: 'booked'`, `status: 'cancelled'`)
+- Action (`action: 'create_appointment'`)
+- Timestamps
+- Metadata (no PHI)
+
+---
+
+### Request Logging (INFO/WARN/ERROR Level)
+
+**Log all HTTP requests:**
+
+```typescript
+// ✅ CORRECT - Request logging
+logger.info('Request completed', {
+  correlationId: req.correlationId,
+  path: req.path,
+  method: req.method,
+  statusCode: 200,
+  durationMs: Date.now() - req.startTime,
+  ip: req.ip,  // Allowed - not PHI
+  userAgent: req.get('user-agent'),  // Allowed - not PHI
+  // ❌ NEVER: req.body, req.headers, req (raw objects)
+});
+```
+
+**Log Levels:**
+- **INFO (200-399):** Successful requests
+- **WARN (400-499):** Client errors (validation, auth failures)
+- **ERROR (500+):** Server errors (database failures, unexpected errors)
+
+---
+
+### Error Logging (ERROR Level)
+
+**Log all errors with context:**
+
+```typescript
+// ✅ CORRECT - Error logging
+logger.error('Database connection failed', {
+  correlationId: req.correlationId,
+  path: req.path,
+  method: req.method,
+  statusCode: 500,
+  durationMs: Date.now() - req.startTime,
+  error: {
+    name: error.name,
+    message: error.message,
+    stack: env.NODE_ENV !== 'production' ? error.stack : undefined,  // **MUST: Stack traces ONLY when NODE_ENV !== 'production'**
+  },
+  // ❌ NEVER: req.body, patient data, PHI
+});
+```
+
+**Include:**
+- Error name, message, stack (dev only)
+- Correlation ID (for tracing)
+- Request metadata (path, method, statusCode)
+- Context (what operation was attempted)
+
+---
+
+## 🚫 What to Never Log (MANDATORY)
+
+### PII/PHI (NEVER)
+
+**MUST NEVER log:**
+- Patient names
+- Phone numbers
+- Email addresses (if PHI)
+- Dates of birth
+- Medical records
+- Social security numbers
+- Addresses (if PHI)
+- Insurance information
+- Any other PHI
+
+**Rule:** If it can identify a patient, don't log it.
+
+**See:** [STANDARDS.md](../development/STANDARDS.md) "PII Redaction Rule" section
+
+---
+
+### Raw Request Objects (NEVER)
+
+**MUST NEVER log:**
+- `req.body` (may contain PHI)
+- `req.headers` (may contain tokens, PHI)
+- `req` (raw request object - contains everything)
+- `res` (raw response object)
+
+**Rationale:**
+- Raw objects may contain nested PHI
+- Headers may contain authentication tokens
+- Body contains user input (may be PHI)
+
+**Example:**
+```typescript
+// ❌ WRONG - Never log raw objects
+logger.info('Request received', req);  // DANGEROUS
+logger.info('Request body', req.body); // DANGEROUS
+logger.info('Headers', req.headers);   // DANGEROUS
+
+// ✅ CORRECT - Log only safe fields
+logger.info('Request received', {
+  correlationId: req.correlationId,
+  path: req.path,
+  method: req.method,
+  ip: req.ip,  // Safe - not PHI
+});
+```
+
+---
+
+### Webhook Payloads (NEVER)
+
+**CRITICAL:** Webhook payloads often contain patient identifiers.
+
+**MUST NEVER log:**
+- `req.body` for webhooks
+- Webhook payload content
+- Platform message content
+- User identifiers from platforms
+
+**Allowed:**
+- `correlationId`
+- `eventId` (platform ID or hash)
+- `provider` ('facebook' | 'instagram' | 'whatsapp' | 'razorpay' | 'paypal')
+- `status` ('processed' | 'failed' | 'pending')
+- `ip` (request IP)
+
+**See:** [WEBHOOKS.md](./WEBHOOKS.md) "PII Logging Rules" section
+
+---
+
+## 📊 Metrics Baseline (MANDATORY)
+
+**Required Metrics:**
+- `request_count` (counter) - Total requests per endpoint
+- `error_count` (counter) - Total errors per endpoint
+- `request_latency_ms` (histogram) - Request duration in milliseconds
+- `external_api_latency_ms` (histogram) - External API call duration
+
+**Label Rules:**
+- **Allowed labels:** `route`, `method`, `status`, `error_type`
+- **FORBIDDEN labels:** `user_id`, `patient_id`, `phone`, `email`, any PII/PHI
+
+**Instrumentation Rules:**
+- **Counters** for totals (request_count, error_count)
+- **Histograms** for latency (request_latency_ms, external_api_latency_ms)
+- **Gauges** only for system state (memory_usage, cpu_usage, queue_depth)
+
+**Environment Rules:**
+- Stack traces logged ONLY when `NODE_ENV !== 'production'`
+- Metrics collected in all environments
+- No vendor lock-in (use standard metric formats)
+
+**Example:**
+```typescript
+// ✅ CORRECT - Safe labels
+metrics.increment('request_count', {
+  route: '/api/v1/appointments',
+  method: 'POST',
+  status: '200',
+});
+
+metrics.observe('request_latency_ms', duration, {
+  route: '/api/v1/appointments',
+  method: 'POST',
+});
+
+// ❌ WRONG - PHI in labels
+metrics.increment('request_count', {
+  user_id: req.user.id, // FORBIDDEN
+  patient_phone: appointment.phone, // FORBIDDEN
+});
+```
+
+**Rationale:**
+- Standard metrics enable monitoring without vendor lock-in
+- PHI in labels violates compliance
+- Histograms provide percentile analysis
+- Counters track totals over time
+
+**AI Agents:** Always use these metric names and label rules. Never include PII/PHI in labels.
+
+---
+
+## 📈 Metrics Collection
+
+### Request Metrics
+
+**Collect per endpoint:**
+- Request count (counter)
+- Request duration (p50, p95, p99) (histogram)
+- Error rate (4xx, 5xx) (counter)
+- Success rate (calculated from counters)
+
+**Example:**
+```typescript
+// Metrics collected automatically by middleware
+{
+  endpoint: '/api/v1/appointments',
+  method: 'POST',
+  count: 1000,
+  durationMs: {
+    p50: 120,
+    p95: 350,
+    p99: 500,
+  },
+  errorRate: 0.02,  // 2%
+  successRate: 0.98, // 98%
+}
+```
+
+---
+
+### System Metrics
+
+**Collect system-level metrics:**
+- CPU usage
+- Memory usage (heap, RSS)
+- Database connection pool size
+- Active request count
+- Queue depth (if using queues)
+
+**Example:**
+```typescript
+// Health check endpoint provides these
+{
+  database: {
+    connected: true,
+    responseTimeMs: 15,
+  },
+  memory: {
+    used: '450mb',
+    total: '512mb',
+    rss: '680mb',
+  },
+  uptime: '2d 14h 30m',
+}
+```
+
+---
+
+### Business Metrics
+
+**Collect business-level metrics:**
+- Appointments created per day
+- Appointments cancelled per day
+- Active users per day
+- Webhook processing rate
+- Error rate by type
+
+**OPD metrics (OPD-09)** — emitted as structured **INFO** logs with `context: 'opd_metric'` (no PHI in labels):
+
+| Log `metric` field | Labels | When |
+|--------------------|--------|------|
+| `opd_booking_total` | `mode`: `slot` \| `queue` | After successful `bookAppointment` |
+| `opd_eta_computed_total` | — | After queue ETA computed in session snapshot poll |
+| `opd_queue_reinsert_total` | `strategy`: `end_of_queue` \| `after_current` | After doctor requeue API |
+
+Downstream: filter logs by `context` + `metric` for counters; correlate with `correlationId`.
+
+### Receptionist / Instagram webhook metrics (RBH-01)
+
+Emitted as structured **INFO** / **WARN** logs with `context: 'webhook_metric'` (no message text, no comment body, no patient identifiers).
+
+| Log `metric` field | Key fields | When |
+|--------------------|------------|------|
+| `webhook_job_dequeued_total` | `eventId`, `provider`, `jobId?` | BullMQ worker picks up a job |
+| `webhook_job_worker_success` | `durationMs`, `provider` | Job handler finished without throw |
+| `webhook_job_worker_failure_total` | `durationMs`, `attempt?` | Job handler threw (retry or DLQ next) |
+| `webhook_job_dead_letter_total` | `attempts`, `errorClass` | Stored to DLQ after max retries |
+| `webhook_payment_job_completed_total` | `parsed`, `appointmentNotified` | Razorpay/PayPal branch completed |
+| `webhook_comment_pipeline_total` | `outcome`, `skipReason?`, `intent?`, `highIntent?`, `dmSent?`, `publicReplySent?`, `doctorTokenPresent?` | Instagram comment webhook processed or skipped |
+| `webhook_instagram_dm_delivery_total` | `outcome`, `reason?`, `usedRecipientFallback?` | DM send after conversation flow (success or classified failure) |
+| `webhook_dm_throttle_skip_total` | `throttleReason`: `send_lock` \| `reply_throttle` | Reply skipped due to per-event or per-user throttle |
+| `webhook_conflict_recovery_total` | `recoveryOutcome`: `success` \| `failed` \| `send_skipped_throttle` | Duplicate conversation / message race handling |
+| `webhook_instagram_dm_pipeline_timing` (RBH-12) | `intent`, `intentMs`, `generateMs`, `igSendMs?`, `handlerPreSendMs`, `greetingFastPath?`, `throttleSkipped?`, `doctorId?` | After DM send attempt: OpenAI + Instagram segment latencies (no PHI) |
+
+**Instagram DM routing (RBH-20):** One structured **INFO** log per processed DM turn with **message** `instagram_dm_routing` (see `backend/src/utils/log-instagram-dm-routing.ts`). Fields include `branch` (`DmHandlerBranch`), `intent`, `intent_topics`, `is_fee_question`, `state_step_before`, `state_step_after`, `conversationId`, `doctorId`, `eventId`, `correlationId`, optional `greeting_fast_path`. **No user message text.**
+
+**Example queries (log aggregation):**
+
+- Routing mix: count `instagram_dm_routing` group by `branch` (sanity: `fee_deterministic_idle` + `fee_deterministic_mid_collection` for pricing; `unknown` should be near zero).
+- **DM routing quality (e-task-ops-02):** Maintain a versioned **golden corpus** under `backend/tests/fixtures/dm-routing-golden/corpus.json` (synthetic / redacted only). Pure preview used in CI: `previewClinicalIdleDmBranch` in `backend/src/utils/dm-routing-clinical-idle-preview.ts` (post-medical ack, reason-first phases, `medical_safety` — does not simulate `fee_ambiguous_visit_type_staff`). Misroute triage: `backend/tests/fixtures/dm-routing-golden/MISROUTE_PLAYBOOK.md`.
+- **Suggested regressions / dashboards** (adapt field names to your log pipeline; no PHI in queries):
+  - **Unknown branch rate:** `count(branch == unknown) / count(*)` on `instagram_dm_routing` for production — sustained spike vs prior week → investigate classifier / handler gaps. Many orgs aim for **under 1–2%** but baseline is practice-dependent.
+  - **After-deflection flow:** For the same `conversationId`, sequence `medical_safety` → next turn’s `branch` — watch for unexpected **`unknown`** or missing **`post_medical_payment_existence_ack`** / fee bridge when the next turn is clearly pricing (manual spot-check; no raw message in logs).
+  - **Reason-first mix:** Weekly trend of `reason_first_triage_ask_more`, `reason_first_triage_confirm`, `reason_first_triage_ask_more_payment_bridge`, `reason_first_triage_fee_narrow` — large shifts after a deploy warrant comparison to the golden corpus + staging replay.
+  - **Optional:** If `ai_classification` metadata includes `pricingSignalKind` (e-task-dm-06), cross-tab fee-related `branch` values vs signal to catch classifier/handler drift.
+- **Healthy ranges:** Compare to a **rolling baseline** (same doctor cohort, same week-of-year if seasonal). Absolute percentages vary with specialty, teleconsult share, and catalog complexity.
+- Conflict recovery: filter `branch = conflict_recovery_ai`.
+- DM failure rate: count lines where `msg ~ webhook_metric_webhook_instagram_dm_delivery_total` and `outcome = failure`, group by `reason`.
+- Comment outreach: count `webhook_comment_pipeline_total` with `highIntent = true`, compare `dmSent` / `publicReplySent`.
+- Worker duration: percentile on `durationMs` for `webhook_job_worker_success` by `provider`.
+- DM perceived latency: percentile on `intentMs`, `generateMs`, `igSendMs`, `handlerPreSendMs` for `webhook_instagram_dm_pipeline_timing` (filter `greetingFastPath = true` to validate fast-path).
+
+**Code:** `backend/src/services/webhook-metrics.ts` (helpers); `backend/src/workers/webhook-worker.ts` (BullMQ wrapper + Instagram branches).
+
+**Implementation:**
+- Log business events with standard fields
+- Aggregate in log aggregation tool (e.g., Datadog, New Relic)
+- Create dashboards from aggregated logs
+
+---
+
+## 🔍 Tracing Rules
+
+### Correlation IDs (MANDATORY)
+
+**Rule:** All requests MUST have correlation ID.
+
+**Format:** UUID v4
+
+**Source:**
+- Client may provide `X-Correlation-ID` or `X-Request-ID`
+- Server validates format (must be valid UUID)
+- Server generates UUID if not provided or invalid
+
+**Usage:**
+- Include in all log entries
+- Include in all error responses
+- Include in all external API calls
+- Enable distributed tracing
+
+**See:** [CONTRACTS.md](../architecture/CONTRACTS.md) "Headers Contract" section
+
+---
+
+### Request Timing (MANDATORY)
+
+**Rule:** All requests MUST have duration tracking.
+
+**Implementation:**
+- `requestTiming` middleware sets `req.startTime`
+- `requestLogger` middleware calculates `durationMs`
+- Included in all log entries
+
+**Use Cases:**
+- Performance monitoring
+- Slow request detection
+- Alert on high p95/p99 latencies
+
+---
+
+### Distributed Tracing
+
+**Rule:** Include correlation ID in all external API calls.
+
+**Example:**
+```typescript
+// Include correlation ID in external API calls
+const response = await externalApi.call({
+  headers: {
+    'X-Correlation-ID': req.correlationId,
+  },
+});
+```
+
+**Enables:**
+- Tracing requests across services
+- Correlating errors across services
+- Performance analysis across services
+
+---
+
+## 🚨 Alert Thresholds
+
+### Error Rate Alerts
+
+**Alert when:**
+- Error rate > 5% for 5 minutes
+- 5xx error rate > 1% for 5 minutes
+- 429 (rate limit) errors > 10% for 1 minute
+
+**Rationale:**
+- High error rate indicates system issues
+- 5xx errors indicate server problems
+- 429 errors indicate abuse or misconfigured limits
+
+---
+
+### Latency Alerts
+
+**Alert when:**
+- p95 latency > 1 second for 5 minutes
+- p99 latency > 2 seconds for 5 minutes
+- Any request > 5 seconds
+
+**Rationale:**
+- High latency degrades user experience
+- Indicates performance problems
+- May indicate resource exhaustion
+
+---
+
+### System Health Alerts
+
+**Alert when:**
+- Database connection pool exhausted
+- Memory usage > 90%
+- CPU usage > 90% for 5 minutes
+- Queue depth > 1000 (if using queues)
+
+**Rationale:**
+- Prevents system failure
+- Enables proactive scaling
+- Prevents cascading failures
+
+---
+
+## 📝 Log Retention
+
+### Production Logs
+
+**Retention:** 30 days minimum
+
+**Required Fields:**
+- All standard fields (correlationId, path, method, statusCode, durationMs)
+- Timestamp
+- Log level
+
+**Storage:**
+- JSON format (structured logging)
+- Log aggregation tool (Datadog, New Relic, CloudWatch)
+- Encrypted at rest
+
+---
+
+### Audit Logs
+
+**Retention:** 7 years (compliance requirement)
+
+**Required Fields:**
+- All standard fields
+- User ID
+- Action performed
+- Resource ID
+- Timestamp
+- Success/failure status
+
+**Storage:**
+- Separate audit table (Supabase)
+- Encrypted at rest
+- Immutable (append-only)
+
+**See:** [COMPLIANCE.md](../compliance/COMPLIANCE.md) "Audit Logging" section
+
+---
+
+## 📝 Version
+
+**Last Updated:** 2026-03-24  
+**Version:** 1.1.0
+
+---
+
+## See Also
+
+- [STANDARDS.md](../development/STANDARDS.md) - PII redaction rules
+- [COMPLIANCE.md](../compliance/COMPLIANCE.md) - Audit requirements
+- [RECIPES.md](../development/RECIPES.md) - Logging implementation
+- [ERROR_CATALOG.md](../development/ERROR_CATALOG.md) - Error definitions
+- [OPD_SUPPORT_RUNBOOK.md](./OPD_SUPPORT_RUNBOOK.md) - OPD troubleshooting (ETA, queue, snapshot polling)

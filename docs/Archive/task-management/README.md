@@ -1,0 +1,286 @@
+# Task Management
+
+This folder contains task management documentation and templates.
+
+**Purpose:** Standardize task creation, tracking, and completion across the project.
+
+---
+
+## 📚 Documentation
+
+### Core Documents
+
+1. **[TASK_MANAGEMENT_GUIDE.md](./TASK_MANAGEMENT_GUIDE.md)** - Complete guide for task management
+   - Rules and requirements
+   - Task lifecycle
+   - Best practices
+   - Tracking guidelines
+
+2. **[TASK_TEMPLATE.md](./TASK_TEMPLATE.md)** - Template for creating new tasks
+   - Standard structure
+   - Required sections
+   - Format guidelines
+
+3. **[CODE_CHANGE_RULES.md](./CODE_CHANGE_RULES.md)** - Rules for tasks that **change** existing code
+   - When to use: any task that updates, refactors, or removes existing behavior (not only new feature addition)
+   - Audit current implementation → map impact → implement → remove obsolete code → update tests and docs
+   - Use in addition to the guide when the task is "Update existing"
+
+4. **[SILENT_FEE_ASSIGNMENT_POLICY.md](./SILENT_FEE_ASSIGNMENT_POLICY.md)** - DM receptionist: reason-first fees, **no patient tier menu**; two outcomes (narrow quote or staff SLA). Implementation: [e-task-dm-05](../Work/Daily-plans/April%202026/04-04-2026/tasks/e-task-dm-05-silent-fee-menu-closure.md).
+
+5. **[BOT_PHILOSOPHY_ELITE_AUDIT_2026.md](./BOT_PHILOSOPHY_ELITE_AUDIT_2026.md)** — Full-bot read-through vs [AI_BOT_BUILDING_PHILOSOPHY.md](../Reference/product/receptionist-bot/AI_BOT_BUILDING_PHILOSOPHY.md); reading tasks under [13-04-2026](../Work/Daily-plans/April%202026/13-04-2026/); execution epics: [tasks/tm-bot-audit-*.md](./tasks/) (gated on audit completion).
+
+---
+
+## 🎯 Quick Start
+
+### Before Creating a Task
+
+1. **MANDATORY:** Check existing codebase first
+   - Search for related files, functions, patterns
+   - Identify what's already implemented
+   - Document existing code status
+2. **Read** [TASK_MANAGEMENT_GUIDE.md](./TASK_MANAGEMENT_GUIDE.md)
+3. **Use** [TASK_TEMPLATE.md](./TASK_TEMPLATE.md) as starting point
+4. **Review** reference documentation:
+   - [STANDARDS.md](../Reference/engineering/development/STANDARDS.md)
+   - [ARCHITECTURE.md](../Reference/engineering/architecture/ARCHITECTURE.md)
+   - [RECIPES.md](../Reference/engineering/development/RECIPES.md)
+   - [COMPLIANCE.md](../Reference/engineering/compliance/COMPLIANCE.md)
+
+### Key Rules
+
+1. **MUST:** Check existing codebase before creating task files
+2. **MUST:** Add completion date when marking tasks complete
+3. **MUST:** Use hierarchical numbering (1.1, 1.1.1, 1.2, etc.) for task breakdown
+4. **MUST:** Update task status when state changes
+5. **MUST:** Use template when creating new tasks
+6. **MUST:** Reference standards before implementation
+7. **MUST:** Document existing code status in "Current State" section
+8. **When a task updates existing code:** MUST follow [CODE_CHANGE_RULES.md](./CODE_CHANGE_RULES.md) (audit, impact, remove obsolete, tests, docs)
+9. **When creating a migration:** MUST read all previous migrations (in order) to understand schema, naming, RLS, triggers, and how the project connects to the database — see [MIGRATIONS_AND_CHANGE.md](../Reference/engineering/development/MIGRATIONS_AND_CHANGE.md) and [CODE_CHANGE_RULES.md](./CODE_CHANGE_RULES.md) §4
+
+### Task Structure
+
+- **Each major task = Separate file** (e.g., `e-task-1-project-setup.md`)
+- **Inside each file = Hierarchical subtasks** with numbered breakdown:
+  - Level 1: Main categories (1, 2, 3, etc.)
+  - Level 2: Subtasks (1.1, 1.2, 2.1, etc.)
+  - Level 3: Detailed steps (1.1.1, 1.1.2, 1.2.1, etc.)
+
+---
+
+## 📁 Task Locations
+
+- **Daily Tasks:** `docs/Work/Daily-plans/YYYY-MM-DD/`
+- **Monthly Plans:** `docs/Work/Monthly-plans/`
+- **Learning Tasks:** `docs/Learning/YYYY-MM-DD/`
+- **Deferred Tasks:** `docs/Work/deferred/` — postponed work with notes to resume later
+
+### Current active plan: MVP completion (2026-02-06)
+
+Detailed implementation tasks for the two MVP must-haves (Connect Instagram + Doctor Setup) live in:
+
+- **Daily plan:** [docs/Work/Daily-plans/2026-02-06/README.md](../Work/Daily-plans/2026-02-06/README.md)
+- **Scope and acceptance criteria:** [docs/Archive/planning/MVP completion planning.md](../Development/Future%20Planning/MVP%20completion%20planning.md)
+
+Tasks: e-task-1 through e-task-6 (Connect Instagram), e-task-7 through e-task-12 (Doctor Setup). Use [TASK_TEMPLATE.md](./TASK_TEMPLATE.md) and [TASK_MANAGEMENT_GUIDE.md](./TASK_MANAGEMENT_GUIDE.md) when executing them.
+
+### Doctor Settings Feature (2026-03-09)
+
+Phased rollout for per-doctor practice settings, availability, and bot integration:
+
+- **Reference:** [DOCTOR_SETTINGS_PHASES.md](../Reference/product/patients-and-practice/DOCTOR_SETTINGS_PHASES.md), [PRACTICE_SETUP_UI.md](../Reference/product/patients-and-practice/PRACTICE_SETUP_UI.md)
+- **Daily plan:** [docs/Work/Daily-plans/March 2026/2026-03-09/README.md](../Work/Daily-plans/March%202026/2026-03-09/README.md)
+
+Tasks: e-task-1 (migration), e-task-2 (settings API), e-task-3 (availability/blocked-times API), e-task-4 (bot integration), e-task-5 (frontend dashboard), e-task-6 (Practice Setup UI consolidation), e-task-7 (Practice Setup UI refinement: cards, nested sidebar, breadcrumb), e-task-8 (Settings UI consistency: flat sidebar, remove back buttons, match integrations cards), e-task-9 (Availability page redesign: weekly calendar, copy to days, blocked times).
+
+### Appointment Booking Flow V2 (2026-03-13)
+
+Complete redesign of the appointment booking flow: "all at once" collection, confirm-details step, external slot picker with proactive messaging, redirect-to-chat for compliance.
+
+- **Reference:** [APPOINTMENT_BOOKING_FLOW_V2.md](../Reference/product/booking/APPOINTMENT_BOOKING_FLOW_V2.md)
+- **Daily plan:** [docs/Work/Daily-plans/March 2026/2026-03-13/README.md](../Work/Daily-plans/March%202026/2026-03-13/README.md)
+
+Tasks: e-task-1 (migrations: slot_selections, patients.email), e-task-2 (collection flow redesign: all-at-once, age, email, confirm_details), e-task-3 (slot selection API: token, POST select-slot, proactive send, redirect), e-task-4 (external slot picker page: /book), e-task-5 (webhook flow integration: slot link, reason_for_visit to notes).
+
+### Reason for Visit & Notes Separation (2026-03-16)
+
+Split appointment data into `reason_for_visit` (required, patient's main complaint) and `notes` (optional, patient extras).
+
+- **Reference:** [APPOINTMENT_REASON_AND_NOTES.md](../Reference/product/booking/APPOINTMENT_REASON_AND_NOTES.md)
+- **Daily plan:** [docs/Work/Daily-plans/March 2026/2026-03-16/README.md](../Work/Daily-plans/March%202026/2026-03-16/README.md)
+
+Tasks: e-task-1 (add reason_for_visit column + wiring), e-task-2 (collect patient extras into notes).
+
+### Booking for Others & Appointment Limits (2026-03-18)
+
+Handle "book for my mother" (collect for other person, book under their name) and enforce 1 appointment per patient per day.
+
+- **Reference:** [BOOKING_FOR_OTHERS_AND_APPOINTMENT_LIMITS.md](../Reference/product/booking/BOOKING_FOR_OTHERS_AND_APPOINTMENT_LIMITS.md)
+- **Daily plan:** [docs/Work/Daily-plans/March 2026/2026-03-18/README.md](../Work/Daily-plans/March%202026/2026-03-18/README.md)
+
+Tasks: e-task-1 (booking for someone else), e-task-2 (appointment limit per person per day).
+
+### OPD modes — slot vs queue (2026-03-24)
+
+Implement doctor-selectable **slot** (fixed calendar) and **queue** (token + ETA) OPD models; patient/doctor dashboards, policies (missed, early join, overflow).
+
+- **Product plan:** [docs/Work/Daily-plans/March 2026/2026-03-24/OPD modes/opd-systems-plan.md](../Work/Daily-plans/March%202026/2026-03-24/OPD%20modes/opd-systems-plan.md)
+- **Initiative README + task files:** [docs/Work/Daily-plans/March 2026/2026-03-24/OPD modes/README.md](../Work/Daily-plans/March%202026/2026-03-24/OPD%20modes/README.md)
+
+Tasks: **e-task-opd-01** (migrations) through **e-task-opd-09** (notifications, tests, docs). Use [TASK_TEMPLATE.md](./TASK_TEMPLATE.md).
+
+### Bot Intelligence & Conversation UX (2026-03-25)
+
+Make the receptionist bot context-aware and conversational (ChatGPT/Gemini-like). Hybrid AI-first approach: keep handlers for clear actions; use AI for conversational turns with richer context.
+
+- **Reference:** [BOT_INTELLIGENCE_PLANNING.md](../Development/Future%20Planning/BOT_INTELLIGENCE_PLANNING.md)
+- **Daily plan:** [docs/Work/Daily-plans/March 2026/2026-03-25/README.md](../Work/Daily-plans/March%202026/2026-03-25/README.md)
+
+Tasks: e-task-1 (AI context enhancement), e-task-2 (AI prompt improvements), e-task-3 (route ambiguous messages to AI), e-task-4 (multi-person booking "me and X"), e-task-5 (conversation history expansion), e-task-6 (hybrid extraction fallback).
+
+### Receptionist bot hardening — market readiness (2026-03-28)
+
+Observability, characterization tests, worker refactors (helpers + module split), legacy step migration, structured prompt kinds, webhook security doc, pause/handoff, Instagram health UI, and operator docs for message_edit fallbacks.
+
+- **Engineering map:** [RECEPTIONIST_BOT_ENGINEERING.md](../Work/Daily-plans/March%202026/2026-03-25/Receptionist%20Bot%20improvements/RECEPTIONIST_BOT_ENGINEERING.md)
+- **Task index:** [tasks/receptionist-bot-hardening/README.md](./tasks/receptionist-bot-hardening/README.md) — **RBH-01** through **RBH-11**
+
+### AI Receptionist — Service matching & staff review (2026-04-01)
+
+Map patient **reason / complaint** to **`service_offerings_json`** with confidence-based routing: **high** → proceed to slot + single capture; **low / ambiguous** → **no slot & no capture** until staff resolution (**24h SLA**). Mandatory **Other / not listed** catch-all; **mandatory audit** on staff actions.
+
+- **Product plan:** [plan-ai-receptionist-service-matching-and-booking.md](../Work/Daily-plans/April%202026/01-04-2026/plan-ai-receptionist-service-matching-and-booking.md)
+- **Initiative hub:** [AI_RECEPTIONIST_MATCHING_INITIATIVE.md](./AI_RECEPTIONIST_MATCHING_INITIATIVE.md)
+- **Task index:** [docs/Work/Daily-plans/April 2026/01-04-2026/tasks/README.md](../Work/Daily-plans/April%202026/01-04-2026/tasks/README.md) — **e-task-arm-01** … **e-task-arm-11**
+
+### DM context, fees & capture (2026-04-04)
+
+Follow-ups from receptionist DM discussions: **thread-aware teleconsult fees**, **TurnContext / conversation memory**, **shipped** safety + confirm + consent fixes (reference), **capture inbox** process, **NCD catalog hints** (ops), **silent fee assignment** (no patient tier menu).
+
+- **Daily plan:** [docs/Work/Daily-plans/April 2026/04-04-2026/README.md](../Work/Daily-plans/April%202026/04-04-2026/README.md)
+- **Policy:** [SILENT_FEE_ASSIGNMENT_POLICY.md](./SILENT_FEE_ASSIGNMENT_POLICY.md) — principles + QA acceptance for narrow fee vs staff only
+- **Task files:** `e-task-dm-01` … `e-task-dm-05`, `e-task-doc-02`, `e-task-ops-01` under [tasks/](../Work/Daily-plans/April%202026/04-04-2026/tasks/)
+
+### DM routing resilience & quality (2026-05-04)
+
+**Classifier-first** payment/fee signals (hybrid with regex fallback), **shared text normalization**, and a **golden corpus + routing metrics** loop so behavior scales past hand-written keyword lists.
+
+- **Daily plan:** [docs/Work/Daily-plans/April 2026/05-04-2026/README.md](../Work/Daily-plans/April%202026/05-04-2026/README.md)
+- **Tasks:** [e-task-dm-06 classifier-led payment/fee routing](../Work/Daily-plans/April%202026/05-04-2026/tasks/e-task-dm-06-classifier-led-payment-fee-routing.md), [e-task-ops-02 DM routing quality & corpus](../Work/Daily-plans/April%202026/05-04-2026/tasks/e-task-ops-02-dm-routing-quality-regression-corpus.md)
+- **Golden corpus (shipped):** [backend/tests/fixtures/dm-routing-golden/](../../backend/tests/fixtures/dm-routing-golden/README.md) — `corpus.json`, misroute playbook, Jest regression (`dm-routing-golden-corpus.test.ts`), preview helper `dm-routing-clinical-idle-preview.ts`
+
+### Staff feedback learning — smart receptionist v2 (2026-04-12)
+
+Learn from **staff confirm / reassign / optional notes** with **shadow evaluation**, **doctor notification**, **explicit opt-in before autobook**, and **privacy-first** storage (structured features; no raw patient text in v1 without legal sign-off).
+
+- **Philosophy:** [AI_BOT_BUILDING_PHILOSOPHY.md](../Reference/product/receptionist-bot/AI_BOT_BUILDING_PHILOSOPHY.md) §9
+- **Daily plan:** [docs/Work/Daily-plans/April 2026/12-04-2026/README.md](../Work/Daily-plans/April%202026/12-04-2026/README.md)
+- **Initiative:** [STAFF_FEEDBACK_LEARNING_INITIATIVE.md](./STAFF_FEEDBACK_LEARNING_INITIATIVE.md)
+- **Tasks:** [e-task-learn-01](../Work/Daily-plans/April%202026/12-04-2026/tasks/e-task-learn-01-privacy-and-data-contract.md) … [e-task-learn-05](../Work/Daily-plans/April%202026/12-04-2026/tasks/e-task-learn-05-assist-ui-and-gated-autobook.md)
+
+### Patient ID (P-xxxxx) after payment — DM & booking copy (2026-04-14)
+
+Show **human-readable Patient ID** only **after successful payment**, not bundled with pre-payment booking DMs (preferred: **Option A** — messaging + post-payment send; optional **Option B** — defer DB MRN in `tm` file).
+
+- **Daily plan:** [docs/Work/Daily-plans/April 2026/14-04-2026/README.md](../Work/Daily-plans/April%202026/14-04-2026/README.md)
+- **Task file:** [tasks/tm-patient-mrn-post-payment-dm.md](./tasks/tm-patient-mrn-post-payment-dm.md)
+
+### AI Receptionist — Human-Like Bot (2026-03-26)
+
+Transform the bot from regex-heavy to AI-first: understand conversations, store data intelligently, respond like a human receptionist.
+
+- **Reference:** [AI_RECEPTIONIST_PLAN.md](./AI_RECEPTIONIST_PLAN.md)
+- **Tasks:** [docs/Archive/task-management/tasks/README.md](./tasks/README.md)
+
+Tasks: e-task-1 (AI-first extraction with context), e-task-2 (conversation-aware extraction), e-task-3 (human-like response generation), e-task-4 (simplify regex to fast-path only).
+
+### Teleconsultation (2026-03-21)
+
+In-app video consultations via Twilio Video. Doctor starts call from dashboard; patient joins via link. Platform verifies both participated for payout eligibility.
+
+- **Reference:** [TELECONSULTATION_INITIATIVE.md](./TELECONSULTATION_INITIATIVE.md), [TELECONSULTATION_PLAN.md](../Work/Daily-plans/March%202026/2026-03-21/TELECONSULTATION_PLAN.md)
+- **Daily plan:** [docs/Work/Daily-plans/March 2026/2026-03-21/README.md](../Work/Daily-plans/March%202026/2026-03-21/README.md)
+
+Tasks: e-task-1 (consultation migration), e-task-2 (Twilio Video service), e-task-3 (Consultation API), e-task-4 (Twilio status webhook), e-task-5 (PATCH appointment), e-task-6 (Frontend appointment + video), e-task-7 (Patient join page), e-task-8 (Send consultation link).
+
+### Patient Identity & Matching (2026-03-27)
+
+Patient identification, matching, deduplication, and Patients tab. Phone search + confirm (no ID required); Patient ID (MRN) as optional shortcut; doctor can merge duplicates.
+
+- **Reference:** [PATIENT_IDENTITY_AND_MATCHING.md](../Development/Future%20Planning/PATIENT_IDENTITY_AND_MATCHING.md)
+- **Daily plan:** [docs/Work/Daily-plans/March 2026/2026-03-27/README.md](../Work/Daily-plans/March%202026/2026-03-27/README.md)
+
+Tasks: e-task-1 (MRN column), e-task-2 (patient matching service), e-task-3 (list patients API), e-task-4 (Patients tab UI), e-task-5 (booking match confirmation), e-task-6 (merge patients), e-task-7 (patient ID in confirmation).
+
+### Services, modalities & follow-ups (2026-03-27 / 2026-03-28)
+
+Structured **service catalog** (text / voice / video + prices), **care episodes**, and **follow-up discount** quoting; integrates booking, payments, dashboard, and DM fee copy.
+
+- **Plan:** [PLAN-services-modalities-and-follow-ups.md](../Work/Daily-plans/March%202026/2026-03-27/services-and-follow-ups/PLAN-services-modalities-and-follow-ups.md)
+- **Task index:** [services-and-follow-ups/tasks/README.md](../Work/Daily-plans/March%202026/2026-03-27/services-and-follow-ups/tasks/README.md) — **SFU-01** … **SFU-09**
+
+Use [TASK_TEMPLATE.md](./TASK_TEMPLATE.md) and [CODE_CHANGE_RULES.md](./CODE_CHANGE_RULES.md) when executing.
+
+### Monetization — Platform Fee (2026-03-22)
+
+Implement Clariva's platform fee: 5% + GST (hybrid: < ₹500 → ₹25 flat + GST). Store platform_fee_minor, gst_minor, doctor_amount_minor for payouts and invoicing.
+
+- **Reference:** [MONETIZATION_INITIATIVE.md](./MONETIZATION_INITIATIVE.md)
+- **Daily plan:** [docs/Work/Daily-plans/March 2026/2026-03-22/README.md](../Work/Daily-plans/March%202026/2026-03-22/README.md)
+
+Tasks: e-task-1 (migration), e-task-2 (config), e-task-3 (payment service).
+
+### Consultation Verification v2 (2026-03-23)
+
+"Who left first" + 1-minute rule for video consultation payout eligibility. Doctor gets paid if: patient no-show, patient left first, or doctor left first but overlap ≥ 60 sec.
+
+- **Reference:** [CONSULTATION_VERIFICATION_V2.md](./CONSULTATION_VERIFICATION_V2.md), [CONSULTATION_VERIFICATION_STRATEGY.md](./CONSULTATION_VERIFICATION_STRATEGY.md)
+- **Daily plan:** [docs/Work/Daily-plans/March 2026/2026-03-23/README.md](../Work/Daily-plans/March%202026/2026-03-23/README.md)
+
+Tasks: e-task-1 (migration doctor_left_at, patient_left_at), e-task-2 (env MIN_VERIFIED 60), e-task-3 (participant-disconnected), e-task-4 (tryMarkVerified logic).
+
+### Add Appointment from Dashboard (2026-03-23)
+
+Doctors can add appointments from the appointments tab, with option to mark as free of cost. Patient selector (existing or walk-in), date/time from available slots, reason for visit, notes.
+
+- **Reference:** [ADD_APPOINTMENT_FROM_DASHBOARD.md](../Work/Daily-plans/March%202026/2026-03-23/Plans/ADD_APPOINTMENT_FROM_DASHBOARD.md)
+- **Daily plan:** [docs/Work/Daily-plans/March 2026/2026-03-23/README.md](../Work/Daily-plans/March%202026/2026-03-23/README.md)
+
+Tasks: e-task-5 (backend doctor create appointment API), e-task-6 (frontend Add Appointment modal), e-task-7 (integration & README).
+
+### Payout Initiative (2026-03-24)
+
+Doctor payouts with configurable schedule: per appointment, daily, weekly, or monthly. Uses Razorpay Route for India. Pay only after consultation verified.
+
+- **Reference:** [PAYOUT_INITIATIVE.md](./PAYOUT_INITIATIVE.md)
+- **Daily plan:** [docs/Work/Daily-plans/March 2026/2026-03-24/README.md](../Work/Daily-plans/March%202026/2026-03-24/README.md)
+
+Tasks: e-task-1 (payments payout columns), e-task-2 (doctor payout settings migration), e-task-3 (Razorpay Route adapter), e-task-4 (payout service + trigger on verified), e-task-5 (scheduled batch payouts), e-task-6 (doctor payout settings API).
+
+### Prescription V1 (2026-03-28)
+
+Structured SOAP prescription + photo upload (parchi). Store under patient; send to patient via Instagram DM and email; show previous prescriptions on appointment view.
+
+- **Reference:** [PRESCRIPTION_EHR_PLAN.md](../Work/Daily-plans/March%202026/2026-03-23/PRESCRIPTION_EHR_PLAN.md)
+- **Daily plan:** [docs/Work/Daily-plans/March 2026/2026-03-28/README.md](../Work/Daily-plans/March%202026/2026-03-28/README.md)
+
+Tasks: e-task-1 (prescription migration), e-task-2 (prescription service & API), e-task-3 (photo storage), e-task-4 (prescription form UI), e-task-5 (send to patient), e-task-6 (previous prescriptions view), e-task-7 (integration & README).
+
+---
+
+## 🔗 Related Documentation
+
+- [Task Management Guide](./TASK_MANAGEMENT_GUIDE.md)
+- [Task Template](./TASK_TEMPLATE.md)
+- [Code Change Rules](./CODE_CHANGE_RULES.md) — when changing existing code
+- [Coding Standards](../Reference/engineering/development/STANDARDS.md)
+- [Architecture Guide](../Reference/engineering/architecture/ARCHITECTURE.md)
+- [Recipes](../Reference/engineering/development/RECIPES.md)
+- [Compliance Guide](../Reference/engineering/compliance/COMPLIANCE.md)
+
+---
+
+**Last Updated:** 2026-03-31  
+**Version:** 2.12.1 (Staff feedback learning: plan phase mapping, pattern-key doc path, ops notes)

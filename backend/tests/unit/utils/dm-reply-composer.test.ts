@@ -1,0 +1,125 @@
+import { describe, expect, it } from '@jest/globals';
+import {
+  composeIdleFeeQuoteDm,
+  composeMidCollectionFeeQuoteDm,
+  composeDmReplySegments,
+  formatMidCollectionAfterFeeBlock,
+  formatWelcomeBackSegment,
+} from '../../../src/utils/dm-reply-composer';
+import type { DoctorSettingsRow } from '../../../src/types/doctor-settings';
+import { deterministicServiceIdForLegacyOffering } from '../../../src/utils/service-catalog-schema';
+
+/** Minimal row for fee formatters (other columns unused). */
+const catalogFixture = {
+  version: 1 as const,
+  services: [
+    {
+      service_id: deterministicServiceIdForLegacyOffering('doc-1', 'only'),
+      service_key: 'only',
+      label: 'Solo Service',
+      modalities: { video: { enabled: true, price_minor: 123_45 } },
+    },
+  ],
+};
+
+const feeFixture = {
+  doctor_id: 'doc-1',
+  appointment_fee_minor: null,
+  appointment_fee_currency: null,
+  country: null,
+  practice_name: 'Test Clinic',
+  timezone: 'Asia/Kolkata',
+  slot_interval_minutes: 30,
+  max_advance_booking_days: 90,
+  min_advance_hours: 1,
+  business_hours_summary: 'Mon–Fri 9–5',
+  cancellation_policy_hours: null,
+  max_appointments_per_day: null,
+  booking_buffer_minutes: null,
+  welcome_message: null,
+  specialty: null,
+  address_summary: null,
+  consultation_types: 'In-person ₹500, Video ₹400',
+  service_offerings_json: null as typeof catalogFixture | null,
+  service_catalog_templates_json: { templates: [] },
+  default_notes: null,
+  payout_schedule: null,
+  payout_minor: null,
+  razorpay_linked_account_id: null,
+  opd_mode: 'slot' as const,
+  opd_policies: null,
+  instagram_receptionist_paused: false,
+  instagram_receptionist_pause_message: null,
+  catalog_mode: null,
+  patient_flow_advance: 'countdown' as const,
+  auto_no_show_after_min: null,
+  cockpit_layout_presets: [],
+  cockpit_template_override: null,
+  created_at: '',
+  updated_at: '',
+} satisfies DoctorSettingsRow;
+
+describe('dm-reply-composer (RBH-19)', () => {
+  it('composeIdleFeeQuoteDm joins fee body and booking CTA with exact ₹ from settings', () => {
+    const out = composeIdleFeeQuoteDm(feeFixture, 'how much is consultation');
+    expect(out).toContain('**In-person**');
+    expect(out).toContain('₹500');
+    expect(out).toContain('₹400');
+    expect(out).toContain('**book appointment**');
+    expect(out.indexOf('₹500')).toBeLessThan(out.indexOf('book appointment'));
+  });
+
+  it('composeMidCollectionFeeQuoteDm adds localized continue block after fees (English)', () => {
+    const out = composeMidCollectionFeeQuoteDm(feeFixture, 'what is the fee', {
+      collectedFields: ['name'],
+    });
+    expect(out).toContain('₹500');
+    expect(out).toContain('---');
+    expect(out).toContain('Please continue sharing any booking details');
+    expect(out).toMatch(/Still needed:.*mobile number/i);
+  });
+
+  it('composeMidCollectionFeeQuoteDm uses Roman Hindi footer for Hinglish pricing during intake', () => {
+    const out = composeMidCollectionFeeQuoteDm(feeFixture, 'kitna charge hai', {
+      collectedFields: [],
+    });
+    expect(out).toContain('₹500');
+    expect(out).toContain('---');
+    expect(out).toContain('Booking complete karne ke liye');
+  });
+
+  it('composeIdleFeeQuoteDm uses catalog when service_offerings_json set (SFU-08)', () => {
+    const withCat = { ...feeFixture, service_offerings_json: catalogFixture, consultation_types: 'ignored' };
+    const out = composeIdleFeeQuoteDm(withCat, 'fees please');
+    expect(out).toContain('Solo Service');
+    expect(out).toContain('₹123.45');
+    expect(out).not.toContain('₹500');
+    expect(out).toContain('**book appointment**');
+  });
+
+  it('formatMidCollectionAfterFeeBlock omits missing line when all required fields present', () => {
+    const block = formatMidCollectionAfterFeeBlock('ok', []);
+    expect(block).toContain('---');
+    expect(block).not.toMatch(/Still needed/i);
+    expect(block).not.toMatch(/mobile number/i);
+  });
+
+  it('formatWelcomeBackSegment uses first name and coarse recency (rcp-21)', () => {
+    expect(
+      formatWelcomeBackSegment({ firstName: 'Priya', recencyBucket: 'within_3_months' })
+    ).toBe("Welcome back, **Priya**! It's good to hear from you again.");
+    expect(formatWelcomeBackSegment({ recencyBucket: 'over_1_year' })).toBe(
+      "Welcome back! It's been quite a while — glad you're in touch."
+    );
+    expect(formatWelcomeBackSegment({ firstName: 'Priya' })).toBe('Welcome back, **Priya**!');
+  });
+
+  it('composeDmReplySegments prepends welcome_back before AI markdown (rcp-21)', () => {
+    const out = composeDmReplySegments([
+      { kind: 'welcome_back', firstName: 'Priya', recencyBucket: 'within_1_month' },
+      { kind: 'markdown', content: 'How can I help you today?' },
+    ]);
+    expect(out.startsWith('Welcome back, **Priya**! Great to hear from you again.')).toBe(true);
+    expect(out).toContain('How can I help you today?');
+  });
+});

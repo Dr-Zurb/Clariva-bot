@@ -1,0 +1,47 @@
+# 18 May 2026 — Daily plans
+
+One batch lands (or is landing) on this day, filed in a self-contained subfolder with its own plan + `Tasks/` tree.
+
+| Folder | Batch | Status | What it covers |
+|---|---|---|---|
+| [`patients-redesign/`](./patients-redesign/) | **Patients tab redesign — Phase 1** (pr-01 … pr-14) | **Completed 2026-05-20** | Replaces the two threadbare surfaces behind the **Patients** sidebar item — `/dashboard/patients` (single-filter card list with no KPIs, no segments, client-side search) and `/dashboard/patients/[id]` (3-zone grid with a placeholder "Files" tab and flat Visits / Conversations lists) — with a doctor-grade EHR home: KPI-strip + server-side search + segments + saved-views + sortable table on the list; identity strip + 6-visit dot breadcrumb + Overview / Visits / Conversations / Rx / Vitals / Files / Audit tabs on the detail page. Built side-by-side at `/dashboard/patients-v2/**`, validated for parity, flipped after a 3-day soak, then the v1 surface is deleted. Reuses the recursive `<PatientProfileShell>` + `PaneDefinition` contract from the [ppr](../13-05-2026/patient-profile-shell-rebuild/) batch and the `SplitStartButton` + `CockpitHeader` patterns from the [cockpit-customization](../10-05-2026/cockpit-customization/) batch — no new shell primitives. **~6 dev-days, 14 tasks, 6 waves, zero new migrations, 1 Opus task** (the PHI-aggregating overview endpoint). |
+
+## Why this batch follows yesterday
+
+The cockpit-side has been the focus for two months (the [`cockpit-customization`](../10-05-2026/cockpit-customization/), [`patient-profile-shell-rebuild`](../13-05-2026/patient-profile-shell-rebuild/), and [`cockpit-v2`](../17-05-2026/cockpit-v2/) batches each rebuilt or extended the active-consult surface). Meanwhile the **Patients** sidebar item still points at the e-task-3 / e-task-4 list page from the early EHR work and a `PatientCockpit.tsx` whose three tabs are Visits, Conversations, and an unimplemented "Files" placeholder. Opening the page after spending a day inside the new cockpit feels like opening a different product. Three concrete problems compound:
+
+1. **The list is a dead end.** One name-search field, no KPIs, no segments, no saved views, no quick-peek; every row is the same card chrome. Filtering happens client-side after a full-table fetch, so it doesn't scale past a few hundred patients.
+2. **The detail page has no medical home.** `PatientCockpit.tsx` shows three tabs — Visits (a flat list of *all* the doctor's appointments client-side filtered by patient_id), Conversations (same fetch path), and Files (literally a paperclip icon + "No files uploaded yet"). The right rail shows the same Latest-Visit / Open-Episodes / Allergies cards available everywhere else in the EHR. Nothing on this page tells the doctor what's *next* for this patient — no care-plan banner, no overdue follow-ups, no risk flags, no vitals trends.
+3. **The chart context the cockpit already computes goes unused.** Allergies, chronic conditions, problem list, vitals readings, prior prescriptions — all of it is fetched and rendered inside the active-consult cockpit via `<PatientChartPanel>`, but the standalone patient page reads almost none of it. The page that *should* be the doctor's EHR home is the page that uses the least of the EHR.
+
+The decision (locked 2026-05-18 in [`patients-redesign/plan-patients-redesign-batch.md`](./patients-redesign/plan-patients-redesign-batch.md)): rebuild both surfaces side-by-side at `/dashboard/patients-v2/**`, reuse the recursive shell + `PaneDefinition` contract from ppr / cockpit-v2 rather than ship a third shell, and treat the existing chart-context endpoints as the data source the new Overview tab consumes through a single aggregator. Strangler Fig — new route, port content by reference, validate parity, flip, soak, delete.
+
+## How to start
+
+If you're picking up `patients-redesign`:
+
+1. Read the [source plan](./patients-redesign/plan-patients-redesign-batch.md) once for context — it locks the 14 decisions (DL-1..DL-14) governing the side-by-side route, the segment / saved-view model, the Overview-tab aggregator shape, the tab inventory, the reuse-not-rebuild stance on the shell, and the soak-then-delete cutover plan.
+2. Open [`patients-redesign/Tasks/EXECUTION-ORDER-patients-redesign.md`](./patients-redesign/Tasks/EXECUTION-ORDER-patients-redesign.md) for the wave / lane matrix and model picks. Per [`AGENT-EXECUTION-EFFICIENCY-GUIDE.md`](../../AGENT-EXECUTION-EFFICIENCY-GUIDE.md) TL;DR rule #1 (**plan with Opus, execute with Auto, polish with Composer**), this batch has **one Opus task** (pr-03 — the PHI-aggregating overview endpoint, hard-rules list rules #1 + #2); every other task defaults to Auto except pr-13 (Composer 2 Fast for the nav cutover).
+3. **Pre-load the ppr / cv2 shell artefacts aggressively.** `frontend/components/patient-profile/Shell.tsx` (the recursive shell from cv2-01), `frontend/lib/patient-profile/types.ts` (the `PaneDefinition` contract), and `frontend/components/patient-profile/PatientProfilePage.tsx` (the mount pattern) are the patterns pr-09 reuses for the detail page. The `<SplitStartButton>` + `<KebabMenu>` patterns in `frontend/components/patient-profile/PatientProfileHeader.tsx` (cp-09) are the identity-strip primitives pr-09 reuses for the patient-page header. **Do not build a new shell** — DL-7 in the source plan forbids it.
+4. **Pre-load the existing chart-context API surface.** `backend/src/controllers/patient-chart-controller.ts`, `backend/src/services/patient-chart-service.ts`, and the existing `frontend/lib/api/patient-chart.ts` client. pr-03's overview aggregator composes those existing queries server-side into a single round-trip — it does not replace them, it just bundles them.
+5. **Three dead components to delete in pr-14** — `frontend/components/patients/PatientDetailRail.tsx`, `frontend/components/patients/PatientDetailWorkArea.tsx`, `frontend/components/patients/PatientPrescriptions.tsx`. None are imported anywhere (`rg "PatientDetailRail\|PatientDetailWorkArea\|PatientPrescriptions" frontend/app frontend/components | grep -v patients/PatientDetail | grep -v patients/PatientPrescriptions` returns zero). They confuse codebase search and should ride along with the v1 deletion sweep.
+
+## Cross-day predecessors
+
+- [Daily-plans/May 2026/13-05-2026/patient-profile-shell-rebuild/](../13-05-2026/patient-profile-shell-rebuild/) — the foundation `<PatientProfileShell>` + `PaneDefinition` contract this batch's detail-page tabs mount under. **Must be merged before pr-09 starts.** pr-09 reuses the exact same shell mount pattern as `frontend/components/patient-profile/PatientProfilePage.tsx`.
+- [Daily-plans/May 2026/17-05-2026/cockpit-v2/](../17-05-2026/cockpit-v2/) — the recursive shell + `PaneDefinition.children` activation. The patient-page detail shell doesn't *need* nested splits (tabs are a flat list of `PaneDefinition`), but the same renderer powers both. If cv2-01 hasn't merged, this batch can stack on `feature/cockpit-v2-recursive-shell`; the linear `PaneDefinition[]` shape works on either pre- or post-cv2-01 shells.
+- [Daily-plans/May 2026/10-05-2026/cockpit-customization/](../10-05-2026/cockpit-customization/) — the preset/layout-presets backend (`doctor_cockpit_layout_presets` table from cc-08, the `usePatientProfilePresets` hook from cc-10). pr-06 reuses the same persistence pattern for "saved views" on the list page (segment + sort + filter combos persisted per-doctor); pr-09 does **not** wire layout presets on the detail page in Phase 1 (Phase 2 will).
+- [Daily-plans/May 2026/06-05-2026/](../06-05-2026/) — early EHR work; the `e-task-3` / `e-task-4` list endpoint pr-02 extends, and the `PatientChartPanel` sections pr-03's aggregator queries against.
+- [backend/migrations/087_patient_chart_context.sql](../../../../backend/migrations/087_patient_chart_context.sql) — the chart-context schema. **No new migrations in this batch.** pr-03's aggregator composes existing queries; pr-02's filter parameters use existing columns. The only schema-adjacent work is a single `idx_appointments_patient_id` index check (added if not already present), gated to Sonnet because adding a covering index is not on the hard-rules list (no RLS or PHI shape change).
+
+## Concurrent batches
+
+### Within the day (2026-05-18)
+
+Single batch on this day — no parallel scheduling needed.
+
+### Cross-day
+
+- `cockpit-v2/` (17-05-2026) and this batch touch **partially overlapping file trees**: both extend `frontend/lib/patient-profile/types.ts` (cv2-01 adds `direction?` on `PaneDefinition`; this batch does not extend the type at all, only consumes it). If cv2-01 has not merged when this batch starts, stack on `feature/cockpit-v2-recursive-shell`. Otherwise both can ship in parallel since:
+  - This batch's new files all live under `frontend/components/patients-v2/**`, `frontend/lib/patient-profile/patient-page-templates.ts` (new), `frontend/app/dashboard/patients-v2/**`, `backend/src/controllers/patient-overview-controller.ts` (new), `backend/src/services/patient-overview-service.ts` (new), and the touched-but-not-conflicting `backend/src/controllers/patient-controller.ts` (pr-02 adds query params; cv2 does not touch this file).
+  - `rg --files frontend/components/patients-v2 frontend/components/patient-profile/panes` returns disjoint sets across the two batches' new files.

@@ -1,0 +1,46 @@
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Build
+.next
+out
+build
+dist
+
+# Env (never commit secrets)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Twilio Video Processors runtime assets — copied into public/ by
+# scripts/copy-twilio-video-processors-assets.mjs (postinstall).
+# The bytes change with the package version pinned in package.json /
+# package-lock.json; checking them in would bloat history with
+# multi-MB WASM/TFLite files on every bump. Per Sub-batch C task-video-C2.
+public/twilio-video-processors-assets/

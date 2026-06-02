@@ -1,0 +1,9 @@
+{
+  "step": "responded",
+  "activeFlow": "fee_quote",
+  "lastPromptKind": "fee_quote",
+  "lastMedicalDeflectionAt": "2026-05-27T08:00:00.000Z",
+  "reasonFirstTriagePhase": "ask_more",
+  "postMedicalConsultFeeAckSent": true,
+  "updatedAt": "2026-05-28T14:00:00.000Z"
+}

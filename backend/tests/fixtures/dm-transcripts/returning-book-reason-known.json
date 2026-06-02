@@ -1,0 +1,11 @@
+{
+  "id": "returning_book_reason_known",
+  "description": "rcp-22: returning consented patient with reason in state — straight to slot link.",
+  "expectedBranch": "booking_start_returning_ready",
+  "when": {
+    "intent": "book_appointment",
+    "just_starting_collection": true,
+    "returning_memory_ready": true,
+    "reason_for_visit_in_state": true
+  }
+}

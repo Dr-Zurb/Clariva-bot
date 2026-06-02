@@ -1,0 +1,249 @@
+/**
+ * RBH-15: Localized, non-diagnostic safety copy for medical_query + emergency.
+ * No treatment advice; emergency = seek professional / local emergency numbers (India 112/108).
+ */
+
+export type SafetyMessageLocale = 'en' | 'hi' | 'pa';
+export type SafetyMessageKind = 'medical_query' | 'emergency';
+
+/** English defaults (backward compatible exports). */
+export const MEDICAL_QUERY_RESPONSE_EN =
+  "I'm the scheduling assistant. I can't give medical advice here. Book a teleconsult through this chat, or discuss your concerns with the doctor during your visit.";
+
+export const EMERGENCY_RESPONSE_EN =
+  'Please call emergency services (in India: **112** or **108**) or go to the nearest hospital immediately.';
+
+const MEDICAL_QUERY_BY_LOCALE: Record<SafetyMessageLocale, string> = {
+  en: MEDICAL_QUERY_RESPONSE_EN,
+  hi: 'मैं अपॉइंटमेंट बुक करने में मदद करने वाला सहायक हूँ। मैं यहाँ चिकित्सा सलाह नहीं दे सकता। कृपया इस चैट से टेलीकंसल्ट बुक करें, या विज़िट के दौरान डॉक्टर से अपनी बात साझा करें।',
+  pa: 'ਮੈਂ ਸਿਰਫ਼ ਅਪਾਇੰਟਮੈਂਟ ਲਈ ਸਹਾਇਕ ਹਾਂ। ਮੈਂ ਇੱਥੇ ਵੈਦਕ ਸਲਾਹ ਨਹੀਂ ਦੇ ਸਕਦਾ। ਕਿਰਪਾ ਕਰਕੇ ਇਸ ਚੈਟ ਰਾਹੀਂ ਟੈਲੀਕੰਸਲਟ ਬੁੱਕ ਕਰੋ, ਜਾਂ ਦੌਰਾਨ ਡਾਕਟਰ ਨਾਲ ਗੱਲ ਕਰੋ।',
+};
+
+/** Roman Hindi - for users typing Hinglish without Devanagari */
+const MEDICAL_QUERY_LATIN_HI =
+  'Main appointment booking assistant hoon. Main yahan medical advice nahi de sakta. Kripaya is chat se teleconsult book karein, ya visit ke dauran doctor se baat karein.';
+
+/** Roman Punjabi */
+const MEDICAL_QUERY_LATIN_PA =
+  'Main sirf appointment layi assistant haan. Main ithe medical salah nahi de sakda. Kirpa karke is chat rahi teleconsult book karo, jaan visit dauran doctor naal gal karo.';
+
+const EMERGENCY_BY_LOCALE: Record<SafetyMessageLocale, string> = {
+  en: EMERGENCY_RESPONSE_EN,
+  hi: 'कृपया तुरंत आपातकालीन सेवा को कॉल करें (भारत: **112** या **108**) या नज़दीकी अस्पताल जाएं।',
+  pa: 'ਕਿਰਪਾ ਕਰਕੇ ਤੁਰੰਤ ਐਮਰਜੈਂਸੀ ਸੇਵਾ ਨੂੰ ਕਾਲ ਕਰੋ (ਭਾਰਤ: **112** ਜਾਂ **108**) ਜਾਂ ਨੇੜਲੇ ਹਸਪਤਾਲ ਜਾਓ।',
+};
+
+const EMERGENCY_LATIN_HI =
+  'Kripaya turant emergency service ko call karein (Bharat: **112** ya **108**) ya nazdeeki hospital jayein.';
+
+const EMERGENCY_LATIN_PA =
+  'Kirpa karke turant emergency nu call karo (Bharat: **112** jaan **108**) jaan nazdeeki hospital jao.';
+
+/**
+ * Guess locale from script + common Latin transliterations (no LLM).
+ *
+ * **Patient language rule:** Reply locale follows the patient's message. Avoid false positives:
+ * - Do **not** treat English `doc` (doctor) as Hindi; use real Hinglish/Hindi tokens only.
+ * - Do **not** treat English `sans` (e.g. font names) as `saans`; breath is usually `saans` / `saas` + context.
+ */
+export function detectSafetyMessageLocale(raw: string): SafetyMessageLocale {
+  const t = raw.trim();
+  if (!t) return 'en';
+  // Gurmukhi (Punjabi)
+  if (/[\u0A00-\u0A7F]/.test(t)) return 'pa';
+  // Devanagari (Hindi and similar)
+  if (/[\u0900-\u097F]/.test(t)) return 'hi';
+
+  const lower = t.toLowerCase();
+  // Latin Punjabi markers (prefer before Hindi when strong cues)
+  if (
+    /\b(menu|meri|mera|naal|vich|chhati|chhaati|behosh|behoshi|punjabi)\b/i.test(t) ||
+    /\b(menu\s+(tin|ten|ik|do)|meri\s+chhati|saas\s+nahi|sass\s+nahi)\b/i.test(lower)
+  ) {
+    return 'pa';
+  }
+  // Latin Hindi / Hinglish markers (incl. fee questions: kitni fees, acha kitna, etc.)
+  if (
+    /\b(mujhe|mere|mera|meri|kya|hai|hain|nahi|nahin|dard|bukhar|bukhhaar|khansi|khans|jukam|jukaam|saans|chakkar|ulti|tabiyat|beech)\b/i.test(
+      t
+    ) ||
+    /\b(saas|saans|sans)\s+nahi\b/i.test(lower) ||
+    /\b(pet\s+dard|sir\s+dard|kitni\s+din)\b/i.test(lower) ||
+    /\b(kitni|kitna|kitne|acha|accha|bolo|bhai|yaar|yar|toh|theek|thik|rupaye|rupiya|paise|paisa|zada|zyada|goli|batado|batao|bohut)\b/i.test(
+      lower
+    )
+  ) {
+    return 'hi';
+  }
+  return 'en';
+}
+
+export function resolveSafetyMessage(kind: SafetyMessageKind, userText: string): string {
+  const locale = detectSafetyMessageLocale(userText);
+  const hasDevanagari = /[\u0900-\u097F]/.test(userText);
+  const hasGurmukhi = /[\u0A00-\u0A7F]/.test(userText);
+
+  if (kind === 'emergency') {
+    if (locale === 'hi' && !hasDevanagari) return EMERGENCY_LATIN_HI;
+    if (locale === 'pa' && !hasGurmukhi) return EMERGENCY_LATIN_PA;
+    return EMERGENCY_BY_LOCALE[locale];
+  }
+
+  if (locale === 'hi' && !hasDevanagari) return MEDICAL_QUERY_LATIN_HI;
+  if (locale === 'pa' && !hasGurmukhi) return MEDICAL_QUERY_LATIN_PA;
+  return MEDICAL_QUERY_BY_LOCALE[locale];
+}
+
+// ---------------------------------------------------------------------------
+// Emergency signal detection (keyword / phrase; deterministic, no logging)
+// ---------------------------------------------------------------------------
+
+const EMERGENCY_PATTERNS_EN: RegExp[] = [
+  /\b(chest\s+pain|can'?t\s+breathe|cannot\s+breathe|difficulty\s+breathing)\b/i,
+  /\b(getting\s+worse|worsening|feel\s+worse|much\s+worse)\b/i,
+  /\b(heart\s+attack|stroke|unconscious)\b/i,
+  /\b(bleeding\s+heavily|uncontrolled\s+bleeding)\b/i,
+  /\b(severe\s+pain|critical\s+condition)\b/i,
+  /\b(poison(ing)?|swallowed\s+poison|consumed\s+poison)\b/i,
+  /\b(faint(ed|ing)?|passed\s+out|collapse(d)?)\b/i,
+  /\b(accident|car\s+crash|road\s+accident)\b/i,
+  /\b(emergency\s+(services|help|room)|need\s+emergency\s+help)\b/i,
+];
+
+/** Hindi / Hinglish (Devanagari + Latin) */
+const EMERGENCY_PATTERNS_HI: RegExp[] = [
+  /छाती\s*(में\s*)?दर्द/,
+  /साँस\s*(नहीं|नहीं\s*आ)/,
+  /दम\s*घुट/,
+  /बेहोश|अचेत/,
+  /दुर्घटना|खून\s*बह/,
+  /ज़हर|विष(?:\s*खा)?/,
+  /\b(chhaati\s+mein\s+dard|saans\s+nahi|saas\s+nahi|sans\s+nahi|dam\s+ghut|behosh|durghatna|khoon)\b/i,
+  /\b(chest\s+dard)\b/i,
+];
+
+/** Punjabi Gurmukhi + common Latin transliteration */
+const EMERGENCY_PATTERNS_PA: RegExp[] = [
+  /ਛਾਤੀ(\s*ਵਿੱਚ)?\s*ਦਰਦ/,
+  /ਸਾਸ\s*(ਨਹੀਂ|ਨ\s*ਆ)/,
+  /ਬੇਹੋਸ਼|ਬੇ\s*ਹੋਸ਼/,
+  /ਦੁਰਘਟਨਾ|ਜ਼ਹਿਰ/,
+  /\b(chhati\s+vich\s+dard|chhaati\s+vich\s+dard)\b/i,
+  /\b(saas\s+nahi|sass\s+nahi)\b/i,
+  /\b(behosh|zehar|zahar|khoon)\b/i,
+  /\b(meri\s+chhati|menu\s+saans)\b/i,
+];
+
+const ALL_EMERGENCY_PATTERNS: RegExp[] = [
+  ...EMERGENCY_PATTERNS_EN,
+  ...EMERGENCY_PATTERNS_HI,
+  ...EMERGENCY_PATTERNS_PA,
+];
+
+/**
+ * Plausible BP readings from patient text (slash or hyphen). Filters obvious non-BP pairs (dates, 24/7).
+ * When multiple pairs exist, callers should prefer the **last** pair — patients often report crisis first, then current.
+ *
+ * **Scope:** Used only for `applyEmergencyIntentPostPolicy` (avoid wrongly downgrading **repeat** emergency
+ * when crisis-level vitals are still present). **Primary** routing for “is this an emergency?” is the
+ * intent classifier with **conversation context** — not this parser (see AI_BOT_BUILDING_PHILOSOPHY.md §2–3).
+ */
+export function parsePlausibleBloodPressurePairs(text: string): { systolic: number; diastolic: number }[] {
+  const t = text.trim();
+  if (t.length < 3) return [];
+  const out: { systolic: number; diastolic: number }[] = [];
+  const re = /\b(\d{2,3})\s*[/\-]\s*(\d{2,3})\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t)) !== null) {
+    let sys = parseInt(m[1]!, 10);
+    let dia = parseInt(m[2]!, 10);
+    if (Number.isNaN(sys) || Number.isNaN(dia)) continue;
+    // Typical typo: values reversed (e.g. 110/200 meant 200/110)
+    if (dia > sys) {
+      [sys, dia] = [dia, sys];
+    }
+    if (sys < 40 || sys > 300 || dia < 30 || dia > 200) continue;
+    if (sys < dia) continue;
+    out.push({ systolic: sys, diastolic: dia });
+  }
+  return out;
+}
+
+/** Hypertensive crisis–range BP (common threshold: systolic ≥180 and/or diastolic ≥120). */
+const CRISIS_SYS = 180;
+const CRISIS_DIA = 120;
+
+export function bloodPressurePairIsHypertensiveCrisis(pair: {
+  systolic: number;
+  diastolic: number;
+}): boolean {
+  return pair.systolic >= CRISIS_SYS || pair.diastolic >= CRISIS_DIA;
+}
+
+/**
+ * True when the patient's **current** reported BP (last plausible pair in the message) is in hypertensive crisis range.
+ * If two pairs appear (e.g. "was 200/100, now 135/85"), the last pair wins so stabilization routes to medical_query / booking, not EMS.
+ */
+export function messageHasHypertensiveCrisisBloodPressureReading(text: string): boolean {
+  const pairs = parsePlausibleBloodPressurePairs(text);
+  if (pairs.length === 0) return false;
+  const last = pairs[pairs.length - 1]!;
+  return bloodPressurePairIsHypertensiveCrisis(last);
+}
+
+/**
+ * After an emergency escalation in-thread, patient clarifies **stability** or gives **non-crisis** vitals.
+ * Used to route to booking resume (AI) instead of generic medical deflection. Not a clinical diagnosis.
+ */
+export function userMessageSignalsPostEmergencyStability(text: string): boolean {
+  if (messageHasHypertensiveCrisisBloodPressureReading(text)) return false;
+  const t = text.trim().toLowerCase();
+  if (t.length < 3) return false;
+  if (
+    /\b(stable|stabilized|better|improved|ok now|fine now|under control|feeling better|no other symptom|now its okay|now it's okay|now okay|okay now|all good|its okay|it's okay)\b/.test(
+      t
+    )
+  ) {
+    return true;
+  }
+  const pairs = parsePlausibleBloodPressurePairs(text);
+  if (pairs.length === 0) return false;
+  const last = pairs[pairs.length - 1]!;
+  return !bloodPressurePairIsHypertensiveCrisis(last);
+}
+
+/**
+ * Deterministic **acute-phrase** emergency signals (latency, obvious EMS language).
+ * Does **not** include BP numbers — vitals/crisis vs stable vs booking-safe is assessed by the **intent
+ * classifier** using full-thread context (LLM). See `messageHasHypertensiveCrisisBloodPressureReading` only
+ * for post-escalation repeat policy.
+ */
+export function isEmergencyUserMessage(text: string): boolean {
+  const t = text.trim();
+  if (t.length > 500) return false;
+  if (/\bemergency\s+appointment\b/i.test(t)) return false;
+  if (/\burgent\s+appointment\b/i.test(t)) return false;
+  return ALL_EMERGENCY_PATTERNS.some((p) => p.test(t));
+}
+
+/**
+ * True when an assistant line is the standard emergency escalation (India 112/108 + hospital),
+ * including localized variants that still mention those numbers.
+ */
+export function assistantMessageIsEmergencyEscalationCopy(text: string): boolean {
+  const c = text.trim().toLowerCase();
+  if (c.length < 15) return false;
+  return /\b(112|108)\b/.test(c) && /\b(emergency|hospital)\b/i.test(c);
+}
+
+/** True if any assistant/system line in the thread is canonical emergency escalation (not only the last bot line). */
+export function recentThreadHasAssistantEmergencyEscalation(
+  recentMessages: { sender_type: string; content: string }[]
+): boolean {
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    if (recentMessages[i].sender_type === 'patient') continue;
+    const c = (recentMessages[i].content ?? '').trim();
+    if (c && assistantMessageIsEmergencyEscalationCopy(c)) return true;
+  }
+  return false;
+}

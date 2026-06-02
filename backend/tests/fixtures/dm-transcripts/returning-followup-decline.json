@@ -1,0 +1,9 @@
+{
+  "id": "returning_followup_decline",
+  "description": "rcp-23: returning patient declines follow-up — normal matcher path.",
+  "expectedBranch": "returning_followup_confirm_decline",
+  "when": {
+    "intent": "greeting",
+    "returning_followup_reply": "decline"
+  }
+}

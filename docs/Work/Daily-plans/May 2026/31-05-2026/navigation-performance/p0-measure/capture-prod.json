@@ -1,0 +1,96 @@
+[dotenv@17.2.3] injecting env (7) from .env.local -- tip: 👥 sync secrets across teammates & machines: https://dotenvx.com/ops
+{
+  "mode": "prod",
+  "baseURL": "http://localhost:3004/",
+  "capturedAt": "2026-05-31T05:46:15.576Z",
+  "results": [
+    {
+      "surface": "today",
+      "kind": "cold",
+      "clickToFcpMs": 612,
+      "apiRequestCount": 9,
+      "apiDurations": {
+        "count": 0,
+        "p50": null,
+        "p95": null
+      }
+    },
+    {
+      "surface": "opd",
+      "kind": "cold",
+      "clickToFcpMs": 44,
+      "apiRequestCount": 2,
+      "apiDurations": {
+        "count": 0,
+        "p50": null,
+        "p95": null
+      }
+    },
+    {
+      "surface": "patients-list",
+      "kind": "cold",
+      "clickToFcpMs": 533,
+      "apiRequestCount": 4,
+      "apiDurations": {
+        "count": 0,
+        "p50": null,
+        "p95": null
+      }
+    },
+    {
+      "surface": "patient-detail",
+      "kind": "cold",
+      "clickToFcpMs": 2894,
+      "apiRequestCount": 0,
+      "apiDurations": {
+        "count": 0,
+        "p50": null,
+        "p95": null
+      }
+    },
+    {
+      "surface": "today",
+      "kind": "repeat",
+      "clickToFcpMs": 517,
+      "apiRequestCount": 9,
+      "apiDurations": {
+        "count": 0,
+        "p50": null,
+        "p95": null
+      }
+    },
+    {
+      "surface": "opd",
+      "kind": "repeat",
+      "clickToFcpMs": 517,
+      "apiRequestCount": 2,
+      "apiDurations": {
+        "count": 0,
+        "p50": null,
+        "p95": null
+      }
+    },
+    {
+      "surface": "patients-list",
+      "kind": "repeat",
+      "clickToFcpMs": 531,
+      "apiRequestCount": 4,
+      "apiDurations": {
+        "count": 0,
+        "p50": null,
+        "p95": null
+      }
+    },
+    {
+      "surface": "patient-detail",
+      "kind": "repeat",
+      "clickToFcpMs": 2788,
+      "apiRequestCount": 0,
+      "apiDurations": {
+        "count": 0,
+        "p50": null,
+        "p95": null
+      }
+    }
+  ]
+}

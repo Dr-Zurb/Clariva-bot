@@ -1,0 +1,116 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================================
+ * UI-1 — Design tokens (semantic CSS variables)
+ *
+ * Read by the semantic color names in tailwind.config.ts. New components
+ * use `bg-primary` / `text-foreground` / `border-border`; legacy raw classes
+ * (`bg-blue-600`, etc.) keep working because we only EXTEND the default
+ * Tailwind palette.
+ *
+ * Default palette (locked 2026-05-05 in plan-ui-system-redesign.md UI-D3):
+ *   - Primary  : teal-700 family   (HSL 188 70% 30%)
+ *   - Accent   : amber-500 family  (HSL 38 92% 50%)
+ *   - Neutrals : slate ramp
+ *   - Status   : emerald (success) / amber (warning) / rose (destructive)
+ *                / sky (info)
+ *
+ * `.dark` block is prepared so any later theme toggle can ship without
+ * touching components. No toggle ships in this batch.
+ * ========================================================================== */
+
+@layer base {
+  :root {
+    /* Surfaces */
+    --background: 0 0% 100%;            /* white */
+    --foreground: 222 47% 11%;          /* slate-900 */
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    /* Brand */
+    --primary: 188 70% 30%;             /* teal-700 ish — clinical, trust-coded */
+    --primary-foreground: 0 0% 100%;
+    --accent: 38 92% 50%;               /* amber-500 — completion / "Sent" */
+    --accent-foreground: 24 10% 10%;
+
+    /* Neutrals */
+    --secondary: 210 40% 96%;           /* slate-100 */
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;    /* slate-500 ish */
+
+    /* Lines & focus */
+    --border: 214 32% 91%;              /* slate-200 */
+    --input: 214 32% 91%;
+    --ring: 188 70% 30%;                /* match primary */
+
+    /* Status (only used in chips / banners — never as page bg per UI-D3) */
+    --destructive: 0 72% 51%;           /* rose-600 ish */
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 71% 38%;             /* emerald-600 */
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;              /* amber-500 */
+    --warning-foreground: 24 10% 10%;
+    --info: 199 89% 48%;                /* sky-500 */
+    --info-foreground: 0 0% 100%;
+
+    /* Radius */
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 222 47% 7%;
+    --foreground: 210 40% 98%;
+    --card: 222 47% 9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222 47% 9%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 188 65% 45%;
+    --primary-foreground: 222 47% 7%;
+    --accent: 38 92% 55%;
+    --accent-foreground: 24 10% 10%;
+
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+
+    --border: 217 33% 17%;
+    --input: 217 33% 17%;
+    --ring: 188 65% 45%;
+
+    --destructive: 0 63% 50%;
+    --destructive-foreground: 210 40% 98%;
+    --success: 142 60% 45%;
+    --success-foreground: 222 47% 7%;
+    --warning: 38 92% 55%;
+    --warning-foreground: 24 10% 10%;
+    --info: 199 89% 55%;
+    --info-foreground: 222 47% 7%;
+  }
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-feature-settings:
+      "cv11" on,
+      "ss01" on;
+  }
+}
+
+@layer utilities {
+  /* Apply to numeric tables (vitals, dosage rows, queue wait times) so digits don't jitter. */
+  .font-tabular {
+    font-feature-settings: "tnum" on, "lnum" on;
+  }
+}

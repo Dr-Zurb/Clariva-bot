@@ -1,0 +1,12 @@
+{
+  "id": "fee_idle",
+  "description": "RBH-13/18: pricing signal, idle responded, not explicit book → deterministic fee block.",
+  "expectedBranch": "fee_deterministic_idle",
+  "when": {
+    "intent": "ask_question",
+    "signals_fee_pricing": true,
+    "user_explicit_book": false,
+    "idle_responded": true,
+    "in_collection": false
+  }
+}

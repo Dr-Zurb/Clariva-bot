@@ -1,0 +1,20 @@
+schemaname,tablename,policyname,cmd,qual,with_check
+storage,objects,consultation_attachments_insert_live_participants,INSERT,null,"((bucket_id = 'consultation-attachments'::text) AND ((storage.foldername(name))[1] IN ( SELECT (consultation_sessions.id)::text AS id
+   FROM consultation_sessions
+  WHERE (((consultation_sessions.doctor_id = auth.uid()) OR ((consultation_sessions.patient_id IS NOT NULL) AND (consultation_sessions.patient_id = auth.uid()))) AND (consultation_sessions.status = 'live'::consultation_status)))))"
+storage,objects,consultation_attachments_insert_participants,INSERT,null,"((bucket_id = 'consultation-attachments'::text) AND
+CASE (auth.jwt() ->> 'consult_role'::text)
+    WHEN 'patient'::text THEN (((auth.jwt() ->> 'session_id'::text) = (storage.foldername(name))[1]) AND (EXISTS ( SELECT 1
+       FROM consultation_sessions
+      WHERE ((consultation_sessions.id = ((storage.foldername(objects.name))[1])::uuid) AND (consultation_sessions.status = 'live'::consultation_status)))))
+    ELSE ((storage.foldername(name))[1] IN ( SELECT (consultation_sessions.id)::text AS id
+       FROM consultation_sessions
+      WHERE ((consultation_sessions.doctor_id = auth.uid()) AND (consultation_sessions.status = 'live'::consultation_status))))
+END)"
+storage,objects,consultation_attachments_select_participants,SELECT,"((bucket_id = 'consultation-attachments'::text) AND
+CASE (auth.jwt() ->> 'consult_role'::text)
+    WHEN 'patient'::text THEN ((auth.jwt() ->> 'session_id'::text) = (storage.foldername(name))[1])
+    ELSE ((storage.foldername(name))[1] IN ( SELECT (consultation_sessions.id)::text AS id
+       FROM consultation_sessions
+      WHERE (consultation_sessions.doctor_id = auth.uid())))
+END)",null

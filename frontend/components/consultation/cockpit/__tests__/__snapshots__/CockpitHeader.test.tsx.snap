@@ -1,0 +1,1360 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`CockpitHeader snapshots > renders ended state — no primary CTA, shows Completed badge 1`] = `
+<div>
+  <header
+    class="sticky top-0 lg:static z-30 border-b border-border bg-background/80 backdrop-blur px-4 py-1.5 lg:px-6"
+  >
+    <div
+      class="flex flex-col gap-0.5"
+    >
+      <div
+        class="flex min-w-0 items-center gap-2"
+      >
+        <a
+          aria-label="Back to appointments"
+          class="shrink-0 text-sm font-medium text-primary leading-none hover:text-primary/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 rounded"
+          href="/dashboard/appointments"
+        >
+          ←
+        </a>
+        <h1
+          class="truncate text-base font-semibold leading-none text-foreground"
+        >
+          Ravi Sharma
+        </h1>
+        <span
+          class="ml-2 shrink-0 text-sm font-medium text-muted-foreground"
+        >
+          33 y / F
+        </span>
+        <div
+          class="ml-auto flex shrink-0 items-center gap-2"
+        >
+          <div
+            class="inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 shrink-0 border-transparent bg-info/15 text-info"
+          >
+            Completed
+          </div>
+          <button
+            aria-expanded="false"
+            aria-haspopup="menu"
+            aria-label="More options"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground rounded-md text-xs h-8 w-8 p-0"
+            data-state="closed"
+            id="radix-:rs:"
+            type="button"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-ellipsis h-4 w-4"
+              fill="none"
+              height="24"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="1"
+              />
+              <circle
+                cx="19"
+                cy="12"
+                r="1"
+              />
+              <circle
+                cx="5"
+                cy="12"
+                r="1"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <p
+        class="flex min-w-0 items-center overflow-hidden text-xs text-muted-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:rounded"
+        data-state="closed"
+        tabindex="0"
+      >
+        <a
+          class="shrink-0 hover:text-foreground hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
+          href="/dashboard/patients-v2/pat-1"
+          title="View patient chart"
+        >
+          MRN-00321
+        </a>
+        <span
+          class="hidden md:contents"
+        >
+          <span
+            aria-hidden="true"
+            class="mx-1.5 text-muted-foreground/50"
+          >
+            ·
+          </span>
+          <a
+            class="shrink-0 tabular-nums hover:text-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
+            href="tel:+91 98765 43210"
+          >
+            +91 98765 43210
+          </a>
+        </span>
+        <span
+          class="hidden md:contents"
+        >
+          <span
+            aria-hidden="true"
+            class="mx-1.5 text-muted-foreground/50"
+          >
+            ·
+          </span>
+          <span
+            class="inline-flex shrink-0 items-center gap-0.5"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-video h-3 w-3"
+              fill="none"
+              height="24"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"
+              />
+              <rect
+                height="12"
+                rx="2"
+                width="14"
+                x="2"
+                y="6"
+              />
+            </svg>
+            <span
+              class="hidden lg:inline"
+            >
+              Video
+            </span>
+          </span>
+        </span>
+        <span
+          class="hidden md:contents"
+        >
+          <span
+            aria-hidden="true"
+            class="mx-1.5 text-muted-foreground/50"
+          >
+            ·
+          </span>
+          <span
+            class="shrink-0 tabular-nums"
+          >
+            16:00
+          </span>
+        </span>
+      </p>
+    </div>
+  </header>
+</div>
+`;
+
+exports[`CockpitHeader snapshots > renders live state 1`] = `
+<div>
+  <header
+    class="sticky top-0 lg:static z-30 border-b border-border bg-background/80 backdrop-blur px-4 py-1.5 lg:px-6"
+  >
+    <div
+      class="flex flex-col gap-0.5"
+    >
+      <div
+        class="flex min-w-0 items-center gap-2"
+      >
+        <a
+          aria-label="Back to appointments"
+          class="shrink-0 text-sm font-medium text-primary leading-none hover:text-primary/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 rounded"
+          href="/dashboard/appointments"
+        >
+          ←
+        </a>
+        <h1
+          class="truncate text-base font-semibold leading-none text-foreground"
+        >
+          Ravi Sharma
+        </h1>
+        <span
+          class="ml-2 shrink-0 text-sm font-medium text-muted-foreground"
+        >
+          28 y / F
+        </span>
+        <div
+          class="ml-auto flex shrink-0 items-center gap-2"
+        >
+          <button
+            aria-expanded="false"
+            aria-haspopup="menu"
+            aria-label="More options"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground rounded-md text-xs h-8 w-8 p-0"
+            data-state="closed"
+            id="radix-:rg:"
+            type="button"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-ellipsis h-4 w-4"
+              fill="none"
+              height="24"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="1"
+              />
+              <circle
+                cx="19"
+                cy="12"
+                r="1"
+              />
+              <circle
+                cx="5"
+                cy="12"
+                r="1"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <p
+        class="flex min-w-0 items-center overflow-hidden text-xs text-muted-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:rounded"
+        data-state="closed"
+        tabindex="0"
+      >
+        <a
+          class="shrink-0 hover:text-foreground hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
+          href="/dashboard/patients-v2/pat-1"
+          title="View patient chart"
+        >
+          MRN-00456
+        </a>
+        <span
+          class="hidden md:contents"
+        >
+          <span
+            aria-hidden="true"
+            class="mx-1.5 text-muted-foreground/50"
+          >
+            ·
+          </span>
+          <a
+            class="shrink-0 tabular-nums hover:text-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
+            href="tel:+91 98765 43210"
+          >
+            +91 98765 43210
+          </a>
+        </span>
+        <span
+          class="hidden md:contents"
+        >
+          <span
+            aria-hidden="true"
+            class="mx-1.5 text-muted-foreground/50"
+          >
+            ·
+          </span>
+          <span
+            class="inline-flex shrink-0 items-center gap-0.5"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-video h-3 w-3"
+              fill="none"
+              height="24"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"
+              />
+              <rect
+                height="12"
+                rx="2"
+                width="14"
+                x="2"
+                y="6"
+              />
+            </svg>
+            <span
+              class="hidden lg:inline"
+            >
+              Video
+            </span>
+          </span>
+        </span>
+        <span
+          class="hidden md:contents"
+        >
+          <span
+            aria-hidden="true"
+            class="mx-1.5 text-muted-foreground/50"
+          >
+            ·
+          </span>
+          <span
+            class="shrink-0 tabular-nums"
+          >
+            16:00
+          </span>
+        </span>
+      </p>
+    </div>
+  </header>
+</div>
+`;
+
+exports[`CockpitHeader snapshots > renders ready state with OPD queue token 1`] = `
+<div>
+  <header
+    class="sticky top-0 lg:static z-30 border-b border-border bg-background/80 backdrop-blur px-4 py-1.5 lg:px-6"
+  >
+    <div
+      class="flex flex-col gap-0.5"
+    >
+      <div
+        class="flex min-w-0 items-center gap-2"
+      >
+        <a
+          aria-label="Back to appointments"
+          class="shrink-0 text-sm font-medium text-primary leading-none hover:text-primary/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 rounded"
+          href="/dashboard/appointments"
+        >
+          ←
+        </a>
+        <h1
+          class="truncate text-base font-semibold leading-none text-foreground"
+        >
+          Ravi Sharma
+        </h1>
+        <span
+          class="ml-2 shrink-0 text-sm font-medium text-muted-foreground"
+        >
+          38 y / F
+        </span>
+        <div
+          class="ml-auto flex shrink-0 items-center gap-2"
+        >
+          <div
+            class="inline-flex rounded-md shadow-sm"
+            role="group"
+          >
+            <button
+              class="inline-flex items-center justify-center whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-8 rounded-md px-3 text-xs rounded-r-none gap-1.5"
+              type="button"
+            >
+              <svg
+                aria-hidden="true"
+                class="lucide lucide-video h-3 w-3"
+                fill="none"
+                height="24"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                viewBox="0 0 24 24"
+                width="24"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"
+                />
+                <rect
+                  height="12"
+                  rx="2"
+                  width="14"
+                  x="2"
+                  y="6"
+                />
+              </svg>
+              Start consult
+            </button>
+            <button
+              aria-expanded="false"
+              aria-haspopup="menu"
+              aria-label="Choose consultation modality"
+              class="inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-8 rounded-md text-xs rounded-l-none border-l border-primary-foreground/20 px-2"
+              data-state="closed"
+              id="radix-:r1c:"
+              type="button"
+            >
+              <svg
+                aria-hidden="true"
+                class="lucide lucide-chevron-down h-3.5 w-3.5"
+                fill="none"
+                height="24"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                viewBox="0 0 24 24"
+                width="24"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="m6 9 6 6 6-6"
+                />
+              </svg>
+            </button>
+          </div>
+          <button
+            aria-expanded="false"
+            aria-haspopup="menu"
+            aria-label="More options"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground rounded-md text-xs h-8 w-8 p-0"
+            data-state="closed"
+            id="radix-:r1e:"
+            type="button"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-ellipsis h-4 w-4"
+              fill="none"
+              height="24"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="1"
+              />
+              <circle
+                cx="19"
+                cy="12"
+                r="1"
+              />
+              <circle
+                cx="5"
+                cy="12"
+                r="1"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <p
+        class="flex min-w-0 items-center overflow-hidden text-xs text-muted-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:rounded"
+        data-state="closed"
+        tabindex="0"
+      >
+        <a
+          class="shrink-0 hover:text-foreground hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
+          href="/dashboard/patients-v2/pat-1"
+          title="View patient chart"
+        >
+          MRN-00999
+        </a>
+        <span
+          class="hidden md:contents"
+        >
+          <span
+            aria-hidden="true"
+            class="mx-1.5 text-muted-foreground/50"
+          >
+            ·
+          </span>
+          <a
+            class="shrink-0 tabular-nums hover:text-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
+            href="tel:+91 98765 43210"
+          >
+            +91 98765 43210
+          </a>
+        </span>
+        <span
+          class="hidden md:contents"
+        >
+          <span
+            aria-hidden="true"
+            class="mx-1.5 text-muted-foreground/50"
+          >
+            ·
+          </span>
+          <span
+            class="inline-flex shrink-0 items-center gap-0.5"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-video h-3 w-3"
+              fill="none"
+              height="24"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"
+              />
+              <rect
+                height="12"
+                rx="2"
+                width="14"
+                x="2"
+                y="6"
+              />
+            </svg>
+            <span
+              class="hidden lg:inline"
+            >
+              Video
+            </span>
+          </span>
+        </span>
+        <span
+          class="hidden md:contents"
+        >
+          <span
+            aria-hidden="true"
+            class="mx-1.5 text-muted-foreground/50"
+          >
+            ·
+          </span>
+          <span
+            class="shrink-0 tabular-nums"
+          >
+            16:00
+          </span>
+        </span>
+        <span
+          aria-hidden="true"
+          class="mx-1.5 text-muted-foreground/50"
+        >
+          ·
+        </span>
+        <span
+          class="shrink-0 text-xs font-medium text-muted-foreground"
+        >
+          Token #
+          4
+        </span>
+      </p>
+    </div>
+  </header>
+</div>
+`;
+
+exports[`CockpitHeader snapshots > renders ready state with full demographics 1`] = `
+<div>
+  <header
+    class="sticky top-0 lg:static z-30 border-b border-border bg-background/80 backdrop-blur px-4 py-1.5 lg:px-6"
+  >
+    <div
+      class="flex flex-col gap-0.5"
+    >
+      <div
+        class="flex min-w-0 items-center gap-2"
+      >
+        <a
+          aria-label="Back to appointments"
+          class="shrink-0 text-sm font-medium text-primary leading-none hover:text-primary/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 rounded"
+          href="/dashboard/appointments"
+        >
+          ←
+        </a>
+        <h1
+          class="truncate text-base font-semibold leading-none text-foreground"
+        >
+          Ravi Sharma
+        </h1>
+        <span
+          class="ml-2 shrink-0 text-sm font-medium text-muted-foreground"
+        >
+          42 y / M
+        </span>
+        <div
+          class="ml-auto flex shrink-0 items-center gap-2"
+        >
+          <div
+            class="inline-flex rounded-md shadow-sm"
+            role="group"
+          >
+            <button
+              class="inline-flex items-center justify-center whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-8 rounded-md px-3 text-xs rounded-r-none gap-1.5"
+              type="button"
+            >
+              <svg
+                aria-hidden="true"
+                class="lucide lucide-video h-3 w-3"
+                fill="none"
+                height="24"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                viewBox="0 0 24 24"
+                width="24"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"
+                />
+                <rect
+                  height="12"
+                  rx="2"
+                  width="14"
+                  x="2"
+                  y="6"
+                />
+              </svg>
+              Start consult
+            </button>
+            <button
+              aria-expanded="false"
+              aria-haspopup="menu"
+              aria-label="Choose consultation modality"
+              class="inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-8 rounded-md text-xs rounded-l-none border-l border-primary-foreground/20 px-2"
+              data-state="closed"
+              id="radix-:r0:"
+              type="button"
+            >
+              <svg
+                aria-hidden="true"
+                class="lucide lucide-chevron-down h-3.5 w-3.5"
+                fill="none"
+                height="24"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                viewBox="0 0 24 24"
+                width="24"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="m6 9 6 6 6-6"
+                />
+              </svg>
+            </button>
+          </div>
+          <button
+            aria-expanded="false"
+            aria-haspopup="menu"
+            aria-label="More options"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground rounded-md text-xs h-8 w-8 p-0"
+            data-state="closed"
+            id="radix-:r2:"
+            type="button"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-ellipsis h-4 w-4"
+              fill="none"
+              height="24"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="1"
+              />
+              <circle
+                cx="19"
+                cy="12"
+                r="1"
+              />
+              <circle
+                cx="5"
+                cy="12"
+                r="1"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <p
+        class="flex min-w-0 items-center overflow-hidden text-xs text-muted-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:rounded"
+        data-state="closed"
+        tabindex="0"
+      >
+        <a
+          class="shrink-0 hover:text-foreground hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
+          href="/dashboard/patients-v2/pat-1"
+          title="View patient chart"
+        >
+          MRN-00123
+        </a>
+        <span
+          class="hidden md:contents"
+        >
+          <span
+            aria-hidden="true"
+            class="mx-1.5 text-muted-foreground/50"
+          >
+            ·
+          </span>
+          <a
+            class="shrink-0 tabular-nums hover:text-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
+            href="tel:+91 98765 43210"
+          >
+            +91 98765 43210
+          </a>
+        </span>
+        <span
+          class="hidden md:contents"
+        >
+          <span
+            aria-hidden="true"
+            class="mx-1.5 text-muted-foreground/50"
+          >
+            ·
+          </span>
+          <span
+            class="inline-flex shrink-0 items-center gap-0.5"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-video h-3 w-3"
+              fill="none"
+              height="24"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"
+              />
+              <rect
+                height="12"
+                rx="2"
+                width="14"
+                x="2"
+                y="6"
+              />
+            </svg>
+            <span
+              class="hidden lg:inline"
+            >
+              Video
+            </span>
+          </span>
+        </span>
+        <span
+          class="hidden md:contents"
+        >
+          <span
+            aria-hidden="true"
+            class="mx-1.5 text-muted-foreground/50"
+          >
+            ·
+          </span>
+          <span
+            class="shrink-0 tabular-nums"
+          >
+            16:00
+          </span>
+        </span>
+      </p>
+    </div>
+  </header>
+</div>
+`;
+
+exports[`CockpitHeader snapshots > renders ready state without demographics (null fallback) 1`] = `
+<div>
+  <header
+    class="sticky top-0 lg:static z-30 border-b border-border bg-background/80 backdrop-blur px-4 py-1.5 lg:px-6"
+  >
+    <div
+      class="flex flex-col gap-0.5"
+    >
+      <div
+        class="flex min-w-0 items-center gap-2"
+      >
+        <a
+          aria-label="Back to appointments"
+          class="shrink-0 text-sm font-medium text-primary leading-none hover:text-primary/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 rounded"
+          href="/dashboard/appointments"
+        >
+          ←
+        </a>
+        <h1
+          class="truncate text-base font-semibold leading-none text-foreground"
+        >
+          Ravi Sharma
+        </h1>
+        <div
+          class="ml-auto flex shrink-0 items-center gap-2"
+        >
+          <div
+            class="inline-flex rounded-md shadow-sm"
+            role="group"
+          >
+            <button
+              class="inline-flex items-center justify-center whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-8 rounded-md px-3 text-xs rounded-r-none gap-1.5"
+              type="button"
+            >
+              <svg
+                aria-hidden="true"
+                class="lucide lucide-video h-3 w-3"
+                fill="none"
+                height="24"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                viewBox="0 0 24 24"
+                width="24"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"
+                />
+                <rect
+                  height="12"
+                  rx="2"
+                  width="14"
+                  x="2"
+                  y="6"
+                />
+              </svg>
+              Start consult
+            </button>
+            <button
+              aria-expanded="false"
+              aria-haspopup="menu"
+              aria-label="Choose consultation modality"
+              class="inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-8 rounded-md text-xs rounded-l-none border-l border-primary-foreground/20 px-2"
+              data-state="closed"
+              id="radix-:r8:"
+              type="button"
+            >
+              <svg
+                aria-hidden="true"
+                class="lucide lucide-chevron-down h-3.5 w-3.5"
+                fill="none"
+                height="24"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                viewBox="0 0 24 24"
+                width="24"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="m6 9 6 6 6-6"
+                />
+              </svg>
+            </button>
+          </div>
+          <button
+            aria-expanded="false"
+            aria-haspopup="menu"
+            aria-label="More options"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground rounded-md text-xs h-8 w-8 p-0"
+            data-state="closed"
+            id="radix-:ra:"
+            type="button"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-ellipsis h-4 w-4"
+              fill="none"
+              height="24"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="1"
+              />
+              <circle
+                cx="19"
+                cy="12"
+                r="1"
+              />
+              <circle
+                cx="5"
+                cy="12"
+                r="1"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <p
+        class="flex min-w-0 items-center overflow-hidden text-xs text-muted-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:rounded"
+        data-state="closed"
+        tabindex="0"
+      >
+        <span
+          class="hidden md:contents"
+        >
+          <span
+            aria-hidden="true"
+            class="mx-1.5 text-muted-foreground/50"
+          >
+            ·
+          </span>
+          <a
+            class="shrink-0 tabular-nums hover:text-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
+            href="tel:+91 98765 43210"
+          >
+            +91 98765 43210
+          </a>
+        </span>
+        <span
+          class="hidden md:contents"
+        >
+          <span
+            aria-hidden="true"
+            class="mx-1.5 text-muted-foreground/50"
+          >
+            ·
+          </span>
+          <span
+            class="inline-flex shrink-0 items-center gap-0.5"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-video h-3 w-3"
+              fill="none"
+              height="24"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"
+              />
+              <rect
+                height="12"
+                rx="2"
+                width="14"
+                x="2"
+                y="6"
+              />
+            </svg>
+            <span
+              class="hidden lg:inline"
+            >
+              Video
+            </span>
+          </span>
+        </span>
+        <span
+          class="hidden md:contents"
+        >
+          <span
+            aria-hidden="true"
+            class="mx-1.5 text-muted-foreground/50"
+          >
+            ·
+          </span>
+          <span
+            class="shrink-0 tabular-nums"
+          >
+            16:00
+          </span>
+        </span>
+      </p>
+    </div>
+  </header>
+</div>
+`;
+
+exports[`CockpitHeader snapshots > renders terminal state with cancelled status 1`] = `
+<div>
+  <header
+    class="sticky top-0 lg:static z-30 border-b border-border bg-background/80 backdrop-blur px-4 py-1.5 lg:px-6"
+  >
+    <div
+      class="flex min-w-0 items-center gap-2"
+    >
+      <a
+        aria-label="Back to appointments"
+        class="shrink-0 text-sm font-medium text-primary leading-none hover:text-primary/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 rounded"
+        href="/dashboard/appointments"
+      >
+        ←
+      </a>
+      <span
+        class="truncate text-sm font-semibold text-muted-foreground"
+      >
+        Ravi Sharma
+      </span>
+      <div
+        class="inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 shrink-0 border-transparent bg-muted text-muted-foreground"
+      >
+        Cancelled
+      </div>
+      <div
+        class="ml-auto flex shrink-0 items-center gap-2"
+      >
+        <button
+          class="inline-flex items-center justify-center whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-8 rounded-md px-3 text-xs gap-1.5"
+          type="button"
+        >
+          Reschedule
+        </button>
+        <button
+          aria-expanded="false"
+          aria-haspopup="menu"
+          aria-label="More options"
+          class="inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground rounded-md text-xs h-8 w-8 p-0"
+          data-state="closed"
+          id="radix-:r17:"
+          type="button"
+        >
+          <svg
+            aria-hidden="true"
+            class="lucide lucide-ellipsis h-4 w-4"
+            fill="none"
+            height="24"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            viewBox="0 0 24 24"
+            width="24"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <circle
+              cx="12"
+              cy="12"
+              r="1"
+            />
+            <circle
+              cx="19"
+              cy="12"
+              r="1"
+            />
+            <circle
+              cx="5"
+              cy="12"
+              r="1"
+            />
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+</div>
+`;
+
+exports[`CockpitHeader snapshots > renders terminal state — single subdued row, no demographics, no row 2 1`] = `
+<div>
+  <header
+    class="sticky top-0 lg:static z-30 border-b border-border bg-background/80 backdrop-blur px-4 py-1.5 lg:px-6"
+  >
+    <div
+      class="flex min-w-0 items-center gap-2"
+    >
+      <a
+        aria-label="Back to appointments"
+        class="shrink-0 text-sm font-medium text-primary leading-none hover:text-primary/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 rounded"
+        href="/dashboard/appointments"
+      >
+        ←
+      </a>
+      <span
+        class="truncate text-sm font-semibold text-muted-foreground"
+      >
+        Ravi Sharma
+      </span>
+      <div
+        class="inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 shrink-0 border-transparent bg-destructive/15 text-destructive"
+      >
+        No-show
+      </div>
+      <div
+        class="ml-auto flex shrink-0 items-center gap-2"
+      >
+        <button
+          class="inline-flex items-center justify-center whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-8 rounded-md px-3 text-xs gap-1.5"
+          type="button"
+        >
+          Reschedule
+        </button>
+        <button
+          aria-expanded="false"
+          aria-haspopup="menu"
+          aria-label="More options"
+          class="inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground rounded-md text-xs h-8 w-8 p-0"
+          data-state="closed"
+          id="radix-:r12:"
+          type="button"
+        >
+          <svg
+            aria-hidden="true"
+            class="lucide lucide-ellipsis h-4 w-4"
+            fill="none"
+            height="24"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            viewBox="0 0 24 24"
+            width="24"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <circle
+              cx="12"
+              cy="12"
+              r="1"
+            />
+            <circle
+              cx="19"
+              cy="12"
+              r="1"
+            />
+            <circle
+              cx="5"
+              cy="12"
+              r="1"
+            />
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+</div>
+`;
+
+exports[`CockpitHeader snapshots > renders wrap_up state 1`] = `
+<div>
+  <header
+    class="sticky top-0 lg:static z-30 border-b border-border bg-background/80 backdrop-blur px-4 py-1.5 lg:px-6"
+  >
+    <div
+      class="flex flex-col gap-0.5"
+    >
+      <div
+        class="flex min-w-0 items-center gap-2"
+      >
+        <a
+          aria-label="Back to appointments"
+          class="shrink-0 text-sm font-medium text-primary leading-none hover:text-primary/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 rounded"
+          href="/dashboard/appointments"
+        >
+          ←
+        </a>
+        <h1
+          class="truncate text-base font-semibold leading-none text-foreground"
+        >
+          Ravi Sharma
+        </h1>
+        <span
+          class="ml-2 shrink-0 text-sm font-medium text-muted-foreground"
+        >
+          55 y / M
+        </span>
+        <div
+          class="ml-auto flex shrink-0 items-center gap-2"
+        >
+          <button
+            class="inline-flex items-center justify-center whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-8 rounded-md px-3 text-xs gap-1.5"
+            type="button"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-circle-check-big h-3.5 w-3.5"
+              fill="none"
+              height="24"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M21.801 10A10 10 0 1 1 17 3.335"
+              />
+              <path
+                d="m9 11 3 3L22 4"
+              />
+            </svg>
+            Done with patient
+          </button>
+          <button
+            aria-expanded="false"
+            aria-haspopup="menu"
+            aria-label="More options"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground rounded-md text-xs h-8 w-8 p-0"
+            data-state="closed"
+            id="radix-:rm:"
+            type="button"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-ellipsis h-4 w-4"
+              fill="none"
+              height="24"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="1"
+              />
+              <circle
+                cx="19"
+                cy="12"
+                r="1"
+              />
+              <circle
+                cx="5"
+                cy="12"
+                r="1"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <p
+        class="flex min-w-0 items-center overflow-hidden text-xs text-muted-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:rounded"
+        data-state="closed"
+        tabindex="0"
+      >
+        <a
+          class="shrink-0 hover:text-foreground hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
+          href="/dashboard/patients-v2/pat-1"
+          title="View patient chart"
+        >
+          MRN-00789
+        </a>
+        <span
+          class="hidden md:contents"
+        >
+          <span
+            aria-hidden="true"
+            class="mx-1.5 text-muted-foreground/50"
+          >
+            ·
+          </span>
+          <a
+            class="shrink-0 tabular-nums hover:text-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
+            href="tel:+91 98765 43210"
+          >
+            +91 98765 43210
+          </a>
+        </span>
+        <span
+          class="hidden md:contents"
+        >
+          <span
+            aria-hidden="true"
+            class="mx-1.5 text-muted-foreground/50"
+          >
+            ·
+          </span>
+          <span
+            class="inline-flex shrink-0 items-center gap-0.5"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-video h-3 w-3"
+              fill="none"
+              height="24"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"
+              />
+              <rect
+                height="12"
+                rx="2"
+                width="14"
+                x="2"
+                y="6"
+              />
+            </svg>
+            <span
+              class="hidden lg:inline"
+            >
+              Video
+            </span>
+          </span>
+        </span>
+        <span
+          class="hidden md:contents"
+        >
+          <span
+            aria-hidden="true"
+            class="mx-1.5 text-muted-foreground/50"
+          >
+            ·
+          </span>
+          <span
+            class="shrink-0 tabular-nums"
+          >
+            16:00
+          </span>
+        </span>
+      </p>
+    </div>
+  </header>
+</div>
+`;

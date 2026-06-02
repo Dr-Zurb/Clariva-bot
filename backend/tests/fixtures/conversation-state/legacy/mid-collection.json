@@ -1,0 +1,9 @@
+{
+  "step": "collecting_phone",
+  "lastIntent": "book_appointment",
+  "lastPromptKind": "collect_details",
+  "collectedFields": ["name", "age"],
+  "consultationType": "video",
+  "catalogServiceKey": "general_consult",
+  "updatedAt": "2026-05-28T09:15:00.000Z"
+}

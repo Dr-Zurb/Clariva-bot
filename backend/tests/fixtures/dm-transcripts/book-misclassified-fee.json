@@ -1,0 +1,9 @@
+{
+  "id": "book_misclassified_fee",
+  "description": "RBH-14: 'how much' classified as book_appointment + pricing-only → fee answer not intake.",
+  "expectedBranch": "fee_book_misclassified_idle",
+  "when": {
+    "intent": "book_appointment",
+    "book_misclassified_pricing_only": true
+  }
+}

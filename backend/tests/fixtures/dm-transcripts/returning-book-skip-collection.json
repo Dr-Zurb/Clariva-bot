@@ -1,0 +1,11 @@
+{
+  "id": "returning_book_skip_collection",
+  "description": "rcp-22: returning consented patient books — skip demographics, ask reason only.",
+  "expectedBranch": "booking_start_returning_reason",
+  "when": {
+    "intent": "book_appointment",
+    "just_starting_collection": true,
+    "returning_memory_ready": true,
+    "reason_for_visit_in_state": false
+  }
+}

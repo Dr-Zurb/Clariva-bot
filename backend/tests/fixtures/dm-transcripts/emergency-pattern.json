@@ -1,0 +1,10 @@
+{
+  "id": "emergency_pattern",
+  "description": "Emergency pattern wins before medical idle branch.",
+  "expectedBranch": "emergency_safety",
+  "when": {
+    "intent": "medical_query",
+    "treat_as_emergency": true,
+    "in_collection": false
+  }
+}

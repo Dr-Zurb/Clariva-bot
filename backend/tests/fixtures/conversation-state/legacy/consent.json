@@ -1,0 +1,12 @@
+{
+  "step": "consent",
+  "lastIntent": "book_appointment",
+  "lastPromptKind": "consent",
+  "collectedFields": ["name", "phone", "age", "gender", "reason_for_visit"],
+  "consent_requested_at": "2026-05-28T12:00:00.000Z",
+  "reasonForVisit": "Routine follow-up",
+  "consultationType": "in_clinic",
+  "catalogServiceKey": "gp_visit",
+  "serviceSelectionFinalized": true,
+  "updatedAt": "2026-05-28T12:05:00.000Z"
+}

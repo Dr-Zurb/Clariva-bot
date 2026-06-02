@@ -1,0 +1,11 @@
+{
+  "step": "recording_consent",
+  "lastIntent": "book_appointment",
+  "lastPromptKind": "recording_consent_ask",
+  "collectedFields": ["name", "phone", "age", "gender", "reason_for_visit", "email"],
+  "consent_requested_at": "2026-05-28T12:10:00.000Z",
+  "catalogServiceKey": "gp_visit",
+  "serviceSelectionFinalized": true,
+  "recordingConsentRePitched": false,
+  "updatedAt": "2026-05-28T12:12:00.000Z"
+}

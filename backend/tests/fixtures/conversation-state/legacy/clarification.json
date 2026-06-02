@@ -1,0 +1,18 @@
+{
+  "step": "awaiting_complaint_clarification",
+  "lastIntent": "book_appointment",
+  "lastPromptKind": "complaint_clarification",
+  "originalReasonForVisit": "Skin rash and knee pain",
+  "complaintClarificationAttemptCount": 0,
+  "complaintClarificationRequestedAt": "2026-05-28T15:00:00.000Z",
+  "pendingClarificationConcerns": ["Skin rash", "Knee pain"],
+  "complaintClarificationFallbackMatch": {
+    "catalogServiceKey": "general_consult",
+    "confidence": "low",
+    "candidateLabels": [
+      { "service_key": "general_consult", "label": "General consult" },
+      { "service_key": "dermatology", "label": "Dermatology" }
+    ]
+  },
+  "updatedAt": "2026-05-28T15:01:00.000Z"
+}

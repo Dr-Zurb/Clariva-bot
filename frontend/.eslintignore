@@ -1,0 +1,4 @@
+# cv2-01: lint-fixture documenting the `<ResizablePanelGroup>` ban.
+# Intentionally a violation; excluded from CI lint runs. See
+# `tools/eslint-fixtures/bad-resizable.tsx` for the verification recipe.
+tools/eslint-fixtures/

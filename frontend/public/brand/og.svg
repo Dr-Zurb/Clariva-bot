@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" fill="none">
+  <!-- Background: off-white -->
+  <rect width="1200" height="630" fill="hsl(0,0%,100%)" />
+  <!-- Left accent bar in primary teal -->
+  <rect x="0" y="0" width="8" height="630" fill="hsl(188,70%,30%)" />
+  <!-- Logomark (scaled 4�) -->
+  <rect x="80" y="215" width="160" height="160" rx="32" fill="hsl(188,70%,30%)" />
+  <path
+    d="M160 235 C136 235 120 251 120 275 C120 299 136 315 160 315 C176 315 188 308 196 297"
+    stroke="white"
+    stroke-width="10"
+    stroke-linecap="round"
+    fill="none"
+  />
+  <polyline
+    points="148,275 160,257 172,293 184,269 196,269"
+    stroke="white"
+    stroke-width="8"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    fill="none"
+  />
+  <!-- Wordmark -->
+  <text
+    x="270"
+    y="282"
+    font-family="Inter, ui-sans-serif, system-ui, sans-serif"
+    font-size="72"
+    font-weight="700"
+    letter-spacing="-1"
+    fill="hsl(222,47%,11%)"
+  >Clariva</text>
+  <!-- Tagline -->
+  <text
+    x="270"
+    y="340"
+    font-family="Inter, ui-sans-serif, system-ui, sans-serif"
+    font-size="28"
+    font-weight="400"
+    fill="hsl(215,16%,47%)"
+  >Digital infrastructure for doctors on social media</text>
+</svg>

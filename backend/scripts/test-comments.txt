@@ -1,0 +1,18 @@
+# Comment test file — one comment per line. Lines starting with # are ignored.
+# Run: npm run test:comment -- --file scripts/test-comments.txt
+
+# High-intent
+want to book
+how to book?
+available tomorrow?
+price?
+interested
+I have stomach pain
+
+# Low-intent
+hi
+great post!
+
+# Skip
+lol
+follow for follow

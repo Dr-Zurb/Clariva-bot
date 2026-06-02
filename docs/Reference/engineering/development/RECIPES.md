@@ -1,0 +1,1456 @@
+# Code Recipes (Copy-Pastable Patterns)
+## Standard Patterns for Common Tasks
+
+---
+
+## How to use these recipes
+
+These are **canonical, project-specific patterns** — prefer them over improvising, and copy the code blocks as the starting point. They must stay consistent with [`STANDARDS.md`](./STANDARDS.md); **if a recipe ever conflicts with STANDARDS.md, STANDARDS wins** (follow STANDARDS and flag the stale recipe). If no recipe fits, reuse the closest existing pattern in the codebase and confirm with the user before introducing a genuinely new pattern.
+
+**See also:** [`STANDARDS.md`](./STANDARDS.md) (rules), [`API_DESIGN.md`](../architecture/API_DESIGN.md), [`TESTING.md`](./TESTING.md), [`ARCHITECTURE.md`](../architecture/ARCHITECTURE.md), [`CODING_WORKFLOW.md`](./CODING_WORKFLOW.md).
+
+---
+
+## 📋 Table of Contents
+
+1. [Add a New Route](#add-a-new-route)
+2. [Add a New Controller](#add-a-new-controller)
+3. [Add a New Service](#add-a-new-service)
+4. [Add Input Validation (Zod)](#add-input-validation-zod)
+5. [Add a Webhook Endpoint](#add-a-webhook-endpoint)
+6. [Add Authentication Middleware](#add-authentication-middleware)
+7. [Add Error Handling](#add-error-handling)
+8. [Add Request Timing Middleware](#add-request-timing-middleware)
+9. [Add Request Logging Middleware](#add-request-logging-middleware)
+10. [Add Express Request Type Extensions](#add-express-request-type-extensions)
+11. [Add Environment Variable](#add-environment-variable)
+12. [Add Security Headers (Helmet)](#add-security-headers-helmet)
+13. [Add Rate Limiting](#add-rate-limiting)
+14. [Configure CORS](#configure-cors)
+15. [Add 404 Handler](#add-404-handler)
+16. [Add Graceful Shutdown](#add-graceful-shutdown)
+17. [Configure Request Body Size Limits](#configure-request-body-size-limits)
+18. [Standard Controller Skeleton (Canonical Template)](#standard-controller-skeleton-canonical-template)
+19. [Service catalog matcher (ARM-04)](#19-service-catalog-matcher-arm-04)
+20. [Public booking payment gate (ARM-10)](#20-public-booking-payment-gate-arm-10)
+
+---
+
+## 1. Add a New Route
+
+**Recipe ID:** `R-ROUTE-001`
+
+**When:** You need a new HTTP endpoint
+
+**Steps:**
+1. Create controller in `controllers/`
+2. Create route file in `routes/`
+3. Mount route in `routes/index.ts`
+
+**Pattern:**
+```typescript
+// routes/appointments.ts
+import { Router } from 'express';
+import { 
+  createAppointmentController,
+  getAppointmentController,
+  listAppointmentsController 
+} from '../controllers/appointment-controller';
+import { authenticateToken } from '../middleware/auth';
+
+const router = Router();
+
+/**
+ * Create appointment
+ * POST /appointments
+ */
+router.post(
+  '/appointments',
+  authenticateToken,
+  createAppointmentController
+);
+
+/**
+ * Get appointment by ID
+ * GET /appointments/:id
+ */
+router.get(
+  '/appointments/:id',
+  authenticateToken,
+  getAppointmentController
+);
+
+/**
+ * List appointments
+ * GET /appointments
+ */
+router.get(
+  '/appointments',
+  authenticateToken,
+  listAppointmentsController
+);
+
+export default router;
+```
+
+```typescript
+// routes/index.ts
+import { Router } from 'express';
+import healthRoutes from './health';
+import appointmentRoutes from './appointments';
+// ... other routes
+
+const router = Router();
+
+router.use('/', healthRoutes);
+router.use('/api/v1', appointmentRoutes); // Mount at /api/v1
+// ... mount other routes
+
+export default router;
+```
+
+---
+
+## 2. Add a New Controller
+
+**When:** You need to handle HTTP requests
+
+**Steps:**
+1. Create controller file in `controllers/`
+2. Import from services (business logic)
+3. Use asyncHandler (recommended - eliminates try-catch boilerplate)
+4. Validate input with Zod
+
+**Pattern:**
+```typescript
+// controllers/appointment-controller.ts
+import { Request, Response } from 'express';
+import { asyncHandler } from '../utils/async-handler';
+import { NotFoundError } from '../utils/errors';
+import { successResponse } from '../utils/response';
+import { createAppointmentSchema } from '../utils/validation';
+import { createAppointment, getAppointment, listAppointments } from '../services/booking-service';
+
+/**
+ * Create appointment controller
+ * POST /appointments
+ */
+export const createAppointmentController = asyncHandler(async (req: Request, res: Response) => {
+  // 1. Validate input with Zod
+  const validated = createAppointmentSchema.parse(req.body);
+  
+  // 2. Call service (business logic)
+  const appointment = await createAppointment(validated);
+  
+  // 3. Return standardized response
+  return res.status(201).json(successResponse(appointment, req));
+});
+
+/**
+ * Get appointment by ID
+ * GET /appointments/:id
+ */
+export const getAppointmentController = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  
+  const appointment = await getAppointment(id);
+  
+  if (!appointment) {
+    throw new NotFoundError('Appointment not found');
+  }
+  
+  return res.json(successResponse(appointment, req));
+});
+
+/**
+ * List appointments
+ * GET /appointments
+ */
+export const listAppointmentsController = asyncHandler(async (req: Request, res: Response) => {
+  const { doctorId } = req.query;
+  
+  const appointments = await listAppointments({ doctorId: doctorId as string });
+  
+  return res.json(successResponse(appointments, req));
+});
+```
+
+---
+
+## 3. Add a New Service
+
+**Recipe ID:** `R-SERVICE-001`
+
+**When:** You need business logic
+
+**Steps:**
+1. Create service file in `services/`
+2. Import types (not Express types)
+3. Import database config
+4. Implement business logic
+
+**Pattern:**
+```typescript
+// services/booking-service.ts
+import { AppointmentData, Appointment } from '../types';
+import { supabase } from '../config/database';
+import { NotFoundError, InternalError } from '../utils/errors';
+
+/**
+ * Create a new appointment
+ * 
+ * @param data - Appointment data
+ * @returns Created appointment
+ */
+export async function createAppointment(data: AppointmentData): Promise<Appointment> {
+  const { data: appointment, error } = await supabase
+    .from('appointments')
+    .insert(data)
+    .select()
+    .single();
+  
+  if (error) {
+    throw new InternalError(`Failed to create appointment: ${error.message}`);
+  }
+  
+  return appointment;
+}
+
+/**
+ * Get appointment by ID
+ * 
+ * @param id - Appointment ID
+ * @returns Appointment or null
+ */
+export async function getAppointment(id: string): Promise<Appointment | null> {
+  const { data: appointment, error } = await supabase
+    .from('appointments')
+    .select('*')
+    .eq('id', id)
+    .single();
+  
+  if (error) {
+    if (error.code === 'PGRST116') {
+      return null; // Not found
+    }
+    throw new InternalError(`Failed to get appointment: ${error.message}`);
+  }
+  
+  return appointment;
+}
+
+/**
+ * List appointments
+ * 
+ * @param filters - Filter options
+ * @returns List of appointments
+ */
+export async function listAppointments(filters: { doctorId?: string }): Promise<Appointment[]> {
+  let query = supabase
+    .from('appointments')
+    .select('*');
+  
+  if (filters.doctorId) {
+    query = query.eq('doctor_id', filters.doctorId);
+  }
+  
+  const { data: appointments, error } = await query;
+  
+  if (error) {
+    throw new InternalError(`Failed to list appointments: ${error.message}`);
+  }
+  
+  return appointments || [];
+}
+```
+
+---
+
+## 4. Add Input Validation (Zod)
+
+**Recipe ID:** `R-VALIDATION-001`
+
+**When:** You need to validate request data
+
+**Steps:**
+1. Create Zod schema
+2. Use in controller before calling service
+3. Handle validation errors
+
+**Pattern:**
+```typescript
+// utils/validation.ts
+import { z } from 'zod';
+
+/**
+ * Create appointment validation schema
+ */
+export const createAppointmentSchema = z.object({
+  patientName: z.string().min(1, 'Patient name is required'),
+  phone: z.string().regex(/^\+?[1-9]\d{1,14}$/, 'Invalid phone number'),
+  appointmentDate: z.string().datetime('Invalid date format'),
+  reason: z.string().min(1, 'Reason is required'),
+  doctorId: z.string().uuid('Invalid doctor ID'),
+});
+
+/**
+ * Get appointment validation schema (params)
+ */
+export const getAppointmentParamsSchema = z.object({
+  id: z.string().uuid('Invalid appointment ID'),
+});
+
+/**
+ * List appointments validation schema (query)
+ */
+export const listAppointmentsQuerySchema = z.object({
+  doctorId: z.string().uuid('Invalid doctor ID').optional(),
+  page: z.string().transform(Number).pipe(z.number().int().positive()).optional(),
+  limit: z.string().transform(Number).pipe(z.number().int().positive().max(100)).optional(),
+});
+```
+
+```typescript
+// controllers/appointment-controller.ts
+import { createAppointmentSchema } from '../utils/validation';
+
+export const createAppointmentController = asyncHandler(async (req, res) => {
+  // Validate body
+  const validated = createAppointmentSchema.parse(req.body);
+  
+  // Validate params
+  const { id } = getAppointmentParamsSchema.parse(req.params);
+  
+  // Validate query
+  const query = listAppointmentsQuerySchema.parse(req.query);
+  
+  // ... rest of controller
+});
+```
+
+---
+
+## 5. Add a Webhook Endpoint
+
+**Recipe ID:** `R-WEBHOOK-001`
+
+**When:** You need to handle webhooks from external services
+
+**Steps:**
+1. Verify signature (MUST)
+2. Extract event ID per platform (see STANDARDS.md Canonical Contracts)
+3. Check idempotency (MUST) - use idempotency table
+4. Mark as processing (prevent duplicates)
+5. Enqueue for async processing (don't block)
+6. Return 200 immediately
+
+**Idempotency Storage:**
+- Table: `webhook_idempotency`
+- Fields: `event_id` (string, primary), `provider` (string), `received_at` (timestamp), `status` (enum), `processed_at` (timestamp, nullable)
+- Check before processing, mark as 'processing' immediately
+
+**⚠️ CRITICAL PII RULE:**
+- **NEVER log `req.body` for webhooks** - platform payloads may contain patient identifiers (PII)
+- Only log metadata: `correlationId`, `eventId`, `provider`, `status`
+- See STANDARDS.md "PII Redaction Rule" for details
+
+**Pattern:**
+```typescript
+// controllers/webhook-controller.ts
+import { Request, Response } from 'express';
+import { asyncHandler } from '../utils/async-handler';
+import { UnauthorizedError } from '../utils/errors';
+import { verifyFacebookSignature } from '../utils/webhook-verification';
+import { isWebhookProcessed, markWebhookProcessing } from '../services/webhook-service';
+import { webhookQueue } from '../config/queue';
+import { logger } from '../config/logger';
+
+/**
+ * Facebook webhook handler
+ * POST /webhooks/facebook
+ * 
+ * MUST: Verify signature, check idempotency, process async, return 200 quickly
+ */
+export const facebookWebhookController = asyncHandler(async (req: Request, res: Response) => {
+  // 1. MUST: Verify signature FIRST
+  if (!verifyFacebookSignature(req)) {
+    // NEVER log req.body - may contain patient identifiers (PII)
+    logger.warn('Invalid webhook signature', { 
+      ip: req.ip,
+      correlationId: req.correlationId,
+      // NEVER include: req.body, req.headers with PHI
+    });
+    throw new UnauthorizedError('Invalid webhook signature');
+  }
+  
+  // ⚠️ CRITICAL: NEVER log req.body for webhooks
+  // Platform payloads may contain patient identifiers (PII)
+  // Only log metadata: correlationId, eventId, provider, status
+  
+  // 2. MUST: Check idempotency
+  // Platform-specific ID extraction (see STANDARDS.md Canonical Contracts)
+  let eventId: string | undefined;
+  
+  // Facebook/Meta: message events use entry[0].id, messaging uses entry[0].messaging[0].message.mid
+  if (req.body.entry?.[0]?.messaging?.[0]?.message?.mid) {
+    eventId = req.body.entry[0].messaging[0].message.mid; // Message ID (most reliable)
+  } else if (req.body.entry?.[0]?.id) {
+    eventId = req.body.entry[0].id; // Fallback to entry ID
+  }
+  
+  // Instagram: uses entry[0].id
+  // WhatsApp: uses entry[0].changes[0].value.messages[0].id
+  
+  if (!eventId) {
+    // Fallback: hash normalized payload + timestamp bucket (5-minute window)
+    // Only use if platform doesn't provide stable ID
+    const normalizedPayload = JSON.stringify(req.body).replace(/\s/g, '');
+    const timestampBucket = Math.floor(Date.now() / 300000); // 5-minute buckets
+    const crypto = require('crypto');
+    eventId = crypto.createHash('sha256')
+      .update(normalizedPayload + timestampBucket)
+      .digest('hex');
+  }
+  
+  // Check idempotency table before processing
+  const existing = await isWebhookProcessed(eventId, 'facebook');
+  if (existing && existing.status === 'completed') {
+    logger.info('Webhook already processed', { eventId, correlationId: req.correlationId });
+    return res.status(200).json(successResponse({ message: 'OK' }, req)); // Idempotent response
+  }
+  
+  // 3. MUST: Mark as processing immediately (prevent race conditions)
+  await markWebhookProcessing(eventId, 'facebook');
+  
+  // 4. MUST: Enqueue for async processing (don't block)
+  await webhookQueue.add('processFacebookWebhook', {
+    data: req.body,
+    eventId,
+    platform: 'facebook',
+    timestamp: new Date().toISOString(),
+  });
+  
+  // 5. MUST: Respond immediately (< 20 seconds for Facebook)
+  return res.status(200).json(successResponse({ message: 'OK' }, req));
+});
+```
+
+```typescript
+// routes/webhooks.ts
+import { Router } from 'express';
+import { facebookWebhookController } from '../controllers/webhook-controller';
+
+const router = Router();
+
+router.post('/webhooks/facebook', facebookWebhookController);
+
+export default router;
+```
+
+---
+
+## 6. Add Authentication Middleware
+
+**Recipe ID:** `R-AUTH-001`
+
+**When:** You need to protect routes
+
+**Steps:**
+1. Extract token from Authorization header
+2. Verify with Supabase Auth
+3. Attach user to request
+4. Continue or reject
+
+**Pattern:**
+```typescript
+// middleware/auth.ts
+import { Request, Response, NextFunction } from 'express';
+import { supabase } from '../config/database';
+import { UnauthorizedError } from '../utils/errors';
+
+/**
+ * Authenticate user using Supabase Auth
+ * 
+ * Extracts JWT from Authorization header and verifies with Supabase
+ * Attaches user to req.user
+ */
+export async function authenticateToken(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    // Extract token from Authorization header
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new UnauthorizedError('Missing or invalid authorization header');
+    }
+    
+    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+    
+    // Verify token with Supabase
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    
+    if (error || !user) {
+      throw new UnauthorizedError('Invalid or expired token');
+    }
+    
+    // Attach user to request (properly typed via types/express.d.ts)
+    req.user = user;
+    
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+```
+
+---
+
+## 7. Add Error Handling
+
+**Recipe ID:** `R-ERROR-001`
+
+**When:** You need to handle errors consistently
+
+**Steps:**
+1. Use typed error classes (all extend AppError - never raw Error)
+2. Use asyncHandler (recommended - eliminates try-catch boilerplate)
+3. Pass errors to middleware (asyncHandler handles this automatically)
+
+**Pattern:**
+```typescript
+// utils/async-handler.ts
+import { Request, Response, NextFunction } from 'express';
+
+/**
+ * Wrapper for async route handlers
+ * Automatically catches errors and passes them to error middleware
+ * 
+ * Usage:
+ * export const myController = asyncHandler(async (req, res) => {
+ *   // No need for try-catch - asyncHandler handles it
+ *   const result = await someAsyncOperation();
+ *   res.json({ data: result });
+ * });
+ */
+export function asyncHandler(
+  fn: (req: Request, res: Response, next: NextFunction) => Promise<unknown>
+): (req: Request, res: Response, next: NextFunction) => Promise<unknown> {
+  return (req: Request, res: Response, next: NextFunction) => {
+    return Promise.resolve(fn(req, res, next)).catch(next);
+  };
+}
+```
+
+```typescript
+// middleware/error-handler.ts
+import { Request, Response, NextFunction } from 'express';
+import { ZodError } from 'zod';
+import { AppError, ValidationError } from '../utils/errors';
+import { errorResponse } from '../utils/response';
+import { logger } from '../config/logger';
+import { env } from '../config/env';
+
+/**
+ * Global error handling middleware
+ * MUST be last middleware in the chain
+ * MUST: Map ZodError to ValidationError (400) per STANDARDS.md
+ * MUST: Use canonical error response format from STANDARDS.md
+ */
+export function errorHandler(
+  err: Error | AppError | ZodError,
+  req: Request,
+  res: Response,
+  _next: NextFunction
+): void {
+  // Map ZodError to ValidationError (MUST per STANDARDS.md)
+  if (err instanceof ZodError) {
+    const validationError = new ValidationError(
+      `Validation failed: ${err.issues.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`
+    );
+    err = validationError;
+  }
+  
+  // Ensure error is AppError (has statusCode, isOperational)
+  const appError = err instanceof AppError 
+    ? err 
+    : new AppError(err.message || 'Internal server error', 500);
+  
+  // Log error (without PII) - only IDs and metadata
+  logger.error({
+    correlationId: req.correlationId,
+    error: {
+      code: appError.constructor.name,
+      message: appError.message,
+      statusCode: appError.statusCode,
+    },
+    ...(env.NODE_ENV === 'development' && err.stack ? { stack: err.stack } : {}),
+  }, 'Error occurred');
+  
+  // Send canonical error response (STANDARDS.md contract)
+  const response = errorResponse(
+    {
+      code: appError.constructor.name,
+      message: appError.message,
+      statusCode: appError.statusCode,
+      ...(env.NODE_ENV === 'development' && err.stack ? { stack: err.stack } : {}),
+    },
+    req
+  );
+  
+  res.status(appError.statusCode).json(response);
+}
+```
+
+```typescript
+// index.ts
+import { errorHandler } from './middleware/error-handler';
+
+// ... routes ...
+
+// Error handler MUST be last
+app.use(errorHandler);
+```
+
+---
+
+## 8. Add Request Timing Middleware
+
+**Recipe ID:** `R-MIDDLEWARE-TIMING-001`
+
+**When:** You need to track request duration for logging
+
+**Steps:**
+1. Create `middleware/request-timing.ts`
+2. Set `req.startTime` at request start
+3. Calculate duration on response finish
+4. Include `durationMs` in all logs
+
+**Pattern:**
+```typescript
+// middleware/request-timing.ts
+import { Request, Response, NextFunction } from 'express';
+
+/**
+ * Request timing middleware
+ * 
+ * Sets req.startTime and calculates durationMs for logging
+ * MUST be included in all logs per STANDARDS.md
+ */
+export function requestTiming(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  // Set start time
+  req.startTime = Date.now();
+  
+  // Calculate duration when response finishes
+  res.on('finish', () => {
+    const durationMs = req.startTime ? Date.now() - req.startTime : undefined;
+    // Duration is now available in req.startTime for logging
+    // Use in error handler or response logging
+  });
+  
+  next();
+}
+```
+
+```typescript
+// index.ts - Mount timing middleware early
+import { requestTiming } from './middleware/request-timing';
+
+// Mount timing middleware before routes (so it captures full request)
+app.use(requestTiming);
+
+// ... other middleware ...
+
+app.use('/', routes);
+```
+
+**Usage in logs:**
+```typescript
+// In controllers or error handlers
+const durationMs = req.startTime ? Date.now() - req.startTime : undefined;
+
+logger.info('Appointment created', {
+  correlationId: req.correlationId,
+  path: req.path,
+  method: req.method,
+  statusCode: 201,
+  durationMs, // ✅ MUST: Include in all logs
+  appointmentId: 'abc123',
+});
+```
+
+---
+
+## 9. Add Request Logging Middleware
+
+**Recipe ID:** `R-MIDDLEWARE-LOGGING-001`
+
+**When:** You need to log all HTTP requests with standard fields
+
+**Steps:**
+1. Create `middleware/request-logger.ts`
+2. Listen for `res.on('finish')` event
+3. Calculate request duration from `req.startTime`
+4. Log with standard fields using `createLogContext`
+5. Use appropriate log levels (info/warn/error based on status code)
+
+**Pattern:**
+```typescript
+// middleware/request-logger.ts
+import { Request, Response, NextFunction } from 'express';
+import { logger, createLogContext } from '../config/logger';
+
+/**
+ * Request logging middleware
+ * 
+ * Logs all HTTP requests with standard fields (correlationId, path, method, statusCode, durationMs)
+ * MUST: Include standard log fields per STANDARDS.md
+ */
+export function requestLogger(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  // Log when response finishes (after response is sent)
+  res.on('finish', () => {
+    // Calculate duration
+    const durationMs = req.startTime ? Date.now() - req.startTime : undefined;
+    
+    // Create log context with standard fields (MUST per STANDARDS.md)
+    const logContext = createLogContext(req, {
+      statusCode: res.statusCode,
+      durationMs,
+    });
+    
+    // Log based on status code (MUST per STANDARDS.md log levels)
+    if (res.statusCode >= 500) {
+      // Server errors (500+) - log as error
+      logger.error(logContext, 'Request completed with server error');
+    } else if (res.statusCode >= 400) {
+      // Client errors (400-499) - log as warn
+      logger.warn(logContext, 'Request completed with client error');
+    } else {
+      // Success (200-399) - log as info
+      logger.info(logContext, 'Request completed');
+    }
+  });
+  
+  next();
+}
+```
+
+```typescript
+// index.ts - Mount after request-timing middleware
+import { correlationId } from './middleware/correlation-id';
+import { requestTiming } from './middleware/request-timing';
+import { requestLogger } from './middleware/request-logger';
+
+// ⚠️ CRITICAL: Middleware order MUST match STANDARDS.md exactly. Do not reorder.
+// See STANDARDS.md "Non-Negotiable Middleware Order" section for canonical order.
+// Middleware order: correlation → timing → logging → ...
+app.use(correlationId);   // First - adds correlationId
+app.use(requestTiming);    // Second - adds startTime
+app.use(requestLogger);    // Third - logs requests (needs correlationId and startTime)
+// ... rest of middleware
+```
+
+**Note:** This middleware must be mounted after `requestTiming` middleware, as it depends on `req.startTime` for duration calculation.
+
+---
+
+## 10. Add Express Request Type Extensions
+
+**Recipe ID:** `R-TYPES-001`
+
+**When:** You need to add custom properties to Express Request (user, correlationId, etc.)
+
+**Steps:**
+1. Create `types/express.d.ts`
+2. Extend Express.Request interface
+3. Use typed properties instead of `(req as any)`
+
+**Pattern:**
+```typescript
+// types/express.d.ts
+import { User } from '@supabase/supabase-js';
+
+declare global {
+  namespace Express {
+    interface Request {
+      /**
+       * Authenticated user (set by auth middleware)
+       */
+      user?: User;
+      
+      /**
+       * Request correlation ID (set by correlation-id middleware)
+       */
+      correlationId?: string;
+      
+      /**
+       * Request start time (set by request-timing middleware)
+       */
+      startTime?: number;
+    }
+  }
+}
+```
+
+**Usage:**
+```typescript
+// ✅ GOOD - Properly typed (no 'as any')
+export const createAppointmentController = asyncHandler(async (req, res) => {
+  // req.user is properly typed
+  const doctorId = req.user?.id;
+  
+  // req.correlationId is properly typed
+  logger.info('Appointment created', {
+    correlationId: req.correlationId,
+    doctorId,
+  });
+});
+
+// ❌ BAD - Using 'as any'
+const doctorId = (req as any).user?.id;
+const correlationId = (req as any).correlationId;
+```
+
+---
+
+## 11. Add Environment Variable
+
+**Recipe ID:** `R-ENV-001`
+
+**When:** You need a new environment variable
+
+**Steps:**
+1. Add to `config/env.ts` schema
+2. Use from `config/env.ts` (never `process.env` directly)
+
+**Pattern:**
+```typescript
+// config/env.ts
+import { z } from 'zod';
+
+const envSchema = z.object({
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  PORT: z.string().transform(Number).default('3000'),
+  
+  // Database
+  SUPABASE_URL: z.string().url(),
+  SUPABASE_ANON_KEY: z.string().min(1),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+  
+  // New variable - add here
+  NEW_VARIABLE: z.string().min(1), // No default = required
+  OPTIONAL_VARIABLE: z.string().optional(), // Optional
+  
+  // ... other variables
+});
+
+// Validate and export
+export const env = envSchema.parse(process.env);
+
+// Type for env (useful for TypeScript)
+export type Env = z.infer<typeof envSchema>;
+```
+
+```typescript
+// Use from config/env.ts (not process.env)
+import { env } from '../config/env';
+
+const value = env.NEW_VARIABLE; // ✅ GOOD
+
+// ❌ BAD - Never do this:
+const value = process.env.NEW_VARIABLE;
+```
+
+---
+
+## 12. Add Security Headers (Helmet)
+
+**Recipe ID:** `R-SECURITY-001`
+
+**When:** You need to add security headers to HTTP responses
+
+**Steps:**
+1. Install: `npm install helmet`
+2. Install types: `npm install --save-dev @types/helmet`
+3. Import and mount in `index.ts`
+4. Configure for production vs development
+
+**Pattern:**
+```typescript
+// index.ts
+import helmet from 'helmet';
+import { env } from './config/env';
+
+// Mount after CORS but before routes
+app.use(helmet({
+  contentSecurityPolicy: env.NODE_ENV === 'production',
+  crossOriginEmbedderPolicy: false, // May need to be false for some APIs
+  crossOriginResourcePolicy: { policy: 'cross-origin' }, // Allow cross-origin resources
+}));
+```
+
+**Configuration Options:**
+```typescript
+app.use(helmet({
+  // Enable CSP in production only (can break APIs in dev)
+  contentSecurityPolicy: env.NODE_ENV === 'production',
+  
+  // Disable COEP (may interfere with API responses)
+  crossOriginEmbedderPolicy: false,
+  
+  // Allow cross-origin resources (needed for APIs)
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  
+  // Other headers (Helmet enables these by default):
+  // - X-Content-Type-Options: nosniff
+  // - X-Frame-Options: SAMEORIGIN
+  // - X-XSS-Protection: 0 (disabled, modern browsers handle XSS)
+  // - Strict-Transport-Security (HSTS) - set by reverse proxy in production
+}));
+```
+
+**Note:** Helmet adds security headers automatically. In production, you may need to adjust `contentSecurityPolicy` based on your frontend requirements.
+
+---
+
+## 13. Add Rate Limiting
+
+**Recipe ID:** `R-RATE-LIMIT-001`
+
+**When:** You need to prevent abuse and DDoS attacks
+
+**Steps:**
+1. Install: `npm install express-rate-limit`
+2. Install types: `npm install --save-dev @types/express-rate-limit`
+3. Create rate limiters (general + strict for auth)
+4. Mount in middleware chain (after request logging, before routes)
+
+**Pattern:**
+```typescript
+// index.ts
+import rateLimit from 'express-rate-limit';
+import { env } from './config/env';
+
+import { TooManyRequestsError } from '../utils/errors';
+import { errorResponse } from '../utils/response';
+
+// General API rate limiter (applies to all routes)
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  // ✅ MUST use canonical error format via handler (not message)
+  handler: (req: Request, res: Response) => {
+    const error = new TooManyRequestsError('Too many requests from this IP, please try again later.');
+    // errorResponse returns object with canonical format: { success: false, error: {...}, meta: {...} }
+    return res.status(429).json(errorResponse({
+      code: 'TooManyRequestsError',
+      message: error.message,
+      statusCode: 429,
+    }, req));
+  },
+  standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
+  legacyHeaders: false,
+  // Skip successful requests (optional - only count failures)
+  skipSuccessfulRequests: false,
+});
+
+// Strict rate limiter for authentication endpoints
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 requests per 15 minutes (prevents brute force)
+  // ✅ MUST use canonical error format via handler (not message)
+  handler: (req: Request, res: Response) => {
+    const error = new TooManyRequestsError('Too many authentication attempts, please try again later.');
+    // errorResponse returns object with canonical format: { success: false, error: {...}, meta: {...} }
+    return res.status(429).json(errorResponse({
+      code: 'TooManyRequestsError',
+      message: error.message,
+      statusCode: 429,
+    }, req));
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true, // Only count failed auth attempts
+});
+
+// Mount general rate limiter (applies to all routes by default)
+app.use(apiLimiter);
+
+// Skip rate limiting for health checks (optional)
+app.use('/health', (req, res, next) => {
+  // Health check should not be rate limited
+  next();
+});
+```
+
+**Usage on Specific Routes:**
+```typescript
+// routes/auth.ts
+import { authLimiter } from '../middleware/rate-limit';
+
+router.post('/login', authLimiter, loginController);
+router.post('/register', authLimiter, registerController);
+```
+
+**Environment-Based Configuration:**
+```typescript
+// More lenient in development
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: env.NODE_ENV === 'production' ? 100 : 1000, // 10x more in dev
+  // ... other options
+});
+```
+
+---
+
+## 14. Configure CORS
+
+**Recipe ID:** `R-CORS-001`
+
+**When:** You need to restrict cross-origin requests in production
+
+**Steps:**
+1. Create CORS configuration object
+2. Allow specific origins in production
+3. Allow all origins in development (or specific dev origins)
+4. Mount in middleware chain (after security, before parsers)
+
+**Pattern:**
+```typescript
+// index.ts
+import cors, { CorsOptions } from 'cors';
+import { env } from './config/env';
+
+// ✅ Production CORS config (explicit, strict)
+const corsOptions: CorsOptions = {
+  origin: (origin, callback) => {
+    // List of allowed origins
+    const allowedOrigins = env.NODE_ENV === 'production'
+      ? [
+          'https://clariva.com',
+          'https://www.clariva.com',
+          'https://app.clariva.com',
+        ]
+      : [
+          'http://localhost:3000',
+          'http://localhost:3001',
+          'http://127.0.0.1:3000',
+        ];
+    
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) {
+      return callback(null, true);
+    }
+    
+    // Check if origin is allowed
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true, // Allow cookies/credentials
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-ID'],
+  exposedHeaders: ['X-Correlation-ID'], // Expose custom headers
+  maxAge: 86400, // Cache preflight for 24 hours
+};
+
+// ✅ Development CORS config (explicit, never use {} in production)
+const corsOptionsDev: CorsOptions = {
+  origin: ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-ID'],
+  exposedHeaders: ['X-Correlation-ID'],
+  maxAge: 86400,
+};
+
+// ✅ Always use explicit config (prevents accidental {} in production)
+app.use(cors(env.NODE_ENV === 'production' ? corsOptions : corsOptionsDev));
+```
+
+**⚠️ DO NOT use `cors()` without options in production** - Always use explicit config above.
+
+---
+
+## 15. Add 404 Handler
+
+**Recipe ID:** `R-404-001`
+
+**When:** You need to handle unmatched routes with proper JSON responses
+
+**Steps:**
+1. Add middleware after all routes
+2. Before error handler
+3. Throw `NotFoundError`
+4. Pass to error handler via `next()`
+
+**Pattern:**
+```typescript
+// index.ts
+import { Request, Response, NextFunction } from 'express';
+import { NotFoundError } from './utils/errors';
+
+// ... routes ...
+app.use('/', routes);
+
+// 404 Handler - Must be AFTER all routes but BEFORE error handler
+// Catches all unmatched routes and returns proper JSON 404 response
+// MUST: Use NotFoundError (typed error class) per STANDARDS.md
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  const notFoundError = new NotFoundError(`Route ${req.method} ${req.path} not found`);
+  next(notFoundError); // Pass to error handler middleware
+});
+
+// Error handling middleware (goes LAST, after all routes and 404 handler)
+app.use((err, req, res, next) => {
+  // Error handler processes NotFoundError
+});
+```
+
+**Why This Pattern:**
+- Returns JSON (not plain text "Cannot GET /path")
+- Uses typed error class (`NotFoundError`)
+- Consistent error format with other errors
+- Passes through error handler (proper logging, formatting)
+
+---
+
+## 16. Add Graceful Shutdown
+
+**Recipe ID:** `R-SHUTDOWN-001`
+
+**When:** You need to handle server shutdown cleanly (production requirement)
+
+**Steps:**
+1. Store server instance from `app.listen()`
+2. Listen for SIGTERM and SIGINT signals
+3. Close HTTP server gracefully
+4. Close database connections
+5. Exit process
+
+**Pattern:**
+```typescript
+// index.ts
+import { initializeDatabase } from './config/database';
+import { logger } from './config/logger';
+
+let server: ReturnType<typeof app.listen>;
+
+// Initialize database and start server
+initializeDatabase()
+  .then(() => {
+    server = app.listen(PORT, () => {
+      logger.info({ port: PORT, environment: env.NODE_ENV }, '🚀 Server is running...');
+    });
+  })
+  .catch((error: Error) => {
+    logger.error({ error: error.message, stack: error.stack }, '❌ Failed to start server');
+    process.exit(1);
+  });
+
+// Graceful shutdown handler
+const gracefulShutdown = (signal: string) => {
+  logger.info(`Received ${signal}, shutting down gracefully...`);
+  
+  // Close HTTP server (stop accepting new requests)
+  server.close(() => {
+    logger.info('HTTP server closed');
+    
+    // Close database connections if needed
+    // Example: await supabase.disconnect();
+    
+    logger.info('Graceful shutdown complete');
+    process.exit(0);
+  });
+  
+  // Force close after 10 seconds
+  setTimeout(() => {
+    logger.error('Forcing shutdown after timeout...');
+    process.exit(1);
+  }, 10000);
+};
+
+// Listen for termination signals
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM')); // Docker/K8s sends this
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));   // Ctrl+C sends this
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
+  logger.error({
+    reason: reason instanceof Error ? reason.message : String(reason),
+    stack: reason instanceof Error ? reason.stack : undefined,
+  }, 'Unhandled Promise Rejection');
+  
+  // In production, exit on unhandled rejections
+  if (env.NODE_ENV === 'production') {
+    gracefulShutdown('unhandledRejection');
+  }
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error: Error) => {
+  logger.error({
+    error: error.message,
+    stack: error.stack,
+  }, 'Uncaught Exception');
+  
+  // Always exit on uncaught exceptions
+  process.exit(1);
+});
+```
+
+**Why This Matters:**
+- Prevents dropped requests during deployment
+- Closes connections cleanly
+- Prevents data corruption
+- Required for production deployments (Docker, Kubernetes)
+
+---
+
+## 17. Configure Request Body Size Limits
+
+**Recipe ID:** `R-BODY-LIMIT-001`
+
+**When:** You need to prevent DoS attacks via large payloads
+
+---
+
+## 18. Standard Controller Skeleton (Canonical Template)
+
+**Recipe ID:** `R-CONTROLLER-SKELETON-001`
+
+**When:** Creating any new controller (use this as the default template)
+
+**This is the canonical controller pattern. AI agents MUST use this template.**
+
+**Complete Template:**
+```typescript
+// controllers/resource-controller.ts
+import { Request, Response } from 'express';
+import { asyncHandler } from '../utils/async-handler';
+import { successResponse } from '../utils/response';
+import { NotFoundError } from '../utils/errors';
+import { logger } from '../config/logger';
+import { z } from 'zod';
+import { myService } from '../services/my-service';
+// If route is protected, router MUST use authenticateToken before controller
+
+// 1. Define Zod validation schema
+const createResourceSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  // Add other fields with validation
+});
+
+const getResourceParamsSchema = z.object({
+  id: z.string().uuid('Invalid ID format'),
+});
+
+/**
+ * Create resource controller
+ * POST /resources
+ */
+export const createResource = asyncHandler(async (req: Request, res: Response) => {
+  // 1. Validate input with Zod (MUST)
+  const validated = createResourceSchema.parse(req.body);
+  
+  // 2. Call service (business logic)
+  const result = await myService.create(validated);
+  
+  // 3. Log action (IDs and metadata ONLY - no PII)
+  logger.info('Resource created', {
+    correlationId: req.correlationId,
+    userId: req.user?.id,
+    resourceId: result.id,
+    action: 'create_resource',
+    // NEVER log: req.body, patient names, phones, DOBs
+  });
+  
+  // 4. Return standardized response (MUST use successResponse)
+  return res.status(201).json(successResponse(result, req));
+});
+
+/**
+ * Get resource by ID
+ * GET /resources/:id
+ */
+export const getResource = asyncHandler(async (req: Request, res: Response) => {
+  // 1. Validate params with Zod
+  const { id } = getResourceParamsSchema.parse(req.params);
+  
+  // 2. Call service
+  const resource = await myService.getById(id);
+  
+  // 3. Handle not found
+  if (!resource) {
+    throw new NotFoundError('Resource not found');
+  }
+  
+  // 4. Log action (metadata only)
+  logger.info('Resource retrieved', {
+    correlationId: req.correlationId,
+    userId: req.user?.id,
+    resourceId: id,
+    action: 'get_resource',
+  });
+  
+  // 5. Return standardized response
+  return res.json(successResponse(resource, req));
+});
+```
+
+**Key Requirements (MUST Follow):**
+1. ✅ Use `asyncHandler` wrapper (never try-catch)
+2. ✅ Validate with Zod schemas (req.body, req.params, req.query)
+3. ✅ Call service functions (no business logic in controller)
+4. ✅ Log with structured format (IDs + metadata only, no PII)
+5. ✅ Use `successResponse()` helper (never manual `res.json({ data: ... })`)
+6. ✅ Throw typed errors (NotFoundError, ValidationError, etc.)
+7. ✅ Return response (explicit return statement)
+
+**AI Agents:** Use this template for ALL new controllers. Do not invent variations.
+
+**Steps:**
+1. Set limit in `express.json()`
+2. Set limit in `express.urlencoded()`
+3. Configure appropriate size (typically 10mb for APIs)
+
+**Pattern:**
+```typescript
+// index.ts
+import express from 'express';
+
+// Configure body size limits
+const BODY_SIZE_LIMIT = '10mb'; // Adjust based on your needs
+
+app.use(express.json({ limit: BODY_SIZE_LIMIT })); // Limit JSON body size
+app.use(express.urlencoded({ 
+  extended: true,
+  limit: BODY_SIZE_LIMIT  // Limit form data size
+}));
+```
+
+**Size Recommendations:**
+- `10mb` - Standard for most APIs
+- `1mb` - Strict (prevents large uploads)
+- `50mb` - If you need file uploads
+
+**Error Handling:**
+When limit is exceeded, Express returns `413 Payload Too Large`. You can handle this:
+
+```typescript
+// Custom error for payload too large
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({
+      error: 'PayloadTooLargeError',
+      message: 'Request entity too large',
+    });
+  }
+  next(err);
+});
+```
+
+---
+
+## 19. Service catalog matcher (ARM-04) {#19-service-catalog-matcher-arm-04}
+
+**Module:** `backend/src/services/service-catalog-matcher.ts`
+
+**Entry:** `matchServiceCatalogOffering(input, options?)` — returns `ServiceCatalogMatchResult | null` (null only if catalog missing/empty; callers should skip).
+
+**Compliance:** Pass **raw** `reasonForVisitText` and optional `recentUserMessages`; the service applies **`redactPhiForAI`** before LLM. Logs use **correlationId**, **source**, **confidence**, **catalogServiceKey** only (see `logger.info` in matcher + webhook).
+
+**Test / CI without OpenAI:** `options.skipLlm: true` **or** inject `options.runLlm` mock — when `runLlm` is provided, the engine runs Stage B without `OPENAI_API_KEY`.
+
+**Pure helpers:** `resolveCatalogOfferingByKey`, `runDeterministicServiceCatalogMatchStageA`, `pickSuggestedModality`.
+
+**Metrics:** optional `options.metrics(event)` — `ServiceCatalogMatchMetricEvent` (no PHI).
+
+**ARM-05 (after matcher):** `isSlotBookingBlockedPendingStaffReview(state)` is true when `pendingStaffServiceReview && !serviceSelectionFinalized`. Instagram handler then uses `transitionToAwaitingStaffServiceConfirmation` + `staff-service-review-dm.ts` templates instead of `buildBookingPageUrl`. SLA: `STAFF_SERVICE_REVIEW_SLA_HOURS` in `env.ts` (default 24).
+
+**Staff feedback learning (learn-02):** After successful **`confirmServiceStaffReviewRequest`** / **`reassignServiceStaffReviewRequest`**, **`ingestServiceMatchLearningExample`** (`service-match-learning-ingest.ts`) inserts into **`service_match_learning_examples`** (RLS: doctor `SELECT` own rows; **`service_role`** insert). **`feature_snapshot`** combines **`review_row_at_resolution`** (columns from the resolved `service_staff_review_requests` row) and **`conversation_state_after_resolution`** (allowlisted matcher keys from `ConversationState` only — **not** `reasonForVisit`). Idempotent on **`review_request_id`**. Disable with **`SERVICE_MATCH_LEARNING_INGEST_ENABLED=false`**. Contract: [STAFF_FEEDBACK_LEARNING_DATA_CONTRACT.md](../../product/learning/STAFF_FEEDBACK_LEARNING_DATA_CONTRACT.md).
+
+**Staff feedback shadow (learn-03):** When a **new** pending review row is inserted, **`recordShadowEvaluationForNewPendingReview`** (`service-match-learning-shadow.ts`) writes **`service_match_shadow_evaluations`** (unique per **`review_request_id`**). **`pattern_key`** = SHA256 canonical JSON ([SERVICE_MATCH_PATTERN_KEY.md](../../product/learning/SERVICE_MATCH_PATTERN_KEY.md)); **`would_suggest_service_key`** = majority vote on past **`final_catalog_service_key`** among examples with the same pattern (no LLM). Does **not** change matcher or queue behavior. Disable with **`SHADOW_LEARNING_ENABLED=false`**. Agreement analytics: [SERVICE_MATCH_SHADOW_METRICS.md](../../product/learning/SERVICE_MATCH_SHADOW_METRICS.md), view **`service_match_shadow_resolution_metrics`**.
+
+**Learning assist + autobook (learn-05):** Pending staff inbox rows include optional **`assist_hint`** (aggregates from **`service_match_learning_examples`** with the same **`pattern_key`** + proposed key). **`tryApplyLearningPolicyAutobook`** (`service-match-learning-autobook.ts`) runs **before** the outbound DM when the conversation would create a **pending** staff review: if **`LEARNING_AUTOBOOK_ENABLED`** (default on) and an **active** row exists in **`service_match_autobook_policies`** matching **`pattern_key`** + proposed catalog key, the handler applies the policy’s final visit type via **`applyFinalCatalogServiceSelection`**, skips **`upsertPendingStaffServiceReviewRequest`**, and sends the booking-link DM in the same turn. Audit: **`learning_policy_autobook_applied`**. **`matcherCandidateLabels`** on **`ConversationState`** keeps the candidate slice **consistent** with learn-02 for pattern keys. **Disable autobook:** **`LEARNING_AUTOBOOK_ENABLED=false`** or **`POST /api/v1/service-match-learning/autobook-policies/:id/disable`**. Doctor-facing summary: [LEARNING_ASSIST_AND_AUTOBOOK.md](../../product/learning/LEARNING_ASSIST_AND_AUTOBOOK.md).
+
+**Instagram DM — confirm, consent, collection (handler):** In `instagram-dm-webhook-handler.ts`, short **yes** after a bot **confirm-details** prompt is routed to **`confirm_details`** (`effectiveAskedForConfirm` / `lastBotMessageAskedForConfirm`) so **`collecting_all`** does not treat the turn as open-ended collection. **Consent:** `parseConsentReply` **`granted`** or **`unclear`** (including skip-extras replies) proceeds to **`persistPatientAfterConsent`** and the booking link path when staff-review does not block. **Jest:** characterization tests that mock `ai-service` must expose **`intentSignalsFeeOrPricing`** (e.g. `jest.requireActual('.../ai-service').intentSignalsFeeOrPricing`) because the handler invokes it on every DM.
+
+**Instagram DM — context-first turn (e-task-dm-03):** Assemble **thread-aware, redacted** text once via **`buildFeeCatalogMatchText`** / **`dm-turn-context.ts`** for fee catalog narrowing (same shape as classify history). After an idle **`medical_query`** deflection, persist **`lastMedicalDeflectionAt`** (ISO timestamp only — **no PHI**); **`isRecentMedicalDeflectionWindow`** gates **`conversationGoal: 'post_medical_deflection'`** in **`buildClassifyIntentContext`** ( **`fee_quote` wins** if both apply). Clear **`lastMedicalDeflectionAt`** when starting fresh collection (**`undefined`** on state merge). Idle **`generateResponse`** turns get **`lastBotMessage`** plus **`idleDialogueHint`** from **`buildAiContextForResponse`** so the model keeps fee / post-deflection continuity without extra PHI in prompts.
+
+**Instagram DM — reason-first triage (e-task-dm-04):** When **`shouldDeferIdleFeeForReasonFirstTriage`** is true, idle pricing / misclassified-book-pricing / **`book_responded`** pricing-only paths set **`reasonFirstTriagePhase: 'ask_more'`** and send deterministic **`formatReasonFirstAskMoreQuestion`** (no full multi-row fee list). Later turns use **`reasonFirstTriagePhase: 'confirm'`**, then on **yes** run **`composeIdleFeeQuoteDmWithMeta`** with **`buildFeeCatalogMatchText`**, set **`reasonForVisit`** from **`buildConsolidatedReasonSnippetFromMessages`**, clear phase, merge matcher finalize. **`buildClassifyIntentContext`** adds **`conversationGoal: 'reason_first_triage'`** (wins over fee / post-deflection); **`applyIntentPostClassificationPolicy`** treats **`reasonFirstTriagePhase`** like a fee-adjacent thread for book→ask downgrades. **`seedCollectedReasonFromStateIfValid`** pre-fills Redis **`reason_for_visit`** when booking collection starts. Escape: **`userWantsExplicitFullFeeList`**. See **`RECEPTIONIST_BOT_DM_BRANCH_INVENTORY.md`**.
+
+---
+
+## 20. Public booking payment gate (ARM-10) {#20-public-booking-payment-gate-arm-10}
+
+**Policy (v1):** Razorpay capture happens only from `POST /api/v1/bookings/select-slot-and-pay` after the conversation allows payment.
+
+| Situation | Payment / capture |
+|-----------|-------------------|
+| `pendingStaffServiceReview && !serviceSelectionFinalized` | **Blocked** — `StaffServiceReviewPendingPaymentError` (403). Log: `booking_payment_gate_denied` with `staff_review_pending`. |
+| Multi-service teleconsult catalog (`getActiveServiceCatalog` has 2+ services), `consultationType !== 'in_clinic'`, `serviceSelectionFinalized !== true` | **Blocked** — `ServiceSelectionNotFinalizedPaymentError` (403). Log: `service_selection_not_finalized`. |
+| Single-service catalog, or in_clinic, or no catalog, or finalized selection | **Allowed** (existing quote + Razorpay flow). |
+| Reschedule token (`appointmentId` in JWT) | **Out of scope** — gate not applied in reschedule path. |
+
+**API:** `GET /api/v1/bookings/slot-page-info` returns `bookingAllowed` + optional `bookingBlockedReason` for `/book` UX (same rules; 200 with flags — not 403).
+
+**Module:** `evaluatePublicBookingPaymentGate` in `backend/src/utils/public-booking-payment-gate.ts`.
+
+**Note:** No auth-hold / deposit in v1; one checkout amount per attempt.
+
+### ARM-11 — Catalog quote fallback safety (multi-service + invalid keys)
+
+**Module:** `computeSlotBookingQuote` in `backend/src/services/slot-selection-service.ts`.
+
+| Catalog | Resolved `service_key` for quote | Behavior |
+|---------|----------------------------------|----------|
+| `getActiveServiceCatalog` is **null** | N/A | **Legacy** flat fee (`appointment_fee_minor` / env). |
+| Catalog **non-empty** (teleconsult) | Valid key/id or single-service default | **Catalog** quote via `quoteConsultationVisit`. |
+| Catalog **non-empty** | Unresolved (`resolveCatalogServiceKeyForSlotBooking` → null) | **`ValidationError` 400** — no silent legacy fallback. Log: `slot_booking_quote_blocked` with `slot_booking_quote_block_reason`: `missing_catalog_service_selection` \| `invalid_catalog_service_key` \| `invalid_catalog_service_id`. |
+
+Interacts with **ARM-10** (payment gate) and **ARM-09** ( `/book` pre-fill): patient should have a valid finalized selection before quote; ARM-11 is a safety net if state and catalog diverge.
+
+---
+
+## 🎯 Quick Reference
+
+### File Naming Convention
+- Routes: `kebab-case.ts` (e.g., `appointment-controller.ts`)
+- Controllers: `kebab-case-controller.ts`
+- Services: `kebab-case-service.ts`
+- Middleware: `kebab-case.ts` (e.g., `auth.ts`)
+
+### Import Order
+1. External libraries (express, zod, etc.)
+2. Internal modules (types, utils, config)
+3. Services
+4. Controllers
+
+### Error Handling
+- Use `asyncHandler` for cleaner code
+- Use typed error classes (ValidationError, NotFoundError, etc.)
+- Always pass errors to `next()`
+
+### Validation
+- Always validate with Zod before processing
+- Validate body, params, and query separately
+- Return 400 with validation errors
+
+---
+
+**Last Updated:** 2026-04-04  
+**Version:** 1.0.0  
+**See Also:** [`STANDARDS.md`](./STANDARDS.md), [`ARCHITECTURE.md`](../architecture/ARCHITECTURE.md), [`EXTERNAL_SERVICES.md`](../operations/EXTERNAL_SERVICES.md)

@@ -1,0 +1,306 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`MessageBubble snapshots > renders a doctor text message 1`] = `
+<div>
+  <ul>
+    <li
+      class="group/message relative flex flex-col items-end"
+      data-message-id="msg-001"
+      role="listitem"
+    >
+      <p
+        class="mb-0.5 flex items-center gap-1 px-1 text-[11px] text-gray-500"
+      >
+        <span>
+          15:45
+        </span>
+      </p>
+      <div
+        class="max-w-[80%] message-body whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm shadow-sm bg-blue-600 text-white"
+      >
+        <span
+          class="inline-flex w-full flex-wrap items-end gap-x-1"
+        >
+          <span
+            class="min-w-0 flex-1"
+          >
+            Plan discussed — follow up in two weeks.
+          </span>
+          <span
+            aria-label="Delivered"
+            class="text-gray-500 text-xs ml-1 shrink-0"
+          >
+            ✓
+          </span>
+        </span>
+      </div>
+    </li>
+  </ul>
+</div>
+`;
+
+exports[`MessageBubble snapshots > renders a failed-send bubble 1`] = `
+<div>
+  <ul>
+    <li
+      class="group/message relative flex flex-col items-end border-l-2 border-red-300 pl-2"
+      data-failed="true"
+      data-message-id="msg-failed"
+      role="listitem"
+    >
+      <p
+        class="mb-0.5 flex items-center gap-1 px-1 text-[11px] text-gray-500"
+      >
+        <span>
+          15:45
+        </span>
+      </p>
+      <div
+        class="max-w-[80%] message-body whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm shadow-sm bg-blue-600 text-white"
+      >
+        <span
+          class="inline-flex w-full flex-wrap items-end gap-x-1"
+        >
+          <span
+            class="min-w-0 flex-1"
+          >
+            Message that failed to send.
+          </span>
+        </span>
+      </div>
+      <div
+        class="mt-1 flex items-center gap-2 text-xs text-red-700"
+      >
+        <span>
+          Failed to send
+        </span>
+        <button
+          class="underline hover:text-red-900 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-1"
+          type="button"
+        >
+          Retry
+        </button>
+        <button
+          class="underline hover:text-red-900 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-1"
+          type="button"
+        >
+          Discard
+        </button>
+      </div>
+    </li>
+  </ul>
+</div>
+`;
+
+exports[`MessageBubble snapshots > renders a patient text message 1`] = `
+<div>
+  <ul>
+    <li
+      class="group/message relative flex flex-col items-start"
+      data-message-id="msg-patient"
+      role="listitem"
+    >
+      <p
+        class="mb-0.5 flex items-center gap-1 px-1 text-[11px] text-gray-500"
+      >
+        <span>
+          15:45
+        </span>
+      </p>
+      <div
+        class="max-w-[80%] message-body whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm shadow-sm bg-white text-gray-900 border border-gray-200"
+      >
+        <span
+          class="inline-flex w-full flex-wrap items-end gap-x-1"
+        >
+          <span
+            class="min-w-0 flex-1"
+          >
+            Thank you, doctor.
+          </span>
+        </span>
+      </div>
+    </li>
+  </ul>
+</div>
+`;
+
+exports[`MessageBubble snapshots > renders a reply with quoted parent preview 1`] = `
+<div>
+  <ul>
+    <li
+      class="group/message relative flex flex-col items-end"
+      data-message-id="msg-reply"
+      role="listitem"
+    >
+      <p
+        class="mb-0.5 flex items-center gap-1 px-1 text-[11px] text-gray-500"
+      >
+        <span>
+          15:45
+        </span>
+      </p>
+      <div
+        class="max-w-[80%] message-body whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm shadow-sm bg-blue-600 text-white"
+      >
+        <button
+          aria-label="Jump to message from Doctor"
+          class="mb-1.5 w-full min-w-0 rounded border-l-2 pl-2 pr-1 py-1 text-left text-xs border-white/40 bg-white/10 text-white/90 hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1"
+          type="button"
+        >
+          <div
+            class="truncate font-medium"
+          >
+            Doctor
+          </div>
+          <div
+            class="truncate opacity-90"
+          >
+            Take 5mg twice a day
+          </div>
+        </button>
+        <span
+          class="inline-flex w-full flex-wrap items-end gap-x-1"
+        >
+          <span
+            class="min-w-0 flex-1"
+          >
+            Got it
+          </span>
+          <span
+            aria-label="Delivered"
+            class="text-gray-500 text-xs ml-1 shrink-0"
+          >
+            ✓
+          </span>
+        </span>
+      </div>
+    </li>
+  </ul>
+</div>
+`;
+
+exports[`MessageBubble snapshots > renders a system message 1`] = `
+<div>
+  <ul>
+    <li
+      class="flex items-center justify-center"
+    >
+      <p
+        class="inline-flex items-center gap-1.5 text-center text-xs italic text-gray-500"
+        data-system-event="session_started"
+      >
+        <svg
+          aria-hidden="true"
+          fill="none"
+          height="12"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="12"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+          />
+          <polyline
+            points="12 6 12 12 16 14"
+          />
+        </svg>
+        <span>
+          Consult started.
+        </span>
+      </p>
+    </li>
+  </ul>
+</div>
+`;
+
+exports[`MessageBubble snapshots > renders an attachment message 1`] = `
+<div>
+  <ul>
+    <li
+      class="group/message relative flex flex-col items-end"
+      data-message-id="msg-001"
+      role="listitem"
+    >
+      <p
+        class="mb-0.5 flex items-center gap-1 px-1 text-[11px] text-gray-500"
+      >
+        <span>
+          15:45
+        </span>
+      </p>
+      <div
+        class="max-w-[80%] message-body whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm shadow-sm bg-blue-600 text-white"
+      >
+        <span
+          class="inline-flex w-full flex-wrap items-end gap-x-1"
+        >
+          <span
+            class="min-w-0 flex-1"
+          >
+            <span
+              class="inline-flex items-center gap-1.5 text-white/85"
+            >
+              <span
+                aria-hidden="true"
+              >
+                📎
+              </span>
+              <span>
+                Loading…
+                 
+                lab-report.pdf · 200.0 KB
+              </span>
+            </span>
+          </span>
+          <span
+            aria-label="Delivered"
+            class="text-gray-500 text-xs ml-1 shrink-0"
+          >
+            ✓
+          </span>
+        </span>
+      </div>
+    </li>
+  </ul>
+</div>
+`;
+
+exports[`MessageBubble snapshots > renders in readonly mode without failed-send affordances 1`] = `
+<div>
+  <ul>
+    <li
+      class="group/message relative flex flex-col items-end"
+      data-message-id="msg-001"
+      role="listitem"
+    >
+      <p
+        class="mb-0.5 flex items-center gap-1 px-1 text-[11px] text-gray-500"
+      >
+        <span>
+          15:45
+        </span>
+      </p>
+      <div
+        class="max-w-[80%] message-body whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm shadow-sm bg-blue-600 text-white"
+      >
+        <span
+          class="inline-flex w-full flex-wrap items-end gap-x-1"
+        >
+          <span
+            class="min-w-0 flex-1"
+          >
+            Read-only history line.
+          </span>
+        </span>
+      </div>
+    </li>
+  </ul>
+</div>
+`;

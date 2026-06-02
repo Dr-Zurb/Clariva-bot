@@ -1,0 +1,16 @@
+{
+  "mode": "dev",
+  "baseURL": "http://localhost:3000/",
+  "capturedAt": "2026-05-31T04:54:42.550Z",
+  "note": "Primary dev capture (Playwright). Patient-detail FCP completed via wall-clock on 2026-05-31 re-run methodology; see baseline.md.",
+  "results": [
+    { "surface": "today", "kind": "cold", "clickToFcpMs": 3473, "apiRequestCount": 12 },
+    { "surface": "opd", "kind": "cold", "clickToFcpMs": 48, "apiRequestCount": 7 },
+    { "surface": "patients-list", "kind": "cold", "clickToFcpMs": 1764, "apiRequestCount": 6 },
+    { "surface": "patient-detail", "kind": "cold", "clickToFcpMs": 3200, "apiRequestCount": 11 },
+    { "surface": "today", "kind": "repeat", "clickToFcpMs": 1912, "apiRequestCount": 12 },
+    { "surface": "opd", "kind": "repeat", "clickToFcpMs": 1916, "apiRequestCount": 7 },
+    { "surface": "patients-list", "kind": "repeat", "clickToFcpMs": 796, "apiRequestCount": 6 },
+    { "surface": "patient-detail", "kind": "repeat", "clickToFcpMs": 3100, "apiRequestCount": 10 }
+  ]
+}

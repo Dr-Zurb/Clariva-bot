@@ -1,0 +1,80 @@
+{
+  "extends": "next/core-web-vitals",
+  "rules": {
+    "no-restricted-imports": "off"
+  },
+  "overrides": [
+    {
+      "files": ["components/patients-v2/**/*.{ts,tsx}"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "**/ResizablePanelGroup",
+                  "@/components/ui/resizable"
+                ],
+                "message": "Direct use of <ResizablePanelGroup> is forbidden outside the patient-profile Shell. Mount <PatientProfileShell> with a PaneDefinition[] instead. See cv2-01's ESLint rule."
+              }
+            ],
+            "paths": []
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "components/patient-profile/Shell.tsx",
+        "lib/patient-profile/**"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@/components/consultation/*",
+                  "@/components/ehr/*",
+                  "@/lib/consultation/*",
+                  "@/types/appointment"
+                ],
+                "message": "DL-2: the patient-profile shell and its lib folder must not import medical concepts. Only `frontend/components/patient-profile/PatientProfilePage.tsx` may bridge the shell to the medical surface (see plan-patient-profile-shell-rebuild-batch.md). NOTE: panes/** is intentionally excluded from this zone — panes wrap medical components by design (ppr-04)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "components/**/*.tsx",
+        "components/**/*.ts",
+        "app/**/*.tsx",
+        "app/**/*.ts",
+        "hooks/**/*.tsx",
+        "hooks/**/*.ts",
+        "lib/**/*.tsx",
+        "lib/**/*.ts",
+        "tools/**/*.tsx",
+        "tools/**/*.ts"
+      ],
+      "excludedFiles": [
+        "components/patient-profile/Shell.tsx",
+        "components/patient-profile/v3/CockpitGroupView.tsx",
+        "components/ui/resizable.tsx"
+      ],
+      "rules": {
+        "no-restricted-syntax": [
+          "error",
+          {
+            "selector": "JSXOpeningElement[name.name='ResizablePanelGroup']",
+            "message": "cv2-01: <ResizablePanelGroup> must only be mounted inside <PatientProfileShell> (Shell.tsx). Use <PatientProfileShell> with a PaneDefinition tree — set `children?: PaneDefinition[]` on a node to nest a resizable group. The shell's correctness guarantees (cascade handles, rebalance gates, size snapshots) only hold inside the shell. See docs/Work/Daily-plans/May 2026/17-05-2026/cockpit-v2/plan-cockpit-v2-batch.md."
+          }
+        ]
+      }
+    }
+  ]
+}

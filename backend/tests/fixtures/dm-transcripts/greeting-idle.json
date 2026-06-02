@@ -1,0 +1,10 @@
+{
+  "id": "greeting_idle",
+  "description": "RBH-12: idle greeting fast path → template opener.",
+  "expectedBranch": "greeting_template",
+  "when": {
+    "intent": "greeting",
+    "in_collection": false,
+    "idle_responded": true
+  }
+}

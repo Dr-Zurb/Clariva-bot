@@ -1,0 +1,10 @@
+{
+  "step": "collecting_all",
+  "lastIntent": "book_for_someone_else",
+  "collectedFields": [],
+  "bookingForSomeoneElse": true,
+  "relation": "mother",
+  "pendingSelfBooking": true,
+  "consultationType": "video",
+  "updatedAt": "2026-05-28T10:45:00.000Z"
+}

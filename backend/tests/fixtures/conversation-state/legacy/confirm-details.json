@@ -1,0 +1,11 @@
+{
+  "step": "confirm_details",
+  "lastIntent": "book_appointment",
+  "lastPromptKind": "confirm_details",
+  "collectedFields": ["name", "phone", "age", "gender", "reason_for_visit"],
+  "reasonForVisit": "Knee pain for two weeks",
+  "consultationType": "video",
+  "catalogServiceKey": "general_consult",
+  "serviceSelectionFinalized": true,
+  "updatedAt": "2026-05-28T11:30:00.000Z"
+}

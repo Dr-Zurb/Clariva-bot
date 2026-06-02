@@ -1,0 +1,24 @@
+{
+  "id": "returning_greeting",
+  "description": "rcp-21: consented returning patient idle greeting → greeting_template (welcome-back copy when RETURNING_PATIENT_MEMORY_ENABLED).",
+  "expectedBranch": "greeting_template",
+  "when": {
+    "intent": "greeting",
+    "in_collection": false,
+    "idle_responded": true
+  },
+  "returningProfile": {
+    "isReturning": true,
+    "hasGrantedConsent": true,
+    "consentStatus": "granted",
+    "hasName": true,
+    "hasPhone": true,
+    "knownFieldKeys": ["name", "phone"],
+    "priorVisits": {
+      "attendedCount": 2,
+      "lastServiceKey": "follow_up",
+      "recencyBucket": "within_3_months"
+    }
+  },
+  "expectedWelcomeBackPrefix": "Welcome back, **Priya**! It's good to hear from you again."
+}

@@ -1,0 +1,688 @@
+import { describe, expect, it } from '@jest/globals';
+import { SERVICE_CATALOG_MATCH_REASON_CODES } from '../../../src/types/conversation';
+import {
+  feeThreadHasCompetingVisitTypeBuckets,
+  formatAppointmentFeeForAiContext,
+  formatConsultationFeesForDm,
+  formatFeeBookingCtaForDm,
+  formatFollowUpPolicyHint,
+  formatServiceCatalogForAiContext,
+  formatServiceCatalogForDm,
+  formatServiceCatalogForDmWithMeta,
+  isConsultationTypePricingFollowUp,
+  isMetaBookingOrFeeReasonText,
+  isPricingInquiryMessage,
+  isTeleconsultCatalogAuthoritative,
+  pickCatalogServicesForFeeDm,
+  pickCatalogServicesMatchingUserText,
+  userExplicitlyWantsToBookNow,
+} from '../../../src/utils/consultation-fees';
+import {
+  deterministicServiceIdForLegacyOffering,
+  type ServiceCatalogV1,
+} from '../../../src/utils/service-catalog-schema';
+
+const sid = (key: string) => deterministicServiceIdForLegacyOffering('d-dm', key);
+
+describe('consultation-fees (RBH-13)', () => {
+  it('isPricingInquiryMessage detects fee questions', () => {
+    expect(isPricingInquiryMessage('how much is consultation')).toBe(true);
+    expect(isPricingInquiryMessage('okay so i have to pay?')).toBe(true);
+    expect(isPricingInquiryMessage('yar kitne paise ye to batao')).toBe(true);
+    expect(isPricingInquiryMessage('Hi')).toBe(false);
+    expect(isPricingInquiryMessage('')).toBe(false);
+  });
+
+  it('formatAppointmentFeeForAiContext formats INR from paise', () => {
+    const line = formatAppointmentFeeForAiContext({
+      appointment_fee_minor: 1000,
+      appointment_fee_currency: 'INR',
+    });
+    expect(line).toContain('₹10');
+    expect(line).toContain('Standard appointment');
+  });
+
+  it('formatAppointmentFeeForAiContext uses supplemental wording when teleconsult catalog present', () => {
+    const line = formatAppointmentFeeForAiContext(
+      {
+        appointment_fee_minor: 5000_00,
+        appointment_fee_currency: 'USD',
+      },
+      { teleconsultCatalogPresent: true }
+    );
+    expect(line).toContain('catalog');
+    expect(line).toContain('5000.00 USD');
+    expect(line).not.toContain('Standard appointment / consultation fee on file:');
+    expect(line).not.toContain('In-clinic');
+  });
+
+  it('userExplicitlyWantsToBookNow detects real booking intent', () => {
+    expect(userExplicitlyWantsToBookNow('I want to book an appointment')).toBe(true);
+    expect(userExplicitlyWantsToBookNow('book video')).toBe(true);
+    expect(userExplicitlyWantsToBookNow('book voice consult')).toBe(true);
+    expect(userExplicitlyWantsToBookNow('video appointment tomorrow')).toBe(true);
+    expect(userExplicitlyWantsToBookNow('how much for video consult')).toBe(false);
+    expect(userExplicitlyWantsToBookNow('how much do you charge')).toBe(false);
+  });
+
+  it('formatConsultationFeesForDm parses plain consultation_types with inline ₹', () => {
+    const out = formatConsultationFeesForDm({
+      practice_name: 'Test Clinic',
+      consultation_types: 'In-person ₹500, Video ₹400',
+      business_hours_summary: 'Mon–Fri 9–5',
+    });
+    expect(out).toContain('Test Clinic');
+    expect(out).toContain('**In-person**');
+    expect(out).toContain('₹500');
+    expect(out).toContain('₹400');
+    expect(out).toContain('Mon–Fri');
+  });
+
+  it('formatConsultationFeesForDm parses compact JSON with r / l keys', () => {
+    const out = formatConsultationFeesForDm({
+      practice_name: 'Clinic',
+      consultation_types: '[{"l":"General","r":500},{"label":"Video","fee_inr":400}]',
+    });
+    expect(out).toContain('**General**');
+    expect(out).toContain('₹500');
+    expect(out).toContain('₹400');
+  });
+
+  it('formatConsultationFeesForDm safe copy when consultation_types empty', () => {
+    const out = formatConsultationFeesForDm({
+      practice_name: 'Clinic',
+      consultation_types: null,
+    });
+    expect(out.toLowerCase()).toContain("don't have");
+    expect(out).not.toMatch(/₹\d+/);
+  });
+
+  it('formatConsultationFeesForDm Roman Hindi when user writes Hinglish (fee question)', () => {
+    const out = formatConsultationFeesForDm(
+      {
+        practice_name: 'Dr Zurb Clinic',
+        consultation_types: 'Video',
+        appointment_fee_minor: 50000,
+        appointment_fee_currency: 'INR',
+      },
+      'acha kitni fees hai?'
+    );
+    expect(out).toContain('consultation types / fees');
+    expect(out).toMatch(/₹500/);
+    expect(out).toContain('**Video**');
+  });
+
+  it('formatConsultationFeesForDm uses appointment_fee_minor when JSON rows lack amounts', () => {
+    const out = formatConsultationFeesForDm(
+      {
+        practice_name: 'Clinic',
+        consultation_types: '[{"l":"Video","note":"ask desk"}]',
+        appointment_fee_minor: 75000,
+        appointment_fee_currency: 'INR',
+      },
+      ''
+    );
+    expect(out).toContain('₹750');
+    expect(out).toContain('Video');
+  });
+
+  it('formatFeeBookingCtaForDm follows Hinglish locale', () => {
+    const cta = formatFeeBookingCtaForDm('kitni fee hai bhai');
+    expect(cta).toMatch(/appointment book/i);
+    expect(cta.toLowerCase()).not.toContain("when you're ready");
+  });
+
+  it('isMetaBookingOrFeeReasonText blocks meta strings for reason', () => {
+    expect(isMetaBookingOrFeeReasonText('how much is the consultation fee')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('stomach pain for 3 days')).toBe(false);
+    expect(isMetaBookingOrFeeReasonText('general consultation')).toBe(false);
+  });
+
+  it('isMetaBookingOrFeeReasonText blocks polite booking-intent phrasings', () => {
+    // Natural wrappers the old anchored regex missed (DM bug on 2026-04-18 —
+    // "i'd like to book an appointment" captured as name + reason).
+    expect(isMetaBookingOrFeeReasonText("i'd like to book an appointment")).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('id like to book an appoinment')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('i would like to book')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('i want to book an appointment')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('i want to book')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('i need to book')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('i need an appointment')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('i want an appointment')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('please book an appointment')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('can you book me an appointment')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('could you schedule a visit')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('please schedule me an apointment')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('help me book an appointment')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('i am looking to book')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('book me an appointment')).toBe(true);
+    expect(isMetaBookingOrFeeReasonText('make an appointment')).toBe(true);
+  });
+
+  it('isMetaBookingOrFeeReasonText preserves legitimate chief-complaint text', () => {
+    // Must NOT block real symptoms, even if they contain "i have" or "need".
+    expect(isMetaBookingOrFeeReasonText('i have stomach pain for 3 days')).toBe(false);
+    expect(isMetaBookingOrFeeReasonText('i have htn, dmt2, cough sneezing')).toBe(false);
+    expect(isMetaBookingOrFeeReasonText('i need medicine for my diabetes')).toBe(false);
+    expect(isMetaBookingOrFeeReasonText('diabetes follow up')).toBe(false);
+    expect(isMetaBookingOrFeeReasonText('Abhishek Sahil')).toBe(false);
+    expect(isMetaBookingOrFeeReasonText('fever and headache')).toBe(false);
+  });
+
+  it('isConsultationTypePricingFollowUp (RBH-14)', () => {
+    expect(isConsultationTypePricingFollowUp('general consultation please')).toBe(true);
+    expect(isConsultationTypePricingFollowUp('video consult')).toBe(true);
+    expect(isConsultationTypePricingFollowUp('tomorrow')).toBe(false);
+  });
+
+  const catalogTwoServices: ServiceCatalogV1 = {
+    version: 1,
+    services: [
+      {
+        service_id: sid('skin'),
+        service_key: 'skin',
+        label: 'Dermatology',
+        modalities: {
+          text: { enabled: true, price_minor: 50_00 },
+          voice: { enabled: true, price_minor: 80_00 },
+          video: { enabled: true, price_minor: 100_00 },
+        },
+      },
+      {
+        service_id: sid('gp'),
+        service_key: 'gp',
+        label: 'General',
+        modalities: {
+          video: { enabled: true, price_minor: 200_00 },
+        },
+      },
+    ],
+  };
+
+  it('SFU-08: formatConsultationFeesForDm prefers service_offerings_json over consultation_types', () => {
+    const out = formatConsultationFeesForDm({
+      practice_name: 'Skin Clinic',
+      consultation_types: 'Legacy ₹999 should not appear',
+      service_offerings_json: catalogTwoServices,
+      appointment_fee_minor: 300_00,
+      appointment_fee_currency: 'INR',
+      business_hours_summary: 'Mon–Fri',
+    });
+    expect(out).toContain('Dermatology');
+    expect(out).not.toContain('`skin`');
+    expect(out).toContain('₹50');
+    expect(out).toContain('₹100');
+    expect(out).toContain('General');
+    expect(out).toContain('₹200');
+    expect(out).not.toContain('₹300');
+    expect(out).not.toContain('In-clinic');
+    expect(out).not.toContain('999');
+    expect(out).not.toContain('Legacy');
+    // Per-modality breakdown removed; modality chosen on /book page
+    expect(out).not.toContain('**Text**:');
+    expect(out).not.toContain('**Voice**:');
+    expect(out).not.toContain('**Video**:');
+  });
+
+  it('SFU-08: legacy path unchanged when catalog null', () => {
+    const out = formatConsultationFeesForDm({
+      practice_name: 'Test Clinic',
+      consultation_types: 'Video ₹400',
+      service_offerings_json: null,
+    });
+    expect(out).toContain('₹400');
+  });
+
+  it('SFU-08: pickCatalogServicesMatchingUserText narrows to one service', () => {
+    const rows = pickCatalogServicesMatchingUserText(catalogTwoServices, 'how much for dermatology');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.service_key).toBe('skin');
+  });
+
+  it('isTeleconsultCatalogAuthoritative when catalog has enabled modalities', () => {
+    expect(
+      isTeleconsultCatalogAuthoritative({
+        service_offerings_json: catalogTwoServices,
+        appointment_fee_currency: 'INR',
+      })
+    ).toBe(true);
+    expect(isTeleconsultCatalogAuthoritative({ service_offerings_json: null })).toBe(false);
+  });
+
+  // Task 10 (Plan 03): single-fee doctors ship a synthetic one-entry catalog (see Task 09).
+  // The authority predicate must still return `true` — the check is on catalog presence, not
+  // cardinality. Lock this down so a future refactor (e.g. "require ≥2 services") doesn't
+  // silently break the single-fee path by falling back to the legacy flat-fee formatter.
+  it('isTeleconsultCatalogAuthoritative returns true for a single-entry single-fee catalog', () => {
+    const singleFeeCatalog: ServiceCatalogV1 = {
+      version: 1,
+      services: [
+        {
+          service_id: sid('consultation'),
+          service_key: 'consultation',
+          label: 'Consultation',
+          modalities: {
+            text: { enabled: true, price_minor: 500_00 },
+            voice: { enabled: true, price_minor: 500_00 },
+            video: { enabled: true, price_minor: 500_00 },
+          },
+        },
+      ],
+    };
+    expect(
+      isTeleconsultCatalogAuthoritative({
+        service_offerings_json: singleFeeCatalog,
+        appointment_fee_currency: 'INR',
+      })
+    ).toBe(true);
+  });
+
+  it('SFU-08: formatServiceCatalogForAiContext compact line', () => {
+    const s = formatServiceCatalogForAiContext({
+      service_offerings_json: catalogTwoServices,
+      appointment_fee_currency: 'INR',
+    });
+    expect(s).toContain('Dermatology');
+    expect(s).toContain('service_key=skin');
+    expect(s).toContain('₹50');
+    expect(s).toContain('video ₹100');
+  });
+
+  it('ARM-02: formatServiceCatalogForAiContext includes matcher hints (system prompt only)', () => {
+    const catalog: ServiceCatalogV1 = {
+      version: 1,
+      services: [
+        {
+          service_id: sid('skin'),
+          service_key: 'skin',
+          label: 'Dermatology',
+          matcher_hints: {
+            keywords: 'rash, acne',
+            include_when: 'skin lesions',
+            exclude_when: 'chest pain emergency',
+          },
+          modalities: { video: { enabled: true, price_minor: 100_00 } },
+        },
+      ],
+    };
+    const s = formatServiceCatalogForAiContext({
+      service_offerings_json: catalog,
+      appointment_fee_currency: 'INR',
+    });
+    expect(s).toContain('[matcher:');
+    expect(s).toContain('keywords=rash, acne');
+    expect(s).toContain('include_when=');
+    expect(s).toContain('exclude_when=');
+  });
+
+  it('routing v2 (Task 05): formatServiceCatalogForAiContext renders v2 examples-only row via resolver', () => {
+    // examples-only row → keywords= sourced from resolved.examplePhrases; legacy
+    // include_when= must NOT appear (resolver omits legacyIncludeWhen for v2 rows).
+    const catalog: ServiceCatalogV1 = {
+      version: 1,
+      services: [
+        {
+          service_id: sid('skin'),
+          service_key: 'skin',
+          label: 'Dermatology',
+          matcher_hints: {
+            examples: ['my skin is breaking out', 'painful red bumps'],
+            exclude_when: 'chest pain emergency',
+          },
+          modalities: { video: { enabled: true, price_minor: 100_00 } },
+        },
+      ],
+    };
+    const s = formatServiceCatalogForAiContext({
+      service_offerings_json: catalog,
+      appointment_fee_currency: 'INR',
+    });
+    expect(s).toContain('keywords=my skin is breaking out, painful red bumps');
+    expect(s).not.toContain('include_when=');
+    expect(s).toContain('exclude_when=chest pain emergency');
+  });
+
+  it('routing v2 (Task 05): legacy keywords + include_when row still produces backward-compatible snippet', () => {
+    // Pre-v2 snippet shape must survive byte-for-byte for legacy rows so the
+    // existing AI-context prompt rules continue to bind.
+    const catalog: ServiceCatalogV1 = {
+      version: 1,
+      services: [
+        {
+          service_id: sid('skin'),
+          service_key: 'skin',
+          label: 'Dermatology',
+          matcher_hints: {
+            keywords: 'rash, acne, eczema',
+            include_when: 'visible skin lesions or rashes',
+          },
+          modalities: { video: { enabled: true, price_minor: 100_00 } },
+        },
+      ],
+    };
+    const s = formatServiceCatalogForAiContext({
+      service_offerings_json: catalog,
+      appointment_fee_currency: 'INR',
+    });
+    expect(s).toContain('keywords=rash, acne, eczema');
+    expect(s).toContain('include_when=visible skin lesions or rashes');
+  });
+
+  it('routing v2 (Task 05): v2 row with both examples and legacy keywords prefers examples (no legacy bleed)', () => {
+    const catalog: ServiceCatalogV1 = {
+      version: 1,
+      services: [
+        {
+          service_id: sid('skin'),
+          service_key: 'skin',
+          label: 'Dermatology',
+          matcher_hints: {
+            examples: ['v2 phrase'],
+            keywords: 'legacy ignored',
+            include_when: 'legacy include ignored',
+          },
+          modalities: { video: { enabled: true, price_minor: 100_00 } },
+        },
+      ],
+    };
+    const s = formatServiceCatalogForAiContext({
+      service_offerings_json: catalog,
+      appointment_fee_currency: 'INR',
+    });
+    expect(s).toContain('keywords=v2 phrase');
+    expect(s).not.toContain('legacy ignored');
+    expect(s).not.toContain('include_when=');
+  });
+
+  it('SFU-08: formatServiceCatalogForDm uses narrow pick', () => {
+    const body = formatServiceCatalogForDm(catalogTwoServices, {
+      practice_name: 'X',
+      consultation_types: null,
+      business_hours_summary: null,
+      appointment_fee_minor: null,
+      appointment_fee_currency: 'INR',
+    }, 'price for gp visit');
+    expect(body).toContain('General');
+    expect(body).not.toContain('`gp`');
+    expect(body).not.toContain('Dermatology');
+  });
+
+  const catalogNcdAmbiguous: ServiceCatalogV1 = {
+    version: 1,
+    services: [
+      {
+        service_id: sid('gen'),
+        service_key: 'general_checkup',
+        label: 'General checkup',
+        modalities: { video: { enabled: true, price_minor: 200_00 } },
+      },
+      {
+        service_id: sid('ncd'),
+        service_key: 'ncd_followup',
+        label: 'NCD follow-up',
+        matcher_hints: { keywords: 'diabetes, blood sugar, glucose' },
+        modalities: { video: { enabled: true, price_minor: 150_00 } },
+      },
+    ],
+  };
+
+  it('e-task-dm-02: fee DM narrows to hint-matched row when thread has clinical context and line is pricing-only', () => {
+    const meta = formatServiceCatalogForDmWithMeta(
+      catalogNcdAmbiguous,
+      {
+        practice_name: 'Clinic',
+        consultation_types: null,
+        business_hours_summary: null,
+        appointment_fee_minor: null,
+        appointment_fee_currency: 'INR',
+      },
+      'how much does it cost',
+      'my blood sugar readings have been high'
+    );
+    expect(meta.markdown).toContain('NCD');
+    expect(meta.markdown).toContain('₹150');
+    expect(meta.markdown).not.toContain('General checkup');
+    expect(meta.feeQuoteMatcherFinalize).toBeUndefined();
+  });
+
+  it('e-task-dm-02: thread + label substring yields single row and high-confidence finalize metadata', () => {
+    const meta = formatServiceCatalogForDmWithMeta(
+      catalogTwoServices,
+      {
+        practice_name: 'X',
+        consultation_types: null,
+        business_hours_summary: null,
+        appointment_fee_minor: null,
+        appointment_fee_currency: 'INR',
+      },
+      'what is the fee',
+      'skin rash getting worse'
+    );
+    expect(meta.markdown).toContain('Dermatology');
+    expect(meta.markdown).not.toContain('General');
+    expect(meta.feeQuoteMatcherFinalize?.matcherProposedCatalogServiceKey).toBe('skin');
+  });
+
+  it('e-task-dm-02: pricing question without clinical thread shows full multi-service catalog', () => {
+    const meta = formatServiceCatalogForDmWithMeta(
+      catalogNcdAmbiguous,
+      {
+        practice_name: 'Clinic',
+        consultation_types: null,
+        business_hours_summary: null,
+        appointment_fee_minor: null,
+        appointment_fee_currency: 'INR',
+      },
+      'how much for a consult'
+    );
+    expect(meta.markdown).toContain('General checkup');
+    expect(meta.markdown).toContain('NCD');
+    expect(meta.feeQuoteMatcherFinalize).toBeUndefined();
+  });
+
+  const catalogFourDrZurbStyle: ServiceCatalogV1 = {
+    version: 1,
+    services: [
+      {
+        service_id: sid('skin'),
+        service_key: 'skin_problems',
+        label: 'Skin Problems',
+        modalities: { video: { enabled: true, price_minor: 1000_00 } },
+      },
+      {
+        service_id: sid('gen'),
+        service_key: 'general_checkup',
+        label: 'General Checkup',
+        modalities: { video: { enabled: true, price_minor: 2000_00 } },
+      },
+      {
+        service_id: sid('ncd'),
+        service_key: 'non_communicable_diseases',
+        label: 'Non Communicable diseases',
+        modalities: {
+          text: { enabled: true, price_minor: 1000_00 },
+          voice: { enabled: true, price_minor: 1000_00 },
+          video: { enabled: true, price_minor: 1000_00 },
+        },
+      },
+      {
+        service_id: sid('oth'),
+        service_key: 'other',
+        label: 'Other / not listed',
+        modalities: { video: { enabled: true, price_minor: 1000_00 } },
+      },
+    ],
+  };
+
+  it('e-task-dm-04: sugar concern thread + pricing-only line narrows to NCD row without JSON matcher_hints', () => {
+    const thread =
+      'hello doctor i have high blood sugar , on empty stomach it came out to 188 today , how do i manage it , please guide me';
+    const meta = formatServiceCatalogForDmWithMeta(
+      catalogFourDrZurbStyle,
+      {
+        practice_name: 'Dr Zurb Clinic',
+        consultation_types: null,
+        business_hours_summary: null,
+        appointment_fee_minor: null,
+        appointment_fee_currency: 'INR',
+      },
+      'so i have to pay ?',
+      thread
+    );
+    expect(meta.markdown).toContain('Non Communicable');
+    expect(meta.markdown).not.toContain('non_communicable_diseases');
+    expect(meta.markdown).not.toContain('Skin Problems');
+    expect(meta.markdown).not.toContain('General Checkup');
+    expect(meta.feeQuoteMatcherFinalize?.matcherProposedCatalogServiceKey).toBe(
+      'non_communicable_diseases'
+    );
+    const pick = pickCatalogServicesForFeeDm(catalogFourDrZurbStyle, 'so i have to pay ?', thread);
+    expect(pick.services).toHaveLength(1);
+    expect(pick.services[0]!.service_key).toBe('non_communicable_diseases');
+  });
+
+  it('e-task-dm-07b: clinical-led narrow fee shows single price (modality chosen on /book page)', () => {
+    const thread =
+      'hello doctor i have high blood sugar , on empty stomach it came out to 188 today , how do i manage it , please guide me';
+    const meta = formatServiceCatalogForDmWithMeta(
+      catalogFourDrZurbStyle,
+      {
+        practice_name: 'Dr Zurb Clinic',
+        consultation_types: null,
+        business_hours_summary: null,
+        appointment_fee_minor: null,
+        appointment_fee_currency: 'INR',
+      },
+      'how much',
+      thread,
+      { clinicalLedFeeThread: true }
+    );
+    expect(meta.markdown).toContain('Non Communicable diseases');
+    expect(meta.markdown).toContain('₹1000');
+    // Per-modality breakdown removed; modality chosen on /book page
+    expect(meta.markdown).not.toMatch(/\*\*Text\*\*:/);
+    expect(meta.markdown).not.toMatch(/\*\*Voice\*\*:/);
+    expect(meta.markdown).not.toMatch(/\*\*Video\*\*:/);
+    expect(meta.markdown).not.toMatch(/choose \*\*text\*\*, \*\*voice\*\*, or \*\*video\*\*/i);
+    expect(meta.markdown).not.toContain("If your visit type isn't listed");
+  });
+
+  it('competing NCD + acute/general thread defers to staff (no multi-tier fee menu for patient)', () => {
+    const thread =
+      'high blood sugar , also i have cough cold , i sometimes have pain in my stomach too like burning';
+    expect(feeThreadHasCompetingVisitTypeBuckets(thread)).toBe(true);
+    const meta = formatServiceCatalogForDmWithMeta(
+      catalogFourDrZurbStyle,
+      {
+        practice_name: 'Dr Zurb Clinic',
+        consultation_types: null,
+        business_hours_summary: null,
+        appointment_fee_minor: null,
+        appointment_fee_currency: 'INR',
+      },
+      'how much is video consult',
+      thread
+    );
+    expect(meta.feeAmbiguousStaffReview?.matcherProposedCatalogServiceKey).toBe('other');
+    expect(meta.feeAmbiguousStaffReview?.serviceCatalogMatchReasonCodes).toEqual(
+      expect.arrayContaining([
+        SERVICE_CATALOG_MATCH_REASON_CODES.AMBIGUOUS_COMPLAINT,
+        SERVICE_CATALOG_MATCH_REASON_CODES.COMPETING_VISIT_TYPE_BUCKETS,
+      ])
+    );
+    expect(meta.markdown.toLowerCase()).toContain('visit type');
+    expect(meta.markdown).not.toContain('₹1000');
+    expect(meta.markdown).not.toContain('₹2000');
+    expect(meta.feeQuoteMatcherFinalize).toBeUndefined();
+  });
+
+  it('e-task-dm-04: skin-led thread + pricing line does not force NCD bucket', () => {
+    const thread = 'i have a bad rash on my arm getting worse';
+    const meta = formatServiceCatalogForDmWithMeta(
+      catalogFourDrZurbStyle,
+      {
+        practice_name: 'Dr Zurb Clinic',
+        consultation_types: null,
+        business_hours_summary: null,
+        appointment_fee_minor: null,
+        appointment_fee_currency: 'INR',
+      },
+      'what is the fee?',
+      thread
+    );
+    expect(meta.markdown).toContain('Skin Problems');
+    expect(meta.markdown).toContain('General Checkup');
+    expect(meta.markdown).toContain('Non Communicable');
+  });
+
+  it('e-task-2: formatFollowUpPolicyHint summarizes enabled policy', () => {
+    const h = formatFollowUpPolicyHint(
+      {
+        enabled: true,
+        max_followups: 2,
+        eligibility_window_days: 30,
+        discount_type: 'percent',
+        discount_value: 15,
+      },
+      'INR'
+    );
+    expect(h).toContain('15%');
+    expect(h).toContain('max 2');
+    expect(h).toContain('30 days');
+  });
+
+  it('e-task-2: formatServiceCatalogForAiContext includes follow-up hint on modality', () => {
+    const catalog: ServiceCatalogV1 = {
+      version: 1,
+      services: [
+        {
+          service_id: sid('fu'),
+          service_key: 'fu',
+          label: 'Follow svc',
+          modalities: {
+            video: {
+              enabled: true,
+              price_minor: 99_00,
+              followup_policy: {
+                enabled: true,
+                max_followups: 1,
+                eligibility_window_days: 14,
+                discount_type: 'free',
+              },
+            },
+          },
+        },
+      ],
+    };
+    const s = formatServiceCatalogForAiContext({
+      service_offerings_json: catalog,
+      appointment_fee_currency: 'INR',
+    });
+    expect(s).toContain('follow-ups');
+    expect(s).toContain('free');
+    expect(s).toContain('service_key=fu');
+  });
+
+  it('e-task-2: empty service catalog + no legacy types uses empty-catalog copy', () => {
+    const emptyCatalog: ServiceCatalogV1 = { version: 1, services: [] };
+    const out = formatConsultationFeesForDm({
+      practice_name: 'Solo Doc',
+      consultation_types: null,
+      service_offerings_json: emptyCatalog,
+      appointment_fee_minor: null,
+    });
+    expect(out.toLowerCase()).toContain('services catalog');
+    expect(out.toLowerCase()).toContain('empty');
+    expect(out).not.toMatch(/₹\d+/);
+  });
+
+  it('e-task-2: appendMinorFeeLine path supports non-INR legacy fee', () => {
+    const out = formatConsultationFeesForDm({
+      practice_name: 'US Clinic',
+      consultation_types: null,
+      appointment_fee_minor: 150_00,
+      appointment_fee_currency: 'USD',
+    });
+    expect(out).toContain('150.00 USD');
+  });
+});

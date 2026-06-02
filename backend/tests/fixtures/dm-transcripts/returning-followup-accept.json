@@ -1,0 +1,9 @@
+{
+  "id": "returning_followup_accept",
+  "description": "rcp-23: returning patient confirms follow-up for prior catalog service.",
+  "expectedBranch": "returning_followup_confirm_accept",
+  "when": {
+    "intent": "greeting",
+    "returning_followup_reply": "accept"
+  }
+}

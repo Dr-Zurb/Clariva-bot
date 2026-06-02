@@ -1,0 +1,56 @@
+-- ============================================================================
+-- Plan 06 · Task 39 — companion-channel ENUM additions (part 1 of 2)
+-- ============================================================================
+-- Migration: 062_consultation_messages_attachments_and_system.sql
+-- Date:      2026-04-19
+-- Description:
+--   Extends the `consultation_message_kind` ENUM with the two new row
+--   kinds required by Decision 9 LOCKED:
+--
+--     1. 'attachment' — companion-channel file uploads (Plan 06 follow-up
+--                       adds the sendAttachment helper + Storage plumbing).
+--     2. 'system'     — backend-emitted lifecycle banners (Task 37's
+--                       emitSystemMessage + Plan 07/08/09 helpers).
+--
+-- Why this migration is ENUM-only:
+--   Postgres raises `55P04 unsafe use of new value` when a newly-ADD-ed
+--   ENUM value is referenced by another statement in the SAME transaction
+--   (including the implicit transaction Supabase's SQL editor wraps
+--   around a multi-statement script). The row-shape CHECK constraint in
+--   migration 063 references `kind = 'attachment'` and `kind = 'system'`,
+--   so 062 MUST commit first so 063 can see the values. This is the
+--   canonical Postgres "ALTER TYPE ... ADD VALUE in its own migration"
+--   pattern — see:
+--     https://www.postgresql.org/docs/current/sql-altertype.html
+--     ("ADD VALUE ... must be committed before it can be used")
+--
+-- Safety:
+--   · Additive, idempotent via `ADD VALUE IF NOT EXISTS` (PG 12+).
+--   · Zero impact on existing rows (all kind='text' pre-migration).
+--   · Companion migration 063 adds the columns + row-shape CHECK.
+--
+-- RUN ORDER: 062 → commit → 063. Running them in a single SQL-editor
+-- transaction triggers `ERROR: 55P04`.
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- ENUM additions (idempotent via IF NOT EXISTS — PG 12+)
+-- ----------------------------------------------------------------------------
+ALTER TYPE consultation_message_kind ADD VALUE IF NOT EXISTS 'attachment';
+ALTER TYPE consultation_message_kind ADD VALUE IF NOT EXISTS 'system';
+
+-- ============================================================================
+-- Migration Complete
+-- ============================================================================
+-- Next step: run `063_consultation_messages_attachment_system_columns_and_checks.sql`
+-- in a separate transaction. It adds the attachment + system_event columns,
+-- widens the sender_role CHECK, and installs the row-shape CHECK that
+-- references the ENUM values added above.
+--
+-- Reverse migration (manual; no automated down-migration tooling):
+--   · ENUM values cannot be DROP-ed in Postgres without recreating the
+--     type. Leaving 'attachment' + 'system' in the ENUM after rollback
+--     is harmless — no rows reference them once 063 is reversed (the
+--     row-shape CHECK is gone and the application layer stops writing
+--     non-text kinds).
+-- ============================================================================

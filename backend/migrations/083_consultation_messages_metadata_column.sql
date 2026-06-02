@@ -1,0 +1,83 @@
+-- ============================================================================
+-- 083_consultation_messages_metadata_column.sql
+-- Sub-batch C · task-video-C3 — add `metadata jsonb` column to
+--                                consultation_messages.
+--
+-- WHY THIS EXISTS
+--   Plan 06's emit-system-message contract (Task 37 / Migration 062) and
+--   Plan 06's attachment-row contract (Migration 063) both pass a
+--   `meta: Record<string, unknown>` argument that is currently STRIPPED
+--   before the insert lands — there's no column to store it. The
+--   signature was kept on the helpers so future plans could start
+--   passing context now and the persistence ship additively.
+--
+--   Sub-batch C · task-video-C3 (snapshot capture) is the first feature
+--   that needs the persisted side. Decision §14 (visibility rule)
+--   requires per-row context to discriminate doctor-taken-of-patient
+--   snapshots (clinical-only, hidden from the patient) from snapshots
+--   the patient took of themselves (visible to both). The discriminant
+--   has to live on the row itself so the SELECT RLS can key on it
+--   (Migration 084 wires that policy).
+--
+--   The column is intentionally generic (`metadata jsonb` with no shape
+--   CHECK) rather than purpose-built for snapshots:
+--
+--     * Plan 08 / 09 system-message helpers (`emitVideoRecordingStarted`,
+--       `emitVideoRecordingFailedToStart`, `emitVideoRecordingStopped`)
+--       already pass `meta: { byRole, twilioErrorCode, reason }` that
+--       can now persist instead of being dropped.
+--     * Plan 04 chat-history follow-ups can stamp `{ replyTo, edited_at }`
+--       additively without another `ALTER TABLE`.
+--     * Future analytics joins (Plan 10) can read context off the row
+--       instead of needing a side-table.
+--
+--   The trade-off (a permissive JSONB vs a tight per-row schema): the
+--   row-shape CHECK from Migration 063 still pins `kind` ↔ required
+--   sibling columns; this column is purely additive context. Application-
+--   layer code (snapshot-storage-service.ts and the system-message
+--   emitter) is the source-of-truth for the shape — see those files
+--   for the per-event contracts.
+--
+-- WHAT CHANGES
+--   1. ADD COLUMN `metadata jsonb` — nullable, default NULL.
+--   2. (No change to the row-shape CHECK from Migration 063 — `metadata`
+--      is not referenced because every kind may legitimately carry
+--      context, and we don't want to force backfills onto callers that
+--      don't need it.)
+--
+-- WHAT DOESN'T CHANGE
+--   * Existing rows — all get `metadata=NULL` implicitly; the row-shape
+--     CHECK from 063 doesn't mention `metadata`, so VALIDATE is a no-op.
+--   * RLS policies — those are tightened in Migration 084 (which
+--     references this column).
+--   * The `attachment_*` columns or their semantics.
+--
+-- SAFETY
+--   * Pure additive; one column with a sane NULL default.
+--   * No table rewrite (PG ≥11 fast-path: nullable column with no
+--     default skips the rewrite under the planner's optimization).
+--   * Idempotent via `IF NOT EXISTS`.
+--
+-- RUN ORDER
+--   083 first (this migration). 084 (RLS tighten) references the
+--   column added here, so 083 MUST commit before 084 is applied.
+--
+-- ROLLBACK
+--   ALTER TABLE consultation_messages DROP COLUMN IF EXISTS metadata;
+--
+--   No data is lost in v1 because no caller currently writes to this
+--   column — the snapshot-storage-service ships in the same task as
+--   this migration, and existing system-message helpers strip `meta`
+--   before insert (see consultation-message-service.ts#emitSystemMessage).
+-- ============================================================================
+
+ALTER TABLE consultation_messages
+  ADD COLUMN IF NOT EXISTS metadata jsonb;
+
+-- ============================================================================
+-- Migration Complete
+-- ============================================================================
+-- Next step: run `084_consultation_messages_snapshot_visibility_rls.sql` in
+-- a separate transaction. It tightens the SELECT policy to hide
+-- doctor-taken-of-patient snapshots from patient viewers (Decision §14).
+-- ============================================================================

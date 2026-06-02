@@ -1,0 +1,13 @@
+{
+  "step": "awaiting_staff_service_confirmation",
+  "lastIntent": "book_appointment",
+  "lastPromptKind": "staff_service_pending",
+  "matcherProposedCatalogServiceKey": "dermatology",
+  "matcherProposedCatalogServiceId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "serviceCatalogMatchConfidence": "low",
+  "serviceCatalogMatchReasonCodes": ["ambiguous_complaint"],
+  "pendingStaffServiceReview": true,
+  "staffServiceReviewRequestId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  "staffServiceReviewDeadlineAt": "2026-05-28T18:00:00.000Z",
+  "updatedAt": "2026-05-28T13:00:00.000Z"
+}

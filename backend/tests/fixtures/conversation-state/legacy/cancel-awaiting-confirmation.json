@@ -1,0 +1,8 @@
+{
+  "step": "awaiting_cancel_confirmation",
+  "lastIntent": "cancel_appointment",
+  "lastPromptKind": "cancel_confirm",
+  "cancelAppointmentId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "collectedFields": [],
+  "updatedAt": "2026-05-28T10:00:00.000Z"
+}
