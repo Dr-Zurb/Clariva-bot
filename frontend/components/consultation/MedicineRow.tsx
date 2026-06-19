@@ -1,27 +1,34 @@
 "use client";
 
-import type { HTMLAttributes, KeyboardEvent } from "react";
+import type { HTMLAttributes, KeyboardEvent, ReactNode } from "react";
 import { GripVertical, Pencil, Trash2 } from "lucide-react";
 import DrugAutocomplete from "@/components/ehr/DrugAutocomplete";
 import type { DrugMasterRow } from "@/types/drug-master";
 import type {
+  DoseUnit,
   DurationUnit,
+  FoodTiming,
   FrequencyCode,
   RouteCode,
 } from "@/types/prescription";
 import { isMedicineRowComplete } from "@/lib/cockpit/medicine-row-state";
 import {
+  DOSE_UNIT_OPTIONS,
   DURATION_UNIT_OPTIONS,
+  FOOD_TIMING_OPTIONS,
   FREQUENCY_OPTIONS,
   ROUTE_OPTIONS,
   durationUnitTakesValue,
   formatDurationLegacyLabel,
+  formatMedicineSigLine,
   getFrequencyLegacyLabel,
   getRouteLegacyLabel,
 } from "@/lib/medicineCodes";
+import { chartOptionChipClass } from "@/components/ehr/chart/chart-chip-styles";
 
 export interface MedicineRowValue {
   medicineName: string;
+  /** Strength text (e.g. "5 mg"). Legacy free-text — also rendered into the PDF / SMS */
   dosage: string;
   /** Legacy free-text route — also rendered into the PDF / SMS */
   route: string;
@@ -42,6 +49,12 @@ export interface MedicineRowValue {
   durationValue: number | null;
   durationUnit: DurationUnit | null;
   routeCode: RouteCode | null;
+  // Migration 133 — dose details (medicine card redesign). NULL on rows
+  // saved before the redesign.
+  doseQty: number | null;
+  doseUnit: DoseUnit | null;
+  form: string | null;
+  foodTiming: FoodTiming | null;
 }
 
 interface MedicineRowProps {
@@ -111,14 +124,7 @@ function MedicineRowSummary({
   onRemove,
   dragHandleProps,
 }: MedicineRowSummaryProps) {
-  const frequencyShort =
-    value.frequencyCode != null
-      ? getFrequencyLegacyLabel(value.frequencyCode)
-      : value.frequency;
-  const durationShort =
-    value.durationValue != null && value.durationUnit != null
-      ? formatDurationLegacyLabel(value.durationValue, value.durationUnit)
-      : value.duration;
+  const sigLine = formatMedicineSigLine(value);
 
   function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     if (readOnly) return;
@@ -152,17 +158,18 @@ function MedicineRowSummary({
       </div>
 
       <div className="flex min-w-0 flex-1 items-baseline gap-2 text-sm">
+        {value.form ? (
+          <span className="shrink-0 text-xs capitalize text-muted-foreground">
+            {value.form}
+          </span>
+        ) : null}
         <span className="truncate font-medium">{value.medicineName}</span>
-        <span className="text-muted-foreground">·</span>
-        <span className="whitespace-nowrap">{value.dosage}</span>
-        <span className="text-muted-foreground">·</span>
-        <span className="whitespace-nowrap text-muted-foreground">
-          {frequencyShort}
-        </span>
-        <span className="text-muted-foreground">·</span>
-        <span className="whitespace-nowrap text-muted-foreground">
-          {durationShort}
-        </span>
+        {sigLine ? (
+          <>
+            <span className="text-muted-foreground">·</span>
+            <span className="truncate text-muted-foreground">{sigLine}</span>
+          </>
+        ) : null}
       </div>
 
       {!readOnly && (
@@ -195,24 +202,55 @@ function MedicineRowSummary({
   );
 }
 
+/** Label + chip-row line inside the editor card. */
+function EditorFieldRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-2">
+      <span className="w-16 shrink-0 pt-1 text-[11px] font-medium text-muted-foreground">
+        {label}
+      </span>
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+const EDITOR_INPUT_CLASS =
+  "h-8 rounded-md border border-border bg-background px-2 py-1 text-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50";
+
+/** Short chip labels for frequency codes (long form goes in `title`). */
+const FREQUENCY_CHIP_LABELS: Record<FrequencyCode, string> = {
+  OD: "OD",
+  BID: "BID",
+  TID: "TID",
+  QID: "QID",
+  QHS: "HS",
+  PRN: "PRN",
+  STAT: "STAT",
+  CUSTOM: "Custom\u2026",
+};
+
 /**
- * Single medicine row for prescription form.
+ * Single medicine card for the prescription form (medicine card
+ * redesign — chip-based editor matching the chief-complaint /
+ * condition-card pattern).
  *
- * EHR Sub-batch B1 / T2.10 — frequency, duration, route are now
- * structured pickers. Selecting a structured value also writes a
- * canonical human-readable label into the legacy `frequency` /
- * `duration` / `route` columns so older readers (PDF, SMS, viewer
- * pre-T3) keep working unchanged (Decision T2-D4).
+ * Structured chips (dose unit, frequency, duration, food timing) write
+ * both the structured columns and the legacy free-text mirrors
+ * (`frequency` / `duration` / `route`) so older readers (PDF, SMS,
+ * viewer pre-T3) keep working unchanged (Decision T2-D4).
  *
  * Escape hatches:
- *   - Frequency: pick "Custom\u2026" → reveals free-text input bound
- *     to the legacy `frequency` column. `frequencyCode` stores
- *     `'CUSTOM'` so we can tell apart "doctor opted out" from "row
- *     pre-dates structured columns".
- *   - Route: pick "Other\u2026" → free-text input bound to legacy
- *     `route`. `routeCode` stores `'other'`.
- *   - Duration: pick "until finished" / "continue" → number input
- *     hides itself; legacy `duration` carries the readable label.
+ *   - Frequency: "Custom…" chip → reveals free-text input bound to the
+ *     legacy `frequency` column (`frequencyCode = 'CUSTOM'`).
+ *   - Route: "Other…" option → free-text input bound to legacy `route`.
  */
 export default function MedicineRow({
   index,
@@ -246,10 +284,30 @@ export default function MedicineRow({
     );
   }
 
-  // ---- frequency picker ---------------------------------------------------
+  // ---- dose (qty + unit chips) ---------------------------------------------
 
-  const handleFrequencyCode = (code: FrequencyCode | "") => {
-    if (code === "") {
+  const handleDoseQty = (raw: string) => {
+    if (raw === "") {
+      onPatch(index, { doseQty: null });
+      return;
+    }
+    const n = Number(raw);
+    if (Number.isNaN(n) || n <= 0) return;
+    onPatch(index, { doseQty: n });
+  };
+
+  const handleDoseUnit = (unit: DoseUnit) => {
+    if (value.doseUnit === unit) {
+      onPatch(index, { doseUnit: null });
+      return;
+    }
+    onPatch(index, { doseUnit: unit });
+  };
+
+  // ---- frequency chips ------------------------------------------------------
+
+  const handleFrequencyChip = (code: FrequencyCode) => {
+    if (value.frequencyCode === code) {
       onPatch(index, { frequencyCode: null, frequency: "" });
       return;
     }
@@ -264,10 +322,10 @@ export default function MedicineRow({
     });
   };
 
-  // ---- duration picker ----------------------------------------------------
+  // ---- duration (value + unit chips) ----------------------------------------
 
-  const handleDurationUnit = (unit: DurationUnit | "") => {
-    if (unit === "") {
+  const handleDurationUnit = (unit: DurationUnit) => {
+    if (value.durationUnit === unit) {
       onPatch(index, { durationUnit: null, duration: "" });
       return;
     }
@@ -305,7 +363,13 @@ export default function MedicineRow({
     });
   };
 
-  // ---- route picker -------------------------------------------------------
+  // ---- food timing chips -----------------------------------------------------
+
+  const handleFoodTiming = (code: FoodTiming) => {
+    onPatch(index, { foodTiming: value.foodTiming === code ? null : code });
+  };
+
+  // ---- route picker -----------------------------------------------------------
 
   const handleRouteCode = (code: RouteCode | "") => {
     if (code === "") {
@@ -343,9 +407,10 @@ export default function MedicineRow({
         }
       }}
     >
-      <div className="rounded border border-gray-200 bg-white p-3">
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
-          <div className="sm:col-span-2 lg:col-span-2">
+      <div className="space-y-2 rounded-md border border-border bg-card p-3">
+        {/* Name + strength + remove */}
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
             <label htmlFor={`med-name-${index}`} className="sr-only">
               Medicine name
             </label>
@@ -359,7 +424,6 @@ export default function MedicineRow({
               disabled={rowDisabled}
             />
           </div>
-
           <div>
             <label htmlFor={`med-dosage-${index}`} className="sr-only">
               Dosage
@@ -369,148 +433,197 @@ export default function MedicineRow({
               type="text"
               value={value.dosage}
               onChange={(e) => onChange(index, "dosage", e.target.value)}
-              placeholder="Dosage"
-              className="h-11 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50"
+              placeholder="Strength"
+              className={`${EDITOR_INPUT_CLASS} w-24`}
               maxLength={100}
               disabled={rowDisabled}
             />
           </div>
-
-          {/* Route picker (T2.10) */}
-          <div>
-            <label htmlFor={`med-route-code-${index}`} className="sr-only">
-              Route
-            </label>
-            <select
-              id={`med-route-code-${index}`}
-              value={value.routeCode ?? ""}
-              onChange={(e) => handleRouteCode(e.target.value as RouteCode | "")}
-              className="h-11 w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50"
-              disabled={rowDisabled}
-            >
-              <option value="">Route…</option>
-              {ROUTE_OPTIONS.map((opt) => (
-                <option key={opt.code} value={opt.code}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Frequency picker (T2.10) */}
-          <div>
-            <label htmlFor={`med-frequency-code-${index}`} className="sr-only">
-              Frequency
-            </label>
-            <select
-              id={`med-frequency-code-${index}`}
-              value={value.frequencyCode ?? ""}
-              onChange={(e) =>
-                handleFrequencyCode(e.target.value as FrequencyCode | "")
-              }
-              className="h-11 w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50"
-              disabled={rowDisabled}
-            >
-              <option value="">Frequency…</option>
-              {FREQUENCY_OPTIONS.map((opt) => (
-                <option key={opt.code} value={opt.code}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Duration picker (T2.10) — value + unit */}
-          <div className="flex gap-2">
-            <label htmlFor={`med-duration-value-${index}`} className="sr-only">
-              Duration value
-            </label>
-            <input
-              id={`med-duration-value-${index}`}
-              type="number"
-              inputMode="numeric"
-              min={1}
-              value={value.durationValue ?? ""}
-              onChange={(e) => handleDurationValue(e.target.value)}
-              placeholder="#"
-              className={`h-11 w-16 rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50 ${
-                durationTakesValue ? "" : "invisible"
-              }`}
-              disabled={rowDisabled || !durationTakesValue}
-              aria-hidden={!durationTakesValue}
-            />
-            <label htmlFor={`med-duration-unit-${index}`} className="sr-only">
-              Duration unit
-            </label>
-            <select
-              id={`med-duration-unit-${index}`}
-              value={value.durationUnit ?? ""}
-              onChange={(e) =>
-                handleDurationUnit(e.target.value as DurationUnit | "")
-              }
-              className="h-11 flex-1 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50"
-              disabled={rowDisabled}
-            >
-              <option value="">Duration…</option>
-              {DURATION_UNIT_OPTIONS.map((opt) => (
-                <option key={opt.unit} value={opt.unit}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          <button
+            type="button"
+            onClick={() => onRemove(index)}
+            disabled={rowDisabled}
+            className="h-8 w-8 rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus:outline-none focus:ring-2 focus:ring-destructive disabled:opacity-50"
+            aria-label={`Remove medicine ${index + 1}`}
+          >
+            <Trash2 className="mx-auto h-4 w-4" aria-hidden />
+          </button>
         </div>
 
-        {/* CUSTOM frequency / other route fallbacks — revealed only when
-            the doctor picks the "Custom\u2026" / "Other\u2026" option. They
-            write directly into the legacy free-text columns so the PDF
-            and SMS pipelines render the typed value verbatim. */}
-        {(showFrequencyCustomInput || showRouteOtherInput) && (
-          <div className="mt-2 grid gap-2 sm:grid-cols-2">
-            {showFrequencyCustomInput && (
-              <div>
-                <label
-                  htmlFor={`med-frequency-custom-${index}`}
-                  className="block text-xs text-gray-600"
-                >
-                  Custom frequency
-                </label>
-                <input
-                  id={`med-frequency-custom-${index}`}
-                  type="text"
-                  value={value.frequency}
-                  onChange={(e) => onChange(index, "frequency", e.target.value)}
-                  placeholder="e.g. Every 6 hours after meals"
-                  className="mt-1 h-10 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50"
-                  maxLength={100}
-                  disabled={rowDisabled}
-                />
-              </div>
-            )}
-            {showRouteOtherInput && (
-              <div>
-                <label
-                  htmlFor={`med-route-other-${index}`}
-                  className="block text-xs text-gray-600"
-                >
-                  Other route
-                </label>
-                <input
-                  id={`med-route-other-${index}`}
-                  type="text"
-                  value={value.route}
-                  onChange={(e) => onChange(index, "route", e.target.value)}
-                  placeholder="e.g. Buccal"
-                  className="mt-1 h-10 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50"
-                  maxLength={100}
-                  disabled={rowDisabled}
-                />
-              </div>
-            )}
+        {/* Dose: qty + unit chips */}
+        <EditorFieldRow label="Dose">
+          <label htmlFor={`med-dose-qty-${index}`} className="sr-only">
+            Dose quantity
+          </label>
+          <input
+            id={`med-dose-qty-${index}`}
+            type="number"
+            inputMode="decimal"
+            min={0.5}
+            step={0.5}
+            value={value.doseQty ?? ""}
+            onChange={(e) => handleDoseQty(e.target.value)}
+            placeholder="#"
+            className={`${EDITOR_INPUT_CLASS} w-[4.25rem]`}
+            disabled={rowDisabled}
+          />
+          <div
+            role="group"
+            aria-label="Dose unit"
+            className="flex flex-wrap gap-1"
+          >
+            {DOSE_UNIT_OPTIONS.map((opt) => (
+              <button
+                key={opt.unit}
+                type="button"
+                onClick={() => handleDoseUnit(opt.unit)}
+                disabled={rowDisabled}
+                aria-pressed={value.doseUnit === opt.unit}
+                className={chartOptionChipClass(value.doseUnit === opt.unit)}
+              >
+                {opt.label}
+              </button>
+            ))}
           </div>
+        </EditorFieldRow>
+
+        {/* Frequency chips */}
+        <EditorFieldRow label="Frequency">
+          <div
+            role="group"
+            aria-label="Frequency"
+            className="flex flex-wrap gap-1"
+          >
+            {FREQUENCY_OPTIONS.map((opt) => (
+              <button
+                key={opt.code}
+                type="button"
+                onClick={() => handleFrequencyChip(opt.code)}
+                disabled={rowDisabled}
+                aria-pressed={value.frequencyCode === opt.code}
+                title={opt.label}
+                className={chartOptionChipClass(value.frequencyCode === opt.code)}
+              >
+                {FREQUENCY_CHIP_LABELS[opt.code]}
+              </button>
+            ))}
+          </div>
+        </EditorFieldRow>
+        {showFrequencyCustomInput && (
+          <EditorFieldRow label="">
+            <label htmlFor={`med-frequency-custom-${index}`} className="sr-only">
+              Custom frequency
+            </label>
+            <input
+              id={`med-frequency-custom-${index}`}
+              type="text"
+              value={value.frequency}
+              onChange={(e) => onChange(index, "frequency", e.target.value)}
+              placeholder="e.g. Every 6 hours after meals"
+              className={`${EDITOR_INPUT_CLASS} w-full`}
+              maxLength={100}
+              disabled={rowDisabled}
+            />
+          </EditorFieldRow>
         )}
 
-        <div className="mt-2 flex items-end gap-2">
+        {/* Duration: value + unit chips */}
+        <EditorFieldRow label="Duration">
+          <label htmlFor={`med-duration-value-${index}`} className="sr-only">
+            Duration value
+          </label>
+          <input
+            id={`med-duration-value-${index}`}
+            type="number"
+            inputMode="numeric"
+            min={1}
+            value={value.durationValue ?? ""}
+            onChange={(e) => handleDurationValue(e.target.value)}
+            placeholder="#"
+            className={`${EDITOR_INPUT_CLASS} w-[4.25rem] ${
+              durationTakesValue ? "" : "invisible"
+            }`}
+            disabled={rowDisabled || !durationTakesValue}
+            aria-hidden={!durationTakesValue}
+          />
+          <div
+            role="group"
+            aria-label="Duration unit"
+            className="flex flex-wrap gap-1"
+          >
+            {DURATION_UNIT_OPTIONS.map((opt) => (
+              <button
+                key={opt.unit}
+                type="button"
+                onClick={() => handleDurationUnit(opt.unit)}
+                disabled={rowDisabled}
+                aria-pressed={value.durationUnit === opt.unit}
+                className={chartOptionChipClass(value.durationUnit === opt.unit)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </EditorFieldRow>
+
+        {/* Food timing chips */}
+        <EditorFieldRow label="Food">
+          <div
+            role="group"
+            aria-label="Food timing"
+            className="flex flex-wrap gap-1"
+          >
+            {FOOD_TIMING_OPTIONS.map((opt) => (
+              <button
+                key={opt.code}
+                type="button"
+                onClick={() => handleFoodTiming(opt.code)}
+                disabled={rowDisabled}
+                aria-pressed={value.foodTiming === opt.code}
+                className={chartOptionChipClass(value.foodTiming === opt.code)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </EditorFieldRow>
+
+        {/* Route + notes */}
+        <div className="flex items-center gap-2">
+          <label htmlFor={`med-route-code-${index}`} className="sr-only">
+            Route
+          </label>
+          <select
+            id={`med-route-code-${index}`}
+            value={value.routeCode ?? ""}
+            onChange={(e) => handleRouteCode(e.target.value as RouteCode | "")}
+            className={`${EDITOR_INPUT_CLASS} w-28 bg-background`}
+            disabled={rowDisabled}
+          >
+            <option value="">Route…</option>
+            {ROUTE_OPTIONS.map((opt) => (
+              <option key={opt.code} value={opt.code}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+          {showRouteOtherInput && (
+            <>
+              <label htmlFor={`med-route-other-${index}`} className="sr-only">
+                Other route
+              </label>
+              <input
+                id={`med-route-other-${index}`}
+                type="text"
+                value={value.route}
+                onChange={(e) => onChange(index, "route", e.target.value)}
+                placeholder="e.g. Buccal"
+                className={`${EDITOR_INPUT_CLASS} w-28`}
+                maxLength={100}
+                disabled={rowDisabled}
+              />
+            </>
+          )}
           <label htmlFor={`med-instructions-${index}`} className="sr-only">
             Instructions
           </label>
@@ -519,20 +632,11 @@ export default function MedicineRow({
             type="text"
             value={value.instructions}
             onChange={(e) => onChange(index, "instructions", e.target.value)}
-            placeholder="Instructions (e.g. after meals, with water)"
-            className="h-11 flex-1 rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50"
+            placeholder="Notes (e.g. avoid face, with plenty of water)"
+            className={`${EDITOR_INPUT_CLASS} min-w-0 flex-1`}
             maxLength={100}
             disabled={rowDisabled}
           />
-          <button
-            type="button"
-            onClick={() => onRemove(index)}
-            disabled={rowDisabled}
-            className="h-11 w-11 rounded p-1.5 text-red-600 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50"
-            aria-label={`Remove medicine ${index + 1}`}
-          >
-            <span aria-hidden>×</span>
-          </button>
         </div>
       </div>
     </div>

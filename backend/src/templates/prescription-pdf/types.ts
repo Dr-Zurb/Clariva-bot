@@ -11,6 +11,7 @@
  */
 
 import type { PrescriptionMedicine } from '../../types/prescription';
+import type { OutputCustomSubsection } from '../../utils/custom-subsections';
 
 export interface PrescriptionPdfHeaderData {
   /** "Dr. Jane Doe" — already prefixed by the service. */
@@ -43,12 +44,22 @@ export interface PrescriptionPdfPatientData {
 export interface PrescriptionPdfBodyData {
   cc: string | null;
   hopi: string | null;
+  /** Derived plain-text social history (from `prescriptions.social_history`). */
+  socialHistory: string | null;
   provisionalDiagnosis: string | null;
   investigations: string | null;
   followUp: string | null;
   patientEducation: string | null;
   clinicalNotes: string | null;
   medicines: PrescriptionMedicine[];
+  /**
+   * Doctor-defined custom subjective subsections (subj-22). Already
+   * sanitised + empty-omitted; renders as an ordered block (section title →
+   * body → child title → body). Empty/absent → no block rendered. Optional so
+   * older composer call sites that predate subj-22 still type-check; the
+   * current composer always populates it.
+   */
+  customSubsections?: OutputCustomSubsection[];
 }
 
 export interface PrescriptionPdfData {

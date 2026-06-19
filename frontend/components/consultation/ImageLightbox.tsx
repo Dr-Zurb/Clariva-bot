@@ -190,7 +190,11 @@ export function ImageLightbox({
         originY: translate.y,
         mode: scale > MIN_SCALE ? "pan" : "swipe",
       };
-      e.currentTarget.setPointerCapture(e.pointerId);
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // Element may be detached mid-gesture (Safari throws InvalidStateError).
+      }
     },
     [scale, translate.x, translate.y],
   );

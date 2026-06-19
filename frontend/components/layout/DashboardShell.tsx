@@ -108,7 +108,7 @@ function DashboardShellInner({ userEmail, token, children }: DashboardShellProps
   const { counts } = useDashboardCounts(token ?? "");
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex h-screen flex-col overflow-hidden">
       <NavPerfTracker />
       <Header
         userEmail={userEmail}
@@ -116,7 +116,7 @@ function DashboardShellInner({ userEmail, token, children }: DashboardShellProps
         onMenuToggle={() => setMobileMenuOpen((prev) => !prev)}
         onOpenSearch={handleOpenPalette}
       />
-      <div className="flex flex-1">
+      <div className="flex min-h-0 flex-1">
         <Sidebar
           isMobileOpen={mobileMenuOpen}
           onClose={() => setMobileMenuOpen(false)}
@@ -125,7 +125,7 @@ function DashboardShellInner({ userEmail, token, children }: DashboardShellProps
           onToggleCollapse={handleToggleCollapse}
         />
         <main
-          className="flex-1 overflow-auto p-4 md:p-6"
+          className="min-h-0 flex-1 overflow-auto p-4 md:p-6"
           id="dashboard-main"
           tabIndex={-1}
         >

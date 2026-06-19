@@ -168,7 +168,7 @@ export default function PaneTabStripV3({
           aria-label="Pane tabs"
           data-pane-tabs-group-id={groupId}
           className={cn(
-            "flex h-9 shrink-0 items-center gap-0.5 border-b border-border/60 bg-muted/30 px-1",
+            "flex h-10 shrink-0 items-center gap-1.5 border-b border-border/60 bg-muted/40 px-2 py-1",
             className,
           )}
         >
@@ -179,7 +179,6 @@ export default function PaneTabStripV3({
             const isActive = paneId === activeTabId;
             const tabElement = (
               <SortableTab
-                key={paneId}
                 paneId={paneId}
                 groupId={groupId}
                 draggable={isTabDraggable(paneId)}
@@ -195,11 +194,11 @@ export default function PaneTabStripV3({
                     onClick={() => onActivateTab(paneId)}
                     onContextMenu={handleContextMenu(paneId)}
                     className={cn(
-                      "inline-flex h-7 items-center gap-1.5 rounded px-2 text-xs font-medium transition-colors",
+                      "inline-flex h-8 items-center gap-1.5 rounded-md bg-card px-2.5 text-xs ring-1 ring-inset transition-[box-shadow,colors]",
                       "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
                       isActive
-                        ? "border border-border/60 bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                        ? "font-semibold text-foreground shadow ring-border/60"
+                        : "font-medium text-muted-foreground shadow-sm ring-border/50 hover:bg-muted/40 hover:text-foreground hover:shadow",
                     )}
                   >
                     {Icon ? (
@@ -217,22 +216,16 @@ export default function PaneTabStripV3({
               </Tooltip>
             </SortableTab>
           );
-          if (wrapTab) {
-            return (
-              <React.Fragment key={paneId}>
-                {wrapTab(paneId, tabElement)}
-              </React.Fragment>
-            );
-          }
-          return <React.Fragment key={paneId}>{tabElement}</React.Fragment>;
-        })}
+            const tabNode = wrapTab ? wrapTab(paneId, tabElement) : tabElement;
+            return <React.Fragment key={paneId}>{tabNode}</React.Fragment>;
+          })}
         {overflowPaneIds.length > 0 ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
                 aria-label={`${overflowPaneIds.length} more tabs`}
-                className="inline-flex h-7 items-center gap-1 rounded px-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                className="inline-flex h-8 items-center gap-1 rounded-md bg-card px-2 text-xs font-medium text-muted-foreground shadow-sm ring-1 ring-inset ring-border/50 hover:bg-muted/60 hover:text-foreground hover:shadow"
               >
                 <MoreHorizontal className="h-3.5 w-3.5" aria-hidden />
                 <span>+{overflowPaneIds.length}</span>

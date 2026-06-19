@@ -10,7 +10,7 @@
 
 | Item | Location |
 |------|----------|
-| **Doctor UI — add patient manually** | [deferred-doctor-ui-add-patient-2026-04.md](../../../deferred/deferred-doctor-ui-add-patient-2026-04.md) |
+| **Doctor UI — add patient manually** | [deferred-doctor-ui-add-patient-2026-04.md](../../../capture/features/patients/deferred-doctor-ui-add-patient-2026-04.md) |
 
 Resume manual add-patient when roster rules and MRN semantics for non-bot paths are clear.
 
@@ -45,7 +45,7 @@ Resume manual add-patient when roster rules and MRN semantics for non-bot paths 
 
 1. **Early data is valuable** — Continue collecting and persisting data needed for booking flow, **abandoned-booking reminders**, and (where consented) **call/SMS** nurture — analogous to a saved cart; this is independent of “show in doctor roster.”
 2. **Doctor Patients list = registered panel** — Use a clear signal; **`medical_record_number` present** is a strong candidate for “first-class registration” for **paid** bot journeys.
-3. **Doctor-created patients** — Deferred until [manual add patient](../../../deferred/deferred-doctor-ui-add-patient-2026-04.md); when built, assign MRN or explicit visibility on create so they appear without bot payment.
+3. **Doctor-created patients** — Deferred until [manual add patient](../../../capture/features/patients/deferred-doctor-ui-add-patient-2026-04.md); when built, assign MRN or explicit visibility on create so they appear without bot payment.
 4. **Zero-fee / waived services** — Payment success may never fire; **MRN must still be assignable** when booking is finalized without capture (see below).
 
 ---
@@ -103,10 +103,10 @@ Resume manual add-patient when roster rules and MRN semantics for non-bot paths 
 - `listPatientsForDoctor` — `backend/src/services/patient-service.ts`
 - `assignMrnAfterPayment` — `backend/src/services/patient-service.ts`; webhook — `backend/src/workers/webhook-worker.ts`
 - Migration 046 — `backend/migrations/046_patient_mrn_after_payment.sql`
-- Deferred manual patient — [deferred-doctor-ui-add-patient-2026-04.md](../../../deferred/deferred-doctor-ui-add-patient-2026-04.md)
+- Deferred manual patient — [deferred-doctor-ui-add-patient-2026-04.md](../../../capture/features/patients/deferred-doctor-ui-add-patient-2026-04.md)
 
 ---
 
-**Index:** [14 Apr 2026 (prior daily)](../14-04-2026/README.md) · [Deferred tasks](../../../deferred/README.md)
+**Index:** [14 Apr 2026 (prior daily)](../14-04-2026/README.md) · [Deferred tasks](../../../capture/MIGRATION-deferred.md)
 
 **Last updated:** 2026-04-15

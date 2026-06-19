@@ -168,7 +168,7 @@ describe("useCockpitV3Layout persistence (cv3p-02)", () => {
     expect(localStorage.getItem(v4TreeLayoutStorageKey(routeKey))).not.toBeNull();
   });
 
-  it("resetLayout returns to the all-hidden blank canvas", async () => {
+  it("resetLayout returns to the seed tree (blank for partial registries)", async () => {
     const storageKey = `test:cv3p-02-reset:${crypto.randomUUID()}`;
     const panes = makePanes(["a", "b", "c"]);
     const opts = hookOptsFor(storageKey, panes);

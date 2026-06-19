@@ -48,11 +48,21 @@ export default function CockpitCanvas({
   }
 
   if (showEmpty) {
-    return <CockpitEmptyState />;
+    return (
+      <div
+        data-testid="cockpit-v3-canvas"
+        className="h-full min-h-0 bg-muted/20"
+      >
+        <CockpitEmptyState />
+      </div>
+    );
   }
 
   return (
-    <div data-testid="cockpit-v3-canvas" className="h-full min-h-0">
+    <div
+      data-testid="cockpit-v3-canvas"
+      className="h-full min-h-0 bg-muted/20 p-1"
+    >
       <CockpitGroupView
         node={layout.paneTree}
         paneById={paneById}

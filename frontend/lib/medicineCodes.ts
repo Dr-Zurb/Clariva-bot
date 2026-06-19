@@ -19,7 +19,9 @@
  */
 
 import type {
+  DoseUnit,
   DurationUnit,
+  FoodTiming,
   FrequencyCode,
   RouteCode,
 } from "@/types/prescription";
@@ -47,13 +49,13 @@ export const FREQUENCY_OPTIONS: readonly FrequencyOption[] = [
   { code: "CUSTOM", label: "Custom\u2026",            legacyLabel: "" },
 ];
 
-const FREQUENCY_INDEX: Record<FrequencyCode, FrequencyOption> =
+const FREQUENCY_INDEX: Partial<Record<FrequencyCode, FrequencyOption>> =
   FREQUENCY_OPTIONS.reduce(
     (acc, opt) => {
       acc[opt.code] = opt;
       return acc;
     },
-    {} as Record<FrequencyCode, FrequencyOption>,
+    {} as Partial<Record<FrequencyCode, FrequencyOption>>,
   );
 
 export function getFrequencyLegacyLabel(code: FrequencyCode | null | undefined): string {
@@ -186,4 +188,156 @@ export function coerceRouteCode(input: string | null | undefined): RouteCode | n
     if (opt.code.toLowerCase() === lower) return opt.code;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Dose (qty + unit) — migration 133 / medicine card redesign
+// ---------------------------------------------------------------------------
+
+export interface DoseUnitOption {
+  unit: DoseUnit;
+  /** Singular display label ("tab", "spoon") */
+  label: string;
+  /** Plural display label ("tabs", "spoons") — "ml" stays "ml" */
+  plural: string;
+}
+
+export const DOSE_UNIT_OPTIONS: readonly DoseUnitOption[] = [
+  { unit: "tab",         label: "tab",         plural: "tabs" },
+  { unit: "cap",         label: "cap",         plural: "caps" },
+  { unit: "ml",          label: "ml",          plural: "ml" },
+  { unit: "spoon",       label: "spoon",       plural: "spoons" },
+  { unit: "drops",       label: "drop",        plural: "drops" },
+  { unit: "puff",        label: "puff",        plural: "puffs" },
+  { unit: "sachet",      label: "sachet",      plural: "sachets" },
+  { unit: "unit",        label: "unit",        plural: "units" },
+  { unit: "application", label: "application", plural: "applications" },
+];
+
+const DOSE_UNIT_INDEX: Record<DoseUnit, DoseUnitOption> =
+  DOSE_UNIT_OPTIONS.reduce(
+    (acc, opt) => {
+      acc[opt.unit] = opt;
+      return acc;
+    },
+    {} as Record<DoseUnit, DoseUnitOption>,
+  );
+
+/** "2 tabs", "1 spoon", "10 ml" — empty string when either piece missing. */
+export function formatDoseLabel(
+  qty: number | null | undefined,
+  unit: DoseUnit | null | undefined,
+): string {
+  if (qty == null || qty <= 0 || !unit) return "";
+  if (unit === "application") return "";
+  const meta = DOSE_UNIT_INDEX[unit];
+  if (!meta) return "";
+  return `${qty} ${qty === 1 ? meta.label : meta.plural}`;
+}
+
+/** Topical forms where dose is "apply", not a countable unit. */
+export function isTopicalForm(form: string | null | undefined): boolean {
+  if (!form?.trim()) return false;
+  return /oint|cream|gel|lotion|paste/.test(form.trim().toLowerCase());
+}
+
+/** Typical per-dose unit for a pharmaceutical form ("syrup" → spoon). */
+export function defaultDoseUnitForForm(
+  form: string | null | undefined,
+): DoseUnit | null {
+  if (!form) return null;
+  const f = form.trim().toLowerCase();
+  if (!f) return null;
+  if (/tab/.test(f)) return "tab";
+  if (/cap/.test(f)) return "cap";
+  if (/syr|susp|solution|liquid|elixir/.test(f)) return "spoon";
+  if (/drop/.test(f)) return "drops";
+  if (/inhaler|puff|aerosol|mdi/.test(f)) return "puff";
+  if (/sachet|powder|granule/.test(f)) return "sachet";
+  if (/inj|vial|ampoule|pen|insulin/.test(f)) return "unit";
+  if (/oint|cream|gel|lotion|paste/.test(f)) return "application";
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Food / timing instruction — migration 133
+// ---------------------------------------------------------------------------
+
+export interface FoodTimingOption {
+  code: FoodTiming;
+  /** Chip / sig-line label */
+  label: string;
+}
+
+export const FOOD_TIMING_OPTIONS: readonly FoodTimingOption[] = [
+  { code: "before_food",   label: "Before food" },
+  { code: "after_food",    label: "After food" },
+  { code: "with_food",     label: "With food" },
+  { code: "empty_stomach", label: "Empty stomach" },
+  { code: "bedtime",       label: "At bedtime" },
+];
+
+const FOOD_TIMING_INDEX: Record<FoodTiming, FoodTimingOption> =
+  FOOD_TIMING_OPTIONS.reduce(
+    (acc, opt) => {
+      acc[opt.code] = opt;
+      return acc;
+    },
+    {} as Record<FoodTiming, FoodTimingOption>,
+  );
+
+export function getFoodTimingLabel(code: FoodTiming | null | undefined): string {
+  if (!code) return "";
+  return FOOD_TIMING_INDEX[code]?.label ?? "";
+}
+
+// ---------------------------------------------------------------------------
+// Sig line — "2 tabs · OD · 30 days · After food"
+// ---------------------------------------------------------------------------
+
+export interface MedicineSigParts {
+  dosage?: string | null;
+  doseQty?: number | null;
+  doseUnit?: DoseUnit | null;
+  frequency?: string | null;
+  frequencyCode?: FrequencyCode | null;
+  duration?: string | null;
+  durationValue?: number | null;
+  durationUnit?: DurationUnit | null;
+  foodTiming?: FoodTiming | null;
+  instructions?: string | null;
+}
+
+/**
+ * Compact one-line sig from structured fields, falling back to the
+ * legacy free-text mirrors. Used by the collapsed medicine card and
+ * by anything else that needs a human recap ("2 tabs · BID · 5 days ·
+ * After food · avoid driving").
+ */
+export function formatMedicineSigLine(parts: MedicineSigParts): string {
+  const segments: string[] = [];
+
+  const dose = formatDoseLabel(parts.doseQty, parts.doseUnit);
+  if (dose) segments.push(dose);
+  else if (parts.dosage?.trim()) segments.push(parts.dosage.trim());
+
+  if (parts.frequencyCode && parts.frequencyCode !== "CUSTOM") {
+    segments.push(parts.frequencyCode);
+  } else if (parts.frequency?.trim()) {
+    segments.push(parts.frequency.trim());
+  }
+
+  const duration =
+    parts.durationUnit != null
+      ? formatDurationLegacyLabel(parts.durationValue, parts.durationUnit)
+      : "";
+  if (duration) segments.push(duration);
+  else if (parts.duration?.trim()) segments.push(parts.duration.trim());
+
+  const food = getFoodTimingLabel(parts.foodTiming);
+  if (food) segments.push(food);
+
+  if (parts.instructions?.trim()) segments.push(parts.instructions.trim());
+
+  return segments.join(" \u00b7 ");
 }

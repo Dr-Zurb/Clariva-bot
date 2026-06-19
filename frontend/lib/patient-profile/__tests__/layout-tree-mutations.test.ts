@@ -35,7 +35,7 @@ import {
 } from "../layout-tree-mutations";
 import type { LayoutNode, LegacyFlatLayout } from "../types";
 import type { PaneTreeNode } from "../layout-tree";
-import { paneTreeToFlat } from "../layout-tree";
+import { paneTreeToFlat, updateNodeHidden } from "../layout-tree";
 
 // ── Fixture helpers ─────────────────────────────────────────────────────────
 
@@ -1423,6 +1423,30 @@ describe("hidePaneToRoot (empty-column-wrapper fix)", () => {
     expect(hiddenPaneIds(result.tree)).toEqual(["rx"]);
     expect(hasDuplicatePaneIds(result.tree)).toBe(false);
     expect(allTabsNodesValid(result.tree)).toBe(true);
+  });
+
+  it("hiding a tab from a pane-named multi-tab leaf does not duplicate structural node ids (palette toggle)", () => {
+    const tree = ptRoot([
+      ptLeaf("chart", 25),
+      ptLeaf("assessment", 50, false, ["assessment", "snapshot"], "assessment"),
+      ptLeaf("plan", 25),
+    ]);
+    const hidden = hidePaneToRoot(tree, "assessment");
+    expect(hidden.ok).toBe(true);
+    if (!hidden.ok) return;
+    expect(nodeIds(hidden.tree).filter((id) => id === "assessment")).toHaveLength(1);
+    expect(visiblePaneIds(hidden.tree).sort()).toEqual(["chart", "plan", "snapshot"]);
+    expect(hiddenPaneIds(hidden.tree)).toEqual(["assessment"]);
+
+    // addPane re-show uses setPaneHidden(false) → updateNodeHidden on every matching id
+    const unhiddenTree = updateNodeHidden(hidden.tree, "assessment", false);
+    expect(nodeIds(unhiddenTree).filter((id) => id === "assessment")).toHaveLength(1);
+    expect(visiblePaneIds(unhiddenTree).sort()).toEqual([
+      "assessment",
+      "chart",
+      "plan",
+      "snapshot",
+    ]);
   });
 
   it("keeps every pane re-addable (hidden re-homed panes survive in the flat model)", () => {

@@ -259,7 +259,7 @@ describe("photoLifted — throws on upload attempt (dev)", () => {
 });
 
 describe("actionsInFooter — suppresses inline commit row", () => {
-  it("hides Send Rx, Send & finish, and Finish visit when actions live in footer", () => {
+  it("hides Send Rx, Send & finish, Finish visit, and Preview when actions live in footer", () => {
     renderBody({ actionsInFooter: true, onFinish: vi.fn() });
     expect(screen.queryByRole("button", { name: /^send rx$/i })).toBeNull();
     expect(
@@ -268,6 +268,12 @@ describe("actionsInFooter — suppresses inline commit row", () => {
     expect(
       screen.queryByRole("button", { name: /finish visit/i }),
     ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /preview as patient/i }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /save as template/i }),
+    ).toBeInTheDocument();
   });
 
   it("shows commit-row buttons when actionsInFooter is false and onFinish is set", () => {

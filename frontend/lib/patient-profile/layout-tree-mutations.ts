@@ -504,10 +504,17 @@ function normalizeLeafAfterPaneRemoval(
       : remainingPaneIds[0]!;
   if (remainingPaneIds.length === 1) {
     const sole = remainingPaneIds[0]!;
-    // Preserve synthetic tabs-container ids (e.g. __tabs_0) for resize-key stability.
+    // Preserve the container id for resize-key stability when it is structural
+    // (synthetic `__tabs_*` or the `__root__` tabs-container) or when it is a
+    // pane-named id that still belongs to a remaining tab. Only collapse to the
+    // sole pane's id when the container was named after the pane being removed —
+    // otherwise hidePaneToRoot would re-home that pane and leave a duplicate node
+    // id (e.g. hiding "assessment" from { id: "assessment", paneIds:
+    // ["assessment","snapshot"] } must become id "snapshot").
     if (
       container.id.startsWith("__tabs_") ||
-      (container.paneIds && container.paneIds.length > 1)
+      container.id === "__root__" ||
+      remainingPaneIds.includes(container.id)
     ) {
       return {
         ...container,
@@ -592,6 +599,19 @@ export function hidePaneToRoot(
   if (!removed) {
     // Pane was the sole leaf in the whole tree — hide in place (blank state).
     return { ok: true, tree: hideInPlace() };
+  }
+  // Re-home only when no structural node still carries this id (palette toggle-off
+  // from a multi-tab leaf whose node id matched the hidden pane used to duplicate
+  // ResizablePanel ids on toggle-on).
+  const existingStructural = findPaneTreeNodeById(removed.tree, paneId);
+  if (existingStructural) {
+    return {
+      ok: true,
+      tree: updatePaneTreeNodeById(removed.tree, paneId, (n) => ({
+        ...n,
+        hidden: true,
+      })),
+    };
   }
   const hiddenLeaf = makeSinglePaneLeaf(paneId, container.sizePct, true);
   const rootTree: PaneTreeNode =

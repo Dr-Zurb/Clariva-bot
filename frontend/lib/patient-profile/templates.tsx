@@ -41,6 +41,7 @@ import type {
   CockpitSessionSummary,
   CockpitState,
 } from './state';
+import { canEditPrescriptionDraft } from './state';
 import SnapshotPane from '@/components/patient-profile/panes/SnapshotPane';
 import { ChartRailWithEmptyState } from '@/components/patient-profile/panes/ChartRailWithEmptyState';
 import InvestigationsPane from '@/components/patient-profile/panes/InvestigationsPane';
@@ -213,6 +214,7 @@ function makeLeftColumn(ctx: TelemedVideoContext): PaneDefinition {
 
 function makeRightColumn(ctx: TelemedVideoContext): PaneDefinition {
   const appointmentId = ctx.appointment.id;
+  const patientId = ctx.appointment.patient_id ?? null;
   return {
     id: 'right-column',
     title: 'Chart Notes',
@@ -224,7 +226,14 @@ function makeRightColumn(ctx: TelemedVideoContext): PaneDefinition {
         id: 'subjective',
         title: 'Subjective',
         icon: PANE_ICONS.subjective,
-        render: () => <SubjectivePane hideHeader />,
+        render: () => (
+          <SubjectivePane
+            hideHeader
+            patientId={patientId}
+            token={ctx.token}
+            cockpitState={ctx.state}
+          />
+        ),
         naturalSizePct: 50,
         minSizePx: 220,
         // R-FUTURE-PROOFING tab-contract slot — reserved for future Photo / AI-summary

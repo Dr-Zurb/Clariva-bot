@@ -38,7 +38,7 @@ Add concise **reference documentation** explaining: **early intake** (data colle
 ### 2. Content
 - [x] 2.1 Define **intake** vs **registered** (MRN, doctor list)
 - [x] 2.2 Mention paid path vs zero-fee path (pointer to task-02)
-- [x] 2.3 Link [deferred doctor add patient](../../../deferred/deferred-doctor-ui-add-patient-2026-04.md)
+- [x] 2.3 Link [deferred doctor add patient](../../capture/features/patients/deferred-doctor-ui-add-patient-2026-04.md)
 
 ### 3. Verification
 - [x] 3.1 Links resolve (relative paths)

@@ -35,6 +35,7 @@ import type React from 'react';
 import type { PaneDefinition } from '@/lib/patient-profile/v3/foundation';
 import {
   mapStateToTemplate,
+  canEditPrescriptionDraft,
   type CockpitTemplate,
 } from '@/lib/patient-profile/state';
 // Type-only: the cockpit context contract the page builds (P5-DL-3 — relocated
@@ -279,7 +280,14 @@ export function buildCockpitTabs(
     id: 'subjective',
     title: 'Subjective',
     icon: PANE_ICONS.subjective,
-    render: () => <SubjectivePane hideHeader />,
+    render: () => (
+      <SubjectivePane
+        hideHeader
+        patientId={patientId}
+        token={ctx.token}
+        cockpitState={ctx.state}
+      />
+    ),
     naturalSizePct: 50,
     minSizePx: 220,
   };

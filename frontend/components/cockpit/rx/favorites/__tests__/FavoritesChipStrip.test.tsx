@@ -22,6 +22,10 @@ const template: MedicineRowValue = {
   durationValue: 5,
   durationUnit: "days",
   routeCode: "oral",
+  doseQty: null,
+  doseUnit: null,
+  form: null,
+  foodTiming: null,
 };
 
 const favorites: DoctorDrugFavorite[] = [

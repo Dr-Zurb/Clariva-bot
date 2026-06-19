@@ -65,7 +65,7 @@ If you're picking items to commit: open the relevant `plan-tX` file. Each tier p
 
 The current production code (`frontend/components/consultation/TextConsultRoom.tsx` + `backend/src/services/text-session-supabase.ts` + migrations 051 / 052 / 062 / 078–082) implements everything the foundation plans specify, with the one Plan-06 patient-voice gap noted above.
 
-**The tier plans T1–T6 are the entire planned work above that line.** There is no other text-consult planning hidden in `Daily-plans/`, `inbox.md`, or `deferred/`. If something doesn't appear in this folder, it isn't on the text-consult roadmap.
+**The tier plans T1–T6 are the entire planned work above that line.** There is no other text-consult planning hidden in `Daily-plans/`, `inbox.md`, or `capture/features/`. If something doesn't appear in this folder, it isn't on the text-consult roadmap.
 
 ---
 

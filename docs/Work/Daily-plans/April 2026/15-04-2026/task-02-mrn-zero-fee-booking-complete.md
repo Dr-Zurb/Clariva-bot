@@ -65,7 +65,7 @@ Ensure **registration** (MRN assignment) happens when a visit is **fully booked*
 
 - Idempotent MRN assignment (RPC / `assign_patient_mrn` already designed for single assign)
 - No PHI in logs
-- Align semantics with product: “registered” = MRN for bot; staff manual path deferred ([deferred doc](../../../deferred/deferred-doctor-ui-add-patient-2026-04.md))
+- Align semantics with product: “registered” = MRN for bot; staff manual path deferred ([deferred doc](../../capture/features/patients/deferred-doctor-ui-add-patient-2026-04.md))
 
 ---
 

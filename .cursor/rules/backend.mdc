@@ -1,0 +1,13 @@
+---
+globs: backend/src/**/*.ts
+alwaysApply: false
+---
+
+# Backend work
+
+Follow @docs/Reference/engineering/development/AI_AGENT_RULES.md and @docs/Reference/engineering/development/STANDARDS.md (especially the "Canonical Contracts" section — single source of truth for the response shape and helpers).
+
+- Use existing patterns from @docs/Reference/engineering/development/RECIPES.md before improvising.
+- Mirror a nearby service for structure (e.g. `complaint-master-service.ts`) rather than inventing a new layout.
+- Controllers orchestrate only (validate → service → respond); business rules live in services.
+- Before "done": run the gate in @docs/Reference/engineering/development/DEFINITION_OF_DONE.md (typecheck + lint + tests).

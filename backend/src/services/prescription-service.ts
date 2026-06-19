@@ -16,10 +16,15 @@ import {
   PrescriptionWithRelations,
   CreatePrescriptionInput,
   UpdatePrescriptionInput,
+  PrescriptionComplaint,
+  LastSubjectiveForPatient,
+  SocialHistoryStructured,
+  FamilyHistoryStructured,
+  PastSurgicalHistoryStructured,
 } from '../types/prescription';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataModification, logDataAccess } from '../utils/audit-logger';
-import { ForbiddenError, InternalError, NotFoundError } from '../utils/errors';
+import { ForbiddenError, InternalError, NotFoundError, ValidationError } from '../utils/errors';
 
 // ============================================================================
 // Create
@@ -87,13 +92,32 @@ export async function createPrescription(
     vitals_spo2: data.vitalsSpo2 ?? null,
     vitals_wt_kg: data.vitalsWtKg ?? null,
     vitals_ht_cm: data.vitalsHtCm ?? null,
+    // objective-tab / migration 151 — Vitals 2.0 extended vitals (canonical units).
+    vitals_rr: data.vitalsRr ?? null,
+    vitals_pain_score: data.vitalsPainScore ?? null,
+    vitals_glucose_mg_dl: data.vitalsGlucoseMgDl ?? null,
+    vitals_gcs_total: data.vitalsGcsTotal ?? null,
+    vitals_bp_posture: data.vitalsBpPosture ?? null,
+    vitals_bp_limb: data.vitalsBpLimb ?? null,
+    vitals_head_circumference_cm: data.vitalsHeadCircumferenceCm ?? null,
+    vitals_muac_cm: data.vitalsMuacCm ?? null,
+    vitals_waist_cm: data.vitalsWaistCm ?? null,
     examination_findings: data.examinationFindings ?? null,
+    examination_json: data.examinationJson ?? [],
     differential_diagnosis: data.differentialDiagnosis ?? null,
     advice: data.advice ?? null,
     follow_up_value: data.followUpValue ?? null,
     follow_up_unit: data.followUpUnit ?? null,
     referral: data.referral ?? null,
     test_results: data.testResults ?? null,
+    complaints: data.complaints ?? [],
+    family_history: data.familyHistory ?? null,
+    family_history_structured: data.familyHistoryStructured ?? null,
+    social_history: data.socialHistory ?? null,
+    social_history_structured: data.socialHistoryStructured ?? null,
+    past_surgical_history: data.pastSurgicalHistory ?? null,
+    past_surgical_history_structured: data.pastSurgicalHistoryStructured ?? null,
+    custom_subsections: data.customSubsections ?? [],
   };
 
   const { data: prescription, error: rxError } = await admin
@@ -128,6 +152,11 @@ export async function createPrescription(
       duration_value: m.durationValue ?? null,
       duration_unit: m.durationUnit ?? null,
       route_code: m.routeCode ?? null,
+      // Migration 133 — dose details.
+      dose_qty: m.doseQty ?? null,
+      dose_unit: m.doseUnit ?? null,
+      form: m.form ?? null,
+      food_timing: m.foodTiming ?? null,
     }));
 
     const { data: insertedMedicines, error: medError } = await admin
@@ -505,6 +534,268 @@ export async function getLastPrescriptionInEpisode(
 }
 
 // ============================================================================
+// Last subjective for patient (subjective-tab · subj-07)
+// ============================================================================
+
+function socialHistoryStructuredHasContent(
+  structured?: SocialHistoryStructured | null,
+): boolean {
+  if (!structured || typeof structured !== 'object') return false;
+  if (structured.notes?.trim()) return true;
+  if (structured.smoking) return true;
+  if (structured.smokeless) return true;
+  if (structured.alcohol) return true;
+  if (
+    structured.substances &&
+    (structured.substances.status === 'never' ||
+      (structured.substances.items?.length ?? 0) > 0 ||
+      (structured.substances.uses?.length ?? 0) > 0 ||
+      structured.substances.route ||
+      structured.substances.notes?.trim())
+  ) {
+    return true;
+  }
+  if (
+    structured.diet?.type ||
+    structured.diet?.notes?.trim()
+  ) {
+    return true;
+  }
+  if (
+    structured.caffeine?.status === 'never' ||
+    (structured.caffeine?.items?.length ?? 0) > 0 ||
+    structured.caffeine?.notes?.trim() ||
+    structured.caffeine?.amount != null ||
+    structured.caffeine?.source ||
+    structured.caffeine?.strength ||
+    (structured.caffeine?.frequencyUnit &&
+      structured.caffeine.frequencyUnit !== 'day') ||
+    structured.diet?.caffeineAmount != null ||
+    structured.diet?.caffeineCupsPerDay != null
+  ) {
+    return true;
+  }
+  if (structured.activity?.level || structured.activity?.daysPerWeek != null) return true;
+  if (structured.activity?.jobActivity) return true;
+  if (structured.activity?.minutesPerSession != null) return true;
+  if ((structured.activity?.types?.length ?? 0) > 0) return true;
+  if ((structured.activity?.items?.length ?? 0) > 0) return true;
+  if (structured.activity?.limitedByHealth) return true;
+  if (structured.activity?.barriers?.trim()) return true;
+  if (structured.activity?.notes?.trim()) return true;
+  if (
+    structured.occupation?.text?.trim() ||
+    (structured.occupation?.exposures?.length ?? 0) > 0
+  ) {
+    return true;
+  }
+  if (structured.living?.situation || structured.living?.notes?.trim()) return true;
+  if (
+    structured.travel?.recent ||
+    structured.travel?.place?.trim() ||
+    structured.travel?.vectorRisk
+  ) {
+    return true;
+  }
+  if (
+    structured.sickContact?.present != null ||
+    (structured.sickContact?.types?.length ?? 0) > 0 ||
+    (structured.sickContact?.context?.length ?? 0) > 0 ||
+    structured.sickContact?.notes?.trim()
+  ) {
+    return true;
+  }
+  if (
+    structured.sleep?.hoursPerNight != null ||
+    structured.sleep?.quality ||
+    structured.sleep?.snoring ||
+    structured.sleep?.shiftWork ||
+    structured.sleep?.notes?.trim()
+  ) {
+    return true;
+  }
+  if (
+    structured.stress?.level ||
+    structured.stress?.support ||
+    (structured.stress?.sources?.length ?? 0) > 0 ||
+    structured.stress?.notes?.trim()
+  ) {
+    return true;
+  }
+  if (structured.sexual?.enabled) {
+    if (
+      structured.sexual.active != null ||
+      structured.sexual.partners != null ||
+      structured.sexual.protection != null ||
+      structured.sexual.notes?.trim()
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function familyHistoryStructuredHasContent(
+  structured: FamilyHistoryStructured | null | undefined,
+): boolean {
+  if (!structured) return false;
+  if (structured.none) return true;
+  if (structured.notes?.trim()) return true;
+  if (structured.other?.trim()) return true;
+  const relatives = structured.relatives;
+  if (relatives) {
+    for (const key of ['father', 'mother', 'child', 'grandparent', 'sibling'] as const) {
+      if ((relatives[key]?.length ?? 0) > 0) return true;
+    }
+  }
+  if ((structured.siblings?.length ?? 0) > 0) return true;
+  if ((structured.otherRelativeEntries?.length ?? 0) > 0) return true;
+  return false;
+}
+
+function pastSurgicalHistoryStructuredHasContent(
+  structured: PastSurgicalHistoryStructured | null | undefined,
+): boolean {
+  if (!structured) return false;
+  if (structured.none) return true;
+  if (structured.notes?.trim()) return true;
+  return (structured.procedures?.length ?? 0) > 0;
+}
+
+function prescriptionHasStructuredSubjective(row: {
+  complaints?: PrescriptionComplaint[] | null;
+  family_history?: string | null;
+  family_history_structured?: FamilyHistoryStructured | null;
+  social_history?: string | null;
+  social_history_structured?: SocialHistoryStructured | null;
+  past_surgical_history?: string | null;
+  past_surgical_history_structured?: PastSurgicalHistoryStructured | null;
+}): boolean {
+  const complaints = row.complaints ?? [];
+  if (complaints.some((c) => typeof c.name === 'string' && c.name.trim())) {
+    return true;
+  }
+  if (row.family_history?.trim()) return true;
+  if (familyHistoryStructuredHasContent(row.family_history_structured)) return true;
+  if (row.social_history?.trim()) return true;
+  if (socialHistoryStructuredHasContent(row.social_history_structured)) return true;
+  if (row.past_surgical_history?.trim()) return true;
+  if (pastSurgicalHistoryStructuredHasContent(row.past_surgical_history_structured)) return true;
+  return false;
+}
+
+/**
+ * Return structured subjective from the patient's most recent prior
+ * prescription (any visit — ST-Q2 default). Excludes `beforeAppointmentId`.
+ * Returns `null` when no prior structured subjective exists.
+ */
+export async function getLastSubjectiveForPatient(
+  patientId: string,
+  beforeAppointmentId: string,
+  correlationId: string,
+  userId: string,
+): Promise<LastSubjectiveForPatient | null> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const { data: appointmentCheck } = await admin
+    .from('appointments')
+    .select('id')
+    .eq('doctor_id', userId)
+    .eq('patient_id', patientId)
+    .limit(1)
+    .maybeSingle();
+
+  const { data: convCheck } = await admin
+    .from('conversations')
+    .select('id')
+    .eq('doctor_id', userId)
+    .eq('patient_id', patientId)
+    .limit(1)
+    .maybeSingle();
+
+  if (!appointmentCheck && !convCheck) {
+    throw new ForbiddenError('No access to this patient');
+  }
+
+  const { data: currentApt, error: aptErr } = await admin
+    .from('appointments')
+    .select('id, doctor_id, patient_id')
+    .eq('id', beforeAppointmentId)
+    .maybeSingle();
+
+  if (aptErr) handleSupabaseError(aptErr, correlationId);
+  if (!currentApt) {
+    throw new NotFoundError('Appointment not found');
+  }
+
+  const apt = currentApt as { id: string; doctor_id: string; patient_id: string | null };
+  if (apt.doctor_id !== userId) {
+    throw new ForbiddenError('Appointment not found');
+  }
+  if (apt.patient_id && apt.patient_id !== patientId) {
+    throw new ValidationError('patientId does not match appointment');
+  }
+
+  const { data: rows, error } = await admin
+    .from('prescriptions')
+    .select(
+      'id, created_at, complaints, family_history, family_history_structured, social_history, social_history_structured, past_surgical_history, past_surgical_history_structured, appointment_id',
+    )
+    .eq('patient_id', patientId)
+    .eq('doctor_id', userId)
+    .neq('appointment_id', beforeAppointmentId)
+    .order('created_at', { ascending: false })
+    .limit(10);
+
+  if (error) handleSupabaseError(error, correlationId);
+
+  const match = (rows ?? []).find((row) =>
+    prescriptionHasStructuredSubjective(
+      row as {
+        complaints?: PrescriptionComplaint[] | null;
+        family_history?: string | null;
+        family_history_structured?: FamilyHistoryStructured | null;
+        social_history?: string | null;
+        social_history_structured?: SocialHistoryStructured | null;
+        past_surgical_history?: string | null;
+        past_surgical_history_structured?: PastSurgicalHistoryStructured | null;
+      },
+    ),
+  );
+
+  if (!match) return null;
+
+  const rx = match as {
+    id: string;
+    created_at: string;
+    complaints: PrescriptionComplaint[] | null;
+    family_history: string | null;
+    family_history_structured: FamilyHistoryStructured | null;
+    social_history: string | null;
+    social_history_structured: SocialHistoryStructured | null;
+    past_surgical_history: string | null;
+    past_surgical_history_structured: PastSurgicalHistoryStructured | null;
+  };
+
+  await logDataAccess(correlationId, userId, 'prescription', rx.id);
+
+  return {
+    sourcePrescriptionId: rx.id,
+    sourceCreatedAt: rx.created_at,
+    complaints: rx.complaints ?? [],
+    familyHistory: rx.family_history,
+    familyHistoryStructured: rx.family_history_structured,
+    socialHistory: rx.social_history,
+    socialHistoryStructured: rx.social_history_structured,
+    pastSurgicalHistory: rx.past_surgical_history,
+    pastSurgicalHistoryStructured: rx.past_surgical_history_structured,
+  };
+}
+
+// ============================================================================
 // Update
 // ============================================================================
 
@@ -567,13 +858,42 @@ export async function updatePrescription(
   if (updates.vitalsSpo2 !== undefined) updateData.vitals_spo2 = updates.vitalsSpo2;
   if (updates.vitalsWtKg !== undefined) updateData.vitals_wt_kg = updates.vitalsWtKg;
   if (updates.vitalsHtCm !== undefined) updateData.vitals_ht_cm = updates.vitalsHtCm;
+  // objective-tab / migration 151 — Vitals 2.0 extended vitals (canonical units).
+  if (updates.vitalsRr !== undefined) updateData.vitals_rr = updates.vitalsRr;
+  if (updates.vitalsPainScore !== undefined) updateData.vitals_pain_score = updates.vitalsPainScore;
+  if (updates.vitalsGlucoseMgDl !== undefined) updateData.vitals_glucose_mg_dl = updates.vitalsGlucoseMgDl;
+  if (updates.vitalsGcsTotal !== undefined) updateData.vitals_gcs_total = updates.vitalsGcsTotal;
+  if (updates.vitalsBpPosture !== undefined) updateData.vitals_bp_posture = updates.vitalsBpPosture;
+  if (updates.vitalsBpLimb !== undefined) updateData.vitals_bp_limb = updates.vitalsBpLimb;
+  if (updates.vitalsHeadCircumferenceCm !== undefined) updateData.vitals_head_circumference_cm = updates.vitalsHeadCircumferenceCm;
+  if (updates.vitalsMuacCm !== undefined) updateData.vitals_muac_cm = updates.vitalsMuacCm;
+  if (updates.vitalsWaistCm !== undefined) updateData.vitals_waist_cm = updates.vitalsWaistCm;
   if (updates.examinationFindings !== undefined) updateData.examination_findings = updates.examinationFindings;
+  if (updates.examinationJson !== undefined) updateData.examination_json = updates.examinationJson;
   if (updates.differentialDiagnosis !== undefined) updateData.differential_diagnosis = updates.differentialDiagnosis;
   if (updates.advice !== undefined) updateData.advice = updates.advice;
   if (updates.followUpValue !== undefined) updateData.follow_up_value = updates.followUpValue;
   if (updates.followUpUnit !== undefined) updateData.follow_up_unit = updates.followUpUnit;
   if (updates.referral !== undefined) updateData.referral = updates.referral;
   if (updates.testResults !== undefined) updateData.test_results = updates.testResults;
+  if (updates.complaints !== undefined) updateData.complaints = updates.complaints;
+  if (updates.familyHistory !== undefined) updateData.family_history = updates.familyHistory;
+  if (updates.familyHistoryStructured !== undefined) {
+    updateData.family_history_structured = updates.familyHistoryStructured;
+  }
+  if (updates.socialHistory !== undefined) updateData.social_history = updates.socialHistory;
+  if (updates.socialHistoryStructured !== undefined) {
+    updateData.social_history_structured = updates.socialHistoryStructured;
+  }
+  if (updates.pastSurgicalHistory !== undefined) {
+    updateData.past_surgical_history = updates.pastSurgicalHistory;
+  }
+  if (updates.pastSurgicalHistoryStructured !== undefined) {
+    updateData.past_surgical_history_structured = updates.pastSurgicalHistoryStructured;
+  }
+  if (updates.customSubsections !== undefined) {
+    updateData.custom_subsections = updates.customSubsections;
+  }
 
   if (Object.keys(updateData).length > 0) {
     const { error: updateError } = await admin.from('prescriptions').update(updateData).eq('id', id);
@@ -605,6 +925,11 @@ export async function updatePrescription(
         duration_value: m.durationValue ?? null,
         duration_unit: m.durationUnit ?? null,
         route_code: m.routeCode ?? null,
+        // Migration 133 — dose details.
+        dose_qty: m.doseQty ?? null,
+        dose_unit: m.doseUnit ?? null,
+        form: m.form ?? null,
+        food_timing: m.foodTiming ?? null,
       }));
 
       const { error: medError } = await admin.from('prescription_medicines').insert(medicineRows);

@@ -27,19 +27,30 @@ import {
   validateUpdatePatientAllergyBody,
   validateCreatePatientConditionBody,
   validateUpdatePatientConditionBody,
+  validateCreatePatientMedicationBody,
+  validateUpdatePatientMedicationBody,
+  validateLinkConditionMedicationBody,
+  validateUpdateMedicalBackgroundNotesBody,
   validateCreatePatientVitalsBody,
   validateUpdatePatientVitalsBody,
 } from '../utils/validation';
 import {
   createAllergy,
   createChronicCondition,
+  createMedication,
   createVitals,
+  getMedicalBackground,
   getProblemList,
+  linkConditionMedication,
   listAllergies,
   listChronicConditions,
+  listMedications,
   listVitals,
+  unlinkConditionMedication,
   updateAllergy,
   updateChronicCondition,
+  updateMedication,
+  upsertMedicalBackgroundNotes,
   updateVitals,
 } from '../services/patient-chart-service';
 
@@ -119,6 +130,83 @@ export const updateConditionHandler = asyncHandler(async (req: Request, res: Res
 
   const condition = await updateChronicCondition(patientId, id, body, correlationId, userId);
   res.status(200).json(successResponse({ condition }, req));
+});
+
+// ============================================================================
+// Medications
+// ============================================================================
+
+export const listMedicationsHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const userId = requireUserId(req);
+  const { patientId } = validatePatientChartParentParams(req.params);
+
+  const medications = await listMedications(patientId, correlationId, userId);
+  res.status(200).json(successResponse({ medications }, req));
+});
+
+export const createMedicationHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const userId = requireUserId(req);
+  const { patientId } = validatePatientChartParentParams(req.params);
+  const body = validateCreatePatientMedicationBody(req.body);
+
+  const medication = await createMedication(patientId, body, correlationId, userId);
+  res.status(201).json(successResponse({ medication }, req));
+});
+
+export const updateMedicationHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const userId = requireUserId(req);
+  const { patientId, id } = validatePatientChartChildParams(req.params);
+  const body = validateUpdatePatientMedicationBody(req.body);
+
+  const medication = await updateMedication(patientId, id, body, correlationId, userId);
+  res.status(200).json(successResponse({ medication }, req));
+});
+
+// ============================================================================
+// Medical background (Phase B — grouped conditions + meds)
+// ============================================================================
+
+export const getMedicalBackgroundHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const userId = requireUserId(req);
+  const { patientId } = validatePatientChartParentParams(req.params);
+
+  const medicalBackground = await getMedicalBackground(patientId, correlationId, userId);
+  res.status(200).json(successResponse({ medicalBackground }, req));
+});
+
+export const updateMedicalBackgroundNotesHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const correlationId = req.correlationId || 'unknown';
+    const userId = requireUserId(req);
+    const { patientId } = validatePatientChartParentParams(req.params);
+    const body = validateUpdateMedicalBackgroundNotesBody(req.body);
+
+    const notes = await upsertMedicalBackgroundNotes(patientId, body, correlationId, userId);
+    res.status(200).json(successResponse({ notes }, req));
+  },
+);
+
+export const linkConditionMedicationHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const userId = requireUserId(req);
+  const { patientId } = validatePatientChartParentParams(req.params);
+  const body = validateLinkConditionMedicationBody(req.body);
+
+  const link = await linkConditionMedication(patientId, body, correlationId, userId);
+  res.status(201).json(successResponse({ link }, req));
+});
+
+export const unlinkConditionMedicationHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const userId = requireUserId(req);
+  const { patientId, id } = validatePatientChartChildParams(req.params);
+
+  await unlinkConditionMedication(patientId, id, correlationId, userId);
+  res.status(200).json(successResponse({ unlinked: true }, req));
 });
 
 // ============================================================================

@@ -27,7 +27,7 @@ export interface RxPaneProps {
   hideHeader?: boolean;
   /**
    * When true, inline SaveStatus + commit actions are suppressed; the
-   * middle-column `<PlanActionFooter>` owns them (cmr-03).
+   * shell `<CockpitRxActionDock>` owns them (cv3l-05).
    */
   actionsInFooter?: boolean;
   /**

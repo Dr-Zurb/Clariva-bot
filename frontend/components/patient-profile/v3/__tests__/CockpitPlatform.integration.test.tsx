@@ -73,6 +73,19 @@ const safetySurface = vi.hoisted((): RxSafetySurfaceValue => ({
   ddiCount: 0,
 }));
 
+vi.mock("@/lib/patient-profile/v3/useCockpitLayoutPresets", () => ({
+  MAX_SAVED_LAYOUTS: 5,
+  useCockpitLayoutPresets: () => ({
+    presets: [],
+    isLoading: false,
+    canSaveMore: true,
+    savePreset: vi.fn(),
+    deletePresetById: vi.fn(),
+    renamePresetById: vi.fn(),
+    refetch: vi.fn(),
+  }),
+}));
+
 vi.mock("@/hooks/useMediaQuery", () => ({
   useMediaQuery: vi.fn(() => true),
 }));

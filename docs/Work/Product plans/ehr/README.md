@@ -53,13 +53,20 @@ If you're picking items to commit: open the relevant `plan-tX` file. Each tier p
 
 **Selection:** No batch selection has been made yet. T1–T5 are `Drafted` and unblocked once you decide to commit; T6 is parked.
 
+### Sub-areas (focused plans that sit on top of the tiers)
+
+| Folder | Plan | Status | What it covers |
+|--------|------|--------|----------------|
+| [subjective-tab/](./subjective-tab/) | [plan-subjective-tab.md](./subjective-tab/plan-subjective-tab.md) | `Drafted` 2026-06-03 | The Cockpit-v3 **Subjective** tab: chief-complaint + HPI as structured **complaint cards** (OLDCARTS, type-aware), owned FH/SH/PSH history fields, linked PMH/allergy/meds sections, all wired for fast data entry. Reuses T2 speed infra; 3 additive migrations. |
+| [objective-tab/](./objective-tab/) | [plan-objective-tab.md](./objective-tab/plan-objective-tab.md) | `Drafted` 2026-06-18 (P1 `Committed`) | The Cockpit-v3 **Objective** tab: free-text exam → structured **system-wise exam cards** (tri-state, C3 hybrid 5 core systems) + Vitals 2.0, porting the subjective layout engines. `examination_findings` becomes a **derived mirror** (zero downstream change). 1 additive migration in P1. |
+
 ---
 
 ## What "above our baseline prescription code" means
 
 The current production code (`frontend/components/consultation/PrescriptionForm.tsx` + `MedicineRow.tsx` + the prescription controller / service stack + migrations 026 / 027) implements everything the V1 prescription plan from March specified, with the omissions captured in `plan-f01` (allergies, vitals, structured drug DB, templates, branded PDF, etc.).
 
-**The tier plans T1–T6 are the entire planned work above that line.** There is no other EHR planning hidden in `Daily-plans/`, `inbox.md`, or `deferred/`. If something doesn't appear in this folder, it isn't on the EHR roadmap.
+**The tier plans T1–T6 are the entire planned work above that line.** There is no other EHR planning hidden in `Daily-plans/`, `inbox.md`, or `capture/features/`. If something doesn't appear in this folder, it isn't on the EHR roadmap.
 
 ---
 

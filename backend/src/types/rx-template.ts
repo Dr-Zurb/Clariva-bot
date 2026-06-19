@@ -9,10 +9,88 @@
  */
 
 import type {
+  CustomSubsection,
+  DoseUnit,
   DurationUnit,
+  FoodTiming,
   FrequencyCode,
+  PrescriptionComplaint,
   RouteCode,
+  SocialHistoryStructured,
+  FamilyHistoryStructured,
+  PastSurgicalHistoryStructured,
 } from './prescription';
+
+/**
+ * Template subsection scope (subj-15). One table, one discriminator.
+ * `custom_block` (subj-39) carries a single doctor-defined custom Subjective
+ * subsection inside `subjective_json.customSubsections`.
+ */
+export const RX_TEMPLATE_SCOPE_VALUES = [
+  'subjective_full',
+  'chief_complaints',
+  'past_medical',
+  'past_surgical',
+  'family_history',
+  'social_history',
+  'allergies',
+  'custom_block',
+] as const;
+
+export type RxTemplateScope = (typeof RX_TEMPLATE_SCOPE_VALUES)[number];
+
+/** Structured subjective bundle stored in `subjective_json` (subj-08). */
+export interface RxTemplateSubjective {
+  complaints?: PrescriptionComplaint[];
+  familyHistory?: string | null;
+  familyHistoryStructured?: FamilyHistoryStructured | null;
+  socialHistory?: string | null;
+  socialHistoryStructured?: SocialHistoryStructured | null;
+  pastSurgicalHistory?: string | null;
+  pastSurgicalHistoryStructured?: PastSurgicalHistoryStructured | null;
+  /**
+   * Doctor-defined custom subsections (subj-39). `custom_block` templates carry
+   * one; `subjective_full` may carry several. Optional — absent ⇒ today's
+   * behaviour for every existing template.
+   */
+  customSubsections?: CustomSubsection[];
+}
+
+/** PMH condition snapshot inside `pmh_json` (subj-17). Recreate-able subset. */
+export interface RxTemplatePmhCondition {
+  condition: string;
+  status?: 'active' | 'resolved';
+  note?: string | null;
+}
+
+/** PMH medication snapshot inside `pmh_json` (subj-17). Applied as additional meds. */
+export interface RxTemplatePmhMedication {
+  drugName: string;
+  dose?: string | null;
+  strength?: string | null;
+  frequency?: string | null;
+  status?: 'active' | 'past';
+  form?: string | null;
+  note?: string | null;
+}
+
+/** Snapshot of a patient's PMH chart slice stored in `pmh_json` (subj-17). */
+export interface RxTemplatePmh {
+  conditions?: RxTemplatePmhCondition[];
+  medications?: RxTemplatePmhMedication[];
+}
+
+/** Allergy snapshot inside `allergies_json` (subj-17). Recreate-able subset. */
+export interface RxTemplateAllergyEntry {
+  allergen: string;
+  severity?: 'mild' | 'moderate' | 'severe' | 'unknown';
+  reaction?: string | null;
+}
+
+/** Snapshot of a patient's allergy chart slice stored in `allergies_json` (subj-17). */
+export interface RxTemplateAllergies {
+  allergies?: RxTemplateAllergyEntry[];
+}
 
 /**
  * Shape of a single medicine inside `doctor_rx_templates.medicines_json`.
@@ -33,6 +111,11 @@ export interface RxTemplateMedicine {
   durationValue?: number | null;
   durationUnit?: DurationUnit | null;
   routeCode?: RouteCode | null;
+  // Migration 133 — dose details
+  doseQty?: number | null;
+  doseUnit?: DoseUnit | null;
+  form?: string | null;
+  foodTiming?: FoodTiming | null;
 }
 
 export interface DoctorRxTemplate {
@@ -48,6 +131,10 @@ export interface DoctorRxTemplate {
   patient_education: string | null;
   clinical_notes: string | null;
   medicines_json: RxTemplateMedicine[];
+  subjective_json: RxTemplateSubjective;
+  pmh_json: RxTemplatePmh;
+  allergies_json: RxTemplateAllergies;
+  scope: RxTemplateScope;
   use_count: number;
   last_used_at: string | null;
   archived_at: string | null;
@@ -67,6 +154,10 @@ export interface RxTemplateInput {
   patientEducation?: string | null;
   clinicalNotes?: string | null;
   medicines?: RxTemplateMedicine[];
+  subjective?: RxTemplateSubjective;
+  pmh?: RxTemplatePmh;
+  allergies?: RxTemplateAllergies;
+  scope?: RxTemplateScope;
 }
 
 /** `name` is required on create; everything else is optional. */

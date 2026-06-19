@@ -48,6 +48,35 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => (v !== undefined && v !== '' ? parseInt(v, 10) : undefined)),
+  /**
+   * subj-14: Tier-1 model for complaint free-text parse (bounded JSON slot-fill).
+   * Defaults to a mini model in `getOpenAIComplaintParseConfig()` — do not route
+   * this through the flagship `OPENAI_MODEL` default.
+   */
+  OPENAI_COMPLAINT_PARSE_MODEL: z.string().optional(),
+  /**
+   * subj-14: Tier-2 escalation model (explicit "✨ refine", Tier-1 empty/truncated).
+   * Falls back to `OPENAI_MODEL` when unset.
+   */
+  OPENAI_COMPLAINT_PARSE_ESCALATION_MODEL: z.string().optional(),
+  /** subj-14: Max completion tokens for complaint parse (multi-complaint JSON). */
+  OPENAI_COMPLAINT_PARSE_MAX_TOKENS: z
+    .string()
+    .optional()
+    .transform((v) => (v !== undefined && v !== '' ? parseInt(v, 10) : undefined)),
+  /**
+   * Chart medicine free-text parse (medical-history med redesign). Tier-1 default
+   * model for bounded JSON sig extraction; defaults to a mini model in
+   * `getOpenAIMedicineParseConfig()` — never the flagship `OPENAI_MODEL` default.
+   */
+  OPENAI_MEDICINE_PARSE_MODEL: z.string().optional(),
+  /** Tier-2 escalation model (explicit "✨" refine / Tier-1 empty). Falls back to `OPENAI_MODEL`. */
+  OPENAI_MEDICINE_PARSE_ESCALATION_MODEL: z.string().optional(),
+  /** Max completion tokens for medicine parse (multi-drug JSON). */
+  OPENAI_MEDICINE_PARSE_MAX_TOKENS: z
+    .string()
+    .optional()
+    .transform((v) => (v !== undefined && v !== '' ? parseInt(v, 10) : undefined)),
   // e-task-5: Max message pairs (user+assistant) for AI context; trade-off: more context vs token cost
   AI_MAX_HISTORY_PAIRS: z
     .string()

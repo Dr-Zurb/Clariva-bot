@@ -1,10 +1,9 @@
 "use client";
 
 /**
- * Bridges PrescriptionForm send handlers to sibling overlays (PlanActionFooter)
- * inside the cockpit middle bottom-row. cmr-06 wraps the bottom-row with
- * `<RxFormActionsBridgeProvider>` so footer + RxPane share one registration
- * surface without duplicating the send pipeline.
+ * Bridges cockpit-level Rx commit handlers (`useRxCommitActions` /
+ * `CockpitRxActionDock`) to PlanSection shortcuts and legacy consumers.
+ * Registration lives at the page root — not the Plan pane lifecycle.
  */
 import {
   createContext,
@@ -51,7 +50,7 @@ export function RxFormActionsBridgeProvider({
   );
 }
 
-/** PrescriptionForm registers when `actionsInFooter` is true. */
+/** `useRxCommitActions` registers at the cockpit page root. */
 export function useRegisterRxFormActions(): RegisterFn {
   return useContext(RxFormActionsRegisterContext);
 }

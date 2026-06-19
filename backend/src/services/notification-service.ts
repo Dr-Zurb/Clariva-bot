@@ -45,6 +45,8 @@ import { createAttachmentSignedUrlForDelivery } from './prescription-attachment-
 import { generatePrescriptionPdf } from './prescription-pdf-service';
 import { mintRxToken, buildShareUrl } from './prescription-token-service';
 import { incrementDoctorDrugUsageOnSend } from './doctor-drug-usage-service';
+import { serializeCustomSubsections } from '../utils/custom-subsections';
+import type { CustomSubsection } from '../types/prescription';
 
 // ============================================================================
 // Types
@@ -477,14 +479,18 @@ async function resolvePrescriptionRecipient(
 
 /**
  * Build text summary for structured prescription.
+ *
+ * Exported for unit testing of the additive subj-22 custom-subsections block.
  */
-function buildPrescriptionTextSummary(rx: {
+export function buildPrescriptionTextSummary(rx: {
   provisional_diagnosis?: string | null;
   // cockpit-v2 / migration 103: renamed from `investigations`.
   // TODO(cv2-07): caller surfaces still pass through unchanged spread of
   // the Prescription row, so the rename is transparent at the call site.
   investigations_orders?: string | null;
   follow_up?: string | null;
+  // subj-22: doctor-defined custom subjective subsections (depth-2 JSONB).
+  custom_subsections?: CustomSubsection[] | null;
   prescription_medicines?: Array<{
     medicine_name: string;
     dosage?: string | null;
@@ -516,6 +522,13 @@ function buildPrescriptionTextSummary(rx: {
   }
   if (rx.follow_up) {
     lines.push(`\n**Follow-up:** ${rx.follow_up}`);
+  }
+  // subj-22: append the custom-subsections mirror as an additive block.
+  // Empty sections/children are omitted by the serializer; nothing is added
+  // when no section survives. Does not touch cc/hopi (not read here anyway).
+  const customSubsectionsText = serializeCustomSubsections(rx.custom_subsections);
+  if (customSubsectionsText) {
+    lines.push(`\n**Additional notes:**\n${customSubsectionsText}`);
   }
   return lines.join('\n').slice(0, 1000);
 }

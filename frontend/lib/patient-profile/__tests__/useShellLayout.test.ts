@@ -10,7 +10,7 @@
  */
 
 import { renderHook, act } from "@testing-library/react";
-import { flatToPaneTree } from "../layout-tree";
+import { flatToPaneTree, serialiseTree } from "../layout-tree";
 import {
   validateLayout,
   layoutsEqual,
@@ -531,6 +531,102 @@ describe("useShellLayout — resetLayout", () => {
     });
     expect(result.current.paneOrder).toEqual(DEFAULT_ORDER);
     expect(result.current.paneState["body"].hidden).toBe(false);
+  });
+});
+
+describe("useShellLayout — undo", () => {
+  it("starts with canUndo false", () => {
+    const { result } = makeHook();
+    expect(result.current.canUndo).toBe(false);
+  });
+
+  it("undo reverses a structural change (hide pane)", () => {
+    const { result } = makeHook();
+    const before = serialiseTree(result.current.paneTree);
+    act(() => {
+      result.current.setPaneHidden("body", true);
+    });
+    expect(result.current.canUndo).toBe(true);
+    expect(result.current.paneState["body"].hidden).toBe(true);
+    act(() => {
+      result.current.undo();
+    });
+    expect(result.current.canUndo).toBe(false);
+    expect(serialiseTree(result.current.paneTree)).toBe(before);
+    expect(result.current.paneState["body"].hidden).toBe(false);
+  });
+
+  it("coalesces consecutive setGroupSizes into one undo step", () => {
+    const { result } = makeHook();
+    const rootId = result.current.paneTree.id;
+    const childIds = (result.current.paneTree.children ?? []).map((c) => c.id);
+    if (childIds.length < 2) return;
+    const before = serialiseTree(result.current.paneTree);
+    act(() => {
+      result.current.setGroupSizes(rootId, {
+        [childIds[0]!]: 60,
+        [childIds[1]!]: 40,
+      });
+      result.current.setGroupSizes(rootId, {
+        [childIds[0]!]: 55,
+        [childIds[1]!]: 45,
+      });
+    });
+    expect(result.current.canUndo).toBe(true);
+    act(() => {
+      result.current.undo();
+    });
+    expect(serialiseTree(result.current.paneTree)).toBe(before);
+    expect(result.current.canUndo).toBe(false);
+  });
+
+  it("applyLayout with recordHistory false does not enable undo", () => {
+    const { result } = makeHook();
+    const alt = v5FromFlat({
+      paneOrder: ["rx", "chart", "body"],
+      paneState: DEFAULT_STATE,
+    });
+    act(() => {
+      result.current.applyLayout(alt, { recordHistory: false });
+    });
+    expect(result.current.canUndo).toBe(false);
+  });
+
+  it("redo restores a change after undo", () => {
+    const { result } = makeHook();
+    const before = serialiseTree(result.current.paneTree);
+    act(() => {
+      result.current.setPaneHidden("body", true);
+    });
+    const afterHide = serialiseTree(result.current.paneTree);
+    expect(afterHide).not.toBe(before);
+
+    act(() => {
+      result.current.undo();
+    });
+    expect(serialiseTree(result.current.paneTree)).toBe(before);
+    expect(result.current.canRedo).toBe(true);
+
+    act(() => {
+      result.current.redo();
+    });
+    expect(serialiseTree(result.current.paneTree)).toBe(afterHide);
+    expect(result.current.canRedo).toBe(false);
+  });
+
+  it("new edit clears the redo stack", () => {
+    const { result } = makeHook();
+    act(() => {
+      result.current.setPaneHidden("body", true);
+    });
+    act(() => {
+      result.current.undo();
+    });
+    expect(result.current.canRedo).toBe(true);
+    act(() => {
+      result.current.setPaneHidden("rx", true);
+    });
+    expect(result.current.canRedo).toBe(false);
   });
 });
 

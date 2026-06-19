@@ -1,0 +1,12 @@
+---
+globs: ["frontend/**/*.ts", "frontend/**/*.tsx"]
+alwaysApply: false
+---
+
+# Frontend work
+
+Follow @docs/Reference/engineering/development/FRONTEND_STANDARDS.md and @docs/Reference/engineering/architecture/FRONTEND_ARCHITECTURE.md.
+
+- Use the patterns in @docs/Reference/engineering/development/FRONTEND_RECIPES.md; mirror a nearby component over improvising.
+- Consume the API strictly per @docs/Reference/engineering/architecture/CONTRACTS.md (don't assume a response shape).
+- Before "done": run the gate in @docs/Reference/engineering/development/DEFINITION_OF_DONE_FRONTEND.md.

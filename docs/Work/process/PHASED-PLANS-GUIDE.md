@@ -217,6 +217,7 @@ Sibling-phase links are always short: `../p1-shell/`, `../../cockpit-pane-freedo
 
 ## 9. Related docs
 
+- [**WORKFLOW.md**](./WORKFLOW.md) — end-to-end lifecycle: capture → product plan → daily plan → done.
 - [`TASK_MANAGEMENT_GUIDE.md`](./TASK_MANAGEMENT_GUIDE.md) — task lifecycle, planning/execution boundary, hierarchical task files.
 - [`TASK_TEMPLATE.md`](./TASK_TEMPLATE.md) — the per-task file template.
 - [`EXECUTION-ORDER-GUIDELINES.md`](./EXECUTION-ORDER-GUIDELINES.md) — waves/lanes **inside** one batch (one phase).

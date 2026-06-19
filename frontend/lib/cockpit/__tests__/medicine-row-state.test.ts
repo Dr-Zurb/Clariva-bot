@@ -15,6 +15,10 @@ function emptyRow(overrides: Partial<MedicineRowValue> = {}): MedicineRowValue {
     durationValue: null,
     durationUnit: null,
     routeCode: null,
+    doseQty: null,
+    doseUnit: null,
+    form: null,
+    foodTiming: null,
     ...overrides,
   };
 }
@@ -150,5 +154,34 @@ describe("isMedicineRowComplete", () => {
         }),
       ),
     ).toBe(true);
+  });
+
+  it("returns true when structured dose (qty + unit) replaces the dosage text", () => {
+    expect(
+      isMedicineRowComplete(
+        emptyRow({
+          medicineName: "Paracetamol",
+          doseQty: 2,
+          doseUnit: "tab",
+          frequencyCode: "TID",
+          durationValue: 5,
+          durationUnit: "days",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false when doseQty is set without a doseUnit and dosage is empty", () => {
+    expect(
+      isMedicineRowComplete(
+        emptyRow({
+          medicineName: "Paracetamol",
+          doseQty: 2,
+          frequencyCode: "TID",
+          durationValue: 5,
+          durationUnit: "days",
+        }),
+      ),
+    ).toBe(false);
   });
 });

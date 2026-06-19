@@ -19,7 +19,9 @@
  */
 
 import type {
+  DoseUnit,
   DurationUnit,
+  FoodTiming,
   FrequencyCode,
   PrescriptionMedicine,
   RouteCode,
@@ -38,6 +40,12 @@ const FREQUENCY_LEGACY: Record<FrequencyCode, string> = {
   PRN: 'As needed',
   STAT: 'Once (immediately)',
   CUSTOM: '',
+  Q4H: 'Every 4 hours',
+  Q6H: 'Every 6 hours',
+  Q8H: 'Every 8 hours',
+  Q12H: 'Every 12 hours',
+  Q24H: 'Every 24 hours',
+  QW: 'Once weekly',
 };
 
 export function getFrequencyLegacyLabel(code: FrequencyCode | null | undefined): string {
@@ -116,6 +124,46 @@ export function getRouteLegacyLabel(code: RouteCode | null | undefined): string 
 }
 
 // ---------------------------------------------------------------------------
+// Dose + food timing (migration 133 — medicine card redesign)
+// ---------------------------------------------------------------------------
+
+const DOSE_UNIT_LABELS: Record<DoseUnit, { singular: string; plural: string }> = {
+  tab: { singular: 'tab', plural: 'tabs' },
+  cap: { singular: 'cap', plural: 'caps' },
+  ml: { singular: 'ml', plural: 'ml' },
+  spoon: { singular: 'spoon', plural: 'spoons' },
+  drops: { singular: 'drop', plural: 'drops' },
+  puff: { singular: 'puff', plural: 'puffs' },
+  sachet: { singular: 'sachet', plural: 'sachets' },
+  unit: { singular: 'unit', plural: 'units' },
+  application: { singular: 'application', plural: 'applications' },
+};
+
+/** "2 tabs", "1 spoon" — empty string when either piece is missing. */
+export function formatDoseLabel(
+  qty: number | null | undefined,
+  unit: DoseUnit | null | undefined,
+): string {
+  if (qty == null || qty <= 0 || !unit) return '';
+  const meta = DOSE_UNIT_LABELS[unit];
+  if (!meta) return '';
+  return `${qty} ${qty === 1 ? meta.singular : meta.plural}`;
+}
+
+const FOOD_TIMING_LABELS: Record<FoodTiming, string> = {
+  before_food: 'Before food',
+  after_food: 'After food',
+  with_food: 'With food',
+  empty_stomach: 'Empty stomach',
+  bedtime: 'At bedtime',
+};
+
+export function getFoodTimingLabel(code: FoodTiming | null | undefined): string {
+  if (!code) return '';
+  return FOOD_TIMING_LABELS[code] ?? '';
+}
+
+// ---------------------------------------------------------------------------
 // PrescriptionMedicine → display strings
 // ---------------------------------------------------------------------------
 
@@ -167,12 +215,31 @@ export function projectMedicineForDisplay(med: PrescriptionMedicine): MedicineDi
     route = med.route;
   }
 
+  // Dose column: "2 tabs (5 mg)" when both structured dose and the
+  // strength text are present (migration 133); strength alone otherwise.
+  const doseLabel = formatDoseLabel(med.dose_qty != null ? Number(med.dose_qty) : null, med.dose_unit);
+  const strength = (med.dosage ?? '').trim();
+  const dosage = doseLabel
+    ? strength
+      ? `${doseLabel} (${strength})`
+      : doseLabel
+    : strength;
+
+  // Instructions: structured food timing leads; free-text notes follow.
+  const foodLabel = getFoodTimingLabel(med.food_timing);
+  const instructionsText = (med.instructions ?? '').trim();
+  const instructions = foodLabel
+    ? instructionsText
+      ? `${foodLabel} — ${instructionsText}`
+      : foodLabel
+    : instructionsText;
+
   return {
     name: med.medicine_name ?? '',
-    dosage: med.dosage ?? '',
+    dosage,
     route,
     frequency,
     duration,
-    instructions: med.instructions ?? '',
+    instructions,
   };
 }

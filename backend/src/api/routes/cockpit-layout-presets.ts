@@ -28,6 +28,38 @@ export const layoutNodeSchema: z.ZodType<LayoutNode> = z.lazy(() =>
   ]),
 ) as z.ZodType<LayoutNode>;
 
+/** Cockpit v3 {@link PaneTreeNode} — mirrors frontend `isValidTreeNode`. */
+export const paneTreeV3Schema: z.ZodType<Record<string, unknown>> = z.lazy(() =>
+  z
+    .object({
+      id: z.string().min(1),
+      sizePct: z.number().min(0).max(100),
+      hidden: z.boolean(),
+      direction: z.enum(['horizontal', 'vertical']).optional(),
+      children: z.array(paneTreeV3Schema).optional(),
+      paneIds: z.array(z.string().min(1)).min(1).optional(),
+      activeTabId: z.string().min(1).optional(),
+    })
+    .superRefine((node, ctx) => {
+      if (node.paneIds != null && node.children != null && node.children.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'leaf cannot have both paneIds and children',
+        });
+      }
+      if (
+        node.paneIds != null &&
+        node.activeTabId != null &&
+        !node.paneIds.includes(node.activeTabId)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'activeTabId must be included in paneIds',
+        });
+      }
+    }),
+) as z.ZodType<Record<string, unknown>>;
+
 export const legacyLayoutSchema: z.ZodType<LegacyPresetLayout> = z.object({
   slots: z.tuple([
     z.enum(COLUMN_TYPES),
@@ -67,14 +99,25 @@ export const cockpitLayoutPresetSchema = z
     sourceTemplateId: z.string().min(1).max(128).optional(),
     layout: z.union([legacyLayoutSchema, patientsListViewLayoutSchema]).optional(),
     layout_tree: layoutNodeSchema.optional(),
+    pane_tree_v3: paneTreeV3Schema.optional(),
   })
-  .refine((d) => d.layout != null || d.layout_tree != null, {
-    message: 'must include layout or layout_tree',
+  .refine((d) => d.layout != null || d.layout_tree != null || d.pane_tree_v3 != null, {
+    message: 'must include layout, layout_tree, or pane_tree_v3',
   });
 
 export const cockpitLayoutPresetsBodySchema = z
   .array(cockpitLayoutPresetSchema)
   .max(5, 'Maximum 5 cockpit layout presets allowed');
+
+/** Parse a v3 pane tree; throws ValidationError on failure. */
+export function parsePaneTreeV3(node: unknown, label = 'pane_tree_v3'): Record<string, unknown> {
+  const result = paneTreeV3Schema.safeParse(node);
+  if (!result.success) {
+    const msg = result.error.issues.map((i) => i.message).join('; ') || 'invalid pane tree';
+    throw new ValidationError(`${label}: ${msg}`);
+  }
+  return result.data;
+}
 
 /** Parse a layout tree node; throws ValidationError on failure. */
 export function parseLayoutTreeNode(node: unknown, label = 'layout_tree'): LayoutNode {

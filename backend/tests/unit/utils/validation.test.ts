@@ -11,6 +11,12 @@ import {
   validateAvailableSlotsQuery,
   validateBookAppointment,
   validateGetAppointmentParams,
+  validateParseComplaintRequest,
+  validateCreatePatientConditionBody,
+  validateUpdatePatientConditionBody,
+  validateCreatePatientMedicationBody,
+  validateUpdatePatientMedicationBody,
+  validateUpdateMedicalBackgroundNotesBody,
 } from '../../../src/utils/validation';
 import { ValidationError } from '../../../src/utils/errors';
 
@@ -196,5 +202,103 @@ describe('validateGetAppointmentParams (e-task-2)', () => {
     expect(() => validateGetAppointmentParams({ id: 'not-uuid' })).toThrow(
       ValidationError
     );
+  });
+});
+
+describe('validateParseComplaintRequest (subj-14)', () => {
+  const fieldSpec = [{ key: 'duration', label: 'Duration', type: 'duration' as const }];
+
+  it('accepts a minimal valid body and trims text', () => {
+    const result = validateParseComplaintRequest({
+      text: '  burning chest pain 3 days  ',
+      fieldSpec,
+    });
+    expect(result.text).toBe('burning chest pain 3 days');
+    expect(result.fieldSpec).toHaveLength(1);
+  });
+
+  it('accepts optional category and tier', () => {
+    const result = validateParseComplaintRequest({
+      text: 'pain',
+      category: 'pain',
+      tier: 'escalation',
+      fieldSpec,
+    });
+    expect(result.category).toBe('pain');
+    expect(result.tier).toBe('escalation');
+  });
+
+  it('rejects empty text', () => {
+    expect(() => validateParseComplaintRequest({ text: '', fieldSpec })).toThrow(ValidationError);
+  });
+
+  it('rejects an empty fieldSpec', () => {
+    expect(() => validateParseComplaintRequest({ text: 'pain', fieldSpec: [] })).toThrow(
+      ValidationError,
+    );
+  });
+
+  it('rejects an invalid field type', () => {
+    expect(() =>
+      validateParseComplaintRequest({
+        text: 'pain',
+        fieldSpec: [{ key: 'x', label: 'X', type: 'number' }],
+      }),
+    ).toThrow(ValidationError);
+  });
+
+  it('rejects an invalid tier', () => {
+    expect(() =>
+      validateParseComplaintRequest({ text: 'pain', tier: 'turbo', fieldSpec }),
+    ).toThrow(ValidationError);
+  });
+});
+
+describe('patient chart condition validation', () => {
+  it('defaults condition status to active on create', () => {
+    const result = validateCreatePatientConditionBody({ condition: 'Hypertension' });
+    expect(result.status).toBe('active');
+  });
+
+  it('accepts resolved status on update', () => {
+    const result = validateUpdatePatientConditionBody({ status: 'resolved' });
+    expect(result.status).toBe('resolved');
+  });
+});
+
+describe('patient chart medication validation', () => {
+  it('accepts intake pattern and source on create', () => {
+    const result = validateCreatePatientMedicationBody({
+      drugName: 'Metformin',
+      intakePattern: 'irregular',
+      source: 'self',
+    });
+    expect(result.intakePattern).toBe('irregular');
+    expect(result.source).toBe('self');
+  });
+
+  it('accepts usage attribute updates', () => {
+    const result = validateUpdatePatientMedicationBody({
+      status: 'past',
+      intakePattern: 'prn',
+      source: 'otc',
+    });
+    expect(result.status).toBe('past');
+    expect(result.intakePattern).toBe('prn');
+    expect(result.source).toBe('otc');
+  });
+});
+
+describe('patient chart medical background notes validation', () => {
+  it('accepts trimmed section notes on update', () => {
+    const result = validateUpdateMedicalBackgroundNotesBody({
+      notes: '  Prior hospitalizations abroad  ',
+    });
+    expect(result.notes).toBe('Prior hospitalizations abroad');
+  });
+
+  it('accepts null notes to clear the field', () => {
+    const result = validateUpdateMedicalBackgroundNotesBody({ notes: null });
+    expect(result.notes).toBeNull();
   });
 });

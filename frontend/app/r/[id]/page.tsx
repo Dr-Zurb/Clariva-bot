@@ -78,6 +78,9 @@ function buildViewModel(data: PublicPrescriptionData): PatientRxViewModel {
       durationValue: m.duration_value,
       durationUnit: m.duration_unit,
       instructions: m.instructions,
+      doseQty: m.dose_qty != null ? Number(m.dose_qty) : null,
+      doseUnit: m.dose_unit,
+      foodTiming: m.food_timing,
     }))
     // Defensive sort — backend already orders by sort_order ASC, but
     // a stale cache or partial fetch could surface unsorted rows.

@@ -30,7 +30,10 @@ export default function CockpitLeafView({
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col" data-cockpit-leaf={node.id}>
+    <div
+      className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-sm"
+      data-cockpit-leaf={node.id}
+    >
       <TabBarDroppable groupId={node.id}>
         <CockpitLeafMenu
           groupId={node.id}
@@ -54,7 +57,7 @@ export default function CockpitLeafView({
       </TabBarDroppable>
       <div
         id={`pane-body-${activeId}`}
-        className="relative min-h-0 flex-1 overflow-auto"
+        className="relative min-h-0 flex-1 overflow-auto bg-card"
       >
         {pane?.render()}
         <CockpitDropOverlay groupId={node.id} />

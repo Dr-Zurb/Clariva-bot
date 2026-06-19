@@ -18,6 +18,7 @@ import { successResponse } from '../utils/response';
 import { UnauthorizedError } from '../utils/errors';
 import {
   validateCreateRxTemplateBody,
+  validateListRxTemplatesQuery,
   validateUpdateRxTemplateBody,
   validateRxTemplateParams,
 } from '../utils/validation';
@@ -38,7 +39,8 @@ function getUserId(req: Request): string {
 export const listRxTemplatesHandler = asyncHandler(async (req: Request, res: Response) => {
   const userId = getUserId(req);
   const correlationId = req.correlationId || 'unknown';
-  const templates = await listRxTemplates(correlationId, userId);
+  const { scope } = validateListRxTemplatesQuery(req.query);
+  const templates = await listRxTemplates(correlationId, userId, scope);
   res.status(200).json(successResponse({ templates }, req));
 });
 

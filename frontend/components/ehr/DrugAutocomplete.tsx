@@ -38,6 +38,7 @@ import { searchDrugs } from "@/lib/api";
 import { useDoctorDrugUsage } from "@/hooks/useDoctorDrugUsage";
 import { sortDrugResultsByPersonalUsage } from "@/lib/drug-autocomplete-ranking";
 import { trackCockpitV2RRxPolishRankingLanded } from "@/lib/patient-profile/telemetry";
+import { cn } from "@/lib/utils";
 
 interface DrugAutocompleteProps {
   /** Current text in the input (controlled). */
@@ -56,17 +57,31 @@ interface DrugAutocompleteProps {
   inputId: string;
   placeholder?: string;
   disabled?: boolean;
+  /** Wrapper classes (positioning/sizing only — avoid borders here). */
   className?: string;
+  /** Input element classes. Defaults to legacy gray border styling. */
+  inputClassName?: string;
   /** Hard cap on result count (server caps at 25). */
   limit?: number;
   /** Debounce window in ms. Defaults to 200. */
   debounceMs?: number;
+  /**
+   * When true, the combobox stops acting as a drug picker: no dropdown, no
+   * fetch, and Enter/arrow keys are NOT captured — they bubble to the parent.
+   * Used by the full-line capture bar once the text carries sig details
+   * ("amlodipine 10 years"), so a stale dropdown match can't hijack Enter and
+   * commit the bare catalog drug instead of parsing the typed line.
+   */
+  selectionDisabled?: boolean;
 }
 
 const MIN_QUERY_LEN = 2;
 const DEFAULT_LIMIT = 10;
 const DEFAULT_DEBOUNCE_MS = 200;
 const CACHE_MAX = 64;
+
+const DEFAULT_INPUT_CLASS =
+  "w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50";
 
 // Module-level cache (per page session). Cleared on page reload.
 const searchCache = new Map<string, DrugMasterRow[]>();
@@ -98,8 +113,10 @@ export default function DrugAutocomplete({
   placeholder = "Medicine name",
   disabled,
   className,
+  inputClassName,
   limit = DEFAULT_LIMIT,
   debounceMs = DEFAULT_DEBOUNCE_MS,
+  selectionDisabled = false,
 }: DrugAutocompleteProps) {
   const [open, setOpen] = useState(false);
   const [activeIdx, setActiveIdx] = useState(-1);
@@ -136,7 +153,7 @@ export default function DrugAutocomplete({
 
   // Debounced fetch. Re-runs whenever the trimmed query changes.
   useEffect(() => {
-    if (!shouldFetch) {
+    if (!shouldFetch || selectionDisabled) {
       setRawResults([]);
       setOpen(false);
       setActiveIdx(-1);
@@ -170,7 +187,7 @@ export default function DrugAutocomplete({
     }, debounceMs);
 
     return () => clearTimeout(timer);
-  }, [query, shouldFetch, token, limit, debounceMs]);
+  }, [query, shouldFetch, token, limit, debounceMs, selectionDisabled]);
 
   // Click-outside → close dropdown.
   useEffect(() => {
@@ -199,6 +216,9 @@ export default function DrugAutocomplete({
   );
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    // Parse-mode (full sig line): never capture keys — let Enter bubble to the
+    // capture bar so the typed line is parsed instead of a stale dropdown match.
+    if (selectionDisabled) return;
     if (!open && e.key === "ArrowDown" && rankedResults.length > 0) {
       setOpen(true);
       setActiveIdx(0);
@@ -233,10 +253,11 @@ export default function DrugAutocomplete({
     }
   };
 
-  const showDropdown = open && shouldFetch && (rankedResults.length > 0 || loading);
+  const showDropdown =
+    !selectionDisabled && open && shouldFetch && (rankedResults.length > 0 || loading);
 
   return (
-    <div ref={wrapperRef} className={`relative ${className ?? ""}`}>
+    <div ref={wrapperRef} className={cn("relative w-full", className)}>
       <input
         ref={inputRef}
         id={inputId}
@@ -254,14 +275,14 @@ export default function DrugAutocomplete({
         value={value}
         onChange={(e) => {
           onChange(e.target.value);
-          setOpen(true);
+          if (!selectionDisabled) setOpen(true);
         }}
         onFocus={() => {
-          if (shouldFetch) setOpen(true);
+          if (shouldFetch && !selectionDisabled) setOpen(true);
         }}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
-        className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50"
+        className={inputClassName ?? DEFAULT_INPUT_CLASS}
         maxLength={200}
         disabled={disabled}
       />

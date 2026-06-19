@@ -223,7 +223,7 @@ describe('putCockpitPresetsForUser — validation', () => {
     const preset = makePreset();
     delete preset.layout;
     await expect(putCockpitPresetsForUser(userId, [preset])).rejects.toThrow(
-      /must include layout or layout_tree/
+      /must include layout, layout_tree, or pane_tree_v3/
     );
   });
 

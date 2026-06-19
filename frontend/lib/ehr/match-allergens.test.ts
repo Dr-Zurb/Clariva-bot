@@ -407,6 +407,10 @@ describe("matchAllergens — accepts the API row shape directly", () => {
       duration_value: 5,
       duration_unit: "days",
       route_code: "oral",
+      dose_qty: null,
+      dose_unit: null,
+      form: null,
+      food_timing: null,
     };
     const allergy = makeAllergy("Paracetamol");
 

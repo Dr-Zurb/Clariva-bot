@@ -83,7 +83,10 @@ export function useCockpitV3Layout(opts: UseCockpitV3LayoutOptions) {
     if (typeof window === "undefined") return;
     const v4Key = v4TreeLayoutStorageKey(storageKey);
     if (window.localStorage.getItem(v4Key)) return;
-    applyLayout({ version: LAYOUT_VERSION, paneTree: blankDefaultTree });
+    applyLayout(
+      { version: LAYOUT_VERSION, paneTree: blankDefaultTree },
+      { recordHistory: false },
+    );
   }, [blankDefaultTree, hydrated, applyLayout, storageKey]);
 
   const dispatchEngine = useCallback(
@@ -232,21 +235,28 @@ export function useCockpitV3Layout(opts: UseCockpitV3LayoutOptions) {
 
   const closeTab = useCallback(
     (groupId: string, paneId: string): CockpitMutationResult => {
-      const { paneTree, paneOrder, paneState } = shell;
-      const visibleCount = paneOrder.filter((id) => !paneState[id]?.hidden).length;
-      if (visibleCount <= 1) return { ok: false, reason: "last-pane-in-tree" };
+      const { paneTree } = shell;
       if (!findPaneTreeNodeById(paneTree, groupId)) {
         return { ok: false, reason: "not-found" };
       }
-      // Handles both a multi-tab leaf (drops just this tab, keeps the rest) and a
-      // single-pane column (prunes the wrapper); re-homes the pane as hidden.
+      // Same hide path as palette `removePane` — including the last visible pane
+      // (empty cockpit). `hidePaneToRoot` hides in place when it is the sole leaf.
       return dispatchEngine((tree) => hidePaneToRoot(tree, paneId));
     },
     [dispatchEngine, shell],
   );
 
+  const resetLayout = useCallback(() => {
+    if (blankDefaultTree) {
+      applyLayout({ version: LAYOUT_VERSION, paneTree: blankDefaultTree });
+    } else {
+      shell.resetLayout();
+    }
+  }, [blankDefaultTree, applyLayout, shell]);
+
   return {
     ...shell,
+    resetLayout,
     dispatchEngine,
     addPane,
     removePane,

@@ -3,8 +3,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renamePreset } from "@/lib/api/cockpit-layout-presets-tree";
+import { renamePreset, savePresetV3 } from "@/lib/api/cockpit-layout-presets-tree";
 import type { LayoutNode } from "@/lib/patient-profile/types";
+import type { PaneTreeNode } from "@/lib/patient-profile/v3/foundation";
 
 vi.mock("@/lib/api-base", () => ({
   requireApiBaseUrl: vi.fn(() => "https://api.example.com"),
@@ -27,6 +28,71 @@ const EXISTING_ROW = {
   sourceTemplateId: "telemed-video",
   layout_tree: LAYOUT_TREE,
 };
+
+const PANE_TREE_V3: PaneTreeNode = {
+  id: "__root__",
+  sizePct: 100,
+  hidden: false,
+  direction: "horizontal",
+  children: [
+    {
+      id: "snapshot",
+      sizePct: 50,
+      hidden: false,
+      paneIds: ["snapshot"],
+      activeTabId: "snapshot",
+    },
+    {
+      id: "assessment",
+      sizePct: 50,
+      hidden: false,
+      paneIds: ["assessment", "plan"],
+      activeTabId: "assessment",
+    },
+  ],
+};
+
+describe("savePresetV3 (cv3l-05)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("persists pane_tree_v3 with tabs intact", async () => {
+    let putBody: unknown;
+    global.fetch = vi.fn().mockImplementation((_url, init) => {
+      if (init?.method === "PUT") {
+        putBody = JSON.parse(String(init.body));
+        const rows = (putBody as { presets: { pane_tree_v3: PaneTreeNode }[] })
+          .presets;
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ presets: rows }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ presets: [] }),
+      });
+    });
+
+    const saved = await savePresetV3("token", {
+      name: "My Consult",
+      paneTree: PANE_TREE_V3,
+    });
+
+    expect(saved.name).toBe("My Consult");
+    expect(saved.paneTreeV3).toEqual(PANE_TREE_V3);
+
+    const rows = (putBody as { presets: { pane_tree_v3: PaneTreeNode }[] })
+      .presets;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].pane_tree_v3).toEqual(PANE_TREE_V3);
+  });
+});
 
 describe("renamePreset (cpfc-03)", () => {
   beforeEach(() => {

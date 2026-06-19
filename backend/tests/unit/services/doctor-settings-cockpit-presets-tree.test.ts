@@ -86,7 +86,9 @@ describe('parseCockpitLayoutPresets (Zod)', () => {
   it('rejects a preset with neither layout nor layout_tree', () => {
     const preset = makeTreePreset();
     delete preset.layout_tree;
-    expect(() => parseCockpitLayoutPresets([preset])).toThrow(/must include layout or layout_tree/);
+    expect(() => parseCockpitLayoutPresets([preset])).toThrow(
+      /must include layout, layout_tree, or pane_tree_v3/,
+    );
   });
 
   it('rejects 6 presets (DL-8 max cap)', () => {
@@ -101,6 +103,40 @@ describe('parseCockpitLayoutPresets (Zod)', () => {
       makeTreePreset({ sourceTemplateId: 'telemed-text' }),
     ]);
     expect(parsed[0]?.sourceTemplateId).toBe('telemed-text');
+  });
+
+  it('accepts a v3 pane_tree_v3 preset (full fidelity)', () => {
+    const paneTreeV3 = {
+      id: '__root__',
+      sizePct: 100,
+      hidden: false,
+      direction: 'horizontal' as const,
+      children: [
+        {
+          id: 'snapshot',
+          sizePct: 50,
+          hidden: false,
+          paneIds: ['snapshot'],
+          activeTabId: 'snapshot',
+        },
+        {
+          id: 'assessment',
+          sizePct: 50,
+          hidden: false,
+          paneIds: ['assessment', 'plan'],
+          activeTabId: 'assessment',
+        },
+      ],
+    };
+    const parsed = parseCockpitLayoutPresets([
+      {
+        id: 'preset-v3',
+        name: 'My Consult',
+        created_at: '2026-06-03T00:00:00.000Z',
+        pane_tree_v3: paneTreeV3,
+      },
+    ]);
+    expect(parsed[0]?.pane_tree_v3).toEqual(paneTreeV3);
   });
 });
 
@@ -127,7 +163,7 @@ describe('putCockpitPresetsForUser — tree roundtrip', () => {
       ValidationError,
     );
     await expect(putCockpitPresetsForUser(userId, [preset])).rejects.toThrow(
-      /must include layout or layout_tree/,
+      /must include layout, layout_tree, or pane_tree_v3/,
     );
   });
 

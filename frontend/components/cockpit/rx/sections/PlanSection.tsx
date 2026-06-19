@@ -36,7 +36,9 @@ import type { MatchableMedicine } from "@/lib/ehr/match-allergens";
 import type { PatientAllergy } from "@/types/patient-chart";
 import type { DrugMasterRow } from "@/types/drug-master";
 import type { InteractionRow } from "@/lib/api/drug-interactions";
-import { coerceRouteCode } from "@/lib/medicineCodes";
+import { coerceRouteCode, defaultDoseUnitForForm } from "@/lib/medicineCodes";
+import { MedicineCaptureBar } from "@/components/cockpit/rx/inputs/MedicineCaptureBar";
+import type { ParsedMedicineLine } from "@/lib/cockpit/medicine-line-parse";
 import { FavoritesChipStrip } from "@/components/cockpit/rx/favorites/FavoritesChipStrip";
 import { useSideSheet } from "@/components/patient-profile/SideSheetHost";
 import { useFavorites } from "@/hooks/useFavorites";
@@ -241,6 +243,8 @@ export function PlanSection({
         dosage: dosagePrefill,
         route: routeText,
         routeCode: seedRouteCode,
+        form: prevRow.form ?? drug.form ?? null,
+        doseUnit: prevRow.doseUnit ?? defaultDoseUnitForForm(drug.form),
       },
     });
     setDrugMasterIndex((prev) => {
@@ -257,6 +261,94 @@ export function PlanSection({
     setMedicineInstanceIds((prev) => [...prev, ...newInstanceIds]);
     setActiveRowInstanceId(newInstanceIds[0] ?? null);
   }, [dispatch, generateInstanceIds, setMedicineInstanceIds]);
+
+  /**
+   * Insert a prefilled medicine card (capture bar). Reuses the first
+   * still-blank row (the seeded empty editor) instead of appending a
+   * second card next to it.
+   */
+  const insertMedicine = useCallback(
+    (medicine: RxMedicine, { keepEditorOpen }: { keepEditorOpen: boolean }) => {
+      const blankIndex = medicines.findIndex(
+        (m) => !m.medicineName.trim() && !m.dosage.trim(),
+      );
+      if (blankIndex >= 0) {
+        dispatch({ type: "UPDATE_MEDICINE", index: blankIndex, patch: medicine });
+        setActiveRowInstanceId(
+          keepEditorOpen ? (medicineInstanceIds[blankIndex] ?? null) : null,
+        );
+        return;
+      }
+      const newInstanceIds = generateInstanceIds(1);
+      dispatch({ type: "ADD_MEDICINE", medicine });
+      setMedicineInstanceIds((prev) => [...prev, ...newInstanceIds]);
+      setActiveRowInstanceId(keepEditorOpen ? (newInstanceIds[0] ?? null) : null);
+    },
+    [
+      dispatch,
+      generateInstanceIds,
+      medicineInstanceIds,
+      medicines,
+      setMedicineInstanceIds,
+    ],
+  );
+
+  const handleCaptureDrug = useCallback(
+    (drug: DrugMasterRow) => {
+      insertMedicine(
+        {
+          ...EMPTY_RX_MEDICINE,
+          medicineName: drug.generic_name,
+          drugMasterId: drug.id,
+          dosage: drug.strength ?? "",
+          form: drug.form ?? null,
+          doseUnit: defaultDoseUnitForForm(drug.form),
+          route: drug.route_default ?? "",
+          routeCode: drug.route_default
+            ? coerceRouteCode(drug.route_default)
+            : null,
+        },
+        // Drug-master pick carries no frequency/duration yet — open the
+        // editor so the doctor finishes the sig with the chips.
+        { keepEditorOpen: true },
+      );
+      setDrugMasterIndex((prev) => {
+        if (prev.get(drug.id) === drug) return prev;
+        const next = new Map(prev);
+        next.set(drug.id, drug);
+        return next;
+      });
+    },
+    [insertMedicine, setDrugMasterIndex],
+  );
+
+  const handleCaptureParsed = useCallback(
+    (parsed: ParsedMedicineLine) => {
+      const medicine: RxMedicine = {
+        ...EMPTY_RX_MEDICINE,
+        medicineName: parsed.medicineName,
+        dosage: parsed.dosage,
+        form: parsed.form,
+        doseQty: parsed.doseQty,
+        doseUnit: parsed.doseUnit,
+        frequencyCode: parsed.frequencyCode,
+        frequency: parsed.frequency,
+        durationValue: parsed.durationValue,
+        durationUnit: parsed.durationUnit,
+        duration: parsed.duration,
+        foodTiming: parsed.foodTiming,
+        routeCode: parsed.routeCode,
+        route: parsed.route,
+        instructions: parsed.instructions,
+      };
+      // Fully-parsed lines collapse straight to the summary card;
+      // partial lines open the editor for the missing chips.
+      insertMedicine(medicine, {
+        keepEditorOpen: !isMedicineRowComplete(medicine),
+      });
+    },
+    [insertMedicine],
+  );
 
   const shortcuts = useMemo(
     () => [
@@ -430,6 +522,14 @@ export function PlanSection({
                 void handleSaveCurrentRowAsFavorite();
               }}
               onManage={() => sideSheet.open("rx-favorites")}
+            />
+          ) : null}
+          {!isReadOnly ? (
+            <MedicineCaptureBar
+              token={token}
+              disabled={disabled}
+              onAddDrug={handleCaptureDrug}
+              onAddParsed={handleCaptureParsed}
             />
           ) : null}
           <div className="mt-2 space-y-2" onKeyDown={handleMedicineListKeyDown}>

@@ -19,16 +19,25 @@
  *     intact); `medicines` is treated atomically (full replacement).
  */
 
+import { randomUUID } from 'crypto';
 import { getSupabaseAdminClient } from '../config/database';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataAccess, logDataModification } from '../utils/audit-logger';
 import { ForbiddenError, InternalError, NotFoundError } from '../utils/errors';
+import { CustomSubsection } from '../types/prescription';
 import {
   CreateRxTemplateInput,
   DoctorRxTemplate,
+  RxTemplateAllergies,
   RxTemplateMedicine,
+  RxTemplatePmh,
+  RxTemplateScope,
+  RxTemplateSubjective,
   UpdateRxTemplateInput,
 } from '../types/rx-template';
+
+const CUSTOM_SUBSECTIONS_MAX = 20;
+const CUSTOM_SUBSECTION_CHILDREN_MAX = 10;
 
 // ============================================================================
 // Helpers
@@ -57,7 +66,142 @@ function normalizeMedicines(input: RxTemplateMedicine[] | undefined): RxTemplate
     durationValue: m.durationValue ?? null,
     durationUnit: m.durationUnit ?? null,
     routeCode: m.routeCode ?? null,
+    // Migration 133 — dose details
+    doseQty: m.doseQty ?? null,
+    doseUnit: m.doseUnit ?? null,
+    form: m.form ?? null,
+    foodTiming: m.foodTiming ?? null,
   }));
+}
+
+/**
+ * Defensive sanitiser for template custom subsections (subj-39). Mirrors the
+ * subjective normaliser's leniency: drop entries without a usable title, mint a
+ * missing/blank id, trim titles/bodies, and cap section + child counts. Never
+ * throws — malformed rows are dropped, not rejected (P12-D3 / P11-D5).
+ */
+function normalizeCustomSubsections(
+  input: CustomSubsection[] | undefined,
+): CustomSubsection[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((s) => typeof s?.title === 'string' && s.title.trim())
+    .slice(0, CUSTOM_SUBSECTIONS_MAX)
+    .map((s) => ({
+      id: typeof s.id === 'string' && s.id.trim() ? s.id : randomUUID(),
+      title: s.title.trim(),
+      body: typeof s.body === 'string' ? s.body.trim() || null : null,
+      children: (Array.isArray(s.children) ? s.children : [])
+        .filter((c) => typeof c?.title === 'string' && c.title.trim())
+        .slice(0, CUSTOM_SUBSECTION_CHILDREN_MAX)
+        .map((c) => ({
+          id: typeof c.id === 'string' && c.id.trim() ? c.id : randomUUID(),
+          title: c.title.trim(),
+          body: typeof c.body === 'string' ? c.body.trim() || null : null,
+        })),
+    }));
+}
+
+function normalizeSubjective(input: RxTemplateSubjective | undefined): RxTemplateSubjective {
+  if (!input || typeof input !== 'object') return {};
+  const complaints = Array.isArray(input.complaints)
+    ? input.complaints
+        .filter((c) => typeof c?.name === 'string' && c.name.trim())
+        .map((c) => ({
+          id: typeof c.id === 'string' ? c.id : randomUUID(),
+          name: c.name.trim(),
+          onset: c.onset ?? undefined,
+          duration: c.duration ?? undefined,
+          location: c.location ?? undefined,
+          character: c.character ?? undefined,
+          radiation: c.radiation ?? undefined,
+          severity: c.severity ?? undefined,
+          timing: c.timing ?? undefined,
+          aggravating: c.aggravating ?? undefined,
+          relieving: c.relieving ?? undefined,
+          associated: c.associated ?? undefined,
+          notes: c.notes ?? undefined,
+          category: c.category ?? undefined,
+        }))
+    : undefined;
+
+  const trimOrNull = (v: unknown): string | null | undefined => {
+    if (v === undefined) return undefined;
+    if (typeof v !== 'string') return null;
+    const trimmed = v.trim();
+    return trimmed || null;
+  };
+
+  return {
+    ...(complaints !== undefined ? { complaints } : {}),
+    ...(input.familyHistory !== undefined
+      ? { familyHistory: trimOrNull(input.familyHistory) ?? null }
+      : {}),
+    ...(input.familyHistoryStructured !== undefined
+      ? { familyHistoryStructured: input.familyHistoryStructured ?? null }
+      : {}),
+    ...(input.socialHistory !== undefined
+      ? { socialHistory: trimOrNull(input.socialHistory) ?? null }
+      : {}),
+    ...(input.socialHistoryStructured !== undefined
+      ? { socialHistoryStructured: input.socialHistoryStructured ?? null }
+      : {}),
+    ...(input.pastSurgicalHistory !== undefined
+      ? { pastSurgicalHistory: trimOrNull(input.pastSurgicalHistory) ?? null }
+      : {}),
+    ...(input.pastSurgicalHistoryStructured !== undefined
+      ? { pastSurgicalHistoryStructured: input.pastSurgicalHistoryStructured ?? null }
+      : {}),
+    ...(input.customSubsections !== undefined
+      ? { customSubsections: normalizeCustomSubsections(input.customSubsections) }
+      : {}),
+  };
+}
+
+/**
+ * Snapshot of the patient's PMH chart slice (subj-17). Defensive sanitiser:
+ * keep only the recreate-able subset, drop rows missing a name.
+ */
+function normalizePmh(input: RxTemplatePmh | undefined): RxTemplatePmh {
+  if (!input || typeof input !== 'object') return {};
+  const conditions = Array.isArray(input.conditions)
+    ? input.conditions
+        .filter((c) => typeof c?.condition === 'string' && c.condition.trim())
+        .map((c) => ({
+          condition: c.condition.trim(),
+          ...(c.status ? { status: c.status } : {}),
+          ...(c.note != null ? { note: String(c.note).trim() || null } : {}),
+        }))
+    : [];
+  const medications = Array.isArray(input.medications)
+    ? input.medications
+        .filter((m) => typeof m?.drugName === 'string' && m.drugName.trim())
+        .map((m) => ({
+          drugName: m.drugName.trim(),
+          ...(m.dose != null ? { dose: String(m.dose).trim() || null } : {}),
+          ...(m.strength != null ? { strength: String(m.strength).trim() || null } : {}),
+          ...(m.frequency != null ? { frequency: String(m.frequency).trim() || null } : {}),
+          ...(m.status ? { status: m.status } : {}),
+          ...(m.form != null ? { form: String(m.form).trim() || null } : {}),
+          ...(m.note != null ? { note: String(m.note).trim() || null } : {}),
+        }))
+    : [];
+  return { conditions, medications };
+}
+
+/** Snapshot of the patient's allergy chart slice (subj-17). */
+function normalizeAllergies(input: RxTemplateAllergies | undefined): RxTemplateAllergies {
+  if (!input || typeof input !== 'object') return {};
+  const allergies = Array.isArray(input.allergies)
+    ? input.allergies
+        .filter((a) => typeof a?.allergen === 'string' && a.allergen.trim())
+        .map((a) => ({
+          allergen: a.allergen.trim(),
+          ...(a.severity ? { severity: a.severity } : {}),
+          ...(a.reaction != null ? { reaction: String(a.reaction).trim() || null } : {}),
+        }))
+    : [];
+  return { allergies };
 }
 
 // ============================================================================
@@ -72,15 +216,22 @@ function normalizeMedicines(input: RxTemplateMedicine[] | undefined): RxTemplate
 export async function listRxTemplates(
   correlationId: string,
   userId: string,
+  scope?: RxTemplateScope,
 ): Promise<DoctorRxTemplate[]> {
   const admin = getSupabaseAdminClient();
   if (!admin) throw new InternalError('Service role client not available');
 
-  const { data, error } = await admin
+  let query = admin
     .from('doctor_rx_templates')
     .select('*')
     .eq('doctor_id', userId)
-    .is('archived_at', null)
+    .is('archived_at', null);
+
+  if (scope) {
+    query = query.eq('scope', scope);
+  }
+
+  const { data, error } = await query
     .order('last_used_at', { ascending: false, nullsFirst: false })
     .order('name', { ascending: true });
 
@@ -115,6 +266,10 @@ export async function createRxTemplate(
     patient_education: input.patientEducation ?? null,
     clinical_notes: input.clinicalNotes ?? null,
     medicines_json: normalizeMedicines(input.medicines),
+    subjective_json: normalizeSubjective(input.subjective),
+    pmh_json: normalizePmh(input.pmh),
+    allergies_json: normalizeAllergies(input.allergies),
+    scope: input.scope ?? 'subjective_full',
   };
 
   const { data, error } = await admin
@@ -175,6 +330,9 @@ export async function updateRxTemplate(
   if (input.patientEducation !== undefined) patch.patient_education = input.patientEducation;
   if (input.clinicalNotes !== undefined) patch.clinical_notes = input.clinicalNotes;
   if (input.medicines !== undefined) patch.medicines_json = normalizeMedicines(input.medicines);
+  if (input.subjective !== undefined) patch.subjective_json = normalizeSubjective(input.subjective);
+  if (input.pmh !== undefined) patch.pmh_json = normalizePmh(input.pmh);
+  if (input.allergies !== undefined) patch.allergies_json = normalizeAllergies(input.allergies);
 
   if (Object.keys(patch).length === 0) {
     // Nothing to change; return the existing row to keep the surface

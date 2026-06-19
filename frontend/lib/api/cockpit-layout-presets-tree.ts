@@ -9,6 +9,12 @@
 import { requireApiBaseUrl } from "@/lib/api-base";
 import type { ApiError } from "@/lib/api";
 import type { LayoutNode, LegacyFlatLayout } from "@/lib/patient-profile/types";
+import {
+  deserialiseTree,
+  isValidTreeNode,
+  serialiseTree,
+  type PaneTreeNode,
+} from "@/lib/patient-profile/v3/foundation";
 
 const COCKPIT_PRESETS_PATH = "/api/v1/settings/doctor/cockpit-presets";
 const MAX_PRESETS = 5;
@@ -23,6 +29,15 @@ export interface CockpitLayoutPresetTree {
   layout?: LegacyFlatLayout;
 }
 
+/** Full-fidelity v3 cockpit layout preset (cv3l-05). */
+export interface CockpitLayoutPresetV3 {
+  id: string;
+  name: string;
+  createdAt: string;
+  sourceTemplateId?: string;
+  paneTreeV3: PaneTreeNode;
+}
+
 interface CockpitPresetWireRow {
   id: string;
   name: string;
@@ -30,6 +45,7 @@ interface CockpitPresetWireRow {
   sourceTemplateId?: string;
   layout_tree?: LayoutNode;
   layout?: unknown;
+  pane_tree_v3?: unknown;
 }
 
 function isApiError(json: unknown): json is ApiError {
@@ -60,6 +76,10 @@ function isLayoutTreeRow(row: CockpitPresetWireRow): boolean {
   return row.layout_tree != null;
 }
 
+function isPaneTreeV3Row(row: CockpitPresetWireRow): boolean {
+  return row.pane_tree_v3 != null && isValidTreeNode(row.pane_tree_v3);
+}
+
 function wireRowToPreset(row: CockpitPresetWireRow): CockpitLayoutPresetTree | null {
   if (isPatientsListViewRow(row)) return null;
   if (!isLayoutTreeRow(row) && row.layout == null) return null;
@@ -78,6 +98,17 @@ function wireRowToPreset(row: CockpitPresetWireRow): CockpitLayoutPresetTree | n
   };
 }
 
+function wireRowToPresetV3(row: CockpitPresetWireRow): CockpitLayoutPresetV3 | null {
+  if (!isPaneTreeV3Row(row)) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    createdAt: row.created_at,
+    sourceTemplateId: row.sourceTemplateId,
+    paneTreeV3: row.pane_tree_v3 as PaneTreeNode,
+  };
+}
+
 function presetToWireRow(preset: CockpitLayoutPresetTree): CockpitPresetWireRow {
   return {
     id: preset.id,
@@ -86,6 +117,16 @@ function presetToWireRow(preset: CockpitLayoutPresetTree): CockpitPresetWireRow 
     sourceTemplateId: preset.sourceTemplateId,
     layout_tree: preset.layoutTree,
     layout: preset.layout,
+  };
+}
+
+function presetV3ToWireRow(preset: CockpitLayoutPresetV3): CockpitPresetWireRow {
+  return {
+    id: preset.id,
+    name: preset.name,
+    created_at: preset.createdAt,
+    sourceTemplateId: preset.sourceTemplateId,
+    pane_tree_v3: JSON.parse(serialiseTree(preset.paneTreeV3)),
   };
 }
 
@@ -132,6 +173,12 @@ export async function listPresetsTree(token: string): Promise<CockpitLayoutPrese
   return rows.map(wireRowToPreset).filter((p): p is CockpitLayoutPresetTree => p !== null);
 }
 
+/** List v3-native saved layouts (full fidelity). */
+export async function listPresetsV3(token: string): Promise<CockpitLayoutPresetV3[]> {
+  const rows = await fetchAllWireRows(token);
+  return rows.map(wireRowToPresetV3).filter((p): p is CockpitLayoutPresetV3 => p !== null);
+}
+
 /**
  * Append a tree preset (read-modify-write). Enforces the 5-preset cap on the server.
  */
@@ -160,6 +207,44 @@ export async function savePresetTree(
   const merged = [...allRows, presetToWireRow(created)];
   const saved = await putWireRows(token, merged);
   const persisted = saved.map(wireRowToPreset).find((p) => p?.id === created.id);
+  if (!persisted) {
+    throw new Error("Saved preset was not returned after upsert");
+  }
+  return persisted;
+}
+
+/**
+ * Append a v3 pane-tree preset (read-modify-write). Full fidelity for tabs + hidden panes.
+ */
+export async function savePresetV3(
+  token: string,
+  payload: {
+    name: string;
+    paneTree: PaneTreeNode;
+    sourceTemplateId?: string;
+  },
+): Promise<CockpitLayoutPresetV3> {
+  const allRows = await fetchAllWireRows(token);
+
+  if (allRows.length >= MAX_PRESETS) {
+    const err = new Error("Maximum 5 cockpit layout presets allowed") as Error & {
+      status?: number;
+    };
+    err.status = 400;
+    throw err;
+  }
+
+  const created: CockpitLayoutPresetV3 = {
+    id: crypto.randomUUID(),
+    name: payload.name.trim(),
+    createdAt: new Date().toISOString(),
+    sourceTemplateId: payload.sourceTemplateId,
+    paneTreeV3: deserialiseTree(serialiseTree(payload.paneTree)),
+  };
+
+  const merged = [...allRows, presetV3ToWireRow(created)];
+  const saved = await putWireRows(token, merged);
+  const persisted = saved.map(wireRowToPresetV3).find((p) => p?.id === created.id);
   if (!persisted) {
     throw new Error("Saved preset was not returned after upsert");
   }
@@ -212,6 +297,40 @@ export async function renamePreset(
   );
   const saved = await putWireRows(token, next);
   const persisted = saved.map(wireRowToPreset).find((p) => p?.id === id);
+  if (!persisted) throw new Error("Renamed preset was not returned after upsert");
+  return persisted;
+}
+
+/** Rename a v3 preset while preserving pane_tree_v3. */
+export async function renamePresetV3(
+  token: string,
+  id: string,
+  name: string,
+): Promise<CockpitLayoutPresetV3> {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    const err = new Error("Preset name cannot be empty") as Error & { status?: number };
+    err.status = 400;
+    throw err;
+  }
+  const allRows = await fetchAllWireRows(token);
+  const idx = allRows.findIndex((r) => r.id === id);
+  if (idx < 0) {
+    const err = new Error("Preset not found") as Error & { status?: number };
+    err.status = 404;
+    throw err;
+  }
+  const row = allRows[idx]!;
+  if (!isPaneTreeV3Row(row)) {
+    const err = new Error("Preset is not a v3 layout") as Error & { status?: number };
+    err.status = 400;
+    throw err;
+  }
+  const next = allRows.map((r, i) =>
+    i === idx ? { ...r, name: trimmed.slice(0, 60) } : r,
+  );
+  const saved = await putWireRows(token, next);
+  const persisted = saved.map(wireRowToPresetV3).find((p) => p?.id === id);
   if (!persisted) throw new Error("Renamed preset was not returned after upsert");
   return persisted;
 }

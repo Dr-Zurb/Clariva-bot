@@ -6,7 +6,7 @@ import type { MedicineRowValue } from "@/components/consultation/MedicineRow";
  *
  * Rules (DL-1 of rx-polish-densification):
  *  - drug name non-empty (trimmed)
- *  - dosage non-empty (trimmed)
+ *  - dose present (strength text `dosage` OR structured `doseQty` + `doseUnit`)
  *  - frequency present (structured `frequencyCode` OR legacy text `frequency`)
  *  - duration present (structured `durationValue` + `durationUnit` OR legacy text `duration`)
  *  - route + instructions are OPTIONAL — a row can be complete without them
@@ -14,7 +14,9 @@ import type { MedicineRowValue } from "@/components/consultation/MedicineRow";
  */
 export function isMedicineRowComplete(value: MedicineRowValue): boolean {
   if (!value.medicineName.trim()) return false;
-  if (!value.dosage.trim()) return false;
+
+  const hasStructuredDose = value.doseQty != null && value.doseUnit != null;
+  if (!value.dosage.trim() && !hasStructuredDose) return false;
 
   const hasFrequency =
     value.frequencyCode !== null || value.frequency.trim().length > 0;

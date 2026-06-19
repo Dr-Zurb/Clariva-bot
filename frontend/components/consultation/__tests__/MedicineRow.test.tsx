@@ -42,6 +42,10 @@ function emptyRow(overrides: Partial<MedicineRowValue> = {}): MedicineRowValue {
     durationValue: null,
     durationUnit: null,
     routeCode: null,
+    doseQty: null,
+    doseUnit: null,
+    form: null,
+    foodTiming: null,
     ...overrides,
   };
 }
@@ -114,9 +118,7 @@ describe("MedicineRow summary mode", () => {
       screen.getByRole("button", { name: "Medicine row 3 — tap to edit" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Paracetamol")).toBeInTheDocument();
-    expect(screen.getByText("500mg")).toBeInTheDocument();
-    expect(screen.getByText("Three times daily")).toBeInTheDocument();
-    expect(screen.getByText("5 days")).toBeInTheDocument();
+    expect(screen.getByText("500mg · TID · 5 days")).toBeInTheDocument();
     expect(screen.queryByLabelText("Dosage")).not.toBeInTheDocument();
   });
 });

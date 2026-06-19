@@ -94,6 +94,10 @@ function completeMedicine(name: string): RxMedicine {
     durationValue: 5,
     durationUnit: "days",
     routeCode: null,
+    doseQty: null,
+    doseUnit: null,
+    form: null,
+    foodTiming: null,
   };
 }
 

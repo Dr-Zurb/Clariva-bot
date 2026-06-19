@@ -27,13 +27,20 @@ import { authenticateToken } from '../../../middleware/auth';
 import {
   createAllergyHandler,
   createConditionHandler,
+  createMedicationHandler,
   createVitalsHandler,
+  getMedicalBackgroundHandler,
+  linkConditionMedicationHandler,
   listAllergiesHandler,
   listConditionsHandler,
+  listMedicationsHandler,
   listProblemsHandler,
   listVitalsHandler,
+  unlinkConditionMedicationHandler,
   updateAllergyHandler,
   updateConditionHandler,
+  updateMedicalBackgroundNotesHandler,
+  updateMedicationHandler,
   updateVitalsHandler,
 } from '../../../controllers/patient-chart-controller';
 
@@ -50,6 +57,17 @@ router.patch('/allergies/:id', updateAllergyHandler);
 router.get('/conditions', listConditionsHandler);
 router.post('/conditions', createConditionHandler);
 router.patch('/conditions/:id', updateConditionHandler);
+
+// Medications
+router.get('/medications', listMedicationsHandler);
+router.post('/medications', createMedicationHandler);
+router.patch('/medications/:id', updateMedicationHandler);
+
+// Medical background (Phase B — problem-oriented grouped view)
+router.get('/medical-background', getMedicalBackgroundHandler);
+router.patch('/medical-background/notes', updateMedicalBackgroundNotesHandler);
+router.post('/condition-medications', linkConditionMedicationHandler);
+router.delete('/condition-medications/:id', unlinkConditionMedicationHandler);
 
 // Vitals
 router.get('/vitals', listVitalsHandler);

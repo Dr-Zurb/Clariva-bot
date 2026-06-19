@@ -165,6 +165,10 @@ describe("filterPriorRxList", () => {
             duration_value: null,
             duration_unit: null,
             route_code: null,
+            dose_qty: null,
+            dose_unit: null,
+            form: null,
+            food_timing: null,
           },
         ],
       });
@@ -204,6 +208,10 @@ describe("filterPriorRxList", () => {
             duration_value: null,
             duration_unit: null,
             route_code: null,
+            dose_qty: null,
+            dose_unit: null,
+            form: null,
+            food_timing: null,
           },
         ],
       });
@@ -227,6 +235,10 @@ describe("filterPriorRxList", () => {
             duration_value: null,
             duration_unit: null,
             route_code: null,
+            dose_qty: null,
+            dose_unit: null,
+            form: null,
+            food_timing: null,
           },
         ],
       });
@@ -250,6 +262,10 @@ describe("filterPriorRxList", () => {
             duration_value: null,
             duration_unit: null,
             route_code: null,
+            dose_qty: null,
+            dose_unit: null,
+            form: null,
+            food_timing: null,
           },
         ],
       });

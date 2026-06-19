@@ -29,6 +29,27 @@ import {
   type PatientFlowAdvance,
   type PayoutSchedule,
 } from '../types/doctor-settings';
+import type { CustomSubsection } from '../types/prescription';
+import {
+  subjectiveCustomSubsectionsDefaultSchema,
+  subjectiveSectionOrderSchema,
+  subjectiveSectionCollapsedSchema,
+  subjectiveSectionHiddenSchema,
+  objectiveCustomSectionsSchema,
+  objectiveSectionOrderSchema,
+  objectiveSectionCollapsedSchema,
+  objectiveSectionHiddenSchema,
+} from '../utils/validation';
+import {
+  sanitizeSubjectiveSectionOrder,
+  sanitizeSubjectiveSectionCollapsed,
+  sanitizeSubjectiveSectionHidden,
+} from '../types/subjective-section-order';
+import {
+  sanitizeObjectiveSectionOrder,
+  sanitizeObjectiveSectionCollapsed,
+  sanitizeObjectiveSectionHidden,
+} from '../types/objective-section-order';
 import { mergeServiceCatalogOnSave } from '../utils/service-catalog-normalize';
 import {
   appendMatcherHintFields,
@@ -51,7 +72,7 @@ import { validateOwnership } from '../utils/db-helpers';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataAccess, logDataModification, logAuditEvent } from '../utils/audit-logger';
 import { InternalError, NotFoundError, ValidationError } from '../utils/errors';
-import { parseLayoutTreeNode } from '../api/routes/cockpit-layout-presets';
+import { parseLayoutTreeNode, parsePaneTreeV3 } from '../api/routes/cockpit-layout-presets';
 
 const SELECT_COLUMNS =
   'doctor_id, appointment_fee_minor, appointment_fee_currency, country, ' +
@@ -66,6 +87,15 @@ const SELECT_COLUMNS =
   'patient_flow_advance, auto_no_show_after_min, ' +
   // CC-08 / CC-09: user-saved cockpit layout presets.
   'cockpit_layout_presets, ' +
+  'subjective_custom_subsections, ' +
+  'subjective_section_order, ' +
+  'subjective_section_collapsed, ' +
+  'subjective_section_hidden, ' +
+  // obj-10 (migration 152): per-doctor objective layout config.
+  'objective_section_order, ' +
+  'objective_section_collapsed, ' +
+  'objective_section_hidden, ' +
+  'objective_custom_sections, ' +
   // R-MOD-full (migration 106): global cockpit template pin.
   'cockpit_template_override, ' +
   'created_at, updated_at';
@@ -106,6 +136,15 @@ const DEFAULT_SETTINGS: DoctorSettingsRow = {
   auto_no_show_after_min: null,
   // CC-08 / CC-09: empty array is the DB-side default.
   cockpit_layout_presets: [],
+  subjective_custom_subsections: [],
+  subjective_section_order: [],
+  subjective_section_collapsed: {},
+  subjective_section_hidden: [],
+  // obj-10: empty arrays/object are the DB-side defaults (canonical layout).
+  objective_section_order: [],
+  objective_section_collapsed: {},
+  objective_section_hidden: [],
+  objective_custom_sections: [],
   // R-MOD-full: NULL = auto-select per modality + state.
   cockpit_template_override: null,
   created_at: '',
@@ -212,8 +251,118 @@ function normalizeUserTemplatesInRow(row: DoctorSettingsRow): DoctorSettingsRow 
   };
 }
 
+function normalizeSubjectiveCustomSubsectionsInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as { subjective_custom_subsections?: unknown }).subjective_custom_subsections;
+  if (!Array.isArray(raw)) {
+    return { ...row, subjective_custom_subsections: [] };
+  }
+  return { ...row, subjective_custom_subsections: raw as CustomSubsection[] };
+}
+
+function normalizeSubjectiveSectionOrderInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as { subjective_section_order?: unknown }).subjective_section_order;
+  if (!Array.isArray(raw)) {
+    return { ...row, subjective_section_order: [] };
+  }
+  return {
+    ...row,
+    subjective_section_order: sanitizeSubjectiveSectionOrder(
+      raw.filter((id): id is string => typeof id === 'string'),
+    ),
+  };
+}
+
+function normalizeSubjectiveSectionCollapsedInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as { subjective_section_collapsed?: unknown }).subjective_section_collapsed;
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ...row, subjective_section_collapsed: {} };
+  }
+  return {
+    ...row,
+    subjective_section_collapsed: sanitizeSubjectiveSectionCollapsed(
+      raw as Record<string, unknown>,
+    ),
+  };
+}
+
+function normalizeSubjectiveSectionHiddenInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as { subjective_section_hidden?: unknown }).subjective_section_hidden;
+  if (!Array.isArray(raw)) {
+    return { ...row, subjective_section_hidden: [] };
+  }
+  return {
+    ...row,
+    subjective_section_hidden: sanitizeSubjectiveSectionHidden(
+      raw.filter((id): id is string => typeof id === 'string'),
+    ),
+  };
+}
+
+function normalizeObjectiveSectionOrderInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as { objective_section_order?: unknown }).objective_section_order;
+  if (!Array.isArray(raw)) {
+    return { ...row, objective_section_order: [] };
+  }
+  return {
+    ...row,
+    objective_section_order: sanitizeObjectiveSectionOrder(
+      raw.filter((id): id is string => typeof id === 'string'),
+    ),
+  };
+}
+
+function normalizeObjectiveSectionCollapsedInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as { objective_section_collapsed?: unknown }).objective_section_collapsed;
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ...row, objective_section_collapsed: {} };
+  }
+  return {
+    ...row,
+    objective_section_collapsed: sanitizeObjectiveSectionCollapsed(
+      raw as Record<string, unknown>,
+    ),
+  };
+}
+
+function normalizeObjectiveSectionHiddenInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as { objective_section_hidden?: unknown }).objective_section_hidden;
+  if (!Array.isArray(raw)) {
+    return { ...row, objective_section_hidden: [] };
+  }
+  return {
+    ...row,
+    objective_section_hidden: sanitizeObjectiveSectionHidden(
+      raw.filter((id): id is string => typeof id === 'string'),
+    ),
+  };
+}
+
+function normalizeObjectiveCustomSectionsInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as { objective_custom_sections?: unknown }).objective_custom_sections;
+  if (!Array.isArray(raw)) {
+    return { ...row, objective_custom_sections: [] };
+  }
+  return { ...row, objective_custom_sections: raw as CustomSubsection[] };
+}
+
 function normalizeDoctorSettingsApiRow(row: DoctorSettingsRow): DoctorSettingsRow {
-  return normalizeUserTemplatesInRow(normalizeServiceOfferingsInRow(row));
+  return normalizeObjectiveCustomSectionsInRow(
+    normalizeObjectiveSectionHiddenInRow(
+      normalizeObjectiveSectionCollapsedInRow(
+        normalizeObjectiveSectionOrderInRow(
+          normalizeSubjectiveSectionHiddenInRow(
+            normalizeSubjectiveSectionCollapsedInRow(
+              normalizeSubjectiveSectionOrderInRow(
+                normalizeSubjectiveCustomSubsectionsInRow(
+                  normalizeUserTemplatesInRow(normalizeServiceOfferingsInRow(row)),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 export type MatcherHintsReplacePayload = {
@@ -587,6 +736,22 @@ export interface UpdateDoctorSettingsPayload {
   auto_no_show_after_min?: number | null;
   /** R-MOD-full: global cockpit template pin. `null` clears = auto-select. */
   cockpit_template_override?: CockpitTemplateOverride | null;
+  /** subj-21: per-doctor default custom subjective subsections (replaces entire array). */
+  subjective_custom_subsections?: CustomSubsection[];
+  /** subj-24: per-doctor default Subjective-tab section order (replaces entire array). */
+  subjective_section_order?: string[];
+  /** subj-28: per-doctor default Subjective-tab section collapse map (replaces entire object). */
+  subjective_section_collapsed?: Record<string, boolean>;
+  /** subj-32: per-doctor hidden Subjective-tab section set (replaces entire array). */
+  subjective_section_hidden?: string[];
+  /** obj-10: per-doctor default Objective-tab section order (replaces entire array). */
+  objective_section_order?: string[];
+  /** obj-10: per-doctor default Objective-tab section collapse map (replaces entire object). */
+  objective_section_collapsed?: Record<string, boolean>;
+  /** obj-10: per-doctor hidden Objective-tab section set (replaces entire array). */
+  objective_section_hidden?: string[];
+  /** obj-10: per-doctor default custom Objective-tab sections (replaces entire array). */
+  objective_custom_sections?: CustomSubsection[];
 }
 
 /**
@@ -697,6 +862,100 @@ export async function updateDoctorSettings(
     );
   }
 
+  if (payload.subjective_custom_subsections !== undefined) {
+    const parsed = subjectiveCustomSubsectionsDefaultSchema.safeParse(
+      payload.subjective_custom_subsections,
+    );
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ValidationError(first?.message ?? 'Invalid subjective_custom_subsections');
+    }
+    // Normalise the validated tree to the canonical CustomSubsection shape
+    // (children/body are optional in the zod output but required downstream).
+    payload.subjective_custom_subsections = parsed.data.map((section) => ({
+      id: section.id,
+      title: section.title,
+      body: section.body ?? null,
+      children: (section.children ?? []).map((child) => ({
+        id: child.id,
+        title: child.title,
+        body: child.body ?? null,
+      })),
+    }));
+  }
+
+  if (payload.subjective_section_order !== undefined) {
+    const parsed = subjectiveSectionOrderSchema.safeParse(payload.subjective_section_order);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ValidationError(first?.message ?? 'Invalid subjective_section_order');
+    }
+    payload.subjective_section_order = parsed.data;
+  }
+
+  if (payload.subjective_section_collapsed !== undefined) {
+    const parsed = subjectiveSectionCollapsedSchema.safeParse(payload.subjective_section_collapsed);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ValidationError(first?.message ?? 'Invalid subjective_section_collapsed');
+    }
+    payload.subjective_section_collapsed = parsed.data;
+  }
+
+  if (payload.subjective_section_hidden !== undefined) {
+    const parsed = subjectiveSectionHiddenSchema.safeParse(payload.subjective_section_hidden);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ValidationError(first?.message ?? 'Invalid subjective_section_hidden');
+    }
+    payload.subjective_section_hidden = parsed.data;
+  }
+
+  if (payload.objective_section_order !== undefined) {
+    const parsed = objectiveSectionOrderSchema.safeParse(payload.objective_section_order);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ValidationError(first?.message ?? 'Invalid objective_section_order');
+    }
+    payload.objective_section_order = parsed.data;
+  }
+
+  if (payload.objective_section_collapsed !== undefined) {
+    const parsed = objectiveSectionCollapsedSchema.safeParse(payload.objective_section_collapsed);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ValidationError(first?.message ?? 'Invalid objective_section_collapsed');
+    }
+    payload.objective_section_collapsed = parsed.data;
+  }
+
+  if (payload.objective_section_hidden !== undefined) {
+    const parsed = objectiveSectionHiddenSchema.safeParse(payload.objective_section_hidden);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ValidationError(first?.message ?? 'Invalid objective_section_hidden');
+    }
+    payload.objective_section_hidden = parsed.data;
+  }
+
+  if (payload.objective_custom_sections !== undefined) {
+    const parsed = objectiveCustomSectionsSchema.safeParse(payload.objective_custom_sections);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ValidationError(first?.message ?? 'Invalid objective_custom_sections');
+    }
+    payload.objective_custom_sections = parsed.data.map((section) => ({
+      id: section.id,
+      title: section.title,
+      body: section.body ?? null,
+      children: (section.children ?? []).map((child) => ({
+        id: child.id,
+        title: child.title,
+        body: child.body ?? null,
+      })),
+    }));
+  }
+
   if (payload.opd_policies !== undefined && payload.opd_policies !== null) {
     const modeSchedule = payload.opd_policies.mode_schedule;
     if (modeSchedule !== undefined) {
@@ -745,6 +1004,14 @@ export async function updateDoctorSettings(
     'patient_flow_advance',
     'auto_no_show_after_min',
     'cockpit_template_override',
+    'subjective_custom_subsections',
+    'subjective_section_order',
+    'subjective_section_collapsed',
+    'subjective_section_hidden',
+    'objective_section_order',
+    'objective_section_collapsed',
+    'objective_section_hidden',
+    'objective_custom_sections',
   ];
   for (const key of allowedKeys) {
     if (key in payload) {
@@ -1196,14 +1463,20 @@ function validatePresetArray(presets: unknown): asserts presets is CockpitLayout
     }
     const hasLayout = preset.layout != null;
     const hasLayoutTree = preset.layout_tree != null;
-    if (!hasLayout && !hasLayoutTree) {
-      throw new ValidationError(`presets[${i}] must include layout or layout_tree`);
+    const hasPaneTreeV3 = preset.pane_tree_v3 != null;
+    if (!hasLayout && !hasLayoutTree && !hasPaneTreeV3) {
+      throw new ValidationError(
+        `presets[${i}] must include layout, layout_tree, or pane_tree_v3`,
+      );
     }
     if (hasLayout) {
       validateLayoutShape(preset.layout, `presets[${i}].layout`);
     }
     if (hasLayoutTree) {
       parseLayoutTreeNode(preset.layout_tree, `presets[${i}].layout_tree`);
+    }
+    if (hasPaneTreeV3) {
+      parsePaneTreeV3(preset.pane_tree_v3, `presets[${i}].pane_tree_v3`);
     }
   }
 }

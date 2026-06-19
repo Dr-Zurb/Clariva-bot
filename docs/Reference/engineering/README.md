@@ -9,4 +9,6 @@ How to build, secure, deploy, and operate Clariva. **AI agents:** start with [`d
 | [`development/`](./development/) | Standards, recipes, testing, definition of done, agent rules |
 | [`operations/`](./operations/) | Onboarding, deployment, observability, external services, runbooks |
 
+**Region / locale:** [`REGION-SPECIFIC-CONFIG.md`](./REGION-SPECIFIC-CONFIG.md) — registry of India vs global clinical and product defaults.
+
 Index: [`../README.md`](../README.md)

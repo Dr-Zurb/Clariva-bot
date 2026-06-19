@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/resizable";
 import type { PaneDefinition, PaneTreeNode } from "@/lib/patient-profile/v3/foundation";
 import { MIN_COMFORTABLE_ROW_PX } from "@/lib/patient-profile/v3/column-cap";
+import { cn } from "@/lib/utils";
 import type { CockpitV3Layout } from "@/lib/patient-profile/v3/useCockpitV3Layout";
 import CockpitLeafView from "./CockpitLeafView";
 
@@ -209,7 +210,11 @@ function CockpitSplitGroup({
                 corner sliver (react-resizable-panels v4 dropped the data attr
                 the old styling relied on). */}
             {index > 0 ? (
-              <ResizableHandle withHandle orientation={orientation} />
+              <ResizableHandle
+                withHandle
+                orientation={orientation}
+                className="bg-transparent hover:bg-border/60 data-[separator=drag]:bg-primary/60 data-[separator=active]:bg-primary/60"
+              />
             ) : null}
             <ResizablePanel
               id={child.id}
@@ -219,11 +224,14 @@ function CockpitSplitGroup({
               // rows) + min-h-0/min-w-0 so a panel can shrink below its
               // content's intrinsic size on the main axis (matches the legacy
               // shell's `flex h-full min-h-0 min-w-0` panel wrapper).
-              className={
+              // Gutter only on leaf panels — nested split wrappers skip p-1 so
+              // horizontal column gaps do not double-stack with inner row gaps.
+              className={cn(
                 orientation === "horizontal"
                   ? "h-full min-h-0 min-w-0 overflow-hidden"
-                  : "w-full min-h-0 min-w-0 overflow-hidden"
-              }
+                  : "w-full min-h-0 min-w-0 overflow-hidden",
+                isLeafNode(child) && "p-1",
+              )}
             >
               <CockpitGroupView
                 node={child}

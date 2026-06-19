@@ -24,6 +24,10 @@ export function medicineToRowValue(m: PrescriptionMedicine): MedicineRowValue {
     durationValue: m.duration_value ?? null,
     durationUnit: m.duration_unit ?? null,
     routeCode: m.route_code ?? null,
+    doseQty: m.dose_qty != null ? Number(m.dose_qty) : null,
+    doseUnit: m.dose_unit ?? null,
+    form: m.form ?? null,
+    foodTiming: m.food_timing ?? null,
   };
 }
 

@@ -35,7 +35,6 @@ import type {
 import { type MedicineRowValue } from "./MedicineRow";
 import { PrescriptionFormCompositionRoot } from "@/components/cockpit/rx/PrescriptionFormCompositionRoot";
 import { SendRxFinishButton } from "@/components/cockpit/rx/SendRxFinishButton";
-import { useRegisterRxFormActions } from "@/components/cockpit/rx/RxFormActionsContext";
 import SaveStatus from "./SaveStatus";
 import TemplatePicker from "@/components/ehr/TemplatePicker";
 import PrescriptionPatientPreview from "./PrescriptionPatientPreview";
@@ -415,6 +414,10 @@ function PrescriptionFormBody({
     durationValue: m.durationValue ?? null,
     durationUnit: m.durationUnit ?? null,
     routeCode: m.routeCode ?? null,
+    doseQty: m.doseQty ?? null,
+    doseUnit: m.doseUnit ?? null,
+    form: m.form ?? null,
+    foodTiming: m.foodTiming ?? null,
   });
 
   /**
@@ -503,6 +506,10 @@ function PrescriptionFormBody({
           durationValue: m.durationValue,
           durationUnit: m.durationUnit,
           routeCode: m.routeCode,
+          doseQty: m.doseQty,
+          doseUnit: m.doseUnit,
+          form: m.form,
+          foodTiming: m.foodTiming,
         })),
       });
       setSuccessMessage(`Saved template "${name.trim()}".`);
@@ -557,6 +564,9 @@ function PrescriptionFormBody({
           durationValue: m.durationValue,
           durationUnit: m.durationUnit,
           instructions: m.instructions || null,
+          doseQty: m.doseQty,
+          doseUnit: m.doseUnit,
+          foodTiming: m.foodTiming,
         })),
     };
   };
@@ -874,39 +884,7 @@ function PrescriptionFormBody({
     await handleSaveAndSend();
   };
 
-  const registerRxFormActions = useRegisterRxFormActions();
-  const sendAndFinishRef = useRef(handleSendAndFinish);
-  sendAndFinishRef.current = handleSendAndFinish;
-  const openTemplatesRef = useRef(() => setTemplatePickerOpen(true));
-  openTemplatesRef.current = () => setTemplatePickerOpen(true);
-  const openPreviewRef = useRef(handleOpenPreview);
-  openPreviewRef.current = handleOpenPreview;
   const canSendRx = cockpitState != null && canSendPrescription(cockpitState);
-
-  useEffect(() => {
-    if (!actionsInFooter) return;
-    registerRxFormActions({
-      sendAndFinish: () => {
-        void sendAndFinishRef.current();
-      },
-      sending: saving || uploading,
-      finishSending: saving && finishAfterSendRef.current,
-      openTemplates: () => openTemplatesRef.current(),
-      openPreview: () => {
-        void openPreviewRef.current();
-      },
-      canSend: canSendRx,
-    });
-    return () => {
-      registerRxFormActions(null);
-    };
-  }, [
-    actionsInFooter,
-    registerRxFormActions,
-    saving,
-    uploading,
-    canSendRx,
-  ]);
 
   /**
    * EHR Sub-batch C / T4.21 (C.4) â€” entry point wired to the
@@ -1175,10 +1153,14 @@ function PrescriptionFormBody({
           onAcknowledge={onAcknowledge}
           onAckDdi={onAckDdi}
           onSendAndFinish={
-            onFinish ? () => void handleSendAndFinish() : undefined
+            !actionsInFooter && onFinish
+              ? () => void handleSendAndFinish()
+              : undefined
           }
           onOpenTemplates={() => setTemplatePickerOpen(true)}
-          onOpenPreview={() => void handleOpenPreview()}
+          onOpenPreview={
+            actionsInFooter ? undefined : () => void handleOpenPreview()
+          }
           canSend={canSendRx}
           showPreviousRxTrigger={cockpitState != null}
         />
@@ -1250,17 +1232,23 @@ function PrescriptionFormBody({
        * still works on legacy mounts (just shows Row 1 + "Send Rx").
        */}
       <div className="flex flex-col gap-2">
-        {/* Row 1 â€” utility */}
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <button
-            type="button"
-            onClick={handleOpenPreview}
-            disabled={saving || uploading || previewLoading}
-            className="rounded-md border border-blue-600 bg-white px-3 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-            title="See how this prescription will look to the patient"
-          >
-            {previewLoading ? "Loadingâ€¦" : "Preview as patient"}
-          </button>
+        {/* Row 1 — utility (Preview + Send live in shell footer when actionsInFooter) */}
+        <div
+          className={`flex flex-wrap items-center gap-2 ${
+            actionsInFooter ? "justify-end" : "justify-between"
+          }`}
+        >
+          {!actionsInFooter ? (
+            <button
+              type="button"
+              onClick={handleOpenPreview}
+              disabled={saving || uploading || previewLoading}
+              className="rounded-md border border-blue-600 bg-white px-3 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              title="See how this prescription will look to the patient"
+            >
+              {previewLoading ? "Loading…" : "Preview as patient"}
+            </button>
+          ) : null}
 
           <button
             type="button"
@@ -1308,28 +1296,23 @@ function PrescriptionFormBody({
         )}
       </div>
 
-      {/* T3.18 â€” Patient preview modal. Mounted at the form's root so
-          ESC + backdrop close are wired up via the modal's own effect. */}
-      <PrescriptionPatientPreview
-        open={previewOpen}
-        onClose={handleClosePreview}
-        viewModel={previewVM}
-      />
-
-      {/* EHR Sub-batch C / T4.21 (C.4) â€” Pre-send soft guards modal.
-          Opens only when "Send to patient" is pressed AND warnings
-          exist; otherwise the send pipeline fires directly. The
-          "Send anyway" button is ALWAYS enabled (Decision T4-D1
-          LOCKED) â€” its `sending` prop is purely for in-flight click
-          debounce, never a warning-based gate. */}
-      <PrescriptionPreSendCheck
-        open={preSendWarnings !== null}
-        warnings={preSendWarnings ?? []}
-        sending={saving}
-        onCancel={handlePreSendCancel}
-        onEdit={handlePreSendEdit}
-        onSendAnyway={handlePreSendSendAnyway}
-      />
+      {!actionsInFooter ? (
+        <>
+          <PrescriptionPatientPreview
+            open={previewOpen}
+            onClose={handleClosePreview}
+            viewModel={previewVM}
+          />
+          <PrescriptionPreSendCheck
+            open={preSendWarnings !== null}
+            warnings={preSendWarnings ?? []}
+            sending={saving}
+            onCancel={handlePreSendCancel}
+            onEdit={handlePreSendEdit}
+            onSendAnyway={handlePreSendSendAnyway}
+          />
+        </>
+      ) : null}
     </div>
   );
 }

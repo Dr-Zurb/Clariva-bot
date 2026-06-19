@@ -1,9 +1,10 @@
 /**
  * cv3t-02 — production-path build-up regression.
  *
- * Seeds from `blankLayout(buildCockpitTabs(ctx))` (the same registry the page
- * mounts), not a hand-rolled flat fixture. Locks the palette + blank-seed
- * against the nested column-wrapper defect (`render: () => null` at top level).
+ * Seeds from `resolveSeedLayout(buildCockpitTabs(ctx))` (Consult on first open;
+ * the same registry the page mounts), not a hand-rolled flat fixture. Locks the
+ * palette + seed against the nested column-wrapper defect (`render: () => null`
+ * at top level).
  */
 
 import React from "react";
@@ -23,6 +24,19 @@ import {
   cleanup,
 } from "@testing-library/react";
 import "@testing-library/jest-dom";
+
+vi.mock("@/lib/patient-profile/v3/useCockpitLayoutPresets", () => ({
+  MAX_SAVED_LAYOUTS: 5,
+  useCockpitLayoutPresets: () => ({
+    presets: [],
+    isLoading: false,
+    canSaveMore: true,
+    savePreset: vi.fn(),
+    deletePresetById: vi.fn(),
+    renamePresetById: vi.fn(),
+    refetch: vi.fn(),
+  }),
+}));
 
 vi.mock("@/hooks/useMediaQuery", () => ({
   useMediaQuery: vi.fn(() => true),
@@ -181,18 +195,6 @@ const TAB_BODY_TESTID: Record<string, string> = {
   objective: "pane-objective-body",
 };
 
-/** Palette "Add <title>" label per tab id. */
-const TAB_ADD_LABEL: Record<string, string> = {
-  snapshot: "Add Snapshot",
-  history: "Add History",
-  body: "Add Consult",
-  assessment: "Add Assessment",
-  "investigations-orders": "Add Investigations",
-  plan: "Add Plan",
-  subjective: "Add Subjective",
-  objective: "Add Objective",
-};
-
 function palettePaneIds(): string[] {
   const palette = screen.getByTestId("cockpit-v3-palette");
   return Array.from(
@@ -263,75 +265,67 @@ describe("cv3t-02: production build-up path", () => {
     cleanup();
   });
 
-  it("starts empty, lists eight real leaf tabs (no column wrappers)", async () => {
+  it("seeds Consult on first open, lists eight real leaf tabs (no column wrappers)", async () => {
     renderProductionShell();
 
     await waitFor(() => {
-      expect(screen.getByTestId("cockpit-v3-empty-state")).toBeInTheDocument();
+      expect(screen.getByTestId("cockpit-v3-canvas")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("Your cockpit is empty")).toBeInTheDocument();
+    expect(screen.queryByTestId("cockpit-v3-empty-state")).not.toBeInTheDocument();
     expect(palettePaneIds()).toEqual([...COCKPIT_TAB_ORDER]);
     for (const wrapperId of V3_COLUMN_WRAPPER_IDS) {
       expect(palettePaneIds()).not.toContain(wrapperId);
     }
 
+    expect(screen.getByTestId("pane-snapshot-body")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Add Snapshot" }),
-    ).toBeInTheDocument();
+      screen.getByRole("button", { name: "Remove Snapshot" }),
+    ).toHaveAttribute("data-palette-on-canvas", "true");
     expect(
-      screen.getByRole("button", { name: "Add Consult" }),
+      screen.getByRole("button", { name: "Remove Consult" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add Plan" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove Plan" })).toBeInTheDocument();
   });
 
-  it("adding Snapshot and Plan from the palette mounts real pane bodies", async () => {
+  it("Consult seed mounts Snapshot and Plan bodies without palette add", async () => {
     renderProductionShell();
 
     await waitFor(() => {
-      expect(screen.getByTestId("cockpit-v3-empty-state")).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Add Snapshot" }));
-
-    await waitFor(() => {
       expect(screen.getByTestId("pane-snapshot-body")).toBeInTheDocument();
+      expect(screen.getByTestId("pane-plan-body")).toBeInTheDocument();
       expect(screen.getByTestId("cockpit-v3-canvas")).toBeInTheDocument();
     });
     expect(screen.queryByTestId("cockpit-v3-empty-state")).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Remove Snapshot" }),
     ).toHaveAttribute("data-palette-on-canvas", "true");
-
-    fireEvent.click(screen.getByRole("button", { name: "Add Plan" }));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("pane-plan-body")).toBeInTheDocument();
-    });
-    expect(screen.getByTestId("pane-snapshot-body")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Remove Plan" }),
+    ).toHaveAttribute("data-palette-on-canvas", "true");
   });
 
-  it("reset returns to blank empty-state", async () => {
+  it("reset returns to Consult after hiding a pane", async () => {
     renderProductionShell();
 
-    await waitFor(() => {
-      expect(screen.getByTestId("cockpit-v3-empty-state")).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Add Snapshot" }));
     await waitFor(() => {
       expect(screen.getByTestId("pane-snapshot-body")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Reset to blank" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove Snapshot" }));
+    await waitFor(() => {
+      expect(screen.queryByTestId("pane-snapshot-body")).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset to Consult" }));
 
     await waitFor(() => {
-      expect(screen.getByTestId("cockpit-v3-empty-state")).toBeInTheDocument();
+      expect(screen.getByTestId("pane-snapshot-body")).toBeInTheDocument();
     });
-    expect(screen.queryByTestId("pane-snapshot-body")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("cockpit-v3-empty-state")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Add Snapshot" }),
-    ).toHaveAttribute("data-palette-on-canvas", "false");
+      screen.getByRole("button", { name: "Remove Snapshot" }),
+    ).toHaveAttribute("data-palette-on-canvas", "true");
   });
 });
 
@@ -350,20 +344,13 @@ describe("cv3t-03: build-up parity axis (production registry)", () => {
     cleanup();
   });
 
-  it("every one of the eight tabs mounts its real body from blank", async () => {
+  it("every one of the eight tabs mounts its real body on Consult seed", async () => {
     renderProductionShell();
-
-    await waitFor(() => {
-      expect(screen.getByTestId("cockpit-v3-empty-state")).toBeInTheDocument();
-    });
-
-    for (const id of COCKPIT_TAB_ORDER) {
-      fireEvent.click(screen.getByRole("button", { name: TAB_ADD_LABEL[id] }));
-    }
 
     await waitFor(() => {
       expect(screen.getByTestId("cockpit-v3-canvas")).toBeInTheDocument();
     });
+
     for (const id of COCKPIT_TAB_ORDER) {
       expect(
         screen.getByTestId(TAB_BODY_TESTID[id]),
@@ -381,14 +368,6 @@ describe("cv3t-03: build-up parity axis (production registry)", () => {
 
   it("renders exactly one safety strip + one action footer when built up", async () => {
     renderProductionShellWithKey("test:cv3t-03-docks", { withDocks: true });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("cockpit-v3-empty-state")).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Add Plan" }));
-    fireEvent.click(screen.getByRole("button", { name: "Add Investigations" }));
-    fireEvent.click(screen.getByRole("button", { name: "Add Consult" }));
 
     await waitFor(() => {
       expect(screen.getByTestId("pane-plan-body")).toBeInTheDocument();

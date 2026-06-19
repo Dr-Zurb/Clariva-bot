@@ -48,6 +48,10 @@ import { InternalError, NotFoundError } from '../utils/errors';
 import { getDoctorSettings } from './doctor-settings-service';
 import { PrescriptionDocument } from '../templates/prescription-pdf/PrescriptionDocument';
 import type { PrescriptionPdfData } from '../templates/prescription-pdf/types';
+import {
+  mapPrescriptionToPdfBody,
+  type PrescriptionPdfSourceRow,
+} from './prescription-pdf-composer';
 import type { PrescriptionMedicine } from '../types/prescription';
 
 // ============================================================================
@@ -133,18 +137,10 @@ interface PatientRow {
   gender:        string | null;
 }
 
-interface PrescriptionRow {
+interface PrescriptionRow extends PrescriptionPdfSourceRow {
   id:                    string;
   appointment_id:        string;
   doctor_id:             string;
-  cc:                    string | null;
-  hopi:                  string | null;
-  provisional_diagnosis: string | null;
-  // cockpit-v2 / migration 103: renamed from `investigations`.
-  investigations_orders: string | null;
-  follow_up:             string | null;
-  patient_education:     string | null;
-  clinical_notes:        string | null;
   created_at:            string;
 }
 
@@ -320,22 +316,7 @@ async function buildPdfData(
         doctorSettings?.timezone,
       ),
     },
-    body: {
-      cc:                   rx.cc,
-      hopi:                 rx.hopi,
-      provisionalDiagnosis: rx.provisional_diagnosis,
-      // cockpit-v2 / migration 103: DB column renamed; PDF body field
-      // name `investigations` stays for the deprecation window (the
-      // template <SectionBlock label="Investigations"> still reads
-      // `body.investigations`).
-      // TODO(cv2-07): rename PDF body field `investigations` → `investigationsOrders`
-      // alongside the cockpit form rename.
-      investigations:       rx.investigations_orders,
-      followUp:             rx.follow_up,
-      patientEducation:     rx.patient_education,
-      clinicalNotes:        rx.clinical_notes,
-      medicines,
-    },
+    body: mapPrescriptionToPdfBody(rx, medicines),
   };
 
   return { data, doctorId: rx.doctor_id };

@@ -1,0 +1,11 @@
+---
+globs: ["**/*.test.ts", "**/*.test.tsx"]
+alwaysApply: false
+---
+
+# Tests
+
+Follow @docs/Reference/engineering/development/TESTING.md (and @docs/Reference/engineering/development/FRONTEND_TESTING.md for `*.test.tsx`).
+
+- Mirror the structure of an adjacent test file in the same folder.
+- Test behavior and edge cases described in the task's acceptance criteria, not implementation details.

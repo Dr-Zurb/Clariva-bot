@@ -4,6 +4,8 @@
 
 **Location:** `docs/Work/process/` — reference this folder before creating any new tasks.
 
+> **End-to-end path:** [`WORKFLOW.md`](./WORKFLOW.md) — capture → product plan → daily plan → done.
+
 > **Big plans are phased.** For anything bigger than a ~1-week batch, the work is split into phases that each live in one program folder. **Read [`PHASED-PLANS-GUIDE.md`](./PHASED-PLANS-GUIDE.md) before creating a plan folder, a phase folder, or the next phase of an in-flight program** — it owns the folder structure and the cross-day rule (later phases go in the original program folder, not the new day's date). This guide owns the per-task lifecycle below.
 
 ---

@@ -7,12 +7,17 @@ import {
   flattenPaneDefinitions,
   type PaneDefinition,
 } from "@/lib/patient-profile/v3/foundation";
-import { blankLayout, blankLayoutFlat } from "@/lib/patient-profile/v3/blankLayout";
+import { paneTreeToFlat } from "@/lib/patient-profile/v3/foundation";
+import { resolveSeedLayout } from "@/lib/patient-profile/v3/default-layouts";
 import {
   maxComfortableColumns,
   maxRowsPerColumn,
 } from "@/lib/patient-profile/v3/column-cap";
 import { useCockpitV3Layout } from "@/lib/patient-profile/v3/useCockpitV3Layout";
+import { isFullEightPaneRegistry } from "@/lib/patient-profile/v3/default-layouts";
+import { useCockpitLayoutSwitcher } from "@/lib/patient-profile/v3/useCockpitLayoutSwitcher";
+import { useCockpitLayoutPresets } from "@/lib/patient-profile/v3/useCockpitLayoutPresets";
+import { useCockpitLayoutHotkeys } from "@/lib/patient-profile/v3/useCockpitLayoutHotkeys";
 import { toastOnCapRejection } from "@/lib/patient-profile/v3/cockpit-cap-toast";
 import { layoutUxToast } from "@/lib/patient-profile/layout-ux-toast";
 import { trackCockpitV3DragDrop } from "@/lib/patient-profile/telemetry";
@@ -33,6 +38,8 @@ export interface CockpitV3ShellProps {
   safetyDock?: ReactNode;
   /** Anchored "Send Rx & finish" footer (v3-DL-6 / P0-DL-3). */
   actionDock?: ReactNode;
+  /** Doctor auth token — enables saved custom layouts in the palette (cv3l-05). */
+  token?: string;
   /** Other PatientProfileShell props are accepted but ignored in Phase 1. */
   [key: string]: unknown;
 }
@@ -52,6 +59,7 @@ export default function CockpitV3Shell({
   consultActive = false,
   safetyDock,
   actionDock,
+  token,
 }: CockpitV3ShellProps) {
   const isLg = useMediaQuery("(min-width: 1024px)", true);
 
@@ -63,8 +71,11 @@ export default function CockpitV3Shell({
     () => flattenPaneDefinitions(panes),
     [panes],
   );
-  const blankDefault = useMemo(() => blankLayout(panes), [panes]);
-  const defaultFlat = useMemo(() => blankLayoutFlat(panes), [panes]);
+  const seedLayout = useMemo(() => resolveSeedLayout(panes), [panes]);
+  const defaultFlat = useMemo(
+    () => paneTreeToFlat(seedLayout.paneTree),
+    [seedLayout],
+  );
 
   const canvasMeasureRef = useRef<HTMLDivElement>(null);
   const [comfortableColumnCap, setComfortableColumnCap] = useState(4);
@@ -94,10 +105,21 @@ export default function CockpitV3Shell({
     defaultPaneOrder: defaultFlat.paneOrder,
     defaultPaneState: defaultFlat.paneState,
     knownLeafIds: paneOrder,
-    blankDefaultTree: blankDefault.paneTree,
+    blankDefaultTree: seedLayout.paneTree,
     maxComfortableColumns: comfortableColumnCap,
     maxRowsPerColumn: comfortableRowCap,
   });
+
+  const showFullLayoutRegistry = isFullEightPaneRegistry(panes);
+  const layoutPresets = useCockpitLayoutPresets(token, showFullLayoutRegistry);
+  const layoutSwitcher = useCockpitLayoutSwitcher(
+    layout,
+    layoutPresets.presets,
+  );
+  useCockpitLayoutHotkeys(
+    showFullLayoutRegistry,
+    layoutSwitcher.applyDefaultLayout,
+  );
 
   const canDragPane = useCallback(
     (paneId: string) => !(paneId === "body" && consultActive),
@@ -170,7 +192,13 @@ export default function CockpitV3Shell({
           {safetyDock}
         </div>
       ) : null}
-      <CockpitPalette panes={panes} layout={layout} className="shrink-0" />
+      <CockpitPalette
+        panes={panes}
+        layout={layout}
+        layoutSwitcher={layoutSwitcher}
+        token={token}
+        className="shrink-0"
+      />
       <CockpitDndContext
         paneById={paneByIdRecord}
         onDrop={handleDrop}

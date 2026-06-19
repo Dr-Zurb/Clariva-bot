@@ -29,6 +29,20 @@ import {
   PATIENT_SEGMENT_IDS,
   PRESCRIPTION_FOLLOW_UP_VALUE_SUPPORTED,
 } from '../services/patient-list-segment-sql';
+import { PAST_SURGICAL_CATALOG_PROCEDURE_SLUGS } from '../types/prescription';
+import { RX_TEMPLATE_SCOPE_VALUES } from '../types/rx-template';
+import {
+  SUBJECTIVE_SECTION_ORDER_MAX,
+  sanitizeSubjectiveSectionOrder,
+  sanitizeSubjectiveSectionCollapsed,
+  sanitizeSubjectiveSectionHidden,
+} from '../types/subjective-section-order';
+import {
+  OBJECTIVE_SECTION_ORDER_MAX,
+  sanitizeObjectiveSectionOrder,
+  sanitizeObjectiveSectionCollapsed,
+  sanitizeObjectiveSectionHidden,
+} from '../types/objective-section-order';
 
 // ============================================================================
 // Constants (RECIPES: E.164-like phone)
@@ -1022,6 +1036,104 @@ export function validateMergePatientsBody(body: unknown): MergePatientsBody {
 // Doctor Settings PATCH (e-task-2)
 // ============================================================================
 
+const CUSTOM_SUBSECTIONS_MAX = 20;
+const CUSTOM_SUBSECTION_CHILDREN_MAX = 10;
+const CUSTOM_SUBSECTION_TITLE_MAX = 200;
+const CUSTOM_SUBSECTION_BODY_MAX = 2000;
+
+const customSubsectionChildSchema = z
+  .object({
+    id: z.string().uuid(),
+    title: z.string().trim().min(1).max(CUSTOM_SUBSECTION_TITLE_MAX),
+    body: z.string().max(CUSTOM_SUBSECTION_BODY_MAX).trim().optional().nullable(),
+  })
+  .strict();
+
+const customSubsectionSchema = z
+  .object({
+    id: z.string().uuid(),
+    title: z.string().trim().min(1).max(CUSTOM_SUBSECTION_TITLE_MAX),
+    body: z.string().max(CUSTOM_SUBSECTION_BODY_MAX).trim().optional().nullable(),
+    // `.default([])` so the inferred output `children` is a non-optional
+    // array — aligns with the canonical `CustomSubsection` shape consumed by
+    // the prescription create/update service inputs (subj-19 type-parity).
+    children: z
+      .array(customSubsectionChildSchema)
+      .max(CUSTOM_SUBSECTION_CHILDREN_MAX)
+      .default([]),
+  })
+  .strict();
+
+/** subj-19/subj-21: custom subsections tree (prescription + doctor default). */
+export const subjectiveCustomSubsectionsDefaultSchema = z
+  .array(customSubsectionSchema)
+  .max(CUSTOM_SUBSECTIONS_MAX);
+
+const customSubsectionsSchema = subjectiveCustomSubsectionsDefaultSchema.optional();
+
+/** subj-24: per-doctor subjective section order (dedupe + drop unknown ids). */
+export const subjectiveSectionOrderSchema = z
+  .array(z.string())
+  .max(SUBJECTIVE_SECTION_ORDER_MAX)
+  .transform((ids) => sanitizeSubjectiveSectionOrder(ids));
+
+/**
+ * subj-28: per-doctor subjective section collapse map { [sectionId]: isOpen }.
+ * Tolerant: drops unknown keys + skips non-boolean values rather than rejecting
+ * (a stale/removed id must never brick a save). Caps entry count to the registry
+ * size before sanitizing.
+ */
+export const subjectiveSectionCollapsedSchema = z
+  .record(z.string(), z.unknown())
+  .refine((map) => Object.keys(map).length <= SUBJECTIVE_SECTION_ORDER_MAX, {
+    message: `subjective_section_collapsed exceeds ${SUBJECTIVE_SECTION_ORDER_MAX} entries`,
+  })
+  .transform((map) => sanitizeSubjectiveSectionCollapsed(map));
+
+/**
+ * subj-32 / subj-37: per-doctor hidden Subjective section set (delta array of
+ * static or custom_block ids). Tolerant: drops unknown ids + dedupes rather
+ * than rejecting (a stale/removed id must never brick a save). Caps entry count
+ * to the registry size before sanitizing.
+ */
+export const subjectiveSectionHiddenSchema = z
+  .array(z.string())
+  .max(SUBJECTIVE_SECTION_ORDER_MAX)
+  .transform((ids) => sanitizeSubjectiveSectionHidden(ids));
+
+/** obj-10: per-doctor objective section order (dedupe + drop unknown ids). */
+export const objectiveSectionOrderSchema = z
+  .array(z.string())
+  .max(OBJECTIVE_SECTION_ORDER_MAX)
+  .transform((ids) => sanitizeObjectiveSectionOrder(ids));
+
+/**
+ * obj-10: per-doctor objective section collapse map { [sectionId]: isOpen }.
+ * Tolerant: drops unknown keys + skips non-boolean values rather than rejecting
+ * (a stale/removed id must never brick a save). Caps entry count to the registry
+ * size before sanitizing.
+ */
+export const objectiveSectionCollapsedSchema = z
+  .record(z.string(), z.unknown())
+  .refine((map) => Object.keys(map).length <= OBJECTIVE_SECTION_ORDER_MAX, {
+    message: `objective_section_collapsed exceeds ${OBJECTIVE_SECTION_ORDER_MAX} entries`,
+  })
+  .transform((map) => sanitizeObjectiveSectionCollapsed(map));
+
+/**
+ * obj-10: per-doctor hidden Objective section set (delta array of static or
+ * custom_block ids). Tolerant: drops unknown ids + dedupes rather than rejecting
+ * (a stale/removed id must never brick a save). Caps entry count to the registry
+ * size before sanitizing.
+ */
+export const objectiveSectionHiddenSchema = z
+  .array(z.string())
+  .max(OBJECTIVE_SECTION_ORDER_MAX)
+  .transform((ids) => sanitizeObjectiveSectionHidden(ids));
+
+/** obj-10: per-doctor default custom Objective sections (custom-subsection tree). */
+export const objectiveCustomSectionsSchema = subjectiveCustomSubsectionsDefaultSchema;
+
 export const patchDoctorSettingsSchema = z
   .object({
     practice_name: z.string().max(200).trim().nullable().optional(),
@@ -1099,6 +1211,22 @@ export const patchDoctorSettingsSchema = z
       .enum(COCKPIT_TEMPLATE_OVERRIDE_VALUES)
       .nullable()
       .optional(),
+    /** subj-21: per-doctor default custom subjective subsections template. */
+    subjective_custom_subsections: subjectiveCustomSubsectionsDefaultSchema.optional(),
+    /** subj-24: per-doctor default Subjective-tab section order. */
+    subjective_section_order: subjectiveSectionOrderSchema.optional(),
+    /** subj-28: per-doctor default Subjective-tab section collapse map. */
+    subjective_section_collapsed: subjectiveSectionCollapsedSchema.optional(),
+    /** subj-32: per-doctor hidden Subjective-tab section set (delta array). */
+    subjective_section_hidden: subjectiveSectionHiddenSchema.optional(),
+    /** obj-10: per-doctor default Objective-tab section order. */
+    objective_section_order: objectiveSectionOrderSchema.optional(),
+    /** obj-10: per-doctor default Objective-tab section collapse map. */
+    objective_section_collapsed: objectiveSectionCollapsedSchema.optional(),
+    /** obj-10: per-doctor hidden Objective-tab section set (delta array). */
+    objective_section_hidden: objectiveSectionHiddenSchema.optional(),
+    /** obj-10: per-doctor default custom Objective-tab sections template. */
+    objective_custom_sections: objectiveCustomSectionsSchema.optional(),
   })
   .strict();
 
@@ -1239,9 +1367,712 @@ const PRESCRIPTION_FIELD_MAX = 1000;
 const PRESCRIPTION_SOAP_TEXT_MAX = 5000;
 const PRESCRIPTION_MEDICINE_NAME_MAX = 200;
 const PRESCRIPTION_MEDICINE_FIELD_MAX = 100;
+const PRESCRIPTION_COMPLAINT_NAME_MAX = 200;
+const PRESCRIPTION_COMPLAINT_ATTR_MAX = 200;
+const PRESCRIPTION_COMPLAINT_NOTES_MAX = 500;
+const PRESCRIPTION_COMPLAINT_ASSOCIATED_MAX = 20;
+const PRESCRIPTION_ASSOCIATED_COMPLAINTS_MAX = 10;
+const PRESCRIPTION_COMPLAINTS_MAX = 20;
+const PRESCRIPTION_HISTORY_MAX = 2000;
+
+const complaintSeveritySchema = z.union([
+  // `minimal` retained for legacy stored cards; UI offers the other four.
+  z.enum(['minimal', 'mild', 'moderate', 'severe', 'very_severe']),
+  z.number().int().min(0).max(10),
+]);
+
+const prescriptionAssociatedComplaintSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().max(PRESCRIPTION_COMPLAINT_NAME_MAX).trim(),
+  onset: z.string().max(PRESCRIPTION_COMPLAINT_ATTR_MAX).trim().optional().nullable(),
+  duration: z.string().max(PRESCRIPTION_COMPLAINT_ATTR_MAX).trim().optional().nullable(),
+  location: z.string().max(PRESCRIPTION_COMPLAINT_ATTR_MAX).trim().optional().nullable(),
+  character: z.string().max(PRESCRIPTION_COMPLAINT_ATTR_MAX).trim().optional().nullable(),
+  radiation: z.string().max(PRESCRIPTION_COMPLAINT_ATTR_MAX).trim().optional().nullable(),
+  severity: complaintSeveritySchema.optional().nullable(),
+  timing: z.string().max(PRESCRIPTION_COMPLAINT_ATTR_MAX).trim().optional().nullable(),
+  aggravating: z.string().max(PRESCRIPTION_COMPLAINT_ATTR_MAX).trim().optional().nullable(),
+  relieving: z.string().max(PRESCRIPTION_COMPLAINT_ATTR_MAX).trim().optional().nullable(),
+  laterality: z.string().max(PRESCRIPTION_COMPLAINT_ATTR_MAX).trim().optional().nullable(),
+  painScore: z.number().int().min(0).max(10).optional().nullable(),
+  temperature: z.number().min(35).max(115).optional().nullable(),
+  temperatureUnit: z.enum(['F', 'C']).optional().nullable(),
+  feverGrade: z.enum(['mild', 'moderate', 'high', 'very_high']).optional().nullable(),
+  measuredBy: z.string().max(PRESCRIPTION_COMPLAINT_ATTR_MAX).trim().optional().nullable(),
+  reportedBy: z.string().max(PRESCRIPTION_COMPLAINT_ATTR_MAX).trim().optional().nullable(),
+  frequency: z.string().max(PRESCRIPTION_COMPLAINT_ATTR_MAX).trim().optional().nullable(),
+  color: z.string().max(PRESCRIPTION_COMPLAINT_ATTR_MAX).trim().optional().nullable(),
+  associated: z
+    .array(z.string().max(PRESCRIPTION_COMPLAINT_ATTR_MAX).trim())
+    .max(PRESCRIPTION_COMPLAINT_ASSOCIATED_MAX)
+    .optional()
+    .nullable(),
+  notes: z.string().max(PRESCRIPTION_COMPLAINT_NOTES_MAX).trim().optional().nullable(),
+  category: z
+    .enum([
+      'pain',
+      'fever',
+      'cough',
+      'git',
+      'urinary',
+      'respiratory',
+      'ent',
+      'derm',
+      'eye',
+      'ear',
+      'cardiac',
+      'dizziness',
+      'gynae',
+      'mental',
+      'trauma',
+      'default',
+    ])
+    .optional()
+    .nullable(),
+});
+
+const prescriptionComplaintSchema = prescriptionAssociatedComplaintSchema.extend({
+  associatedComplaints: z
+    .array(prescriptionAssociatedComplaintSchema)
+    .max(PRESCRIPTION_ASSOCIATED_COMPLAINTS_MAX)
+    .optional()
+    .nullable(),
+});
+
+// objective-tab / migration 150 — structured exam findings (obj-01).
+const EXAM_SYSTEM_ID_MAX = 64;
+const EXAM_FINDING_MAX = 200;
+const EXAM_FINDINGS_MAX = 60;
+const EXAM_NOTES_MAX = 1000;
+const EXAM_SYSTEMS_MAX = 60;
+const EXAM_STATUS_VALUES = ['normal', 'abnormal'] as const;
+
+/**
+ * Tolerant per-system exam-finding schema for `examination_json` (obj-01).
+ * Mirrors the `complaints` element shape but, like the rx-template custom
+ * subsections, malformed rows are DROPPED (not rejected) so one stale/partial
+ * system never bricks a prescription save (P1-D contract). A missing/empty
+ * `systemId` or a bad `status` drops the row; empty findings are filtered.
+ */
+const examSystemFindingSchema = z
+  .object({
+    systemId: z.string().trim().min(1).max(EXAM_SYSTEM_ID_MAX),
+    status: z.enum(EXAM_STATUS_VALUES),
+    findings: z
+      .array(z.string().trim().max(EXAM_FINDING_MAX))
+      .max(EXAM_FINDINGS_MAX)
+      .optional()
+      .nullable(),
+    notes: z.string().max(EXAM_NOTES_MAX).trim().optional().nullable(),
+  })
+  .transform((f) => ({
+    systemId: f.systemId,
+    status: f.status,
+    findings: (f.findings ?? []).filter((s) => s.length > 0),
+    notes: f.notes ?? null,
+  }));
+
+const examinationJsonSchema = z
+  .array(examSystemFindingSchema.nullable().catch(null))
+  .transform((arr) =>
+    arr
+      .filter((f): f is NonNullable<typeof f> => f !== null)
+      .slice(0, EXAM_SYSTEMS_MAX),
+  )
+  .optional();
+
+const SOCIAL_HISTORY_STATUS_VALUES = ['never', 'current', 'ex'] as const;
+const SOCIAL_HISTORY_DURATION_UNIT_VALUES = ['years', 'months', 'days'] as const;
+const SOCIAL_HISTORY_ALCOHOL_PATTERN_VALUES = ['occasional', 'weekend', 'daily', 'binge'] as const;
+const SOCIAL_HISTORY_TYPE_MAX = 50;
+const SOCIAL_HISTORY_TYPES_MAX = 10;
+
+const socialHistoryCageSchema = z.object({
+  cutDown: z.boolean(),
+  annoyed: z.boolean(),
+  guilty: z.boolean(),
+  eyeOpener: z.boolean(),
+  enabled: z.boolean().optional().nullable(),
+});
+
+const socialHistoryAuditCAnswerSchema = z.number().int().min(0).max(4);
+
+const socialHistoryAuditCSchema = z.object({
+  frequency: socialHistoryAuditCAnswerSchema.optional().nullable(),
+  typicalQuantity: socialHistoryAuditCAnswerSchema.optional().nullable(),
+  bingeFrequency: socialHistoryAuditCAnswerSchema.optional().nullable(),
+  enabled: z.boolean().optional().nullable(),
+});
+
+const socialHistoryAuditFullYesNoSchema = z.union([
+  z.literal(0),
+  z.literal(2),
+  z.literal(4),
+]);
+
+const socialHistoryAuditFullSchema = z.object({
+  unableToStop: socialHistoryAuditCAnswerSchema.optional().nullable(),
+  failedExpectations: socialHistoryAuditCAnswerSchema.optional().nullable(),
+  morningDrink: socialHistoryAuditCAnswerSchema.optional().nullable(),
+  guiltRemorse: socialHistoryAuditCAnswerSchema.optional().nullable(),
+  blackout: socialHistoryAuditCAnswerSchema.optional().nullable(),
+  injury: socialHistoryAuditFullYesNoSchema.optional().nullable(),
+  othersConcerned: socialHistoryAuditFullYesNoSchema.optional().nullable(),
+  enabled: z.boolean().optional().nullable(),
+});
+
+const TOBACCO_PRODUCT_PHASE_VALUES = ['current', 'past'] as const;
+
+const TOBACCO_FREQUENCY_UNIT_VALUES = [
+  'day',
+  'week',
+  'fortnight',
+  'month',
+  'interval',
+  'occasional',
+] as const;
+
+const tobaccoProductRowSchema = z.object({
+  id: z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim(),
+  type: z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim(),
+  typeOther: z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim().optional().nullable(),
+  perDay: z.number().min(0).max(200).optional().nullable(),
+  perDayUnit: z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim().optional().nullable(),
+  perDayUnitOther: z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim().optional().nullable(),
+  frequency: z.number().min(0).max(90).optional().nullable(),
+  frequencyUnit: z.enum(TOBACCO_FREQUENCY_UNIT_VALUES).optional().nullable(),
+  years: z.number().min(0).max(1200).optional().nullable(),
+  yearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
+  phase: z.enum(TOBACCO_PRODUCT_PHASE_VALUES).optional().nullable(),
+  quitYearsAgo: z.number().min(0).max(1200).optional().nullable(),
+  quitYearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
+});
+
+const socialHistorySmokingSectionSchema = z.object({
+  status: z.enum(SOCIAL_HISTORY_STATUS_VALUES),
+  products: z.array(tobaccoProductRowSchema).max(SOCIAL_HISTORY_TYPES_MAX),
+  years: z.number().min(0).max(1200).optional().nullable(),
+  yearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
+  quitYearsAgo: z.number().min(0).max(1200).optional().nullable(),
+  quitYearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
+});
+
+const socialHistorySmokelessSectionSchema = z.object({
+  status: z.enum(SOCIAL_HISTORY_STATUS_VALUES),
+  products: z.array(tobaccoProductRowSchema).max(SOCIAL_HISTORY_TYPES_MAX),
+  years: z.number().min(0).max(1200).optional().nullable(),
+  yearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
+  quitYearsAgo: z.number().min(0).max(1200).optional().nullable(),
+  quitYearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
+});
+
+const ALCOHOL_FREQUENCY_UNIT_VALUES = ['day', 'week', 'fortnight', 'month', 'interval'] as const;
+
+const alcoholMaxPerSessionSchema = z.object({
+  amount: z.number().min(0).max(5000),
+  amountUnit: z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim().optional().nullable(),
+  amountUnitOther: z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim().optional().nullable(),
+});
+
+const alcoholDrinkRowSchema = z.object({
+  id: z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim(),
+  type: z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim(),
+  typeOther: z.string().max(SOCIAL_HISTORY_TYPE_MAX).optional().nullable(),
+  amount: z.number().min(0).max(5000).optional().nullable(),
+  amountUnit: z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim().optional().nullable(),
+  amountUnitOther: z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim().optional().nullable(),
+  frequency: z.number().min(0).max(90).optional().nullable(),
+  frequencyUnit: z.enum(ALCOHOL_FREQUENCY_UNIT_VALUES).optional().nullable(),
+  abv: z.number().min(0).max(100).optional().nullable(),
+  years: z.number().min(0).max(1200).optional().nullable(),
+  yearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
+  phase: z.enum(TOBACCO_PRODUCT_PHASE_VALUES).optional().nullable(),
+  quitYearsAgo: z.number().min(0).max(1200).optional().nullable(),
+  quitYearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
+});
+
+const socialHistoryAlcoholSectionSchema = z.object({
+  status: z.enum(SOCIAL_HISTORY_STATUS_VALUES),
+  drinks: z.array(alcoholDrinkRowSchema).max(SOCIAL_HISTORY_TYPES_MAX),
+  types: z.array(z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim()).max(SOCIAL_HISTORY_TYPES_MAX).optional(),
+  unitsPerWeek: z.number().min(0).max(200).optional().nullable(),
+  pattern: z.enum(SOCIAL_HISTORY_ALCOHOL_PATTERN_VALUES).optional().nullable(),
+  cage: socialHistoryCageSchema.optional().nullable(),
+  auditC: socialHistoryAuditCSchema.optional().nullable(),
+  auditFull: socialHistoryAuditFullSchema.optional().nullable(),
+  maxPerSession: alcoholMaxPerSessionSchema.optional().nullable(),
+  quitYearsAgo: z.number().min(0).max(1200).optional().nullable(),
+  quitYearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
+});
+
+const SOCIAL_HISTORY_SUBSTANCE_ROUTE_VALUES = [
+  'oral',
+  'inhaled',
+  'iv',
+  'snorted',
+  'smoked',
+  'other',
+] as const;
+const SOCIAL_HISTORY_SUBSTANCE_LEGACY_ROUTE_VALUES = ['oral', 'inhaled', 'iv'] as const;
+const SOCIAL_HISTORY_SUBSTANCE_STATUS_VALUES = ['never', 'current', 'ex'] as const;
+/** @deprecated Legacy coarse frequency — still accepted for stored rows. */
+const SOCIAL_HISTORY_SUBSTANCE_FREQUENCY_LEGACY_VALUES = ['daily', 'weekly', 'occasional'] as const;
+const SOCIAL_HISTORY_SUBSTANCE_FREQUENCY_UNIT_VALUES = [
+  'day',
+  'week',
+  'fortnight',
+  'month',
+  'interval',
+  'occasional',
+] as const;
+const SOCIAL_HISTORY_SUBSTANCE_PHASE_VALUES = ['current', 'past'] as const;
+const SOCIAL_HISTORY_SUBSTANCE_ITEMS_MAX = 10;
+const SOCIAL_HISTORY_SUBSTANCE_NOTES_MAX = 500;
+const SOCIAL_HISTORY_DIET_TYPE_VALUES = [
+  /** @deprecated UI removed — accepted for stored rows only. */
+  'regular',
+  'vegetarian',
+  'non-vegetarian',
+  'eggetarian',
+  'vegan',
+  'other',
+] as const;
+const SOCIAL_HISTORY_CAFFEINE_SOURCE_VALUES = ['tea', 'coffee', 'energy', 'other'] as const;
+const SOCIAL_HISTORY_CAFFEINE_FREQUENCY_UNIT_VALUES = [
+  'day',
+  'times_per_day',
+  'week',
+  'fortnight',
+  'month',
+  'interval',
+  'occasional',
+] as const;
+const SOCIAL_HISTORY_CAFFEINE_STRENGTH_VALUES = ['light', 'regular', 'strong', 'custom'] as const;
+const SOCIAL_HISTORY_CAFFEINE_NOTES_MAX = 200;
+const SOCIAL_HISTORY_CAFFEINE_ITEMS_MAX = 10;
+const SOCIAL_HISTORY_CAFFEINE_STATUS_VALUES = ['never', 'current', 'ex'] as const;
+const SOCIAL_HISTORY_CAFFEINE_PHASE_VALUES = ['current', 'past'] as const;
+const SOCIAL_HISTORY_DIET_NOTES_MAX = 200;
+const SOCIAL_HISTORY_DIET_TYPE_OTHER_MAX = 100;
+const SOCIAL_HISTORY_CAFFEINE_SOURCE_OTHER_MAX = 50;
+const SOCIAL_HISTORY_ACTIVITY_LEVEL_VALUES = ['sedentary', 'light', 'moderate', 'vigorous'] as const;
+const SOCIAL_HISTORY_JOB_ACTIVITY_LEVEL_VALUES = ['sedentary', 'light', 'moderate', 'heavy'] as const;
+const SOCIAL_HISTORY_ACTIVITY_TYPE_VALUES = [
+  'walking',
+  'yoga',
+  'gym',
+  'sport',
+  'household',
+  'commute',
+  'other',
+] as const;
+const SOCIAL_HISTORY_ACTIVITY_ITEMS_MAX = 8;
+const SOCIAL_HISTORY_ACTIVITY_NOTES_MAX = 200;
+const SOCIAL_HISTORY_ACTIVITY_BARRIERS_MAX = 200;
+const SOCIAL_HISTORY_LIVING_SITUATION_VALUES = ['alone', 'with-family', 'institutional'] as const;
+const SOCIAL_HISTORY_SLEEP_QUALITY_VALUES = ['good', 'fair', 'poor'] as const;
+const SOCIAL_HISTORY_STRESS_LEVEL_VALUES = ['low', 'moderate', 'high'] as const;
+const SOCIAL_HISTORY_STRESS_SUPPORT_VALUES = ['good', 'limited', 'none'] as const;
+const SOCIAL_HISTORY_SEXUAL_PARTNERS_VALUES = ['single', 'multiple'] as const;
+const SOCIAL_HISTORY_SEXUAL_PROTECTION_VALUES = ['always', 'sometimes', 'never'] as const;
+const SOCIAL_HISTORY_SEXUAL_NOTES_MAX = 500;
+const SOCIAL_HISTORY_OCCUPATION_TEXT_MAX = 200;
+const SOCIAL_HISTORY_EXPOSURES_MAX = 10;
+const SOCIAL_HISTORY_LIVING_NOTES_MAX = 500;
+const SOCIAL_HISTORY_TRAVEL_PLACE_MAX = 200;
+const SOCIAL_HISTORY_SICK_CONTACT_TYPE_VALUES = [
+  'flu-covid-cold',
+  'tb-cough',
+  'measles-chickenpox',
+  'gi-contact',
+  'skin-scabies',
+  'unknown',
+  'other',
+  'fever-dengue-malaria',
+  'respiratory',
+  'gi',
+  'rash-measles',
+] as const;
+const SOCIAL_HISTORY_SICK_CONTACT_CONTEXT_VALUES = [
+  'household',
+  'workplace',
+  'travel',
+  'travel-companion',
+  'healthcare-setting',
+  'other',
+] as const;
+const SOCIAL_HISTORY_SICK_CONTACT_NOTES_MAX = 500;
+const SOCIAL_HISTORY_SLEEP_NOTES_MAX = 500;
+const SOCIAL_HISTORY_STRESS_SOURCE_VALUES = [
+  'work',
+  'family',
+  'health',
+  'money',
+  'other',
+] as const;
+const SOCIAL_HISTORY_STRESS_NOTES_MAX = 500;
+
+const socialHistorySubstanceItemSchema = z.object({
+  id: z.string().max(64).trim(),
+  type: z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim(),
+  typeOther: z.string().max(200).trim().optional().nullable(),
+  route: z.enum(SOCIAL_HISTORY_SUBSTANCE_ROUTE_VALUES).optional().nullable(),
+  routeOther: z.string().max(200).trim().optional().nullable(),
+  amount: z.number().min(0).max(999).optional().nullable(),
+  amountUnit: z.string().max(32).trim().optional().nullable(),
+  amountUnitOther: z.string().max(64).trim().optional().nullable(),
+  frequency: z
+    .union([
+      z.enum(SOCIAL_HISTORY_SUBSTANCE_FREQUENCY_LEGACY_VALUES),
+      z.number().min(0).max(90),
+    ])
+    .optional()
+    .nullable(),
+  frequencyUnit: z.enum(SOCIAL_HISTORY_SUBSTANCE_FREQUENCY_UNIT_VALUES).optional().nullable(),
+  years: z.number().min(0).max(100).optional().nullable(),
+  yearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
+  phase: z.enum(SOCIAL_HISTORY_SUBSTANCE_PHASE_VALUES).optional().nullable(),
+});
+
+const socialHistorySubstancesSectionSchema = z.object({
+  status: z.enum(SOCIAL_HISTORY_SUBSTANCE_STATUS_VALUES).optional().nullable(),
+  items: z.array(socialHistorySubstanceItemSchema).max(SOCIAL_HISTORY_SUBSTANCE_ITEMS_MAX).optional(),
+  notes: z.string().max(SOCIAL_HISTORY_SUBSTANCE_NOTES_MAX).trim().optional().nullable(),
+  /** @deprecated Legacy flat shape — still accepted for stored rows. */
+  uses: z.array(z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim()).max(SOCIAL_HISTORY_TYPES_MAX).optional(),
+  route: z.enum(SOCIAL_HISTORY_SUBSTANCE_LEGACY_ROUTE_VALUES).optional().nullable(),
+});
+
+const socialHistoryDietSectionSchema = z.object({
+  type: z.enum(SOCIAL_HISTORY_DIET_TYPE_VALUES).optional().nullable(),
+  typeOther: z.string().max(SOCIAL_HISTORY_DIET_TYPE_OTHER_MAX).trim().optional().nullable(),
+  notes: z.string().max(SOCIAL_HISTORY_DIET_NOTES_MAX).trim().optional().nullable(),
+  /** @deprecated Nested caffeine — prefer top-level caffeine. */
+  caffeineAmount: z.number().min(0).max(20).optional().nullable(),
+  caffeineSource: z.enum(SOCIAL_HISTORY_CAFFEINE_SOURCE_VALUES).optional().nullable(),
+  caffeineSourceOther: z
+    .string()
+    .max(SOCIAL_HISTORY_CAFFEINE_SOURCE_OTHER_MAX)
+    .trim()
+    .optional()
+    .nullable(),
+  caffeineFrequency: z.number().min(0).max(14).optional().nullable(),
+  caffeineFrequencyUnit: z
+    .enum(SOCIAL_HISTORY_CAFFEINE_FREQUENCY_UNIT_VALUES)
+    .optional()
+    .nullable(),
+  caffeineCupsPerDay: z.number().min(0).max(20).optional().nullable(),
+});
+
+const socialHistoryCaffeineItemSchema = z.object({
+  id: z.string().max(64),
+  type: z.enum(SOCIAL_HISTORY_CAFFEINE_SOURCE_VALUES).optional().nullable(),
+  typeOther: z
+    .string()
+    .max(SOCIAL_HISTORY_CAFFEINE_SOURCE_OTHER_MAX)
+    .trim()
+    .optional()
+    .nullable(),
+  amount: z.number().min(0).max(999).optional().nullable(),
+  amountUnit: z.string().max(32).optional().nullable(),
+  amountUnitOther: z.string().max(32).trim().optional().nullable(),
+  strength: z.enum(SOCIAL_HISTORY_CAFFEINE_STRENGTH_VALUES).optional().nullable(),
+  caffeineMg: z.number().min(0).max(1000).optional().nullable(),
+  frequency: z.number().min(0).max(50).optional().nullable(),
+  frequencyUnit: z
+    .enum(SOCIAL_HISTORY_CAFFEINE_FREQUENCY_UNIT_VALUES)
+    .optional()
+    .nullable(),
+  years: z.number().min(0).max(100).optional().nullable(),
+  yearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
+  phase: z.enum(SOCIAL_HISTORY_CAFFEINE_PHASE_VALUES).optional().nullable(),
+  quitYearsAgo: z.number().min(0).max(100).optional().nullable(),
+  quitYearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
+});
+
+const socialHistoryCaffeineSectionSchema = z.object({
+  status: z.enum(SOCIAL_HISTORY_CAFFEINE_STATUS_VALUES).optional().nullable(),
+  items: z
+    .array(socialHistoryCaffeineItemSchema)
+    .max(SOCIAL_HISTORY_CAFFEINE_ITEMS_MAX)
+    .optional(),
+  notes: z.string().max(SOCIAL_HISTORY_CAFFEINE_NOTES_MAX).trim().optional().nullable(),
+  /** @deprecated Legacy flat shape — still accepted for stored rows. */
+  amount: z.number().min(0).max(20).optional().nullable(),
+  source: z.enum(SOCIAL_HISTORY_CAFFEINE_SOURCE_VALUES).optional().nullable(),
+  sourceOther: z
+    .string()
+    .max(SOCIAL_HISTORY_CAFFEINE_SOURCE_OTHER_MAX)
+    .trim()
+    .optional()
+    .nullable(),
+  frequency: z.number().min(0).max(14).optional().nullable(),
+  frequencyUnit: z
+    .enum(SOCIAL_HISTORY_CAFFEINE_FREQUENCY_UNIT_VALUES)
+    .optional()
+    .nullable(),
+  strength: z.enum(SOCIAL_HISTORY_CAFFEINE_STRENGTH_VALUES).optional().nullable(),
+});
+
+const socialHistoryActivityItemSchema = z.object({
+  id: z.string().max(64),
+  type: z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim().optional().nullable(),
+  typeOther: z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim().optional().nullable(),
+  daysPerWeek: z.number().min(0).max(7).optional().nullable(),
+  minutesPerSession: z.number().min(0).max(300).optional().nullable(),
+});
+
+const socialHistoryActivitySectionSchema = z.object({
+  level: z.enum(SOCIAL_HISTORY_ACTIVITY_LEVEL_VALUES).optional().nullable(),
+  jobActivity: z.enum(SOCIAL_HISTORY_JOB_ACTIVITY_LEVEL_VALUES).optional().nullable(),
+  daysPerWeek: z.number().min(0).max(7).optional().nullable(),
+  minutesPerSession: z.number().min(0).max(300).optional().nullable(),
+  types: z
+    .array(z.enum(SOCIAL_HISTORY_ACTIVITY_TYPE_VALUES))
+    .max(SOCIAL_HISTORY_TYPES_MAX)
+    .optional()
+    .nullable(),
+  items: z
+    .array(socialHistoryActivityItemSchema)
+    .max(SOCIAL_HISTORY_ACTIVITY_ITEMS_MAX)
+    .optional()
+    .nullable(),
+  limitedByHealth: z.boolean().optional().nullable(),
+  barriers: z.string().max(SOCIAL_HISTORY_ACTIVITY_BARRIERS_MAX).trim().optional().nullable(),
+  notes: z.string().max(SOCIAL_HISTORY_ACTIVITY_NOTES_MAX).trim().optional().nullable(),
+});
+
+const socialHistoryOccupationSectionSchema = z.object({
+  text: z.string().max(SOCIAL_HISTORY_OCCUPATION_TEXT_MAX).trim().optional().nullable(),
+  exposures: z.array(z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim()).max(SOCIAL_HISTORY_EXPOSURES_MAX),
+});
+
+const socialHistoryLivingSectionSchema = z.object({
+  situation: z.enum(SOCIAL_HISTORY_LIVING_SITUATION_VALUES).optional().nullable(),
+  notes: z.string().max(SOCIAL_HISTORY_LIVING_NOTES_MAX).trim().optional().nullable(),
+});
+
+const socialHistoryTravelSectionSchema = z.object({
+  recent: z.boolean().optional().nullable(),
+  place: z.string().max(SOCIAL_HISTORY_TRAVEL_PLACE_MAX).trim().optional().nullable(),
+  vectorRisk: z.boolean().optional().nullable(),
+});
+
+const socialHistorySickContactSectionSchema = z.object({
+  present: z.boolean().optional().nullable(),
+  types: z.array(z.enum(SOCIAL_HISTORY_SICK_CONTACT_TYPE_VALUES)).max(8).optional().nullable(),
+  context: z.array(z.enum(SOCIAL_HISTORY_SICK_CONTACT_CONTEXT_VALUES)).max(5).optional().nullable(),
+  notes: z.string().max(SOCIAL_HISTORY_SICK_CONTACT_NOTES_MAX).trim().optional().nullable(),
+});
+
+const socialHistorySleepSectionSchema = z.object({
+  hoursPerNight: z.number().min(0).max(24).optional().nullable(),
+  quality: z.enum(SOCIAL_HISTORY_SLEEP_QUALITY_VALUES).optional().nullable(),
+  snoring: z.boolean().optional().nullable(),
+  shiftWork: z.boolean().optional().nullable(),
+  notes: z.string().max(SOCIAL_HISTORY_SLEEP_NOTES_MAX).trim().optional().nullable(),
+});
+
+const socialHistoryStressSectionSchema = z.object({
+  level: z.enum(SOCIAL_HISTORY_STRESS_LEVEL_VALUES).optional().nullable(),
+  support: z.enum(SOCIAL_HISTORY_STRESS_SUPPORT_VALUES).optional().nullable(),
+  sources: z.array(z.enum(SOCIAL_HISTORY_STRESS_SOURCE_VALUES)).max(5).optional().nullable(),
+  notes: z.string().max(SOCIAL_HISTORY_STRESS_NOTES_MAX).trim().optional().nullable(),
+});
+
+const FAMILY_HISTORY_CONDITION_VALUES = [
+  'htn',
+  'dm',
+  'cad',
+  'stroke',
+  'early-cardiac-death',
+  'cancer',
+  'epilepsy',
+  'asthma',
+  'psychiatric',
+  'ckd',
+  'thyroid',
+  'tb',
+  'dyslipidemia',
+  'obesity',
+  'dementia',
+  'autoimmune',
+  'anemia',
+  'gout',
+] as const;
+const FAMILY_HISTORY_OTHER_MAX = 500;
+const FAMILY_HISTORY_RELATIVE_CONDITIONS_MAX = 15;
+const FAMILY_HISTORY_CONDITION_NOTE_MAX = 200;
+const FAMILY_HISTORY_CONDITION_OTHER_MAX = 120;
+
+const familyHistorySiblingDetailSchema = z.object({
+  sex: z.enum(['brother', 'sister']).optional().nullable(),
+  order: z.enum(['older', 'younger', 'twin']).optional().nullable(),
+});
+
+const familyHistoryGrandparentDetailSchema = z.object({
+  side: z.enum(['maternal', 'paternal']).optional().nullable(),
+  sex: z.enum(['grandfather', 'grandmother']).optional().nullable(),
+});
+
+const familyHistoryEntrySchema = z.object({
+  id: z.string().max(64).trim().optional().nullable(),
+  condition: z.union([z.enum(FAMILY_HISTORY_CONDITION_VALUES), z.literal('other')]),
+  conditionOther: z.string().max(FAMILY_HISTORY_CONDITION_OTHER_MAX).trim().optional().nullable(),
+  notes: z.string().max(FAMILY_HISTORY_CONDITION_NOTE_MAX).trim().optional().nullable(),
+});
+
+const familyHistoryEntryInputSchema = z.union([
+  familyHistoryEntrySchema,
+  z.enum(FAMILY_HISTORY_CONDITION_VALUES),
+]);
+
+const familyHistoryRelativeEntriesSchema = z
+  .array(familyHistoryEntryInputSchema)
+  .max(FAMILY_HISTORY_RELATIVE_CONDITIONS_MAX)
+  .transform((items) => {
+    const catalogSeen = new Set<string>();
+    const entries: Array<{
+      id?: string;
+      condition: (typeof FAMILY_HISTORY_CONDITION_VALUES)[number] | 'other';
+      conditionOther?: string;
+      notes?: string;
+    }> = [];
+    for (const item of items) {
+      if (typeof item === 'string') {
+        if (catalogSeen.has(item)) continue;
+        catalogSeen.add(item);
+        entries.push({ condition: item });
+        continue;
+      }
+      const notes = item.notes?.trim();
+      if (item.condition === 'other') {
+        const conditionOther = item.conditionOther?.trim();
+        entries.push({
+          ...(item.id?.trim() ? { id: item.id.trim() } : {}),
+          condition: 'other',
+          ...(conditionOther ? { conditionOther } : {}),
+          ...(notes ? { notes } : {}),
+        });
+        continue;
+      }
+      if (catalogSeen.has(item.condition)) continue;
+      catalogSeen.add(item.condition);
+      entries.push({
+        ...(item.id?.trim() ? { id: item.id.trim() } : {}),
+        condition: item.condition,
+        ...(notes ? { notes } : {}),
+      });
+    }
+    return entries;
+  });
+
+const familyHistorySiblingCardSchema = z.object({
+  id: z.string().max(64).trim(),
+  detail: familyHistorySiblingDetailSchema.optional().nullable(),
+  entries: familyHistoryRelativeEntriesSchema,
+});
+
+const familyHistoryStructuredSchema = z
+  .object({
+    none: z.boolean().optional().nullable(),
+    relatives: z
+      .object({
+        father: familyHistoryRelativeEntriesSchema.optional().nullable(),
+        mother: familyHistoryRelativeEntriesSchema.optional().nullable(),
+        sibling: familyHistoryRelativeEntriesSchema.optional().nullable(),
+        child: familyHistoryRelativeEntriesSchema.optional().nullable(),
+        grandparent: familyHistoryRelativeEntriesSchema.optional().nullable(),
+      })
+      .optional()
+      .nullable(),
+    siblings: z.array(familyHistorySiblingCardSchema).max(5).optional().nullable(),
+    relativesMeta: z
+      .object({
+        sibling: familyHistorySiblingDetailSchema.optional().nullable(),
+        grandparent: familyHistoryGrandparentDetailSchema.optional().nullable(),
+      })
+      .optional()
+      .nullable(),
+    other: z.string().max(FAMILY_HISTORY_OTHER_MAX).trim().optional().nullable(),
+    otherRelativeEntries: familyHistoryRelativeEntriesSchema.optional().nullable(),
+    notes: z.string().max(PRESCRIPTION_HISTORY_MAX).trim().optional().nullable(),
+  })
+  .optional()
+  .nullable();
+
+const socialHistorySexualSectionSchema = z.object({
+  enabled: z.boolean(),
+  active: z.boolean().optional().nullable(),
+  partners: z.enum(SOCIAL_HISTORY_SEXUAL_PARTNERS_VALUES).optional().nullable(),
+  protection: z.enum(SOCIAL_HISTORY_SEXUAL_PROTECTION_VALUES).optional().nullable(),
+  notes: z.string().max(SOCIAL_HISTORY_SEXUAL_NOTES_MAX).trim().optional().nullable(),
+});
+
+export const socialHistoryStructuredSchema = z
+  .object({
+    smoking: socialHistorySmokingSectionSchema.optional().nullable(),
+    smokeless: socialHistorySmokelessSectionSchema.optional().nullable(),
+    alcohol: socialHistoryAlcoholSectionSchema.optional().nullable(),
+    notes: z.string().max(PRESCRIPTION_HISTORY_MAX).trim().optional().nullable(),
+    substances: socialHistorySubstancesSectionSchema.optional().nullable(),
+    diet: socialHistoryDietSectionSchema.optional().nullable(),
+    caffeine: socialHistoryCaffeineSectionSchema.optional().nullable(),
+    activity: socialHistoryActivitySectionSchema.optional().nullable(),
+    occupation: socialHistoryOccupationSectionSchema.optional().nullable(),
+    living: socialHistoryLivingSectionSchema.optional().nullable(),
+    travel: socialHistoryTravelSectionSchema.optional().nullable(),
+    sickContact: socialHistorySickContactSectionSchema.optional().nullable(),
+    sleep: socialHistorySleepSectionSchema.optional().nullable(),
+    stress: socialHistoryStressSectionSchema.optional().nullable(),
+    sexual: socialHistorySexualSectionSchema.optional().nullable(),
+  })
+  .optional()
+  .nullable();
+
+const PAST_SURGICAL_PROCEDURE_OTHER_MAX = 120;
+const PAST_SURGICAL_PROCEDURE_NOTE_MAX = 200;
+const PAST_SURGICAL_AGO_VALUE_MAX = 120;
+const PAST_SURGICAL_PROCEDURES_MAX = 20;
+
+const pastSurgicalProcedureEntrySchema = z.object({
+  id: z.string().max(64).trim(),
+  procedure: z.union([z.enum(PAST_SURGICAL_CATALOG_PROCEDURE_SLUGS), z.literal('other')]),
+  procedureOther: z.string().max(PAST_SURGICAL_PROCEDURE_OTHER_MAX).trim().optional().nullable(),
+  agoValue: z.number().int().min(1).max(PAST_SURGICAL_AGO_VALUE_MAX).optional().nullable(),
+  agoUnit: z.enum(['days', 'weeks', 'months', 'years']).optional().nullable(),
+  notes: z.string().max(PAST_SURGICAL_PROCEDURE_NOTE_MAX).trim().optional().nullable(),
+});
+
+const pastSurgicalHistoryStructuredSchema = z
+  .object({
+    none: z.boolean().optional().nullable(),
+    procedures: z.array(pastSurgicalProcedureEntrySchema).max(PAST_SURGICAL_PROCEDURES_MAX).optional().nullable(),
+    notes: z.string().max(PRESCRIPTION_HISTORY_MAX).trim().optional().nullable(),
+  })
+  .optional()
+  .nullable();
+
+const CUSTOM_SUBSECTIONS_TEXT_MAX = PRESCRIPTION_SOAP_TEXT_MAX;
+
+const subjectiveFieldsSchema = {
+  complaints: z.array(prescriptionComplaintSchema).max(PRESCRIPTION_COMPLAINTS_MAX).optional(),
+  familyHistory: z.string().max(PRESCRIPTION_HISTORY_MAX).trim().optional().nullable(),
+  familyHistoryStructured: familyHistoryStructuredSchema,
+  socialHistory: z.string().max(PRESCRIPTION_HISTORY_MAX).trim().optional().nullable(),
+  socialHistoryStructured: socialHistoryStructuredSchema,
+  pastSurgicalHistory: z.string().max(PRESCRIPTION_HISTORY_MAX).trim().optional().nullable(),
+  pastSurgicalHistoryStructured: pastSurgicalHistoryStructuredSchema,
+  customSubsections: customSubsectionsSchema,
+  customSubsectionsText: z.string().max(CUSTOM_SUBSECTIONS_TEXT_MAX).trim().optional().nullable(),
+};
 
 // cockpit-v2 / migration 103 — structured SOAP field ranges mirror DB CHECKs.
 const FOLLOW_UP_UNIT_VALUES = ['days', 'weeks', 'months', 'as_needed'] as const;
+
+// objective-tab / migration 151 — Vitals 2.0 BP posture/limb allowed sets.
+const VITALS_BP_POSTURE_VALUES = ['sitting', 'standing', 'supine'] as const;
+const VITALS_BP_LIMB_VALUES = ['left_arm', 'right_arm', 'left_leg', 'right_leg'] as const;
 
 const structuredSoapFieldsSchema = {
   vitalsBpSystolic: z.number().int().min(30).max(300).optional().nullable(),
@@ -1251,7 +2082,19 @@ const structuredSoapFieldsSchema = {
   vitalsSpo2: z.number().int().min(0).max(100).optional().nullable(),
   vitalsWtKg: z.number().min(0.5).max(500).optional().nullable(),
   vitalsHtCm: z.number().min(20).max(250).optional().nullable(),
+  // objective-tab / migration 151 — Vitals 2.0 extended vitals (canonical units).
+  vitalsRr: z.number().int().min(0).max(120).optional().nullable(),
+  vitalsPainScore: z.number().int().min(0).max(10).optional().nullable(),
+  vitalsGlucoseMgDl: z.number().min(10).max(1500).optional().nullable(),
+  vitalsGcsTotal: z.number().int().min(3).max(15).optional().nullable(),
+  vitalsBpPosture: z.enum(VITALS_BP_POSTURE_VALUES).optional().nullable(),
+  vitalsBpLimb: z.enum(VITALS_BP_LIMB_VALUES).optional().nullable(),
+  vitalsHeadCircumferenceCm: z.number().min(10).max(80).optional().nullable(),
+  vitalsMuacCm: z.number().min(5).max(60).optional().nullable(),
+  vitalsWaistCm: z.number().min(20).max(300).optional().nullable(),
   examinationFindings: z.string().max(PRESCRIPTION_SOAP_TEXT_MAX).trim().optional().nullable(),
+  // objective-tab / migration 150 — structured exam findings (tolerant; obj-01).
+  examinationJson: examinationJsonSchema,
   differentialDiagnosis: z
     .array(z.string().trim().min(1).max(200))
     .max(20)
@@ -1316,6 +2159,17 @@ function resolveInvestigationsField<T extends {
 // 090's CHECK constraints exactly. If the DB enum vocabulary changes,
 // update both files in lockstep.
 const FREQUENCY_CODE_VALUES = ['OD', 'BID', 'TID', 'QID', 'QHS', 'PRN', 'STAT', 'CUSTOM'] as const;
+/** Chart meds only — migration 136 extends patient_medications CHECK. */
+const PATIENT_MED_FREQUENCY_CODE_VALUES = [
+  ...FREQUENCY_CODE_VALUES,
+  'Q4H',
+  'Q6H',
+  'Q8H',
+  'Q12H',
+  'Q24H',
+  'QW',
+] as const;
+const STRENGTH_UNIT_VALUES = ['mg', 'g', 'mcg', 'iu', 'pct'] as const;
 const DURATION_UNIT_VALUES = ['days', 'weeks', 'months', 'until-finished', 'continue'] as const;
 const ROUTE_CODE_VALUES = [
   'oral',
@@ -1328,6 +2182,26 @@ const ROUTE_CODE_VALUES = [
   'nasal',
   'sublingual',
   'other',
+] as const;
+
+// Migration 133 — dose-detail enums. Mirror the CHECK constraints exactly.
+const DOSE_UNIT_VALUES = [
+  'tab',
+  'cap',
+  'ml',
+  'spoon',
+  'drops',
+  'puff',
+  'sachet',
+  'unit',
+  'application',
+] as const;
+const FOOD_TIMING_VALUES = [
+  'before_food',
+  'after_food',
+  'with_food',
+  'empty_stomach',
+  'bedtime',
 ] as const;
 
 const prescriptionMedicineSchema = z.object({
@@ -1345,6 +2219,11 @@ const prescriptionMedicineSchema = z.object({
   durationValue: z.number().int().positive().optional().nullable(),
   durationUnit: z.enum(DURATION_UNIT_VALUES).optional().nullable(),
   routeCode: z.enum(ROUTE_CODE_VALUES).optional().nullable(),
+  // Migration 133 — dose details (medicine card redesign).
+  doseQty: z.number().positive().max(999).optional().nullable(),
+  doseUnit: z.enum(DOSE_UNIT_VALUES).optional().nullable(),
+  form: z.string().max(PRESCRIPTION_MEDICINE_FIELD_MAX).trim().optional().nullable(),
+  foodTiming: z.enum(FOOD_TIMING_VALUES).optional().nullable(),
 });
 
 export const createPrescriptionBodySchema = z
@@ -1362,6 +2241,7 @@ export const createPrescriptionBodySchema = z
     clinicalNotes: z.string().max(PRESCRIPTION_SOAP_TEXT_MAX).trim().optional().nullable(),
     medicines: z.array(prescriptionMedicineSchema).optional(),
     ...structuredSoapFieldsSchema,
+    ...subjectiveFieldsSchema,
   })
   .superRefine(refineFollowUpPairing)
   .transform(resolveInvestigationsField);
@@ -1390,6 +2270,7 @@ export const updatePrescriptionBodySchema = z
     clinicalNotes: z.string().max(PRESCRIPTION_SOAP_TEXT_MAX).trim().optional().nullable(),
     medicines: z.array(prescriptionMedicineSchema).optional(),
     ...structuredSoapFieldsSchema,
+    ...subjectiveFieldsSchema,
   })
   .strict()
   .refine((data) => Object.keys(data).length > 0, 'At least one field required')
@@ -1434,7 +2315,103 @@ const rxTemplateMedicineSchema = z.object({
   durationValue: z.number().int().positive().optional().nullable(),
   durationUnit: z.enum(DURATION_UNIT_VALUES).optional().nullable(),
   routeCode: z.enum(ROUTE_CODE_VALUES).optional().nullable(),
+  // Migration 133 — dose details
+  doseQty: z.number().positive().max(999).optional().nullable(),
+  doseUnit: z.enum(DOSE_UNIT_VALUES).optional().nullable(),
+  form: z.string().max(PRESCRIPTION_MEDICINE_FIELD_MAX).trim().optional().nullable(),
+  foodTiming: z.enum(FOOD_TIMING_VALUES).optional().nullable(),
 });
+
+/**
+ * subj-39: tolerant custom-subsection schema for template `subjective_json`.
+ * Unlike the strict `customSubsectionSchema` used by doctor-settings, malformed
+ * entries are DROPPED (not rejected) — a stale/partial section must never brick
+ * a template save (P12-D3 / P11-D5). Children over the cap drop their parent
+ * section; the section array is sliced to the cap rather than rejected.
+ */
+const rxTemplateCustomSubsectionChildSchema = z
+  .object({
+    id: z.string().uuid(),
+    title: z.string().trim().min(1).max(CUSTOM_SUBSECTION_TITLE_MAX),
+    body: z.string().max(CUSTOM_SUBSECTION_BODY_MAX).trim().optional().nullable(),
+  })
+  .transform((c) => ({ id: c.id, title: c.title, body: c.body ?? null }));
+
+const rxTemplateCustomSubsectionSchema = z
+  .object({
+    id: z.string().uuid(),
+    title: z.string().trim().min(1).max(CUSTOM_SUBSECTION_TITLE_MAX),
+    body: z.string().max(CUSTOM_SUBSECTION_BODY_MAX).trim().optional().nullable(),
+    children: z
+      .array(rxTemplateCustomSubsectionChildSchema.nullable().catch(null))
+      .max(CUSTOM_SUBSECTION_CHILDREN_MAX)
+      .optional(),
+  })
+  .transform((s) => ({
+    id: s.id,
+    title: s.title,
+    body: s.body ?? null,
+    children: (s.children ?? []).filter(
+      (c): c is NonNullable<typeof c> => c !== null,
+    ),
+  }));
+
+const rxTemplateCustomSubsectionsSchema = z
+  .array(rxTemplateCustomSubsectionSchema.nullable().catch(null))
+  .transform((arr) =>
+    arr
+      .filter((s): s is NonNullable<typeof s> => s !== null)
+      .slice(0, CUSTOM_SUBSECTIONS_MAX),
+  )
+  .optional();
+
+const rxTemplateSubjectiveSchema = z.object({
+  complaints: z.array(prescriptionComplaintSchema).max(PRESCRIPTION_COMPLAINTS_MAX).optional(),
+  familyHistory: z.string().max(PRESCRIPTION_HISTORY_MAX).trim().optional().nullable(),
+  familyHistoryStructured: familyHistoryStructuredSchema,
+  socialHistory: z.string().max(PRESCRIPTION_HISTORY_MAX).trim().optional().nullable(),
+  socialHistoryStructured: socialHistoryStructuredSchema,
+  pastSurgicalHistory: z.string().max(PRESCRIPTION_HISTORY_MAX).trim().optional().nullable(),
+  pastSurgicalHistoryStructured: pastSurgicalHistoryStructuredSchema,
+  customSubsections: rxTemplateCustomSubsectionsSchema,
+});
+
+const RX_TEMPLATE_PMH_ROWS_MAX = 100;
+const RX_TEMPLATE_CHART_FIELD_MAX = 200;
+const RX_TEMPLATE_CHART_NOTE_MAX = 2000;
+
+const rxTemplatePmhConditionSchema = z.object({
+  condition: z.string().min(1).max(RX_TEMPLATE_CHART_FIELD_MAX).trim(),
+  status: z.enum(['active', 'resolved']).optional(),
+  note: z.string().max(RX_TEMPLATE_CHART_NOTE_MAX).trim().optional().nullable(),
+});
+
+const rxTemplatePmhMedicationSchema = z.object({
+  drugName: z.string().min(1).max(RX_TEMPLATE_CHART_FIELD_MAX).trim(),
+  dose: z.string().max(RX_TEMPLATE_CHART_FIELD_MAX).trim().optional().nullable(),
+  strength: z.string().max(RX_TEMPLATE_CHART_FIELD_MAX).trim().optional().nullable(),
+  frequency: z.string().max(RX_TEMPLATE_CHART_FIELD_MAX).trim().optional().nullable(),
+  status: z.enum(['active', 'past']).optional(),
+  form: z.string().max(RX_TEMPLATE_CHART_FIELD_MAX).trim().optional().nullable(),
+  note: z.string().max(RX_TEMPLATE_CHART_NOTE_MAX).trim().optional().nullable(),
+});
+
+const rxTemplatePmhSchema = z.object({
+  conditions: z.array(rxTemplatePmhConditionSchema).max(RX_TEMPLATE_PMH_ROWS_MAX).optional(),
+  medications: z.array(rxTemplatePmhMedicationSchema).max(RX_TEMPLATE_PMH_ROWS_MAX).optional(),
+});
+
+const rxTemplateAllergyEntrySchema = z.object({
+  allergen: z.string().min(1).max(RX_TEMPLATE_CHART_FIELD_MAX).trim(),
+  severity: z.enum(['mild', 'moderate', 'severe', 'unknown']).optional(),
+  reaction: z.string().max(RX_TEMPLATE_CHART_FIELD_MAX).trim().optional().nullable(),
+});
+
+const rxTemplateAllergiesSchema = z.object({
+  allergies: z.array(rxTemplateAllergyEntrySchema).max(RX_TEMPLATE_PMH_ROWS_MAX).optional(),
+});
+
+export const rxTemplateScopeSchema = z.enum(RX_TEMPLATE_SCOPE_VALUES);
 
 export const createRxTemplateBodySchema = z.object({
   name: z.string().min(1, 'Template name is required').max(RX_TEMPLATE_NAME_MAX).trim(),
@@ -1447,6 +2424,10 @@ export const createRxTemplateBodySchema = z.object({
   patientEducation: z.string().max(PRESCRIPTION_FIELD_MAX).trim().optional().nullable(),
   clinicalNotes: z.string().max(5000).trim().optional().nullable(),
   medicines: z.array(rxTemplateMedicineSchema).optional(),
+  subjective: rxTemplateSubjectiveSchema.optional(),
+  pmh: rxTemplatePmhSchema.optional(),
+  allergies: rxTemplateAllergiesSchema.optional(),
+  scope: rxTemplateScopeSchema.optional().default('subjective_full'),
 });
 
 export type CreateRxTemplateBody = z.infer<typeof createRxTemplateBodySchema>;
@@ -1473,6 +2454,9 @@ export const updateRxTemplateBodySchema = z
     patientEducation: z.string().max(PRESCRIPTION_FIELD_MAX).trim().optional().nullable(),
     clinicalNotes: z.string().max(5000).trim().optional().nullable(),
     medicines: z.array(rxTemplateMedicineSchema).optional(),
+    subjective: rxTemplateSubjectiveSchema.optional(),
+    pmh: rxTemplatePmhSchema.optional(),
+    allergies: rxTemplateAllergiesSchema.optional(),
   })
   .strict()
   .refine((data) => Object.keys(data).length > 0, 'At least one field required');
@@ -1501,6 +2485,24 @@ export function validateRxTemplateParams(params: unknown): RxTemplateParams {
     const first = result.error.issues[0];
     const message = first?.message ?? 'Invalid template ID';
     throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+export const listRxTemplatesQuerySchema = z.object({
+  scope: rxTemplateScopeSchema.optional(),
+});
+
+export type ListRxTemplatesQuery = z.infer<typeof listRxTemplatesQuerySchema>;
+
+export function validateListRxTemplatesQuery(query: unknown): ListRxTemplatesQuery {
+  const raw = query as Record<string, unknown>;
+  const result = listRxTemplatesQuerySchema.safeParse({
+    scope: typeof raw.scope === 'string' ? raw.scope : undefined,
+  });
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid query');
   }
   return result.data;
 }
@@ -1710,10 +2712,29 @@ const diagnosedOnSchema = z
   .refine((s) => isoDateOnlyRegex.test(s), 'diagnosedOn must be ISO date YYYY-MM-DD')
   .nullable()
   .optional();
+const patientConditionStatusSchema = z.enum(['active', 'resolved']);
+const PATIENT_CONDITION_AGO_VALUE_MAX = 120;
+const patientConditionAgoValueSchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(PATIENT_CONDITION_AGO_VALUE_MAX)
+  .nullable()
+  .optional();
+const patientConditionAgoUnitSchema = z
+  .enum(['days', 'weeks', 'months', 'years'])
+  .nullable()
+  .optional();
 
 export const createPatientConditionBodySchema = z.object({
   condition: z.string().min(1, 'condition is required').max(PATIENT_CHART_CONDITION_MAX).trim(),
+  status: patientConditionStatusSchema.optional().default('active'),
   diagnosedOn: diagnosedOnSchema,
+  diagnosedAgoValue: patientConditionAgoValueSchema,
+  diagnosedAgoUnit: patientConditionAgoUnitSchema,
+  resolvedAgoValue: patientConditionAgoValueSchema,
+  resolvedAgoUnit: patientConditionAgoUnitSchema,
+  onTreatment: z.boolean().nullable().optional(),
   note: z.string().max(PATIENT_CHART_TEXT_MAX).trim().optional().nullable(),
 });
 
@@ -1731,7 +2752,13 @@ export function validateCreatePatientConditionBody(body: unknown): CreatePatient
 export const updatePatientConditionBodySchema = z
   .object({
     condition: z.string().min(1).max(PATIENT_CHART_CONDITION_MAX).trim().optional(),
+    status: patientConditionStatusSchema.optional(),
     diagnosedOn: diagnosedOnSchema,
+    diagnosedAgoValue: patientConditionAgoValueSchema,
+    diagnosedAgoUnit: patientConditionAgoUnitSchema,
+    resolvedAgoValue: patientConditionAgoValueSchema,
+    resolvedAgoUnit: patientConditionAgoUnitSchema,
+    onTreatment: z.boolean().nullable().optional(),
     note: z.string().max(PATIENT_CHART_TEXT_MAX).trim().optional().nullable(),
     archivedAt: z.union([z.string().datetime({ offset: true }), z.literal('now'), z.null()]).optional(),
   })
@@ -1749,10 +2776,157 @@ export function validateUpdatePatientConditionBody(body: unknown): UpdatePatient
   return result.data;
 }
 
+// ---- medications -----------------------------------------------------------
+
+const PATIENT_CHART_DRUG_NAME_MAX = 200;
+const PATIENT_CHART_DOSE_MAX = 100;
+const PATIENT_CHART_FREQUENCY_MAX = 100;
+const patientMedicationStatusSchema = z.enum(['active', 'past']);
+const patientMedicationIntakePatternSchema = z.enum(['regular', 'irregular', 'prn']);
+const patientMedicationSourceSchema = z.enum(['prescribed', 'self', 'otc']);
+const patientMedicationStopReasonSchema = z.enum([
+  'resolved',
+  'side_effects',
+  'cost',
+  'patient_choice',
+  'other',
+]);
+const patientMedicationStoppedAgoUnitSchema = z.enum(['days', 'weeks', 'months', 'years']);
+const medicationDateSchema = z
+  .string()
+  .refine((s) => isoDateOnlyRegex.test(s), 'date must be ISO date YYYY-MM-DD')
+  .nullable()
+  .optional();
+
+// Migration 138 — fixed-dose-combination strength (one entry per ingredient).
+const strengthComponentSchema = z.object({
+  value: z.number().positive().max(999999),
+  unit: z.enum(STRENGTH_UNIT_VALUES).optional().nullable(),
+  ingredient: z.string().max(PATIENT_CHART_DRUG_NAME_MAX).trim().optional().nullable(),
+});
+
+const chartMedicationStructuredFields = {
+  strength: z.string().max(PATIENT_CHART_DOSE_MAX).trim().optional().nullable(),
+  strengthValue: z.number().positive().max(999999).optional().nullable(),
+  strengthUnit: z.enum(STRENGTH_UNIT_VALUES).optional().nullable(),
+  strengthComponents: z.array(strengthComponentSchema).min(2).max(6).optional().nullable(),
+  doseQty: z.number().positive().max(999).optional().nullable(),
+  doseUnit: z.enum(DOSE_UNIT_VALUES).optional().nullable(),
+  frequencyCode: z.enum(PATIENT_MED_FREQUENCY_CODE_VALUES).optional().nullable(),
+  form: z.string().max(PATIENT_CHART_DOSE_MAX).trim().optional().nullable(),
+  drugMasterId: z.string().uuid().optional().nullable(),
+  stoppedAgoValue: z.number().int().positive().optional().nullable(),
+  stoppedAgoUnit: patientMedicationStoppedAgoUnitSchema.optional().nullable(),
+  startedAgoValue: z.number().int().positive().optional().nullable(),
+  startedAgoUnit: patientMedicationStoppedAgoUnitSchema.optional().nullable(),
+  stopReason: patientMedicationStopReasonSchema.optional().nullable(),
+  doseSchedule: z
+    .string()
+    .max(20)
+    .regex(/^[0-9]+(-[0-9]+)+$/, 'doseSchedule must look like 1-0-1')
+    .optional()
+    .nullable(),
+  foodTiming: z.enum(FOOD_TIMING_VALUES).optional().nullable(),
+};
+
+export const createPatientMedicationBodySchema = z.object({
+  drugName: z.string().min(1, 'drugName is required').max(PATIENT_CHART_DRUG_NAME_MAX).trim(),
+  dose: z.string().max(PATIENT_CHART_DOSE_MAX).trim().optional().nullable(),
+  frequency: z.string().max(PATIENT_CHART_FREQUENCY_MAX).trim().optional().nullable(),
+  status: patientMedicationStatusSchema.optional().default('active'),
+  intakePattern: patientMedicationIntakePatternSchema.optional().nullable(),
+  source: patientMedicationSourceSchema.optional().nullable(),
+  startedOn: medicationDateSchema,
+  stoppedOn: medicationDateSchema,
+  note: z.string().max(PATIENT_CHART_TEXT_MAX).trim().optional().nullable(),
+  conditionIds: z.array(z.string().uuid()).max(20).optional(),
+  ...chartMedicationStructuredFields,
+});
+
+export type CreatePatientMedicationBody = z.infer<typeof createPatientMedicationBodySchema>;
+
+export function validateCreatePatientMedicationBody(body: unknown): CreatePatientMedicationBody {
+  const result = createPatientMedicationBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+export const updatePatientMedicationBodySchema = z
+  .object({
+    drugName: z.string().min(1).max(PATIENT_CHART_DRUG_NAME_MAX).trim().optional(),
+    dose: z.string().max(PATIENT_CHART_DOSE_MAX).trim().optional().nullable(),
+    frequency: z.string().max(PATIENT_CHART_FREQUENCY_MAX).trim().optional().nullable(),
+    status: patientMedicationStatusSchema.optional(),
+    intakePattern: patientMedicationIntakePatternSchema.optional().nullable(),
+    source: patientMedicationSourceSchema.optional().nullable(),
+    startedOn: medicationDateSchema,
+    stoppedOn: medicationDateSchema,
+    note: z.string().max(PATIENT_CHART_TEXT_MAX).trim().optional().nullable(),
+    archivedAt: z.union([z.string().datetime({ offset: true }), z.literal('now'), z.null()]).optional(),
+    ...chartMedicationStructuredFields,
+  })
+  .strict()
+  .refine((data) => Object.keys(data).length > 0, 'At least one field required');
+
+export type UpdatePatientMedicationBody = z.infer<typeof updatePatientMedicationBodySchema>;
+
+export function validateUpdatePatientMedicationBody(body: unknown): UpdatePatientMedicationBody {
+  const result = updatePatientMedicationBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+export const linkConditionMedicationBodySchema = z.object({
+  conditionId: z.string().uuid('conditionId must be a valid UUID'),
+  medicationId: z.string().uuid('medicationId must be a valid UUID'),
+});
+
+export type LinkConditionMedicationBody = z.infer<typeof linkConditionMedicationBodySchema>;
+
+export function validateLinkConditionMedicationBody(body: unknown): LinkConditionMedicationBody {
+  const result = linkConditionMedicationBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+const PATIENT_MEDICAL_BACKGROUND_NOTES_MAX = 2000;
+
+export const updateMedicalBackgroundNotesBodySchema = z.object({
+  notes: z
+    .string()
+    .max(PATIENT_MEDICAL_BACKGROUND_NOTES_MAX)
+    .trim()
+    .optional()
+    .nullable(),
+});
+
+export type UpdateMedicalBackgroundNotesBody = z.infer<
+  typeof updateMedicalBackgroundNotesBodySchema
+>;
+
+export function validateUpdateMedicalBackgroundNotesBody(
+  body: unknown,
+): UpdateMedicalBackgroundNotesBody {
+  const result = updateMedicalBackgroundNotesBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
 // ---- vitals ----------------------------------------------------------------
 // Bounds mirror the CHECK constraints in migration 087. The DB is the second
 // line of defense; this is the first.
-
 const intInRange = (min: number, max: number, label: string) =>
   z
     .number()
@@ -2279,6 +3453,12 @@ export const medicineRowValueSchema = z.object({
   durationValue: z.number().int().positive().nullable(),
   durationUnit: z.enum(DURATION_UNIT_VALUES).nullable(),
   routeCode: z.enum(ROUTE_CODE_VALUES).nullable(),
+  // Migration 133 — dose details. Optional so favorites saved before the
+  // medicine card redesign keep validating.
+  doseQty: z.number().positive().max(999).optional().nullable(),
+  doseUnit: z.enum(DOSE_UNIT_VALUES).optional().nullable(),
+  form: z.string().max(PRESCRIPTION_MEDICINE_FIELD_MAX).trim().optional().nullable(),
+  foodTiming: z.enum(FOOD_TIMING_VALUES).optional().nullable(),
 });
 
 export const createDoctorDrugFavoriteBodySchema = z.object({
@@ -2342,6 +3522,90 @@ export function validateDoctorDrugFavoriteParams(
 }
 
 // =============================================================================
+// Doctor note favorites (subjective-tab · subj-06)
+// =============================================================================
+
+const NOTE_FAVORITE_VALUE_MAX = 500;
+
+export const noteFavoriteFieldKeySchema = z.enum([
+  'complaint_name',
+  'family_history',
+  'social_history',
+  'past_surgical_history',
+  'complaint_associated',
+]);
+
+export const createDoctorNoteFavoriteBodySchema = z.object({
+  fieldKey: noteFavoriteFieldKeySchema,
+  value: z.string().min(1).max(NOTE_FAVORITE_VALUE_MAX).trim(),
+});
+
+export type CreateDoctorNoteFavoriteBody = z.infer<typeof createDoctorNoteFavoriteBodySchema>;
+
+export function validateCreateDoctorNoteFavoriteBody(
+  body: unknown,
+): CreateDoctorNoteFavoriteBody {
+  const result = createDoctorNoteFavoriteBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+export const recordDoctorNoteFavoriteUseBodySchema = createDoctorNoteFavoriteBodySchema;
+
+export type RecordDoctorNoteFavoriteUseBody = z.infer<
+  typeof recordDoctorNoteFavoriteUseBodySchema
+>;
+
+export function validateRecordDoctorNoteFavoriteUseBody(
+  body: unknown,
+): RecordDoctorNoteFavoriteUseBody {
+  const result = recordDoctorNoteFavoriteUseBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+export const doctorNoteFavoriteParamsSchema = z.object({
+  id: z.string().uuid('Invalid favorite ID'),
+});
+
+export type DoctorNoteFavoriteParams = z.infer<typeof doctorNoteFavoriteParamsSchema>;
+
+export function validateDoctorNoteFavoriteParams(params: unknown): DoctorNoteFavoriteParams {
+  const result = doctorNoteFavoriteParamsSchema.safeParse(params);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid favorite ID');
+  }
+  return result.data;
+}
+
+export const listDoctorNoteFavoritesQuerySchema = z.object({
+  fieldKey: noteFavoriteFieldKeySchema.optional(),
+});
+
+export type ListDoctorNoteFavoritesQuery = z.infer<typeof listDoctorNoteFavoritesQuerySchema>;
+
+export function validateListDoctorNoteFavoritesQuery(
+  query: unknown,
+): ListDoctorNoteFavoritesQuery {
+  const raw = query as Record<string, unknown>;
+  const result = listDoctorNoteFavoritesQuerySchema.safeParse({
+    fieldKey: typeof raw.fieldKey === 'string' ? raw.fieldKey : undefined,
+  });
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid query');
+  }
+  return result.data;
+}
+
+// =============================================================================
 // Web Push subscriptions (task-text-D6b)
 // =============================================================================
 
@@ -2374,6 +3638,72 @@ export function validatePushSubscriptionParams(params: unknown): PushSubscriptio
   if (!result.success) {
     const first = result.error.issues[0];
     throw new ValidationError(first?.message ?? 'Invalid subscription ID');
+  }
+  return result.data;
+}
+
+// =============================================================================
+// AI free-text complaint parse (subjective-tab · subj-14)
+// POST /api/v1/complaints/parse — gated, server-side, suggestion-only.
+// =============================================================================
+
+const COMPLAINT_PARSE_TEXT_MAX = 2000;
+const COMPLAINT_PARSE_FIELDSPEC_MAX = 40;
+const COMPLAINT_PARSE_CHIPS_MAX = 60;
+
+const complaintParseFieldSpecSchema = z.object({
+  key: z.string().min(1).max(40),
+  label: z.string().min(1).max(120),
+  type: z.enum(['text', 'severity', 'chips', 'duration', 'painscale', 'temperature']),
+  chips: z.array(z.string().min(1).max(80)).max(COMPLAINT_PARSE_CHIPS_MAX).optional(),
+});
+
+export const parseComplaintRequestSchema = z.object({
+  text: z.string().min(1, 'text is required').max(COMPLAINT_PARSE_TEXT_MAX).trim(),
+  category: z.string().min(1).max(40).optional(),
+  fieldSpec: z
+    .array(complaintParseFieldSpecSchema)
+    .min(1, 'fieldSpec must list at least one field')
+    .max(COMPLAINT_PARSE_FIELDSPEC_MAX),
+  tier: z.enum(['default', 'escalation']).optional(),
+});
+
+export type ParseComplaintRequestBody = z.infer<typeof parseComplaintRequestSchema>;
+
+export function validateParseComplaintRequest(body: unknown): ParseComplaintRequestBody {
+  const result = parseComplaintRequestSchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const where = first ? first.path.join('.') : 'body';
+    const why = first?.message ?? 'invalid request';
+    throw new ValidationError(`Invalid complaint-parse request at ${where}: ${why}`);
+  }
+  return result.data;
+}
+
+// ---------------------------------------------------------------------------
+// Chart medicine free-text parse (medical-history med redesign) — gated AI.
+// The body is intentionally tiny: only the doctor's typed line + tier. The
+// output vocabulary is fixed server-side (see medicine-parse-service), so unlike
+// the complaint parse there is no client-supplied field spec to validate.
+// ---------------------------------------------------------------------------
+
+const MEDICINE_PARSE_TEXT_MAX = 2000;
+
+export const parseMedicineRequestSchema = z.object({
+  text: z.string().min(1, 'text is required').max(MEDICINE_PARSE_TEXT_MAX).trim(),
+  tier: z.enum(['default', 'escalation']).optional(),
+});
+
+export type ParseMedicineRequestBody = z.infer<typeof parseMedicineRequestSchema>;
+
+export function validateParseMedicineRequest(body: unknown): ParseMedicineRequestBody {
+  const result = parseMedicineRequestSchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const where = first ? first.path.join('.') : 'body';
+    const why = first?.message ?? 'invalid request';
+    throw new ValidationError(`Invalid medicine-parse request at ${where}: ${why}`);
   }
   return result.data;
 }

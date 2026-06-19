@@ -37,12 +37,16 @@
 
 import * as React from "react";
 import {
+  formatDoseLabel,
   formatDurationLegacyLabel,
+  getFoodTimingLabel,
   getFrequencyLegacyLabel,
   getRouteLegacyLabel,
 } from "@/lib/medicineCodes";
 import type {
+  DoseUnit,
   DurationUnit,
+  FoodTiming,
   FrequencyCode,
   RouteCode,
 } from "@/types/prescription";
@@ -65,6 +69,10 @@ export interface PatientRxMedicineVM {
   durationValue: number | null;
   durationUnit: DurationUnit | null;
   instructions: string | null;
+  // Migration 133 — dose details. Optional so legacy VM builders compile.
+  doseQty?: number | null;
+  doseUnit?: DoseUnit | null;
+  foodTiming?: FoodTiming | null;
 }
 
 export interface PatientRxViewModel {
@@ -120,13 +128,30 @@ function projectMedicineDisplay(med: PatientRxMedicineVM): {
     route = med.route;
   }
 
+  // Migration 133 — "2 tabs (5 mg)" when both dose + strength are present.
+  const doseLabel = formatDoseLabel(med.doseQty, med.doseUnit);
+  const strength = med.dosage?.trim() ?? "";
+  const dosage = doseLabel
+    ? strength
+      ? `${doseLabel} (${strength})`
+      : doseLabel
+    : strength;
+
+  const foodLabel = getFoodTimingLabel(med.foodTiming);
+  const instructionsText = (med.instructions ?? "").trim();
+  const instructions = foodLabel
+    ? instructionsText
+      ? `${foodLabel} — ${instructionsText}`
+      : foodLabel
+    : instructionsText;
+
   return {
     name: med.medicineName ?? "",
-    dosage: med.dosage ?? "",
+    dosage,
     route,
     frequency,
     duration,
-    instructions: med.instructions ?? "",
+    instructions,
   };
 }
 

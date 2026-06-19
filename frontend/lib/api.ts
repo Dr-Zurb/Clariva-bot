@@ -37,12 +37,20 @@ import type {
   AllergyData,
   AllergiesListData,
   ConditionData,
+  ConditionMedicationLinkData,
   ConditionsListData,
   CreatePatientAllergyPayload,
   CreatePatientConditionPayload,
+  CreatePatientMedicationPayload,
   CreatePatientVitalsPayload,
+  LinkConditionMedicationPayload,
+  MedicalBackgroundData,
+  MedicationData,
+  MedicationsListData,
   UpdatePatientAllergyPayload,
   UpdatePatientConditionPayload,
+  UpdatePatientMedicationPayload,
+  UpdateMedicalBackgroundNotesPayload,
   UpdatePatientVitalsPayload,
   VitalsData,
   VitalsListData,
@@ -66,6 +74,7 @@ import type { DrugMasterRow } from "@/types/drug-master";
 import type {
   CreateRxTemplatePayload,
   DoctorRxTemplate,
+  RxTemplateScope,
   UpdateRxTemplatePayload,
 } from "@/types/rx-template";
 
@@ -3008,9 +3017,14 @@ export interface RxTemplateData {
 
 /** List active templates for the calling doctor. Sorted server-side. */
 export async function listRxTemplates(
-  token: string
+  token: string,
+  scope?: RxTemplateScope,
 ): Promise<ApiSuccess<RxTemplatesListData>> {
-  return request<RxTemplatesListData>(`/api/v1/rx-templates`, { token });
+  const qs =
+    scope != null
+      ? `?${new URLSearchParams({ scope }).toString()}`
+      : "";
+  return request<RxTemplatesListData>(`/api/v1/rx-templates${qs}`, { token });
 }
 
 /** Create a new template. */
@@ -3539,6 +3553,103 @@ export function archivePatientCondition(
   id: string,
 ): Promise<ApiSuccess<ConditionData>> {
   return updatePatientCondition(token, patientId, id, { archivedAt: "now" });
+}
+
+// ---- Medications -----------------------------------------------------------
+
+export async function listPatientMedications(
+  token: string,
+  patientId: string,
+): Promise<ApiSuccess<MedicationsListData>> {
+  return request<MedicationsListData>(
+    `/api/v1/patients/${encodeURIComponent(patientId)}/chart/medications`,
+    { token },
+  );
+}
+
+export async function createPatientMedication(
+  token: string,
+  patientId: string,
+  payload: CreatePatientMedicationPayload,
+): Promise<ApiSuccess<MedicationData>> {
+  return patientChartMutate<MedicationData>(
+    "POST",
+    `/api/v1/patients/${encodeURIComponent(patientId)}/chart/medications`,
+    token,
+    payload,
+  );
+}
+
+export async function updatePatientMedication(
+  token: string,
+  patientId: string,
+  id: string,
+  payload: UpdatePatientMedicationPayload,
+): Promise<ApiSuccess<MedicationData>> {
+  return patientChartMutate<MedicationData>(
+    "PATCH",
+    `/api/v1/patients/${encodeURIComponent(patientId)}/chart/medications/${encodeURIComponent(id)}`,
+    token,
+    payload,
+  );
+}
+
+export function archivePatientMedication(
+  token: string,
+  patientId: string,
+  id: string,
+): Promise<ApiSuccess<MedicationData>> {
+  return updatePatientMedication(token, patientId, id, { archivedAt: "now" });
+}
+
+// ---- Medical background (Phase B) ------------------------------------------
+
+export async function getPatientMedicalBackground(
+  token: string,
+  patientId: string,
+): Promise<ApiSuccess<MedicalBackgroundData>> {
+  return request<MedicalBackgroundData>(
+    `/api/v1/patients/${encodeURIComponent(patientId)}/chart/medical-background`,
+    { token },
+  );
+}
+
+export async function updatePatientMedicalBackgroundNotes(
+  token: string,
+  patientId: string,
+  payload: UpdateMedicalBackgroundNotesPayload,
+): Promise<ApiSuccess<{ notes: string | null }>> {
+  return patientChartMutate<{ notes: string | null }>(
+    "PATCH",
+    `/api/v1/patients/${encodeURIComponent(patientId)}/chart/medical-background/notes`,
+    token,
+    payload,
+  );
+}
+
+export async function linkConditionMedication(
+  token: string,
+  patientId: string,
+  payload: LinkConditionMedicationPayload,
+): Promise<ApiSuccess<ConditionMedicationLinkData>> {
+  return patientChartMutate<ConditionMedicationLinkData>(
+    "POST",
+    `/api/v1/patients/${encodeURIComponent(patientId)}/chart/condition-medications`,
+    token,
+    payload,
+  );
+}
+
+export async function unlinkConditionMedication(
+  token: string,
+  patientId: string,
+  linkId: string,
+): Promise<ApiSuccess<{ unlinked: boolean }>> {
+  return patientChartMutate<{ unlinked: boolean }>(
+    "DELETE",
+    `/api/v1/patients/${encodeURIComponent(patientId)}/chart/condition-medications/${encodeURIComponent(linkId)}`,
+    token,
+  );
 }
 
 // ---- Vitals ----------------------------------------------------------------

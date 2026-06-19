@@ -10,6 +10,7 @@
  * CC-08 / CC-09 (migration): cockpit_layout_presets JSONB — user-saved cockpit layout presets.
  */
 
+import type { CustomSubsection } from './prescription';
 import type {
   ServiceCatalogTemplatesJsonV1,
   ServiceCatalogV1,
@@ -58,6 +59,11 @@ export interface CockpitLayoutPreset {
   layout?: LegacyPresetLayout;
   /** Recursive tree layout (112). At least one of layout / layout_tree required. */
   layout_tree?: LayoutNode;
+  /**
+   * Cockpit v3 native tree (cv3l-05) — full fidelity: tabs, hidden panes, splits.
+   * Mutually exclusive with legacy shapes for new saves; at least one layout field required.
+   */
+  pane_tree_v3?: Record<string, unknown>;
 }
 
 /** When doctor receives payouts. NULL = default weekly in payout service. */
@@ -236,6 +242,55 @@ export interface DoctorSettingsRow {
    * and are NOT stored here.
    */
   cockpit_layout_presets: CockpitLayoutPreset[];
+  /**
+   * subj-21 / migration 145: per-doctor default custom subjective subsections.
+   * Seeds fresh visits when empty; doctor-authored headings/structure only.
+   */
+  subjective_custom_subsections: CustomSubsection[];
+  /**
+   * subj-24 / migration 146: per-doctor default Subjective-tab section order.
+   * Empty array = canonical default layout. Section-id strings only (not PHI).
+   */
+  subjective_section_order: string[];
+  /**
+   * subj-28 / migration 147: per-doctor default Subjective-tab section collapse
+   * map `{ [sectionId]: isOpen }` (true = open). Empty object = canonical default.
+   * Stores overrides only; the merge against the live registry is the client's
+   * job (subj-29). Section-id strings → booleans only (not PHI).
+   */
+  subjective_section_collapsed: Record<string, boolean>;
+  /**
+   * subj-32 / migration 148: per-doctor hidden Subjective-tab sections — a delta
+   * set of static section-id strings the doctor has hidden. Empty array = nothing
+   * hidden (canonical visibility). The filter against the live render plan is the
+   * client's job (subj-33). Static section-id strings only (not PHI).
+   */
+  subjective_section_hidden: string[];
+  /**
+   * obj-10 / migration 152: per-doctor default Objective-tab section order.
+   * Empty array = canonical default layout. Section-id strings only (not PHI).
+   */
+  objective_section_order: string[];
+  /**
+   * obj-10 / migration 152: per-doctor default Objective-tab section collapse
+   * map `{ [sectionId]: isOpen }` (true = open). Empty object = canonical default.
+   * Stores overrides only; the merge against the live registry is the client's
+   * job (obj-11). Section-id strings → booleans only (not PHI).
+   */
+  objective_section_collapsed: Record<string, boolean>;
+  /**
+   * obj-10 / migration 152: per-doctor hidden Objective-tab sections — a delta
+   * set of static section-id strings the doctor has hidden. Empty array = nothing
+   * hidden (canonical visibility). The filter against the live render plan is the
+   * client's job (obj-12). Static section-id strings only (not PHI).
+   */
+  objective_section_hidden: string[];
+  /**
+   * obj-10 / migration 152: per-doctor default custom Objective-tab sections.
+   * Seeds fresh visits when empty; doctor-authored headings/structure only
+   * (obj-13 consumes). Not PHI.
+   */
+  objective_custom_sections: CustomSubsection[];
   /**
    * R-MOD-full (migration 106): global template pin. `null` = auto-select per
    * modality + state (cockpit-v2 default). Non-null must be one of

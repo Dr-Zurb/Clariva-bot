@@ -25,6 +25,9 @@ import dashboardEventsRoutes from './dashboard-events';
 import diagnosesRoutes from './diagnoses';
 import doctorDrugFavoritesRoutes from './doctor-drug-favorites';
 import doctorDrugUsageRoutes from './doctor-drug-usage';
+import complaintMasterRoutes from './complaint-master';
+import medicinesRoutes from './medicines';
+import noteFavoritesRoutes from './note-favorites';
 import pushRoutes from './push';
 
 const router = Router();
@@ -124,6 +127,12 @@ router.use('/doctors/me/drug-favorites', doctorDrugFavoritesRoutes);
 
 // rx-polish-favorites · rxf-05: per-doctor drug usage scores for autocomplete ranking
 router.use('/doctors/me/drug-usage', doctorDrugUsageRoutes);
+
+// subjective-tab · subj-06: complaint lookup + per-doctor note favourites
+router.use('/complaints', complaintMasterRoutes);
+router.use('/doctors/me/note-favorites', noteFavoritesRoutes);
+// medical-history med redesign: gated AI free-text medication parse
+router.use('/medicines', medicinesRoutes);
 
 // task-text-D6b: Web Push subscribe / unsubscribe / list
 router.use('/push', pushRoutes);

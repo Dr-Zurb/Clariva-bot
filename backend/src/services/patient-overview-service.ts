@@ -652,7 +652,7 @@ export async function getPatientOverview(
     snapshot,
     active_problems: problems,
     allergies,
-    chronic_conditions: chronicConditions,
+    chronic_conditions: chronicConditions.filter((c) => (c.status ?? 'active') === 'active'),
     current_medications: currentMedications,
     vitals_trends: vitalsTrends,
     recent_activity: recentActivity,

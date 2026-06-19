@@ -6,7 +6,9 @@
  */
 
 import type {
+  DoseUnit,
   DurationUnit,
+  FoodTiming,
   FrequencyCode,
   RouteCode,
 } from './prescription';
@@ -24,6 +26,12 @@ export interface MedicineRowTemplate {
   durationValue: number | null;
   durationUnit: DurationUnit | null;
   routeCode: RouteCode | null;
+  // Migration 133 — dose details. Optional so favorites saved before
+  // the medicine card redesign keep round-tripping.
+  doseQty?: number | null;
+  doseUnit?: DoseUnit | null;
+  form?: string | null;
+  foodTiming?: FoodTiming | null;
 }
 
 export interface DoctorDrugFavoriteRow {

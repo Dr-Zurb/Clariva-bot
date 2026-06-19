@@ -78,6 +78,10 @@ function makeRx(
         duration_value: null,
         duration_unit: null,
         route_code: null,
+        dose_qty: null,
+        dose_unit: null,
+        form: null,
+        food_timing: null,
       },
     ],
     ...overrides,
@@ -280,6 +284,10 @@ describe("PreviousRxSideSheet", () => {
             durationValue: null,
             durationUnit: null,
             routeCode: null,
+            doseQty: null,
+            doseUnit: null,
+            form: null,
+            foodTiming: null,
           },
         ]}
         onConfirmApply={onConfirmApply}

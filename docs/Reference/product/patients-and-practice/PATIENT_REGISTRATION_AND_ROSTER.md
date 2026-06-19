@@ -36,7 +36,7 @@ Paid and zero-fee paths both converge on the same idempotent assignment — retr
 
 ## Deferred: doctor-created patients
 
-Manual “add patient” from the doctor UI is **out of scope** until roster rules are finalized. See [deferred-doctor-ui-add-patient-2026-04.md](../Development/deferred/deferred-doctor-ui-add-patient-2026-04.md).
+Manual “add patient” from the doctor UI is **out of scope** until roster rules are finalized. See [deferred-doctor-ui-add-patient-2026-04.md](../../../Work/capture/features/patients/deferred-doctor-ui-add-patient-2026-04.md).
 
 ---
 

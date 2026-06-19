@@ -1,0 +1,34 @@
+---
+description: Clariva agent contract — hard rules, scope discipline, routing
+alwaysApply: true
+---
+
+# Agent contract (always)
+
+## Hard rules — absolute, no exceptions (cannot be inferred from code)
+- Never read `process.env` directly — use `config/env.ts`.
+- No try-catch in controllers — use `asyncHandler`; the global middleware maps ZodError→ValidationError.
+- Validate ALL external input with Zod in the controller before calling services.
+- Throw typed `AppError` subclasses, never raw `Error`.
+- Controllers orchestrate only (validate → service → respond). No DB access in controllers.
+- Never log PII/PHI (names, phones, DOBs) or raw request objects.
+
+## Scope discipline
+- Change ONLY what the request asks for. No opportunistic refactors, renames, or "while I was here" edits.
+- If the task forces you across layers (API + DB + service) or into unrelated files, STOP and surface it before proceeding — do not expand scope on your own.
+- Honor any "Scope Guard" / "DO NOT TOUCH" list in the task file.
+
+## Approach (default with an escape hatch)
+- Prefer existing patterns in the codebase and RECIPES.md over improvising.
+- If you believe a different approach is clearly better, propose it in ONE line and wait — don't implement it unasked.
+
+## When the request is ambiguous
+- If the ask is short/vague or you had to infer intent, restate your interpretation in ONE line before writing code.
+- For a genuine two-way-door ambiguity (e.g. "can't type X" vs "shouldn't allow X"), ask first — don't build on a guess.
+
+## STOP and tell me to switch to Opus if the task touches:
+PHI columns, RLS / `auth.uid()`, a new migration, payments/consent, or a 5+ file refactor.
+You (Auto) will not escalate yourself — flag it instead of guessing.
+
+## Before saying "done"
+Run the verification gate (typecheck + lint + tests) before declaring done — never skip it. The full checklist (`DEFINITION_OF_DONE.md`) loads automatically when editing code.

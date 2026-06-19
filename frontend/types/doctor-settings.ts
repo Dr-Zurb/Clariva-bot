@@ -4,6 +4,12 @@
  */
 
 import type { ServiceCatalogV1 } from "@/lib/service-catalog-schema";
+import type {
+  StaticSubjectiveSectionId,
+  SubjectiveSectionId,
+} from "@/lib/cockpit/subjective-section-order";
+import type { ObjectiveSectionId } from "@/lib/cockpit/objective-section-order";
+import type { CustomSubsection } from "@/types/prescription";
 
 /** OPD scheduling: fixed slots vs token queue (migration 028). */
 export type OpdMode = 'slot' | 'queue';
@@ -158,6 +164,39 @@ export interface DoctorSettings {
     | 'telemed-text'
     | 'review'
     | null;
+  /** subj-21: per-doctor default custom subjective subsections template. */
+  subjective_custom_subsections?: CustomSubsection[];
+  /** subj-24: per-doctor default Subjective-tab section order. Empty = canonical default. */
+  subjective_section_order?: SubjectiveSectionId[];
+  /**
+   * subj-28: per-doctor default Subjective-tab section collapse map
+   * `{ [sectionId]: isOpen }` (true = open). Empty/absent = canonical default.
+   * Stores overrides only; the merge against the live registry is the client's job.
+   */
+  subjective_section_collapsed?: Record<string, boolean>;
+  /**
+   * subj-32 / subj-37: per-doctor hidden Subjective-tab sections — a delta set of
+   * section-id strings (static or custom_block) the doctor has hidden.
+   * Empty/absent = nothing hidden. The filter against the live render plan is
+   * the client's job (subj-33).
+   */
+  subjective_section_hidden?: SubjectiveSectionId[];
+  /** obj-10: per-doctor default Objective-tab section order. Empty = canonical default. */
+  objective_section_order?: ObjectiveSectionId[];
+  /**
+   * obj-10: per-doctor default Objective-tab section collapse map
+   * `{ [sectionId]: isOpen }` (true = open). Empty/absent = canonical default.
+   * Stores overrides only; the merge against the live registry is the client's job.
+   */
+  objective_section_collapsed?: Record<string, boolean>;
+  /**
+   * obj-10: per-doctor hidden Objective-tab sections — a delta set of section-id
+   * strings (static or custom_block) the doctor has hidden. Empty/absent =
+   * nothing hidden. The filter against the live render plan is the client's job (obj-12).
+   */
+  objective_section_hidden?: ObjectiveSectionId[];
+  /** obj-10: per-doctor default custom Objective-tab sections template (obj-13 consumes). */
+  objective_custom_sections?: CustomSubsection[];
   created_at: string;
   updated_at: string;
 }
@@ -208,4 +247,20 @@ export type PatchDoctorSettingsPayload = Partial<{
     | 'telemed-text'
     | 'review'
     | null;
+  /** subj-21: replace per-doctor default custom subjective subsections template. */
+  subjective_custom_subsections?: CustomSubsection[];
+  /** subj-24: replace per-doctor default Subjective-tab section order. */
+  subjective_section_order?: SubjectiveSectionId[];
+  /** subj-28: replace per-doctor default Subjective-tab section collapse map. */
+  subjective_section_collapsed?: Record<string, boolean>;
+  /** subj-32 / subj-37: replace per-doctor hidden Subjective-tab section set. */
+  subjective_section_hidden?: SubjectiveSectionId[];
+  /** obj-10: replace per-doctor default Objective-tab section order. */
+  objective_section_order?: ObjectiveSectionId[];
+  /** obj-10: replace per-doctor default Objective-tab section collapse map. */
+  objective_section_collapsed?: Record<string, boolean>;
+  /** obj-10: replace per-doctor hidden Objective-tab section set. */
+  objective_section_hidden?: ObjectiveSectionId[];
+  /** obj-10: replace per-doctor default custom Objective-tab sections template. */
+  objective_custom_sections?: CustomSubsection[];
 }>;

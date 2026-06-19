@@ -1,28 +1,37 @@
 "use client";
 
 /**
- * AllergiesSection (EHR Sub-batch A / T1.3)
- *
- * Lists patient_allergies rows for the current doctor + patient. Add /
- * archive flows are local + optimistic (the row appears / disappears
- * immediately; on server error we roll back and surface the message).
- *
- * Hosted by <PatientChartPanel> via <SectionWrapper title="Allergies">.
- * The wrapper owns the collapse/expand and the "+ Add" affordance —
- * this component just renders the body and exposes an imperative
- * `openAdd()` via a controlled `addOpen` prop pattern.
- *
- * Future hooks:
- *   - T2.7 may canonicalize allergens against drug_master.
- *   - T4.18 reads this same data to render the allergy-clash banner.
+ * AllergiesSection — patient_allergies with capture bar + collapsible cards (Subjective tab).
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState, type RefObject } from "react";
+import { AllergyCard, type AllergyCardPatch } from "@/components/ehr/chart/AllergyCard";
+import { ChartCatalogCombobox } from "@/components/ehr/chart/ChartCatalogCombobox";
+import { ChartQuickAddChips } from "@/components/ehr/chart/ChartQuickAddChips";
 import {
   archivePatientAllergy,
   createPatientAllergy,
   listPatientAllergies,
+  updatePatientAllergy,
 } from "@/lib/api";
+import {
+  COMMON_ALLERGEN_CATALOG,
+  COMMON_ALLERGEN_QUICK_ADD,
+  commonAllergenLabel,
+  filterCommonAllergenCatalog,
+  resolveCommonAllergen,
+} from "@/lib/cockpit/common-allergens";
+import { useStableMedKey } from "@/lib/chart/use-stable-med-key";
+import { formatApplySummary, type ApplyRowResult } from "@/lib/chart/use-pmh-template-apply";
+import {
+  allergiesHaveContent,
+  snapshotAllergies,
+  useAllergyTemplateApply,
+} from "@/lib/chart/use-allergy-template-apply";
+import {
+  type SectionTemplateControlsBinding,
+} from "@/components/cockpit/rx/subjective/SubjectiveSectionTemplateButton";
+import { ALLERGIES_CAPTURE_SECTION_ID } from "@/lib/chart/chart-allergy-scroll";
 import type {
   PatientAllergy,
   PatientAllergySeverity,
@@ -35,50 +44,59 @@ interface AllergiesSectionProps {
   token: string;
   layout: PatientChartLayout;
   mode: PatientChartMode;
-  /** Controlled "is the inline add form open?" — owned by the parent so the
-   *  SectionWrapper "+ Add" button can drive it. */
-  addOpen: boolean;
-  onAddOpenChange: (open: boolean) => void;
-  /** Notify parent of the row count for the section badge. */
+  addOpen?: boolean;
+  onAddOpenChange?: (open: boolean) => void;
   onCountChange?: (count: number) => void;
+  /** Header-mounted template controls read live bindings from this ref. */
+  templateControlsRef?: RefObject<SectionTemplateControlsBinding | null>;
+  onTemplateControlsReadyChange?: (ready: boolean) => void;
 }
 
-const SEVERITY_OPTIONS: { value: PatientAllergySeverity; label: string }[] = [
-  { value: "unknown", label: "Unknown" },
-  { value: "mild", label: "Mild" },
-  { value: "moderate", label: "Moderate" },
-  { value: "severe", label: "Severe" },
-];
+function normalizeKey(value: string): string {
+  return value.trim().toLowerCase();
+}
 
-const SEVERITY_BADGE_CLASS: Record<PatientAllergySeverity, string> = {
-  mild: "bg-yellow-50 text-yellow-700 ring-yellow-600/20",
-  moderate: "bg-orange-50 text-orange-700 ring-orange-600/20",
-  severe: "bg-red-50 text-red-700 ring-red-600/20",
-  unknown: "bg-gray-50 text-gray-600 ring-gray-500/10",
-};
+function isDuplicateAllergen(rows: PatientAllergy[], allergen: string): boolean {
+  const key = normalizeKey(allergen);
+  return rows.some((row) => normalizeKey(row.allergen) === key);
+}
 
 export default function AllergiesSection({
   patientId,
   token,
   layout: _layout,
   mode,
-  addOpen,
+  addOpen = false,
   onAddOpenChange,
   onCountChange,
+  templateControlsRef,
+  onTemplateControlsReadyChange,
 }: AllergiesSectionProps) {
+  const inputId = useId();
+  const { stableKey, linkRealId } = useStableMedKey();
   const [rows, setRows] = useState<PatientAllergy[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-
-  // Add-form fields
-  const [allergen, setAllergen] = useState("");
-  const [severity, setSeverity] = useState<PatientAllergySeverity>("unknown");
-  const [reaction, setReaction] = useState("");
+  const [templateNotice, setTemplateNotice] = useState<string | null>(null);
+  const [focusCombobox, setFocusCombobox] = useState(false);
 
   const readonly = mode === "readonly";
 
-  // -------- load --------
+  const reloadAllergies = useCallback(async () => {
+    try {
+      const res = await listPatientAllergies(token, patientId);
+      const data = res.data.allergies ?? [];
+      setRows(data);
+      onCountChange?.(data.length);
+    } catch {
+      // Keep the current optimistic state if the resync fails.
+    }
+  }, [onCountChange, patientId, token]);
+
+  useEffect(() => {
+    if (addOpen) setFocusCombobox(true);
+  }, [addOpen]);
+
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -100,70 +118,149 @@ export default function AllergiesSection({
     };
   }, [token, patientId, onCountChange]);
 
-  // -------- add (optimistic) --------
-  const submitAdd = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = allergen.trim();
-    if (!trimmed || busy) return;
-    setActionError(null);
-    setBusy(true);
+  const catalogOptions = useMemo(() => {
+    const selected = new Set((rows ?? []).map((row) => normalizeKey(row.allergen)));
+    return COMMON_ALLERGEN_CATALOG.filter((def) => !selected.has(normalizeKey(def.label))).map(
+      (def) => ({ value: def.value, label: def.label }),
+    );
+  }, [rows]);
 
-    // Optimistic placeholder. Use a temp id so we can swap with the server row.
-    const tempId = `temp-${Date.now()}`;
-    const optimistic: PatientAllergy = {
-      id: tempId,
-      doctor_id: "", // server-owned; ok to leave blank for the placeholder
-      patient_id: patientId,
-      allergen: trimmed,
-      severity,
-      reaction: reaction.trim() || null,
-      note: null,
-      archived_at: null,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    setRows((prev) => {
-      const next = [optimistic, ...(prev ?? [])];
-      onCountChange?.(next.length);
-      return next;
-    });
+  const quickAddLabels = useMemo(() => {
+    const selected = new Set((rows ?? []).map((row) => normalizeKey(row.allergen)));
+    return COMMON_ALLERGEN_QUICK_ADD.map((value) => commonAllergenLabel(value)).filter(
+      (label) => !selected.has(normalizeKey(label)),
+    );
+  }, [rows]);
 
-    try {
-      const res = await createPatientAllergy(token, patientId, {
+  const commitAllergen = useCallback(
+    async (
+      allergen: string,
+      severity: PatientAllergySeverity = "unknown",
+      opts?: { reaction?: string | null },
+    ): Promise<ApplyRowResult> => {
+      const trimmed = allergen.trim();
+      if (!trimmed || readonly) return "duplicate";
+      if (rows && isDuplicateAllergen(rows, trimmed)) return "duplicate";
+
+      setActionError(null);
+
+      const reaction = opts?.reaction ?? null;
+      const tempId = `temp-${Date.now()}`;
+      const optimistic: PatientAllergy = {
+        id: tempId,
+        doctor_id: "",
+        patient_id: patientId,
         allergen: trimmed,
         severity,
-        reaction: reaction.trim() || null,
-      });
-      const created = res.data.allergy;
-      // Swap temp row with server row.
+        reaction,
+        note: null,
+        archived_at: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
       setRows((prev) => {
-        if (!prev) return [created];
-        return prev.map((r) => (r.id === tempId ? created : r));
-      });
-      // Reset form.
-      setAllergen("");
-      setSeverity("unknown");
-      setReaction("");
-      onAddOpenChange(false);
-    } catch (err) {
-      // Rollback.
-      setRows((prev) => {
-        if (!prev) return prev;
-        const next = prev.filter((r) => r.id !== tempId);
+        const next = [optimistic, ...(prev ?? [])];
         onCountChange?.(next.length);
         return next;
       });
-      setActionError(err instanceof Error ? err.message : "Failed to add allergy");
-    } finally {
-      setBusy(false);
-    }
-  };
 
-  // -------- archive (optimistic) --------
+      try {
+        const res = await createPatientAllergy(token, patientId, {
+          allergen: trimmed,
+          severity,
+          ...(reaction ? { reaction } : {}),
+        });
+        const created = res.data.allergy;
+        linkRealId(tempId, created.id);
+
+        // Preserve any edits the user made on the temp row during the create
+        // round-trip (e.g. tapping a severity chip) and persist them after.
+        let pendingEdits: AllergyCardPatch | null = null;
+        setRows((prev) => {
+          if (!prev) return [created];
+          return prev.map((r) => {
+            if (r.id !== tempId) return r;
+            const merged: PatientAllergy = { ...created };
+            const edits: AllergyCardPatch = {};
+            if (r.severity !== created.severity) {
+              merged.severity = r.severity;
+              edits.severity = r.severity;
+            }
+            if (r.reaction !== created.reaction) {
+              merged.reaction = r.reaction;
+              edits.reaction = r.reaction;
+            }
+            if (r.note !== created.note) {
+              merged.note = r.note;
+              edits.note = r.note;
+            }
+            if (Object.keys(edits).length > 0) pendingEdits = edits;
+            return merged;
+          });
+        });
+        onAddOpenChange?.(false);
+        setActionError(null);
+
+        if (pendingEdits) {
+          try {
+            await updatePatientAllergy(token, patientId, created.id, pendingEdits);
+          } catch (err) {
+            setActionError(err instanceof Error ? err.message : "Failed to update allergy");
+          }
+        }
+        return "created";
+      } catch (err) {
+        setRows((prev) => {
+          if (!prev) return prev;
+          const next = prev.filter((r) => r.id !== tempId);
+          onCountChange?.(next.length);
+          return next;
+        });
+        setActionError(err instanceof Error ? err.message : "Failed to add allergy");
+        return "error";
+      }
+    },
+    [linkRealId, onAddOpenChange, onCountChange, patientId, readonly, rows, token],
+  );
+
+  const applyTemplate = useAllergyTemplateApply({
+    getExisting: () => (rows ?? []).map((r) => ({ allergen: r.allergen })),
+    createAllergy: (entry) =>
+      commitAllergen(entry.allergen, entry.severity ?? "unknown", {
+        reaction: entry.reaction ?? null,
+      }),
+    reload: reloadAllergies,
+    onSummary: (summary) => setTemplateNotice(formatApplySummary(summary, "allergies")),
+  });
+
+  const buildTemplateSave = useCallback(() => {
+    if (!allergiesHaveContent(rows)) return null;
+    return { scope: "allergies" as const, allergies: snapshotAllergies(rows ?? []) };
+  }, [rows]);
+
+  const controlsReady = !readonly && rows !== null && !!templateControlsRef;
+
+  useEffect(() => {
+    if (!templateControlsRef) return;
+    if (controlsReady) {
+      templateControlsRef.current = {
+        applyOverride: applyTemplate,
+        buildSaveOverride: buildTemplateSave,
+        defaultSaveName: "Allergies",
+      };
+    } else {
+      templateControlsRef.current = null;
+    }
+  }, [applyTemplate, buildTemplateSave, controlsReady, templateControlsRef]);
+
+  useEffect(() => {
+    onTemplateControlsReadyChange?.(controlsReady);
+    return () => onTemplateControlsReadyChange?.(false);
+  }, [controlsReady, onTemplateControlsReadyChange]);
+
   const archive = async (row: PatientAllergy) => {
-    if (busy) return;
+    if (row.id.startsWith("temp-")) return;
     setActionError(null);
-    setBusy(true);
     const snapshot = rows ?? [];
     setRows((prev) => {
       if (!prev) return prev;
@@ -173,19 +270,44 @@ export default function AllergiesSection({
     });
     try {
       await archivePatientAllergy(token, patientId, row.id);
+      setActionError(null);
     } catch (err) {
-      // Roll back.
       setRows(snapshot);
       onCountChange?.(snapshot.length);
       setActionError(err instanceof Error ? err.message : "Failed to remove allergy");
-    } finally {
-      setBusy(false);
     }
   };
 
-  // -------- render --------
+  const patchAllergy = async (row: PatientAllergy, patch: AllergyCardPatch) => {
+    const unchanged =
+      (patch.severity === undefined || patch.severity === row.severity) &&
+      (patch.reaction === undefined || patch.reaction === row.reaction) &&
+      (patch.note === undefined || patch.note === row.note);
+    if (unchanged) return;
+
+    // Optimistic local update — the chip/field reflects the choice instantly.
+    // We never disable the controls while saving, so there is no grey flash.
+    setRows((prev) =>
+      prev?.map((r) => (r.id === row.id ? { ...r, ...patch } : r)) ?? prev,
+    );
+
+    // Temp row: the create reconcile persists these edits once the real id
+    // arrives, so there is nothing to PATCH yet.
+    if (row.id.startsWith("temp-")) return;
+
+    try {
+      await updatePatientAllergy(token, patientId, row.id, patch);
+      setActionError(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to update allergy");
+      // Resync from the server so the UI reflects the true persisted state
+      // instead of a guessed rollback.
+      void reloadAllergies();
+    }
+  };
+
   if (rows === null) {
-    return <p className="px-1 py-2 text-xs text-gray-400">Loading allergies…</p>;
+    return <p className="px-1 py-2 text-xs text-muted-foreground">Loading allergies…</p>;
   }
   if (loadError) {
     return (
@@ -195,135 +317,68 @@ export default function AllergiesSection({
     );
   }
 
-  const empty = rows.length === 0;
-
   return (
-    <div className="space-y-2">
-      {/* Inline add form (rendered when parent says addOpen=true). */}
-      {!readonly && addOpen && (
-        <form onSubmit={submitAdd} className="space-y-2 rounded-md border border-gray-200 bg-gray-50 p-2">
-          <div>
-            <label htmlFor="allergen" className="sr-only">
-              Allergen
-            </label>
-            <input
-              id="allergen"
-              type="text"
-              value={allergen}
-              onChange={(e) => setAllergen(e.target.value)}
-              placeholder="Allergen (e.g. Penicillin, Peanuts)"
-              maxLength={200}
-              required
-              disabled={busy}
-              className="block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+    <div className="space-y-3">
+      {templateNotice ? (
+        <p className="text-xs text-muted-foreground" role="status">
+          {templateNotice}
+        </p>
+      ) : null}
+
+      {!readonly && (
+        <div id={ALLERGIES_CAPTURE_SECTION_ID} className="scroll-mt-2 space-y-3">
+          <ChartCatalogCombobox
+            inputId={inputId}
+            testId="allergies-combobox"
+            placeholder="Search or enter allergen…"
+            catalogOptions={catalogOptions}
+            filterCatalog={filterCommonAllergenCatalog}
+            resolveCatalog={resolveCommonAllergen}
+            customLabel={(text) => `Add "${text}" as allergen`}
+            focusRequest={focusCombobox}
+            onFocusRequestHandled={() => {
+              setFocusCombobox(false);
+              onAddOpenChange?.(false);
+            }}
+            onCommit={(payload) => {
+              const allergen = payload.kind === "catalog" ? payload.label : payload.text;
+              void commitAllergen(allergen);
+            }}
+          />
+          <ChartQuickAddChips
+            labels={quickAddLabels}
+            groupLabel="Common allergens"
+            testId="allergies-quick-add"
+            onAdd={(label) => void commitAllergen(label)}
+          />
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <div className="space-y-2" data-testid="allergies-chip-list">
+          {rows.map((row) => (
+            <AllergyCard
+              key={stableKey(row.id)}
+              allergy={row}
+              readonly={readonly}
+              defaultCollapsed
+              captureInputId={inputId}
+              sectionId={ALLERGIES_CAPTURE_SECTION_ID}
+              onPatch={(patch) => void patchAllergy(row, patch)}
+              onRemove={() => void archive(row)}
             />
-          </div>
-          <div className="flex gap-2">
-            <select
-              value={severity}
-              onChange={(e) => setSeverity(e.target.value as PatientAllergySeverity)}
-              disabled={busy}
-              aria-label="Severity"
-              className="rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
-            >
-              {SEVERITY_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-            <input
-              type="text"
-              value={reaction}
-              onChange={(e) => setReaction(e.target.value)}
-              placeholder="Reaction (optional)"
-              maxLength={200}
-              disabled={busy}
-              className="block flex-1 rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
-            />
-          </div>
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setAllergen("");
-                setReaction("");
-                setSeverity("unknown");
-                onAddOpenChange(false);
-              }}
-              disabled={busy}
-              className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={busy || !allergen.trim()}
-              className="rounded-md bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              {busy ? "Saving…" : "Save"}
-            </button>
-          </div>
-        </form>
+          ))}
+        </div>
+      )}
+
+      {rows.length === 0 && readonly && (
+        <p className="px-1 py-1 text-xs text-muted-foreground">No allergies recorded.</p>
       )}
 
       {actionError && (
         <p role="alert" className="text-xs text-red-600">
           {actionError}
         </p>
-      )}
-
-      {empty ? (
-        <p className="px-1 py-2 text-xs text-gray-500">
-          No allergies recorded.
-          {!readonly && !addOpen && (
-            <>
-              {" "}
-              <button
-                type="button"
-                onClick={() => onAddOpenChange(true)}
-                className="font-medium text-blue-600 hover:text-blue-700"
-              >
-                Add one
-              </button>
-              .
-            </>
-          )}
-        </p>
-      ) : (
-        <ul className="space-y-1">
-          {rows.map((row) => (
-            <li
-              key={row.id}
-              className="group flex items-start gap-2 rounded px-1 py-1 hover:bg-gray-50"
-            >
-              <span
-                className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ring-1 ring-inset ${
-                  SEVERITY_BADGE_CLASS[row.severity]
-                }`}
-              >
-                {row.severity}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-gray-900">{row.allergen}</p>
-                {row.reaction && (
-                  <p className="truncate text-xs text-gray-500">{row.reaction}</p>
-                )}
-              </div>
-              {!readonly && !row.id.startsWith("temp-") && (
-                <button
-                  type="button"
-                  onClick={() => archive(row)}
-                  disabled={busy}
-                  aria-label={`Remove allergy ${row.allergen}`}
-                  className="invisible text-xs text-gray-400 hover:text-red-600 group-hover:visible disabled:opacity-50"
-                >
-                  ✕
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
       )}
     </div>
   );

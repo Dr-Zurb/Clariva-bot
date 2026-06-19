@@ -75,7 +75,7 @@ This folder contains task management documentation and templates.
 - **Daily Tasks:** `docs/Work/Daily-plans/YYYY-MM-DD/`
 - **Monthly Plans:** `docs/Work/Monthly-plans/`
 - **Learning Tasks:** `docs/Learning/YYYY-MM-DD/`
-- **Deferred Tasks:** `docs/Work/deferred/` — postponed work with notes to resume later
+- **Deferred / parked work:** `docs/Work/capture/features/` — see [`MIGRATION-deferred.md`](../../Work/capture/MIGRATION-deferred.md) for paths migrated from retired `Work/deferred/`
 
 ### Current active plan: MVP completion (2026-02-06)
 

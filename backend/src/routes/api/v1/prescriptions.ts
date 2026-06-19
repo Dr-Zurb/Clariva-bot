@@ -13,6 +13,7 @@ import {
   createPrescriptionHandler,
   createPrescriptionShareLinkHandler,
   getLastPrescriptionInEpisodeHandler,
+  getLastSubjectiveForPatientHandler,
   getPrescriptionByIdHandler,
   listPrescriptionsHandler,
   regeneratePrescriptionPdfHandler,
@@ -34,6 +35,7 @@ router.get('/', listPrescriptionsHandler);
 // the handler would still reject, but reordering keeps the routing
 // clean and avoids the noisy 400).
 router.get('/last-in-episode', getLastPrescriptionInEpisodeHandler);
+router.get('/last-subjective', getLastSubjectiveForPatientHandler);
 router.get('/:id', getPrescriptionByIdHandler);
 router.patch('/:id', updatePrescriptionHandler);
 

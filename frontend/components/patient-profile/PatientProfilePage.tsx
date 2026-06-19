@@ -33,7 +33,7 @@ import type {
   CockpitTemplate,
 } from "@/lib/patient-profile/templates";
 import { SafetyStickyStrip } from "@/components/cockpit/middle/SafetyStickyStrip";
-import { PlanActionFooter } from "@/components/cockpit/middle/PlanActionFooter";
+import { CockpitRxActionDock } from "@/components/cockpit/rx/CockpitRxActionDock";
 import { RxFormProvider } from "@/components/cockpit/rx/RxFormContext";
 import { RxSafetyProvider } from "@/components/cockpit/rx/RxSafetyContext";
 import { RxFormActionsBridgeProvider } from "@/components/cockpit/rx/RxFormActionsContext";
@@ -305,7 +305,13 @@ export default function PatientProfilePage({
     // padding so the patient-profile shell bleeds edge-to-edge — matches
     // v1 (`ConsultationCockpit.tsx` ~L2103). Without this, v2 renders
     // visibly inset on every side (parity bug surfaced in ppr-11 QA).
-    <div className="-m-4 md:-m-6 flex h-screen flex-col">
+    //
+    // Height must add the cancelled vertical padding back: `h-full` only spans
+    // `<main>`'s content box, so with negative margins the shell stops short
+    // of the bottom. `calc(100% + padding)` fills `<main>`'s padding box so
+    // the footer sits flush. Requires a definite height chain on ancestors
+    // (DashboardShell row + main both use `min-h-0 flex-1`).
+    <div className="-m-4 md:-m-6 flex h-[calc(100%_+_2rem)] md:h-[calc(100%_+_3rem)] min-h-0 flex-col overflow-hidden">
       {/* Mount keyboard handlers once at the page root. */}
       <CommandBar />
       <KeyboardHelpHost />
@@ -339,13 +345,18 @@ export default function PatientProfilePage({
         <CockpitV3Shell
           panes={v3Panes}
           storageKey={storageKey}
+          token={token}
           consultActive={state === "live"}
           safetyDock={<SafetyStickyStrip appointmentId={appt.id} />}
           actionDock={
-            <PlanActionFooter
+            <CockpitRxActionDock
               state={state}
               appointmentId={appt.id}
+              patientId={appt.patient_id ?? null}
+              token={token}
               finishBusy={finishBusy}
+              onFinish={() => void handleFinishVisit()}
+              onSent={handleRxSent}
             />
           }
         />

@@ -20,6 +20,10 @@ function row(name: string, dosage = "10mg"): MedicineRowValue {
     durationValue: null,
     durationUnit: null,
     routeCode: null,
+    doseQty: null,
+    doseUnit: null,
+    form: null,
+    foodTiming: null,
   };
 }
 
@@ -40,6 +44,10 @@ function dbMed(name: string, dosage: string | null = "10mg"): PrescriptionMedici
     duration_value: null,
     duration_unit: null,
     route_code: null,
+    dose_qty: null,
+    dose_unit: null,
+    form: null,
+    food_timing: null,
   };
 }
 

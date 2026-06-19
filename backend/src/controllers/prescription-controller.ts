@@ -16,6 +16,7 @@ import { successResponse } from '../utils/response';
 import {
   createPrescription,
   getLastPrescriptionInEpisode,
+  getLastSubjectiveForPatient,
   getPrescriptionById,
   listPrescriptionsByAppointment,
   listPrescriptionsByPatient,
@@ -404,5 +405,39 @@ export const getLastPrescriptionInEpisodeHandler = asyncHandler(
     );
 
     res.status(200).json(successResponse({ prescription }, req));
+  },
+);
+
+/**
+ * subjective-tab · subj-07 — carry-forward subjective from last visit.
+ *
+ * GET /api/v1/prescriptions/last-subjective?patientId=&appointmentId=
+ */
+export const getLastSubjectiveForPatientHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const correlationId = req.correlationId || 'unknown';
+    const userId = req.user?.id;
+    if (!userId) throw new UnauthorizedError('Authentication required');
+
+    const patientId = typeof req.query.patientId === 'string' ? req.query.patientId : '';
+    const appointmentId = typeof req.query.appointmentId === 'string' ? req.query.appointmentId : '';
+    const uuidRe = /^[0-9a-fA-F-]{36}$/;
+
+    if (!uuidRe.test(patientId) || !uuidRe.test(appointmentId)) {
+      res.status(400).json({
+        success: false,
+        error: { message: 'patientId and appointmentId must be UUIDs' },
+      });
+      return;
+    }
+
+    const subjective = await getLastSubjectiveForPatient(
+      patientId,
+      appointmentId,
+      correlationId,
+      userId,
+    );
+
+    res.status(200).json(successResponse({ subjective }, req));
   },
 );

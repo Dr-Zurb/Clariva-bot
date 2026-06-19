@@ -185,3 +185,65 @@ describe("DrugAutocomplete — personal ranking in dropdown", () => {
     });
   });
 });
+
+describe("DrugAutocomplete — selectionDisabled (full-line parse mode)", () => {
+  beforeEach(() => {
+    mockedSearch.mockReset();
+    mockedUsage.mockReset();
+    mockedUsage.mockReturnValue({ scores: {}, isLoading: false });
+  });
+
+  it("never fetches or shows a dropdown when selectionDisabled", async () => {
+    mockedSearch.mockResolvedValue({
+      data: { results: [makeDrug(drugA, "Amlodipine")] },
+    } as never);
+
+    render(
+      <DrugAutocomplete
+        value="amlodipine 10 years"
+        onChange={() => {}}
+        token="test-token-1234567890"
+        inputId="med-sig"
+        debounceMs={0}
+        selectionDisabled
+      />
+    );
+
+    const input = screen.getByRole("combobox");
+    await act(async () => {
+      fireEvent.focus(input);
+    });
+
+    expect(mockedSearch).not.toHaveBeenCalled();
+    expect(screen.queryByRole("option")).toBeNull();
+  });
+
+  it("lets Enter bubble (does not pick a drug) when selectionDisabled", async () => {
+    const onSelect = vi.fn();
+    mockedSearch.mockResolvedValue({
+      data: { results: [makeDrug(drugA, "Amlodipine")] },
+    } as never);
+
+    render(
+      <DrugAutocomplete
+        value="amlodipine 10 years"
+        onChange={() => {}}
+        onSelect={onSelect}
+        token="test-token-1234567890"
+        inputId="med-sig-2"
+        debounceMs={0}
+        selectionDisabled
+      />
+    );
+
+    const input = screen.getByRole("combobox");
+    await act(async () => {
+      fireEvent.focus(input);
+    });
+
+    // dispatchEvent returns false only if a handler called preventDefault.
+    const notCancelled = fireEvent.keyDown(input, { key: "Enter" });
+    expect(notCancelled).toBe(true);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+});

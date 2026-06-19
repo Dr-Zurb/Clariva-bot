@@ -10,6 +10,8 @@ import {
   updateNodeSize,
   isValidTreeNode,
   upgradeV4LeavesToV5,
+  deserialiseTree,
+  serialiseTree,
   type PaneTreeNode,
 } from "./layout-tree";
 import { setActiveTab as setActiveTabMutation } from "./layout-tree-mutations";
@@ -31,6 +33,19 @@ export const LAYOUT_VERSION = 5 as const;
 
 /** Stable empty default — never use `= []` in destructuring (fresh ref every render → hydration loop). */
 const EMPTY_LEGACY_STORAGE_KEYS: readonly string[] = [];
+
+const MAX_UNDO_STEPS = 50;
+
+type HistoryCommitKind = "size" | "structural";
+
+function clonePaneTree(tree: PaneTreeNode): PaneTreeNode {
+  return deserialiseTree(serialiseTree(tree));
+}
+
+export interface ApplyLayoutOptions {
+  /** When false, does not push onto the undo stack (blank seed, hydration helpers). */
+  recordHistory?: boolean;
+}
 
 /** Read persisted layout: v4 key first, then legacy v3 (migrated on success). */
 export function readPersistedLayout(
@@ -268,7 +283,13 @@ export interface UseShellLayoutResult {
   /** Reset to defaults (used by "Reset layout" preset). */
   resetLayout: () => void;
   /** Apply a preset snapshot (used by `applyPreset` in ppr-09). */
-  applyLayout: (layout: PatientProfileLayout) => void;
+  applyLayout: (layout: PatientProfileLayout, options?: ApplyLayoutOptions) => void;
+  /** Revert the last recorded layout change (resize coalesces per drag). */
+  undo: () => void;
+  canUndo: boolean;
+  /** Re-apply a change undone via `undo`. */
+  redo: () => void;
+  canRedo: boolean;
   layoutVersion: number;
   hydrated: boolean;
   /** Set a leaf's size by id. Walks the tree, updates the matching node. */
@@ -325,6 +346,89 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
   const [hydrated, setHydrated] = useState(false);
   const prevLayoutRef = useRef<PatientProfileLayout | null>(null);
   const writeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pastRef = useRef<PaneTreeNode[]>([]);
+  const futureRef = useRef<PaneTreeNode[]>([]);
+  const lastCommitKindRef = useRef<HistoryCommitKind | null>(null);
+  const [historyTick, setHistoryTick] = useState(0);
+
+  const canUndo = useMemo(
+    () => pastRef.current.length > 0,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [historyTick],
+  );
+
+  const canRedo = useMemo(
+    () => futureRef.current.length > 0,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [historyTick],
+  );
+
+  const pushHistory = useCallback((tree: PaneTreeNode) => {
+    pastRef.current.push(clonePaneTree(tree));
+    if (pastRef.current.length > MAX_UNDO_STEPS) {
+      pastRef.current.shift();
+    }
+    futureRef.current = [];
+    setHistoryTick((t) => t + 1);
+  }, []);
+
+  const commitPaneTree = useCallback(
+    (
+      nextTree: PaneTreeNode,
+      kind: HistoryCommitKind,
+      options?: { recordHistory?: boolean },
+    ) => {
+      const record = options?.recordHistory !== false;
+      setLayout((prev) => {
+        const current = prev.paneTree;
+        if (serialiseTree(current) === serialiseTree(nextTree)) {
+          return prev;
+        }
+        if (record) {
+          if (kind !== "size" || lastCommitKindRef.current !== "size") {
+            pushHistory(current);
+          }
+          lastCommitKindRef.current = kind;
+        }
+        prevLayoutRef.current = null;
+        return { version: LAYOUT_VERSION, paneTree: nextTree };
+      });
+      setLayoutVersion((v) => v + 1);
+    },
+    [pushHistory],
+  );
+
+  const undo = useCallback(() => {
+    const prior = pastRef.current.pop();
+    if (!prior) return;
+    lastCommitKindRef.current = null;
+    setLayout((prev) => {
+      futureRef.current.push(clonePaneTree(prev.paneTree));
+      if (futureRef.current.length > MAX_UNDO_STEPS) {
+        futureRef.current.shift();
+      }
+      prevLayoutRef.current = null;
+      return { version: LAYOUT_VERSION, paneTree: prior };
+    });
+    setLayoutVersion((v) => v + 1);
+    setHistoryTick((t) => t + 1);
+  }, []);
+
+  const redo = useCallback(() => {
+    const next = futureRef.current.pop();
+    if (!next) return;
+    lastCommitKindRef.current = null;
+    setLayout((prev) => {
+      pastRef.current.push(clonePaneTree(prev.paneTree));
+      if (pastRef.current.length > MAX_UNDO_STEPS) {
+        pastRef.current.shift();
+      }
+      prevLayoutRef.current = null;
+      return { version: LAYOUT_VERSION, paneTree: next };
+    });
+    setLayoutVersion((v) => v + 1);
+    setHistoryTick((t) => t + 1);
+  }, []);
 
   const { paneOrder, paneState } = useMemo(
     () => paneTreeToFlat(layout.paneTree),
@@ -419,16 +523,40 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
   const setLeafSize = useCallback(
     (nodeId: string, sizePct: number) => {
       if (Number.isNaN(sizePct)) return;
-      setPaneTree((prev) => updateNodeSize(prev, nodeId, sizePct));
+      setLayout((prev) => {
+        const nextTree = updateNodeSize(prev.paneTree, nodeId, sizePct);
+        if (serialiseTree(prev.paneTree) === serialiseTree(nextTree)) {
+          return prev;
+        }
+        if (lastCommitKindRef.current !== "size") {
+          pushHistory(prev.paneTree);
+        }
+        lastCommitKindRef.current = "size";
+        prevLayoutRef.current = null;
+        return { version: LAYOUT_VERSION, paneTree: nextTree };
+      });
+      setLayoutVersion((v) => v + 1);
     },
-    [setPaneTree],
+    [pushHistory],
   );
 
   const setGroupSizes = useCallback(
     (groupId: string, sizes: Record<string, number>) => {
-      setPaneTree((prev) => updateGroupSizes(prev, groupId, sizes));
+      setLayout((prev) => {
+        const nextTree = updateGroupSizes(prev.paneTree, groupId, sizes);
+        if (serialiseTree(prev.paneTree) === serialiseTree(nextTree)) {
+          return prev;
+        }
+        if (lastCommitKindRef.current !== "size") {
+          pushHistory(prev.paneTree);
+        }
+        lastCommitKindRef.current = "size";
+        prevLayoutRef.current = null;
+        return { version: LAYOUT_VERSION, paneTree: nextTree };
+      });
+      setLayoutVersion((v) => v + 1);
     },
-    [setPaneTree],
+    [pushHistory],
   );
 
   const setActiveTab = useCallback(
@@ -449,34 +577,42 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
     [setLeafSize],
   );
 
-  const reorderPane = useCallback((fromId: string, toId: string) => {
-    if (fromId === toId) return;
-    setLayout((prev) => {
-      const nextTree = reorderSiblingNodes(prev.paneTree, fromId, toId);
-      if (!nextTree) {
-        if (typeof console !== "undefined") {
-          console.warn(
-            "[useShellLayout] reorderPane: cross-group reorder ignored",
-            { fromId, toId },
-          );
+  const reorderPane = useCallback(
+    (fromId: string, toId: string) => {
+      if (fromId === toId) return;
+      setLayout((prev) => {
+        const nextTree = reorderSiblingNodes(prev.paneTree, fromId, toId);
+        if (!nextTree) {
+          if (typeof console !== "undefined") {
+            console.warn(
+              "[useShellLayout] reorderPane: cross-group reorder ignored",
+              { fromId, toId },
+            );
+          }
+          return prev;
         }
-        return prev;
-      }
-      return { version: LAYOUT_VERSION, paneTree: nextTree };
-    });
-    prevLayoutRef.current = null;
-    setLayoutVersion((v) => v + 1);
-  }, []);
+        pushHistory(prev.paneTree);
+        lastCommitKindRef.current = "structural";
+        prevLayoutRef.current = null;
+        return { version: LAYOUT_VERSION, paneTree: nextTree };
+      });
+      setLayoutVersion((v) => v + 1);
+    },
+    [pushHistory],
+  );
 
   const setPaneHidden = useCallback(
     (id: string, hidden: boolean) => {
       if (hidden) {
         setLayout((prev) => {
           prevLayoutRef.current = prev;
-          return {
-            version: LAYOUT_VERSION,
-            paneTree: updateNodeHidden(prev.paneTree, id, true),
-          };
+          const nextTree = updateNodeHidden(prev.paneTree, id, true);
+          if (serialiseTree(prev.paneTree) === serialiseTree(nextTree)) {
+            return prev;
+          }
+          pushHistory(prev.paneTree);
+          lastCommitKindRef.current = "structural";
+          return { version: LAYOUT_VERSION, paneTree: nextTree };
         });
         setLayoutVersion((v) => v + 1);
         return;
@@ -494,52 +630,76 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
         setLayoutVersion((v) => v + 1);
         return;
       }
-      setLayout((prev) => ({
-        version: LAYOUT_VERSION,
-        paneTree: updateNodeHidden(prev.paneTree, id, false),
-      }));
+      setLayout((prev) => {
+        const nextTree = updateNodeHidden(prev.paneTree, id, false);
+        if (serialiseTree(prev.paneTree) === serialiseTree(nextTree)) {
+          return prev;
+        }
+        pushHistory(prev.paneTree);
+        lastCommitKindRef.current = "structural";
+        prevLayoutRef.current = null;
+        return { version: LAYOUT_VERSION, paneTree: nextTree };
+      });
       setLayoutVersion((v) => v + 1);
     },
-    [paneOrder.length],
+    [paneOrder.length, pushHistory],
   );
 
-  const setLeafIdsHidden = useCallback((leafIds: string[], hidden: boolean) => {
-    if (leafIds.length === 0) return;
-    if (hidden) {
-      setLayout((prev) => {
-        prevLayoutRef.current = prev;
-        let tree = prev.paneTree;
-        for (const id of leafIds) {
-          tree = updateNodeHidden(tree, id, true);
-        }
-        return { version: LAYOUT_VERSION, paneTree: tree };
-      });
-    } else {
-      setLayout((prev) => {
-        let tree = prev.paneTree;
-        for (const id of leafIds) {
-          tree = updateNodeHidden(tree, id, false);
-        }
-        return { version: LAYOUT_VERSION, paneTree: tree };
-      });
-      prevLayoutRef.current = null;
-    }
-    setLayoutVersion((v) => v + 1);
-  }, []);
+  const setLeafIdsHidden = useCallback(
+    (leafIds: string[], hidden: boolean) => {
+      if (leafIds.length === 0) return;
+      if (hidden) {
+        setLayout((prev) => {
+          prevLayoutRef.current = prev;
+          let tree = prev.paneTree;
+          for (const leafId of leafIds) {
+            tree = updateNodeHidden(tree, leafId, true);
+          }
+          if (serialiseTree(prev.paneTree) === serialiseTree(tree)) {
+            return prev;
+          }
+          pushHistory(prev.paneTree);
+          lastCommitKindRef.current = "structural";
+          return { version: LAYOUT_VERSION, paneTree: tree };
+        });
+      } else {
+        setLayout((prev) => {
+          let tree = prev.paneTree;
+          for (const leafId of leafIds) {
+            tree = updateNodeHidden(tree, leafId, false);
+          }
+          if (serialiseTree(prev.paneTree) === serialiseTree(tree)) {
+            return prev;
+          }
+          pushHistory(prev.paneTree);
+          lastCommitKindRef.current = "structural";
+          prevLayoutRef.current = null;
+          return { version: LAYOUT_VERSION, paneTree: tree };
+        });
+      }
+      setLayoutVersion((v) => v + 1);
+    },
+    [pushHistory],
+  );
 
   const resetLayout = useCallback(() => {
-    setLayout({ version: LAYOUT_VERSION, paneTree: defaultTree });
-    prevLayoutRef.current = null;
-    setLayoutVersion((v) => v + 1);
-  }, [defaultTree]);
+    commitPaneTree(defaultTree, "structural");
+  }, [commitPaneTree, defaultTree]);
 
-  const applyLayout = useCallback((next: PatientProfileLayout) => {
-    const validated = validateLayout(next);
-    if (!validated) return;
-    setLayout(validated);
-    prevLayoutRef.current = null;
-    setLayoutVersion((v) => v + 1);
-  }, []);
+  const applyLayout = useCallback(
+    (next: PatientProfileLayout, options?: ApplyLayoutOptions) => {
+      const validated = validateLayout(next);
+      if (!validated) return;
+      if (options?.recordHistory === false) {
+        setLayout(validated);
+        prevLayoutRef.current = null;
+        setLayoutVersion((v) => v + 1);
+        return;
+      }
+      commitPaneTree(validated.paneTree, "structural");
+    },
+    [commitPaneTree],
+  );
 
   return {
     paneOrder,
@@ -551,6 +711,10 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
     setLeafIdsHidden,
     resetLayout,
     applyLayout,
+    undo,
+    canUndo,
+    redo,
+    canRedo,
     layoutVersion,
     hydrated,
     setLeafSize,

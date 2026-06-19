@@ -63,4 +63,17 @@ describe("PlanActionFooter", () => {
     renderFooter(<PlanActionFooter state="ready" onSendAndFinish={vi.fn()} />);
     expect(screen.getByRole("status")).toHaveTextContent(/saved/i);
   });
+
+  it("shows Preview as patient when onPreview is provided", () => {
+    renderFooter(
+      <PlanActionFooter
+        state="ended"
+        onSendAndFinish={vi.fn()}
+        onPreview={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /preview as patient/i }),
+    ).toBeInTheDocument();
+  });
 });

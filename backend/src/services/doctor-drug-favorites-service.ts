@@ -34,6 +34,14 @@ function normalizeTemplate(input: MedicineRowTemplate): MedicineRowTemplate {
         : null,
     durationUnit: input.durationUnit ?? null,
     routeCode: input.routeCode ?? null,
+    // Migration 133 — dose details
+    doseQty:
+      typeof input.doseQty === 'number' && Number.isFinite(input.doseQty) && input.doseQty > 0
+        ? input.doseQty
+        : null,
+    doseUnit: input.doseUnit ?? null,
+    form: typeof input.form === 'string' ? input.form.trim() || null : null,
+    foodTiming: input.foodTiming ?? null,
   };
 }
 
