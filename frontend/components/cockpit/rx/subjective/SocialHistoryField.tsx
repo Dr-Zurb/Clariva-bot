@@ -57,10 +57,14 @@ import {
   formatSocialHistoryPreview,
   lifestyleClusterFilledCount,
   lifestyleClusterHasContent,
+  serializeAlcoholSectionSummary,
   serializeContextCluster,
   serializeLifestyleCluster,
   serializeSexualCluster,
+  serializeSmokelessSectionSummary,
+  serializeSmokingSectionSummary,
   serializeSubstanceUseCluster,
+  serializeSubstancesSectionSummary,
   serializeWellbeingCluster,
   sexualClusterFilledCount,
   sexualClusterHasContent,
@@ -184,6 +188,7 @@ export interface SocialHistoryFieldProps {
 
 interface StatusChipRowProps {
   label: string;
+  hideLabel?: boolean;
   options: readonly { value: SmokingStatus; label: string }[];
   selected: SmokingStatus | undefined;
   disabled?: boolean;
@@ -193,6 +198,7 @@ interface StatusChipRowProps {
 
 function StatusChipRow({
   label,
+  hideLabel = false,
   options,
   selected,
   disabled = false,
@@ -201,7 +207,7 @@ function StatusChipRow({
 }: StatusChipRowProps) {
   return (
     <div className="space-y-1.5" data-testid={testId}>
-      <p className="text-xs font-medium text-foreground/80">{label}</p>
+      {!hideLabel && <p className="text-xs font-medium text-foreground/80">{label}</p>}
       <div className="flex flex-wrap gap-1.5" role="group" aria-label={label}>
         {options.map((option) => {
           const isSelected = selected === option.value;
@@ -370,6 +376,12 @@ function TextField({
 function clusterContainerPreview(serialized: string): string | undefined {
   const preview = formatSocialHistoryClusterPreview(serialized);
   return preview ? `— ${preview}` : undefined;
+}
+
+/** Collapsed preview for a single section card: drops the leading "Label:" prefix. */
+function sectionCardPreview(serialized: string): string | undefined {
+  const stripped = serialized.replace(/^[^:]+:\s*/, "").trim();
+  return clusterContainerPreview(stripped);
 }
 
 function AlcoholScreenChip({
@@ -687,6 +699,26 @@ export function SocialHistoryField({
     () => clusterContainerPreview(serializeSubstanceUseCluster(value)),
     [value],
   );
+  const smokingCardPreview = useMemo(
+    () => sectionCardPreview(serializeSmokingSectionSummary(value)),
+    [value],
+  );
+  const smokelessCardPreview = useMemo(
+    () => sectionCardPreview(serializeSmokelessSectionSummary(value)),
+    [value],
+  );
+  const alcoholCardPreview = useMemo(
+    () => sectionCardPreview(serializeAlcoholSectionSummary(value)),
+    [value],
+  );
+  const substancesCardPreview = useMemo(
+    () => sectionCardPreview(serializeSubstancesSectionSummary(value)),
+    [value],
+  );
+  const substancesCount = value.substances?.items?.length ?? 0;
+  const substancesDefaultOpen = Boolean(
+    value.substances?.status && value.substances.status !== "never",
+  );
   const lifestylePreview = useMemo(
     () => clusterContainerPreview(serializeLifestyleCluster(value)),
     [value],
@@ -896,11 +928,23 @@ export function SocialHistoryField({
           preview={substanceUsePreview}
           count={substanceUseClusterFilledCount(value)}
           defaultOpen={substanceUseClusterHasContent(value)}
-          bodyClassName="space-y-4 pt-0"
+          bodyClassName="flex flex-col gap-2 pt-0"
         >
-        <section className="space-y-2" aria-label="Smoking">
+        <CollapsibleContainer
+          variant="subsection"
+          testId="social-smoking-card"
+          title="Smoking"
+          toggleLabel="Toggle smoking"
+          ariaLabel="Smoking"
+          preview={smokingCardPreview}
+          count={smokingProductsForDisplay.length}
+          defaultOpen={statusReveal(smoking?.status)}
+          scrollOnExpand
+          bodyClassName="space-y-2"
+        >
           <StatusChipRow
             label="Smoking"
+            hideLabel
             options={SMOKING_STATUS_OPTIONS}
             selected={smoking?.status}
             disabled={disabled}
@@ -919,6 +963,7 @@ export function SocialHistoryField({
                 disabled={disabled}
                 implicitPast={smoking.status === "ex"}
                 testIdPrefix="social-smoking"
+                closeScrollToSelector='[data-testid="social-smoking-card"]'
                 onChange={(products) =>
                   onChange(
                     setSmoking(value, {
@@ -963,11 +1008,23 @@ export function SocialHistoryField({
               </div>
             </div>
           )}
-        </section>
+        </CollapsibleContainer>
 
-        <section className="space-y-2" aria-label="Smokeless tobacco">
+        <CollapsibleContainer
+          variant="subsection"
+          testId="social-smokeless-card"
+          title="Smokeless tobacco"
+          toggleLabel="Toggle smokeless tobacco"
+          ariaLabel="Smokeless tobacco"
+          preview={smokelessCardPreview}
+          count={smokelessProductsForDisplay.length}
+          defaultOpen={statusReveal(smokeless?.status)}
+          scrollOnExpand
+          bodyClassName="space-y-2"
+        >
           <StatusChipRow
             label="Smokeless tobacco"
+            hideLabel
             options={SMOKELESS_STATUS_OPTIONS}
             selected={smokeless?.status}
             disabled={disabled}
@@ -986,6 +1043,7 @@ export function SocialHistoryField({
                 disabled={disabled}
                 implicitPast={smokeless.status === "ex"}
                 testIdPrefix="social-smokeless"
+                closeScrollToSelector='[data-testid="social-smokeless-card"]'
                 onChange={(products) =>
                   onChange(
                     setSmokeless(value, {
@@ -999,11 +1057,23 @@ export function SocialHistoryField({
               />
             </div>
           )}
-        </section>
+        </CollapsibleContainer>
 
-        <section className="space-y-2" aria-label="Alcohol">
+        <CollapsibleContainer
+          variant="subsection"
+          testId="social-alcohol-card"
+          title="Alcohol"
+          toggleLabel="Toggle alcohol"
+          ariaLabel="Alcohol"
+          preview={alcoholCardPreview}
+          count={alcoholDrinksForDisplayMemo.length}
+          defaultOpen={statusReveal(alcohol?.status)}
+          scrollOnExpand
+          bodyClassName="space-y-2"
+        >
           <StatusChipRow
             label="Alcohol"
+            hideLabel
             options={ALCOHOL_STATUS_OPTIONS}
             selected={alcohol?.status}
             disabled={disabled}
@@ -1021,6 +1091,7 @@ export function SocialHistoryField({
                 disabled={disabled}
                 implicitPast={alcohol.status === "ex"}
                 testIdPrefix="social-alcohol"
+                closeScrollToSelector='[data-testid="social-alcohol-card"]'
                 onChange={(drinks) =>
                   onChange(
                     setAlcohol(value, {
@@ -1522,14 +1593,29 @@ export function SocialHistoryField({
               )}
             </div>
           )}
-        </section>
+        </CollapsibleContainer>
 
+        <CollapsibleContainer
+          variant="subsection"
+          testId="social-substances-card"
+          title="Substances"
+          toggleLabel="Toggle substances"
+          ariaLabel="Substances"
+          preview={substancesCardPreview}
+          count={substancesCount}
+          defaultOpen={substancesDefaultOpen}
+          scrollOnExpand
+          bodyClassName="space-y-2"
+        >
           <SubstancesSection
             value={value}
-        disabled={disabled}
+            disabled={disabled}
             inputIdPrefix={inputId}
+            hideStatusLabel
+            closeScrollToSelector='[data-testid="social-substances-card"]'
             onChange={onChange}
           />
+        </CollapsibleContainer>
         </CollapsibleContainer>
 
         <CollapsibleContainer

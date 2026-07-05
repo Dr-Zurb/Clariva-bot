@@ -7,6 +7,7 @@ import { describe, it, expect } from '@jest/globals';
 import {
   validateCreatePrescriptionBody,
   validateUpdatePrescriptionBody,
+  validateCreateUploadUrlBody,
 } from '../../../src/utils/validation';
 import { ValidationError } from '../../../src/utils/errors';
 
@@ -112,7 +113,10 @@ describe('prescription SOAP validation (cv2-07)', () => {
       expect(result.examinationJson![1]).toEqual({
         systemId: 'respiratory',
         status: 'abnormal',
-        findings: ['crepitations', 'wheeze'],
+        findings: [
+          { findingId: 'crepitations', attributes: {} },
+          { findingId: 'wheeze', attributes: {} },
+        ],
         notes: 'right base',
       });
     });
@@ -147,12 +151,101 @@ describe('prescription SOAP validation (cv2-07)', () => {
         ],
       });
       expect(result.examinationJson![0].systemId).toBe('abdomen');
-      expect(result.examinationJson![0].findings).toEqual(['tender']);
+      expect(result.examinationJson![0].findings).toEqual([
+        { findingId: 'tender', attributes: {} },
+      ]);
+    });
+
+    it('accepts structured finding entries with attributes (obj-31)', () => {
+      const result = validateUpdatePrescriptionBody({
+        examinationJson: [
+          {
+            systemId: 'general',
+            status: 'abnormal',
+            findings: [
+              { findingId: 'pallor', attributes: { site: 'Conjunctival', severity: 'Mild' } },
+            ],
+          },
+        ],
+      });
+      expect(result.examinationJson![0].findings).toEqual([
+        { findingId: 'pallor', attributes: { site: 'Conjunctival', severity: 'Mild' } },
+      ]);
     });
 
     it('accepts an empty array (legacy free-text passthrough)', () => {
       const result = validateUpdatePrescriptionBody({ examinationJson: [] });
       expect(result.examinationJson).toEqual([]);
+    });
+  });
+
+  describe('testResultsJson validation (obj-20)', () => {
+    it('preserves a valid row set, dropping unknown keys and collapsing empties', () => {
+      const result = validateUpdatePrescriptionBody({
+        testResultsJson: [
+          {
+            id: 'r1',
+            source: 'patient_report',
+            name: '  HbA1c  ',
+            value: '7.8',
+            unit: '%',
+            date: '2026-06-10',
+            interpretation: 'high',
+            notes: '  fasting  ',
+            extra: 'should be dropped',
+          },
+          { id: 'r2', source: 'in_clinic_poc', name: 'RBS', unit: '' },
+        ],
+      });
+      expect(result.testResultsJson).toHaveLength(2);
+      expect(result.testResultsJson![0]).toEqual({
+        id: 'r1',
+        source: 'patient_report',
+        name: 'HbA1c',
+        value: '7.8',
+        unit: '%',
+        date: '2026-06-10',
+        interpretation: 'high',
+        notes: 'fasting',
+      });
+      expect(result.testResultsJson![1]).toEqual({
+        id: 'r2',
+        source: 'in_clinic_poc',
+        name: 'RBS',
+        value: null,
+        unit: null,
+        date: null,
+        interpretation: null,
+        notes: null,
+      });
+    });
+
+    it('drops rows with a bad source or missing name without rejecting the save', () => {
+      const result = validateUpdatePrescriptionBody({
+        testResultsJson: [
+          { id: 'a', source: 'unknown', name: 'X' },
+          { id: 'b', source: 'patient_report', name: '   ' },
+          { source: 'in_clinic_poc', name: 'NoId' },
+          { id: 'c', source: 'in_clinic_poc', name: 'RBS', value: '180' },
+        ],
+      });
+      expect(result.testResultsJson).toHaveLength(1);
+      expect(result.testResultsJson![0].id).toBe('c');
+    });
+
+    it('collapses a bad interpretation enum to null and keeps the row', () => {
+      const result = validateUpdatePrescriptionBody({
+        testResultsJson: [
+          { id: 'r1', source: 'in_clinic_poc', name: 'RBS', interpretation: 'weird' },
+        ],
+      });
+      expect(result.testResultsJson).toHaveLength(1);
+      expect(result.testResultsJson![0].interpretation).toBeNull();
+    });
+
+    it('accepts an empty array (legacy free-text passthrough)', () => {
+      const result = validateUpdatePrescriptionBody({ testResultsJson: [] });
+      expect(result.testResultsJson).toEqual([]);
     });
   });
 
@@ -243,6 +336,205 @@ describe('prescription SOAP validation (cv2-07)', () => {
       expect(result.vitalsBpSystolic).toBe(120);
       expect(result.vitalsHtCm).toBe(170);
       expect(result.vitalsRr).toBe(16);
+    });
+  });
+
+  describe('vitals_json extended vitals (vit-03 / migration 156)', () => {
+    it('accepts in-range numeric + categorical json vitals', () => {
+      const result = validateUpdatePrescriptionBody({
+        vitalsJson: {
+          vitalsO2FlowLMin: 4,
+          vitalsFio2Pct: 40,
+          vitalsGcsE: 4,
+          vitalsGcsV: 5,
+          vitalsGcsM: 6,
+          vitalsFetalHeartRateBpm: 140,
+          vitalsO2DeliveryMethod: 'nasal_cannula',
+          vitalsGlucoseTiming: 'fasting',
+          vitalsAvpu: 'alert',
+        },
+      });
+      expect(result.vitalsJson).toMatchObject({
+        vitalsO2FlowLMin: 4,
+        vitalsFio2Pct: 40,
+        vitalsGcsE: 4,
+        vitalsFetalHeartRateBpm: 140,
+        vitalsO2DeliveryMethod: 'nasal_cannula',
+        vitalsAvpu: 'alert',
+      });
+    });
+
+    it('accepts an empty json object', () => {
+      const result = validateUpdatePrescriptionBody({ vitalsJson: {} });
+      expect(result.vitalsJson).toEqual({});
+    });
+
+    it('strips unknown json keys rather than rejecting (degradable)', () => {
+      const result = validateUpdatePrescriptionBody({
+        vitalsJson: { vitalsO2FlowLMin: 2, vitalsUnknownKey: 99 } as never,
+      });
+      expect(result.vitalsJson).toEqual({ vitalsO2FlowLMin: 2 });
+    });
+
+    it('accepts null for a json vital (not recorded)', () => {
+      const result = validateUpdatePrescriptionBody({
+        vitalsJson: { vitalsHipCm: null },
+      });
+      expect(result.vitalsJson?.vitalsHipCm ?? null).toBeNull();
+    });
+
+    it('rejects a numeric json vital above its registry bound', () => {
+      expect(() =>
+        validateUpdatePrescriptionBody({ vitalsJson: { vitalsFio2Pct: 150 } }),
+      ).toThrow(ValidationError);
+    });
+
+    it('rejects a numeric json vital below its registry bound', () => {
+      expect(() =>
+        validateUpdatePrescriptionBody({ vitalsJson: { vitalsGcsE: 0 } }),
+      ).toThrow(ValidationError);
+    });
+
+    it('rejects an unknown categorical json value', () => {
+      expect(() =>
+        validateUpdatePrescriptionBody({
+          vitalsJson: { vitalsO2DeliveryMethod: 'space_helmet' as never },
+        }),
+      ).toThrow(ValidationError);
+    });
+
+    it('does not perturb the shipped vitals_* columns', () => {
+      const result = validateUpdatePrescriptionBody({
+        vitalsBpSystolic: 118,
+        vitalsJson: { vitalsPefrLMin: 420 },
+      });
+      expect(result.vitalsBpSystolic).toBe(118);
+      expect(result.vitalsJson?.vitalsPefrLMin).toBe(420);
+    });
+
+    it('accepts multi-reading bpReadings in vitalsJson', () => {
+      const result = validateUpdatePrescriptionBody({
+        vitalsBpSystolic: 138,
+        vitalsBpDiastolic: 88,
+        vitalsJson: {
+          bpReadings: [
+            { systolic: 138, diastolic: 88, posture: 'sitting', limb: 'left_arm' },
+            { systolic: 132, diastolic: 84, posture: 'sitting', limb: 'right_arm' },
+          ],
+        },
+      });
+      expect(result.vitalsJson?.bpReadings).toHaveLength(2);
+    });
+
+    it('rejects out-of-bounds bpReadings systolic', () => {
+      expect(() =>
+        validateUpdatePrescriptionBody({
+          vitalsJson: {
+            bpReadings: [{ systolic: 400, diastolic: 80 }],
+          },
+        }),
+      ).toThrow(ValidationError);
+    });
+
+    it('accepts bpContext and row provenance in vitalsJson', () => {
+      const result = validateUpdatePrescriptionBody({
+        vitalsJson: {
+          bpContext: {
+            measuredBy: 'nurse',
+            method: 'manual_auscultatory',
+            setting: 'clinic',
+          },
+          bpReadings: [
+            {
+              systolic: 138,
+              diastolic: 88,
+              measuredBy: 'physician',
+              setting: 'clinic',
+            },
+            { systolic: 132, diastolic: 84, setting: 'home' },
+          ],
+        },
+      });
+      expect(result.vitalsJson?.bpContext).toMatchObject({
+        measuredBy: 'nurse',
+        setting: 'clinic',
+      });
+      const readings = result.vitalsJson?.bpReadings;
+      expect(Array.isArray(readings) && readings[1]?.setting).toBe('home');
+    });
+
+    it("rejects invalid bpContext measuredBy", () => {
+      expect(() =>
+        validateUpdatePrescriptionBody({
+          vitalsJson: {
+            bpContext: { measuredBy: 'invalid' },
+          },
+        }),
+      ).toThrow(ValidationError);
+    });
+
+    it('accepts provenance overrides for all numeric vitals except BP in vitalsJson', () => {
+      const result = validateUpdatePrescriptionBody({
+        vitalsJson: {
+          measurementContext: { measuredBy: 'patient', setting: 'home' },
+          vitalProvenance: {
+            vitalsWtKg: { measuredBy: 'nurse', setting: 'clinic' },
+            vitalsTempC: { measuredBy: 'physician' },
+            vitalsRr: { measuredBy: 'nurse', setting: 'clinic' },
+            vitalsHr: { measuredBy: 'nurse' },
+            vitalsHtCm: { measuredBy: 'caregiver', setting: 'home' },
+          },
+        },
+      });
+      expect(result.vitalsJson?.vitalProvenance).toMatchObject({
+        vitalsWtKg: { measuredBy: 'nurse', setting: 'clinic' },
+        vitalsTempC: { measuredBy: 'physician' },
+        vitalsRr: { measuredBy: 'nurse', setting: 'clinic' },
+        vitalsHr: { measuredBy: 'nurse' },
+        vitalsHtCm: { measuredBy: 'caregiver', setting: 'home' },
+      });
+    });
+
+    it('strips unknown vitalProvenance keys', () => {
+      const result = validateUpdatePrescriptionBody({
+        vitalsJson: {
+          vitalProvenance: {
+            vitalsBpSystolic: { measuredBy: 'nurse' },
+            notAVital: { measuredBy: 'nurse' },
+          } as never,
+        },
+      });
+      expect(result.vitalsJson?.vitalProvenance).toEqual({});
+    });
+
+    it('rejects invalid vitalProvenance measuredBy', () => {
+      expect(() =>
+        validateUpdatePrescriptionBody({
+          vitalsJson: {
+            vitalProvenance: {
+              vitalsWtKg: { measuredBy: 'invalid' },
+            },
+          },
+        }),
+      ).toThrow(ValidationError);
+    });
+
+    it('accepts bp reading note and rejects over-length note', () => {
+      const result = validateUpdatePrescriptionBody({
+        vitalsJson: {
+          bpReadings: [{ systolic: 120, diastolic: 80, note: 'Seated 5 minutes' }],
+        },
+      });
+      expect(result.vitalsJson?.bpReadings).toMatchObject([
+        { note: 'Seated 5 minutes' },
+      ]);
+      expect(() =>
+        validateUpdatePrescriptionBody({
+          vitalsJson: {
+            bpReadings: [{ systolic: 120, diastolic: 80, note: 'x'.repeat(201) }],
+          },
+        }),
+      ).toThrow(ValidationError);
     });
   });
 
@@ -523,5 +815,71 @@ describe('prescription SOAP validation (cv2-07)', () => {
         })
       ).toThrow(ValidationError);
     });
+  });
+});
+
+describe('attachment upload-url category (obj-22)', () => {
+  it('accepts the objective category tag', () => {
+    const result = validateCreateUploadUrlBody({
+      filename: 'wound.jpg',
+      contentType: 'image/jpeg',
+      category: 'objective',
+    });
+    expect(result.category).toBe('objective');
+  });
+
+  it('omits category for a legacy photo-Rx upload (undefined, not an error)', () => {
+    const result = validateCreateUploadUrlBody({ filename: 'rx.jpg', contentType: 'image/jpeg' });
+    expect(result.category).toBeUndefined();
+  });
+
+  it('rejects an unknown category rather than silently widening the tag space', () => {
+    expect(() =>
+      validateCreateUploadUrlBody({ filename: 'x.jpg', contentType: 'image/jpeg', category: 'bogus' })
+    ).toThrow(ValidationError);
+  });
+});
+
+describe('attachment upload-url subjective complaint pin (sdp-02)', () => {
+  it('accepts the subjective category with an optional complaintId', () => {
+    const result = validateCreateUploadUrlBody({
+      filename: 'rash.jpg',
+      contentType: 'image/jpeg',
+      category: 'subjective',
+      complaintId: 'cmp-7',
+    });
+    expect(result.category).toBe('subjective');
+    expect(result.complaintId).toBe('cmp-7');
+  });
+
+  it('accepts subjective without a complaintId (undefined, not an error)', () => {
+    const result = validateCreateUploadUrlBody({
+      filename: 'rash.jpg',
+      contentType: 'image/jpeg',
+      category: 'subjective',
+    });
+    expect(result.complaintId).toBeUndefined();
+  });
+
+  it('drops unknown keys instead of carrying them through', () => {
+    const result = validateCreateUploadUrlBody({
+      filename: 'rash.jpg',
+      contentType: 'image/jpeg',
+      category: 'subjective',
+      complaintId: 'cmp-7',
+      surprise: 'dropme',
+    });
+    expect(result).not.toHaveProperty('surprise');
+  });
+
+  it('rejects an over-long complaintId rather than accepting an unbounded segment', () => {
+    expect(() =>
+      validateCreateUploadUrlBody({
+        filename: 'rash.jpg',
+        contentType: 'image/jpeg',
+        category: 'subjective',
+        complaintId: 'c'.repeat(65),
+      })
+    ).toThrow(ValidationError);
   });
 });

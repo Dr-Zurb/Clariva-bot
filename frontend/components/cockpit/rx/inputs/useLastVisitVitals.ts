@@ -4,11 +4,11 @@ import { useEffect, useState } from "react";
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import { getLastPrescriptionInEpisode } from "@/lib/api";
 import type { GhostVitals } from "@/components/cockpit/rx/inputs/VitalsExtended";
-import type { VitalKey } from "@/lib/cockpit/vitals-schema";
+import { vitalsByStorage, type ColumnVitalKey } from "@/lib/cockpit/vitals-schema";
 import type { PrescriptionWithRelations } from "@/types/prescription";
 
-/** Maps each numeric vital key to its canonical column on a prescription row. */
-const GHOST_COLUMN: Record<VitalKey, keyof PrescriptionWithRelations> = {
+/** Maps each column-backed vital key to its canonical column on a prescription row. */
+const GHOST_COLUMN: Record<ColumnVitalKey, keyof PrescriptionWithRelations> = {
   vitalsBpSystolic: "vitals_bp_systolic",
   vitalsBpDiastolic: "vitals_bp_diastolic",
   vitalsHr: "vitals_hr",
@@ -27,8 +27,9 @@ const GHOST_COLUMN: Record<VitalKey, keyof PrescriptionWithRelations> = {
 
 function extractGhostVitals(rx: PrescriptionWithRelations): GhostVitals {
   const ghost: GhostVitals = {};
-  for (const key of Object.keys(GHOST_COLUMN) as VitalKey[]) {
-    const value = rx[GHOST_COLUMN[key]];
+  for (const key of vitalsByStorage("column").map((v) => v.key)) {
+    const columnKey = key as ColumnVitalKey;
+    const value = rx[GHOST_COLUMN[columnKey]];
     if (typeof value === "number" && Number.isFinite(value)) {
       ghost[key] = value;
     }

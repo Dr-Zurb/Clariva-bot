@@ -9,6 +9,12 @@ import {
 import { ObjectiveSection } from "@/components/cockpit/rx/sections/ObjectiveSection";
 import { EXAM_DELIMITER } from "@/lib/cockpit/exam-findings";
 
+// vit-10..12 gave VitalsGrid doctor-scoped trend/demographics queries (needs a
+// QueryClient); these tests cover ObjectiveSection layout, not vitals internals.
+vi.mock("@/components/cockpit/rx/inputs/VitalsGrid", () => ({
+  VitalsGrid: () => <div data-testid="vitals-grid-stub" />,
+}));
+
 const mockGetDoctorSettings = vi.fn();
 const mockPatchDoctorSettings = vi.fn();
 
@@ -99,7 +105,7 @@ describe("ObjectiveSection — structured exam (obj-03)", () => {
     renderSection();
     expect(screen.getByTestId("exam-system-list")).toBeInTheDocument();
     expect(screen.getByTestId("exam-mark-all-normal")).toBeInTheDocument();
-    expect(screen.getByLabelText("Test results (patient-brought)")).toBeInTheDocument();
+    expect(screen.getByTestId("test-results-list-patient_report")).toBeInTheDocument();
   });
 
   it("keeps legacy general/systemic textareas collapsed by default (mounted, hidden)", async () => {
@@ -118,7 +124,7 @@ describe("ObjectiveSection — R-HISTORY enhancements", () => {
   it("renders Vitals grid + structured exam + test results + collapsed legacy blocks", async () => {
     renderSection();
     expect(screen.getByTestId("exam-system-list")).toBeInTheDocument();
-    expect(screen.getByLabelText("Test results (patient-brought)")).toBeInTheDocument();
+    expect(screen.getByTestId("test-results-list-patient_report")).toBeInTheDocument();
     expect(screen.getByText("Free-text exam (legacy)")).toBeInTheDocument();
     expect(screen.getByText("Legacy free-text vitals")).toBeInTheDocument();
     await waitFor(() =>

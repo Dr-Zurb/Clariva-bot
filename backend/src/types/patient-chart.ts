@@ -345,3 +345,31 @@ export interface ProblemListItem {
   /** Maximum follow-ups allowed (episode rows only). */
   max_followups: number | null;
 }
+
+// ============================================================================
+// Investigations & results timeline (soap-data-placement P3 / sdp-05)
+// ============================================================================
+
+/**
+ * One visit projected onto the investigations & results timeline. Assembled in
+ * TS from the patient's prescriptions — no view/migration (P3-D1). One entry
+ * per prescription (visit) that carries investigations/results activity:
+ * ordered investigations, resulted rows, or objective report-scan media.
+ */
+export interface ResultsTimelineEntry {
+  /** Source prescription id (visit identity for the UI key). */
+  prescriptionId: string;
+  /** Owning appointment id. */
+  appointmentId: string;
+  /** Visit date — the prescription's `created_at` (ISO). Sorted desc (P3-D2). */
+  visitDate: string;
+  /** Ordered investigations free-text (`investigations_orders`); null when blank. */
+  ordered: string | null;
+  /** Resulted rows from `test_results_json` (objective-tab P5 shape). */
+  resulted: import('./prescription').TestResultRow[];
+  /**
+   * Per-visit count of objective report-scan attachments (P3-D5). A coarse
+   * indicator only — precise per-result linkage is deferred.
+   */
+  mediaCount: number;
+}

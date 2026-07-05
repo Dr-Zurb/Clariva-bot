@@ -362,8 +362,6 @@ export default function AllergiesSection({
               allergy={row}
               readonly={readonly}
               defaultCollapsed
-              captureInputId={inputId}
-              sectionId={ALLERGIES_CAPTURE_SECTION_ID}
               onPatch={(patch) => void patchAllergy(row, patch)}
               onRemove={() => void archive(row)}
             />

@@ -59,6 +59,7 @@ import {
   type AiRefineStatus,
 } from "@/components/cockpit/rx/subjective/AiRefineProposal";
 import { SubjectiveSectionTemplateButton } from "@/components/cockpit/rx/subjective/SubjectiveSectionTemplateButton";
+import { SubjectiveOtherPhotosStrip } from "@/components/cockpit/rx/subjective/SubjectiveOtherPhotosStrip";
 
 export interface ComplaintListProps {
   disabled?: boolean;
@@ -537,11 +538,13 @@ export function ComplaintList({
       ariaLabel="Chief complaints"
       title="Chief complaints"
       toggleLabel="Toggle chief complaints"
+      scrollOnExpand
+      stickyHeader
       count={complaints.length}
       open={sectionOpen}
       onOpenChange={onSectionOpenChange}
       className="scroll-mt-2"
-      bodyClassName="space-y-2 px-3 pb-3 pt-0"
+      bodyClassName="space-y-2"
       leadingActions={<SectionReorderLeadingAction sectionId="chief_complaints" />}
       actions={!disabled ? <SubjectiveSectionTemplateButton scope="chief_complaints" /> : undefined}
     >
@@ -666,6 +669,8 @@ export function ComplaintList({
             })}
           </div>
         )}
+
+        <SubjectiveOtherPhotosStrip disabled={disabled} />
       </div>
     </CollapsibleContainer>
   );

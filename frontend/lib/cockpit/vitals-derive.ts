@@ -14,63 +14,31 @@
  * affine inverse, so `fToC(cToF(x)) === x` to within floating-point epsilon
  * (asserted < 1e-9 in tests; obj-08 close-gate relies on this).
  *
- * `evaluateRange` imports `resolveVital` from `vitals-schema.ts`. The two
- * modules reference each other only through hoisted function declarations used
- * at call time (never at module-init time), so the cyclic import is safe.
+ * The unit converters live in the dependency-free leaf `vitals-units.ts` and
+ * are re-exported here for back-compat; `vitals-schema.ts` imports them from
+ * the leaf directly, so there is no runtime import cycle between schema and
+ * derive. `evaluateRange` imports `resolveVital` from `vitals-schema.ts` — a
+ * one-directional, call-time-only reference.
  */
 
 import { resolveVital, type RangeContext, type VitalKey } from "./vitals-schema";
 
 // ---------------------------------------------------------------------------
-// 1. Unit converters (exact affine inverses)
+// 1. Unit converters (re-exported from the leaf `vitals-units.ts`)
 // ---------------------------------------------------------------------------
 
-/** Pounds per kilogram (international avoirdupois pound, exact). */
-const KG_PER_LB = 0.45359237;
-/** Centimetres per inch (exact). */
-const CM_PER_IN = 2.54;
-/** mg/dL per mmol/L for glucose (molar mass of glucose ≈ 180.182). */
-const MG_DL_PER_MMOL_L = 18.0182;
-
-/** °C → °F. */
-export function cToF(celsius: number): number {
-  return (celsius * 9) / 5 + 32;
-}
-
-/** °F → °C. */
-export function fToC(fahrenheit: number): number {
-  return ((fahrenheit - 32) * 5) / 9;
-}
-
-/** kg → lb. */
-export function kgToLb(kg: number): number {
-  return kg / KG_PER_LB;
-}
-
-/** lb → kg. */
-export function lbToKg(lb: number): number {
-  return lb * KG_PER_LB;
-}
-
-/** cm → in. */
-export function cmToIn(cm: number): number {
-  return cm / CM_PER_IN;
-}
-
-/** in → cm. */
-export function inToCm(inches: number): number {
-  return inches * CM_PER_IN;
-}
-
-/** mg/dL → mmol/L (glucose). */
-export function mgDlToMmolL(mgDl: number): number {
-  return mgDl / MG_DL_PER_MMOL_L;
-}
-
-/** mmol/L → mg/dL (glucose). */
-export function mmolLToMgDl(mmolL: number): number {
-  return mmolL * MG_DL_PER_MMOL_L;
-}
+export {
+  cToF,
+  fToC,
+  kgToLb,
+  lbToKg,
+  cmToIn,
+  inToCm,
+  cmToFtIn,
+  ftInToCm,
+  mgDlToMmolL,
+  mmolLToMgDl,
+} from "./vitals-units";
 
 // ---------------------------------------------------------------------------
 // 2. Derived clinical values
@@ -141,3 +109,16 @@ export function evaluateRange(
   if (canonicalValue > band.high) return "high";
   return "normal";
 }
+
+export type {
+  CategorizeContext,
+  VitalCategoryDirection,
+  VitalCategoryResult,
+  VitalCategorySeverity,
+} from "./vital-categories";
+export {
+  categorizeBpPair,
+  categorizeVital,
+  categoryIconClass,
+  rangeFlagToCategory,
+} from "./vital-categories";

@@ -316,10 +316,12 @@ export function CustomSubsectionBlock({
       interactiveTitle={isEditingTitle ? headerTitleInput : undefined}
       preview={preview}
       toggleLabel={`Toggle ${displayTitle}`}
+      scrollOnExpand
+      stickyHeader
       leadingActions={headerLeadingActions}
       actions={headerActions}
       defaultOpen
-      bodyClassName="space-y-3 pt-0"
+      bodyClassName="space-y-3"
     >
       <div className="space-y-2">
         {disabled ? (

@@ -23,6 +23,180 @@ export type VitalsBpPosture = 'sitting' | 'standing' | 'supine';
 /** BP measurement limb (objective-tab Vitals 2.0 / migration 151). */
 export type VitalsBpLimb = 'left_arm' | 'right_arm' | 'left_leg' | 'right_leg';
 
+/** Who performed the BP measurement (teleconsult provenance). */
+export type BpMeasuredBy = 'patient' | 'caregiver' | 'nurse' | 'physician' | 'other';
+
+/** How BP was measured (device / technique). */
+export type BpMethod =
+  | 'auto_upper_arm'
+  | 'manual_auscultatory'
+  | 'wrist_monitor'
+  | 'wearable'
+  | 'kiosk';
+
+/** Where BP was measured. */
+export type BpSetting = 'home' | 'clinic' | 'hospital' | 'pharmacy' | 'work';
+
+/** Visit-level default BP measurement context (vitals_json.bpContext). */
+export interface BpContext {
+  measuredBy?: BpMeasuredBy | null;
+  method?: BpMethod | null;
+  setting?: BpSetting | null;
+}
+
+/** One BP measurement row (vitals-section · multi-reading BP). */
+export interface BpReading {
+  systolic: number | null;
+  diastolic: number | null;
+  posture?: VitalsBpPosture | null;
+  limb?: VitalsBpLimb | null;
+  /** Optional clinician label, e.g. "3 min", "rest". */
+  sequenceLabel?: string | null;
+  /** Per-row override; null = inherit visit `bpContext`. */
+  measuredBy?: BpMeasuredBy | null;
+  method?: BpMethod | null;
+  setting?: BpSetting | null;
+  /** Optional free-text note for this reading (flows into derived BP text). */
+  note?: string | null;
+}
+
+/** Visit-level default glucose device (vitals_json.glucoseContext). */
+export interface GlucoseContext {
+  device?: VitalsGlucoseDevice | null;
+}
+
+/** One blood-glucose reading row (vitals-section · multi-reading glucose). */
+export interface GlucoseReading {
+  valueMgDl: number | null;
+  timing?: VitalsGlucoseTiming | null;
+  device?: VitalsGlucoseDevice | null;
+  sequenceLabel?: string | null;
+  note?: string | null;
+}
+
+// ----------------------------------------------------------------------------
+// Vitals 3.0 — json-backed extended vitals (vitals-section / migration 156).
+//
+// `prescriptions.vitals_json` holds every `storage: "json"` vital from the
+// frontend registry (`frontend/lib/cockpit/{vitals-schema,categorical-vitals-
+// schema}.ts`) — the single source of truth for keys/bounds/value-sets. This
+// shape is the BACKEND lockstep mirror; keep both in sync (vit-01 ↔ vit-03).
+// All keys optional/nullable + canonical units; an absent vital is "not
+// recorded". Validation lives in Zod (registry-derived bounds), not SQL (V3-D1).
+// ----------------------------------------------------------------------------
+
+/** O₂ delivery method (categorical vital). */
+export type VitalsO2DeliveryMethod =
+  | 'room_air'
+  | 'nasal_cannula'
+  | 'simple_mask'
+  | 'non_rebreather'
+  | 'venturi_mask'
+  | 'high_flow'
+  | 'cpap'
+  | 'bipap'
+  | 'mechanical_ventilation';
+
+/** Glucose measurement timing (categorical vital). */
+export type VitalsGlucoseTiming =
+  | 'fasting'
+  | 'random'
+  | 'post_prandial'
+  | 'pre_meal'
+  | 'post_meal'
+  | 'post_prandial_1h'
+  | 'post_prandial_2h'
+  | 'ogtt_0h'
+  | 'ogtt_1h'
+  | 'ogtt_2h'
+  | 'ogtt_3h'
+  | 'bedtime';
+
+/** Pupil light reactivity (categorical vital, per eye). */
+export type VitalsPupilReactivity = 'reactive' | 'sluggish' | 'non_reactive' | 'fixed';
+
+/** AVPU responsiveness scale (categorical vital). */
+export type VitalsAvpu = 'alert' | 'voice' | 'pain' | 'unresponsive';
+
+/** Pulse rhythm (categorical vital). */
+export type VitalsPulseRhythm =
+  | 'regular'
+  | 'irregular'
+  | 'irregularly_irregular'
+  | 'regularly_irregular';
+
+/** Temperature measurement site (categorical vital). */
+export type VitalsTempSite = 'oral' | 'axillary' | 'tympanic' | 'rectal' | 'temporal' | 'forehead';
+
+export type VitalsTempDevice = 'digital' | 'mercury' | 'ir_forehead' | 'wearable';
+
+export type VitalsSpo2Device = 'medical_oximeter' | 'smartwatch' | 'phone_app';
+
+export type VitalsHrSource = 'palpation' | 'oximeter' | 'wearable' | 'bp_cuff' | 'ecg';
+
+export type VitalsGlucoseDevice = 'glucometer' | 'cgm' | 'lab_venous';
+
+/** Visit-level who / where for all vitals (teleconsult provenance). */
+export interface MeasurementContext {
+  measuredBy?: BpMeasuredBy | null;
+  setting?: BpSetting | null;
+}
+
+/**
+ * Extended vitals persisted in `prescriptions.vitals_json` (migration 156).
+ * Numeric values are in canonical units; categorical values store the enum.
+ * `gcs_total` stays a column — E/V/M sub-scores live here and auto-sum in the
+ * UI (vit-06). Empty `{}` = no extended vitals recorded.
+ */
+export interface VitalsJson {
+  // Respiratory
+  vitalsO2FlowLMin?: number | null;
+  vitalsFio2Pct?: number | null;
+  vitalsPefrLMin?: number | null;
+  // Metabolic
+  vitalsBloodKetonesMmolL?: number | null;
+  vitalsHipCm?: number | null;
+  // Neuro
+  vitalsGcsE?: number | null;
+  vitalsGcsV?: number | null;
+  vitalsGcsM?: number | null;
+  vitalsPupilSizeLeftMm?: number | null;
+  vitalsPupilSizeRightMm?: number | null;
+  vitalsCapillaryRefillS?: number | null;
+  // Obstetric
+  vitalsFetalHeartRateBpm?: number | null;
+  vitalsFundalHeightCm?: number | null;
+  // Categorical / context
+  vitalsO2DeliveryMethod?: VitalsO2DeliveryMethod | null;
+  vitalsGlucoseTiming?: VitalsGlucoseTiming | null;
+  vitalsPupilReactivityLeft?: VitalsPupilReactivity | null;
+  vitalsPupilReactivityRight?: VitalsPupilReactivity | null;
+  vitalsAvpu?: VitalsAvpu | null;
+  vitalsPulseRhythm?: VitalsPulseRhythm | null;
+  vitalsTempSite?: VitalsTempSite | null;
+  vitalsTempDevice?: VitalsTempDevice | null;
+  vitalsSpo2Device?: VitalsSpo2Device | null;
+  vitalsHrSource?: VitalsHrSource | null;
+  vitalsGlucoseDevice?: VitalsGlucoseDevice | null;
+  /** Multi-reading BP rows; primary (index 0) mirrors legacy columns. */
+  bpReadings?: BpReading[] | null;
+  /** Multi-reading glucose rows; primary (index 0) mirrors legacy column + timing. */
+  glucoseReadings?: GlucoseReading[] | null;
+  /** Visit-level default glucose device. */
+  glucoseContext?: GlucoseContext | null;
+  /** Visit-level who / where for all vitals (teleconsult provenance). */
+  measurementContext?: MeasurementContext | null;
+  /** Visit-level BP cuff method; who/where may also live in `measurementContext`. */
+  bpContext?: BpContext | null;
+  /**
+   * Per-vital who/where override when a reading differs from visit defaults.
+   * Keys are vital registry keys; absent = inherit `measurementContext`.
+   */
+  vitalProvenance?: Record<string, MeasurementContext> | null;
+  /** Optional per-vital notes (scalar vitals + cluster keys + custom ids). */
+  vitalNotes?: Record<string, string> | null;
+}
+
 /** Severity on a structured complaint card (subjective-tab / migration 116). */
 // `minimal` is retained only for legacy stored cards; the UI offers
 // mild/moderate/severe/very_severe (subj-14 refine).
@@ -100,6 +274,12 @@ export type PrescriptionAssociatedComplaint = Omit<
 /** Per-system exam status (objective-tab / migration 150). */
 export type ExamSystemStatus = 'normal' | 'abnormal';
 
+/** One structured finding entry within a system row (obj-31). */
+export interface ExamFindingEntry {
+  findingId: string;
+  attributes?: Record<string, string>;
+}
+
 /**
  * One structured per-system examination finding stored in
  * `prescriptions.examination_json` JSONB (objective-tab / migration 150).
@@ -109,7 +289,30 @@ export type ExamSystemStatus = 'normal' | 'abnormal';
 export interface ExamSystemFinding {
   systemId: string;
   status: ExamSystemStatus;
-  findings?: string[];
+  findings?: ExamFindingEntry[];
+  notes?: string | null;
+}
+
+/** Source of a structured test-result row (objective-tab / migration 154). */
+export type TestResultSource = 'patient_report' | 'in_clinic_poc';
+
+/** Clinical interpretation of a structured test-result row (migration 154). */
+export type TestResultInterpretation = 'normal' | 'high' | 'low' | 'abnormal';
+
+/**
+ * One structured point-of-care / patient-brought result row stored in
+ * `prescriptions.test_results_json` JSONB (objective-tab / migration 154).
+ * `test_results` TEXT is derived from this on save (OBJ-D2); patient-brought
+ * vs in-clinic POC share one shape, discriminated by `source` (P5-D2).
+ */
+export interface TestResultRow {
+  id: string;
+  source: TestResultSource;
+  name: string;
+  value?: string | null;
+  unit?: string | null;
+  date?: string | null;
+  interpretation?: TestResultInterpretation | null;
   notes?: string | null;
 }
 
@@ -600,6 +803,10 @@ export interface Prescription {
   vitals_muac_cm: number | null;
   vitals_waist_cm: number | null;
 
+  // vitals-section / migration 156 — json-backed extended vitals (additive;
+  // does not alter the shipped vitals_* columns or their derived output).
+  vitals_json: VitalsJson;
+
   // Objective — free-text examination findings.
   examination_findings: string | null;
 
@@ -617,6 +824,10 @@ export interface Prescription {
   follow_up_unit: FollowUpUnit | null;
   referral: string | null;
   test_results: string | null;
+
+  // objective-tab / migration 154 — structured point-of-care / patient-brought
+  // test results. `test_results` is derived from this on save (OBJ-D2).
+  test_results_json: TestResultRow[];
 
   // subjective-tab / migration 116 — structured complaints + owned histories.
   complaints: PrescriptionComplaint[];
@@ -833,6 +1044,9 @@ export interface StructuredSoapInput {
   vitalsMuacCm?: number | null;
   vitalsWaistCm?: number | null;
 
+  // vitals-section / migration 156 — json-backed extended vitals (additive).
+  vitalsJson?: VitalsJson;
+
   // Objective — exam findings
   examinationFindings?: string | null;
   // objective-tab / migration 150 — structured per-system exam findings.
@@ -847,6 +1061,9 @@ export interface StructuredSoapInput {
   followUpUnit?: FollowUpUnit | null;
   referral?: string | null;
   testResults?: string | null;
+  // objective-tab / migration 154 — structured test results. `testResults`
+  // TEXT is derived from this on save (OBJ-D2).
+  testResultsJson?: TestResultRow[];
 }
 
 /** Input for creating a prescription (camelCase from API) */

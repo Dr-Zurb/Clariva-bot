@@ -98,6 +98,154 @@ describe('rx template server-backed JSON validation (subj-17)', () => {
   });
 });
 
+describe('rx template objective scope + objective_json validation (obj-16)', () => {
+  it('rxTemplateScopeSchema accepts every objective scope', () => {
+    for (const scope of [
+      'objective_full',
+      'vitals',
+      'exam_systemic',
+      'exam_general',
+      'exam_cvs',
+      'exam_resp',
+      'exam_abd',
+      'exam_cns',
+      'objective_custom_block',
+    ]) {
+      expect(rxTemplateScopeSchema.parse(scope)).toBe(scope);
+    }
+  });
+
+  it('accepts a vitals body with the vitals subset', () => {
+    const body = validateCreateRxTemplateBody({
+      name: 'Adult baseline',
+      scope: 'vitals',
+      objective: { vitalsHr: 72, vitalsBpSystolic: 120, vitalsBpDiastolic: 80, vitalsSpo2: 98 },
+    });
+    expect(body.scope).toBe('vitals');
+    expect(body.objective?.vitalsHr).toBe(72);
+    expect(body.objective?.vitalsBpSystolic).toBe(120);
+  });
+
+  it('accepts an exam body with structured examinationJson', () => {
+    const body = validateCreateRxTemplateBody({
+      name: 'Normal CVS',
+      scope: 'exam_cvs',
+      objective: {
+        examinationJson: [
+          { systemId: 'cvs', status: 'normal', findings: ['S1S2 heard', ''], notes: '  no murmurs ' },
+        ],
+        testResults: '  ECG normal  ',
+      },
+    });
+    const exam = body.objective?.examinationJson ?? [];
+    expect(exam).toHaveLength(1);
+    expect(exam[0]?.systemId).toBe('cvs');
+    expect(exam[0]?.findings).toEqual([{ findingId: 's1s2_heard', attributes: {} }]);
+    expect(exam[0]?.notes).toBe('no murmurs');
+    expect(body.objective?.testResults).toBe('ECG normal');
+  });
+
+  it('drops unknown keys from the objective payload', () => {
+    const body = validateCreateRxTemplateBody({
+      name: 'Stray keys',
+      scope: 'objective_full',
+      objective: { vitalsHr: 80, somethingElse: 'nope', hopi: 'leak' } as never,
+    });
+    expect(body.objective).toEqual({ vitalsHr: 80 });
+  });
+
+  it('rejects an out-of-range vital', () => {
+    expect(() =>
+      validateCreateRxTemplateBody({
+        name: 'Bad vital',
+        scope: 'vitals',
+        objective: { vitalsHr: 9999 },
+      }),
+    ).toThrow(ValidationError);
+  });
+
+  it('drops a malformed exam system row instead of rejecting the template', () => {
+    const body = validateCreateRxTemplateBody({
+      name: 'Mixed exam',
+      scope: 'exam_systemic',
+      objective: {
+        examinationJson: [
+          { systemId: '', status: 'normal' },
+          { systemId: 'resp', status: 'not_a_status' },
+          { systemId: 'cns', status: 'abnormal', findings: ['power 4/5'] },
+        ] as never,
+      },
+    });
+    const exam = body.objective?.examinationJson ?? [];
+    expect(exam).toHaveLength(1);
+    expect(exam[0]?.systemId).toBe('cns');
+  });
+});
+
+describe('rx template result scopes + testResultsJson validation (obj-23)', () => {
+  it('rxTemplateScopeSchema accepts the two result scopes', () => {
+    expect(rxTemplateScopeSchema.parse('test_results')).toBe('test_results');
+    expect(rxTemplateScopeSchema.parse('point_of_care')).toBe('point_of_care');
+  });
+
+  it('accepts a test_results body with structured result rows', () => {
+    const body = validateCreateRxTemplateBody({
+      name: 'Diabetic panel',
+      scope: 'test_results',
+      objective: {
+        testResultsJson: [
+          {
+            id: 'r-1',
+            source: 'patient_report',
+            name: '  HbA1c  ',
+            value: '7.2',
+            unit: '%',
+            interpretation: 'high',
+          },
+        ],
+      },
+    });
+    expect(body.scope).toBe('test_results');
+    const rows = body.objective?.testResultsJson ?? [];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.name).toBe('HbA1c');
+    expect(rows[0]?.source).toBe('patient_report');
+    expect(rows[0]?.interpretation).toBe('high');
+  });
+
+  it('drops a result row with an empty name / bad source rather than rejecting', () => {
+    const body = validateCreateRxTemplateBody({
+      name: 'Mixed',
+      scope: 'point_of_care',
+      objective: {
+        testResultsJson: [
+          { id: 'a', source: 'in_clinic_poc', name: '' },
+          { id: 'b', source: 'not_a_source', name: 'Dropped' },
+          { id: 'c', source: 'in_clinic_poc', name: 'RBS', value: '180', unit: 'mg/dL' },
+        ] as never,
+      },
+    });
+    const rows = body.objective?.testResultsJson ?? [];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.name).toBe('RBS');
+  });
+
+  it('coerces a bad interpretation to null (tolerant) instead of dropping the row', () => {
+    const body = validateCreateRxTemplateBody({
+      name: 'Tolerant',
+      scope: 'test_results',
+      objective: {
+        testResultsJson: [
+          { id: 'd', source: 'patient_report', name: 'Lipid', interpretation: 'sky_high' },
+        ] as never,
+      },
+    });
+    const rows = body.objective?.testResultsJson ?? [];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.interpretation).toBeNull();
+  });
+});
+
 describe('rx template custom_block subjective.customSubsections validation (subj-39)', () => {
   const VALID_ID = '11111111-1111-4111-8111-111111111111';
   const CHILD_ID = '22222222-2222-4222-8222-222222222222';

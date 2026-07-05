@@ -1,29 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  scrollAllergyCaptureIntoView,
+  reAnchorAllergyCardOnClose,
   scrollAllergyCardHeaderIntoView,
 } from "@/lib/chart/chart-allergy-scroll";
 
 describe("chart-allergy-scroll", () => {
-  it("scrolls the header element into view", () => {
+  it("glides the card to the top of the scroll pane on expand", () => {
     const el = document.createElement("div");
     el.scrollIntoView = vi.fn();
     scrollAllergyCardHeaderIntoView(el);
-    expect(el.scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "auto" });
+    expect(el.scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "smooth" });
   });
 
-  it("scrolls the capture section when present", () => {
-    const section = document.createElement("div");
-    section.id = "allergies-capture";
-    section.scrollIntoView = vi.fn();
-    document.body.appendChild(section);
-
-    scrollAllergyCaptureIntoView({
-      sectionId: "allergies-capture",
-      captureInputId: "input-fallback",
-    });
-
-    expect(section.scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "smooth" });
-    section.remove();
+  it("re-anchors the closing card as a fold-locked settle (no aggressive re-glide)", () => {
+    // With no scroll-pane ancestor the close settle is a no-op — it never fires the
+    // native block:start jump the old capture-section scroll did.
+    const el = document.createElement("div");
+    el.scrollIntoView = vi.fn();
+    expect(() => reAnchorAllergyCardOnClose(el)).not.toThrow();
+    expect(el.scrollIntoView).not.toHaveBeenCalled();
+    expect(() => reAnchorAllergyCardOnClose(null)).not.toThrow();
   });
 });

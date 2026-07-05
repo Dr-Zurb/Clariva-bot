@@ -51,7 +51,11 @@ export default function SubjectivePane({
       {!hideHeader ? (
         <PaneHeader title="Subjective" titleId="cockpit-subjective-title" />
       ) : null}
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+      {/* pt-0: any top padding on the scroll container paints content over the
+          sticky section header (a "bleed" band above it). Use a scrolling
+          spacer for breathing room instead. */}
+      <div className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] px-4 pb-3 pt-0">
+        <div className="h-3" aria-hidden />
         <SubjectiveSection
           heading={null}
           disabled={disabled}

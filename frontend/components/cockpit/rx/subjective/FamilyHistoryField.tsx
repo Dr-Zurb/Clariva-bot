@@ -812,12 +812,14 @@ export function FamilyHistoryField({
     <CollapsibleContainer
       title="Family history"
       toggleLabel="Toggle Family history"
+      scrollOnExpand
+      stickyHeader
       preview={preview ? `— ${preview}` : undefined}
       count={familyHistoryFilledCount(value)}
       open={sectionOpen}
       onOpenChange={onSectionOpenChange}
       defaultOpen={sectionOpen === undefined ? hasFamilyHistoryStructuredContent(value) : undefined}
-      bodyClassName="space-y-3 px-3 pb-3 pt-0"
+      bodyClassName="space-y-3"
       testId="family-history-field"
       leadingActions={<SectionReorderLeadingAction sectionId="family_history" />}
       actions={!disabled ? <SubjectiveSectionTemplateButton scope="family_history" /> : undefined}

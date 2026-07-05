@@ -34,6 +34,7 @@ import type { ApiSuccess, ApiError } from "@/lib/api";
 import type {
   PatientVitalsReading,
   ProblemsListData,
+  ResultsTimelineListData,
   VitalsListData,
 } from "@/types/patient-chart";
 
@@ -147,4 +148,56 @@ export async function listPatientProblems(
     throw err;
   }
   return json as ApiSuccess<ProblemsListData>;
+}
+
+// ---------------------------------------------------------------------------
+// Investigations & results timeline (soap-data-placement P3 / sdp-06)
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /api/v1/patients/:patientId/chart/results
+ *
+ * Returns the patient's investigations & results timeline: per visit, ordered
+ * investigations + resulted rows + objective media count. Date-desc.
+ *
+ * @param token     Doctor JWT.
+ * @param patientId Patient UUID.
+ */
+export async function getPatientResultsTimeline(
+  token: string,
+  patientId: string,
+): Promise<ApiSuccess<ResultsTimelineListData>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/patients/${patientId}/chart/results`,
+    {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    },
+  );
+
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<ResultsTimelineListData>
+    | ApiError;
+
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number; code?: string };
+    err.status = res.status;
+    if (isApiError(json)) err.code = json.error.code;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & {
+      status?: number;
+      code?: string;
+    };
+    err.status = json.error.statusCode ?? 500;
+    err.code = json.error.code;
+    throw err;
+  }
+  return json as ApiSuccess<ResultsTimelineListData>;
 }

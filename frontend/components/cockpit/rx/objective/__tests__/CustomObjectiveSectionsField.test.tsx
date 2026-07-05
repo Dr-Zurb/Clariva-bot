@@ -20,6 +20,12 @@ import { EXAM_DELIMITER } from "@/lib/cockpit/exam-findings";
 import { createEmptyCustomSubsection } from "@/lib/cockpit/custom-subsections";
 import type { ObjectiveSectionId } from "@/lib/cockpit/objective-section-order";
 
+// vit-10..12 gave VitalsGrid doctor-scoped trend/demographics queries (needs a
+// QueryClient); these tests cover custom objective sections, not vitals internals.
+vi.mock("@/components/cockpit/rx/inputs/VitalsGrid", () => ({
+  VitalsGrid: () => <div data-testid="vitals-grid-stub" />,
+}));
+
 const mockGetDoctorSettings = vi.fn();
 const mockPatchDoctorSettings = vi.fn();
 

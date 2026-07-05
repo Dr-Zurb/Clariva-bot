@@ -60,7 +60,14 @@ export default function ObjectivePane({
       {!hideHeader ? (
         <PaneHeader title="Objective" titleId="cockpit-objective-title" />
       ) : null}
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+      {/* pt-0: any top padding on the scroll container paints content over the
+          sticky section header (a "bleed" band above it). Use a scrolling
+          spacer for breathing room instead.
+          overflow-anchor:none: the collapse/scroll tweens own `scrollTop` during
+          open/close — native scroll anchoring would inject competing corrections
+          that make the close fold look brittle. */}
+      <div className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] px-4 pb-3 pt-0">
+        <div className="h-3" aria-hidden />
         <ObjectiveSection heading={null} />
       </div>
     </div>

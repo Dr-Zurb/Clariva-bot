@@ -102,6 +102,9 @@ export async function createPrescription(
     vitals_head_circumference_cm: data.vitalsHeadCircumferenceCm ?? null,
     vitals_muac_cm: data.vitalsMuacCm ?? null,
     vitals_waist_cm: data.vitalsWaistCm ?? null,
+    // vitals-section / migration 156 — json-backed extended vitals (additive;
+    // empty {} when omitted, mirroring test_results_json's empty-array default).
+    vitals_json: data.vitalsJson ?? {},
     examination_findings: data.examinationFindings ?? null,
     examination_json: data.examinationJson ?? [],
     differential_diagnosis: data.differentialDiagnosis ?? null,
@@ -110,6 +113,7 @@ export async function createPrescription(
     follow_up_unit: data.followUpUnit ?? null,
     referral: data.referral ?? null,
     test_results: data.testResults ?? null,
+    test_results_json: data.testResultsJson ?? [],
     complaints: data.complaints ?? [],
     family_history: data.familyHistory ?? null,
     family_history_structured: data.familyHistoryStructured ?? null,
@@ -868,6 +872,8 @@ export async function updatePrescription(
   if (updates.vitalsHeadCircumferenceCm !== undefined) updateData.vitals_head_circumference_cm = updates.vitalsHeadCircumferenceCm;
   if (updates.vitalsMuacCm !== undefined) updateData.vitals_muac_cm = updates.vitalsMuacCm;
   if (updates.vitalsWaistCm !== undefined) updateData.vitals_waist_cm = updates.vitalsWaistCm;
+  // vitals-section / migration 156 — json-backed extended vitals (additive).
+  if (updates.vitalsJson !== undefined) updateData.vitals_json = updates.vitalsJson;
   if (updates.examinationFindings !== undefined) updateData.examination_findings = updates.examinationFindings;
   if (updates.examinationJson !== undefined) updateData.examination_json = updates.examinationJson;
   if (updates.differentialDiagnosis !== undefined) updateData.differential_diagnosis = updates.differentialDiagnosis;
@@ -876,6 +882,7 @@ export async function updatePrescription(
   if (updates.followUpUnit !== undefined) updateData.follow_up_unit = updates.followUpUnit;
   if (updates.referral !== undefined) updateData.referral = updates.referral;
   if (updates.testResults !== undefined) updateData.test_results = updates.testResults;
+  if (updates.testResultsJson !== undefined) updateData.test_results_json = updates.testResultsJson;
   if (updates.complaints !== undefined) updateData.complaints = updates.complaints;
   if (updates.familyHistory !== undefined) updateData.family_history = updates.familyHistory;
   if (updates.familyHistoryStructured !== undefined) {

@@ -13,6 +13,8 @@ import {
 import { Stethoscope, User } from "lucide-react";
 import { ExamSystemList } from "@/components/cockpit/rx/inputs/ExamSystemList";
 import { VitalsGrid } from "@/components/cockpit/rx/inputs/VitalsGrid";
+import { TestResultsList } from "@/components/cockpit/rx/objective/TestResultsList";
+import { ObjectiveMediaStrip } from "@/components/cockpit/rx/objective/ObjectiveMediaStrip";
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import { usePrescriptionFormShell } from "@/components/cockpit/rx/PrescriptionFormShellContext";
 import { CollapsibleContainer } from "@/components/ui/CollapsibleContainer";
@@ -20,7 +22,12 @@ import {
   ObjectiveSectionDragHandle,
   ObjectiveSortableSectionShell,
 } from "@/components/cockpit/rx/objective/ObjectiveSortableSectionShell";
+import {
+  ObjectiveSectionTemplateButton,
+  ObjectiveWholeTemplateButton,
+} from "@/components/cockpit/rx/objective/ObjectiveSectionTemplateButton";
 import { ManageObjectiveSectionsMenu } from "@/components/cockpit/rx/objective/ManageObjectiveSectionsMenu";
+import { ObjectiveSpecialtyPacksStrip } from "@/components/cockpit/rx/objective/ObjectiveSpecialtyPacksStrip";
 import {
   ObjectiveCustomSectionBlock,
   ObjectiveCustomSectionsChrome,
@@ -90,6 +97,8 @@ const OBJECTIVE_COLLAPSE_DEFAULTS: Record<StaticObjectiveSectionId, boolean> = {
   vitals: true,
   exam: true,
   test_results: true,
+  point_of_care: false,
+  media: false,
   legacy_exam: false,
   legacy_vitals: false,
 };
@@ -155,6 +164,7 @@ export function ObjectiveSection({
   // resolving (gates the one-shot hydration so the seed lands on first paint);
   // `null` = no seed available → registry default (never blank).
   const [seedLayout, setSeedLayout] = useState<DefaultLayout | null | undefined>(undefined);
+  const [doctorSpecialty, setDoctorSpecialty] = useState<string | null>(null);
 
   const customBlockIds = useMemo(
     () => objectiveCustomSections.map((s) => s.id),
@@ -233,6 +243,7 @@ export function ObjectiveSection({
             specialty: settingsRes.data.settings.specialty ?? null,
           }),
         );
+        setDoctorSpecialty(settingsRes.data.settings.specialty ?? null);
       } catch {
         if (!cancelled) setSeedLayout(null);
       }
@@ -241,6 +252,15 @@ export function ObjectiveSection({
       cancelled = true;
     };
   }, [shell?.objectiveDefaults, shell?.objectiveSeed, appointmentId, token]);
+
+  // obj-18: specialty for starter packs — standalone path sets this in the seed
+  // fetch above; the cockpit shell path reads it off the shell (carried there by
+  // the setup, which already fetched settings) — no extra round-trip, so the
+  // "hydrate from shell without fetching" invariant (obj-11/12/15) is preserved.
+  useEffect(() => {
+    if (shell?.objectiveDefaults == null) return;
+    setDoctorSpecialty(shell.objectiveSpecialty ?? null);
+  }, [shell?.objectiveDefaults, shell?.objectiveSpecialty]);
 
   // ---- Hydration: stored order + collapse from per-doctor default --------------
   useEffect(() => {
@@ -554,22 +574,16 @@ export function ObjectiveSection({
       vitals: <VitalsGrid />,
       exam: <ExamSystemList disabled={disabled} />,
       test_results: (
-        <>
-          <label htmlFor="testResults" className={RX_FIELD_LABEL_CLASS}>
-            Test results (patient-brought)
-          </label>
-          <textarea
-            id="testResults"
-            rows={3}
-            value={fields.testResults}
-            onChange={(e) => setField("testResults", e.target.value)}
-            className={RX_FIELD_INPUT_CLASS}
-            placeholder="Reports / labs the patient brought to this visit"
-            maxLength={3000}
-            disabled={disabled}
-          />
-        </>
+        <TestResultsList
+          source="patient_report"
+          disabled={disabled}
+          showLegacyTextarea
+        />
       ),
+      point_of_care: (
+        <TestResultsList source="in_clinic_poc" disabled={disabled} />
+      ),
+      media: <ObjectiveMediaStrip disabled={disabled} />,
       legacy_exam: (
         <div className="rounded-md border border-border bg-card">
           <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
@@ -631,7 +645,7 @@ export function ObjectiveSection({
         </>
       ),
     };
-  }, [disabled, exam.general, exam.systemic, fields.testResults, fields.vitalsText, setField]);
+  }, [disabled, exam.general, exam.systemic, fields.vitalsText, setField]);
 
   const renderSection = (sectionId: ObjectiveSectionId) => {
     const isStatic = isStaticObjectiveSectionId(sectionId);
@@ -668,17 +682,31 @@ export function ObjectiveSection({
     ) : undefined;
 
     if (isStatic) {
+      // obj-23: result scopes reuse the same per-section template button (save/apply
+      // only that source's structured rows via the shared engine).
+      const sectionActions =
+        disabled
+          ? undefined
+          : sectionId === "vitals"
+            ? <ObjectiveSectionTemplateButton scope="vitals" />
+            : sectionId === "test_results"
+              ? <ObjectiveSectionTemplateButton scope="test_results" />
+              : sectionId === "point_of_care"
+                ? <ObjectiveSectionTemplateButton scope="point_of_care" />
+                : undefined;
       inner = (
         <CollapsibleContainer
           title={title}
           toggleLabel={`Toggle ${title}`}
           leadingActions={leadingActions}
+          actions={sectionActions}
+          scrollOnExpand
+          stickyHeader
           open={collapseControlled ? displayOpenById[sectionId] : undefined}
           onOpenChange={
             collapseControlled ? (open) => handleSectionOpenChange(sectionId, open) : undefined
           }
           defaultOpen={collapseControlled ? undefined : OBJECTIVE_COLLAPSE_DEFAULTS[sectionId]}
-          bodyClassName="px-3 pb-3 pt-0"
         >
           {sectionBody[sectionId]}
         </CollapsibleContainer>
@@ -751,6 +779,7 @@ export function ObjectiveSection({
             </span>
           ) : null}
         </div>
+        {!disabled ? <ObjectiveWholeTemplateButton disabled={disabled} /> : null}
         <ManageObjectiveSectionsMenu
           disabled={disabled}
           open={sectionManagerOpen}
@@ -764,6 +793,10 @@ export function ObjectiveSection({
           onAddCustomSection={handleAddCustomSection}
         />
       </div>
+
+      {!disabled ? (
+        <ObjectiveSpecialtyPacksStrip specialty={doctorSpecialty} disabled={disabled} />
+      ) : null}
 
       {showAllHiddenEmptyState ? (
         <div

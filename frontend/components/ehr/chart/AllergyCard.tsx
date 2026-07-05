@@ -8,14 +8,13 @@ import {
   CHART_CARD_OPTION_CHIP_CLASS,
   CHART_COMPACT_INPUT_CLASS,
 } from "@/components/ehr/chart/chart-chip-styles";
-import {
-  scrollAllergyCaptureIntoView,
-  scrollAllergyCardHeaderIntoView,
-} from "@/lib/chart/chart-allergy-scroll";
+import { scrollAllergyCardHeaderIntoView } from "@/lib/chart/chart-allergy-scroll";
+import { scrollCollapsibleToTop } from "@/lib/cockpit/collapse-scroll";
 import {
   appendAllergyReaction,
   availableAllergyReactionQuickAdd,
 } from "@/lib/cockpit/common-allergens";
+import { Collapse } from "@/components/ui/Collapse";
 import { cn } from "@/lib/utils";
 import type { PatientAllergy, PatientAllergySeverity } from "@/types/patient-chart";
 
@@ -100,10 +99,6 @@ export interface AllergyCardProps {
   busy?: boolean;
   defaultCollapsed?: boolean;
   testIdPrefix?: string;
-  /** Capture combobox input id — scroll target after deliberate collapse. */
-  captureInputId?: string;
-  /** Capture subsection wrapper id — preferred collapse scroll target. */
-  sectionId?: string;
   onPatch: (patch: AllergyCardPatch) => void;
   onRemove: () => void;
 }
@@ -114,8 +109,6 @@ export function AllergyCard({
   busy = false,
   defaultCollapsed = true,
   testIdPrefix = "allergy",
-  captureInputId,
-  sectionId,
   onPatch,
   onRemove,
 }: AllergyCardProps) {
@@ -123,13 +116,13 @@ export function AllergyCard({
   const [expanded, setExpanded] = useState(() => !defaultCollapsed);
   const [reactionDraft, setReactionDraft] = useState(allergy.reaction ?? "");
   const [noteDraft, setNoteDraft] = useState(allergy.note ?? "");
-  const collapseHeaderRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
   const prevExpandedRef = useRef(expanded);
   const collapsible = !readonly;
   const canExpand = collapsible && !pending;
-  const showSummary = collapsible && !expanded;
   const detail = formatAllergyDetail(allergy.reaction, allergy.note);
   const severityTestId = `${testIdPrefix}-severity-${allergy.id}`;
+  const bodyId = `${testIdPrefix}-body-${allergy.id}`;
   const reactionQuickAddLabels = useMemo(
     () => availableAllergyReactionQuickAdd(reactionDraft),
     [reactionDraft],
@@ -140,16 +133,21 @@ export function AllergyCard({
     setNoteDraft(allergy.note ?? "");
   }, [allergy.id, allergy.reaction, allergy.note]);
 
+  // Open glides the card to the sticky line so its body expands in view. Close
+  // glides the whole Allergies container (capture bar + chip list) back to the top —
+  // the same gesture chief complaints uses — so the doctor lands where new chips are
+  // added, not stranded mid-list.
   useLayoutEffect(() => {
     if (!canExpand) return;
     const prev = prevExpandedRef.current;
-    if (expanded && !prev) {
-      scrollAllergyCardHeaderIntoView(collapseHeaderRef.current);
-    } else if (!expanded && prev && captureInputId) {
-      scrollAllergyCaptureIntoView({ sectionId, captureInputId });
-    }
+    if (expanded === prev) return;
     prevExpandedRef.current = expanded;
-  }, [canExpand, captureInputId, expanded, sectionId]);
+    if (expanded) {
+      scrollAllergyCardHeaderIntoView(cardRef.current);
+    } else {
+      scrollCollapsibleToTop(cardRef.current?.closest("section") ?? null);
+    }
+  }, [canExpand, expanded]);
 
   const collapse = () => setExpanded(false);
 
@@ -175,7 +173,7 @@ export function AllergyCard({
     if (!canExpand) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      setExpanded(true);
+      setExpanded((v) => !v);
     }
   };
 
@@ -199,23 +197,12 @@ export function AllergyCard({
       </span>
     ) : null;
 
-  if (showSummary) {
+  // Temp rows stay summary-only (no expand) while the create reconciles.
+  if (pending) {
     return (
       <div
-        role={canExpand ? "button" : undefined}
-        tabIndex={canExpand ? 0 : undefined}
-        onClick={() => {
-          if (canExpand) setExpanded(true);
-        }}
-        onKeyDown={handleSummaryKeyDown}
-        className={cn(
-          "group flex items-center gap-2 rounded-md border border-border/60 bg-background px-2 py-1.5",
-          canExpand &&
-            "cursor-pointer hover:bg-muted/30 focus:outline-none focus:ring-2 focus:ring-ring",
-        )}
+        className="group flex items-center gap-2 rounded-md border border-border/60 bg-background px-2 py-1.5"
         data-testid={`${testIdPrefix}-summary-${allergy.id}`}
-        aria-label={canExpand ? `${allergy.allergen} — expand allergy` : undefined}
-        aria-expanded={false}
       >
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
           <span className="font-medium text-foreground">{allergy.allergen}</span>
@@ -224,11 +211,8 @@ export function AllergyCard({
         </div>
         <button
           type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove();
-          }}
-          disabled={busy || pending}
+          onClick={onRemove}
+          disabled={busy}
           className="shrink-0 text-muted-foreground hover:text-destructive disabled:opacity-50"
           aria-label={`Remove allergy ${allergy.allergen}`}
         >
@@ -240,105 +224,129 @@ export function AllergyCard({
 
   return (
     <div
-      className="space-y-2 rounded-md border border-border/60 bg-background px-2.5 py-2"
+      ref={cardRef}
+      className="scroll-mt-[var(--collapsible-sticky-top,2.75rem)] rounded-md border border-border/60 bg-background transition-colors"
       data-testid={`${testIdPrefix}-card-${allergy.id}`}
-      aria-expanded={canExpand ? expanded : undefined}
+      data-open={expanded ? "true" : "false"}
       onKeyDown={(e) => {
-        if (e.key === "Escape" && canExpand) collapse();
+        if (e.key === "Escape" && canExpand && expanded) collapse();
       }}
     >
-      {canExpand && (
-        <div
-          ref={collapseHeaderRef}
-          className="-mx-2.5 -mt-2 mb-1 flex items-center gap-1.5 border-b border-border/60 bg-muted/25 px-2 py-1"
-          data-testid={`${testIdPrefix}-collapse-header-${allergy.id}`}
-        >
-          <button
-            type="button"
-            onClick={collapse}
-            className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm py-0.5 pl-0.5 text-left hover:bg-muted/40"
-            aria-label={`Collapse ${allergy.allergen}`}
-            aria-expanded
-          >
-            <span className="truncate text-xs font-medium text-foreground">{allergy.allergen}</span>
-            {detail ? (
-              <span className="truncate text-xs text-muted-foreground">· {detail}</span>
-            ) : null}
-          </button>
-          <button
-            type="button"
-            onClick={collapse}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-            aria-label={`Collapse ${allergy.allergen}`}
-            aria-expanded
-          >
-            <ChevronDown className="h-4 w-4" aria-hidden />
-          </button>
-          {!readonly && (
-            <button
-              type="button"
-              disabled={busy || pending}
-              onClick={onRemove}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/60 hover:text-destructive disabled:opacity-50"
-              aria-label={`Remove allergy ${allergy.allergen}`}
-            >
-              <Trash2 className="h-3.5 w-3.5" aria-hidden />
-            </button>
-          )}
+      <div
+        className={cn(
+          "flex items-center gap-2 px-2 py-1.5",
+          expanded && "border-b border-border/60 bg-muted/25",
+        )}
+        data-testid={
+          expanded
+            ? `${testIdPrefix}-collapse-header-${allergy.id}`
+            : `${testIdPrefix}-summary-${allergy.id}`
+        }
+        role={canExpand ? "button" : undefined}
+        tabIndex={canExpand ? 0 : undefined}
+        aria-expanded={canExpand ? expanded : undefined}
+        aria-controls={canExpand ? bodyId : undefined}
+        aria-label={
+          canExpand
+            ? expanded
+              ? `Collapse ${allergy.allergen}`
+              : `Expand ${allergy.allergen}`
+            : undefined
+        }
+        onClick={() => {
+          if (canExpand) setExpanded((v) => !v);
+        }}
+        onKeyDown={handleSummaryKeyDown}
+      >
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+          <span className="font-medium text-foreground">{allergy.allergen}</span>
+          {!expanded && detail ? (
+            <span className="text-muted-foreground">· {detail}</span>
+          ) : null}
+          {!expanded ? summarySeverityToggle : null}
         </div>
-      )}
 
-      <div className="space-y-2">
-        {!readonly && !pending ? (
-          <>
-            <ChartEditorFieldRow label="Severity">
-              <AllergySeverityToggle
-                value={allergy.severity}
-                testId={severityTestId}
-                ariaLabel={`Severity for ${allergy.allergen}`}
-                onChange={(severity) => onPatch({ severity })}
-              />
-            </ChartEditorFieldRow>
-            <ChartEditorFieldRow label="Reaction">
-              <div className="min-w-0 space-y-2">
-                <ChartQuickAddChips
-                  labels={reactionQuickAddLabels}
-                  disabled={busy}
-                  groupLabel="Common reactions"
-                  testId={`${testIdPrefix}-reaction-quick-add-${allergy.id}`}
-                  onAdd={addReactionChip}
-                />
-                <input
-                  type="text"
-                  value={reactionDraft}
-                  disabled={busy}
-                  placeholder="e.g. Rash, anaphylaxis"
-                  aria-label={`Reaction for ${allergy.allergen}`}
-                  className={cn(CHART_COMPACT_INPUT_CLASS, "h-8 w-full min-w-0")}
-                  data-testid={`${testIdPrefix}-reaction-${allergy.id}`}
-                  onChange={(e) => setReactionDraft(e.target.value)}
-                  onBlur={commitReaction}
-                />
-              </div>
-            </ChartEditorFieldRow>
-            <ChartEditorFieldRow label="Note">
-              <input
-                type="text"
-                value={noteDraft}
-                disabled={busy}
-                placeholder="Additional context"
-                aria-label={`Note for ${allergy.allergen}`}
-                className={cn(CHART_COMPACT_INPUT_CLASS, "h-8 w-full min-w-0")}
-                data-testid={`${testIdPrefix}-note-${allergy.id}`}
-                onChange={(e) => setNoteDraft(e.target.value)}
-                onBlur={commitNote}
-              />
-            </ChartEditorFieldRow>
-          </>
-        ) : readonly && detail ? (
-          <p className="text-xs text-muted-foreground">{detail}</p>
+        {!readonly && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove();
+            }}
+            className="shrink-0 text-muted-foreground hover:text-destructive disabled:opacity-50"
+            aria-label={`Remove allergy ${allergy.allergen}`}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
+
+        {canExpand ? (
+          <ChevronDown
+            className={cn(
+              "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200",
+              expanded ? "-rotate-180" : "rotate-0",
+            )}
+            aria-hidden
+          />
         ) : null}
       </div>
+
+      {canExpand ? (
+        <Collapse open={expanded} id={bodyId} className="space-y-2 px-2.5 pb-2.5 pt-2">
+          {!readonly ? (
+            <>
+              <ChartEditorFieldRow label="Severity">
+                <AllergySeverityToggle
+                  value={allergy.severity}
+                  testId={severityTestId}
+                  ariaLabel={`Severity for ${allergy.allergen}`}
+                  onChange={(severity) => onPatch({ severity })}
+                />
+              </ChartEditorFieldRow>
+              <ChartEditorFieldRow label="Reaction">
+                <div className="min-w-0 space-y-2">
+                  <ChartQuickAddChips
+                    labels={reactionQuickAddLabels}
+                    disabled={busy}
+                    groupLabel="Common reactions"
+                    testId={`${testIdPrefix}-reaction-quick-add-${allergy.id}`}
+                    onAdd={addReactionChip}
+                  />
+                  <input
+                    type="text"
+                    value={reactionDraft}
+                    disabled={busy}
+                    placeholder="e.g. Rash, anaphylaxis"
+                    aria-label={`Reaction for ${allergy.allergen}`}
+                    className={cn(CHART_COMPACT_INPUT_CLASS, "h-8 w-full min-w-0")}
+                    data-testid={`${testIdPrefix}-reaction-${allergy.id}`}
+                    onChange={(e) => setReactionDraft(e.target.value)}
+                    onBlur={commitReaction}
+                  />
+                </div>
+              </ChartEditorFieldRow>
+              <ChartEditorFieldRow label="Note">
+                <input
+                  type="text"
+                  value={noteDraft}
+                  disabled={busy}
+                  placeholder="Additional context"
+                  aria-label={`Note for ${allergy.allergen}`}
+                  className={cn(CHART_COMPACT_INPUT_CLASS, "h-8 w-full min-w-0")}
+                  data-testid={`${testIdPrefix}-note-${allergy.id}`}
+                  onChange={(e) => setNoteDraft(e.target.value)}
+                  onBlur={commitNote}
+                />
+              </ChartEditorFieldRow>
+            </>
+          ) : detail ? (
+            <p className="text-xs text-muted-foreground">{detail}</p>
+          ) : null}
+        </Collapse>
+      ) : readonly && detail ? (
+        <p className="px-2.5 pb-2 text-xs text-muted-foreground">{detail}</p>
+      ) : null}
     </div>
   );
 }

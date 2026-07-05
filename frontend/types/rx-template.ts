@@ -10,10 +10,14 @@ import type {
   CustomSubsection,
   DoseUnit,
   DurationUnit,
+  ExamSystemFinding,
   FoodTiming,
   FrequencyCode,
   RouteCode,
   Complaint,
+  TestResultRow,
+  VitalsBpLimb,
+  VitalsBpPosture,
 } from "@/types/prescription";
 import type { SocialHistoryStructured } from "@/lib/cockpit/social-history";
 import type { FamilyHistoryStructured } from "@/lib/cockpit/family-history";
@@ -33,6 +37,17 @@ export const RX_TEMPLATE_SCOPE_VALUES = [
   "social_history",
   "allergies",
   "custom_block",
+  "objective_full",
+  "vitals",
+  "exam_systemic",
+  "exam_general",
+  "exam_cvs",
+  "exam_resp",
+  "exam_abd",
+  "exam_cns",
+  "objective_custom_block",
+  "test_results",
+  "point_of_care",
 ] as const;
 
 export type RxTemplateScope = (typeof RX_TEMPLATE_SCOPE_VALUES)[number];
@@ -52,6 +67,35 @@ export interface RxTemplateSubjective {
    * behaviour for every existing template.
    */
   customSubsections?: CustomSubsection[];
+}
+
+/**
+ * Structured objective bundle in `objective_json` (obj-16). Mirrors backend
+ * RxTemplateObjective: structured exam findings + the `vitals_*` subset +
+ * `testResults` + doctor-defined custom objective sections. Config, not PHI.
+ */
+export interface RxTemplateObjective {
+  examinationJson?: ExamSystemFinding[];
+  vitalsBpSystolic?: number | null;
+  vitalsBpDiastolic?: number | null;
+  vitalsHr?: number | null;
+  vitalsTempC?: number | null;
+  vitalsSpo2?: number | null;
+  vitalsWtKg?: number | null;
+  vitalsHtCm?: number | null;
+  vitalsRr?: number | null;
+  vitalsPainScore?: number | null;
+  vitalsGlucoseMgDl?: number | null;
+  vitalsGcsTotal?: number | null;
+  vitalsBpPosture?: VitalsBpPosture | null;
+  vitalsBpLimb?: VitalsBpLimb | null;
+  vitalsHeadCircumferenceCm?: number | null;
+  vitalsMuacCm?: number | null;
+  vitalsWaistCm?: number | null;
+  testResults?: string | null;
+  /** obj-23: structured POC / patient-brought result rows (mirror of test_results_json). */
+  testResultsJson?: TestResultRow[];
+  customSections?: CustomSubsection[];
 }
 
 /** PMH condition snapshot inside `pmh_json` (subj-17). */
@@ -124,6 +168,7 @@ export interface DoctorRxTemplate {
   clinical_notes: string | null;
   medicines_json: RxTemplateMedicine[];
   subjective_json: RxTemplateSubjective;
+  objective_json: RxTemplateObjective;
   pmh_json: RxTemplatePmh;
   allergies_json: RxTemplateAllergies;
   scope: RxTemplateScope;
@@ -147,6 +192,7 @@ export interface RxTemplatePayload {
   clinicalNotes?: string | null;
   medicines?: RxTemplateMedicine[];
   subjective?: RxTemplateSubjective;
+  objective?: RxTemplateObjective;
   pmh?: RxTemplatePmh;
   allergies?: RxTemplateAllergies;
   scope?: RxTemplateScope;

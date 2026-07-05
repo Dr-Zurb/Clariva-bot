@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { CollapsibleContainer } from "@/components/ui/CollapsibleContainer";
+import { ObjectiveCustomSectionTemplateButton } from "@/components/cockpit/rx/objective/ObjectiveSectionTemplateButton";
 import { RemoveIconButton } from "@/components/cockpit/rx/subjective/RemoveIconButton";
 import {
   RX_FIELD_INPUT_CLASS,
@@ -73,14 +74,21 @@ export function ObjectiveCustomSectionBlock({
   }, [disabled, dispatch, index]);
 
   const headerActions = disabled ? null : (
-    <RemoveIconButton
-      label={`Remove ${displayTitle}`}
-      disabled={disabled}
-      onClick={(e) => {
-        e.stopPropagation();
-        handleRemove();
-      }}
-    />
+    <span className="flex items-center gap-0.5">
+      <ObjectiveCustomSectionTemplateButton
+        sectionId={section.id}
+        sectionTitle={section.title}
+        disabled={disabled}
+      />
+      <RemoveIconButton
+        label={`Remove ${displayTitle}`}
+        disabled={disabled}
+        onClick={(e) => {
+          e.stopPropagation();
+          handleRemove();
+        }}
+      />
+    </span>
   );
 
   return (
@@ -90,10 +98,12 @@ export function ObjectiveCustomSectionBlock({
       title={displayTitle}
       preview={section.body?.trim() || null}
       toggleLabel={`Toggle ${displayTitle}`}
+      scrollOnExpand
+      stickyHeader
       leadingActions={disabled ? undefined : leadingActions}
       actions={headerActions}
       defaultOpen
-      bodyClassName="space-y-3 px-3 pb-3 pt-0"
+      bodyClassName="space-y-3"
     >
       <div className="space-y-2">
         {disabled ? (

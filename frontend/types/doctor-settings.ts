@@ -10,6 +10,7 @@ import type {
 } from "@/lib/cockpit/subjective-section-order";
 import type { ObjectiveSectionId } from "@/lib/cockpit/objective-section-order";
 import type { CustomSubsection } from "@/types/prescription";
+import type { CustomVitalDef } from "@/lib/cockpit/vitals-custom";
 
 /** OPD scheduling: fixed slots vs token queue (migration 028). */
 export type OpdMode = 'slot' | 'queue';
@@ -197,6 +198,18 @@ export interface DoctorSettings {
   objective_section_hidden?: ObjectiveSectionId[];
   /** obj-10: per-doctor default custom Objective-tab sections template (obj-13 consumes). */
   objective_custom_sections?: CustomSubsection[];
+  /**
+   * vit-02 / migration 156: per-doctor hidden vitals — a delta set of registry
+   * vital-key strings. Empty/absent = nothing hidden (classic-core default).
+   * View-only; never reaches the payload. Transport lands in vit-07; vit-03
+   * declares the type only.
+   */
+  vitals_hidden?: string[];
+  /**
+   * vit-14 / migration 157: per-doctor custom-vital DEFINITIONS — seeds fresh
+   * visits; empty/absent = none. Config (labels/units/group), not PHI.
+   */
+  vitals_custom?: CustomVitalDef[];
   created_at: string;
   updated_at: string;
 }
@@ -263,4 +276,8 @@ export type PatchDoctorSettingsPayload = Partial<{
   objective_section_hidden?: ObjectiveSectionId[];
   /** obj-10: replace per-doctor default custom Objective-tab sections template. */
   objective_custom_sections?: CustomSubsection[];
+  /** vit-07: replace per-doctor hidden vitals set (registry vital-key strings). */
+  vitals_hidden?: string[];
+  /** vit-14: replace per-doctor custom-vital definitions. */
+  vitals_custom?: CustomVitalDef[];
 }>;

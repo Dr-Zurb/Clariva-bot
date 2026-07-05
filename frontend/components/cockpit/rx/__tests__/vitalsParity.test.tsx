@@ -14,7 +14,8 @@
  * Synthetic fixtures only — no PHI in logs/snapshots.
  */
 
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   RxFormProvider,
@@ -30,6 +31,7 @@ import {
   cToF,
   fToC,
   cmToIn,
+  ftInToCm,
   inToCm,
   kgToLb,
   lbToKg,
@@ -42,6 +44,8 @@ import {
 import { getLastPrescriptionInEpisode } from "@/lib/api";
 import type { PrescriptionWithRelations } from "@/types/prescription";
 
+const mockGetDoctorSettings = vi.fn();
+
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
@@ -49,10 +53,75 @@ vi.mock("@/lib/api", async (importOriginal) => {
     getLastPrescriptionInEpisode: vi
       .fn()
       .mockResolvedValue({ data: { prescription: null } }),
+    getDoctorSettings: (...args: unknown[]) => mockGetDoctorSettings(...args),
+    getPatientById: vi.fn().mockResolvedValue({
+      data: {
+        patient: {
+          id: "pat-1",
+          name: "Test",
+          phone: "999",
+          date_of_birth: "1990-01-01",
+          gender: "male",
+          created_at: "2020-01-01T00:00:00.000Z",
+          updated_at: "2020-01-01T00:00:00.000Z",
+        },
+      },
+    }),
   };
 });
 
+vi.mock("@/hooks/queries/useVitalsTrendsQuery", async () => {
+  const { buildVitalsTrendSeries, indexVitalsTrendSeries } = await import(
+    "@/lib/cockpit/vitals-trends"
+  );
+  const { buildCategoricalVitalTimelines } = await import(
+    "@/lib/cockpit/categorical-vitals-timeline"
+  );
+  const {
+    buildCustomVitalTextTimelines,
+    buildCustomVitalTrendSeries,
+    indexCustomVitalTrendSeries,
+  } = await import("@/lib/cockpit/custom-vitals-trends");
+  const empty = buildVitalsTrendSeries([]);
+  const emptyCustom = buildCustomVitalTrendSeries([]);
+  return {
+    useVitalsTrendsQuery: () => ({
+      series: empty,
+      byMetric: indexVitalsTrendSeries(empty),
+      categoricalTimelines: buildCategoricalVitalTimelines([]),
+      customTrendSeries: emptyCustom,
+      byCustomId: indexCustomVitalTrendSeries(emptyCustom),
+      customTextTimelines: buildCustomVitalTextTimelines([]),
+      isLoading: false,
+      isEmpty: true,
+      error: null,
+    }),
+  };
+});
+
+vi.mock("@/components/cockpit/rx/objective/PediatricGrowthChartsSection", () => ({
+  PediatricGrowthChartsSection: () => null,
+}));
+
 const mockedGetLast = vi.mocked(getLastPrescriptionInEpisode);
+
+async function waitForVitalsSettingsLoaded() {
+  await waitFor(() => expect(mockGetDoctorSettings).toHaveBeenCalled());
+}
+
+async function revealVital(menuLabel: string) {
+  await waitForVitalsSettingsLoaded();
+  if (!screen.queryByRole("button", { name: `Show ${menuLabel}` })) {
+    fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
+  }
+  fireEvent.click(await screen.findByRole("button", { name: `Show ${menuLabel}` }));
+}
+
+async function revealExtendedVitalsForA11y() {
+  await revealVital("Glasgow Coma Scale (GCS)");
+  await revealVital("Waist Circumference");
+  await revealVital("Head Circumference (HC)");
+}
 
 // ---------------------------------------------------------------------------
 // 1.2 — Shipped-7-vitals regression (pure buildRxPayload, no component).
@@ -173,7 +242,7 @@ function VitalsProbe() {
         wt: state.fields.vitalsWtKg,
         temp: state.fields.vitalsTempC,
         ht: state.fields.vitalsHtCm,
-        glucose: state.fields.vitalsGlucoseMgDl,
+        glucose: state.fields.vitalsGlucoseReadings[0]?.valueMgDl ?? state.fields.vitalsGlucoseMgDl,
       })}
     </pre>
   );
@@ -184,46 +253,59 @@ function readProbe(): { wt: number | null; temp: number | null; ht: number | nul
 }
 
 function renderGrid(initial?: Partial<RxFormFields>) {
+  mockGetDoctorSettings.mockResolvedValue({
+    data: { settings: { vitals_hidden: [] } },
+  });
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
-    <TooltipProvider>
-      <RxFormProvider
-        appointmentId="appt-1"
-        patientId="pat-1"
-        token="tok"
-        entryMode="structured"
-        initialFields={{ ...createEmptyRxFormFields(), ...initial }}
-        autosaveEnabled={false}
-        prescriptionIdRef={prescriptionIdRef}
-        onPrescriptionCreated={() => {}}
-      >
-        <VitalsGrid />
-        <VitalsProbe />
-      </RxFormProvider>
-    </TooltipProvider>,
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <RxFormProvider
+          appointmentId="appt-1"
+          patientId="pat-1"
+          token="tok"
+          entryMode="structured"
+          initialFields={{ ...createEmptyRxFormFields(), ...initial }}
+          autosaveEnabled={false}
+          prescriptionIdRef={prescriptionIdRef}
+          onPrescriptionCreated={() => {}}
+        >
+          <VitalsGrid />
+          <VitalsProbe />
+        </RxFormProvider>
+      </TooltipProvider>
+    </QueryClientProvider>,
   );
 }
 
 describe("obj-08 close-gate · unit round-trip parity (P2-D2)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetDoctorSettings.mockResolvedValue({
+      data: { settings: { vitals_hidden: [] } },
+    });
     mockedGetLast.mockResolvedValue({ data: { prescription: null } });
   });
 
-  it("temp °F: entered value stores canonical °C and re-displays with no drift", () => {
+  it("temp °F: entered value stores canonical °C and re-displays with no drift", async () => {
     renderGrid();
+    await waitForVitalsSettingsLoaded();
     fireEvent.click(screen.getByRole("button", { name: "°F" }));
-    const input = screen.getByLabelText(/Temp in °F/i) as HTMLInputElement;
+    const input = screen.getByLabelText(/Temperature in °F/i) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "100.4" } });
 
     expect(readProbe().temp).toBeCloseTo(fToC(100.4), 6); // canonical stored
-    expect(Number((screen.getByLabelText(/Temp in °F/i) as HTMLInputElement).value)).toBeCloseTo(
+    expect(Number((screen.getByLabelText(/Temperature in °F/i) as HTMLInputElement).value)).toBeCloseTo(
       100.4,
       1,
     ); // re-display, no drift
   });
 
-  it("weight lb: entered value stores canonical kg and re-displays with no drift", () => {
+  it("weight lb: entered value stores canonical kg and re-displays with no drift", async () => {
     renderGrid();
+    await waitForVitalsSettingsLoaded();
     fireEvent.click(screen.getByRole("button", { name: "lb" }));
     const input = screen.getByLabelText(/Weight in lb/i) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "154.3" } });
@@ -235,36 +317,38 @@ describe("obj-08 close-gate · unit round-trip parity (P2-D2)", () => {
     );
   });
 
-  it("height in: entered value stores canonical cm and re-displays with no drift", () => {
+  it("height ft/in: entered value stores canonical cm and re-displays with no drift", async () => {
     renderGrid();
-    // "in" is shared by height/HC/MUAC/waist toggles — scope to the Height group.
+    await waitForVitalsSettingsLoaded();
     const heightGroup = screen.getByRole("group", { name: /Height unit/i });
-    fireEvent.click(within(heightGroup).getByRole("button", { name: "in" }));
-    const input = screen.getByLabelText(/Height in in/i) as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "66.9" } });
+    fireEvent.click(within(heightGroup).getByRole("button", { name: "ft/in" }));
+    const feetInput = screen.getByLabelText(/^Height feet$/i) as HTMLInputElement;
+    const inchesInput = screen.getByLabelText(/^Height inches$/i) as HTMLInputElement;
+    fireEvent.change(feetInput, { target: { value: "5" } });
+    fireEvent.change(inchesInput, { target: { value: "7" } });
 
-    expect(readProbe().ht).toBeCloseTo(inToCm(66.9), 6);
-    expect(Number((screen.getByLabelText(/Height in in/i) as HTMLInputElement).value)).toBeCloseTo(
-      66.9,
-      1,
-    );
+    expect(readProbe().ht).toBeCloseTo(ftInToCm(5, 7), 6);
+    expect(Number((screen.getByLabelText(/^Height feet$/i) as HTMLInputElement).value)).toBe(5);
+    expect(Number((screen.getByLabelText(/^Height inches$/i) as HTMLInputElement).value)).toBe(7);
   });
 
-  it("glucose mmol/L: entered value stores canonical mg/dL and re-displays with no drift", () => {
+  it("glucose mmol/L: entered value stores canonical mg/dL and re-displays with no drift", async () => {
     renderGrid();
+    await waitForVitalsSettingsLoaded();
     fireEvent.click(screen.getByRole("button", { name: "mmol/L" }));
-    const input = screen.getByLabelText(/Glucose in mmol\/L/i) as HTMLInputElement;
+    const input = screen.getByLabelText(/^Blood glucose value$/i) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "6" } });
 
     expect(readProbe().glucose).toBeCloseTo(mmolLToMgDl(6), 6);
-    expect(Number((screen.getByLabelText(/Glucose in mmol\/L/i) as HTMLInputElement).value)).toBeCloseTo(
+    expect(Number((screen.getByLabelText(/^Blood glucose value$/i) as HTMLInputElement).value)).toBeCloseTo(
       6,
       1,
     );
   });
 
-  it("toggling units alone never mutates the stored canonical value", () => {
+  it("toggling units alone never mutates the stored canonical value", async () => {
     renderGrid({ vitalsWtKg: 70 });
+    await waitForVitalsSettingsLoaded();
     expect(readProbe().wt).toBe(70);
     fireEvent.click(screen.getByRole("button", { name: "lb" }));
     fireEvent.click(screen.getByRole("button", { name: "kg" }));
@@ -275,10 +359,13 @@ describe("obj-08 close-gate · unit round-trip parity (P2-D2)", () => {
 describe("obj-08 close-gate · canonical round-trip load → edit (P2-D2)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetDoctorSettings.mockResolvedValue({
+      data: { settings: { vitals_hidden: [] } },
+    });
     mockedGetLast.mockResolvedValue({ data: { prescription: null } });
   });
 
-  it("hydrates stored canonical vitals into the grid, then reflects an edit", () => {
+  it("hydrates stored canonical vitals into the grid, then reflects an edit", async () => {
     const row = {
       id: "rx-1",
       appointment_id: "appt-1",
@@ -289,13 +376,14 @@ describe("obj-08 close-gate · canonical round-trip load → edit (P2-D2)", () =
     } as unknown as PrescriptionWithRelations;
 
     renderGrid(rxFormFieldsFromPrescription(row));
+    await waitForVitalsSettingsLoaded();
 
     // Reflects stored canonical values in the active (canonical) unit.
-    expect((screen.getByLabelText(/Glucose in mg\/dL/i) as HTMLInputElement).value).toBe("108");
-    expect((screen.getByLabelText(/Temp in °C/i) as HTMLInputElement).value).toBe("38");
+    expect((screen.getByLabelText(/^Blood glucose value$/i) as HTMLInputElement).value).toBe("108");
+    expect((screen.getByLabelText(/Temperature in °C/i) as HTMLInputElement).value).toBe("38");
 
     // Edit → state reflects the new canonical value.
-    fireEvent.change(screen.getByLabelText(/Glucose in mg\/dL/i), { target: { value: "120" } });
+    fireEvent.change(screen.getByLabelText(/^Blood glucose value$/i), { target: { value: "120" } });
     expect(readProbe().glucose).toBe(120);
   });
 });
@@ -303,6 +391,9 @@ describe("obj-08 close-gate · canonical round-trip load → edit (P2-D2)", () =
 describe("obj-08 close-gate · ghost values read-only (P2-D5)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetDoctorSettings.mockResolvedValue({
+      data: { settings: { vitals_hidden: [] } },
+    });
   });
 
   it("hydrates last-visit ghosts read-only and never overwrites the live entry", async () => {
@@ -317,14 +408,14 @@ describe("obj-08 close-gate · ghost values read-only (P2-D5)", () => {
     renderGrid();
 
     expect(await screen.findByText(/prev 80 bpm/i)).toBeInTheDocument();
-    expect((screen.getByLabelText(/HR in bpm/i) as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText(/Pulse Rate \(PR\) in bpm/i) as HTMLInputElement).value).toBe("");
   });
 
   it("renders no ghost text when there is no prior prescription", async () => {
     mockedGetLast.mockResolvedValue({ data: { prescription: null } });
     renderGrid();
     // Allow the async fetch to settle, then assert no ghost captions.
-    expect(await screen.findByLabelText(/HR in bpm/i)).toBeInTheDocument();
+    expect(await screen.findByLabelText(/Pulse Rate \(PR\) in bpm/i)).toBeInTheDocument();
     expect(screen.queryByText(/^prev /i)).not.toBeInTheDocument();
   });
 });
@@ -332,24 +423,27 @@ describe("obj-08 close-gate · ghost values read-only (P2-D5)", () => {
 describe("obj-08 close-gate · grid a11y sweep", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetDoctorSettings.mockResolvedValue({
+      data: { settings: { vitals_hidden: [] } },
+    });
     mockedGetLast.mockResolvedValue({ data: { prescription: null } });
   });
 
-  it("labels every core + extended input", () => {
+  it("labels every core + extended input", async () => {
     renderGrid();
+    await revealExtendedVitalsForA11y();
     for (const label of [
       /Systolic blood pressure/i,
       /Diastolic blood pressure/i,
-      /HR in bpm/i,
-      /Temp in °C/i,
-      /SpO₂ in %/i,
+      /Pulse Rate \(PR\) in bpm/i,
+      /Temperature in °C/i,
+      /Oxygen Saturation \(SpO₂\) in %/i,
       /Weight in kg/i,
-      /Height in cm/i,
-      /Resp rate in breaths\/min/i,
-      /Pain in \/10/i,
-      /Glucose in mg\/dL/i,
-      /GCS in \/15/i,
-      /Waist in cm/i,
+      /^Height in cm$/i,
+      /Respiratory Rate \(RR\) in breaths\/min/i,
+      /^Blood glucose value$/i,
+      /Glasgow Coma Scale \(GCS\) in \/15/i,
+      /Waist Circumference in cm/i,
       /BP measurement posture/i,
       /BP measurement limb/i,
     ]) {
@@ -357,24 +451,34 @@ describe("obj-08 close-gate · grid a11y sweep", () => {
     }
   });
 
-  it("exposes unit toggles as labelled groups of aria-pressed buttons", () => {
+  it("exposes unit toggles as labelled groups of aria-pressed buttons", async () => {
     renderGrid();
+    await waitForVitalsSettingsLoaded();
     expect(screen.getByRole("group", { name: /Weight unit/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "kg" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "lb" })).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("gives range flags and derived badges aria-labels", () => {
-    renderGrid({ vitalsHr: 200, vitalsBpSystolic: 120, vitalsBpDiastolic: 80, vitalsHtCm: 170, vitalsWtKg: 70 });
-    expect(screen.getByLabelText(/HR above normal range/i)).toBeInTheDocument();
+  it("gives range flags and derived badges aria-labels", async () => {
+    renderGrid({
+      vitalsHr: 200,
+      vitalsBpSystolic: 120,
+      vitalsBpDiastolic: 80,
+      vitalsBpReadings: [{ systolic: 120, diastolic: 80 }],
+      vitalsHtCm: 170,
+      vitalsWtKg: 70,
+    });
+    await waitForVitalsSettingsLoaded();
+    expect(screen.getByLabelText(/Pulse Rate \(PR\): Above normal/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Mean arterial pressure/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Body surface area/i)).toBeInTheDocument();
+    expect(screen.getByTestId("bsa-badge")).toBeInTheDocument();
   });
 
-  it("renders the pediatric group as a native keyboard-operable disclosure", () => {
+  it("renders the pediatric group as a native keyboard-operable disclosure", async () => {
     const { container } = renderGrid();
+    await revealVital("Head Circumference (HC)");
     const details = container.querySelector("details");
     expect(details).not.toBeNull();
-    expect(details?.querySelector("summary")?.textContent).toMatch(/Pediatric vitals/i);
+    expect(details?.querySelector("summary")?.textContent).toMatch(/Paediatric vitals/i);
   });
 });

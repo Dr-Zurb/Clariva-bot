@@ -22,7 +22,7 @@ import {
   StickyNote,
   Trash2,
 } from "lucide-react";
-import type { Complaint, ComplaintSeverity } from "@/types/prescription";
+import type { Complaint, ComplaintSeverity, PrescriptionAttachment } from "@/types/prescription";
 import type { ComplaintMasterRow } from "@/types/complaint-master";
 import {
   HoverCard,
@@ -56,6 +56,8 @@ import {
 } from "@/lib/cockpit/fever-temperature";
 import { ComplaintAssociatedNamesInline } from "@/components/cockpit/rx/subjective/ComplaintAssociatedNamesInline";
 import { AssociatedSymptomsPanel } from "@/components/cockpit/rx/subjective/AssociatedComplaintsPanel";
+import { Collapse } from "@/components/ui/Collapse";
+import { COLLAPSE_CLOSE_MS } from "@/lib/cockpit/collapse-scroll";
 import {
   COMPLAINT_CARD_HEADER_ATTR,
   COMPLAINT_CARD_INSTANCE_ATTR,
@@ -115,6 +117,14 @@ import {
   RX_FIELD_INPUT_CLASS,
   RX_FIELD_LABEL_CLASS,
 } from "@/components/cockpit/rx/sections/field-styles";
+import { PrescriptionMediaStrip } from "@/components/cockpit/rx/media/PrescriptionMediaStrip";
+import {
+  SUBJECTIVE_ATTACHMENT_CATEGORY,
+  SUBJECTIVE_MEDIA_ALLOWED_MIME,
+  SUBJECTIVE_MEDIA_MAX_FILES,
+  SUBJECTIVE_MEDIA_MAX_FILE_SIZE_MB,
+  filterSubjectiveAttachmentsForComplaint,
+} from "@/lib/cockpit/subjective-media";
 
 const SUGGESTED_CHIP_CLASS =
   "border-dashed border-primary/60 bg-primary/5 text-foreground hover:border-primary";
@@ -586,7 +596,13 @@ function complaintSummaryAriaLabel(
     : `Complaint ${index + 1}: ${nameWithCount} — tap to edit`;
 }
 
-function ComplaintCardSummary({
+/**
+ * Collapsed complaint row. Renders only the inner row (no card border / instance
+ * attr) so it can sit inside the persistent `ComplaintCard` root that owns the
+ * border and animates the body via `Collapse`. When editable it is the whole-row
+ * "tap to edit" button; read-only it is a static row.
+ */
+function ComplaintSummaryRow({
   index,
   value,
   depth,
@@ -599,12 +615,9 @@ function ComplaintCardSummary({
   onPromote,
   promoteBlockedReason,
   mainListDropIntent,
-  isMainListDragSource,
   dragHandleProps,
-  scrollInstanceId,
   parsedCue,
 }: ComplaintCardSummaryProps) {
-  const instanceId = scrollInstanceId ?? value.id;
   const associatedNames = listAssociatedComplaintNames(value);
   const displayName = formatComplaintDisplayName(value.name);
   const badgeLabel = depth === 1 ? `A${index + 1}` : String(index + 1);
@@ -641,10 +654,7 @@ function ComplaintCardSummary({
       tabIndex={readOnly ? undefined : 0}
       onClick={readOnly ? undefined : () => onRequestEdit?.(index)}
       onKeyDown={readOnly ? undefined : handleExpandKeyDown}
-      {...{ [COMPLAINT_CARD_INSTANCE_ATTR]: instanceId }}
-      className={`group relative flex min-h-9 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1.5 text-left hover:bg-muted/40 focus:outline-none focus:ring-2 focus:ring-ring data-[readonly=true]:cursor-default data-[readonly=true]:hover:bg-card ${mainListDragSurfaceClass(
-        mainListDropIntent,
-      )}`}
+      className="group relative flex min-h-9 cursor-pointer items-center gap-1.5 px-2 py-1.5 text-left hover:bg-muted/40 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-inset data-[readonly=true]:cursor-default data-[readonly=true]:hover:bg-transparent"
       data-readonly={readOnly || undefined}
       aria-label={complaintSummaryAriaLabel(index, value, depth, parentName, readOnly)}
     >
@@ -1631,6 +1641,24 @@ function ComplaintCardCollapseLip({
   );
 }
 
+/**
+ * Keep the heavy expanded body mounted while open *and* through the close fold,
+ * then unmount it — so the collapse animates (the body is still there as it folds)
+ * without leaving every collapsed complaint's editor (autocomplete, media strip,
+ * associated panel) mounted. Mounts synchronously on open (state adjusted during
+ * render) so the open animation never flashes an empty body.
+ */
+function useExpandedBodyMounted(open: boolean): boolean {
+  const [mounted, setMounted] = useState(open);
+  if (open && !mounted) setMounted(true);
+  useEffect(() => {
+    if (open || !mounted) return;
+    const timer = window.setTimeout(() => setMounted(false), COLLAPSE_CLOSE_MS);
+    return () => window.clearTimeout(timer);
+  }, [open, mounted]);
+  return mounted;
+}
+
 export function ComplaintCard({
   index,
   value,
@@ -1651,7 +1679,6 @@ export function ComplaintCard({
   onPromote,
   promoteBlockedReason,
   mainListDropIntent = null,
-  isMainListDragSource = false,
   mainListDragActive = false,
   onMainNestHover,
   onAcceptMainNestDrop,
@@ -1844,32 +1871,19 @@ export function ComplaintCard({
   const parsedCueNode =
     parsedCue.length > 0 ? <ParsedFieldsIndicator items={parsedCue} /> : null;
 
-  const rootComplaints = rxForm?.state.fields.complaints ?? [];
-  const shouldShowSummary =
-    isComplaintComplete(value) && (isReadOnly || isEditing === false);
+  const complaintPhotoFilter = useCallback(
+    (attachments: readonly PrescriptionAttachment[]) =>
+      filterSubjectiveAttachmentsForComplaint(attachments, value.id),
+    [value.id],
+  );
 
-  if (shouldShowSummary) {
-    return (
-      <ComplaintCardSummary
-        index={index}
-        value={value}
-        depth={depth}
-        parentName={parentName}
-        readOnly={isReadOnly}
-        disabled={disabled}
-        onPatch={onPatch}
-        onRequestEdit={onRequestEdit}
-        onRemove={onRemove}
-        onPromote={onPromote}
-        promoteBlockedReason={promoteBlockedReason}
-        mainListDropIntent={mainListDropIntent}
-        isMainListDragSource={isMainListDragSource}
-        dragHandleProps={dragHandleProps}
-        scrollInstanceId={instanceId}
-        parsedCue={parsedCueNode}
-      />
-    );
-  }
+  const rootComplaints = rxForm?.state.fields.complaints ?? [];
+  // Show the compact summary row when the complaint is complete and not being
+  // edited (or read-only); otherwise the editor body is open. Same condition as
+  // before, just expressed as the Collapse `open` state instead of a hard swap.
+  const expanded = !(isComplaintComplete(value) && (isReadOnly || isEditing === false));
+  // Keep the heavy body mounted through the close fold, then unmount (perf).
+  const bodyMounted = useExpandedBodyMounted(expanded);
 
   const handlePatch = (patch: Partial<Complaint>) => {
     let nextPatch =
@@ -2003,10 +2017,18 @@ export function ComplaintCard({
     }
   };
 
+  // Depth-0 expanded card pins its header beneath the sticky "Chief complaints"
+  // section header (the `--collapsible-sticky-top` var is published by the
+  // section's CollapsibleContainer). `overflow-clip` (not `hidden`) clips the
+  // card body without creating a scroll container, so the sticky header
+  // resolves against the pane instead of this card. Depth-1 (associated) cards
+  // render inside the parent body and must not pin (avoids a 3rd sticky level).
+  const stickyHeader = depth === 0;
+
   return (
     <div
       {...{ [COMPLAINT_CARD_INSTANCE_ATTR]: instanceId }}
-      className={`relative overflow-hidden rounded-md border border-border bg-card ${mainListDragSurfaceClass(
+      className={`relative overflow-clip rounded-md border border-border bg-card ${mainListDragSurfaceClass(
         depth === 0 ? mainListDropIntent : null,
       )}`}
       onKeyDown={(e) => {
@@ -2015,9 +2037,14 @@ export function ComplaintCard({
         }
       }}
     >
+      {bodyMounted ? (
       <div
         {...{ [COMPLAINT_CARD_HEADER_ATTR]: true }}
-        className="scroll-mt-2 flex min-h-9 items-center gap-1.5 border-b border-border/60 bg-muted/25 px-2"
+        className={`flex min-h-9 items-center gap-1.5 border-b border-border/60 bg-card px-2 ${
+          stickyHeader
+            ? "sticky top-[var(--collapsible-sticky-top,2.75rem)] z-10 scroll-mt-[var(--collapsible-sticky-top,2.75rem)] shadow-sm"
+            : "scroll-mt-2"
+        }`}
       >
         <ComplaintCardDragHandle
           dragHandleProps={dragHandleProps}
@@ -2087,7 +2114,28 @@ export function ComplaintCard({
           </button>
         ) : null}
       </div>
+      ) : (
+        <ComplaintSummaryRow
+          index={index}
+          value={value}
+          depth={depth}
+          parentName={parentName}
+          readOnly={isReadOnly}
+          disabled={disabled}
+          onPatch={onPatch}
+          onRequestEdit={onRequestEdit}
+          onRemove={onRemove}
+          onPromote={onPromote}
+          promoteBlockedReason={promoteBlockedReason}
+          mainListDropIntent={mainListDropIntent}
+          dragHandleProps={dragHandleProps}
+          parsedCue={parsedCueNode}
+        />
+      )}
 
+      <Collapse open={expanded}>
+        {bodyMounted ? (
+          <>
       <div className="space-y-2 px-2 py-1.5">
         <div>
           <div className="flex items-center gap-1">
@@ -2123,6 +2171,24 @@ export function ComplaintCard({
             />
           )}
         </div>
+
+        <PrescriptionMediaStrip
+          disabled={rowDisabled}
+          category={SUBJECTIVE_ATTACHMENT_CATEGORY}
+          complaintId={value.id}
+          filterAttachments={complaintPhotoFilter}
+          allowedMime={SUBJECTIVE_MEDIA_ALLOWED_MIME}
+          maxFiles={SUBJECTIVE_MEDIA_MAX_FILES}
+          maxFileSizeMb={SUBJECTIVE_MEDIA_MAX_FILE_SIZE_MB}
+          variant="compact"
+          testIdBase={`complaint-photos-${value.id}`}
+          sectionLabel="Photos"
+          addLabel="Add photo"
+          addAriaLabel={`Add photo for complaint ${index + 1}`}
+          listAriaLabel={`Photos for complaint ${index + 1}`}
+          emptyMessage=""
+          emptyMessageDisabled=""
+        />
 
         {depth === 0 && dispatch ? (
           <AssociatedSymptomsPanel
@@ -2267,6 +2333,9 @@ export function ComplaintCard({
         disabled={rowDisabled}
         onCollapse={() => onRequestCollapse?.(index, "explicit")}
       />
+          </>
+        ) : null}
+      </Collapse>
     </div>
   );
 }

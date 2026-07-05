@@ -950,6 +950,26 @@ export function serializeSubstanceUseCluster(structured: SocialHistoryStructured
   return parts.join(" · ");
 }
 
+export function serializeSmokingSectionSummary(structured: SocialHistoryStructured): string {
+  const normalized = normalizeSocialHistoryStructured(structured);
+  return normalized.smoking ? serializeSmokingSection(normalized.smoking) : "";
+}
+
+export function serializeSmokelessSectionSummary(structured: SocialHistoryStructured): string {
+  const normalized = normalizeSocialHistoryStructured(structured);
+  return normalized.smokeless ? serializeSmokelessSection(normalized.smokeless) : "";
+}
+
+export function serializeAlcoholSectionSummary(structured: SocialHistoryStructured): string {
+  const normalized = normalizeSocialHistoryStructured(structured);
+  return normalized.alcohol ? serializeAlcoholSection(normalized.alcohol) : "";
+}
+
+export function serializeSubstancesSectionSummary(structured: SocialHistoryStructured): string {
+  const normalized = normalizeSocialHistoryStructured(structured);
+  return normalized.substances ? serializeSubstancesSectionForHistory(normalized.substances) : "";
+}
+
 export function serializeLifestyleCluster(structured: SocialHistoryStructured): string {
   const normalized = normalizeSocialHistoryStructured(structured);
   const parts: string[] = [];

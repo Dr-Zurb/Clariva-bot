@@ -71,7 +71,7 @@ import {
 import {
   CHART_MED_CARD_INSTANCE_ATTR,
   CHART_MED_COLLAPSE_HEADER_ATTR,
-  scrollChartMedCaptureIntoView,
+  scrollChartMedContainerIntoView,
   scrollChartMedCardHeaderIntoView,
 } from "@/lib/chart/chart-medication-scroll";
 import {
@@ -191,9 +191,12 @@ export interface ChartMedicationCardProps {
    * card sits closed and the doctor expands it only to edit. Ignored for drafts.
    */
   defaultCollapsed?: boolean;
-  /** Capture-bar input id — scroll target after deliberate collapse. */
+  /**
+   * Capture-bar input id — retained for caller wiring/focus; the collapse scroll now
+   * targets the enclosing "bigger container" (condition card / meds section).
+   */
   captureInputId?: string;
-  /** Subsection wrapper id (title + capture bar) — preferred collapse scroll target. */
+  /** Standalone/unlinked meds section wrapper id — the close scroll fallback target. */
   medSectionId?: string;
   onDraftCommit?: (payload: CreatePatientMedicationPayload) => void;
   /** Batch create for AI multi-drug "Add all"; falls back to repeated commits. */
@@ -213,7 +216,6 @@ export function ChartMedicationCard({
   testIdPrefix = "chart-med",
   isDraft = false,
   defaultCollapsed = false,
-  captureInputId,
   medSectionId,
   onDraftCommit,
   onDraftCommitMany,
@@ -392,11 +394,13 @@ export function ChartMedicationCard({
     const prev = prevExpandedRef.current;
     if (expanded && !prev) {
       scrollChartMedCardHeaderIntoView(row.id);
-    } else if (!expanded && prev && captureInputId) {
-      scrollChartMedCaptureIntoView({ sectionId: medSectionId, captureInputId });
+    } else if (!expanded && prev) {
+      // Close → glide the bigger container (enclosing condition card, else the
+      // standalone meds section) back to the top. Standard collapse motion.
+      scrollChartMedContainerIntoView(row.id, { sectionId: medSectionId });
     }
     prevExpandedRef.current = expanded;
-  }, [expanded, collapsible, row.id, captureInputId, medSectionId]);
+  }, [expanded, collapsible, row.id, medSectionId]);
 
   const sigLine = formatChartMedicationSig(row);
   const isSos = row.frequency_code === "PRN" || row.intake_pattern === "prn";

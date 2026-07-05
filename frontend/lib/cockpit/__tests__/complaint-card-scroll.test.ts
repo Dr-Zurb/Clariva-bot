@@ -17,7 +17,7 @@ describe("scrollComplaintCardHeaderIntoView", () => {
     vi.restoreAllMocks();
   });
 
-  it("scrolls the expanded card header into view", () => {
+  it("glides the expanded card header into view", () => {
     document.body.innerHTML = `
       <div ${COMPLAINT_CARD_INSTANCE_ATTR}="row-1">
         <div ${COMPLAINT_CARD_HEADER_ATTR}>Header</div>
@@ -26,11 +26,12 @@ describe("scrollComplaintCardHeaderIntoView", () => {
 
     scrollComplaintCardHeaderIntoView("row-1");
 
+    // No scroll pane in jsdom → the shared glide falls back to native smooth scroll.
     const header = document.querySelector(`[${COMPLAINT_CARD_HEADER_ATTR}]`);
     expect(header).not.toBeNull();
     expect(header?.scrollIntoView).toHaveBeenCalledWith({
       block: "start",
-      behavior: "auto",
+      behavior: "smooth",
     });
   });
 

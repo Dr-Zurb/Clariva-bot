@@ -19,9 +19,12 @@ describe("CollapsibleContainer", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Toggle section" }));
 
-    const body = screen.getByText("Body content").parentElement;
-    expect(body).toHaveAttribute("aria-hidden", "true");
-    expect(body).toHaveStyle({ display: "none" });
+    // The animating wrapper carries aria-hidden + the collapsed grid track.
+    const wrapper = screen
+      .getByText("Body content")
+      .closest("[aria-hidden]") as HTMLElement | null;
+    expect(wrapper).toHaveAttribute("aria-hidden", "true");
+    expect(wrapper?.className).toContain("grid-rows-[0fr]");
   });
 
   it("shows the body again when expanded", () => {
@@ -36,13 +39,16 @@ describe("CollapsibleContainer", () => {
       </CollapsibleContainer>,
     );
 
-    const body = screen.getByText("Body content").parentElement;
-    expect(body).toHaveAttribute("aria-hidden", "true");
+    const wrapper = screen
+      .getByText("Body content")
+      .closest("[aria-hidden]") as HTMLElement | null;
+    expect(wrapper).toHaveAttribute("aria-hidden", "true");
+    expect(wrapper?.className).toContain("grid-rows-[0fr]");
 
     fireEvent.click(screen.getByRole("button", { name: "Toggle section" }));
 
-    expect(body).toHaveAttribute("aria-hidden", "false");
-    expect(body).not.toHaveStyle({ display: "none" });
+    expect(wrapper).toHaveAttribute("aria-hidden", "false");
+    expect(wrapper?.className).toContain("grid-rows-[1fr]");
   });
 
   it("does not collapse when clicking an interactive title control", () => {
@@ -80,5 +86,22 @@ describe("CollapsibleContainer", () => {
     expect(dragHandle.compareDocumentPosition(titleButton)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
+  });
+
+  it("keeps the full section title visible when a long preview is present", () => {
+    render(
+      <CollapsibleContainer
+        title="Social / personal history"
+        toggleLabel="Toggle Social / personal history"
+        preview="— Smoking: Smoker (cigarette, hookah, vape) · Smokeless: Gutka, Paan/Supari, Khaini · Alcohol: Drinks alcohol"
+        defaultOpen
+      >
+        <p>Body content</p>
+      </CollapsibleContainer>,
+    );
+
+    const title = screen.getByText("Social / personal history");
+    expect(title).toHaveClass("shrink-0");
+    expect(title).not.toHaveClass("truncate");
   });
 });

@@ -484,7 +484,11 @@ describe("ComplaintList", () => {
       screen.getByRole("button", { name: /^Collapse complaint 1$/i }),
     );
 
-    expect(screen.queryByLabelText("Complaint name")).not.toBeInTheDocument();
+    // The editor body stays mounted through the close fold (deferred unmount),
+    // so wait for it to drop and the summary row to take over.
+    await waitFor(() => {
+      expect(screen.queryByLabelText("Complaint name")).not.toBeInTheDocument();
+    });
     expect(
       screen.getByRole("button", { name: /Complaint 1: Headache — tap to edit/i }),
     ).toBeInTheDocument();
@@ -569,7 +573,10 @@ describe("ComplaintList", () => {
       screen.getByRole("button", { name: /^Finish and collapse complaint 1$/i }),
     );
 
-    expect(screen.queryByLabelText("Complaint name")).not.toBeInTheDocument();
+    // Body unmounts after the close fold (deferred unmount); summary then shows.
+    await waitFor(() => {
+      expect(screen.queryByLabelText("Complaint name")).not.toBeInTheDocument();
+    });
     expect(
       screen.getByRole("button", { name: /Complaint 1: Headache — tap to edit/i }),
     ).toBeInTheDocument();

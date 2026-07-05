@@ -50,11 +50,13 @@ export function PatientAllergiesZone({
       title="Allergies"
       toggleLabel="Toggle allergies"
       testId="patient-allergies-zone"
+      scrollOnExpand
+      stickyHeader
       open={zoneOpen}
       onOpenChange={handleZoneOpenChange}
       count={allergyCount}
       preview={allergySummary !== "No allergies" ? `— ${allergySummary}` : undefined}
-      bodyClassName="space-y-3 px-3 pb-3 pt-0"
+      bodyClassName="space-y-3"
       leadingActions={<SectionReorderLeadingAction sectionId="allergies" />}
       actions={
         !readonly ? (

@@ -62,14 +62,14 @@ describe("AllergyCard", () => {
       />,
     );
     fireEvent.click(screen.getByTestId("allergy-summary-allergy-1"));
-    expect(screen.getByTestId("allergy-card-allergy-1")).toBeInTheDocument();
+    expect(screen.getByTestId("allergy-card-allergy-1")).toHaveAttribute("data-open", "true");
     expect(screen.getByTestId("allergy-collapse-header-allergy-1")).toBeInTheDocument();
     expect(screen.getByTestId("allergy-severity-allergy-1")).toBeInTheDocument();
     expect(screen.getByTestId("allergy-reaction-allergy-1")).toBeInTheDocument();
     expect(screen.getByTestId("allergy-reaction-quick-add-allergy-1")).toBeInTheDocument();
   });
 
-  it("collapses when the expanded header is clicked", () => {
+  it("collapses when the expanded header chevron is clicked", () => {
     render(
       <AllergyCard
         allergy={baseAllergy}
@@ -79,10 +79,26 @@ describe("AllergyCard", () => {
       />,
     );
     fireEvent.click(screen.getByTestId("allergy-summary-allergy-1"));
-    const header = screen.getByTestId("allergy-collapse-header-allergy-1");
-    fireEvent.click(header.querySelector("button")!);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Collapse Penicillin" }),
+    );
     expect(screen.getByTestId("allergy-summary-allergy-1")).toBeInTheDocument();
-    expect(screen.queryByTestId("allergy-card-allergy-1")).not.toBeInTheDocument();
+    expect(screen.getByTestId("allergy-card-allergy-1")).toHaveAttribute("data-open", "false");
+  });
+
+  it("glides the card header into view on expand (smooth collapse-scroll)", () => {
+    const scrollSpy = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
+    render(
+      <AllergyCard
+        allergy={baseAllergy}
+        defaultCollapsed
+        onPatch={vi.fn()}
+        onRemove={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("allergy-summary-allergy-1"));
+    expect(scrollSpy).toHaveBeenCalledWith({ block: "start", behavior: "smooth" });
+    scrollSpy.mockRestore();
   });
 
   it("updates severity from chip toggle", () => {

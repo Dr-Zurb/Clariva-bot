@@ -24,6 +24,7 @@ import {
   type LayoutNode,
   type LegacyPresetLayout,
   type CockpitTemplateOverride,
+  type CustomVitalDef,
   type DoctorSettingsRow,
   type OpdMode,
   type PatientFlowAdvance,
@@ -39,6 +40,8 @@ import {
   objectiveSectionOrderSchema,
   objectiveSectionCollapsedSchema,
   objectiveSectionHiddenSchema,
+  vitalsCustomSchema,
+  vitalsHiddenSchema,
 } from '../utils/validation';
 import {
   sanitizeSubjectiveSectionOrder,
@@ -50,6 +53,7 @@ import {
   sanitizeObjectiveSectionCollapsed,
   sanitizeObjectiveSectionHidden,
 } from '../types/objective-section-order';
+import { sanitizeVitalsHidden } from '../types/vitals-hidden';
 import { mergeServiceCatalogOnSave } from '../utils/service-catalog-normalize';
 import {
   appendMatcherHintFields,
@@ -96,6 +100,10 @@ const SELECT_COLUMNS =
   'objective_section_collapsed, ' +
   'objective_section_hidden, ' +
   'objective_custom_sections, ' +
+  // vit-14 (migration 157): per-doctor custom-vital definitions.
+  'vitals_custom, ' +
+  // vit-07 (migration 156): per-doctor hidden vitals set.
+  'vitals_hidden, ' +
   // R-MOD-full (migration 106): global cockpit template pin.
   'cockpit_template_override, ' +
   'created_at, updated_at';
@@ -145,6 +153,10 @@ const DEFAULT_SETTINGS: DoctorSettingsRow = {
   objective_section_collapsed: {},
   objective_section_hidden: [],
   objective_custom_sections: [],
+  // vit-14: per-doctor custom-vital definitions (empty = none).
+  vitals_custom: [],
+  // vit-07: per-doctor hidden vitals (empty = factory default).
+  vitals_hidden: [],
   // R-MOD-full: NULL = auto-select per modality + state.
   cockpit_template_override: null,
   created_at: '',
@@ -345,16 +357,41 @@ function normalizeObjectiveCustomSectionsInRow(row: DoctorSettingsRow): DoctorSe
   return { ...row, objective_custom_sections: raw as CustomSubsection[] };
 }
 
+function normalizeVitalsCustomInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as { vitals_custom?: unknown }).vitals_custom;
+  if (!Array.isArray(raw)) {
+    return { ...row, vitals_custom: [] };
+  }
+  return { ...row, vitals_custom: raw as CustomVitalDef[] };
+}
+
+function normalizeVitalsHiddenInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as { vitals_hidden?: unknown }).vitals_hidden;
+  if (!Array.isArray(raw)) {
+    return { ...row, vitals_hidden: [] };
+  }
+  return {
+    ...row,
+    vitals_hidden: sanitizeVitalsHidden(
+      raw.filter((id): id is string => typeof id === 'string'),
+    ),
+  };
+}
+
 function normalizeDoctorSettingsApiRow(row: DoctorSettingsRow): DoctorSettingsRow {
-  return normalizeObjectiveCustomSectionsInRow(
-    normalizeObjectiveSectionHiddenInRow(
-      normalizeObjectiveSectionCollapsedInRow(
-        normalizeObjectiveSectionOrderInRow(
-          normalizeSubjectiveSectionHiddenInRow(
-            normalizeSubjectiveSectionCollapsedInRow(
-              normalizeSubjectiveSectionOrderInRow(
-                normalizeSubjectiveCustomSubsectionsInRow(
-                  normalizeUserTemplatesInRow(normalizeServiceOfferingsInRow(row)),
+  return normalizeVitalsHiddenInRow(
+    normalizeVitalsCustomInRow(
+      normalizeObjectiveCustomSectionsInRow(
+        normalizeObjectiveSectionHiddenInRow(
+          normalizeObjectiveSectionCollapsedInRow(
+            normalizeObjectiveSectionOrderInRow(
+              normalizeSubjectiveSectionHiddenInRow(
+                normalizeSubjectiveSectionCollapsedInRow(
+                  normalizeSubjectiveSectionOrderInRow(
+                    normalizeSubjectiveCustomSubsectionsInRow(
+                      normalizeUserTemplatesInRow(normalizeServiceOfferingsInRow(row)),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -364,6 +401,7 @@ function normalizeDoctorSettingsApiRow(row: DoctorSettingsRow): DoctorSettingsRo
     ),
   );
 }
+
 
 export type MatcherHintsReplacePayload = {
   keywords: string;
@@ -752,6 +790,10 @@ export interface UpdateDoctorSettingsPayload {
   objective_section_hidden?: string[];
   /** obj-10: per-doctor default custom Objective-tab sections (replaces entire array). */
   objective_custom_sections?: CustomSubsection[];
+  /** vit-14: per-doctor custom-vital definitions (replaces entire array). */
+  vitals_custom?: CustomVitalDef[];
+  /** vit-07: per-doctor hidden vitals set (replaces entire array). */
+  vitals_hidden?: string[];
 }
 
 /**
@@ -956,6 +998,24 @@ export async function updateDoctorSettings(
     }));
   }
 
+  if (payload.vitals_custom !== undefined) {
+    const parsed = vitalsCustomSchema.safeParse(payload.vitals_custom);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ValidationError(first?.message ?? 'Invalid vitals_custom');
+    }
+    payload.vitals_custom = parsed.data;
+  }
+
+  if (payload.vitals_hidden !== undefined) {
+    const parsed = vitalsHiddenSchema.safeParse(payload.vitals_hidden);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ValidationError(first?.message ?? 'Invalid vitals_hidden');
+    }
+    payload.vitals_hidden = parsed.data;
+  }
+
   if (payload.opd_policies !== undefined && payload.opd_policies !== null) {
     const modeSchedule = payload.opd_policies.mode_schedule;
     if (modeSchedule !== undefined) {
@@ -1012,6 +1072,8 @@ export async function updateDoctorSettings(
     'objective_section_collapsed',
     'objective_section_hidden',
     'objective_custom_sections',
+    'vitals_custom',
+    'vitals_hidden',
   ];
   for (const key of allowedKeys) {
     if (key in payload) {

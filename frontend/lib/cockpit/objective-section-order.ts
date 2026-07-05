@@ -3,16 +3,14 @@ export const CORE_OBJECTIVE_SECTION_IDS = [
   "vitals",
   "exam",
   "test_results",
+  "point_of_care",
+  "media",
   "legacy_exam",
   "legacy_vitals",
 ] as const;
 
 export type CoreObjectiveSectionId = (typeof CORE_OBJECTIVE_SECTION_IDS)[number];
 
-/**
- * Reserved for P5 — not in the registry until point-of-care / media sections land:
- * `point_of_care`, `media`
- */
 export type StaticObjectiveSectionId = CoreObjectiveSectionId;
 
 export const CUSTOM_BLOCK_SECTION_PREFIX = "custom_block:" as const;
@@ -27,12 +25,14 @@ const CUSTOM_BLOCK_UUID_RE =
 
 /**
  * Canonical default render order — reproduces the pre-P3 hardcoded layout in
- * `ObjectiveSection.tsx` (Vitals → exam → test results → legacy exam → legacy vitals).
+ * `ObjectiveSection.tsx` (Vitals → exam → patient-brought → POC → legacy blocks).
  */
 export const DEFAULT_OBJECTIVE_SECTION_ORDER: StaticObjectiveSectionId[] = [
   "vitals",
   "exam",
   "test_results",
+  "point_of_care",
+  "media",
   "legacy_exam",
   "legacy_vitals",
 ];
@@ -41,7 +41,9 @@ export const DEFAULT_OBJECTIVE_SECTION_ORDER: StaticObjectiveSectionId[] = [
 export const OBJECTIVE_SECTION_LABELS: Record<StaticObjectiveSectionId, string> = {
   vitals: "Vitals",
   exam: "Examination",
-  test_results: "Test results",
+  test_results: "Patient-brought reports",
+  point_of_care: "Point-of-care (in-clinic)",
+  media: "Media & scans",
   legacy_exam: "Free-text exam (legacy)",
   legacy_vitals: "Legacy free-text vitals",
 };

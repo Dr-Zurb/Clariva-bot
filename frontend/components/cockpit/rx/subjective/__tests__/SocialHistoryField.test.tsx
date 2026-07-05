@@ -53,6 +53,14 @@ function renderField(
   return view;
 }
 
+/**
+ * Tobacco / alcohol / substance items render as collapsed entry cards; their
+ * detail fields live behind the fold, so open the card before reaching them.
+ */
+function openEntryCard(testId: string) {
+  fireEvent.click(screen.getByTestId(`${testId}-toggle`));
+}
+
 describe("SocialHistoryField", () => {
   it("hides smoking detail fields until current or ex is selected", () => {
     function Harness() {
@@ -67,6 +75,47 @@ describe("SocialHistoryField", () => {
     const smokingGroup = screen.getByTestId("social-smoking-status");
     fireEvent.click(smokingGroup.querySelector('button[aria-label="Smoker"]')!);
     expect(screen.getByTestId("social-smoking-products")).toBeInTheDocument();
+  });
+
+  it("renders tobacco, alcohol and substances as collapsible section cards", () => {
+    renderField({});
+    for (const testId of [
+      "social-smoking-card",
+      "social-smokeless-card",
+      "social-alcohol-card",
+      "social-substances-card",
+    ]) {
+      expect(screen.getByTestId(testId)).toBeInTheDocument();
+    }
+    // Expand the enclosing cluster so the nested section toggles are visible.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Toggle tobacco, alcohol and drugs cluster" }),
+    );
+    for (const label of [
+      "Toggle smoking",
+      "Toggle smokeless tobacco",
+      "Toggle alcohol",
+      "Toggle substances",
+    ]) {
+      expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
+    }
+  });
+
+  it("collapses empty section cards but opens ones with content, and toggles on click", () => {
+    renderField({
+      smoking: {
+        status: "current",
+        products: [{ id: "p1", type: "cigarette", perDay: 20, years: 10 }],
+      },
+    });
+
+    const smokingToggle = screen.getByRole("button", { name: "Toggle smoking" });
+    const alcoholToggle = screen.getByRole("button", { name: "Toggle alcohol" });
+    expect(smokingToggle).toHaveAttribute("aria-expanded", "true");
+    expect(alcoholToggle).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(smokingToggle);
+    expect(smokingToggle).toHaveAttribute("aria-expanded", "false");
   });
 
   it("updates pack-years badge when per-day and years are entered", () => {
@@ -148,6 +197,7 @@ describe("SocialHistoryField", () => {
       onChange,
     );
 
+    openEntryCard("social-smoking-product-0");
     fireEvent.click(within(screen.getByTestId("social-smoking-product-0")).getByRole("button", { name: "Months" }));
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -229,6 +279,7 @@ describe("SocialHistoryField", () => {
 
     expect(screen.getByLabelText("Other product name")).toHaveValue("Naswar");
     expect(screen.getByTestId("social-smokeless-products")).toBeInTheDocument();
+    openEntryCard("social-smokeless-product-0");
     fireEvent.click(screen.getByRole("button", { name: "Times" }));
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -250,6 +301,7 @@ describe("SocialHistoryField", () => {
       onChange,
     );
 
+    openEntryCard("social-alcohol-drink-0");
     const drinkCard = screen.getByTestId("social-alcohol-drink-0");
     expect(within(drinkCard).getByLabelText("Quit duration")).toBeInTheDocument();
     const quitUnitGroup = within(drinkCard).getByRole("group", { name: "Quit duration unit" });
@@ -584,6 +636,7 @@ describe("SocialHistoryField phase-2 lifestyle + context (sh-06)", () => {
     fireEvent.click(screen.getByTestId("social-substances-add-cannabis"));
     expect(screen.getByTestId("social-substances-details")).toBeInTheDocument();
 
+    openEntryCard("social-substances-item-0");
     fireEvent.click(
       screen.getByTestId("social-substances-item-0-route-iv"),
     );
@@ -1024,6 +1077,7 @@ describe("SET_SOCIAL_HISTORY_STRUCTURED reducer", () => {
       },
     });
 
+    openEntryCard("social-alcohol-drink-0");
     expect(screen.getByRole("group", { name: "Drink strength" })).toBeInTheDocument();
     expect(screen.getByTestId("social-alcohol-strength-8-0")).toBeInTheDocument();
     expect(screen.getByTestId("social-alcohol-max-session-amount")).toHaveAttribute(

@@ -33,10 +33,16 @@ function renderSmokeless(
   );
 }
 
+/** Products render as collapsed cards; open one to reach its detail fields. */
+function openProductCard(testId: string) {
+  fireEvent.click(screen.getByTestId(`${testId}-toggle`));
+}
+
 describe("TobaccoProductRows — smokeless UX", () => {
   it("shows inline packets/day suffix and unit chips", () => {
     renderSmokeless([{ id: "p1", type: "gutka", perDay: 2 }]);
 
+    openProductCard("social-smokeless-product-0");
     const row = screen.getByTestId("social-smokeless-product-0");
     expect(within(row).getByText("packets/day")).toBeInTheDocument();
     expect(within(row).getByRole("button", { name: "Times" })).toBeInTheDocument();
@@ -49,6 +55,7 @@ describe("TobaccoProductRows — smokeless UX", () => {
   it("shows inline times/day when Times unit is selected", () => {
     renderSmokeless([{ id: "p1", type: "gutka", perDay: 2, perDayUnit: "times" }]);
 
+    openProductCard("social-smokeless-product-0");
     const row = screen.getByTestId("social-smokeless-product-0");
     expect(within(row).getByText("times/day")).toBeInTheDocument();
     expect(within(row).getByRole("button", { name: "Packets" })).toBeInTheDocument();
@@ -74,14 +81,22 @@ describe("TobaccoProductRows — smokeless UX", () => {
     ]);
   });
 
-  it("uses stacked card layout for product rows", () => {
+  it("uses collapsible card layout for product rows", () => {
     renderSmokeless([
       { id: "p1", type: "gutka", perDay: 1 },
       { id: "p2", type: "paan/supari", perDay: 1 },
     ]);
 
-    expect(screen.getByTestId("social-smokeless-product-0")).toHaveClass("space-y-2");
+    // Each product renders as its own card, collapsed by default.
+    expect(screen.getByTestId("social-smokeless-product-0")).toHaveAttribute(
+      "data-open",
+      "false",
+    );
+    expect(screen.getByTestId("social-smokeless-product-1")).toBeInTheDocument();
     expect(screen.getByTitle("Paan/Supari")).toBeInTheDocument();
+
+    // Opening a card reveals its detail fields.
+    openProductCard("social-smokeless-product-0");
     const row = screen.getByTestId("social-smokeless-product-0");
     expect(within(row).getByText("Amount")).toBeInTheDocument();
     expect(within(row).getByText("How often")).toBeInTheDocument();

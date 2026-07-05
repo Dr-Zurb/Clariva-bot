@@ -44,6 +44,7 @@ import React, {
   useMemo,
   useReducer,
   useRef,
+  useState,
   type MutableRefObject,
 } from "react";
 import { createPrescription, updatePrescription } from "@/lib/api";
@@ -106,18 +107,82 @@ import {
 } from "@/lib/cockpit/custom-subsections";
 import {
   EXAM_CORE_SYSTEM_ORDER,
+  isTeleconsult,
   resolveExamSystem,
+  teleconsultNormalLine,
 } from "@/lib/cockpit/exam-schema";
+import {
+  normalizeExamFindingEntries,
+  renderExamSystemFindingBody,
+} from "@/lib/cockpit/exam-finding-utils";
+import { normalizeCvsFindingEntries } from "@/lib/cockpit/cvs-exam-migrations";
+import { normalizeRespFindingEntries } from "@/lib/cockpit/resp-exam-migrations";
+import { normalizeAbdFindingEntries } from "@/lib/cockpit/abd-exam-migrations";
+import { normalizeCnsFindingEntries } from "@/lib/cockpit/cns-exam-migrations";
+import {
+  deriveTestResults,
+  normalizeTestResults,
+} from "@/lib/cockpit/test-results";
+import {
+  hydrateMeasurementContextFromPrescription,
+  hydrateVitalProvenanceFromPrescription,
+  resolveDefaultMeasurementContext,
+  type VitalProvenanceMap,
+} from "@/lib/cockpit/measurement-context";
+import {
+  createEmptyBpReading,
+  DEFAULT_BP_CONTEXT,
+  hydrateBpContextFromPrescription,
+  hydrateBpReadingsFromPrescription,
+  resolvePrimaryBpForPayload,
+} from "@/lib/cockpit/bp-readings";
+import {
+  createEmptyGlucoseReading,
+  DEFAULT_GLUCOSE_CONTEXT,
+  glucoseReadingRowHasData,
+  hydrateGlucoseContextFromPrescription,
+  hydrateGlucoseReadingsFromPrescription,
+  resolvePrimaryGlucoseForPayload,
+} from "@/lib/cockpit/glucose-readings";
+import {
+  assembleVitalsJsonPayload,
+  createEmptyJsonVitalFields,
+  hasVitalsJsonContent,
+  hydrateJsonVitalFields,
+  pickJsonVitalFields,
+} from "@/lib/cockpit/vitals-json";
+import {
+  assembleVitalsCustomEntries,
+  hydrateCustomVitalNotesFromEntries,
+  hydrateVitalsCustom,
+  type CustomVitalDef,
+  type CustomVitalValueMap,
+} from "@/lib/cockpit/vitals-custom";
+import {
+  hydrateVitalNotesFromPrescription,
+  type VitalNotesMap,
+} from "@/lib/cockpit/vital-notes";
+import type {
+  VitalsAvpu,
+  VitalsGlucoseTiming,
+  VitalsO2DeliveryMethod,
+  VitalsPulseRhythm,
+  VitalsPupilReactivity,
+  VitalsTempSite,
+} from "@/lib/cockpit/categorical-vitals-schema";
 import type {
   Complaint,
+  ExamFindingEntry,
   ExamSystemFinding,
   ExamSystemStatus,
   PrescriptionType,
   PrescriptionWithRelations,
+  TestResultRow,
   UpdatePrescriptionPayload,
   VitalsBpLimb,
   VitalsBpPosture,
 } from "@/types/prescription";
+import type { BpContext, BpReading, GlucoseContext, GlucoseReading, MeasurementContext } from "@/types/prescription";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -127,8 +192,13 @@ export type FollowUpUnit = "days" | "weeks" | "months" | "as_needed";
 
 /** Re-export for consumers that import from RxFormContext. */
 export type { Complaint } from "@/types/prescription";
-export type { ExamSystemFinding, ExamSystemStatus } from "@/types/prescription";
-export type { VitalsBpLimb, VitalsBpPosture } from "@/types/prescription";
+export type { ExamFindingEntry, ExamSystemFinding, ExamSystemStatus } from "@/types/prescription";
+export type {
+  TestResultRow,
+  TestResultSource,
+  TestResultInterpretation,
+} from "@/types/prescription";
+export type { VitalsBpLimb, VitalsBpPosture, BpContext, BpReading, GlucoseContext, GlucoseReading, MeasurementContext } from "@/types/prescription";
 export type { SocialHistoryStructured } from "@/lib/cockpit/social-history";
 export type { FamilyHistoryStructured } from "@/lib/cockpit/family-history";
 export type { PastSurgicalHistoryStructured } from "@/lib/cockpit/past-surgical-history";
@@ -175,9 +245,55 @@ export interface RxFormFields {
   vitalsGcsTotal: number | null;
   vitalsBpPosture: VitalsBpPosture | null;
   vitalsBpLimb: VitalsBpLimb | null;
+  /** Multi-reading BP rows; primary (index 0) mirrors legacy columns on save. */
+  vitalsBpReadings: BpReading[];
+  /** Multi-reading glucose rows; primary (index 0) mirrors legacy column on save. */
+  vitalsGlucoseReadings: GlucoseReading[];
+  /** Visit-level default glucose device. */
+  vitalsGlucoseContext: GlucoseContext;
+  /** Visit-level BP measurement context (teleconsult provenance). */
+  /** Visit-level BP cuff method; who/where live in `vitalsMeasurementContext`. */
+  vitalsBpContext: BpContext;
+  /** Visit-level who / where for all vitals (teleconsult provenance). */
+  vitalsMeasurementContext: MeasurementContext;
+  /** Per-vital who/where overrides (Tier-1 teleconsult vitals). */
+  vitalsProvenanceOverrides: VitalProvenanceMap;
+  /** Per-vital optional notes (vitals_json.vitalNotes). */
+  vitalsNotes: Record<string, string | null>;
   vitalsHeadCircumferenceCm: number | null;
   vitalsMuacCm: number | null;
   vitalsWaistCm: number | null;
+
+  /**
+   * vit-14: active doctor-authored custom-vital DEFINITIONS for this visit
+   * (seeded from `doctor_settings.vitals_custom`, overlaid with any
+   * self-describing entries already stored on the prescription).
+   */
+  vitalsCustomDefs: CustomVitalDef[];
+  /** vit-14: per-visit entered custom-vital VALUES, keyed by definition id. */
+  vitalsCustomValues: CustomVitalValueMap;
+
+  // vitals-section / migration 156 — json-backed extended vitals (canonical units).
+  vitalsO2FlowLMin: number | null;
+  vitalsFio2Pct: number | null;
+  vitalsPefrLMin: number | null;
+  vitalsBloodKetonesMmolL: number | null;
+  vitalsHipCm: number | null;
+  vitalsGcsE: number | null;
+  vitalsGcsV: number | null;
+  vitalsGcsM: number | null;
+  vitalsPupilSizeLeftMm: number | null;
+  vitalsPupilSizeRightMm: number | null;
+  vitalsCapillaryRefillS: number | null;
+  vitalsFetalHeartRateBpm: number | null;
+  vitalsFundalHeightCm: number | null;
+  vitalsO2DeliveryMethod: VitalsO2DeliveryMethod | null;
+  vitalsGlucoseTiming: VitalsGlucoseTiming | null;
+  vitalsPupilReactivityLeft: VitalsPupilReactivity | null;
+  vitalsPupilReactivityRight: VitalsPupilReactivity | null;
+  vitalsAvpu: VitalsAvpu | null;
+  vitalsPulseRhythm: VitalsPulseRhythm | null;
+  vitalsTempSite: VitalsTempSite | null;
 
   examinationFindings: string;
   /**
@@ -207,6 +323,12 @@ export interface RxFormFields {
   followUpUnit: FollowUpUnit | null;
   referral: string;
   testResults: string;
+  /**
+   * Structured point-of-care / patient-brought test results (obj-20).
+   * `testResults` is derived from this on save when non-empty; an empty array
+   * leaves the legacy free-text `testResults` untouched (OBJ-D2 passthrough).
+   */
+  testResultsStructured: TestResultRow[];
 
   patientEducation: string;
   clinicalNotes: string;
@@ -216,12 +338,17 @@ export interface RxFormFields {
 
 export interface RxFormState {
   fields: RxFormFields;
+  /** Appointment `consultation_type` — readable modality for exam layer (tc-01). */
+  consultationType: string | null;
   isDirty: boolean;
   isSaving: boolean;
   isSubmitting: boolean;
   lastSavedAt: string | null;
   submitError: string | null;
 }
+
+/** Reducer-owned slice — `consultationType` is merged at the provider boundary. */
+type RxFormReducerState = Omit<RxFormState, "consultationType">;
 
 export type RxFormAction =
   | { type: "SET_FIELD"; key: keyof RxFormFields; value: RxFormFields[keyof RxFormFields] }
@@ -267,12 +394,16 @@ export type RxFormAction =
       type: "SET_EXAM_SYSTEM";
       systemId: string;
       status: ExamSystemStatus;
-      findings?: string[];
+      findings?: ExamFindingEntry[];
       notes?: string | null;
     }
   | { type: "CLEAR_EXAM_SYSTEM"; systemId: string }
   | { type: "MARK_ALL_EXAM_NORMAL"; systemIds: string[] }
   | { type: "SET_EXAM_FINDINGS"; examFindings: ExamSystemFinding[] }
+  | { type: "SET_TEST_RESULTS"; testResults: TestResultRow[] }
+  | { type: "ADD_TEST_RESULT"; row: TestResultRow }
+  | { type: "UPDATE_TEST_RESULT"; id: string; patch: Partial<TestResultRow> }
+  | { type: "REMOVE_TEST_RESULT"; id: string }
   | { type: "ADD_DDX"; entry: string }
   | { type: "REMOVE_DDX"; index: number }
   | { type: "SAVE_START" }
@@ -308,9 +439,18 @@ export function createEmptyComplaint(id?: string): Complaint {
   };
 }
 
+export type RxFormSeedOptions = {
+  /** Appointment `consultation_type` — drives vitals provenance defaults. */
+  consultationType?: string | null;
+};
+
 export function createEmptyRxFormFields(
   seedMedicines: RxMedicine[] = [{ ...EMPTY_RX_MEDICINE }],
+  seedOptions?: RxFormSeedOptions,
 ): RxFormFields {
+  const visitMeasurementContext = resolveDefaultMeasurementContext(
+    seedOptions?.consultationType,
+  );
   return {
     cc: "",
     hopi: "",
@@ -338,9 +478,19 @@ export function createEmptyRxFormFields(
     vitalsGcsTotal: null,
     vitalsBpPosture: null,
     vitalsBpLimb: null,
+    vitalsBpReadings: [createEmptyBpReading()],
+    vitalsGlucoseReadings: [createEmptyGlucoseReading()],
+    vitalsGlucoseContext: { device: DEFAULT_GLUCOSE_CONTEXT.device },
+    vitalsBpContext: { method: DEFAULT_BP_CONTEXT.method },
+    vitalsMeasurementContext: { ...visitMeasurementContext },
+    vitalsProvenanceOverrides: {},
+    vitalsNotes: {},
     vitalsHeadCircumferenceCm: null,
     vitalsMuacCm: null,
     vitalsWaistCm: null,
+    vitalsCustomDefs: [],
+    vitalsCustomValues: {},
+    ...createEmptyJsonVitalFields(),
     examinationFindings: "",
     examFindings: [],
     objectiveCustomSections: [],
@@ -354,6 +504,7 @@ export function createEmptyRxFormFields(
     followUpUnit: null,
     referral: "",
     testResults: "",
+    testResultsStructured: [],
     patientEducation: "",
     clinicalNotes: "",
     fromPrescriptionId: null,
@@ -544,12 +695,17 @@ export function normalizeExamFindings(
     const systemId = typeof row.systemId === "string" ? row.systemId.trim() : "";
     if (!systemId) continue;
     if (row.status !== "normal" && row.status !== "abnormal") continue;
-    const findings = Array.isArray(row.findings)
-      ? row.findings
-          .filter((f): f is string => typeof f === "string")
-          .map((f) => f.trim())
-          .filter(Boolean)
-      : [];
+    const findingsRaw = normalizeExamFindingEntries(row.findings as unknown[] | null | undefined);
+    const findings =
+      systemId === "cvs"
+        ? normalizeCvsFindingEntries(findingsRaw)
+        : systemId === "resp"
+          ? normalizeRespFindingEntries(findingsRaw)
+          : systemId === "abd"
+            ? normalizeAbdFindingEntries(findingsRaw)
+            : systemId === "cns"
+              ? normalizeCnsFindingEntries(findingsRaw)
+              : findingsRaw;
     out.push({
       systemId,
       status: row.status,
@@ -558,6 +714,34 @@ export function normalizeExamFindings(
     });
   }
   return out;
+}
+
+function hydrateRxFormFields(fields: RxFormFields): RxFormFields {
+  const examFindings = normalizeExamFindings(fields.examFindings);
+  // Legacy CVS pulse rows carried a `notes` attribute; pulse notes now live on
+  // the shared Vitals HR note. Carry any existing pulse note over (without
+  // clobbering an explicit vitals note) so nothing is lost on load.
+  const legacyPulseNote = extractLegacyCvsPulseNote(fields.examFindings);
+  const vitalsNotes =
+    legacyPulseNote && !fields.vitalsNotes.vitalsHr?.trim()
+      ? { ...fields.vitalsNotes, vitalsHr: legacyPulseNote }
+      : fields.vitalsNotes;
+  return {
+    ...fields,
+    examFindings,
+    vitalsNotes,
+  };
+}
+
+/** Pull a legacy `pulse.notes` attribute from raw CVS exam findings, if present. */
+function extractLegacyCvsPulseNote(
+  examFindings: ExamSystemFinding[] | null | undefined,
+): string | null {
+  if (!Array.isArray(examFindings)) return null;
+  const cvs = examFindings.find((f) => f?.systemId === "cvs");
+  const pulse = cvs?.findings?.find((e) => e.findingId === "pulse");
+  const note = pulse?.attributes?.notes?.trim();
+  return note ? note : null;
 }
 
 /** Deterministic order: core registry index first, then alpha by systemId. */
@@ -570,19 +754,36 @@ function compareExamSystems(a: ExamSystemFinding, b: ExamSystemFinding): number 
   return a.systemId.localeCompare(b.systemId);
 }
 
-function renderExamSystemLine(finding: ExamSystemFinding): string {
-  // Registry label (obj-02) for core systems; safe humanized fallback for
-  // unknown / future custom ids (resolveExamSystem never throws).
+/**
+ * Visit-level teleconsult limitation caveat appended to a non-empty derived exam
+ * block (tc-03, TC-D1). Derived-only — never stored as data — and a constant (no
+ * timestamp) so the derivation stays pure + stable.
+ */
+export const TELECONSULT_EXAM_CAVEAT =
+  "Assessment via teleconsultation; physical examination limited to inspection and patient-reported data.";
+
+function renderExamSystemLine(finding: ExamSystemFinding, teleconsult: boolean): string {
   const label = resolveExamSystem(finding.systemId).label;
-  const findings = (finding.findings ?? []).map((f) => f.trim()).filter(Boolean);
   let body: string;
   if (finding.status === "normal") {
-    body = "Normal";
+    // Teleconsult "normal" must not over-claim auscultation/palpation (TC-D4):
+    // emit the inspection-scoped WNL line (tc-01) instead of a bare "Normal".
+    body = teleconsult ? teleconsultNormalLine(finding.systemId) : "Normal";
   } else {
-    body = findings.length > 0 ? findings.join(", ") : "Abnormal";
+    body = renderExamSystemFindingBody(finding);
   }
   const notes = finding.notes?.trim();
   return notes ? `${label}: ${body} (${notes})` : `${label}: ${body}`;
+}
+
+/** Options for {@link deriveExaminationFindingsFromExam} (tc-03). */
+export interface DeriveExaminationOptions {
+  /**
+   * Appointment modality (tc-01). **Absent → in-clinic**, keeping every existing
+   * findings-only call byte-identical (TC-D5). Only an explicitly-provided
+   * teleconsult modality scopes the normal line + appends the caveat.
+   */
+  consultationType?: string | null;
 }
 
 /**
@@ -590,16 +791,23 @@ function renderExamSystemLine(finding: ExamSystemFinding): string {
  * mirrors `examination_findings` on save (OBJ-D2). Pure + stable (registry
  * order, no `Date.now`). An empty list returns "" so the caller can fall back
  * to the legacy free-text passthrough (P1-D2).
+ *
+ * On a teleconsult (tc-03) the normal line is inspection-scoped and a single
+ * visit-level limitation caveat is appended; in-clinic output is unchanged.
  */
 export function deriveExaminationFindingsFromExam(
   examFindings: ExamSystemFinding[],
+  options?: DeriveExaminationOptions,
 ): string {
   const normalized = normalizeExamFindings(examFindings);
   if (normalized.length === 0) return "";
-  return [...normalized]
+  const teleconsult =
+    options?.consultationType !== undefined && isTeleconsult(options.consultationType);
+  const body = [...normalized]
     .sort(compareExamSystems)
-    .map(renderExamSystemLine)
+    .map((finding) => renderExamSystemLine(finding, teleconsult))
     .join("\n");
+  return teleconsult ? `${body}\n${TELECONSULT_EXAM_CAVEAT}` : body;
 }
 
 /** Upsert a single system's structured finding (reducer helper). */
@@ -680,6 +888,7 @@ function hydrateSocialHistoryFromPrescription(
 export function rxFormFieldsFromPrescription(
   rx: PrescriptionWithRelations,
   medicines: RxMedicine[] = medicinesFromPrescription(rx),
+  seedOptions?: RxFormSeedOptions,
 ): RxFormFields {
   const complaints = complaintsFromPrescription(rx);
   const hasStructuredComplaints = namedComplaints(complaints).length > 0;
@@ -715,9 +924,48 @@ export function rxFormFieldsFromPrescription(
     vitalsGcsTotal: rx.vitals_gcs_total ?? null,
     vitalsBpPosture: rx.vitals_bp_posture ?? null,
     vitalsBpLimb: rx.vitals_bp_limb ?? null,
+    vitalsBpReadings: hydrateBpReadingsFromPrescription({
+      columns: {
+        systolic: rx.vitals_bp_systolic ?? null,
+        diastolic: rx.vitals_bp_diastolic ?? null,
+        posture: rx.vitals_bp_posture ?? null,
+        limb: rx.vitals_bp_limb ?? null,
+      },
+      vitalsJson: rx.vitals_json,
+    }),
+    vitalsGlucoseReadings: hydrateGlucoseReadingsFromPrescription({
+      columns: {
+        valueMgDl: rx.vitals_glucose_mg_dl ?? null,
+        timing: rx.vitals_json?.vitalsGlucoseTiming ?? null,
+        device: rx.vitals_json?.vitalsGlucoseDevice ?? null,
+      },
+      vitalsJson: rx.vitals_json,
+    }),
+    vitalsGlucoseContext: {
+      device:
+        hydrateGlucoseContextFromPrescription(rx.vitals_json).device ??
+        DEFAULT_GLUCOSE_CONTEXT.device,
+    },
+    vitalsBpContext: {
+      method: hydrateBpContextFromPrescription(rx.vitals_json).method ?? DEFAULT_BP_CONTEXT.method,
+    },
+    vitalsMeasurementContext: hydrateMeasurementContextFromPrescription(
+      rx.vitals_json,
+      seedOptions?.consultationType,
+    ),
+    vitalsProvenanceOverrides: hydrateVitalProvenanceFromPrescription(rx.vitals_json),
+    vitalsNotes: {
+      ...hydrateVitalNotesFromPrescription(rx.vitals_json),
+      ...hydrateCustomVitalNotesFromEntries(rx.vitals_json?.vitalsCustom),
+    },
     vitalsHeadCircumferenceCm: rx.vitals_head_circumference_cm ?? null,
     vitalsMuacCm: rx.vitals_muac_cm ?? null,
     vitalsWaistCm: rx.vitals_waist_cm ?? null,
+    ...(() => {
+      const { defs, values } = hydrateVitalsCustom(rx.vitals_json, []);
+      return { vitalsCustomDefs: defs, vitalsCustomValues: values };
+    })(),
+    ...hydrateJsonVitalFields(rx.vitals_json),
     examinationFindings: rx.examination_findings ?? "",
     examFindings: normalizeExamFindings(rx.examination_json),
     // obj-13: per-visit instances seed from the doctor default (in ObjectiveSection),
@@ -733,6 +981,7 @@ export function rxFormFieldsFromPrescription(
     followUpUnit: rx.follow_up_unit ?? null,
     referral: rx.referral ?? "",
     testResults: rx.test_results ?? "",
+    testResultsStructured: normalizeTestResults(rx.test_results_json),
     patientEducation: rx.patient_education ?? "",
     clinicalNotes: rx.clinical_notes ?? "",
     fromPrescriptionId: null,
@@ -785,7 +1034,10 @@ function serializeComplaintForPayload(
   };
 }
 
-export function buildRxPayload(fields: RxFormFields): UpdatePrescriptionPayload {
+export function buildRxPayload(
+  fields: RxFormFields,
+  options?: DeriveExaminationOptions,
+): UpdatePrescriptionPayload {
   const structured = namedComplaints(fields.complaints);
   const derivedCc = structured.length > 0 ? deriveCcFromComplaints(fields.complaints) : null;
   const derivedHopi =
@@ -846,13 +1098,55 @@ export function buildRxPayload(fields: RxFormFields): UpdatePrescriptionPayload 
   const storedExamFindings = normalizeExamFindings(fields.examFindings);
   const baseExaminationFindings =
     storedExamFindings.length > 0
-      ? deriveExaminationFindingsFromExam(storedExamFindings)
+      ? deriveExaminationFindingsFromExam(storedExamFindings, options)
       : fields.examinationFindings.trim();
   const objectiveCustomText = serializeCustomSubsections(fields.objectiveCustomSections);
   const derivedExaminationFindings =
     [baseExaminationFindings, objectiveCustomText]
       .filter((block) => Boolean(block && block.trim()))
       .join("\n\n") || null;
+
+  // objective-tab / OBJ-D2 (obj-20) — derive test_results from the structured
+  // result rows when present; otherwise leave the legacy free-text untouched
+  // (byte-parity passthrough). Empty / all-dropped rows fall back to the legacy
+  // testResults text, keeping legacy saves byte-identical.
+  const storedTestResults = normalizeTestResults(fields.testResultsStructured);
+  const derivedTestResults =
+    (storedTestResults.length > 0
+      ? deriveTestResults(storedTestResults)
+      : fields.testResults.trim()) || null;
+
+  const primaryBp = resolvePrimaryBpForPayload(fields);
+  const primaryGlucose = resolvePrimaryGlucoseForPayload(fields);
+  const primaryReading = fields.vitalsGlucoseReadings[0];
+  const usesGlucoseReadingCluster =
+    primaryReading != null && glucoseReadingRowHasData(primaryReading);
+  const jsonFieldsForPayload = {
+    ...pickJsonVitalFields({ ...createEmptyJsonVitalFields(), ...fields }),
+    ...(usesGlucoseReadingCluster
+      ? {
+          vitalsGlucoseTiming: primaryGlucose.timing,
+          vitalsGlucoseDevice:
+            primaryGlucose.device ?? fields.vitalsGlucoseContext.device ?? null,
+        }
+      : {}),
+  };
+
+  const storedVitalsJson = assembleVitalsJsonPayload(
+    jsonFieldsForPayload,
+    fields.vitalsBpReadings,
+    fields.vitalsBpContext,
+    fields.vitalsMeasurementContext,
+    fields.vitalsProvenanceOverrides,
+    assembleVitalsCustomEntries(
+      fields.vitalsCustomDefs,
+      fields.vitalsCustomValues,
+      fields.vitalsNotes,
+    ),
+    fields.vitalsGlucoseReadings,
+    fields.vitalsGlucoseContext,
+    fields.vitalsNotes,
+  );
 
   let hopi: string | null;
   if (fields.hopiManualOverride && hopiFallback) {
@@ -882,8 +1176,8 @@ export function buildRxPayload(fields: RxFormFields): UpdatePrescriptionPayload 
     followUp: fields.followUp.trim() || null,
     patientEducation: fields.patientEducation.trim() || null,
     clinicalNotes: fields.clinicalNotes.trim() || null,
-    vitalsBpSystolic: fields.vitalsBpSystolic,
-    vitalsBpDiastolic: fields.vitalsBpDiastolic,
+    vitalsBpSystolic: primaryBp.systolic,
+    vitalsBpDiastolic: primaryBp.diastolic,
     vitalsHr: fields.vitalsHr,
     vitalsTempC: fields.vitalsTempC,
     vitalsSpo2: fields.vitalsSpo2,
@@ -891,10 +1185,10 @@ export function buildRxPayload(fields: RxFormFields): UpdatePrescriptionPayload 
     vitalsHtCm: fields.vitalsHtCm,
     vitalsRr: fields.vitalsRr,
     vitalsPainScore: fields.vitalsPainScore,
-    vitalsGlucoseMgDl: fields.vitalsGlucoseMgDl,
+    vitalsGlucoseMgDl: primaryGlucose.valueMgDl,
     vitalsGcsTotal: fields.vitalsGcsTotal,
-    vitalsBpPosture: fields.vitalsBpPosture,
-    vitalsBpLimb: fields.vitalsBpLimb,
+    vitalsBpPosture: primaryBp.posture,
+    vitalsBpLimb: primaryBp.limb,
     vitalsHeadCircumferenceCm: fields.vitalsHeadCircumferenceCm,
     vitalsMuacCm: fields.vitalsMuacCm,
     vitalsWaistCm: fields.vitalsWaistCm,
@@ -906,7 +1200,9 @@ export function buildRxPayload(fields: RxFormFields): UpdatePrescriptionPayload 
     followUpValue: fields.followUpValue,
     followUpUnit: fields.followUpUnit,
     referral: fields.referral.trim() || null,
-    testResults: fields.testResults.trim() || null,
+    testResults: derivedTestResults,
+    testResultsJson: storedTestResults,
+    ...(hasVitalsJsonContent(storedVitalsJson) ? { vitalsJson: storedVitalsJson } : {}),
     medicines: fields.medicines
       .filter((m) => m.medicineName.trim())
       .map((m, i) => ({
@@ -934,7 +1230,7 @@ export function buildRxPayload(fields: RxFormFields): UpdatePrescriptionPayload 
 // Reducer
 // ---------------------------------------------------------------------------
 
-export function rxFormReducer(state: RxFormState, action: RxFormAction): RxFormState {
+export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): RxFormReducerState {
   switch (action.type) {
     case "SET_FIELD": {
       const nextFields = { ...state.fields, [action.key]: action.value };
@@ -1343,9 +1639,7 @@ export function rxFormReducer(state: RxFormState, action: RxFormAction): RxFormS
       };
     }
     case "SET_EXAM_SYSTEM": {
-      const findings = (action.findings ?? [])
-        .map((f) => f.trim())
-        .filter(Boolean);
+      const findings = normalizeExamFindingEntries(action.findings);
       const examFindings = upsertExamSystem(state.fields.examFindings, {
         systemId: action.systemId,
         status: action.status,
@@ -1398,6 +1692,50 @@ export function rxFormReducer(state: RxFormState, action: RxFormAction): RxFormS
         isDirty: true,
         submitError: null,
       };
+    case "SET_TEST_RESULTS":
+      return {
+        ...state,
+        fields: {
+          ...state.fields,
+          testResultsStructured: normalizeTestResults(action.testResults),
+        },
+        isDirty: true,
+        submitError: null,
+      };
+    case "ADD_TEST_RESULT":
+      return {
+        ...state,
+        fields: {
+          ...state.fields,
+          testResultsStructured: [...state.fields.testResultsStructured, action.row],
+        },
+        isDirty: true,
+        submitError: null,
+      };
+    case "UPDATE_TEST_RESULT":
+      return {
+        ...state,
+        fields: {
+          ...state.fields,
+          testResultsStructured: state.fields.testResultsStructured.map((row) =>
+            row.id === action.id ? { ...row, ...action.patch, id: row.id } : row,
+          ),
+        },
+        isDirty: true,
+        submitError: null,
+      };
+    case "REMOVE_TEST_RESULT":
+      return {
+        ...state,
+        fields: {
+          ...state.fields,
+          testResultsStructured: state.fields.testResultsStructured.filter(
+            (row) => row.id !== action.id,
+          ),
+        },
+        isDirty: true,
+        submitError: null,
+      };
     case "ADD_DDX":
       return {
         ...state,
@@ -1439,7 +1777,7 @@ export function rxFormReducer(state: RxFormState, action: RxFormAction): RxFormS
       return { ...state, isSubmitting: false, submitError: action.error };
     case "RESET":
       return {
-        fields: action.initialFields,
+        fields: hydrateRxFormFields(action.initialFields),
         isDirty: false,
         isSaving: false,
         isSubmitting: false,
@@ -1465,6 +1803,9 @@ export interface RxFormContextValue {
   setFamilyHistoryStructured: (structured: FamilyHistoryStructured) => void;
   setSocialHistoryStructured: (structured: SocialHistoryStructured) => void;
   setPastSurgicalHistoryStructured: (structured: PastSurgicalHistoryStructured) => void;
+  /** Latest request to open + scroll a structured exam system card (e.g. from Vitals). */
+  focusExamSystemRequest: { systemId: string; token: number } | null;
+  requestFocusExamSystem: (systemId: string) => void;
   isDirty: boolean;
   submitDisabled: boolean;
   buildPayload: () => UpdatePrescriptionPayload;
@@ -1479,6 +1820,8 @@ export interface RxFormProviderProps {
   token: string;
   entryMode: PrescriptionType;
   initialFields: RxFormFields;
+  /** Appointment modality — not persisted; drives teleconsult exam preset (tc-01). */
+  consultationType?: string | null;
   autosaveEnabled: boolean;
   prescriptionIdRef: MutableRefObject<string | null>;
   onPrescriptionCreated: (prescription: PrescriptionWithRelations) => void;
@@ -1491,19 +1834,25 @@ export function RxFormProvider({
   token,
   entryMode,
   initialFields,
+  consultationType = null,
   autosaveEnabled,
   prescriptionIdRef,
   onPrescriptionCreated,
   children,
 }: RxFormProviderProps): JSX.Element {
-  const [state, dispatch] = useReducer(rxFormReducer, {
-    fields: initialFields,
+  const [reducerState, dispatch] = useReducer(rxFormReducer, {
+    fields: hydrateRxFormFields(initialFields),
     isDirty: false,
     isSaving: false,
     isSubmitting: false,
     lastSavedAt: null,
     submitError: null,
   });
+
+  const state: RxFormState = useMemo(
+    () => ({ ...reducerState, consultationType }),
+    [reducerState, consultationType],
+  );
 
   const initialFieldsRef = useRef(initialFields);
   useEffect(() => {
@@ -1528,10 +1877,25 @@ export function RxFormProvider({
     dispatch({ type: "SET_PAST_SURGICAL_HISTORY_STRUCTURED", structured });
   }, []);
 
+  const [focusExamSystemRequest, setFocusExamSystemRequest] = useState<
+    { systemId: string; token: number } | null
+  >(null);
+  const requestFocusExamSystem = useCallback((systemId: string) => {
+    setFocusExamSystemRequest({ systemId, token: Date.now() });
+  }, []);
+
   const fieldsRef = useRef(state.fields);
   fieldsRef.current = state.fields;
 
-  const buildPayload = useCallback(() => buildRxPayload(fieldsRef.current), []);
+  // tc-03: thread the readable modality into the exam derivation on save so a
+  // teleconsult scopes the normal line + appends the limitation caveat.
+  const consultationTypeRef = useRef(consultationType);
+  consultationTypeRef.current = consultationType;
+
+  const buildPayload = useCallback(
+    () => buildRxPayload(fieldsRef.current, { consultationType: consultationTypeRef.current }),
+    [],
+  );
 
   const formSnapshot = useMemo(
     () =>
@@ -1545,7 +1909,9 @@ export function RxFormProvider({
   const persistSnapshot = useCallback(async () => {
     dispatch({ type: "SAVE_START" });
     try {
-      const payload = buildRxPayload(fieldsRef.current);
+      const payload = buildRxPayload(fieldsRef.current, {
+        consultationType: consultationTypeRef.current,
+      });
       const existingId = prescriptionIdRef.current;
       if (existingId) {
         await updatePrescription(token, existingId, payload);
@@ -1601,12 +1967,14 @@ export function RxFormProvider({
       setFamilyHistoryStructured,
       setSocialHistoryStructured,
       setPastSurgicalHistoryStructured,
+      focusExamSystemRequest,
+      requestFocusExamSystem,
       isDirty: state.isDirty,
       submitDisabled,
       buildPayload,
       autoSave,
     }),
-    [appointmentId, patientId, token, autoSave, buildPayload, setField, setFamilyHistoryStructured, setSocialHistoryStructured, setPastSurgicalHistoryStructured, state, submitDisabled],
+    [appointmentId, patientId, token, autoSave, buildPayload, setField, setFamilyHistoryStructured, setSocialHistoryStructured, setPastSurgicalHistoryStructured, focusExamSystemRequest, requestFocusExamSystem, state, submitDisabled],
   );
 
   return <RxFormContext.Provider value={value}>{children}</RxFormContext.Provider>;
@@ -1624,3 +1992,15 @@ export function useRxForm(): RxFormContextValue {
   }
   return ctx;
 }
+
+/** Appointment `consultation_type` from RX form state (tc-01). */
+export function useConsultationType(): string | null {
+  return useRxForm().state.consultationType;
+}
+
+/** True when the visit is a teleconsult (not `in_clinic`) — tc-01 / TC-D6. */
+export function useIsTeleconsult(): boolean {
+  return isTeleconsult(useConsultationType());
+}
+
+export { isTeleconsult };

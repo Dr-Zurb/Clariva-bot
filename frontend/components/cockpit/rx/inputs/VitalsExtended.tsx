@@ -16,11 +16,58 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
+  EXTENDED_VITAL_GROUPS,
+  hasVisibleGcsScore,
+  VITAL_GROUP_LABELS,
+  VITALS_AUTO_GRID_CLASS,
+  VITALS_GRID_CLASS,
+  VITALS_GROUP_CARD_CLASS,
+  VITALS_GROUP_HEADING_CLASS,
+  VITAL_CELL_CLASS,
+  VITAL_GRID_UNIT_SPAN_CLASS,
+  contextKeysForNumericVital,
+  vitalGridSpan,
+  vitalGridSpanClass,
+  visibleStandaloneCategoricalVitalsInGroup,
+  visibleNumericVitalsInGroupExcludingGcs,
+  visibleVitalsInGroup,
+  vitalFieldShortLabel,
+  vitalSparklineLabel,
+} from "@/lib/cockpit/vitals-group-layout";
+import {
+  type CategoricalVitalKey,
+} from "@/lib/cockpit/categorical-vitals-schema";
+import {
   resolveVital,
   type RangeContext,
+  type VitalGroup,
   type VitalKey,
 } from "@/lib/cockpit/vitals-schema";
-import { evaluateRange, type RangeFlag } from "@/lib/cockpit/vitals-derive";
+import { evaluateRange, categorizeVital, type RangeFlag } from "@/lib/cockpit/vitals-derive";
+import {
+  categoryIconClass,
+  rangeFlagToCategory,
+  type VitalCategoryResult,
+} from "@/lib/cockpit/vital-categories";
+import { CategoricalVitalSelect } from "@/components/cockpit/rx/inputs/CategoricalVitalSelect";
+import { CustomVitalsGridFields } from "@/components/cockpit/rx/inputs/CustomVitalField";
+import { GcsScoreSection } from "@/components/cockpit/rx/inputs/GcsScoreSection";
+import {
+  hasVisiblePupilCluster,
+  PupilsSection,
+} from "@/components/cockpit/rx/inputs/PupilsSection";
+import { VitalContextFields } from "@/components/cockpit/rx/inputs/VitalContextFields";
+import { VitalLowConfidenceBadge } from "@/components/cockpit/rx/inputs/VitalLowConfidenceBadge";
+import { VitalQuickFillChips } from "@/components/cockpit/rx/inputs/VitalQuickFillChips";
+import { VitalRangeHelp } from "@/components/cockpit/rx/inputs/VitalRangeHelp";
+import { LastVisitVitalGhost } from "@/components/cockpit/rx/inputs/LastVisitVitalGhost";
+import type { CustomVitalDef, CustomVitalValueMap } from "@/lib/cockpit/vitals-custom";
+import type { CustomVitalTrendSeries } from "@/lib/cockpit/custom-vitals-trends";
+import { deviceContextKeyForParent, resolveVitalLowConfidence } from "@/lib/cockpit/vital-confidence";
+import { resolveEffectiveMeasurementProvenance } from "@/lib/cockpit/measurement-context";
+import { resolveVitalQuickFillOptions } from "@/lib/cockpit/vitals-quick-fill";
+import { vitalKeyHasRangeReference } from "@/lib/cockpit/vital-range-reference";
+import { cn } from "@/lib/utils";
 
 /** Last-visit canonical values, keyed by numeric vital key (read-only ghosts). */
 export type GhostVitals = Partial<Record<VitalKey, number>>;
@@ -35,25 +82,45 @@ function roundForUnit(value: number, precision: number): number {
 // See frontend/lib/cockpit/__color-exceptions.md
 // ---------------------------------------------------------------------------
 
-export function RangeFlagIcon({ label, flag }: { label: string; flag: RangeFlag }): JSX.Element | null {
-  if (flag == null || flag === "normal") return null;
-  const isHigh = flag === "high";
-  const colorClass = isHigh ? "text-red-600" : "text-blue-600";
-  const description = isHigh ? "above normal range" : "below normal range";
+export function RangeFlagIcon({
+  label,
+  flag,
+  category,
+}: {
+  label: string;
+  flag?: RangeFlag | null;
+  category?: VitalCategoryResult | null;
+}): JSX.Element | null {
+  const resolved =
+    category ??
+    (flag != null && flag !== "normal" ? rangeFlagToCategory(label, flag) : null);
+  if (resolved == null || resolved.severity === "normal") return null;
+
+  const colorClass = categoryIconClass(resolved);
+  const directionText =
+    resolved.direction === "low"
+      ? "below expected range"
+      : resolved.direction === "high"
+        ? "above expected range"
+        : "outside expected range";
+
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <span
           className={`inline-flex shrink-0 items-center ${colorClass}`}
-          aria-label={`${label} ${description}`}
+          aria-label={`${label}: ${resolved.label}`}
+          data-testid={`vital-category-icon-${resolved.severity}`}
         >
           <AlertTriangle className="h-4 w-4" aria-hidden />
         </span>
       </TooltipTrigger>
-      <TooltipContent>
-        <p>
-          {label} {description}
-        </p>
+      <TooltipContent className="max-w-xs">
+        <p className="font-medium">{resolved.label}</p>
+        <p className="text-xs text-muted-foreground">{directionText}</p>
+        {resolved.source ? (
+          <p className="mt-1 text-[10px] text-muted-foreground">Advisory · {resolved.source}</p>
+        ) : null}
       </TooltipContent>
     </Tooltip>
   );
@@ -137,20 +204,54 @@ export interface VitalFieldProps {
   /** Explicit short label (kept stable for the shipped core fields). */
   label: string;
   ctx?: RangeContext;
+  /** Patient age/sex for advisory categorization. */
+  rangeCtx?: RangeContext;
   /** Previous-visit canonical value (read-only ghost). */
   ghost?: number | null;
+  /** Inline recent-trend sparkline (obj-26); read-only. */
+  sparkline?: React.ReactNode;
   /** Extra computed badges (e.g. BMI/BSA) rendered after the flag. */
   trailing?: React.ReactNode;
+  /** Auto-fit grid column span (1 = compact, 2 = rich context). */
+  gridSpan?: 1 | 2;
 }
 
-export function VitalField({ vitalKey, label, ctx, ghost, trailing }: VitalFieldProps): JSX.Element {
+export function VitalField({
+  vitalKey,
+  label,
+  ctx,
+  rangeCtx,
+  ghost,
+  sparkline,
+  trailing,
+  gridSpan,
+}: VitalFieldProps): JSX.Element {
   const { state, setField } = useRxForm();
   const def = resolveVital(vitalKey);
   const [unitSymbol, setUnitSymbol] = useState<string>(def.displayUnits[0].unit);
   const activeUnit = def.displayUnits.find((u) => u.unit === unitSymbol) ?? def.displayUnits[0];
+  const span = gridSpan ?? vitalGridSpan(vitalKey);
 
+  const flagCtx = rangeCtx ?? ctx ?? {};
   const canonical = (state.fields[vitalKey] as number | null) ?? null;
-  const flag = evaluateRange(vitalKey, canonical, ctx);
+  const flag = evaluateRange(vitalKey, canonical, flagCtx);
+  const category = categorizeVital(vitalKey, canonical, flagCtx);
+  const effectiveMeasuredBy = resolveEffectiveMeasurementProvenance(
+    state.fields.vitalsMeasurementContext,
+    state.fields.vitalsProvenanceOverrides[vitalKey],
+  ).measuredBy;
+  const contextKeys = contextKeysForNumericVital(vitalKey);
+  const deviceContextKey = deviceContextKeyForParent(contextKeys);
+  const deviceValue =
+    deviceContextKey != null
+      ? (state.fields[deviceContextKey as keyof typeof state.fields] as string | null)
+      : null;
+  const lowConfidenceReason = resolveVitalLowConfidence({
+    measuredBy: effectiveMeasuredBy,
+    vitalKey,
+    deviceContextKey,
+    deviceValue,
+  });
 
   const displayValue: number | "" =
     canonical == null ? "" : roundForUnit(activeUnit.fromCanonical(canonical), activeUnit.precision);
@@ -159,6 +260,7 @@ export function VitalField({ vitalKey, label, ctx, ghost, trailing }: VitalField
 
   const min = roundForUnit(activeUnit.fromCanonical(def.hardMin), activeUnit.precision);
   const max = roundForUnit(activeUnit.fromCanonical(def.hardMax), activeUnit.precision);
+  const quickFillOptions = resolveVitalQuickFillOptions(vitalKey, activeUnit, ctx ?? {});
 
   const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value;
@@ -172,9 +274,24 @@ export function VitalField({ vitalKey, label, ctx, ghost, trailing }: VitalField
   };
 
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between gap-2">
+    <div className={vitalGridSpanClass(span)}>
+      <div className={VITAL_CELL_CLASS}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className={RX_FIELD_LABEL_CLASS}>{label}</span>
+        {vitalKeyHasRangeReference(vitalKey, flagCtx) ? (
+          <VitalRangeHelp
+            kind={vitalKey}
+            rangeCtx={flagCtx}
+            currentCategory={category}
+          />
+        ) : null}
+        {sparkline}
+        {lowConfidenceReason ? (
+          <VitalLowConfidenceBadge
+            reason={lowConfidenceReason}
+            testId={`vital-low-confidence-badge-${vitalKey}`}
+          />
+        ) : null}
         <UnitToggle
           fieldLabel={label}
           units={def.displayUnits.map((u) => u.unit)}
@@ -182,8 +299,8 @@ export function VitalField({ vitalKey, label, ctx, ghost, trailing }: VitalField
           onSelect={setUnitSymbol}
         />
       </div>
-      <div className="mt-1 flex items-center gap-2">
-        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-[5.5rem] shrink-0 items-center gap-1.5">
           <input
             type="number"
             inputMode="decimal"
@@ -193,135 +310,271 @@ export function VitalField({ vitalKey, label, ctx, ghost, trailing }: VitalField
             value={displayValue}
             onChange={onChange}
             placeholder={ghostDisplay != null ? String(ghostDisplay) : "—"}
-            className={`${RX_FIELD_INPUT_CLASS} mt-0 w-full`}
+            className={`${RX_FIELD_INPUT_CLASS} mt-0 w-full max-w-[8rem]`}
             aria-label={`${label} in ${activeUnit.unit}`}
           />
           <span className="whitespace-nowrap text-xs text-muted-foreground">{activeUnit.unit}</span>
         </div>
-        <RangeFlagIcon label={label} flag={flag} />
+        {displayValue === "" && quickFillOptions.length > 0 ? (
+          <VitalQuickFillChips
+            options={quickFillOptions}
+            onSelect={(index) => {
+              const option = quickFillOptions[index];
+              if (option == null) return;
+              setField(vitalKey, option.canonicalValue as RxFormFields[typeof vitalKey]);
+            }}
+            testIdPrefix={`vital-${vitalKey}`}
+            ariaGroupLabel={`Common ${label} values`}
+          />
+        ) : null}
+        <RangeFlagIcon label={label} flag={flag} category={category} />
         {trailing}
       </div>
-      {ghostDisplay != null && (
+      <VitalContextFields parentKey={vitalKey} noteKey={vitalKey} noteLabel={label} />
+      {ghostDisplay != null && canonical == null ? (
+        <LastVisitVitalGhost
+          label={label}
+          displayText={`${ghostDisplay} ${activeUnit.unit}`}
+          onApply={() => setField(vitalKey, ghost as RxFormFields[typeof vitalKey])}
+          testId={`vital-last-visit-${vitalKey}`}
+        />
+      ) : ghostDisplay != null ? (
         <span
           className="block text-[10px] text-muted-foreground/70"
           aria-label={`Last visit ${label}: ${ghostDisplay} ${activeUnit.unit}`}
         >
           prev {ghostDisplay} {activeUnit.unit}
         </span>
-      )}
+      ) : null}
+      </div>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Categorical BP qualifiers (posture / limb) — plain selects over allowed sets.
-// ---------------------------------------------------------------------------
-
-const POSTURE_OPTIONS = [
-  { value: "sitting", label: "Sitting" },
-  { value: "standing", label: "Standing" },
-  { value: "supine", label: "Supine" },
-] as const;
-
-const LIMB_OPTIONS = [
-  { value: "left_arm", label: "Left arm" },
-  { value: "right_arm", label: "Right arm" },
-  { value: "left_leg", label: "Left leg" },
-  { value: "right_leg", label: "Right leg" },
-] as const;
-
-function PostureSelect(): JSX.Element {
-  const { state, setField } = useRxForm();
-  return (
-    <div className="space-y-1.5">
-      <label htmlFor="vitalsBpPosture" className={RX_FIELD_LABEL_CLASS}>
-        BP posture
-      </label>
-      <select
-        id="vitalsBpPosture"
-        value={state.fields.vitalsBpPosture ?? ""}
-        onChange={(e) =>
-          setField("vitalsBpPosture", (e.target.value || null) as RxFormFields["vitalsBpPosture"])
-        }
-        className={`${RX_FIELD_INPUT_CLASS}`}
-        aria-label="BP measurement posture"
-      >
-        <option value="">—</option>
-        {POSTURE_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}
-
-function LimbSelect(): JSX.Element {
-  const { state, setField } = useRxForm();
-  return (
-    <div className="space-y-1.5">
-      <label htmlFor="vitalsBpLimb" className={RX_FIELD_LABEL_CLASS}>
-        BP limb
-      </label>
-      <select
-        id="vitalsBpLimb"
-        value={state.fields.vitalsBpLimb ?? ""}
-        onChange={(e) =>
-          setField("vitalsBpLimb", (e.target.value || null) as RxFormFields["vitalsBpLimb"])
-        }
-        className={`${RX_FIELD_INPUT_CLASS}`}
-        aria-label="BP measurement limb"
-      >
-        <option value="">—</option>
-        {LIMB_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Extended-vitals group + collapsible pediatric group.
+// Extended-vitals groups (registry-driven) + collapsible pediatric group.
 // ---------------------------------------------------------------------------
 
 export interface VitalsExtendedProps {
   ctx?: RangeContext;
+  /** Patient demographics for advisory categorization on inline fields. */
+  rangeCtx?: RangeContext;
   ghost?: GhostVitals | null;
+  /** Render a read-only sparkline per numeric vital (obj-26). */
+  sparklineFor?: (vitalKey: VitalKey, label: string) => React.ReactNode;
+  /** When set, only these numeric vitals are rendered (vit-08). */
+  visibleKeys?: ReadonlySet<VitalKey>;
+  /** When set, only these categorical vitals are rendered (vit-08). */
+  visibleCategoricalKeys?: ReadonlySet<CategoricalVitalKey>;
+  /** vit-14: doctor-authored custom vitals interleaved by group. */
+  customVitals?: readonly CustomVitalDef[];
+  customVitalValues?: CustomVitalValueMap;
+  onCustomVitalChange?: (id: string, value: number | string | null) => void;
+  customVitalsDisabled?: boolean;
+  byCustomTrendId?: Readonly<Record<string, CustomVitalTrendSeries>>;
+  customTrendsLoading?: boolean;
 }
 
-export function VitalsExtended({ ctx, ghost }: VitalsExtendedProps): JSX.Element {
+function VitalsGroupCard({
+  title,
+  testId,
+  children,
+}: {
+  title: string;
+  testId: string;
+  children: React.ReactNode;
+}): JSX.Element {
+  return (
+    <section className={VITALS_GROUP_CARD_CLASS} data-testid={testId}>
+      <h3 className={VITALS_GROUP_HEADING_CLASS}>{title}</h3>
+      <div className={VITALS_GRID_CLASS}>{children}</div>
+    </section>
+  );
+}
+
+function VitalGroupGrid({
+  groupLabel,
+  vitalKeys,
+  categoricalKeys,
+  customVitals = [],
+  customVitalValues = {},
+  onCustomVitalChange,
+  customVitalsDisabled = false,
+  byCustomTrendId,
+  customTrendsLoading = false,
+  showGcsSection,
+  showPupilsSection,
+  ctx,
+  rangeCtx,
+  ghost,
+  sparklineFor,
+  visibleKeys,
+  visibleCategoricalKeys,
+}: {
+  groupLabel: string;
+  vitalKeys: readonly VitalKey[];
+  categoricalKeys: readonly CategoricalVitalKey[];
+  customVitals?: readonly CustomVitalDef[];
+  customVitalValues?: CustomVitalValueMap;
+  onCustomVitalChange?: (id: string, value: number | string | null) => void;
+  customVitalsDisabled?: boolean;
+  byCustomTrendId?: Readonly<Record<string, CustomVitalTrendSeries>>;
+  customTrendsLoading?: boolean;
+  showGcsSection?: boolean;
+  showPupilsSection?: boolean;
+  ctx?: RangeContext;
+  rangeCtx?: RangeContext;
+  ghost?: GhostVitals | null;
+  sparklineFor?: (vitalKey: VitalKey, label: string) => React.ReactNode;
+  visibleKeys?: ReadonlySet<VitalKey>;
+  visibleCategoricalKeys?: ReadonlySet<CategoricalVitalKey>;
+}): JSX.Element {
+  return (
+    <VitalsGroupCard title={groupLabel} testId={`vitals-group-${groupLabel.toLowerCase().replace(/\s+/g, "-")}`}>
+        {vitalKeys.map((vitalKey) => (
+          <VitalField
+            key={vitalKey}
+            vitalKey={vitalKey}
+            label={vitalFieldShortLabel(vitalKey)}
+            ctx={ctx}
+            rangeCtx={rangeCtx}
+            ghost={ghost?.[vitalKey]}
+            sparkline={sparklineFor?.(vitalKey, vitalSparklineLabel(vitalKey))}
+            gridSpan={vitalGridSpan(vitalKey)}
+          />
+        ))}
+        {categoricalKeys.map((vitalKey) => (
+          <div key={vitalKey} className={VITAL_GRID_UNIT_SPAN_CLASS}>
+            <div className={VITAL_CELL_CLASS}>
+              <CategoricalVitalSelect vitalKey={vitalKey} />
+            </div>
+          </div>
+        ))}
+        {showGcsSection ? (
+          <GcsScoreSection visibleKeys={visibleKeys} sparklineFor={sparklineFor} rangeCtx={rangeCtx} />
+        ) : null}
+        {showPupilsSection ? (
+          <PupilsSection
+            visibleNumericKeys={visibleKeys}
+            visibleCategoricalKeys={visibleCategoricalKeys}
+            rangeCtx={rangeCtx}
+          />
+        ) : null}
+        {onCustomVitalChange ? (
+          <CustomVitalsGridFields
+            defs={customVitals}
+            values={customVitalValues}
+            disabled={customVitalsDisabled}
+            byCustomTrendId={byCustomTrendId}
+            trendsLoading={customTrendsLoading}
+            onChange={onCustomVitalChange}
+          />
+        ) : null}
+    </VitalsGroupCard>
+  );
+}
+
+export function VitalsExtended({
+  ctx,
+  rangeCtx,
+  ghost,
+  sparklineFor,
+  visibleKeys,
+  visibleCategoricalKeys,
+  customVitals = [],
+  customVitalValues = {},
+  onCustomVitalChange,
+  customVitalsDisabled = false,
+  byCustomTrendId,
+  customTrendsLoading = false,
+}: VitalsExtendedProps): JSX.Element {
+  const customByGroup = (group: VitalGroup): CustomVitalDef[] =>
+    customVitals.filter((def) => def.group === group);
+
+  const paediatricKeys = visibleVitalsInGroup("paediatric", visibleKeys);
+  const paediatricCustom = customByGroup("paediatric");
+  const extendedGroups = EXTENDED_VITAL_GROUPS.map((group) => ({
+    group,
+    numericKeys:
+      group === "neuro"
+        ? visibleNumericVitalsInGroupExcludingGcs(group, visibleKeys)
+        : visibleVitalsInGroup(group, visibleKeys),
+    categoricalKeys: visibleStandaloneCategoricalVitalsInGroup(group, visibleCategoricalKeys),
+    customDefs: customByGroup(group),
+    showGcs: group === "neuro" && hasVisibleGcsScore(visibleKeys),
+    showPupils:
+      group === "neuro" && hasVisiblePupilCluster(visibleKeys, visibleCategoricalKeys),
+  })).filter(
+    (section) =>
+      section.numericKeys.length > 0 ||
+      section.categoricalKeys.length > 0 ||
+      section.customDefs.length > 0 ||
+      section.showGcs ||
+      section.showPupils,
+  );
+
+  const showExtendedBlock = extendedGroups.length > 0;
+  const showPediatric = paediatricKeys.length > 0 || paediatricCustom.length > 0;
+
+  if (!showExtendedBlock && !showPediatric) {
+    return <></>;
+  }
+
   return (
     <div className="space-y-3">
-      <div>
-        <span className={RX_FIELD_LABEL_CLASS}>Extended</span>
-        <div className="mt-1 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <VitalField vitalKey="vitalsRr" label="Resp rate" ctx={ctx} ghost={ghost?.vitalsRr} />
-          <VitalField vitalKey="vitalsPainScore" label="Pain" ghost={ghost?.vitalsPainScore} />
-          <VitalField vitalKey="vitalsGlucoseMgDl" label="Glucose" ctx={ctx} ghost={ghost?.vitalsGlucoseMgDl} />
-          <VitalField vitalKey="vitalsGcsTotal" label="GCS" ghost={ghost?.vitalsGcsTotal} />
-          <VitalField vitalKey="vitalsWaistCm" label="Waist" ctx={ctx} ghost={ghost?.vitalsWaistCm} />
-          <PostureSelect />
-          <LimbSelect />
-        </div>
-      </div>
+      {extendedGroups.map(({ group, numericKeys, categoricalKeys, customDefs, showGcs, showPupils }) => (
+        <VitalGroupGrid
+          key={group}
+          groupLabel={VITAL_GROUP_LABELS[group]}
+          vitalKeys={numericKeys}
+          categoricalKeys={categoricalKeys}
+          customVitals={customDefs}
+          customVitalValues={customVitalValues}
+          onCustomVitalChange={onCustomVitalChange}
+          customVitalsDisabled={customVitalsDisabled}
+          byCustomTrendId={byCustomTrendId}
+          customTrendsLoading={customTrendsLoading}
+          showGcsSection={showGcs}
+          showPupilsSection={showPupils}
+          ctx={ctx}
+          rangeCtx={rangeCtx}
+          ghost={ghost}
+          sparklineFor={sparklineFor}
+          visibleKeys={visibleKeys}
+          visibleCategoricalKeys={visibleCategoricalKeys}
+        />
+      ))}
 
-      <details className="rounded-md border border-dashed border-border bg-muted/30 px-3 py-2">
-        <summary className="cursor-pointer select-none text-xs font-medium text-muted-foreground">
-          Pediatric vitals
-        </summary>
-        <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <VitalField
-            vitalKey="vitalsHeadCircumferenceCm"
-            label="Head circ."
-            ghost={ghost?.vitalsHeadCircumferenceCm}
-          />
-          <VitalField vitalKey="vitalsMuacCm" label="MUAC" ghost={ghost?.vitalsMuacCm} />
-        </div>
-      </details>
+      {showPediatric ? (
+        <details className={cn(VITALS_GROUP_CARD_CLASS, "border-dashed")}>
+          <summary className={cn(VITALS_GROUP_HEADING_CLASS, "cursor-pointer select-none list-none")}>
+            {VITAL_GROUP_LABELS.paediatric} vitals
+          </summary>
+          <div className={cn(VITALS_GRID_CLASS, "mt-2")}>
+            {paediatricKeys.map((vitalKey) => (
+              <VitalField
+                key={vitalKey}
+                vitalKey={vitalKey}
+                label={vitalFieldShortLabel(vitalKey)}
+                rangeCtx={rangeCtx}
+                ghost={ghost?.[vitalKey]}
+                sparkline={sparklineFor?.(vitalKey, vitalSparklineLabel(vitalKey))}
+                gridSpan={vitalGridSpan(vitalKey)}
+              />
+            ))}
+            {onCustomVitalChange ? (
+              <CustomVitalsGridFields
+                defs={paediatricCustom}
+                values={customVitalValues}
+                disabled={customVitalsDisabled}
+                byCustomTrendId={byCustomTrendId}
+                trendsLoading={customTrendsLoading}
+                onChange={onCustomVitalChange}
+              />
+            ) : null}
+          </div>
+        </details>
+      ) : null}
     </div>
   );
 }

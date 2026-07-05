@@ -101,11 +101,11 @@ describe("evaluateRange", () => {
     expect(evaluateRange("vitalsHr", 80)).toBe("normal");
   });
 
-  it("flags temperature at the fever edge", () => {
-    expect(evaluateRange("vitalsTempC", 36.0)).toBe("low");
-    expect(evaluateRange("vitalsTempC", 36.1)).toBe("normal");
-    expect(evaluateRange("vitalsTempC", 37.5)).toBe("normal");
-    expect(evaluateRange("vitalsTempC", 37.6)).toBe("high");
+  it("flags temperature at advisory band edges", () => {
+    expect(evaluateRange("vitalsTempC", 34.9)).toBe("low");
+    expect(evaluateRange("vitalsTempC", 36.0)).toBe("normal");
+    expect(evaluateRange("vitalsTempC", 37.4)).toBe("normal");
+    expect(evaluateRange("vitalsTempC", 37.5)).toBe("high");
   });
 
   it("flags low SpO2 but never high (cap is 100)", () => {

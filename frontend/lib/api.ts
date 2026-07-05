@@ -3189,7 +3189,10 @@ export async function updatePrescription(
 export async function getPrescriptionUploadUrl(
   token: string,
   prescriptionId: string,
-  body: { filename?: string; contentType?: string }
+  // `category: "objective" | "subjective"` (obj-22 / sdp-02) tags the upload via a storage
+  // path segment — same bucket/RLS, no new column. Omitted = legacy photo-Rx attachment.
+  // `complaintId` pins subjective media to a complaint folder (opaque segment, P2-D2).
+  body: { filename?: string; contentType?: string; category?: "objective" | "subjective"; complaintId?: string }
 ): Promise<ApiSuccess<CreateUploadUrlData>> {
   const res = await fetch(
     `${requireApiBaseUrl()}/api/v1/prescriptions/${prescriptionId}/attachments/upload-url`,
@@ -3269,6 +3272,32 @@ export async function getPrescriptionDownloadUrl(
     `/api/v1/prescriptions/${prescriptionId}/attachments/${attachmentId}/download-url`,
     { token }
   );
+}
+
+/**
+ * Delete a prescription attachment (DB row + storage object). Requires auth token.
+ * obj-22: backs the Objective media strip's remove affordance. Returns 204 (no body).
+ */
+export async function deletePrescriptionAttachment(
+  token: string,
+  prescriptionId: string,
+  attachmentId: string
+): Promise<void> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/prescriptions/${prescriptionId}/attachments/${attachmentId}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    }
+  );
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as ApiError | Record<string, never>;
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
 }
 
 export interface SendPrescriptionData {

@@ -16,6 +16,12 @@ import { ObjectiveSection } from "@/components/cockpit/rx/sections/ObjectiveSect
 import type { RxFormProviderSetup } from "@/components/cockpit/rx/useRxFormProviderSetup";
 import type { ObjectiveSectionId } from "@/lib/cockpit/objective-section-order";
 
+// vit-10..12 gave VitalsGrid doctor-scoped trend/demographics queries (needs a
+// QueryClient); these tests cover the objective manage-menu, not vitals internals.
+vi.mock("@/components/cockpit/rx/inputs/VitalsGrid", () => ({
+  VitalsGrid: () => <div data-testid="vitals-grid-stub" />,
+}));
+
 const mockGetDoctorSettings = vi.fn();
 const mockPatchDoctorSettings = vi.fn();
 const mockUpdatePrescription = vi.fn();
@@ -172,7 +178,7 @@ describe("ManageObjectiveSectionsMenu — hide/unhide (obj-12)", () => {
     const { container } = renderWithRxForm(<ObjectiveSection heading={null} />);
     await waitForSettingsLoaded();
 
-    await hideSectionViaMenu("Test results");
+    await hideSectionViaMenu("Patient-brought reports");
     await hideSectionViaMenu("Legacy free-text vitals");
 
     await waitFor(
@@ -241,6 +247,8 @@ describe("ManageObjectiveSectionsMenu — hide/unhide (obj-12)", () => {
           "vitals",
           "exam",
           "test_results",
+          "point_of_care",
+          "media",
           "legacy_exam",
           "legacy_vitals",
         ] as ObjectiveSectionId[],

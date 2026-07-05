@@ -50,22 +50,30 @@ describe("resolveDefaultLayout · modality maps (§G)", () => {
     });
   });
 
-  it("video → observed exam + home vitals; legacy free-text hidden", () => {
+  it("video → observed exam + uploads; in-clinic POC + legacy free-text hidden (obj-23)", () => {
     expect(resolveDefaultLayout({ modality: "video" })).toEqual({
       defaultOrder: [...DEFAULT_OBJECTIVE_SECTION_ORDER],
-      defaultHidden: ["legacy_exam", "legacy_vitals"],
+      defaultHidden: ["point_of_care", "legacy_exam", "legacy_vitals"],
     });
+    // uploads (media) stay visible over video (obj-23 emphasis)
+    expect(resolveDefaultLayout({ modality: "video" }).defaultHidden).not.toContain("media");
   });
 
-  it("voice/text (async) → test results lead; structured + legacy exam hidden", () => {
+  it("voice/text (async) → patient-reported + uploads; structured/POC/legacy hidden (obj-23)", () => {
     const voice = resolveDefaultLayout({ modality: "voice" });
     expect(voice.defaultOrder[0]).toBe("test_results");
-    expect(voice.defaultHidden).toEqual(["exam", "legacy_exam", "legacy_vitals"]);
+    expect(voice.defaultHidden).toEqual([
+      "exam",
+      "point_of_care",
+      "legacy_exam",
+      "legacy_vitals",
+    ]);
     // text mirrors voice
     expect(resolveDefaultLayout({ modality: "text" })).toEqual(voice);
-    // never all-hidden — vitals + test_results stay visible
+    // never all-hidden — vitals + test_results + media (uploads) stay visible
     expect(voice.defaultHidden).not.toContain("vitals");
     expect(voice.defaultHidden).not.toContain("test_results");
+    expect(voice.defaultHidden).not.toContain("media");
   });
 
   it("unknown / absent modality → registry default (never blank)", () => {
@@ -84,6 +92,8 @@ describe("resolveDefaultLayout · specialty emphasis (§E2, section-level)", () 
       "exam",
       "vitals",
       "test_results",
+      "point_of_care",
+      "media",
       "legacy_exam",
       "legacy_vitals",
     ]);
@@ -93,7 +103,12 @@ describe("resolveDefaultLayout · specialty emphasis (§E2, section-level)", () 
     const layout = resolveDefaultLayout({ modality: "voice", specialty: "Cardiology" });
     expect(layout.defaultOrder.slice(0, 2)).toEqual(["vitals", "exam"]);
     // specialty never changes the modality hidden set
-    expect(layout.defaultHidden).toEqual(["exam", "legacy_exam", "legacy_vitals"]);
+    expect(layout.defaultHidden).toEqual([
+      "exam",
+      "point_of_care",
+      "legacy_exam",
+      "legacy_vitals",
+    ]);
   });
 
   it("unknown / gp specialty leaves the modality order unchanged", () => {

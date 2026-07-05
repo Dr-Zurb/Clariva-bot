@@ -79,6 +79,18 @@ async function loadDoctorSubjectiveDefaults(token: string): Promise<{
   }
 }
 
+async function loadConsultationType(
+  token: string,
+  appointmentId: string,
+): Promise<string | null> {
+  try {
+    const apptRes = await getAppointmentById(appointmentId, token);
+    return apptRes.data.appointment.consultation_type ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * obj-14 (OBJ-D6): compute the modality/specialty default-layout seed for the
  * Objective tab. Pure resolver fed by the appointment modality + doctor
@@ -160,6 +172,12 @@ export interface RxFormProviderSetup {
    */
   objectiveSeed?: DefaultLayout | null;
   /**
+   * obj-18: doctor specialty (from `doctor_settings`) for resolving Objective-tab
+   * specialty starter packs. Carried on the shell so the Objective tab never
+   * re-fetches settings in the cockpit path. View-only; never reaches the payload.
+   */
+  objectiveSpecialty?: string | null;
+  /**
    * Props for `<RxFormProvider>`. Always non-null so callers can mount the
    * provider on the first render — during the fetch window we mount it with
    * empty fields and `autosaveEnabled: false`, then re-mount (via the `key`)
@@ -214,6 +232,8 @@ export function useRxFormProviderSetup({
   const [objectiveDefaults, setObjectiveDefaults] =
     useState<DoctorObjectiveDefaults | null>(null);
   const [objectiveSeed, setObjectiveSeed] = useState<DefaultLayout | null>(null);
+  const [objectiveSpecialty, setObjectiveSpecialty] = useState<string | null>(null);
+  const [consultationType, setConsultationType] = useState<string | null>(null);
 
   useEffect(() => {
     if (disabled || !token) return;
@@ -225,6 +245,9 @@ export function useRxFormProviderSetup({
       setSubjectiveSectionCollapsed(defaults.sectionCollapsed);
       setSubjectiveSectionHidden(defaults.sectionHidden);
       setObjectiveDefaults(defaults.objective);
+      // obj-18: carry the doctor specialty on the shell so the Objective tab can
+      // resolve specialty starter packs without its own settings round-trip.
+      setObjectiveSpecialty(defaults.specialty);
       // obj-14: compute the view-only modality/specialty seed for the Objective tab.
       const seed = await loadObjectiveSeed(token, appointmentId, defaults.specialty);
       if (!cancelled) setObjectiveSeed(seed);
@@ -237,26 +260,38 @@ export function useRxFormProviderSetup({
   useEffect(() => {
     if (disabled) return;
     if (initialPrescription) {
-      setPrescription(initialPrescription);
-      prescriptionIdRef.current = initialPrescription.id;
-      setEntryMode(initialPrescription.type);
-      const meds = medicinesFromPrescription(initialPrescription);
-      setInitialFields(rxFormFieldsFromPrescription(initialPrescription, meds));
-      if ((initialPrescription.prescription_medicines ?? []).length > 0) {
-        setMedicineInstanceIds(
-          generateInstanceIds(initialPrescription.prescription_medicines!.length),
+      let cancelled = false;
+      void (async () => {
+        const consultationType = await loadConsultationType(token, appointmentId);
+        if (cancelled) return;
+        setConsultationType(consultationType);
+        setPrescription(initialPrescription);
+        prescriptionIdRef.current = initialPrescription.id;
+        setEntryMode(initialPrescription.type);
+        const meds = medicinesFromPrescription(initialPrescription);
+        setInitialFields(
+          rxFormFieldsFromPrescription(initialPrescription, meds, { consultationType }),
         );
-      }
-      setAttachments(initialPrescription.prescription_attachments ?? []);
-      setLoading(false);
-      return;
+        if ((initialPrescription.prescription_medicines ?? []).length > 0) {
+          setMedicineInstanceIds(
+            generateInstanceIds(initialPrescription.prescription_medicines!.length),
+          );
+        }
+        setAttachments(initialPrescription.prescription_attachments ?? []);
+        setLoading(false);
+      })();
+      return () => {
+        cancelled = true;
+      };
     }
     let cancelled = false;
     const load = async () => {
       setLoading(true);
       try {
+        const consultationType = await loadConsultationType(token, appointmentId);
         const res = await listPrescriptionsByAppointment(token, appointmentId);
         if (cancelled) return;
+        setConsultationType(consultationType);
         const list = res.data.prescriptions ?? [];
         if (list.length > 0) {
           const latest = list[0];
@@ -264,7 +299,9 @@ export function useRxFormProviderSetup({
           prescriptionIdRef.current = latest.id;
           setEntryMode(latest.type);
           const meds = medicinesFromPrescription(latest);
-          setInitialFields(rxFormFieldsFromPrescription(latest, meds));
+          setInitialFields(
+            rxFormFieldsFromPrescription(latest, meds, { consultationType }),
+          );
           if ((latest.prescription_medicines ?? []).length > 0) {
             setMedicineInstanceIds(
               generateInstanceIds(latest.prescription_medicines!.length),
@@ -272,7 +309,7 @@ export function useRxFormProviderSetup({
           }
           setAttachments(latest.prescription_attachments ?? []);
         } else {
-          const fields = createEmptyRxFormFields();
+          const fields = createEmptyRxFormFields(undefined, { consultationType });
           try {
             const defaults = await loadDoctorSubjectiveDefaults(token);
             setSubjectiveSectionOrder(defaults.sectionOrder);
@@ -295,7 +332,13 @@ export function useRxFormProviderSetup({
           setInitialFields(fields);
         }
       } catch {
-        if (!cancelled) setInitialFields(createEmptyRxFormFields());
+        if (!cancelled) {
+          const consultationType = await loadConsultationType(token, appointmentId);
+          if (!cancelled) {
+            setConsultationType(consultationType);
+            setInitialFields(createEmptyRxFormFields(undefined, { consultationType }));
+          }
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -327,6 +370,7 @@ export function useRxFormProviderSetup({
     token,
     entryMode,
     initialFields: initialFields ?? emptyInitialFields,
+    consultationType,
     autosaveEnabled: !loading,
     prescriptionIdRef,
     onPrescriptionCreated: (rx) => {
@@ -358,6 +402,7 @@ export function useRxFormProviderSetup({
     objectiveDefaults,
     setObjectiveDefaults,
     objectiveSeed,
+    objectiveSpecialty,
     providerProps,
   };
 }

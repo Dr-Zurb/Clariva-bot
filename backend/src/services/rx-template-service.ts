@@ -24,12 +24,13 @@ import { getSupabaseAdminClient } from '../config/database';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataAccess, logDataModification } from '../utils/audit-logger';
 import { ForbiddenError, InternalError, NotFoundError } from '../utils/errors';
-import { CustomSubsection } from '../types/prescription';
+import { CustomSubsection, type ExamFindingEntry } from '../types/prescription';
 import {
   CreateRxTemplateInput,
   DoctorRxTemplate,
   RxTemplateAllergies,
   RxTemplateMedicine,
+  RxTemplateObjective,
   RxTemplatePmh,
   RxTemplateScope,
   RxTemplateSubjective,
@@ -158,6 +159,141 @@ function normalizeSubjective(input: RxTemplateSubjective | undefined): RxTemplat
   };
 }
 
+function normalizeExamFindingEntries(raw: unknown): ExamFindingEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ExamFindingEntry[] = [];
+  for (const entry of raw) {
+    if (typeof entry === 'string') {
+      const trimmed = entry.trim();
+      if (!trimmed) continue;
+      out.push({
+        findingId: trimmed.toLowerCase().replace(/[\s-]+/g, '_'),
+        attributes: {},
+      });
+      continue;
+    }
+    if (!entry || typeof entry !== 'object') continue;
+    const row = entry as Record<string, unknown>;
+    const findingId = typeof row.findingId === 'string' ? row.findingId.trim() : '';
+    if (!findingId) continue;
+    const attributes: Record<string, string> = {};
+    if (row.attributes && typeof row.attributes === 'object') {
+      for (const [key, value] of Object.entries(row.attributes as Record<string, unknown>)) {
+        if (typeof value !== 'string') continue;
+        const k = key.trim();
+        const v = value.trim();
+        if (k && v) attributes[k] = v;
+      }
+    }
+    out.push({ findingId, attributes });
+  }
+  return out;
+}
+
+/**
+ * Defensive sanitiser for the objective preset (obj-16). Mirrors
+ * `normalizeSubjective`: only keys present in the input are emitted (so PATCH
+ * never nulls an untouched field), numbers are passed through after a finite
+ * check (the validator already bounds ranges), exam findings + custom sections
+ * reuse the tolerant array sanitisers, and `testResults` is trimmed-or-nulled.
+ */
+function normalizeObjective(input: RxTemplateObjective | undefined): RxTemplateObjective {
+  if (!input || typeof input !== 'object') return {};
+
+  const trimOrNull = (v: unknown): string | null => {
+    if (typeof v !== 'string') return null;
+    const trimmed = v.trim();
+    return trimmed || null;
+  };
+  const finiteOrNull = (v: unknown): number | null =>
+    typeof v === 'number' && Number.isFinite(v) ? v : null;
+
+  const examinationJson = Array.isArray(input.examinationJson)
+    ? input.examinationJson
+        .filter(
+          (f) =>
+            typeof f?.systemId === 'string' &&
+            f.systemId.trim() &&
+            (f.status === 'normal' || f.status === 'abnormal'),
+        )
+        .map((f) => ({
+          systemId: f.systemId.trim(),
+          status: f.status,
+          findings: normalizeExamFindingEntries(f.findings),
+          notes: typeof f.notes === 'string' ? f.notes.trim() || null : null,
+        }))
+    : undefined;
+
+  return {
+    ...(examinationJson !== undefined ? { examinationJson } : {}),
+    ...(input.vitalsBpSystolic !== undefined ? { vitalsBpSystolic: finiteOrNull(input.vitalsBpSystolic) } : {}),
+    ...(input.vitalsBpDiastolic !== undefined ? { vitalsBpDiastolic: finiteOrNull(input.vitalsBpDiastolic) } : {}),
+    ...(input.vitalsHr !== undefined ? { vitalsHr: finiteOrNull(input.vitalsHr) } : {}),
+    ...(input.vitalsTempC !== undefined ? { vitalsTempC: finiteOrNull(input.vitalsTempC) } : {}),
+    ...(input.vitalsSpo2 !== undefined ? { vitalsSpo2: finiteOrNull(input.vitalsSpo2) } : {}),
+    ...(input.vitalsWtKg !== undefined ? { vitalsWtKg: finiteOrNull(input.vitalsWtKg) } : {}),
+    ...(input.vitalsHtCm !== undefined ? { vitalsHtCm: finiteOrNull(input.vitalsHtCm) } : {}),
+    ...(input.vitalsRr !== undefined ? { vitalsRr: finiteOrNull(input.vitalsRr) } : {}),
+    ...(input.vitalsPainScore !== undefined ? { vitalsPainScore: finiteOrNull(input.vitalsPainScore) } : {}),
+    ...(input.vitalsGlucoseMgDl !== undefined ? { vitalsGlucoseMgDl: finiteOrNull(input.vitalsGlucoseMgDl) } : {}),
+    ...(input.vitalsGcsTotal !== undefined ? { vitalsGcsTotal: finiteOrNull(input.vitalsGcsTotal) } : {}),
+    ...(input.vitalsBpPosture !== undefined ? { vitalsBpPosture: input.vitalsBpPosture ?? null } : {}),
+    ...(input.vitalsBpLimb !== undefined ? { vitalsBpLimb: input.vitalsBpLimb ?? null } : {}),
+    ...(input.vitalsHeadCircumferenceCm !== undefined
+      ? { vitalsHeadCircumferenceCm: finiteOrNull(input.vitalsHeadCircumferenceCm) }
+      : {}),
+    ...(input.vitalsMuacCm !== undefined ? { vitalsMuacCm: finiteOrNull(input.vitalsMuacCm) } : {}),
+    ...(input.vitalsWaistCm !== undefined ? { vitalsWaistCm: finiteOrNull(input.vitalsWaistCm) } : {}),
+    ...(input.testResults !== undefined ? { testResults: trimOrNull(input.testResults) } : {}),
+    ...(input.testResultsJson !== undefined
+      ? { testResultsJson: normalizeTemplateTestResults(input.testResultsJson) }
+      : {}),
+    ...(input.customSections !== undefined
+      ? { customSections: normalizeCustomSubsections(input.customSections) }
+      : {}),
+  };
+}
+
+/**
+ * obj-23: defensive sanitiser for structured result-row presets in a template's
+ * `objective_json.testResultsJson`. Mirrors the frontend `normalizeTestResults`
+ * + the Zod `testResultsJsonSchema`: drop rows with a bad `source` or empty
+ * `name`, collapse empty optional strings to null, coerce a bad interpretation
+ * to null, keep array order. Config, not PHI.
+ */
+function normalizeTemplateTestResults(input: unknown): RxTemplateObjective['testResultsJson'] {
+  if (!Array.isArray(input)) return [];
+  const SOURCES = ['patient_report', 'in_clinic_poc'];
+  const INTERPRETATIONS = ['normal', 'high', 'low', 'abnormal'];
+  const trimOrNull = (v: unknown): string | null =>
+    typeof v === 'string' && v.trim() ? v.trim() : null;
+
+  const out: NonNullable<RxTemplateObjective['testResultsJson']> = [];
+  for (const row of input) {
+    if (!row || typeof row !== 'object') continue;
+    const r = row as Record<string, unknown>;
+    const name = typeof r.name === 'string' ? r.name.trim() : '';
+    if (!name) continue;
+    if (typeof r.source !== 'string' || !SOURCES.includes(r.source)) continue;
+    const id = typeof r.id === 'string' && r.id.trim() ? r.id.trim() : randomUUID();
+    const interpretation =
+      typeof r.interpretation === 'string' && INTERPRETATIONS.includes(r.interpretation)
+        ? (r.interpretation as NonNullable<RxTemplateObjective['testResultsJson']>[number]['interpretation'])
+        : null;
+    out.push({
+      id,
+      source: r.source as NonNullable<RxTemplateObjective['testResultsJson']>[number]['source'],
+      name,
+      value: trimOrNull(r.value),
+      unit: trimOrNull(r.unit),
+      date: trimOrNull(r.date),
+      interpretation,
+      notes: trimOrNull(r.notes),
+    });
+  }
+  return out;
+}
+
 /**
  * Snapshot of the patient's PMH chart slice (subj-17). Defensive sanitiser:
  * keep only the recreate-able subset, drop rows missing a name.
@@ -267,6 +403,7 @@ export async function createRxTemplate(
     clinical_notes: input.clinicalNotes ?? null,
     medicines_json: normalizeMedicines(input.medicines),
     subjective_json: normalizeSubjective(input.subjective),
+    objective_json: normalizeObjective(input.objective),
     pmh_json: normalizePmh(input.pmh),
     allergies_json: normalizeAllergies(input.allergies),
     scope: input.scope ?? 'subjective_full',
@@ -331,6 +468,7 @@ export async function updateRxTemplate(
   if (input.clinicalNotes !== undefined) patch.clinical_notes = input.clinicalNotes;
   if (input.medicines !== undefined) patch.medicines_json = normalizeMedicines(input.medicines);
   if (input.subjective !== undefined) patch.subjective_json = normalizeSubjective(input.subjective);
+  if (input.objective !== undefined) patch.objective_json = normalizeObjective(input.objective);
   if (input.pmh !== undefined) patch.pmh_json = normalizePmh(input.pmh);
   if (input.allergies !== undefined) patch.allergies_json = normalizeAllergies(input.allergies);
 

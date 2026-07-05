@@ -35,6 +35,7 @@ import {
   listConditionsHandler,
   listMedicationsHandler,
   listProblemsHandler,
+  listResultsTimelineHandler,
   listVitalsHandler,
   unlinkConditionMedicationHandler,
   updateAllergyHandler,
@@ -76,5 +77,8 @@ router.patch('/vitals/:id', updateVitalsHandler);
 
 // Problem list (T5.25 — read-only; derived from patient_problem_list_v)
 router.get('/problems', listProblemsHandler);
+
+// Investigations & results timeline (sdp-05 — read-only; assembled from prescriptions)
+router.get('/results', listResultsTimelineHandler);
 
 export default router;

@@ -6,6 +6,7 @@ import {
   createEmptyRxFormFields,
 } from "@/components/cockpit/rx/RxFormContext";
 import { ComplaintCard } from "@/components/cockpit/rx/subjective/ComplaintCard";
+import { PrescriptionFormShellProvider } from "@/components/cockpit/rx/PrescriptionFormShellContext";
 import type { Complaint } from "@/types/prescription";
 
 vi.mock("@/lib/api/last-subjective", () => ({
@@ -785,5 +786,99 @@ describe("ComplaintCard smart-confirm defaults", () => {
         feverGrade: "moderate",
       }),
     );
+  });
+});
+
+describe("ComplaintCard per-complaint photos (sdp-03)", () => {
+  it("renders a compact Photos affordance filtered to this complaint", () => {
+    const fields = createEmptyRxFormFields();
+    const complaint = createEmptyComplaint();
+    complaint.name = "Rash";
+    fields.complaints = [complaint];
+
+    const shellAttachments = [
+      {
+        id: "c-photo",
+        prescription_id: "rx-1",
+        file_path: `doc-1/rx-1/subjective/${complaint.id}/uuid-rash.jpg`,
+        file_type: "image/jpeg",
+        caption: null,
+        uploaded_at: "2026-06-25T00:00:00Z",
+      },
+      {
+        id: "other-photo",
+        prescription_id: "rx-1",
+        file_path: "doc-1/rx-1/subjective/other-cmp/uuid-other.jpg",
+        file_type: "image/jpeg",
+        caption: null,
+        uploaded_at: "2026-06-25T00:00:00Z",
+      },
+    ];
+
+    const prescriptionIdRef = { current: "rx-1" as string | null };
+    const shell = {
+      loading: false,
+      initialFields: fields,
+      entryMode: "structured" as const,
+      setEntryMode: vi.fn(),
+      prescription: null,
+      setPrescription: vi.fn(),
+      prescriptionIdRef,
+      attachments: shellAttachments,
+      setAttachments: vi.fn(),
+      setInitialFields: vi.fn(),
+      generateInstanceIds: (n: number) => Array.from({ length: n }, (_, i) => `m-${i}`),
+      instanceIdSeqRef: { current: 0 },
+      medicineInstanceIds: ["m-0"],
+      setMedicineInstanceIds: vi.fn(),
+      subjectiveSectionOrder: [],
+      setSubjectiveSectionOrder: vi.fn(),
+      subjectiveSectionCollapsed: {},
+      setSubjectiveSectionCollapsed: vi.fn(),
+      subjectiveSectionHidden: [],
+      setSubjectiveSectionHidden: vi.fn(),
+      objectiveDefaults: null,
+      setObjectiveDefaults: vi.fn(),
+      providerProps: {
+        key: "test",
+        appointmentId: "appt-1",
+        patientId: "pat-1",
+        token: "test-token",
+        entryMode: "structured" as const,
+        initialFields: fields,
+        autosaveEnabled: false,
+        prescriptionIdRef,
+        onPrescriptionCreated: vi.fn(),
+      },
+    };
+
+    render(
+      <RxFormProvider
+        appointmentId="appt-1"
+        patientId="pat-1"
+        token="test-token"
+        entryMode="structured"
+        initialFields={fields}
+        autosaveEnabled={false}
+        prescriptionIdRef={prescriptionIdRef}
+        onPrescriptionCreated={() => {}}
+      >
+        <PrescriptionFormShellProvider value={shell as never}>
+          <ComplaintCard
+            index={0}
+            value={complaint}
+            onPatch={vi.fn()}
+            onRemove={vi.fn()}
+            isEditing
+            token="test-token"
+          />
+        </PrescriptionFormShellProvider>
+      </RxFormProvider>,
+    );
+
+    const strip = screen.getByTestId(`complaint-photos-${complaint.id}`);
+    expect(strip).toBeInTheDocument();
+    expect(screen.getByText("Photos")).toBeInTheDocument();
+    expect(screen.getAllByTestId(`complaint-photos-${complaint.id}-item`)).toHaveLength(1);
   });
 });

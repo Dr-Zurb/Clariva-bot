@@ -79,13 +79,17 @@ export function normalizeSpecialty(specialty: string | null | undefined): Specia
 }
 
 /**
- * Modality → section default (§G). All maps keep `vitals` and never hide
- * everything.
- *   - in_clinic → full exam (registry default).
- *   - video → structured exam (observed) + home vitals; de-emphasise legacy
- *     free-text blocks (hidden).
- *   - voice / text (async) → patient-reported vitals + uploaded reports only;
- *     structured + legacy exam hidden, `test_results` leads.
+ * Modality → section default (§G / OBJ-D6). obj-23 wires the result/POC/media
+ * content emphasis (view-only; never reaches `buildRxPayload`). All maps keep
+ * `vitals` and never hide everything.
+ *   - in_clinic → full + POC: every section visible (registry default), incl.
+ *     the in-clinic point-of-care + media strips.
+ *   - video → observed + uploads: structured exam (observed) + media uploads
+ *     visible; in-clinic `point_of_care` hidden (no chairside POC over video),
+ *     legacy free-text blocks hidden.
+ *   - voice / text (async) → patient-reported + uploads: `test_results` leads,
+ *     media uploads visible (report scans); structured `exam`, in-clinic
+ *     `point_of_care`, and legacy exam hidden.
  */
 function resolveModalityLayout(modality: ConsultModality | null | undefined): DefaultLayout {
   switch (modality) {
@@ -94,13 +98,25 @@ function resolveModalityLayout(modality: ConsultModality | null | undefined): De
     case "video":
       return {
         defaultOrder: [...DEFAULT_OBJECTIVE_SECTION_ORDER],
-        defaultHidden: ["legacy_exam", "legacy_vitals"],
+        // obj-23: no chairside POC over video; media (uploads) stays visible.
+        defaultHidden: ["point_of_care", "legacy_exam", "legacy_vitals"],
       };
     case "voice":
     case "text":
       return {
-        defaultOrder: ["test_results", "vitals", "exam", "legacy_exam", "legacy_vitals"],
-        defaultHidden: ["exam", "legacy_exam", "legacy_vitals"],
+        defaultOrder: [
+          "test_results",
+          "vitals",
+          "media",
+          "exam",
+          "point_of_care",
+          "legacy_exam",
+          "legacy_vitals",
+        ],
+        // obj-23: async = patient-reported + uploads. `test_results` leads and the
+        // media strip (uploaded report scans) is visible; live-capture sections
+        // (structured exam + in-clinic POC) and legacy free-text are hidden.
+        defaultHidden: ["exam", "point_of_care", "legacy_exam", "legacy_vitals"],
       };
     default:
       // Unknown / absent modality → registry default (never blank).

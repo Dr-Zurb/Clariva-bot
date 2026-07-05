@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Info } from "lucide-react";
 import {
   Tooltip,
@@ -8,8 +8,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { CollapsibleEntryCard } from "@/components/cockpit/rx/inputs/CollapsibleEntryCard";
 import { RX_FIELD_INPUT_CLASS } from "@/components/cockpit/rx/sections/field-styles";
-import { RemoveIconButton } from "@/components/cockpit/rx/subjective/RemoveIconButton";
 import { cn } from "@/lib/utils";
 import type { SocialHistoryDurationUnit } from "@/lib/cockpit/social-history-indices";
 import {
@@ -70,6 +70,10 @@ interface SubstancesSectionProps {
   value: SocialHistoryStructured;
   disabled?: boolean;
   inputIdPrefix: string;
+  /** Hide the internal status-row label when the section is wrapped in a titled card. */
+  hideStatusLabel?: boolean;
+  /** Selector for the enclosing card an item glides back to when closed. */
+  closeScrollToSelector?: string;
   onChange: (next: SocialHistoryStructured) => void;
 }
 
@@ -85,6 +89,9 @@ function SubstanceItemRow({
   index,
   disabled,
   implicitPast,
+  open,
+  closeScrollToSelector,
+  onToggle,
   onPatch,
   onRemove,
 }: {
@@ -92,6 +99,9 @@ function SubstanceItemRow({
   index: number;
   disabled?: boolean;
   implicitPast?: boolean;
+  open: boolean;
+  closeScrollToSelector?: string;
+  onToggle: () => void;
   onPatch: (patch: Partial<SubstanceUseItem>) => void;
   onRemove: () => void;
 }) {
@@ -100,6 +110,7 @@ function SubstanceItemRow({
       ? item.typeOther?.trim() || SUBSTANCE_TYPE_LABELS.other
       : (SUBSTANCE_TYPE_LABELS[item.type] ?? item.type);
   const phase = item.phase ?? (implicitPast ? "past" : "current");
+  const isPast = implicitPast || phase === "past";
   const durationUnit = item.yearsUnit ?? "years";
   const durationMax = maxForDurationUnit(durationUnit);
   const defaultUnit = defaultSubstanceAmountUnit(item.type);
@@ -108,92 +119,112 @@ function SubstanceItemRow({
   const freqUnit = item.frequencyUnit ?? "week";
   const needsFrequencyCount =
     freqUnit === "week" || freqUnit === "fortnight" || freqUnit === "month" || freqUnit === "interval";
+  const supportsAgentName = item.type !== "other" && substanceSupportsAgentName(item.type);
+
+  // Header label folds the agent name in so it stays visible while collapsed.
+  const headerLabel =
+    supportsAgentName && item.typeOther?.trim()
+      ? `${displayLabel} — ${item.typeOther.trim()}`
+      : displayLabel;
+
+  const routeLabel =
+    item.route == null
+      ? null
+      : item.route === "other"
+        ? item.routeOther?.trim() || null
+        : (SUBSTANCE_ROUTE_OPTIONS.find((o) => o.value === item.route)?.label ?? null);
+  const previewParts: string[] = [];
+  if (item.amount != null) previewParts.push(`${item.amount} ${unitLabel}/day`);
+  if (routeLabel) previewParts.push(routeLabel);
+  if (item.years != null) {
+    previewParts.push(`for ${item.years} ${durationUnitChipLabel(durationUnit)}`);
+  }
+  const preview = previewParts.join(" · ") || undefined;
+
+  const titleNode = (
+    <>
+      <span className="min-w-0 truncate text-xs font-semibold text-foreground" title={headerLabel}>
+        {headerLabel}
+      </span>
+      {!implicitPast && (
+        <span
+          className="shrink-0"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <div className="flex gap-0.5" role="group" aria-label={`${displayLabel} phase`}>
+            {PHASE_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                disabled={disabled}
+                aria-pressed={phase === option.value}
+                aria-label={option.label}
+                data-testid={`social-substances-item-${index}-phase-${option.value}`}
+                onClick={() =>
+                  onPatch(option.value === "past" ? { phase: "past" } : { phase: "current" })
+                }
+                className={cn(
+                  OPTION_CHIP_CLASS,
+                  phase === option.value
+                    ? option.value === "past"
+                      ? "border-muted-foreground bg-muted text-foreground"
+                      : "border-primary bg-primary/10 text-foreground"
+                    : "border-border text-muted-foreground hover:border-primary/60",
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </span>
+      )}
+    </>
+  );
 
   return (
-    <div
-      className={cn(
-        "space-y-2 rounded-md border px-2.5 py-2",
-        implicitPast || phase === "past"
-          ? "border-border/60 bg-muted/30"
-          : "border-border/50 bg-background/60",
-      )}
-      data-testid={`social-substances-item-${index}`}
+    <CollapsibleEntryCard
+      title={titleNode}
+      preview={preview}
+      open={open}
+      onToggle={onToggle}
+      onRemove={disabled ? undefined : onRemove}
+      removeLabel={`Remove ${displayLabel}`}
+      toggleLabel={`${open ? "Collapse" : "Expand"} ${displayLabel}`}
+      testId={`social-substances-item-${index}`}
+      bodyId={`social-substances-item-body-${item.id}`}
+      closeScrollToSelector={closeScrollToSelector ?? '[data-testid="social-history-cluster-substance"]'}
+      className={isPast ? "bg-muted/30" : undefined}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
-          {item.type === "other" ? (
-            <input
-              type="text"
-              value={item.typeOther ?? ""}
-              disabled={disabled}
-              placeholder="Specify substance"
-              aria-label="Other substance name"
-              data-testid={`social-substances-item-${index}-other`}
-              onChange={(e) => onPatch({ typeOther: e.target.value || undefined })}
-              className={cn(
-                RX_FIELD_INPUT_CLASS,
-                "h-8 min-w-[6rem] max-w-[10rem] px-2 py-1 text-xs font-semibold",
-              )}
-            />
-          ) : (
-            <>
-              <span className="shrink-0 text-xs font-semibold text-foreground" title={displayLabel}>
-                {displayLabel}
-              </span>
-              {substanceSupportsAgentName(item.type) && (
-                <input
-                  type="text"
-                  value={item.typeOther ?? ""}
-                  disabled={disabled}
-                  placeholder="Which one? e.g. Alprazolam"
-                  aria-label={`${displayLabel} agent name`}
-                  data-testid={`social-substances-item-${index}-agent`}
-                  onChange={(e) => onPatch({ typeOther: e.target.value || undefined })}
-                  className={cn(
-                    RX_FIELD_INPUT_CLASS,
-                    "h-8 min-w-[6rem] max-w-[10rem] px-2 py-1 text-xs",
-                  )}
-                />
-              )}
-            </>
-          )}
-
-          {!implicitPast && (
-            <div className="flex shrink-0 gap-0.5" role="group" aria-label={`${displayLabel} phase`}>
-              {PHASE_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  disabled={disabled}
-                  aria-pressed={phase === option.value}
-                  aria-label={option.label}
-                  data-testid={`social-substances-item-${index}-phase-${option.value}`}
-                  onClick={() =>
-                    onPatch(option.value === "past" ? { phase: "past" } : { phase: "current" })
-                  }
-                  className={cn(
-                    OPTION_CHIP_CLASS,
-                    phase === option.value
-                      ? option.value === "past"
-                        ? "border-muted-foreground bg-muted text-foreground"
-                        : "border-primary bg-primary/10 text-foreground"
-                      : "border-border text-muted-foreground hover:border-primary/60",
-                  )}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <RemoveIconButton
-          label={`Remove ${displayLabel}`}
+      {item.type === "other" ? (
+        <input
+          type="text"
+          value={item.typeOther ?? ""}
           disabled={disabled}
-          testId={`social-substances-item-${index}-remove`}
-          onClick={onRemove}
+          placeholder="Specify substance"
+          aria-label="Other substance name"
+          data-testid={`social-substances-item-${index}-other`}
+          onChange={(e) => onPatch({ typeOther: e.target.value || undefined })}
+          className={cn(
+            RX_FIELD_INPUT_CLASS,
+            "h-8 min-w-[6rem] max-w-[10rem] px-2 py-1 text-xs font-semibold",
+          )}
         />
-      </div>
+      ) : supportsAgentName ? (
+        <input
+          type="text"
+          value={item.typeOther ?? ""}
+          disabled={disabled}
+          placeholder="Which one? e.g. Alprazolam"
+          aria-label={`${displayLabel} agent name`}
+          data-testid={`social-substances-item-${index}-agent`}
+          onChange={(e) => onPatch({ typeOther: e.target.value || undefined })}
+          className={cn(
+            RX_FIELD_INPUT_CLASS,
+            "h-8 min-w-[6rem] max-w-[10rem] px-2 py-1 text-xs",
+          )}
+        />
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className={ROW_LABEL_CLASS}>Amount</span>
@@ -455,7 +486,7 @@ function SubstanceItemRow({
           IV use — consider infection risk and BBV screening
         </p>
       )}
-    </div>
+    </CollapsibleEntryCard>
   );
 }
 
@@ -463,6 +494,8 @@ export function SubstancesSection({
   value,
   disabled = false,
   inputIdPrefix,
+  hideStatusLabel = false,
+  closeScrollToSelector,
   onChange,
 }: SubstancesSectionProps) {
   const normalized = useMemo(
@@ -478,6 +511,17 @@ export function SubstancesSection({
     substances: normalized ?? undefined,
     alcoholStatus: value.alcohol?.status ?? null,
   });
+
+  // Per-item collapse state; newly added substances start collapsed (chip → card).
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const toggleExpanded = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const updateSection = (next: SubstancesSectionInput | null) => {
     onChange(patchSubstances(value, next));
@@ -535,6 +579,7 @@ export function SubstancesSection({
     <section className="space-y-2" aria-label="Substances">
       <StatusChipRow
         label="Substances"
+        hideLabel={hideStatusLabel}
         options={SUBSTANCE_STATUS_OPTIONS}
         selected={status}
         disabled={disabled}
@@ -583,7 +628,7 @@ export function SubstancesSection({
 
           {items.length > 0 && (
             <div
-              className="space-y-2 border-l-2 border-primary/20 pl-2"
+              className="space-y-2"
               data-testid="social-substances-details"
               aria-expanded={true}
             >
@@ -594,6 +639,9 @@ export function SubstancesSection({
                   index={index}
                   disabled={disabled}
                   implicitPast={implicitPast}
+                  open={expandedIds.has(item.id)}
+                  closeScrollToSelector={closeScrollToSelector}
+                  onToggle={() => toggleExpanded(item.id)}
                   onPatch={(patch) => patchItem(item.id, patch)}
                   onRemove={() => handleRemoveItem(item.id)}
                 />
@@ -644,6 +692,7 @@ export function SubstancesSection({
 
 function StatusChipRow({
   label,
+  hideLabel = false,
   options,
   selected,
   disabled,
@@ -651,6 +700,7 @@ function StatusChipRow({
   onSelect,
 }: {
   label: string;
+  hideLabel?: boolean;
   options: readonly { value: SubstanceUseStatus; label: string }[];
   selected: SubstanceUseStatus | undefined;
   disabled?: boolean;
@@ -659,7 +709,7 @@ function StatusChipRow({
 }) {
   return (
     <div className="space-y-1.5" data-testid={testId}>
-      <p className="text-xs font-medium text-foreground/80">{label}</p>
+      {!hideLabel && <p className="text-xs font-medium text-foreground/80">{label}</p>}
       <div className="flex flex-wrap gap-1.5" role="group" aria-label={label}>
         {options.map((option) => {
           const isSelected = selected === option.value;

@@ -1,8 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { Info } from "lucide-react";
+import { CollapsibleEntryCard } from "@/components/cockpit/rx/inputs/CollapsibleEntryCard";
 import { RX_FIELD_INPUT_CLASS } from "@/components/cockpit/rx/sections/field-styles";
-import { RemoveIconButton } from "@/components/cockpit/rx/subjective/RemoveIconButton";
 import {
   Tooltip,
   TooltipContent,
@@ -95,6 +96,8 @@ interface TobaccoProductRowsProps {
   /** Ex-smoker / former user — all products are past; hide per-product phase controls. */
   implicitPast?: boolean;
   testIdPrefix: string;
+  /** Selector for the enclosing card the product should glide back to when closed. */
+  closeScrollToSelector?: string;
   onChange: (products: TobaccoProductRow[]) => void;
 }
 
@@ -298,6 +301,9 @@ function CompactProductCard({
   testIdPrefix,
   implicitPast = false,
   disabled,
+  open,
+  closeScrollToSelector,
+  onToggle,
   onChange,
   onRemove,
 }: {
@@ -307,6 +313,9 @@ function CompactProductCard({
   testIdPrefix: string;
   implicitPast?: boolean;
   disabled?: boolean;
+  open: boolean;
+  closeScrollToSelector?: string;
+  onToggle: () => void;
   onChange: (patch: Partial<TobaccoProductRow>) => void;
   onRemove: () => void;
 }) {
@@ -333,86 +342,104 @@ function CompactProductCard({
   );
   const phase = productPhase(product);
   const showProductQuit = implicitPast || phase === "past";
+  const isPast = implicitPast || phase === "past";
   const defaultUnit = defaultAmountUnit(catalog, product.type);
 
-  return (
-    <div
-      className={cn(
-        "space-y-2 rounded-md border px-2.5 py-2",
-        implicitPast || phase === "past"
-          ? "border-border/60 bg-muted/30"
-          : "border-border/50 bg-background/60",
+  const previewParts: string[] = [];
+  if (product.perDay != null) {
+    previewParts.push(`${product.perDay}${amountSuffix ? ` ${amountSuffix}` : ""}`);
+  }
+  if (product.years != null) {
+    previewParts.push(`for ${product.years} ${durationUnitChipLabel(resolvedDurationUnit)}`);
+  }
+  if (showProductQuit && product.quitYearsAgo != null) {
+    previewParts.push(
+      `quit ${product.quitYearsAgo} ${durationUnitChipLabel(product.quitYearsUnit ?? "years")} ago`,
+    );
+  }
+  if (catalog === "smoking" && countsForPackYears && rowPackYears != null) {
+    previewParts.push(`≈ ${rowPackYears} pack-years`);
+  }
+  const preview = previewParts.join(" · ");
+
+  const titleNode = (
+    <>
+      <span className="min-w-0 truncate text-xs font-semibold text-foreground" title={displayLabel}>
+        {displayLabel}
+      </span>
+      {!implicitPast && (
+        <span
+          className="shrink-0"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <div className="flex gap-0.5" role="group" aria-label="Product phase">
+            {PHASE_OPTIONS.map((option) => {
+              const isSelected = phase === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  disabled={disabled}
+                  aria-pressed={isSelected}
+                  aria-label={option.label}
+                  data-testid={`${testIdPrefix}-phase-${option.value}-${index}`}
+                  onClick={() =>
+                    onChange(
+                      option.value === "past"
+                        ? { phase: "past" }
+                        : { phase: undefined, quitYearsAgo: undefined, quitYearsUnit: undefined },
+                    )
+                  }
+                  className={cn(
+                    OPTION_CHIP_CLASS,
+                    isSelected
+                      ? option.value === "past"
+                        ? "border-muted-foreground bg-muted text-foreground"
+                        : "border-primary bg-primary/10 text-foreground"
+                      : "border-border text-muted-foreground hover:border-primary/60",
+                  )}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </span>
       )}
-      data-testid={`${testIdPrefix}-product-${index}`}
+    </>
+  );
+
+  return (
+    <CollapsibleEntryCard
+      title={titleNode}
+      preview={preview || undefined}
+      open={open}
+      onToggle={onToggle}
+      onRemove={disabled ? undefined : onRemove}
+      removeLabel={`Remove ${displayLabel}`}
+      toggleLabel={`${open ? "Collapse" : "Expand"} ${displayLabel}`}
+      testId={`${testIdPrefix}-product-${index}`}
+      bodyId={`${testIdPrefix}-product-body-${product.id}`}
+      closeScrollToSelector={closeScrollToSelector ?? '[data-testid="social-history-cluster-substance"]'}
+      className={isPast ? "bg-muted/30" : undefined}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
-          {product.type === "other" ? (
-            <input
-              type="text"
-              value={product.typeOther ?? ""}
-              disabled={disabled}
-              placeholder="Name"
-              aria-label="Other product name"
-              onChange={(e) =>
-                onChange({ typeOther: e.target.value === "" ? undefined : e.target.value })
-              }
-              className={cn(
-                RX_FIELD_INPUT_CLASS,
-                "h-8 min-w-[6rem] max-w-[10rem] px-2 py-1 text-xs font-semibold",
-              )}
-            />
-          ) : (
-            <span
-              className="shrink-0 text-xs font-semibold text-foreground"
-              title={displayLabel}
-            >
-              {displayLabel}
-            </span>
-          )}
-
-          {!implicitPast && (
-            <div className="flex shrink-0 gap-0.5" role="group" aria-label="Product phase">
-              {PHASE_OPTIONS.map((option) => {
-                const isSelected = phase === option.value;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    disabled={disabled}
-                    aria-pressed={isSelected}
-                    aria-label={option.label}
-                    data-testid={`${testIdPrefix}-phase-${option.value}-${index}`}
-                    onClick={() =>
-                      onChange(
-                        option.value === "past"
-                          ? { phase: "past" }
-                          : { phase: undefined, quitYearsAgo: undefined, quitYearsUnit: undefined },
-                      )
-                    }
-                    className={cn(
-                      OPTION_CHIP_CLASS,
-                      isSelected
-                        ? option.value === "past"
-                          ? "border-muted-foreground bg-muted text-foreground"
-                          : "border-primary bg-primary/10 text-foreground"
-                        : "border-border text-muted-foreground hover:border-primary/60",
-                    )}
-                  >
-                    {option.label}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <RemoveIconButton
-          label={`Remove ${displayLabel}`}
+      {product.type === "other" ? (
+        <input
+          type="text"
+          value={product.typeOther ?? ""}
           disabled={disabled}
-          onClick={onRemove}
+          placeholder="Name"
+          aria-label="Other product name"
+          onChange={(e) =>
+            onChange({ typeOther: e.target.value === "" ? undefined : e.target.value })
+          }
+          className={cn(
+            RX_FIELD_INPUT_CLASS,
+            "h-8 min-w-[6rem] max-w-[10rem] px-2 py-1 text-xs font-semibold",
+          )}
         />
-      </div>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className={ROW_LABEL_CLASS}>Amount</span>
@@ -667,7 +694,7 @@ function CompactProductCard({
           </span>
         </p>
       )}
-    </div>
+    </CollapsibleEntryCard>
   );
 }
 
@@ -677,10 +704,23 @@ export function TobaccoProductRows({
   disabled = false,
   implicitPast = false,
   testIdPrefix,
+  closeScrollToSelector,
   onChange,
 }: TobaccoProductRowsProps) {
   const canAddProduct = products.length < MAX_PRODUCT_ROWS;
   const addChips = availableAddChips(catalog, products);
+
+  // Per-product collapse state. Newly added products start collapsed (chip → card),
+  // matching the edema/lymph and PMH condition-card pattern.
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const toggleExpanded = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const updateProduct = (id: string, patch: Partial<TobaccoProductRow>) => {
     onChange(
@@ -732,7 +772,7 @@ export function TobaccoProductRows({
 
       {products.length > 0 ? (
         <div
-          className="space-y-1.5 border-l-2 border-primary/20 pl-2"
+          className="space-y-2"
           role="group"
           aria-label="Registered products"
         >
@@ -745,6 +785,9 @@ export function TobaccoProductRows({
               testIdPrefix={testIdPrefix}
               implicitPast={implicitPast}
               disabled={disabled}
+              open={expandedIds.has(product.id)}
+              closeScrollToSelector={closeScrollToSelector}
+              onToggle={() => toggleExpanded(product.id)}
               onChange={(patch) => updateProduct(product.id, patch)}
               onRemove={() => removeProduct(product.id)}
             />

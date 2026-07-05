@@ -41,6 +41,7 @@ import {
   createVitals,
   getMedicalBackground,
   getProblemList,
+  getResultsTimeline,
   linkConditionMedication,
   listAllergies,
   listChronicConditions,
@@ -257,4 +258,17 @@ export const listProblemsHandler = asyncHandler(async (req: Request, res: Respon
 
   const problems = await getProblemList(patientId, correlationId, userId);
   res.status(200).json(successResponse({ problems }, req));
+});
+
+// ============================================================================
+// Investigations & results timeline (sdp-05 — read-only)
+// ============================================================================
+
+export const listResultsTimelineHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const userId = requireUserId(req);
+  const { patientId } = validatePatientChartParentParams(req.params);
+
+  const results = await getResultsTimeline(patientId, correlationId, userId);
+  res.status(200).json(successResponse({ results }, req));
 });

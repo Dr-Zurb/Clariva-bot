@@ -1,3 +1,5 @@
+import { scrollCollapsibleToTop } from "@/lib/cockpit/collapse-scroll";
+
 /** Scroll anchor id on the expanded complaint card header row. */
 export const COMPLAINT_CARD_HEADER_ATTR = "data-complaint-card-header";
 
@@ -14,9 +16,11 @@ export const CHIEF_COMPLAINTS_SECTION_ID = "chief-complaints";
 export type ComplaintCollapseSource = "explicit" | "blur";
 
 /**
- * After switching the active complaint card, align its header to the top of the
- * nearest scroll container so the body expands downward instead of leaving the
- * viewport at the bottom of a tall card.
+ * After switching the active complaint card, glide its header to the top of the
+ * scroll pane (under the sticky section header — the card header carries the
+ * matching `scroll-mt`) so the body expands downward in view. Uses the shared
+ * collapse glide (ease-out, distance-independent) so it feels the same as the
+ * Objective sections/cards instead of the old instant jump.
  */
 export function scrollComplaintCardHeaderIntoView(instanceId: string): void {
   if (typeof document === "undefined" || !instanceId) return;
@@ -24,29 +28,29 @@ export function scrollComplaintCardHeaderIntoView(instanceId: string): void {
   const root = document.querySelector(`[${COMPLAINT_CARD_INSTANCE_ATTR}="${instanceId}"]`);
   const header = root?.querySelector(`[${COMPLAINT_CARD_HEADER_ATTR}]`);
   if (header instanceof HTMLElement) {
-    header.scrollIntoView({ block: "start", behavior: "auto" });
+    scrollCollapsibleToTop(header);
   }
 }
 
 /**
  * After a deliberate card collapse, bring the whole chief-complaints container
  * back into view (header + capture field + collapsed list) so the doctor can add
- * another complaint or pick the next card. Scrolls the section wrapper — not
- * just the input — so the "Chief complaints" title stays visible. Does not
- * focus the input (avoids keyboard pop / steal).
+ * another complaint or pick the next card. Glides the section wrapper — not just
+ * the input — so the "Chief complaints" title stays visible, using the same shared
+ * glide as everywhere else. Does not focus the input (avoids keyboard pop / steal).
  */
 export function scrollComplaintCaptureIntoView(): void {
   if (typeof document === "undefined") return;
 
   const section = document.getElementById(CHIEF_COMPLAINTS_SECTION_ID);
-  if (section && "scrollIntoView" in section) {
-    section.scrollIntoView({ block: "start", behavior: "smooth" });
+  if (section instanceof HTMLElement) {
+    scrollCollapsibleToTop(section);
     return;
   }
 
   // Fallback when the section id is absent (tests / legacy markup).
   const input = document.getElementById(COMPLAINT_CAPTURE_INPUT_ID);
-  if (input && "scrollIntoView" in input) {
-    input.scrollIntoView({ block: "start", behavior: "smooth" });
+  if (input instanceof HTMLElement) {
+    scrollCollapsibleToTop(input);
   }
 }

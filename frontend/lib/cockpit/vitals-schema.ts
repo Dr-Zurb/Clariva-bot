@@ -1,24 +1,26 @@
 /**
- * Vitals 2.0 registry (objective-tab · obj-06).
+ * Vitals 3.0 numeric registry (objective-tab · obj-06; vitals-section · vit-01).
  *
  * Pure data module — no React, no network, no side effects. The Vitals analog
  * of `exam-schema.ts`: one `VitalDefinition` per measured numeric vital,
- * carrying its canonical unit, display units (+ conversion), input step, and an
- * advisory range band (age/sex-aware where it matters).
+ * carrying its canonical unit, display units (+ conversion), input step, an
+ * advisory range band (age/sex-aware where it matters), clinical group, and
+ * storage location (`column` vs `vitals_json`).
  *
  * Scope: the 7 shipped vitals (migration 103) + obj-05's extended numeric set
- * (migration 151). The two categorical qualifiers `vitalsBpPosture` /
- * `vitalsBpLimb` are NOT in this registry — they are plain selects rendered
- * directly in the grid (obj-07), with no unit/range math.
+ * (migration 151) + vit-01's full catalog (json-backed vitals). The two
+ * categorical qualifiers `vitalsBpPosture` / `vitalsBpLimb` and other
+ * non-numeric context fields live in `categorical-vitals-schema.ts` (or as
+ * plain column selects for posture/limb — obj-07).
  *
  * Hard bounds (`hardMin`/`hardMax`) mirror the migration-103/151 CHECK
  * constraints in canonical units. Advisory `range` bands are guidance only and
  * never exceed these hard bounds (asserted in tests). No pediatric percentile
  * curves (P2-D4) — only flat or coarse age/sex-banded advisory ranges.
  *
- * Conversion is delegated to the named converters in `vitals-derive.ts`; this
- * module references them only as function values (hoisted), so the cyclic
- * import with `evaluateRange` is safe.
+ * Conversion is delegated to the named converters in the dependency-free leaf
+ * `vitals-units.ts` (also re-exported by `vitals-derive.ts`). Importing from the
+ * leaf keeps this registry free of any runtime import cycle with `vitals-derive`.
  */
 
 import {
@@ -30,9 +32,21 @@ import {
   lbToKg,
   mgDlToMmolL,
   mmolLToMgDl,
-} from "./vitals-derive";
+} from "./vitals-units";
 
-/** Canonical (numeric) vital keys — each matches an `RxFormFields` key. */
+/** Clinical grouping for render and hide/unhide menus (vit-05/07). */
+export type VitalGroup =
+  | "core"
+  | "respiratory"
+  | "metabolic"
+  | "neuro"
+  | "paediatric"
+  | "obstetric";
+
+/** Where a vital value is persisted — dedicated column or `vitals_json`. */
+export type VitalStorage = "column" | "json";
+
+/** Canonical (numeric) vital keys — column keys match shipped `RxFormFields`. */
 export type VitalKey =
   | "vitalsBpSystolic"
   | "vitalsBpDiastolic"
@@ -47,7 +61,20 @@ export type VitalKey =
   | "vitalsGcsTotal"
   | "vitalsHeadCircumferenceCm"
   | "vitalsMuacCm"
-  | "vitalsWaistCm";
+  | "vitalsWaistCm"
+  | "vitalsO2FlowLMin"
+  | "vitalsFio2Pct"
+  | "vitalsPefrLMin"
+  | "vitalsBloodKetonesMmolL"
+  | "vitalsHipCm"
+  | "vitalsGcsE"
+  | "vitalsGcsV"
+  | "vitalsGcsM"
+  | "vitalsPupilSizeLeftMm"
+  | "vitalsPupilSizeRightMm"
+  | "vitalsCapillaryRefillS"
+  | "vitalsFetalHeartRateBpm"
+  | "vitalsFundalHeightCm";
 
 /** Patient context used to resolve age/sex-aware advisory bands. */
 export interface RangeContext {
@@ -87,6 +114,10 @@ export interface VitalDefinition {
   displayUnits: readonly VitalUnit[];
   /** True for vitals only meaningful in pediatrics (head circumference, MUAC). */
   pedsOnly: boolean;
+  /** Clinical group for render / visibility menus. */
+  group: VitalGroup;
+  /** Persistence location — column (shipped) or `vitals_json` (vit-02). */
+  storage: VitalStorage;
   /** Hard storage minimum in canonical units (mirrors migration CHECK). */
   hardMin: number;
   /** Hard storage maximum in canonical units (mirrors migration CHECK). */
@@ -121,6 +152,8 @@ export const VITALS_REGISTRY: readonly VitalDefinition[] = [
     canonicalUnit: "mmHg",
     displayUnits: [canonicalUnit("mmHg", "mmHg", 1, 0)],
     pedsOnly: false,
+    group: "core",
+    storage: "column",
     hardMin: 30,
     hardMax: 300,
     range: ({ ageYears }) => {
@@ -136,6 +169,8 @@ export const VITALS_REGISTRY: readonly VitalDefinition[] = [
     canonicalUnit: "mmHg",
     displayUnits: [canonicalUnit("mmHg", "mmHg", 1, 0)],
     pedsOnly: false,
+    group: "core",
+    storage: "column",
     hardMin: 20,
     hardMax: 200,
     range: ({ ageYears }) => {
@@ -147,10 +182,12 @@ export const VITALS_REGISTRY: readonly VitalDefinition[] = [
   },
   {
     key: "vitalsHr",
-    label: "Heart Rate",
+    label: "Pulse Rate (PR)",
     canonicalUnit: "bpm",
     displayUnits: [canonicalUnit("bpm", "beats/min", 1, 0)],
     pedsOnly: false,
+    group: "core",
+    storage: "column",
     hardMin: 20,
     hardMax: 250,
     range: ({ ageYears }) => {
@@ -163,10 +200,12 @@ export const VITALS_REGISTRY: readonly VitalDefinition[] = [
   },
   {
     key: "vitalsRr",
-    label: "Respiratory Rate",
+    label: "Respiratory Rate (RR)",
     canonicalUnit: "breaths/min",
     displayUnits: [canonicalUnit("breaths/min", "breaths/min", 1, 0)],
     pedsOnly: false,
+    group: "core",
+    storage: "column",
     hardMin: 0,
     hardMax: 120,
     range: ({ ageYears }) => {
@@ -186,16 +225,20 @@ export const VITALS_REGISTRY: readonly VitalDefinition[] = [
       { unit: "°F", label: "Fahrenheit", step: 0.1, precision: 1, toCanonical: fToC, fromCanonical: cToF },
     ],
     pedsOnly: false,
+    group: "core",
+    storage: "column",
     hardMin: 30,
     hardMax: 45,
-    range: () => ({ low: 36.1, high: 37.5 }),
+    range: () => ({ low: 35, high: 37.4 }),
   },
   {
     key: "vitalsSpo2",
-    label: "SpO₂",
+    label: "Oxygen Saturation (SpO₂)",
     canonicalUnit: "%",
     displayUnits: [canonicalUnit("%", "percent", 1, 0)],
     pedsOnly: false,
+    group: "core",
+    storage: "column",
     hardMin: 0,
     hardMax: 100,
     range: () => ({ low: 95, high: 100 }),
@@ -209,6 +252,8 @@ export const VITALS_REGISTRY: readonly VitalDefinition[] = [
       { unit: "lb", label: "Pounds", step: 0.1, precision: 1, toCanonical: lbToKg, fromCanonical: kgToLb },
     ],
     pedsOnly: false,
+    group: "core",
+    storage: "column",
     hardMin: 0.5,
     hardMax: 500,
     range: NO_BAND,
@@ -219,9 +264,19 @@ export const VITALS_REGISTRY: readonly VitalDefinition[] = [
     canonicalUnit: "cm",
     displayUnits: [
       canonicalUnit("cm", "Centimetres", 0.5, 1),
-      { unit: "in", label: "Inches", step: 0.1, precision: 1, toCanonical: inToCm, fromCanonical: cmToIn },
+      {
+        unit: "ft/in",
+        label: "Feet and inches",
+        step: 1,
+        precision: 0,
+        // Composite UI (`HeightVitalField`) — converters unused for single-field entry.
+        toCanonical: identity,
+        fromCanonical: identity,
+      },
     ],
     pedsOnly: false,
+    group: "core",
+    storage: "column",
     hardMin: 20,
     hardMax: 250,
     range: NO_BAND,
@@ -232,6 +287,8 @@ export const VITALS_REGISTRY: readonly VitalDefinition[] = [
     canonicalUnit: "/10",
     displayUnits: [canonicalUnit("/10", "0–10 scale", 1, 0)],
     pedsOnly: false,
+    group: "core",
+    storage: "column",
     hardMin: 0,
     hardMax: 10,
     range: NO_BAND,
@@ -245,16 +302,20 @@ export const VITALS_REGISTRY: readonly VitalDefinition[] = [
       { unit: "mmol/L", label: "mmol/L", step: 0.1, precision: 1, toCanonical: mmolLToMgDl, fromCanonical: mgDlToMmolL },
     ],
     pedsOnly: false,
+    group: "core",
+    storage: "column",
     hardMin: 10,
     hardMax: 1500,
-    range: () => ({ low: 70, high: 140 }),
+    range: () => ({ low: 70, high: 99 }),
   },
   {
     key: "vitalsGcsTotal",
-    label: "GCS Total",
+    label: "Glasgow Coma Scale (GCS)",
     canonicalUnit: "/15",
     displayUnits: [canonicalUnit("/15", "3–15 scale", 1, 0)],
     pedsOnly: false,
+    group: "neuro",
+    storage: "column",
     hardMin: 3,
     hardMax: 15,
     // 15 = fully conscious; anything below the band edge flags 'low' (impaired).
@@ -262,13 +323,15 @@ export const VITALS_REGISTRY: readonly VitalDefinition[] = [
   },
   {
     key: "vitalsHeadCircumferenceCm",
-    label: "Head Circumference",
+    label: "Head Circumference (HC)",
     canonicalUnit: "cm",
     displayUnits: [
       canonicalUnit("cm", "Centimetres", 0.1, 1),
       { unit: "in", label: "Inches", step: 0.1, precision: 1, toCanonical: inToCm, fromCanonical: cmToIn },
     ],
     pedsOnly: true,
+    group: "paediatric",
+    storage: "column",
     hardMin: 10,
     hardMax: 80,
     // No flat band — clinically read against age/sex percentile curves (P2-D4 / P6).
@@ -276,13 +339,15 @@ export const VITALS_REGISTRY: readonly VitalDefinition[] = [
   },
   {
     key: "vitalsMuacCm",
-    label: "MUAC",
+    label: "Mid-Upper Arm Circumference (MUAC)",
     canonicalUnit: "cm",
     displayUnits: [
       canonicalUnit("cm", "Centimetres", 0.1, 1),
       { unit: "in", label: "Inches", step: 0.1, precision: 1, toCanonical: inToCm, fromCanonical: cmToIn },
     ],
     pedsOnly: true,
+    group: "paediatric",
+    storage: "column",
     hardMin: 5,
     hardMax: 60,
     // WHO flat advisory cutoff: < 11.5 cm flags malnutrition. No upper flag.
@@ -297,15 +362,199 @@ export const VITALS_REGISTRY: readonly VitalDefinition[] = [
       { unit: "in", label: "Inches", step: 0.1, precision: 1, toCanonical: inToCm, fromCanonical: cmToIn },
     ],
     pedsOnly: false,
+    group: "metabolic",
+    storage: "column",
     hardMin: 20,
     hardMax: 300,
     // Sex-aware abdominal-obesity cutoff (Asian/Indian): > 90 cm male, > 80 cm
     // female. No low flag — `low` pinned to hardMin so valid values never flag low.
     range: ({ sex }) => ({ low: 20, high: sex === "female" ? 80 : 90 }),
   },
+  // ---------------------------------------------------------------------------
+  // Respiratory (vit-01 · storage: json)
+  // ---------------------------------------------------------------------------
+  {
+    key: "vitalsO2FlowLMin",
+    label: "Oxygen Flow Rate (O₂)",
+    canonicalUnit: "L/min",
+    displayUnits: [canonicalUnit("L/min", "litres/min", 0.5, 1)],
+    pedsOnly: false,
+    group: "respiratory",
+    storage: "json",
+    hardMin: 0,
+    hardMax: 50,
+    range: () => ({ low: 0.5, high: 6 }),
+  },
+  {
+    key: "vitalsFio2Pct",
+    label: "Fraction of Inspired Oxygen (FiO₂)",
+    canonicalUnit: "%",
+    displayUnits: [canonicalUnit("%", "percent", 1, 0)],
+    pedsOnly: false,
+    group: "respiratory",
+    storage: "json",
+    hardMin: 21,
+    hardMax: 100,
+    range: () => ({ low: 21, high: 100 }),
+  },
+  {
+    key: "vitalsPefrLMin",
+    label: "Peak Expiratory Flow Rate (PEFR)",
+    canonicalUnit: "L/min",
+    displayUnits: [canonicalUnit("L/min", "litres/min", 10, 0)],
+    pedsOnly: false,
+    group: "respiratory",
+    storage: "json",
+    hardMin: 0,
+    hardMax: 1000,
+    range: ({ ageYears, sex }) => {
+      if (ageYears == null || ageYears >= 18) {
+        return sex === "female" ? { low: 300, high: 500 } : { low: 400, high: 650 };
+      }
+      return null;
+    },
+  },
+  // ---------------------------------------------------------------------------
+  // Metabolic (vit-01 · storage: json)
+  // ---------------------------------------------------------------------------
+  {
+    key: "vitalsBloodKetonesMmolL",
+    label: "Blood Ketones",
+    canonicalUnit: "mmol/L",
+    displayUnits: [canonicalUnit("mmol/L", "mmol/L", 0.1, 1)],
+    pedsOnly: false,
+    group: "metabolic",
+    storage: "json",
+    hardMin: 0,
+    hardMax: 20,
+    range: () => ({ low: 0, high: 0.6 }),
+  },
+  {
+    key: "vitalsHipCm",
+    label: "Hip Circumference",
+    canonicalUnit: "cm",
+    displayUnits: [
+      canonicalUnit("cm", "Centimetres", 0.1, 1),
+      { unit: "in", label: "Inches", step: 0.1, precision: 1, toCanonical: inToCm, fromCanonical: cmToIn },
+    ],
+    pedsOnly: false,
+    group: "metabolic",
+    storage: "json",
+    hardMin: 20,
+    hardMax: 300,
+    range: NO_BAND,
+  },
+  // ---------------------------------------------------------------------------
+  // Neuro (vit-01 · storage: json)
+  // ---------------------------------------------------------------------------
+  {
+    key: "vitalsGcsE",
+    label: "GCS Eye (E)",
+    canonicalUnit: "/4",
+    displayUnits: [canonicalUnit("/4", "1–4 scale", 1, 0)],
+    pedsOnly: false,
+    group: "neuro",
+    storage: "json",
+    hardMin: 1,
+    hardMax: 4,
+    range: () => ({ low: 4, high: 4 }),
+  },
+  {
+    key: "vitalsGcsV",
+    label: "GCS Verbal (V)",
+    canonicalUnit: "/5",
+    displayUnits: [canonicalUnit("/5", "1–5 scale", 1, 0)],
+    pedsOnly: false,
+    group: "neuro",
+    storage: "json",
+    hardMin: 1,
+    hardMax: 5,
+    range: () => ({ low: 5, high: 5 }),
+  },
+  {
+    key: "vitalsGcsM",
+    label: "GCS Motor (M)",
+    canonicalUnit: "/6",
+    displayUnits: [canonicalUnit("/6", "1–6 scale", 1, 0)],
+    pedsOnly: false,
+    group: "neuro",
+    storage: "json",
+    hardMin: 1,
+    hardMax: 6,
+    range: () => ({ low: 6, high: 6 }),
+  },
+  {
+    key: "vitalsPupilSizeLeftMm",
+    label: "Pupil Size (L)",
+    canonicalUnit: "mm",
+    displayUnits: [canonicalUnit("mm", "millimetres", 0.5, 1)],
+    pedsOnly: false,
+    group: "neuro",
+    storage: "json",
+    hardMin: 1,
+    hardMax: 15,
+    range: () => ({ low: 2, high: 5 }),
+  },
+  {
+    key: "vitalsPupilSizeRightMm",
+    label: "Pupil Size (R)",
+    canonicalUnit: "mm",
+    displayUnits: [canonicalUnit("mm", "millimetres", 0.5, 1)],
+    pedsOnly: false,
+    group: "neuro",
+    storage: "json",
+    hardMin: 1,
+    hardMax: 15,
+    range: () => ({ low: 2, high: 5 }),
+  },
+  {
+    key: "vitalsCapillaryRefillS",
+    label: "Capillary Refill",
+    canonicalUnit: "s",
+    displayUnits: [canonicalUnit("s", "seconds", 0.5, 1)],
+    pedsOnly: false,
+    group: "neuro",
+    storage: "json",
+    hardMin: 0,
+    hardMax: 30,
+    range: () => ({ low: 0, high: 2 }),
+  },
+  // ---------------------------------------------------------------------------
+  // Obstetric (vit-01 · storage: json)
+  // ---------------------------------------------------------------------------
+  {
+    key: "vitalsFetalHeartRateBpm",
+    label: "Fetal Heart Rate",
+    canonicalUnit: "bpm",
+    displayUnits: [canonicalUnit("bpm", "beats/min", 1, 0)],
+    pedsOnly: false,
+    group: "obstetric",
+    storage: "json",
+    hardMin: 50,
+    hardMax: 250,
+    range: () => ({ low: 110, high: 160 }),
+  },
+  {
+    key: "vitalsFundalHeightCm",
+    label: "Fundal Height",
+    canonicalUnit: "cm",
+    displayUnits: [canonicalUnit("cm", "Centimetres", 0.5, 1)],
+    pedsOnly: false,
+    group: "obstetric",
+    storage: "json",
+    hardMin: 0,
+    hardMax: 50,
+    range: NO_BAND,
+  },
 ] as const;
 
-/** Canonical render order — single source for the vitals grid (obj-07). */
+/** Keys persisted in dedicated prescription columns (migrations 103/151). */
+export type ColumnVitalKey = Extract<
+  (typeof VITALS_REGISTRY)[number],
+  { storage: "column" }
+>["key"];
+
+/** Canonical render order — single source for the vitals grid (obj-07 / vit-05). */
 export const VITAL_ORDER: readonly VitalKey[] = VITALS_REGISTRY.map((v) => v.key);
 
 const BY_KEY = new Map<VitalKey, VitalDefinition>(
@@ -322,4 +571,14 @@ export function resolveVital(key: VitalKey): VitalDefinition {
 /** Return the ordered vitals registry. */
 export function listVitals(): readonly VitalDefinition[] {
   return VITALS_REGISTRY;
+}
+
+/** Partition numeric vitals by clinical group. */
+export function listVitalsByGroup(group: VitalGroup): readonly VitalDefinition[] {
+  return VITALS_REGISTRY.filter((v) => v.group === group);
+}
+
+/** Partition numeric vitals by storage location. */
+export function vitalsByStorage(storage: VitalStorage): readonly VitalDefinition[] {
+  return VITALS_REGISTRY.filter((v) => v.storage === storage);
 }

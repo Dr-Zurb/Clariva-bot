@@ -13,6 +13,12 @@ import {
   type ObjectiveSectionId,
 } from "@/lib/cockpit/objective-section-order";
 
+// vit-10..12 gave VitalsGrid doctor-scoped trend/demographics queries (needs a
+// QueryClient); these tests cover ObjectiveSection layout, not vitals internals.
+vi.mock("@/components/cockpit/rx/inputs/VitalsGrid", () => ({
+  VitalsGrid: () => <div data-testid="vitals-grid-stub" />,
+}));
+
 const mockGetDoctorSettings = vi.fn();
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -71,7 +77,8 @@ describe("ObjectiveSection section order (obj-09)", () => {
     const root = container.querySelector('[aria-label="Objective"]')!;
     expect(within(root).getByText("Vitals", { exact: true })).toBeInTheDocument();
     expect(within(root).getByTestId("exam-system-list")).toBeInTheDocument();
-    expect(within(root).getByLabelText("Test results (patient-brought)")).toBeInTheDocument();
+    expect(within(root).getByTestId("test-results-list-patient_report")).toBeInTheDocument();
+    expect(within(root).getByText("Point-of-care (in-clinic)")).toBeInTheDocument();
     expect(within(root).getByText("Free-text exam (legacy)")).toBeInTheDocument();
     expect(within(root).getByText("Legacy free-text vitals")).toBeInTheDocument();
   });
@@ -123,6 +130,8 @@ describe("objective-section-order merge (obj-09)", () => {
       "vitals",
       "exam",
       "test_results",
+      "point_of_care",
+      "media",
       "legacy_exam",
       "legacy_vitals",
     ]);
@@ -141,6 +150,8 @@ describe("objective-section-order merge (obj-09)", () => {
       "vitals",
       "exam",
       "test_results",
+      "point_of_care",
+      "media",
       "legacy_exam",
     ]);
   });

@@ -3,7 +3,7 @@ import {
   ADDITIONAL_MEDICATIONS_SECTION_ID,
   CHART_MED_CARD_INSTANCE_ATTR,
   CHART_MED_COLLAPSE_HEADER_ATTR,
-  scrollChartMedCaptureIntoView,
+  scrollChartMedContainerIntoView,
   scrollChartMedCardHeaderIntoView,
 } from "@/lib/chart/chart-medication-scroll";
 
@@ -16,7 +16,7 @@ describe("scrollChartMedCardHeaderIntoView", () => {
     vi.restoreAllMocks();
   });
 
-  it("scrolls the expanded card header into view", () => {
+  it("smoothly glides the expanded card header to the top", () => {
     document.body.innerHTML = `
       <div ${CHART_MED_CARD_INSTANCE_ATTR}="med-1">
         <div ${CHART_MED_COLLAPSE_HEADER_ATTR}>Header</div>
@@ -25,11 +25,12 @@ describe("scrollChartMedCardHeaderIntoView", () => {
 
     scrollChartMedCardHeaderIntoView("med-1");
 
+    // No scrollable ancestor in jsdom → the shared glide falls back to native smooth scroll.
     const header = document.querySelector(`[${CHART_MED_COLLAPSE_HEADER_ATTR}]`);
     expect(header).not.toBeNull();
     expect(header?.scrollIntoView).toHaveBeenCalledWith({
       block: "start",
-      behavior: "auto",
+      behavior: "smooth",
     });
   });
 
@@ -39,7 +40,7 @@ describe("scrollChartMedCardHeaderIntoView", () => {
   });
 });
 
-describe("scrollChartMedCaptureIntoView", () => {
+describe("scrollChartMedContainerIntoView", () => {
   beforeEach(() => {
     vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
   });
@@ -48,13 +49,36 @@ describe("scrollChartMedCaptureIntoView", () => {
     vi.restoreAllMocks();
   });
 
-  it("scrolls the med subsection wrapper when present", () => {
-    document.body.innerHTML = `<section id="${ADDITIONAL_MEDICATIONS_SECTION_ID}">Meds</section>`;
+  it("glides the enclosing condition card to the top when nested", () => {
+    document.body.innerHTML = `
+      <div data-testid="condition-card-c1">
+        <div id="condition-meds-c1">
+          <div ${CHART_MED_CARD_INSTANCE_ATTR}="med-1">
+            <div ${CHART_MED_COLLAPSE_HEADER_ATTR}>Header</div>
+          </div>
+        </div>
+      </div>
+    `;
 
-    scrollChartMedCaptureIntoView({
-      sectionId: ADDITIONAL_MEDICATIONS_SECTION_ID,
-      captureInputId: "additional-med-capture",
+    scrollChartMedContainerIntoView("med-1", { sectionId: "condition-meds-c1" });
+
+    const conditionCard = document.querySelector('[data-testid="condition-card-c1"]');
+    expect(conditionCard?.scrollIntoView).toHaveBeenCalledWith({
+      block: "start",
+      behavior: "smooth",
     });
+  });
+
+  it("falls back to the standalone meds section when not nested in a condition", () => {
+    document.body.innerHTML = `
+      <section id="${ADDITIONAL_MEDICATIONS_SECTION_ID}">
+        <div ${CHART_MED_CARD_INSTANCE_ATTR}="med-2">
+          <div ${CHART_MED_COLLAPSE_HEADER_ATTR}>Header</div>
+        </div>
+      </section>
+    `;
+
+    scrollChartMedContainerIntoView("med-2", { sectionId: ADDITIONAL_MEDICATIONS_SECTION_ID });
 
     const section = document.getElementById(ADDITIONAL_MEDICATIONS_SECTION_ID);
     expect(section?.scrollIntoView).toHaveBeenCalledWith({
@@ -63,18 +87,10 @@ describe("scrollChartMedCaptureIntoView", () => {
     });
   });
 
-  it("falls back to the capture input when the section is absent", () => {
-    document.body.innerHTML = `<input id="condition-med-capture-c1" />`;
-
-    scrollChartMedCaptureIntoView({
-      sectionId: "missing-section",
-      captureInputId: "condition-med-capture-c1",
-    });
-
-    const input = document.getElementById("condition-med-capture-c1");
-    expect(input?.scrollIntoView).toHaveBeenCalledWith({
-      block: "start",
-      behavior: "smooth",
-    });
+  it("no-ops when the instance is missing", () => {
+    document.body.innerHTML = "";
+    expect(() =>
+      scrollChartMedContainerIntoView("missing", { sectionId: "nope" }),
+    ).not.toThrow();
   });
 });

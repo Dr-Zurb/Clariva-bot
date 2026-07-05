@@ -15,8 +15,10 @@
  * Sections rendered (in order):
  *   1. Allergies
  *   2. Chronic conditions
- *   3. Vitals
- *   4. Previous prescriptions
+ *   3. Problem list
+ *   4. Vitals
+ *   5. Investigations & results
+ *   6. Previous prescriptions
  *
  * Each section is independent; the parent panel owns layout + collapse
  * defaults + the per-section "is the add form open?" state (so the
@@ -33,6 +35,7 @@ import AllergiesSection from "./sections/AllergiesSection";
 import ChronicConditionsSection from "./sections/ChronicConditionsSection";
 import PreviousRxSection from "./sections/PreviousRxSection";
 import ProblemListSection from "./sections/ProblemListSection";
+import ResultsTimelineSection from "./sections/ResultsTimelineSection";
 import VitalsSection from "./sections/VitalsSection";
 import SectionWrapper from "./SectionWrapper";
 import type {
@@ -99,6 +102,7 @@ export default function PatientChartPanel({
   const [allergyCount, setAllergyCount] = useState<number | null>(null);
   const [conditionCount, setConditionCount] = useState<number | null>(null);
   const [problemCount, setProblemCount] = useState<number | null>(null);
+  const [resultsTimelineCount, setResultsTimelineCount] = useState<number | null>(null);
   const [previousRxCount, setPreviousRxCount] = useState<number | null>(null);
 
   // Stable callbacks so AllergiesSection / ConditionsSection's effect deps
@@ -106,6 +110,10 @@ export default function PatientChartPanel({
   const handleAllergyCount = useCallback((n: number) => setAllergyCount(n), []);
   const handleConditionCount = useCallback((n: number) => setConditionCount(n), []);
   const handleProblemCount = useCallback((n: number) => setProblemCount(n), []);
+  const handleResultsTimelineCount = useCallback(
+    (n: number) => setResultsTimelineCount(n),
+    [],
+  );
   const handlePreviousRxCount = useCallback((n: number) => setPreviousRxCount(n), []);
 
   const readonly = mode === "readonly";
@@ -201,6 +209,22 @@ export default function PatientChartPanel({
           appointmentId={appointmentId}
           addOpen={vitalsAddOpen}
           onAddOpenChange={setVitalsAddOpen}
+        />
+      </SectionWrapper>
+
+      <SectionWrapper
+        id="chart-section-results-timeline"
+        title="Investigations & Results"
+        startCollapsed={isAccordion}
+        count={resultsTimelineCount}
+        hideAdd
+      >
+        <ResultsTimelineSection
+          patientId={patientId}
+          token={token}
+          layout={layout}
+          mode={mode}
+          onCountChange={handleResultsTimelineCount}
         />
       </SectionWrapper>
 

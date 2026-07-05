@@ -377,6 +377,13 @@ export interface PastSurgicalHistoryFieldProps {
   onChange: (next: PastSurgicalHistoryStructured) => void;
   sectionOpen?: boolean;
   onSectionOpenChange?: (open: boolean) => void;
+  scrollOnExpand?: boolean;
+  /** When false, header does not pin (e.g. nested inside Patient background). */
+  stickyHeader?: boolean;
+  /** Stack beneath an ancestor sticky header (Patient background zone). */
+  nestedSticky?: boolean;
+  /** Visual tier — flat nested row vs top-level section card. */
+  variant?: "section" | "subsection";
 }
 
 export function PastSurgicalHistoryField({
@@ -385,6 +392,10 @@ export function PastSurgicalHistoryField({
   onChange,
   sectionOpen,
   onSectionOpenChange,
+  scrollOnExpand = false,
+  stickyHeader = true,
+  nestedSticky = false,
+  variant = nestedSticky ? "subsection" : "section",
 }: PastSurgicalHistoryFieldProps) {
   const inputId = "rx-history-pastSurgicalHistory";
   const noneSelected = value.none === true;
@@ -413,6 +424,10 @@ export function PastSurgicalHistoryField({
     <CollapsibleContainer
       title="Past surgical history"
       toggleLabel="Toggle Past surgical history"
+      scrollOnExpand={scrollOnExpand}
+      stickyHeader={stickyHeader}
+      nestedSticky={nestedSticky}
+      variant={variant}
       preview={
         formatPastSurgicalHistoryPreview(value)
           ? `— ${formatPastSurgicalHistoryPreview(value)}`
@@ -424,9 +439,13 @@ export function PastSurgicalHistoryField({
       defaultOpen={
         sectionOpen === undefined ? hasPastSurgicalHistoryStructuredContent(value) : undefined
       }
-      bodyClassName="space-y-3 px-3 pb-3 pt-0"
+      bodyClassName="space-y-3"
       testId="past-surgical-history-field"
-      leadingActions={<SectionReorderLeadingAction sectionId="past_surgical" />}
+      leadingActions={
+        variant === "section" ? (
+          <SectionReorderLeadingAction sectionId="past_surgical" />
+        ) : undefined
+      }
       actions={!disabled ? <SubjectiveSectionTemplateButton scope="past_surgical" /> : undefined}
     >
       <div data-testid="past-surgical-none">
@@ -456,24 +475,13 @@ export function PastSurgicalHistoryField({
             label="Procedures"
             hint="Search, pick a common procedure, or add a custom entry"
           >
-            {entries.length > 0 && (
-              <div
-                className="space-y-2 border-l-2 border-primary/20 pl-2"
-                data-testid="past-surgical-procedure-rows"
-              >
-                {entries.map((entry) => (
-                  <ProcedureEntryRow
-                    key={entry.id}
-                    entry={entry}
-                    disabled={disabled}
-                    onPatch={(patch) =>
-                      onChange(patchPastSurgicalProcedureEntry(value, entry.id, patch))
-                    }
-                    onRemove={() => onChange(removePastSurgicalProcedureEntry(value, entry.id))}
-                  />
-                ))}
-              </div>
-            )}
+            <ProcedureCombobox
+              inputId={`${inputId}-combobox`}
+              entries={entries}
+              catalogOptions={catalogOptions}
+              disabled={disabled}
+              onCommit={handleCommit}
+            />
 
             {quickAddOptions.length > 0 && (
               <div className="space-y-1.5" data-testid="past-surgical-quick-add">
@@ -494,13 +502,24 @@ export function PastSurgicalHistoryField({
               </div>
             )}
 
-            <ProcedureCombobox
-              inputId={`${inputId}-combobox`}
-              entries={entries}
-              catalogOptions={catalogOptions}
-              disabled={disabled}
-              onCommit={handleCommit}
-            />
+            {entries.length > 0 && (
+              <div
+                className="space-y-2 border-l-2 border-primary/20 pl-2"
+                data-testid="past-surgical-procedure-rows"
+              >
+                {entries.map((entry) => (
+                  <ProcedureEntryRow
+                    key={entry.id}
+                    entry={entry}
+                    disabled={disabled}
+                    onPatch={(patch) =>
+                      onChange(patchPastSurgicalProcedureEntry(value, entry.id, patch))
+                    }
+                    onRemove={() => onChange(removePastSurgicalProcedureEntry(value, entry.id))}
+                  />
+                ))}
+              </div>
+            )}
           </HistorySubsection>
 
           <HistorySubsection testId="past-surgical-section-notes" label="Additional notes">

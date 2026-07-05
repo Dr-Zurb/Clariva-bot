@@ -22,6 +22,7 @@ import {
   formatTemplateSummary,
   SCOPE_PICKER_LABELS,
   sortCustomBlockTemplatesForSection,
+  sortObjectiveCustomBlockTemplatesForSection,
   templateHasScopedContent,
   templateMatchesSearch,
 } from "@/lib/cockpit/template-picker-summary";
@@ -29,14 +30,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-export type TemplatePickerVariant = "full" | "subjective";
+export type TemplatePickerVariant = "full" | "subjective" | "objective";
 
 interface TemplatePickerProps {
   open: boolean;
   onClose: () => void;
   /** Auth token (Supabase session). */
   token: string;
-  /** Controls labels and list filtering emphasis. Default `full`. */
+  /**
+   * Controls labels and list filtering emphasis. Default `full`. The
+   * `objective` variant (obj-16) lists objective-scoped templates; its
+   * apply/save row logic lands in obj-17 — for now it renders like `full`.
+   */
   variant?: TemplatePickerVariant;
   /**
    * Template scope filter — only templates of this scope are listed.
@@ -72,6 +77,8 @@ export default function TemplatePicker({
   priorityCustomSectionId,
 }: TemplatePickerProps) {
   const isSubjective = variant === "subjective";
+  const isObjective = variant === "objective";
+  const isScopedVariant = isSubjective || isObjective;
   const scopeLabels = SCOPE_PICKER_LABELS[scope];
   const [templates, setTemplates] = useState<DoctorRxTemplate[]>([]);
   const [loading, setLoading] = useState(false);
@@ -130,17 +137,19 @@ export default function TemplatePicker({
   }, [open]);
 
   const filtered = useMemo(() => {
-    const base = isSubjective
+    const base = isScopedVariant
       ? templates.filter((t) => templateHasScopedContent(t, scope))
       : templates;
     const ordered =
       scope === "custom_block"
         ? sortCustomBlockTemplatesForSection(base, priorityCustomSectionId)
-        : base;
+        : scope === "objective_custom_block"
+          ? sortObjectiveCustomBlockTemplatesForSection(base, priorityCustomSectionId)
+          : base;
     const q = search.trim();
     if (!q) return ordered;
     return ordered.filter((t) => {
-      if (isSubjective) return templateMatchesSearch(t, scope, q);
+      if (isScopedVariant) return templateMatchesSearch(t, scope, q);
       const lower = q.toLowerCase();
       if (t.name.toLowerCase().includes(lower)) return true;
       if (t.description?.toLowerCase().includes(lower)) return true;
@@ -149,7 +158,7 @@ export default function TemplatePicker({
       }
       return false;
     });
-  }, [search, templates, isSubjective, scope, priorityCustomSectionId]);
+  }, [search, templates, isScopedVariant, scope, priorityCustomSectionId]);
 
   const handleApply = useCallback(
     async (template: DoctorRxTemplate) => {
@@ -190,8 +199,8 @@ export default function TemplatePicker({
 
   if (!open || !portalReady || typeof document === "undefined") return null;
 
-  const headerTitle = isSubjective ? scopeLabels.title : "Rx templates";
-  const searchPlaceholder = isSubjective
+  const headerTitle = isScopedVariant ? scopeLabels.title : "Rx templates";
+  const searchPlaceholder = isScopedVariant
     ? "Search templates by name…"
     : "Search templates by name or medicine…";
 
@@ -211,7 +220,7 @@ export default function TemplatePicker({
               {headerTitle}
             </h2>
           </div>
-          {isSubjective && scopeLabels.hint ? (
+          {isScopedVariant && scopeLabels.hint ? (
             <p className="mt-0.5 pl-6 text-xs text-muted-foreground">{scopeLabels.hint}</p>
           ) : null}
         </div>
@@ -254,7 +263,7 @@ export default function TemplatePicker({
         {!loading && !error && filtered.length === 0 && (
           <div className="px-3 py-6 text-center text-sm text-muted-foreground">
             {templates.length === 0 ? (
-              isSubjective ? (
+              isScopedVariant ? (
                 <p>Use the save icon in the section header to create a template.</p>
               ) : (
                 <>
@@ -271,7 +280,7 @@ export default function TemplatePicker({
                   )}
                 </>
               )
-            ) : isSubjective &&
+            ) : isScopedVariant &&
               templates.filter((t) => templateHasScopedContent(t, scope)).length === 0 ? (
               <p>No templates with content yet — use the save icon in the section header.</p>
             ) : (
@@ -284,7 +293,7 @@ export default function TemplatePicker({
             {filtered.map((t) => {
               const busy = busyTemplateId === t.id;
               const medCount = t.medicines_json?.length ?? 0;
-              const contentSummary = isSubjective
+              const contentSummary = isScopedVariant
                 ? formatTemplateSummary(t, scope)
                 : `${medCount} medicine${medCount === 1 ? "" : "s"}`;
               const lastUsed = t.last_used_at
@@ -338,7 +347,7 @@ export default function TemplatePicker({
         )}
       </div>
 
-      {!isSubjective && onSaveCurrentAsTemplate && templates.length > 0 && !loading && (
+      {!isScopedVariant && onSaveCurrentAsTemplate && templates.length > 0 && !loading && (
         <div className="border-t border-border p-3">
           <Button
             type="button"

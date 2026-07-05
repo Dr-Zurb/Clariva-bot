@@ -306,6 +306,91 @@ describe('rx-template-service (subj-15 scope)', () => {
     expect(chain.insertedRow?.subjective_json).toEqual({});
   });
 
+  it('createRxTemplate defaults objective_json to an empty object when absent (obj-16)', async () => {
+    const inserted = { id: 't-obj-0', doctor_id: doctorId, name: 'Plain', scope: 'subjective_full' };
+    const chain = buildInsertChain(inserted);
+    mockedDb.getSupabaseAdminClient.mockReturnValue({ from: jest.fn(() => chain) } as never);
+
+    await createRxTemplate({ name: 'Plain' }, correlationId, doctorId);
+
+    expect(chain.insertedRow?.objective_json).toEqual({});
+  });
+
+  it('createRxTemplate normalizes + persists objective_json (obj-16)', async () => {
+    const inserted = { id: 't-obj-1', doctor_id: doctorId, name: 'Vitals + exam', scope: 'objective_full' };
+    const chain = buildInsertChain(inserted);
+    mockedDb.getSupabaseAdminClient.mockReturnValue({ from: jest.fn(() => chain) } as never);
+
+    await createRxTemplate(
+      {
+        name: 'Vitals + exam',
+        scope: 'objective_full',
+        objective: {
+          vitalsHr: 72,
+          vitalsBpSystolic: 120,
+          examinationJson: [
+            {
+              systemId: '  cvs  ',
+              status: 'normal',
+              findings: ['S1S2 heard', ''],
+              notes: '  no murmurs  ',
+            },
+            { systemId: '', status: 'abnormal' },
+          ] as never,
+          testResults: '  ECG normal  ',
+        },
+      },
+      correlationId,
+      doctorId,
+    );
+
+    const objective = chain.insertedRow?.objective_json as {
+      vitalsHr: number;
+      vitalsBpSystolic: number;
+      examinationJson: Array<{ systemId: string; status: string; findings: Array<{ findingId: string; attributes: Record<string, string> }>; notes: string | null }>;
+      testResults: string | null;
+    };
+    expect(objective.vitalsHr).toBe(72);
+    expect(objective.vitalsBpSystolic).toBe(120);
+    expect(objective.examinationJson).toEqual([
+      { systemId: 'cvs', status: 'normal', findings: [{ findingId: 's1s2_heard', attributes: {} }], notes: 'no murmurs' },
+    ]);
+    expect(objective.testResults).toBe('ECG normal');
+  });
+
+  it('createRxTemplate normalizes + persists testResultsJson result rows (obj-23)', async () => {
+    const inserted = { id: 't-obj-2', doctor_id: doctorId, name: 'POC panel', scope: 'point_of_care' };
+    const chain = buildInsertChain(inserted);
+    mockedDb.getSupabaseAdminClient.mockReturnValue({ from: jest.fn(() => chain) } as never);
+
+    await createRxTemplate(
+      {
+        name: 'POC panel',
+        scope: 'point_of_care',
+        objective: {
+          testResultsJson: [
+            { id: 'r-1', source: 'in_clinic_poc', name: '  RBS  ', value: '180', unit: 'mg/dL' },
+            { id: 'r-2', source: 'bogus_source', name: 'Dropped' },
+            { id: 'r-3', source: 'patient_report', name: '', value: 'x' },
+          ] as never,
+        },
+      },
+      correlationId,
+      doctorId,
+    );
+
+    const objective = chain.insertedRow?.objective_json as {
+      testResultsJson: Array<{ source: string; name: string; value: string | null; unit: string | null }>;
+    };
+    expect(objective.testResultsJson).toHaveLength(1);
+    expect(objective.testResultsJson[0]).toMatchObject({
+      source: 'in_clinic_poc',
+      name: 'RBS',
+      value: '180',
+      unit: 'mg/dL',
+    });
+  });
+
   it('createRxTemplate round-trips multiple customSubsections on subjective_full (subj-42)', async () => {
     const inserted = { id: 't-10', doctor_id: doctorId, name: 'Full bundle', scope: 'subjective_full' };
     const chain = buildInsertChain(inserted);

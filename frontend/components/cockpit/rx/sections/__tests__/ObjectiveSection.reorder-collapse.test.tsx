@@ -15,6 +15,12 @@ import { ObjectiveSection } from "@/components/cockpit/rx/sections/ObjectiveSect
 import type { RxFormProviderSetup } from "@/components/cockpit/rx/useRxFormProviderSetup";
 import type { ObjectiveSectionId } from "@/lib/cockpit/objective-section-order";
 
+// vit-10..12 gave VitalsGrid doctor-scoped trend/demographics queries (needs a
+// QueryClient); these tests cover ObjectiveSection layout, not vitals internals.
+vi.mock("@/components/cockpit/rx/inputs/VitalsGrid", () => ({
+  VitalsGrid: () => <div data-testid="vitals-grid-stub" />,
+}));
+
 const mockGetDoctorSettings = vi.fn();
 const mockPatchDoctorSettings = vi.fn();
 const mockUpdatePrescription = vi.fn();
@@ -163,6 +169,8 @@ describe("ObjectiveSection reorder (obj-11)", () => {
       "vitals",
       "exam",
       "test_results",
+      "point_of_care",
+      "media",
       "legacy_exam",
       "legacy_vitals",
     ]);
@@ -174,6 +182,8 @@ describe("ObjectiveSection reorder (obj-11)", () => {
       "exam",
       "vitals",
       "test_results",
+      "point_of_care",
+      "media",
       "legacy_exam",
       "legacy_vitals",
     ]);
@@ -187,6 +197,8 @@ describe("ObjectiveSection reorder (obj-11)", () => {
           "exam",
           "vitals",
           "test_results",
+          "point_of_care",
+          "media",
           "legacy_exam",
           "legacy_vitals",
         ]);
@@ -208,10 +220,18 @@ describe("ObjectiveSection reorder (obj-11)", () => {
 
     await waitFor(() => {
       const order = readRenderedSectionOrder(container);
-      // unknown dropped, dupes removed, missing appended at canonical slots — all 5 present.
-      expect(order).toHaveLength(5);
+      // unknown dropped, dupes removed, missing appended at canonical slots — all 7 present.
+      expect(order).toHaveLength(7);
       expect(new Set(order)).toEqual(
-        new Set(["vitals", "exam", "test_results", "legacy_exam", "legacy_vitals"]),
+        new Set([
+          "vitals",
+          "exam",
+          "test_results",
+          "point_of_care",
+          "media",
+          "legacy_exam",
+          "legacy_vitals",
+        ]),
       );
       expect(order[0]).toBe("legacy_vitals");
     });

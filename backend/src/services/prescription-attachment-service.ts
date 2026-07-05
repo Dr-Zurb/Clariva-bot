@@ -23,9 +23,36 @@ const ALLOWED_MIME = [
   'application/pdf',
 ] as const;
 
+/**
+ * objective-tab / P5-D4 (obj-22) — objective media is the SAME `prescription_attachments`
+ * storage, tagged by an `objective/` path segment (no new column / bucket / RLS policy).
+ * The prescription-scoped RLS policy (migration 026) already covers every object under
+ * `{doctor_id}/{prescription_id}/…`, so the segment does not widen access.
+ *
+ * soap-data-placement / P2 (sdp-02) — `subjective` pins a photo to a complaint via a deeper
+ * `subjective/{complaintId}/` segment under the SAME prescription folder. Still no new column /
+ * bucket / policy: the bucket is private and reached only through service-role signed URLs gated
+ * by `verifyPrescriptionOwnership`, so the deeper folder is covered by the same ownership flow
+ * and does not widen access (verify-not-widen, P2-D2). The `complaintId` is an opaque sanitized
+ * folder segment — never matched against the `complaints` JSONB.
+ */
+export type AttachmentCategory = 'objective' | 'subjective';
+
+const COMPLAINT_ID_SEGMENT_MAX = 64;
+
 function sanitizeFilename(filename: string): string {
   const base = filename.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
   return base || 'file';
+}
+
+/**
+ * Reduce an opaque complaint id to a safe single folder segment. Treated as opaque (P2-D2):
+ * no existence check against the prescription's `complaints` JSONB. An empty/unsafe value
+ * collapses to `unpinned` so the upload still lands under a deterministic folder.
+ */
+function sanitizeComplaintIdSegment(complaintId: string): string {
+  const base = complaintId.replace(/[^a-zA-Z0-9-]/g, '').slice(0, COMPLAINT_ID_SEGMENT_MAX);
+  return base || 'unpinned';
 }
 
 /**
@@ -62,7 +89,9 @@ export async function createUploadUrl(
   userId: string,
   filename: string,
   contentType: string,
-  correlationId: string
+  correlationId: string,
+  category?: AttachmentCategory,
+  complaintId?: string
 ): Promise<{ path: string; token: string }> {
   const admin = getSupabaseAdminClient();
   if (!admin) {
@@ -78,7 +107,17 @@ export async function createUploadUrl(
   const sanitized = sanitizeFilename(filename);
   const ext = sanitized.includes('.') ? '' : getExtensionFromMime(contentType);
   const baseName = sanitized.endsWith(ext) ? sanitized : `${sanitized}${ext}`;
-  const path = `${doctorId}/${prescriptionId}/${randomUUID()}-${baseName}`;
+  // obj-22: objective media gets a `objective/` segment under the prescription folder so the
+  // Objective media strip can filter it without a new column. sdp-02: subjective media gets a
+  // deeper `subjective/{complaintId}/` segment so a photo pins to a complaint. Other categories
+  // keep the legacy `{doctor}/{prescription}/{uuid}-{file}` shape untouched.
+  let segment = '';
+  if (category === 'objective') {
+    segment = 'objective/';
+  } else if (category === 'subjective') {
+    segment = `subjective/${sanitizeComplaintIdSegment(complaintId ?? '')}/`;
+  }
+  const path = `${doctorId}/${prescriptionId}/${segment}${randomUUID()}-${baseName}`;
 
   const { data, error } = await admin.storage
     .from(BUCKET)
@@ -194,6 +233,55 @@ export async function getAttachmentDownloadUrl(
 
   await logDataAccess(correlationId, userId, 'prescription_attachment', attachmentId);
   return { downloadUrl: signed.signedUrl };
+}
+
+/**
+ * Delete a prescription attachment (DB row + storage object).
+ *
+ * obj-22: lets the Objective media strip remove a mis-uploaded photo/scan. Uses the SAME
+ * ownership check + the DELETE RLS policy already shipped in migration 026 — no policy
+ * widening. PHI-safe: never logs the file path / patient context.
+ */
+export async function deleteAttachment(
+  prescriptionId: string,
+  attachmentId: string,
+  correlationId: string,
+  userId: string
+): Promise<void> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  await verifyPrescriptionOwnership(admin, prescriptionId, userId);
+
+  const { data: att, error: attError } = await admin
+    .from('prescription_attachments')
+    .select('id, prescription_id, file_path')
+    .eq('id', attachmentId)
+    .eq('prescription_id', prescriptionId)
+    .single();
+
+  if (attError || !att) {
+    throw new NotFoundError('Attachment not found');
+  }
+
+  const { error: storageError } = await admin.storage.from(BUCKET).remove([att.file_path]);
+  if (storageError) {
+    handleSupabaseError(storageError, correlationId);
+  }
+
+  const { error: delError } = await admin
+    .from('prescription_attachments')
+    .delete()
+    .eq('id', attachmentId)
+    .eq('prescription_id', prescriptionId);
+
+  if (delError) {
+    handleSupabaseError(delError, correlationId);
+  }
+
+  await logDataModification(correlationId, userId, 'delete', 'prescription_attachment', attachmentId);
 }
 
 /**

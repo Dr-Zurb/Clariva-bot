@@ -12,6 +12,7 @@ import type {
   CustomSubsection,
   DoseUnit,
   DurationUnit,
+  ExamSystemFinding,
   FoodTiming,
   FrequencyCode,
   PrescriptionComplaint,
@@ -19,12 +20,20 @@ import type {
   SocialHistoryStructured,
   FamilyHistoryStructured,
   PastSurgicalHistoryStructured,
+  TestResultRow,
+  VitalsBpLimb,
+  VitalsBpPosture,
 } from './prescription';
 
 /**
  * Template subsection scope (subj-15). One table, one discriminator.
  * `custom_block` (subj-39) carries a single doctor-defined custom Subjective
  * subsection inside `subjective_json.customSubsections`.
+ *
+ * obj-16 widens the union with the objective scopes (`objective_full`, the
+ * `vitals`/`exam_*` subsections, and `objective_custom_block`) so the same
+ * table can hold objective presets in `objective_json`. obj-23 adds the Zone-C
+ * RESULT scopes (`test_results`, `point_of_care`) for structured result presets.
  */
 export const RX_TEMPLATE_SCOPE_VALUES = [
   'subjective_full',
@@ -35,6 +44,17 @@ export const RX_TEMPLATE_SCOPE_VALUES = [
   'social_history',
   'allergies',
   'custom_block',
+  'objective_full',
+  'vitals',
+  'exam_systemic',
+  'exam_general',
+  'exam_cvs',
+  'exam_resp',
+  'exam_abd',
+  'exam_cns',
+  'objective_custom_block',
+  'test_results',
+  'point_of_care',
 ] as const;
 
 export type RxTemplateScope = (typeof RX_TEMPLATE_SCOPE_VALUES)[number];
@@ -54,6 +74,43 @@ export interface RxTemplateSubjective {
    * behaviour for every existing template.
    */
   customSubsections?: CustomSubsection[];
+}
+
+/**
+ * Structured objective bundle stored in `objective_json` (obj-16). Mirror of
+ * `RxTemplateSubjective` in shape discipline (object, camelCase, app-validated).
+ * Holds the reusable starter content for an objective preset: structured exam
+ * findings, the `vitals_*` subset, the doctor's `testResults` interpretation,
+ * and doctor-defined custom objective sections. Config, not PHI.
+ */
+export interface RxTemplateObjective {
+  // Structured per-system exam findings (mirror of prescriptions.examination_json).
+  examinationJson?: ExamSystemFinding[];
+  // Vitals subset (migration 103 + Vitals 2.0 migration 151), canonical units.
+  vitalsBpSystolic?: number | null;
+  vitalsBpDiastolic?: number | null;
+  vitalsHr?: number | null;
+  vitalsTempC?: number | null;
+  vitalsSpo2?: number | null;
+  vitalsWtKg?: number | null;
+  vitalsHtCm?: number | null;
+  vitalsRr?: number | null;
+  vitalsPainScore?: number | null;
+  vitalsGlucoseMgDl?: number | null;
+  vitalsGcsTotal?: number | null;
+  vitalsBpPosture?: VitalsBpPosture | null;
+  vitalsBpLimb?: VitalsBpLimb | null;
+  vitalsHeadCircumferenceCm?: number | null;
+  vitalsMuacCm?: number | null;
+  vitalsWaistCm?: number | null;
+  // Plan-adjacent objective interpretation text (legacy free-text, OBJ-D2).
+  testResults?: string | null;
+  // obj-23: structured point-of-care / patient-brought result rows (mirror of
+  // prescriptions.test_results_json). `test_results`/`point_of_care` presets carry
+  // their source's rows; `objective_full` carries all of them.
+  testResultsJson?: TestResultRow[];
+  // Doctor-defined custom objective sections (`objective_custom_block` carries one).
+  customSections?: CustomSubsection[];
 }
 
 /** PMH condition snapshot inside `pmh_json` (subj-17). Recreate-able subset. */
@@ -132,6 +189,7 @@ export interface DoctorRxTemplate {
   clinical_notes: string | null;
   medicines_json: RxTemplateMedicine[];
   subjective_json: RxTemplateSubjective;
+  objective_json: RxTemplateObjective;
   pmh_json: RxTemplatePmh;
   allergies_json: RxTemplateAllergies;
   scope: RxTemplateScope;
@@ -155,6 +213,7 @@ export interface RxTemplateInput {
   clinicalNotes?: string | null;
   medicines?: RxTemplateMedicine[];
   subjective?: RxTemplateSubjective;
+  objective?: RxTemplateObjective;
   pmh?: RxTemplatePmh;
   allergies?: RxTemplateAllergies;
   scope?: RxTemplateScope;

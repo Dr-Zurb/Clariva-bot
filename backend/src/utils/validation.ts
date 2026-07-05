@@ -21,6 +21,12 @@ import {
   CATALOG_MODES,
   PATIENT_FLOW_ADVANCE_VALUES,
   COCKPIT_TEMPLATE_OVERRIDE_VALUES,
+  CUSTOM_VITAL_GROUPS,
+  CUSTOM_VITAL_KINDS,
+  CUSTOM_VITALS_MAX,
+  CUSTOM_VITAL_ID_MAX,
+  CUSTOM_VITAL_LABEL_MAX,
+  CUSTOM_VITAL_UNIT_MAX,
   type ModeSchedule,
 } from '../types/doctor-settings';
 import type { PatientListFilters, PatientListSortId, PatientSegmentId } from '../services/patient-list-types';
@@ -43,6 +49,7 @@ import {
   sanitizeObjectiveSectionCollapsed,
   sanitizeObjectiveSectionHidden,
 } from '../types/objective-section-order';
+import { VITALS_HIDDEN_MAX, sanitizeVitalsHidden } from '../types/vitals-hidden';
 
 // ============================================================================
 // Constants (RECIPES: E.164-like phone)
@@ -1131,8 +1138,55 @@ export const objectiveSectionHiddenSchema = z
   .max(OBJECTIVE_SECTION_ORDER_MAX)
   .transform((ids) => sanitizeObjectiveSectionHidden(ids));
 
+/**
+ * vit-07: per-doctor hidden vitals set (delta array of registry vital-key strings).
+ * Tolerant: drops unknown ids + dedupes rather than rejecting (a stale/removed id
+ * must never brick a save). Caps entry count to the registry size before sanitizing.
+ */
+export const vitalsHiddenSchema = z
+  .array(z.string())
+  .max(VITALS_HIDDEN_MAX)
+  .transform((ids) => sanitizeVitalsHidden(ids));
+
 /** obj-10: per-doctor default custom Objective sections (custom-subsection tree). */
 export const objectiveCustomSectionsSchema = subjectiveCustomSubsectionsDefaultSchema;
+
+/**
+ * vit-14: a single per-doctor custom-vital DEFINITION (not a value). `.strict()`
+ * so an unexpected key is rejected rather than silently stored; the unit is
+ * normalized to `null` when blank/absent (text vitals carry no unit).
+ */
+const customVitalDefSchema = z
+  .object({
+    id: z.string().trim().min(1).max(CUSTOM_VITAL_ID_MAX),
+    label: z.string().trim().min(1).max(CUSTOM_VITAL_LABEL_MAX),
+    unit: z.string().trim().max(CUSTOM_VITAL_UNIT_MAX).optional().nullable(),
+    kind: z.enum(CUSTOM_VITAL_KINDS),
+    group: z.enum(CUSTOM_VITAL_GROUPS),
+  })
+  .strict()
+  .transform((def) => ({
+    id: def.id,
+    label: def.label,
+    unit: def.unit?.trim() || null,
+    kind: def.kind,
+    group: def.group,
+  }));
+
+/**
+ * vit-14: per-doctor custom-vital definition list. Dedupes by id (last write
+ * wins) and caps the list, so a malformed/duplicate entry never bricks a save.
+ */
+export const vitalsCustomSchema = z
+  .array(customVitalDefSchema)
+  .max(CUSTOM_VITALS_MAX)
+  .transform((defs) => {
+    const byId = new Map<string, (typeof defs)[number]>();
+    for (const def of defs) {
+      byId.set(def.id, def);
+    }
+    return [...byId.values()];
+  });
 
 export const patchDoctorSettingsSchema = z
   .object({
@@ -1227,6 +1281,10 @@ export const patchDoctorSettingsSchema = z
     objective_section_hidden: objectiveSectionHiddenSchema.optional(),
     /** obj-10: per-doctor default custom Objective-tab sections template. */
     objective_custom_sections: objectiveCustomSectionsSchema.optional(),
+    /** vit-14: per-doctor custom-vital definitions. */
+    vitals_custom: vitalsCustomSchema.optional(),
+    /** vit-07: per-doctor hidden vitals set (delta array). */
+    vitals_hidden: vitalsHiddenSchema.optional(),
   })
   .strict();
 
@@ -1454,12 +1512,43 @@ const EXAM_STATUS_VALUES = ['normal', 'abnormal'] as const;
  * system never bricks a prescription save (P1-D contract). A missing/empty
  * `systemId` or a bad `status` drops the row; empty findings are filtered.
  */
+const EXAM_FINDING_ID_MAX = 64;
+const EXAM_FINDING_ATTR_KEY_MAX = 64;
+const EXAM_FINDING_ATTR_VALUE_MAX = 200;
+
+const examFindingEntrySchema = z
+  .union([
+    z.string().trim().max(EXAM_FINDING_MAX),
+    z.object({
+      findingId: z.string().trim().min(1).max(EXAM_FINDING_ID_MAX),
+      attributes: z
+        .record(z.string().trim().max(EXAM_FINDING_ATTR_KEY_MAX), z.string().trim().max(EXAM_FINDING_ATTR_VALUE_MAX))
+        .optional()
+        .nullable(),
+    }),
+  ])
+  .transform((entry) => {
+    if (typeof entry === 'string') {
+      const trimmed = entry.trim();
+      if (!trimmed) return null;
+      return { findingId: trimmed.toLowerCase().replace(/[\s-]+/g, '_'), attributes: {} as Record<string, string> };
+    }
+    const attrs = entry.attributes ?? {};
+    const cleaned: Record<string, string> = {};
+    for (const [key, value] of Object.entries(attrs)) {
+      const k = key.trim();
+      const v = value.trim();
+      if (k && v) cleaned[k] = v;
+    }
+    return { findingId: entry.findingId, attributes: cleaned };
+  });
+
 const examSystemFindingSchema = z
   .object({
     systemId: z.string().trim().min(1).max(EXAM_SYSTEM_ID_MAX),
     status: z.enum(EXAM_STATUS_VALUES),
     findings: z
-      .array(z.string().trim().max(EXAM_FINDING_MAX))
+      .array(examFindingEntrySchema.nullable().catch(null))
       .max(EXAM_FINDINGS_MAX)
       .optional()
       .nullable(),
@@ -1468,7 +1557,9 @@ const examSystemFindingSchema = z
   .transform((f) => ({
     systemId: f.systemId,
     status: f.status,
-    findings: (f.findings ?? []).filter((s) => s.length > 0),
+    findings: (f.findings ?? []).filter(
+      (entry): entry is { findingId: string; attributes: Record<string, string> } => entry !== null,
+    ),
     notes: f.notes ?? null,
   }));
 
@@ -1478,6 +1569,61 @@ const examinationJsonSchema = z
     arr
       .filter((f): f is NonNullable<typeof f> => f !== null)
       .slice(0, EXAM_SYSTEMS_MAX),
+  )
+  .optional();
+
+// objective-tab / migration 154 — structured test results (obj-20).
+const TEST_RESULT_ID_MAX = 64;
+const TEST_RESULT_NAME_MAX = 200;
+const TEST_RESULT_VALUE_MAX = 200;
+const TEST_RESULT_UNIT_MAX = 50;
+const TEST_RESULT_DATE_MAX = 40;
+const TEST_RESULT_NOTES_MAX = 1000;
+const TEST_RESULTS_MAX = 100;
+const TEST_RESULT_SOURCE_VALUES = ['patient_report', 'in_clinic_poc'] as const;
+const TEST_RESULT_INTERPRETATION_VALUES = ['normal', 'high', 'low', 'abnormal'] as const;
+
+/**
+ * Tolerant per-row test-result schema for `test_results_json` (obj-20). Mirrors
+ * the `examination_json` discipline: malformed rows are DROPPED (not rejected)
+ * so one stale/partial row never bricks a prescription save (OBJ-D / P5-D
+ * contract). A missing/empty `id` or `name`, or a bad `source`, drops the row;
+ * empty optional strings collapse to null.
+ */
+const testResultRowSchema = z
+  .object({
+    id: z.string().trim().min(1).max(TEST_RESULT_ID_MAX),
+    source: z.enum(TEST_RESULT_SOURCE_VALUES),
+    name: z.string().trim().min(1).max(TEST_RESULT_NAME_MAX),
+    value: z.string().trim().max(TEST_RESULT_VALUE_MAX).optional().nullable(),
+    unit: z.string().trim().max(TEST_RESULT_UNIT_MAX).optional().nullable(),
+    date: z.string().trim().max(TEST_RESULT_DATE_MAX).optional().nullable(),
+    // Optional enum: a stale/unknown interpretation collapses to null rather
+    // than dropping the whole row (matches the frontend `normalizeTestResults`).
+    interpretation: z
+      .enum(TEST_RESULT_INTERPRETATION_VALUES)
+      .optional()
+      .nullable()
+      .catch(null),
+    notes: z.string().max(TEST_RESULT_NOTES_MAX).trim().optional().nullable(),
+  })
+  .transform((r) => ({
+    id: r.id,
+    source: r.source,
+    name: r.name,
+    value: r.value || null,
+    unit: r.unit || null,
+    date: r.date || null,
+    interpretation: r.interpretation ?? null,
+    notes: r.notes || null,
+  }));
+
+const testResultsJsonSchema = z
+  .array(testResultRowSchema.nullable().catch(null))
+  .transform((arr) =>
+    arr
+      .filter((r): r is NonNullable<typeof r> => r !== null)
+      .slice(0, TEST_RESULTS_MAX),
   )
   .optional();
 
@@ -2073,6 +2219,192 @@ const FOLLOW_UP_UNIT_VALUES = ['days', 'weeks', 'months', 'as_needed'] as const;
 // objective-tab / migration 151 — Vitals 2.0 BP posture/limb allowed sets.
 const VITALS_BP_POSTURE_VALUES = ['sitting', 'standing', 'supine'] as const;
 const VITALS_BP_LIMB_VALUES = ['left_arm', 'right_arm', 'left_leg', 'right_leg'] as const;
+const BP_MEASURED_BY_VALUES = ['patient', 'caregiver', 'nurse', 'physician', 'other'] as const;
+const BP_METHOD_VALUES = [
+  'auto_upper_arm',
+  'manual_auscultatory',
+  'wrist_monitor',
+  'wearable',
+  'kiosk',
+] as const;
+const BP_SETTING_VALUES = ['home', 'clinic', 'hospital', 'pharmacy', 'work'] as const;
+
+// ----------------------------------------------------------------------------
+// vitals-section / migration 156 — json-backed extended vitals (`vitals_json`).
+//
+// Bounds + value-sets MIRROR the frontend registry (the single source of truth:
+// `frontend/lib/cockpit/{vitals-schema,categorical-vitals-schema}.ts`, vit-01).
+// The backend cannot import the FE registry across the package boundary, so the
+// numeric bounds + categorical enums are declared once HERE and the Zod schema
+// is built from them — never hand-repeated per field. Keep in lockstep with
+// vit-01 (asserted indirectly by the contract round-trip tests). Validation
+// lives in Zod, not SQL (V3-D1). Out-of-bounds is REJECTED; unknown keys are
+// STRIPPED (zod object default) so a stale key never bricks a save (V3-D6).
+// ----------------------------------------------------------------------------
+
+/** Numeric json-vital hard bounds (canonical units). `int` mirrors registry steps. */
+const JSON_VITAL_NUMERIC_BOUNDS = {
+  vitalsO2FlowLMin: { min: 0, max: 50, int: false },
+  vitalsFio2Pct: { min: 21, max: 100, int: true },
+  vitalsPefrLMin: { min: 0, max: 1000, int: true },
+  vitalsBloodKetonesMmolL: { min: 0, max: 20, int: false },
+  vitalsHipCm: { min: 20, max: 300, int: false },
+  vitalsGcsE: { min: 1, max: 4, int: true },
+  vitalsGcsV: { min: 1, max: 5, int: true },
+  vitalsGcsM: { min: 1, max: 6, int: true },
+  vitalsPupilSizeLeftMm: { min: 1, max: 15, int: false },
+  vitalsPupilSizeRightMm: { min: 1, max: 15, int: false },
+  vitalsCapillaryRefillS: { min: 0, max: 30, int: false },
+  vitalsFetalHeartRateBpm: { min: 50, max: 250, int: true },
+  vitalsFundalHeightCm: { min: 0, max: 50, int: false },
+} as const;
+
+/** Categorical json-vital allowed value-sets (store enum, not label). */
+const JSON_VITAL_CATEGORICAL_VALUES = {
+  vitalsO2DeliveryMethod: [
+    'room_air',
+    'nasal_cannula',
+    'simple_mask',
+    'non_rebreather',
+    'venturi_mask',
+    'high_flow',
+    'cpap',
+    'bipap',
+    'mechanical_ventilation',
+  ],
+  vitalsGlucoseTiming: [
+    'fasting',
+    'random',
+    'post_prandial',
+    'pre_meal',
+    'post_meal',
+    'post_prandial_1h',
+    'post_prandial_2h',
+    'ogtt_0h',
+    'ogtt_1h',
+    'ogtt_2h',
+    'ogtt_3h',
+    'bedtime',
+  ],
+  vitalsPupilReactivityLeft: ['reactive', 'sluggish', 'non_reactive', 'fixed'],
+  vitalsPupilReactivityRight: ['reactive', 'sluggish', 'non_reactive', 'fixed'],
+  vitalsAvpu: ['alert', 'voice', 'pain', 'unresponsive'],
+  vitalsPulseRhythm: ['regular', 'irregular', 'irregularly_irregular', 'regularly_irregular'],
+  vitalsTempSite: ['oral', 'axillary', 'tympanic', 'rectal', 'temporal', 'forehead'],
+  vitalsTempDevice: ['digital', 'mercury', 'ir_forehead', 'wearable'],
+  vitalsSpo2Device: ['medical_oximeter', 'smartwatch', 'phone_app'],
+  vitalsHrSource: ['palpation', 'oximeter', 'wearable', 'bp_cuff', 'ecg'],
+  vitalsGlucoseDevice: ['glucometer', 'cgm', 'lab_venous'],
+} as const;
+
+const vitalsJsonShape = ((): Record<string, z.ZodTypeAny> => {
+  const shape: Record<string, z.ZodTypeAny> = {};
+  for (const [key, b] of Object.entries(JSON_VITAL_NUMERIC_BOUNDS)) {
+    const base = b.int ? z.number().int() : z.number();
+    shape[key] = base.min(b.min).max(b.max).optional().nullable();
+  }
+  for (const [key, values] of Object.entries(JSON_VITAL_CATEGORICAL_VALUES)) {
+    shape[key] = z
+      .enum(values as unknown as [string, ...string[]])
+      .optional()
+      .nullable();
+  }
+  const bpReadingSchema = z.object({
+    systolic: z.number().int().min(30).max(300).nullable(),
+    diastolic: z.number().int().min(20).max(200).nullable(),
+    posture: z.enum(VITALS_BP_POSTURE_VALUES).optional().nullable(),
+    limb: z.enum(VITALS_BP_LIMB_VALUES).optional().nullable(),
+    sequenceLabel: z.string().trim().max(24).optional().nullable(),
+    note: z.string().trim().max(200).optional().nullable(),
+    measuredBy: z.enum(BP_MEASURED_BY_VALUES).optional().nullable(),
+    method: z.enum(BP_METHOD_VALUES).optional().nullable(),
+    setting: z.enum(BP_SETTING_VALUES).optional().nullable(),
+  });
+  const bpContextSchema = z.object({
+    measuredBy: z.enum(BP_MEASURED_BY_VALUES).optional().nullable(),
+    method: z.enum(BP_METHOD_VALUES).optional().nullable(),
+    setting: z.enum(BP_SETTING_VALUES).optional().nullable(),
+  });
+  const measurementContextSchema = z.object({
+    measuredBy: z.enum(BP_MEASURED_BY_VALUES).optional().nullable(),
+    setting: z.enum(BP_SETTING_VALUES).optional().nullable(),
+  });
+  const vitalProvenanceContextSchema = z.object({
+    measuredBy: z.enum(BP_MEASURED_BY_VALUES).optional().nullable(),
+    setting: z.enum(BP_SETTING_VALUES).optional().nullable(),
+  });
+  const VITAL_PROVENANCE_EXCLUDED = new Set([
+    'vitalsBpSystolic',
+    'vitalsBpDiastolic',
+    'vitalsPainScore',
+    'vitalsGcsE',
+    'vitalsGcsV',
+    'vitalsGcsM',
+  ]);
+  const COLUMN_VITAL_PROVENANCE_KEYS = [
+    'vitalsHr',
+    'vitalsRr',
+    'vitalsTempC',
+    'vitalsSpo2',
+    'vitalsWtKg',
+    'vitalsHtCm',
+    'vitalsGlucoseMgDl',
+    'vitalsGcsTotal',
+    'vitalsHeadCircumferenceCm',
+    'vitalsMuacCm',
+    'vitalsWaistCm',
+  ] as const;
+  const vitalProvenanceShape: Record<string, z.ZodTypeAny> = {};
+  for (const key of [
+    ...COLUMN_VITAL_PROVENANCE_KEYS,
+    ...Object.keys(JSON_VITAL_NUMERIC_BOUNDS),
+  ]) {
+    if (VITAL_PROVENANCE_EXCLUDED.has(key)) continue;
+    if (key in vitalProvenanceShape) continue;
+    vitalProvenanceShape[key] = vitalProvenanceContextSchema.optional();
+  }
+  shape.vitalProvenance = z.object(vitalProvenanceShape).optional().nullable();
+  shape.bpReadings = z.array(bpReadingSchema).max(10).optional().nullable();
+  shape.bpContext = bpContextSchema.optional().nullable();
+  const glucoseReadingSchema = z.object({
+    valueMgDl: z.number().min(10).max(1500).nullable(),
+    timing: z.enum(JSON_VITAL_CATEGORICAL_VALUES.vitalsGlucoseTiming).optional().nullable(),
+    device: z.enum(JSON_VITAL_CATEGORICAL_VALUES.vitalsGlucoseDevice).optional().nullable(),
+    sequenceLabel: z.string().trim().max(24).optional().nullable(),
+    note: z.string().trim().max(200).optional().nullable(),
+  });
+  const glucoseContextSchema = z.object({
+    device: z.enum(JSON_VITAL_CATEGORICAL_VALUES.vitalsGlucoseDevice).optional().nullable(),
+  });
+  shape.glucoseReadings = z.array(glucoseReadingSchema).max(8).optional().nullable();
+  shape.glucoseContext = glucoseContextSchema.optional().nullable();
+  shape.measurementContext = measurementContextSchema.optional().nullable();
+  const vitalsCustomValueEntrySchema = z.object({
+    id: z.string().trim().min(1).max(CUSTOM_VITAL_ID_MAX),
+    label: z.string().trim().min(1).max(CUSTOM_VITAL_LABEL_MAX),
+    unit: z.string().trim().max(CUSTOM_VITAL_UNIT_MAX).optional().nullable(),
+    kind: z.enum(CUSTOM_VITAL_KINDS),
+    value: z.union([z.number(), z.string().trim().min(1)]),
+    note: z.string().trim().max(200).optional().nullable(),
+  });
+  shape.vitalsCustom = z
+    .array(vitalsCustomValueEntrySchema)
+    .max(CUSTOM_VITALS_MAX)
+    .optional()
+    .nullable();
+  shape.vitalNotes = z
+    .record(z.string().trim().min(1).max(CUSTOM_VITAL_ID_MAX), z.string().trim().min(1).max(200))
+    .optional()
+    .nullable();
+  return shape;
+})();
+
+/**
+ * `vitals_json` schema (migration 156). Object of optional/nullable extended
+ * vitals; unknown keys stripped (object default), out-of-bounds rejected, empty
+ * `{}` valid. Defaults to `{}` so callers that omit it persist the empty object.
+ */
+const vitalsJsonSchema = z.object(vitalsJsonShape).optional();
 
 const structuredSoapFieldsSchema = {
   vitalsBpSystolic: z.number().int().min(30).max(300).optional().nullable(),
@@ -2092,6 +2424,8 @@ const structuredSoapFieldsSchema = {
   vitalsHeadCircumferenceCm: z.number().min(10).max(80).optional().nullable(),
   vitalsMuacCm: z.number().min(5).max(60).optional().nullable(),
   vitalsWaistCm: z.number().min(20).max(300).optional().nullable(),
+  // vitals-section / migration 156 — json-backed extended vitals (registry bounds).
+  vitalsJson: vitalsJsonSchema,
   examinationFindings: z.string().max(PRESCRIPTION_SOAP_TEXT_MAX).trim().optional().nullable(),
   // objective-tab / migration 150 — structured exam findings (tolerant; obj-01).
   examinationJson: examinationJsonSchema,
@@ -2105,6 +2439,8 @@ const structuredSoapFieldsSchema = {
   followUpUnit: z.enum(FOLLOW_UP_UNIT_VALUES).optional().nullable(),
   referral: z.string().max(PRESCRIPTION_SOAP_TEXT_MAX).trim().optional().nullable(),
   testResults: z.string().max(PRESCRIPTION_SOAP_TEXT_MAX).trim().optional().nullable(),
+  // objective-tab / migration 154 — structured test results (tolerant; obj-20).
+  testResultsJson: testResultsJsonSchema,
 };
 
 function refineFollowUpPairing<T extends { followUpValue?: number | null; followUpUnit?: string | null }>(
@@ -2376,6 +2712,37 @@ const rxTemplateSubjectiveSchema = z.object({
   customSubsections: rxTemplateCustomSubsectionsSchema,
 });
 
+/**
+ * obj-16: objective preset stored in `objective_json`. Mirrors
+ * `rxTemplateSubjectiveSchema` discipline — drops unknown keys, bounds arrays,
+ * and reuses the live Rx vitals/exam validators (`structuredSoapFieldsSchema`,
+ * `examinationJsonSchema`) plus the tolerant custom-subsection validator so a
+ * stale/partial preset never bricks a template save. Config, not PHI.
+ */
+const rxTemplateObjectiveSchema = z.object({
+  examinationJson: examinationJsonSchema,
+  vitalsBpSystolic: structuredSoapFieldsSchema.vitalsBpSystolic,
+  vitalsBpDiastolic: structuredSoapFieldsSchema.vitalsBpDiastolic,
+  vitalsHr: structuredSoapFieldsSchema.vitalsHr,
+  vitalsTempC: structuredSoapFieldsSchema.vitalsTempC,
+  vitalsSpo2: structuredSoapFieldsSchema.vitalsSpo2,
+  vitalsWtKg: structuredSoapFieldsSchema.vitalsWtKg,
+  vitalsHtCm: structuredSoapFieldsSchema.vitalsHtCm,
+  vitalsRr: structuredSoapFieldsSchema.vitalsRr,
+  vitalsPainScore: structuredSoapFieldsSchema.vitalsPainScore,
+  vitalsGlucoseMgDl: structuredSoapFieldsSchema.vitalsGlucoseMgDl,
+  vitalsGcsTotal: structuredSoapFieldsSchema.vitalsGcsTotal,
+  vitalsBpPosture: structuredSoapFieldsSchema.vitalsBpPosture,
+  vitalsBpLimb: structuredSoapFieldsSchema.vitalsBpLimb,
+  vitalsHeadCircumferenceCm: structuredSoapFieldsSchema.vitalsHeadCircumferenceCm,
+  vitalsMuacCm: structuredSoapFieldsSchema.vitalsMuacCm,
+  vitalsWaistCm: structuredSoapFieldsSchema.vitalsWaistCm,
+  testResults: structuredSoapFieldsSchema.testResults,
+  // obj-23: structured result-row presets (reuses the live Rx test-results validator).
+  testResultsJson: structuredSoapFieldsSchema.testResultsJson,
+  customSections: rxTemplateCustomSubsectionsSchema,
+});
+
 const RX_TEMPLATE_PMH_ROWS_MAX = 100;
 const RX_TEMPLATE_CHART_FIELD_MAX = 200;
 const RX_TEMPLATE_CHART_NOTE_MAX = 2000;
@@ -2425,6 +2792,7 @@ export const createRxTemplateBodySchema = z.object({
   clinicalNotes: z.string().max(5000).trim().optional().nullable(),
   medicines: z.array(rxTemplateMedicineSchema).optional(),
   subjective: rxTemplateSubjectiveSchema.optional(),
+  objective: rxTemplateObjectiveSchema.optional(),
   pmh: rxTemplatePmhSchema.optional(),
   allergies: rxTemplateAllergiesSchema.optional(),
   scope: rxTemplateScopeSchema.optional().default('subjective_full'),
@@ -2455,6 +2823,7 @@ export const updateRxTemplateBodySchema = z
     clinicalNotes: z.string().max(5000).trim().optional().nullable(),
     medicines: z.array(rxTemplateMedicineSchema).optional(),
     subjective: rxTemplateSubjectiveSchema.optional(),
+    objective: rxTemplateObjectiveSchema.optional(),
     pmh: rxTemplatePmhSchema.optional(),
     allergies: rxTemplateAllergiesSchema.optional(),
   })
@@ -2555,6 +2924,13 @@ export function validateListPrescriptionsQuery(
 const ATTACHMENT_ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] as const;
 const ATTACHMENT_FILENAME_MAX = 200;
 const ATTACHMENT_CAPTION_MAX = 500;
+// objective-tab / P5-D4 (obj-22): context tag carried as a storage path segment, NOT a
+// new column. `objective` routes wound/rash/ECG/report-scan media to the Objective tab's
+// media strip; absence keeps the legacy photo-Rx path byte-identical.
+// soap-data-placement / P2 (sdp-02): `subjective` pins symptom media to a complaint via an
+// optional opaque `complaintId` (sanitized into a folder segment by the service, P2-D2).
+const ATTACHMENT_CATEGORY_VALUES = ['objective', 'subjective'] as const;
+const ATTACHMENT_COMPLAINT_ID_MAX = 64;
 
 export const createUploadUrlBodySchema = z.object({
   filename: z.string().max(ATTACHMENT_FILENAME_MAX).trim().optional().default('file'),
@@ -2562,6 +2938,8 @@ export const createUploadUrlBodySchema = z.object({
     .enum(ATTACHMENT_ALLOWED_MIME as unknown as [string, ...string[]])
     .optional()
     .default('image/jpeg'),
+  category: z.enum(ATTACHMENT_CATEGORY_VALUES).optional(),
+  complaintId: z.string().max(ATTACHMENT_COMPLAINT_ID_MAX).trim().optional(),
 });
 
 export type CreateUploadUrlBody = z.infer<typeof createUploadUrlBodySchema>;

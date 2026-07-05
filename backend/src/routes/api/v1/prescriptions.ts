@@ -21,6 +21,7 @@ import {
   createUploadUrlHandler,
   registerAttachmentHandler,
   getAttachmentDownloadUrlHandler,
+  deleteAttachmentHandler,
   sendPrescriptionToPatientHandler,
 } from '../../../controllers/prescription-controller';
 
@@ -43,6 +44,9 @@ router.patch('/:id', updatePrescriptionHandler);
 router.post('/:id/attachments/upload-url', createUploadUrlHandler);
 router.post('/:id/attachments', registerAttachmentHandler);
 router.get('/:id/attachments/:attachmentId/download-url', getAttachmentDownloadUrlHandler);
+// objective-tab (obj-22) — remove a mis-uploaded objective media file. Reuses the shipped
+// DELETE RLS policy (migration 026); no new policy.
+router.delete('/:id/attachments/:attachmentId', deleteAttachmentHandler);
 
 // Send to patient
 router.post('/:id/send', sendPrescriptionToPatientHandler);

@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { Info } from "lucide-react";
+import { CollapsibleEntryCard } from "@/components/cockpit/rx/inputs/CollapsibleEntryCard";
 import { RX_FIELD_INPUT_CLASS } from "@/components/cockpit/rx/sections/field-styles";
-import { RemoveIconButton } from "@/components/cockpit/rx/subjective/RemoveIconButton";
 import {
   Tooltip,
   TooltipContent,
@@ -378,6 +378,9 @@ function CompactDrinkCard({
   testIdPrefix,
   implicitPast,
   disabled,
+  open,
+  closeScrollToSelector,
+  onToggle,
   onChange,
   onRemove,
 }: {
@@ -386,11 +389,15 @@ function CompactDrinkCard({
   testIdPrefix: string;
   implicitPast?: boolean;
   disabled?: boolean;
+  open: boolean;
+  closeScrollToSelector?: string;
+  onToggle: () => void;
   onChange: (patch: Partial<AlcoholDrinkRow>) => void;
   onRemove: () => void;
 }) {
   const displayLabel = alcoholDrinkDisplayLabel(drink);
   const phase = drinkPhase(drink);
+  const isPast = implicitPast || phase === "past";
   const showQuit = implicitPast || phase === "past";
   const freqUnit = drink.frequencyUnit ?? "week";
   const resolvedAmountUnit = drink.amountUnit ?? defaultAlcoholAmountUnit(drink.type);
@@ -404,81 +411,87 @@ function CompactDrinkCard({
   const needsFrequencyCount =
     freqUnit === "week" || freqUnit === "fortnight" || freqUnit === "month" || freqUnit === "interval";
 
-  return (
-    <div
-      className={cn(
-        "space-y-1.5 rounded-md border px-2.5 py-2",
-        implicitPast || phase === "past"
-          ? "border-border/60 bg-muted/30"
-          : "border-border/50 bg-background/60",
+  // Collapsed one-liner: reuse the drink preview sentence but drop its leading label
+  // (already shown in the header), then append the weekly-units estimate.
+  const previewSegments = previewSentence ? previewSentence.split(" · ").slice(1) : [];
+  if (rowUnits != null) previewSegments.push(`≈ ${rowUnits} units/week`);
+  const preview = previewSegments.join(" · ") || undefined;
+
+  const titleNode = (
+    <>
+      <span className="min-w-0 truncate text-xs font-semibold text-foreground" title={displayLabel}>
+        {displayLabel}
+      </span>
+      {!implicitPast && (
+        <span
+          className="shrink-0"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <div className="flex gap-0.5" role="group" aria-label="Drink phase">
+            {PHASE_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                disabled={disabled}
+                aria-pressed={phase === option.value}
+                aria-label={option.label}
+                data-testid={`${testIdPrefix}-phase-${option.value}-${index}`}
+                onClick={() =>
+                  onChange(
+                    option.value === "past"
+                      ? { phase: "past" }
+                      : { phase: undefined, quitYearsAgo: undefined, quitYearsUnit: undefined },
+                  )
+                }
+                className={cn(
+                  "rounded border px-1.5 py-0.5 text-[10px] font-medium transition-colors",
+                  phase === option.value
+                    ? option.value === "past"
+                      ? "border-muted-foreground bg-muted text-foreground"
+                      : "border-primary bg-primary/10 text-foreground"
+                    : "border-border text-muted-foreground hover:border-primary/60",
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </span>
       )}
-      data-testid={`${testIdPrefix}-drink-${index}`}
+    </>
+  );
+
+  return (
+    <CollapsibleEntryCard
+      title={titleNode}
+      preview={preview}
+      open={open}
+      onToggle={onToggle}
+      onRemove={disabled ? undefined : onRemove}
+      removeLabel={`Remove ${displayLabel}`}
+      toggleLabel={`${open ? "Collapse" : "Expand"} ${displayLabel}`}
+      testId={`${testIdPrefix}-drink-${index}`}
+      bodyId={`${testIdPrefix}-drink-body-${drink.id}`}
+      closeScrollToSelector={closeScrollToSelector ?? '[data-testid="social-history-cluster-substance"]'}
+      className={isPast ? "bg-muted/30" : undefined}
     >
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          {drink.type === "other" ? (
-            <input
-              type="text"
-              value={drink.typeOther ?? ""}
-              disabled={disabled}
-              placeholder="Drink name"
-              aria-label="Other drink name"
-              onChange={(e) =>
-                onChange({ typeOther: e.target.value === "" ? undefined : e.target.value })
-              }
-              className={cn(
-                RX_FIELD_INPUT_CLASS,
-                "h-8 w-28 min-w-0 px-2 py-1 text-xs font-semibold",
-              )}
-            />
-          ) : (
-            <span
-              className="shrink-0 text-xs font-semibold text-foreground"
-              title={displayLabel}
-            >
-              {displayLabel}
-            </span>
-          )}
-
-          {!implicitPast && (
-            <div className="flex shrink-0 gap-0.5" role="group" aria-label="Drink phase">
-              {PHASE_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  disabled={disabled}
-                  aria-pressed={phase === option.value}
-                  aria-label={option.label}
-                  data-testid={`${testIdPrefix}-phase-${option.value}-${index}`}
-                  onClick={() =>
-                    onChange(
-                      option.value === "past"
-                        ? { phase: "past" }
-                        : { phase: undefined, quitYearsAgo: undefined, quitYearsUnit: undefined },
-                    )
-                  }
-                  className={cn(
-                    "rounded border px-1.5 py-0.5 text-[10px] font-medium transition-colors",
-                    phase === option.value
-                      ? option.value === "past"
-                        ? "border-muted-foreground bg-muted text-foreground"
-                        : "border-primary bg-primary/10 text-foreground"
-                      : "border-border text-muted-foreground hover:border-primary/60",
-                  )}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <RemoveIconButton
-          label={`Remove ${displayLabel}`}
+      {drink.type === "other" ? (
+        <input
+          type="text"
+          value={drink.typeOther ?? ""}
           disabled={disabled}
-          onClick={onRemove}
+          placeholder="Drink name"
+          aria-label="Other drink name"
+          onChange={(e) =>
+            onChange({ typeOther: e.target.value === "" ? undefined : e.target.value })
+          }
+          className={cn(
+            RX_FIELD_INPUT_CLASS,
+            "h-8 w-28 min-w-0 px-2 py-1 text-xs font-semibold",
+          )}
         />
-      </div>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className={ROW_LABEL_CLASS}>Amount</span>
@@ -714,7 +727,7 @@ function CompactDrinkCard({
           )}
         </p>
       )}
-    </div>
+    </CollapsibleEntryCard>
   );
 }
 
@@ -723,6 +736,8 @@ export interface AlcoholDrinkRowsProps {
   disabled?: boolean;
   implicitPast?: boolean;
   testIdPrefix: string;
+  /** Selector for the enclosing card the drink should glide back to when closed. */
+  closeScrollToSelector?: string;
   onChange: (drinks: AlcoholDrinkRow[]) => void;
 }
 
@@ -731,12 +746,24 @@ export function AlcoholDrinkRows({
   disabled = false,
   implicitPast = false,
   testIdPrefix,
+  closeScrollToSelector,
   onChange,
 }: AlcoholDrinkRowsProps) {
   const usedTypes = new Set(drinks.filter((d) => d.type !== "other").map((d) => d.type));
   const addOptions = ALCOHOL_DRINK_TYPES.filter(
     (t) => t.value === "other" || !usedTypes.has(t.value),
   );
+
+  // Per-drink collapse state; newly added drinks start collapsed (chip → card).
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const toggleExpanded = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const update = (id: string, patch: Partial<AlcoholDrinkRow>) => {
     onChange(drinks.map((d) => (d.id === id ? { ...d, ...patch } : d)));
@@ -767,7 +794,7 @@ export function AlcoholDrinkRows({
 
       {drinks.length > 0 && (
         <div
-          className="space-y-1.5 border-l-2 border-primary/20 pl-2"
+          className="space-y-2"
           role="group"
           aria-label="Registered drinks"
         >
@@ -779,6 +806,9 @@ export function AlcoholDrinkRows({
               testIdPrefix={testIdPrefix}
               implicitPast={implicitPast}
               disabled={disabled}
+              open={expandedIds.has(drink.id)}
+              closeScrollToSelector={closeScrollToSelector}
+              onToggle={() => toggleExpanded(drink.id)}
               onChange={(patch) => update(drink.id, patch)}
               onRemove={() => onChange(drinks.filter((d) => d.id !== drink.id))}
             />

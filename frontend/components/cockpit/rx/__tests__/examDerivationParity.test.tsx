@@ -30,6 +30,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
   RxFormProvider,
+  TELECONSULT_EXAM_CAVEAT,
   buildRxPayload,
   createEmptyRxFormFields,
   deriveExaminationFindingsFromExam,
@@ -69,13 +70,16 @@ const STRUCTURED_EXAM: ExamSystemFinding[] = [
   {
     systemId: "resp",
     status: "abnormal",
-    findings: ["Wheeze", "Crackles"],
+    findings: [
+      { findingId: "wheeze", attributes: {} },
+      { findingId: "crackles", attributes: {} },
+    ],
     notes: null,
   },
   {
     systemId: "cvs",
     status: "abnormal",
-    findings: ["Murmur"],
+    findings: [{ findingId: "murmur", attributes: {} }],
     notes: "grade 3/6",
   },
 ];
@@ -83,7 +87,7 @@ const STRUCTURED_EXAM: ExamSystemFinding[] = [
 const EXPECTED_STRUCTURED_TEXT = [
   "General: Normal",
   "Cardiovascular: Murmur (grade 3/6)",
-  "Respiratory: Wheeze, Crackles",
+  "Respiratory: Wheeze; Crackles",
   "Abdomen: Normal",
   "CNS / Neuro: Abnormal",
 ].join("\n");
@@ -156,7 +160,12 @@ describe("obj-04 close-gate · examination_findings byte-parity", () => {
 
   it("an unknown systemId sorts after the core set with a humanized fallback label", () => {
     const text = deriveExaminationFindingsFromExam([
-      { systemId: "spine_exam", status: "abnormal", findings: ["Tenderness"], notes: null },
+      {
+        systemId: "spine_exam",
+        status: "abnormal",
+        findings: [{ findingId: "tenderness", attributes: {} }],
+        notes: null,
+      },
       { systemId: "general", status: "normal", findings: [], notes: null },
     ]);
     expect(text).toBe(["General: Normal", "Spine Exam: Tenderness"].join("\n"));
@@ -227,6 +236,7 @@ function renderExamList(initial?: Partial<RxFormFields>, disabled = false) {
       autosaveEnabled={false}
       prescriptionIdRef={prescriptionIdRef}
       onPrescriptionCreated={() => {}}
+      consultationType="in_clinic"
     >
       <ExamSystemList disabled={disabled} />
       <ExamFindingsProbe />
@@ -243,18 +253,76 @@ describe("obj-04 close-gate · exam card round-trip + a11y", () => {
     renderExamList({
       examFindings: [
         { systemId: "resp", status: "normal", findings: [], notes: null },
-        { systemId: "cvs", status: "abnormal", findings: ["Murmur"], notes: null },
+        {
+          systemId: "cvs",
+          status: "abnormal",
+          findings: [
+            {
+              findingId: "murmur",
+              attributes: { timing: "Systolic", grade: "3/6", area: "Mitral" },
+            },
+          ],
+          notes: null,
+        },
       ],
     });
 
-    // resp normal → WNL one-liner visible; its status radio is checked.
-    expect(screen.getByText("Chest clear, NVBS bilaterally")).toBeInTheDocument();
-    expect(screen.getByTestId("exam-status-resp-normal")).toHaveAttribute(
-      "aria-checked",
+    expect(screen.getByTestId("exam-summary-resp")).toHaveTextContent(
+      "Bilateral air entry normal, no added sounds",
+    );
+    expect(screen.getByTestId("exam-summary-cvs")).toHaveTextContent(
+      "Murmur · Systolic · 3/6 · Mitral",
+    );
+    fireEvent.click(screen.getByTestId("exam-toggle-cvs"));
+    fireEvent.click(screen.getByTestId("cvs-finding-toggle-murmur"));
+    expect(screen.getByTestId("cvs-field-murmur-timing-systolic")).toHaveAttribute(
+      "aria-pressed",
       "true",
     );
-    // cvs abnormal → selected chip reflects stored finding.
-    expect(screen.getByTestId("exam-finding-cvs-murmur")).toHaveAttribute(
+  });
+
+  it("still previews legacy murmur findingId on load (chip vocabulary migration)", () => {
+    renderExamList({
+      examFindings: [
+        {
+          systemId: "cvs",
+          status: "abnormal",
+          findings: [{ findingId: "murmur", attributes: {} }],
+          notes: null,
+        },
+      ],
+    });
+    expect(screen.getByTestId("exam-summary-cvs")).toHaveTextContent("Murmur");
+    fireEvent.click(screen.getByTestId("exam-toggle-cvs"));
+    fireEvent.click(screen.getByTestId("cvs-finding-toggle-murmur"));
+    expect(screen.getByTestId("cvs-field-murmur-timing-systolic")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("migrates legacy systolic_murmur chip rows into structured murmur on load", () => {
+    renderExamList({
+      examFindings: [
+        {
+          systemId: "cvs",
+          status: "abnormal",
+          findings: [{ findingId: "systolic_murmur", attributes: {} }],
+          notes: null,
+        },
+      ],
+    });
+    expect(readExamFindings()).toEqual([
+      {
+        systemId: "cvs",
+        status: "abnormal",
+        findings: [{ findingId: "murmur", attributes: { timing: "Systolic" } }],
+        notes: null,
+      },
+    ]);
+    fireEvent.click(screen.getByTestId("exam-toggle-cvs"));
+    fireEvent.click(screen.getByTestId("cvs-finding-toggle-murmur"));
+    expect(screen.getByTestId("cvs-field-murmur-timing-systolic")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
@@ -262,31 +330,46 @@ describe("obj-04 close-gate · exam card round-trip + a11y", () => {
 
   it("edit reflects in state and re-derives deterministically (edit → save)", () => {
     renderExamList({
-      examFindings: [{ systemId: "cvs", status: "abnormal", findings: ["Murmur"], notes: null }],
+      examFindings: [
+        {
+          systemId: "cvs",
+          status: "abnormal",
+          findings: [
+            { findingId: "murmur", attributes: { timing: "Systolic", grade: "2/6" } },
+          ],
+          notes: null,
+        },
+      ],
     });
 
-    fireEvent.click(screen.getByTestId("exam-finding-cvs-gallop"));
+    fireEvent.click(screen.getByTestId("exam-toggle-cvs"));
+    fireEvent.click(screen.getByTestId("exam-finding-cvs-parasternal-heave"));
     const next = readExamFindings();
     expect(next).toEqual([
-      { systemId: "cvs", status: "abnormal", findings: ["Murmur", "Gallop"], notes: null },
+      {
+        systemId: "cvs",
+        status: "abnormal",
+        findings: [
+          { findingId: "murmur", attributes: { timing: "Systolic", grade: "2/6" } },
+          { findingId: "parasternal_heave", attributes: {} },
+        ],
+        notes: null,
+      },
     ]);
     expect(deriveExaminationFindingsFromExam(next)).toBe(
-      "Cardiovascular: Murmur, Gallop",
+      "Cardiovascular: Murmur (Systolic, 2/6); Parasternal heave",
     );
   });
 
-  it("tri-state control is keyboard operable with correct aria", () => {
+  it("expand toggle reveals General subsection body (obj-32)", () => {
     renderExamList();
-    const notExamined = screen.getByTestId("exam-status-general-not_examined");
-    notExamined.focus();
-    fireEvent.keyDown(notExamined, { key: "ArrowRight" });
+    fireEvent.click(screen.getByTestId("exam-toggle-general"));
+    expect(screen.getByTestId("general-subsection-appearance")).toBeInTheDocument();
+    expect(screen.getByTestId("general-finding-card-pallor")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("exam-mark-normal-general"));
     expect(readExamFindings()).toEqual([
       { systemId: "general", status: "normal", findings: [], notes: null },
     ]);
-    expect(screen.getByTestId("exam-status-general-normal")).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
   });
 
   it("disabled mode renders read-only (no edits commit)", () => {
@@ -295,8 +378,9 @@ describe("obj-04 close-gate · exam card round-trip + a11y", () => {
       true,
     );
     expect(screen.getByTestId("exam-mark-all-normal")).toBeDisabled();
-    expect(screen.getByTestId("exam-status-general-abnormal")).toBeDisabled();
-    fireEvent.click(screen.getByTestId("exam-status-general-abnormal"));
+    fireEvent.click(screen.getByTestId("exam-toggle-general"));
+    expect(screen.getByTestId("exam-mark-normal-general")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("general-finding-toggle-pallor"));
     // State unchanged — the only entry remains the pre-seeded cns normal.
     expect(readExamFindings()).toEqual([
       { systemId: "cns", status: "normal", findings: [], notes: null },
@@ -317,5 +401,94 @@ describe("obj-04 close-gate · exam card round-trip + a11y", () => {
         "CNS / Neuro: Normal",
       ].join("\n"),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// tc-03 — scoped teleconsult normal line + limitation caveat (TC-D4 / TC-D5)
+// ---------------------------------------------------------------------------
+
+describe("teleconsult exam derivation (tc-03)", () => {
+  it("in-clinic byte-parity: explicit in_clinic matches the no-options default", () => {
+    const inClinic = deriveExaminationFindingsFromExam(STRUCTURED_EXAM, {
+      consultationType: "in_clinic",
+    });
+    expect(inClinic).toBe(EXPECTED_STRUCTURED_TEXT);
+    expect(inClinic).toBe(deriveExaminationFindingsFromExam(STRUCTURED_EXAM));
+  });
+
+  it("scopes each normal system to its inspection-only WNL line", () => {
+    const text = deriveExaminationFindingsFromExam(
+      [
+        { systemId: "general", status: "normal", findings: [], notes: null },
+        { systemId: "cvs", status: "normal", findings: [], notes: null },
+        { systemId: "resp", status: "normal", findings: [], notes: null },
+        { systemId: "abd", status: "normal", findings: [], notes: null },
+        { systemId: "cns", status: "normal", findings: [], notes: null },
+      ],
+      { consultationType: "video" },
+    );
+    expect(text).toBe(
+      [
+        "General: Well appearing, not in distress",
+        "Cardiovascular: No raised JVP or peripheral edema on inspection",
+        "Respiratory: No respiratory distress on inspection",
+        "Abdomen: No abdominal distension on inspection",
+        "CNS / Neuro: Alert and oriented on remote assessment",
+        TELECONSULT_EXAM_CAVEAT,
+      ].join("\n"),
+    );
+  });
+
+  it("appends the limitation caveat exactly once after a mixed normal + abnormal block", () => {
+    const text = deriveExaminationFindingsFromExam(STRUCTURED_EXAM, {
+      consultationType: "video",
+    });
+    expect(text).toBe(
+      [
+        "General: Well appearing, not in distress",
+        "Cardiovascular: Murmur (grade 3/6)",
+        "Respiratory: Wheeze; Crackles",
+        "Abdomen: No abdominal distension on inspection",
+        "CNS / Neuro: Abnormal",
+        TELECONSULT_EXAM_CAVEAT,
+      ].join("\n"),
+    );
+    // Exactly once — not per system.
+    expect(text.split(TELECONSULT_EXAM_CAVEAT)).toHaveLength(2);
+  });
+
+  it("returns '' for an empty exam even on teleconsult (legacy fallback preserved)", () => {
+    expect(deriveExaminationFindingsFromExam([], { consultationType: "video" })).toBe("");
+  });
+
+  it("null/unknown modality is treated as teleconsult (isTeleconsult semantics), undefined stays in-clinic", () => {
+    const abnormalOnly: ExamSystemFinding[] = [
+      { systemId: "resp", status: "abnormal", findings: [{ findingId: "wheeze", attributes: {} }], notes: null },
+    ];
+    // Explicit null → teleconsult (caveat appended).
+    expect(deriveExaminationFindingsFromExam(abnormalOnly, { consultationType: null })).toBe(
+      ["Respiratory: Wheeze", TELECONSULT_EXAM_CAVEAT].join("\n"),
+    );
+    // No options / undefined → in-clinic default (no caveat), byte-identical.
+    expect(deriveExaminationFindingsFromExam(abnormalOnly)).toBe("Respiratory: Wheeze");
+  });
+
+  it("buildRxPayload threads the modality: default is in-clinic, video scopes + caveats", () => {
+    const fields = createEmptyRxFormFields();
+    fields.examFindings = STRUCTURED_EXAM;
+
+    expect(buildRxPayload(fields).examinationFindings).toBe(EXPECTED_STRUCTURED_TEXT);
+    expect(buildRxPayload(fields, { consultationType: "in_clinic" }).examinationFindings).toBe(
+      EXPECTED_STRUCTURED_TEXT,
+    );
+
+    const teleconsult = buildRxPayload(fields, { consultationType: "video" });
+    expect(teleconsult.examinationFindings).toContain(
+      "Abdomen: No abdominal distension on inspection",
+    );
+    expect(teleconsult.examinationFindings?.endsWith(TELECONSULT_EXAM_CAVEAT)).toBe(true);
+    // The stored structured JSON is modality-independent (nothing new persisted).
+    expect(teleconsult.examinationJson).toEqual(buildRxPayload(fields).examinationJson);
   });
 });

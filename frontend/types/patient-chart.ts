@@ -373,6 +373,31 @@ export interface ProblemsListData {
 }
 
 // ============================================================================
+// Investigations & results timeline (soap-data-placement P3 / sdp-05–06)
+// ============================================================================
+
+/**
+ * One visit on GET /api/v1/patients/:id/chart/results. Assembled server-side
+ * from prescriptions — ordered investigations + resulted rows + media count.
+ */
+export interface ResultsTimelineEntry {
+  prescriptionId: string;
+  appointmentId: string;
+  /** ISO visit date (prescription created_at). Sorted desc by the API. */
+  visitDate: string;
+  /** Ordered investigations free-text; null when blank. */
+  ordered: string | null;
+  /** Resulted rows from test_results_json (objective-tab P5 shape). */
+  resulted: import("./prescription").TestResultRow[];
+  /** Per-visit count of objective report-scan attachments (P3-D5). */
+  mediaCount: number;
+}
+
+export interface ResultsTimelineListData {
+  results: ResultsTimelineEntry[];
+}
+
+// ============================================================================
 // Component-shared types
 // ============================================================================
 

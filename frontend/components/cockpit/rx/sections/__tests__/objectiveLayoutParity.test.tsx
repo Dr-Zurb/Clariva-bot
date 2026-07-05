@@ -33,6 +33,12 @@ import type {
   DoctorObjectiveDefaults,
   RxFormProviderSetup,
 } from "@/components/cockpit/rx/useRxFormProviderSetup";
+
+// vit-10..12 gave VitalsGrid doctor-scoped trend/demographics queries (needs a
+// QueryClient); this layout gate covers ObjectiveSection, not vitals internals.
+vi.mock("@/components/cockpit/rx/inputs/VitalsGrid", () => ({
+  VitalsGrid: () => <div data-testid="vitals-grid-stub" />,
+}));
 import { resolveDefaultLayout } from "@/lib/cockpit/objective-default-layout";
 import { EXAM_DELIMITER } from "@/lib/cockpit/exam-findings";
 import type { ObjectiveSectionId } from "@/lib/cockpit/objective-section-order";
@@ -208,7 +214,7 @@ function richFields(): RxFormFields {
   f.vitalsSpo2 = 98;
   f.examFindings = [
     { systemId: "general", status: "normal", findings: [], notes: null },
-    { systemId: "cvs", status: "abnormal", findings: ["Murmur"], notes: "grade 3/6" },
+    { systemId: "cvs", status: "abnormal", findings: [{ findingId: "murmur", attributes: {} }], notes: "grade 3/6" },
   ] satisfies ExamSystemFinding[];
   f.testResults = "Hb 12.5 g/dL";
   f.objectiveCustomSections = [
@@ -238,8 +244,8 @@ describe("obj-15 · §1 output byte-parity (layout is view-only)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Toggle Examination" }));
     expect(JSON.stringify(readPayload())).toBe(baseline);
 
-    // (c) hide — hide Test results (content stays in the payload — see 1.2).
-    await hideViaMenu("Test results");
+    // (c) hide — hide patient-brought reports (content stays in the payload — see 1.2).
+    await hideViaMenu("Patient-brought reports");
     await waitFor(() => expect(renderedOrder(container)).not.toContain("test_results"));
     expect(JSON.stringify(readPayload())).toBe(baseline);
   });
@@ -317,6 +323,8 @@ describe("obj-15 · §2 engine round-trips", () => {
         "exam",
         "vitals",
         "test_results",
+        "point_of_care",
+        "media",
         "legacy_exam",
         "legacy_vitals",
       ]),
@@ -328,7 +336,15 @@ describe("obj-15 · §2 engine round-trips", () => {
     );
     const persistedOrder = patchCallsWith("objective_section_order").at(-1)![1]
       .objective_section_order as ObjectiveSectionId[];
-    expect(persistedOrder).toEqual(["exam", "vitals", "test_results", "legacy_exam", "legacy_vitals"]);
+    expect(persistedOrder).toEqual([
+      "exam",
+      "vitals",
+      "test_results",
+      "point_of_care",
+      "media",
+      "legacy_exam",
+      "legacy_vitals",
+    ]);
     unmount();
 
     // Remount with the persisted order + a stale id → re-applies, stale dropped, none lost.
@@ -343,7 +359,15 @@ describe("obj-15 · §2 engine round-trips", () => {
       expect(order[0]).toBe("exam");
       expect(order[1]).toBe("vitals");
       expect(new Set(order)).toEqual(
-        new Set(["vitals", "exam", "test_results", "legacy_exam", "legacy_vitals"]),
+        new Set([
+          "vitals",
+          "exam",
+          "test_results",
+          "point_of_care",
+          "media",
+          "legacy_exam",
+          "legacy_vitals",
+        ]),
       );
     });
   });
@@ -375,6 +399,8 @@ describe("obj-15 · §2 engine round-trips", () => {
           "vitals",
           "exam",
           "test_results",
+          "point_of_care",
+          "media",
           "legacy_exam",
           "legacy_vitals",
         ] as ObjectiveSectionId[],
@@ -403,7 +429,7 @@ describe("obj-15 · §2 engine round-trips", () => {
     expect(screen.queryByRole("button", { name: "Hide P/V" })).not.toBeInTheDocument();
 
     // Hide a static section → no custom_block id ever lands in a persisted order/hidden patch.
-    fireEvent.click(await screen.findByRole("button", { name: "Hide Test results" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Hide Patient-brought reports" }));
     await waitFor(() => expect(patchCallsWith("objective_section_hidden").length).toBeGreaterThan(0));
     for (const key of ["objective_section_hidden", "objective_section_order"]) {
       for (const call of patchCallsWith(key)) {
@@ -418,8 +444,10 @@ describe("obj-15 · §2 engine round-trips", () => {
     const { container, unmount } = renderWithShell({
       objectiveSeed: resolveDefaultLayout({ modality: "voice" }),
     });
-    // voice seed → test_results leads, structured exam hidden by default.
-    await waitFor(() => expect(renderedOrder(container)).toEqual(["test_results", "vitals"]));
+    // voice seed (obj-23) → test_results leads, uploads (media) visible, structured exam/POC hidden.
+    await waitFor(() =>
+      expect(renderedOrder(container)).toEqual(["test_results", "vitals", "media"]),
+    );
     // The seed alone never autosaves (nothing persisted on mount).
     await new Promise((r) => setTimeout(r, 40));
     expect(patchCallsWith("objective_section_hidden")).toEqual([]);

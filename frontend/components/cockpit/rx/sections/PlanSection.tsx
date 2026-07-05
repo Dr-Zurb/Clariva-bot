@@ -601,8 +601,6 @@ export function PlanSection({
 
       <ReferralField fields={fields} setField={setField} disabled={disabled} />
 
-      <TestResultsField fields={fields} setField={setField} disabled={disabled} />
-
       <ClinicalNotesField fields={fields} setField={setField} disabled={disabled} />
     </section>
   );
@@ -754,34 +752,6 @@ function ReferralField({
         onChange={(e) => setField("referral", e.target.value)}
         className={RX_FIELD_INPUT_CLASS}
         placeholder="Referral"
-        maxLength={5000}
-        disabled={disabled}
-      />
-    </div>
-  );
-}
-
-function TestResultsField({
-  fields,
-  setField,
-  disabled,
-}: {
-  fields: ReturnType<typeof useRxForm>["state"]["fields"];
-  setField: ReturnType<typeof useRxForm>["setField"];
-  disabled: boolean;
-}) {
-  return (
-    <div>
-      <label htmlFor="testResults" className={RX_FIELD_LABEL_CLASS}>
-        Test results
-      </label>
-      <textarea
-        id="testResults"
-        rows={2}
-        value={fields.testResults}
-        onChange={(e) => setField("testResults", e.target.value)}
-        className={RX_FIELD_INPUT_CLASS}
-        placeholder="Test results"
         maxLength={5000}
         disabled={disabled}
       />

@@ -1,3 +1,7 @@
+import {
+  scrollCollapsibleToStickyTop,
+} from "@/lib/cockpit/collapse-scroll";
+
 /** Scroll anchor on the expanded chart-med collapse header row. */
 export const CHART_MED_COLLAPSE_HEADER_ATTR = "data-chart-med-collapse-header";
 
@@ -17,16 +21,16 @@ export function conditionMedSectionId(conditionId: string): string {
   return `condition-meds-${conditionId}`;
 }
 
-export interface ScrollChartMedCaptureOptions {
-  /** Preferred — keeps the subsection title + capture bar visible. */
+export interface ScrollChartMedContainerOptions {
+  /** Fallback "bigger container" (standalone / unlinked meds) when the card is not nested inside a condition. */
   sectionId?: string;
-  /** Fallback when the section wrapper is absent (tests / legacy markup). */
-  captureInputId?: string;
 }
 
 /**
- * After expanding a chart-med card, align its collapse header to the top of the
- * nearest scroll container so the body expands downward (mirrors chief complaints).
+ * OPEN: glide the expanded card's collapse header smoothly to the top of the scroll
+ * area, landing just beneath the live stack of sticky headers so it is never cut off
+ * (mirrors chief complaints). Depth-agnostic — works both standalone and nested
+ * inside a condition card.
  */
 export function scrollChartMedCardHeaderIntoView(medId: string): void {
   if (typeof document === "undefined" || !medId) return;
@@ -34,32 +38,36 @@ export function scrollChartMedCardHeaderIntoView(medId: string): void {
   const root = document.querySelector(`[${CHART_MED_CARD_INSTANCE_ATTR}="${medId}"]`);
   const header = root?.querySelector(`[${CHART_MED_COLLAPSE_HEADER_ATTR}]`);
   if (header instanceof HTMLElement) {
-    header.scrollIntoView({ block: "start", behavior: "auto" });
+    scrollCollapsibleToStickyTop(header);
   }
 }
 
 /**
- * After a deliberate card collapse, bring the med capture subsection back into
- * view so the doctor can add another medicine. Scrolls the section wrapper when
- * present; does not focus the input (avoids keyboard steal).
+ * CLOSE: glide the card's "bigger container" back to the top — the enclosing
+ * condition card when nested (so collapsing e.g. Amlodipine returns to the
+ * Hypertension card), otherwise the standalone medications section. Smooth.
  */
-export function scrollChartMedCaptureIntoView(options: ScrollChartMedCaptureOptions): void {
-  if (typeof document === "undefined") return;
+export function scrollChartMedContainerIntoView(
+  medId: string,
+  options: ScrollChartMedContainerOptions = {},
+): void {
+  if (typeof document === "undefined" || !medId) return;
 
-  const { sectionId, captureInputId } = options;
+  const root = document.querySelector(`[${CHART_MED_CARD_INSTANCE_ATTR}="${medId}"]`);
 
-  if (sectionId) {
-    const section = document.getElementById(sectionId);
-    if (section && "scrollIntoView" in section) {
-      section.scrollIntoView({ block: "start", behavior: "smooth" });
-      return;
-    }
+  const conditionCard =
+    root instanceof HTMLElement
+      ? root.closest<HTMLElement>('[data-testid^="condition-card-"]')
+      : null;
+  if (conditionCard) {
+    scrollCollapsibleToStickyTop(conditionCard);
+    return;
   }
 
-  if (captureInputId) {
-    const input = document.getElementById(captureInputId);
-    if (input && "scrollIntoView" in input) {
-      input.scrollIntoView({ block: "start", behavior: "smooth" });
+  if (options.sectionId) {
+    const section = document.getElementById(options.sectionId);
+    if (section instanceof HTMLElement) {
+      scrollCollapsibleToStickyTop(section);
     }
   }
 }

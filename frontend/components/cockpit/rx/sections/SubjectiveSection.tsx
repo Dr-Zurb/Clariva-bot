@@ -667,6 +667,8 @@ export function SubjectiveSection({
         <CollapsibleContainer
           title="Free-text notes (optional)"
           toggleLabel="Toggle free-text notes"
+          scrollOnExpand
+          stickyHeader
           open={collapseControlled ? displayOpenById.free_text_notes : undefined}
           onOpenChange={
             collapseControlled
@@ -674,7 +676,6 @@ export function SubjectiveSection({
               : undefined
           }
           defaultOpen={collapseControlled ? undefined : false}
-          bodyClassName="px-3 pb-3 pt-0"
           leadingActions={<SectionReorderLeadingAction sectionId="free_text_notes" />}
         >
           <label htmlFor="hopi-fallback" className={RX_FIELD_LABEL_CLASS}>
@@ -719,6 +720,7 @@ export function SubjectiveSection({
           value={fields.pastSurgicalHistoryStructured}
           disabled={disabled}
           onChange={setPastSurgicalHistoryStructured}
+          scrollOnExpand
           {...sectionOpenProps("past_surgical")}
         />
       );

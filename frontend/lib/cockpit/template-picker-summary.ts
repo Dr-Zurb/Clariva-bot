@@ -8,6 +8,12 @@ import {
   templateHasSubjectiveContent,
   templateSubjective,
 } from "@/lib/cockpit/apply-subjective-template";
+import {
+  templateObjective,
+  templateObjectiveCustomBlockSourceSectionId,
+  templateObjectiveScopeHasContent,
+} from "@/lib/cockpit/apply-objective-template";
+import { resolveExamSystem } from "@/lib/cockpit/exam-schema";
 import { hasCustomSubsectionsContent } from "@/lib/cockpit/custom-subsections";
 import { hasFamilyHistoryStructuredContent } from "@/lib/cockpit/family-history";
 import { hasPastSurgicalHistoryStructuredContent } from "@/lib/cockpit/past-surgical-history";
@@ -50,7 +56,69 @@ export const SCOPE_PICKER_LABELS: Record<
     title: "Custom section templates",
     hint: "Doctor-defined Subjective sections",
   },
+  // obj-16: objective scopes. Substrate-only labels; the objective picker's
+  // scoped row summaries + content filtering land in obj-17.
+  objective_full: {
+    title: "Objective templates",
+    hint: "Vitals, exam findings & results",
+  },
+  vitals: {
+    title: "Vitals templates",
+    hint: "Vital sign presets",
+  },
+  exam_systemic: {
+    title: "Systemic exam templates",
+  },
+  exam_general: {
+    title: "General exam templates",
+  },
+  exam_cvs: {
+    title: "Cardiovascular exam templates",
+  },
+  exam_resp: {
+    title: "Respiratory exam templates",
+  },
+  exam_abd: {
+    title: "Abdominal exam templates",
+  },
+  exam_cns: {
+    title: "Neurological exam templates",
+  },
+  objective_custom_block: {
+    title: "Custom section templates",
+    hint: "Doctor-defined Objective sections",
+  },
+  // obj-23: result scopes — structured POC / patient-brought result-row presets.
+  test_results: {
+    title: "Patient-brought result templates",
+    hint: "Structured report-row presets",
+  },
+  point_of_care: {
+    title: "Point-of-care result templates",
+    hint: "In-clinic POC result-row presets",
+  },
 };
+
+/** obj-23: result rows carried by a template's `objective_json`, by source. */
+function templateResultRowCount(
+  template: DoctorRxTemplate,
+  source: "patient_report" | "in_clinic_poc",
+): number {
+  return (templateObjective(template).testResultsJson ?? []).filter(
+    (row) => row?.source === source && typeof row?.name === "string" && row.name.trim(),
+  ).length;
+}
+
+/** obj-23: whether a result row's text fields match a search query. */
+function resultRowMatchesQuery(
+  row: { name?: string | null; value?: string | null; unit?: string | null; notes?: string | null } | null | undefined,
+  q: string,
+): boolean {
+  if (!row) return false;
+  return [row.name, row.value, row.unit, row.notes].some((t) =>
+    t?.toLowerCase().includes(q),
+  );
+}
 
 function plural(n: number, singular: string, pluralForm = `${singular}s`): string {
   return `${n} ${n === 1 ? singular : pluralForm}`;
@@ -105,6 +173,18 @@ export function templateHasScopedContent(
       return hasCustomSubsectionsContent(templateCustomSubsections(template));
     case "subjective_full":
       return templateHasSubjectiveContent(template);
+    case "vitals":
+    case "exam_systemic":
+    case "exam_general":
+    case "exam_cvs":
+    case "exam_resp":
+    case "exam_abd":
+    case "exam_cns":
+    case "test_results":
+    case "point_of_care":
+    case "objective_custom_block":
+    case "objective_full":
+      return templateObjectiveScopeHasContent(template, scope);
   }
 }
 
@@ -188,6 +268,61 @@ export function formatTemplateSummary(
       if (customCount > 0) parts.push(plural(customCount, "custom section", "custom sections"));
       return parts.length > 0 ? parts.join(" · ") : "Empty template";
     }
+    case "vitals":
+      return templateObjectiveScopeHasContent(template, scope) ? "Vitals" : "Empty template";
+    case "exam_systemic": {
+      const count = (templateObjective(template).examinationJson ?? []).length;
+      return count > 0 ? plural(count, "system", "systems") : "Empty template";
+    }
+    case "exam_general":
+    case "exam_cvs":
+    case "exam_resp":
+    case "exam_abd":
+    case "exam_cns":
+      return templateObjectiveScopeHasContent(template, scope)
+        ? resolveExamSystem(
+            scope === "exam_general"
+              ? "general"
+              : scope === "exam_cvs"
+                ? "cvs"
+                : scope === "exam_resp"
+                  ? "resp"
+                  : scope === "exam_abd"
+                    ? "abd"
+                    : "cns",
+          ).label
+        : "Empty template";
+    case "test_results": {
+      const count = templateResultRowCount(template, "patient_report");
+      return count > 0 ? plural(count, "result", "results") : "Empty template";
+    }
+    case "point_of_care": {
+      const count = templateResultRowCount(template, "in_clinic_poc");
+      return count > 0 ? plural(count, "POC result", "POC results") : "Empty template";
+    }
+    case "objective_custom_block": {
+      const count = (templateObjective(template).customSections ?? []).filter((s) =>
+        hasCustomSubsectionsContent([s]),
+      ).length;
+      return count > 0 ? plural(count, "section") : "Empty template";
+    }
+    case "objective_full": {
+      const parts: string[] = [];
+      const objective = templateObjective(template);
+      if (templateObjectiveScopeHasContent(template, "vitals")) parts.push("vitals");
+      const examCount = (objective.examinationJson ?? []).length;
+      if (examCount > 0) parts.push(plural(examCount, "exam system", "exam systems"));
+      if (objective.testResults?.trim()) parts.push("test results");
+      const resultRowCount =
+        templateResultRowCount(template, "patient_report") +
+        templateResultRowCount(template, "in_clinic_poc");
+      if (resultRowCount > 0) parts.push(plural(resultRowCount, "result row", "result rows"));
+      const customCount = (objective.customSections ?? []).filter((s) =>
+        hasCustomSubsectionsContent([s]),
+      ).length;
+      if (customCount > 0) parts.push(plural(customCount, "custom section", "custom sections"));
+      return parts.length > 0 ? parts.join(" · ") : "Empty template";
+    }
   }
 }
 
@@ -251,9 +386,68 @@ export function templateMatchesSearch(
         }
       }
       return false;
-    default:
+    case "test_results":
+    case "point_of_care": {
+      const source = scope === "test_results" ? "patient_report" : "in_clinic_poc";
+      for (const row of templateObjective(template).testResultsJson ?? []) {
+        if (row?.source !== source) continue;
+        if (resultRowMatchesQuery(row, q)) return true;
+      }
+      return false;
+    }
+    case "vitals":
+    case "exam_systemic":
+    case "exam_general":
+    case "exam_cvs":
+    case "exam_resp":
+    case "exam_abd":
+    case "exam_cns":
+    case "objective_full": {
+      const objective = templateObjective(template);
+      for (const finding of objective.examinationJson ?? []) {
+        if (finding.systemId?.toLowerCase().includes(q)) return true;
+        for (const chip of finding.findings ?? []) {
+          if (chip.toLowerCase().includes(q)) return true;
+        }
+        if (finding.notes?.toLowerCase().includes(q)) return true;
+      }
+      if (objective.testResults?.toLowerCase().includes(q)) return true;
+      if (scope === "objective_full") {
+        for (const row of objective.testResultsJson ?? []) {
+          if (resultRowMatchesQuery(row, q)) return true;
+        }
+        for (const s of objective.customSections ?? []) {
+          if (s.title?.toLowerCase().includes(q)) return true;
+          if (s.body?.toLowerCase().includes(q)) return true;
+        }
+      }
+      return false;
+    }
+    case "objective_custom_block":
+      for (const s of templateObjective(template).customSections ?? []) {
+        if (s.title?.toLowerCase().includes(q)) return true;
+        if (s.body?.toLowerCase().includes(q)) return true;
+        for (const c of s.children ?? []) {
+          if (c.title?.toLowerCase().includes(q)) return true;
+          if (c.body?.toLowerCase().includes(q)) return true;
+        }
+      }
       return false;
   }
+}
+
+export function sortObjectiveCustomBlockTemplatesForSection(
+  templates: DoctorRxTemplate[],
+  sectionId: string | undefined,
+): DoctorRxTemplate[] {
+  if (!sectionId) return templates;
+  return [...templates].sort((a, b) => {
+    const aOwn = templateObjectiveCustomBlockSourceSectionId(a) === sectionId;
+    const bOwn = templateObjectiveCustomBlockSourceSectionId(b) === sectionId;
+    if (aOwn && !bOwn) return -1;
+    if (!aOwn && bOwn) return 1;
+    return 0;
+  });
 }
 
 /**

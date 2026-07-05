@@ -100,20 +100,26 @@ export function PatientBackgroundZone({
       title="Patient background"
       toggleLabel="Toggle patient background"
       testId="patient-background-zone"
+      scrollOnExpand
+      stickyHeader
       open={sectionOpen}
       onOpenChange={onSectionOpenChange}
       preview={zonePreview ? `— ${zonePreview}` : undefined}
-      bodyClassName="flex flex-col gap-2 px-3 pb-3 pt-0"
+      bodyClassName="space-y-2"
       leadingActions={<SectionReorderLeadingAction sectionId="patient_background" />}
     >
       <CollapsibleContainer
         title="Past medical history"
         toggleLabel="Toggle past medical history"
         testId="past-medical-history-field"
+        variant="subsection"
         count={pmhFilledCount > 0 ? pmhFilledCount : null}
         preview={pmhPreview ? `— ${pmhPreview}` : undefined}
         defaultOpen
-        bodyClassName="space-y-3 px-3 pb-3 pt-0"
+        scrollOnExpand
+        stickyHeader
+        nestedSticky
+        bodyClassName="space-y-3"
         actions={
           !readonly ? (
             <SubjectiveSectionTemplateHeaderActions
@@ -139,6 +145,9 @@ export function PatientBackgroundZone({
         value={surgicalStructured}
         disabled={readonly}
         onChange={setPastSurgicalHistoryStructured}
+        scrollOnExpand
+        stickyHeader
+        nestedSticky
       />
     </CollapsibleContainer>
   );

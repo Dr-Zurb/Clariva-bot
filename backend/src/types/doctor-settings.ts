@@ -16,6 +16,49 @@ import type {
   ServiceCatalogV1,
 } from '../utils/service-catalog-schema';
 
+/**
+ * vit-14: clinical groups a custom vital can be filed under. Mirrors the
+ * frontend vitals registry `VitalGroup` (vitals-schema.ts) so a custom vital
+ * lists inside an existing group in the manage-vitals menu + grid.
+ */
+export const CUSTOM_VITAL_GROUPS = [
+  'core',
+  'respiratory',
+  'metabolic',
+  'neuro',
+  'paediatric',
+  'obstetric',
+] as const;
+export type CustomVitalGroup = (typeof CUSTOM_VITAL_GROUPS)[number];
+
+/** vit-14: value kinds a custom vital can capture. */
+export const CUSTOM_VITAL_KINDS = ['numeric', 'text'] as const;
+export type CustomVitalKind = (typeof CUSTOM_VITAL_KINDS)[number];
+
+/**
+ * vit-14: a per-doctor custom-vital DEFINITION (not a value). Doctor-authored
+ * config persisted in `doctor_settings.vitals_custom`; values are stored
+ * per-visit in `prescriptions.vitals_json`. Not PHI.
+ */
+export interface CustomVitalDef {
+  /** Stable slug id (e.g. `custom_<uuid>`); namespaces the value in vitals_json. */
+  id: string;
+  /** Doctor-facing label, e.g. "Abdominal girth". */
+  label: string;
+  /** Optional display unit, e.g. "cm"; omitted/null for text vitals. */
+  unit?: string | null;
+  /** Whether the value is a number (with optional unit) or free text. */
+  kind: CustomVitalKind;
+  /** Clinical group the vital files under in the grid + menu. */
+  group: CustomVitalGroup;
+}
+
+/** vit-14: caps for the custom-vital definition list + field lengths. */
+export const CUSTOM_VITALS_MAX = 30;
+export const CUSTOM_VITAL_LABEL_MAX = 60;
+export const CUSTOM_VITAL_UNIT_MAX = 16;
+export const CUSTOM_VITAL_ID_MAX = 80;
+
 /** CC-08 / 099: legacy flat three-column cockpit layout snapshot. */
 export type LegacyPresetLayout = {
   slots: ['chart' | 'body' | 'rx', 'chart' | 'body' | 'rx', 'chart' | 'body' | 'rx'];
@@ -291,6 +334,21 @@ export interface DoctorSettingsRow {
    * (obj-13 consumes). Not PHI.
    */
   objective_custom_sections: CustomSubsection[];
+  /**
+   * vit-02 / migration 156: per-doctor hidden vitals — a delta set of registry
+   * vital-key strings the doctor has hidden. Empty/absent = nothing hidden
+   * (classic-core default). View-only; never affects PDF/examination_findings/
+   * test_results/vitals. Transport (select/sanitize/validate) lands in vit-07;
+   * vit-03 declares the type only. Registry key strings only (not PHI).
+   */
+  vitals_hidden?: string[];
+  /**
+   * vit-14 / migration 157: per-doctor custom-vital DEFINITIONS — doctor-authored
+   * vitals the shipped registry doesn't carry. Seeds fresh visits like
+   * objective_custom_sections; empty/absent = none. Definitions only (labels/
+   * units/group), NOT PHI — custom-vital VALUES ride in prescriptions.vitals_json.
+   */
+  vitals_custom?: CustomVitalDef[];
   /**
    * R-MOD-full (migration 106): global template pin. `null` = auto-select per
    * modality + state (cockpit-v2 default). Non-null must be one of

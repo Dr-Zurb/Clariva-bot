@@ -27,6 +27,7 @@ import {
   createUploadUrl,
   registerAttachment,
   getAttachmentDownloadUrl,
+  deleteAttachment,
 } from '../services/prescription-attachment-service';
 import { sendPrescriptionToPatient } from '../services/notification-service';
 import { forceRegeneratePrescriptionPdf } from '../services/prescription-pdf-service';
@@ -153,9 +154,9 @@ export const createUploadUrlHandler = asyncHandler(async (req: Request, res: Res
   }
 
   const { id } = validatePrescriptionParams(req.params);
-  const { filename, contentType } = validateCreateUploadUrlBody(req.body);
+  const { filename, contentType, category, complaintId } = validateCreateUploadUrlBody(req.body);
 
-  const { path, token } = await createUploadUrl(id, userId, filename, contentType, correlationId);
+  const { path, token } = await createUploadUrl(id, userId, filename, contentType, correlationId, category, complaintId);
 
   res.status(200).json(successResponse({ path, token }, req));
 });
@@ -197,6 +198,28 @@ export const getAttachmentDownloadUrlHandler = asyncHandler(async (req: Request,
   const { downloadUrl } = await getAttachmentDownloadUrl(id, attachmentId, correlationId, userId);
 
   res.status(200).json(successResponse({ downloadUrl }, req));
+});
+
+/**
+ * Delete a prescription attachment (DB row + storage object)
+ * DELETE /api/v1/prescriptions/:id/attachments/:attachmentId
+ *
+ * obj-22: backs the Objective media strip's remove affordance. Reuses the existing
+ * ownership check + shipped DELETE RLS policy (migration 026); no policy widening.
+ */
+export const deleteAttachmentHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const userId = req.user?.id;
+
+  if (!userId) {
+    throw new UnauthorizedError('Authentication required');
+  }
+
+  const { id, attachmentId } = validatePrescriptionAttachmentParams(req.params);
+
+  await deleteAttachment(id, attachmentId, correlationId, userId);
+
+  res.status(204).send();
 });
 
 /**

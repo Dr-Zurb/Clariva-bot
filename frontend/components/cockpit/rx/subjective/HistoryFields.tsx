@@ -70,7 +70,9 @@ function HistoryFieldRow({
       defaultOpen={sectionOpen === undefined ? false : undefined}
       toggleLabel={`Toggle ${label}`}
       preview={preview ? `— ${preview}` : undefined}
-      bodyClassName="space-y-2 px-3 pb-3 pt-0"
+      scrollOnExpand
+      stickyHeader
+      bodyClassName="space-y-2"
     >
       <NoteFavoritesChipStrip
         favorites={favorites}

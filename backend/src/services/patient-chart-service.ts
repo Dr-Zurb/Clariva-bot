@@ -38,12 +38,14 @@ import type {
   PatientMedication,
   PatientVitalsReading,
   ProblemListItem,
+  ResultsTimelineEntry,
   UpdateMedicalBackgroundNotesInput,
   UpdatePatientAllergyInput,
   UpdatePatientChronicConditionInput,
   UpdatePatientMedicationInput,
   UpdatePatientVitalsInput,
 } from '../types/patient-chart';
+import type { TestResultRow } from '../types/prescription';
 
 // ============================================================================
 // Internal helpers
@@ -741,6 +743,106 @@ export async function getProblemList(
   if (error) handleSupabaseError(error, correlationId);
   await logDataAccess(correlationId, userId, 'patient_problem_list_v', patientId);
   return (data ?? []) as unknown as ProblemListItem[];
+}
+
+// ============================================================================
+// Investigations & results timeline (soap-data-placement P3 / sdp-05)
+// ============================================================================
+
+/**
+ * An objective report-scan attachment lives under the `objective/` path
+ * segment of the prescription folder (obj-22). The per-visit media count is a
+ * coarse indicator (P3-D5) — we match on the segment, not a per-result link.
+ */
+function isObjectiveAttachment(filePath: string | null | undefined): boolean {
+  return typeof filePath === 'string' && filePath.includes('/objective/');
+}
+
+/**
+ * Project the patient's prescriptions into a date-desc investigations & results
+ * timeline (P3-D2): per visit, the ordered investigations
+ * (`investigations_orders`) + resulted rows (`test_results_json`) + a per-visit
+ * count of objective report-scan attachments.
+ *
+ * Read-only, no view/migration (P3-D1). Doctor-scoped via the same admin-client
+ * + WHERE `doctor_id = userId` path as the other chart reads. Visits with no
+ * investigations/results activity (no ordered, no resulted, no media) are
+ * omitted — the timeline only surfaces investigation-bearing visits.
+ *
+ * PHI-safe (P3-D3): `logDataAccess` records the patient id only; investigation
+ * and result values are never logged.
+ */
+export async function getResultsTimeline(
+  patientId: string,
+  correlationId: string,
+  userId: string
+): Promise<ResultsTimelineEntry[]> {
+  const { data, error } = await admin()
+    .from('prescriptions')
+    .select('id, appointment_id, created_at, investigations_orders, test_results_json')
+    .eq('doctor_id', userId)
+    .eq('patient_id', patientId)
+    .order('created_at', { ascending: false });
+
+  if (error) handleSupabaseError(error, correlationId);
+
+  type PrescriptionRow = {
+    id: string;
+    appointment_id: string;
+    created_at: string;
+    investigations_orders: string | null;
+    test_results_json: TestResultRow[] | null;
+  };
+  const rows = (data ?? []) as PrescriptionRow[];
+
+  // Per-visit objective media counts in a single round-trip across all the
+  // patient's prescriptions; we count the `objective/` segment in TS.
+  const mediaCountByPrescription = new Map<string, number>();
+  const prescriptionIds = rows.map((row) => row.id);
+  if (prescriptionIds.length > 0) {
+    const { data: attachments, error: attachmentError } = await admin()
+      .from('prescription_attachments')
+      .select('prescription_id, file_path')
+      .in('prescription_id', prescriptionIds);
+
+    if (attachmentError) handleSupabaseError(attachmentError, correlationId);
+
+    for (const attachment of (attachments ?? []) as Array<{
+      prescription_id: string;
+      file_path: string | null;
+    }>) {
+      if (isObjectiveAttachment(attachment.file_path)) {
+        mediaCountByPrescription.set(
+          attachment.prescription_id,
+          (mediaCountByPrescription.get(attachment.prescription_id) ?? 0) + 1
+        );
+      }
+    }
+  }
+
+  const timeline: ResultsTimelineEntry[] = [];
+  for (const row of rows) {
+    const ordered = row.investigations_orders?.trim() ? row.investigations_orders : null;
+    const resulted = Array.isArray(row.test_results_json) ? row.test_results_json : [];
+    const mediaCount = mediaCountByPrescription.get(row.id) ?? 0;
+
+    // Only surface visits that carry investigations/results activity.
+    if (ordered === null && resulted.length === 0 && mediaCount === 0) {
+      continue;
+    }
+
+    timeline.push({
+      prescriptionId: row.id,
+      appointmentId: row.appointment_id,
+      visitDate: row.created_at,
+      ordered,
+      resulted,
+      mediaCount,
+    });
+  }
+
+  await logDataAccess(correlationId, userId, 'prescription', patientId);
+  return timeline;
 }
 
 export async function updateVitals(

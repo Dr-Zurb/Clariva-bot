@@ -23,10 +23,20 @@ function baseState(fields: RxFormFields = createEmptyRxFormFields()): RxFormStat
   };
 }
 
-const RESPIRATORY: ExamSystemFinding = {
+const RESPIRATORY = {
   systemId: "respiratory",
   status: "abnormal",
   findings: ["crepitations", "wheeze"],
+  notes: "right base",
+} as unknown as ExamSystemFinding;
+
+const RESPIRATORY_NORMALIZED: ExamSystemFinding = {
+  systemId: "respiratory",
+  status: "abnormal",
+  findings: [
+    { findingId: "crepitations", attributes: {} },
+    { findingId: "wheeze", attributes: {} },
+  ],
   notes: "right base",
 };
 
@@ -40,7 +50,7 @@ describe("deriveExaminationFindingsFromExam (obj-01)", () => {
     // Insertion order is respiratory-then-general; registry order is the reverse.
     const text = deriveExaminationFindingsFromExam([RESPIRATORY, GENERAL]);
     expect(text).toBe(
-      ["General: Normal", "Respiratory: crepitations, wheeze (right base)"].join("\n"),
+      ["General: Normal", "Respiratory: Crepitations; Wheeze (right base)"].join("\n"),
     );
   });
 
@@ -72,7 +82,12 @@ describe("normalizeExamFindings (obj-01)", () => {
       { systemId: " abdomen ", status: "abnormal", findings: ["tender", "", " "] },
     ]);
     expect(result).toEqual([
-      { systemId: "abdomen", status: "abnormal", findings: ["tender"], notes: null },
+      {
+        systemId: "abdomen",
+        status: "abnormal",
+        findings: [{ findingId: "tender", attributes: {} }],
+        notes: null,
+      },
     ]);
   });
 });
@@ -94,15 +109,10 @@ describe("buildRxPayload exam derivation (OBJ-D2)", () => {
     fields.examFindings = [RESPIRATORY, GENERAL];
     const payload = buildRxPayload(fields);
     expect(payload.examinationFindings).toBe(
-      ["General: Normal", "Respiratory: crepitations, wheeze (right base)"].join("\n"),
+      ["General: Normal", "Respiratory: Crepitations; Wheeze (right base)"].join("\n"),
     );
     expect(payload.examinationJson).toEqual([
-      {
-        systemId: "respiratory",
-        status: "abnormal",
-        findings: ["crepitations", "wheeze"],
-        notes: "right base",
-      },
+      RESPIRATORY_NORMALIZED,
       { systemId: "general", status: "normal", findings: [], notes: null },
     ]);
   });
@@ -124,7 +134,12 @@ describe("rxFormReducer exam actions (obj-01)", () => {
       notes: " right base ",
     });
     expect(state.fields.examFindings).toEqual([
-      { systemId: "respiratory", status: "abnormal", findings: ["wheeze"], notes: "right base" },
+      {
+        systemId: "respiratory",
+        status: "abnormal",
+        findings: [{ findingId: "wheeze", attributes: {} }],
+        notes: "right base",
+      },
     ]);
     expect(state.isDirty).toBe(true);
 
@@ -191,12 +206,7 @@ describe("rxFormFieldsFromPrescription exam hydration (obj-01)", () => {
     } as unknown as PrescriptionWithRelations;
     const fields = rxFormFieldsFromPrescription(rx);
     expect(fields.examFindings).toEqual([
-      {
-        systemId: "respiratory",
-        status: "abnormal",
-        findings: ["crepitations", "wheeze"],
-        notes: "right base",
-      },
+      RESPIRATORY_NORMALIZED,
       { systemId: "general", status: "normal", findings: [], notes: null },
     ]);
   });

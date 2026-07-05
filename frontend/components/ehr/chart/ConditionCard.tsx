@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { ChartCardOptionToggle } from "@/components/ehr/chart/ChartCardOptionToggle";
 import { ChartMedicationCard } from "@/components/ehr/chart/ChartMedicationCard";
 import { ChartMedicationCaptureBar } from "@/components/ehr/chart/ChartMedicationCaptureBar";
@@ -12,6 +13,7 @@ import {
   type ConditionTimingValue,
 } from "@/components/ehr/chart/ConditionTimingField";
 import { CHART_COMPACT_INPUT_CLASS } from "@/components/ehr/chart/chart-chip-styles";
+import { CollapsibleEntryCard } from "@/components/cockpit/rx/inputs/CollapsibleEntryCard";
 import type { ChartMedicationPatch } from "@/lib/chart/chart-medication";
 import { chartMedPatchToLocalPatch } from "@/lib/chart/chart-medication";
 import { conditionMedSectionId } from "@/lib/chart/chart-medication-scroll";
@@ -29,18 +31,38 @@ const CONDITION_STATUS_OPTIONS = [
   { value: "resolved" as const, label: "Past" },
 ];
 
-function conditionStatusReveal(status: PatientConditionStatus): boolean {
-  return status === "active" || status === "resolved";
-}
-
 /** Shared so the parent can refocus this condition's capture bar after a save. */
 export function conditionMedCaptureInputId(conditionId: string): string {
   return `condition-med-capture-${conditionId}`;
 }
 
+/** Collapsed one-line summary: diagnosed/resolved timing, medication count, note. */
+function conditionPreview(
+  condition: ConditionWithMedications,
+  timing: ConditionTimingValue,
+  isPast: boolean,
+): string {
+  const parts: string[] = [];
+  const diagnosed = formatConditionAgoSummary(timing.agoValue, timing.agoUnit);
+  if (diagnosed) parts.push(`for ${diagnosed}`);
+  if (isPast) {
+    const resolved = formatConditionAgoSummary(
+      condition.resolved_ago_value,
+      condition.resolved_ago_unit,
+    );
+    if (resolved) parts.push(`resolved ${resolved}`);
+  }
+  const medCount = condition.medications.length;
+  if (medCount > 0) parts.push(`${medCount} medication${medCount === 1 ? "" : "s"}`);
+  if (condition.note?.trim()) parts.push(condition.note.trim());
+  return parts.join(" · ");
+}
+
 export interface ConditionCardProps {
   condition: ConditionWithMedications;
   readonly?: boolean;
+  /** Start collapsed (default) — the clinician expands to edit timing / meds / notes. */
+  defaultCollapsed?: boolean;
   token: string;
   onStatusChange: (status: PatientConditionStatus) => void;
   onRemove: () => void;
@@ -58,6 +80,7 @@ export interface ConditionCardProps {
 export function ConditionCard({
   condition,
   readonly = false,
+  defaultCollapsed = true,
   token,
   onStatusChange,
   onRemove,
@@ -72,65 +95,64 @@ export function ConditionCard({
 }: ConditionCardProps) {
   const status = condition.status ?? "active";
   const isPast = status === "resolved";
-  const showDetails = conditionStatusReveal(status);
+  const [expanded, setExpanded] = useState(() => !defaultCollapsed);
 
   const timingValue: ConditionTimingValue = conditionTimingFromRecord(condition);
 
   const medCaptureInputId = conditionMedCaptureInputId(condition.id);
+  const bodyId = `condition-body-${condition.id}`;
+
+  const titleNode = (
+    <>
+      <span
+        className={cn(
+          "shrink-0 text-xs font-semibold text-foreground",
+          isPast && "text-muted-foreground",
+        )}
+        title={condition.condition}
+      >
+        {condition.condition}
+      </span>
+      {!readonly ? (
+        <span
+          className="shrink-0"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <ChartCardOptionToggle
+            options={CONDITION_STATUS_OPTIONS}
+            value={status}
+            ariaLabel={`${condition.condition} status`}
+            testId={`condition-status-toggle-${condition.id}`}
+            pastOptionValue="resolved"
+            onChange={onStatusChange}
+          />
+        </span>
+      ) : (
+        <span className="shrink-0 text-[10px] text-muted-foreground">
+          {isPast ? "Past" : "Active"}
+        </span>
+      )}
+    </>
+  );
 
   return (
-    <div
-      className={cn(
-        "space-y-2 rounded-md border px-2.5 py-2",
-        isPast ? "border-border/60 bg-muted/30" : "border-border/50 bg-background/60",
-      )}
-      data-testid={`condition-card-${condition.id}`}
+    <CollapsibleEntryCard
+      title={titleNode}
+      preview={conditionPreview(condition, timingValue, isPast)}
+      toggleLabel={`${expanded ? "Collapse" : "Expand"} ${condition.condition}`}
+      open={expanded}
+      onToggle={() => setExpanded((v) => !v)}
+      onRemove={readonly ? undefined : onRemove}
+      removeLabel={`Remove condition ${condition.condition}`}
+      testId={`condition-card-${condition.id}`}
+      bodyId={bodyId}
+      closeScrollToSelector='[data-testid="past-medical-history-field"]'
+      scrollMarginClassName="scroll-mt-[var(--collapsible-sticky-top,2.75rem)]"
+      className={isPast ? "bg-muted/30" : undefined}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
-          <span
-            className={cn(
-              "shrink-0 text-xs font-semibold text-foreground",
-              isPast && "text-muted-foreground",
-            )}
-            title={condition.condition}
-          >
-            {condition.condition}
-          </span>
-          {!readonly && (
-            <ChartCardOptionToggle
-              options={CONDITION_STATUS_OPTIONS}
-              value={status}
-              ariaLabel={`${condition.condition} status`}
-              testId={`condition-status-toggle-${condition.id}`}
-              pastOptionValue="resolved"
-              onChange={onStatusChange}
-            />
-          )}
-          {readonly && (
-            <span className="text-[10px] text-muted-foreground">
-              {isPast ? "Past" : "Active"}
-            </span>
-          )}
-        </div>
-
-        {!readonly && (
-          <button
-            type="button"
-            aria-label={`Remove condition ${condition.condition}`}
-            onClick={onRemove}
-            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
-          >
-            <span aria-hidden="true" className="text-sm leading-none">
-              ×
-            </span>
-          </button>
-        )}
-      </div>
-
-      {showDetails && (
-        <>
-          {readonly ? (
+      <>
+        {readonly ? (
             <>
               {formatConditionAgoSummary(timingValue.agoValue, timingValue.agoUnit) && (
                 <p className="text-xs text-muted-foreground">
@@ -221,8 +243,7 @@ export function ConditionCard({
               onBlur={(e) => onNoteChange(e.target.value)}
             />
           </ChartFieldGroup>
-        </>
-      )}
-    </div>
+      </>
+    </CollapsibleEntryCard>
   );
 }

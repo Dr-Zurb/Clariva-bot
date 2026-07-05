@@ -42,7 +42,16 @@ export function resolveObjectiveSectionHasDataHint(
     case "exam":
       return fields.examFindings.length > 0;
     case "test_results":
-      return Boolean(fields.testResults.trim());
+      return (
+        fields.testResultsStructured.some((row) => row.source === "patient_report") ||
+        Boolean(fields.testResults.trim())
+      );
+    case "point_of_care":
+      return fields.testResultsStructured.some((row) => row.source === "in_clinic_poc");
+    case "media":
+      // obj-22: objective media lives on the shell's attachment list, not in RxFormFields,
+      // so the menu cannot surface a data hint here (boolean-only, no content — P10-D5).
+      return false;
     case "legacy_exam":
       return Boolean(fields.examinationFindings.trim());
     case "legacy_vitals":

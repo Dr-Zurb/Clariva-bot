@@ -20,6 +20,7 @@ const FULL_ORDER: ObjectiveSectionId[] = [
   "vitals",
   "exam",
   "test_results",
+  "point_of_care",
   "legacy_exam",
   "legacy_vitals",
 ];
@@ -33,6 +34,7 @@ describe("resolveVisibleSections (obj-12 / P10-D2)", () => {
     expect(resolveVisibleSections(FULL_ORDER, ["test_results"], MOUNTABLE)).toEqual([
       "vitals",
       "exam",
+      "point_of_care",
       "legacy_exam",
       "legacy_vitals",
     ]);
