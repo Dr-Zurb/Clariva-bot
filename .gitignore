@@ -4,6 +4,9 @@
 .env.*.local
 Clariva-bot render.env
 
+# Dependencies
+node_modules/
+
 # OS and IDE
 .DS_Store
 Thumbs.db
