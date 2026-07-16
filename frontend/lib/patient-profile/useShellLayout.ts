@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   flatToPaneTree,
   paneTreeToFlat,
@@ -189,6 +189,29 @@ export function isLayoutAlignedWith(
 }
 
 /**
+ * Returns `true` if the layout's tree contains at least one leaf id that is
+ * NOT in `knownLeafIds` — a pane the current registry no longer defines (e.g.
+ * a removed tab such as the folded-away `investigations-orders`). Such a leaf
+ * has no matching `PaneDefinition`, so it renders as an empty "ghost" column;
+ * a persisted layout that trips this is treated as stale and reseeded.
+ *
+ * Empty `knownLeafIds` ("no template advertised") returns `false` — we cannot
+ * classify leaves as unknown, so we preserve the layout.
+ */
+export function layoutHasUnknownLeaf(
+  layout: PatientProfileLayout,
+  knownLeafIds: ReadonlySet<string> | readonly string[],
+): boolean {
+  const known =
+    knownLeafIds instanceof Set
+      ? knownLeafIds
+      : new Set<string>(knownLeafIds as readonly string[]);
+  if (known.size === 0) return false;
+  const { paneOrder } = paneTreeToFlat(layout.paneTree);
+  return paneOrder.some((id) => !known.has(id));
+}
+
+/**
  * Deep-compare two {@link PatientProfileLayout} objects. Used by ppr-09 to
  * mark the active preset with a check in the preset menu.
  */
@@ -320,6 +343,7 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
     () => [storageKey, ...legacyStorageKeys],
     [storageKey, legacyKeysFingerprint],
   );
+  const storageKeysFingerprint = storageKeysToRead.join("\0");
   const v4Key = v4TreeLayoutStorageKey(storageKey);
 
   // Memoise the key so the hydration effect only re-runs when the *set* of
@@ -457,12 +481,13 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
     };
   }, [v4Key, layout, hydrated]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (typeof window === "undefined") {
       setHydrated(true);
       return;
     }
     let validated: PatientProfileLayout | null = null;
+    let discardedStaleLayout = false;
     try {
       for (const key of storageKeysToRead) {
         const keyV4 = v4TreeLayoutStorageKey(key);
@@ -474,14 +499,20 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
         }
         if (validated) break;
       }
-      // csl-03 (2026-05-26): if the schema-valid layout has zero leaves in
-      // common with the current template, treat it as stale (legacy v1
-      // ids like `chart` / `body` / `rx`) and discard. Also nukes the
-      // localStorage entry so the next write seeds a clean default.
+      // csl-03 (2026-05-26): treat a schema-valid layout as stale when its
+      // leaf ids no longer match the current template and discard it (also
+      // nukes the localStorage entry so the next write seeds a clean default).
+      // Two stale cases:
+      //   - MISSING a current-template leaf — legacy v1 ids (`chart`/`body`/
+      //     `rx`) landing on the v2/v3 registry; toggles would update dead ids.
+      //   - UNKNOWN leaf the registry no longer defines — e.g. the removed
+      //     `investigations-orders` pane, which would otherwise linger in a
+      //     saved layout as an empty "ghost" column with no pane body.
       if (
         validated &&
         knownLeafIdsSet.size > 0 &&
-        !isLayoutAlignedWith(validated, knownLeafIdsSet)
+        (!isLayoutAlignedWith(validated, knownLeafIdsSet) ||
+          layoutHasUnknownLeaf(validated, knownLeafIdsSet))
       ) {
         try {
           window.localStorage.removeItem(v4Key);
@@ -494,10 +525,11 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
         }
         if (typeof console !== "undefined") {
           console.info(
-            "[useShellLayout] discarded stale persisted layout — missing one or more current-template leaf ids",
+            "[useShellLayout] discarded stale persisted layout — leaf ids no longer match the current template (missing or unknown leaf)",
           );
         }
         validated = null;
+        discardedStaleLayout = true;
       }
       if (validated) {
         try {
@@ -510,11 +542,26 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
       // JSON parse failure or storage access denied
     }
     if (validated) {
-      setLayout(validated);
-      setLayoutVersion((v) => v + 1);
+      setLayout((prev) => {
+        if (serialiseTree(prev.paneTree) === serialiseTree(validated!.paneTree)) {
+          return prev;
+        }
+        setLayoutVersion((v) => v + 1);
+        return validated!;
+      });
+    } else if (discardedStaleLayout) {
+      // Stale persisted layout — seed the live default tree once.
+      setLayout((prev) => {
+        if (serialiseTree(prev.paneTree) === serialiseTree(defaultTree)) {
+          return prev;
+        }
+        setLayoutVersion((v) => v + 1);
+        return { version: LAYOUT_VERSION, paneTree: defaultTree };
+      });
     }
     setHydrated(true);
-  }, [storageKey, storageKeysToRead, v4Key, knownLeafIdsSet]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- defaultTree read only when discarding stale persisted layout in this same pass
+  }, [storageKey, storageKeysFingerprint, v4Key, knownLeafIdsSet]);
 
   const setPaneTree = useCallback((updater: (prev: PaneTreeNode) => PaneTreeNode) => {
     setLayout((prev) => ({ version: LAYOUT_VERSION, paneTree: updater(prev.paneTree) }));

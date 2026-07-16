@@ -197,7 +197,7 @@ export function VitalProvenanceOverride({
             Use visit default
           </Button>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2">{fields}</div>
+        <div className="grid gap-2 grid-cols-1 @[18rem]/vitals:grid-cols-2">{fields}</div>
       </div>
     );
   }

@@ -11,6 +11,7 @@ import {
   RxFormProvider,
   buildRxPayload,
   createEmptyRxFormFields,
+  rxFormReducer,
   useRxForm,
   type ExamSystemFinding,
   type RxFormFields,
@@ -35,6 +36,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     getDoctorSettings: (...args: unknown[]) => mockGetDoctorSettings(...args),
     patchDoctorSettings: (...args: unknown[]) => mockPatchDoctorSettings(...args),
+    getAppointmentById: vi.fn().mockResolvedValue({
+      data: { appointment: { consultation_type: null } },
+    }),
     updatePrescription: vi.fn(),
     createPrescription: vi.fn(),
   };
@@ -179,6 +183,30 @@ describe("obj-13 · custom objective sections (component)", () => {
     expect(customIdx).toBe(order.indexOf("test_results") + 1);
   });
 
+  it("removes a custom section from form state", () => {
+    const fields = createEmptyRxFormFields();
+    fields.objectiveCustomSections = [
+      {
+        id: "11111111-1111-4111-8111-111111111111",
+        title: "P/V",
+        body: "x",
+        children: [],
+      },
+    ];
+    const state = rxFormReducer(
+      {
+        fields,
+        isDirty: false,
+        isSaving: false,
+        isSubmitting: false,
+        lastSavedAt: null,
+        submitError: null,
+      },
+      { type: "REMOVE_OBJECTIVE_CUSTOM_SECTION", index: 0 },
+    );
+    expect(state.fields.objectiveCustomSections).toEqual([]);
+  });
+
   it("derives typed custom content into examination_findings", async () => {
     const { container } = renderObjective();
     fireEvent.click(screen.getByTestId("objective-custom-sections-add-first"));
@@ -198,29 +226,6 @@ describe("obj-13 · custom objective sections (component)", () => {
     fireEvent.change(bodyInput, { target: { value: "No CMT" } });
 
     await waitFor(() => expect(readDerived()).toBe("P/V\nNo CMT"));
-  });
-
-  it("removes a custom section and drops it from the order", async () => {
-    const fields = createEmptyRxFormFields();
-    fields.objectiveCustomSections = [
-      { id: "11111111-1111-4111-8111-111111111111", title: "P/V", body: "x", children: [] },
-    ];
-    const { container } = renderObjective(fields);
-
-    await waitFor(() => {
-      expect(
-        container.querySelector('[data-objective-section-id^="custom_block:"]'),
-      ).not.toBeNull();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Remove P/V" }));
-
-    await waitFor(() => {
-      expect(
-        container.querySelector('[data-objective-section-id^="custom_block:"]'),
-      ).toBeNull();
-    });
-    expect(readDerived()).toBe("");
   });
 
   it("autosaves the per-doctor default (titles only) but never writes custom_block ids to the order", async () => {

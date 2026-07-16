@@ -7,15 +7,21 @@ import {
   scrollCollapsibleToStickyTop,
 } from "@/lib/cockpit/collapse-scroll";
 import { Collapse } from "@/components/ui/Collapse";
+import {
+  CollapsibleDepthProvider,
+  StickyStackProvider,
+  useDepthToneSurface,
+  useStickyHeader,
+} from "@/components/ui/sticky-stack";
 import { cn } from "@/lib/utils";
 
 /**
- * Sticky-aware scroll offset for a collapsible entry card nested inside an exam
- * finding card (stacks under the section header + exam card header). Callers in
- * flatter contexts can pass a smaller offset via `scrollMarginClassName`.
+ * Sticky-aware scroll offset for a collapsible entry card. Reads the live
+ * `--sticky-stack` var published by pinned ancestors so the card lands just under
+ * the stack of sticky headers above it at any depth.
  */
 export const COLLAPSIBLE_ENTRY_CARD_EXAM_SCROLL_MARGIN =
-  "scroll-mt-[calc(var(--collapsible-sticky-top,2.75rem)_+_var(--exam-card-sticky-top,2.75rem))]";
+  "scroll-mt-[var(--sticky-stack,2.75rem)]";
 
 export interface CollapsibleEntryCardProps {
   /** Header title (e.g. the site / condition name). */
@@ -85,6 +91,14 @@ export function CollapsibleEntryCard({
 }: CollapsibleEntryCardProps): JSX.Element {
   const cardRef = useRef<HTMLDivElement>(null);
   const prevOpen = useRef(open);
+  // Pin this card's header beneath the live stack of pinned ancestors (up to the
+  // cap), so a card-inside-a-card keeps its title visible while scrolling its body.
+  const { headerRef, pinned, headerStyle, childValue, bodyStyle, pinnedShadowClass } =
+    useStickyHeader(true);
+
+  // Depth-based tonal alternation (inherited from an opted-in ancestor container).
+  // Even depth → recessed tint, odd → raised card; `null` → treatment off.
+  const tone = useDepthToneSurface({ railMinDepth: 0 });
 
   // Only move the viewport on an actual open/close transition — never when the card
   // first mounts (added collapsed) or on unrelated re-renders. Standard motion:
@@ -118,14 +132,21 @@ export function CollapsibleEntryCard({
       data-open={open ? "true" : "false"}
       className={cn(
         scrollMarginClassName,
-        "rounded-md border border-border/60 bg-background transition-colors",
+        // Pane-width container so preview can hide on narrow Assessment columns.
+        "@container/entry min-w-0 rounded-md border border-border/60 transition-colors",
+        tone.active ? tone.surface : "bg-background",
+        tone.rail,
         className,
       )}
     >
       <div
+        ref={headerRef}
+        style={headerStyle}
         className={cn(
-          "flex items-center gap-2 px-2 py-1.5",
-          open && "border-b border-border/60 bg-muted/25",
+          "flex items-center gap-2 rounded-t-md px-2 py-1.5",
+          open && "border-b border-border/60",
+          // Opaque when pinned so body content does not bleed through on scroll.
+          pinned ? cn("bg-background", pinnedShadowClass) : open && "bg-muted/25",
         )}
         role={disabled ? undefined : "button"}
         tabIndex={disabled ? undefined : 0}
@@ -143,14 +164,22 @@ export function CollapsibleEntryCard({
         }}
         onKeyDown={handleKeyDown}
       >
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 overflow-hidden text-xs">
           {typeof title === "string" ? (
-            <span className="shrink-0 font-medium text-foreground">{title}</span>
+            <span className="min-w-0 break-words font-medium text-foreground">{title}</span>
           ) : (
             title
           )}
           {!open && preview ? (
-            <span className="min-w-0 truncate text-muted-foreground">— {preview}</span>
+            <span
+              className={cn(
+                // Prefer the entry name — preview only when the card is wide enough.
+                "hidden min-w-0 truncate text-muted-foreground",
+                "@[22rem]/entry:inline @[22rem]/entry:min-w-0 @[22rem]/entry:flex-1",
+              )}
+            >
+              — {preview}
+            </span>
           ) : null}
         </div>
 
@@ -179,8 +208,21 @@ export function CollapsibleEntryCard({
         />
       </div>
 
-      <Collapse open={open} id={bodyId} className="space-y-2 px-2.5 pb-2.5 pt-2">
-        {children}
+      <Collapse
+        open={open}
+        id={bodyId}
+        style={bodyStyle}
+        className="space-y-2 px-2.5 pb-2.5 pt-2"
+      >
+        <StickyStackProvider value={childValue}>
+          {tone.active && tone.depth !== null ? (
+            <CollapsibleDepthProvider depth={tone.depth + 1}>
+              {children}
+            </CollapsibleDepthProvider>
+          ) : (
+            children
+          )}
+        </StickyStackProvider>
       </Collapse>
     </div>
   );

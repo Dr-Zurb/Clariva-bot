@@ -10,13 +10,13 @@ import { OBJECTIVE_SECTION_ORDER_MAX } from '../../../src/types/objective-sectio
 describe('doctor settings objective_section_order (obj-10)', () => {
   it('accepts a valid section order on PATCH', () => {
     const result = validatePatchDoctorSettings({
-      objective_section_order: ['vitals', 'exam', 'test_results', 'legacy_exam'],
+      objective_section_order: ['vitals', 'exam', 'notes', 'test_results'],
     });
     expect(result.objective_section_order).toEqual([
       'vitals',
       'exam',
+      'notes',
       'test_results',
-      'legacy_exam',
     ]);
   });
 
@@ -27,9 +27,9 @@ describe('doctor settings objective_section_order (obj-10)', () => {
 
   it('dedupes known ids and preserves first occurrence order', () => {
     const result = validatePatchDoctorSettings({
-      objective_section_order: ['exam', 'vitals', 'exam', 'vitals', 'legacy_vitals'],
+      objective_section_order: ['exam', 'vitals', 'exam', 'vitals', 'notes'],
     });
-    expect(result.objective_section_order).toEqual(['exam', 'vitals', 'legacy_vitals']);
+    expect(result.objective_section_order).toEqual(['exam', 'vitals', 'notes']);
   });
 
   it('accepts flattened custom block ids on PATCH', () => {
@@ -54,6 +54,13 @@ describe('doctor settings objective_section_order (obj-10)', () => {
     expect(result.objective_section_order).toEqual(['vitals', 'exam']);
   });
 
+  it('drops retired legacy_exam and legacy_vitals ids from stored orders', () => {
+    const result = validatePatchDoctorSettings({
+      objective_section_order: ['vitals', 'legacy_exam', 'exam', 'legacy_vitals', 'notes'],
+    });
+    expect(result.objective_section_order).toEqual(['vitals', 'exam', 'notes']);
+  });
+
   it('rejects arrays longer than the registry size', () => {
     const tooLong = Array.from({ length: OBJECTIVE_SECTION_ORDER_MAX + 1 }, (_, i) => `id-${i}`);
     expect(() =>
@@ -69,10 +76,15 @@ describe('doctor settings objective_section_collapsed (obj-10)', () => {
         vitals: true,
         exam: false,
         not_a_section: true,
-        legacy_exam: 'nope' as unknown as boolean,
+        legacy_vitals: 'nope' as unknown as boolean,
+        notes: true,
       },
     });
-    expect(result.objective_section_collapsed).toEqual({ vitals: true, exam: false });
+    expect(result.objective_section_collapsed).toEqual({
+      vitals: true,
+      exam: false,
+      notes: true,
+    });
   });
 
   it('accepts an empty collapse map', () => {
@@ -84,9 +96,16 @@ describe('doctor settings objective_section_collapsed (obj-10)', () => {
 describe('doctor settings objective_section_hidden (obj-10)', () => {
   it('dedupes + drops unknown ids', () => {
     const result = validatePatchDoctorSettings({
-      objective_section_hidden: ['legacy_exam', 'legacy_exam', 'bogus', 'legacy_vitals'],
+      objective_section_hidden: ['legacy_vitals', 'legacy_vitals', 'bogus', 'exam'],
     });
-    expect(result.objective_section_hidden).toEqual(['legacy_exam', 'legacy_vitals']);
+    expect(result.objective_section_hidden).toEqual(['exam']);
+  });
+
+  it('drops retired legacy_exam and legacy_vitals ids from stored hidden sets', () => {
+    const result = validatePatchDoctorSettings({
+      objective_section_hidden: ['legacy_exam', 'legacy_vitals', 'notes'],
+    });
+    expect(result.objective_section_hidden).toEqual(['notes']);
   });
 });
 

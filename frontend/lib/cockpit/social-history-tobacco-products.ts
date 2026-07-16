@@ -45,15 +45,19 @@ export interface TobaccoProductRow {
   phase?: TobaccoProductPhase;
   quitYearsAgo?: number;
   quitYearsUnit?: SocialHistoryDurationUnit;
+  /** Free-text context for this product row. */
+  note?: string;
 }
 
 export interface TobaccoUseSection {
-  status: TobaccoSmokingStatus;
+  status?: TobaccoSmokingStatus;
   products: TobaccoProductRow[];
   years?: number;
   yearsUnit?: SocialHistoryDurationUnit;
   quitYearsAgo?: number;
   quitYearsUnit?: SocialHistoryDurationUnit;
+  /** Section-level free-text notes (not per-product). */
+  notes?: string;
 }
 
 /** Legacy flat fields — migrated to `products[]` on normalize. */
@@ -174,6 +178,18 @@ export function parseProductDurationSuffix(
 export function productPhase(product: TobaccoProductRow): TobaccoProductPhase {
   return product.phase === "past" ? "past" : "current";
 }
+
+function parseClauseNoteSuffix(raw: string): { rest: string; note?: string } {
+  const match = raw.match(/;\s*notes:\s*(.+)$/i);
+  if (!match) return { rest: raw };
+  return {
+    rest: raw.slice(0, match.index).trim(),
+    note: match[1].trim(),
+  };
+}
+
+/** Strip trailing `; notes: …` from a serialized social-history item clause. */
+export { parseClauseNoteSuffix };
 
 function formatProductPhaseClause(product: TobaccoProductRow): string {
   if (product.quitYearsAgo != null) {
@@ -378,6 +394,7 @@ export function formatTobaccoProductClause(
     clause += `, ${formatProductDurationSuffix(product.years, product.yearsUnit)}`;
   }
   clause += formatProductPhaseClause(product);
+  if (product.note?.trim()) clause += `; notes: ${product.note.trim()}`;
   return clause;
 }
 
@@ -446,6 +463,8 @@ function normalizeProductRow(
   if (product.quitYearsAgo != null) row.quitYearsAgo = product.quitYearsAgo;
   const storedQuitUnit = normalizeStoredDurationUnit(product.quitYearsUnit);
   if (storedQuitUnit) row.quitYearsUnit = storedQuitUnit;
+  const note = product.note?.trim();
+  if (note) row.note = note;
   return row;
 }
 
@@ -505,7 +524,19 @@ export function normalizeTobaccoSection(
   if (sectionQuitYearsAgo != null) next.quitYearsAgo = sectionQuitYearsAgo;
   if (sectionQuitYearsUnit === "months") next.quitYearsUnit = "months";
 
+  const notes = input.notes?.trim();
+  if (notes) next.notes = notes;
+
   return next;
+}
+
+export function tobaccoSectionHasContent(
+  input: (TobaccoUseSection & LegacyTobaccoFlatFields) | null | undefined,
+): boolean {
+  if (!input) return false;
+  if (input.notes?.trim()) return true;
+  if (input.status) return true;
+  return false;
 }
 
 export function smokingCigaretteEquivalent(product: TobaccoProductRow): number | null {
@@ -626,9 +657,13 @@ function buildParsedTobaccoProduct(
 export function parseTobaccoProductClause(
   raw: string,
   catalog: TobaccoCatalog,
-): TobaccoProductRow | null {
+): TobaccoProductRow {
   let trimmed = raw.trim();
   if (!trimmed || STATUS_TOKENS.has(trimmed.toLowerCase())) return null;
+
+  const noteParsed = parseClauseNoteSuffix(trimmed);
+  trimmed = noteParsed.rest;
+  const noteFields = noteParsed.note ? { note: noteParsed.note } : {};
 
   const phaseParsed = parseProductPhaseSuffix(trimmed);
   trimmed = phaseParsed.rest;
@@ -649,6 +684,7 @@ export function parseTobaccoProductClause(
     ...(phaseParsed.quitYearsUnit
       ? { quitYearsUnit: normalizeStoredDurationUnit(phaseParsed.quitYearsUnit) }
       : {}),
+    ...noteFields,
   };
 
   const occasionalMatch = trimmed.match(

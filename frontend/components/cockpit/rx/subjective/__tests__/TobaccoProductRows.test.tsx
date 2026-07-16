@@ -228,18 +228,28 @@ describe("TobaccoProductRows — smoking UX", () => {
     expect(screen.getByTestId("social-smoking-add-chips")).toBeInTheDocument();
   });
 
-  it("shows per-product quit when implicitPast (ex-smoker)", () => {
-    renderSmoking(
-      [{ id: "p1", type: "cigarette", perDay: 4, years: 3, quitYearsAgo: 2 }],
-      vi.fn(),
-      { implicitPast: true },
-    );
+  it("shows per-product note field inside expanded cards", () => {
+    const onChange = vi.fn();
+    renderSmokeless([{ id: "p1", type: "gutka", perDay: 2 }], onChange);
 
-    expect(screen.queryByTestId("social-smoking-phase-current-0")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("social-smoking-phase-past-0")).not.toBeInTheDocument();
-    const row = screen.getByTestId("social-smoking-product-0");
-    expect(within(row).getByLabelText("Quit duration")).toHaveValue(2);
-    expect(within(row).getByText("· for")).toBeInTheDocument();
-    expect(within(row).getByText("ago")).toBeInTheDocument();
+    openProductCard("social-smokeless-product-0");
+    const row = screen.getByTestId("social-smokeless-product-0");
+    const noteInput = within(row).getByTestId("social-smokeless-note-0");
+    expect(noteInput).toBeInTheDocument();
+
+    fireEvent.change(noteInput, { target: { value: "after meals only" } });
+    expect(onChange).toHaveBeenCalledWith([
+      expect.objectContaining({ note: "after meals only" }),
+    ]);
+  });
+
+  it("shows note text in collapsed card preview", () => {
+    renderSmoking([
+      { id: "p1", type: "cigarette", perDay: 5, note: "shared with spouse" },
+    ]);
+
+    expect(screen.getByTestId("social-smoking-product-0")).toHaveTextContent(
+      "shared with spouse",
+    );
   });
 });

@@ -10,7 +10,13 @@ export interface ExamSystemStatusToolbarProps {
   disabled?: boolean;
   onMarkNormal: () => void;
   onClear: () => void;
+  /** When set, show Expand all / Collapse all for subsections within this system. */
+  onExpandAllSubsections?: () => void;
+  onCollapseAllSubsections?: () => void;
 }
+
+const disclosureButtonClass =
+  "rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground hover:border-primary/60 hover:text-foreground disabled:opacity-50";
 
 export function ExamSystemStatusToolbar({
   systemId,
@@ -19,8 +25,12 @@ export function ExamSystemStatusToolbar({
   disabled = false,
   onMarkNormal,
   onClear,
+  onExpandAllSubsections,
+  onCollapseAllSubsections,
 }: ExamSystemStatusToolbarProps) {
   const canClear = status !== "not_examined";
+  const showSubsectionDisclosure =
+    onExpandAllSubsections != null && onCollapseAllSubsections != null;
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -49,6 +59,28 @@ export function ExamSystemStatusToolbar({
       >
         Clear
       </button>
+      {showSubsectionDisclosure ? (
+        <>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={onExpandAllSubsections}
+            className={disclosureButtonClass}
+            data-testid={`exam-expand-all-subsections-${systemId}`}
+          >
+            Expand all
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={onCollapseAllSubsections}
+            className={disclosureButtonClass}
+            data-testid={`exam-collapse-all-subsections-${systemId}`}
+          >
+            Collapse all
+          </button>
+        </>
+      ) : null}
       {status === "normal" ? (
         <span className="text-xs text-muted-foreground">{normalLine}</span>
       ) : null}

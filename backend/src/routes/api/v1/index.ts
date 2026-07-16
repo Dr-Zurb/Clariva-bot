@@ -23,6 +23,7 @@ import meRoutes from './me';
 import adminRoutes from './admin';
 import dashboardEventsRoutes from './dashboard-events';
 import diagnosesRoutes from './diagnoses';
+import investigationsRoutes from './investigations';
 import doctorDrugFavoritesRoutes from './doctor-drug-favorites';
 import doctorDrugUsageRoutes from './doctor-drug-usage';
 import complaintMasterRoutes from './complaint-master';
@@ -121,6 +122,11 @@ router.use('/dashboard/events', dashboardEventsRoutes);
 // Patient seeing flow · pf-02: doctor-scoped diagnosis-tag autocomplete
 // for the wrap-up dialog (powers GET /diagnoses/recent).
 router.use('/diagnoses', diagnosesRoutes);
+
+// plan-investigations-library · inv-lib-04: gated, suggestion-only AI resolver
+// that normalizes free-text lab/imaging orders into clean terms (POST
+// /investigations/parse). The frontend static catalog re-resolves every term.
+router.use('/investigations', investigationsRoutes);
 
 // rx-polish-favorites · rxf-04: per-doctor medicine row favorites
 router.use('/doctors/me/drug-favorites', doctorDrugFavoritesRoutes);

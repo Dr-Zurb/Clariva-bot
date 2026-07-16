@@ -27,6 +27,12 @@ import {
   CUSTOM_VITAL_ID_MAX,
   CUSTOM_VITAL_LABEL_MAX,
   CUSTOM_VITAL_UNIT_MAX,
+  INVESTIGATIONS_CUSTOM_ORDERS_MAX,
+  INVESTIGATIONS_CUSTOM_ORDER_ID_MAX,
+  INVESTIGATIONS_CUSTOM_ORDER_LABEL_MAX,
+  INVESTIGATIONS_CUSTOM_ORDER_MEMBERS_MAX,
+  INVESTIGATIONS_CUSTOM_ORDER_MEMBER_ID_MAX,
+  INVESTIGATIONS_CUSTOM_ORDER_MEMBER_LABEL_MAX,
   type ModeSchedule,
 } from '../types/doctor-settings';
 import type { PatientListFilters, PatientListSortId, PatientSegmentId } from '../services/patient-list-types';
@@ -49,6 +55,18 @@ import {
   sanitizeObjectiveSectionCollapsed,
   sanitizeObjectiveSectionHidden,
 } from '../types/objective-section-order';
+import {
+  PLAN_SECTION_ORDER_MAX,
+  sanitizePlanSectionOrder,
+  sanitizePlanSectionCollapsed,
+  sanitizePlanSectionHidden,
+} from '../types/plan-section-order';
+import {
+  ASSESSMENT_SECTION_ORDER_MAX,
+  sanitizeAssessmentSectionOrder,
+  sanitizeAssessmentSectionCollapsed,
+  sanitizeAssessmentSectionHidden,
+} from '../types/assessment-section-order';
 import { VITALS_HIDDEN_MAX, sanitizeVitalsHidden } from '../types/vitals-hidden';
 
 // ============================================================================
@@ -1138,6 +1156,46 @@ export const objectiveSectionHiddenSchema = z
   .max(OBJECTIVE_SECTION_ORDER_MAX)
   .transform((ids) => sanitizeObjectiveSectionHidden(ids));
 
+/** plan chrome: per-doctor Plan section order (dedupe + drop unknown ids). */
+export const planSectionOrderSchema = z
+  .array(z.string())
+  .max(PLAN_SECTION_ORDER_MAX)
+  .transform((ids) => sanitizePlanSectionOrder(ids));
+
+/** plan chrome: per-doctor Plan section collapse map { [sectionId]: isOpen }. */
+export const planSectionCollapsedSchema = z
+  .record(z.string(), z.unknown())
+  .refine((map) => Object.keys(map).length <= PLAN_SECTION_ORDER_MAX, {
+    message: `plan_section_collapsed exceeds ${PLAN_SECTION_ORDER_MAX} entries`,
+  })
+  .transform((map) => sanitizePlanSectionCollapsed(map));
+
+/** plan chrome: per-doctor hidden Plan section set (delta array). */
+export const planSectionHiddenSchema = z
+  .array(z.string())
+  .max(PLAN_SECTION_ORDER_MAX)
+  .transform((ids) => sanitizePlanSectionHidden(ids));
+
+/** assessment chrome: per-doctor Assessment section order. */
+export const assessmentSectionOrderSchema = z
+  .array(z.string())
+  .max(ASSESSMENT_SECTION_ORDER_MAX)
+  .transform((ids) => sanitizeAssessmentSectionOrder(ids));
+
+/** assessment chrome: per-doctor Assessment section collapse map. */
+export const assessmentSectionCollapsedSchema = z
+  .record(z.string(), z.unknown())
+  .refine((map) => Object.keys(map).length <= ASSESSMENT_SECTION_ORDER_MAX, {
+    message: `assessment_section_collapsed exceeds ${ASSESSMENT_SECTION_ORDER_MAX} entries`,
+  })
+  .transform((map) => sanitizeAssessmentSectionCollapsed(map));
+
+/** assessment chrome: per-doctor hidden Assessment section set (delta array). */
+export const assessmentSectionHiddenSchema = z
+  .array(z.string())
+  .max(ASSESSMENT_SECTION_ORDER_MAX)
+  .transform((ids) => sanitizeAssessmentSectionHidden(ids));
+
 /**
  * vit-07: per-doctor hidden vitals set (delta array of registry vital-key strings).
  * Tolerant: drops unknown ids + dedupes rather than rejecting (a stale/removed id
@@ -1184,6 +1242,48 @@ export const vitalsCustomSchema = z
     const byId = new Map<string, (typeof defs)[number]>();
     for (const def of defs) {
       byId.set(def.id, def);
+    }
+    return [...byId.values()];
+  });
+
+const investigationCustomOrderMemberSchema = z
+  .object({
+    id: z.string().trim().min(1).max(INVESTIGATIONS_CUSTOM_ORDER_MEMBER_ID_MAX),
+    label: z.string().trim().min(1).max(INVESTIGATIONS_CUSTOM_ORDER_MEMBER_LABEL_MAX),
+    kind: z.enum(['panel', 'analyte', 'imaging', 'custom']),
+  })
+  .strict();
+
+const investigationCustomOrderSchema = z
+  .object({
+    id: z.string().trim().min(1).max(INVESTIGATIONS_CUSTOM_ORDER_ID_MAX),
+    label: z.string().trim().min(1).max(INVESTIGATIONS_CUSTOM_ORDER_LABEL_MAX),
+    members: z.array(investigationCustomOrderMemberSchema).max(INVESTIGATIONS_CUSTOM_ORDER_MEMBERS_MAX).optional(),
+    useCount: z.number().int().min(0).max(10_000),
+    pinned: z.boolean(),
+    updatedAt: z.string().trim().min(1).max(40),
+  })
+  .strict()
+  .transform((row) => ({
+    id: row.id,
+    label: row.label,
+    members: row.members ?? [],
+    useCount: row.useCount,
+    pinned: row.pinned,
+    updatedAt: row.updatedAt,
+  }));
+
+/**
+ * plan-investigations-library: per-doctor custom investigation order vocabulary.
+ * Dedupes by id (last write wins) and caps the list.
+ */
+export const investigationsCustomOrdersSchema = z
+  .array(investigationCustomOrderSchema)
+  .max(INVESTIGATIONS_CUSTOM_ORDERS_MAX)
+  .transform((rows) => {
+    const byId = new Map<string, (typeof rows)[number]>();
+    for (const row of rows) {
+      byId.set(row.id, row);
     }
     return [...byId.values()];
   });
@@ -1281,10 +1381,28 @@ export const patchDoctorSettingsSchema = z
     objective_section_hidden: objectiveSectionHiddenSchema.optional(),
     /** obj-10: per-doctor default custom Objective-tab sections template. */
     objective_custom_sections: objectiveCustomSectionsSchema.optional(),
+    /** plan chrome: per-doctor default Plan-tab section order. */
+    plan_section_order: planSectionOrderSchema.optional(),
+    /** plan chrome: per-doctor default Plan-tab section collapse map. */
+    plan_section_collapsed: planSectionCollapsedSchema.optional(),
+    /** plan chrome: per-doctor hidden Plan-tab section set (delta array). */
+    plan_section_hidden: planSectionHiddenSchema.optional(),
+    /** assessment chrome: per-doctor default Assessment-tab section order. */
+    assessment_section_order: assessmentSectionOrderSchema.optional(),
+    /** assessment chrome: per-doctor default Assessment-tab section collapse map. */
+    assessment_section_collapsed: assessmentSectionCollapsedSchema.optional(),
+    /** assessment chrome: per-doctor hidden Assessment-tab section set (delta array). */
+    assessment_section_hidden: assessmentSectionHiddenSchema.optional(),
+    /** assessment-plan-custom-sections: per-doctor default custom Assessment sections template. */
+    assessment_custom_sections: objectiveCustomSectionsSchema.optional(),
+    /** assessment-plan-custom-sections: per-doctor default custom Plan sections template. */
+    plan_custom_sections: objectiveCustomSectionsSchema.optional(),
     /** vit-14: per-doctor custom-vital definitions. */
     vitals_custom: vitalsCustomSchema.optional(),
     /** vit-07: per-doctor hidden vitals set (delta array). */
     vitals_hidden: vitalsHiddenSchema.optional(),
+    /** plan-investigations-library: per-doctor custom investigation orders. */
+    investigations_custom_orders: investigationsCustomOrdersSchema.optional(),
   })
   .strict();
 
@@ -1582,6 +1700,9 @@ const TEST_RESULT_NOTES_MAX = 1000;
 const TEST_RESULTS_MAX = 100;
 const TEST_RESULT_SOURCE_VALUES = ['patient_report', 'in_clinic_poc'] as const;
 const TEST_RESULT_INTERPRETATION_VALUES = ['normal', 'high', 'low', 'abnormal'] as const;
+// objective-reports / migration 159 — reference-range fields on a result row (rpt-02).
+const TEST_RESULT_REPORT_ID_MAX = 64;
+const TEST_RESULT_REF_TEXT_MAX = 100;
 
 /**
  * Tolerant per-row test-result schema for `test_results_json` (obj-20). Mirrors
@@ -1606,6 +1727,20 @@ const testResultRowSchema = z
       .nullable()
       .catch(null),
     notes: z.string().max(TEST_RESULT_NOTES_MAX).trim().optional().nullable(),
+    // objective-reports / migration 159 (rpt-02) — grouping + reference range.
+    // A malformed `reportId` (e.g. non-string) collapses to null (ungrouped)
+    // rather than dropping the row; an unknown-but-valid id also stays ungrouped
+    // at render time. Numeric range bounds coerce bad input to null.
+    reportId: z
+      .string()
+      .trim()
+      .max(TEST_RESULT_REPORT_ID_MAX)
+      .optional()
+      .nullable()
+      .catch(null),
+    refLow: z.number().finite().optional().nullable().catch(null),
+    refHigh: z.number().finite().optional().nullable().catch(null),
+    refText: z.string().trim().max(TEST_RESULT_REF_TEXT_MAX).optional().nullable(),
   })
   .transform((r) => ({
     id: r.id,
@@ -1616,6 +1751,10 @@ const testResultRowSchema = z
     date: r.date || null,
     interpretation: r.interpretation ?? null,
     notes: r.notes || null,
+    reportId: r.reportId || null,
+    refLow: r.refLow ?? null,
+    refHigh: r.refHigh ?? null,
+    refText: r.refText || null,
   }));
 
 const testResultsJsonSchema = z
@@ -1625,6 +1764,285 @@ const testResultsJsonSchema = z
       .filter((r): r is NonNullable<typeof r> => r !== null)
       .slice(0, TEST_RESULTS_MAX),
   )
+  .optional();
+
+// objective-reports / migration 159 — lab/imaging report headers (rpt-02).
+const LAB_REPORT_ID_MAX = 64;
+const LAB_REPORT_TITLE_MAX = 200;
+const LAB_REPORT_LAB_NAME_MAX = 200;
+const LAB_REPORT_DATE_MAX = 40;
+const LAB_REPORT_FINDINGS_MAX = 4000;
+const LAB_REPORT_ATTACHMENTS_MAX = 50;
+const LAB_REPORTS_MAX = 100;
+const LAB_REPORT_KIND_VALUES = ['lab', 'imaging'] as const;
+const LAB_REPORT_ENTRY_METHOD_VALUES = ['manual', 'extracted'] as const;
+
+/**
+ * Tolerant per-header schema for `lab_reports_json` (rpt-02). Mirrors the
+ * `test_results_json` discipline: a malformed header (missing id/title, bad
+ * `kind`) is DROPPED at the array level, never rejecting the whole prescription
+ * save. `entryMethod` defaults to `'manual'` when absent/unknown; empty optional
+ * strings collapse to null. Report data never leaks into the derived
+ * `test_results` TEXT (OBJ-D2 stays byte-identical).
+ */
+const labReportSchema = z
+  .object({
+    id: z.string().trim().min(1).max(LAB_REPORT_ID_MAX),
+    kind: z.enum(LAB_REPORT_KIND_VALUES),
+    title: z.string().trim().min(1).max(LAB_REPORT_TITLE_MAX),
+    reportDate: z.string().trim().max(LAB_REPORT_DATE_MAX).optional().nullable(),
+    labName: z.string().trim().max(LAB_REPORT_LAB_NAME_MAX).optional().nullable(),
+    attachmentIds: z
+      .array(z.string().trim().min(1).max(LAB_REPORT_ID_MAX))
+      .max(LAB_REPORT_ATTACHMENTS_MAX)
+      .optional()
+      .nullable(),
+    findings: z.string().max(LAB_REPORT_FINDINGS_MAX).trim().optional().nullable(),
+    // Provenance metadata: a stale/unknown value collapses to the safe default
+    // rather than dropping the header.
+    entryMethod: z
+      .enum(LAB_REPORT_ENTRY_METHOD_VALUES)
+      .optional()
+      .nullable()
+      .catch('manual'),
+  })
+  .transform((h) => ({
+    id: h.id,
+    kind: h.kind,
+    title: h.title,
+    reportDate: h.reportDate || null,
+    labName: h.labName || null,
+    attachmentIds: h.attachmentIds ?? [],
+    findings: h.findings || null,
+    entryMethod: h.entryMethod ?? 'manual',
+  }));
+
+export const labReportsJsonSchema = z
+  .array(labReportSchema.nullable().catch(null))
+  .transform((arr) =>
+    arr
+      .filter((h): h is NonNullable<typeof h> => h !== null)
+      .slice(0, LAB_REPORTS_MAX),
+  )
+  .optional();
+
+// assessment-tab / migration 161 — structured diagnoses (asmt-03).
+const DIAGNOSIS_ID_MAX = 64;
+const DIAGNOSIS_LABEL_MAX = 500;
+const DIAGNOSIS_NOTE_MAX = 2000;
+const DIAGNOSES_MAX = 50;
+// assessment-tab / asmt-06 — optional ICD-11 coding on the row (additive).
+const DIAGNOSIS_CODE_MAX = 32;
+const DIAGNOSIS_CODE_TITLE_MAX = 300;
+const DIAGNOSIS_KIND_VALUES = ['primary', 'secondary', 'differential'] as const;
+const DIAGNOSIS_CERTAINTY_VALUES = [
+  'provisional',
+  'rule_out', // deprecated — tolerated on ingest, mapped → provisional
+  'confirmed',
+  'excluded',
+] as const;
+const DIAGNOSIS_STATUS_VALUES = ['new', 'ongoing', 'resolved'] as const;
+// assessment-tab / migration 160 — acuity enum (also used per-diagnosis on rows).
+const ASSESSMENT_ACUITY_VALUES = ['improving', 'stable', 'worsening'] as const;
+
+/**
+ * Tolerant per-row schema for `diagnoses_json` (asmt-03). Malformed rows
+ * (missing id/label) are DROPPED at the array level. Unknown kind/certainty/
+ * status fall back to defaults. Never rejects the whole prescription save.
+ */
+const diagnosisRowSchema = z
+  .object({
+    id: z.string().trim().min(1).max(DIAGNOSIS_ID_MAX),
+    label: z.string().trim().min(1).max(DIAGNOSIS_LABEL_MAX),
+    kind: z.enum(DIAGNOSIS_KIND_VALUES).optional().nullable().catch('secondary'),
+    certainty: z
+      .enum(DIAGNOSIS_CERTAINTY_VALUES)
+      .optional()
+      .nullable()
+      .catch('provisional'),
+    status: z.enum(DIAGNOSIS_STATUS_VALUES).optional().nullable().catch('new'),
+    note: z.string().max(DIAGNOSIS_NOTE_MAX).trim().optional().nullable(),
+    // Per-diagnosis acuity (replaces dormant visit-level assessment_acuity).
+    // Unknown values collapse to null — never drop the diagnosis row.
+    acuity: z
+      .enum(ASSESSMENT_ACUITY_VALUES)
+      .optional()
+      .nullable()
+      .catch(null),
+    // asmt-04: optional link to patient_chronic_conditions.id. Bad/unknown
+    // values collapse to null — never drop the diagnosis row. Writer dormant
+    // on Assessment (Known conditions zone owns condition edits).
+    conditionId: z
+      .string()
+      .uuid()
+      .optional()
+      .nullable()
+      .catch(null),
+    // asmt-06: optional ICD-11 code + canonical title from diagnosis_catalog.
+    // Additive metadata — bad/unknown values collapse to null, never drop the
+    // row; coding is optional (uncoded rows still save, ASMT-D3).
+    code: z
+      .string()
+      .max(DIAGNOSIS_CODE_MAX)
+      .trim()
+      .optional()
+      .nullable()
+      .catch(null),
+    codeTitle: z
+      .string()
+      .max(DIAGNOSIS_CODE_TITLE_MAX)
+      .trim()
+      .optional()
+      .nullable()
+      .catch(null),
+  })
+  .transform((r) => ({
+    id: r.id,
+    label: r.label,
+    kind: r.kind ?? 'secondary',
+    // Deprecated `rule_out` → Working/provisional (role-gated certainty).
+    certainty:
+      r.certainty === 'rule_out' ? ('provisional' as const) : (r.certainty ?? 'provisional'),
+    status: r.status ?? 'new',
+    note: r.note || null,
+    acuity: r.acuity ?? null,
+    conditionId: r.conditionId ?? null,
+    code: r.code || null,
+    codeTitle: r.codeTitle || null,
+  }));
+
+export const diagnosesJsonSchema = z
+  .array(diagnosisRowSchema.nullable().catch(null))
+  .transform((arr) => {
+    const kept = arr
+      .filter((r): r is NonNullable<typeof r> => r !== null)
+      .slice(0, DIAGNOSES_MAX);
+    // Enforce at most one primary among committed rows (first wins).
+    // Differentials are never demoted to secondary (asmt-05).
+    let hasPrimary = false;
+    return kept.map((row) => {
+      if (row.kind === 'differential') {
+        return {
+          ...row,
+          kind: 'differential' as const,
+          conditionId: null,
+          acuity: null,
+        };
+      }
+      if (row.kind !== 'primary') return row;
+      if (hasPrimary) return { ...row, kind: 'secondary' as const };
+      hasPrimary = true;
+      return row;
+    });
+  })
+  .optional();
+
+// plan-investigations-library / migration 167 — structured investigation orders
+// (inv-lib-05). Tolerant per-row: malformed rows (missing id/label) are DROPPED
+// at the array level; an unknown kind falls back to 'custom'. Never rejects the
+// whole prescription save. The legacy `investigations_orders` TEXT stays
+// authoritative for output (INV-D8) — this column is additive metadata.
+const INVESTIGATION_ORDER_ID_MAX = 64;
+const INVESTIGATION_ORDER_LABEL_MAX = 200;
+const INVESTIGATION_ORDERS_MAX = 40;
+const INVESTIGATION_ORDER_KIND_VALUES = [
+  'panel',
+  'analyte',
+  'imaging',
+  'custom',
+] as const;
+
+const investigationOrderMemberSchema = z
+  .object({
+    id: z.string().trim().min(1).max(INVESTIGATION_ORDER_ID_MAX),
+    label: z.string().trim().min(1).max(INVESTIGATION_ORDER_LABEL_MAX),
+    kind: z.enum(INVESTIGATION_ORDER_KIND_VALUES).optional().nullable().catch('custom'),
+  })
+  .transform((r) => ({
+    id: r.id,
+    label: r.label,
+    kind: r.kind ?? 'custom',
+  }));
+
+const INVESTIGATION_CONTRAST_VALUES = ['plain', 'contrast', 'both'] as const;
+const INVESTIGATION_URGENCY_VALUES = ['routine', 'urgent'] as const;
+
+const investigationImagingRequisitionSchema = z
+  .object({
+    contrast: z
+      .enum(INVESTIGATION_CONTRAST_VALUES)
+      .optional()
+      .nullable()
+      .catch(null),
+    site: z.string().trim().max(40).optional().nullable().catch(null),
+    indication: z.string().trim().max(200).optional().nullable().catch(null),
+    urgency: z
+      .enum(INVESTIGATION_URGENCY_VALUES)
+      .optional()
+      .nullable()
+      .catch(null),
+  })
+  .transform((r) => {
+    const contrast = r.contrast ?? null;
+    const site = r.site?.trim() ? r.site.trim() : null;
+    const indication = r.indication?.trim() ? r.indication.trim() : null;
+    const urgency = r.urgency ?? null;
+    if (!contrast && !site && !indication && !urgency) return null;
+    return { contrast, site, indication, urgency };
+  });
+
+const investigationOrderRowSchema = z
+  .object({
+    id: z.string().trim().min(1).max(INVESTIGATION_ORDER_ID_MAX),
+    label: z.string().trim().min(1).max(INVESTIGATION_ORDER_LABEL_MAX),
+    kind: z.enum(INVESTIGATION_ORDER_KIND_VALUES).optional().nullable().catch('custom'),
+    sourcePanelId: z
+      .string()
+      .trim()
+      .max(INVESTIGATION_ORDER_ID_MAX)
+      .optional()
+      .nullable()
+      .catch(null),
+    members: z
+      .array(investigationOrderMemberSchema.nullable().catch(null))
+      .max(INVESTIGATION_ORDERS_MAX)
+      .optional()
+      .nullable()
+      .catch(null),
+    requisition: investigationImagingRequisitionSchema.optional().nullable().catch(null),
+  })
+  .transform((r) => {
+    const members = (r.members ?? [])
+      .filter((m): m is NonNullable<typeof m> => m !== null)
+      .slice(0, INVESTIGATION_ORDERS_MAX);
+    const sourcePanelId = r.sourcePanelId || null;
+    const requisition = r.requisition ?? null;
+    return {
+      id: r.id,
+      label: r.label,
+      kind: r.kind ?? 'custom',
+      ...(sourcePanelId ? { sourcePanelId } : {}),
+      ...(members.length > 0 ? { members } : {}),
+      ...(requisition ? { requisition } : {}),
+    };
+  });
+
+export const investigationsOrdersJsonSchema = z
+  .array(investigationOrderRowSchema.nullable().catch(null))
+  .transform((arr) => {
+    const kept = arr.filter((r): r is NonNullable<typeof r> => r !== null);
+    // Dedupe by identity (kind:id), first wins; cap the list.
+    const seen = new Set<string>();
+    const out: typeof kept = [];
+    for (const row of kept) {
+      const key = `${row.kind}:${row.id.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(row);
+      if (out.length >= INVESTIGATION_ORDERS_MAX) break;
+    }
+    return out;
+  })
   .optional();
 
 const SOCIAL_HISTORY_STATUS_VALUES = ['never', 'current', 'ex'] as const;
@@ -1678,6 +2096,8 @@ const TOBACCO_FREQUENCY_UNIT_VALUES = [
   'occasional',
 ] as const;
 
+const SOCIAL_HISTORY_TOBACCO_PRODUCT_NOTE_MAX = 200;
+
 const tobaccoProductRowSchema = z.object({
   id: z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim(),
   type: z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim(),
@@ -1692,24 +2112,29 @@ const tobaccoProductRowSchema = z.object({
   phase: z.enum(TOBACCO_PRODUCT_PHASE_VALUES).optional().nullable(),
   quitYearsAgo: z.number().min(0).max(1200).optional().nullable(),
   quitYearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
+  note: z.string().max(SOCIAL_HISTORY_TOBACCO_PRODUCT_NOTE_MAX).trim().optional().nullable(),
 });
 
+const SOCIAL_HISTORY_TOBACCO_SECTION_NOTES_MAX = 200;
+
 const socialHistorySmokingSectionSchema = z.object({
-  status: z.enum(SOCIAL_HISTORY_STATUS_VALUES),
+  status: z.enum(SOCIAL_HISTORY_STATUS_VALUES).optional().nullable(),
   products: z.array(tobaccoProductRowSchema).max(SOCIAL_HISTORY_TYPES_MAX),
   years: z.number().min(0).max(1200).optional().nullable(),
   yearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
   quitYearsAgo: z.number().min(0).max(1200).optional().nullable(),
   quitYearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
+  notes: z.string().max(SOCIAL_HISTORY_TOBACCO_SECTION_NOTES_MAX).trim().optional().nullable(),
 });
 
 const socialHistorySmokelessSectionSchema = z.object({
-  status: z.enum(SOCIAL_HISTORY_STATUS_VALUES),
+  status: z.enum(SOCIAL_HISTORY_STATUS_VALUES).optional().nullable(),
   products: z.array(tobaccoProductRowSchema).max(SOCIAL_HISTORY_TYPES_MAX),
   years: z.number().min(0).max(1200).optional().nullable(),
   yearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
   quitYearsAgo: z.number().min(0).max(1200).optional().nullable(),
   quitYearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
+  notes: z.string().max(SOCIAL_HISTORY_TOBACCO_SECTION_NOTES_MAX).trim().optional().nullable(),
 });
 
 const ALCOHOL_FREQUENCY_UNIT_VALUES = ['day', 'week', 'fortnight', 'month', 'interval'] as const;
@@ -1735,10 +2160,11 @@ const alcoholDrinkRowSchema = z.object({
   phase: z.enum(TOBACCO_PRODUCT_PHASE_VALUES).optional().nullable(),
   quitYearsAgo: z.number().min(0).max(1200).optional().nullable(),
   quitYearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
+  note: z.string().max(SOCIAL_HISTORY_TOBACCO_PRODUCT_NOTE_MAX).trim().optional().nullable(),
 });
 
 const socialHistoryAlcoholSectionSchema = z.object({
-  status: z.enum(SOCIAL_HISTORY_STATUS_VALUES),
+  status: z.enum(SOCIAL_HISTORY_STATUS_VALUES).optional().nullable(),
   drinks: z.array(alcoholDrinkRowSchema).max(SOCIAL_HISTORY_TYPES_MAX),
   types: z.array(z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim()).max(SOCIAL_HISTORY_TYPES_MAX).optional(),
   unitsPerWeek: z.number().min(0).max(200).optional().nullable(),
@@ -1749,6 +2175,7 @@ const socialHistoryAlcoholSectionSchema = z.object({
   maxPerSession: alcoholMaxPerSessionSchema.optional().nullable(),
   quitYearsAgo: z.number().min(0).max(1200).optional().nullable(),
   quitYearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
+  notes: z.string().max(SOCIAL_HISTORY_TOBACCO_SECTION_NOTES_MAX).trim().optional().nullable(),
 });
 
 const SOCIAL_HISTORY_SUBSTANCE_ROUTE_VALUES = [
@@ -1878,6 +2305,7 @@ const socialHistorySubstanceItemSchema = z.object({
   years: z.number().min(0).max(100).optional().nullable(),
   yearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
   phase: z.enum(SOCIAL_HISTORY_SUBSTANCE_PHASE_VALUES).optional().nullable(),
+  note: z.string().max(SOCIAL_HISTORY_TOBACCO_PRODUCT_NOTE_MAX).trim().optional().nullable(),
 });
 
 const socialHistorySubstancesSectionSchema = z.object({
@@ -2434,6 +2862,25 @@ const structuredSoapFieldsSchema = {
     .max(20)
     .optional()
     .nullable(),
+  // assessment-tab / migration 160 — clinical-impression note + visit acuity.
+  // Tolerant: empty/whitespace note → null; an unknown acuity degrades to null
+  // (`.catch(null)`) rather than rejecting the whole save (ASMT-D3).
+  assessmentNote: z
+    .string()
+    .max(PRESCRIPTION_SOAP_TEXT_MAX)
+    .trim()
+    .transform((v) => (v.length > 0 ? v : null))
+    .optional()
+    .nullable(),
+  assessmentAcuity: z
+    .enum(ASSESSMENT_ACUITY_VALUES)
+    .nullable()
+    .catch(null)
+    .optional(),
+  // assessment-tab / migration 161 — structured diagnoses (tolerant; asmt-03).
+  diagnosesJson: diagnosesJsonSchema,
+  // plan-investigations-library / migration 167 — structured orders (tolerant; inv-lib-05).
+  investigationsOrdersJson: investigationsOrdersJsonSchema,
   advice: z.string().max(PRESCRIPTION_SOAP_TEXT_MAX).trim().optional().nullable(),
   followUpValue: z.number().int().min(0).max(3650).optional().nullable(),
   followUpUnit: z.enum(FOLLOW_UP_UNIT_VALUES).optional().nullable(),
@@ -2441,6 +2888,10 @@ const structuredSoapFieldsSchema = {
   testResults: z.string().max(PRESCRIPTION_SOAP_TEXT_MAX).trim().optional().nullable(),
   // objective-tab / migration 154 — structured test results (tolerant; obj-20).
   testResultsJson: testResultsJsonSchema,
+  // assessment-plan-custom-sections / migration 177 — depth-2 custom section trees.
+  // Reuse the subjective custom-subsection schema (id/title/body + children).
+  assessmentCustomSections: customSubsectionsSchema,
+  planCustomSections: customSubsectionsSchema,
 };
 
 function refineFollowUpPairing<T extends { followUpValue?: number | null; followUpUnit?: string | null }>(
@@ -2778,6 +3229,49 @@ const rxTemplateAllergiesSchema = z.object({
   allergies: z.array(rxTemplateAllergyEntrySchema).max(RX_TEMPLATE_PMH_ROWS_MAX).optional(),
 });
 
+/** Plan preset stored in `plan_json` — advice / follow-up / referral / clinical notes. */
+const RX_TEMPLATE_REFERRAL_SPECIALTIES_MAX = 20;
+const RX_TEMPLATE_REFERRAL_LABEL_MAX = 120;
+const rxTemplatePlanSchema = z.object({
+  advice: z.string().max(PRESCRIPTION_FIELD_MAX).trim().optional().nullable(),
+  followUp: z.string().max(PRESCRIPTION_FIELD_MAX).trim().optional().nullable(),
+  followUpValue: z.number().int().min(0).max(3650).optional().nullable(),
+  followUpUnit: z.enum(FOLLOW_UP_UNIT_VALUES).optional().nullable(),
+  referral: z.string().max(PRESCRIPTION_FIELD_MAX).trim().optional().nullable(),
+  referralUrgency: z.string().max(RX_TEMPLATE_REFERRAL_LABEL_MAX).trim().optional().nullable(),
+  referralSpecialties: z
+    .array(z.string().max(RX_TEMPLATE_REFERRAL_LABEL_MAX).trim())
+    .max(RX_TEMPLATE_REFERRAL_SPECIALTIES_MAX)
+    .optional(),
+  referralReason: z.string().max(RX_TEMPLATE_REFERRAL_LABEL_MAX).trim().optional().nullable(),
+  clinicalNotes: z.string().max(5000).trim().optional().nullable(),
+});
+
+/**
+ * Assessment preset stored in `assessment_json` — diagnoses + notes + optional
+ * visit-level acuity. Reuses diagnosesJsonSchema for row tolerance.
+ */
+const rxTemplateAssessmentSchema = z.object({
+  diagnoses: diagnosesJsonSchema.optional(),
+  assessmentNote: z.string().max(5000).trim().optional().nullable(),
+  assessmentAcuity: z
+    .enum(ASSESSMENT_ACUITY_VALUES)
+    .optional()
+    .nullable(),
+  knownConditions: z
+    .array(
+      z.object({
+        condition: z.string().min(1).max(200).trim(),
+        status: z.enum(['active', 'resolved']).optional(),
+        note: z.string().max(2000).trim().optional().nullable(),
+        code: z.string().max(64).trim().optional().nullable(),
+        codeTitle: z.string().max(500).trim().optional().nullable(),
+      }),
+    )
+    .max(100)
+    .optional(),
+});
+
 export const rxTemplateScopeSchema = z.enum(RX_TEMPLATE_SCOPE_VALUES);
 
 export const createRxTemplateBodySchema = z.object({
@@ -2793,6 +3287,8 @@ export const createRxTemplateBodySchema = z.object({
   medicines: z.array(rxTemplateMedicineSchema).optional(),
   subjective: rxTemplateSubjectiveSchema.optional(),
   objective: rxTemplateObjectiveSchema.optional(),
+  plan: rxTemplatePlanSchema.optional(),
+  assessment: rxTemplateAssessmentSchema.optional(),
   pmh: rxTemplatePmhSchema.optional(),
   allergies: rxTemplateAllergiesSchema.optional(),
   scope: rxTemplateScopeSchema.optional().default('subjective_full'),
@@ -2824,6 +3320,8 @@ export const updateRxTemplateBodySchema = z
     medicines: z.array(rxTemplateMedicineSchema).optional(),
     subjective: rxTemplateSubjectiveSchema.optional(),
     objective: rxTemplateObjectiveSchema.optional(),
+    plan: rxTemplatePlanSchema.optional(),
+    assessment: rxTemplateAssessmentSchema.optional(),
     pmh: rxTemplatePmhSchema.optional(),
     allergies: rxTemplateAllergiesSchema.optional(),
   })
@@ -2929,7 +3427,7 @@ const ATTACHMENT_CAPTION_MAX = 500;
 // media strip; absence keeps the legacy photo-Rx path byte-identical.
 // soap-data-placement / P2 (sdp-02): `subjective` pins symptom media to a complaint via an
 // optional opaque `complaintId` (sanitized into a folder segment by the service, P2-D2).
-const ATTACHMENT_CATEGORY_VALUES = ['objective', 'subjective'] as const;
+const ATTACHMENT_CATEGORY_VALUES = ['objective', 'subjective', 'advice'] as const;
 const ATTACHMENT_COMPLAINT_ID_MAX = 64;
 
 export const createUploadUrlBodySchema = z.object({
@@ -3103,6 +3601,10 @@ const patientConditionAgoUnitSchema = z
   .enum(['days', 'weeks', 'months', 'years'])
   .nullable()
   .optional();
+const patientConditionAcuitySchema = z
+  .enum(['improving', 'stable', 'worsening'])
+  .nullable()
+  .optional();
 
 export const createPatientConditionBodySchema = z.object({
   condition: z.string().min(1, 'condition is required').max(PATIENT_CHART_CONDITION_MAX).trim(),
@@ -3113,6 +3615,9 @@ export const createPatientConditionBodySchema = z.object({
   resolvedAgoValue: patientConditionAgoValueSchema,
   resolvedAgoUnit: patientConditionAgoUnitSchema,
   onTreatment: z.boolean().nullable().optional(),
+  acuity: patientConditionAcuitySchema,
+  code: z.string().max(32).trim().optional().nullable(),
+  codeTitle: z.string().max(300).trim().optional().nullable(),
   note: z.string().max(PATIENT_CHART_TEXT_MAX).trim().optional().nullable(),
 });
 
@@ -3137,6 +3642,9 @@ export const updatePatientConditionBodySchema = z
     resolvedAgoValue: patientConditionAgoValueSchema,
     resolvedAgoUnit: patientConditionAgoUnitSchema,
     onTreatment: z.boolean().nullable().optional(),
+    acuity: patientConditionAcuitySchema,
+    code: z.string().max(32).trim().optional().nullable(),
+    codeTitle: z.string().max(300).trim().optional().nullable(),
     note: z.string().max(PATIENT_CHART_TEXT_MAX).trim().optional().nullable(),
     archivedAt: z.union([z.string().datetime({ offset: true }), z.literal('now'), z.null()]).optional(),
   })
@@ -3295,6 +3803,30 @@ export function validateUpdateMedicalBackgroundNotesBody(
   body: unknown,
 ): UpdateMedicalBackgroundNotesBody {
   const result = updateMedicalBackgroundNotesBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+const PATIENT_ALLERGIES_SECTION_NOTES_MAX = 2000;
+
+export const updateAllergySectionNotesBodySchema = z.object({
+  notes: z
+    .string()
+    .max(PATIENT_ALLERGIES_SECTION_NOTES_MAX)
+    .trim()
+    .optional()
+    .nullable(),
+});
+
+export type UpdateAllergySectionNotesBody = z.infer<typeof updateAllergySectionNotesBodySchema>;
+
+export function validateUpdateAllergySectionNotesBody(
+  body: unknown,
+): UpdateAllergySectionNotesBody {
+  const result = updateAllergySectionNotesBodySchema.safeParse(body);
   if (!result.success) {
     const first = result.error.issues[0];
     throw new ValidationError(first?.message ?? 'Invalid request body');
@@ -4082,6 +4614,66 @@ export function validateParseMedicineRequest(body: unknown): ParseMedicineReques
     const where = first ? first.path.join('.') : 'body';
     const why = first?.message ?? 'invalid request';
     throw new ValidationError(`Invalid medicine-parse request at ${where}: ${why}`);
+  }
+  return result.data;
+}
+
+// ---------------------------------------------------------------------------
+// AI ICD-11 diagnosis resolver (assessment-tab · asmt-07) — gated AI.
+// Tiny body: only the doctor's free-text diagnosis line + tier. The output
+// vocabulary is fixed server-side (every suggestion is re-resolved against
+// `diagnosis_catalog`), so there is no client-supplied field spec to validate.
+// ---------------------------------------------------------------------------
+
+const DIAGNOSIS_RESOLVE_TEXT_MAX = 200;
+
+export const resolveDiagnosisRequestSchema = z.object({
+  text: z.string().min(1, 'text is required').max(DIAGNOSIS_RESOLVE_TEXT_MAX).trim(),
+  tier: z.enum(['default', 'escalation']).optional(),
+});
+
+export type ResolveDiagnosisRequestBody = z.infer<typeof resolveDiagnosisRequestSchema>;
+
+export function validateResolveDiagnosisRequest(body: unknown): ResolveDiagnosisRequestBody {
+  const result = resolveDiagnosisRequestSchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const where = first ? first.path.join('.') : 'body';
+    const why = first?.message ?? 'invalid request';
+    throw new ValidationError(`Invalid diagnosis-resolve request at ${where}: ${why}`);
+  }
+  return result.data;
+}
+
+// ---------------------------------------------------------------------------
+// AI investigation order resolver (plan-investigations-library · inv-lib-04) —
+// gated AI. Tiny body: only the doctor's free-text order line + tier. The
+// output is a normalized term list; the FRONTEND static catalog re-resolves
+// every term, so there is no client-supplied field spec to validate.
+// ---------------------------------------------------------------------------
+
+const INVESTIGATION_RESOLVE_TEXT_MAX = 200;
+
+export const resolveInvestigationRequestSchema = z.object({
+  text: z.string().min(1, 'text is required').max(INVESTIGATION_RESOLVE_TEXT_MAX).trim(),
+  tier: z.enum(['default', 'escalation']).optional(),
+});
+
+export type ResolveInvestigationRequestBody = z.infer<
+  typeof resolveInvestigationRequestSchema
+>;
+
+export function validateResolveInvestigationRequest(
+  body: unknown,
+): ResolveInvestigationRequestBody {
+  const result = resolveInvestigationRequestSchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const where = first ? first.path.join('.') : 'body';
+    const why = first?.message ?? 'invalid request';
+    throw new ValidationError(
+      `Invalid investigation-resolve request at ${where}: ${why}`,
+    );
   }
   return result.data;
 }

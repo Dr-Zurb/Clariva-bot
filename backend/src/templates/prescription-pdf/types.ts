@@ -48,9 +48,12 @@ export interface PrescriptionPdfBodyData {
   socialHistory: string | null;
   provisionalDiagnosis: string | null;
   investigations: string | null;
+  /** plan-p1 — patient-facing lifestyle / advice. */
+  advice: string | null;
   followUp: string | null;
   patientEducation: string | null;
-  clinicalNotes: string | null;
+  /** plan-p1 — patient-facing referral. */
+  referral: string | null;
   medicines: PrescriptionMedicine[];
   /**
    * Doctor-defined custom subjective subsections (subj-22). Already
@@ -60,6 +63,18 @@ export interface PrescriptionPdfBodyData {
    * current composer always populates it.
    */
   customSubsections?: OutputCustomSubsection[];
+  /**
+   * assessment-plan-custom-sections — doctor-defined custom Assessment sections.
+   * Already sanitised + empty-omitted; renders after the diagnosis block.
+   * Empty/absent → no block rendered. Optional for call-site parity.
+   */
+  assessmentCustomSections?: OutputCustomSubsection[];
+  /**
+   * assessment-plan-custom-sections — doctor-defined custom Plan sections.
+   * Already sanitised + empty-omitted; renders in the plan-side block.
+   * Empty/absent → no block rendered. Optional for call-site parity.
+   */
+  planCustomSections?: OutputCustomSubsection[];
 }
 
 export interface PrescriptionPdfData {

@@ -42,12 +42,14 @@ export function addComplaintToTree(
 ): Complaint[] {
   const clean = sanitizeComplaintForStorage(complaint, parentId ? 1 : 0);
   if (!parentId) {
-    return [...complaints, clean];
+    // Newest chief-complaint card at the top.
+    return [clean, ...complaints];
   }
   const parentIndex = findParentIndex(complaints, parentId);
   if (parentIndex < 0) return complaints;
   const parent = complaints[parentIndex]!;
-  const children = [...(parent.associatedComplaints ?? []), clean];
+  // Newest associated mini-card at the top under its parent.
+  const children = [clean, ...(parent.associatedComplaints ?? [])];
   const next = [...complaints];
   next[parentIndex] = { ...parent, associatedComplaints: children };
   return next;
@@ -243,7 +245,7 @@ export function demoteComplaintUnderParent(
   if (parentIndex < 0) return complaints;
 
   const parent = next[parentIndex]!;
-  const children = [...(parent.associatedComplaints ?? []), demoted];
+  const children = [demoted, ...(parent.associatedComplaints ?? [])];
   next[parentIndex] = { ...parent, associatedComplaints: children };
   return next;
 }

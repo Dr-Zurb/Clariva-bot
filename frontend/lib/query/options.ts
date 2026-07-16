@@ -5,6 +5,7 @@ import {
   getDoctorSettings,
   getPrescriptionsForPatient,
   getServiceStaffReviews,
+  listPatientConditions,
 } from "@/lib/api";
 import { getPatientOverview } from "@/lib/api/patients";
 import { listVitalsHistory } from "@/lib/api/patient-chart";
@@ -56,6 +57,17 @@ export function patientVitalsQueryOptions(token: string, patientId: string) {
   return {
     queryKey: queryKeys.patient(patientId).vitals(),
     queryFn: () => listVitalsHistory(token, patientId, VITALS_FETCH_LIMIT),
+    staleTime: STALE.CLINICAL,
+  } as const;
+}
+
+export function patientConditionsQueryOptions(token: string, patientId: string) {
+  return {
+    queryKey: queryKeys.patient(patientId).conditions(),
+    queryFn: async () => {
+      const res = await listPatientConditions(token, patientId);
+      return res.data.conditions ?? [];
+    },
     staleTime: STALE.CLINICAL,
   } as const;
 }

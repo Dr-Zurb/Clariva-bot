@@ -31,6 +31,7 @@ import {
   validateUpdatePatientMedicationBody,
   validateLinkConditionMedicationBody,
   validateUpdateMedicalBackgroundNotesBody,
+  validateUpdateAllergySectionNotesBody,
   validateCreatePatientVitalsBody,
   validateUpdatePatientVitalsBody,
 } from '../utils/validation';
@@ -39,6 +40,7 @@ import {
   createChronicCondition,
   createMedication,
   createVitals,
+  getAllergySectionNotes,
   getMedicalBackground,
   getProblemList,
   getResultsTimeline,
@@ -52,6 +54,7 @@ import {
   updateChronicCondition,
   updateMedication,
   upsertMedicalBackgroundNotes,
+  upsertAllergySectionNotes,
   updateVitals,
 } from '../services/patient-chart-service';
 
@@ -76,9 +79,24 @@ export const listAllergiesHandler = asyncHandler(async (req: Request, res: Respo
   const userId = requireUserId(req);
   const { patientId } = validatePatientChartParentParams(req.params);
 
-  const allergies = await listAllergies(patientId, correlationId, userId);
-  res.status(200).json(successResponse({ allergies }, req));
+  const [allergies, sectionNotes] = await Promise.all([
+    listAllergies(patientId, correlationId, userId),
+    getAllergySectionNotes(patientId, correlationId, userId),
+  ]);
+  res.status(200).json(successResponse({ allergies, sectionNotes }, req));
 });
+
+export const updateAllergySectionNotesHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const correlationId = req.correlationId || 'unknown';
+    const userId = requireUserId(req);
+    const { patientId } = validatePatientChartParentParams(req.params);
+    const body = validateUpdateAllergySectionNotesBody(req.body);
+
+    const notes = await upsertAllergySectionNotes(patientId, body, correlationId, userId);
+    res.status(200).json(successResponse({ notes }, req));
+  },
+);
 
 export const createAllergyHandler = asyncHandler(async (req: Request, res: Response) => {
   const correlationId = req.correlationId || 'unknown';

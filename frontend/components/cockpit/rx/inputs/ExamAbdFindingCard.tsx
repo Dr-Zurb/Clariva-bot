@@ -24,6 +24,7 @@ import {
   RX_FIELD_INPUT_CLASS,
 } from "@/components/cockpit/rx/sections/field-styles";
 import { Collapse } from "@/components/ui/Collapse";
+import { useDepthToneSurface } from "@/components/ui/sticky-stack";
 import { cn } from "@/lib/utils";
 
 function splitMultiValue(value: string | undefined): string[] {
@@ -197,6 +198,8 @@ export function ExamAbdFindingCard({
   const isRecorded = Boolean(entry && abdFindingEntryHasAttributes(entry));
   const detailPreview = entry && isRecorded ? abdFindingAttributesPreview(entry) : "";
   const attributes = entry?.attributes ?? {};
+  // L3 raised row + rail from exam depth context; state-driven tint layers on top.
+  const tone = useDepthToneSurface({ railMinDepth: 0 });
 
   function patchAttributes(patch: Record<string, string | null>) {
     const base = entry ?? createEmptyFindingEntry(definition.findingId);
@@ -206,12 +209,14 @@ export function ExamAbdFindingCard({
   return (
     <article
       className={cn(
-        "scroll-mt-[calc(var(--collapsible-sticky-top,2.75rem)_+_var(--exam-card-sticky-top,2.75rem))] transition-colors",
+        "scroll-mt-[var(--sticky-stack,2.75rem)] transition-colors",
+        tone.active && tone.surface,
         open
           ? "my-1 rounded-sm border border-border/70 bg-background px-1 shadow-sm"
           : isRecorded
             ? "bg-muted/10 hover:bg-muted/20"
             : "hover:bg-muted/15",
+        tone.rail,
       )}
       {...{ [EXAM_ABD_FINDING_CARD_ATTR]: definition.findingId }}
       data-testid={`abd-finding-card-${definition.findingId}`}

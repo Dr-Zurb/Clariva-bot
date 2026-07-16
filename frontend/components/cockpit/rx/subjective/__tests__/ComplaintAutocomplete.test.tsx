@@ -195,4 +195,25 @@ describe("ComplaintAutocomplete", () => {
     expect(onChange).toHaveBeenCalledWith("");
     expect(searchComplaints).not.toHaveBeenCalled();
   });
+
+  it("renders the suggestion listbox in a body portal with fixed positioning", async () => {
+    render(
+      <ComplaintAutocomplete
+        inputId="complaint-capture"
+        value="he"
+        onChange={() => {}}
+        token="test-token"
+      />,
+    );
+
+    fireEvent.focus(screen.getByRole("combobox"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("listbox")).toBeInTheDocument();
+    });
+
+    const listbox = screen.getByRole("listbox");
+    expect(listbox.parentElement).toBe(document.body);
+    expect(listbox).toHaveStyle({ position: "fixed" });
+  });
 });

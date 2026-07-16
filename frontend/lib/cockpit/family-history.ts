@@ -762,7 +762,7 @@ export function addFamilyHistorySiblingCard(
   const next = clearNoneFlag({ ...structured });
   const cards = [...getFamilyHistorySiblingCards(next)];
   if (cards.length >= MAX_FAMILY_HISTORY_SIBLING_CARDS) return next;
-  cards.push({ id: createEntryId(), entries: [] });
+  cards.unshift({ id: createEntryId(), entries: [] });
   next.siblings = cards;
   return next;
 }
@@ -889,7 +889,15 @@ export function addFamilyHistoryCatalogCondition(
   condition: FamilyHistoryCondition,
 ): FamilyHistoryStructured {
   const next = clearNoneFlag({ ...structured });
-  addCatalogCondition(next, relative, condition);
+  const relatives = legacyRelatives(next);
+  next.relatives = relatives as FamilyHistoryStructured["relatives"];
+  if (!(relative in relatives)) {
+    relatives[relative] = [];
+  }
+  relatives[relative] = addCatalogConditionToEntries(
+    normalizeRelativeEntries(relatives[relative]),
+    condition,
+  );
   return normalizeFamilyHistoryStructured(next, { keepEmptyRelativeCards: true });
 }
 
@@ -899,7 +907,15 @@ export function addFamilyHistoryOtherCondition(
   conditionOther = "",
 ): FamilyHistoryStructured {
   const next = clearNoneFlag({ ...structured });
-  addOtherCondition(next, relative, conditionOther);
+  const relatives = legacyRelatives(next);
+  next.relatives = relatives as FamilyHistoryStructured["relatives"];
+  if (!(relative in relatives)) {
+    relatives[relative] = [];
+  }
+  relatives[relative] = addOtherConditionToEntries(
+    normalizeRelativeEntries(relatives[relative]),
+    conditionOther,
+  );
   return normalizeFamilyHistoryStructured(next, { keepEmptyRelativeCards: true });
 }
 
@@ -968,7 +984,7 @@ function addCatalogConditionToEntries(
       : { ...current, notes: undefined };
     return existing;
   }
-  existing.push(
+  existing.unshift(
     trimmedNotes
       ? { id: createEntryId(), condition, notes: trimmedNotes }
       : { id: createEntryId(), condition },
@@ -996,7 +1012,7 @@ function addOtherConditionToEntries(
     );
     if (duplicate) return existing;
   }
-  existing.push({
+  existing.unshift({
     id: createEntryId(),
     condition: "other",
     ...(trimmedOther ? { conditionOther: trimmedOther } : {}),

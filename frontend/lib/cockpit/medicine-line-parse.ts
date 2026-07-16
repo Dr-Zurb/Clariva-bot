@@ -29,10 +29,12 @@ import type {
   PatientMedicationStopReason,
 } from "@/types/patient-chart";
 import {
+  composeRouteWithSite,
   formatDurationLegacyLabel,
-  getFoodTimingLabel,
   getFrequencyLegacyLabel,
   getRouteLegacyLabel,
+  resolveRouteSiteInput,
+  routeCodeSupportsSite,
 } from "@/lib/medicineCodes";
 import { resolveIntakePatternPolicy } from "@/lib/cockpit/intake-pattern-policy";
 
@@ -149,7 +151,39 @@ const FORM_ROUTE: Record<string, RouteCode> = {
   inhaler: "inhaled",
   nebuliser: "inhaled",
   suppository: "rectal",
+  // Injection defaults to IM unless a site cue implies SC (abdomen / flank).
+  injection: "IM",
 };
+
+/** Sites that imply subcutaneous when form is injection and no route was typed. */
+const SC_SITE_KEYS = new Set(["abdomen", "tummy", "flank"]);
+
+/** Sites that imply intramuscular when form is injection and no route was typed. */
+const IM_SITE_KEYS = new Set([
+  "deltoid",
+  "glute",
+  "gluteal",
+  "gluteus",
+  "thigh",
+  "ventrogluteal",
+  "dorsogluteal",
+  "vastus",
+  "buttock",
+  "buttocks",
+]);
+
+/**
+ * When the line is an injection and the doctor named a classic site without
+ * typing im/sc, infer the matching route so the site pass can consume it.
+ */
+function inferInjectionRouteFromSiteTokens(tokens: Token[]): RouteCode | null {
+  for (const t of tokens) {
+    if (t.consumed) continue;
+    if (SC_SITE_KEYS.has(t.key)) return "SC";
+    if (IM_SITE_KEYS.has(t.key)) return "IM";
+  }
+  return null;
+}
 
 const FREQUENCY_ALIASES: Record<string, FrequencyCode> = {
   od: "OD", "1x": "OD", qd: "OD", om: "OD",
@@ -290,7 +324,97 @@ const ROUTE_PHRASES: ReadonlyArray<[string[], RouteCode]> = [
   [["apply", "locally"], "topical"],
   [["external", "use"], "topical"],
   [["locally"], "topical"],
+  [["intra", "muscular"], "IM"],
+  [["intra", "venous"], "IV"],
+  [["sub", "cutaneous"], "SC"],
 ];
+
+/** Single-token route cues (clinic shorthand). */
+const ROUTE_TOKENS: Record<string, RouteCode> = {
+  im: "IM",
+  i_m: "IM",
+  "i.m": "IM",
+  "i.m.": "IM",
+  intramuscular: "IM",
+  iv: "IV",
+  i_v: "IV",
+  "i.v": "IV",
+  "i.v.": "IV",
+  intravenous: "IV",
+  sc: "SC",
+  sq: "SC",
+  subq: "SC",
+  "s.c": "SC",
+  "s.c.": "SC",
+  subcutaneous: "SC",
+  po: "oral",
+  oral: "oral",
+  peroral: "oral",
+  topical: "topical",
+  inhaled: "inhaled",
+  inhalational: "inhaled",
+  nebulised: "inhaled",
+  nebulized: "inhaled",
+  rectal: "rectal",
+  pr: "rectal",
+  nasal: "nasal",
+  intranasal: "nasal",
+  sublingual: "sublingual",
+  sl: "sublingual",
+};
+
+/**
+ * Multi-word site phrases (run before single tokens). Labels match
+ * `getRouteSiteCatalog` / `composeRouteWithSite`.
+ */
+const SITE_PHRASES: ReadonlyArray<[string[], string]> = [
+  [["vastus", "lateralis"], "Vastus lateralis"],
+  [["upper", "arm"], "Upper arm"],
+  [["left", "nostril"], "Left"],
+  [["right", "nostril"], "Right"],
+  [["both", "nostrils"], "Both"],
+  // Topical — require a preposition so "avoid face" stays in instructions.
+  [["on", "face"], "Face"],
+  [["to", "face"], "Face"],
+  [["on", "scalp"], "Scalp"],
+  [["to", "scalp"], "Scalp"],
+  [["on", "trunk"], "Trunk"],
+  [["to", "trunk"], "Trunk"],
+  [["on", "limbs"], "Limbs"],
+  [["to", "limbs"], "Limbs"],
+  [["on", "hands"], "Hands"],
+  [["to", "hands"], "Hands"],
+  [["on", "feet"], "Feet"],
+  [["to", "feet"], "Feet"],
+  [["on", "groin"], "Groin"],
+  [["to", "groin"], "Groin"],
+];
+
+/**
+ * Single-token site cues for injectable / nasal routes only.
+ * Topical body areas are phrase-only (see SITE_PHRASES) so notes like
+ * "avoid face" are not stolen as a site.
+ */
+const SITE_TOKENS: Record<string, string> = {
+  deltoid: "Deltoid",
+  glute: "Glute",
+  gluteal: "Glute",
+  gluteus: "Glute",
+  thigh: "Thigh",
+  ventrogluteal: "Ventrogluteal",
+  dorsogluteal: "Dorsogluteal",
+  vastus: "Vastus lateralis",
+  abdomen: "Abdomen",
+  tummy: "Abdomen",
+  flank: "Flank",
+  buttock: "Buttock",
+  buttocks: "Buttock",
+  hand: "Hand",
+  forearm: "Forearm",
+  antecubital: "Antecubital",
+  cubital: "Antecubital",
+  wrist: "Wrist",
+};
 
 const STRENGTH_UNITS = new Set(["mg", "mcg", "ug", "µg", "g", "gm", "iu", "%", "mg/ml", "mg/5ml"]);
 
@@ -447,17 +571,20 @@ export function parseDosePattern(key: string): { code: FrequencyCode; qty: numbe
   return { code, qty: allEqual ? nonZero[0] : null };
 }
 
-/** Scan for a multi-word phrase over unconsumed tokens; consume on match. */
-function consumePhrase(tokens: Token[], phrase: string[]): boolean {
+/**
+ * Scan for a multi-word phrase over unconsumed tokens; consume on match.
+ * Returns the start index of the match, or null.
+ */
+function consumePhrase(tokens: Token[], phrase: string[]): number | null {
   outer: for (let i = 0; i + phrase.length <= tokens.length; i++) {
     for (let j = 0; j < phrase.length; j++) {
       const t = tokens[i + j];
       if (t.consumed || t.key !== phrase[j]) continue outer;
     }
     for (let j = 0; j < phrase.length; j++) tokens[i + j].consumed = true;
-    return true;
+    return i;
   }
-  return false;
+  return null;
 }
 
 interface AgoRun {
@@ -559,17 +686,38 @@ export function parseMedicineLine(line: string): ParsedMedicineLine | null {
     first.consumed = true;
   }
 
+  // Mid-line injection form ("b12 injection gluteal") — unambiguous clinic
+  // shorthand; keep out of the drug name so AI isn't needed for this line.
+  if (!form) {
+    for (const t of tokens) {
+      if (t.consumed) continue;
+      if (t.key === "inj" || t.key === "injection") {
+        form = "injection";
+        t.consumed = true;
+        break;
+      }
+    }
+  }
+
   // -- Pass B: frequency ------------------------------------------------------
+  /** Index of the first frequency token (for bare dose qty immediately before it). */
+  let frequencyAnchorIdx: number | null = null;
   for (const [phrase, code] of FREQUENCY_PHRASES) {
     if (frequencyCode) break;
-    if (consumePhrase(tokens, phrase)) frequencyCode = code;
+    const start = consumePhrase(tokens, phrase);
+    if (start != null) {
+      frequencyCode = code;
+      frequencyAnchorIdx = start;
+    }
   }
   if (!frequencyCode) {
-    for (const t of tokens) {
+    for (let i = 0; i < tokens.length; i++) {
+      const t = tokens[i];
       if (t.consumed) continue;
       const code = FREQUENCY_ALIASES[t.key];
       if (code) {
         frequencyCode = code;
+        frequencyAnchorIdx = i;
         t.consumed = true;
         break;
       }
@@ -578,6 +726,7 @@ export function parseMedicineLine(line: string): ParsedMedicineLine | null {
         frequencyCode = pattern.code;
         doseSchedule = t.raw.replace(/[–]/g, "-");
         if (pattern.qty != null) doseQty = pattern.qty;
+        frequencyAnchorIdx = i;
         t.consumed = true;
         break;
       }
@@ -592,13 +741,13 @@ export function parseMedicineLine(line: string): ParsedMedicineLine | null {
   {
     for (const [phrase, reason] of STOP_REASON_PHRASES) {
       if (stopReason) break;
-      if (consumePhrase(tokens, phrase)) {
+      if (consumePhrase(tokens, phrase) != null) {
         stopReason = reason;
         status = "past";
       }
     }
     for (const phrase of PAST_STATUS_PHRASES) {
-      if (consumePhrase(tokens, phrase)) status = "past";
+      if (consumePhrase(tokens, phrase) != null) status = "past";
     }
     for (let i = 0; i < tokens.length; i++) {
       const t = tokens[i];
@@ -832,10 +981,24 @@ export function parseMedicineLine(line: string): ParsedMedicineLine | null {
     }
   }
 
+  // -- Pass E2: bare dose qty immediately before frequency ("… 5mg 1 od") ----
+  // Doctors often omit the unit. Only claim when strength or form is already
+  // known so "amlodipine 5 od" keeps 5 as strength, not dose.
+  if (doseQty == null && frequencyAnchorIdx != null && frequencyAnchorIdx > 0) {
+    const before = tokens[frequencyAnchorIdx - 1];
+    if (before && !before.consumed) {
+      const n = parseNumeric(before.key);
+      if (n != null && n > 0 && (dosage || form)) {
+        doseQty = n;
+        before.consumed = true;
+      }
+    }
+  }
+
   // -- Pass F: food / timing --------------------------------------------------
   for (const [phrase, code] of FOOD_TIMING_PHRASES) {
     if (foodTiming) break;
-    if (consumePhrase(tokens, phrase)) foodTiming = code;
+    if (consumePhrase(tokens, phrase) != null) foodTiming = code;
   }
   if (!foodTiming) {
     for (const t of tokens) {
@@ -852,16 +1015,53 @@ export function parseMedicineLine(line: string): ParsedMedicineLine | null {
   // -- Pass G: route ----------------------------------------------------------
   for (const [phrase, code] of ROUTE_PHRASES) {
     if (routeCode) break;
-    if (consumePhrase(tokens, phrase)) routeCode = code;
+    if (consumePhrase(tokens, phrase) != null) routeCode = code;
   }
-  if (!routeCode && form && FORM_ROUTE[form]) {
+  if (!routeCode) {
+    for (const t of tokens) {
+      if (t.consumed) continue;
+      const code = ROUTE_TOKENS[t.key];
+      if (code) {
+        routeCode = code;
+        t.consumed = true;
+        break;
+      }
+    }
+  }
+  // Injection + site without im/sc: gluteal/deltoid → IM, abdomen → SC.
+  if (!routeCode && form === "injection") {
+    routeCode = inferInjectionRouteFromSiteTokens(tokens) ?? FORM_ROUTE.injection;
+  } else if (!routeCode && form && FORM_ROUTE[form]) {
     routeCode = FORM_ROUTE[form];
+  }
+
+  // -- Pass G1: body / application site (only when route supports it) --------
+  let routeSite: string | null = null;
+  if (routeCodeSupportsSite(routeCode)) {
+    for (const [phrase, label] of SITE_PHRASES) {
+      if (routeSite) break;
+      if (consumePhrase(tokens, phrase) != null) routeSite = label;
+    }
+    // Bare site tokens only for injectable / nasal — topical uses phrases above.
+    if (!routeSite && routeCode !== "topical") {
+      for (const t of tokens) {
+        if (t.consumed) continue;
+        const label = SITE_TOKENS[t.key];
+        if (label) {
+          routeSite = resolveRouteSiteInput(routeCode!, label) ?? label;
+          t.consumed = true;
+          break;
+        }
+      }
+    } else if (routeSite && routeCode) {
+      routeSite = resolveRouteSiteInput(routeCode, routeSite) ?? routeSite;
+    }
   }
 
   // -- Pass G2: medication source ("self-started", "prescribed", "OTC") ------
   for (const [phrase, code] of SOURCE_PHRASES) {
     if (source) break;
-    if (consumePhrase(tokens, phrase)) source = code;
+    if (consumePhrase(tokens, phrase) != null) source = code;
   }
   if (!source) {
     for (const t of tokens) {
@@ -878,7 +1078,7 @@ export function parseMedicineLine(line: string): ParsedMedicineLine | null {
   // -- Pass G3: intake pattern ("regularly", "irregular", "off and on") ------
   for (const [phrase, code] of INTAKE_PATTERN_PHRASES) {
     if (intakePattern) break;
-    if (consumePhrase(tokens, phrase)) intakePattern = code;
+    if (consumePhrase(tokens, phrase) != null) intakePattern = code;
   }
   if (!intakePattern) {
     for (const t of tokens) {
@@ -925,12 +1125,21 @@ export function parseMedicineLine(line: string): ParsedMedicineLine | null {
   if (!medicineName) return null;
 
   // Default the dose unit from the form when a qty was found without one.
-  if (doseQty != null && !doseUnit && form && FORM_DOSE_UNIT[form]) {
-    doseUnit = FORM_DOSE_UNIT[form];
+  // Bare qty shorthand ("… 1 od") defaults to tab / tablet when form unknown.
+  if (doseQty != null && !doseUnit) {
+    if (form && FORM_DOSE_UNIT[form]) {
+      doseUnit = FORM_DOSE_UNIT[form];
+    } else {
+      doseUnit = "tab";
+      if (!form) form = "tablet";
+    }
   }
   // Infer form from per-dose unit when no explicit form prefix ("2 tab" → tablet).
   if (!form && doseUnit && DOSE_UNIT_TO_FORM[doseUnit]) {
     form = DOSE_UNIT_TO_FORM[doseUnit];
+  }
+  if (!routeCode && form && FORM_ROUTE[form]) {
+    routeCode = FORM_ROUTE[form];
   }
 
   return {
@@ -946,7 +1155,11 @@ export function parseMedicineLine(line: string): ParsedMedicineLine | null {
     duration: durationUnit ? formatDurationLegacyLabel(durationValue, durationUnit) : "",
     foodTiming,
     routeCode,
-    route: routeCode ? getRouteLegacyLabel(routeCode) : "",
+    route: routeCode
+      ? routeCodeSupportsSite(routeCode)
+        ? composeRouteWithSite(routeCode, routeSite)
+        : getRouteLegacyLabel(routeCode)
+      : "",
     instructions: leftoverTokens.join(" ").trim(),
     doseSchedule,
     intakePattern,
@@ -975,6 +1188,7 @@ export function lineHasSigDetails(line: string): boolean {
       parsed.doseSchedule ||
       parsed.durationUnit ||
       parsed.foodTiming ||
+      parsed.routeCode ||
       parsed.form ||
       parsed.intakePattern ||
       parsed.source ||

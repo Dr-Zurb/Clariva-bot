@@ -76,7 +76,7 @@ describe("SubjectiveSection reorder (subj-25)", () => {
     expect(getSectionReorderGrip("Past surgical history")).toBeInTheDocument();
     expect(getSectionReorderGrip("Family history")).toBeInTheDocument();
     expect(getSectionReorderGrip("Social / personal history")).toBeInTheDocument();
-    expect(getSectionReorderGrip("Free-text notes")).toBeInTheDocument();
+    expect(getSectionReorderGrip("Additional Notes")).toBeInTheDocument();
   });
 
   it("renders one grip per custom block that reorders among subjective peers", async () => {
@@ -147,9 +147,8 @@ describe("SubjectiveSection reorder (subj-25)", () => {
   it("does not put reorder grips on the fixed toolbar", () => {
     renderWithRxForm(<SubjectiveSection />);
 
-    const toolbar = screen
-      .getByTestId("subjective-template-trigger")
-      .closest(".flex.flex-wrap.items-center.justify-end");
+    const trigger = screen.getByTestId("subjective-template-trigger");
+    const toolbar = trigger.closest("[class*='flex']");
     expect(toolbar).toBeTruthy();
     expect(within(toolbar!).queryByTestId("subjective-section-drag-handle")).not.toBeInTheDocument();
   });

@@ -19,6 +19,27 @@ const DEFAULT_OPENAI_MODEL = 'gpt-5.2';
 const DEFAULT_OPENAI_MAX_TOKENS = 256;
 
 /**
+ * asmt-07: Tier-1 default for the diagnosis ICD-11 resolver — bounded JSON
+ * term normalization; mini is sufficient because output is catalog-constrained
+ * + suggestion-only (the server re-resolves every term against the catalog).
+ */
+const DEFAULT_OPENAI_DIAGNOSIS_RESOLVE_MODEL = 'gpt-4o-mini';
+
+/** asmt-07: Room for a handful of short candidate terms + envelope overhead. */
+const DEFAULT_OPENAI_DIAGNOSIS_RESOLVE_MAX_TOKENS = 400;
+
+/**
+ * inv-lib-04: Tier-1 default for the investigation order resolver — bounded JSON
+ * term normalization. Mini is sufficient because the model only NORMALIZES text
+ * into order terms; the frontend static catalog re-resolves every term (the model
+ * can never inject an order the catalog does not know).
+ */
+const DEFAULT_OPENAI_INVESTIGATION_RESOLVE_MODEL = 'gpt-4o-mini';
+
+/** inv-lib-04: Room for a handful of short candidate order terms + envelope overhead. */
+const DEFAULT_OPENAI_INVESTIGATION_RESOLVE_MAX_TOKENS = 400;
+
+/**
  * subj-14: Tier-1 default for complaint free-text parse — bounded JSON
  * slot-fill; mini is sufficient because output is schema-bounded + suggestion-only.
  */
@@ -164,6 +185,91 @@ export function getOpenAIMedicineParseConfig(
     model,
     maxTokens:
       env.OPENAI_MEDICINE_PARSE_MAX_TOKENS ?? DEFAULT_OPENAI_MEDICINE_PARSE_MAX_TOKENS,
+    tier,
+  };
+}
+
+/** Which diagnosis-resolver model tier to use (asmt-07 ICD-11 resolver). */
+export type DiagnosisResolveModelTier = 'default' | 'escalation';
+
+/**
+ * OpenAI config for the diagnosis ICD-11 resolver (asmt-07). Separate from
+ * {@link getOpenAIConfig} so this small JSON task does not inherit the flagship
+ * `OPENAI_MODEL` default.
+ */
+export interface DiagnosisResolveOpenAIConfig {
+  /** Model identifier (for API calls and audit). */
+  model: string;
+  /** Max completion tokens for the resolve response. */
+  maxTokens: number;
+  /** Tier that resolved `model` (for audit / telemetry). */
+  tier: DiagnosisResolveModelTier;
+}
+
+/**
+ * Returns diagnosis-resolver model config for the given tier.
+ *
+ * - **default** (Tier 1): auto-gated fallback — `OPENAI_DIAGNOSIS_RESOLVE_MODEL`
+ *   or `gpt-4o-mini`. Cheap catalog-constrained term normalization.
+ * - **escalation** (Tier 2): explicit "✨" refine / Tier-1 empty —
+ *   `OPENAI_DIAGNOSIS_RESOLVE_ESCALATION_MODEL` or flagship `OPENAI_MODEL`.
+ */
+export function getOpenAIDiagnosisResolveConfig(
+  tier: DiagnosisResolveModelTier = 'default',
+): DiagnosisResolveOpenAIConfig {
+  const flagship = env.OPENAI_MODEL ?? DEFAULT_OPENAI_MODEL;
+  const model =
+    tier === 'escalation'
+      ? (env.OPENAI_DIAGNOSIS_RESOLVE_ESCALATION_MODEL ?? flagship)
+      : (env.OPENAI_DIAGNOSIS_RESOLVE_MODEL ?? DEFAULT_OPENAI_DIAGNOSIS_RESOLVE_MODEL);
+
+  return {
+    model,
+    maxTokens:
+      env.OPENAI_DIAGNOSIS_RESOLVE_MAX_TOKENS ?? DEFAULT_OPENAI_DIAGNOSIS_RESOLVE_MAX_TOKENS,
+    tier,
+  };
+}
+
+export type InvestigationResolveModelTier = 'default' | 'escalation';
+
+/**
+ * OpenAI config for the investigation order resolver (inv-lib-04). Separate from
+ * {@link getOpenAIConfig} so this small JSON task does not inherit the flagship
+ * `OPENAI_MODEL` default.
+ */
+export interface InvestigationResolveOpenAIConfig {
+  /** Model identifier (for API calls and audit). */
+  model: string;
+  /** Max completion tokens for the resolve response. */
+  maxTokens: number;
+  /** Tier that resolved `model` (for audit / telemetry). */
+  tier: InvestigationResolveModelTier;
+}
+
+/**
+ * Returns investigation-resolver model config for the given tier.
+ *
+ * - **default** (Tier 1): auto-gated fallback — `OPENAI_INVESTIGATION_RESOLVE_MODEL`
+ *   or `gpt-4o-mini`. Cheap catalog-constrained order-term normalization.
+ * - **escalation** (Tier 2): explicit "✨" refine / Tier-1 empty —
+ *   `OPENAI_INVESTIGATION_RESOLVE_ESCALATION_MODEL` or flagship `OPENAI_MODEL`.
+ */
+export function getOpenAIInvestigationResolveConfig(
+  tier: InvestigationResolveModelTier = 'default',
+): InvestigationResolveOpenAIConfig {
+  const flagship = env.OPENAI_MODEL ?? DEFAULT_OPENAI_MODEL;
+  const model =
+    tier === 'escalation'
+      ? (env.OPENAI_INVESTIGATION_RESOLVE_ESCALATION_MODEL ?? flagship)
+      : (env.OPENAI_INVESTIGATION_RESOLVE_MODEL ??
+        DEFAULT_OPENAI_INVESTIGATION_RESOLVE_MODEL);
+
+  return {
+    model,
+    maxTokens:
+      env.OPENAI_INVESTIGATION_RESOLVE_MAX_TOKENS ??
+      DEFAULT_OPENAI_INVESTIGATION_RESOLVE_MAX_TOKENS,
     tier,
   };
 }

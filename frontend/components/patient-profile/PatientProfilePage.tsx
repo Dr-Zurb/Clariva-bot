@@ -10,8 +10,8 @@ import {
 import {
   postAppointmentWrapUp,
   postDoctorMarkNoShow,
-  getDoctorSettings,
 } from "@/lib/api";
+import { getDoctorSettingsShared } from "@/lib/api/doctor-settings-shared";
 import type { Appointment, ConsultationModality } from "@/types/appointment";
 import CockpitHeader from "@/components/patient-profile/PatientProfileHeader";
 import { PatientRibbon } from "@/components/patient-profile/PatientRibbon";
@@ -365,12 +365,10 @@ export default function PatientProfilePage({
     </div>
   );
 
-  // `<RxFormProvider>` is mounted unconditionally — during the brief draft-load
-  // window it holds empty fields with autosave disabled, then re-mounts (via
-  // the `key` flip from "…-loading" → "…-ready" in useRxFormProviderSetup) once
-  // the draft resolves. This is what lets sibling panes that call `useRxForm()`
-  // (PatientRibbon Dx mirror, AssessmentStrip, etc.) render safely on every
-  // path — there is no longer an early-return that bypasses the provider.
+  // `<RxFormProvider>` mounts on first paint with empty fields (autosave off).
+  // When the draft resolves, `initialFields` soft-`RESET`s the form — `key`
+  // stays on `appointmentId` so PatientRibbon is not remounted (avoids a second
+  // ribbon skeleton / chart refetch on every load).
   const { key: rxProviderKey, ...rxProviderProps } = rxFormSetup.providerProps;
   return (
     <RxFormProvider key={rxProviderKey} {...rxProviderProps}>
@@ -398,7 +396,7 @@ function useDoctorCockpitTemplateOverride(
 
   useEffect(() => {
     let cancelled = false;
-    getDoctorSettings(token)
+    void getDoctorSettingsShared(token)
       .then((res) => {
         if (!cancelled) {
           setOverride(res.data.settings.cockpit_template_override ?? null);

@@ -20,6 +20,122 @@ export type FollowUpUnit = 'days' | 'weeks' | 'months' | 'as_needed';
 /** BP measurement posture (objective-tab Vitals 2.0 / migration 151). */
 export type VitalsBpPosture = 'sitting' | 'standing' | 'supine';
 
+/**
+ * Visit-level clinical trajectory (assessment-tab / migration 160). Kept in
+ * lockstep with the `prescriptions_assessment_acuity_chk` CHECK constraint —
+ * change both sides together.
+ */
+export type AssessmentAcuity = 'improving' | 'stable' | 'worsening';
+
+/** Diagnosis role within a visit (assessment-tab / migration 161; asmt-05 adds differential). */
+export type DiagnosisKind = 'primary' | 'secondary' | 'differential';
+
+/**
+ * Clinical certainty for a structured diagnosis row (migration 161).
+ * Role-gated in the UI:
+ * - committed (primary/secondary): `confirmed` | `provisional` (labelled Provisional/Working)
+ * - differential: `provisional` (Considering) | `excluded` (Ruled out)
+ * `rule_out` is deprecated — tolerated on ingest, mapped to `provisional`.
+ */
+export type DiagnosisCertainty =
+  | 'provisional'
+  | 'rule_out'
+  | 'confirmed'
+  | 'excluded';
+
+/** Visit-relative status for a structured diagnosis row (migration 161). */
+export type DiagnosisStatus = 'new' | 'ongoing' | 'resolved';
+
+/**
+ * One structured diagnosis row stored in `prescriptions.diagnoses_json`
+ * (assessment-tab / migration 161). `provisional_diagnosis` TEXT is derived
+ * from the primary label on save (ASMT-D4).
+ */
+export interface DiagnosisRow {
+  id: string;
+  label: string;
+  kind: DiagnosisKind;
+  certainty: DiagnosisCertainty;
+  status: DiagnosisStatus;
+  note?: string | null;
+  /**
+   * Per-diagnosis clinical trajectory (improving / stable / worsening).
+   * Replaces the dormant visit-level `assessment_acuity` column for new edits.
+   * Differentials typically leave this null.
+   */
+  acuity?: AssessmentAcuity | null;
+  /**
+   * Optional link to `patient_chronic_conditions.id` (asmt-04, dormant writer).
+   * Kept so older saved rows still hydrate; Assessment no longer creates or
+   * edits this link. Null = unlinked.
+   */
+  conditionId?: string | null;
+  /**
+   * assessment-tab / asmt-06 — optional ICD-11 (MMS) code from
+   * `diagnosis_catalog` when the row was resolved via the catalog autocomplete.
+   * Additive metadata: coding is OPTIONAL (uncoded rows still save, ASMT-D3)
+   * and NEVER alters the derived provisional/differential TEXT (ASMT-D4/D4').
+   * `label` stays the doctor-facing text and may differ from `codeTitle`.
+   */
+  code?: string | null;
+  /** Canonical ICD-11 title for `code` (asmt-06); null when uncoded. */
+  codeTitle?: string | null;
+}
+
+/**
+ * Order kind for a structured investigation order (plan-investigations-library /
+ * migration 167). `panel|analyte|imaging` are catalog-backed (the frontend static
+ * lab library owns them); `custom` is free-typed text with no catalog entry.
+ */
+export type InvestigationOrderKind = 'panel' | 'analyte' | 'imaging' | 'custom';
+
+/** Contrast preference for CT/MRI / contrast studies (requisition). */
+export type InvestigationImagingContrast = 'plain' | 'contrast' | 'both';
+
+/** Urgency for imaging requisition. */
+export type InvestigationImagingUrgency = 'routine' | 'urgent';
+
+/**
+ * Light requisition details for CT/MRI / Doppler. Encoded into flat
+ * `investigations_orders` TEXT on the client (INV-D8); also accepted on
+ * `investigations_orders_json` as additive metadata.
+ */
+export interface InvestigationImagingRequisition {
+  contrast?: InvestigationImagingContrast | null;
+  site?: string | null;
+  indication?: string | null;
+  urgency?: InvestigationImagingUrgency | null;
+}
+
+/**
+ * One structured investigation order stored in
+ * `prescriptions.investigations_orders_json` (migration 167 / inv-lib-05). The
+ * legacy `investigations_orders` TEXT column is derived on save (INV-D8 / INV-D11).
+ * Panels and viewable imaging (X-rays) are named baskets: editable `label` +
+ * optional `members` (analytes or views). `sourcePanelId` holds the catalog
+ * template id for either kind.
+ */
+export interface InvestigationOrderMember {
+  id: string;
+  label: string;
+  kind: InvestigationOrderKind;
+}
+
+export interface InvestigationOrder {
+  /** Catalog entry id (panel/analyte/imaging id) or a stable synthetic id for custom. */
+  id: string;
+  /** Doctor-facing title / label; for baskets this is the editable name. */
+  label: string;
+  /** Catalog-backed kind, or `custom` for free text. */
+  kind: InvestigationOrderKind;
+  /** Catalog template id this basket was seeded from (panel or imaging id). */
+  sourcePanelId?: string | null;
+  /** Basket members when expandable (`panel` or viewable `imaging`). */
+  members?: InvestigationOrderMember[] | null;
+  /** CT/MRI-style requisition fields (optional). */
+  requisition?: InvestigationImagingRequisition | null;
+}
+
 /** BP measurement limb (objective-tab Vitals 2.0 / migration 151). */
 export type VitalsBpLimb = 'left_arm' | 'right_arm' | 'left_leg' | 'right_leg';
 
@@ -314,6 +430,44 @@ export interface TestResultRow {
   date?: string | null;
   interpretation?: TestResultInterpretation | null;
   notes?: string | null;
+  /**
+   * objective-reports / migration 159 — links this row to a `LabReport.id`
+   * header. Absent or referencing an unknown header = ungrouped ("Other
+   * results"). Optional → existing rows stay valid.
+   */
+  reportId?: string | null;
+  /** Reference-range low bound for high/low flagging (migration 159). */
+  refLow?: number | null;
+  /** Reference-range high bound for high/low flagging (migration 159). */
+  refHigh?: number | null;
+  /** Non-numeric reference range, e.g. "Negative"/"<200" (migration 159). */
+  refText?: string | null;
+}
+
+/** Report kind for a grouped lab/imaging panel (objective-reports / migration 159). */
+export type LabReportKind = 'lab' | 'imaging';
+
+/** How a lab report header was created (objective-reports / migration 159). */
+export type LabReportEntryMethod = 'manual' | 'extracted';
+
+/**
+ * A lab / imaging report header that GROUPS structured `TestResultRow`s into a
+ * verifiable panel, stored in `prescriptions.lab_reports_json` JSONB (migration
+ * 159). Rows link via `TestResultRow.reportId`; an unknown/absent reportId
+ * collapses to ungrouped ("Other results"). `entryMethod` distinguishes manual
+ * entry from extracted-then-verified (rpt-05). Report headers / ranges do NOT
+ * leak into the derived `test_results` TEXT — OBJ-D2 stays byte-identical.
+ */
+export interface LabReport {
+  id: string;
+  kind: LabReportKind;
+  title: string;
+  reportDate?: string | null;
+  labName?: string | null;
+  attachmentIds: string[];
+  /** Imaging narrative / impression (imaging reports). */
+  findings?: string | null;
+  entryMethod: LabReportEntryMethod;
 }
 
 /** Leaf custom sub-subsection — cannot nest further (subj-19 / migration 144). */
@@ -522,6 +676,7 @@ export interface TobaccoProductRow {
   phase?: 'current' | 'past' | null;
   quitYearsAgo?: number | null;
   quitYearsUnit?: 'years' | 'months' | 'days' | null;
+  note?: string | null;
 }
 
 export interface AlcoholDrinkRow {
@@ -540,27 +695,30 @@ export interface AlcoholDrinkRow {
   quitYearsUnit?: 'years' | 'months' | 'days' | null;
   /** Optional ABV override (0–100 %). */
   abv?: number | null;
+  note?: string | null;
 }
 
 export interface SocialHistoryStructured {
   smoking?: {
-    status: SocialHistorySmokingStatus;
+    status?: SocialHistorySmokingStatus | null;
     products: TobaccoProductRow[];
     years?: number | null;
     yearsUnit?: 'years' | 'months' | 'days' | null;
     quitYearsAgo?: number | null;
     quitYearsUnit?: 'years' | 'months' | 'days' | null;
+    notes?: string | null;
   } | null;
   smokeless?: {
-    status: SocialHistorySmokingStatus;
+    status?: SocialHistorySmokingStatus | null;
     products: TobaccoProductRow[];
     years?: number | null;
     yearsUnit?: 'years' | 'months' | 'days' | null;
     quitYearsAgo?: number | null;
     quitYearsUnit?: 'years' | 'months' | 'days' | null;
+    notes?: string | null;
   } | null;
   alcohol?: {
-    status: SocialHistorySmokingStatus;
+    status?: SocialHistorySmokingStatus | null;
     drinks: AlcoholDrinkRow[];
     /** @deprecated Use drink row frequency; stripped on normalize. */
     pattern?: 'occasional' | 'weekend' | 'daily' | 'binge' | null;
@@ -598,6 +756,7 @@ export interface SocialHistoryStructured {
     unitsPerWeek?: number | null;
     quitYearsAgo?: number | null;
     quitYearsUnit?: 'years' | 'months' | 'days' | null;
+    notes?: string | null;
   } | null;
   notes?: string | null;
   /** Phase 2 — substances / lifestyle / context / wellbeing (sh-05). */
@@ -618,6 +777,7 @@ export interface SocialHistoryStructured {
       years?: number | null;
       yearsUnit?: 'years' | 'months' | 'days' | null;
       phase?: 'current' | 'past' | null;
+      note?: string | null;
     }>;
     notes?: string | null;
     /** @deprecated Legacy flat shape. */
@@ -760,12 +920,32 @@ export interface Prescription {
   hopi: string | null;
   provisional_diagnosis: string | null;
   /**
+   * assessment-tab / migration 160 — free-text clinical-impression note and
+   * visit-level trajectory. Both NULLABLE. Clinician-only (ASMT-D5): neither is
+   * rendered on the patient PDF/SMS/notification (the `clinical_notes` privacy
+   * precedent).
+   */
+  assessment_note: string | null;
+  assessment_acuity: AssessmentAcuity | null;
+  /**
+   * assessment-tab / migration 161 — structured diagnosis rows. Primary label
+   * derives into `provisional_diagnosis` on save (ASMT-D4). Empty array =
+   * legacy free-text passthrough.
+   */
+  diagnoses_json: DiagnosisRow[];
+  /**
    * Investigations / tests the doctor has ORDERED (e.g. "CBC, LFT").
    * Renamed from `investigations` in migration 103 (cockpit-v2). Distinct
    * from `test_results`, which carries the doctor's interpretation of
    * returned results.
    */
   investigations_orders: string | null;
+  /**
+   * Structured investigation orders (migration 167 / inv-lib-05). Empty array =
+   * legacy free-text passthrough; `investigations_orders` TEXT is derived from
+   * the order labels on save (INV-D8) so output readers stay byte-identical.
+   */
+  investigations_orders_json: InvestigationOrder[];
   /**
    * Legacy free-text follow-up. STAYS for the cockpit-v2 deprecation
    * window — the new structured form populates it on send as the
@@ -829,6 +1009,11 @@ export interface Prescription {
   // test results. `test_results` is derived from this on save (OBJ-D2).
   test_results_json: TestResultRow[];
 
+  // objective-reports / migration 159 — lab/imaging report headers grouping
+  // test-result rows into verifiable panels (PHI). Additive; does NOT alter the
+  // derived `test_results` TEXT (OBJ-D2 byte-identical).
+  lab_reports_json: LabReport[];
+
   // subjective-tab / migration 116 — structured complaints + owned histories.
   complaints: PrescriptionComplaint[];
   family_history: string | null;
@@ -841,6 +1026,10 @@ export interface Prescription {
   past_surgical_history_structured: PastSurgicalHistoryStructured | null;
   /** custom subsections / migration 144 — JSONB source; derived TEXT mirror on save. */
   custom_subsections: CustomSubsection[];
+  /** assessment-plan-custom-sections / migration 177 — custom Assessment sections (depth-2). */
+  assessment_custom_sections: CustomSubsection[];
+  /** assessment-plan-custom-sections / migration 177 — custom Plan sections (depth-2). */
+  plan_custom_sections: CustomSubsection[];
 }
 
 /**
@@ -1055,6 +1244,15 @@ export interface StructuredSoapInput {
   // Assessment — DDx
   differentialDiagnosis?: string[] | null;
 
+  // assessment-tab / migration 160 — clinical-impression note + visit acuity.
+  // Both optional/nullable; clinician-only (ASMT-D5).
+  assessmentNote?: string | null;
+  assessmentAcuity?: AssessmentAcuity | null;
+
+  // assessment-tab / migration 161 — structured diagnoses. Primary label
+  // derives into provisionalDiagnosis on save (ASMT-D4).
+  diagnosesJson?: DiagnosisRow[];
+
   // Plan — advice / structured follow-up / referral / test results
   advice?: string | null;
   followUpValue?: number | null;
@@ -1064,6 +1262,10 @@ export interface StructuredSoapInput {
   // objective-tab / migration 154 — structured test results. `testResults`
   // TEXT is derived from this on save (OBJ-D2).
   testResultsJson?: TestResultRow[];
+
+  // assessment-plan-custom-sections / migration 177 — depth-2 custom section trees.
+  assessmentCustomSections?: CustomSubsection[];
+  planCustomSections?: CustomSubsection[];
 }
 
 /** Input for creating a prescription (camelCase from API) */
@@ -1083,9 +1285,16 @@ export interface CreatePrescriptionInput extends StructuredSoapInput, Subjective
    */
   investigations?: string | null;
   /**
-   * Legacy free-text follow-up. STAYS for backwards-compat; new clients
-   * should populate `followUpValue` + `followUpUnit` instead. Phase 3
-   * drops both this field and the underlying column.
+   * Structured investigation orders (migration 167 / inv-lib-05). Empty/omitted =
+   * passthrough; `investigations` (flat string) is still authoritative for output
+   * (INV-D8). Malformed rows are dropped by the tolerant validator.
+   */
+  investigationsOrdersJson?: InvestigationOrder[];
+  /**
+   * Follow-up notes (extra on Rx). Interval lives in `followUpValue` +
+   * `followUpUnit`; patient-facing output merges both at read time.
+   * Legacy rows may still hold a full free-text / output echo — hydrate
+   * strips echoes when structured fields are present.
    */
   followUp?: string | null;
   patientEducation?: string | null;
@@ -1100,6 +1309,8 @@ export interface UpdatePrescriptionInput extends StructuredSoapInput, Subjective
   provisionalDiagnosis?: string | null;
   /** See `CreatePrescriptionInput.investigations` — same deprecation note. */
   investigations?: string | null;
+  /** See `CreatePrescriptionInput.investigationsOrdersJson` (migration 167 / inv-lib-05). */
+  investigationsOrdersJson?: InvestigationOrder[];
   /** See `CreatePrescriptionInput.followUp` — same deprecation note. */
   followUp?: string | null;
   patientEducation?: string | null;

@@ -26,6 +26,7 @@ import PaneHeader from "@/components/patient-profile/PaneHeader";
  */
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import { InvestigationsChipRow } from "@/components/cockpit/rx/inputs/InvestigationsChipRow";
+import { InvestigationsSectionTemplateButton } from "@/components/cockpit/rx/inputs/InvestigationsSectionTemplateButton";
 import { parseInvestigationsOrders } from "@/components/cockpit/rx/inputs/investigations-orders-format";
 import { canEditPrescriptionDraft, type CockpitState } from "@/lib/patient-profile/state";
 import { trackCockpitV2RMiddleInvLanded } from "@/lib/patient-profile/telemetry";
@@ -43,7 +44,7 @@ export default function InvestigationsPane({
   appointmentId,
   hideHeader = false,
 }: InvestigationsPaneProps): JSX.Element {
-  const { state: rxFormState, setField } = useRxForm();
+  const { state: rxFormState, setField, token } = useRxForm();
   const value = rxFormState.fields.investigationsOrders;
   const isEditable = canEditPrescriptionDraft(state);
   const [editorRevealed, setEditorRevealed] = useState(false);
@@ -63,7 +64,7 @@ export default function InvestigationsPane({
   useEffect(() => {
     if (!editorRevealed) return;
     const input = document.querySelector<HTMLInputElement>(
-      '#rx-investigations input[aria-label="Investigation name"]',
+      '#rx-investigations [data-testid="investigations-combobox"]',
     );
     input?.focus();
     input?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -81,7 +82,13 @@ export default function InvestigationsPane({
   }, []);
 
   const header = hideHeader ? null : (
-    <PaneHeader title="Investigations" titleId="cockpit-investigations-title" />
+    <PaneHeader
+      title="Investigations"
+      titleId="cockpit-investigations-title"
+      actions={
+        isEditable ? <InvestigationsSectionTemplateButton disabled={!isEditable} /> : undefined
+      }
+    />
   );
 
   if (showEmptyState) {
@@ -114,6 +121,7 @@ export default function InvestigationsPane({
           onChange={(next) => setField("investigationsOrders", next)}
           disabled={!isEditable}
           hideLabel={hideHeader}
+          token={token}
         />
       </div>
     </div>

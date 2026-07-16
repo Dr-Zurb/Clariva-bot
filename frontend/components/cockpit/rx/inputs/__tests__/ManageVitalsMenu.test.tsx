@@ -558,16 +558,18 @@ describe("VitalsGrid · manage vitals menu (vit-08)", () => {
     renderWithProvider();
     await waitForVitalsSettingsLoaded();
 
-    expect(screen.getByTestId("vitals-manager-trigger")).toHaveTextContent(
-      `${menuHiddenCount} hidden`,
+    expect(screen.getByTestId("vitals-manager-trigger")).toHaveAttribute(
+      "aria-label",
+      `Manage vitals · ${menuHiddenCount} hidden`,
     );
 
     fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
     fireEvent.click(await screen.findByRole("button", { name: "Hide Pulse Rate (PR)" }));
 
     await waitFor(() => {
-      expect(screen.getByTestId("vitals-manager-trigger")).toHaveTextContent(
-        `${menuHiddenCount + 1} hidden`,
+      expect(screen.getByTestId("vitals-manager-trigger")).toHaveAttribute(
+        "aria-label",
+        `Manage vitals · ${menuHiddenCount + 1} hidden`,
       );
     });
   });

@@ -151,6 +151,11 @@ describe("CustomSubsectionsField (subj-20)", () => {
     expect(screen.getByText("Untitled section")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Remove Travel history" }));
+    const dialog = await screen.findByTestId("delete-custom-section-dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /^Remove section$/i }));
+    await waitFor(() => {
+      expect(screen.queryByTestId("delete-custom-section-dialog")).not.toBeInTheDocument();
+    });
     expect(screen.queryByText("Travel history")).not.toBeInTheDocument();
     expect(screen.getByText("Untitled section")).toBeInTheDocument();
   });

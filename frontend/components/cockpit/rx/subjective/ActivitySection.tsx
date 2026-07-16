@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/tooltip";
 import { RX_FIELD_INPUT_CLASS } from "@/components/cockpit/rx/sections/field-styles";
 import { RemoveIconButton } from "@/components/cockpit/rx/subjective/RemoveIconButton";
+import { useDepthToneSurface } from "@/components/ui/sticky-stack";
 import { cn } from "@/lib/utils";
 import {
   ACTIVITY_LEVEL_OPTIONS,
@@ -40,6 +41,7 @@ interface ActivitySectionProps {
   value: SocialHistoryStructured;
   disabled?: boolean;
   inputIdPrefix: string;
+  hideLabel?: boolean;
   onChange: (next: SocialHistoryStructured) => void;
 }
 
@@ -143,7 +145,13 @@ function ActivityItemRow({
   );
 }
 
-export function ActivitySection({ value, disabled, inputIdPrefix, onChange }: ActivitySectionProps) {
+export function ActivitySection({
+  value,
+  disabled,
+  inputIdPrefix,
+  hideLabel = false,
+  onChange,
+}: ActivitySectionProps) {
   const activity = useMemo(() => normalizeActivitySection(value.activity), [value.activity]);
   const level = activity?.level;
   const items = activity?.items ?? [];
@@ -151,6 +159,7 @@ export function ActivitySection({ value, disabled, inputIdPrefix, onChange }: Ac
   const showExerciseDetails = levelShowsExerciseDetails(level);
   const hints = activityClinicalHints({ activity: activity ?? undefined });
   const inBreakdownMode = items.length > 0;
+  const tone = useDepthToneSurface();
 
   const baseSection = (): ActivitySectionInput => ({
     ...(activity ?? {}),
@@ -212,7 +221,7 @@ export function ActivitySection({ value, disabled, inputIdPrefix, onChange }: Ac
     }
     updateSection({
       ...baseSection(),
-      items: [...items, createActivityItem(type, seed)],
+      items: [createActivityItem(type, seed), ...items],
       daysPerWeek: undefined,
       minutesPerSession: undefined,
       types: undefined,
@@ -247,7 +256,9 @@ export function ActivitySection({ value, disabled, inputIdPrefix, onChange }: Ac
 
   return (
     <section className="space-y-2" aria-label="Physical activity">
-      <p className="text-xs font-medium text-foreground/80">Physical activity</p>
+      {!hideLabel ? (
+        <p className="text-xs font-medium text-foreground/80">Physical activity</p>
+      ) : null}
 
       <div className="space-y-3 rounded-md border border-border/50 bg-background/60 px-2.5 py-2.5">
       <div className="space-y-1" data-testid="social-activity-work">
@@ -400,7 +411,10 @@ export function ActivitySection({ value, disabled, inputIdPrefix, onChange }: Ac
 
           {items.length > 0 && (
             <div
-              className="space-y-1 border-l-2 border-primary/20 pl-2"
+              className={cn(
+                "space-y-1 pl-2",
+                tone.active ? "border-l border-border/40" : "border-l-2 border-primary/20",
+              )}
               data-testid="social-activity-items"
             >
               {items.map((item, index) => (

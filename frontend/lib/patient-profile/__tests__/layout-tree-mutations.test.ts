@@ -31,6 +31,7 @@ import {
   moveLeafBetweenTabs,
   setActiveTab,
   dropPaneIntoZone,
+  moveSiblingIntoGutter,
   hidePaneToRoot,
 } from "../layout-tree-mutations";
 import type { LayoutNode, LegacyFlatLayout } from "../types";
@@ -876,6 +877,34 @@ describe("extractFromTabsNode (cpf-02)", () => {
     expect(tabsSlot?.children?.map((c) => c.paneIds?.[0] ?? c.id)).toEqual(["body", "rx"]);
   });
 
+  it("extracts the naming pane from a multi-tab leaf without duplicating panel ids", () => {
+    const tree = ptRoot([
+      ptLeaf(
+        "subjective",
+        100,
+        false,
+        ["subjective", "objective", "assessment"],
+        "subjective",
+      ),
+    ]);
+    const result = extractFromTabsNode(tree, "subjective", "horizontal");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const ids = nodeIds(result.tree);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(collectAllPaneIds(result.tree).sort()).toEqual([
+      "assessment",
+      "objective",
+      "subjective",
+    ]);
+    expect(ptFindNode(result.tree, "subjective")!.paneIds).toEqual(["subjective"]);
+    const remaining = result.tree.children?.find(
+      (c) => (c.paneIds ?? []).includes("objective") && c.id !== "subjective",
+    );
+    expect(remaining?.id.startsWith("__tabs_")).toBe(true);
+  });
+
   it("collapses an empty source container after extraction", () => {
     const tree = ptRoot([
       ptLeaf("chart", 50),
@@ -1164,6 +1193,75 @@ describe("dropPaneIntoZone — edges, same-axis parent (cpfd-01)", () => {
     expect(bodyNode.sizePct).toBe(20);
     expect(rxNode.sizePct).toBe(20);
   });
+
+  it("east of a split column inserts a sibling between columns (gutter)", () => {
+    const tree = ptRoot(
+      [
+        ptSplit("col-mid", "vertical", [ptLeaf("body", 50), ptLeaf("plan", 50)], 40),
+        ptSplit(
+          "col-right",
+          "vertical",
+          [ptLeaf("subjective", 50), ptLeaf("objective", 50)],
+          40,
+        ),
+        ptLeaf("assessment", 20),
+      ],
+      "horizontal",
+    );
+    const result = dropPaneIntoZone(tree, "assessment", "col-mid", "east");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(ptChildIds(result.tree, "__root__")).toEqual([
+      "col-mid",
+      "assessment",
+      "col-right",
+    ]);
+  });
+
+  it("extracts the naming pane from a multi-tab leaf without duplicating panel ids", () => {
+    // Leaf id === active tab id (common after tabbing peers into a home pane).
+    // Dragging that selected tab onto its own east edge used to mint a second
+    // "subjective" node → ResizablePanel "Panel ids must be unique".
+    const tree = ptRoot([
+      ptLeaf(
+        "subjective",
+        70,
+        false,
+        ["subjective", "objective", "assessment", "plan"],
+        "subjective",
+      ),
+      ptLeaf("body", 30),
+    ]);
+    const result = dropPaneIntoZone(tree, "subjective", "subjective", "east");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const ids = nodeIds(result.tree);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(collectAllPaneIds(result.tree).sort()).toEqual([
+      "assessment",
+      "body",
+      "objective",
+      "plan",
+      "subjective",
+    ]);
+
+    // Extracted pane is its own leaf again.
+    const extracted = ptFindNode(result.tree, "subjective")!;
+    expect(extracted.paneIds).toEqual(["subjective"]);
+    expect(extracted.children).toBeUndefined();
+
+    // Remaining tabs stay together under a synthetic group id (not "subjective").
+    const remaining = result.tree.children?.find(
+      (c) =>
+        !c.children?.length &&
+        (c.paneIds ?? []).includes("objective") &&
+        c.id !== "subjective",
+    );
+    expect(remaining).toBeTruthy();
+    expect(remaining!.id.startsWith("__tabs_")).toBe(true);
+    expect(remaining!.paneIds).toEqual(["objective", "assessment", "plan"]);
+  });
 });
 
 describe("dropPaneIntoZone — edges, cross-axis parent (cpfd-01)", () => {
@@ -1335,6 +1433,120 @@ describe("dropPaneIntoZone — round-trip (cpfd-01)", () => {
     expect(tabsPaneIds(restored.tree, "__tabs_0").sort()).toEqual(
       tabsPaneIds(original, "__tabs_0").sort(),
     );
+  });
+});
+
+// ── moveSiblingIntoGutter (gutter reorder vs insert) ────────────────────────
+
+describe("moveSiblingIntoGutter — reorder preserves geometry", () => {
+  // 4 flat root columns with DISTINCT widths so a resize would be obvious.
+  const FOUR_COLS: PaneTreeNode = ptRoot([
+    ptLeaf("a", 20),
+    ptLeaf("b", 30),
+    ptLeaf("c", 15),
+    ptLeaf("d", 35),
+  ]);
+
+  it("moves an existing column into the seam WITHOUT changing any width", () => {
+    const before = JSON.stringify(FOUR_COLS);
+    // Drop column "d" onto the seam between "a" and "b".
+    const result = moveSiblingIntoGutter(
+      FOUR_COLS,
+      "d",
+      "__root__",
+      "a",
+      "b",
+      "a", // insert fallback (ignored on the reorder path)
+      "east",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Order changed …
+    expect(ptChildIds(result.tree, "__root__")).toEqual(["a", "d", "b", "c"]);
+    // … but every column kept its exact sizePct (no column added/removed).
+    expect(ptFindNode(result.tree, "a")!.sizePct).toBe(20);
+    expect(ptFindNode(result.tree, "b")!.sizePct).toBe(30);
+    expect(ptFindNode(result.tree, "c")!.sizePct).toBe(15);
+    expect(ptFindNode(result.tree, "d")!.sizePct).toBe(35);
+    // Same set of panes before and after — this is a move, not an add.
+    expect(collectAllPaneIds(result.tree).sort()).toEqual(["a", "b", "c", "d"]);
+    // Input tree is untouched (pure).
+    expect(JSON.stringify(FOUR_COLS)).toBe(before);
+  });
+
+  it("no-ops when the dragged column already borders the seam", () => {
+    // "a" is the seam's left neighbour → dropping it there changes nothing.
+    expect(
+      moveSiblingIntoGutter(FOUR_COLS, "a", "__root__", "a", "b", "b", "west"),
+    ).toEqual({ ok: false, reason: "no-op" });
+    // "b" is the seam's right neighbour → also a no-op.
+    expect(
+      moveSiblingIntoGutter(FOUR_COLS, "b", "__root__", "a", "b", "a", "east"),
+    ).toEqual({ ok: false, reason: "no-op" });
+  });
+
+  it("reorders a column across the whole strip preserving widths", () => {
+    // Drop "a" onto the seam between "c" and "d".
+    const result = moveSiblingIntoGutter(
+      FOUR_COLS,
+      "a",
+      "__root__",
+      "c",
+      "d",
+      "c",
+      "east",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(ptChildIds(result.tree, "__root__")).toEqual(["b", "c", "a", "d"]);
+    expect(ptFindNode(result.tree, "a")!.sizePct).toBe(20);
+    expect(collectAllPaneIds(result.tree).sort()).toEqual(["a", "b", "c", "d"]);
+  });
+});
+
+describe("moveSiblingIntoGutter — insert fallback (a new column is added)", () => {
+  it("falls back to dropPaneIntoZone when the source is a tab in a multi-tab leaf", () => {
+    const tree = ptRoot([
+      ptLeaf("__tabs_0", 50, false, ["body", "rx"], "body"),
+      ptLeaf("colC", 50),
+    ]);
+    // Drag the "rx" tab (not its own column) onto the seam.
+    const result = moveSiblingIntoGutter(
+      tree,
+      "rx",
+      "__root__",
+      "__tabs_0",
+      "colC",
+      "colC", // resolved insert target/zone for the fallback path
+      "west",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // A brand-new column appeared (2 root columns → 3): extracting a tab
+    // genuinely adds a column, so a resize here is expected (unlike reorder).
+    expect(ptChildIds(result.tree, "__root__").length).toBe(3);
+    expect(collectAllPaneIds(result.tree).sort()).toEqual(["body", "colC", "rx"]);
+  });
+
+  it("falls back to insert when the pane comes from a different parent", () => {
+    // "a" lives at root; the seam divides two ROWS inside the nested column "mid".
+    const tree = ptRoot([
+      ptLeaf("a", 40),
+      ptSplit("mid", "vertical", [ptLeaf("m1", 50), ptLeaf("m2", 50)], 60),
+    ]);
+    const result = moveSiblingIntoGutter(
+      tree,
+      "a",
+      "mid",
+      "m1",
+      "m2",
+      "m1",
+      "south",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // "a" is pulled into "mid" as a new row between m1 and m2.
+    expect(ptChildIds(result.tree, "mid")).toEqual(["m1", "a", "m2"]);
   });
 });
 

@@ -141,4 +141,22 @@ describe("smokingPackYearsFromProducts (sh-13)", () => {
     expect(parsed?.frequency).toBe(2);
     expect(parsed?.perDay).toBe(2);
   });
+
+  it("round-trips product notes in clause TEXT", () => {
+    const clause = formatTobaccoProductClause(
+      {
+        id: "p1",
+        type: "beedi",
+        perDay: 8,
+        note: "shared with friends",
+      },
+      "smoking",
+    );
+    expect(clause).toContain("; notes: shared with friends");
+    expect(parseTobaccoProductClause(clause, "smoking")).toMatchObject({
+      type: "beedi",
+      perDay: 8,
+      note: "shared with friends",
+    });
+  });
 });

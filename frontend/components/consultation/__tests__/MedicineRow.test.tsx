@@ -111,14 +111,14 @@ function renderRow(
 }
 
 describe("MedicineRow summary mode", () => {
-  it("renders the compact line when isEditing is false and the row is complete", () => {
+  it("renders the compact line when isEditing is false and the row is named", () => {
     renderRow({}, { isEditing: false });
 
     expect(
-      screen.getByRole("button", { name: "Medicine row 3 — tap to edit" }),
+      screen.getByRole("button", { name: "Paracetamol — expand medication" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Paracetamol")).toBeInTheDocument();
-    expect(screen.getByText("500mg · TID · 5 days")).toBeInTheDocument();
+    expect(screen.getByText(/500mg · TID · 5 days/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Dosage")).not.toBeInTheDocument();
   });
 });
@@ -129,14 +129,17 @@ describe("MedicineRow editor mode", () => {
 
     expect(screen.getByLabelText("Dosage")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Medicine row 3 — tap to edit" }),
+      screen.queryByRole("button", { name: /expand medication/i }),
     ).not.toBeInTheDocument();
   });
 
-  it("renders the full editor when the row is incomplete even if isEditing is false", () => {
+  it("renders summary for an incomplete named row when isEditing is false", () => {
     renderRow({ medicineName: "Paracetamol" }, { isEditing: false });
 
-    expect(screen.getByLabelText("Dosage")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Paracetamol — expand medication" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Dosage")).not.toBeInTheDocument();
   });
 });
 
@@ -145,7 +148,7 @@ describe("MedicineRow tap to edit", () => {
     const { onRequestEdit } = renderRow({}, { isEditing: false });
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Medicine row 3 — tap to edit" }),
+      screen.getByRole("button", { name: "Paracetamol — expand medication" }),
     );
 
     expect(onRequestEdit).toHaveBeenCalledTimes(1);
@@ -165,8 +168,77 @@ describe("MedicineRow delete from summary", () => {
   });
 });
 
+describe("MedicineRow collapse scroll (subj/obj parity)", () => {
+  it("glides the card into view when expanding from summary", () => {
+    const scrollSpy = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(() => {});
+
+    const { rerender, onRequestEdit, onRequestCollapse, onChange, onPatch, onRemove, value } =
+      renderRow({}, { isEditing: false });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Paracetamol — expand medication" }),
+    );
+    expect(onRequestEdit).toHaveBeenCalled();
+
+    rerender(
+      <MedicineRow
+        index={2}
+        value={value}
+        onChange={onChange}
+        onPatch={onPatch}
+        onRemove={onRemove}
+        token="test-token"
+        isEditing
+        onRequestEdit={onRequestEdit}
+        onRequestCollapse={onRequestCollapse}
+      />,
+    );
+
+    expect(scrollSpy).toHaveBeenCalledWith({
+      block: "start",
+      behavior: "smooth",
+    });
+    scrollSpy.mockRestore();
+  });
+
+  it("glides the medicines section when collapsing the editor", () => {
+    const scrollSpy = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(() => {});
+
+    const section = document.createElement("div");
+    section.id = "medicines-section";
+    document.body.appendChild(section);
+
+    const { rerender, onRequestEdit, onRequestCollapse, onChange, onPatch, onRemove, value } =
+      renderRow({}, { isEditing: true });
+    const editor = screen.getByTestId("medicine-row-editor-2");
+    section.appendChild(editor.parentElement ?? editor);
+
+    rerender(
+      <MedicineRow
+        index={2}
+        value={value}
+        onChange={onChange}
+        onPatch={onPatch}
+        onRemove={onRemove}
+        token="test-token"
+        isEditing={false}
+        onRequestEdit={onRequestEdit}
+        onRequestCollapse={onRequestCollapse}
+      />,
+    );
+
+    expect(scrollSpy).toHaveBeenCalled();
+    scrollSpy.mockRestore();
+    section.remove();
+  });
+});
+
 describe("MedicineRow Esc in editor", () => {
-  it("fires onRequestCollapse when Escape is pressed on a complete row", () => {
+  it("fires onRequestCollapse when Escape is pressed on a named row", () => {
     const { onRequestCollapse } = renderRow({}, { isEditing: true });
 
     fireEvent.keyDown(screen.getByLabelText("Dosage"), { key: "Escape" });
@@ -175,7 +247,7 @@ describe("MedicineRow Esc in editor", () => {
     expect(onRequestCollapse).toHaveBeenCalledWith(2);
   });
 
-  it("does nothing when Escape is pressed on an incomplete row", () => {
+  it("fires onRequestCollapse when Escape is pressed on an incomplete named row", () => {
     const { onRequestCollapse } = renderRow(
       { medicineName: "Paracetamol" },
       { isEditing: true },
@@ -183,7 +255,8 @@ describe("MedicineRow Esc in editor", () => {
 
     fireEvent.keyDown(screen.getByLabelText("Dosage"), { key: "Escape" });
 
-    expect(onRequestCollapse).not.toHaveBeenCalled();
+    expect(onRequestCollapse).toHaveBeenCalledTimes(1);
+    expect(onRequestCollapse).toHaveBeenCalledWith(2);
   });
 });
 
@@ -226,10 +299,7 @@ describe("MedicineRow read-only summary", () => {
       "true",
     );
     expect(
-      screen.queryByRole("button", { name: "Medicine row 3 — tap to edit" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Edit medicine row" }),
+      screen.queryByRole("button", { name: /expand medication/i }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Delete medicine row" }),
@@ -254,7 +324,7 @@ describe("MedicineRow default behavior", () => {
 
     expect(screen.getByLabelText("Dosage")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /tap to edit/i }),
+      screen.queryByRole("button", { name: /expand medication/i }),
     ).not.toBeInTheDocument();
   });
 });
@@ -265,7 +335,7 @@ describe("MedicineRow summary drag handle", () => {
     renderRow({}, { isEditing: false, dragHandleProps: { onPointerDown } });
 
     const dragHandle = screen
-      .getByRole("button", { name: "Medicine row 3 — tap to edit" })
+      .getByRole("button", { name: "Paracetamol — expand medication" })
       .querySelector("[aria-hidden='true']");
     expect(dragHandle).toBeTruthy();
     fireEvent.pointerDown(dragHandle!);

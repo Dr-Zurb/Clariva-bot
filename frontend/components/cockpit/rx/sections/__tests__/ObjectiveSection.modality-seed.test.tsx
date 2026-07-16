@@ -84,6 +84,10 @@ function renderWithShell(shell: Partial<RxFormProviderSetup>) {
     setSubjectiveSectionHidden: vi.fn(),
     objectiveDefaults: EMPTY_DEFAULTS,
     setObjectiveDefaults: vi.fn(),
+    planDefaults: null,
+    setPlanDefaults: vi.fn(),
+    assessmentDefaults: null,
+    setAssessmentDefaults: vi.fn(),
     providerProps: {
       key: "test",
       appointmentId: "appt-1",
@@ -125,53 +129,47 @@ function renderedOrder(container: HTMLElement): ObjectiveSectionId[] {
 }
 
 describe("obj-14 · modality/specialty seed wiring (OBJ-D6)", () => {
-  it("applies the video seed default: legacy free-text blocks hidden", async () => {
+  it("applies the video seed default: full registry visible (nothing hidden)", async () => {
     const { container } = renderWithShell({
       objectiveSeed: resolveDefaultLayout({ modality: "video" }),
     });
 
-    await waitFor(() => expect(renderedOrder(container)).not.toContain("legacy_exam"));
+    await waitFor(() => expect(renderedOrder(container)).toContain("vitals"));
     const order = renderedOrder(container);
-    expect(order).toContain("vitals");
+    expect(order).toEqual(["vitals", "exam", "notes", "test_results"]);
     expect(order).toContain("exam");
     expect(order).toContain("test_results");
-    expect(order).not.toContain("legacy_exam");
-    expect(order).not.toContain("legacy_vitals");
   });
 
-  it("applies the voice seed default: test results lead, uploads visible, structured exam/POC hidden", async () => {
+  it("applies the voice seed default: test results lead, uploads visible, structured exam hidden", async () => {
     const { container } = renderWithShell({
       objectiveSeed: resolveDefaultLayout({ modality: "voice" }),
     });
 
     await waitFor(() => expect(renderedOrder(container)[0]).toBe("test_results"));
     const order = renderedOrder(container);
-    // obj-23: async = patient-reported + uploads → test_results, vitals, media visible.
-    expect(order).toEqual(["test_results", "vitals", "media"]);
+    // rpt-01: async = Reports lead + vitals + notes; exam hidden (media lives inside Reports).
+    expect(order).toEqual(["test_results", "vitals", "notes"]);
     expect(order).not.toContain("exam");
-    expect(order).not.toContain("point_of_care");
   });
 
-  it("a doctor override wins wholesale over the seed (legacy stays visible)", async () => {
+  it("a doctor override wins wholesale over the seed (notes stay visible)", async () => {
     const { container } = renderWithShell({
       objectiveDefaults: {
         ...EMPTY_DEFAULTS,
-        // Doctor reordered exam-first and hid only test_results.
-        sectionOrder: ["exam", "vitals", "test_results", "legacy_exam", "legacy_vitals"],
+        // Doctor reordered exam-first and hid only test_results; notes remain visible.
+        sectionOrder: ["exam", "vitals", "notes", "test_results"],
         sectionHidden: ["test_results"],
       },
       objectiveSeed: resolveDefaultLayout({ modality: "voice" }),
     });
 
     await waitFor(() => expect(renderedOrder(container)[0]).toBe("exam"));
-    // Override hidden wins wholesale → legacy blocks the seed would hide stay visible.
+    // Override hidden wins wholesale → exam the seed would hide stays visible; notes kept.
     expect(renderedOrder(container)).toEqual([
       "exam",
       "vitals",
-      "point_of_care",
-      "media",
-      "legacy_exam",
-      "legacy_vitals",
+      "notes",
     ]);
   });
 

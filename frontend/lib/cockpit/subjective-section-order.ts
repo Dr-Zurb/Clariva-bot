@@ -71,7 +71,7 @@ export const SUBJECTIVE_SECTION_LABELS: Record<StaticSubjectiveSectionId, string
   past_surgical: "Past surgical history",
   family_history: "Family history",
   social_history: "Social / personal history",
-  free_text_notes: "Free-text notes",
+  free_text_notes: "Additional Notes",
   custom_subsections: "Custom sections",
 };
 

@@ -21,6 +21,9 @@ const config: Config = {
   content: [
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
+    // Layout class constants (vitals grids, etc.) live under lib/ — must be scanned
+    // or container-query variants never make it into the CSS bundle.
+    "./lib/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
     container: {

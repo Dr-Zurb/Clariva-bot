@@ -18,6 +18,8 @@ import type {
   TestResultRow,
   VitalsBpLimb,
   VitalsBpPosture,
+  DiagnosisRow,
+  AssessmentAcuity,
 } from "@/types/prescription";
 import type { SocialHistoryStructured } from "@/lib/cockpit/social-history";
 import type { FamilyHistoryStructured } from "@/lib/cockpit/family-history";
@@ -27,12 +29,18 @@ import type { PastSurgicalHistoryStructured } from "@/lib/cockpit/past-surgical-
  * Template subsection scope (subj-15). Mirrors backend RX_TEMPLATE_SCOPE_VALUES.
  * `custom_block` (subj-39) carries a single doctor-defined custom Subjective
  * subsection inside `subjective_json.customSubsections`.
+ * plan-medications-library adds `medicines` for Plan medicine-list presets.
+ * Plan templates add `advice` / `follow_up` / `referral` / `clinical_notes` /
+ * `plan_full` (structured payload in `plan_json`). Assessment templates add
+ * `diagnoses` / `assessment_notes` / `assessment_full` (structured payload in
+ * `assessment_json`).
  */
 export const RX_TEMPLATE_SCOPE_VALUES = [
   "subjective_full",
   "chief_complaints",
   "past_medical",
   "past_surgical",
+  "patient_background",
   "family_history",
   "social_history",
   "allergies",
@@ -45,9 +53,23 @@ export const RX_TEMPLATE_SCOPE_VALUES = [
   "exam_resp",
   "exam_abd",
   "exam_cns",
+  "exam_additional_notes",
+  "objective_notes",
   "objective_custom_block",
   "test_results",
   "point_of_care",
+  "investigations_orders",
+  "medicines",
+  "advice",
+  "follow_up",
+  "referral",
+  "clinical_notes",
+  "plan_full",
+  "diagnoses",
+  "assessment_notes",
+  "assessment_full",
+  "known_conditions",
+  "free_text_notes",
 ] as const;
 
 export type RxTemplateScope = (typeof RX_TEMPLATE_SCOPE_VALUES)[number];
@@ -134,6 +156,41 @@ export interface RxTemplateAllergies {
   allergies?: RxTemplateAllergyEntry[];
 }
 
+/**
+ * Structured Plan bundle in `plan_json`. Advice / follow-up / referral chips+notes /
+ * clinical notes. Config, not PHI.
+ */
+export interface RxTemplatePlan {
+  advice?: string | null;
+  followUp?: string | null;
+  followUpValue?: number | null;
+  followUpUnit?: "days" | "weeks" | "months" | "as_needed" | null;
+  referral?: string | null;
+  referralUrgency?: string | null;
+  referralSpecialties?: string[];
+  referralReason?: string | null;
+  clinicalNotes?: string | null;
+}
+
+/**
+ * Structured Assessment bundle in `assessment_json`. Diagnoses + private notes
+ * (+ optional visit acuity) + Known conditions chart snapshot.
+ */
+export interface RxTemplateKnownCondition {
+  condition: string;
+  status?: "active" | "resolved";
+  note?: string | null;
+  code?: string | null;
+  codeTitle?: string | null;
+}
+
+export interface RxTemplateAssessment {
+  diagnoses?: DiagnosisRow[];
+  assessmentNote?: string | null;
+  assessmentAcuity?: AssessmentAcuity | null;
+  knownConditions?: RxTemplateKnownCondition[];
+}
+
 export interface RxTemplateMedicine {
   drugMasterId?: string | null;
   medicineName: string;
@@ -169,6 +226,8 @@ export interface DoctorRxTemplate {
   medicines_json: RxTemplateMedicine[];
   subjective_json: RxTemplateSubjective;
   objective_json: RxTemplateObjective;
+  plan_json: RxTemplatePlan;
+  assessment_json: RxTemplateAssessment;
   pmh_json: RxTemplatePmh;
   allergies_json: RxTemplateAllergies;
   scope: RxTemplateScope;
@@ -193,6 +252,8 @@ export interface RxTemplatePayload {
   medicines?: RxTemplateMedicine[];
   subjective?: RxTemplateSubjective;
   objective?: RxTemplateObjective;
+  plan?: RxTemplatePlan;
+  assessment?: RxTemplateAssessment;
   pmh?: RxTemplatePmh;
   allergies?: RxTemplateAllergies;
   scope?: RxTemplateScope;

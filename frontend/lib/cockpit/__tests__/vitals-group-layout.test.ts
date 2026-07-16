@@ -7,6 +7,9 @@ import {
   VITAL_GROUP_ORDER,
   VITAL_GRID_FULL_SPAN_CLASS,
   VITAL_GRID_UNIT_SPAN_CLASS,
+  VITALS_CONTAINER_CLASS,
+  VITALS_GRID_CLASS,
+  VITAL_CLUSTER_GRID_CLASS,
   allLayoutBuckets,
   bpReadingsGridSpanClass,
   glucoseReadingsGridSpanClass,
@@ -28,6 +31,14 @@ import {
 } from "@/lib/cockpit/vitals-schema";
 
 describe("vitals-group-layout", () => {
+  it("stacks vitals grids on container width, not viewport sm", () => {
+    expect(VITALS_CONTAINER_CLASS).toContain("@container/vitals");
+    expect(VITALS_GRID_CLASS).toContain("@[26rem]/vitals:grid-cols-2");
+    expect(VITALS_GRID_CLASS).not.toContain("sm:grid-cols-2");
+    expect(VITAL_CLUSTER_GRID_CLASS).toContain("@[26rem]/vitals:grid-cols-2");
+    expect(VITAL_CLUSTER_GRID_CLASS).not.toContain("sm:grid-cols-2");
+  });
+
   it("defines labels for every clinical group", () => {
     for (const group of VITAL_GROUP_ORDER) {
       expect(VITAL_GROUP_LABELS[group].length).toBeGreaterThan(0);

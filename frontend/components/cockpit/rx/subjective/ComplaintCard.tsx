@@ -57,6 +57,10 @@ import {
 import { ComplaintAssociatedNamesInline } from "@/components/cockpit/rx/subjective/ComplaintAssociatedNamesInline";
 import { AssociatedSymptomsPanel } from "@/components/cockpit/rx/subjective/AssociatedComplaintsPanel";
 import { Collapse } from "@/components/ui/Collapse";
+import {
+  CollapsibleDepthProvider,
+  useDepthToneSurface,
+} from "@/components/ui/sticky-stack";
 import { COLLAPSE_CLOSE_MS } from "@/lib/cockpit/collapse-scroll";
 import {
   COMPLAINT_CARD_HEADER_ATTR,
@@ -111,6 +115,7 @@ import {
   createEmptyComplaint,
   useOptionalRxForm,
 } from "@/components/cockpit/rx/RxFormContext";
+import { usePersistedComplaintChildOpen } from "@/lib/cockpit/use-persisted-entry-open";
 import { getLastSubjectiveForPatient } from "@/lib/api/last-subjective";
 import { recordNoteFavoriteUse } from "@/lib/api/note-favorites";
 import {
@@ -434,6 +439,9 @@ function InlineDurationCombo({
         value={open ? draft : committedLabel}
         onChange={handleChange}
         onFocus={handleFocus}
+        onClick={() => {
+          if (!disabled) handleFocus();
+        }}
         onBlur={() => {
           window.setTimeout(() => setOpen(false), 120);
         }}
@@ -601,6 +609,9 @@ function complaintSummaryAriaLabel(
  * attr) so it can sit inside the persistent `ComplaintCard` root that owns the
  * border and animates the body via `Collapse`. When editable it is the whole-row
  * "tap to edit" button; read-only it is a static row.
+ *
+ * Narrow panes (SOAP 2×2): stack name above duration/actions via `@container/complaints`
+ * so the label is not crushed by the fixed Duration field + icon chrome.
  */
 function ComplaintSummaryRow({
   index,
@@ -648,54 +659,15 @@ function ComplaintSummaryRow({
     }
   }
 
-  return (
-    <div
-      role={readOnly ? undefined : "button"}
-      tabIndex={readOnly ? undefined : 0}
-      onClick={readOnly ? undefined : () => onRequestEdit?.(index)}
-      onKeyDown={readOnly ? undefined : handleExpandKeyDown}
-      className="group relative flex min-h-9 cursor-pointer items-center gap-1.5 px-2 py-1.5 text-left hover:bg-muted/40 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-inset data-[readonly=true]:cursor-default data-[readonly=true]:hover:bg-transparent"
-      data-readonly={readOnly || undefined}
-      aria-label={complaintSummaryAriaLabel(index, value, depth, parentName, readOnly)}
-    >
-      {depth === 0 && mainListDropIntent === "nest" ? (
-        <span className="pointer-events-none absolute inset-x-2 bottom-1 truncate text-center text-[10px] font-medium text-primary">
-          Link as associated symptom
-        </span>
-      ) : null}
-      <div className="flex shrink-0 items-center gap-1.5 self-center">
-        <ComplaintCardDragHandle
-          dragHandleProps={dragHandleProps}
-          ariaLabel={dragLabel}
-          stopPropagation
-        />
-        <ComplaintCardBadge label={badgeLabel} />
-      </div>
-
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-baseline text-sm font-medium leading-tight">
-          <span className="shrink-0">{displayName}</span>
-          {parsedCue ? <span className="ml-1 self-center">{parsedCue}</span> : null}
-          {associatedNames.length > 0 ? (
-            <ComplaintAssociatedNamesInline names={associatedNames} />
-          ) : null}
-        </div>
-        {detailSummary.hasRow || hasNotes ? (
-          <div className="mt-0.5 flex min-w-0 items-center gap-0.5 overflow-hidden">
-            {detailSummary.hasRow ? (
-              <ComplaintCardDetailSummaryLine
-                summary={detailSummary}
-                severity={value.severity}
-                feverGrade={value.feverGrade}
-                className="min-w-0"
-              />
-            ) : null}
-            {hasNotes ? <ComplaintNotePopover text={notesText} /> : null}
-          </div>
-        ) : null}
-      </div>
-
-      <div className="flex shrink-0 items-center gap-1.5 self-center">
+  const trailingActions =
+    canEditInline || (readOnly && durationValue.trim()) || !readOnly ? (
+      <div
+        className={cn(
+          "flex shrink-0 items-center gap-1.5",
+          // Narrow: second row, indent past drag+badge, actions end-aligned.
+          "w-full justify-end pl-9 @[22rem]/complaints:w-auto @[22rem]/complaints:justify-start @[22rem]/complaints:self-center @[22rem]/complaints:pl-0",
+        )}
+      >
         {canEditInline ? (
           <ComplaintCardDurationField
             index={index}
@@ -743,6 +715,65 @@ function ComplaintSummaryRow({
             </button>
           </>
         )}
+      </div>
+    ) : null;
+
+  return (
+    // Container must be an ancestor of the querying flex — same element cannot query itself.
+    <div className="@container/complaints min-w-0 w-full">
+      <div
+        role={readOnly ? undefined : "button"}
+        tabIndex={readOnly ? undefined : 0}
+        onClick={readOnly ? undefined : () => onRequestEdit?.(index)}
+        onKeyDown={readOnly ? undefined : handleExpandKeyDown}
+        className={cn(
+          "group relative flex min-h-9 cursor-pointer gap-1.5 px-2 py-1.5 text-left hover:bg-muted/40 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-inset data-[readonly=true]:cursor-default data-[readonly=true]:hover:bg-transparent",
+          "flex-col @[22rem]/complaints:flex-row @[22rem]/complaints:items-center",
+        )}
+        data-readonly={readOnly || undefined}
+        aria-label={complaintSummaryAriaLabel(index, value, depth, parentName, readOnly)}
+      >
+        {depth === 0 && mainListDropIntent === "nest" ? (
+          <span className="pointer-events-none absolute inset-x-2 bottom-1 truncate text-center text-[10px] font-medium text-primary">
+            Link as associated symptom
+          </span>
+        ) : null}
+
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-1.5 self-center">
+            <ComplaintCardDragHandle
+              dragHandleProps={dragHandleProps}
+              ariaLabel={dragLabel}
+              stopPropagation
+            />
+            <ComplaintCardBadge label={badgeLabel} />
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-baseline text-sm font-medium leading-tight">
+              <span className="min-w-0 truncate">{displayName}</span>
+              {parsedCue ? <span className="ml-1 shrink-0 self-center">{parsedCue}</span> : null}
+              {associatedNames.length > 0 ? (
+                <ComplaintAssociatedNamesInline names={associatedNames} />
+              ) : null}
+            </div>
+            {detailSummary.hasRow || hasNotes ? (
+              <div className="mt-0.5 flex min-w-0 items-center gap-0.5 overflow-hidden">
+                {detailSummary.hasRow ? (
+                  <ComplaintCardDetailSummaryLine
+                    summary={detailSummary}
+                    severity={value.severity}
+                    feverGrade={value.feverGrade}
+                    className="min-w-0"
+                  />
+                ) : null}
+                {hasNotes ? <ComplaintNotePopover text={notesText} /> : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        {trailingActions}
       </div>
     </div>
   );
@@ -1854,7 +1885,10 @@ export function ComplaintCard({
       }),
     [value.name, resolvedCategory],
   );
-  const [activeChildId, setActiveChildId] = useState<string | null>(null);
+  const [activeChildId, setActiveChildId] = usePersistedComplaintChildOpen(
+    rxForm?.appointmentId,
+    value.id,
+  );
   const [promoteError, setPromoteError] = useState<string | null>(null);
 
   // Transparency cue (subj-13 §3): read-and-clear what the parser auto-filled
@@ -2025,117 +2059,11 @@ export function ComplaintCard({
   // render inside the parent body and must not pin (avoids a 3rd sticky level).
   const stickyHeader = depth === 0;
 
-  return (
-    <div
-      {...{ [COMPLAINT_CARD_INSTANCE_ATTR]: instanceId }}
-      className={`relative overflow-clip rounded-md border border-border bg-card ${mainListDragSurfaceClass(
-        depth === 0 ? mainListDropIntent : null,
-      )}`}
-      onKeyDown={(e) => {
-        if (e.key === "Escape" && isComplaintComplete(value)) {
-          onRequestCollapse?.(index, "explicit");
-        }
-      }}
-    >
-      {bodyMounted ? (
-      <div
-        {...{ [COMPLAINT_CARD_HEADER_ATTR]: true }}
-        className={`flex min-h-9 items-center gap-1.5 border-b border-border/60 bg-card px-2 ${
-          stickyHeader
-            ? "sticky top-[var(--collapsible-sticky-top,2.75rem)] z-10 scroll-mt-[var(--collapsible-sticky-top,2.75rem)] shadow-sm"
-            : "scroll-mt-2"
-        }`}
-      >
-        <ComplaintCardDragHandle
-          dragHandleProps={dragHandleProps}
-          ariaLabel={dragLabel}
-          stopPropagation
-        />
-        <ComplaintCardBadge label={badgeLabel} />
+  // Depth-based tonal alternation (inherited from Chief complaints root `depthTone`).
+  const tone = useDepthToneSurface();
 
-        <button
-          type="button"
-          disabled={rowDisabled}
-          onClick={() => onRequestCollapse?.(index, "explicit")}
-          className="min-h-8 min-w-0 flex-1 truncate rounded-sm px-1 text-left text-sm font-medium leading-tight hover:bg-muted/50 disabled:opacity-50"
-          aria-label={collapseNameLabel}
-          aria-expanded
-        >
-          {expandedDisplayName}
-          {associatedSuffix && depth === 0 ? (
-            <span
-              className="font-normal text-muted-foreground"
-              title={associatedNamesTitle}
-            >
-              {" "}
-              · {associatedSuffix}
-            </span>
-          ) : null}
-        </button>
-
-        {!isReadOnly ? (
-          <ComplaintCardDurationField
-            index={index}
-            value={value}
-            disabled={rowDisabled}
-            onDurationChange={(duration) => handlePatch({ duration })}
-          />
-        ) : null}
-
-        <button
-          type="button"
-          disabled={rowDisabled}
-          onClick={() => onRequestCollapse?.(index, "explicit")}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground disabled:opacity-50"
-          aria-label={collapseHeaderLabel}
-          aria-expanded
-        >
-          <ChevronDown className="h-4 w-4" aria-hidden />
-        </button>
-
-        {!isReadOnly && canPromote ? (
-          <ComplaintPromoteButton
-            ariaLabel={promoteLabel}
-            disabled={rowDisabled}
-            blockedReason={promoteBlockedReason}
-            onPromote={() => onPromote!(index)}
-          />
-        ) : null}
-
-        {!isReadOnly ? (
-          <button
-            type="button"
-            onClick={() => onRemove(index)}
-            disabled={rowDisabled}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/60 hover:text-destructive disabled:opacity-50"
-            aria-label={removeLabel}
-          >
-            <Trash2 className="h-3.5 w-3.5" aria-hidden />
-          </button>
-        ) : null}
-      </div>
-      ) : (
-        <ComplaintSummaryRow
-          index={index}
-          value={value}
-          depth={depth}
-          parentName={parentName}
-          readOnly={isReadOnly}
-          disabled={disabled}
-          onPatch={onPatch}
-          onRequestEdit={onRequestEdit}
-          onRemove={onRemove}
-          onPromote={onPromote}
-          promoteBlockedReason={promoteBlockedReason}
-          mainListDropIntent={mainListDropIntent}
-          dragHandleProps={dragHandleProps}
-          parsedCue={parsedCueNode}
-        />
-      )}
-
-      <Collapse open={expanded}>
-        {bodyMounted ? (
-          <>
+  const expandedBody = bodyMounted ? (
+    <>
       <div className="space-y-2 px-2 py-1.5">
         <div>
           <div className="flex items-center gap-1">
@@ -2193,6 +2121,7 @@ export function ComplaintCard({
         {depth === 0 && dispatch ? (
           <AssociatedSymptomsPanel
             parentId={value.id}
+            parentScrollInstanceId={instanceId}
             parentName={value.name.trim() || "complaint"}
             suggestionChips={associatedSuggestionChips}
             associatedComplaints={associatedComplaints}
@@ -2333,8 +2262,128 @@ export function ComplaintCard({
         disabled={rowDisabled}
         onCollapse={() => onRequestCollapse?.(index, "explicit")}
       />
-          </>
+    </>
+  ) : null;
+
+  return (
+    <div
+      {...{ [COMPLAINT_CARD_INSTANCE_ATTR]: instanceId }}
+      className={cn(
+        "relative overflow-clip rounded-md",
+        tone.active
+          ? cn("border border-border/60", !tone.recessed && "shadow-sm", tone.surface)
+          : "border border-border bg-card",
+        mainListDragSurfaceClass(depth === 0 ? mainListDropIntent : null),
+      )}
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && isComplaintComplete(value)) {
+          onRequestCollapse?.(index, "explicit");
+        }
+      }}
+    >
+      {bodyMounted ? (
+      <div
+        {...{ [COMPLAINT_CARD_HEADER_ATTR]: true }}
+        className={cn(
+          "flex min-h-9 items-center gap-1.5 border-b border-border/60 px-2",
+          stickyHeader
+            ? "sticky top-[var(--collapsible-sticky-top,2.75rem)] z-10 scroll-mt-[var(--collapsible-sticky-top,2.75rem)] bg-background shadow-sm"
+            : cn("scroll-mt-2", tone.active ? tone.surface : "bg-card"),
+        )}
+      >
+        <ComplaintCardDragHandle
+          dragHandleProps={dragHandleProps}
+          ariaLabel={dragLabel}
+          stopPropagation
+        />
+        <ComplaintCardBadge label={badgeLabel} />
+
+        <button
+          type="button"
+          disabled={rowDisabled}
+          onClick={() => onRequestCollapse?.(index, "explicit")}
+          className="min-h-8 min-w-0 flex-1 truncate rounded-sm px-1 text-left text-sm font-medium leading-tight hover:bg-muted/50 disabled:opacity-50"
+          aria-label={collapseNameLabel}
+          aria-expanded
+        >
+          {expandedDisplayName}
+          {associatedSuffix && depth === 0 ? (
+            <span
+              className="font-normal text-muted-foreground"
+              title={associatedNamesTitle}
+            >
+              {" "}
+              · {associatedSuffix}
+            </span>
+          ) : null}
+        </button>
+
+        {!isReadOnly ? (
+          <ComplaintCardDurationField
+            index={index}
+            value={value}
+            disabled={rowDisabled}
+            onDurationChange={(duration) => handlePatch({ duration })}
+          />
         ) : null}
+
+        <button
+          type="button"
+          disabled={rowDisabled}
+          onClick={() => onRequestCollapse?.(index, "explicit")}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground disabled:opacity-50"
+          aria-label={collapseHeaderLabel}
+          aria-expanded
+        >
+          <ChevronDown className="h-4 w-4" aria-hidden />
+        </button>
+
+        {!isReadOnly && canPromote ? (
+          <ComplaintPromoteButton
+            ariaLabel={promoteLabel}
+            disabled={rowDisabled}
+            blockedReason={promoteBlockedReason}
+            onPromote={() => onPromote!(index)}
+          />
+        ) : null}
+
+        {!isReadOnly ? (
+          <button
+            type="button"
+            onClick={() => onRemove(index)}
+            disabled={rowDisabled}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/60 hover:text-destructive disabled:opacity-50"
+            aria-label={removeLabel}
+          >
+            <Trash2 className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        ) : null}
+      </div>
+      ) : (
+        <ComplaintSummaryRow
+          index={index}
+          value={value}
+          depth={depth}
+          parentName={parentName}
+          readOnly={isReadOnly}
+          disabled={disabled}
+          onPatch={onPatch}
+          onRequestEdit={onRequestEdit}
+          onRemove={onRemove}
+          onPromote={onPromote}
+          promoteBlockedReason={promoteBlockedReason}
+          mainListDropIntent={mainListDropIntent}
+          dragHandleProps={dragHandleProps}
+          parsedCue={parsedCueNode}
+        />
+      )}
+
+      <Collapse open={expanded}>
+        {tone.active && tone.depth !== null ? (
+          <CollapsibleDepthProvider depth={tone.depth + 1}>{expandedBody}</CollapsibleDepthProvider>
+        ) : (
+          expandedBody
+        )}
       </Collapse>
     </div>
   );

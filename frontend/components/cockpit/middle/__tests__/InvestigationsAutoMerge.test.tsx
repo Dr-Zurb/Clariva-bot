@@ -71,10 +71,11 @@ describe("InvestigationsAutoMerge", () => {
 
   it("updates investigationsOrders on chip add", () => {
     renderWithRxForm(<InvestigationsAutoMerge state="live" />);
-    const input = screen.getByRole("textbox", { name: /investigation name/i });
-    fireEvent.change(input, { target: { value: "MRI" } });
-    fireEvent.keyDown(input, { key: "Enter" });
-    expect(screen.getByText("MRI")).toBeInTheDocument();
+    const input = screen.getByLabelText("Investigation name");
+    fireEvent.change(input, { target: { value: "qwerty zxcvb" } });
+    // Shift+Enter forces the custom path; no local match + no token → commit.
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    expect(screen.getByText("qwerty zxcvb")).toBeInTheDocument();
   });
 
   it("fires narrow-merge telemetry when appointmentId is provided", () => {

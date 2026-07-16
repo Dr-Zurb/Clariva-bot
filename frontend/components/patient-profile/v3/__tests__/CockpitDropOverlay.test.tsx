@@ -15,7 +15,11 @@ import type { DropZone } from "@/lib/patient-profile/v3/foundation";
 // ---------------------------------------------------------------------------
 
 let mockActiveDragPaneId: string | null = null;
-let mockPendingDrop: { groupId: string; zone: DropZone } | null = null;
+let mockPendingDrop: {
+  groupId: string;
+  zone: DropZone;
+  intent?: "insert" | "merge" | "swap";
+} | null = null;
 
 type DroppableConfig = {
   id: string;
@@ -96,7 +100,37 @@ describe("<CockpitDropOverlay> (cv3d-02)", () => {
     const previews = document.querySelectorAll("[data-cockpit-drop-preview]");
     expect(previews).toHaveLength(1);
     expect(previews[0]).toHaveAttribute("data-cockpit-drop-zone", "east");
-    expect(previews[0]).toHaveClass("right-0");
+    expect(previews[0]).toHaveTextContent("Insert right");
+    expect(previews[0]).toHaveTextContent("Drop to place beside this pane");
+  });
+
+  it("labels insert above / below / left with proper terms", () => {
+    mockActiveDragPaneId = "chart";
+    mockPendingDrop = { groupId: GROUP_ID, zone: "north" };
+    const { rerender } = renderOverlay();
+    expect(document.querySelector("[data-cockpit-drop-preview]")).toHaveTextContent(
+      "Insert above",
+    );
+
+    mockPendingDrop = { groupId: GROUP_ID, zone: "south" };
+    rerender(
+      <div className="relative h-64 w-96">
+        <CockpitDropOverlay groupId={GROUP_ID} />
+      </div>,
+    );
+    expect(document.querySelector("[data-cockpit-drop-preview]")).toHaveTextContent(
+      "Insert below",
+    );
+
+    mockPendingDrop = { groupId: GROUP_ID, zone: "west" };
+    rerender(
+      <div className="relative h-64 w-96">
+        <CockpitDropOverlay groupId={GROUP_ID} />
+      </div>,
+    );
+    expect(document.querySelector("[data-cockpit-drop-preview]")).toHaveTextContent(
+      "Insert left",
+    );
   });
 
   it("swaps preview region when pending zone changes", () => {
@@ -119,6 +153,18 @@ describe("<CockpitDropOverlay> (cv3d-02)", () => {
     mockActiveDragPaneId = "chart";
     mockPendingDrop = { groupId: GROUP_ID, zone: "center" };
     renderOverlay();
+    expect(document.querySelector("[data-cockpit-drop-preview]")).toBeNull();
+  });
+
+  it("shows swap preview above content when intent is swap", () => {
+    mockActiveDragPaneId = "chart";
+    mockPendingDrop = { groupId: GROUP_ID, zone: "center", intent: "swap" };
+    renderOverlay();
+
+    const swap = document.querySelector("[data-cockpit-swap-preview]");
+    expect(swap).toBeInTheDocument();
+    expect(swap).toHaveTextContent("Swap");
+    expect(swap).toHaveTextContent("Drop to exchange panes");
     expect(document.querySelector("[data-cockpit-drop-preview]")).toBeNull();
   });
 });

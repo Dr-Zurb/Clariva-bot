@@ -1,13 +1,14 @@
 "use client";
 
-import { useLayoutEffect, useRef } from "react";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { ExamAbdSystemBody } from "@/components/cockpit/rx/inputs/ExamAbdSystemBody";
 import { ExamCnsSystemBody } from "@/components/cockpit/rx/inputs/ExamCnsSystemBody";
 import { ExamCvsSystemBody } from "@/components/cockpit/rx/inputs/ExamCvsSystemBody";
 import { ExamGeneralSystemBody } from "@/components/cockpit/rx/inputs/ExamGeneralSystemBody";
 import { ExamRespSystemBody } from "@/components/cockpit/rx/inputs/ExamRespSystemBody";
-import type { ExamSystemDefinition } from "@/lib/cockpit/exam-schema";
+import { ObjectiveSectionTemplateButton } from "@/components/cockpit/rx/objective/ObjectiveSectionTemplateButton";
+import { examSystemIdToTemplateScope } from "@/lib/cockpit/apply-objective-template";
+import { isExamAdditionalNotesSystemId, type ExamSystemDefinition } from "@/lib/cockpit/exam-schema";
 import type { ExamFindingEntry, ExamSystemFinding } from "@/types/prescription";
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import {
@@ -28,7 +29,13 @@ import {
 import { EXAM_SYSTEM_CARD_ATTR } from "@/lib/cockpit/exam-card-scroll";
 import { ExamSystemStatusToolbar } from "@/components/cockpit/rx/inputs/ExamSystemStatusToolbar";
 import { Collapse } from "@/components/ui/Collapse";
+import {
+  CollapsibleDepthProvider,
+  StickyStackProvider,
+  useStickyHeader,
+} from "@/components/ui/sticky-stack";
 
+import { resolveSoapNestedStatusDotClass } from "@/components/cockpit/rx/sections/section-chrome";
 import { cn } from "@/lib/utils";
 
 export type ExamSystemCardStatus = "not_examined" | "normal" | "abnormal";
@@ -47,11 +54,17 @@ function chipTestId(systemId: string, chip: string): string {
     .toLowerCase()}`;
 }
 
-const STATUS_DOT_CLASS: Record<ExamSystemCardStatus, string> = {
-  not_examined: "bg-muted-foreground/40",
+const EXAM_STATUS_DOT_CLASS: Record<Exclude<ExamSystemCardStatus, "not_examined">, string> = {
   normal: "bg-emerald-500",
   abnormal: "bg-amber-500",
 };
+
+function resolveExamSystemStatusDotClass(status: ExamSystemCardStatus): string {
+  if (status === "not_examined") {
+    return resolveSoapNestedStatusDotClass("objective", false, "cluster");
+  }
+  return cn("h-2 w-2 shrink-0 rounded-full", EXAM_STATUS_DOT_CLASS[status]);
+}
 
 export interface ExamSystemCardProps {
   definition: ExamSystemDefinition;
@@ -74,23 +87,10 @@ export function ExamSystemCard({
   const entries = finding?.findings ?? [];
   const previewText = examSystemPreviewText(finding);
 
-  // Publish this card header's live height as a CSS var so nested finding cards
-  // can offset their own scroll-margin to land *under* both the sticky section
-  // header and this sticky card header (the stacked-sticky offset).
-  const articleRef = useRef<HTMLElement>(null);
-  const headerRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const article = articleRef.current;
-    const header = headerRef.current;
-    if (!article || !header) return;
-    const apply = () => {
-      article.style.setProperty("--exam-card-sticky-top", `${header.offsetHeight}px`);
-    };
-    apply();
-    const observer = new ResizeObserver(apply);
-    observer.observe(header);
-    return () => observer.disconnect();
-  }, []);
+  // Pin this card header beneath the sticky section header (and publish the
+  // advanced offset so nested finding cards land under the full stack).
+  const { headerRef, pinned, headerStyle, childValue, bodyStyle, pinnedShadowClass } =
+    useStickyHeader(true);
 
   function clearSystem() {
     if (disabled) return;
@@ -147,24 +147,43 @@ export function ExamSystemCard({
     commitEntries(entries, notes.trim() || null);
   }
 
+  function setAdditionalNotesOnly(notes: string) {
+    if (disabled) return;
+    const trimmed = notes.trim();
+    if (!trimmed) {
+      dispatch({ type: "CLEAR_EXAM_SYSTEM", systemId });
+      return;
+    }
+    dispatch({
+      type: "SET_EXAM_SYSTEM",
+      systemId,
+      status: "abnormal",
+      findings: [],
+      notes: trimmed,
+    });
+  }
+
+  const templateScope = examSystemIdToTemplateScope(systemId);
+  const isAdditionalNotes = isExamAdditionalNotesSystemId(systemId);
+
   return (
     <article
-      ref={articleRef}
-      className="scroll-mt-[var(--collapsible-sticky-top,2.75rem)] rounded-md border border-border bg-card"
+      className="scroll-mt-[var(--sticky-stack,2.75rem)] rounded-md border border-border bg-card"
       {...{ [EXAM_SYSTEM_CARD_ATTR]: systemId }}
       data-testid={`exam-system-card-${systemId}`}
       aria-label={`${label} examination`}
     >
       <div
         ref={headerRef}
+        style={headerStyle}
         className={cn(
-          "sticky z-10 flex flex-wrap items-center gap-2 rounded-t-md bg-card px-3 py-2",
-          "top-[var(--collapsible-sticky-top,2.75rem)]",
-          open && "py-2.5 shadow-sm",
+          "flex flex-wrap items-center gap-2 rounded-t-md bg-card px-3 py-2",
+          open && "py-2.5",
+          pinned && pinnedShadowClass,
         )}
       >
         <span
-          className={cn("h-2 w-2 shrink-0 rounded-full", STATUS_DOT_CLASS[status])}
+          className={resolveExamSystemStatusDotClass(status)}
           aria-hidden
         />
         <button
@@ -184,6 +203,10 @@ export function ExamSystemCard({
             </span>
           ) : null}
         </button>
+
+        {!disabled && templateScope ? (
+          <ObjectiveSectionTemplateButton scope={templateScope} disabled={disabled} />
+        ) : null}
 
         {status !== "not_examined" ? (
           <button
@@ -216,8 +239,46 @@ export function ExamSystemCard({
         </button>
       </div>
 
-      <Collapse open={open} className="border-t border-border px-3 py-2">
-          {systemId === "general" ? (
+      <Collapse open={open} style={bodyStyle} className="border-t border-border px-3 py-2">
+        <StickyStackProvider value={childValue}>
+          {/* This raised system card is the exam depth root; seed depth 0 so its
+              subsections read as recessed wells (L2) and their finding cards as
+              raised rows (L3), keying the nesting spine via the shared helper. */}
+          <CollapsibleDepthProvider depth={0}>
+          {isAdditionalNotes ? (
+            <div className="space-y-3" data-testid="exam-additional-notes-body">
+              <label
+                htmlFor={`exam-notes-${systemId}`}
+                className={RX_EXAM_SUBSECTION_HEADING_CLASS}
+              >
+                Free-text notes for this visit
+              </label>
+              <textarea
+                id={`exam-notes-${systemId}`}
+                value={finding?.notes ?? ""}
+                onChange={(event) => setAdditionalNotesOnly(event.target.value)}
+                disabled={disabled}
+                rows={4}
+                className={cn(RX_FIELD_INPUT_CLASS, "min-h-[5.5rem] resize-y")}
+                placeholder="Exam notes that don't fit a system above…"
+                maxLength={2000}
+                data-testid={`exam-notes-${systemId}`}
+              />
+              <div className="flex justify-center pt-0.5">
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onOpenChange(false)}
+                  aria-label={`Collapse ${label}`}
+                  data-testid={`exam-done-${systemId}`}
+                  className="flex items-center gap-1 rounded-full border border-border/60 px-2 py-0.5 text-[10px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                >
+                  <ChevronUp className="h-3 w-3" aria-hidden />
+                  Done
+                </button>
+              </div>
+            </div>
+          ) : systemId === "general" ? (
             <ExamGeneralSystemBody
               finding={finding}
               disabled={disabled}
@@ -329,6 +390,8 @@ export function ExamSystemCard({
               ) : null}
             </div>
           )}
+          </CollapsibleDepthProvider>
+        </StickyStackProvider>
       </Collapse>
     </article>
   );

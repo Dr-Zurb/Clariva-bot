@@ -7,6 +7,7 @@ import {
   normalizeCaffeineSection,
   parseCaffeineText,
   serializeCaffeineSection,
+  serializeCaffeineItemPreview,
 } from "@/lib/cockpit/social-history-caffeine";
 import { parseSocialHistoryAsStructured, serializeSocialHistory } from "@/lib/cockpit/social-history";
 
@@ -160,6 +161,7 @@ describe("social-history-caffeine", () => {
     expect(serializeCaffeineSection({ status: "current", items: [item] })).toContain(
       "~200 mg/serving",
     );
+    expect(serializeCaffeineItemPreview(item)).toContain("~200 mg/serving");
     expect(parseCaffeineText("Current use — Coffee (~200 mg/serving)")).toMatchObject({
       status: "current",
       items: [{ type: "coffee", strength: "custom", caffeineMg: 200 }],

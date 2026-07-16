@@ -24,7 +24,9 @@ import {
   RX_FIELD_INPUT_CLASS,
 } from "@/components/cockpit/rx/sections/field-styles";
 import { Collapse } from "@/components/ui/Collapse";
+import { useDepthToneSurface } from "@/components/ui/sticky-stack";
 import { EXAM_PATIENT_ASSISTED_PILL_CLASS } from "@/components/cockpit/rx/inputs/ExamTeleconsultFeasibilityChip";
+import { examTeleconsultFindingCardShellClass } from "@/components/cockpit/rx/inputs/ExamTeleconsultFindingCardHeader";
 import {
   Tooltip,
   TooltipContent,
@@ -209,6 +211,8 @@ export function ExamCnsFindingCard({
   const flaggedTeleconsult = Boolean(teleconsultFeasibilityHint);
   const limitedOnTeleconsult = flaggedTeleconsult && !isRecorded;
   const patientAssisted = flaggedTeleconsult && isRecorded;
+  // L3 raised row + rail from exam depth context; state-driven tint layers on top.
+  const tone = useDepthToneSurface({ railMinDepth: 0 });
 
   function patchAttributes(patch: Record<string, string | null>) {
     const base = entry ?? createEmptyFindingEntry(definition.findingId);
@@ -218,15 +222,10 @@ export function ExamCnsFindingCard({
   return (
     <article
       className={cn(
-        "scroll-mt-[calc(var(--collapsible-sticky-top,2.75rem)_+_var(--exam-card-sticky-top,2.75rem))] transition-colors",
-        limitedOnTeleconsult && !open && "border border-dashed border-border/50 bg-muted/20",
-        open
-          ? "my-1 rounded-sm border border-border/70 bg-background px-1 shadow-sm"
-          : isRecorded
-            ? "bg-muted/10 hover:bg-muted/20"
-            : limitedOnTeleconsult
-              ? "hover:bg-muted/25"
-              : "hover:bg-muted/15",
+        "scroll-mt-[var(--sticky-stack,2.75rem)] transition-colors",
+        tone.active && tone.surface,
+        examTeleconsultFindingCardShellClass(open, isRecorded, limitedOnTeleconsult, tone.active),
+        tone.rail,
       )}
       {...{ [EXAM_CNS_FINDING_CARD_ATTR]: definition.findingId }}
       data-testid={`cns-finding-card-${definition.findingId}`}

@@ -97,10 +97,21 @@ export default function TemplatePicker({
     let cancelled = false;
     setLoading(true);
     setError(null);
-    listRxTemplates(token, scope)
-      .then((res) => {
+    // rpt-01: Reports picker remaps legacy `point_of_care` templates on read (no migration).
+    const load =
+      scope === "test_results"
+        ? Promise.all([
+            listRxTemplates(token, "test_results"),
+            listRxTemplates(token, "point_of_care"),
+          ]).then(([reports, poc]) => [
+            ...reports.data.templates,
+            ...poc.data.templates,
+          ])
+        : listRxTemplates(token, scope).then((res) => res.data.templates);
+    load
+      .then((next) => {
         if (cancelled) return;
-        setTemplates(res.data.templates);
+        setTemplates(next);
       })
       .catch((err: unknown) => {
         if (cancelled) return;

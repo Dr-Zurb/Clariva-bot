@@ -5,13 +5,14 @@ import { RX_FIELD_INPUT_CLASS } from "@/components/cockpit/rx/sections/field-sty
 import { VITAL_NOTE_MAX_LEN } from "@/lib/cockpit/vital-notes";
 import { cn } from "@/lib/utils";
 
-/** Shared layout — compact default like BP rows; grows with content up to the full row. */
-export const VITAL_NOTE_WRAPPER_CLASS = "flex min-w-0 max-w-full shrink items-center gap-1";
+/** Shared layout — label + input; input fills remaining row width without forcing overflow. */
+export const VITAL_NOTE_WRAPPER_CLASS =
+  "flex min-w-0 max-w-full flex-1 basis-[min(100%,12rem)] items-center gap-1";
 
 export function vitalNoteInputClassName(className?: string): string {
   return cn(
     RX_FIELD_INPUT_CLASS,
-    "mt-0 h-7 w-auto min-w-[8rem] max-w-full py-1 text-xs placeholder:text-muted-foreground sm:min-w-[11rem] [field-sizing:content]",
+    "mt-0 h-7 min-w-0 flex-1 py-1 text-xs placeholder:text-muted-foreground",
     className,
   );
 }

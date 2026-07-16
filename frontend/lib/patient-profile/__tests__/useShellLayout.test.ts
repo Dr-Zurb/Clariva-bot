@@ -18,6 +18,7 @@ import {
   useShellLayout,
   v4TreeLayoutStorageKey,
   isLayoutAlignedWith,
+  layoutHasUnknownLeaf,
 } from "../useShellLayout";
 import type { PatientProfileLayout, PaneRuntimeState } from "../types";
 import { layoutFlat } from "./layout-flat";
@@ -924,6 +925,69 @@ describe("isLayoutAlignedWith", () => {
   });
 });
 
+describe("layoutHasUnknownLeaf", () => {
+  it("returns true when a leaf id is absent from the known set (removed pane)", () => {
+    // `investigations-orders` was folded into `plan` (SOAP) and is no longer
+    // in the registry — a saved layout carrying it must be flagged as stale.
+    const layout = v5FromFlat({
+      paneOrder: ["subjective", "objective", "investigations-orders", "plan"],
+      paneState: {
+        subjective: { sizePct: 25, hidden: false },
+        objective: { sizePct: 25, hidden: false },
+        "investigations-orders": { sizePct: 25, hidden: false },
+        plan: { sizePct: 25, hidden: false },
+      },
+    });
+    expect(
+      layoutHasUnknownLeaf(layout, ["subjective", "objective", "plan"]),
+    ).toBe(true);
+  });
+
+  it("returns false when every leaf id is in the known set", () => {
+    const layout = v5FromFlat({
+      paneOrder: ["subjective", "objective", "plan"],
+      paneState: {
+        subjective: { sizePct: 34, hidden: false },
+        objective: { sizePct: 33, hidden: false },
+        plan: { sizePct: 33, hidden: false },
+      },
+    });
+    expect(
+      layoutHasUnknownLeaf(layout, [
+        "subjective",
+        "objective",
+        "plan",
+        "assessment",
+      ]),
+    ).toBe(false);
+  });
+
+  it("accepts both ReadonlySet and readonly array inputs", () => {
+    const layout = v5FromFlat({
+      paneOrder: ["subjective", "ghost"],
+      paneState: {
+        subjective: { sizePct: 50, hidden: false },
+        ghost: { sizePct: 50, hidden: false },
+      },
+    });
+    expect(layoutHasUnknownLeaf(layout, new Set(["subjective"]))).toBe(true);
+    expect(layoutHasUnknownLeaf(layout, ["subjective"])).toBe(true);
+  });
+
+  it("treats an empty known set as 'no template advertised' and returns false", () => {
+    const layout = v5FromFlat({
+      paneOrder: ["chart", "body", "rx"],
+      paneState: {
+        chart: { sizePct: 33, hidden: false },
+        body: { sizePct: 33, hidden: false },
+        rx: { sizePct: 34, hidden: false },
+      },
+    });
+    expect(layoutHasUnknownLeaf(layout, [])).toBe(false);
+    expect(layoutHasUnknownLeaf(layout, new Set<string>())).toBe(false);
+  });
+});
+
 describe("useShellLayout — knownLeafIds hydration guard (csl-03)", () => {
   const STORAGE_KEY = "test:stale-layout";
 
@@ -1003,6 +1067,45 @@ describe("useShellLayout — knownLeafIds hydration guard (csl-03)", () => {
     );
 
     expect(result.current.paneOrder).toEqual(V2_LEAVES);
+    expect(
+      localStorage.getItem(v4TreeLayoutStorageKey(STORAGE_KEY)),
+    ).toBeNull();
+  });
+
+  it("discards a persisted layout carrying an UNKNOWN (removed) leaf — the investigations-orders ghost", () => {
+    // Current registry after the SOAP fold: seven leaves, no investigations-orders.
+    const SEVEN_LEAVES = V2_LEAVES.filter((id) => id !== "investigations-orders");
+    const sevenDefaultState: Record<string, PaneRuntimeState> =
+      Object.fromEntries(
+        SEVEN_LEAVES.map((id) => [id, { sizePct: 14, hidden: false }]),
+      );
+
+    // Saved layout still has every current leaf PLUS the removed one, so the
+    // "missing leaf" guard alone would keep it and render an empty ghost column.
+    const ghost = v5FromFlat({
+      paneOrder: [...SEVEN_LEAVES, "investigations-orders"],
+      paneState: {
+        ...sevenDefaultState,
+        "investigations-orders": { sizePct: 12, hidden: false },
+      },
+    });
+    localStorage.setItem(
+      v4TreeLayoutStorageKey(STORAGE_KEY),
+      JSON.stringify(ghost),
+    );
+
+    const { result } = renderHook(() =>
+      useShellLayout({
+        storageKey: STORAGE_KEY,
+        defaultPaneOrder: SEVEN_LEAVES,
+        defaultPaneState: sevenDefaultState,
+        knownLeafIds: SEVEN_LEAVES,
+      }),
+    );
+
+    // Ghost discarded; hook fell back to the clean seven-leaf default.
+    expect(result.current.paneOrder).toEqual(SEVEN_LEAVES);
+    expect(result.current.paneOrder).not.toContain("investigations-orders");
     expect(
       localStorage.getItem(v4TreeLayoutStorageKey(STORAGE_KEY)),
     ).toBeNull();

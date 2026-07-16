@@ -90,6 +90,12 @@ function renderWithShell(
     setSubjectiveSectionCollapsed: vi.fn(),
     subjectiveSectionHidden: [],
     setSubjectiveSectionHidden: vi.fn(),
+    objectiveDefaults: null,
+    setObjectiveDefaults: vi.fn(),
+    planDefaults: null,
+    setPlanDefaults: vi.fn(),
+    assessmentDefaults: null,
+    setAssessmentDefaults: vi.fn(),
     providerProps: {
       key: "test",
       appointmentId: "appt-1",
@@ -134,7 +140,10 @@ function collapsePatchCalls() {
 }
 
 async function waitForSettingsLoaded() {
-  await waitFor(() => expect(mockGetDoctorSettings).toHaveBeenCalled());
+  await waitFor(() => {
+    expect(mockGetDoctorSettings).toHaveBeenCalled();
+    expect(screen.queryByTestId("subjective-layout-skeleton")).not.toBeInTheDocument();
+  });
 }
 
 describe("SubjectiveSection collapse persistence (subj-31)", () => {
@@ -147,6 +156,7 @@ describe("SubjectiveSection collapse persistence (subj-31)", () => {
         settings: {
           subjective_section_order: [],
           subjective_section_collapsed: {},
+          subjective_section_hidden: [],
         },
       },
     });
@@ -156,6 +166,7 @@ describe("SubjectiveSection collapse persistence (subj-31)", () => {
           subjective_section_order: [],
           subjective_section_collapsed:
             payload.subjective_section_collapsed ?? {},
+          subjective_section_hidden: payload.subjective_section_hidden ?? [],
         },
       },
     }));
@@ -169,7 +180,7 @@ describe("SubjectiveSection collapse persistence (subj-31)", () => {
     expect(chiefToggle).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(chiefToggle);
 
-    const freeTextToggle = getCollapseToggle("Toggle free-text notes");
+    const freeTextToggle = getCollapseToggle("Toggle additional notes");
     expect(freeTextToggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(freeTextToggle);
 
@@ -198,7 +209,7 @@ describe("SubjectiveSection collapse persistence (subj-31)", () => {
     await waitForSettingsLoaded();
 
     fireEvent.click(getCollapseToggle("Toggle chief complaints"));
-    fireEvent.click(getCollapseToggle("Toggle free-text notes"));
+    fireEvent.click(getCollapseToggle("Toggle additional notes"));
 
     await waitFor(() => expect(collapsePatchCalls().length).toBeGreaterThan(0), {
       timeout: 1500,
@@ -209,6 +220,7 @@ describe("SubjectiveSection collapse persistence (subj-31)", () => {
         settings: {
           subjective_section_order: [],
           subjective_section_collapsed: savedMap,
+          subjective_section_hidden: [],
         },
       },
     });
@@ -217,7 +229,7 @@ describe("SubjectiveSection collapse persistence (subj-31)", () => {
     renderWithRxForm(<SubjectiveSection heading={null} />);
     await waitFor(() => {
       expect(getCollapseToggle("Toggle chief complaints")).toHaveAttribute("aria-expanded", "false");
-      expect(getCollapseToggle("Toggle free-text notes")).toHaveAttribute("aria-expanded", "true");
+      expect(getCollapseToggle("Toggle additional notes")).toHaveAttribute("aria-expanded", "true");
       expect(getCollapseToggle("Toggle Social / personal history")).toHaveAttribute(
         "aria-expanded",
         "false",
@@ -250,14 +262,16 @@ describe("SubjectiveSection collapse persistence (subj-31)", () => {
 
     renderWithRxForm(<SubjectiveSection heading={null} />);
 
-    expect(getCollapseToggle("Toggle chief complaints")).toHaveAttribute("aria-expanded", "false");
-    expect(getCollapseToggle("Toggle free-text notes")).toHaveAttribute("aria-expanded", "false");
+    // Order/visibility hydrate with the same settings fetch — hold the list
+    // (skeleton) rather than painting the registry default order first.
+    expect(screen.getByTestId("subjective-layout-skeleton")).toBeInTheDocument();
 
     resolveSettings({
       data: {
         settings: {
           subjective_section_order: [],
           subjective_section_collapsed: { chief_complaints: true },
+          subjective_section_hidden: [],
         },
       },
     });
@@ -319,6 +333,10 @@ describe("SubjectiveSection collapse persistence (subj-31)", () => {
         setSubjectiveSectionCollapsed: vi.fn(),
         subjectiveSectionHidden: [],
         setSubjectiveSectionHidden: vi.fn(),
+        objectiveDefaults: null,
+        setObjectiveDefaults: vi.fn(),
+        planDefaults: null,
+        setPlanDefaults: vi.fn(),
         providerProps: {
           key: "test",
           appointmentId: "appt-1",
@@ -426,5 +444,80 @@ describe("SubjectiveSection collapse persistence (subj-31)", () => {
 
     expect(collapsePatchCalls()).toHaveLength(0);
     expect(mockUpdatePrescription).not.toHaveBeenCalled();
+  });
+
+  it("expands and collapses all visible sections via toolbar controls", async () => {
+    renderWithRxForm(<SubjectiveSection heading={null} />);
+    await waitForSettingsLoaded();
+
+    expect(getCollapseToggle("Toggle chief complaints")).toHaveAttribute("aria-expanded", "true");
+    expect(getCollapseToggle("Toggle Social / personal history")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+
+    fireEvent.click(screen.getByTestId("subjective-collapse-all"));
+    expect(getCollapseToggle("Toggle chief complaints")).toHaveAttribute("aria-expanded", "false");
+    expect(getCollapseToggle("Toggle additional notes")).toHaveAttribute("aria-expanded", "false");
+    expect(getCollapseToggle("Toggle Social / personal history")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+
+    fireEvent.click(screen.getByTestId("subjective-expand-all"));
+    expect(getCollapseToggle("Toggle chief complaints")).toHaveAttribute("aria-expanded", "true");
+    expect(getCollapseToggle("Toggle additional notes")).toHaveAttribute("aria-expanded", "true");
+    expect(getCollapseToggle("Toggle Social / personal history")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
+  it("clears form-state subjective content and collapses sections", async () => {
+    const fields = createEmptyRxFormFields();
+    fields.complaints = [{ id: "c1", name: "Fever", category: "default" }];
+    fields.hopi = "Dictation";
+    fields.socialHistoryStructured = {
+      smoking: { status: "never", products: [] },
+    };
+
+    renderWithRxForm(<SubjectiveSection heading={null} />, fields);
+    await waitForSettingsLoaded();
+
+    expect(screen.getByTestId("subjective-clear-all")).not.toBeDisabled();
+    fireEvent.click(screen.getByTestId("subjective-expand-all"));
+    expect(getCollapseToggle("Toggle chief complaints")).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(screen.getByTestId("subjective-clear-all"));
+    expect(screen.getByTestId("subjective-clear-all-dialog")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("subjective-clear-all-dialog-confirm"));
+
+    await waitFor(() => {
+      expect(screen.queryByDisplayValue("Fever")).not.toBeInTheDocument();
+      expect(screen.getByLabelText(/Additional history notes/i)).toHaveValue("");
+      expect(screen.getByTestId("subjective-clear-all")).toBeDisabled();
+    });
+    expect(getCollapseToggle("Toggle chief complaints")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
+  it("cancel on clear confirm leaves subjective content intact", async () => {
+    const fields = createEmptyRxFormFields();
+    fields.hopi = "Keep me";
+
+    renderWithRxForm(<SubjectiveSection heading={null} />, fields);
+    await waitForSettingsLoaded();
+
+    fireEvent.click(screen.getByTestId("subjective-clear-all"));
+    expect(screen.getByTestId("subjective-clear-all-dialog")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("subjective-clear-all-dialog")).not.toBeInTheDocument();
+    });
+    expect(screen.getByLabelText(/Additional history notes/i)).toHaveValue("Keep me");
+    expect(screen.getByTestId("subjective-clear-all")).not.toBeDisabled();
   });
 });

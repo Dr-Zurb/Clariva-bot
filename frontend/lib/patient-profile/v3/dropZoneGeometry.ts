@@ -3,6 +3,13 @@ import type { DropZone } from "@/lib/patient-profile/v3/foundation";
 /** Halves model (v3-DL-4). Tunable post-dogfood (V3-R6). */
 export const EDGE = 0.5;
 
+/**
+ * Central "swap" pad half-extent (fraction of each axis from the midline).
+ * A pointer within `|nx-0.5| < CENTER && |ny-0.5| < CENTER` targets the middle
+ * of the body → swap the two panes (cv3d-swap). Edges remain insert zones.
+ */
+export const CENTER = 0.2;
+
 export interface Rect {
   width: number;
   height: number;
@@ -32,6 +39,10 @@ export function resolveDropZoneFromPointer(
   const ny = point.y / h;
   const dx = Math.abs(nx - 0.5);
   const dy = Math.abs(ny - 0.5);
+
+  // Central pad → swap (cv3d-swap). Checked before the edge split so the middle
+  // of the body is a distinct target.
+  if (dx < CENTER && dy < CENTER) return "center";
 
   // Dominant axis; exact ties → horizontal (west/east), nx/ny on center line → west/north.
   if (dx >= dy) {

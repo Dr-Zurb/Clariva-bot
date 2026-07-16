@@ -1,11 +1,14 @@
 "use client";
 
 /**
- * AssessmentStrip — ~60px sticky leaf rendered between Body and bottom-row
- * in the middle column. Hosts the canonical Working Dx input (id="diagnosis")
- * and the DDx chip array. Lifted out of <AssessmentSection> per source plan
- * DL-19; AssessmentSection hides its own Dx + DDx when this strip is in the
- * tree (cmr-01 DL-6).
+ * AssessmentStrip — ~60px sticky glance surface for Working Dx + DDx.
+ * Docked in the legacy middle column (templates.tsx) between Body and the
+ * bottom-row; owns the canonical `id="diagnosis"` ribbon 🎯 focus target.
+ * The v3 `assessment` tab mounts `<AssessmentSection>` instead (asmt-01).
+ *
+ * asmt-05: DDx glance is **read-only** — differentials are edited as cards in
+ * the Assessment tab; `fields.differentialDiagnosis` is a derived mirror of
+ * non-excluded differential cards (ASMT-D4′).
  *
  * Click on the ribbon's 🎯 segment focuses this strip's Dx input (crb-02 DL-4).
  *
@@ -14,7 +17,6 @@
  */
 import { useEffect } from "react";
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
-import { DdxChipList } from "@/components/cockpit/rx/inputs/DdxChipList";
 import { RX_FIELD_INPUT_CLASS } from "@/components/cockpit/rx/sections/field-styles";
 import { Badge } from "@/components/ui/badge";
 import { canEditPrescriptionDraft, type CockpitState } from "@/lib/patient-profile/state";
@@ -81,23 +83,20 @@ export function AssessmentStrip({ state, appointmentId }: AssessmentStripProps) 
         ·
       </span>
       <span className="shrink-0 text-xs text-muted-foreground">DDx:</span>
-      {isEditable ? (
-        <div className="min-w-0 flex-1 overflow-hidden [&>div]:space-y-0 [&_label]:sr-only">
-          <DdxChipList />
-        </div>
-      ) : (
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 overflow-hidden">
-          {ddxEntries.length === 0 ? (
-            <span className="text-xs text-muted-foreground">—</span>
-          ) : (
-            ddxEntries.map((entry, index) => (
-              <Badge key={`${entry}-${index}`} variant="secondary">
-                {entry}
-              </Badge>
-            ))
-          )}
-        </div>
-      )}
+      <div
+        className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 overflow-hidden"
+        data-testid="assessment-strip-ddx-glance"
+      >
+        {ddxEntries.length === 0 ? (
+          <span className="text-xs text-muted-foreground">—</span>
+        ) : (
+          ddxEntries.map((entry, index) => (
+            <Badge key={`${entry}-${index}`} variant="secondary">
+              {entry}
+            </Badge>
+          ))
+        )}
+      </div>
     </div>
   );
 }

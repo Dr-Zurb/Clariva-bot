@@ -70,6 +70,17 @@ export interface AiParsedMedicine {
   instructions?: string | null;
   /** Food/timing: before_food | after_food | with_food | empty_stomach | bedtime. */
   foodTiming?: string | null;
+  /** Route: oral | IV | IM | SC | topical | inhaled | rectal | nasal | sublingual | other. */
+  routeCode?: string | null;
+  /**
+   * Body / application site when stated (e.g. "Deltoid", "Glute", "Abdomen").
+   * Plan encodes as `IM · Deltoid` in legacy route text.
+   */
+  routeSite?: string | null;
+  /** Rx treatment-course duration (Plan) — distinct from startedAgo. */
+  durationValue?: number | null;
+  /** days | weeks | months | until-finished | continue */
+  durationUnit?: string | null;
 }
 
 export interface ParseMedicineResult {

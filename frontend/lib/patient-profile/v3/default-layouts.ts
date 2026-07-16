@@ -2,7 +2,7 @@
  * default-layouts.ts — v3-native intent-based workflow layouts (cv3l-01 / P6-DL-4).
  *
  * Four complete PaneTreeNode presets: Consult (seed + reset), Read, Document,
- * Review. Every tree contains all eight pane ids (visible in structure, hidden
+ * Review. Every tree contains all seven pane ids (visible in structure, hidden
  * as root leaves) so the palette can toggle any pane back on.
  */
 
@@ -58,7 +58,7 @@ function split(
   return { id, sizePct, hidden: false, direction, children };
 }
 
-/** v2 8-pane telemed-video: 3 columns, no hidden panes. */
+/** v2 7-pane telemed-video: 3 columns, no hidden panes. */
 function buildConsultTree(): PaneTreeNode {
   return {
     id: "__root__",
@@ -73,10 +73,7 @@ function buildConsultTree(): PaneTreeNode {
       split("col-mid", 56, "vertical", [
         visibleLeaf("body", 42),
         visibleLeaf("assessment", 8),
-        split("c-mid-bottom", 50, "horizontal", [
-          visibleLeaf("investigations-orders", 40),
-          visibleLeaf("plan", 60),
-        ]),
+        visibleLeaf("plan", 50),
       ]),
       split("col-right", 22, "vertical", [
         visibleLeaf("subjective", 50),
@@ -86,7 +83,7 @@ function buildConsultTree(): PaneTreeNode {
   };
 }
 
-/** Case-history focus: wide History; body / investigations / plan hidden at root. */
+/** Case-history focus: wide History; body / plan hidden at root. */
 function buildReadTree(): PaneTreeNode {
   return {
     id: "__root__",
@@ -104,7 +101,6 @@ function buildReadTree(): PaneTreeNode {
         visibleLeaf("objective", 50),
       ]),
       hiddenLeaf("body"),
-      hiddenLeaf("investigations-orders"),
       hiddenLeaf("plan"),
     ],
   };
@@ -127,8 +123,7 @@ function buildDocumentTree(): PaneTreeNode {
         visibleLeaf("objective", 50),
       ]),
       split("doc-right", 60, "vertical", [
-        visibleLeaf("investigations-orders", 28),
-        visibleLeaf("plan", 72),
+        visibleLeaf("plan", 100),
       ]),
       hiddenLeaf("body"),
       hiddenLeaf("history"),
@@ -136,7 +131,7 @@ function buildDocumentTree(): PaneTreeNode {
   };
 }
 
-/** Post-visit calm reading: all eight visible, Consult-like columns. */
+/** Post-visit calm reading: all seven visible, Consult-like columns. */
 function buildReviewTree(): PaneTreeNode {
   return {
     id: "__root__",
@@ -155,8 +150,7 @@ function buildReviewTree(): PaneTreeNode {
         visibleLeaf("objective", 31),
       ]),
       split("review-right", 26, "vertical", [
-        visibleLeaf("plan", 58),
-        visibleLeaf("investigations-orders", 42),
+        visibleLeaf("plan", 100),
       ]),
     ],
   };
@@ -185,7 +179,7 @@ export const DEFAULT_LAYOUTS: readonly DefaultLayoutEntry[] = [
   {
     id: "document",
     label: "Document",
-    description: "SOAP + Rx — plan and investigations forward.",
+    description: "SOAP + Rx — plan forward.",
     hotkey: "mod+shift+3",
     tree: DOCUMENT_TREE,
   },
@@ -209,7 +203,11 @@ export function getDefaultLayoutTree(id: DefaultLayoutId): PaneTreeNode {
   return TREE_BY_ID[id];
 }
 
-/** True when the registry is the full eight-tab cockpit (not walk-in subset). */
+/**
+ * True when the registry is the full cockpit (all `COCKPIT_TAB_ORDER` panes),
+ * not the walk-in subset. Name is historical (was eight tabs; now seven after
+ * Investigations folded into Plan) — the count tracks `COCKPIT_TAB_ORDER`.
+ */
 export function isFullEightPaneRegistry(panes: PaneDefinition[]): boolean {
   if (panes.length !== ALL_PANE_IDS.length) return false;
   const ids = new Set(panes.map((p) => p.id));
@@ -218,7 +216,7 @@ export function isFullEightPaneRegistry(panes: PaneDefinition[]): boolean {
 
 /**
  * Seed layout for CockpitV3Shell: Consult for the full registry, blank for
- * walk-in / partial subsets (Consult references all eight pane ids).
+ * walk-in / partial subsets (Consult references all pane ids).
  */
 export function resolveSeedLayout(panes: PaneDefinition[]): PatientProfileLayout {
   assertFlatLeafRegistry(panes);

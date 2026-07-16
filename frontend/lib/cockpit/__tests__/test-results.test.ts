@@ -50,8 +50,34 @@ describe("normalizeTestResults (obj-20)", () => {
         date: null,
         interpretation: null,
         notes: "high",
+        reportId: null,
+        refLow: null,
+        refHigh: null,
+        refText: null,
       },
     ]);
+  });
+
+  it("preserves reportId + reference-range fields (rpt-02/03)", () => {
+    const result = normalizeTestResults([
+      {
+        id: "r1",
+        source: "patient_report",
+        name: "Hb",
+        value: "9.5",
+        unit: "g/dL",
+        reportId: "rep-1",
+        refLow: 12,
+        refHigh: 16,
+        refText: "12–16",
+      },
+    ]);
+    expect(result[0]).toMatchObject({
+      reportId: "rep-1",
+      refLow: 12,
+      refHigh: 16,
+      refText: "12–16",
+    });
   });
 
   it("returns [] for non-array input", () => {

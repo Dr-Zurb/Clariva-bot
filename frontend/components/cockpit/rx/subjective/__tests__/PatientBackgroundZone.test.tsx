@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
   RxFormProvider,
@@ -17,7 +17,22 @@ vi.mock("@/components/ehr/sections/ProblemOrientedMedicalSection", () => ({
 }));
 
 vi.mock("@/components/cockpit/rx/subjective/PastSurgicalHistoryField", () => ({
-  PastSurgicalHistoryField: () => <div data-testid="past-surgical-stub" />,
+  PastSurgicalHistoryField: ({
+    sectionOpen,
+    onSectionOpenChange,
+  }: {
+    sectionOpen?: boolean;
+    onSectionOpenChange?: (open: boolean) => void;
+  }) => (
+    <button
+      type="button"
+      data-testid="past-surgical-toggle"
+      aria-expanded={sectionOpen ?? false}
+      onClick={() => onSectionOpenChange?.(!(sectionOpen ?? false))}
+    >
+      Toggle Past surgical history
+    </button>
+  ),
 }));
 
 function renderZone(mode: "default" | "readonly" = "default") {
@@ -44,7 +59,7 @@ describe("PatientBackgroundZone", () => {
     expect(screen.getByTestId("patient-background-zone")).toBeInTheDocument();
     expect(screen.getByText("Patient background")).toBeInTheDocument();
     expect(screen.getByTestId("problem-oriented-stub")).toBeInTheDocument();
-    expect(screen.getByTestId("past-surgical-stub")).toBeInTheDocument();
+    expect(screen.getByTestId("past-surgical-toggle")).toBeInTheDocument();
     expect(screen.getByText("Past medical history")).toBeInTheDocument();
     expect(screen.queryByTestId("allergies-stub")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /\+ Add/i })).not.toBeInTheDocument();
@@ -62,5 +77,19 @@ describe("PatientBackgroundZone", () => {
 
     expect(pomProps.at(-1)).toMatchObject({ mode: "readonly" });
     expect(screen.queryByRole("button", { name: /\+ Add/i })).not.toBeInTheDocument();
+  });
+
+  it("accordion: opening past surgical closes past medical history", () => {
+    renderZone();
+
+    const pmh = screen.getByRole("button", { name: /Toggle past medical history/i });
+    const surgical = screen.getByTestId("past-surgical-toggle");
+
+    expect(pmh).toHaveAttribute("aria-expanded", "true");
+    expect(surgical).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(surgical);
+    expect(surgical).toHaveAttribute("aria-expanded", "true");
+    expect(pmh).toHaveAttribute("aria-expanded", "false");
   });
 });

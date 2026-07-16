@@ -77,6 +77,33 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => (v !== undefined && v !== '' ? parseInt(v, 10) : undefined)),
+  /**
+   * Diagnosis AI resolver (assessment-tab · asmt-07). Tier-1 default model for
+   * catalog-constrained ICD-11 term normalization; defaults to a mini model in
+   * `getOpenAIDiagnosisResolveConfig()` — never the flagship `OPENAI_MODEL` default.
+   */
+  OPENAI_DIAGNOSIS_RESOLVE_MODEL: z.string().optional(),
+  /** Tier-2 escalation model (explicit "✨" refine / Tier-1 empty). Falls back to `OPENAI_MODEL`. */
+  OPENAI_DIAGNOSIS_RESOLVE_ESCALATION_MODEL: z.string().optional(),
+  /** Max completion tokens for diagnosis resolve (short candidate JSON). */
+  OPENAI_DIAGNOSIS_RESOLVE_MAX_TOKENS: z
+    .string()
+    .optional()
+    .transform((v) => (v !== undefined && v !== '' ? parseInt(v, 10) : undefined)),
+  /**
+   * Investigation AI resolver (plan-investigations-library · inv-lib-04). Tier-1
+   * default model that normalizes messy/vernacular order text into clean lab /
+   * imaging order TERMS (the frontend static catalog owns identity). Defaults to a
+   * mini model in `getOpenAIInvestigationResolveConfig()` — never the flagship.
+   */
+  OPENAI_INVESTIGATION_RESOLVE_MODEL: z.string().optional(),
+  /** Tier-2 escalation model (explicit "✨" refine / Tier-1 empty). Falls back to `OPENAI_MODEL`. */
+  OPENAI_INVESTIGATION_RESOLVE_ESCALATION_MODEL: z.string().optional(),
+  /** Max completion tokens for investigation resolve (short candidate JSON). */
+  OPENAI_INVESTIGATION_RESOLVE_MAX_TOKENS: z
+    .string()
+    .optional()
+    .transform((v) => (v !== undefined && v !== '' ? parseInt(v, 10) : undefined)),
   // e-task-5: Max message pairs (user+assistant) for AI context; trade-off: more context vs token cost
   AI_MAX_HISTORY_PAIRS: z
     .string()

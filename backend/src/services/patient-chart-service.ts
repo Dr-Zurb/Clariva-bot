@@ -40,6 +40,7 @@ import type {
   ProblemListItem,
   ResultsTimelineEntry,
   UpdateMedicalBackgroundNotesInput,
+  UpdateAllergySectionNotesInput,
   UpdatePatientAllergyInput,
   UpdatePatientChronicConditionInput,
   UpdatePatientMedicationInput,
@@ -118,6 +119,77 @@ export async function listAllergies(
   if (error) handleSupabaseError(error, correlationId);
   await logDataAccess(correlationId, userId, 'patient_allergies', patientId);
   return (data ?? []) as PatientAllergy[];
+}
+
+export async function getAllergySectionNotes(
+  patientId: string,
+  correlationId: string,
+  userId: string,
+): Promise<string | null> {
+  const { data, error } = await admin()
+    .from('patient_allergies_section_notes')
+    .select('notes')
+    .eq('doctor_id', userId)
+    .eq('patient_id', patientId)
+    .maybeSingle();
+
+  if (error) handleSupabaseError(error, correlationId);
+  await logDataAccess(correlationId, userId, 'patient_allergies_section_notes', patientId);
+  return (data?.notes as string | null | undefined) ?? null;
+}
+
+export async function upsertAllergySectionNotes(
+  patientId: string,
+  input: UpdateAllergySectionNotesInput,
+  correlationId: string,
+  userId: string,
+): Promise<string | null> {
+  const notes = input.notes?.trim() ? input.notes.trim() : null;
+
+  const { data: existing, error: existingError } = await admin()
+    .from('patient_allergies_section_notes')
+    .select('doctor_id')
+    .eq('doctor_id', userId)
+    .eq('patient_id', patientId)
+    .maybeSingle();
+
+  if (existingError) handleSupabaseError(existingError, correlationId);
+
+  if (existing) {
+    const { data, error } = await admin()
+      .from('patient_allergies_section_notes')
+      .update({ notes })
+      .eq('doctor_id', userId)
+      .eq('patient_id', patientId)
+      .select('notes')
+      .single();
+
+    if (error || !data) handleSupabaseError(error, correlationId);
+    await logDataModification(
+      correlationId,
+      userId,
+      'update',
+      'patient_allergies_section_notes',
+      patientId,
+    );
+    return (data.notes as string | null) ?? null;
+  }
+
+  const { data, error } = await admin()
+    .from('patient_allergies_section_notes')
+    .insert({ doctor_id: userId, patient_id: patientId, notes })
+    .select('notes')
+    .single();
+
+  if (error || !data) handleSupabaseError(error, correlationId);
+  await logDataModification(
+    correlationId,
+    userId,
+    'create',
+    'patient_allergies_section_notes',
+    patientId,
+  );
+  return (data.notes as string | null) ?? null;
 }
 
 export async function createAllergy(
@@ -221,6 +293,9 @@ export async function createChronicCondition(
     resolved_ago_value: input.resolvedAgoValue ?? null,
     resolved_ago_unit: input.resolvedAgoUnit ?? null,
     on_treatment: input.onTreatment ?? null,
+    acuity: input.acuity ?? null,
+    code: input.code ?? null,
+    code_title: input.codeTitle ?? null,
     note: input.note ?? null,
   };
 
@@ -254,6 +329,9 @@ export async function updateChronicCondition(
   if (input.resolvedAgoValue !== undefined) update.resolved_ago_value = input.resolvedAgoValue;
   if (input.resolvedAgoUnit !== undefined) update.resolved_ago_unit = input.resolvedAgoUnit;
   if (input.onTreatment !== undefined) update.on_treatment = input.onTreatment;
+  if (input.acuity !== undefined) update.acuity = input.acuity;
+  if (input.code !== undefined) update.code = input.code;
+  if (input.codeTitle !== undefined) update.code_title = input.codeTitle;
   if (input.note !== undefined) update.note = input.note;
   const archivedAt = resolveArchivedAt(input.archivedAt);
   if (archivedAt !== undefined) update.archived_at = archivedAt;

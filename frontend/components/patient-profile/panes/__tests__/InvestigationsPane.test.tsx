@@ -55,7 +55,7 @@ describe("InvestigationsPane", () => {
       investigationsOrders: "ECG; Trop-I",
     });
     expect(screen.getByText(/ECG/i)).toBeInTheDocument();
-    expect(screen.getByText(/Trop-I/i)).toBeInTheDocument();
+    expect(screen.getByText(/Troponin I/i)).toBeInTheDocument();
   });
 
   it("hides the add affordance in read-only state", () => {

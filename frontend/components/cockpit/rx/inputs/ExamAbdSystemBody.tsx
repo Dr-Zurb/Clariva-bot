@@ -3,7 +3,6 @@
 import { useCallback, useState } from "react";
 import { ChevronUp } from "lucide-react";
 import {
-  reAnchorExamAbdFindingCardOnClose,
   scrollExamAbdFindingCardIntoView,
   scrollExamSubsectionIntoView,
 } from "@/lib/cockpit/exam-card-scroll";
@@ -123,7 +122,13 @@ export function ExamAbdSystemBody({
   // Percussion grey out. In-clinic order + open-state are byte-identical.
   const orderedSubsections = orderSubsectionsForModality(ABD_EXAM_SUBSECTIONS, isTele);
 
-  const { isOpen: isSubsectionOpen, toggle: toggleSubsection } = useExamSubsectionOpenState({
+  const {
+    isOpen: isSubsectionOpen,
+    toggle: toggleSubsection,
+    expandAll: expandAllSubsections,
+    collapseAll: collapseAllSubsections,
+  } = useExamSubsectionOpenState({
+    systemId: "abd",
     subsections: ABD_EXAM_SUBSECTIONS,
     initialEntries: finding?.findings ?? [],
     ownedFindingIds: abdSubsectionOwnedFindingIds,
@@ -143,8 +148,6 @@ export function ExamAbdSystemBody({
     const subsectionScrollKey = resolveAbdCardSubsectionScrollKey(findingId);
     if (subsectionScrollKey) {
       scrollExamSubsectionIntoView(subsectionScrollKey);
-    } else {
-      reAnchorExamAbdFindingCardOnClose(findingId);
     }
   }, []);
 
@@ -269,6 +272,8 @@ export function ExamAbdSystemBody({
         disabled={disabled}
         onMarkNormal={markNormal}
         onClear={clearSection}
+        onExpandAllSubsections={showBody ? expandAllSubsections : undefined}
+        onCollapseAllSubsections={showBody ? collapseAllSubsections : undefined}
       />
 
       {showBody ? (
@@ -338,7 +343,7 @@ export function ExamAbdSystemBody({
 
                 {hasCards ? (
                   <div
-                    className="mt-2 divide-y divide-border/45"
+                    className="mt-2 space-y-0.5"
                     data-testid={`exam-findings-abd-${subsection.id}-cards`}
                   >
                     {chipGroups.map((group) => (

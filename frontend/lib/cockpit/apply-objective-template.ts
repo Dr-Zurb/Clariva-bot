@@ -35,6 +35,8 @@ export type FormStateObjectiveTemplateScope = Extract<
   | "exam_resp"
   | "exam_abd"
   | "exam_cns"
+  | "exam_additional_notes"
+  | "objective_notes"
   | "test_results"
   | "point_of_care"
   | "objective_custom_block"
@@ -49,46 +51,41 @@ export const FORM_STATE_OBJECTIVE_TEMPLATE_SCOPES: FormStateObjectiveTemplateSco
   "exam_resp",
   "exam_abd",
   "exam_cns",
+  "exam_additional_notes",
+  "objective_notes",
   "test_results",
   "point_of_care",
   "objective_custom_block",
   "objective_full",
 ];
 
-/** obj-23: the two RESULT scopes map 1:1 to a `test_results_json` row source. */
-type ResultTemplateScope = Extract<
-  FormStateObjectiveTemplateScope,
-  "test_results" | "point_of_care"
->;
-
-const RESULT_SCOPE_TO_SOURCE: Record<ResultTemplateScope, TestResultSource> = {
-  test_results: "patient_report",
+/** obj-23 / rpt-01: legacy POC scope still maps 1:1 to a row source for remapped apply. */
+const RESULT_SCOPE_TO_SOURCE: Record<"point_of_care", TestResultSource> = {
   point_of_care: "in_clinic_poc",
 };
-
-function isResultScope(scope: FormStateObjectiveTemplateScope): scope is ResultTemplateScope {
-  return scope === "test_results" || scope === "point_of_care";
-}
 
 /** Normalized result rows for one source, in entry order. */
 function resultRowsForSource(rows: TestResultRow[], source: TestResultSource): TestResultRow[] {
   return normalizeTestResults(rows).filter((row) => row.source === source);
 }
 
+/** All structured result rows (Reports scope — rpt-01). */
+function allResultRows(rows: TestResultRow[] | undefined): TestResultRow[] {
+  return normalizeTestResults(rows);
+}
+
 /**
  * Normalize a preset's result rows for apply. Ids are preserved (not re-minted)
- * so apply-vs-hand stays byte-identical through `buildRxPayload` (OBJ-D2): a
- * scoped apply replaces only its own source's rows and `objective_full` replaces
- * the whole set, so preserved ids never accumulate or collide.
+ * so apply-vs-hand stays byte-identical through `buildRxPayload` (OBJ-D2).
  */
 function applyTemplateResultRows(rows: TestResultRow[] | undefined): TestResultRow[] {
   return normalizeTestResults(rows);
 }
 
 /**
- * Merge a result scope's applied rows onto the current form: drop the scope's own
- * source rows, keep the other source's rows, then append the freshly-id'd preset
- * rows. With no `fields` (no current form) it falls back to a plain replace.
+ * Merge applied result rows onto the form for a legacy source-scoped preset
+ * (e.g. remapped `point_of_care` templates): drop that source's rows, keep the
+ * other source, then append the preset rows.
  */
 function mergeResultRowsForSource(
   fields: RxFormFields | undefined,
@@ -101,9 +98,15 @@ function mergeResultRowsForSource(
   return [...existingOtherSource, ...appliedRows];
 }
 
-type PerSystemExamScope = Extract<
+export type PerSystemExamScope = Extract<
   FormStateObjectiveTemplateScope,
-  "exam_general" | "exam_cvs" | "exam_resp" | "exam_abd" | "exam_cns"
+  | "exam_general"
+  | "exam_cvs"
+  | "exam_resp"
+  | "exam_abd"
+  | "exam_cns"
+  | "exam_additional_notes"
+  | "objective_notes"
 >;
 
 const PER_SYSTEM_EXAM_SCOPE_TO_SYSTEM_ID: Record<PerSystemExamScope, string> = {
@@ -112,7 +115,26 @@ const PER_SYSTEM_EXAM_SCOPE_TO_SYSTEM_ID: Record<PerSystemExamScope, string> = {
   exam_resp: "resp",
   exam_abd: "abd",
   exam_cns: "cns",
+  exam_additional_notes: "additional_notes",
+  objective_notes: "objective_notes",
 };
+
+/** Map a core / sibling exam systemId → its dedicated template scope (for card chrome). */
+export const EXAM_SYSTEM_ID_TO_TEMPLATE_SCOPE: Record<string, PerSystemExamScope> = {
+  general: "exam_general",
+  cvs: "exam_cvs",
+  resp: "exam_resp",
+  abd: "exam_abd",
+  cns: "exam_cns",
+  additional_notes: "exam_additional_notes",
+  objective_notes: "objective_notes",
+};
+
+export function examSystemIdToTemplateScope(
+  systemId: string,
+): PerSystemExamScope | null {
+  return EXAM_SYSTEM_ID_TO_TEMPLATE_SCOPE[systemId] ?? null;
+}
 
 const VITALS_FORM_KEYS = [
   "vitalsBpSystolic",
@@ -232,11 +254,24 @@ export function objectiveScopeHasContent(
     case "exam_resp":
     case "exam_abd":
     case "exam_cns":
-      return findExamFinding(fields.examFindings, PER_SYSTEM_EXAM_SCOPE_TO_SYSTEM_ID[scope]) != null;
+    case "exam_additional_notes":
+    case "objective_notes": {
+      const finding = findExamFinding(
+        fields.examFindings,
+        PER_SYSTEM_EXAM_SCOPE_TO_SYSTEM_ID[scope],
+      );
+      if (scope === "exam_additional_notes" || scope === "objective_notes") {
+        return Boolean(finding?.notes?.trim());
+      }
+      return finding != null;
+    }
     case "test_results":
+      return allResultRows(fields.testResultsStructured).length > 0;
     case "point_of_care":
+      // Legacy scope: still gated on in-clinic POC rows for remapped apply/save.
       return (
-        resultRowsForSource(fields.testResultsStructured, RESULT_SCOPE_TO_SOURCE[scope]).length > 0
+        resultRowsForSource(fields.testResultsStructured, RESULT_SCOPE_TO_SOURCE.point_of_care)
+          .length > 0
       );
     case "objective_custom_block": {
       const sectionId = options?.sectionId;
@@ -271,7 +306,9 @@ export function buildObjectiveTemplateSavePayload(
     case "exam_cvs":
     case "exam_resp":
     case "exam_abd":
-    case "exam_cns": {
+    case "exam_cns":
+    case "exam_additional_notes":
+    case "objective_notes": {
       const systemId = PER_SYSTEM_EXAM_SCOPE_TO_SYSTEM_ID[scope];
       const finding = findExamFinding(fields.examFindings, systemId);
       return {
@@ -283,14 +320,23 @@ export function buildObjectiveTemplateSavePayload(
       };
     }
     case "test_results":
+      // rpt-01: Reports templates capture ALL structured rows (any source).
+      return {
+        scope,
+        medicines: [],
+        objective: {
+          testResultsJson: allResultRows(fields.testResultsStructured),
+        },
+      };
     case "point_of_care":
+      // Legacy write path kept for tests / remapped apply tooling — UI no longer saves here.
       return {
         scope,
         medicines: [],
         objective: {
           testResultsJson: resultRowsForSource(
             fields.testResultsStructured,
-            RESULT_SCOPE_TO_SOURCE[scope],
+            RESULT_SCOPE_TO_SOURCE.point_of_care,
           ),
         },
       };
@@ -382,14 +428,25 @@ export function buildObjectiveTemplateApplyActions(
     case "exam_cvs":
     case "exam_resp":
     case "exam_abd":
-    case "exam_cns": {
+    case "exam_cns":
+    case "exam_additional_notes":
+    case "objective_notes": {
       const systemId = PER_SYSTEM_EXAM_SCOPE_TO_SYSTEM_ID[scope];
       const finding = findExamFinding(objective.examinationJson ?? [], systemId);
       return finding ? [buildExamSystemApplyAction(finding)] : [];
     }
-    case "test_results":
+    case "test_results": {
+      // rpt-01: replace the whole structured set (Reports owns all sources).
+      return [
+        {
+          type: "SET_TEST_RESULTS",
+          testResults: applyTemplateResultRows(objective.testResultsJson),
+        },
+      ];
+    }
     case "point_of_care": {
-      const source = RESULT_SCOPE_TO_SOURCE[scope];
+      // Remap-on-read: legacy POC presets still merge only in_clinic_poc rows.
+      const source = RESULT_SCOPE_TO_SOURCE.point_of_care;
       const applied = applyTemplateResultRows(objective.testResultsJson).filter(
         (row) => row.source === source,
       );
@@ -561,17 +618,25 @@ export function templateObjectiveScopeHasContent(
     case "exam_resp":
     case "exam_abd":
     case "exam_cns":
-      return (
-        findExamFinding(
-          objective.examinationJson ?? [],
-          PER_SYSTEM_EXAM_SCOPE_TO_SYSTEM_ID[scope],
-        ) != null
+    case "exam_additional_notes":
+    case "objective_notes": {
+      const finding = findExamFinding(
+        objective.examinationJson ?? [],
+        PER_SYSTEM_EXAM_SCOPE_TO_SYSTEM_ID[scope],
       );
+      if (scope === "exam_additional_notes" || scope === "objective_notes") {
+        return Boolean(finding?.notes?.trim());
+      }
+      return finding != null;
+    }
     case "test_results":
+      return allResultRows(objective.testResultsJson ?? []).length > 0;
     case "point_of_care":
       return (
-        resultRowsForSource(objective.testResultsJson ?? [], RESULT_SCOPE_TO_SOURCE[scope]).length >
-        0
+        resultRowsForSource(
+          objective.testResultsJson ?? [],
+          RESULT_SCOPE_TO_SOURCE.point_of_care,
+        ).length > 0
       );
     case "objective_custom_block":
       return hasCustomSubsectionsContent(objective.customSections ?? []);
@@ -599,13 +664,18 @@ export function defaultObjectiveSaveName(
     case "exam_resp":
     case "exam_abd":
     case "exam_cns":
+    case "exam_additional_notes":
+    case "objective_notes":
       return resolveExamSystem(PER_SYSTEM_EXAM_SCOPE_TO_SYSTEM_ID[scope]).label;
     case "test_results": {
-      const [first] = resultRowsForSource(fields.testResultsStructured, "patient_report");
-      return first?.name ?? "Patient-brought results";
+      const [first] = allResultRows(fields.testResultsStructured);
+      return first?.name ?? "Reports";
     }
     case "point_of_care": {
-      const [first] = resultRowsForSource(fields.testResultsStructured, "in_clinic_poc");
+      const [first] = resultRowsForSource(
+        fields.testResultsStructured,
+        RESULT_SCOPE_TO_SOURCE.point_of_care,
+      );
       return first?.name ?? "Point-of-care results";
     }
     case "objective_custom_block":
@@ -613,4 +683,61 @@ export function defaultObjectiveSaveName(
     case "objective_full":
       return "Objective bundle";
   }
+}
+
+function clearObjectiveCustomSectionVisitBodies(
+  sections: readonly CustomSubsection[],
+): CustomSubsection[] {
+  return sections.map((section) => ({
+    id: section.id,
+    title: section.title,
+    body: null,
+    children: (section.children ?? []).map((child) => ({
+      id: child.id,
+      title: child.title,
+      body: null,
+    })),
+  }));
+}
+
+/** True when Clear all on the Objective tab should be enabled. */
+export function rxFormHasClearableObjectiveContent(fields: RxFormFields): boolean {
+  return rxFormHasObjectiveContent(fields);
+}
+
+/**
+ * Reducer actions that empty Objective form fields (vitals, structured exam,
+ * reports, custom section visit bodies). Keeps custom section titles/structure.
+ */
+export function buildObjectiveClearAllActions(fields: RxFormFields): RxFormAction[] {
+  const actions: RxFormAction[] = [];
+  for (const key of VITALS_FORM_KEYS) {
+    actions.push({ type: "SET_FIELD", key, value: null });
+  }
+  actions.push({
+    type: "SET_FIELD",
+    key: "vitalsBpReadings",
+    value: [
+      {
+        systolic: null,
+        diastolic: null,
+        posture: null,
+        limb: null,
+        sequenceLabel: null,
+      },
+    ],
+  });
+  actions.push({ type: "SET_FIELD", key: "vitalsText", value: "" });
+  actions.push({ type: "SET_FIELD", key: "vitalsNotes", value: {} });
+  actions.push({ type: "SET_EXAM_FINDINGS", examFindings: [] });
+  actions.push({ type: "SET_FIELD", key: "examinationFindings", value: "" });
+  actions.push({ type: "SET_FIELD", key: "testResults", value: "" });
+  actions.push({ type: "SET_TEST_RESULTS", testResults: [] });
+  if (fields.objectiveCustomSections.length > 0) {
+    actions.push({
+      type: "SET_OBJECTIVE_CUSTOM_SECTIONS",
+      sections: clearObjectiveCustomSectionVisitBodies(fields.objectiveCustomSections),
+    });
+  }
+  return actions;
 }

@@ -9,6 +9,10 @@ import {
 } from "@/components/cockpit/rx/RxFormContext";
 import { ComplaintList } from "@/components/cockpit/rx/subjective/ComplaintList";
 import { SubjectiveSection } from "@/components/cockpit/rx/sections/SubjectiveSection";
+import {
+  DEPTH_TONE_RAIL_BY_FAMILY,
+  SoapTabFamilyProvider,
+} from "@/components/cockpit/rx/sections/section-chrome";
 import { searchComplaints } from "@/lib/api/complaint-master";
 import * as complaintCardScroll from "@/lib/cockpit/complaint-card-scroll";
 
@@ -496,7 +500,7 @@ describe("ComplaintList", () => {
 
   describe("post-collapse scroll", () => {
     beforeEach(() => {
-      vi.spyOn(complaintCardScroll, "scrollComplaintCardHeaderIntoView").mockImplementation(
+      vi.spyOn(complaintCardScroll, "scrollComplaintCardIntoView").mockImplementation(
         () => {},
       );
       vi.spyOn(complaintCardScroll, "scrollComplaintCaptureIntoView").mockImplementation(
@@ -620,6 +624,26 @@ describe("ComplaintList", () => {
 
     vi.useRealTimers();
   });
+
+  it("applies depth-tone surfaces on the section and complaint cards", () => {
+    const headache = createEmptyComplaint();
+    headache.name = "Headache";
+
+    renderWithRxForm(
+      <SoapTabFamilyProvider family="subjective">
+        <ComplaintList />
+      </SoapTabFamilyProvider>,
+      { initialComplaints: [headache] },
+    );
+
+    const section = getChiefComplaintsSection();
+    expect(section.className).toContain("bg-muted/30");
+
+    const card = document.querySelector("[data-complaint-instance]");
+    expect(card?.className).toContain("bg-card");
+    expect(card?.className).toContain("shadow-sm");
+    expect(card?.className).not.toContain(DEPTH_TONE_RAIL_BY_FAMILY.subjective);
+  });
 });
 
 describe("SubjectiveSection", () => {
@@ -627,9 +651,9 @@ describe("SubjectiveSection", () => {
     renderWithRxForm(<SubjectiveSection heading={null} />);
 
     expect(getChiefComplaintsSection()).toBeInTheDocument();
-    expect(screen.getByText("Free-text notes (optional)")).toBeInTheDocument();
+    expect(screen.getByText("Additional Notes")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText("Free-text notes (optional)"));
+    fireEvent.click(screen.getByText("Additional Notes"));
     expect(screen.getByLabelText("Additional history notes")).toBeInTheDocument();
   });
 });

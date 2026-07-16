@@ -109,6 +109,12 @@ describe("<PaneTabStripV3>", () => {
     expect(screen.getByTestId("active-pane-body")).toBeInTheDocument();
   });
 
+  it("renders trailing end-zone droppable after tabs", () => {
+    renderStrip(["chart", "body"], { groupId: "leaf-1" });
+    const end = screen.getByTestId("pane-tab-strip-end-drop");
+    expect(end).toHaveAttribute("data-pane-tabs-end", "leaf-1");
+  });
+
   it("activate calls onActivateTab when clicking a non-active tab", () => {
     const onActivateTab = vi.fn();
     renderStrip(["chart", "body", "rx"], {
@@ -159,6 +165,118 @@ describe("<PaneTabStripV3>", () => {
       screen.getByLabelText(`Close pane-${VISIBLE_TAB_LIMIT + 1} tab`),
     );
     expect(onCloseTab).toHaveBeenCalledWith(`pane-${VISIBLE_TAB_LIMIT + 1}`);
+  });
+
+  it("tablist scrolls horizontally when the strip is narrower than its tabs", () => {
+    renderStrip(["subjective", "objective", "assessment", "plan"], {
+      activeTabId: "subjective",
+    });
+    const scroll = screen.getByTestId("pane-tab-strip-scroll");
+    expect(scroll).toHaveClass("overflow-x-auto");
+    expect(scroll).toHaveClass("overflow-y-hidden");
+    expect(scroll).toHaveClass("min-w-0");
+    expect(scroll).toHaveAttribute("role", "tablist");
+  });
+
+  it("maps vertical mouse wheel to horizontal scroll when the strip overflows", () => {
+    renderStrip(["subjective", "objective", "assessment", "plan"], {
+      activeTabId: "subjective",
+    });
+    const scroll = screen.getByTestId("pane-tab-strip-scroll");
+    Object.defineProperty(scroll, "scrollWidth", { configurable: true, value: 400 });
+    Object.defineProperty(scroll, "clientWidth", { configurable: true, value: 200 });
+    scroll.scrollLeft = 0;
+
+    fireEvent.wheel(scroll, { deltaY: 40, deltaX: 0 });
+    expect(scroll.scrollLeft).toBe(40);
+  });
+
+  it("does not remap wheel when the gesture is already horizontal", () => {
+    renderStrip(["subjective", "objective", "assessment", "plan"], {
+      activeTabId: "subjective",
+    });
+    const scroll = screen.getByTestId("pane-tab-strip-scroll");
+    Object.defineProperty(scroll, "scrollWidth", { configurable: true, value: 400 });
+    Object.defineProperty(scroll, "clientWidth", { configurable: true, value: 200 });
+    scroll.scrollLeft = 10;
+
+    fireEvent.wheel(scroll, { deltaY: 5, deltaX: 30 });
+    // Native horizontal handling owns this — we must not double-apply deltaY.
+    expect(scroll.scrollLeft).toBe(10);
+  });
+
+  it("shows a right edge fade and marks overflowing when the strip cannot fit its tabs", () => {
+    renderStrip(["subjective", "objective", "assessment", "plan"], {
+      activeTabId: "subjective",
+    });
+    const scroll = screen.getByTestId("pane-tab-strip-scroll");
+    Object.defineProperty(scroll, "scrollWidth", { configurable: true, value: 400 });
+    Object.defineProperty(scroll, "clientWidth", { configurable: true, value: 200 });
+    Object.defineProperty(scroll, "scrollLeft", { configurable: true, value: 0, writable: true });
+    fireEvent.scroll(scroll);
+
+    expect(scroll).toHaveAttribute("data-overflowing", "true");
+    expect(screen.getByTestId("pane-tab-strip-fade-right")).toBeInTheDocument();
+    expect(screen.queryByTestId("pane-tab-strip-fade-left")).not.toBeInTheDocument();
+    expect(screen.getByTestId("pane-tab-strip-scrollbar")).toBeInTheDocument();
+    expect(screen.getByTestId("pane-tab-strip-thumb")).toBeInTheDocument();
+  });
+
+  it("shows a left edge fade after scrolling away from the start", () => {
+    renderStrip(["subjective", "objective", "assessment", "plan"], {
+      activeTabId: "subjective",
+    });
+    const scroll = screen.getByTestId("pane-tab-strip-scroll");
+    Object.defineProperty(scroll, "scrollWidth", { configurable: true, value: 400 });
+    Object.defineProperty(scroll, "clientWidth", { configurable: true, value: 200 });
+    Object.defineProperty(scroll, "scrollLeft", {
+      configurable: true,
+      get: () => 80,
+    });
+    fireEvent.scroll(scroll);
+
+    expect(screen.getByTestId("pane-tab-strip-fade-left")).toBeInTheDocument();
+    expect(screen.getByTestId("pane-tab-strip-fade-right")).toBeInTheDocument();
+  });
+
+  it("drags the custom thumb to scroll the tab strip", () => {
+    renderStrip(["subjective", "objective", "assessment", "plan"], {
+      activeTabId: "subjective",
+    });
+    const scroll = screen.getByTestId("pane-tab-strip-scroll");
+    Object.defineProperty(scroll, "scrollWidth", { configurable: true, value: 400 });
+    Object.defineProperty(scroll, "clientWidth", { configurable: true, value: 200 });
+    let scrollLeft = 0;
+    Object.defineProperty(scroll, "scrollLeft", {
+      configurable: true,
+      get: () => scrollLeft,
+      set: (v: number) => {
+        scrollLeft = v;
+      },
+    });
+    fireEvent.scroll(scroll);
+
+    const thumb = screen.getByTestId("pane-tab-strip-thumb");
+    const track = screen.getByTestId("pane-tab-strip-scrollbar");
+    // Track is 200px wide so maxThumbTravel ≈ 100 (50% thumb) → dx 50 ≈ half scroll.
+    vi.spyOn(track, "getBoundingClientRect").mockReturnValue({
+      width: 200,
+      height: 6,
+      top: 0,
+      left: 0,
+      bottom: 6,
+      right: 200,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    Object.defineProperty(track, "clientWidth", { configurable: true, value: 200 });
+
+    fireEvent.pointerDown(thumb, { clientX: 20, pointerId: 1, buttons: 1 });
+    fireEvent.pointerMove(thumb, { clientX: 70, pointerId: 1, buttons: 1 });
+    fireEvent.pointerUp(thumb, { clientX: 70, pointerId: 1 });
+
+    expect(scrollLeft).toBeGreaterThan(0);
   });
 });
 

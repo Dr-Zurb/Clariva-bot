@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, within, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   RxFormProvider,
@@ -19,6 +19,16 @@ vi.mock("@/components/cockpit/rx/inputs/VitalsGrid", () => ({
   VitalsGrid: () => <div data-testid="vitals-grid-stub" />,
 }));
 
+vi.mock("@/components/cockpit/rx/inputs/ExamSystemList", () => ({
+  ExamSystemList: ({ disabled }: { disabled?: boolean }) => (
+    <div data-testid="exam-system-list">
+      <button type="button" data-testid="exam-mark-all-normal" disabled={disabled}>
+        Mark all normal
+      </button>
+    </div>
+  ),
+}));
+
 const mockGetDoctorSettings = vi.fn();
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -26,6 +36,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     getDoctorSettings: (...args: unknown[]) => mockGetDoctorSettings(...args),
+    getAppointmentById: vi.fn().mockResolvedValue({ data: { appointment: { consultation_type: "in_clinic" } } }),
     patchDoctorSettings: vi.fn(),
   };
 });
@@ -33,7 +44,14 @@ vi.mock("@/lib/api", async (importOriginal) => {
 beforeEach(() => {
   mockGetDoctorSettings.mockReset();
   mockGetDoctorSettings.mockResolvedValue({
-    data: { settings: { objective_section_order: [], objective_section_collapsed: {} } },
+    data: {
+      settings: {
+        objective_section_order: [],
+        objective_section_collapsed: {},
+        objective_section_hidden: [],
+        specialty: null,
+      },
+    },
   });
 });
 
@@ -65,26 +83,34 @@ function readRenderedSectionOrder(container: HTMLElement): ObjectiveSectionId[] 
 }
 
 describe("ObjectiveSection section order (obj-09)", () => {
-  it("renders sections in DEFAULT_OBJECTIVE_SECTION_ORDER", () => {
+  it("renders sections in DEFAULT_OBJECTIVE_SECTION_ORDER", async () => {
     const { container } = renderWithRxForm(<ObjectiveSection />);
 
     const available = resolveAvailableSectionIds();
 
-    expect(readRenderedSectionOrder(container)).toEqual(
-      normalizeSectionOrder(DEFAULT_OBJECTIVE_SECTION_ORDER, available),
-    );
+    await waitFor(() => {
+      expect(readRenderedSectionOrder(container)).toEqual(
+        normalizeSectionOrder(DEFAULT_OBJECTIVE_SECTION_ORDER, available),
+      );
+    });
 
     const root = container.querySelector('[aria-label="Objective"]')!;
     expect(within(root).getByText("Vitals", { exact: true })).toBeInTheDocument();
     expect(within(root).getByTestId("exam-system-list")).toBeInTheDocument();
-    expect(within(root).getByTestId("test-results-list-patient_report")).toBeInTheDocument();
-    expect(within(root).getByText("Point-of-care (in-clinic)")).toBeInTheDocument();
-    expect(within(root).getByText("Free-text exam (legacy)")).toBeInTheDocument();
-    expect(within(root).getByText("Legacy free-text vitals")).toBeInTheDocument();
+    expect(within(root).getByTestId("test-results-list")).toBeInTheDocument();
+    expect(within(root).getByText("Reports")).toBeInTheDocument();
+    expect(within(root).queryByText("Free-text exam (legacy)")).not.toBeInTheDocument();
+    expect(within(root).queryByText("Legacy free-text vitals")).not.toBeInTheDocument();
   });
 
-  it("keeps heading outside the ordered section list", () => {
+  it("keeps heading outside the ordered section list", async () => {
     const { container } = renderWithRxForm(<ObjectiveSection />);
+
+    await waitFor(() => {
+      expect(
+        container.querySelector("[data-objective-section-id]"),
+      ).toBeInTheDocument();
+    });
 
     const root = container.querySelector('[aria-label="Objective"]')!;
     const heading = root.querySelector("h3");
@@ -100,12 +126,15 @@ describe("ObjectiveSection section order (obj-09)", () => {
     expect(heading!.closest("[data-objective-section-id]")).toBeNull();
   });
 
-  it("omits heading shell when heading is null", () => {
+  it("omits heading shell when heading is null", async () => {
     const { container } = renderWithRxForm(<ObjectiveSection heading={null} />);
+
+    await waitFor(() => {
+      expect(readRenderedSectionOrder(container)[0]).toBe("vitals");
+    });
 
     const root = container.querySelector('[aria-label="Objective"]')!;
     expect(root.querySelector("h3")).toBeNull();
-    expect(readRenderedSectionOrder(container)[0]).toBe("vitals");
   });
 });
 
@@ -123,36 +152,34 @@ describe("objective-section-order merge (obj-09)", () => {
 
     expect(
       normalizeSectionOrder(
-        ["unknown_section", "vitals", "legacy_exam", "vitals"],
+        ["unknown_section", "vitals", "legacy_vitals", "vitals"] as ObjectiveSectionId[],
         available,
       ),
-    ).toEqual([
-      "vitals",
-      "exam",
-      "test_results",
-      "point_of_care",
-      "media",
-      "legacy_exam",
-      "legacy_vitals",
-    ]);
+    ).toEqual(["vitals", "exam", "notes", "test_results"]);
   });
 
   it("normalizeSectionOrder preserves stored relative order for known ids", () => {
     const available = resolveAvailableSectionIds();
 
     expect(
+      normalizeSectionOrder(["exam", "vitals", "test_results"], available),
+    ).toEqual(["exam", "vitals", "notes", "test_results"]);
+  });
+
+  it("normalizeSectionOrder drops retired point_of_care / media / legacy ids (rpt-01)", () => {
+    const available = resolveAvailableSectionIds();
+    expect(
       normalizeSectionOrder(
-        ["legacy_vitals", "vitals", "test_results"],
+        [
+          "vitals",
+          "point_of_care" as ObjectiveSectionId,
+          "media" as ObjectiveSectionId,
+          "legacy_exam" as ObjectiveSectionId,
+          "legacy_vitals" as ObjectiveSectionId,
+          "exam",
+        ],
         available,
       ),
-    ).toEqual([
-      "legacy_vitals",
-      "vitals",
-      "exam",
-      "test_results",
-      "point_of_care",
-      "media",
-      "legacy_exam",
-    ]);
+    ).toEqual(["vitals", "exam", "notes", "test_results"]);
   });
 });

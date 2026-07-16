@@ -23,7 +23,6 @@ const VISIBLE_BY_LAYOUT: Record<DefaultLayoutId, readonly string[]> = {
     "assessment",
     "subjective",
     "objective",
-    "investigations-orders",
     "plan",
   ],
   review: PANE_IDS,
@@ -31,7 +30,7 @@ const VISIBLE_BY_LAYOUT: Record<DefaultLayoutId, readonly string[]> = {
 
 const HIDDEN_BY_LAYOUT: Record<DefaultLayoutId, readonly string[]> = {
   consult: [],
-  read: ["body", "investigations-orders", "plan"],
+  read: ["body", "plan"],
   document: ["body", "history"],
   review: [],
 };
@@ -40,7 +39,6 @@ const STRUCTURAL_IDS = new Set([
   "__root__",
   "col-left",
   "col-mid",
-  "c-mid-bottom",
   "col-right",
   "read-left",
   "read-center",
@@ -154,14 +152,14 @@ describe("default-layouts (cv3l-01)", () => {
   });
 
   it.each(DEFAULT_LAYOUTS.map((e) => [e.id, e.tree] as const))(
-    "%s tree passes validators and the eight-pane invariant",
+    "%s tree passes validators and the seven-pane invariant",
     (id, tree) => {
       expect(isValidTreeNode(tree)).toBe(true);
       assertLeafContracts(tree);
 
       const paneIds = collectPaneIds(tree);
       expect(paneIds.sort()).toEqual([...PANE_IDS].sort());
-      expect(new Set(paneIds).size).toBe(8);
+      expect(new Set(paneIds).size).toBe(7);
 
       expect(visiblePaneIds(tree).sort()).toEqual(
         [...VISIBLE_BY_LAYOUT[id]].sort(),

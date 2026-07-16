@@ -4,7 +4,8 @@
  * AllergiesSection — patient_allergies with capture bar + collapsible cards (Subjective tab).
  */
 
-import { useCallback, useEffect, useId, useMemo, useState, type RefObject } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
+import { RX_FIELD_INPUT_CLASS } from "@/components/cockpit/rx/sections/field-styles";
 import { AllergyCard, type AllergyCardPatch } from "@/components/ehr/chart/AllergyCard";
 import { ChartCatalogCombobox } from "@/components/ehr/chart/ChartCatalogCombobox";
 import { ChartQuickAddChips } from "@/components/ehr/chart/ChartQuickAddChips";
@@ -13,7 +14,9 @@ import {
   createPatientAllergy,
   listPatientAllergies,
   updatePatientAllergy,
+  updatePatientAllergySectionNotes,
 } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import {
   COMMON_ALLERGEN_CATALOG,
   COMMON_ALLERGEN_QUICK_ADD,
@@ -47,6 +50,7 @@ interface AllergiesSectionProps {
   addOpen?: boolean;
   onAddOpenChange?: (open: boolean) => void;
   onCountChange?: (count: number) => void;
+  onSectionNotesChange?: (notes: string | null) => void;
   /** Header-mounted template controls read live bindings from this ref. */
   templateControlsRef?: RefObject<SectionTemplateControlsBinding | null>;
   onTemplateControlsReadyChange?: (ready: boolean) => void;
@@ -55,6 +59,9 @@ interface AllergiesSectionProps {
 function normalizeKey(value: string): string {
   return value.trim().toLowerCase();
 }
+
+const FIELD_SAVE_DEBOUNCE_MS = 400;
+const ALLERGIES_SECTION_NOTES_MAX = 2000;
 
 function isDuplicateAllergen(rows: PatientAllergy[], allergen: string): boolean {
   const key = normalizeKey(allergen);
@@ -69,29 +76,43 @@ export default function AllergiesSection({
   addOpen = false,
   onAddOpenChange,
   onCountChange,
+  onSectionNotesChange,
   templateControlsRef,
   onTemplateControlsReadyChange,
 }: AllergiesSectionProps) {
   const inputId = useId();
   const { stableKey, linkRealId } = useStableMedKey();
   const [rows, setRows] = useState<PatientAllergy[] | null>(null);
+  const [sectionNotes, setSectionNotes] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [templateNotice, setTemplateNotice] = useState<string | null>(null);
   const [focusCombobox, setFocusCombobox] = useState(false);
+  const pendingSectionNotesRef = useRef<string | undefined>(undefined);
+  const sectionNotesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const readonly = mode === "readonly";
+
+  const reportSectionNotes = useCallback(
+    (notes: string | null) => {
+      onSectionNotesChange?.(notes?.trim() ? notes.trim() : null);
+    },
+    [onSectionNotesChange],
+  );
 
   const reloadAllergies = useCallback(async () => {
     try {
       const res = await listPatientAllergies(token, patientId);
       const data = res.data.allergies ?? [];
+      const notes = res.data.sectionNotes ?? null;
       setRows(data);
+      setSectionNotes(notes);
       onCountChange?.(data.length);
+      reportSectionNotes(notes);
     } catch {
       // Keep the current optimistic state if the resync fails.
     }
-  }, [onCountChange, patientId, token]);
+  }, [onCountChange, patientId, reportSectionNotes, token]);
 
   useEffect(() => {
     if (addOpen) setFocusCombobox(true);
@@ -104,8 +125,11 @@ export default function AllergiesSection({
         const res = await listPatientAllergies(token, patientId);
         if (cancelled) return;
         const data = res.data.allergies ?? [];
+        const notes = res.data.sectionNotes ?? null;
         setRows(data);
+        setSectionNotes(notes);
         onCountChange?.(data.length);
+        reportSectionNotes(notes);
       } catch (err) {
         if (cancelled) return;
         setLoadError(err instanceof Error ? err.message : "Failed to load allergies");
@@ -116,7 +140,44 @@ export default function AllergiesSection({
     return () => {
       cancelled = true;
     };
-  }, [token, patientId, onCountChange]);
+  }, [token, patientId, onCountChange, reportSectionNotes]);
+
+  useEffect(() => {
+    return () => {
+      if (sectionNotesTimerRef.current) clearTimeout(sectionNotesTimerRef.current);
+    };
+  }, []);
+
+  const flushSectionNotesSave = useCallback(async () => {
+    if (pendingSectionNotesRef.current === undefined) return;
+    const notes = pendingSectionNotesRef.current;
+    pendingSectionNotesRef.current = undefined;
+    setActionError(null);
+    try {
+      await updatePatientAllergySectionNotes(token, patientId, {
+        notes: notes.trim() ? notes.trim() : null,
+      });
+    } catch (err) {
+      void reloadAllergies();
+      setActionError(err instanceof Error ? err.message : "Failed to save allergy notes");
+    }
+  }, [patientId, reloadAllergies, token]);
+
+  const scheduleSectionNotesPatch = useCallback(
+    (notes: string) => {
+      if (readonly) return;
+      const normalized = notes.trim() ? notes : null;
+      setSectionNotes(normalized);
+      reportSectionNotes(normalized);
+      pendingSectionNotesRef.current = notes;
+      if (sectionNotesTimerRef.current) clearTimeout(sectionNotesTimerRef.current);
+      sectionNotesTimerRef.current = setTimeout(() => {
+        sectionNotesTimerRef.current = null;
+        void flushSectionNotesSave();
+      }, FIELD_SAVE_DEBOUNCE_MS);
+    },
+    [flushSectionNotesSave, readonly, reportSectionNotes],
+  );
 
   const catalogOptions = useMemo(() => {
     const selected = new Set((rows ?? []).map((row) => normalizeKey(row.allergen)));
@@ -369,8 +430,35 @@ export default function AllergiesSection({
         </div>
       )}
 
-      {rows.length === 0 && readonly && (
+      {rows.length === 0 && readonly && !sectionNotes?.trim() && (
         <p className="px-1 py-1 text-xs text-muted-foreground">No allergies recorded.</p>
+      )}
+
+      {(!readonly || sectionNotes?.trim()) && (
+        <div className="space-y-1" data-testid="allergies-section-notes-field">
+          <label
+            htmlFor={`${inputId}-allergies-section-notes`}
+            className="text-xs font-medium text-foreground/80"
+          >
+            Notes (optional)
+          </label>
+          {readonly ? (
+            <p className="text-xs text-muted-foreground">{sectionNotes}</p>
+          ) : (
+            <input
+              id={`${inputId}-allergies-section-notes`}
+              type="text"
+              defaultValue={sectionNotes ?? ""}
+              key={`allergies-section-notes-${sectionNotes ?? ""}`}
+              placeholder="Additional allergy context not captured above"
+              aria-label="Allergies section notes"
+              className={cn(RX_FIELD_INPUT_CLASS, "h-8 text-xs")}
+              maxLength={ALLERGIES_SECTION_NOTES_MAX}
+              data-testid="allergies-section-notes"
+              onChange={(e) => scheduleSectionNotesPatch(e.target.value)}
+            />
+          )}
+        </div>
       )}
 
       {actionError && (

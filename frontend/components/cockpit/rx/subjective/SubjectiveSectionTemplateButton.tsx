@@ -19,8 +19,14 @@ import { cn } from "@/lib/utils";
 /** Server-backed scopes whose save/apply go through a chart hook (subj-17). */
 export type ServerBackedTemplateScope = Extract<RxTemplateScope, "past_medical" | "allergies">;
 
+/** Collective Patient background scope (PMH chart + past surgical form). */
+export type PatientBackgroundTemplateScope = Extract<RxTemplateScope, "patient_background">;
+
 /** Every scope the shared button can drive. */
-export type SectionTemplateScope = FormStateTemplateScope | ServerBackedTemplateScope;
+export type SectionTemplateScope =
+  | FormStateTemplateScope
+  | ServerBackedTemplateScope
+  | PatientBackgroundTemplateScope;
 
 const SAVE_EMPTY_MESSAGES: Record<SectionTemplateScope, string> = {
   chief_complaints: "Add at least one complaint before saving a template.",
@@ -29,6 +35,9 @@ const SAVE_EMPTY_MESSAGES: Record<SectionTemplateScope, string> = {
   social_history: "Add social / personal history before saving a template.",
   past_medical: "Add a condition or medication before saving a template.",
   allergies: "Add an allergy before saving a template.",
+  free_text_notes: "Add additional notes before saving a template.",
+  patient_background:
+    "Add past medical history or past surgical history before saving a template.",
 };
 
 const SAVE_PROMPT_LABELS: Record<SectionTemplateScope, string> = {
@@ -38,6 +47,8 @@ const SAVE_PROMPT_LABELS: Record<SectionTemplateScope, string> = {
   social_history: "Save current social history as template",
   past_medical: "Save current medical history as template",
   allergies: "Save current allergies as template",
+  free_text_notes: "Save current additional notes as template",
+  patient_background: "Save current patient background as template",
 };
 
 const TEMPLATE_ARIA_LABELS: Record<SectionTemplateScope, string> = {
@@ -47,6 +58,8 @@ const TEMPLATE_ARIA_LABELS: Record<SectionTemplateScope, string> = {
   social_history: "Templates for social history",
   past_medical: "Templates for past medical history",
   allergies: "Templates for allergies",
+  free_text_notes: "Templates for additional notes",
+  patient_background: "Templates for patient background",
 };
 
 const SAVE_ARIA_LABELS: Record<SectionTemplateScope, string> = {
@@ -56,13 +69,19 @@ const SAVE_ARIA_LABELS: Record<SectionTemplateScope, string> = {
   social_history: "Save social history as template",
   past_medical: "Save medical history as template",
   allergies: "Save allergies as template",
+  free_text_notes: "Save additional notes as template",
+  patient_background: "Save patient background as template",
 };
 
 const ICON_BTN_CLASS =
   "h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-foreground";
 
 function isFormStateScope(scope: SectionTemplateScope): scope is FormStateTemplateScope {
-  return scope !== "past_medical" && scope !== "allergies";
+  return (
+    scope !== "past_medical" &&
+    scope !== "allergies" &&
+    scope !== "patient_background"
+  );
 }
 
 function defaultSaveName(
@@ -80,6 +99,10 @@ function defaultSaveName(
       return "Family history";
     case "social_history":
       return "Social history";
+    case "free_text_notes": {
+      const hopi = fields.hopi.trim();
+      return hopi.length > 40 ? `${hopi.slice(0, 40)}…` : hopi || "Additional notes";
+    }
   }
 }
 
@@ -228,11 +251,13 @@ export function SubjectiveSectionTemplateHeaderActions({
   ready: boolean;
   disabled?: boolean;
 }) {
-  if (disabled || !ready) return null;
+  // Always reserve header chrome (don't unmount while chart rows load) — empty
+  // space → icons popping in was shifting Allergies / PMH headers.
+  if (disabled) return null;
   return (
     <SubjectiveSectionTemplateButton
       scope={scope}
-      disabled={!controlsRef.current}
+      disabled={!ready}
       applyOverride={(template) => controlsRef.current?.applyOverride(template)}
       buildSaveOverride={() => controlsRef.current?.buildSaveOverride() ?? null}
       defaultSaveName={controlsRef.current?.defaultSaveName}

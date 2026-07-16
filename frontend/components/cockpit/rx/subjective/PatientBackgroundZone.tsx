@@ -4,17 +4,38 @@ import { useCallback, useRef, useState } from "react";
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import { PastSurgicalHistoryField } from "@/components/cockpit/rx/subjective/PastSurgicalHistoryField";
 import {
+  SubjectiveSectionTemplateButton,
   SubjectiveSectionTemplateHeaderActions,
   type SectionTemplateControlsBinding,
+  type ScopedSavePayload,
 } from "@/components/cockpit/rx/subjective/SubjectiveSectionTemplateButton";
 import ProblemOrientedMedicalSection from "@/components/ehr/sections/ProblemOrientedMedicalSection";
 import { CollapsibleContainer } from "@/components/ui/CollapsibleContainer";
+import {
+  resolveSubjectiveSectionIcon,
+  sectionHeaderIcon,
+} from "@/components/cockpit/rx/sections/section-chrome";
+import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import { SectionReorderLeadingAction } from "@/components/cockpit/rx/subjective/SortableSectionShell";
 import { formatActivePastSummary } from "@/components/ehr/chart/ChartPillToggle";
 import {
+  buildScopedTemplateApplyActions,
+  buildScopedTemplateSavePayload,
+  scopeHasContent,
+} from "@/lib/cockpit/apply-subjective-template";
+import { pmhTemplateHasContent } from "@/lib/chart/use-pmh-template-apply";
+import {
   formatPastSurgicalHistoryPreview,
+  hasPastSurgicalHistoryStructuredContent,
 } from "@/lib/cockpit/past-surgical-history";
+import { useAccordionOpenState } from "@/lib/cockpit/accordion-open-state";
+import type { DoctorRxTemplate } from "@/types/rx-template";
 import type { PatientChartMode } from "@/types/patient-chart";
+
+const BACKGROUND_SUBSECTIONS = [
+  { id: "pmh" },
+  { id: "past_surgical" },
+] as const;
 
 const BACKGROUND_LAYOUT = "in-call" as const;
 
@@ -40,7 +61,7 @@ export function PatientBackgroundZone({
   sectionOpen,
   onSectionOpenChange,
 }: PatientBackgroundZoneProps) {
-  const { state, setPastSurgicalHistoryStructured } = useRxForm();
+  const { state, dispatch, setPastSurgicalHistoryStructured } = useRxForm();
   const [counts, setCounts] = useState({
     conditionActive: 0,
     conditionPast: 0,
@@ -93,20 +114,72 @@ export function PatientBackgroundZone({
   const surgicalStructured = state.fields.pastSurgicalHistoryStructured;
   const surgicalPreview = formatPastSurgicalHistoryPreview(surgicalStructured);
 
-  const zonePreview = joinPreviewParts([pmhPreview, surgicalPreview]);
+  const zonePreview = joinPreviewParts([pmhPreview ?? "", surgicalPreview ?? ""]);
+
+  const subsectionAccordion = useAccordionOpenState({
+    items: BACKGROUND_SUBSECTIONS,
+    initialOpenIds: [
+      ...(pmhFilledCount > 0 ? ["pmh"] : []),
+      ...(hasPastSurgicalHistoryStructuredContent(surgicalStructured) ? ["past_surgical"] : []),
+    ],
+    fallbackOpenIds: ["pmh"],
+  });
+
+  const applyPatientBackgroundTemplate = useCallback(
+    async (template: DoctorRxTemplate) => {
+      if (pmhTemplateHasContent(template.pmh_json)) {
+        await pmhControlsRef.current?.applyOverride(template);
+      }
+      for (const action of buildScopedTemplateApplyActions("past_surgical", template)) {
+        dispatch(action);
+      }
+    },
+    [dispatch],
+  );
+
+  const buildPatientBackgroundSave = useCallback((): ScopedSavePayload | null => {
+    const pmhBuilt = pmhControlsRef.current?.buildSaveOverride() ?? null;
+    const hasPsh = scopeHasContent("past_surgical", state.fields);
+    if (!pmhBuilt && !hasPsh) return null;
+
+    const pshPayload = hasPsh
+      ? buildScopedTemplateSavePayload("past_surgical", state.fields)
+      : null;
+
+    return {
+      scope: "patient_background",
+      medicines: [],
+      ...(pmhBuilt?.pmh ? { pmh: pmhBuilt.pmh } : {}),
+      ...(pshPayload?.subjective ? { subjective: pshPayload.subjective } : {}),
+    };
+  }, [state.fields]);
 
   return (
     <CollapsibleContainer
       title="Patient background"
+      sectionIcon={sectionHeaderIcon(resolveSubjectiveSectionIcon("patient_background")!)}
       toggleLabel="Toggle patient background"
       testId="patient-background-zone"
       scrollOnExpand
+      closeScrollToSelector={SUBJECTIVE_SCROLL_TOP_SELECTOR}
       stickyHeader
       open={sectionOpen}
       onOpenChange={onSectionOpenChange}
       preview={zonePreview ? `— ${zonePreview}` : undefined}
       bodyClassName="space-y-2"
+      depthTone
       leadingActions={<SectionReorderLeadingAction sectionId="patient_background" />}
+      actions={
+        !readonly ? (
+          <SubjectiveSectionTemplateButton
+            scope="patient_background"
+            disabled={readonly}
+            applyOverride={applyPatientBackgroundTemplate}
+            buildSaveOverride={buildPatientBackgroundSave}
+            defaultSaveName="Patient background"
+          />
+        ) : undefined
+      }
     >
       <CollapsibleContainer
         title="Past medical history"
@@ -115,8 +188,10 @@ export function PatientBackgroundZone({
         variant="subsection"
         count={pmhFilledCount > 0 ? pmhFilledCount : null}
         preview={pmhPreview ? `— ${pmhPreview}` : undefined}
-        defaultOpen
+        open={subsectionAccordion.isOpen("pmh")}
+        onOpenChange={(open) => subsectionAccordion.setOpen("pmh", open)}
         scrollOnExpand
+        closeScrollToSelector='[data-testid="patient-background-zone"]'
         stickyHeader
         nestedSticky
         bodyClassName="space-y-3"
@@ -145,7 +220,10 @@ export function PatientBackgroundZone({
         value={surgicalStructured}
         disabled={readonly}
         onChange={setPastSurgicalHistoryStructured}
+        sectionOpen={subsectionAccordion.isOpen("past_surgical")}
+        onSectionOpenChange={(open) => subsectionAccordion.setOpen("past_surgical", open)}
         scrollOnExpand
+        closeScrollToSelector='[data-testid="patient-background-zone"]'
         stickyHeader
         nestedSticky
       />

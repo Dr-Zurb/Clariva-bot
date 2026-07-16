@@ -3,7 +3,6 @@
 import { useCallback, useState, type ReactNode } from "react";
 import { ChevronUp } from "lucide-react";
 import {
-  reAnchorExamCvsFindingCardOnClose,
   scrollExamCvsFindingCardIntoView,
   scrollExamSubsectionIntoView,
 } from "@/lib/cockpit/exam-card-scroll";
@@ -39,6 +38,7 @@ import {
   listCvsStructuredFindingsForSubsection,
   listCvsSubsectionChips,
   resolveCvsAuscultationChipGroupNotesMeta,
+  resolveCvsExamFinding,
 } from "@/lib/cockpit/cvs-exam-finding-schema";
 import {
   chipLabelToFindingId,
@@ -142,7 +142,13 @@ export function ExamCvsSystemBody({
   // palpation/auscultation subsections grey out. In-clinic is byte-identical.
   const orderedSubsections = orderSubsectionsForModality(CVS_EXAM_SUBSECTIONS, isTele);
 
-  const { isOpen: isSubsectionOpen, toggle: toggleSubsection } = useExamSubsectionOpenState({
+  const {
+    isOpen: isSubsectionOpen,
+    toggle: toggleSubsection,
+    expandAll: expandAllSubsections,
+    collapseAll: collapseAllSubsections,
+  } = useExamSubsectionOpenState({
+    systemId: "cvs",
     subsections: CVS_EXAM_SUBSECTIONS,
     initialEntries: finding?.findings ?? [],
     ownedFindingIds: cvsSubsectionOwnedFindingIds,
@@ -160,10 +166,15 @@ export function ExamCvsSystemBody({
     setOpenFindingId(open ? findingId : null);
     if (open) {
       scrollExamCvsFindingCardIntoView(findingId);
-    } else if (isCvsAuscultationExpandableCardId(findingId)) {
+      return;
+    }
+    if (isCvsAuscultationExpandableCardId(findingId)) {
       scrollExamSubsectionIntoView(CVS_AUSCULTATION_SUBSECTION_SCROLL_KEY);
-    } else {
-      reAnchorExamCvsFindingCardOnClose(findingId);
+      return;
+    }
+    const def = resolveCvsExamFinding(findingId);
+    if (def) {
+      scrollExamSubsectionIntoView(cvsSubsectionScrollKey(def.subsectionId));
     }
   }, []);
 
@@ -313,6 +324,8 @@ export function ExamCvsSystemBody({
         disabled={disabled}
         onMarkNormal={markNormal}
         onClear={clearSection}
+        onExpandAllSubsections={showBody ? expandAllSubsections : undefined}
+        onCollapseAllSubsections={showBody ? collapseAllSubsections : undefined}
       />
 
       {showBody ? (
@@ -398,7 +411,7 @@ export function ExamCvsSystemBody({
                 <div
                   key="auscultation-cards"
                   className={cn(
-                    "divide-y divide-border/45",
+                    "space-y-0.5",
                     separated ? "mt-2 border-t border-border/45 pt-2" : "mt-2",
                   )}
                   data-testid="exam-findings-cvs-auscultation"
@@ -522,7 +535,7 @@ export function ExamCvsSystemBody({
                 <div
                   key="cards"
                   className={cn(
-                    "divide-y divide-border/45",
+                    "space-y-0.5",
                     separated ? "mt-2 border-t border-border/45 pt-2" : "mt-2",
                   )}
                 >

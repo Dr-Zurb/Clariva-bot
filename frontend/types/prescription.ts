@@ -12,6 +12,124 @@ export type FollowUpUnit = "days" | "weeks" | "months" | "as_needed";
 /** BP measurement posture (objective-tab Vitals 2.0 / migration 151). */
 export type VitalsBpPosture = "sitting" | "standing" | "supine";
 
+/**
+ * Visit-level clinical trajectory (assessment-tab / migration 160). Mirrors the
+ * backend type + the `prescriptions_assessment_acuity_chk` CHECK constraint.
+ */
+export type AssessmentAcuity = "improving" | "stable" | "worsening";
+
+/** Diagnosis role within a visit (assessment-tab / migration 161; asmt-05 adds differential). */
+export type DiagnosisKind = "primary" | "secondary" | "differential";
+
+/**
+ * Clinical certainty for a structured diagnosis row (migration 161).
+ * Role-gated in the UI:
+ * - committed (primary/secondary): `confirmed` | `provisional` (labelled Provisional)
+ * - differential: `provisional` (Considering) | `excluded` (Ruled out)
+ * `rule_out` is deprecated — tolerated on hydrate, mapped to `provisional`.
+ */
+export type DiagnosisCertainty =
+  | "provisional"
+  | "rule_out"
+  | "confirmed"
+  | "excluded";
+
+/** Visit-relative status for a structured diagnosis row (migration 161). */
+export type DiagnosisStatus = "new" | "ongoing" | "resolved";
+
+/**
+ * One structured diagnosis row stored in `prescriptions.diagnoses_json`
+ * (assessment-tab / migration 161). Mirrors backend DiagnosisRow.
+ * `provisional_diagnosis` TEXT is derived from the primary label on save
+ * (ASMT-D4).
+ */
+export interface DiagnosisRow {
+  id: string;
+  label: string;
+  kind: DiagnosisKind;
+  certainty: DiagnosisCertainty;
+  status: DiagnosisStatus;
+  note?: string | null;
+  /**
+   * Per-diagnosis clinical trajectory (improving / stable / worsening).
+   * Replaces the dormant visit-level `assessment_acuity` column for new edits.
+   * Differentials typically leave this null.
+   */
+  acuity?: AssessmentAcuity | null;
+  /**
+   * Optional link to `patient_chronic_conditions.id` (asmt-04, dormant writer).
+   * Kept so older saved rows still hydrate; Assessment no longer creates or
+   * edits this link. Null = unlinked.
+   */
+  conditionId?: string | null;
+  /**
+   * assessment-tab / asmt-06 — optional ICD-11 (MMS) code from
+   * `diagnosis_catalog` when the row was resolved via the catalog autocomplete.
+   * Additive + OPTIONAL: uncoded rows still save (ASMT-D3) and coding never
+   * alters the derived provisional/differential TEXT (ASMT-D4/D4'). `label`
+   * stays the doctor-facing text and may differ from `codeTitle`.
+   */
+  code?: string | null;
+  /** Canonical ICD-11 title for `code` (asmt-06); null when uncoded. */
+  codeTitle?: string | null;
+}
+
+/**
+ * Order kind for a structured investigation order (migration 167 / inv-lib-05).
+ * Mirrors backend `InvestigationOrderKind`. `panel|analyte|imaging` are
+ * catalog-backed; `custom` is free-typed text with no catalog entry.
+ * `panel` rows may carry editable `members` (named basket / INV-D11).
+ */
+export type InvestigationOrderKind = "panel" | "analyte" | "imaging" | "custom";
+
+/** Contrast preference for CT/MRI / contrast studies (requisition). */
+export type InvestigationImagingContrast = "plain" | "contrast" | "both";
+
+/** Urgency for imaging requisition. */
+export type InvestigationImagingUrgency = "routine" | "urgent";
+
+/**
+ * Light requisition details for CT/MRI / Doppler (site, contrast, indication).
+ * Encoded into flat `investigations_orders` TEXT on serialize (INV-D8).
+ */
+export interface InvestigationImagingRequisition {
+  contrast?: InvestigationImagingContrast | null;
+  /** Laterality / site, e.g. left, right, bilateral. */
+  site?: string | null;
+  indication?: string | null;
+  urgency?: InvestigationImagingUrgency | null;
+}
+
+/** One member inside a named investigation basket (INV-D11). */
+export interface InvestigationOrderMember {
+  id: string;
+  label: string;
+  kind: InvestigationOrderKind;
+}
+
+/**
+ * One structured investigation order stored in
+ * `prescriptions.investigations_orders_json` (migration 167 / inv-lib-05).
+ * Mirrors backend `InvestigationOrder`. Panels, viewable imaging (X-rays), and
+ * free-text custom orders are named baskets: `label` is the editable title;
+ * `members` lists analytes, views, or nested orders. Flat `investigations_orders`
+ * TEXT is derived on save (INV-D8/D11).
+ */
+export interface InvestigationOrder {
+  id: string;
+  label: string;
+  kind: InvestigationOrderKind;
+  /**
+   * Catalog template id this basket was seeded from (panel id or imaging id).
+   * Null for freeform / custom groups.
+   */
+  sourcePanelId?: string | null;
+  /** Basket members — present for expandable `panel` / viewable `imaging` / `custom`. */
+  members?: InvestigationOrderMember[] | null;
+  /** CT/MRI-style requisition fields (optional). */
+  requisition?: InvestigationImagingRequisition | null;
+}
+
 /** BP measurement limb (objective-tab Vitals 2.0 / migration 151). */
 export type VitalsBpLimb = "left_arm" | "right_arm" | "left_leg" | "right_leg";
 
@@ -290,6 +408,45 @@ export interface TestResultRow {
   date?: string | null;
   interpretation?: TestResultInterpretation | null;
   notes?: string | null;
+  /**
+   * objective-reports / migration 159 — links this row to a `LabReport.id`
+   * header. Absent or referencing an unknown header = ungrouped ("Other
+   * results"). Optional → existing rows stay valid.
+   */
+  reportId?: string | null;
+  /** Reference-range low bound for high/low flagging (migration 159). */
+  refLow?: number | null;
+  /** Reference-range high bound for high/low flagging (migration 159). */
+  refHigh?: number | null;
+  /** Non-numeric reference range, e.g. "Negative"/"<200" (migration 159). */
+  refText?: string | null;
+}
+
+/** Report kind for a grouped lab/imaging panel (objective-reports / migration 159). */
+export type LabReportKind = "lab" | "imaging";
+
+/** How a lab report header was created (objective-reports / migration 159). */
+export type LabReportEntryMethod = "manual" | "extracted";
+
+/**
+ * A lab / imaging report header that GROUPS structured `TestResultRow`s into a
+ * verifiable panel, stored in `prescriptions.lab_reports_json` JSONB (migration
+ * 159). Mirrors backend/src/types/prescription.ts:LabReport. Rows link via
+ * `TestResultRow.reportId`; an unknown/absent reportId collapses to ungrouped
+ * ("Other results"). `entryMethod` distinguishes manual entry from
+ * extracted-then-verified (rpt-05). Report headers / ranges do NOT leak into the
+ * derived `test_results` TEXT — OBJ-D2 stays byte-identical.
+ */
+export interface LabReport {
+  id: string;
+  kind: LabReportKind;
+  title: string;
+  reportDate?: string | null;
+  labName?: string | null;
+  attachmentIds: string[];
+  /** Imaging narrative / impression (imaging reports). */
+  findings?: string | null;
+  entryMethod: LabReportEntryMethod;
 }
 
 /** Leaf custom sub-subsection — cannot nest further (subj-19 / migration 144). */
@@ -316,9 +473,26 @@ export interface Prescription {
   cc: string | null;
   hopi: string | null;
   provisional_diagnosis: string | null;
+  /**
+   * assessment-tab / migration 160 — clinical-impression note + visit acuity.
+   * Both nullable; clinician-only (ASMT-D5), never on patient output.
+   */
+  assessment_note?: string | null;
+  assessment_acuity?: AssessmentAcuity | null;
+  /**
+   * assessment-tab / migration 161 — structured diagnosis rows. Primary label
+   * derives into `provisional_diagnosis` on save (ASMT-D4). Empty = legacy
+   * free-text passthrough.
+   */
+  diagnoses_json?: DiagnosisRow[];
   /** @deprecated API alias — prefer `investigations_orders`. */
   investigations?: string | null;
   investigations_orders?: string | null;
+  /**
+   * Structured investigation orders (migration 167 / inv-lib-05). Additive; the
+   * flat `investigations_orders` string stays authoritative for display.
+   */
+  investigations_orders_json?: InvestigationOrder[];
   follow_up: string | null;
   patient_education: string | null;
   clinical_notes: string | null;
@@ -355,6 +529,8 @@ export interface Prescription {
   test_results?: string | null;
   /** objective-tab / migration 154 — structured test results. `test_results` is derived from this on save (OBJ-D2). */
   test_results_json?: TestResultRow[];
+  /** objective-reports / migration 159 — lab/imaging report headers grouping test-result rows (PHI). */
+  lab_reports_json?: LabReport[];
   complaints?: Complaint[];
   family_history?: string | null;
   family_history_structured?: import("@/lib/cockpit/family-history").FamilyHistoryStructured | null;
@@ -363,6 +539,10 @@ export interface Prescription {
   past_surgical_history?: string | null;
   past_surgical_history_structured?: import("@/lib/cockpit/past-surgical-history").PastSurgicalHistoryStructured | null;
   custom_subsections?: CustomSubsection[];
+  /** assessment-plan-custom-sections / migration 177 — custom Assessment sections (depth-2). */
+  assessment_custom_sections?: CustomSubsection[];
+  /** assessment-plan-custom-sections / migration 177 — custom Plan sections (depth-2). */
+  plan_custom_sections?: CustomSubsection[];
 }
 
 /**
@@ -526,6 +706,10 @@ export interface SubjectivePayload {
   customSubsections?: CustomSubsection[];
   /** Derived plain-text mirror for PDF/SMS (computed on save; not persisted). */
   customSubsectionsText?: string | null;
+  /** assessment-plan-custom-sections — custom Assessment sections (depth-2). */
+  assessmentCustomSections?: CustomSubsection[];
+  /** assessment-plan-custom-sections — custom Plan sections (depth-2). */
+  planCustomSections?: CustomSubsection[];
 }
 
 /** cockpit-v2 structured SOAP fields (camelCase API). */
@@ -553,6 +737,23 @@ export interface StructuredSoapPayload {
   /** objective-tab / migration 150 — structured per-system exam findings. */
   examinationJson?: ExamSystemFinding[];
   differentialDiagnosis?: string[] | null;
+  /**
+   * assessment-tab / migration 160 — clinical-impression note + visit acuity.
+   * Optional/nullable; clinician-only (ASMT-D5).
+   */
+  assessmentNote?: string | null;
+  assessmentAcuity?: AssessmentAcuity | null;
+  /**
+   * assessment-tab / migration 161 — structured diagnoses. `provisionalDiagnosis`
+   * TEXT is derived from the primary label on save (ASMT-D4).
+   */
+  diagnosesJson?: DiagnosisRow[];
+  /**
+   * Structured investigation orders (migration 167 / inv-lib-05). Derived from
+   * the order labels on save; the flat `investigations` string stays
+   * authoritative for output (INV-D8).
+   */
+  investigationsOrdersJson?: InvestigationOrder[];
   advice?: string | null;
   followUpValue?: number | null;
   followUpUnit?: FollowUpUnit | null;

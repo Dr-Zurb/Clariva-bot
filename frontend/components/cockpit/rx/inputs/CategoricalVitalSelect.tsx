@@ -47,7 +47,7 @@ export function CategoricalVitalSelect({
 
   if (variant === "inline") {
     return (
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="flex min-w-0 max-w-full items-center gap-1">
         <label
           htmlFor={vitalKey}
           className={cn("shrink-0 text-[11px] text-muted-foreground", inlineLabelClassName)}
@@ -65,9 +65,10 @@ export function CategoricalVitalSelect({
           }
           className={cn(
             RX_FIELD_INPUT_CLASS,
-            "mt-0 h-7 w-auto max-w-full py-1 text-xs",
+            "mt-0 h-7 min-w-0 max-w-full flex-1 py-1 text-xs",
           )}
-          style={{ minWidth: `${inlineSelectMinCh}ch` }}
+          // Soft preference only — never force wider than the card.
+          style={{ maxWidth: "100%", width: `min(100%, ${inlineSelectMinCh}ch)` }}
           aria-label={def.label}
           data-testid={`vital-context-${vitalKey}`}
         >
@@ -97,8 +98,8 @@ export function CategoricalVitalSelect({
               (e.target.value || null) as RxFormFields[typeof vitalKey],
             )
           }
-          className={cn(RX_FIELD_INPUT_CLASS, "mt-0 h-7 w-auto max-w-full py-1 text-xs")}
-          style={{ minWidth: `${inlineSelectMinCh}ch` }}
+          className={cn(RX_FIELD_INPUT_CLASS, "mt-0 h-7 min-w-0 max-w-full flex-1 py-1 text-xs")}
+          style={{ maxWidth: "100%", width: `min(100%, ${inlineSelectMinCh}ch)` }}
           aria-label={def.label}
         >
           <option value="">—</option>

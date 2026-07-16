@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import { ChartCardOptionToggle } from "@/components/ehr/chart/ChartCardOptionToggle";
+import { usePersistedOpenFlag } from "@/lib/cockpit/use-persisted-entry-open";
 import { ChartMedicationCard } from "@/components/ehr/chart/ChartMedicationCard";
 import { ChartMedicationCaptureBar } from "@/components/ehr/chart/ChartMedicationCaptureBar";
 import {
@@ -63,6 +63,11 @@ export interface ConditionCardProps {
   readonly?: boolean;
   /** Start collapsed (default) — the clinician expands to edit timing / meds / notes. */
   defaultCollapsed?: boolean;
+  /**
+   * When set (typically patientId), expanded/collapsed state survives refresh
+   * and tab switches via sessionStorage.
+   */
+  uiScopeKey?: string | null;
   token: string;
   onStatusChange: (status: PatientConditionStatus) => void;
   onRemove: () => void;
@@ -81,6 +86,7 @@ export function ConditionCard({
   condition,
   readonly = false,
   defaultCollapsed = true,
+  uiScopeKey = null,
   token,
   onStatusChange,
   onRemove,
@@ -95,7 +101,11 @@ export function ConditionCard({
 }: ConditionCardProps) {
   const status = condition.status ?? "active";
   const isPast = status === "resolved";
-  const [expanded, setExpanded] = useState(() => !defaultCollapsed);
+  const [expanded, setExpanded] = usePersistedOpenFlag(
+    uiScopeKey,
+    condition.id,
+    !defaultCollapsed,
+  );
 
   const timingValue: ConditionTimingValue = conditionTimingFromRecord(condition);
 
@@ -113,6 +123,15 @@ export function ConditionCard({
       >
         {condition.condition}
       </span>
+      {condition.code ? (
+        <span
+          className="shrink-0 rounded border border-border/70 bg-muted/50 px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+          title={condition.code_title ?? condition.code}
+          data-testid={`condition-code-chip-${condition.id}`}
+        >
+          {condition.code}
+        </span>
+      ) : null}
       {!readonly ? (
         <span
           className="shrink-0"
@@ -148,7 +167,7 @@ export function ConditionCard({
       testId={`condition-card-${condition.id}`}
       bodyId={bodyId}
       closeScrollToSelector='[data-testid="past-medical-history-field"]'
-      scrollMarginClassName="scroll-mt-[var(--collapsible-sticky-top,2.75rem)]"
+      scrollMarginClassName="scroll-mt-[var(--sticky-stack,2.75rem)]"
       className={isPast ? "bg-muted/30" : undefined}
     >
       <>

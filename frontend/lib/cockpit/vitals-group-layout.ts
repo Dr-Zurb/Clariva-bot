@@ -29,15 +29,28 @@ export const VITALS_GROUP_CARD_CLASS =
 export const VITALS_GROUP_HEADING_CLASS =
   "text-xs font-semibold uppercase tracking-wide text-muted-foreground";
 
-/** Two-column vitals grid — numeric core vitals (HR, Temp, etc.). */
-export const VITALS_GRID_CLASS = "grid grid-cols-1 items-start gap-3 sm:grid-cols-2";
+/**
+ * Named container for vitals layout. Pane width (not viewport) must drive 1↔2
+ * column stacking — SOAP 2×2 leaves Objective ~280–350px while the window is
+ * still `sm`+, so viewport `sm:grid-cols-2` jammed BP/glucose until they overflow.
+ */
+export const VITALS_CONTAINER_CLASS = "@container/vitals min-w-0";
+
+/**
+ * Two-column vitals grid — numeric core vitals (HR, Temp, etc.).
+ * Stacks below ~26rem of *this* vitals container; side-by-side when wider.
+ */
+export const VITALS_GRID_CLASS =
+  "grid grid-cols-1 items-start gap-3 @[26rem]/vitals:grid-cols-2";
 
 /**
  * Isolated row for paired BP / glucose cluster cards — never interleaves with numeric vitals.
  * Multi-reading cards span full width within this grid; single-reading cards share a row.
  * `items-start` so expanding “Measured differently” on one card does not stretch its neighbor.
+ * Same container query as {@link VITALS_GRID_CLASS} (pane-aware, not viewport).
  */
-export const VITAL_CLUSTER_GRID_CLASS = "grid grid-cols-1 items-start gap-3 sm:grid-cols-2";
+export const VITAL_CLUSTER_GRID_CLASS =
+  "grid grid-cols-1 items-start gap-3 @[26rem]/vitals:grid-cols-2";
 
 /** @deprecated Use VITALS_GRID_CLASS — kept for tests referencing auto-fill. */
 export const VITALS_AUTO_GRID_CLASS = VITALS_GRID_CLASS;

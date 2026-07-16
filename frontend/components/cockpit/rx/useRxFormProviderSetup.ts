@@ -3,9 +3,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   listPrescriptionsByAppointment,
-  getDoctorSettings,
   getAppointmentById,
 } from "@/lib/api";
+import {
+  getDoctorSettingsShared,
+  peekDoctorSettingsShared,
+} from "@/lib/api/doctor-settings-shared";
+import type { DoctorSettingsData } from "@/lib/api";
 import {
   resolveDefaultLayout,
   type DefaultLayout,
@@ -26,12 +30,36 @@ import type { SubjectiveSectionCollapseMap } from "@/lib/cockpit/subjective-sect
 import type { SubjectiveSectionHiddenSet } from "@/lib/cockpit/subjective-section-visibility";
 import type { SubjectiveSectionId } from "@/lib/cockpit/subjective-section-order";
 import type { ObjectiveSectionId } from "@/lib/cockpit/objective-section-order";
+import type { PlanSectionId } from "@/lib/cockpit/plan-section-order";
+import type { PlanSectionCollapseMap } from "@/lib/cockpit/plan-section-collapse";
+import type { PlanSectionHiddenSet } from "@/lib/cockpit/plan-section-visibility";
+import type { AssessmentSectionId } from "@/lib/cockpit/assessment-section-order";
+import type { AssessmentSectionCollapseMap } from "@/lib/cockpit/assessment-section-collapse";
+import type { AssessmentSectionHiddenSet } from "@/lib/cockpit/assessment-section-visibility";
 
 /** obj-10: doctor default Objective-tab layout config (no consumer yet — obj-11/12 consume). */
 export interface DoctorObjectiveDefaults {
   sectionOrder: ObjectiveSectionId[];
   sectionCollapsed: Record<string, boolean>;
   sectionHidden: ObjectiveSectionId[];
+  customSections: import("@/types/prescription").CustomSubsection[];
+}
+
+/** Doctor default Plan-tab layout (order / collapse / hidden). */
+export interface DoctorPlanDefaults {
+  sectionOrder: PlanSectionId[];
+  sectionCollapsed: PlanSectionCollapseMap;
+  sectionHidden: PlanSectionHiddenSet;
+  /** assessment-plan-custom-sections: per-doctor default custom Plan sections. */
+  customSections: import("@/types/prescription").CustomSubsection[];
+}
+
+/** Doctor default Assessment-tab layout (order / collapse / hidden). */
+export interface DoctorAssessmentDefaults {
+  sectionOrder: AssessmentSectionId[];
+  sectionCollapsed: AssessmentSectionCollapseMap;
+  sectionHidden: AssessmentSectionHiddenSet;
+  /** assessment-plan-custom-sections: per-doctor default custom Assessment sections. */
   customSections: import("@/types/prescription").CustomSubsection[];
 }
 
@@ -42,31 +70,69 @@ const EMPTY_OBJECTIVE_DEFAULTS: DoctorObjectiveDefaults = {
   customSections: [],
 };
 
-async function loadDoctorSubjectiveDefaults(token: string): Promise<{
+const EMPTY_PLAN_DEFAULTS: DoctorPlanDefaults = {
+  sectionOrder: [],
+  sectionCollapsed: {},
+  sectionHidden: [],
+  customSections: [],
+};
+
+const EMPTY_ASSESSMENT_DEFAULTS: DoctorAssessmentDefaults = {
+  sectionOrder: [],
+  sectionCollapsed: {},
+  sectionHidden: [],
+  customSections: [],
+};
+
+type DoctorLayoutDefaultsBundle = {
   customSubsections: import("@/types/prescription").CustomSubsection[];
   sectionOrder: SubjectiveSectionId[];
   sectionCollapsed: SubjectiveSectionCollapseMap;
   sectionHidden: SubjectiveSectionHiddenSet;
   objective: DoctorObjectiveDefaults;
-  /** obj-14: doctor specialty for the modality/specialty default-layout seed. */
+  plan: DoctorPlanDefaults;
+  assessment: DoctorAssessmentDefaults;
   specialty: string | null;
-}> {
+};
+
+function doctorLayoutDefaultsFromSettings(
+  settings: DoctorSettingsData["settings"],
+): DoctorLayoutDefaultsBundle {
+  return {
+    customSubsections: settings.subjective_custom_subsections ?? [],
+    sectionOrder: settings.subjective_section_order ?? [],
+    sectionCollapsed: settings.subjective_section_collapsed ?? {},
+    sectionHidden: settings.subjective_section_hidden ?? [],
+    objective: {
+      sectionOrder: settings.objective_section_order ?? [],
+      sectionCollapsed: settings.objective_section_collapsed ?? {},
+      sectionHidden: settings.objective_section_hidden ?? [],
+      customSections: settings.objective_custom_sections ?? [],
+    },
+    plan: {
+      sectionOrder: (settings.plan_section_order ?? []) as PlanSectionId[],
+      sectionCollapsed: settings.plan_section_collapsed ?? {},
+      sectionHidden: (settings.plan_section_hidden ?? []) as PlanSectionHiddenSet,
+      customSections: settings.plan_custom_sections ?? [],
+    },
+    assessment: {
+      sectionOrder: (settings.assessment_section_order ??
+        []) as AssessmentSectionId[],
+      sectionCollapsed: settings.assessment_section_collapsed ?? {},
+      sectionHidden: (settings.assessment_section_hidden ??
+        []) as AssessmentSectionHiddenSet,
+      customSections: settings.assessment_custom_sections ?? [],
+    },
+    specialty: settings.specialty ?? null,
+  };
+}
+
+async function loadDoctorSubjectiveDefaults(
+  token: string,
+): Promise<DoctorLayoutDefaultsBundle> {
   try {
-    const settingsRes = await getDoctorSettings(token);
-    const settings = settingsRes.data.settings;
-    return {
-      customSubsections: settings.subjective_custom_subsections ?? [],
-      sectionOrder: settings.subjective_section_order ?? [],
-      sectionCollapsed: settings.subjective_section_collapsed ?? {},
-      sectionHidden: settings.subjective_section_hidden ?? [],
-      objective: {
-        sectionOrder: settings.objective_section_order ?? [],
-        sectionCollapsed: settings.objective_section_collapsed ?? {},
-        sectionHidden: settings.objective_section_hidden ?? [],
-        customSections: settings.objective_custom_sections ?? [],
-      },
-      specialty: settings.specialty ?? null,
-    };
+    const settingsRes = await getDoctorSettingsShared(token);
+    return doctorLayoutDefaultsFromSettings(settingsRes.data.settings);
   } catch {
     return {
       customSubsections: [],
@@ -74,6 +140,8 @@ async function loadDoctorSubjectiveDefaults(token: string): Promise<{
       sectionCollapsed: {},
       sectionHidden: [],
       objective: EMPTY_OBJECTIVE_DEFAULTS,
+      plan: EMPTY_PLAN_DEFAULTS,
+      assessment: EMPTY_ASSESSMENT_DEFAULTS,
       specialty: null,
     };
   }
@@ -88,28 +156,6 @@ async function loadConsultationType(
     return apptRes.data.appointment.consultation_type ?? null;
   } catch {
     return null;
-  }
-}
-
-/**
- * obj-14 (OBJ-D6): compute the modality/specialty default-layout seed for the
- * Objective tab. Pure resolver fed by the appointment modality + doctor
- * specialty; a missing/failed modality fetch degrades to a specialty-only seed
- * (never throws — the tab must never block on this).
- */
-async function loadObjectiveSeed(
-  token: string,
-  appointmentId: string,
-  specialty: string | null,
-): Promise<DefaultLayout> {
-  try {
-    const apptRes = await getAppointmentById(appointmentId, token);
-    return resolveDefaultLayout({
-      modality: apptRes.data.appointment.consultation_type ?? null,
-      specialty,
-    });
-  } catch {
-    return resolveDefaultLayout({ modality: null, specialty });
   }
 }
 
@@ -165,6 +211,22 @@ export interface RxFormProviderSetup {
     React.SetStateAction<DoctorObjectiveDefaults | null>
   >;
   /**
+   * Doctor default Plan-tab layout; `null` until the first fetch resolves.
+   * PlanSection prefers this over a standalone settings fetch when present.
+   */
+  planDefaults: DoctorPlanDefaults | null;
+  setPlanDefaults: React.Dispatch<
+    React.SetStateAction<DoctorPlanDefaults | null>
+  >;
+  /**
+   * Doctor default Assessment-tab layout; `null` until the first fetch resolves.
+   * AssessmentSection prefers this over a standalone settings fetch when present.
+   */
+  assessmentDefaults: DoctorAssessmentDefaults | null;
+  setAssessmentDefaults: React.Dispatch<
+    React.SetStateAction<DoctorAssessmentDefaults | null>
+  >;
+  /**
    * obj-14 (OBJ-D6): modality/specialty default-layout seed for the Objective
    * tab. View-only (never persisted, never reaches `buildRxPayload`); a doctor
    * override always wins over it. Optional so the shell can be constructed
@@ -172,18 +234,12 @@ export interface RxFormProviderSetup {
    */
   objectiveSeed?: DefaultLayout | null;
   /**
-   * obj-18: doctor specialty (from `doctor_settings`) for resolving Objective-tab
-   * specialty starter packs. Carried on the shell so the Objective tab never
-   * re-fetches settings in the cockpit path. View-only; never reaches the payload.
-   */
-  objectiveSpecialty?: string | null;
-  /**
    * Props for `<RxFormProvider>`. Always non-null so callers can mount the
    * provider on the first render — during the fetch window we mount it with
-   * empty fields and `autosaveEnabled: false`, then re-mount (via the `key`)
-   * when the draft resolves. This is what lets sibling panes that call
-   * `useRxForm()` (e.g. `AssessmentStrip`, `PatientRibbon`) render safely
-   * even before the prescription draft is loaded.
+   * empty fields and `autosaveEnabled: false`, then soft-`RESET` when the
+   * draft resolves (via `initialFields` identity change). A stable `key` keeps
+   * the provider (and siblings like PatientRibbon) mounted so chart fetches
+   * are not replayed.
    */
   providerProps: Omit<RxFormProviderProps, "children"> & { key: string };
 }
@@ -223,34 +279,64 @@ export function useRxFormProviderSetup({
   >([]);
   const [loading, setLoading] = useState(!initialPrescription);
   const prescriptionIdRef = useRef<string | null>(initialPrescription?.id ?? null);
+
+  // One-shot peek: if profile override (or a prior mount) already filled the
+  // shared cache, SOAP tabs paint the doctor order on first frame.
+  const [layoutSeed] = useState<DoctorLayoutDefaultsBundle | null>(() => {
+    if (disabled) return null;
+    const hit = peekDoctorSettingsShared(token);
+    return hit ? doctorLayoutDefaultsFromSettings(hit.data.settings) : null;
+  });
+
   const [subjectiveSectionOrder, setSubjectiveSectionOrder] =
-    useState<SubjectiveSectionId[] | null>(null);
+    useState<SubjectiveSectionId[] | null>(layoutSeed?.sectionOrder ?? null);
   const [subjectiveSectionCollapsed, setSubjectiveSectionCollapsed] =
-    useState<SubjectiveSectionCollapseMap | null>(null);
+    useState<SubjectiveSectionCollapseMap | null>(
+      layoutSeed?.sectionCollapsed ?? null,
+    );
   const [subjectiveSectionHidden, setSubjectiveSectionHidden] =
-    useState<SubjectiveSectionHiddenSet | null>(null);
+    useState<SubjectiveSectionHiddenSet | null>(layoutSeed?.sectionHidden ?? null);
   const [objectiveDefaults, setObjectiveDefaults] =
-    useState<DoctorObjectiveDefaults | null>(null);
+    useState<DoctorObjectiveDefaults | null>(layoutSeed?.objective ?? null);
+  const [planDefaults, setPlanDefaults] = useState<DoctorPlanDefaults | null>(
+    layoutSeed?.plan ?? null,
+  );
+  const [assessmentDefaults, setAssessmentDefaults] =
+    useState<DoctorAssessmentDefaults | null>(layoutSeed?.assessment ?? null);
   const [objectiveSeed, setObjectiveSeed] = useState<DefaultLayout | null>(null);
-  const [objectiveSpecialty, setObjectiveSpecialty] = useState<string | null>(null);
   const [consultationType, setConsultationType] = useState<string | null>(null);
+  const settingsWarmRef = useRef(false);
+
+  // Kick the shared settings fetch once on first render so cold open overlaps
+  // with the rest of the page mount (useEffect still applies results to state).
+  if (!disabled && token && !settingsWarmRef.current) {
+    settingsWarmRef.current = true;
+    void getDoctorSettingsShared(token);
+  }
 
   useEffect(() => {
     if (disabled || !token) return;
     let cancelled = false;
     void (async () => {
-      const defaults = await loadDoctorSubjectiveDefaults(token);
+      // Settings + appointment modality in parallel — seed only needs specialty
+      // from settings after both settle (avoids a second appointment round-trip).
+      const [defaults, modality] = await Promise.all([
+        loadDoctorSubjectiveDefaults(token),
+        loadConsultationType(token, appointmentId),
+      ]);
       if (cancelled) return;
       setSubjectiveSectionOrder(defaults.sectionOrder);
       setSubjectiveSectionCollapsed(defaults.sectionCollapsed);
       setSubjectiveSectionHidden(defaults.sectionHidden);
       setObjectiveDefaults(defaults.objective);
-      // obj-18: carry the doctor specialty on the shell so the Objective tab can
-      // resolve specialty starter packs without its own settings round-trip.
-      setObjectiveSpecialty(defaults.specialty);
-      // obj-14: compute the view-only modality/specialty seed for the Objective tab.
-      const seed = await loadObjectiveSeed(token, appointmentId, defaults.specialty);
-      if (!cancelled) setObjectiveSeed(seed);
+      setPlanDefaults(defaults.plan);
+      setAssessmentDefaults(defaults.assessment);
+      setObjectiveSeed(
+        resolveDefaultLayout({
+          modality,
+          specialty: defaults.specialty,
+        }),
+      );
     })();
     return () => {
       cancelled = true;
@@ -288,8 +374,10 @@ export function useRxFormProviderSetup({
     const load = async () => {
       setLoading(true);
       try {
-        const consultationType = await loadConsultationType(token, appointmentId);
-        const res = await listPrescriptionsByAppointment(token, appointmentId);
+        const [consultationType, res] = await Promise.all([
+          loadConsultationType(token, appointmentId),
+          listPrescriptionsByAppointment(token, appointmentId),
+        ]);
         if (cancelled) return;
         setConsultationType(consultationType);
         const list = res.data.prescriptions ?? [];
@@ -311,11 +399,14 @@ export function useRxFormProviderSetup({
         } else {
           const fields = createEmptyRxFormFields(undefined, { consultationType });
           try {
+            // Hits shared settings cache when the defaults effect already ran.
             const defaults = await loadDoctorSubjectiveDefaults(token);
             setSubjectiveSectionOrder(defaults.sectionOrder);
             setSubjectiveSectionCollapsed(defaults.sectionCollapsed);
             setSubjectiveSectionHidden(defaults.sectionHidden);
             setObjectiveDefaults(defaults.objective);
+            setPlanDefaults(defaults.plan);
+            setAssessmentDefaults(defaults.assessment);
             if (defaults.customSubsections.length > 0) {
               fields.customSubsections = seedCustomSubsectionsFromDefault(defaults.customSubsections);
               fields.customSubsectionsText = serializeCustomSubsections(fields.customSubsections);
@@ -324,6 +415,18 @@ export function useRxFormProviderSetup({
               // obj-13: seed per-visit objective custom sections from the doctor default.
               fields.objectiveCustomSections = seedCustomSubsectionsFromDefault(
                 defaults.objective.customSections,
+              );
+            }
+            if (defaults.assessment.customSections.length > 0) {
+              // assessment-plan-custom-sections: seed per-visit assessment sections.
+              fields.assessmentCustomSections = seedCustomSubsectionsFromDefault(
+                defaults.assessment.customSections,
+              );
+            }
+            if (defaults.plan.customSections.length > 0) {
+              // assessment-plan-custom-sections: seed per-visit plan sections.
+              fields.planCustomSections = seedCustomSubsectionsFromDefault(
+                defaults.plan.customSections,
               );
             }
           } catch {
@@ -357,14 +460,12 @@ export function useRxFormProviderSetup({
 
   // `providerProps` is always non-null so callers can mount `<RxFormProvider>`
   // on the very first render. During the brief fetch window we feed the
-  // provider empty fields with `autosaveEnabled: false`; the `key` flips from
-  // "${id}-loading" → "${id}-ready" once the draft resolves, forcing React to
-  // unmount the placeholder provider and remount it with the freshly-loaded
-  // initial fields. Without this, sibling panes that call `useRxForm()`
-  // (PatientRibbon Dx mirror, AssessmentStrip, etc.) would crash because there
-  // would be no provider above them in the tree during the loading window.
+  // provider empty fields with `autosaveEnabled: false`. When the draft
+  // resolves, `initialFields` changes and `RxFormProvider` soft-`RESET`s —
+  // keep `key` stable on `appointmentId` so PatientRibbon / chart panes are
+  // not unmounted (that remount was replaying ribbon skeletons on every load).
   const providerProps: Omit<RxFormProviderProps, "children"> & { key: string } = {
-    key: `${appointmentId}-${initialFields == null ? "loading" : "ready"}`,
+    key: appointmentId,
     appointmentId,
     patientId,
     token,
@@ -401,8 +502,11 @@ export function useRxFormProviderSetup({
     setSubjectiveSectionHidden,
     objectiveDefaults,
     setObjectiveDefaults,
+    planDefaults,
+    setPlanDefaults,
+    assessmentDefaults,
+    setAssessmentDefaults,
     objectiveSeed,
-    objectiveSpecialty,
     providerProps,
   };
 }

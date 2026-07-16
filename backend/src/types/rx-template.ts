@@ -23,6 +23,8 @@ import type {
   TestResultRow,
   VitalsBpLimb,
   VitalsBpPosture,
+  DiagnosisRow,
+  AssessmentAcuity,
 } from './prescription';
 
 /**
@@ -34,12 +36,20 @@ import type {
  * `vitals`/`exam_*` subsections, and `objective_custom_block`) so the same
  * table can hold objective presets in `objective_json`. obj-23 adds the Zone-C
  * RESULT scopes (`test_results`, `point_of_care`) for structured result presets.
+ * plan-investigations-library adds `investigations_orders` for Plan order-list
+ * presets (flat TEXT in `investigations`). plan-medications-library adds
+ * `medicines` for Plan medicine-list presets (`medicines_json`). Plan templates
+ * add `advice` / `follow_up` / `referral` / `clinical_notes` / `plan_full`
+ * (structured payload in `plan_json`; plan_full also uses investigations +
+ * medicines_json). Assessment templates add `diagnoses` / `assessment_notes` /
+ * `assessment_full` (structured payload in `assessment_json`).
  */
 export const RX_TEMPLATE_SCOPE_VALUES = [
   'subjective_full',
   'chief_complaints',
   'past_medical',
   'past_surgical',
+  'patient_background',
   'family_history',
   'social_history',
   'allergies',
@@ -52,9 +62,23 @@ export const RX_TEMPLATE_SCOPE_VALUES = [
   'exam_resp',
   'exam_abd',
   'exam_cns',
+  'exam_additional_notes',
+  'objective_notes',
   'objective_custom_block',
   'test_results',
   'point_of_care',
+  'investigations_orders',
+  'medicines',
+  'advice',
+  'follow_up',
+  'referral',
+  'clinical_notes',
+  'plan_full',
+  'diagnoses',
+  'assessment_notes',
+  'assessment_full',
+  'known_conditions',
+  'free_text_notes',
 ] as const;
 
 export type RxTemplateScope = (typeof RX_TEMPLATE_SCOPE_VALUES)[number];
@@ -150,6 +174,43 @@ export interface RxTemplateAllergies {
 }
 
 /**
+ * Structured Plan bundle stored in `plan_json`. Holds reusable starter content
+ * for advice, follow-up, referral chips+notes, and clinical notes. Config, not PHI.
+ */
+export interface RxTemplatePlan {
+  advice?: string | null;
+  followUp?: string | null;
+  followUpValue?: number | null;
+  followUpUnit?: 'days' | 'weeks' | 'months' | 'as_needed' | null;
+  referral?: string | null;
+  referralUrgency?: string | null;
+  referralSpecialties?: string[];
+  referralReason?: string | null;
+  clinicalNotes?: string | null;
+}
+
+/**
+ * Structured Assessment bundle stored in `assessment_json`. Holds reusable
+ * starter content for diagnoses, private notes, optional visit acuity, and
+ * Known conditions chart snapshots (`knownConditions`).
+ */
+export interface RxTemplateKnownCondition {
+  condition: string;
+  status?: 'active' | 'resolved';
+  note?: string | null;
+  code?: string | null;
+  codeTitle?: string | null;
+}
+
+export interface RxTemplateAssessment {
+  diagnoses?: DiagnosisRow[];
+  assessmentNote?: string | null;
+  assessmentAcuity?: AssessmentAcuity | null;
+  /** Chart Known conditions snapshot (scope `known_conditions` / `assessment_full`). */
+  knownConditions?: RxTemplateKnownCondition[];
+}
+
+/**
  * Shape of a single medicine inside `doctor_rx_templates.medicines_json`.
  * Mirrors `MedicineInput` (camelCase) so Apply can hand the array
  * straight to <PrescriptionForm>'s state.
@@ -190,6 +251,8 @@ export interface DoctorRxTemplate {
   medicines_json: RxTemplateMedicine[];
   subjective_json: RxTemplateSubjective;
   objective_json: RxTemplateObjective;
+  plan_json: RxTemplatePlan;
+  assessment_json: RxTemplateAssessment;
   pmh_json: RxTemplatePmh;
   allergies_json: RxTemplateAllergies;
   scope: RxTemplateScope;
@@ -214,6 +277,8 @@ export interface RxTemplateInput {
   medicines?: RxTemplateMedicine[];
   subjective?: RxTemplateSubjective;
   objective?: RxTemplateObjective;
+  plan?: RxTemplatePlan;
+  assessment?: RxTemplateAssessment;
   pmh?: RxTemplatePmh;
   allergies?: RxTemplateAllergies;
   scope?: RxTemplateScope;

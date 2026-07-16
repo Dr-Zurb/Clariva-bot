@@ -7,6 +7,11 @@ import {
   type SectionTemplateControlsBinding,
 } from "@/components/cockpit/rx/subjective/SubjectiveSectionTemplateButton";
 import { CollapsibleContainer } from "@/components/ui/CollapsibleContainer";
+import {
+  resolveSubjectiveSectionIcon,
+  sectionHeaderIcon,
+} from "@/components/cockpit/rx/sections/section-chrome";
+import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import { SectionReorderLeadingAction } from "@/components/cockpit/rx/subjective/SortableSectionShell";
 import { formatCountSummary } from "@/components/patient-profile/panes/snapshot-pane-summary";
 import type { PatientChartMode } from "@/types/patient-chart";
@@ -29,6 +34,7 @@ export function PatientAllergiesZone({
   onSectionOpenChange,
 }: PatientAllergiesZoneProps) {
   const [allergyCount, setAllergyCount] = useState<number | null>(null);
+  const [sectionNotes, setSectionNotes] = useState<string | null>(null);
   const [localOpen, setLocalOpen] = useState(false);
   const zoneOpen = sectionOpen ?? localOpen;
   const handleZoneOpenChange = onSectionOpenChange ?? setLocalOpen;
@@ -37,6 +43,7 @@ export function PatientAllergiesZone({
   const readonly = mode === "readonly";
 
   const handleAllergyCount = useCallback((n: number) => setAllergyCount(n), []);
+  const handleSectionNotesChange = useCallback((notes: string | null) => setSectionNotes(notes), []);
 
   const allergySummary = formatCountSummary(
     allergyCount,
@@ -44,19 +51,29 @@ export function PatientAllergiesZone({
     "allergies",
     "No allergies",
   );
+  const zonePreviewParts = [
+    allergySummary !== "No allergies" ? allergySummary : "",
+    sectionNotes?.trim() ? "notes" : "",
+  ].filter(Boolean);
+  const zonePreview = zonePreviewParts.length > 0 ? `— ${zonePreviewParts.join(" · ")}` : undefined;
+  const zoneCount =
+    (allergyCount ?? 0) > 0 ? allergyCount : sectionNotes?.trim() ? 1 : allergyCount;
 
   return (
     <CollapsibleContainer
       title="Allergies"
+      sectionIcon={sectionHeaderIcon(resolveSubjectiveSectionIcon("allergies")!)}
       toggleLabel="Toggle allergies"
       testId="patient-allergies-zone"
       scrollOnExpand
+      closeScrollToSelector={SUBJECTIVE_SCROLL_TOP_SELECTOR}
       stickyHeader
       open={zoneOpen}
       onOpenChange={handleZoneOpenChange}
-      count={allergyCount}
-      preview={allergySummary !== "No allergies" ? `— ${allergySummary}` : undefined}
+      count={zoneCount}
+      preview={zonePreview}
       bodyClassName="space-y-3"
+      depthTone
       leadingActions={<SectionReorderLeadingAction sectionId="allergies" />}
       actions={
         !readonly ? (
@@ -76,6 +93,7 @@ export function PatientAllergiesZone({
         templateControlsRef={allergyControlsRef}
         onTemplateControlsReadyChange={setAllergyControlsReady}
         onCountChange={handleAllergyCount}
+        onSectionNotesChange={handleSectionNotesChange}
       />
     </CollapsibleContainer>
   );

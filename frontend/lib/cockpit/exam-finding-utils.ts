@@ -6,8 +6,12 @@
  */
 
 import {
+  GENERAL_EXAM_SUBSECTIONS,
   GENERAL_EXAM_FINDINGS,
+  generalSubsectionNotesFindingId,
+  listGeneralExamFindingsForSubsection,
   resolveGeneralExamFinding,
+  resolveGeneralSubsectionNotesLabel,
 } from "@/lib/cockpit/general-exam-finding-schema";
 import {
   CVS_AUSCULTATION_CHIP_GROUP_NOTES,
@@ -69,7 +73,11 @@ import {
 import { listExamSystemChips, resolveExamSystem } from "@/lib/cockpit/exam-schema";
 import type { ExamFindingEntry, ExamSystemFinding } from "@/types/prescription";
 
-const GENERAL_FINDING_ORDER = GENERAL_EXAM_FINDINGS.map((f) => f.findingId);
+const GENERAL_FINDING_ORDER = GENERAL_EXAM_SUBSECTIONS.flatMap((subsection) => {
+  const findingIds = listGeneralExamFindingsForSubsection(subsection.id).map((f) => f.findingId);
+  const notesId = generalSubsectionNotesFindingId(subsection.id);
+  return notesId ? [...findingIds, notesId] : findingIds;
+});
 
 const CVS_CHIP_FINDING_ORDER = CVS_EXAM_SUBSECTIONS.flatMap((subsection) => {
   if (subsection.chipGroups?.length) {
@@ -197,6 +205,16 @@ function renderCnsSubsectionNotesEntry(label: string, entry: ExamFindingEntry): 
 }
 
 function cnsSubsectionNotesPreview(label: string, entry: ExamFindingEntry): string {
+  const notes = entry.attributes?.notes?.trim();
+  return notes ? `${label} · ${notes}` : label;
+}
+
+function renderGeneralSubsectionNotesEntry(label: string, entry: ExamFindingEntry): string {
+  const notes = entry.attributes?.notes?.trim();
+  return notes ? `${label}: ${notes}` : label;
+}
+
+function generalSubsectionNotesPreview(label: string, entry: ExamFindingEntry): string {
   const notes = entry.attributes?.notes?.trim();
   return notes ? `${label} · ${notes}` : label;
 }
@@ -734,6 +752,10 @@ function attributePreviewParts(
 
 /** One-line preview for a general finding entry (collapsed card header). */
 export function generalFindingEntryPreview(entry: ExamFindingEntry): string {
+  const subsectionNotesLabel = resolveGeneralSubsectionNotesLabel(entry.findingId);
+  if (subsectionNotesLabel) {
+    return generalSubsectionNotesPreview(subsectionNotesLabel, entry);
+  }
   const def = resolveGeneralExamFinding(entry.findingId);
   const label = def?.label ?? entry.findingId;
   const parts = attributePreviewParts(def, entry.attributes ?? {});
@@ -749,6 +771,10 @@ export function generalFindingAttributesPreview(entry: ExamFindingEntry): string
 
 /** Derived-text fragment for one general finding entry. */
 export function renderGeneralFindingEntry(entry: ExamFindingEntry): string {
+  const subsectionNotesLabel = resolveGeneralSubsectionNotesLabel(entry.findingId);
+  if (subsectionNotesLabel) {
+    return renderGeneralSubsectionNotesEntry(subsectionNotesLabel, entry);
+  }
   const def = resolveGeneralExamFinding(entry.findingId);
   const label = def?.label ?? entry.findingId;
   const attrs = entry.attributes ?? {};
@@ -869,6 +895,9 @@ export function renderExamSystemFindingBody(finding: ExamSystemFinding): string 
 /** Collapsed system-card preview for abnormal general (and other) systems. */
 export function examSystemPreviewText(finding: ExamSystemFinding | undefined): string | null {
   if (!finding) return null;
+  if (finding.systemId === "additional_notes" || finding.systemId === "objective_notes") {
+    return finding.notes?.trim() || null;
+  }
   if (finding.status === "normal") {
     return resolveExamSystem(finding.systemId).normalLine;
   }
@@ -961,6 +990,9 @@ export function setLymphadenopathySites(
 }
 
 export function findingEntryHasAttributes(entry: ExamFindingEntry): boolean {
+  if (resolveGeneralSubsectionNotesLabel(entry.findingId)) {
+    return Boolean(entry.attributes?.notes?.trim());
+  }
   if (entry.findingId === "edema") {
     return edemaAttributesHaveContent(entry.attributes ?? {});
   }

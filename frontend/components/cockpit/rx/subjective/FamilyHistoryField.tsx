@@ -2,6 +2,12 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { CollapsibleContainer } from "@/components/ui/CollapsibleContainer";
+import {
+  resolveSubjectiveSectionIcon,
+  sectionHeaderIcon,
+} from "@/components/cockpit/rx/sections/section-chrome";
+import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
+import { useDepthToneSurface } from "@/components/ui/sticky-stack";
 import { SectionReorderLeadingAction } from "@/components/cockpit/rx/subjective/SortableSectionShell";
 import { RemoveIconButton } from "@/components/cockpit/rx/subjective/RemoveIconButton";
 import {
@@ -152,9 +158,9 @@ function FamilyHistoryConditionCombobox({
   }, [rows.length, highlighted]);
 
   const finishCommit = useCallback(() => {
-    setOpen(false);
     setQuery("");
     setHighlighted(0);
+    setOpen(false);
   }, []);
 
   const commitRow = useCallback(
@@ -270,6 +276,9 @@ function FamilyHistoryConditionCombobox({
         }}
         onFocus={() => {
           if (!disabled) setOpen(true);
+        }}
+        onClick={() => {
+          if (!disabled && !atMax) setOpen(true);
         }}
         onKeyDown={onKeyDown}
         className={cn(
@@ -550,6 +559,23 @@ function RelativeDetailChips({
   return null;
 }
 
+function familyHistoryCardShellClass(active: ReturnType<typeof useDepthToneSurface>): string {
+  return cn(
+    "space-y-2 rounded-md px-2.5 py-2",
+    active.active
+      ? cn(
+          "border border-border/60",
+          !active.recessed && "shadow-sm",
+          active.surface,
+        )
+      : "border border-border/50 bg-background/60",
+  );
+}
+
+function familyHistoryEntryListClass(active: ReturnType<typeof useDepthToneSurface>): string {
+  return cn("space-y-2 pl-2", !active.active && "border-l-2 border-primary/20");
+}
+
 function SiblingCard({
   card,
   structured,
@@ -564,10 +590,11 @@ function SiblingCard({
   onChange: (next: FamilyHistoryStructured) => void;
 }) {
   const displayLabel = formatSiblingCardLabel(card.detail);
+  const tone = useDepthToneSurface();
 
   return (
     <div
-      className="space-y-2 rounded-md border border-border/50 bg-background/60 px-2.5 py-2"
+      className={familyHistoryCardShellClass(tone)}
       data-testid={`family-history-card-sibling-${card.id}`}
     >
       <div className="flex items-center justify-between gap-2">
@@ -587,7 +614,7 @@ function SiblingCard({
       />
 
       {card.entries.length > 0 && (
-        <div className="space-y-2 border-l-2 border-primary/20 pl-2">
+        <div className={familyHistoryEntryListClass(tone)}>
           {card.entries.map((entry) => (
             <ConditionEntryRow
               key={entry.id}
@@ -640,10 +667,11 @@ function RelativeCard({
 }) {
   const entries = getFamilyHistoryRelativeEntries(structured, relative);
   const displayLabel = formatFamilyHistoryRelativeLabel(relative, structured.relativesMeta);
+  const tone = useDepthToneSurface();
 
   return (
     <div
-      className="space-y-2 rounded-md border border-border/50 bg-background/60 px-2.5 py-2"
+      className={familyHistoryCardShellClass(tone)}
       data-testid={`family-history-card-${relative}`}
     >
       <div className="flex items-center justify-between gap-2">
@@ -663,7 +691,7 @@ function RelativeCard({
       />
 
       {entries.length > 0 && (
-        <div className="space-y-2 border-l-2 border-primary/20 pl-2">
+        <div className={familyHistoryEntryListClass(tone)}>
           {entries.map((entry) => (
             <ConditionEntryRow
               key={entry.id}
@@ -711,10 +739,11 @@ function OtherRelativeCard({
   onChange: (next: FamilyHistoryStructured) => void;
 }) {
   const entries = getOtherRelativeEntries(structured);
+  const tone = useDepthToneSurface();
 
   return (
     <div
-      className="space-y-2 rounded-md border border-border/50 bg-background/60 px-2.5 py-2"
+      className={familyHistoryCardShellClass(tone)}
       data-testid="family-history-card-other-relative"
     >
       <div className="flex items-center justify-between gap-2">
@@ -744,7 +773,7 @@ function OtherRelativeCard({
       </div>
 
       {entries.length > 0 && (
-        <div className="space-y-2 border-l-2 border-primary/20 pl-2">
+        <div className={familyHistoryEntryListClass(tone)}>
           {entries.map((entry) => (
             <ConditionEntryRow
               key={entry.id}
@@ -811,14 +840,17 @@ export function FamilyHistoryField({
   return (
     <CollapsibleContainer
       title="Family history"
+      sectionIcon={sectionHeaderIcon(resolveSubjectiveSectionIcon("family_history")!)}
       toggleLabel="Toggle Family history"
       scrollOnExpand
+      closeScrollToSelector={SUBJECTIVE_SCROLL_TOP_SELECTOR}
       stickyHeader
       preview={preview ? `— ${preview}` : undefined}
       count={familyHistoryFilledCount(value)}
       open={sectionOpen}
       onOpenChange={onSectionOpenChange}
       defaultOpen={sectionOpen === undefined ? hasFamilyHistoryStructuredContent(value) : undefined}
+      depthTone
       bodyClassName="space-y-3"
       testId="family-history-field"
       leadingActions={<SectionReorderLeadingAction sectionId="family_history" />}
@@ -892,7 +924,7 @@ export function FamilyHistoryField({
           )}
 
           {showCards && (
-            <div className="space-y-2 border-l-2 border-primary/20 pl-2" data-testid="family-history-cards">
+            <div className="space-y-2" data-testid="family-history-cards">
               {siblingCards.map((card) => (
                 <SiblingCard
                   key={card.id}

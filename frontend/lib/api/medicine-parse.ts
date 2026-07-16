@@ -43,6 +43,14 @@ export interface AiParsedMedicine {
   stopReason?: string | null;
   foodTiming?: string | null;
   instructions?: string | null;
+  /** Route: oral | IV | IM | SC | topical | inhaled | rectal | nasal | sublingual | other. */
+  routeCode?: string | null;
+  /** Body / application site when stated (e.g. Deltoid, Glute). */
+  routeSite?: string | null;
+  /** Rx course duration value (Plan). */
+  durationValue?: number | null;
+  /** days | weeks | months | until-finished | continue */
+  durationUnit?: string | null;
 }
 
 export interface ParseMedicineResultData {

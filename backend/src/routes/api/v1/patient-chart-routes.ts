@@ -39,6 +39,7 @@ import {
   listVitalsHandler,
   unlinkConditionMedicationHandler,
   updateAllergyHandler,
+  updateAllergySectionNotesHandler,
   updateConditionHandler,
   updateMedicalBackgroundNotesHandler,
   updateMedicationHandler,
@@ -52,6 +53,7 @@ router.use(authenticateToken);
 // Allergies
 router.get('/allergies', listAllergiesHandler);
 router.post('/allergies', createAllergyHandler);
+router.patch('/allergies/notes', updateAllergySectionNotesHandler);
 router.patch('/allergies/:id', updateAllergyHandler);
 
 // Chronic conditions

@@ -33,6 +33,8 @@ export type {
 // ── Kept pure mutation engine (layout-tree-mutations.ts) ──────────────────────
 export {
   dropPaneIntoZone,
+  swapPaneTreeNodes,
+  moveSiblingIntoGutter,
   addToTabsNode,
   hidePaneToRoot,
   extractFromTabsNode,

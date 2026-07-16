@@ -55,11 +55,14 @@ export default function CockpitLeafView({
           />
         </CockpitLeafMenu>
       </TabBarDroppable>
-      <div
-        id={`pane-body-${activeId}`}
-        className="relative min-h-0 flex-1 overflow-auto bg-card"
-      >
-        {pane?.render()}
+      <div className="relative min-h-0 flex-1">
+        {/* Scroll lives in its own layer so the drop overlay can sit above all tab content. */}
+        <div
+          id={`pane-body-${activeId}`}
+          className="absolute inset-0 overflow-auto bg-card"
+        >
+          {pane?.render()}
+        </div>
         <CockpitDropOverlay groupId={node.id} />
       </div>
     </div>

@@ -375,6 +375,7 @@ type PaneTreeOk = { ok: true; tree: PaneTreeNode };
 type PaneTreeErr<R extends string> = { ok: false; reason: R };
 
 let paneTreeSplitCounter = 0;
+let paneTreeTabsCounter = 0;
 
 function isPaneTreeLeaf(n: PaneTreeNode): boolean {
   return !n.children?.length;
@@ -524,6 +525,24 @@ function normalizeLeafAfterPaneRemoval(
     }
     return makeSinglePaneLeaf(sole, container.sizePct, container.hidden);
   }
+
+  // Multi remaining: if the container was pane-named after the removed pane,
+  // mint a synthetic `__tabs_*` id so the extracted pane can reclaim that id
+  // without colliding (dropPaneIntoZone / extractFromTabsNode create a new
+  // leaf with paneId === the old container.id).
+  if (
+    !container.id.startsWith("__tabs_") &&
+    container.id !== "__root__" &&
+    !remainingPaneIds.includes(container.id)
+  ) {
+    return {
+      ...container,
+      id: nextPaneTreeTabsId(),
+      paneIds: remainingPaneIds,
+      activeTabId,
+    };
+  }
+
   return {
     ...container,
     paneIds: remainingPaneIds,
@@ -534,7 +553,12 @@ function normalizeLeafAfterPaneRemoval(
 function removePaneFromCurrentContainer(
   tree: PaneTreeNode,
   paneId: string,
-): { tree: PaneTreeNode; sourceContainerId: string } | null {
+): {
+  tree: PaneTreeNode;
+  sourceContainerId: string;
+  /** Id of the leaf after removal (may differ if renamed). Null if pruned. */
+  remainingContainerId: string | null;
+} | null {
   const located = findContainerOf(tree, paneId);
   if (!located) return null;
   const { container, index } = located;
@@ -542,15 +566,22 @@ function removePaneFromCurrentContainer(
   const nextPaneIds = paneIds.filter((_, i) => i !== index);
 
   let newTree: PaneTreeNode;
+  let remainingContainerId: string | null;
   if (nextPaneIds.length === 0) {
     const without = replacePaneTreeNodeById(tree, container.id, null);
     if (!without) return null;
     newTree = without;
+    remainingContainerId = null;
   } else {
     const updated = normalizeLeafAfterPaneRemoval(container, nextPaneIds)!;
     newTree = updatePaneTreeNodeById(tree, container.id, () => updated);
+    remainingContainerId = updated.id;
   }
-  return { tree: compactSingleChildSplits(newTree), sourceContainerId: container.id };
+  return {
+    tree: compactSingleChildSplits(newTree),
+    sourceContainerId: container.id,
+    remainingContainerId,
+  };
 }
 
 /**
@@ -635,6 +666,10 @@ function resolveInsertIndex(length: number, position: TabsAddPosition): number {
 
 function nextPaneTreeSplitId(): string {
   return `__split_${paneTreeSplitCounter++}`;
+}
+
+function nextPaneTreeTabsId(): string {
+  return `__tabs_${paneTreeTabsCounter++}`;
 }
 
 /**
@@ -731,6 +766,10 @@ export function extractFromTabsNode(
     originalHidden,
   );
 
+  // After removal the source leaf may have been renamed (pane-named container
+  // whose naming pane was extracted → `__tabs_*`). Prefer the post-rename id.
+  const remainingId = removed.remainingContainerId ?? sourceContainerId;
+
   const resultTree = updatePaneTreeNodeById(removed.tree, parentNode.id, (p) => {
     if (!p.children?.length) return p;
     const children = [...p.children];
@@ -741,7 +780,7 @@ export function extractFromTabsNode(
       return { ...p, children };
     }
 
-    const sourceIdx = children.findIndex((c) => c.id === sourceContainerId);
+    const sourceIdx = children.findIndex((c) => c.id === remainingId);
     if (sourceIdx < 0) return p;
 
     const sourceNode = children[sourceIdx]!;
@@ -769,10 +808,55 @@ export function extractFromTabsNode(
 }
 
 /**
+ * Swap two whole leaf containers in place (v3 swap-panes / cv3d-swap).
+ *
+ * Slot-preserving: each node moves into the other's position but adopts the
+ * DESTINATION slot's `sizePct`, so the surrounding grid geometry is unchanged —
+ * only the two panes trade places (matching the geometry-preserving gutter
+ * reorder). Node ids and any nested structure travel with each node.
+ *
+ * Failure modes:
+ *   - "not-found" — either id is absent from the tree.
+ *   - "no-op"     — same id, or one node is nested inside the other.
+ */
+export function swapPaneTreeNodes(
+  tree: PaneTreeNode,
+  aId: string,
+  bId: string,
+): PaneTreeOk | PaneTreeErr<"not-found" | "no-op"> {
+  if (aId === bId) return { ok: false, reason: "no-op" };
+
+  const nodeA = findPaneTreeNodeById(tree, aId);
+  const nodeB = findPaneTreeNodeById(tree, bId);
+  if (!nodeA || !nodeB) return { ok: false, reason: "not-found" };
+
+  // Cannot swap a node with one of its own ancestors/descendants.
+  if (findPaneTreeNodeById(nodeA, bId) || findPaneTreeNodeById(nodeB, aId)) {
+    return { ok: false, reason: "no-op" };
+  }
+
+  const aReplacement: PaneTreeNode = { ...nodeB, sizePct: nodeA.sizePct };
+  const bReplacement: PaneTreeNode = { ...nodeA, sizePct: nodeB.sizePct };
+
+  // Single pass — return the replacement WITHOUT recursing into it so the
+  // swapped-in node's own id is not matched again.
+  function swap(n: PaneTreeNode): PaneTreeNode {
+    if (n.id === aId) return aReplacement;
+    if (n.id === bId) return bReplacement;
+    if (!n.children?.length) return n;
+    return { ...n, children: n.children.map(swap) };
+  }
+
+  return { ok: true, tree: swap(tree) };
+}
+
+/**
  * Move `sourcePaneId` onto `targetGroupId`'s `zone`:
  *   - "center"            → tab into the target (delegates to addToTabsNode).
- *   - "west" / "east"     → new single-pane sibling leaf left / right of target.
- *   - "north" / "south"   → new single-pane sibling leaf above / below target.
+ *   - "west" / "east"     → new single-pane sibling left / right of target
+ *                          (target may be a leaf or a split column node).
+ *   - "north" / "south"   → new single-pane sibling above / below target
+ *                          (target may be a leaf or a split row node).
  *
  * Edge drops resolve the target's parent orientation:
  *   - parent axis === zone axis → insert the new leaf into the parent's children
@@ -808,9 +892,11 @@ export function dropPaneIntoZone(
   const source = findContainerOf(tree, sourcePaneId);
   if (!source) return { ok: false, reason: "not-found" };
   const target = findPaneTreeNodeById(tree, targetGroupId);
-  if (!target || !isPaneTreeLeaf(target)) return { ok: false, reason: "not-found" };
+  // Edge targets may be leaves or split nodes (column/row gutters).
+  if (!target) return { ok: false, reason: "not-found" };
 
   const sourceIsSoleOccupantOfTarget =
+    isPaneTreeLeaf(target) &&
     source.container.id === target.id &&
     (target.paneIds ?? [target.id]).length === 1;
   if (sourceIsSoleOccupantOfTarget) return { ok: false, reason: "no-op" };
@@ -825,8 +911,19 @@ export function dropPaneIntoZone(
   const removed = removePaneFromCurrentContainer(tree, sourcePaneId);
   if (!removed) return { ok: false, reason: "not-found" };
 
-  const targetAfter = findPaneTreeNodeById(removed.tree, targetGroupId);
-  if (!targetAfter || !isPaneTreeLeaf(targetAfter)) {
+  // Target may have been renamed when the naming pane was extracted from a
+  // multi-tab leaf whose id equalled sourcePaneId (e.g. dragging "subjective"
+  // out of { id: "subjective", paneIds: ["subjective", ...] }).
+  const resolvedTargetId =
+    (findPaneTreeNodeById(removed.tree, targetGroupId)
+      ? targetGroupId
+      : null) ?? removed.remainingContainerId;
+  if (!resolvedTargetId) {
+    return { ok: false, reason: "no-op" };
+  }
+
+  const targetAfter = findPaneTreeNodeById(removed.tree, resolvedTargetId);
+  if (!targetAfter) {
     return { ok: false, reason: "no-op" };
   }
 
@@ -840,7 +937,7 @@ export function dropPaneIntoZone(
     targetAfter.hidden,
   );
 
-  const parentLoc = findParentOfPaneTreeNode(removed.tree, targetGroupId);
+  const parentLoc = findParentOfPaneTreeNode(removed.tree, resolvedTargetId);
 
   let resultTree: PaneTreeNode;
 
@@ -869,7 +966,7 @@ export function dropPaneIntoZone(
       resultTree = updatePaneTreeNodeById(removed.tree, parent.id, (p) => {
         if (!p.children?.length) return p;
         const children = [...p.children];
-        const idx = children.findIndex((c) => c.id === targetGroupId);
+        const idx = children.findIndex((c) => c.id === resolvedTargetId);
         if (idx < 0) return p;
         children[idx] = sizedTarget;
         children.splice(insertAt, 0, sizedNew);
@@ -885,11 +982,121 @@ export function dropPaneIntoZone(
           ? [{ ...newLeaf, sizePct: 50 }, { ...targetAfter, sizePct: 50 }]
           : [{ ...targetAfter, sizePct: 50 }, { ...newLeaf, sizePct: 50 }],
       };
-      resultTree = updatePaneTreeNodeById(removed.tree, targetGroupId, () => nestedSplit);
+      resultTree = updatePaneTreeNodeById(
+        removed.tree,
+        resolvedTargetId,
+        () => nestedSplit,
+      );
     }
   }
 
   return { ok: true, tree: compactSingleChildSplits(resultTree) };
+}
+
+/**
+ * Splice the direct child `childId` of `parentId` into the seam immediately
+ * BEFORE `rightChildId`, preserving every child's `sizePct`. A pure array
+ * reorder — no node is added or removed and no size is touched, so the columns
+ * keep their exact widths in the new order.
+ *
+ * Failure modes:
+ *   - "not-found" — `parentId` is not a split, or `childId` is not a direct
+ *     child of it.
+ *   - "no-op"     — the child already sits in the seam slot (it IS the left or
+ *     right neighbour of the seam), so the order would not change.
+ */
+function reorderChildIntoSeam(
+  tree: PaneTreeNode,
+  parentId: string,
+  childId: string,
+  leftChildId: string,
+  rightChildId: string,
+): PaneTreeOk | PaneTreeErr<"not-found" | "no-op"> {
+  const parent = findPaneTreeNodeById(tree, parentId);
+  if (!parent?.children?.length) return { ok: false, reason: "not-found" };
+
+  // The child already borders the seam → dropping it there changes nothing.
+  if (childId === leftChildId || childId === rightChildId) {
+    return { ok: false, reason: "no-op" };
+  }
+
+  const children = parent.children;
+  const fromIdx = children.findIndex((c) => c.id === childId);
+  if (fromIdx < 0) return { ok: false, reason: "not-found" };
+
+  const moved = children[fromIdx]!;
+  const without = children.filter((_, i) => i !== fromIdx);
+  const beforeIdx = without.findIndex((c) => c.id === rightChildId);
+  const insertAt = beforeIdx < 0 ? without.length : beforeIdx;
+  const nextChildren = [...without];
+  nextChildren.splice(insertAt, 0, moved);
+
+  return {
+    ok: true,
+    tree: updatePaneTreeNodeById(tree, parentId, (p) => ({
+      ...p,
+      children: nextChildren,
+    })),
+  };
+}
+
+/**
+ * Drop `sourcePaneId` onto the SEAM between `leftChildId` and `rightChildId`
+ * (two direct children of `parentId`).
+ *
+ * Two distinct intents share one gesture:
+ *   - REORDER (geometry-preserving) — when the dragged pane already lives as its
+ *     OWN single-pane column that is a direct child of `parentId`, the doctor is
+ *     just moving that column between two others. We splice it into the seam via
+ *     {@link reorderChildIntoSeam} WITHOUT changing any `sizePct`, so every
+ *     column keeps its width (no column is added or removed).
+ *   - INSERT (resize expected) — any other source (a tab pulled out of a
+ *     multi-tab leaf, or a pane coming from a different parent) genuinely adds a
+ *     column/row to `parentId`. We fall back to {@link dropPaneIntoZone} with the
+ *     caller-resolved `(fallbackTargetGroupId, fallbackZone)`, which halves the
+ *     neighbour to make room.
+ *
+ * Failure modes mirror {@link dropPaneIntoZone}, plus the reorder path's "no-op".
+ */
+export function moveSiblingIntoGutter(
+  tree: PaneTreeNode,
+  sourcePaneId: string,
+  parentId: string,
+  leftChildId: string,
+  rightChildId: string,
+  fallbackTargetGroupId: string,
+  fallbackZone: DropZone,
+):
+  | PaneTreeOk
+  | PaneTreeErr<
+      | "not-found"
+      | "already-in-target"
+      | "cap-reached"
+      | "last-pane-in-tree"
+      | "no-op"
+    > {
+  const parent = findPaneTreeNodeById(tree, parentId);
+  const source = findContainerOf(tree, sourcePaneId);
+  const homeLeaf = source?.container;
+
+  const isSinglePaneLeaf =
+    !!homeLeaf &&
+    isPaneTreeLeaf(homeLeaf) &&
+    (homeLeaf.paneIds ?? [homeLeaf.id]).length === 1;
+  const homeIsDirectChild =
+    !!homeLeaf && !!parent?.children?.some((c) => c.id === homeLeaf.id);
+
+  if (parent?.children?.length && isSinglePaneLeaf && homeIsDirectChild) {
+    return reorderChildIntoSeam(
+      tree,
+      parentId,
+      homeLeaf!.id,
+      leftChildId,
+      rightChildId,
+    );
+  }
+
+  return dropPaneIntoZone(tree, sourcePaneId, fallbackTargetGroupId, fallbackZone);
 }
 
 /**

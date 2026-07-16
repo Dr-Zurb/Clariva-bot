@@ -5,10 +5,12 @@ import {
   buildFullTemplateCustomSubsectionsApplyActions,
   buildScopedTemplateApplyActions,
   buildScopedTemplateSavePayload,
+  buildSubjectiveClearAllActions,
   buildSubjectiveTemplateApplyActions,
   buildSubjectiveTemplateSavePayload,
   customBlockSectionHasContent,
   fullSubjectiveHasContent,
+  rxFormHasClearableSubjectiveContent,
   rxFormHasSubjectiveContent,
   scopeHasContent,
   subjectiveComplaintCount,
@@ -44,6 +46,9 @@ function makeTemplate(overrides: Partial<DoctorRxTemplate> = {}): DoctorRxTempla
       socialHistory: "Office worker",
       pastSurgicalHistory: null,
     },
+    objective_json: {},
+    plan_json: {},
+    assessment_json: {},
     pmh_json: {},
     allergies_json: {},
     scope: "subjective_full",
@@ -74,6 +79,77 @@ describe("apply-subjective-template", () => {
         complaints: [{ id: "1", name: "Fever", category: "default" }],
       }),
     ).toBe(true);
+  });
+
+  it("detects clearable visit content (bodies, not custom title shells)", () => {
+    expect(rxFormHasClearableSubjectiveContent(emptyFields())).toBe(false);
+    expect(
+      rxFormHasClearableSubjectiveContent({
+        ...emptyFields(),
+        hopi: "Dictation only",
+      }),
+    ).toBe(true);
+    expect(
+      rxFormHasClearableSubjectiveContent({
+        ...emptyFields(),
+        customSubsections: [{ id: "s1", title: "Travel", body: null, children: [] }],
+      }),
+    ).toBe(false);
+    expect(
+      rxFormHasClearableSubjectiveContent({
+        ...emptyFields(),
+        customSubsections: [
+          { id: "s1", title: "Travel", body: "Bali", children: [] },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("buildSubjectiveClearAllActions empties form-state fields and keeps custom shells", () => {
+    const fields = {
+      ...emptyFields(),
+      complaints: [{ id: "1", name: "Fever", category: "default" }],
+      hopi: "Extra notes",
+      cc: "Fever",
+      familyHistoryStructured: { notes: "Father — DM" },
+      socialHistoryStructured: {
+        smoking: { status: "never" as const, products: [] },
+      },
+      pastSurgicalHistoryStructured: { notes: "Appendectomy 2010" },
+      customSubsections: [
+        {
+          id: "s1",
+          title: "Travel",
+          body: "Bali",
+          children: [{ id: "c1", title: "Dates", body: "June" }],
+        },
+      ],
+    };
+
+    let state: RxFormState = {
+      fields,
+      isDirty: false,
+      isSaving: false,
+      isSubmitting: false,
+      lastSavedAt: null,
+      submitError: null,
+    };
+    for (const action of buildSubjectiveClearAllActions(fields)) {
+      state = rxFormReducer(state, action);
+    }
+
+    expect(state.fields.complaints).toEqual([]);
+    expect(state.fields.cc).toBe("");
+    expect(state.fields.hopi).toBe("");
+    expect(rxFormHasClearableSubjectiveContent(state.fields)).toBe(false);
+    expect(state.fields.customSubsections).toEqual([
+      {
+        id: "s1",
+        title: "Travel",
+        body: null,
+        children: [{ id: "c1", title: "Dates", body: null }],
+      },
+    ]);
   });
 
   it("builds save payload with complaints + histories only (empty medicines)", () => {

@@ -5,10 +5,12 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import type { ComplaintMasterRow } from "@/types/complaint-master";
 import { searchComplaints } from "@/lib/api/complaint-master";
 
@@ -40,6 +42,23 @@ const MIN_QUERY_LEN = 2;
 const DEFAULT_LIMIT = 10;
 const DEFAULT_DEBOUNCE_MS = 100;
 const CACHE_MAX = 64;
+/** Above sticky SOAP section headers (sticky-stack caps at ~40). */
+const LISTBOX_Z_INDEX = 50;
+
+interface DropdownAnchor {
+  top: number;
+  left: number;
+  width: number;
+}
+
+function measureDropdownAnchor(input: HTMLInputElement): DropdownAnchor {
+  const rect = input.getBoundingClientRect();
+  return {
+    top: rect.bottom + 2,
+    left: rect.left,
+    width: rect.width,
+  };
+}
 
 const searchCache = new Map<string, ComplaintMasterRow[]>();
 
@@ -102,8 +121,17 @@ export function ComplaintAutocomplete({
   const fetchIdRef = useRef(0);
   const resolvingRef = useRef(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const listboxRef = useRef<HTMLUListElement>(null);
+  const optionRefs = useRef<Array<HTMLLIElement | null>>([]);
   const inputRefInternal = useRef<HTMLInputElement | null>(null);
   const listboxId = `${useId()}-listbox`;
+  const [dropdownAnchor, setDropdownAnchor] = useState<DropdownAnchor | null>(null);
+
+  // Keep the keyboard-highlighted option visible inside the scrollable listbox.
+  useEffect(() => {
+    if (activeIdx < 0) return;
+    optionRefs.current[activeIdx]?.scrollIntoView({ block: "nearest" });
+  }, [activeIdx]);
 
   const query = value.trim();
   const shouldFetch = useMemo(() => query.length >= MIN_QUERY_LEN, [query]);
@@ -146,12 +174,41 @@ export function ComplaintAutocomplete({
     return () => clearTimeout(timer);
   }, [query, shouldFetch, token, limit, debounceMs]);
 
+  const showDropdown =
+    open && shouldFetch && (results.length > 0 || loading || resolving);
+
+  const syncDropdownAnchor = useCallback(() => {
+    const input = inputRefInternal.current;
+    if (!input) return;
+    setDropdownAnchor(measureDropdownAnchor(input));
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!showDropdown) {
+      setDropdownAnchor(null);
+      return;
+    }
+    syncDropdownAnchor();
+  }, [showDropdown, syncDropdownAnchor, value, results.length, loading, resolving]);
+
+  useEffect(() => {
+    if (!showDropdown) return;
+    const handleReposition = () => syncDropdownAnchor();
+    window.addEventListener("resize", handleReposition);
+    window.addEventListener("scroll", handleReposition, true);
+    return () => {
+      window.removeEventListener("resize", handleReposition);
+      window.removeEventListener("scroll", handleReposition, true);
+    };
+  }, [showDropdown, syncDropdownAnchor]);
+
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (!wrapperRef.current?.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const target = e.target as Node;
+      if (wrapperRef.current?.contains(target)) return;
+      if (listboxRef.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -159,8 +216,8 @@ export function ComplaintAutocomplete({
 
   const finishCommit = useCallback(() => {
     onChange("");
-    setOpen(false);
     setActiveIdx(-1);
+    setOpen(false);
     inputRefInternal.current?.focus();
   }, [onChange]);
 
@@ -263,11 +320,81 @@ export function ComplaintAutocomplete({
     }
   };
 
-  const showDropdown =
-    open && shouldFetch && (results.length > 0 || loading || resolving);
+  const listbox = showDropdown && dropdownAnchor ? (
+    <ul
+      ref={listboxRef}
+      id={listboxId}
+      role="listbox"
+      style={{
+        position: "fixed",
+        top: dropdownAnchor.top,
+        left: dropdownAnchor.left,
+        width: dropdownAnchor.width,
+        zIndex: LISTBOX_Z_INDEX,
+      }}
+      className="max-h-52 overflow-auto rounded-lg border border-border/80 bg-card py-1 shadow-md"
+    >
+      {resolving ? (
+        <li className="px-2.5 py-1.5 text-xs text-muted-foreground">Matching…</li>
+      ) : null}
+      {!resolving && loading && results.length === 0 ? (
+        <li className="px-2.5 py-1.5 text-xs text-muted-foreground">Searching…</li>
+      ) : null}
+      {!resolving &&
+        results.map((complaint, idx) => {
+          const active = idx === activeIdx;
+          const categoryLabel = formatCategoryLabel(complaint.category);
+          return (
+            <li
+              key={complaint.id}
+              id={`${listboxId}-option-${idx}`}
+              ref={(el) => {
+                optionRefs.current[idx] = el;
+              }}
+              role="option"
+              aria-selected={active}
+              onMouseEnter={() => setActiveIdx(idx)}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                commitSelection(complaint);
+              }}
+              className={`cursor-pointer border-l-2 px-2 py-1.5 text-sm transition-colors ${
+                active
+                  ? "border-l-primary bg-primary/15 font-medium text-foreground"
+                  : "border-l-transparent text-foreground/90 hover:bg-muted/50"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate font-medium leading-tight">
+                  {complaint.name}
+                </span>
+                {categoryLabel ? (
+                  <span className="shrink-0 rounded bg-muted/70 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    {categoryLabel}
+                  </span>
+                ) : null}
+              </div>
+            </li>
+          );
+        })}
+      {!resolving && results.length === 0 && !loading ? (
+        <li className="px-2.5 py-1.5 text-xs leading-snug text-muted-foreground">
+          No matches — press Enter to add as custom text.
+        </li>
+      ) : null}
+      {results.length > 0 && onCommit && !resolving ? (
+        <li
+          className="border-t border-border/60 px-2.5 py-1 text-[11px] text-muted-foreground"
+          aria-hidden
+        >
+          ↑↓ navigate · Enter to select · Shift+Enter for custom text
+        </li>
+      ) : null}
+    </ul>
+  ) : null;
 
   return (
-    <div ref={wrapperRef} className={`relative ${className ?? ""}`}>
+    <div ref={wrapperRef} className={className ?? ""}>
       <input
         ref={(el) => {
           inputRefInternal.current = el;
@@ -293,6 +420,9 @@ export function ComplaintAutocomplete({
         onFocus={() => {
           if (shouldFetch) setOpen(true);
         }}
+        onClick={() => {
+          if (!disabled && !resolving && shouldFetch) setOpen(true);
+        }}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         className={`min-h-9 w-full rounded-md border bg-background px-2.5 py-1.5 text-sm transition-[border-radius,box-shadow] focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 ${
@@ -303,67 +433,9 @@ export function ComplaintAutocomplete({
         maxLength={200}
         disabled={disabled || resolving}
       />
-      {showDropdown && (
-        <ul
-          id={listboxId}
-          role="listbox"
-          className="absolute left-0 right-0 z-30 mt-0.5 max-h-52 overflow-auto rounded-lg border border-border/80 bg-card py-1 shadow-md"
-        >
-          {resolving ? (
-            <li className="px-2.5 py-1.5 text-xs text-muted-foreground">Matching…</li>
-          ) : null}
-          {!resolving && loading && results.length === 0 ? (
-            <li className="px-2.5 py-1.5 text-xs text-muted-foreground">Searching…</li>
-          ) : null}
-          {!resolving &&
-            results.map((complaint, idx) => {
-              const active = idx === activeIdx;
-              const categoryLabel = formatCategoryLabel(complaint.category);
-              return (
-                <li
-                  key={complaint.id}
-                  id={`${listboxId}-option-${idx}`}
-                  role="option"
-                  aria-selected={active}
-                  onMouseEnter={() => setActiveIdx(idx)}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    commitSelection(complaint);
-                  }}
-                  className={`cursor-pointer border-l-2 px-2 py-1.5 text-sm transition-colors ${
-                    active
-                      ? "border-l-primary bg-primary/8 text-foreground"
-                      : "border-l-transparent text-foreground/90 hover:bg-muted/50"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate font-medium leading-tight">
-                      {complaint.name}
-                    </span>
-                    {categoryLabel ? (
-                      <span className="shrink-0 rounded bg-muted/70 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                        {categoryLabel}
-                      </span>
-                    ) : null}
-                  </div>
-                </li>
-              );
-            })}
-          {!resolving && results.length === 0 && !loading ? (
-            <li className="px-2.5 py-1.5 text-xs leading-snug text-muted-foreground">
-              No matches — press Enter to add as custom text.
-            </li>
-          ) : null}
-          {results.length > 0 && onCommit && !resolving ? (
-            <li
-              className="border-t border-border/60 px-2.5 py-1 text-[11px] text-muted-foreground"
-              aria-hidden
-            >
-              ↑↓ navigate · Enter to select · Shift+Enter for custom text
-            </li>
-          ) : null}
-        </ul>
-      )}
+      {typeof document !== "undefined" && listbox
+        ? createPortal(listbox, document.body)
+        : null}
     </div>
   );
 }

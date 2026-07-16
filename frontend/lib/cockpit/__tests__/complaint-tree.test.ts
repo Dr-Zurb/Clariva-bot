@@ -30,12 +30,34 @@ const CHILD: Complaint = {
 };
 
 describe("complaint-tree", () => {
+  it("adds a root complaint at the front of the list", () => {
+    const fever = {
+      ...createEmptyComplaint("33333333-3333-4333-8333-333333333333"),
+      name: "Fever",
+    };
+    const tree = addComplaintToTree([PARENT], fever);
+    expect(tree.map((c) => c.name)).toEqual(["Fever", "Chest pain"]);
+  });
+
   it("adds associated complaints under a parent only (one level)", () => {
     let tree = [PARENT];
     tree = addComplaintToTree(tree, CHILD, PARENT.id);
     expect(tree[0].associatedComplaints).toHaveLength(1);
     expect(tree[0].associatedComplaints![0].name).toBe("Breathlessness");
     expect(tree[0].associatedComplaints![0].associatedComplaints).toBeUndefined();
+  });
+
+  it("prepends newer associated complaints under a parent", () => {
+    const nausea = {
+      ...createEmptyComplaint("44444444-4444-4444-8444-444444444444"),
+      name: "Nausea",
+    };
+    let tree = addComplaintToTree([PARENT], CHILD, PARENT.id);
+    tree = addComplaintToTree(tree, nausea, PARENT.id);
+    expect(tree[0].associatedComplaints!.map((c) => c.name)).toEqual([
+      "Nausea",
+      "Breathlessness",
+    ]);
   });
 
   it("removing parent drops nested children", () => {
@@ -62,7 +84,8 @@ describe("complaint-tree", () => {
     };
     let tree = addComplaintToTree([PARENT], CHILD, PARENT.id);
     tree = addComplaintToTree(tree, nausea, PARENT.id);
-    tree = promoteAssociatedComplaint(tree, PARENT.id, 0);
+    // Newest associated is first; Breathlessness is index 1.
+    tree = promoteAssociatedComplaint(tree, PARENT.id, 1);
 
     expect(tree).toHaveLength(2);
     expect(tree[0].name).toBe("Chest pain");

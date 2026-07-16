@@ -76,15 +76,19 @@ describe("custom subsections form state (subj-19)", () => {
     second.title = "Occupation";
     state = rxFormReducer(state, { type: "ADD_CUSTOM_SUBSECTION", section: second });
     expect(state.fields.customSubsections).toHaveLength(2);
+    // Newest section is prepended.
+    expect(state.fields.customSubsections[0].title).toBe("Occupation");
+    expect(state.fields.customSubsections[1].title).toBe("Travel");
 
     state = rxFormReducer(state, {
       type: "REORDER_CUSTOM_SUBSECTIONS",
-      fromIndex: 1,
-      toIndex: 0,
+      fromIndex: 0,
+      toIndex: 1,
     });
-    expect(state.fields.customSubsections[0].title).toBe("Occupation");
+    expect(state.fields.customSubsections[0].title).toBe("Travel");
+    expect(state.fields.customSubsections[1].title).toBe("Occupation");
 
-    state = rxFormReducer(state, { type: "REMOVE_CUSTOM_SUBSECTION", index: 0 });
+    state = rxFormReducer(state, { type: "REMOVE_CUSTOM_SUBSECTION", index: 1 });
     expect(state.fields.customSubsections).toHaveLength(1);
     expect(state.fields.customSubsections[0].title).toBe("Travel");
   });

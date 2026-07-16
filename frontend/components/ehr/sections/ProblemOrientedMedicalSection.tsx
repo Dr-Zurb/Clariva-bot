@@ -6,10 +6,16 @@
  */
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { RX_FIELD_INPUT_CLASS } from "@/components/cockpit/rx/sections/field-styles";
+import { queryKeys } from "@/lib/query/keys";
+import { STALE } from "@/lib/query/stale";
+import {
+  invalidatePatientConditions,
+  type InvalidatePatientConditionsOptions,
+} from "@/lib/query/invalidate";
 import { ConditionCard, conditionMedCaptureInputId } from "@/components/ehr/chart/ConditionCard";
 import type { ConditionTimingValue } from "@/components/ehr/chart/ConditionTimingField";
-import { ChartCatalogCombobox } from "@/components/ehr/chart/ChartCatalogCombobox";
 import { HistorySubsection } from "@/components/ehr/chart/HistorySubsection";
 import { ChartMedicationCard } from "@/components/ehr/chart/ChartMedicationCard";
 import { ChartMedicationCaptureBar } from "@/components/ehr/chart/ChartMedicationCaptureBar";
@@ -17,8 +23,17 @@ import { useChartMedDuplicateNotice } from "@/components/ehr/chart/useChartMedDu
 import { countActivePast } from "@/components/ehr/chart/ChartPillToggle";
 import { ChartQuickAddChips } from "@/components/ehr/chart/ChartQuickAddChips";
 import {
+  DiagnosisAutocomplete,
+  type DiagnosisCommitPayload,
+} from "@/components/cockpit/rx/inputs/DiagnosisAutocomplete";
+import {
   ADDITIONAL_MEDICATIONS_SECTION_ID,
 } from "@/lib/chart/chart-medication-scroll";
+import {
+  isDuplicateCondition,
+  normalizeConditionKey,
+  PMH_ICD_SHORTCUTS,
+} from "@/lib/chart/pmh-icd-shortcuts";
 import {
   type ChartMedicationPatch,
   chartMedPatchToApiPayload,
@@ -42,13 +57,6 @@ import {
   type PmhTemplateBridge,
 } from "@/components/cockpit/rx/subjective/SubjectivePresetButton";
 import {
-  FAMILY_HISTORY_CONDITION_CATALOG,
-  type FamilyHistoryCatalogCondition,
-  familyHistoryConditionLabel,
-  filterFamilyHistoryConditionCatalog,
-  resolveFamilyHistoryCatalogCondition,
-} from "@/lib/cockpit/family-history-conditions";
-import {
   archivePatientCondition,
   archivePatientMedication,
   createPatientCondition,
@@ -70,16 +78,6 @@ import type {
   PatientMedication,
 } from "@/types/patient-chart";
 
-const PMH_QUICK_ADD: readonly FamilyHistoryCatalogCondition[] = [
-  "htn",
-  "dm",
-  "asthma",
-  "ckd",
-  "thyroid",
-  "cad",
-  "dyslipidemia",
-] as const;
-
 interface ProblemOrientedMedicalSectionProps {
   patientId: string;
   token: string;
@@ -98,7 +96,7 @@ interface ProblemOrientedMedicalSectionProps {
 }
 
 function normalizeKey(value: string): string {
-  return value.trim().toLowerCase();
+  return normalizeConditionKey(value);
 }
 
 function normalizeCondition(row: ConditionWithMedications): ConditionWithMedications {
@@ -110,16 +108,17 @@ function normalizeCondition(row: ConditionWithMedications): ConditionWithMedicat
     resolved_ago_value: row.resolved_ago_value ?? null,
     resolved_ago_unit: row.resolved_ago_unit ?? null,
     on_treatment: row.on_treatment ?? null,
+    acuity: row.acuity ?? null,
+    code: row.code ?? null,
+    code_title: row.code_title ?? null,
   };
 }
 
+/** Stable newest-first order by created_at — Active↔Past must not jump the card. */
 function sortConditionCards(conditions: ConditionWithMedications[]): ConditionWithMedications[] {
-  const rank = (status: PatientConditionStatus) => (status === "active" ? 0 : 1);
-  return [...conditions].sort((a, b) => {
-    const byStatus = rank(a.status ?? "active") - rank(b.status ?? "active");
-    if (byStatus !== 0) return byStatus;
-    return String(a.created_at).localeCompare(String(b.created_at));
-  });
+  return [...conditions].sort((a, b) =>
+    String(b.created_at).localeCompare(String(a.created_at)),
+  );
 }
 
 function allMedications(background: MedicalBackgroundGrouped): PatientMedication[] {
@@ -131,22 +130,27 @@ function allMedications(background: MedicalBackgroundGrouped): PatientMedication
   return Array.from(byId.values());
 }
 
-function reportBackgroundCounts(
-  background: MedicalBackgroundGrouped,
-  onStatusCountsChange?: ProblemOrientedMedicalSectionProps["onStatusCountsChange"],
-) {
+interface BackgroundCounts {
+  conditionActive: number;
+  conditionPast: number;
+  medActive: number;
+  medPast: number;
+  hasSectionNotes: boolean;
+}
+
+function computeBackgroundCounts(background: MedicalBackgroundGrouped): BackgroundCounts {
   const condCounts = countActivePast(
     background.conditions.map((c) => ({ status: c.status ?? "active" })),
   );
   const meds = allMedications(background);
   const medCounts = countActivePast(meds.map((m) => ({ status: m.status })));
-  onStatusCountsChange?.({
+  return {
     conditionActive: condCounts.active,
     conditionPast: condCounts.past,
     medActive: medCounts.active,
     medPast: medCounts.past,
     hasSectionNotes: !!background.notes?.trim(),
-  });
+  };
 }
 
 /** Full PatientMedication shaped from a create payload for instant optimistic render. */
@@ -253,14 +257,15 @@ export default function ProblemOrientedMedicalSection({
 }: ProblemOrientedMedicalSectionProps) {
   const conditionInputId = useId();
   const { stableKey, linkRealId } = useStableMedKey();
-  const [background, setBackground] = useState<MedicalBackgroundGrouped | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const bgKey = useMemo(
+    () => queryKeys.patient(patientId).medicalBackground(),
+    [patientId],
+  );
   const [actionError, setActionError] = useState<string | null>(null);
   const [templateNotice, setTemplateNotice] = useState<string | null>(null);
+  const [conditionCapture, setConditionCapture] = useState("");
 
-  // Bumped on every optimistic mutation + reload so a slow in-flight reload can
-  // never clobber a newer optimistic insert (keeps rapid adds from flickering).
-  const reloadGenRef = useRef(0);
   const conditionSaveTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const conditionPendingPayloadRef = useRef<Map<string, ConditionUpdatePayload>>(new Map());
   const medicationSaveTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -268,44 +273,88 @@ export default function ProblemOrientedMedicalSection({
   const sectionNotesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSectionNotesRef = useRef<string | null | undefined>(undefined);
   const creatingConditionsRef = useRef(new Set<string>());
+  const lastReportedCountsRef = useRef<string | null>(null);
 
   const readonly = mode === "readonly";
   const registerPmhBridge = useRegisterPmhTemplateBridge();
   const { notifyDuplicate, noticePortal } = useChartMedDuplicateNotice();
 
+  // PMH conditions + meds live in the shared query cache, so a chronic-condition
+  // write here and a write in the Assessment "Known conditions" zone (which reads
+  // the same conditions) refresh each other with no manual page reload.
+  const backgroundQuery = useQuery({
+    queryKey: bgKey,
+    queryFn: async (): Promise<MedicalBackgroundGrouped> => {
+      const res = await getPatientMedicalBackground(token, patientId);
+      const data = res.data.medicalBackground;
+      return {
+        ...data,
+        conditions: data.conditions.map((c) => normalizeCondition(c)),
+        notes: data.notes ?? null,
+      };
+    },
+    enabled: Boolean(token) && Boolean(patientId),
+    staleTime: STALE.CLINICAL,
+  });
+
+  const background = backgroundQuery.data ?? null;
+  const loadError =
+    backgroundQuery.isError && !background
+      ? backgroundQuery.error instanceof Error
+        ? backgroundQuery.error.message
+        : "Failed to load medical background"
+      : null;
+
+  // Optimistic writes go straight to the query cache (mirrors the old
+  // setState(prev => next) API so the mutation handlers below are unchanged).
+  const setBackground = useCallback(
+    (
+      update:
+        | MedicalBackgroundGrouped
+        | null
+        | ((
+            prev: MedicalBackgroundGrouped | null,
+          ) => MedicalBackgroundGrouped | null),
+    ) => {
+      queryClient.setQueryData<MedicalBackgroundGrouped | null>(bgKey, (prev) =>
+        typeof update === "function" ? update(prev ?? null) : update,
+      );
+    },
+    [bgKey, queryClient],
+  );
+
   const reload = useCallback(async () => {
-    const gen = ++reloadGenRef.current;
-    const res = await getPatientMedicalBackground(token, patientId);
-    const data = res.data.medicalBackground;
-    const normalized: MedicalBackgroundGrouped = {
-      ...data,
-      conditions: data.conditions.map((c) => normalizeCondition(c)),
-      notes: data.notes ?? null,
-    };
-    // A newer optimistic insert / reload superseded this fetch — don't clobber it.
-    if (gen !== reloadGenRef.current) return normalized;
-    setBackground(normalized);
-    reportBackgroundCounts(normalized, onStatusCountsChange);
-    return normalized;
-  }, [onStatusCountsChange, patientId, token]);
+    await queryClient.invalidateQueries({ queryKey: bgKey });
+  }, [bgKey, queryClient]);
+
+  // Cross-surface sync after a chronic-condition write here. Prefer
+  // invalidatePatientConditions so the acting surface can skip an immediate
+  // refetch (avoids the deleted-card flicker on Assessment Known conditions).
+  const syncConditionSurfaces = useCallback(
+    (options?: InvalidatePatientConditionsOptions) => {
+      void invalidatePatientConditions(queryClient, patientId, {
+        // Default: PMH already holds the optimistic medical-background cache.
+        actingSurface: options?.actingSurface ?? "medicalBackground",
+      });
+    },
+    [patientId, queryClient],
+  );
+  // De-duped so it fires on the initial load + external refetches without
+  // re-emitting identical counts (which could loop an unmemoized parent).
+  const emitCounts = useCallback(
+    (bg: MedicalBackgroundGrouped) => {
+      const counts = computeBackgroundCounts(bg);
+      const key = JSON.stringify(counts);
+      if (key === lastReportedCountsRef.current) return;
+      lastReportedCountsRef.current = key;
+      onStatusCountsChange?.(counts);
+    },
+    [onStatusCountsChange],
+  );
 
   useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        await reload();
-        if (cancelled) return;
-      } catch (err) {
-        if (cancelled) return;
-        setLoadError(err instanceof Error ? err.message : "Failed to load medical background");
-        setBackground({ conditions: [], unlinkedMedications: [], links: [], notes: null });
-      }
-    }
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [reload]);
+    if (background) emitCounts(background);
+  }, [background, emitCounts]);
 
   useEffect(() => {
     const conditionTimers = conditionSaveTimersRef.current;
@@ -324,18 +373,10 @@ export default function ProblemOrientedMedicalSection({
     [background?.conditions],
   );
 
-  const catalogOptions = useMemo(() => {
-    const selected = new Set(sortedConditions.map((row) => normalizeKey(row.condition)));
-    return FAMILY_HISTORY_CONDITION_CATALOG.filter(
-      (def) => !selected.has(normalizeKey(def.label)),
-    ).map((def) => ({ value: def.value, label: def.label }));
-  }, [sortedConditions]);
-
-  const quickAddLabels = useMemo(() => {
-    const selected = new Set(sortedConditions.map((row) => normalizeKey(row.condition)));
-    return PMH_QUICK_ADD.map((value) => familyHistoryConditionLabel(value)).filter(
-      (label) => !selected.has(normalizeKey(label)),
-    );
+  const quickAddItems = useMemo(() => {
+    return PMH_ICD_SHORTCUTS.filter(
+      (s) => !isDuplicateCondition(sortedConditions, s.title, s.code),
+    ).map((s) => ({ id: s.id, label: s.title, badge: s.code }));
   }, [sortedConditions]);
 
   const patchConditionInBackground = useCallback(
@@ -346,11 +387,11 @@ export default function ProblemOrientedMedicalSection({
           ...prev,
           conditions: prev.conditions.map((c) => (c.id === id ? { ...c, ...patch } : c)),
         };
-        reportBackgroundCounts(next, onStatusCountsChange);
+        emitCounts(next);
         return next;
       });
     },
-    [onStatusCountsChange],
+    [emitCounts, setBackground],
   );
 
   const patchMedicationInBackground = useCallback(
@@ -366,11 +407,11 @@ export default function ProblemOrientedMedicalSection({
           })),
           unlinkedMedications: prev.unlinkedMedications.map(patchMed),
         };
-        reportBackgroundCounts(next, onStatusCountsChange);
+        emitCounts(next);
         return next;
       });
     },
-    [onStatusCountsChange],
+    [emitCounts, setBackground],
   );
 
   const flushConditionSave = useCallback(
@@ -381,12 +422,13 @@ export default function ProblemOrientedMedicalSection({
       setActionError(null);
       try {
         await updatePatientCondition(token, patientId, rowId, payload);
+        syncConditionSurfaces();
       } catch (err) {
         void reload();
         setActionError(err instanceof Error ? err.message : "Failed to update condition");
       }
     },
-    [patientId, reload, token],
+    [patientId, reload, syncConditionSurfaces, token],
   );
 
   const scheduleConditionPatch = useCallback(
@@ -435,11 +477,11 @@ export default function ProblemOrientedMedicalSection({
           unlinkedMedications: [...prev.unlinkedMedications, ...medsToUnlink],
           links: prev.links.filter((l) => l.condition_id !== conditionId),
         };
-        reportBackgroundCounts(next, onStatusCountsChange);
+        emitCounts(next);
         return next;
       });
     },
-    [onStatusCountsChange],
+    [emitCounts, setBackground],
   );
 
   const removeCondition = useCallback(
@@ -451,17 +493,50 @@ export default function ProblemOrientedMedicalSection({
       }
 
       setActionError(null);
+      const conditionsKey = queryKeys.patient(patientId).conditions();
+      // Cancel in-flight refetches so a stale medical-background / conditions
+      // list can't revive the card after optimistic remove.
+      await queryClient.cancelQueries({ queryKey: bgKey });
+      await queryClient.cancelQueries({ queryKey: conditionsKey });
+      const previousBg =
+        queryClient.getQueryData<MedicalBackgroundGrouped | null>(bgKey) ?? null;
+      const previousConditions =
+        queryClient.getQueryData<PatientChronicCondition[]>(conditionsKey) ?? [];
+
       removeConditionFromBackground(condition.id);
+      queryClient.setQueryData<PatientChronicCondition[]>(
+        conditionsKey,
+        previousConditions.filter((c) => c.id !== condition.id),
+      );
 
       try {
         await flushPendingConditionSave(condition.id);
         await archivePatientCondition(token, patientId, condition.id);
+        // Both caches were patched optimistically — don't active-refetch either
+        // or the soft-delete GET can briefly revive the card on Known conditions.
+        syncConditionSurfaces({ actingSurface: "all" });
       } catch (err) {
-        void reload();
+        if (previousBg) {
+          queryClient.setQueryData(bgKey, previousBg);
+          emitCounts(previousBg);
+        } else {
+          void reload();
+        }
+        queryClient.setQueryData(conditionsKey, previousConditions);
         setActionError(err instanceof Error ? err.message : "Failed to remove condition");
       }
     },
-    [flushPendingConditionSave, patientId, reload, removeConditionFromBackground, token],
+    [
+      bgKey,
+      emitCounts,
+      flushPendingConditionSave,
+      patientId,
+      queryClient,
+      reload,
+      removeConditionFromBackground,
+      syncConditionSurfaces,
+      token,
+    ],
   );
 
   const flushMedicationSave = useCallback(
@@ -524,7 +599,7 @@ export default function ProblemOrientedMedicalSection({
       setBackground((prev) => {
         if (!prev) return prev;
         const next = { ...prev, notes: notes.trim() ? notes : null };
-        reportBackgroundCounts(next, onStatusCountsChange);
+        emitCounts(next);
         return next;
       });
       pendingSectionNotesRef.current = notes;
@@ -534,18 +609,25 @@ export default function ProblemOrientedMedicalSection({
         void flushSectionNotesSave();
       }, FIELD_SAVE_DEBOUNCE_MS);
     },
-    [flushSectionNotesSave, onStatusCountsChange, readonly],
+    [emitCounts, flushSectionNotesSave, readonly, setBackground],
   );
 
   const commitCondition = useCallback(
     async (
       condition: string,
-      opts?: { status?: PatientConditionStatus; note?: string | null },
+      opts?: {
+        status?: PatientConditionStatus;
+        note?: string | null;
+        code?: string | null;
+        codeTitle?: string | null;
+      },
     ): Promise<ApplyRowResult> => {
       const trimmed = condition.trim();
-      const key = normalizeKey(trimmed);
+      const code = opts?.code?.trim() || null;
+      const codeTitle = opts?.codeTitle?.trim() || null;
+      const key = code ? `code:${code}` : normalizeKey(trimmed);
       if (!trimmed || readonly || !background) return "duplicate";
-      if (sortedConditions.some((r) => normalizeKey(r.condition) === key)) return "duplicate";
+      if (isDuplicateCondition(sortedConditions, trimmed, code)) return "duplicate";
       if (creatingConditionsRef.current.has(key)) return "duplicate";
 
       const status = opts?.status ?? "active";
@@ -566,17 +648,22 @@ export default function ProblemOrientedMedicalSection({
         resolved_ago_value: null,
         resolved_ago_unit: null,
         on_treatment: null,
+        acuity: null,
+        code,
+        code_title: codeTitle,
         note,
         archived_at: null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         medications: [],
       });
+      // Cancel in-flight refetch so it can't overwrite this optimistic insert.
+      await queryClient.cancelQueries({ queryKey: bgKey });
       setBackground((prev) => {
         const next = prev
-          ? { ...prev, conditions: [...prev.conditions, optimistic] }
+          ? { ...prev, conditions: [optimistic, ...prev.conditions] }
           : { conditions: [optimistic], unlinkedMedications: [], links: [], notes: null };
-        reportBackgroundCounts(next, onStatusCountsChange);
+        emitCounts(next);
         return next;
       });
 
@@ -585,6 +672,8 @@ export default function ProblemOrientedMedicalSection({
           condition: trimmed,
           status,
           note,
+          code,
+          codeTitle,
         });
         const created = normalizeCondition({ ...res.data.condition, medications: [] });
         setBackground((prev) => {
@@ -594,6 +683,8 @@ export default function ProblemOrientedMedicalSection({
             conditions: prev.conditions.map((c) => (c.id === tempId ? created : c)),
           };
         });
+        setConditionCapture("");
+        syncConditionSurfaces();
         return "created";
       } catch (err) {
         removeConditionFromBackground(tempId);
@@ -605,13 +696,43 @@ export default function ProblemOrientedMedicalSection({
     },
     [
       background,
-      onStatusCountsChange,
+      bgKey,
+      emitCounts,
       patientId,
+      queryClient,
       readonly,
       removeConditionFromBackground,
+      setBackground,
       sortedConditions,
+      syncConditionSurfaces,
       token,
     ],
+  );
+
+  const handleConditionCaptureCommit = useCallback(
+    (payload: DiagnosisCommitPayload) => {
+      if (payload.source === "catalog") {
+        void commitCondition(payload.entry.title, {
+          code: payload.entry.code,
+          codeTitle: payload.entry.title,
+        });
+        return;
+      }
+      void commitCondition(payload.label);
+    },
+    [commitCondition],
+  );
+
+  const handleConditionQuickAdd = useCallback(
+    (item: { id: string; label: string; badge?: string }) => {
+      const shortcut = PMH_ICD_SHORTCUTS.find((s) => s.id === item.id);
+      if (!shortcut) return;
+      void commitCondition(shortcut.title, {
+        code: shortcut.code,
+        codeTitle: shortcut.title,
+      });
+    },
+    [commitCondition],
   );
 
   const commitMedication = async (
@@ -630,8 +751,8 @@ export default function ProblemOrientedMedicalSection({
     const optimistic = buildOptimisticMedication(tempId, patientId, { ...payload, drugName: trimmed });
     let added = false;
     let blockedDuplicate: { id: string; drug_name: string } | null = null;
-    // Invalidate any in-flight reload so it can't overwrite this insert.
-    reloadGenRef.current++;
+    // Cancel any in-flight refetch so it can't overwrite this optimistic insert.
+    await queryClient.cancelQueries({ queryKey: bgKey });
     setBackground((prev) => {
       if (!prev) return prev;
       const existing =
@@ -649,7 +770,7 @@ export default function ProblemOrientedMedicalSection({
       added = true;
       let next: MedicalBackgroundGrouped;
       if (target === "additional") {
-        next = { ...prev, unlinkedMedications: [...prev.unlinkedMedications, optimistic] };
+        next = { ...prev, unlinkedMedications: [optimistic, ...prev.unlinkedMedications] };
       } else {
         const tempLink: MedicalBackgroundGrouped["links"][number] = {
           id: `temp-link-${tempId}`,
@@ -662,12 +783,14 @@ export default function ProblemOrientedMedicalSection({
         next = {
           ...prev,
           conditions: prev.conditions.map((c) =>
-            c.id === target ? { ...c, medications: [...c.medications, optimistic] } : c,
+            c.id === target
+              ? { ...c, medications: [optimistic, ...c.medications] }
+              : c,
           ),
-          links: [...prev.links, tempLink],
+          links: [tempLink, ...prev.links],
         };
       }
-      reportBackgroundCounts(next, onStatusCountsChange);
+      emitCounts(next);
       return next;
     });
 
@@ -698,8 +821,8 @@ export default function ProblemOrientedMedicalSection({
       await reload();
       return "created";
     } catch (err) {
-      // Roll back the optimistic card and shield it from a stale reload.
-      reloadGenRef.current++;
+      // Roll back the optimistic card and shield it from a stale refetch.
+      await queryClient.cancelQueries({ queryKey: bgKey });
       setBackground((prev) => {
         if (!prev) return prev;
         const next: MedicalBackgroundGrouped = {
@@ -711,7 +834,7 @@ export default function ProblemOrientedMedicalSection({
           unlinkedMedications: prev.unlinkedMedications.filter((m) => m.id !== tempId),
           links: prev.links.filter((l) => l.medication_id !== tempId),
         };
-        reportBackgroundCounts(next, onStatusCountsChange);
+        emitCounts(next);
         return next;
       });
       setActionError(err instanceof Error ? err.message : "Failed to add medication");
@@ -727,6 +850,10 @@ export default function ProblemOrientedMedicalSection({
     if (row.id.startsWith("temp-")) return;
     setActionError(null);
 
+    await queryClient.cancelQueries({ queryKey: bgKey });
+    const previousBg =
+      queryClient.getQueryData<MedicalBackgroundGrouped | null>(bgKey) ?? null;
+
     setBackground((prev) => {
       if (!prev) return prev;
       const next: MedicalBackgroundGrouped = {
@@ -738,14 +865,19 @@ export default function ProblemOrientedMedicalSection({
         unlinkedMedications: prev.unlinkedMedications.filter((m) => m.id !== row.id),
         links: prev.links.filter((l) => l.medication_id !== row.id),
       };
-      reportBackgroundCounts(next, onStatusCountsChange);
+      emitCounts(next);
       return next;
     });
 
     try {
       await archivePatientMedication(token, patientId, row.id);
     } catch (err) {
-      void reload();
+      if (previousBg) {
+        queryClient.setQueryData(bgKey, previousBg);
+        emitCounts(previousBg);
+      } else {
+        void reload();
+      }
       setActionError(err instanceof Error ? err.message : "Failed to remove medication");
     }
   };
@@ -796,6 +928,82 @@ export default function ProblemOrientedMedicalSection({
   backgroundRef.current = background;
   const applyTemplateRef = useRef(applyTemplate);
   applyTemplateRef.current = applyTemplate;
+
+  const clearAllChartPmh = useCallback(async () => {
+    const bg = backgroundRef.current;
+    if (!bg || readonly) return;
+
+    for (const timer of conditionSaveTimersRef.current.values()) clearTimeout(timer);
+    conditionSaveTimersRef.current.clear();
+    conditionPendingPayloadRef.current.clear();
+    for (const timer of medicationSaveTimersRef.current.values()) clearTimeout(timer);
+    medicationSaveTimersRef.current.clear();
+    medicationPendingPayloadRef.current.clear();
+    if (sectionNotesTimerRef.current) {
+      clearTimeout(sectionNotesTimerRef.current);
+      sectionNotesTimerRef.current = null;
+    }
+    pendingSectionNotesRef.current = undefined;
+    creatingConditionsRef.current.clear();
+
+    const conditionIds = bg.conditions
+      .map((c) => c.id)
+      .filter((id) => !id.startsWith("temp-"));
+    const medicationIds = new Set<string>();
+    for (const condition of bg.conditions) {
+      for (const med of condition.medications) {
+        if (!med.id.startsWith("temp-")) medicationIds.add(med.id);
+      }
+    }
+    for (const med of bg.unlinkedMedications) {
+      if (!med.id.startsWith("temp-")) medicationIds.add(med.id);
+    }
+    const hadNotes = Boolean(bg.notes?.trim());
+
+    await queryClient.cancelQueries({ queryKey: bgKey });
+    const conditionsKey = queryKeys.patient(patientId).conditions();
+    await queryClient.cancelQueries({ queryKey: conditionsKey });
+    const emptied: MedicalBackgroundGrouped = {
+      ...bg,
+      conditions: [],
+      unlinkedMedications: [],
+      links: [],
+      notes: null,
+    };
+    setBackground(emptied);
+    emitCounts(emptied);
+    // Keep Assessment Known in sync immediately — both caches are empty.
+    queryClient.setQueryData(conditionsKey, []);
+    setActionError(null);
+
+    try {
+      await Promise.all([
+        ...[...medicationIds].map((id) => archivePatientMedication(token, patientId, id)),
+        ...conditionIds.map((id) => archivePatientCondition(token, patientId, id)),
+        ...(hadNotes
+          ? [updatePatientMedicalBackgroundNotes(token, patientId, { notes: null })]
+          : []),
+      ]);
+      if (conditionIds.length > 0) syncConditionSurfaces({ actingSurface: "all" });
+    } catch (err) {
+      void reload();
+      setActionError(err instanceof Error ? err.message : "Failed to clear medical history");
+    }
+  }, [
+    bgKey,
+    emitCounts,
+    patientId,
+    queryClient,
+    readonly,
+    reload,
+    setBackground,
+    syncConditionSurfaces,
+    token,
+  ]);
+
+  const clearAllChartPmhRef = useRef(clearAllChartPmh);
+  clearAllChartPmhRef.current = clearAllChartPmh;
+
   const bridgeRef = useRef<PmhTemplateBridge>({
     snapshotForSave: () => {
       const bg = backgroundRef.current;
@@ -803,9 +1011,10 @@ export default function ProblemOrientedMedicalSection({
     },
     hasContent: () => {
       const bg = backgroundRef.current;
-      return !!bg && pmhHasContent(bg);
+      return !!bg && (pmhHasContent(bg) || Boolean(bg.notes?.trim()));
     },
     applyFromTemplate: (template, opts) => applyTemplateRef.current(template, opts),
+    clearAll: () => clearAllChartPmhRef.current(),
   });
 
   const bridgeAvailable = !readonly && background !== null;
@@ -816,14 +1025,14 @@ export default function ProblemOrientedMedicalSection({
   }, [bridgeAvailable, registerPmhBridge]);
 
   if (background === null) {
+    if (loadError) {
+      return (
+        <p role="alert" className="px-1 py-2 text-xs text-red-600">
+          {loadError}
+        </p>
+      );
+    }
     return <p className="px-1 py-2 text-xs text-muted-foreground">Loading medical history…</p>;
-  }
-  if (loadError) {
-    return (
-      <p role="alert" className="px-1 py-2 text-xs text-red-600">
-        {loadError}
-      </p>
-    );
   }
 
   return (
@@ -838,31 +1047,21 @@ export default function ProblemOrientedMedicalSection({
         <HistorySubsection testId="pmh-conditions" label="Conditions">
           {!readonly && (
             <div className="space-y-3">
-              <ChartCatalogCombobox
+              <DiagnosisAutocomplete
                 inputId={conditionInputId}
                 testId="pmh-combobox"
-                placeholder="Search or enter condition…"
-                catalogOptions={catalogOptions}
-                filterCatalog={(options, query) =>
-                  filterFamilyHistoryConditionCatalog(
-                    FAMILY_HISTORY_CONDITION_CATALOG.filter((def) =>
-                      options.some((opt) => opt.value === def.value),
-                    ),
-                    query,
-                  ).map((def) => ({ value: def.value, label: def.label }))
-                }
-                resolveCatalog={(query) => resolveFamilyHistoryCatalogCondition(query)}
-                customLabel={(text) => `Add "${text}" as condition`}
-                onCommit={(payload) => {
-                  const label = payload.kind === "catalog" ? payload.label : payload.text;
-                  void commitCondition(label);
-                }}
+                value={conditionCapture}
+                onChange={setConditionCapture}
+                onCommit={handleConditionCaptureCommit}
+                token={token}
+                ariaLabel="Add past medical history condition"
+                placeholder="Add condition — search ICD or type and press Enter"
               />
               <ChartQuickAddChips
-                labels={quickAddLabels}
+                items={quickAddItems}
                 groupLabel="Common conditions"
                 testId="pmh-quick-add"
-                onAdd={(label) => void commitCondition(label)}
+                onAddItem={handleConditionQuickAdd}
               />
             </div>
           )}
@@ -873,6 +1072,7 @@ export default function ProblemOrientedMedicalSection({
                   key={normalizeKey(condition.condition)}
                   condition={condition}
                   readonly={readonly}
+                  uiScopeKey={patientId}
                   token={token}
                   getMedKey={stableKey}
                   onStatusChange={(status) => scheduleConditionPatch(condition, { status })}

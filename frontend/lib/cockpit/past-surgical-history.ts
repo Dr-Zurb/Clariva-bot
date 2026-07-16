@@ -514,7 +514,7 @@ export function addPastSurgicalCatalogProcedure(
     return next;
   }
   if (entries.length >= MAX_PAST_SURGICAL_PROCEDURES) return next;
-  entries.push({ id: createEntryId(), procedure });
+  entries.unshift({ id: createEntryId(), procedure });
   next.procedures = entries;
   return next;
 }
@@ -539,7 +539,7 @@ export function addPastSurgicalOtherProcedure(
     if (duplicate) return next;
   }
   if (entries.length >= MAX_PAST_SURGICAL_PROCEDURES) return next;
-  entries.push({
+  entries.unshift({
     id: createEntryId(),
     procedure: "other",
     ...(trimmedOther ? { procedureOther: trimmedOther } : {}),

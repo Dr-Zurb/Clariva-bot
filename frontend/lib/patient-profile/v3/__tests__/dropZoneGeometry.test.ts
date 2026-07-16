@@ -5,6 +5,7 @@
 import { describe, it, expect } from "vitest";
 import type { DropZone } from "@/lib/patient-profile/v3/foundation";
 import {
+  CENTER,
   EDGE,
   resolveDropZoneFromPointer,
 } from "@/lib/patient-profile/v3/dropZoneGeometry";
@@ -46,11 +47,27 @@ describe("resolveDropZoneFromPointer (cv3d-02)", () => {
     });
   });
 
-  describe("exact ties", () => {
-    it("dead center → west (horizontal tie-break)", () => {
-      expect(at(0.5, 0.5)).toBe("west");
+  describe("center pad (cv3d-swap)", () => {
+    it("exports CENTER = 0.2", () => {
+      expect(CENTER).toBe(0.2);
     });
 
+    it("dead center → center (swap pad)", () => {
+      expect(at(0.5, 0.5)).toBe("center");
+    });
+
+    it("just inside the pad on each axis → center", () => {
+      expect(at(0.5 + CENTER - 0.01, 0.5)).toBe("center");
+      expect(at(0.5, 0.5 + CENTER - 0.01)).toBe("center");
+    });
+
+    it("just outside the pad → edge, not center", () => {
+      expect(at(0.5 + CENTER + 0.01, 0.5)).toBe("east");
+      expect(at(0.5, 0.5 + CENTER + 0.01)).toBe("south");
+    });
+  });
+
+  describe("exact ties", () => {
     it("exact corner (0,0) → west (horizontal dominates)", () => {
       expect(at(0, 0)).toBe("west");
     });
@@ -93,11 +110,12 @@ describe("resolveDropZoneFromPointer (cv3d-02)", () => {
         for (let col = 0; col <= 10; col += 1) {
           const zone = at(col / 10, row / 10);
           expect(zone).toBeDefined();
-          expect(["west", "east", "north", "south"]).toContain(zone);
+          expect(["west", "east", "north", "south", "center"]).toContain(zone);
           zones.add(zone);
         }
       }
-      expect(zones.size).toBe(4);
+      // Four edges + the central swap pad.
+      expect(zones.size).toBe(5);
     });
   });
 

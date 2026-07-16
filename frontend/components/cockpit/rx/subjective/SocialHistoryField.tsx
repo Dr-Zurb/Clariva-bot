@@ -2,6 +2,12 @@
 
 import { useMemo } from "react";
 import { CollapsibleContainer } from "@/components/ui/CollapsibleContainer";
+import {
+  resolveSubjectiveSectionIcon,
+  sectionHeaderIcon,
+} from "@/components/cockpit/rx/sections/section-chrome";
+import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
+import { useAccordionOpenState } from "@/lib/cockpit/accordion-open-state";
 import { SectionReorderLeadingAction } from "@/components/cockpit/rx/subjective/SortableSectionShell";
 import { historyFieldInputId } from "@/lib/cockpit/history-field-chips";
 import {
@@ -46,9 +52,26 @@ import {
   TobaccoProductRows,
 } from "@/components/cockpit/rx/subjective/TobaccoProductRows";
 import { SubstancesSection } from "@/components/cockpit/rx/subjective/SubstancesSection";
+import { SocialHistorySectionNotesField } from "@/components/cockpit/rx/subjective/SocialHistorySectionNotesField";
 import { DietSection } from "@/components/cockpit/rx/subjective/DietSection";
+import {
+  dietHasContent,
+  normalizeDietSection,
+  serializeDietSection,
+} from "@/lib/cockpit/social-history-diet";
 import { CaffeineSection } from "@/components/cockpit/rx/subjective/CaffeineSection";
+import {
+  caffeineHasContent,
+  caffeineItemsForDisplay,
+  normalizeCaffeineSection,
+  serializeCaffeineSection,
+} from "@/lib/cockpit/social-history-caffeine";
 import { ActivitySection } from "@/components/cockpit/rx/subjective/ActivitySection";
+import {
+  activityHasContent,
+  normalizeActivitySection,
+  serializeActivitySection,
+} from "@/lib/cockpit/social-history-activity";
 import type { TobaccoProductRow } from "@/lib/cockpit/social-history-tobacco-products";
 import {
   contextClusterFilledCount,
@@ -59,7 +82,10 @@ import {
   lifestyleClusterHasContent,
   serializeAlcoholSectionSummary,
   serializeContextCluster,
+  serializeLivingSection,
   serializeLifestyleCluster,
+  serializeOccupationSection,
+  serializeTravelSection,
   serializeSexualCluster,
   serializeSmokelessSectionSummary,
   serializeSmokingSectionSummary,
@@ -90,12 +116,17 @@ import {
 import {
   SICK_CONTACT_CONTEXT_OPTIONS,
   SICK_CONTACT_TYPE_OPTIONS,
+  serializeSickContactSection,
+  sickContactHasContent,
   type SickContactSectionInput,
 } from "@/lib/cockpit/social-history-sick-contact";
 import {
   SLEEP_FLAG_OPTIONS,
   STRESS_SOURCE_OPTIONS,
+  serializeSleepSection,
+  serializeStressSection,
   sleepHasContent,
+  stressHasContent,
   wellbeingClinicalHints,
   type SleepSectionInput,
   type StressSectionInput,
@@ -285,6 +316,7 @@ function MultiTypeChipRow({
 interface SingleSelectChipRowProps {
   label: string;
   hint?: string;
+  hideLabel?: boolean;
   options: readonly { value: string; label: string }[];
   selected: string | undefined;
   disabled?: boolean;
@@ -295,6 +327,7 @@ interface SingleSelectChipRowProps {
 function SingleSelectChipRow({
   label,
   hint,
+  hideLabel = false,
   options,
   selected,
   disabled = false,
@@ -303,7 +336,7 @@ function SingleSelectChipRow({
 }: SingleSelectChipRowProps) {
   return (
     <div className="space-y-1.5" data-testid={testId}>
-      <p className="text-xs font-medium text-foreground/80">{label}</p>
+      {!hideLabel ? <p className="text-xs font-medium text-foreground/80">{label}</p> : null}
       {hint ? <p className="text-[10px] text-muted-foreground">{hint}</p> : null}
       <div className="flex flex-wrap gap-1.5" role="group" aria-label={label}>
         {options.map((option) => {
@@ -336,6 +369,7 @@ interface TextFieldProps {
   id: string;
   label: string;
   hint?: string;
+  hideLabel?: boolean;
   value: string;
   disabled?: boolean;
   placeholder?: string;
@@ -347,6 +381,7 @@ function TextField({
   id,
   label,
   hint,
+  hideLabel = false,
   value,
   disabled = false,
   placeholder,
@@ -355,9 +390,11 @@ function TextField({
 }: TextFieldProps) {
   return (
     <div className="space-y-1">
-      <label htmlFor={id} className="text-xs font-medium text-foreground/80">
-        {label}
-      </label>
+      {!hideLabel ? (
+        <label htmlFor={id} className="text-xs font-medium text-foreground/80">
+          {label}
+        </label>
+      ) : null}
       {hint ? <p className="text-[10px] text-muted-foreground">{hint}</p> : null}
       <input
         id={id}
@@ -560,6 +597,39 @@ function statusReveal(status: SmokingStatus | undefined): boolean {
   return status === "current" || status === "ex";
 }
 
+const SOCIAL_HISTORY_CLUSTERS = [
+  { id: "substance" },
+  { id: "lifestyle" },
+  { id: "context" },
+  { id: "wellbeing" },
+  { id: "sexual" },
+] as const;
+
+const SUBSTANCE_CLUSTER_CARDS = [
+  { id: "smoking" },
+  { id: "smokeless" },
+  { id: "alcohol" },
+  { id: "substances" },
+] as const;
+
+const LIFESTYLE_CLUSTER_CARDS = [
+  { id: "diet" },
+  { id: "caffeine" },
+  { id: "activity" },
+] as const;
+
+const CONTEXT_CLUSTER_CARDS = [
+  { id: "occupation" },
+  { id: "living" },
+  { id: "travel" },
+  { id: "sick_contact" },
+] as const;
+
+const WELLBEING_CLUSTER_CARDS = [
+  { id: "sleep" },
+  { id: "stress" },
+] as const;
+
 function stripProductPhaseOnly(products: TobaccoProductRow[]): TobaccoProductRow[] {
   return products.map(({ phase: _phase, ...rest }) => rest);
 }
@@ -723,14 +793,87 @@ export function SocialHistoryField({
     () => clusterContainerPreview(serializeLifestyleCluster(value)),
     [value],
   );
+  const caffeineItemsForDisplayMemo = useMemo(
+    () => caffeineItemsForDisplay(normalizeCaffeineSection(value.caffeine) ?? undefined),
+    [value.caffeine],
+  );
+  const caffeineCardPreview = useMemo(() => {
+    const section = normalizeCaffeineSection(value.caffeine);
+    if (!section) return undefined;
+    return sectionCardPreview(serializeCaffeineSection(section));
+  }, [value.caffeine]);
+  const dietCardPreview = useMemo(() => {
+    const section = normalizeDietSection(value.diet);
+    if (!section) return undefined;
+    return sectionCardPreview(serializeDietSection(section));
+  }, [value.diet]);
+  const activityCardPreview = useMemo(() => {
+    const section = normalizeActivitySection(value.activity);
+    if (!section) return undefined;
+    return sectionCardPreview(serializeActivitySection(section));
+  }, [value.activity]);
+  const activityItemsCount = useMemo(() => {
+    const section = normalizeActivitySection(value.activity);
+    return section?.items?.length ?? 0;
+  }, [value.activity]);
   const contextPreview = useMemo(
     () => clusterContainerPreview(serializeContextCluster(value)),
     [value],
   );
+  const occupationCardPreview = useMemo(() => {
+    if (!value.occupation) return undefined;
+    const serialized = serializeOccupationSection(value.occupation);
+    if (!serialized) return undefined;
+    return sectionCardPreview(serialized);
+  }, [value.occupation]);
+  const livingCardPreview = useMemo(() => {
+    if (!value.living) return undefined;
+    const serialized = serializeLivingSection(value.living);
+    if (!serialized) return undefined;
+    return sectionCardPreview(serialized);
+  }, [value.living]);
+  const travelCardPreview = useMemo(() => {
+    if (!value.travel) return undefined;
+    const serialized = serializeTravelSection(value.travel);
+    if (!serialized) return undefined;
+    return sectionCardPreview(serialized);
+  }, [value.travel]);
+  const sickContactCardPreview = useMemo(() => {
+    if (!sickContactHasContent(value.sickContact)) return undefined;
+    const serialized = serializeSickContactSection(value.sickContact ?? {});
+    if (!serialized) return undefined;
+    return sectionCardPreview(serialized);
+  }, [value.sickContact]);
+  const occupationHasContent = Boolean(
+    value.occupation?.text?.trim() || (value.occupation?.exposures.length ?? 0) > 0,
+  );
+  const livingHasContent = Boolean(value.living?.situation || value.living?.notes?.trim());
+  const travelHasContent = Boolean(
+    value.travel?.recent || value.travel?.place?.trim() || value.travel?.vectorRisk,
+  );
+  const occupationCount =
+    (value.occupation?.exposures.length ?? 0) > 0
+      ? (value.occupation?.exposures.length ?? 0)
+      : value.occupation?.text?.trim()
+        ? 1
+        : 0;
   const wellbeingPreview = useMemo(
     () => clusterContainerPreview(serializeWellbeingCluster(value)),
     [value],
   );
+  const sleepCardPreview = useMemo(() => {
+    if (!value.sleep) return undefined;
+    const serialized = serializeSleepSection(value.sleep);
+    if (!serialized) return undefined;
+    return sectionCardPreview(serialized);
+  }, [value.sleep]);
+  const stressCardPreview = useMemo(() => {
+    if (!value.stress) return undefined;
+    const serialized = serializeStressSection(value.stress);
+    if (!serialized) return undefined;
+    return sectionCardPreview(serialized);
+  }, [value.stress]);
+  const stressSourcesCount = value.stress?.sources?.length ?? 0;
   const sexualPreview = useMemo(
     () => clusterContainerPreview(serializeSexualCluster(value)),
     [value],
@@ -773,6 +916,7 @@ export function SocialHistoryField({
                   smoking?.quitYearsUnit,
                 )
               : [...(smoking?.products ?? [])],
+        notes: smoking?.notes,
       }),
     );
   };
@@ -795,6 +939,7 @@ export function SocialHistoryField({
                   smokeless?.quitYearsUnit,
                 )
               : [...(smokeless?.products ?? [])],
+        notes: smokeless?.notes,
       }),
     );
   };
@@ -818,6 +963,7 @@ export function SocialHistoryField({
                   alcohol?.quitYearsUnit,
                 )
               : baseDrinks,
+        notes: alcohol?.notes,
         ...(status === "never"
           ? {}
           : {
@@ -907,28 +1053,91 @@ export function SocialHistoryField({
     );
   };
 
+  const clusterAccordion = useAccordionOpenState({
+    items: SOCIAL_HISTORY_CLUSTERS,
+    initialOpenIds: [
+      ...(substanceUseClusterHasContent(value) ? ["substance"] : []),
+      ...(lifestyleClusterHasContent(value) ? ["lifestyle"] : []),
+      ...(contextClusterHasContent(value) ? ["context"] : []),
+      ...(wellbeingClusterHasContent(value) ? ["wellbeing"] : []),
+      ...(sexualClusterHasContent(value) ? ["sexual"] : []),
+    ],
+    fallbackOpenIds: ["substance"],
+  });
+
+  const substanceAccordion = useAccordionOpenState({
+    items: SUBSTANCE_CLUSTER_CARDS,
+    initialOpenIds: [
+      ...(statusReveal(smoking?.status) ? ["smoking"] : []),
+      ...(statusReveal(smokeless?.status) ? ["smokeless"] : []),
+      ...(statusReveal(alcohol?.status) ? ["alcohol"] : []),
+      ...(substancesDefaultOpen ? ["substances"] : []),
+    ],
+    fallbackOpenIds: ["smoking"],
+  });
+
+  const lifestyleAccordion = useAccordionOpenState({
+    items: LIFESTYLE_CLUSTER_CARDS,
+    initialOpenIds: [
+      ...(dietHasContent(value.diet) ? ["diet"] : []),
+      ...(caffeineHasContent(value.caffeine) ? ["caffeine"] : []),
+      ...(activityHasContent(value.activity) ? ["activity"] : []),
+    ],
+    fallbackOpenIds: ["diet"],
+  });
+
+  const contextAccordion = useAccordionOpenState({
+    items: CONTEXT_CLUSTER_CARDS,
+    initialOpenIds: [
+      ...(occupationHasContent ? ["occupation"] : []),
+      ...(livingHasContent ? ["living"] : []),
+      ...(travelHasContent ? ["travel"] : []),
+      ...(sickContactHasContent(value.sickContact) ? ["sick_contact"] : []),
+    ],
+    fallbackOpenIds: ["occupation"],
+  });
+
+  const wellbeingAccordion = useAccordionOpenState({
+    items: WELLBEING_CLUSTER_CARDS,
+    initialOpenIds: [
+      ...(sleepHasContent(value.sleep) ? ["sleep"] : []),
+      ...(stressHasContent(value.stress) ? ["stress"] : []),
+    ],
+    fallbackOpenIds: ["sleep"],
+  });
+
   return (
     <CollapsibleContainer
       title="Social / personal history"
+      sectionIcon={sectionHeaderIcon(resolveSubjectiveSectionIcon("social_history")!)}
       toggleLabel="Toggle Social / personal history"
+      testId="social-history-field"
+      scrollOnExpand
+      closeScrollToSelector={SUBJECTIVE_SCROLL_TOP_SELECTOR}
+      stickyHeader
+      depthTone
       preview={preview ? `— ${preview}` : undefined}
       open={sectionOpen}
       onOpenChange={onSectionOpenChange}
       defaultOpen={sectionOpen === undefined ? false : undefined}
-      bodyClassName="space-y-4 px-3 pb-3 pt-0"
+      bodyClassName="flex flex-col gap-3 px-3 pt-3 pb-3"
       leadingActions={<SectionReorderLeadingAction sectionId="social_history" />}
       actions={!disabled ? <SubjectiveSectionTemplateButton scope="social_history" /> : undefined}
     >
-      <div className="space-y-3">
         <CollapsibleContainer
           title="Tobacco, alcohol & drugs"
           toggleLabel="Toggle tobacco, alcohol and drugs cluster"
           ariaLabel="Tobacco, alcohol and drugs"
+          variant="subsection"
           testId="social-history-cluster-substance"
           preview={substanceUsePreview}
           count={substanceUseClusterFilledCount(value)}
-          defaultOpen={substanceUseClusterHasContent(value)}
-          bodyClassName="flex flex-col gap-2 pt-0"
+          open={clusterAccordion.isOpen("substance")}
+          onOpenChange={(open) => clusterAccordion.setOpen("substance", open)}
+          scrollOnExpand
+          stickyHeader
+          closeScrollToSelector='[data-testid="social-history-field"]'
+          bodyClassName="flex flex-col gap-3 pt-3 pb-3"
         >
         <CollapsibleContainer
           variant="subsection"
@@ -938,8 +1147,12 @@ export function SocialHistoryField({
           ariaLabel="Smoking"
           preview={smokingCardPreview}
           count={smokingProductsForDisplay.length}
-          defaultOpen={statusReveal(smoking?.status)}
+          statusDotFilled={Boolean(value.smoking?.status)}
+          open={substanceAccordion.isOpen("smoking")}
+          onOpenChange={(open) => substanceAccordion.setOpen("smoking", open)}
           scrollOnExpand
+          stickyHeader
+          closeScrollToSelector='[data-testid="social-history-cluster-substance"]'
           bodyClassName="space-y-2"
         >
           <StatusChipRow
@@ -1008,6 +1221,21 @@ export function SocialHistoryField({
               </div>
             </div>
           )}
+          <SocialHistorySectionNotesField
+            id={`${inputId}-smoking-notes`}
+            testId="social-smoking-notes"
+            disabled={disabled}
+            value={smoking?.notes ?? ""}
+            placeholder="Counseling, quit attempts, passive exposure…"
+            onChange={(notes) =>
+              onChange(
+                setSmoking(value, {
+                  ...(smoking ?? { products: [] }),
+                  notes,
+                }),
+              )
+            }
+          />
         </CollapsibleContainer>
 
         <CollapsibleContainer
@@ -1018,8 +1246,12 @@ export function SocialHistoryField({
           ariaLabel="Smokeless tobacco"
           preview={smokelessCardPreview}
           count={smokelessProductsForDisplay.length}
-          defaultOpen={statusReveal(smokeless?.status)}
+          statusDotFilled={Boolean(value.smokeless?.status)}
+          open={substanceAccordion.isOpen("smokeless")}
+          onOpenChange={(open) => substanceAccordion.setOpen("smokeless", open)}
           scrollOnExpand
+          stickyHeader
+          closeScrollToSelector='[data-testid="social-history-cluster-substance"]'
           bodyClassName="space-y-2"
         >
           <StatusChipRow
@@ -1057,6 +1289,21 @@ export function SocialHistoryField({
               />
             </div>
           )}
+          <SocialHistorySectionNotesField
+            id={`${inputId}-smokeless-notes`}
+            testId="social-smokeless-notes"
+            disabled={disabled}
+            value={smokeless?.notes ?? ""}
+            placeholder="Product details, counseling, quit attempts…"
+            onChange={(notes) =>
+              onChange(
+                setSmokeless(value, {
+                  ...(smokeless ?? { products: [] }),
+                  notes,
+                }),
+              )
+            }
+          />
         </CollapsibleContainer>
 
         <CollapsibleContainer
@@ -1067,8 +1314,12 @@ export function SocialHistoryField({
           ariaLabel="Alcohol"
           preview={alcoholCardPreview}
           count={alcoholDrinksForDisplayMemo.length}
-          defaultOpen={statusReveal(alcohol?.status)}
+          statusDotFilled={Boolean(value.alcohol?.status)}
+          open={substanceAccordion.isOpen("alcohol")}
+          onOpenChange={(open) => substanceAccordion.setOpen("alcohol", open)}
           scrollOnExpand
+          stickyHeader
+          closeScrollToSelector='[data-testid="social-history-cluster-substance"]'
           bodyClassName="space-y-2"
         >
           <StatusChipRow
@@ -1593,6 +1844,21 @@ export function SocialHistoryField({
               )}
             </div>
           )}
+          <SocialHistorySectionNotesField
+            id={`${inputId}-alcohol-notes`}
+            testId="social-alcohol-notes"
+            disabled={disabled}
+            value={alcohol?.notes ?? ""}
+            placeholder="Pattern, triggers, counseling, relapse…"
+            onChange={(notes) =>
+              onChange(
+                setAlcohol(value, {
+                  ...(alcohol ?? { drinks: [] }),
+                  notes,
+                }),
+              )
+            }
+          />
         </CollapsibleContainer>
 
         <CollapsibleContainer
@@ -1603,8 +1869,12 @@ export function SocialHistoryField({
           ariaLabel="Substances"
           preview={substancesCardPreview}
           count={substancesCount}
-          defaultOpen={substancesDefaultOpen}
+          statusDotFilled={Boolean(value.substances?.status)}
+          open={substanceAccordion.isOpen("substances")}
+          onOpenChange={(open) => substanceAccordion.setOpen("substances", open)}
           scrollOnExpand
+          stickyHeader
+          closeScrollToSelector='[data-testid="social-history-cluster-substance"]'
           bodyClassName="space-y-2"
         >
           <SubstancesSection
@@ -1622,498 +1892,664 @@ export function SocialHistoryField({
           title="Lifestyle"
           toggleLabel="Toggle lifestyle cluster"
           ariaLabel="Lifestyle"
+          variant="subsection"
           testId="social-history-cluster-lifestyle"
           preview={lifestylePreview}
           count={lifestyleClusterFilledCount(value)}
-          defaultOpen={lifestyleClusterHasContent(value)}
-          bodyClassName="space-y-4 pt-0"
+          open={clusterAccordion.isOpen("lifestyle")}
+          onOpenChange={(open) => clusterAccordion.setOpen("lifestyle", open)}
+          scrollOnExpand
+          stickyHeader
+          closeScrollToSelector='[data-testid="social-history-field"]'
+          bodyClassName="flex flex-col gap-3 pt-3 pb-3"
         >
-          <DietSection
-            value={value}
-            disabled={disabled}
-            inputIdPrefix={inputId}
-            onChange={onChange}
-          />
+          <CollapsibleContainer
+            variant="subsection"
+            testId="social-diet-card"
+            title="Diet"
+            toggleLabel="Toggle diet"
+            ariaLabel="Diet"
+            preview={dietCardPreview}
+            count={dietHasContent(normalizeDietSection(value.diet)) ? 1 : 0}
+            open={lifestyleAccordion.isOpen("diet")}
+            onOpenChange={(open) => lifestyleAccordion.setOpen("diet", open)}
+            scrollOnExpand
+            stickyHeader
+            closeScrollToSelector='[data-testid="social-history-cluster-lifestyle"]'
+            bodyClassName="space-y-2"
+          >
+            <DietSection
+              value={value}
+              disabled={disabled}
+              inputIdPrefix={inputId}
+              hideLabel
+              onChange={onChange}
+            />
+          </CollapsibleContainer>
 
-          <CaffeineSection
-            value={value}
-            disabled={disabled}
-            inputIdPrefix={inputId}
-            onChange={onChange}
-          />
+          <CollapsibleContainer
+            variant="subsection"
+            testId="social-caffeine-card"
+            title="Caffeine"
+            toggleLabel="Toggle caffeine"
+            ariaLabel="Caffeine"
+            preview={caffeineCardPreview}
+            count={caffeineItemsForDisplayMemo.length}
+            open={lifestyleAccordion.isOpen("caffeine")}
+            onOpenChange={(open) => lifestyleAccordion.setOpen("caffeine", open)}
+            scrollOnExpand
+            stickyHeader
+            closeScrollToSelector='[data-testid="social-history-cluster-lifestyle"]'
+            bodyClassName="space-y-2"
+          >
+            <CaffeineSection
+              value={value}
+              disabled={disabled}
+              inputIdPrefix={inputId}
+              hideLabel
+              closeScrollToSelector='[data-testid="social-caffeine-card"]'
+              onChange={onChange}
+            />
+          </CollapsibleContainer>
 
-          <ActivitySection
-            value={value}
-            disabled={disabled}
-            inputIdPrefix={inputId}
-            onChange={onChange}
-          />
+          <CollapsibleContainer
+            variant="subsection"
+            testId="social-activity-card"
+            title="Physical activity"
+            toggleLabel="Toggle physical activity"
+            ariaLabel="Physical activity"
+            preview={activityCardPreview}
+            count={activityItemsCount}
+            open={lifestyleAccordion.isOpen("activity")}
+            onOpenChange={(open) => lifestyleAccordion.setOpen("activity", open)}
+            scrollOnExpand
+            stickyHeader
+            closeScrollToSelector='[data-testid="social-history-cluster-lifestyle"]'
+            bodyClassName="space-y-2"
+          >
+            <ActivitySection
+              value={value}
+              disabled={disabled}
+              inputIdPrefix={inputId}
+              hideLabel
+              onChange={onChange}
+            />
+          </CollapsibleContainer>
         </CollapsibleContainer>
 
         <CollapsibleContainer
           title="Work, home & exposure"
           toggleLabel="Toggle work, home and exposure cluster"
           ariaLabel="Work, home and exposure"
+          variant="subsection"
           testId="social-history-cluster-context"
           preview={contextPreview}
           count={contextClusterFilledCount(value)}
-          defaultOpen={contextClusterHasContent(value)}
-          bodyClassName="space-y-4 pt-0"
+          open={clusterAccordion.isOpen("context")}
+          onOpenChange={(open) => clusterAccordion.setOpen("context", open)}
+          scrollOnExpand
+          stickyHeader
+          closeScrollToSelector='[data-testid="social-history-field"]'
+          bodyClassName="flex flex-col gap-3 pt-3 pb-3"
         >
-          <section className="space-y-2" aria-label="Occupation">
-            <TextField
-              id={`${inputId}-occupation-text`}
-              label="Occupation"
-              hint="Job and workplace hazards"
-              value={occupation?.text ?? ""}
-              disabled={disabled}
-              placeholder="Job or role"
-              onChange={(text) =>
-          onChange(
-                  setOccupation(value, {
-                    text,
-                    exposures: occupation?.exposures ?? [],
-                  }),
-                )
-              }
-            />
-            {(occupation?.text?.trim() || (occupation?.exposures.length ?? 0) > 0) && (
-              <div
-                className="rounded-md border border-border/60 bg-muted/20 p-2.5"
-                aria-expanded={true}
-                data-testid="social-occupation-details"
-              >
-                <MultiTypeChipRow
-                  label="Exposures"
-                  options={OCCUPATION_EXPOSURES}
-                  selected={occupation?.exposures ?? []}
-                  disabled={disabled}
-                  testId="social-occupation-exposures"
-                  onToggle={(exposure) => {
-                    const current = occupation?.exposures ?? [];
-                    onChange(
-                      setOccupation(value, {
-                        text: occupation?.text,
-                        exposures: toggleType(current, exposure),
-                      }),
-                    );
-                  }}
-                />
-              </div>
-            )}
-          </section>
-
-          <section className="space-y-2" aria-label="Living situation">
-            <SingleSelectChipRow
-              label="Living situation"
-              hint="Support at home, infection risk"
-              options={LIVING_SITUATIONS}
-              selected={living?.situation}
-              disabled={disabled}
-              testId="social-living-situation"
-              onSelect={(situation) => {
-                if (!situation) {
-                  onChange(setLiving(value, null));
-                  return;
+          <CollapsibleContainer
+            variant="subsection"
+            testId="social-occupation-card"
+            title="Occupation"
+            toggleLabel="Toggle occupation"
+            ariaLabel="Occupation"
+            preview={occupationCardPreview}
+            count={occupationCount}
+            open={contextAccordion.isOpen("occupation")}
+            onOpenChange={(open) => contextAccordion.setOpen("occupation", open)}
+            scrollOnExpand
+            stickyHeader
+            closeScrollToSelector='[data-testid="social-history-cluster-context"]'
+            bodyClassName="space-y-2"
+          >
+            <section className="space-y-2" aria-label="Occupation">
+              <TextField
+                id={`${inputId}-occupation-text`}
+                label="Occupation"
+                hideLabel
+                hint="Job and workplace hazards"
+                value={occupation?.text ?? ""}
+                disabled={disabled}
+                placeholder="Job or role"
+                onChange={(text) =>
+                  onChange(
+                    setOccupation(value, {
+                      text,
+                      exposures: occupation?.exposures ?? [],
+                    }),
+                  )
                 }
-                onChange(
-                  setLiving(value, {
-                    situation: situation as (typeof LIVING_SITUATIONS)[number]["value"],
-                    notes: living?.notes,
-                  }),
-                );
-              }}
-            />
-            {living?.situation && (
-              <div
-                className="rounded-md border border-border/60 bg-muted/20 p-2.5"
-                aria-expanded={true}
-                data-testid="social-living-details"
-              >
-                <TextField
-                  id={`${inputId}-living-notes`}
-                  label="Details (optional)"
-                  value={living.notes ?? ""}
-                  disabled={disabled}
-                  placeholder="Optional details"
-                  maxLength={500}
-                  onChange={(notes) => onChange(setLiving(value, { ...living, notes }))}
-                />
-              </div>
-            )}
-          </section>
-
-          <section className="space-y-2" aria-label="Travel">
-            <div className="space-y-1.5" data-testid="social-travel-toggle">
-              <p
-                id={`${inputId}-travel-label`}
-                className="text-xs font-medium text-foreground/80"
-              >
-                Travel
-              </p>
-              <p className="text-[10px] text-muted-foreground">
-                Recent trips — endemic areas, outbreaks
-              </p>
-              <div role="group" aria-labelledby={`${inputId}-travel-label`}>
-                <button
-                  type="button"
-                  disabled={disabled}
-                  aria-pressed={travelActive}
-                  aria-expanded={travelActive}
-                  aria-controls={`${inputId}-travel-details`}
-                  aria-label="Recent travel"
-                  onClick={() => {
-                    if (travelActive) {
-                      onChange(setTravel(value, null));
-                      return;
-                    }
-                    onChange(setTravel(value, { recent: true }));
-                  }}
-                  className={cn(
-                    CHIP_CLASS,
-                    travelActive
-                      ? "border-primary bg-primary/10 font-medium text-foreground"
-                      : "border-border text-muted-foreground hover:border-primary/60 hover:text-foreground",
-                  )}
+              />
+              {(occupation?.text?.trim() || (occupation?.exposures.length ?? 0) > 0) && (
+                <div
+                  className="rounded-md border border-border/60 bg-muted/20 p-2.5"
+                  aria-expanded={true}
+                  data-testid="social-occupation-details"
                 >
-                  Recent travel
-                </button>
-              </div>
-            </div>
-            {travelActive && (
-              <div
-                id={`${inputId}-travel-details`}
-                className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5"
-                aria-expanded={true}
-                data-testid="social-travel-details"
-              >
-                <TextField
-                  id={`${inputId}-travel-place`}
-                  label="Place"
-                  value={travel?.place ?? ""}
-                  disabled={disabled}
-                  placeholder="City or destination"
-                  onChange={(place) =>
-                    onChange(
-                      setTravel(value, {
-                        recent: true,
-                        place,
-                        vectorRisk: travel?.vectorRisk,
-                      }),
-                    )
+                  <MultiTypeChipRow
+                    label="Exposures"
+                    options={OCCUPATION_EXPOSURES}
+                    selected={occupation?.exposures ?? []}
+                    disabled={disabled}
+                    testId="social-occupation-exposures"
+                    onToggle={(exposure) => {
+                      const current = occupation?.exposures ?? [];
+                      onChange(
+                        setOccupation(value, {
+                          text: occupation?.text,
+                          exposures: toggleType(current, exposure),
+                        }),
+                      );
+                    }}
+                  />
+                </div>
+              )}
+            </section>
+          </CollapsibleContainer>
+
+          <CollapsibleContainer
+            variant="subsection"
+            testId="social-living-card"
+            title="Living situation"
+            toggleLabel="Toggle living situation"
+            ariaLabel="Living situation"
+            preview={livingCardPreview}
+            count={living?.situation ? 1 : 0}
+            open={contextAccordion.isOpen("living")}
+            onOpenChange={(open) => contextAccordion.setOpen("living", open)}
+            scrollOnExpand
+            stickyHeader
+            closeScrollToSelector='[data-testid="social-history-cluster-context"]'
+            bodyClassName="space-y-2"
+          >
+            <section className="space-y-2" aria-label="Living situation">
+              <SingleSelectChipRow
+                label="Living situation"
+                hideLabel
+                hint="Support at home, infection risk"
+                options={LIVING_SITUATIONS}
+                selected={living?.situation}
+                disabled={disabled}
+                testId="social-living-situation"
+                onSelect={(situation) => {
+                  if (!situation) {
+                    onChange(setLiving(value, null));
+                    return;
                   }
-                />
-                <div data-testid="social-travel-vector-risk">
+                  onChange(
+                    setLiving(value, {
+                      situation: situation as (typeof LIVING_SITUATIONS)[number]["value"],
+                      notes: living?.notes,
+                    }),
+                  );
+                }}
+              />
+              {living?.situation && (
+                <div
+                  className="rounded-md border border-border/60 bg-muted/20 p-2.5"
+                  aria-expanded={true}
+                  data-testid="social-living-details"
+                >
+                  <TextField
+                    id={`${inputId}-living-notes`}
+                    label="Details (optional)"
+                    value={living.notes ?? ""}
+                    disabled={disabled}
+                    placeholder="Optional details"
+                    maxLength={500}
+                    onChange={(notes) => onChange(setLiving(value, { ...living, notes }))}
+                  />
+                </div>
+              )}
+            </section>
+          </CollapsibleContainer>
+
+          <CollapsibleContainer
+            variant="subsection"
+            testId="social-travel-card"
+            title="Travel"
+            toggleLabel="Toggle travel"
+            ariaLabel="Travel"
+            preview={travelCardPreview}
+            count={travelActive ? 1 : 0}
+            open={contextAccordion.isOpen("travel")}
+            onOpenChange={(open) => contextAccordion.setOpen("travel", open)}
+            scrollOnExpand
+            stickyHeader
+            closeScrollToSelector='[data-testid="social-history-cluster-context"]'
+            bodyClassName="space-y-2"
+          >
+            <section className="space-y-2" aria-label="Travel">
+              <div className="space-y-1.5" data-testid="social-travel-toggle">
+                <p className="text-[10px] text-muted-foreground">
+                  Recent trips — endemic areas, outbreaks
+                </p>
+                <div role="group" aria-label="Travel">
                   <button
                     type="button"
                     disabled={disabled}
-                    aria-pressed={travel?.vectorRisk === true}
-                    aria-label="Dengue malaria or endemic area"
-                    onClick={() =>
-                      onChange(
-                        setTravel(value, {
-                          recent: travel?.recent ?? true,
-                          place: travel?.place,
-                          vectorRisk: !travel?.vectorRisk,
-                        }),
-                      )
-                    }
+                    aria-pressed={travelActive}
+                    aria-expanded={travelActive}
+                    aria-controls={`${inputId}-travel-details`}
+                    aria-label="Recent travel"
+                    onClick={() => {
+                      if (travelActive) {
+                        onChange(setTravel(value, null));
+                        return;
+                      }
+                      onChange(setTravel(value, { recent: true }));
+                    }}
                     className={cn(
                       CHIP_CLASS,
-                      travel?.vectorRisk
+                      travelActive
                         ? "border-primary bg-primary/10 font-medium text-foreground"
                         : "border-border text-muted-foreground hover:border-primary/60 hover:text-foreground",
                     )}
                   >
-                    Dengue / malaria / endemic area
+                    Recent travel
                   </button>
                 </div>
               </div>
-            )}
-          </section>
+              {travelActive && (
+                <div
+                  id={`${inputId}-travel-details`}
+                  className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5"
+                  aria-expanded={true}
+                  data-testid="social-travel-details"
+                >
+                  <TextField
+                    id={`${inputId}-travel-place`}
+                    label="Place"
+                    value={travel?.place ?? ""}
+                    disabled={disabled}
+                    placeholder="City or destination"
+                    onChange={(place) =>
+                      onChange(
+                        setTravel(value, {
+                          recent: true,
+                          place,
+                          vectorRisk: travel?.vectorRisk,
+                        }),
+                      )
+                    }
+                  />
+                  <div data-testid="social-travel-vector-risk">
+                    <button
+                      type="button"
+                      disabled={disabled}
+                      aria-pressed={travel?.vectorRisk === true}
+                      aria-label="Dengue malaria or endemic area"
+                      onClick={() =>
+                        onChange(
+                          setTravel(value, {
+                            recent: travel?.recent ?? true,
+                            place: travel?.place,
+                            vectorRisk: !travel?.vectorRisk,
+                          }),
+                        )
+                      }
+                      className={cn(
+                        CHIP_CLASS,
+                        travel?.vectorRisk
+                          ? "border-primary bg-primary/10 font-medium text-foreground"
+                          : "border-border text-muted-foreground hover:border-primary/60 hover:text-foreground",
+                      )}
+                    >
+                      Dengue / malaria / endemic area
+                    </button>
+                  </div>
+                </div>
+              )}
+            </section>
+          </CollapsibleContainer>
 
-          <section className="space-y-2" aria-label="Sick contact">
-            <p className="text-xs font-medium text-foreground/80">Sick contact</p>
-            <p className="text-[10px] text-muted-foreground">
-              Travel, household, work, or clinic exposure
-            </p>
-            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Sick contact">
-              <button
-                type="button"
-                disabled={disabled}
-                aria-pressed={noneSickContactSelected}
-                aria-label="No sick contact"
-                data-testid="social-sick-contact-none"
-                onClick={() =>
-                  onChange(
-                    setSickContact(value, {
-                      ...baseSickContact(),
-                      present: noneSickContactSelected ? undefined : false,
-                      types: undefined,
-                      context: undefined,
-                      notes: undefined,
-                    }),
-                  )
-                }
-                className={cn(
-                  CHIP_CLASS,
-                  noneSickContactSelected
-                    ? "border-primary bg-primary/10 font-medium text-foreground"
-                    : "border-border text-muted-foreground hover:border-primary/60 hover:text-foreground",
-                )}
-              >
-                None
-              </button>
-              <button
-                type="button"
-                disabled={disabled}
-                aria-pressed={recentSickContactSelected}
-                aria-label="Recent sick contact"
-                data-testid="social-sick-contact-recent"
-                onClick={() =>
-                  onChange(
-                    setSickContact(value, {
-                      ...baseSickContact(),
-                      present: recentSickContactSelected ? undefined : true,
-                    }),
-                  )
-                }
-                className={cn(
-                  CHIP_CLASS,
-                  recentSickContactSelected
-                    ? "border-primary bg-primary/10 font-medium text-foreground"
-                    : "border-border text-muted-foreground hover:border-primary/60 hover:text-foreground",
-                )}
-              >
-                Recent contact
-              </button>
-            </div>
-            {recentSickContactSelected && (
-              <div
-                className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5"
-                data-testid="social-sick-contact-details"
-              >
-                <MultiTypeChipRow
-                  label="Communicable illness"
-                  options={SICK_CONTACT_TYPE_OPTIONS}
-                  selected={sickContact?.types ?? []}
+          <CollapsibleContainer
+            variant="subsection"
+            testId="social-sick-contact-card"
+            title="Sick contact"
+            toggleLabel="Toggle sick contact"
+            ariaLabel="Sick contact"
+            preview={sickContactCardPreview}
+            count={
+              (sickContact?.types?.length ?? 0) > 0
+                ? (sickContact?.types?.length ?? 0)
+                : sickContactHasContent(value.sickContact)
+                  ? 1
+                  : 0
+            }
+            open={contextAccordion.isOpen("sick_contact")}
+            onOpenChange={(open) => contextAccordion.setOpen("sick_contact", open)}
+            scrollOnExpand
+            stickyHeader
+            closeScrollToSelector='[data-testid="social-history-cluster-context"]'
+            bodyClassName="space-y-2"
+          >
+            <section className="space-y-2" aria-label="Sick contact">
+              <p className="text-[10px] text-muted-foreground">
+                Travel, household, work, or clinic exposure
+              </p>
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Sick contact">
+                <button
+                  type="button"
                   disabled={disabled}
-                  testId="social-sick-contact-types"
-                  onToggle={(type) => {
-                    const current = sickContact?.types ?? [];
+                  aria-pressed={noneSickContactSelected}
+                  aria-label="No sick contact"
+                  data-testid="social-sick-contact-none"
+                  onClick={() =>
                     onChange(
                       setSickContact(value, {
                         ...baseSickContact(),
-                        present: true,
-                        types: toggleType(current, type) as SickContactSectionInput["types"],
-                      }),
-                    );
-                  }}
-                />
-                <MultiTypeChipRow
-                  label="Context"
-                  options={SICK_CONTACT_CONTEXT_OPTIONS}
-                  selected={sickContact?.context ?? []}
-                  disabled={disabled}
-                  testId="social-sick-contact-context"
-                  onToggle={(ctx) => {
-                    const current = sickContact?.context ?? [];
-                    onChange(
-                      setSickContact(value, {
-                        ...baseSickContact(),
-                        present: true,
-                        context: toggleType(current, ctx) as SickContactSectionInput["context"],
-                      }),
-                    );
-                  }}
-                />
-                <TextField
-                  id={`${inputId}-sick-contact-notes`}
-                  label="Details (optional)"
-                  value={sickContact?.notes ?? ""}
-                  disabled={disabled}
-                  placeholder="Who, when, diagnosis if known"
-                  maxLength={500}
-                  onChange={(notes) =>
-                    onChange(
-                      setSickContact(value, {
-                        ...baseSickContact(),
-                        present: true,
-                        notes,
+                        present: noneSickContactSelected ? undefined : false,
+                        types: undefined,
+                        context: undefined,
+                        notes: undefined,
                       }),
                     )
                   }
-                />
+                  className={cn(
+                    CHIP_CLASS,
+                    noneSickContactSelected
+                      ? "border-primary bg-primary/10 font-medium text-foreground"
+                      : "border-border text-muted-foreground hover:border-primary/60 hover:text-foreground",
+                  )}
+                >
+                  None
+                </button>
+                <button
+                  type="button"
+                  disabled={disabled}
+                  aria-pressed={recentSickContactSelected}
+                  aria-label="Recent sick contact"
+                  data-testid="social-sick-contact-recent"
+                  onClick={() =>
+                    onChange(
+                      setSickContact(value, {
+                        ...baseSickContact(),
+                        present: recentSickContactSelected ? undefined : true,
+                      }),
+                    )
+                  }
+                  className={cn(
+                    CHIP_CLASS,
+                    recentSickContactSelected
+                      ? "border-primary bg-primary/10 font-medium text-foreground"
+                      : "border-border text-muted-foreground hover:border-primary/60 hover:text-foreground",
+                  )}
+                >
+                  Recent contact
+                </button>
               </div>
-            )}
-          </section>
+              {recentSickContactSelected && (
+                <div
+                  className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5"
+                  data-testid="social-sick-contact-details"
+                >
+                  <MultiTypeChipRow
+                    label="Communicable illness"
+                    options={SICK_CONTACT_TYPE_OPTIONS}
+                    selected={sickContact?.types ?? []}
+                    disabled={disabled}
+                    testId="social-sick-contact-types"
+                    onToggle={(type) => {
+                      const current = sickContact?.types ?? [];
+                      onChange(
+                        setSickContact(value, {
+                          ...baseSickContact(),
+                          present: true,
+                          types: toggleType(current, type) as SickContactSectionInput["types"],
+                        }),
+                      );
+                    }}
+                  />
+                  <MultiTypeChipRow
+                    label="Context"
+                    options={SICK_CONTACT_CONTEXT_OPTIONS}
+                    selected={sickContact?.context ?? []}
+                    disabled={disabled}
+                    testId="social-sick-contact-context"
+                    onToggle={(ctx) => {
+                      const current = sickContact?.context ?? [];
+                      onChange(
+                        setSickContact(value, {
+                          ...baseSickContact(),
+                          present: true,
+                          context: toggleType(current, ctx) as SickContactSectionInput["context"],
+                        }),
+                      );
+                    }}
+                  />
+                  <TextField
+                    id={`${inputId}-sick-contact-notes`}
+                    label="Details (optional)"
+                    value={sickContact?.notes ?? ""}
+                    disabled={disabled}
+                    placeholder="Who, when, diagnosis if known"
+                    maxLength={500}
+                    onChange={(notes) =>
+                      onChange(
+                        setSickContact(value, {
+                          ...baseSickContact(),
+                          present: true,
+                          notes,
+                        }),
+                      )
+                    }
+                  />
+                </div>
+              )}
+            </section>
+          </CollapsibleContainer>
         </CollapsibleContainer>
 
         <CollapsibleContainer
           title="Sleep & stress"
           toggleLabel="Toggle sleep and stress cluster"
           ariaLabel="Sleep and stress"
+          variant="subsection"
           testId="social-history-cluster-wellbeing"
           preview={wellbeingPreview}
           count={wellbeingClusterFilledCount(value)}
-          defaultOpen={wellbeingClusterHasContent(value)}
-          bodyClassName="space-y-4 pt-0"
+          open={clusterAccordion.isOpen("wellbeing")}
+          onOpenChange={(open) => clusterAccordion.setOpen("wellbeing", open)}
+          scrollOnExpand
+          stickyHeader
+          closeScrollToSelector='[data-testid="social-history-field"]'
+          bodyClassName="flex flex-col gap-3 pt-3 pb-3"
         >
-          <section className="space-y-2" aria-label="Sleep">
-            <p className="text-xs font-medium text-foreground/80">Sleep</p>
-            <p className="text-[10px] text-muted-foreground">Rest, snoring, shift work</p>
-            <SingleSelectChipRow
-              label="Quality"
-              options={SLEEP_QUALITY}
-              selected={sleep?.quality}
-              disabled={disabled}
-              testId="social-sleep-quality"
-              onSelect={(quality) => {
-                const next = {
-                  ...baseSleep(),
-                  quality: quality as (typeof SLEEP_QUALITY)[number]["value"] | undefined,
-                };
-                onChange(setSleep(value, sleepHasContent(next) ? next : null));
-              }}
-            />
-            <NumberField
-              id={`${inputId}-sleep-hours`}
-              label="Hours/night (optional)"
-              value={sleep?.hoursPerNight}
-              disabled={disabled}
-              max={24}
-              onChange={(hoursPerNight) => {
-                const next = { ...baseSleep(), hoursPerNight };
-                onChange(setSleep(value, sleepHasContent(next) ? next : null));
-              }}
-            />
-            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Sleep flags">
-              {SLEEP_FLAG_OPTIONS.map((option) => {
-                const selected =
-                  option.value === "snoring" ? sleep?.snoring === true : sleep?.shiftWork === true;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    disabled={disabled}
-                    aria-pressed={selected}
-                    aria-label={option.label}
-                    data-testid={`social-sleep-flag-${option.value}`}
-                    onClick={() => {
-                      const next = { ...baseSleep() };
-                      if (option.value === "snoring") {
-                        next.snoring = selected ? undefined : true;
-                      } else {
-                        next.shiftWork = selected ? undefined : true;
-                      }
-                      onChange(setSleep(value, sleepHasContent(next) ? next : null));
-                    }}
-                    className={cn(
-                      CHIP_CLASS,
-                      selected
-                        ? "border-primary bg-primary/10 font-medium text-foreground"
-                        : "border-border text-muted-foreground hover:border-primary/60 hover:text-foreground",
-                    )}
-                  >
-                    {option.label}
-                  </button>
-                );
-              })}
-            </div>
-            <TextField
-              id={`${inputId}-sleep-notes`}
-              label="Details (optional)"
-              value={sleep?.notes ?? ""}
-              disabled={disabled}
-              placeholder="Snoring, shift work, wakes frequently"
-              maxLength={500}
-              onChange={(notes) => {
-                const next = { ...baseSleep(), notes };
-                onChange(setSleep(value, sleepHasContent(next) ? next : null));
-              }}
-            />
-          </section>
-
-          <section className="space-y-2" aria-label="Stress">
-            <p className="text-xs font-medium text-foreground/80">Stress</p>
-            <p className="text-[10px] text-muted-foreground">
-              Load and coping — work, family, health
-            </p>
-            <SingleSelectChipRow
-              label="Stress level"
-              options={STRESS_LEVELS}
-              selected={stress?.level}
-              disabled={disabled}
-              testId="social-stress-level"
-              onSelect={(level) => {
-                if (!level) {
-                  onChange(setStress(value, null));
-                  return;
-                }
-                onChange(
-                  setStress(value, {
-                    ...baseStress(),
-                    level: level as (typeof STRESS_LEVELS)[number]["value"],
-                  }),
-                );
-              }}
-            />
-            {stress?.level && (
-              <div
-                className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5"
-                aria-expanded={true}
-                data-testid="social-stress-details"
-              >
-                <SingleSelectChipRow
-                  label="Social support"
-                  options={STRESS_SUPPORT}
-                  selected={stress.support}
-                  disabled={disabled}
-                  testId="social-stress-support"
-                  onSelect={(support) =>
-                    onChange(
-                      setStress(value, {
-                        ...baseStress(),
-                        support: support as (typeof STRESS_SUPPORT)[number]["value"] | undefined,
-                      }),
-                    )
-                  }
-                />
-                <MultiTypeChipRow
-                  label="Sources"
-                  options={STRESS_SOURCE_OPTIONS}
-                  selected={stress.sources ?? []}
-                  disabled={disabled}
-                  testId="social-stress-sources"
-                  onToggle={(source) => {
-                    const current = stress.sources ?? [];
-                    onChange(
-                      setStress(value, {
-                        ...baseStress(),
-                        sources: toggleType(current, source) as StressSectionInput["sources"],
-                      }),
-                    );
-                  }}
-                />
-                <TextField
-                  id={`${inputId}-stress-notes`}
-                  label="Details (optional)"
-                  value={stress.notes ?? ""}
-                  disabled={disabled}
-                  placeholder="Job loss, exam, caregiving"
-                  maxLength={500}
-                  onChange={(notes) =>
-                    onChange(
-                      setStress(value, {
-                        ...baseStress(),
-                        notes,
-                      }),
-                    )
-                  }
-                />
+          <CollapsibleContainer
+            variant="subsection"
+            testId="social-sleep-card"
+            title="Sleep"
+            toggleLabel="Toggle sleep"
+            ariaLabel="Sleep"
+            preview={sleepCardPreview}
+            count={sleepHasContent(value.sleep) ? 1 : 0}
+            open={wellbeingAccordion.isOpen("sleep")}
+            onOpenChange={(open) => wellbeingAccordion.setOpen("sleep", open)}
+            scrollOnExpand
+            stickyHeader
+            closeScrollToSelector='[data-testid="social-history-cluster-wellbeing"]'
+            bodyClassName="space-y-2"
+          >
+            <section className="space-y-2" aria-label="Sleep">
+              <p className="text-[10px] text-muted-foreground">Rest, snoring, shift work</p>
+              <SingleSelectChipRow
+                label="Quality"
+                options={SLEEP_QUALITY}
+                selected={sleep?.quality}
+                disabled={disabled}
+                testId="social-sleep-quality"
+                onSelect={(quality) => {
+                  const next = {
+                    ...baseSleep(),
+                    quality: quality as (typeof SLEEP_QUALITY)[number]["value"] | undefined,
+                  };
+                  onChange(setSleep(value, sleepHasContent(next) ? next : null));
+                }}
+              />
+              <NumberField
+                id={`${inputId}-sleep-hours`}
+                label="Hours/night (optional)"
+                value={sleep?.hoursPerNight}
+                disabled={disabled}
+                max={24}
+                onChange={(hoursPerNight) => {
+                  const next = { ...baseSleep(), hoursPerNight };
+                  onChange(setSleep(value, sleepHasContent(next) ? next : null));
+                }}
+              />
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Sleep flags">
+                {SLEEP_FLAG_OPTIONS.map((option) => {
+                  const selected =
+                    option.value === "snoring"
+                      ? sleep?.snoring === true
+                      : sleep?.shiftWork === true;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      disabled={disabled}
+                      aria-pressed={selected}
+                      aria-label={option.label}
+                      data-testid={`social-sleep-flag-${option.value}`}
+                      onClick={() => {
+                        const next = { ...baseSleep() };
+                        if (option.value === "snoring") {
+                          next.snoring = selected ? undefined : true;
+                        } else {
+                          next.shiftWork = selected ? undefined : true;
+                        }
+                        onChange(setSleep(value, sleepHasContent(next) ? next : null));
+                      }}
+                      className={cn(
+                        CHIP_CLASS,
+                        selected
+                          ? "border-primary bg-primary/10 font-medium text-foreground"
+                          : "border-border text-muted-foreground hover:border-primary/60 hover:text-foreground",
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
               </div>
-            )}
-          </section>
+              <TextField
+                id={`${inputId}-sleep-notes`}
+                label="Details (optional)"
+                value={sleep?.notes ?? ""}
+                disabled={disabled}
+                placeholder="Snoring, shift work, wakes frequently"
+                maxLength={500}
+                onChange={(notes) => {
+                  const next = { ...baseSleep(), notes };
+                  onChange(setSleep(value, sleepHasContent(next) ? next : null));
+                }}
+              />
+            </section>
+          </CollapsibleContainer>
+
+          <CollapsibleContainer
+            variant="subsection"
+            testId="social-stress-card"
+            title="Stress"
+            toggleLabel="Toggle stress"
+            ariaLabel="Stress"
+            preview={stressCardPreview}
+            count={
+              stressSourcesCount > 0 ? stressSourcesCount : stressHasContent(value.stress) ? 1 : 0
+            }
+            open={wellbeingAccordion.isOpen("stress")}
+            onOpenChange={(open) => wellbeingAccordion.setOpen("stress", open)}
+            scrollOnExpand
+            stickyHeader
+            closeScrollToSelector='[data-testid="social-history-cluster-wellbeing"]'
+            bodyClassName="space-y-2"
+          >
+            <section className="space-y-2" aria-label="Stress">
+              <p className="text-[10px] text-muted-foreground">
+                Load and coping — work, family, health
+              </p>
+              <SingleSelectChipRow
+                label="Stress level"
+                options={STRESS_LEVELS}
+                selected={stress?.level}
+                disabled={disabled}
+                testId="social-stress-level"
+                onSelect={(level) => {
+                  if (!level) {
+                    onChange(setStress(value, null));
+                    return;
+                  }
+                  onChange(
+                    setStress(value, {
+                      ...baseStress(),
+                      level: level as (typeof STRESS_LEVELS)[number]["value"],
+                    }),
+                  );
+                }}
+              />
+              {stress?.level && (
+                <div
+                  className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5"
+                  aria-expanded={true}
+                  data-testid="social-stress-details"
+                >
+                  <SingleSelectChipRow
+                    label="Social support"
+                    options={STRESS_SUPPORT}
+                    selected={stress.support}
+                    disabled={disabled}
+                    testId="social-stress-support"
+                    onSelect={(support) =>
+                      onChange(
+                        setStress(value, {
+                          ...baseStress(),
+                          support: support as (typeof STRESS_SUPPORT)[number]["value"] | undefined,
+                        }),
+                      )
+                    }
+                  />
+                  <MultiTypeChipRow
+                    label="Sources"
+                    options={STRESS_SOURCE_OPTIONS}
+                    selected={stress.sources ?? []}
+                    disabled={disabled}
+                    testId="social-stress-sources"
+                    onToggle={(source) => {
+                      const current = stress.sources ?? [];
+                      onChange(
+                        setStress(value, {
+                          ...baseStress(),
+                          sources: toggleType(current, source) as StressSectionInput["sources"],
+                        }),
+                      );
+                    }}
+                  />
+                  <TextField
+                    id={`${inputId}-stress-notes`}
+                    label="Details (optional)"
+                    value={stress.notes ?? ""}
+                    disabled={disabled}
+                    placeholder="Job loss, exam, caregiving"
+                    maxLength={500}
+                    onChange={(notes) =>
+                      onChange(
+                        setStress(value, {
+                          ...baseStress(),
+                          notes,
+                        }),
+                      )
+                    }
+                  />
+                </div>
+              )}
+            </section>
+          </CollapsibleContainer>
 
           {wellbeingHints.length > 0 && (
             <div className="space-y-1" data-testid="social-wellbeing-hints">
@@ -2130,11 +2566,16 @@ export function SocialHistoryField({
           title="Sexual history"
           toggleLabel="Toggle sexual history"
           ariaLabel="Sexual history"
+          variant="subsection"
           testId="social-history-cluster-sexual"
           preview={sexualPreview}
           count={sexualClusterFilledCount(value)}
-          defaultOpen={sexualClusterHasContent(value)}
-          bodyClassName="space-y-2 pt-0"
+          open={clusterAccordion.isOpen("sexual")}
+          onOpenChange={(open) => clusterAccordion.setOpen("sexual", open)}
+          scrollOnExpand
+          stickyHeader
+          closeScrollToSelector='[data-testid="social-history-field"]'
+          bodyClassName="space-y-2 pt-3 pb-3"
         >
           <div className="space-y-2" data-testid="social-sexual-details">
             <SingleSelectChipRow
@@ -2205,7 +2646,6 @@ export function SocialHistoryField({
             </div>
           </div>
         </CollapsibleContainer>
-      </div>
 
       <div className="space-y-1.5">
         <label htmlFor={inputId} className="text-xs font-medium text-foreground/80">

@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   RxFormProvider,
@@ -7,12 +7,21 @@ import {
   type RxFormFields,
 } from "@/components/cockpit/rx/RxFormContext";
 import { ObjectiveSection } from "@/components/cockpit/rx/sections/ObjectiveSection";
-import { EXAM_DELIMITER } from "@/lib/cockpit/exam-findings";
 
 // vit-10..12 gave VitalsGrid doctor-scoped trend/demographics queries (needs a
 // QueryClient); these tests cover ObjectiveSection layout, not vitals internals.
 vi.mock("@/components/cockpit/rx/inputs/VitalsGrid", () => ({
   VitalsGrid: () => <div data-testid="vitals-grid-stub" />,
+}));
+
+vi.mock("@/components/cockpit/rx/inputs/ExamSystemList", () => ({
+  ExamSystemList: ({ disabled }: { disabled?: boolean }) => (
+    <div data-testid="exam-system-list">
+      <button type="button" data-testid="exam-mark-all-normal" disabled={disabled}>
+        Mark all normal
+      </button>
+    </div>
+  ),
 }));
 
 const mockGetDoctorSettings = vi.fn();
@@ -23,6 +32,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     getDoctorSettings: (...args: unknown[]) => mockGetDoctorSettings(...args),
+    getAppointmentById: vi.fn().mockResolvedValue({ data: { appointment: { consultation_type: "in_clinic" } } }),
     patchDoctorSettings: (...args: unknown[]) => mockPatchDoctorSettings(...args),
     updatePrescription: vi.fn().mockResolvedValue({ data: {} }),
     createPrescription: vi.fn(),
@@ -88,105 +98,41 @@ function renderSectionDisabled(ui: ReactElement) {
   );
 }
 
-function legacyExamToggle() {
-  return screen.getByRole("button", { name: "Toggle Free-text exam (legacy)" });
-}
-
-function legacyGeneralTextarea() {
-  return screen.getByLabelText("General Examination") as HTMLTextAreaElement;
-}
-
-function legacySystemicTextarea() {
-  return screen.getByLabelText("Systemic Examination") as HTMLTextAreaElement;
-}
-
 describe("ObjectiveSection — structured exam (obj-03)", () => {
-  it("renders structured exam cards between vitals and test results", () => {
+  it("renders structured exam cards between vitals and reports", () => {
     renderSection();
     expect(screen.getByTestId("exam-system-list")).toBeInTheDocument();
     expect(screen.getByTestId("exam-mark-all-normal")).toBeInTheDocument();
-    expect(screen.getByTestId("test-results-list-patient_report")).toBeInTheDocument();
+    expect(screen.getByTestId("test-results-list")).toBeInTheDocument();
   });
 
-  it("keeps legacy general/systemic textareas collapsed by default (mounted, hidden)", async () => {
-    renderSection();
-    await waitFor(() =>
-      expect(legacyExamToggle()).toHaveAttribute("aria-expanded", "false"),
-    );
-    // Children stay mounted in CollapsibleContainer even when collapsed.
-    expect(legacyGeneralTextarea()).toBeInTheDocument();
-    fireEvent.click(legacyExamToggle());
-    expect(legacyExamToggle()).toHaveAttribute("aria-expanded", "true");
+  it("renders the Notes free-text section", () => {
+    const { container } = renderSection();
+    expect(
+      container.querySelector('[data-objective-section-id="notes"]'),
+    ).not.toBeNull();
+    expect(screen.getByText("Notes")).toBeInTheDocument();
+    expect(screen.getByTestId("objective-notes-textarea")).toBeInTheDocument();
   });
 });
 
 describe("ObjectiveSection — R-HISTORY enhancements", () => {
-  it("renders Vitals grid + structured exam + test results + collapsed legacy blocks", async () => {
+  it("renders Vitals grid + structured exam + notes + reports", async () => {
     renderSection();
     expect(screen.getByTestId("exam-system-list")).toBeInTheDocument();
-    expect(screen.getByTestId("test-results-list-patient_report")).toBeInTheDocument();
-    expect(screen.getByText("Free-text exam (legacy)")).toBeInTheDocument();
-    expect(screen.getByText("Legacy free-text vitals")).toBeInTheDocument();
+    expect(screen.getByTestId("test-results-list")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Toggle Notes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Toggle Reports" })).toBeInTheDocument();
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Toggle Legacy free-text vitals" }),
-      ).toHaveAttribute("aria-expanded", "false"),
+      expect(screen.getByRole("button", { name: "Toggle Notes" })).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      ),
     );
   });
 
-  it("parses legacy examinationFindings into General textarea", () => {
-    renderSection({ examinationFindings: "Pale, afebrile." });
-    expect(legacyGeneralTextarea().value).toBe("Pale, afebrile.");
-    expect(legacySystemicTextarea().value).toBe("");
-  });
-
-  it("parses delimited examinationFindings into both textareas", () => {
-    renderSection({
-      examinationFindings: `Alert${EXAM_DELIMITER}Chest clear`,
-    });
-    expect(legacyGeneralTextarea().value).toBe("Alert");
-    expect(legacySystemicTextarea().value).toBe("Chest clear");
-  });
-
-  it("serializes back to delimited form on edit", () => {
-    renderSection({ examinationFindings: "Alert" });
-    fireEvent.change(legacySystemicTextarea(), { target: { value: "Chest clear" } });
-    expect(legacySystemicTextarea().value).toBe("Chest clear");
-    expect(legacyGeneralTextarea().value).toBe("Alert");
-  });
-
-  it("disables structured exam and legacy inputs when disabled prop set", () => {
-    const { container } = renderSectionDisabled(<ObjectiveSection disabled />);
+  it("disables structured exam when disabled prop set", () => {
+    renderSectionDisabled(<ObjectiveSection disabled />);
     expect(screen.getByTestId("exam-mark-all-normal")).toBeDisabled();
-    const generalEl = container.querySelector("#exam-general");
-    expect(generalEl).toBeDisabled();
-  });
-});
-
-describe("ObjectiveSection visual split (cpv-04)", () => {
-  it("renders both legacy labels with icons", () => {
-    renderSection();
-    expect(screen.getByText("General Examination")).toBeInTheDocument();
-    expect(screen.getByText("Systemic Examination")).toBeInTheDocument();
-  });
-
-  it("each legacy textarea is labelled correctly", () => {
-    renderSection();
-    expect(legacyGeneralTextarea()).toBeInTheDocument();
-    expect(legacySystemicTextarea()).toBeInTheDocument();
-  });
-
-  it("typing in General does not affect Systemic", () => {
-    renderSection();
-    fireEvent.change(legacyGeneralTextarea(), {
-      target: { value: "alert and oriented" },
-    });
-    expect(legacySystemicTextarea()).toHaveValue("");
-  });
-
-  it("placeholders are visible clinical examples", () => {
-    renderSection();
-    expect(screen.getByPlaceholderText(/alert, oriented/i)).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/chest clear/i)).toBeInTheDocument();
   });
 });

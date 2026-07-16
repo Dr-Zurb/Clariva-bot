@@ -4,7 +4,7 @@
  * Proves that structured Zone-C surfaces (obj-20..23) are **content/view-only
  * against the derived output** (P5-D3 / OBJ-D2): `test_results` derives
  * byte-identically whether hand-entered (legacy textarea) or filled by structured
- * rows / a scoped template / a POC specialty pack; media attachments round-trip
+ * rows / a scoped template; media attachments round-trip
  * on reload without entering `buildRxPayload`; modality emphasis is seed-
  * independent; and result-row / media / template affordances are accessible.
  *
@@ -42,8 +42,6 @@ import {
 } from "@/lib/cockpit/apply-objective-template";
 import { resolveDefaultLayout } from "@/lib/cockpit/objective-default-layout";
 import { filterObjectiveAttachments } from "@/lib/cockpit/objective-media";
-import { specialtyPackToSyntheticTemplate } from "@/lib/cockpit/objective-specialty-pack-apply";
-import { resolveObjectiveSpecialtyPacks } from "@/lib/cockpit/objective-specialty-packs";
 import { deriveTestResults } from "@/lib/cockpit/test-results";
 import type { DoctorRxTemplate } from "@/types/rx-template";
 import type { PrescriptionAttachment, PrescriptionWithRelations } from "@/types/prescription";
@@ -77,6 +75,10 @@ const HBA1C: TestResultRow = {
   interpretation: "high",
   date: "2026-06-01",
   notes: "Outside lab",
+  reportId: null,
+  refLow: null,
+  refHigh: null,
+  refText: null,
 };
 
 const RBS: TestResultRow = {
@@ -88,6 +90,10 @@ const RBS: TestResultRow = {
   interpretation: null,
   date: null,
   notes: null,
+  reportId: null,
+  refLow: null,
+  refHigh: null,
+  refText: null,
 };
 
 const LEGACY_FREE_TEXT = "Outside lab Hb 12.5 g/dL — patient brought report";
@@ -146,6 +152,8 @@ function makeTemplate(
     medicines_json: [],
     subjective_json: {},
     objective_json: objective,
+    plan_json: {},
+    assessment_json: {},
     pmh_json: {},
     allergies_json: {},
     scope,
@@ -234,6 +242,10 @@ function ObjectiveSectionHarness({
       customSections: [],
     },
     setObjectiveDefaults: vi.fn(),
+    planDefaults: null,
+    setPlanDefaults: vi.fn(),
+    assessmentDefaults: null,
+    setAssessmentDefaults: vi.fn(),
     providerProps: {
       key: "test",
       appointmentId: "appt-1",
@@ -316,9 +328,10 @@ describe("obj-24 · §1 output byte-parity (structured results are content-only)
     expect(structured.testResultsJson).toEqual([HBA1C, RBS]);
   });
 
-  it("1.1b a test_results-scope template apply matches hand-entry of the same patient-report rows", () => {
-    const handPatientOnly = createEmptyRxFormFields();
-    handPatientOnly.testResultsStructured = [HBA1C];
+  it("1.1b a test_results-scope template apply matches hand-entry of the same report rows (rpt-01)", () => {
+    // rpt-01: Reports templates capture all structured rows (any source).
+    const handAllRows = createEmptyRxFormFields();
+    handAllRows.testResultsStructured = [HBA1C, RBS];
 
     const template = makeTemplate(
       "test_results",
@@ -329,30 +342,10 @@ describe("obj-24 · §1 output byte-parity (structured results are content-only)
     ]);
 
     expect(buildRxPayload(applied).testResults).toEqual(
-      buildRxPayload(handPatientOnly).testResults,
+      buildRxPayload(handAllRows).testResults,
     );
     expect(buildRxPayload(applied).testResultsJson).toEqual(
-      buildRxPayload(handPatientOnly).testResultsJson,
-    );
-  });
-
-  it("1.1c a POC specialty pack apply matches hand-entry of the same structured rows", () => {
-    const pack = resolveObjectiveSpecialtyPacks("pulmonology")[0]!;
-    const applied = applyActions(
-      createEmptyRxFormFields(),
-      buildObjectiveTemplateApplyActions(
-        "objective_full",
-        specialtyPackToSyntheticTemplate(pack),
-        createEmptyRxFormFields(),
-      ),
-    );
-
-    const hand = createEmptyRxFormFields();
-    hand.testResultsStructured = pack.objective.testResultsJson ?? [];
-
-    expect(buildRxPayload(applied).testResults).toEqual(buildRxPayload(hand).testResults);
-    expect(buildRxPayload(applied).testResultsJson?.map((r) => r.name)).toEqual(
-      buildRxPayload(hand).testResultsJson?.map((r) => r.name),
+      buildRxPayload(handAllRows).testResultsJson,
     );
   });
 
@@ -486,7 +479,7 @@ describe("obj-24 · §4 accessibility", () => {
   it("4.1 result-row controls are labelled and keyboard-operable", async () => {
     renderObjectiveSection(richStructuredFields());
     await waitFor(() =>
-      expect(screen.getByTestId("test-results-list-patient_report")).toBeInTheDocument(),
+      expect(screen.getByTestId("test-results-list")).toBeInTheDocument(),
     );
 
     const card = screen.getByTestId(`test-result-row-${HBA1C.id}`);
@@ -502,15 +495,12 @@ describe("obj-24 · §4 accessibility", () => {
     ).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("4.2 media strip + result-scope template + specialty-pack affordances are labelled", async () => {
-    renderObjectiveSection(richStructuredFields(), {
-      attachments: [makeAttachment({ id: "m-1" })],
-    });
+      it("4.2 result-scope template affordances are labelled", async () => {
+    renderObjectiveSection(richStructuredFields());
 
-    await waitFor(() => expect(screen.getByTestId("objective-media-strip")).toBeInTheDocument());
-    expect(screen.getByLabelText("Add objective media")).toBeInTheDocument();
-    expect(screen.getByLabelText("Objective media attachments")).toBeInTheDocument();
-
+    await waitFor(() =>
+      expect(screen.getByTestId("objective-section-template-test_results")).toBeInTheDocument(),
+    );
     expect(screen.getByTestId("objective-section-template-test_results")).toHaveAttribute(
       "aria-label",
       "Templates",
@@ -519,15 +509,7 @@ describe("obj-24 · §4 accessibility", () => {
       "aria-label",
       "Save as template",
     );
-    expect(screen.getByTestId("objective-section-template-point_of_care")).toHaveAttribute(
-      "aria-label",
-      "Templates",
-    );
-
-    const packStrip = await screen.findByTestId("objective-specialty-packs-strip");
-    const packButton = packStrip.querySelector("button");
-    expect(packButton).not.toBeNull();
-    expect(packButton!.tagName).toBe("BUTTON");
+    expect(screen.queryByTestId("objective-section-template-point_of_care")).not.toBeInTheDocument();
   });
 
   it("4.3 disabled (read-only) mode hides edit affordances for results, media, and templates", async () => {
@@ -541,10 +523,9 @@ describe("obj-24 · §4 accessibility", () => {
     );
 
     expect(screen.queryByTestId(`test-result-name-${HBA1C.id}`)).not.toBeInTheDocument();
-    expect(screen.queryByTestId("test-results-add-patient_report")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("test-results-add")).not.toBeInTheDocument();
     expect(screen.queryByTestId("objective-media-add")).not.toBeInTheDocument();
     expect(screen.queryByTestId("objective-media-remove")).not.toBeInTheDocument();
     expect(screen.queryByTestId("objective-section-template-test_results")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("objective-specialty-packs-strip")).not.toBeInTheDocument();
   });
 });

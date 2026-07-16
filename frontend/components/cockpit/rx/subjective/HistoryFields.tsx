@@ -3,6 +3,10 @@
 import { useMemo, type ReactNode } from "react";
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import { CollapsibleContainer } from "@/components/ui/CollapsibleContainer";
+import {
+  resolveSubjectiveSectionIcon,
+  sectionHeaderIcon,
+} from "@/components/cockpit/rx/sections/section-chrome";
 import { FamilyHistoryField } from "@/components/cockpit/rx/subjective/FamilyHistoryField";
 import { NoteFavoritesChipStrip } from "@/components/cockpit/rx/subjective/NoteFavoritesChipStrip";
 import { SocialHistoryField } from "@/components/cockpit/rx/subjective/SocialHistoryField";
@@ -18,6 +22,8 @@ import { historyFieldKeyToSectionId } from "@/lib/cockpit/subjective-section-ord
 import type { SubjectiveSectionId } from "@/lib/cockpit/subjective-section-order";
 import { historyFieldKeyToNoteFavorite } from "@/lib/api/note-favorites";
 import { RX_FIELD_INPUT_CLASS } from "@/components/cockpit/rx/sections/field-styles";
+import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
+import { SectionReorderLeadingAction } from "@/components/cockpit/rx/subjective/SortableSectionShell";
 
 export interface HistoryFieldsProps {
   disabled?: boolean;
@@ -51,6 +57,7 @@ function HistoryFieldRow({
   disabled = false,
   token,
   onChange,
+  sectionId,
   sectionOpen,
   onSectionOpenChange,
 }: HistoryFieldRowProps) {
@@ -65,14 +72,18 @@ function HistoryFieldRow({
   return (
     <CollapsibleContainer
       title={label}
+      sectionIcon={sectionHeaderIcon(resolveSubjectiveSectionIcon(sectionId)!)}
       open={sectionOpen}
       onOpenChange={onSectionOpenChange}
       defaultOpen={sectionOpen === undefined ? false : undefined}
       toggleLabel={`Toggle ${label}`}
       preview={preview ? `— ${preview}` : undefined}
       scrollOnExpand
+      closeScrollToSelector={SUBJECTIVE_SCROLL_TOP_SELECTOR}
       stickyHeader
+      depthTone
       bodyClassName="space-y-2"
+      leadingActions={<SectionReorderLeadingAction sectionId={sectionId} />}
     >
       <NoteFavoritesChipStrip
         favorites={favorites}

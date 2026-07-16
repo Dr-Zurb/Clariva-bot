@@ -89,8 +89,8 @@ vi.mock("@/components/patient-profile/panes/ObjectivePane", () => ({
   default: () => <div data-testid="pane-objective-body">objective</div>,
 }));
 
-vi.mock("@/components/cockpit/middle/AssessmentStrip", () => ({
-  AssessmentStrip: () => (
+vi.mock("@/components/cockpit/rx/sections/AssessmentSection", () => ({
+  AssessmentSection: () => (
     <div data-testid="pane-assessment-body">assessment</div>
   ),
 }));
@@ -189,7 +189,6 @@ const TAB_BODY_TESTID: Record<string, string> = {
   history: "pane-history-body",
   body: "pane-body-body",
   assessment: "pane-assessment-body",
-  "investigations-orders": "pane-investigations-body",
   plan: "pane-plan-body",
   subjective: "pane-subjective-body",
   objective: "pane-objective-body",
@@ -242,13 +241,13 @@ describe("cv3t-02: flat registry guards", () => {
     );
   });
 
-  it("blankLayout seeds all eight production leaf ids hidden", () => {
+  it("blankLayout seeds all seven production leaf ids hidden", () => {
     const panes = productionRegistry();
     const layout = blankLayout(panes);
     const flat = blankLayoutFlat(panes);
 
     expect(flat.paneOrder).toEqual([...COCKPIT_TAB_ORDER]);
-    expect(flat.paneOrder).toHaveLength(8);
+    expect(flat.paneOrder).toHaveLength(7);
     for (const id of COCKPIT_TAB_ORDER) {
       expect(flat.paneState[id]?.hidden).toBe(true);
     }
@@ -265,7 +264,7 @@ describe("cv3t-02: production build-up path", () => {
     cleanup();
   });
 
-  it("seeds Consult on first open, lists eight real leaf tabs (no column wrappers)", async () => {
+  it("seeds Consult on first open, lists seven real leaf tabs (no column wrappers)", async () => {
     renderProductionShell();
 
     await waitFor(() => {
@@ -331,7 +330,7 @@ describe("cv3t-02: production build-up path", () => {
 
 /**
  * cv3t-03 — the build-up axis the cv3x-01 matrix lacked, proven on the
- * production registry. Closes: every one of the eight tabs mounts real content;
+ * production registry. Closes: every one of the seven tabs mounts real content;
  * a multi-tab layout persists across reload; exactly one safety/action dock in
  * a built-up arrangement (the lifted-props no-duplication check, end-to-end).
  */
@@ -344,7 +343,7 @@ describe("cv3t-03: build-up parity axis (production registry)", () => {
     cleanup();
   });
 
-  it("every one of the eight tabs mounts its real body on Consult seed", async () => {
+  it("every one of the seven tabs mounts its real body on Consult seed", async () => {
     renderProductionShell();
 
     await waitFor(() => {

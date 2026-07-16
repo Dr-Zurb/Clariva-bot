@@ -1,9 +1,12 @@
 "use client";
 
 import { useMemo } from "react";
-import { ChevronDown, ChevronUp, Eye, EyeOff, GripVertical, LayoutList, Plus } from "lucide-react";
+import { ChevronDown, ChevronUp, Eye, EyeOff, GripVertical, Plus, Settings2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { IconTooltip, IconTooltipGroup } from "@/components/ui/icon-tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { RxFormFields } from "@/components/cockpit/rx/RxFormContext";
+import { SOAP_TAB_CHROME_ICON_BTN_CLASS } from "@/components/cockpit/rx/SoapTabChromeActions";
 import {
   isStaticObjectiveSectionId,
   resolveObjectiveSectionLabel,
@@ -40,22 +43,17 @@ export function resolveObjectiveSectionHasDataHint(
     case "vitals":
       return ANY_VITALS_KEYS.some((key) => fields[key] != null);
     case "exam":
-      return fields.examFindings.length > 0;
-    case "test_results":
-      return (
-        fields.testResultsStructured.some((row) => row.source === "patient_report") ||
-        Boolean(fields.testResults.trim())
+      return fields.examFindings.some((f) => f.systemId !== "objective_notes");
+    case "notes":
+      return fields.examFindings.some(
+        (f) => f.systemId === "objective_notes" && Boolean(f.notes?.trim()),
       );
-    case "point_of_care":
-      return fields.testResultsStructured.some((row) => row.source === "in_clinic_poc");
-    case "media":
-      // obj-22: objective media lives on the shell's attachment list, not in RxFormFields,
-      // so the menu cannot surface a data hint here (boolean-only, no content — P10-D5).
-      return false;
-    case "legacy_exam":
-      return Boolean(fields.examinationFindings.trim());
-    case "legacy_vitals":
-      return Boolean(fields.vitalsText.trim());
+    case "test_results":
+      // rpt-01: Reports covers all structured rows + legacy free-text.
+      // Media attachments live on the shell list (not RxFormFields) — no hint (P10-D5).
+      return (
+        fields.testResultsStructured.length > 0 || Boolean(fields.testResults.trim())
+      );
     default:
       return false;
   }
@@ -110,17 +108,27 @@ export function ManageObjectiveSectionsMenu({
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
-          aria-label={triggerLabel}
-          data-testid="objective-section-manager-trigger"
-        >
-          <LayoutList className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          <span>{triggerLabel}</span>
-        </button>
-      </PopoverTrigger>
+      <IconTooltipGroup>
+        <IconTooltip label={triggerLabel}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={cn(SOAP_TAB_CHROME_ICON_BTN_CLASS, "relative")}
+              aria-label={triggerLabel}
+              data-testid="objective-section-manager-trigger"
+            >
+              <Settings2 className="h-3.5 w-3.5" aria-hidden />
+              {hiddenMountableCount > 0 ? (
+                <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-muted-foreground px-0.5 text-[9px] font-semibold leading-none text-background">
+                  {hiddenMountableCount}
+                </span>
+              ) : null}
+            </Button>
+          </PopoverTrigger>
+        </IconTooltip>
+      </IconTooltipGroup>
       <PopoverContent align="end" className="w-[30rem] max-w-[calc(100vw-2rem)] p-0">
         <div className="border-b border-border px-3 py-2.5">
           <p className="text-sm font-medium">Manage sections</p>

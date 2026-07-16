@@ -30,7 +30,9 @@ const SAVE_EMPTY_MESSAGES: Record<FormStateObjectiveTemplateScope, string> = {
   exam_resp: "Record respiratory exam findings before saving a template.",
   exam_abd: "Record abdominal exam findings before saving a template.",
   exam_cns: "Record neurological exam findings before saving a template.",
-  test_results: "Add a patient-brought result row before saving a template.",
+  exam_additional_notes: "Add examination additional notes before saving a template.",
+  objective_notes: "Add objective notes before saving a template.",
+  test_results: "Add a result row before saving a template.",
   point_of_care: "Add a point-of-care result row before saving a template.",
   objective_custom_block: "Add section notes or sub-sections before saving a template.",
   objective_full: "Add objective content before saving a template.",
@@ -44,7 +46,9 @@ const SAVE_PROMPT_LABELS: Record<FormStateObjectiveTemplateScope, string> = {
   exam_resp: "Save current respiratory exam as template",
   exam_abd: "Save current abdominal exam as template",
   exam_cns: "Save current neurological exam as template",
-  test_results: "Save current patient-brought results as template",
+  exam_additional_notes: "Save current examination additional notes as template",
+  objective_notes: "Save current objective notes as template",
+  test_results: "Save current reports as template",
   point_of_care: "Save current point-of-care results as template",
   objective_custom_block: "Save current custom section as template",
   objective_full: "Save current objective as template",
@@ -64,7 +68,12 @@ export function ObjectiveSectionTemplateButton({
   const [saving, setSaving] = useState(false);
 
   const handleApply = async (template: DoctorRxTemplate) => {
-    const actions = buildObjectiveTemplateApplyActions(scope, template, state.fields);
+    // rpt-01: remapped POC templates keep source-scoped merge so they don't wipe other rows.
+    const applyScope =
+      scope === "test_results" && template.scope === "point_of_care"
+        ? "point_of_care"
+        : scope;
+    const actions = buildObjectiveTemplateApplyActions(applyScope, template, state.fields);
     for (const action of actions) {
       dispatch(action);
     }

@@ -12,11 +12,13 @@ import {
   validateBookAppointment,
   validateGetAppointmentParams,
   validateParseComplaintRequest,
+  validateResolveDiagnosisRequest,
   validateCreatePatientConditionBody,
   validateUpdatePatientConditionBody,
   validateCreatePatientMedicationBody,
   validateUpdatePatientMedicationBody,
   validateUpdateMedicalBackgroundNotesBody,
+  validateUpdateAllergySectionNotesBody,
 } from '../../../src/utils/validation';
 import { ValidationError } from '../../../src/utils/errors';
 
@@ -254,6 +256,35 @@ describe('validateParseComplaintRequest (subj-14)', () => {
   });
 });
 
+describe('validateResolveDiagnosisRequest (asmt-07)', () => {
+  it('accepts a minimal valid body and trims text', () => {
+    const result = validateResolveDiagnosisRequest({ text: '  BP high  ' });
+    expect(result.text).toBe('BP high');
+    expect(result.tier).toBeUndefined();
+  });
+
+  it('accepts an optional tier', () => {
+    const result = validateResolveDiagnosisRequest({ text: 'sugar', tier: 'escalation' });
+    expect(result.tier).toBe('escalation');
+  });
+
+  it('rejects empty text', () => {
+    expect(() => validateResolveDiagnosisRequest({ text: '' })).toThrow(ValidationError);
+  });
+
+  it('rejects an invalid tier', () => {
+    expect(() => validateResolveDiagnosisRequest({ text: 'sugar', tier: 'turbo' })).toThrow(
+      ValidationError,
+    );
+  });
+
+  it('rejects text over the length cap', () => {
+    expect(() =>
+      validateResolveDiagnosisRequest({ text: 'x'.repeat(201) }),
+    ).toThrow(ValidationError);
+  });
+});
+
 describe('patient chart condition validation', () => {
   it('defaults condition status to active on create', () => {
     const result = validateCreatePatientConditionBody({ condition: 'Hypertension' });
@@ -263,6 +294,38 @@ describe('patient chart condition validation', () => {
   it('accepts resolved status on update', () => {
     const result = validateUpdatePatientConditionBody({ status: 'resolved' });
     expect(result.status).toBe('resolved');
+  });
+
+  it('accepts a valid acuity on create', () => {
+    const result = validateCreatePatientConditionBody({
+      condition: 'Hypertension',
+      acuity: 'stable',
+    });
+    expect(result.acuity).toBe('stable');
+  });
+
+  it('accepts optional ICD coding on create', () => {
+    const result = validateCreatePatientConditionBody({
+      condition: 'Essential hypertension',
+      code: 'BA00',
+      codeTitle: 'Essential hypertension',
+    });
+    expect(result.code).toBe('BA00');
+    expect(result.codeTitle).toBe('Essential hypertension');
+  });
+
+  it('accepts clearing acuity to null on update', () => {
+    const result = validateUpdatePatientConditionBody({ acuity: null });
+    expect(result.acuity).toBeNull();
+  });
+
+  it('rejects an unknown acuity value', () => {
+    expect(() =>
+      validateCreatePatientConditionBody({
+        condition: 'Hypertension',
+        acuity: 'critical',
+      }),
+    ).toThrow(ValidationError);
   });
 });
 
@@ -299,6 +362,20 @@ describe('patient chart medical background notes validation', () => {
 
   it('accepts null notes to clear the field', () => {
     const result = validateUpdateMedicalBackgroundNotesBody({ notes: null });
+    expect(result.notes).toBeNull();
+  });
+});
+
+describe('patient chart allergy section notes validation', () => {
+  it('accepts trimmed section notes on update', () => {
+    const result = validateUpdateAllergySectionNotesBody({
+      notes: '  NKDA per patient  ',
+    });
+    expect(result.notes).toBe('NKDA per patient');
+  });
+
+  it('accepts null notes to clear the field', () => {
+    const result = validateUpdateAllergySectionNotesBody({ notes: null });
     expect(result.notes).toBeNull();
   });
 });

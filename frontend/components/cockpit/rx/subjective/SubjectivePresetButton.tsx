@@ -32,6 +32,8 @@ export interface PmhTemplateBridge {
     template: DoctorRxTemplate,
     opts?: ApplyPmhTemplateOptions,
   ) => Promise<void>;
+  /** Archive all chart conditions/meds and clear section notes (Clear all). */
+  clearAll: () => Promise<void>;
 }
 
 interface SubjectivePmhBridgeContextValue {

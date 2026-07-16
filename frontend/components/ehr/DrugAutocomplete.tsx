@@ -22,6 +22,9 @@
  * (LRU-ish via insertion-order eviction). Cache TTL is implicit — page
  * reload clears it. Good enough for a per-session lookup; the table is
  * tiny and the network round-trip is sub-100ms.
+ *
+ * Dropdown is portaled to `document.body` with fixed positioning so sticky
+ * SOAP section headers (z ≈ 40) and sibling Plan cards cannot cover it.
  */
 
 import {
@@ -29,10 +32,12 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import type { DrugMasterRow } from "@/types/drug-master";
 import { searchDrugs } from "@/lib/api";
 import { useDoctorDrugUsage } from "@/hooks/useDoctorDrugUsage";
@@ -79,9 +84,26 @@ const MIN_QUERY_LEN = 2;
 const DEFAULT_LIMIT = 10;
 const DEFAULT_DEBOUNCE_MS = 200;
 const CACHE_MAX = 64;
+/** Above sticky SOAP section headers (sticky-stack caps at ~40). */
+const LISTBOX_Z_INDEX = 50;
 
 const DEFAULT_INPUT_CLASS =
   "w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50";
+
+interface DropdownAnchor {
+  top: number;
+  left: number;
+  width: number;
+}
+
+function measureDropdownAnchor(input: HTMLInputElement): DropdownAnchor {
+  const rect = input.getBoundingClientRect();
+  return {
+    top: rect.bottom + 4,
+    left: rect.left,
+    width: rect.width,
+  };
+}
 
 // Module-level cache (per page session). Cleared on page reload.
 const searchCache = new Map<string, DrugMasterRow[]>();
@@ -126,7 +148,9 @@ export default function DrugAutocomplete({
   const fetchIdRef = useRef(0);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listboxRef = useRef<HTMLUListElement>(null);
   const listboxId = `${useId()}-listbox`;
+  const [dropdownAnchor, setDropdownAnchor] = useState<DropdownAnchor | null>(null);
   const { scores: usageScores } = useDoctorDrugUsage(token);
 
   // Effective query — trimmed; below MIN_QUERY_LEN we hide the dropdown
@@ -189,14 +213,43 @@ export default function DrugAutocomplete({
     return () => clearTimeout(timer);
   }, [query, shouldFetch, token, limit, debounceMs, selectionDisabled]);
 
-  // Click-outside → close dropdown.
+  const showDropdown =
+    !selectionDisabled && open && shouldFetch && (rankedResults.length > 0 || loading);
+
+  const syncDropdownAnchor = useCallback(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    setDropdownAnchor(measureDropdownAnchor(input));
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!showDropdown) {
+      setDropdownAnchor(null);
+      return;
+    }
+    syncDropdownAnchor();
+  }, [showDropdown, syncDropdownAnchor, value, rankedResults.length, loading]);
+
+  useEffect(() => {
+    if (!showDropdown) return;
+    const handleReposition = () => syncDropdownAnchor();
+    window.addEventListener("resize", handleReposition);
+    // Capture scroll from nested panes (Plan tab scroll container).
+    window.addEventListener("scroll", handleReposition, true);
+    return () => {
+      window.removeEventListener("resize", handleReposition);
+      window.removeEventListener("scroll", handleReposition, true);
+    };
+  }, [showDropdown, syncDropdownAnchor]);
+
+  // Click-outside → close dropdown (input wrapper OR portaled listbox).
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (!wrapperRef.current) return;
-      if (!wrapperRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const target = e.target as Node;
+      if (wrapperRef.current?.contains(target)) return;
+      if (listboxRef.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -253,8 +306,65 @@ export default function DrugAutocomplete({
     }
   };
 
-  const showDropdown =
-    !selectionDisabled && open && shouldFetch && (rankedResults.length > 0 || loading);
+  const listbox =
+    showDropdown && dropdownAnchor ? (
+      <ul
+        ref={listboxRef}
+        id={listboxId}
+        role="listbox"
+        style={{
+          position: "fixed",
+          top: dropdownAnchor.top,
+          left: dropdownAnchor.left,
+          width: dropdownAnchor.width,
+          zIndex: LISTBOX_Z_INDEX,
+        }}
+        className="max-h-72 overflow-auto rounded-md border border-border bg-popover py-0.5 shadow-lg"
+      >
+        {loading && rankedResults.length === 0 && (
+          <li className="px-3 py-2 text-xs text-muted-foreground">Searching…</li>
+        )}
+        {rankedResults.map((drug, idx) => {
+          const active = idx === activeIdx;
+          return (
+            <li
+              key={drug.id}
+              id={`${listboxId}-option-${idx}`}
+              role="option"
+              aria-selected={active}
+              onMouseEnter={() => setActiveIdx(idx)}
+              // onMouseDown (not onClick) so the input doesn't blur
+              // before the click registers — onClick after blur would
+              // close the dropdown via the outside-click handler.
+              onMouseDown={(e) => {
+                e.preventDefault();
+                commitSelection(drug);
+              }}
+              className={cn(
+                "cursor-pointer px-3 py-2.5 text-sm leading-tight",
+                active ? "bg-primary/10" : "hover:bg-muted/50",
+              )}
+            >
+              <div className="font-medium text-foreground">{drug.generic_name}</div>
+              <div className="mt-0.5 text-xs text-muted-foreground">
+                {[
+                  drug.brand_names.slice(0, 3).join(" · "),
+                  drug.strength,
+                  drug.form,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </div>
+            </li>
+          );
+        })}
+        {rankedResults.length === 0 && !loading && (
+          <li className="px-3 py-2 text-xs text-muted-foreground">
+            No matches — type the medicine name to add it as free text.
+          </li>
+        )}
+      </ul>
+    ) : null;
 
   return (
     <div ref={wrapperRef} className={cn("relative w-full", className)}>
@@ -280,61 +390,18 @@ export default function DrugAutocomplete({
         onFocus={() => {
           if (shouldFetch && !selectionDisabled) setOpen(true);
         }}
+        onClick={() => {
+          if (shouldFetch && !selectionDisabled && !disabled) setOpen(true);
+        }}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         className={inputClassName ?? DEFAULT_INPUT_CLASS}
         maxLength={200}
         disabled={disabled}
       />
-      {showDropdown && (
-        <ul
-          id={listboxId}
-          role="listbox"
-          className="absolute left-0 right-0 z-30 mt-1 max-h-72 overflow-auto rounded-md border border-gray-200 bg-white shadow-lg"
-        >
-          {loading && rankedResults.length === 0 && (
-            <li className="px-3 py-2 text-xs text-gray-500">Searching…</li>
-          )}
-          {rankedResults.map((drug, idx) => {
-            const active = idx === activeIdx;
-            return (
-              <li
-                key={drug.id}
-                id={`${listboxId}-option-${idx}`}
-                role="option"
-                aria-selected={active}
-                onMouseEnter={() => setActiveIdx(idx)}
-                // onMouseDown (not onClick) so the input doesn't blur
-                // before the click registers — onClick after blur would
-                // close the dropdown via the outside-click handler.
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  commitSelection(drug);
-                }}
-                className={`cursor-pointer px-3 py-2.5 text-sm leading-tight ${
-                  active ? "bg-blue-50" : ""
-                }`}
-              >
-                <div className="font-medium text-gray-900">{drug.generic_name}</div>
-                <div className="mt-0.5 text-xs text-gray-500">
-                  {[
-                    drug.brand_names.slice(0, 3).join(" · "),
-                    drug.strength,
-                    drug.form,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </div>
-              </li>
-            );
-          })}
-          {rankedResults.length === 0 && !loading && (
-            <li className="px-3 py-2 text-xs text-gray-500">
-              No matches — type the medicine name to add it as free text.
-            </li>
-          )}
-        </ul>
-      )}
+      {typeof document !== "undefined" && listbox
+        ? createPortal(listbox, document.body)
+        : null}
     </div>
   );
 }

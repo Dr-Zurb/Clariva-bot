@@ -85,6 +85,10 @@ function OtherPhotosHarness({
     setSubjectiveSectionHidden: vi.fn(),
     objectiveDefaults: null,
     setObjectiveDefaults: vi.fn(),
+    planDefaults: null,
+    setPlanDefaults: vi.fn(),
+    assessmentDefaults: null,
+    setAssessmentDefaults: vi.fn(),
     providerProps: {
       key: "test",
       appointmentId: "appt-1",
@@ -267,6 +271,8 @@ describe("PrescriptionMediaStrip read-only compact (sdp-04)", () => {
       setSubjectiveSectionHidden: vi.fn(),
       objectiveDefaults: null,
       setObjectiveDefaults: vi.fn(),
+      planDefaults: null,
+      setPlanDefaults: vi.fn(),
       providerProps: {
         key: "test",
         appointmentId: "appt-1",

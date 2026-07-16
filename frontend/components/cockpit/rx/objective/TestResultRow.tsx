@@ -11,6 +11,14 @@ import {
   RX_FIELD_LABEL_CLASS,
 } from "@/components/cockpit/rx/sections/field-styles";
 import {
+  analyteToRowPrefill,
+  isLabRangeProvisional,
+  LAB_RANGE_VARIES_MICROCOPY,
+  lookupLabAnalyteByAlias,
+  resolveLabAnalyteRange,
+  suggestInterpretationFromRange,
+} from "@/lib/cockpit/lab-test-library";
+import {
   TEST_RESULT_INTERPRETATION_OPTIONS,
   TEST_RESULT_SOURCE_OPTIONS,
   testChipsForSource,
@@ -29,9 +37,25 @@ export interface TestResultRowCardProps {
   disabled?: boolean;
 }
 
+function parseOptionalNumber(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const n = Number(trimmed);
+  return Number.isFinite(n) ? n : null;
+}
+
 export function TestResultRowCard({ row, disabled = false }: TestResultRowCardProps) {
   const { dispatch } = useRxForm();
   const testChips = testChipsForSource(row.source);
+  const libraryMatch = lookupLabAnalyteByAlias(row.name);
+  const libraryRange = libraryMatch ? resolveLabAnalyteRange(libraryMatch) : null;
+  const rangeIsProvisional = isLabRangeProvisional(libraryRange);
+  const autoSuggestion = suggestInterpretationFromRange({
+    value: row.value,
+    refLow: row.refLow,
+    refHigh: row.refHigh,
+    refText: row.refText,
+  });
 
   function patch(updates: Partial<TestResultRow>) {
     if (disabled) return;
@@ -44,6 +68,18 @@ export function TestResultRowCard({ row, disabled = false }: TestResultRowCardPr
   }
 
   function applyTestChip(entry: TestResultCatalogEntry) {
+    const analyte = lookupLabAnalyteByAlias(entry.name);
+    if (analyte) {
+      const prefill = analyteToRowPrefill(analyte);
+      patch({
+        name: prefill.name,
+        unit: prefill.unit,
+        refLow: prefill.refLow,
+        refHigh: prefill.refHigh,
+        refText: prefill.refText,
+      });
+      return;
+    }
     patch({
       name: entry.name,
       unit: entry.defaultUnit ?? row.unit ?? null,
@@ -54,9 +90,30 @@ export function TestResultRowCard({ row, disabled = false }: TestResultRowCardPr
     patch({ interpretation: row.interpretation === next ? null : next });
   }
 
+  function applyAutoSuggestion() {
+    if (!autoSuggestion) return;
+    patch({ interpretation: autoSuggestion });
+  }
+
   function setSource(next: TestResultSource) {
     if (next === row.source) return;
     patch({ source: next });
+  }
+
+  function handleValueChange(nextValue: string) {
+    const value = nextValue || null;
+    const updates: Partial<TestResultRow> = { value };
+    // Soft auto-suggest only when the doctor has not set an interpretation yet.
+    if (row.interpretation == null) {
+      const suggested = suggestInterpretationFromRange({
+        value,
+        refLow: row.refLow,
+        refHigh: row.refHigh,
+        refText: row.refText,
+      });
+      if (suggested) updates.interpretation = suggested;
+    }
+    patch(updates);
   }
 
   function handleSourceKeyDown(
@@ -95,6 +152,8 @@ export function TestResultRowCard({ row, disabled = false }: TestResultRowCardPr
       </article>
     );
   }
+
+  const hasNumericRange = row.refLow != null || row.refHigh != null;
 
   return (
     <article
@@ -187,7 +246,7 @@ export function TestResultRowCard({ row, disabled = false }: TestResultRowCardPr
               id={`test-result-value-${row.id}`}
               type="text"
               value={row.value ?? ""}
-              onChange={(event) => patch({ value: event.target.value || null })}
+              onChange={(event) => handleValueChange(event.target.value)}
               className={cn(RX_FIELD_INPUT_CLASS, "mt-1")}
               placeholder="e.g. 7.8"
               maxLength={200}
@@ -226,8 +285,84 @@ export function TestResultRowCard({ row, disabled = false }: TestResultRowCardPr
           </div>
         </div>
 
+        <div className="grid gap-2 sm:grid-cols-3">
+          <div>
+            <label htmlFor={`test-result-ref-low-${row.id}`} className={RX_FIELD_LABEL_CLASS}>
+              Ref low
+            </label>
+            <input
+              id={`test-result-ref-low-${row.id}`}
+              type="text"
+              inputMode="decimal"
+              value={row.refLow ?? ""}
+              onChange={(event) => patch({ refLow: parseOptionalNumber(event.target.value) })}
+              className={cn(RX_FIELD_INPUT_CLASS, "mt-1")}
+              placeholder="e.g. 12"
+              data-testid={`test-result-ref-low-${row.id}`}
+            />
+          </div>
+          <div>
+            <label htmlFor={`test-result-ref-high-${row.id}`} className={RX_FIELD_LABEL_CLASS}>
+              Ref high
+            </label>
+            <input
+              id={`test-result-ref-high-${row.id}`}
+              type="text"
+              inputMode="decimal"
+              value={row.refHigh ?? ""}
+              onChange={(event) => patch({ refHigh: parseOptionalNumber(event.target.value) })}
+              className={cn(RX_FIELD_INPUT_CLASS, "mt-1")}
+              placeholder="e.g. 16"
+              data-testid={`test-result-ref-high-${row.id}`}
+            />
+          </div>
+          <div>
+            <label htmlFor={`test-result-ref-text-${row.id}`} className={RX_FIELD_LABEL_CLASS}>
+              Printed range
+            </label>
+            <input
+              id={`test-result-ref-text-${row.id}`}
+              type="text"
+              value={row.refText ?? ""}
+              onChange={(event) => patch({ refText: event.target.value || null })}
+              className={cn(RX_FIELD_INPUT_CLASS, "mt-1")}
+              placeholder="e.g. Negative, 12–16"
+              maxLength={100}
+              data-testid={`test-result-ref-text-${row.id}`}
+            />
+          </div>
+        </div>
+
+        {(hasNumericRange || row.refText || libraryMatch) && (
+          <p
+            className="text-[11px] text-muted-foreground"
+            data-testid={`test-result-range-hint-${row.id}`}
+          >
+            {rangeIsProvisional || !libraryMatch ? (
+              <>
+                {LAB_RANGE_VARIES_MICROCOPY}
+                {rangeIsProvisional ? " (provisional — pending clinical review)" : null}
+              </>
+            ) : (
+              LAB_RANGE_VARIES_MICROCOPY
+            )}
+          </p>
+        )}
+
         <div>
-          <span className={RX_FIELD_LABEL_CLASS}>Interpretation</span>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className={RX_FIELD_LABEL_CLASS}>Interpretation</span>
+            {autoSuggestion && row.interpretation !== autoSuggestion ? (
+              <button
+                type="button"
+                onClick={applyAutoSuggestion}
+                className="rounded border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground hover:border-primary/60 hover:text-foreground"
+                data-testid={`test-result-auto-flag-${row.id}`}
+              >
+                Suggest: {autoSuggestion}
+              </button>
+            ) : null}
+          </div>
           <div
             className={cn(CHART_SELECT_CHIP_GROUP_CLASS, "mt-1")}
             role="group"

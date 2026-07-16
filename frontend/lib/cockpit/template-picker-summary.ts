@@ -13,6 +13,17 @@ import {
   templateObjectiveCustomBlockSourceSectionId,
   templateObjectiveScopeHasContent,
 } from "@/lib/cockpit/apply-objective-template";
+import {
+  investigationsOrdersCount,
+  templateInvestigationsHasContent,
+} from "@/lib/cockpit/apply-investigations-template";
+import {
+  medicinesNamedCount,
+  templateMedicinesHasContent,
+} from "@/lib/cockpit/apply-medicines-template";
+import { templatePlanScopeHasContent } from "@/lib/cockpit/apply-plan-template";
+import { templateAssessmentScopeHasContent } from "@/lib/cockpit/apply-assessment-template";
+import { normalizeDiagnoses } from "@/lib/cockpit/diagnoses";
 import { resolveExamSystem } from "@/lib/cockpit/exam-schema";
 import { hasCustomSubsectionsContent } from "@/lib/cockpit/custom-subsections";
 import { hasFamilyHistoryStructuredContent } from "@/lib/cockpit/family-history";
@@ -42,6 +53,10 @@ export const SCOPE_PICKER_LABELS: Record<
     title: "Past surgical templates",
     hint: "Procedures & surgical history",
   },
+  patient_background: {
+    title: "Patient background templates",
+    hint: "Past medical + past surgical presets",
+  },
   family_history: {
     title: "Family history templates",
   },
@@ -55,6 +70,10 @@ export const SCOPE_PICKER_LABELS: Record<
   custom_block: {
     title: "Custom section templates",
     hint: "Doctor-defined Subjective sections",
+  },
+  free_text_notes: {
+    title: "Additional notes templates",
+    hint: "Free-text history notes presets",
   },
   // obj-16: objective scopes. Substrate-only labels; the objective picker's
   // scoped row summaries + content filtering land in obj-17.
@@ -84,18 +103,71 @@ export const SCOPE_PICKER_LABELS: Record<
   exam_cns: {
     title: "Neurological exam templates",
   },
+  exam_additional_notes: {
+    title: "Exam additional notes templates",
+    hint: "Free-text examination notes presets",
+  },
+  objective_notes: {
+    title: "Objective notes templates",
+    hint: "Objective tab notes presets",
+  },
   objective_custom_block: {
     title: "Custom section templates",
     hint: "Doctor-defined Objective sections",
   },
-  // obj-23: result scopes — structured POC / patient-brought result-row presets.
+  // obj-23 / rpt-01: Reports templates — all structured result rows (any source).
+  // Legacy `point_of_care` templates are remapped into this picker on read.
   test_results: {
-    title: "Patient-brought result templates",
-    hint: "Structured report-row presets",
+    title: "Reports templates",
+    hint: "Structured result-row presets (incl. former POC templates)",
   },
   point_of_care: {
     title: "Point-of-care result templates",
     hint: "In-clinic POC result-row presets",
+  },
+  investigations_orders: {
+    title: "Investigations templates",
+    hint: "Order list presets",
+  },
+  medicines: {
+    title: "Medicines templates",
+    hint: "Medicine list presets",
+  },
+  advice: {
+    title: "Advice templates",
+    hint: "Advice & education presets",
+  },
+  follow_up: {
+    title: "Follow-up templates",
+    hint: "Follow-up interval & notes presets",
+  },
+  referral: {
+    title: "Referral templates",
+    hint: "Referral specialty & notes presets",
+  },
+  clinical_notes: {
+    title: "Clinical notes templates",
+    hint: "Private clinical notes presets",
+  },
+  plan_full: {
+    title: "Plan templates",
+    hint: "Full plan tab presets",
+  },
+  diagnoses: {
+    title: "Diagnoses templates",
+    hint: "Structured diagnosis-row presets",
+  },
+  known_conditions: {
+    title: "Known conditions templates",
+    hint: "Chart known-condition presets",
+  },
+  assessment_notes: {
+    title: "Assessment notes templates",
+    hint: "Private assessment notes presets",
+  },
+  assessment_full: {
+    title: "Assessment templates",
+    hint: "Full assessment tab presets",
   },
 };
 
@@ -141,6 +213,14 @@ export function templateHasScopedContent(
   switch (scope) {
     case "past_medical":
       return pmhTemplateHasContent(template.pmh_json);
+    case "patient_background": {
+      const subj = templateSubjective(template);
+      const hasPsh =
+        (subj.pastSurgicalHistoryStructured &&
+          hasPastSurgicalHistoryStructuredContent(subj.pastSurgicalHistoryStructured)) ||
+        Boolean(subj.pastSurgicalHistory?.trim());
+      return pmhTemplateHasContent(template.pmh_json) || hasPsh;
+    }
     case "allergies":
       return allergiesTemplateHasContent(template);
     case "chief_complaints":
@@ -171,6 +251,8 @@ export function templateHasScopedContent(
     }
     case "custom_block":
       return hasCustomSubsectionsContent(templateCustomSubsections(template));
+    case "free_text_notes":
+      return Boolean(template.hopi?.trim());
     case "subjective_full":
       return templateHasSubjectiveContent(template);
     case "vitals":
@@ -180,11 +262,35 @@ export function templateHasScopedContent(
     case "exam_resp":
     case "exam_abd":
     case "exam_cns":
-    case "test_results":
-    case "point_of_care":
+    case "exam_additional_notes":
+    case "objective_notes":
     case "objective_custom_block":
     case "objective_full":
       return templateObjectiveScopeHasContent(template, scope);
+    case "test_results":
+      // rpt-01 remap-on-read: POC-scoped templates also count as Reports content.
+      return (
+        templateObjectiveScopeHasContent(template, "test_results") ||
+        (template.scope === "point_of_care" &&
+          templateObjectiveScopeHasContent(template, "point_of_care"))
+      );
+    case "point_of_care":
+      return templateObjectiveScopeHasContent(template, scope);
+    case "investigations_orders":
+      return templateInvestigationsHasContent(template);
+    case "medicines":
+      return templateMedicinesHasContent(template);
+    case "advice":
+    case "follow_up":
+    case "referral":
+    case "clinical_notes":
+    case "plan_full":
+      return templatePlanScopeHasContent(template, scope);
+    case "diagnoses":
+    case "known_conditions":
+    case "assessment_notes":
+    case "assessment_full":
+      return templateAssessmentScopeHasContent(template, scope);
   }
 }
 
@@ -222,6 +328,23 @@ export function formatTemplateSummary(
       return templateHasScopedContent(template, scope) ? "Social history" : "Empty template";
     case "past_surgical":
       return templateHasScopedContent(template, scope) ? "Surgical history" : "Empty template";
+    case "patient_background": {
+      const parts: string[] = [];
+      const condCount = (template.pmh_json?.conditions ?? []).filter((c) =>
+        c.condition?.trim(),
+      ).length;
+      const medCount = (template.pmh_json?.medications ?? []).filter((m) =>
+        m.drugName?.trim(),
+      ).length;
+      if (condCount > 0) parts.push(plural(condCount, "condition"));
+      if (medCount > 0) parts.push(plural(medCount, "medication", "medications"));
+      if (templateHasScopedContent(template, "past_surgical")) {
+        parts.push("surgical history");
+      }
+      return parts.length > 0 ? parts.join(" · ") : "Empty template";
+    }
+    case "free_text_notes":
+      return templateHasScopedContent(template, scope) ? "Additional notes" : "Empty template";
     case "custom_block": {
       const count = templateCustomSubsections(template).filter((s) =>
         hasCustomSubsectionsContent([s]),
@@ -279,6 +402,8 @@ export function formatTemplateSummary(
     case "exam_resp":
     case "exam_abd":
     case "exam_cns":
+    case "exam_additional_notes":
+    case "objective_notes":
       return templateObjectiveScopeHasContent(template, scope)
         ? resolveExamSystem(
             scope === "exam_general"
@@ -289,11 +414,18 @@ export function formatTemplateSummary(
                   ? "resp"
                   : scope === "exam_abd"
                     ? "abd"
-                    : "cns",
+                    : scope === "exam_cns"
+                      ? "cns"
+                      : scope === "exam_additional_notes"
+                        ? "additional_notes"
+                        : "objective_notes",
           ).label
         : "Empty template";
     case "test_results": {
-      const count = templateResultRowCount(template, "patient_report");
+      // rpt-01: all structured rows; remapped POC templates counted too.
+      const count =
+        templateResultRowCount(template, "patient_report") +
+        templateResultRowCount(template, "in_clinic_poc");
       return count > 0 ? plural(count, "result", "results") : "Empty template";
     }
     case "point_of_care": {
@@ -323,6 +455,76 @@ export function formatTemplateSummary(
       if (customCount > 0) parts.push(plural(customCount, "custom section", "custom sections"));
       return parts.length > 0 ? parts.join(" · ") : "Empty template";
     }
+    case "investigations_orders": {
+      const count = investigationsOrdersCount(template.investigations);
+      return count > 0 ? plural(count, "order") : "Empty template";
+    }
+    case "medicines": {
+      const count = medicinesNamedCount(template.medicines_json ?? []);
+      return count > 0 ? plural(count, "medicine") : "Empty template";
+    }
+    case "advice":
+      return templatePlanScopeHasContent(template, scope)
+        ? "Advice"
+        : "Empty template";
+    case "follow_up":
+      return templatePlanScopeHasContent(template, scope)
+        ? "Follow-up"
+        : "Empty template";
+    case "referral": {
+      const specs = (template.plan_json?.referralSpecialties ?? []).filter((s) =>
+        s.trim(),
+      );
+      if (specs.length > 0) return plural(specs.length, "specialty", "specialties");
+      return templatePlanScopeHasContent(template, scope)
+        ? "Referral"
+        : "Empty template";
+    }
+    case "clinical_notes":
+      return templatePlanScopeHasContent(template, scope)
+        ? "Clinical notes"
+        : "Empty template";
+    case "plan_full": {
+      const parts: string[] = [];
+      const invCount = investigationsOrdersCount(template.investigations);
+      if (invCount > 0) parts.push(plural(invCount, "order"));
+      const medCount = medicinesNamedCount(template.medicines_json ?? []);
+      if (medCount > 0) parts.push(plural(medCount, "medicine"));
+      if (templatePlanScopeHasContent(template, "advice")) parts.push("advice");
+      if (templatePlanScopeHasContent(template, "follow_up")) parts.push("follow-up");
+      if (templatePlanScopeHasContent(template, "referral")) parts.push("referral");
+      if (templatePlanScopeHasContent(template, "clinical_notes")) {
+        parts.push("clinical notes");
+      }
+      return parts.length > 0 ? parts.join(" · ") : "Empty template";
+    }
+    case "diagnoses": {
+      const count = normalizeDiagnoses(template.assessment_json?.diagnoses).length;
+      return count > 0 ? plural(count, "diagnosis", "diagnoses") : "Empty template";
+    }
+    case "known_conditions": {
+      const count = (template.assessment_json?.knownConditions ?? []).filter((c) =>
+        c.condition?.trim(),
+      ).length;
+      return count > 0 ? plural(count, "condition") : "Empty template";
+    }
+    case "assessment_notes":
+      return templateAssessmentScopeHasContent(template, scope)
+        ? "Assessment notes"
+        : "Empty template";
+    case "assessment_full": {
+      const parts: string[] = [];
+      const dxCount = normalizeDiagnoses(template.assessment_json?.diagnoses).length;
+      if (dxCount > 0) parts.push(plural(dxCount, "diagnosis", "diagnoses"));
+      const kcCount = (template.assessment_json?.knownConditions ?? []).filter((c) =>
+        c.condition?.trim(),
+      ).length;
+      if (kcCount > 0) parts.push(plural(kcCount, "condition"));
+      if (templateAssessmentScopeHasContent(template, "assessment_notes")) {
+        parts.push("notes");
+      }
+      return parts.length > 0 ? parts.join(" · ") : "Empty template";
+    }
   }
 }
 
@@ -346,6 +548,16 @@ export function templateMatchesSearch(
         if (m.drugName?.toLowerCase().includes(q)) return true;
       }
       return false;
+    case "patient_background": {
+      for (const c of template.pmh_json?.conditions ?? []) {
+        if (c.condition?.toLowerCase().includes(q)) return true;
+      }
+      for (const m of template.pmh_json?.medications ?? []) {
+        if (m.drugName?.toLowerCase().includes(q)) return true;
+      }
+      const subj = templateSubjective(template);
+      return Boolean(subj.pastSurgicalHistory?.toLowerCase().includes(q));
+    }
     case "allergies":
       for (const a of template.allergies_json?.allergies ?? []) {
         if (a.allergen?.toLowerCase().includes(q)) return true;
@@ -376,6 +588,8 @@ export function templateMatchesSearch(
       ];
       return textFields.some((t) => t?.toLowerCase().includes(q));
     }
+    case "free_text_notes":
+      return (template.hopi ?? "").toLowerCase().includes(q);
     case "custom_block":
       for (const s of templateCustomSubsections(template)) {
         if (s.title?.toLowerCase().includes(q)) return true;
@@ -386,11 +600,16 @@ export function templateMatchesSearch(
         }
       }
       return false;
-    case "test_results":
-    case "point_of_care": {
-      const source = scope === "test_results" ? "patient_report" : "in_clinic_poc";
+    case "test_results": {
+      // rpt-01: search across any source (incl. remapped POC presets).
       for (const row of templateObjective(template).testResultsJson ?? []) {
-        if (row?.source !== source) continue;
+        if (resultRowMatchesQuery(row, q)) return true;
+      }
+      return false;
+    }
+    case "point_of_care": {
+      for (const row of templateObjective(template).testResultsJson ?? []) {
+        if (row?.source !== "in_clinic_poc") continue;
         if (resultRowMatchesQuery(row, q)) return true;
       }
       return false;
@@ -402,6 +621,8 @@ export function templateMatchesSearch(
     case "exam_resp":
     case "exam_abd":
     case "exam_cns":
+    case "exam_additional_notes":
+    case "objective_notes":
     case "objective_full": {
       const objective = templateObjective(template);
       for (const finding of objective.examinationJson ?? []) {
@@ -433,6 +654,88 @@ export function templateMatchesSearch(
         }
       }
       return false;
+    case "investigations_orders":
+      return (template.investigations ?? "").toLowerCase().includes(q);
+    case "medicines":
+      for (const m of template.medicines_json ?? []) {
+        if (m.medicineName?.toLowerCase().includes(q)) return true;
+        if (m.dosage?.toLowerCase().includes(q)) return true;
+        if (m.instructions?.toLowerCase().includes(q)) return true;
+      }
+      return false;
+    case "advice":
+      return (template.plan_json?.advice ?? "").toLowerCase().includes(q);
+    case "follow_up":
+      return (
+        (template.plan_json?.followUp ?? "").toLowerCase().includes(q) ||
+        (template.follow_up ?? "").toLowerCase().includes(q)
+      );
+    case "referral": {
+      const plan = template.plan_json ?? {};
+      if ((plan.referral ?? "").toLowerCase().includes(q)) return true;
+      if ((plan.referralUrgency ?? "").toLowerCase().includes(q)) return true;
+      if ((plan.referralReason ?? "").toLowerCase().includes(q)) return true;
+      for (const s of plan.referralSpecialties ?? []) {
+        if (s.toLowerCase().includes(q)) return true;
+      }
+      return false;
+    }
+    case "clinical_notes":
+      return (
+        (template.plan_json?.clinicalNotes ?? "").toLowerCase().includes(q) ||
+        (template.clinical_notes ?? "").toLowerCase().includes(q)
+      );
+    case "plan_full": {
+      if ((template.investigations ?? "").toLowerCase().includes(q)) return true;
+      for (const m of template.medicines_json ?? []) {
+        if (m.medicineName?.toLowerCase().includes(q)) return true;
+      }
+      const plan = template.plan_json ?? {};
+      return [
+        plan.advice,
+        plan.followUp,
+        plan.referral,
+        plan.referralUrgency,
+        plan.referralReason,
+        plan.clinicalNotes,
+        ...(plan.referralSpecialties ?? []),
+      ].some((t) => (t ?? "").toLowerCase().includes(q));
+    }
+    case "diagnoses":
+      return normalizeDiagnoses(template.assessment_json?.diagnoses).some((d) =>
+        d.label.toLowerCase().includes(q),
+      );
+    case "known_conditions":
+      return (template.assessment_json?.knownConditions ?? []).some((c) =>
+        [c.condition, c.note, c.code, c.codeTitle].some((t) =>
+          (t ?? "").toLowerCase().includes(q),
+        ),
+      );
+    case "assessment_notes":
+      return (template.assessment_json?.assessmentNote ?? "")
+        .toLowerCase()
+        .includes(q);
+    case "assessment_full": {
+      if (
+        normalizeDiagnoses(template.assessment_json?.diagnoses).some((d) =>
+          d.label.toLowerCase().includes(q),
+        )
+      ) {
+        return true;
+      }
+      if (
+        (template.assessment_json?.knownConditions ?? []).some((c) =>
+          [c.condition, c.note, c.code, c.codeTitle].some((t) =>
+            (t ?? "").toLowerCase().includes(q),
+          ),
+        )
+      ) {
+        return true;
+      }
+      return (template.assessment_json?.assessmentNote ?? "")
+        .toLowerCase()
+        .includes(q);
+    }
   }
 }
 

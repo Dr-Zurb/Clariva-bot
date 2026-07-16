@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, within, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
   RxFormProvider,
@@ -19,6 +19,16 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     updatePrescription: vi.fn().mockResolvedValue({ data: {} }),
     createPrescription: vi.fn(),
+    getDoctorSettings: vi.fn().mockResolvedValue({
+      data: {
+        settings: {
+          subjective_section_order: [],
+          subjective_section_collapsed: {},
+          subjective_section_hidden: [],
+        },
+      },
+    }),
+    patchDoctorSettings: vi.fn(),
   };
 });
 
@@ -58,14 +68,16 @@ function readRenderedSectionOrder(container: HTMLElement): SubjectiveSectionId[]
 }
 
 describe("SubjectiveSection section order (subj-23)", () => {
-  it("renders fallback-mode sections in DEFAULT_SECTION_ORDER", () => {
+  it("renders fallback-mode sections in DEFAULT_SECTION_ORDER", async () => {
     const { container } = renderWithRxForm(<SubjectiveSection heading={null} />);
 
     const available = resolveAvailableSectionIds(false);
 
-    expect(readRenderedSectionOrder(container)).toEqual(
-      normalizeSectionOrder(DEFAULT_SECTION_ORDER, available),
-    );
+    await waitFor(() => {
+      expect(readRenderedSectionOrder(container)).toEqual(
+        normalizeSectionOrder(DEFAULT_SECTION_ORDER, available),
+      );
+    });
 
     const root = container.querySelector("#rx-symptoms")!;
     expect(within(root).getByLabelText("Chief complaints")).toBeInTheDocument();
@@ -76,22 +88,24 @@ describe("SubjectiveSection section order (subj-23)", () => {
     expect(
       within(root).getByText("Social / personal history", { exact: true }),
     ).toBeInTheDocument();
-    expect(within(root).getByText("Free-text notes (optional)")).toBeInTheDocument();
+    expect(within(root).getByText("Additional Notes")).toBeInTheDocument();
     expect(within(root).getByTestId("custom-subsections-empty")).toBeInTheDocument();
     expect(screen.queryByTestId("patient-background-zone")).not.toBeInTheDocument();
     expect(screen.queryByTestId("patient-allergies-zone")).not.toBeInTheDocument();
   });
 
-  it("renders linked-chart sections in DEFAULT_SECTION_ORDER", () => {
+  it("renders linked-chart sections in DEFAULT_SECTION_ORDER", async () => {
     const { container } = renderWithRxForm(
       <SubjectiveSection heading={null} patientId="pat-1" token="test-token" />,
     );
 
     const available = resolveAvailableSectionIds(true);
 
-    expect(readRenderedSectionOrder(container)).toEqual(
-      normalizeSectionOrder(DEFAULT_SECTION_ORDER, available),
-    );
+    await waitFor(() => {
+      expect(readRenderedSectionOrder(container)).toEqual(
+        normalizeSectionOrder(DEFAULT_SECTION_ORDER, available),
+      );
+    });
 
     const root = container.querySelector("#rx-symptoms")!;
     expect(within(root).getByTestId("patient-background-zone")).toBeInTheDocument();
@@ -101,24 +115,28 @@ describe("SubjectiveSection section order (subj-23)", () => {
     expect(within(root).getByTestId("allergies-stub")).toBeInTheDocument();
   });
 
-  it("keeps toolbar and heading outside the ordered section list", () => {
+  it("keeps toolbar and heading outside the ordered section list", async () => {
     const { container } = renderWithRxForm(<SubjectiveSection />);
+
+    await waitFor(() => {
+      expect(
+        container.querySelector("[data-subjective-section-id]"),
+      ).toBeInTheDocument();
+    });
 
     const root = container.querySelector("#rx-symptoms")!;
     const heading = root.querySelector("h3");
-    const toolbar = root.querySelector(".flex.flex-wrap.items-center.justify-end");
+    const templateTrigger = screen.getByTestId("subjective-template-trigger");
     const firstOrdered = root.querySelector("[data-subjective-section-id]");
 
     expect(heading?.textContent).toBe("Subjective");
-    expect(toolbar).toBeTruthy();
+    expect(templateTrigger).toBeInTheDocument();
     expect(firstOrdered?.getAttribute("data-subjective-section-id")).toBe("chief_complaints");
 
     const children = Array.from(root.children);
     const headingIdx = children.indexOf(heading!);
-    const toolbarIdx = children.indexOf(toolbar!);
     const firstOrderedIdx = children.indexOf(firstOrdered as Element);
     expect(headingIdx).toBeLessThan(firstOrderedIdx);
-    expect(toolbarIdx).toBeLessThan(firstOrderedIdx);
-    expect(toolbar!.closest("[data-subjective-section-id]")).toBeNull();
+    expect(templateTrigger.closest("[data-subjective-section-id]")).toBeNull();
   });
 });

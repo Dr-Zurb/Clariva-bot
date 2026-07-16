@@ -74,6 +74,15 @@ export async function createPrescription(
     cc: data.cc ?? null,
     hopi: data.hopi ?? null,
     provisional_diagnosis: data.provisionalDiagnosis ?? null,
+    // assessment-tab / migration 160 — clinical-impression note + visit acuity
+    // (clinician-only; pass-through, NULL when omitted).
+    assessment_note: data.assessmentNote ?? null,
+    assessment_acuity: data.assessmentAcuity ?? null,
+    // assessment-tab / migration 161 — structured diagnoses (empty = passthrough).
+    diagnoses_json: data.diagnosesJson ?? [],
+    // plan-investigations-library / migration 167 — structured investigation
+    // orders (empty = passthrough; investigations_orders TEXT stays authoritative).
+    investigations_orders_json: data.investigationsOrdersJson ?? [],
     // cockpit-v2 / migration 103: `investigations` column was renamed to
     // `investigations_orders`. The public API field name stays
     // `investigations` for the deprecation window.
@@ -122,6 +131,8 @@ export async function createPrescription(
     past_surgical_history: data.pastSurgicalHistory ?? null,
     past_surgical_history_structured: data.pastSurgicalHistoryStructured ?? null,
     custom_subsections: data.customSubsections ?? [],
+    assessment_custom_sections: data.assessmentCustomSections ?? [],
+    plan_custom_sections: data.planCustomSections ?? [],
   };
 
   const { data: prescription, error: rxError } = await admin
@@ -847,6 +858,14 @@ export async function updatePrescription(
   if (updates.cc !== undefined) updateData.cc = updates.cc;
   if (updates.hopi !== undefined) updateData.hopi = updates.hopi;
   if (updates.provisionalDiagnosis !== undefined) updateData.provisional_diagnosis = updates.provisionalDiagnosis;
+  // assessment-tab / migration 160 — clinical-impression note + visit acuity.
+  if (updates.assessmentNote !== undefined) updateData.assessment_note = updates.assessmentNote;
+  if (updates.assessmentAcuity !== undefined) updateData.assessment_acuity = updates.assessmentAcuity;
+  // assessment-tab / migration 161 — structured diagnoses.
+  if (updates.diagnosesJson !== undefined) updateData.diagnoses_json = updates.diagnosesJson;
+  // plan-investigations-library / migration 167 — structured investigation orders.
+  if (updates.investigationsOrdersJson !== undefined)
+    updateData.investigations_orders_json = updates.investigationsOrdersJson;
   // cockpit-v2 / migration 103: column renamed to `investigations_orders`.
   // Public API field stays as `investigations` for the deprecation window.
   // TODO(cv2-07): rename UpdatePrescriptionInput.investigations → investigationsOrders.
@@ -900,6 +919,12 @@ export async function updatePrescription(
   }
   if (updates.customSubsections !== undefined) {
     updateData.custom_subsections = updates.customSubsections;
+  }
+  if (updates.assessmentCustomSections !== undefined) {
+    updateData.assessment_custom_sections = updates.assessmentCustomSections;
+  }
+  if (updates.planCustomSections !== undefined) {
+    updateData.plan_custom_sections = updates.planCustomSections;
   }
 
   if (Object.keys(updateData).length > 0) {

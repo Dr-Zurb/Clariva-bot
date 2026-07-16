@@ -10,11 +10,20 @@ import {
 const EXPECTED_CORE_IDS = ["general", "cvs", "resp", "abd", "cns"] as const;
 
 describe("exam-schema registry (obj-02 · obj-30)", () => {
-  it("lists 5 core systems in canonical order", () => {
-    expect(listExamSystems()).toHaveLength(5);
-    expect(listExamSystems().map((s) => s.systemId)).toEqual([...EXPECTED_CORE_IDS]);
+  it("lists 5 core systems plus Additional notes in render order", () => {
+    expect(listExamSystems()).toHaveLength(6);
+    expect(listExamSystems().map((s) => s.systemId)).toEqual([
+      ...EXPECTED_CORE_IDS,
+      "additional_notes",
+    ]);
     expect(EXAM_CORE_SYSTEM_ORDER).toEqual([...EXPECTED_CORE_IDS]);
     expect(EXAM_CORE_SYSTEMS.map((s) => s.systemId)).toEqual([...EXPECTED_CORE_IDS]);
+  });
+
+  it("resolves Additional notes as a notes-only sibling system", () => {
+    const notes = resolveExamSystem("additional_notes");
+    expect(notes.label).toBe("Additional notes");
+    expect(notes.subsections).toEqual([]);
   });
 
   it("gives each core system a non-empty normalLine and labelled subsections with chips", () => {

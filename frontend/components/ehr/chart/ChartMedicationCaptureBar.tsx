@@ -32,6 +32,7 @@ import {
   type ParsedMedicineLine,
 } from "@/lib/cockpit/medicine-line-parse";
 import { shouldRequestAiMedParse } from "@/lib/cockpit/should-request-ai-med-parse";
+import { shouldAutoAcceptSingleAiMed } from "@/lib/cockpit/ai-med-autogate";
 import { parseMedicineWithAI, type AiParsedMedicine } from "@/lib/api/medicine-parse";
 import { searchDrugs } from "@/lib/api";
 import type {
@@ -148,6 +149,17 @@ export function ChartMedicationCaptureBar({
             degradeToTyped();
             return;
           }
+          if (
+            shouldAutoAcceptSingleAiMed(trigger, found, fallback?.drug_name)
+          ) {
+            aiAbortRef.current = null;
+            pendingFallbackRef.current = null;
+            setShowKeepAsTyped(false);
+            setAiStatus("idle");
+            setAiMeds([]);
+            commitPayload(chartMedPayloadFromAiMedicine(found[0]!, { conditionStatus }));
+            return;
+          }
           setAiMeds(found);
           setAiStatus("ready");
         })
@@ -161,7 +173,7 @@ export function ChartMedicationCaptureBar({
           setAiStatus("error");
         });
     },
-    [token, disabled, commitPayload],
+    [token, disabled, commitPayload, conditionStatus],
   );
 
   const handleAddAiMed = useCallback(
@@ -351,22 +363,15 @@ export function ChartMedicationCaptureBar({
       </div>
 
       {aiStatus !== "idle" ? (
-        <>
-          <ChartMedAiProposal
-            status={aiStatus}
-            medicines={aiMeds}
-            onAdd={handleAddAiMed}
-            onAddAll={handleAddAllAiMeds}
-            onDismiss={resetAi}
-            {...(showKeepAsTyped ? { onKeepAsTyped: handleKeepAsTyped } : {})}
-          />
-          {aiStatus === "ready" && aiMeds.length > 0 ? (
-            <p className="text-[10px] text-muted-foreground" aria-live="polite">
-              <kbd className="rounded border border-border bg-muted px-1">↵</kbd> adds{" "}
-              {aiMeds.length === 1 ? "suggestion" : "all suggestions"}
-            </p>
-          ) : null}
-        </>
+        <ChartMedAiProposal
+          status={aiStatus}
+          medicines={aiMeds}
+          typedText={text.trim()}
+          onAdd={handleAddAiMed}
+          onAddAll={handleAddAllAiMeds}
+          onDismiss={resetAi}
+          {...(showKeepAsTyped ? { onKeepAsTyped: handleKeepAsTyped } : {})}
+        />
       ) : parsedPreview ? (
         <p className="mt-1 text-[10px] text-muted-foreground" aria-live="polite">
           <kbd className="rounded border border-border bg-muted px-1">↵</kbd> adds{" "}

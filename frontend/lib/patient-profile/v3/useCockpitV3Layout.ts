@@ -10,6 +10,8 @@ import {
   LAYOUT_VERSION,
   extractFromTabsNode,
   dropPaneIntoZone,
+  swapPaneTreeNodes,
+  moveSiblingIntoGutter,
   addToTabsNode,
   hidePaneToRoot,
   MAX_LEAVES,
@@ -201,25 +203,60 @@ export function useCockpitV3Layout(opts: UseCockpitV3LayoutOptions) {
     [dispatchEngine],
   );
 
+  const moveIntoGutter = useCallback(
+    (
+      paneId: string,
+      parentId: string,
+      leftChildId: string,
+      rightChildId: string,
+      fallbackTargetGroupId: string,
+      fallbackZone: DropZone,
+    ): CockpitMutationResult =>
+      dispatchEngine((tree) =>
+        moveSiblingIntoGutter(
+          tree,
+          paneId,
+          parentId,
+          leftChildId,
+          rightChildId,
+          fallbackTargetGroupId,
+          fallbackZone,
+        ),
+      ),
+    [dispatchEngine],
+  );
+
   const reorderWithinGroup = useCallback(
     (
       groupId: string,
       sourcePaneId: string,
-      beforePaneId: string | null,
+      overPaneId: string,
+      place: "before" | "after" = "before",
     ): CockpitMutationResult => {
-      if (!beforePaneId) return { ok: false, reason: "not-found" };
       return dispatchEngine((tree) => {
         const node = findPaneTreeNodeById(tree, groupId);
         if (!node) return { ok: false, reason: "not-found" };
         const paneIds = [...(node.paneIds ?? [node.id])];
         const fromIdx = paneIds.indexOf(sourcePaneId);
-        const beforeIdx = paneIds.indexOf(beforePaneId);
-        if (fromIdx < 0 || beforeIdx < 0) {
+        const overIdx = paneIds.indexOf(overPaneId);
+        if (fromIdx < 0 || overIdx < 0) {
           return { ok: false, reason: "not-found" };
         }
-        if (fromIdx === beforeIdx) return { ok: false, reason: "no-op" };
+        if (fromIdx === overIdx) return { ok: false, reason: "no-op" };
+
         const next = paneIds.filter((id) => id !== sourcePaneId);
-        const insertAt = next.indexOf(beforePaneId);
+        let insertAt = next.indexOf(overPaneId);
+        if (insertAt < 0) return { ok: false, reason: "not-found" };
+        if (place === "after") insertAt += 1;
+
+        // Dropping immediately before/after the neighbour we already sit beside
+        // is a no-op (e.g. A before B when order is already [A, B]).
+        const projected = [...next];
+        projected.splice(insertAt, 0, sourcePaneId);
+        if (projected.every((id, i) => id === paneIds[i])) {
+          return { ok: false, reason: "no-op" };
+        }
+
         next.splice(insertAt, 0, sourcePaneId);
         return {
           ok: true,
@@ -230,6 +267,17 @@ export function useCockpitV3Layout(opts: UseCockpitV3LayoutOptions) {
         };
       });
     },
+    [dispatchEngine],
+  );
+
+  const swapLeaves = useCallback(
+    (
+      sourceGroupId: string,
+      targetGroupId: string,
+    ): CockpitMutationResult =>
+      dispatchEngine((tree) =>
+        swapPaneTreeNodes(tree, sourceGroupId, targetGroupId),
+      ),
     [dispatchEngine],
   );
 
@@ -262,7 +310,9 @@ export function useCockpitV3Layout(opts: UseCockpitV3LayoutOptions) {
     removePane,
     splitLeafDir,
     movePane,
+    moveIntoGutter,
     reorderWithinGroup,
+    swapLeaves,
     closeTab,
   };
 }

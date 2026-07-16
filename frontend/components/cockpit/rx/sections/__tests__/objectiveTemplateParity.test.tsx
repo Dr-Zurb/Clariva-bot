@@ -37,8 +37,6 @@ import {
   buildObjectiveTemplateApplyActions,
   buildObjectiveTemplateSavePayload,
 } from "@/lib/cockpit/apply-objective-template";
-import { specialtyPackToSyntheticTemplate } from "@/lib/cockpit/objective-specialty-pack-apply";
-import { resolveObjectiveSpecialtyPacks } from "@/lib/cockpit/objective-specialty-packs";
 import type { DoctorRxTemplate, RxTemplateObjective } from "@/types/rx-template";
 import type { PrescriptionWithRelations } from "@/types/prescription";
 
@@ -116,6 +114,8 @@ function makeTemplate(objective: RxTemplateObjective): DoctorRxTemplate {
     medicines_json: [],
     subjective_json: {},
     objective_json: objective,
+    plan_json: {},
+    assessment_json: {},
     pmh_json: {},
     allergies_json: {},
     scope: "objective_full",
@@ -188,41 +188,7 @@ describe("obj-19 · §1 output byte-parity (templates/packs are content-only)", 
     expect(buildRxPayload(applied)).toEqual(buildRxPayload(handVitals));
   });
 
-  it("1.1c a specialty pack apply equals hand-entry of the same content", () => {
-    const pack = resolveObjectiveSpecialtyPacks("cardiology")[0]!;
-    const applied = applyToEmpty("objective_full", specialtyPackToSyntheticTemplate(pack));
-
-    const hand = createEmptyRxFormFields();
-    hand.vitalsBpSystolic = pack.objective.vitalsBpSystolic ?? null;
-    hand.vitalsBpDiastolic = pack.objective.vitalsBpDiastolic ?? null;
-    hand.vitalsHr = pack.objective.vitalsHr ?? null;
-    hand.vitalsTempC = pack.objective.vitalsTempC ?? null;
-    hand.vitalsSpo2 = pack.objective.vitalsSpo2 ?? null;
-    hand.vitalsWtKg = pack.objective.vitalsWtKg ?? null;
-    hand.vitalsHtCm = pack.objective.vitalsHtCm ?? null;
-    hand.vitalsRr = pack.objective.vitalsRr ?? null;
-    hand.vitalsPainScore = pack.objective.vitalsPainScore ?? null;
-    hand.vitalsGlucoseMgDl = pack.objective.vitalsGlucoseMgDl ?? null;
-    hand.vitalsGcsTotal = pack.objective.vitalsGcsTotal ?? null;
-    hand.vitalsBpPosture = pack.objective.vitalsBpPosture ?? null;
-    hand.vitalsBpLimb = pack.objective.vitalsBpLimb ?? null;
-    hand.vitalsHeadCircumferenceCm = pack.objective.vitalsHeadCircumferenceCm ?? null;
-    hand.vitalsMuacCm = pack.objective.vitalsMuacCm ?? null;
-    hand.vitalsWaistCm = pack.objective.vitalsWaistCm ?? null;
-    hand.examFindings = pack.objective.examinationJson ?? [];
-    // obj-23: cardiology pack now carries an in-clinic POC result row.
-    hand.testResultsStructured = pack.objective.testResultsJson ?? [];
-    hand.objectiveCustomSections = (pack.objective.customSections ?? []).map((s) => ({
-      id: s.id,
-      title: s.title,
-      body: s.body ?? null,
-      children: s.children ?? [],
-    }));
-
-    expect(buildRxPayload(applied)).toEqual(buildRxPayload(hand));
-  });
-
-  it("1.2 no template/pack state leaks into the payload (same keys as hand-entry)", () => {
+  it("1.2 no template state leaks into the payload (same keys as hand-entry)", () => {
     const applied = applyToEmpty("objective_full", saveFullTemplate(richObjectiveFields()));
     const handKeys = Object.keys(buildRxPayload(richObjectiveFields())).sort();
     const appliedKeys = Object.keys(buildRxPayload(applied)).sort();
@@ -375,16 +341,7 @@ describe("obj-19 · §3 accessibility", () => {
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
   });
 
-  it("3.2 the specialty-pack affordance is keyboard-operable and labelled", async () => {
-    renderObjective(false);
-
-    const strip = await screen.findByTestId("objective-specialty-packs-strip");
-    const applyButton = strip.querySelector("button");
-    expect(applyButton).not.toBeNull();
-    expect(applyButton!.tagName).toBe("BUTTON");
-  });
-
-  it("3.3 read-only (disabled) mode hides the Templates buttons + pack strip", async () => {
+  it("3.2 read-only (disabled) mode hides the Templates buttons", async () => {
     renderObjective(true);
     await waitFor(() =>
       expect(document.querySelector('[aria-label="Objective"]')).toBeInTheDocument(),
@@ -392,6 +349,5 @@ describe("obj-19 · §3 accessibility", () => {
 
     expect(screen.queryByTestId("objective-template-trigger")).not.toBeInTheDocument();
     expect(screen.queryByTestId("objective-template-save-trigger")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("objective-specialty-packs-strip")).not.toBeInTheDocument();
   });
 });

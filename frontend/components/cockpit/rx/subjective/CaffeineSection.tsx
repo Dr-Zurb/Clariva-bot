@@ -1,14 +1,14 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { CollapsibleEntryCard } from "@/components/cockpit/rx/inputs/CollapsibleEntryCard";
 import { RX_FIELD_INPUT_CLASS } from "@/components/cockpit/rx/sections/field-styles";
-import { RemoveIconButton } from "@/components/cockpit/rx/subjective/RemoveIconButton";
 import { cn } from "@/lib/utils";
 import type { SocialHistoryDurationUnit } from "@/lib/cockpit/social-history-indices";
 import {
@@ -36,6 +36,7 @@ import {
   estimateCaffeineMgPerServing,
   MAX_CAFFEINE_ITEMS,
   normalizeCaffeineSection,
+  serializeCaffeineItemPreview,
   type CaffeineFrequencyUnit,
   type CaffeinePhase,
   type CaffeinePresetStrength,
@@ -71,6 +72,8 @@ interface CaffeineSectionProps {
   value: SocialHistoryStructured;
   disabled?: boolean;
   inputIdPrefix: string;
+  hideLabel?: boolean;
+  closeScrollToSelector?: string;
   onChange: (next: SocialHistoryStructured) => void;
 }
 
@@ -81,11 +84,21 @@ function patchCaffeine(
   return setCaffeine(structured, patch);
 }
 
-function CaffeineItemRow({
+function caffeineItemDisplayLabel(item: CaffeineUseItem): string {
+  if (item.type === "other") {
+    return item.typeOther?.trim() || CAFFEINE_TYPE_LABELS.other;
+  }
+  return item.type ? (CAFFEINE_TYPE_LABELS[item.type] ?? item.type) : "Caffeine";
+}
+
+function CaffeineItemCard({
   item,
   index,
   disabled,
   implicitPast,
+  open,
+  closeScrollToSelector,
+  onToggle,
   onPatch,
   onRemove,
 }: {
@@ -93,15 +106,13 @@ function CaffeineItemRow({
   index: number;
   disabled?: boolean;
   implicitPast?: boolean;
+  open: boolean;
+  closeScrollToSelector?: string;
+  onToggle: () => void;
   onPatch: (patch: Partial<CaffeineUseItem>) => void;
   onRemove: () => void;
 }) {
-  const displayLabel =
-    item.type === "other"
-      ? item.typeOther?.trim() || CAFFEINE_TYPE_LABELS.other
-      : item.type
-        ? (CAFFEINE_TYPE_LABELS[item.type] ?? item.type)
-        : "Caffeine";
+  const displayLabel = caffeineItemDisplayLabel(item);
   const phase = item.phase ?? (implicitPast ? "past" : "current");
   const durationUnit = item.yearsUnit ?? "years";
   const durationMax = maxForDurationUnit(durationUnit);
@@ -119,6 +130,8 @@ function CaffeineItemRow({
   const quitUnit = item.quitYearsUnit ?? "years";
   const quitMax = maxForDurationUnit(quitUnit);
   const usesCustom = caffeineUsesCustomStrength(item);
+  const isPast = implicitPast || phase === "past";
+  const preview = serializeCaffeineItemPreview(item);
 
   const strengthSelection = usesCustom
     ? "custom"
@@ -126,78 +139,82 @@ function CaffeineItemRow({
       ? item.strength
       : "regular";
 
-  return (
-    <div
-      className={cn(
-        "space-y-2 rounded-md border px-2.5 py-2",
-        implicitPast || phase === "past"
-          ? "border-border/60 bg-muted/30"
-          : "border-border/50 bg-background/60",
+  const titleNode = (
+    <>
+      <span className="min-w-0 truncate text-xs font-semibold text-foreground" title={displayLabel}>
+        {displayLabel}
+      </span>
+      {!implicitPast && (
+        <span
+          className="shrink-0"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <div className="flex gap-0.5" role="group" aria-label={`${displayLabel} phase`}>
+            {PHASE_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                disabled={disabled}
+                aria-pressed={phase === option.value}
+                aria-label={option.label}
+                data-testid={`social-caffeine-item-${index}-phase-${option.value}`}
+                onClick={() =>
+                  onPatch(
+                    option.value === "past"
+                      ? { phase: "past" }
+                      : { phase: "current", quitYearsAgo: undefined, quitYearsUnit: undefined },
+                  )
+                }
+                className={cn(
+                  OPTION_CHIP_CLASS,
+                  phase === option.value
+                    ? option.value === "past"
+                      ? "border-muted-foreground bg-muted text-foreground"
+                      : "border-primary bg-primary/10 text-foreground"
+                    : "border-border text-muted-foreground hover:border-primary/60",
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </span>
       )}
-      data-testid={`social-caffeine-item-${index}`}
+    </>
+  );
+
+  return (
+    <CollapsibleEntryCard
+      title={titleNode}
+      preview={preview}
+      open={open}
+      onToggle={onToggle}
+      onRemove={disabled ? undefined : onRemove}
+      removeLabel={`Remove ${displayLabel}`}
+      toggleLabel={`${open ? "Collapse" : "Expand"} ${displayLabel}`}
+      testId={`social-caffeine-item-${index}`}
+      bodyId={`social-caffeine-item-body-${item.id}`}
+      closeScrollToSelector={
+        closeScrollToSelector ?? '[data-testid="social-history-cluster-lifestyle"]'
+      }
+      className={isPast ? "bg-muted/30" : undefined}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
-          {item.type === "other" ? (
-            <input
-              type="text"
-              value={item.typeOther ?? ""}
-              disabled={disabled}
-              placeholder="Specify source"
-              aria-label="Other caffeine source"
-              data-testid={`social-caffeine-item-${index}-other`}
-              onChange={(e) => onPatch({ typeOther: e.target.value || undefined })}
-              className={cn(
-                RX_FIELD_INPUT_CLASS,
-                "h-8 min-w-[6rem] max-w-[10rem] px-2 py-1 text-xs font-semibold",
-              )}
-            />
-          ) : (
-            <span className="shrink-0 text-xs font-semibold text-foreground" title={displayLabel}>
-              {displayLabel}
-            </span>
-          )}
-
-          {!implicitPast && (
-            <div className="flex shrink-0 gap-0.5" role="group" aria-label={`${displayLabel} phase`}>
-              {PHASE_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  disabled={disabled}
-                  aria-pressed={phase === option.value}
-                  aria-label={option.label}
-                  data-testid={`social-caffeine-item-${index}-phase-${option.value}`}
-                  onClick={() =>
-                    onPatch(
-                      option.value === "past"
-                        ? { phase: "past" }
-                        : { phase: "current", quitYearsAgo: undefined, quitYearsUnit: undefined },
-                    )
-                  }
-                  className={cn(
-                    OPTION_CHIP_CLASS,
-                    phase === option.value
-                      ? option.value === "past"
-                        ? "border-muted-foreground bg-muted text-foreground"
-                        : "border-primary bg-primary/10 text-foreground"
-                      : "border-border text-muted-foreground hover:border-primary/60",
-                  )}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <RemoveIconButton
-          label={`Remove ${displayLabel}`}
+      {item.type === "other" ? (
+        <input
+          type="text"
+          value={item.typeOther ?? ""}
           disabled={disabled}
-          testId={`social-caffeine-item-${index}-remove`}
-          onClick={onRemove}
+          placeholder="Specify source"
+          aria-label="Other caffeine source"
+          data-testid={`social-caffeine-item-${index}-other`}
+          onChange={(e) => onPatch({ typeOther: e.target.value || undefined })}
+          className={cn(
+            RX_FIELD_INPUT_CLASS,
+            "h-8 min-w-[6rem] max-w-[10rem] px-2 py-1 text-xs font-semibold",
+          )}
         />
-      </div>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className={ROW_LABEL_CLASS}>Amount</span>
@@ -492,8 +509,8 @@ function CaffeineItemRow({
                 className={cn(
                   OPTION_CHIP_CLASS,
                   selected
-                      ? "border-primary bg-primary/10 text-foreground"
-                      : "border-border text-muted-foreground hover:border-primary/60",
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : "border-border text-muted-foreground hover:border-primary/60",
                 )}
               >
                 {durationUnitChipLabel(option.value)}
@@ -503,7 +520,7 @@ function CaffeineItemRow({
         </div>
       </div>
 
-      {(implicitPast || phase === "past") && (
+      {isPast && (
         <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
           <span className="text-[11px] text-muted-foreground">quit</span>
           <input
@@ -565,17 +582,34 @@ function CaffeineItemRow({
           <span className="text-[11px] text-muted-foreground">ago</span>
         </div>
       )}
-    </div>
+    </CollapsibleEntryCard>
   );
 }
 
-export function CaffeineSection({ value, disabled, inputIdPrefix, onChange }: CaffeineSectionProps) {
+export function CaffeineSection({
+  value,
+  disabled,
+  inputIdPrefix,
+  hideLabel = false,
+  closeScrollToSelector,
+  onChange,
+}: CaffeineSectionProps) {
   const normalized = useMemo(() => normalizeCaffeineSection(value.caffeine), [value.caffeine]);
   const status = normalized?.status;
   const items = caffeineItemsForDisplay(normalized ?? undefined);
   const addOptions = useMemo(() => availableCaffeineAddChips(items), [items]);
   const implicitPast = status === "ex";
   const hints = caffeineClinicalHints(normalized ?? undefined);
+
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const toggleExpanded = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const updateSection = (next: CaffeineSectionInput | null) => {
     onChange(patchCaffeine(value, next));
@@ -603,13 +637,18 @@ export function CaffeineSection({ value, disabled, inputIdPrefix, onChange }: Ca
     });
     updateSection({
       status: status ?? "current",
-      items: [...items, newItem],
+      items: [newItem, ...items],
       notes: normalized?.notes,
     });
   };
 
   const handleRemoveItem = (itemId: string) => {
     const nextItems = items.filter((i) => i.id !== itemId);
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(itemId);
+      return next;
+    });
     if (nextItems.length === 0 && !normalized?.notes?.trim()) {
       updateSection(status ? { status, items: [] } : null);
       return;
@@ -633,6 +672,7 @@ export function CaffeineSection({ value, disabled, inputIdPrefix, onChange }: Ca
     <section className="space-y-2" aria-label="Caffeine">
       <StatusChipRow
         label="Caffeine"
+        hideLabel={hideLabel}
         options={CAFFEINE_STATUS_OPTIONS}
         selected={status}
         disabled={disabled}
@@ -665,17 +705,20 @@ export function CaffeineSection({ value, disabled, inputIdPrefix, onChange }: Ca
 
           {items.length > 0 && (
             <div
-              className="space-y-2 border-l-2 border-primary/20 pl-2"
+              className="space-y-2"
               data-testid="social-caffeine-details"
               aria-expanded={true}
             >
               {items.map((item, index) => (
-                <CaffeineItemRow
+                <CaffeineItemCard
                   key={item.id}
                   item={item}
                   index={index}
                   disabled={disabled}
                   implicitPast={implicitPast}
+                  open={expandedIds.has(item.id)}
+                  closeScrollToSelector={closeScrollToSelector}
+                  onToggle={() => toggleExpanded(item.id)}
                   onPatch={(patch) => patchItem(item.id, patch)}
                   onRemove={() => handleRemoveItem(item.id)}
                 />
@@ -726,6 +769,7 @@ export function CaffeineSection({ value, disabled, inputIdPrefix, onChange }: Ca
 
 function StatusChipRow({
   label,
+  hideLabel = false,
   options,
   selected,
   disabled,
@@ -733,6 +777,7 @@ function StatusChipRow({
   onSelect,
 }: {
   label: string;
+  hideLabel?: boolean;
   options: readonly { value: CaffeineUseStatus; label: string }[];
   selected: CaffeineUseStatus | undefined;
   disabled?: boolean;
@@ -741,7 +786,7 @@ function StatusChipRow({
 }) {
   return (
     <div className="space-y-1.5" data-testid={testId}>
-      <p className="text-xs font-medium text-foreground/80">{label}</p>
+      {!hideLabel ? <p className="text-xs font-medium text-foreground/80">{label}</p> : null}
       <div className="flex flex-wrap gap-1.5" role="group" aria-label={label}>
         {options.map((option) => {
           const isSelected = selected === option.value;

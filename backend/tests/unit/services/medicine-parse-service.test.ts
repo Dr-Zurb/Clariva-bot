@@ -333,6 +333,37 @@ describe('boundMedicineList — schema-bounding', () => {
     expect(out[0].status).toBe('past');
     expect(out[0].stoppedAgoValue).toBe(1);
   });
+
+  it('bounds routeCode, routeSite, and Plan duration fields', () => {
+    const out = boundMedicineList({
+      medicines: [
+        {
+          name: 'B12',
+          routeCode: 'im',
+          routeSite: 'gluteal',
+          durationValue: 5,
+          durationUnit: 'days',
+        },
+      ],
+    });
+    expect(out[0]).toEqual(
+      expect.objectContaining({
+        name: 'B12',
+        routeCode: 'IM',
+        routeSite: 'gluteal',
+        durationValue: 5,
+        durationUnit: 'days',
+      }),
+    );
+  });
+
+  it('drops invalid routeCode / durationUnit', () => {
+    const out = boundMedicineList({
+      medicines: [{ name: 'X', routeCode: 'inhalation', durationUnit: 'hours' }],
+    });
+    expect(out[0].routeCode).toBeNull();
+    expect(out[0].durationUnit).toBeNull();
+  });
 });
 
 describe('parseMedicineWithAI — fail-soft', () => {

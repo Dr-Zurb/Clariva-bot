@@ -239,6 +239,7 @@ export function LymphadenopathySitesPanel({
               disabled={disabled}
               testId={`general-lymph-panel-${entry.site}`}
               bodyId={`general-lymph-panel-${entry.site}-body`}
+              closeScrollToSelector='[data-exam-general-finding-card="lymphadenopathy"]'
             >
               <LymphSiteFields
                 entry={entry}

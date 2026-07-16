@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { getPrescription } from "@/lib/api";
 import { formatDate } from "@/lib/format-date";
+import { resolveFollowUpForOutput } from "@/lib/cockpit/follow-up-format";
 import type {
   FollowUpUnit,
   PrescriptionMedicine,
@@ -58,16 +59,7 @@ function formatFollowUp(
   unit: FollowUpUnit | null | undefined,
   legacy: string | null | undefined,
 ): string {
-  if (value != null && unit) {
-    const unitLabel =
-      unit === "as_needed"
-        ? "as needed"
-        : value === 1
-          ? unit.replace(/s$/, "")
-          : unit;
-    return `in ${value} ${unitLabel}`;
-  }
-  return emDash(legacy);
+  return resolveFollowUpForOutput(legacy, value, unit) ?? "—";
 }
 
 function computeBmi(wtKg: number | null | undefined, htCm: number | null | undefined): string {

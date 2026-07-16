@@ -21,6 +21,9 @@ function baseTemplate(over: Partial<DoctorRxTemplate> = {}): DoctorRxTemplate {
     clinical_notes: null,
     medicines_json: [],
     subjective_json: {},
+    objective_json: {},
+    plan_json: {},
+    assessment_json: {},
     pmh_json: {},
     allergies_json: {},
     scope: "subjective_full",
@@ -49,6 +52,24 @@ describe("templateHasScopedContent", () => {
     ).toBe(true);
   });
 
+  it("detects patient_background from PMH or past surgical", () => {
+    expect(
+      templateHasScopedContent(
+        baseTemplate({ pmh_json: { conditions: [{ condition: "DM" }] } }),
+        "patient_background",
+      ),
+    ).toBe(true);
+    expect(
+      templateHasScopedContent(
+        baseTemplate({
+          subjective_json: { pastSurgicalHistory: "Appendectomy 2010" },
+        }),
+        "patient_background",
+      ),
+    ).toBe(true);
+    expect(templateHasScopedContent(baseTemplate(), "patient_background")).toBe(false);
+  });
+
   it("detects complaint scoped content", () => {
     expect(
       templateHasScopedContent(
@@ -73,6 +94,18 @@ describe("formatTemplateSummary", () => {
       "past_medical",
     );
     expect(summary).toBe("2 conditions · 1 medication");
+  });
+
+  it("formats patient_background composite", () => {
+    const summary = formatTemplateSummary(
+      baseTemplate({
+        pmh_json: { conditions: [{ condition: "Asthma" }] },
+        subjective_json: { pastSurgicalHistory: "Appendectomy" },
+      }),
+      "patient_background",
+    );
+    expect(summary).toContain("1 condition");
+    expect(summary).toContain("surgical history");
   });
 
   it("formats subjective_full composite", () => {

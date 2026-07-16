@@ -1,15 +1,19 @@
 "use client";
 
 /**
- * PatientRibbon (cockpit-ribbon batch · crb-02)
+ * PatientRibbon (cockpit-ribbon batch · crb-02 + ribbon-expand Phase 1)
  *
  * 52px full-width strip rendered between <PatientProfileHeader> and
  * <PatientProfileShell> inside <PatientProfilePage>. Surfaces always-visible
  * patient context across all panes:
  *
  *   ┌────────────────────────────────────────────────────────────────────────┐
- *   │ 42 y · M · 68 kg │ ⚠️ Penicillin · Sulfa · +2 │ 🩺 HTN · DM · COPD │ 💊 4 │ 🎯 URI │
+ *   │ 42 y · M · 68 kg │ ⚠️ Penicillin · … │ 🩺 HTN · … │ 💊 4 │ Safety │ ⧉ 🕐 │ 🎯 URI │
  *   └────────────────────────────────────────────────────────────────────────┘
+ *
+ * Phase 1 (ribbon-expand): click-to-expand overlays — allergies/meds popovers
+ * mount the real EHR section components; Chart / History open SnapshotPane /
+ * HistoryPane in the shell SideSheetHost (no inline growth; tabs untouched).
  *
  * Subscribes to <RxFormProvider> (lifted by csf-01) for the Dx live-mirror via
  * useRxForm(). The 🎯 click handler focuses #diagnosis (the Dx input id from
@@ -19,11 +23,11 @@
  * Mobile (<lg) → handled by parent (<PatientProfilePage> doesn't mount us).
  *
  * @see frontend/hooks/usePatientRibbonData.ts  (data hook — crb-01)
- * @see docs/Work/Daily-plans/May 2026/21-05-2026/cockpit-ribbon/Tasks/task-crb-02-patient-ribbon-component.md
+ * @see docs/Work/Daily-plans/July 2026/16-07-2026/ribbon-expand-snapshot-history/plan-ribbon-expand-snapshot-history-batch.md
  */
 
-import { useEffect } from "react";
-import { Shield } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Clock, PanelRightOpen, Shield } from "lucide-react";
 import type { Appointment } from "@/types/appointment";
 import { trackCockpitV2RRibbonLanded } from "@/lib/patient-profile/telemetry";
 import {
@@ -34,6 +38,11 @@ import {
 } from "@/hooks/usePatientRibbonData";
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import { useOptionalRxSafety } from "@/components/cockpit/rx/RxSafetyContext";
+import { useSideSheet } from "@/components/patient-profile/SideSheetHost";
+import SnapshotPane from "@/components/patient-profile/panes/SnapshotPane";
+import HistoryPane from "@/components/patient-profile/panes/HistoryPane";
+import AllergiesSection from "@/components/ehr/sections/AllergiesSection";
+import PreviousRxSection from "@/components/ehr/sections/PreviousRxSection";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tooltip,
@@ -47,6 +56,9 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+
+const RIBBON_SECTION_LAYOUT = "in-call" as const;
+const RIBBON_SECTION_MODE = "default" as const;
 
 /** Inline ribbon segment separator (DL-7 / cpv-06). */
 function Sep() {
@@ -67,7 +79,13 @@ export function PatientRibbon({ appointment, token }: PatientRibbonProps) {
   // Walk-in fallback per DL-6: no patient row → render nothing.
   if (!appointment.patient_id) return null;
 
-  return <PatientRibbonInner patientId={appointment.patient_id} token={token} />;
+  return (
+    <PatientRibbonInner
+      appointment={appointment}
+      patientId={appointment.patient_id}
+      token={token}
+    />
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -76,9 +94,11 @@ export function PatientRibbon({ appointment, token }: PatientRibbonProps) {
 // ---------------------------------------------------------------------------
 
 function PatientRibbonInner({
+  appointment,
   patientId,
   token,
 }: {
+  appointment: Appointment;
   patientId: string;
   token: string;
 }) {
@@ -114,21 +134,116 @@ function PatientRibbonInner({
         role="region"
         aria-label="Patient context ribbon"
         className="flex h-[52px] w-full items-center border-b bg-card px-4"
+        data-testid="patient-ribbon"
       >
         <IdentitySlot identity={data.identity} isLoading={data.isLoading} />
         <Sep />
-        <AllergiesSlot chips={data.allergies} isLoading={data.isLoading} />
+        <AllergiesSlot
+          chips={data.allergies}
+          isLoading={data.isLoading}
+          patientId={patientId}
+          token={token}
+        />
         <Sep />
         <ChronicSlot chips={data.chronicConditions} isLoading={data.isLoading} />
         <Sep />
-        <ActiveMedsSlot count={data.activeMedsCount} isLoading={data.isLoading} />
+        <ActiveMedsSlot
+          count={data.activeMedsCount}
+          isLoading={data.isLoading}
+          patientId={patientId}
+          token={token}
+        />
         <Sep />
         <SafetySlot />
+        <RibbonSheetActions appointment={appointment} token={token} />
         {/* Spacer pushes 🎯 Treating to the right */}
         <div className="flex-1" aria-hidden />
         <TreatingSlot dxValue={dxValue} />
       </div>
     </TooltipProvider>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Chart + History side-sheet triggers (RX-01 / RX-04)
+// ---------------------------------------------------------------------------
+
+function RibbonSheetActions({
+  appointment,
+  token,
+}: {
+  appointment: Appointment;
+  token: string;
+}) {
+  const { open, isOpen } = useSideSheet();
+
+  const openChart = useCallback(() => {
+    open({
+      id: "patient-chart",
+      title: "Patient chart",
+      content: (
+        <SnapshotPane appointment={appointment} token={token} hideHeader />
+      ),
+      defaultWidth: 520,
+      canDock: false,
+    });
+  }, [appointment, open, token]);
+
+  const openHistory = useCallback(() => {
+    open({
+      id: "visit-history",
+      title: "Visit history",
+      content: (
+        <HistoryPane appointment={appointment} token={token} hideHeader />
+      ),
+      defaultWidth: 480,
+      canDock: false,
+    });
+  }, [appointment, open, token]);
+
+  return (
+    <div className="ml-2 flex shrink-0 items-center gap-0.5">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            data-testid="ribbon-open-chart"
+            aria-haspopup="dialog"
+            aria-expanded={isOpen("patient-chart")}
+            aria-label="Open patient chart"
+            onClick={openChart}
+            className={cn(
+              "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground",
+              "transition-colors hover:bg-accent hover:text-foreground",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            )}
+          >
+            <PanelRightOpen className="h-4 w-4" aria-hidden />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Patient chart</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            data-testid="ribbon-open-history"
+            aria-haspopup="dialog"
+            aria-expanded={isOpen("visit-history")}
+            aria-label="Open visit history"
+            onClick={openHistory}
+            className={cn(
+              "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground",
+              "transition-colors hover:bg-accent hover:text-foreground",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            )}
+          >
+            <Clock className="h-4 w-4" aria-hidden />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Visit history</TooltipContent>
+      </Tooltip>
+    </div>
   );
 }
 
@@ -166,16 +281,23 @@ function IdentitySlot({
 }
 
 // ---------------------------------------------------------------------------
-// Slot: Allergies
+// Slot: Allergies — glance chips + click popover (RX-02)
 // ---------------------------------------------------------------------------
 
 function AllergiesSlot({
   chips,
   isLoading,
+  patientId,
+  token,
 }: {
   chips: RibbonAllergyChip[];
   isLoading: boolean;
+  patientId: string;
+  token: string;
 }) {
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+
   if (isLoading) {
     return (
       <div className="flex items-center gap-1.5">
@@ -186,33 +308,64 @@ function AllergiesSlot({
     );
   }
 
-  if (chips.length === 0) {
-    return (
-      <span className="text-xs text-muted-foreground">No known allergies</span>
-    );
-  }
-
   const VISIBLE_MAX = 3;
   const visible = chips.slice(0, VISIBLE_MAX);
-  const overflow = chips.slice(VISIBLE_MAX);
+  const overflowCount = Math.max(0, chips.length - VISIBLE_MAX);
 
   return (
-    <div className="flex items-center gap-1.5">
-      {visible.map((chip) => (
-        <AllergyChip key={chip.id} chip={chip} />
-      ))}
-      {overflow.length > 0 && (
-        <OverflowPill
-          count={overflow.length}
-          items={overflow.map((c) => ({
-            id: c.id,
-            label: c.name,
-            detail: formatAllergyDetail(c),
-          }))}
-          aria-label={`${overflow.length} more allergies`}
+    <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          data-testid="ribbon-allergies-trigger"
+          aria-haspopup="dialog"
+          aria-expanded={popoverOpen}
+          aria-label={
+            chips.length === 0
+              ? "No known allergies. Open to add or review."
+              : `Allergies: ${chips.length}. Open to review or add.`
+          }
+          className={cn(
+            "inline-flex max-w-[min(100%,28rem)] items-center gap-1.5 rounded-md px-1 py-0.5",
+            "text-left transition-colors hover:bg-accent/60",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          )}
+        >
+          {chips.length === 0 ? (
+            <span className="text-xs text-muted-foreground">
+              No known allergies
+            </span>
+          ) : (
+            <>
+              {visible.map((chip) => (
+                <AllergyChip key={chip.id} chip={chip} />
+              ))}
+              {overflowCount > 0 && (
+                <span className="inline-flex shrink-0 items-center rounded-full border border-border bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">
+                  +{overflowCount}
+                </span>
+              )}
+            </>
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="bottom"
+        align="start"
+        className="w-[min(100vw-2rem,22rem)] max-h-[420px] overflow-y-auto p-3"
+        data-testid="ribbon-allergies-popover"
+      >
+        <p className="mb-2 text-xs font-semibold text-foreground">Allergies</p>
+        <AllergiesSection
+          patientId={patientId}
+          token={token}
+          layout={RIBBON_SECTION_LAYOUT}
+          mode={RIBBON_SECTION_MODE}
+          addOpen={addOpen}
+          onAddOpenChange={setAddOpen}
         />
-      )}
-    </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -231,7 +384,7 @@ function AllergyChip({ chip }: { chip: RibbonAllergyChip }) {
       <TooltipTrigger asChild>
         <span
           className={cn(
-            "inline-flex cursor-default items-center rounded border px-1.5 py-0.5 text-xs font-medium",
+            "inline-flex items-center rounded border px-1.5 py-0.5 text-xs font-medium",
             chipClass,
           )}
           role="note"
@@ -249,13 +402,6 @@ function AllergyChip({ chip }: { chip: RibbonAllergyChip }) {
       </TooltipContent>
     </Tooltip>
   );
-}
-
-function formatAllergyDetail(chip: RibbonAllergyChip): string {
-  const parts: string[] = [];
-  if (chip.severity) parts.push(`Severity: ${chip.severity}`);
-  if (chip.reaction) parts.push(`Reaction: ${chip.reaction}`);
-  return parts.join(" · ") || chip.name;
 }
 
 // ---------------------------------------------------------------------------
@@ -330,39 +476,73 @@ function ChronicChip({ chip }: { chip: RibbonChronicChip }) {
 }
 
 // ---------------------------------------------------------------------------
-// Slot: Active meds count
+// Slot: Active meds — count glance + click popover (RX-02)
 // ---------------------------------------------------------------------------
 
 function ActiveMedsSlot({
   count,
   isLoading,
+  patientId,
+  token,
 }: {
   count: number;
   isLoading: boolean;
+  patientId: string;
+  token: string;
 }) {
+  const [popoverOpen, setPopoverOpen] = useState(false);
+
   if (isLoading) {
     return <Skeleton className="h-5 w-12" />;
   }
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span
-          className={cn(
-            "cursor-default whitespace-nowrap text-xs font-medium",
-            count === 0 ? "text-muted-foreground" : "text-foreground",
-          )}
-          aria-label={`${count} active medications`}
-        >
-          💊 {count}
-        </span>
-      </TooltipTrigger>
-      <TooltipContent side="bottom">
-        {count === 0
-          ? "No active medications on the most recent prescription."
-          : `${count} active medication${count === 1 ? "" : "s"} on the most recent prescription.`}
-      </TooltipContent>
-    </Tooltip>
+    <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              data-testid="ribbon-meds-trigger"
+              aria-haspopup="dialog"
+              aria-expanded={popoverOpen}
+              aria-label={`${count} active medications. Open current medications.`}
+              className={cn(
+                "cursor-pointer whitespace-nowrap rounded-md px-1 py-0.5 text-xs font-medium",
+                "transition-colors hover:bg-accent/60",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                count === 0 ? "text-muted-foreground" : "text-foreground",
+              )}
+            >
+              💊 {count}
+            </button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          {count === 0
+            ? "No active medications on the most recent prescription. Click to review."
+            : `${count} active medication${count === 1 ? "" : "s"} on the most recent prescription. Click to review.`}
+        </TooltipContent>
+      </Tooltip>
+      <PopoverContent
+        side="bottom"
+        align="start"
+        className="w-[min(100vw-2rem,22rem)] max-h-[420px] overflow-y-auto p-3"
+        data-testid="ribbon-meds-popover"
+      >
+        <p className="mb-2 text-xs font-semibold text-foreground">
+          Current medications
+        </p>
+        <PreviousRxSection
+          patientId={patientId}
+          token={token}
+          layout={RIBBON_SECTION_LAYOUT}
+          mode={RIBBON_SECTION_MODE}
+          limit={10}
+          filter="most-recent-visit"
+        />
+      </PopoverContent>
+    </Popover>
   );
 }
 

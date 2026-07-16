@@ -21,6 +21,16 @@ vi.mock("@/components/cockpit/rx/inputs/VitalsGrid", () => ({
   VitalsGrid: () => <div data-testid="vitals-grid-stub" />,
 }));
 
+vi.mock("@/components/cockpit/rx/inputs/ExamSystemList", () => ({
+  ExamSystemList: ({ disabled }: { disabled?: boolean }) => (
+    <div data-testid="exam-system-list">
+      <button type="button" data-testid="exam-mark-all-normal" disabled={disabled}>
+        Mark all normal
+      </button>
+    </div>
+  ),
+}));
+
 const mockGetDoctorSettings = vi.fn();
 const mockPatchDoctorSettings = vi.fn();
 const mockUpdatePrescription = vi.fn();
@@ -30,6 +40,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     getDoctorSettings: (...args: unknown[]) => mockGetDoctorSettings(...args),
+    getAppointmentById: vi.fn().mockResolvedValue({ data: { appointment: { consultation_type: "in_clinic" } } }),
     patchDoctorSettings: (...args: unknown[]) => mockPatchDoctorSettings(...args),
     updatePrescription: (...args: unknown[]) => mockUpdatePrescription(...args),
     createPrescription: vi.fn(),
@@ -84,6 +95,10 @@ function renderWithShell(ui: ReactElement, shell: Partial<RxFormProviderSetup>) 
     setSubjectiveSectionHidden: vi.fn(),
     objectiveDefaults: null,
     setObjectiveDefaults: vi.fn(),
+    planDefaults: null,
+    setPlanDefaults: vi.fn(),
+    assessmentDefaults: null,
+    setAssessmentDefaults: vi.fn(),
     providerProps: {
       key: "test",
       appointmentId: "appt-1",
@@ -140,7 +155,10 @@ function collapsePatchCalls() {
 }
 
 async function waitForSettingsLoaded() {
-  await waitFor(() => expect(mockGetDoctorSettings).toHaveBeenCalled());
+  await waitFor(() => {
+    expect(mockGetDoctorSettings).toHaveBeenCalled();
+    expect(screen.queryByTestId("objective-layout-skeleton")).not.toBeInTheDocument();
+  });
 }
 
 beforeEach(() => {
@@ -148,13 +166,21 @@ beforeEach(() => {
   mockPatchDoctorSettings.mockReset();
   mockUpdatePrescription.mockReset();
   mockGetDoctorSettings.mockResolvedValue({
-    data: { settings: { objective_section_order: [], objective_section_collapsed: {} } },
+    data: {
+      settings: {
+        objective_section_order: [],
+        objective_section_collapsed: {},
+        objective_section_hidden: [],
+        specialty: null,
+      },
+    },
   });
   mockPatchDoctorSettings.mockImplementation(async (_token, payload) => ({
     data: {
       settings: {
         objective_section_order: payload.objective_section_order ?? [],
         objective_section_collapsed: payload.objective_section_collapsed ?? {},
+        objective_section_hidden: payload.objective_section_hidden ?? [],
       },
     },
   }));
@@ -168,11 +194,8 @@ describe("ObjectiveSection reorder (obj-11)", () => {
     expect(readRenderedSectionOrder(container)).toEqual([
       "vitals",
       "exam",
+      "notes",
       "test_results",
-      "point_of_care",
-      "media",
-      "legacy_exam",
-      "legacy_vitals",
     ]);
 
     const grip = screen.getByRole("button", { name: /Reorder Vitals/i });
@@ -181,11 +204,8 @@ describe("ObjectiveSection reorder (obj-11)", () => {
     expect(readRenderedSectionOrder(container)).toEqual([
       "exam",
       "vitals",
+      "notes",
       "test_results",
-      "point_of_care",
-      "media",
-      "legacy_exam",
-      "legacy_vitals",
     ]);
 
     await waitFor(
@@ -196,11 +216,8 @@ describe("ObjectiveSection reorder (obj-11)", () => {
         expect(last.objective_section_order).toEqual([
           "exam",
           "vitals",
+          "notes",
           "test_results",
-          "point_of_care",
-          "media",
-          "legacy_exam",
-          "legacy_vitals",
         ]);
       },
       { timeout: 1500 },
@@ -210,8 +227,8 @@ describe("ObjectiveSection reorder (obj-11)", () => {
   it("hydrates a stored order from the shell and merges stale/unknown ids (no section lost)", async () => {
     const { container } = renderWithShell(<ObjectiveSection heading={null} />, {
       objectiveDefaults: {
-        // stale unknown id + a missing-but-available `exam` + duplicate
-        sectionOrder: ["legacy_vitals", "bogus_section", "vitals", "vitals"] as ObjectiveSectionId[],
+        // stale unknown/retired ids + a missing-but-available `exam` + duplicate
+        sectionOrder: ["notes", "bogus_section", "legacy_vitals", "vitals", "vitals"] as ObjectiveSectionId[],
         sectionCollapsed: {},
         sectionHidden: [],
         customSections: [],
@@ -220,20 +237,17 @@ describe("ObjectiveSection reorder (obj-11)", () => {
 
     await waitFor(() => {
       const order = readRenderedSectionOrder(container);
-      // unknown dropped, dupes removed, missing appended at canonical slots — all 7 present.
-      expect(order).toHaveLength(7);
+      // unknown/retired dropped, dupes removed, missing appended at canonical slots — all 4 present.
+      expect(order).toHaveLength(4);
       expect(new Set(order)).toEqual(
         new Set([
           "vitals",
           "exam",
+          "notes",
           "test_results",
-          "point_of_care",
-          "media",
-          "legacy_exam",
-          "legacy_vitals",
         ]),
       );
-      expect(order[0]).toBe("legacy_vitals");
+      expect(order[0]).toBe("notes");
     });
     expect(mockGetDoctorSettings).not.toHaveBeenCalled();
   });
@@ -247,7 +261,7 @@ describe("ObjectiveSection reorder (obj-11)", () => {
 });
 
 describe("ObjectiveSection collapse-memory (obj-11)", () => {
-  it("opens vitals/exam by default and collapses legacy blocks", async () => {
+  it("opens vitals/exam/notes/reports by default", async () => {
     renderWithRxForm(<ObjectiveSection heading={null} />);
     await waitForSettingsLoaded();
 
@@ -261,9 +275,14 @@ describe("ObjectiveSection collapse-memory (obj-11)", () => {
       "aria-expanded",
       "true",
     );
-    expect(
-      screen.getByRole("button", { name: "Toggle Free-text exam (legacy)" }),
-    ).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "Toggle Notes" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Toggle Reports" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
   });
 
   it("autosaves delta-only collapse overrides after toggling sections", async () => {
@@ -274,8 +293,8 @@ describe("ObjectiveSection collapse-memory (obj-11)", () => {
     await waitFor(() => expect(vitalsToggle).toHaveAttribute("aria-expanded", "true"));
     fireEvent.click(vitalsToggle); // vitals: true -> false (delta)
 
-    const legacyToggle = screen.getByRole("button", { name: "Toggle Free-text exam (legacy)" });
-    fireEvent.click(legacyToggle); // legacy_exam: false -> true (delta)
+    const notesToggle = screen.getByRole("button", { name: "Toggle Notes" });
+    fireEvent.click(notesToggle); // notes: true -> false (delta)
 
     await waitFor(
       () => {
@@ -284,7 +303,7 @@ describe("ObjectiveSection collapse-memory (obj-11)", () => {
         };
         expect(last.objective_section_collapsed).toEqual({
           vitals: false,
-          legacy_exam: true,
+          notes: false,
         });
         expect(last.objective_section_collapsed).not.toHaveProperty("exam");
       },
@@ -297,7 +316,7 @@ describe("ObjectiveSection collapse-memory (obj-11)", () => {
     renderWithShell(<ObjectiveSection heading={null} />, {
       objectiveDefaults: {
         sectionOrder: [],
-        sectionCollapsed: { vitals: false, legacy_exam: true },
+        sectionCollapsed: { vitals: false, notes: false },
         sectionHidden: [],
         customSections: [],
       },
@@ -308,9 +327,10 @@ describe("ObjectiveSection collapse-memory (obj-11)", () => {
         "aria-expanded",
         "false",
       );
-      expect(
-        screen.getByRole("button", { name: "Toggle Free-text exam (legacy)" }),
-      ).toHaveAttribute("aria-expanded", "true");
+      expect(screen.getByRole("button", { name: "Toggle Notes" })).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
     });
     expect(mockGetDoctorSettings).not.toHaveBeenCalled();
   });

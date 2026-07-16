@@ -190,6 +190,38 @@ describe("exam-finding-utils (obj-31)", () => {
     );
   });
 
+  it("renders General subsection notes and sorts them after subsection findings", () => {
+    expect(
+      renderGeneralFindingEntry({
+        findingId: "general_appearance_notes",
+        attributes: { notes: "Mild conjunctival pallor" },
+      }),
+    ).toBe("Appearance: Mild conjunctival pallor");
+    expect(
+      generalFindingEntryPreview({
+        findingId: "general_appearance_notes",
+        attributes: { notes: "Mild conjunctival pallor" },
+      }),
+    ).toBe("Appearance · Mild conjunctival pallor");
+
+    const finding: ExamSystemFinding = {
+      systemId: "general",
+      status: "abnormal",
+      findings: [
+        {
+          findingId: "general_appearance_notes",
+          attributes: { notes: "Mild conjunctival pallor" },
+        },
+        { findingId: "pallor", attributes: { site: "Conjunctival" } },
+        { findingId: "distress", attributes: { severity: "Mild" } },
+      ],
+      notes: null,
+    };
+    expect(renderExamSystemFindingBody(finding)).toBe(
+      "Distress (Mild); Pallor (Conjunctival); Appearance: Mild conjunctival pallor",
+    );
+  });
+
   it("slugifies chip labels for non-general systems", () => {
     expect(chipLabelToFindingId("JVP raised")).toBe("jvp_raised");
     expect(chipLabelToFindingId("Reduced AE")).toBe("reduced_ae");

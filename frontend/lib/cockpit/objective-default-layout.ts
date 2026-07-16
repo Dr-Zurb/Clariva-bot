@@ -11,10 +11,8 @@
  *     NEVER hides everything (the tab is never blank).
  *
  * Granularity note: the objective registry is coarse (`vitals`, `exam`,
- * `test_results`, legacy blocks). The §E2 specialty packs are mostly about
- * *systems within the exam card* and *custom blocks* (P/V, MSE), neither of
- * which is a top-level section — so specialty emphasis here only reorders the
- * visible sections. Richer system/template emphasis is P4/P5.
+ * `notes`, `test_results` / Reports). Specialty emphasis here only
+ * reorders the visible sections. Richer system/template emphasis is P4/P5.
  */
 import type { ConsultationModality } from "@/types/appointment";
 import {
@@ -79,17 +77,14 @@ export function normalizeSpecialty(specialty: string | null | undefined): Specia
 }
 
 /**
- * Modality → section default (§G / OBJ-D6). obj-23 wires the result/POC/media
- * content emphasis (view-only; never reaches `buildRxPayload`). All maps keep
- * `vitals` and never hide everything.
- *   - in_clinic → full + POC: every section visible (registry default), incl.
- *     the in-clinic point-of-care + media strips.
- *   - video → observed + uploads: structured exam (observed) + media uploads
- *     visible; in-clinic `point_of_care` hidden (no chairside POC over video),
- *     legacy free-text blocks hidden.
- *   - voice / text (async) → patient-reported + uploads: `test_results` leads,
- *     media uploads visible (report scans); structured `exam`, in-clinic
- *     `point_of_care`, and legacy exam hidden.
+ * Modality → section default (§G / OBJ-D6).
+ *   - in_clinic → full exam: every section visible (registry default).
+ *   - video → observed + uploads: structured exam + Reports (incl. media strip).
+ *   - voice / text (async) → patient-reported + uploads: `test_results` (Reports)
+ *     leads; structured `exam` hidden.
+ *
+ * rpt-01: retired `point_of_care` / standalone `media` / legacy free-text
+ * section ids — no longer in hide sets or modality orders (media renders inside Reports).
  */
 function resolveModalityLayout(modality: ConsultModality | null | undefined): DefaultLayout {
   switch (modality) {
@@ -98,25 +93,13 @@ function resolveModalityLayout(modality: ConsultModality | null | undefined): De
     case "video":
       return {
         defaultOrder: [...DEFAULT_OBJECTIVE_SECTION_ORDER],
-        // obj-23: no chairside POC over video; media (uploads) stays visible.
-        defaultHidden: ["point_of_care", "legacy_exam", "legacy_vitals"],
+        defaultHidden: [],
       };
     case "voice":
     case "text":
       return {
-        defaultOrder: [
-          "test_results",
-          "vitals",
-          "media",
-          "exam",
-          "point_of_care",
-          "legacy_exam",
-          "legacy_vitals",
-        ],
-        // obj-23: async = patient-reported + uploads. `test_results` leads and the
-        // media strip (uploaded report scans) is visible; live-capture sections
-        // (structured exam + in-clinic POC) and legacy free-text are hidden.
-        defaultHidden: ["exam", "point_of_care", "legacy_exam", "legacy_vitals"],
+        defaultOrder: ["test_results", "vitals", "exam", "notes"],
+        defaultHidden: ["exam"],
       };
     default:
       // Unknown / absent modality → registry default (never blank).

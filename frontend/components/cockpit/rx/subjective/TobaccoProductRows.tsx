@@ -360,6 +360,9 @@ function CompactProductCard({
   if (catalog === "smoking" && countsForPackYears && rowPackYears != null) {
     previewParts.push(`≈ ${rowPackYears} pack-years`);
   }
+  if (product.note?.trim()) {
+    previewParts.push(product.note.trim());
+  }
   const preview = previewParts.join(" · ");
 
   const titleNode = (
@@ -694,6 +697,27 @@ function CompactProductCard({
           </span>
         </p>
       )}
+
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <label
+          htmlFor={`${testIdPrefix}-note-${product.id}`}
+          className={ROW_LABEL_CLASS}
+        >
+          Note
+        </label>
+        <input
+          id={`${testIdPrefix}-note-${product.id}`}
+          type="text"
+          value={product.note ?? ""}
+          disabled={disabled}
+          placeholder="Additional context"
+          aria-label={`Note for ${displayLabel}`}
+          maxLength={200}
+          data-testid={`${testIdPrefix}-note-${index}`}
+          onChange={(e) => onChange({ note: e.target.value.trim() || undefined })}
+          className={cn(RX_FIELD_INPUT_CLASS, "h-8 min-w-0 flex-1 text-xs")}
+        />
+      </div>
     </CollapsibleEntryCard>
   );
 }
@@ -735,10 +759,10 @@ export function TobaccoProductRows({
   const addProductOfType = (type: string) => {
     if (!canAddProduct) return;
     onChange([
-      ...products,
       createTobaccoProduct(type, {
         ...(type === "other" && catalog === "smoking" ? { perDayUnit: "other" } : {}),
       }),
+      ...products,
     ]);
   };
 

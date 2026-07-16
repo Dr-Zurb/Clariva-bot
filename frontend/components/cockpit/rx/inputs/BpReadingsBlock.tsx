@@ -214,7 +214,7 @@ function BpMethodInlineSelect({
 }) {
   const methodMinCh = vitalSelectMinWidthCh(BP_METHOD_OPTIONS, "Method");
   return (
-    <div className="flex shrink-0 items-center gap-1" data-testid="bp-method-select">
+    <div className="flex min-w-0 max-w-full items-center gap-1" data-testid="bp-method-select">
       <label htmlFor="bp-block-method" className="shrink-0 text-[11px] text-muted-foreground">
         Method
       </label>
@@ -222,8 +222,8 @@ function BpMethodInlineSelect({
         id="bp-block-method"
         value={method ?? ""}
         onChange={(e) => onMethodChange((e.target.value || "auto_upper_arm") as BpMethod)}
-        className={cn(RX_FIELD_INPUT_CLASS, "mt-0 h-7 w-auto max-w-full py-1 text-xs")}
-        style={{ minWidth: `${methodMinCh}ch` }}
+        className={cn(RX_FIELD_INPUT_CLASS, "mt-0 h-7 min-w-0 max-w-full flex-1 py-1 text-xs")}
+        style={{ maxWidth: "100%", width: `min(100%, ${methodMinCh}ch)` }}
         aria-label="BP measurement method"
       >
         {BP_METHOD_OPTIONS.map((option) => (
@@ -256,7 +256,7 @@ function BpReadingInlineSelect<T extends string>({
   minWidthCh: number;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-1">
+    <div className="flex min-w-0 max-w-full items-center gap-1">
       <label htmlFor={id} className="shrink-0 text-[11px] text-muted-foreground">
         {label}
       </label>
@@ -264,8 +264,8 @@ function BpReadingInlineSelect<T extends string>({
         id={id}
         value={value ?? ""}
         onChange={(e) => onChange((e.target.value || null) as T | null)}
-        className={cn(RX_FIELD_INPUT_CLASS, "mt-0 h-7 w-auto max-w-full py-1 text-xs")}
-        style={{ minWidth: `${minWidthCh}ch` }}
+        className={cn(RX_FIELD_INPUT_CLASS, "mt-0 h-7 min-w-0 max-w-full flex-1 py-1 text-xs")}
+        style={{ maxWidth: "100%", width: `min(100%, ${minWidthCh}ch)` }}
         aria-label={ariaLabel}
       >
         <option value="">{placeholder}</option>
@@ -303,7 +303,7 @@ function BpReadingRowOverride({
       )}
       data-testid="bp-reading-context-override"
     >
-      <div className="flex min-w-[8rem] flex-col gap-1">
+      <div className="flex min-w-0 flex-col gap-1">
         <span className="text-[11px] font-medium text-muted-foreground">Measured by</span>
         <BpReadingOverrideSelect
           value={reading.measuredBy}
@@ -312,10 +312,10 @@ function BpReadingRowOverride({
           onChange={(measuredBy) => onChange({ ...reading, measuredBy })}
           options={BP_MEASURED_BY_OPTIONS}
           ariaLabel="Reading measured by override"
-          className="w-full min-w-[8rem]"
+          className="w-full min-w-0"
         />
       </div>
-      <div className="flex min-w-[8rem] flex-col gap-1">
+      <div className="flex min-w-0 flex-col gap-1">
         <span className="text-[11px] font-medium text-muted-foreground">Method</span>
         <BpReadingOverrideSelect
           value={reading.method}
@@ -324,10 +324,10 @@ function BpReadingRowOverride({
           onChange={(method) => onChange({ ...reading, method })}
           options={BP_METHOD_OPTIONS}
           ariaLabel="Reading method override"
-          className="w-full min-w-[8rem]"
+          className="w-full min-w-0"
         />
       </div>
-      <div className="flex min-w-[8rem] flex-col gap-1">
+      <div className="flex min-w-0 flex-col gap-1">
         <span className="text-[11px] font-medium text-muted-foreground">Setting</span>
         <BpReadingOverrideSelect
           value={reading.setting}
@@ -336,7 +336,7 @@ function BpReadingRowOverride({
           onChange={(setting) => onChange({ ...reading, setting })}
           options={BP_SETTING_OPTIONS}
           ariaLabel="Reading setting override"
-          className="w-full min-w-[8rem]"
+          className="w-full min-w-0"
         />
       </div>
     </div>
@@ -458,7 +458,7 @@ function BpReadingRow({
       data-testid={`bp-reading-row-${index}`}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex shrink-0 flex-nowrap items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <BpNumberInput
             value={reading.systolic}
             onChange={(systolic) => onChange({ ...reading, systolic })}
@@ -718,7 +718,7 @@ export function BpReadingsBlock({ ghost, sparklineFor, rangeCtx }: BpReadingsBlo
       data-bp-grid-span={readings.length > 1 ? "full" : "unit"}
     >
       <div className={VITAL_CLUSTER_CELL_CLASS}>
-      <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
         <span className={RX_FIELD_LABEL_CLASS}>Blood pressure (mmHg)</span>
         <VitalRangeHelp
           kind="bp"

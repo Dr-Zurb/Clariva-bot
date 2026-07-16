@@ -45,11 +45,26 @@ describe("AssessmentStrip", () => {
     expect(screen.getByLabelText(/working dx/i)).toBeDisabled();
   });
 
+  it("shows DDx as a read-only glance (asmt-05 — no chip editor)", () => {
+    renderWithRxForm(
+      <AssessmentStrip state="live" />,
+      {
+        ...createEmptyRxFormFields(),
+        provisionalDiagnosis: "URI",
+        differentialDiagnosis: ["Pneumonia"],
+      },
+    );
+    expect(screen.getByText("Pneumonia")).toBeInTheDocument();
+    expect(screen.getByTestId("assessment-strip-ddx-glance")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /differential/i })).not.toBeInTheDocument();
+  });
+
   it("hides DDx add affordance when state is ended", () => {
     renderWithRxForm(
       <AssessmentStrip state="ended" />,
       {
         ...createEmptyRxFormFields(),
+        provisionalDiagnosis: "URI",
         differentialDiagnosis: ["Pneumonia"],
       },
     );

@@ -148,7 +148,7 @@ function GlucoseInlineSelect<T extends string>({
   minWidthCh: number;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-1">
+    <div className="flex min-w-0 max-w-full items-center gap-1">
       <label htmlFor={id} className="shrink-0 text-[11px] text-muted-foreground">
         {label}
       </label>
@@ -158,9 +158,9 @@ function GlucoseInlineSelect<T extends string>({
         onChange={(e) => onChange((e.target.value || null) as T | null)}
         className={cn(
           RX_FIELD_INPUT_CLASS,
-          "mt-0 h-7 w-auto max-w-full shrink-0 py-1 text-xs",
+          "mt-0 h-7 min-w-0 max-w-full flex-1 py-1 text-xs",
         )}
-        style={{ minWidth: `${minWidthCh}ch` }}
+        style={{ maxWidth: "100%", width: `min(100%, ${minWidthCh}ch)` }}
         aria-label={ariaLabel}
       >
         <option value="">{placeholder}</option>
@@ -203,7 +203,7 @@ function GlucoseOverrideSelect<T extends string>({
         }
         onChange(raw as T);
       }}
-      className={cn(RX_FIELD_INPUT_CLASS, "mt-0 h-8 w-full min-w-[8rem] text-xs")}
+      className={cn(RX_FIELD_INPUT_CLASS, "mt-0 h-8 w-full min-w-0 text-xs")}
       aria-label={ariaLabel}
     >
       <option value="">{defaultLabel}</option>
@@ -266,7 +266,7 @@ function GlucoseReadingContextFields({
     <div
       className={cn(
         "grid gap-2",
-        variant === "popover" ? "sm:grid-cols-1" : "sm:grid-cols-2",
+        variant === "popover" ? "grid-cols-1" : "grid-cols-1 @[18rem]/vitals:grid-cols-2",
       )}
       data-testid="glucose-reading-context-override"
     >
@@ -491,7 +491,7 @@ function GlucoseReadingRow({
       data-testid={`glucose-reading-row-${index}`}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex shrink-0 flex-nowrap items-center gap-1.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <input
             type="number"
             inputMode="decimal"
@@ -712,7 +712,7 @@ export function GlucoseReadingsBlock({
       data-glucose-grid-span={readings.length > 1 ? "full" : "unit"}
     >
       <div className={VITAL_CLUSTER_CELL_CLASS}>
-        <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <span className={RX_FIELD_LABEL_CLASS}>Blood glucose</span>
           <VitalRangeHelp
             kind="glucose"

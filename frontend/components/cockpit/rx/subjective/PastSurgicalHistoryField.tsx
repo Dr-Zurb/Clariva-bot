@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { CollapsibleContainer } from "@/components/ui/CollapsibleContainer";
+import {
+  resolveSubjectiveSectionIcon,
+  sectionHeaderIcon,
+} from "@/components/cockpit/rx/sections/section-chrome";
+import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import { SectionReorderLeadingAction } from "@/components/cockpit/rx/subjective/SortableSectionShell";
 import { RemoveIconButton } from "@/components/cockpit/rx/subjective/RemoveIconButton";
 import {
@@ -40,6 +45,7 @@ import {
 import { RX_FIELD_INPUT_CLASS } from "@/components/cockpit/rx/sections/field-styles";
 import { HistorySubsection } from "@/components/ehr/chart/HistorySubsection";
 import { SubjectiveSectionTemplateButton } from "@/components/cockpit/rx/subjective/SubjectiveSectionTemplateButton";
+import { useDepthToneSurface } from "@/components/ui/sticky-stack";
 import { cn } from "@/lib/utils";
 
 const CHIP_CLASS =
@@ -118,9 +124,9 @@ function ProcedureCombobox({
   }, [rows.length, highlighted]);
 
   const finishCommit = useCallback(() => {
-    setOpen(false);
     setQuery("");
     setHighlighted(0);
+    setOpen(false);
   }, []);
 
   const commitRow = useCallback(
@@ -224,6 +230,9 @@ function ProcedureCombobox({
         }}
         onFocus={() => {
           if (!disabled) setOpen(true);
+        }}
+        onClick={() => {
+          if (!disabled && !atMax) setOpen(true);
         }}
         onKeyDown={onKeyDown}
         className={cn(
@@ -378,6 +387,8 @@ export interface PastSurgicalHistoryFieldProps {
   sectionOpen?: boolean;
   onSectionOpenChange?: (open: boolean) => void;
   scrollOnExpand?: boolean;
+  /** Close-scroll target — tab root for L1, parent zone for nested subsection. */
+  closeScrollToSelector?: string;
   /** When false, header does not pin (e.g. nested inside Patient background). */
   stickyHeader?: boolean;
   /** Stack beneath an ancestor sticky header (Patient background zone). */
@@ -393,6 +404,7 @@ export function PastSurgicalHistoryField({
   sectionOpen,
   onSectionOpenChange,
   scrollOnExpand = false,
+  closeScrollToSelector,
   stickyHeader = true,
   nestedSticky = false,
   variant = nestedSticky ? "subsection" : "section",
@@ -420,11 +432,22 @@ export function PastSurgicalHistoryField({
     onChange(addPastSurgicalOtherProcedure(value, payload.text));
   };
 
+  const tone = useDepthToneSurface();
+
   return (
     <CollapsibleContainer
       title="Past surgical history"
+      sectionIcon={
+        variant === "section"
+          ? sectionHeaderIcon(resolveSubjectiveSectionIcon("past_surgical")!)
+          : undefined
+      }
       toggleLabel="Toggle Past surgical history"
       scrollOnExpand={scrollOnExpand}
+      closeScrollToSelector={
+        closeScrollToSelector ??
+        (variant === "section" ? SUBJECTIVE_SCROLL_TOP_SELECTOR : undefined)
+      }
       stickyHeader={stickyHeader}
       nestedSticky={nestedSticky}
       variant={variant}
@@ -436,6 +459,7 @@ export function PastSurgicalHistoryField({
       count={pastSurgicalHistoryFilledCount(value)}
       open={sectionOpen}
       onOpenChange={onSectionOpenChange}
+      depthTone={variant === "section"}
       defaultOpen={
         sectionOpen === undefined ? hasPastSurgicalHistoryStructuredContent(value) : undefined
       }
@@ -504,7 +528,10 @@ export function PastSurgicalHistoryField({
 
             {entries.length > 0 && (
               <div
-                className="space-y-2 border-l-2 border-primary/20 pl-2"
+                className={cn(
+                  "space-y-2 pl-2",
+                  tone.active ? "border-l border-border/40" : "border-l-2 border-primary/20",
+                )}
                 data-testid="past-surgical-procedure-rows"
               >
                 {entries.map((entry) => (

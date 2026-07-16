@@ -51,6 +51,7 @@ import type {
   UpdatePatientConditionPayload,
   UpdatePatientMedicationPayload,
   UpdateMedicalBackgroundNotesPayload,
+  UpdateAllergySectionNotesPayload,
   UpdatePatientVitalsPayload,
   VitalsData,
   VitalsListData,
@@ -2892,8 +2893,10 @@ export interface PublicPrescriptionData {
     hopi: string | null;
     provisional_diagnosis: string | null;
     investigations: string | null;
+    advice: string | null;
     follow_up: string | null;
     patient_education: string | null;
+    referral: string | null;
     sent_to_patient_at: string | null;
     created_at: string;
     prescription_medicines: PrescriptionMedicine[];
@@ -2913,6 +2916,13 @@ export interface PublicPrescriptionData {
   };
   /** Fresh ~24h signed URL (re-minted on every visit). May be null when render fails. */
   signed_pdf_url: string | null;
+  /** Advice-tagged handouts with short-lived signed download URLs. */
+  advice_handouts?: Array<{
+    id: string;
+    file_type: string;
+    label: string;
+    download_url: string;
+  }>;
   /** ISO timestamp the share-token expires. */
   token_expires_at: string | null;
 }
@@ -3189,10 +3199,15 @@ export async function updatePrescription(
 export async function getPrescriptionUploadUrl(
   token: string,
   prescriptionId: string,
-  // `category: "objective" | "subjective"` (obj-22 / sdp-02) tags the upload via a storage
+  // `category: "objective" | "subjective" | "advice"` tags the upload via a storage
   // path segment — same bucket/RLS, no new column. Omitted = legacy photo-Rx attachment.
   // `complaintId` pins subjective media to a complaint folder (opaque segment, P2-D2).
-  body: { filename?: string; contentType?: string; category?: "objective" | "subjective"; complaintId?: string }
+  body: {
+    filename?: string;
+    contentType?: string;
+    category?: "objective" | "subjective" | "advice";
+    complaintId?: string;
+  }
 ): Promise<ApiSuccess<CreateUploadUrlData>> {
   const res = await fetch(
     `${requireApiBaseUrl()}/api/v1/prescriptions/${prescriptionId}/attachments/upload-url`,
@@ -3498,6 +3513,19 @@ export async function listPatientAllergies(
   return request<AllergiesListData>(
     `/api/v1/patients/${encodeURIComponent(patientId)}/chart/allergies`,
     { token },
+  );
+}
+
+export async function updatePatientAllergySectionNotes(
+  token: string,
+  patientId: string,
+  payload: UpdateAllergySectionNotesPayload,
+): Promise<ApiSuccess<{ notes: string | null }>> {
+  return patientChartMutate<{ notes: string | null }>(
+    "PATCH",
+    `/api/v1/patients/${encodeURIComponent(patientId)}/chart/allergies/notes`,
+    token,
+    payload,
   );
 }
 

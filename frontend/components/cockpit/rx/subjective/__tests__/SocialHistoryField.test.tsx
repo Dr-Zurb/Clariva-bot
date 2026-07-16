@@ -87,16 +87,62 @@ describe("SocialHistoryField", () => {
     ]) {
       expect(screen.getByTestId(testId)).toBeInTheDocument();
     }
-    // Expand the enclosing cluster so the nested section toggles are visible.
-    fireEvent.click(
-      screen.getByRole("button", { name: "Toggle tobacco, alcohol and drugs cluster" }),
-    );
+    // Substance cluster opens by default (accordion fallback); nested cards are in the DOM.
     for (const label of [
       "Toggle smoking",
       "Toggle smokeless tobacco",
       "Toggle alcohol",
       "Toggle substances",
     ]) {
+      expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
+    }
+  });
+
+  it("renders lifestyle subsections as collapsible section cards", () => {
+    renderField({});
+    fireEvent.click(screen.getByRole("button", { name: "Toggle lifestyle cluster" }));
+    for (const testId of [
+      "social-diet-card",
+      "social-caffeine-card",
+      "social-activity-card",
+    ]) {
+      expect(screen.getByTestId(testId)).toBeInTheDocument();
+    }
+    for (const label of ["Toggle diet", "Toggle caffeine", "Toggle physical activity"]) {
+      expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
+    }
+  });
+
+  it("renders work, home and exposure subsections as collapsible section cards", () => {
+    renderField({});
+    fireEvent.click(
+      screen.getByRole("button", { name: "Toggle work, home and exposure cluster" }),
+    );
+    for (const testId of [
+      "social-occupation-card",
+      "social-living-card",
+      "social-travel-card",
+      "social-sick-contact-card",
+    ]) {
+      expect(screen.getByTestId(testId)).toBeInTheDocument();
+    }
+    for (const label of [
+      "Toggle occupation",
+      "Toggle living situation",
+      "Toggle travel",
+      "Toggle sick contact",
+    ]) {
+      expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
+    }
+  });
+
+  it("renders sleep and stress subsections as collapsible section cards", () => {
+    renderField({});
+    fireEvent.click(screen.getByRole("button", { name: "Toggle sleep and stress cluster" }));
+    for (const testId of ["social-sleep-card", "social-stress-card"]) {
+      expect(screen.getByTestId(testId)).toBeInTheDocument();
+    }
+    for (const label of ["Toggle sleep", "Toggle stress"]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
   });
@@ -656,6 +702,7 @@ describe("SocialHistoryField phase-2 lifestyle + context (sh-06)", () => {
     fireEvent.click(screen.getByTestId("social-caffeine-add-tea"));
     expect(screen.getByTestId("social-caffeine-details")).toBeInTheDocument();
 
+    openEntryCard("social-caffeine-item-0");
     fireEvent.change(screen.getByLabelText("Caffeine amount"), { target: { value: "2" } });
     expect(screen.getByLabelText("Caffeine amount")).toHaveValue(2);
   });
@@ -671,6 +718,7 @@ describe("SocialHistoryField phase-2 lifestyle + context (sh-06)", () => {
 
     fireEvent.click(screen.getByTestId("social-caffeine-status-current"));
     fireEvent.click(screen.getByTestId("social-caffeine-add-coffee"));
+    openEntryCard("social-caffeine-item-0");
     fireEvent.change(screen.getByTestId("social-caffeine-item-0-frequency-unit"), {
       target: { value: "occasional" },
     });
@@ -701,6 +749,7 @@ describe("SocialHistoryField phase-2 lifestyle + context (sh-06)", () => {
 
     render(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "Toggle Social / personal history" }));
+    openEntryCard("social-caffeine-item-0");
     fireEvent.click(
       screen.getByTestId("social-diet-type").querySelector('button[aria-pressed="true"]')!,
     );
@@ -750,6 +799,7 @@ describe("SocialHistoryField phase-2 lifestyle + context (sh-06)", () => {
     render(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "Toggle Social / personal history" }));
     fireEvent.click(screen.getByRole("button", { name: "Toggle work, home and exposure cluster" }));
+    fireEvent.click(screen.getByRole("button", { name: "Toggle travel" }));
     expect(screen.queryByTestId("social-travel-details")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Recent travel" }));
@@ -770,6 +820,7 @@ describe("SocialHistoryField phase-2 lifestyle + context (sh-06)", () => {
     render(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "Toggle Social / personal history" }));
     fireEvent.click(screen.getByRole("button", { name: "Toggle work, home and exposure cluster" }));
+    fireEvent.click(screen.getByRole("button", { name: "Toggle sick contact" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Recent sick contact" }));
     expect(screen.getByTestId("social-sick-contact-details")).toBeInTheDocument();
@@ -842,6 +893,7 @@ describe("SocialHistoryField phase-2 wellbeing + sexual (sh-07)", () => {
     render(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "Toggle Social / personal history" }));
     fireEvent.click(screen.getByRole("button", { name: "Toggle sleep and stress cluster" }));
+    fireEvent.click(screen.getByRole("button", { name: "Toggle stress" }));
 
     fireEvent.click(
       screen.getByTestId("social-stress-level").querySelector('button[aria-label="High"]')!,
@@ -1107,5 +1159,38 @@ describe("SET_SOCIAL_HISTORY_STRUCTURED reducer", () => {
     expect(screen.getByTestId("social-smoking-pack-years")).toHaveAttribute("aria-live", "polite");
     expect(screen.getByTestId("social-alcohol-cage-score")).toHaveAttribute("aria-live", "polite");
     expect(screen.getByTestId("social-alcohol-audit-c-score")).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("accordion: opening one L2 cluster closes sibling clusters", () => {
+    renderField({});
+
+    const substance = screen.getByRole("button", {
+      name: /Toggle tobacco, alcohol and drugs cluster/i,
+    });
+    const lifestyle = screen.getByRole("button", { name: /Toggle lifestyle cluster/i });
+
+    expect(substance).toHaveAttribute("aria-expanded", "true");
+    expect(lifestyle).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(lifestyle);
+    expect(lifestyle).toHaveAttribute("aria-expanded", "true");
+    expect(substance).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("accordion: opening one L3 card closes siblings within the substance cluster", () => {
+    renderField({
+      smoking: { status: "current", products: [] },
+      alcohol: { status: "current", drinks: [] },
+    });
+
+    const smoking = screen.getByRole("button", { name: /^Toggle smoking$/i });
+    const alcohol = screen.getByRole("button", { name: /^Toggle alcohol$/i });
+
+    expect(smoking).toHaveAttribute("aria-expanded", "true");
+    expect(alcohol).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(alcohol);
+    expect(alcohol).toHaveAttribute("aria-expanded", "true");
+    expect(smoking).toHaveAttribute("aria-expanded", "false");
   });
 });

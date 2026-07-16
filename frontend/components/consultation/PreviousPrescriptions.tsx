@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { listPrescriptionsByPatient, getPrescriptionDownloadUrl } from "@/lib/api";
 import type { PrescriptionWithRelations } from "@/types/prescription";
+import { resolveFollowUpForOutput } from "@/lib/cockpit/follow-up-format";
 import PrescriptionPastActionsKebab from "./PrescriptionPastActionsKebab";
 import { formatDate as formatDatePinned } from "@/lib/format-date";
 
@@ -126,6 +127,11 @@ export default function PreviousPrescriptions({
           const diagnosis = rx.provisional_diagnosis
             ? rx.provisional_diagnosis.slice(0, 60) + (rx.provisional_diagnosis.length > 60 ? "…" : "")
             : null;
+          const followUp = resolveFollowUpForOutput(
+            rx.follow_up,
+            rx.follow_up_value,
+            rx.follow_up_unit,
+          );
           return (
             <li
               key={rx.id}
@@ -210,10 +216,10 @@ export default function PreviousPrescriptions({
                       </ul>
                     </div>
                   )}
-                  {rx.follow_up && (
+                  {followUp && (
                     <div>
                       <span className="font-medium text-gray-600">Follow-up: </span>
-                      <span className="text-gray-800">{rx.follow_up}</span>
+                      <span className="text-gray-800">{followUp}</span>
                     </div>
                   )}
                   {(rx.prescription_attachments?.length ?? 0) > 0 && (

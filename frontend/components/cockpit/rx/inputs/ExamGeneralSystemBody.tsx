@@ -3,8 +3,8 @@
 import { useCallback, useState } from "react";
 import { ChevronUp } from "lucide-react";
 import {
-  reAnchorExamGeneralFindingCardOnClose,
   scrollExamGeneralFindingCardIntoView,
+  scrollExamSubsectionIntoView,
 } from "@/lib/cockpit/exam-card-scroll";
 import { ExamGeneralFindingCard } from "@/components/cockpit/rx/inputs/ExamGeneralFindingCard";
 import {
@@ -16,16 +16,21 @@ import {
 } from "@/components/cockpit/rx/inputs/ExamSubsectionCollapsible";
 import {
   GENERAL_EXAM_SUBSECTIONS,
+  generalSubsectionNotesFindingId,
   listGeneralExamFindingsForSubsection,
+  resolveGeneralExamFinding,
 } from "@/lib/cockpit/general-exam-finding-schema";
 import {
+  createEmptyFindingEntry,
   findingEntryHasAttributes,
   findExamFindingEntry,
   generalFindingEntryPreview,
+  patchFindingEntryAttributes,
 } from "@/lib/cockpit/exam-finding-utils";
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import {
   RX_EXAM_ADDITIONAL_NOTES_LABEL,
+  RX_EXAM_FIELD_LABEL_BLOCK_CLASS,
   RX_EXAM_SUBSECTION_HEADING_CLASS,
   RX_FIELD_INPUT_CLASS,
 } from "@/components/cockpit/rx/sections/field-styles";
@@ -43,9 +48,14 @@ import { cn } from "@/lib/utils";
 import { ExamSystemStatusToolbar } from "@/components/cockpit/rx/inputs/ExamSystemStatusToolbar";
 import { resolveExamCardStatus } from "@/components/cockpit/rx/inputs/ExamSystemCard";
 
-/** Finding-card ids grouped under a General subsection. */
+/** Finding-card ids grouped under a General subsection (cards + subsection notes row). */
 function generalSubsectionOwnedFindingIds(subsection: { id: string }): Set<string> {
-  return new Set(listGeneralExamFindingsForSubsection(subsection.id).map((d) => d.findingId));
+  const ids = new Set(
+    listGeneralExamFindingsForSubsection(subsection.id).map((d) => d.findingId),
+  );
+  const notesId = generalSubsectionNotesFindingId(subsection.id);
+  if (notesId) ids.add(notesId);
+  return ids;
 }
 
 function generalSubsectionScrollKey(subsectionId: string): string {
@@ -79,22 +89,34 @@ export function ExamGeneralSystemBody({
   // is inert here — order + tags are unchanged from in-clinic.
   const orderedSubsections = orderSubsectionsForModality(GENERAL_EXAM_SUBSECTIONS, isTele);
 
-  // General groups finding cards by subsection. obj-32 keeps every card visible, so
-  // all subsections start expanded; the doctor can still collapse a group manually.
-  const { isOpen: isSubsectionOpen, toggle: toggleSubsection } = useExamSubsectionOpenState({
+  // General groups finding cards by subsection. Accordion: one subsection open
+  // at a time (manual toggle); expand-all opens every group for survey mode.
+  const {
+    isOpen: isSubsectionOpen,
+    toggle: toggleSubsection,
+    expandAll: expandAllSubsections,
+    collapseAll: collapseAllSubsections,
+  } = useExamSubsectionOpenState({
+    systemId: "general",
     subsections: GENERAL_EXAM_SUBSECTIONS,
     initialEntries: finding?.findings ?? [],
     ownedFindingIds: generalSubsectionOwnedFindingIds,
     scrollKeyFor: generalSubsectionScrollKey,
-    initialExtraOpenIds: GENERAL_EXAM_SUBSECTIONS.map((s) => s.id),
+    fallbackOpenIds: GENERAL_EXAM_SUBSECTIONS[0] ? [GENERAL_EXAM_SUBSECTIONS[0].id] : [],
   });
 
   // Open → glide the finding card under both sticky headers concurrently with the
   // expand; close → keep it put unless it scrolled above the sticky line.
   const setFindingOpen = useCallback((findingId: string, open: boolean) => {
     setOpenFindingId(open ? findingId : null);
-    if (open) scrollExamGeneralFindingCardIntoView(findingId);
-    else reAnchorExamGeneralFindingCardOnClose(findingId);
+    if (open) {
+      scrollExamGeneralFindingCardIntoView(findingId);
+      return;
+    }
+    const def = resolveGeneralExamFinding(findingId);
+    if (def) {
+      scrollExamSubsectionIntoView(generalSubsectionScrollKey(def.subsectionId));
+    }
   }, []);
 
   function commit(nextEntries: ExamFindingEntry[], notes: string | null) {
@@ -174,6 +196,19 @@ export function ExamGeneralSystemBody({
     });
   }
 
+  function setSubsectionNotes(notesFindingId: string, notes: string) {
+    if (disabled) return;
+    const base =
+      findExamFindingEntry(entries, notesFindingId) ?? createEmptyFindingEntry(notesFindingId);
+    upsertEntry(patchFindingEntryAttributes(base, { notes }));
+  }
+
+  function subsectionNotesValue(subsectionId: string): string {
+    const notesFindingId = generalSubsectionNotesFindingId(subsectionId);
+    if (!notesFindingId) return "";
+    return findExamFindingEntry(entries, notesFindingId)?.attributes?.notes ?? "";
+  }
+
   return (
     <div className="space-y-2.5" data-testid="exam-general-system-body">
       <ExamSystemStatusToolbar
@@ -183,6 +218,8 @@ export function ExamGeneralSystemBody({
         disabled={disabled}
         onMarkNormal={markNormal}
         onClear={clearSection}
+        onExpandAllSubsections={showFindingCards ? expandAllSubsections : undefined}
+        onCollapseAllSubsections={showFindingCards ? collapseAllSubsections : undefined}
       />
 
       {showFindingCards ? (
@@ -202,6 +239,7 @@ export function ExamGeneralSystemBody({
             const teleconsultNote = isTele
               ? resolveExamSubsectionTeleconsultNote("general", subsection.id)
               : undefined;
+            const notesFindingId = generalSubsectionNotesFindingId(subsection.id);
 
             return (
               <ExamSubsectionCollapsible
@@ -226,7 +264,7 @@ export function ExamGeneralSystemBody({
                     {teleconsultNote}
                   </p>
                 ) : null}
-                <div className="mt-2 divide-y divide-border/45">
+                <div className="mt-2 space-y-0.5">
                   {defs.map((def) => (
                     <ExamGeneralFindingCard
                       key={def.findingId}
@@ -245,6 +283,29 @@ export function ExamGeneralSystemBody({
                     />
                   ))}
                 </div>
+                {notesFindingId ? (
+                  <div className="mt-2 border-t border-border/45 pt-2">
+                    <label
+                      htmlFor={`general-${subsection.id}-notes`}
+                      className={RX_EXAM_FIELD_LABEL_BLOCK_CLASS}
+                    >
+                      Notes
+                    </label>
+                    <input
+                      id={`general-${subsection.id}-notes`}
+                      type="text"
+                      value={subsectionNotesValue(subsection.id)}
+                      onChange={(event) =>
+                        setSubsectionNotes(notesFindingId, event.target.value)
+                      }
+                      disabled={disabled}
+                      className={cn(RX_FIELD_INPUT_CLASS, "mt-1")}
+                      placeholder="Optional detail"
+                      maxLength={500}
+                      data-testid={`general-${subsection.id}-notes`}
+                    />
+                  </div>
+                ) : null}
               </ExamSubsectionCollapsible>
             );
           })}

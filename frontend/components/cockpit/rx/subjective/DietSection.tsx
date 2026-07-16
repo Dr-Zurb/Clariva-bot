@@ -20,6 +20,7 @@ interface DietSectionProps {
   value: SocialHistoryStructured;
   disabled?: boolean;
   inputIdPrefix: string;
+  hideLabel?: boolean;
   onChange: (next: SocialHistoryStructured) => void;
 }
 
@@ -30,7 +31,13 @@ function patchDiet(
   return setDiet(structured, patch);
 }
 
-export function DietSection({ value, disabled, inputIdPrefix, onChange }: DietSectionProps) {
+export function DietSection({
+  value,
+  disabled,
+  inputIdPrefix,
+  hideLabel = false,
+  onChange,
+}: DietSectionProps) {
   const diet = useMemo(() => normalizeDietSection(value.diet), [value.diet]);
   const hints = dietClinicalHints(diet);
 
@@ -47,16 +54,16 @@ export function DietSection({ value, disabled, inputIdPrefix, onChange }: DietSe
     }
 
     updateDiet({
-      ...diet,
+      ...(diet ?? {}),
       type,
-      typeOther: type === "other" ? diet?.typeOther : undefined,
+      typeOther: undefined,
     });
   };
 
   return (
     <section className="space-y-2" aria-label="Diet">
       <div className="space-y-1.5" data-testid="social-diet-type">
-        <p className="text-xs font-medium text-foreground/80">Diet</p>
+        {!hideLabel ? <p className="text-xs font-medium text-foreground/80">Diet</p> : null}
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Diet">
           {DIET_TYPE_OPTIONS.map((option) => {
             const isSelected = diet?.type === option.value;
@@ -82,60 +89,30 @@ export function DietSection({ value, disabled, inputIdPrefix, onChange }: DietSe
         </div>
       </div>
 
-      {diet?.type && (
-        <div
-          className="space-y-2 rounded-md border border-border/50 bg-background/60 px-2.5 py-2"
-          data-testid="social-diet-details"
+      <div className="space-y-1" data-testid="social-diet-notes-field">
+        <label
+          htmlFor={`${inputIdPrefix}-diet-notes`}
+          className="text-xs font-medium text-foreground/80"
         >
-          {diet.type === "other" ? (
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <input
-                type="text"
-                value={diet.typeOther ?? ""}
-                disabled={disabled}
-                placeholder="Specify diet"
-                aria-label="Other diet type"
-                data-testid="social-diet-type-other"
-                onChange={(e) =>
-                  updateDiet({
-                    ...diet,
-                    typeOther: e.target.value === "" ? undefined : e.target.value,
-                  })
-                }
-                className={cn(
-                  RX_FIELD_INPUT_CLASS,
-                  "h-8 min-w-[6rem] max-w-[12rem] px-2 py-1 text-xs font-semibold",
-                )}
-              />
-            </div>
-          ) : null}
-
-          <div className="space-y-1">
-            <label
-              htmlFor={`${inputIdPrefix}-diet-notes`}
-              className="text-xs font-medium text-foreground/80"
-            >
-              Notes (optional)
-            </label>
-            <input
-              id={`${inputIdPrefix}-diet-notes`}
-              type="text"
-              disabled={disabled}
-              value={diet.notes ?? ""}
-              maxLength={200}
-              placeholder="Allergies, fasting, restrictions…"
-              data-testid="social-diet-notes"
-              onChange={(e) =>
-                updateDiet({
-                  ...diet,
-                  notes: e.target.value.trim() || undefined,
-                })
-              }
-              className={cn(RX_FIELD_INPUT_CLASS, "h-8 text-xs")}
-            />
-          </div>
-        </div>
-      )}
+          Notes (optional)
+        </label>
+        <input
+          id={`${inputIdPrefix}-diet-notes`}
+          type="text"
+          disabled={disabled}
+          value={diet?.notes ?? ""}
+          maxLength={200}
+          placeholder="E.g. eats twice a day, multiple small meals…"
+          data-testid="social-diet-notes"
+          onChange={(e) =>
+            updateDiet({
+              ...(diet ?? {}),
+              notes: e.target.value.trim() || undefined,
+            })
+          }
+          className={cn(RX_FIELD_INPUT_CLASS, "h-8 text-xs")}
+        />
+      </div>
 
       {hints.length > 0 && (
         <div className="space-y-1" data-testid="social-diet-hints" role="status">

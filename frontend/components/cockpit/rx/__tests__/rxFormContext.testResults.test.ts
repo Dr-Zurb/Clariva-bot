@@ -31,6 +31,10 @@ const HBA1C: TestResultRow = {
   date: "2026-06-10",
   interpretation: "high",
   notes: "fasting",
+  reportId: null,
+  refLow: null,
+  refHigh: null,
+  refText: null,
 };
 
 const RBS: TestResultRow = {
@@ -42,6 +46,10 @@ const RBS: TestResultRow = {
   date: null,
   interpretation: null,
   notes: null,
+  reportId: null,
+  refLow: null,
+  refHigh: null,
+  refText: null,
 };
 
 describe("buildRxPayload test-results derivation (OBJ-D2)", () => {
@@ -88,12 +96,13 @@ describe("rxFormReducer test-results actions (obj-20)", () => {
     expect(state.isDirty).toBe(true);
 
     state = rxFormReducer(state, { type: "ADD_TEST_RESULT", row: RBS });
+    expect(state.fields.testResultsStructured.map((r) => r.id)).toEqual(["r2", "r1"]);
     state = rxFormReducer(state, {
       type: "UPDATE_TEST_RESULT",
       id: "r1",
       patch: { value: "8.1", interpretation: "abnormal" },
     });
-    expect(state.fields.testResultsStructured[0]).toMatchObject({
+    expect(state.fields.testResultsStructured.find((r) => r.id === "r1")).toMatchObject({
       id: "r1",
       value: "8.1",
       interpretation: "abnormal",
@@ -112,6 +121,28 @@ describe("rxFormReducer test-results actions (obj-20)", () => {
       ],
     });
     expect(state.fields.testResultsStructured.map((r) => r.id)).toEqual(["r2"]);
+  });
+  it("adds a panel via ADD_LAB_PANEL and collapses rows on REMOVE_LAB_REPORT", () => {
+    let state = rxFormReducer(baseState(), {
+      type: "ADD_LAB_PANEL",
+      report: {
+        id: "rep-1",
+        kind: "lab",
+        title: "CBC",
+        reportDate: null,
+        labName: null,
+        attachmentIds: [],
+        findings: null,
+        entryMethod: "manual",
+      },
+      rows: [{ ...HBA1C, id: "r-hb", reportId: "rep-1", name: "Haemoglobin" }],
+    });
+    expect(state.fields.labReports).toHaveLength(1);
+    expect(state.fields.testResultsStructured[0]?.reportId).toBe("rep-1");
+
+    state = rxFormReducer(state, { type: "REMOVE_LAB_REPORT", id: "rep-1" });
+    expect(state.fields.labReports).toEqual([]);
+    expect(state.fields.testResultsStructured[0]?.reportId).toBeNull();
   });
 });
 

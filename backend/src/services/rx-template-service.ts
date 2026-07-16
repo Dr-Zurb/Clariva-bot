@@ -31,6 +31,8 @@ import {
   RxTemplateAllergies,
   RxTemplateMedicine,
   RxTemplateObjective,
+  RxTemplatePlan,
+  RxTemplateAssessment,
   RxTemplatePmh,
   RxTemplateScope,
   RxTemplateSubjective,
@@ -255,6 +257,143 @@ function normalizeObjective(input: RxTemplateObjective | undefined): RxTemplateO
 }
 
 /**
+ * Defensive sanitiser for the Plan preset (`plan_json`). Only keys present in
+ * the input are emitted; strings trimmed-or-nulled; specialties de-duped and
+ * trimmed. Config, not PHI.
+ */
+function normalizePlan(input: RxTemplatePlan | undefined): RxTemplatePlan {
+  if (!input || typeof input !== 'object') return {};
+
+  const trimOrNull = (v: unknown): string | null => {
+    if (typeof v !== 'string') return null;
+    const trimmed = v.trim();
+    return trimmed || null;
+  };
+  const FOLLOW_UP_UNITS = new Set(['days', 'weeks', 'months', 'as_needed']);
+
+  const specialties = Array.isArray(input.referralSpecialties)
+    ? Array.from(
+        new Set(
+          input.referralSpecialties
+            .filter((s): s is string => typeof s === 'string')
+            .map((s) => s.trim())
+            .filter(Boolean),
+        ),
+      )
+    : undefined;
+
+  const followUpUnit =
+    input.followUpUnit === null
+      ? null
+      : typeof input.followUpUnit === 'string' && FOLLOW_UP_UNITS.has(input.followUpUnit)
+        ? input.followUpUnit
+        : undefined;
+
+  const followUpValue =
+    input.followUpValue === null
+      ? null
+      : typeof input.followUpValue === 'number' && Number.isFinite(input.followUpValue)
+        ? Math.floor(input.followUpValue)
+        : undefined;
+
+  return {
+    ...(input.advice !== undefined ? { advice: trimOrNull(input.advice) } : {}),
+    ...(input.followUp !== undefined ? { followUp: trimOrNull(input.followUp) } : {}),
+    ...(input.followUpValue !== undefined ? { followUpValue } : {}),
+    ...(input.followUpUnit !== undefined ? { followUpUnit } : {}),
+    ...(input.referral !== undefined ? { referral: trimOrNull(input.referral) } : {}),
+    ...(input.referralUrgency !== undefined
+      ? { referralUrgency: trimOrNull(input.referralUrgency) }
+      : {}),
+    ...(specialties !== undefined ? { referralSpecialties: specialties } : {}),
+    ...(input.referralReason !== undefined
+      ? { referralReason: trimOrNull(input.referralReason) }
+      : {}),
+    ...(input.clinicalNotes !== undefined
+      ? { clinicalNotes: trimOrNull(input.clinicalNotes) }
+      : {}),
+  };
+}
+
+/**
+ * Defensive sanitiser for the Assessment preset (`assessment_json`). Only keys
+ * present in the input are emitted; strings trimmed-or-nulled; diagnoses keep
+ * label+coding but drop chart conditionId links (config, not a patient chart
+ * snapshot). Config, not PHI.
+ */
+function normalizeAssessment(
+  input: RxTemplateAssessment | undefined,
+): RxTemplateAssessment {
+  if (!input || typeof input !== 'object') return {};
+
+  const trimOrNull = (v: unknown): string | null => {
+    if (typeof v !== 'string') return null;
+    const trimmed = v.trim();
+    return trimmed || null;
+  };
+  const ACUITY = new Set(['improving', 'stable', 'worsening']);
+
+  const assessmentAcuity =
+    input.assessmentAcuity === null
+      ? null
+      : typeof input.assessmentAcuity === 'string' && ACUITY.has(input.assessmentAcuity)
+        ? input.assessmentAcuity
+        : undefined;
+
+  const diagnoses = Array.isArray(input.diagnoses)
+    ? input.diagnoses
+        .filter(
+          (row): row is NonNullable<typeof row> =>
+            Boolean(row && typeof row === 'object' && typeof row.label === 'string' && row.label.trim()),
+        )
+        .map((row) => ({
+          id:
+            typeof row.id === 'string' && row.id.trim()
+              ? row.id.trim()
+              : randomUUID(),
+          label: row.label.trim(),
+          kind: row.kind ?? 'secondary',
+          certainty: row.certainty ?? 'provisional',
+          status: row.status ?? 'new',
+          note: trimOrNull(row.note ?? null),
+          acuity: row.acuity ?? null,
+          conditionId: null,
+          code: trimOrNull(row.code ?? null),
+          codeTitle: trimOrNull(row.codeTitle ?? null),
+        }))
+    : undefined;
+
+  const knownConditions = Array.isArray(input.knownConditions)
+    ? input.knownConditions
+        .filter(
+          (c): c is NonNullable<typeof c> =>
+            Boolean(
+              c &&
+                typeof c === 'object' &&
+                typeof c.condition === 'string' &&
+                c.condition.trim(),
+            ),
+        )
+        .map((c) => ({
+          condition: c.condition.trim(),
+          ...(c.status === 'active' || c.status === 'resolved' ? { status: c.status } : {}),
+          ...(c.note !== undefined ? { note: trimOrNull(c.note) } : {}),
+          ...(c.code !== undefined ? { code: trimOrNull(c.code) } : {}),
+          ...(c.codeTitle !== undefined ? { codeTitle: trimOrNull(c.codeTitle) } : {}),
+        }))
+    : undefined;
+
+  return {
+    ...(diagnoses !== undefined ? { diagnoses } : {}),
+    ...(input.assessmentNote !== undefined
+      ? { assessmentNote: trimOrNull(input.assessmentNote) }
+      : {}),
+    ...(assessmentAcuity !== undefined ? { assessmentAcuity } : {}),
+    ...(knownConditions !== undefined ? { knownConditions } : {}),
+  };
+}
+
+/**
  * obj-23: defensive sanitiser for structured result-row presets in a template's
  * `objective_json.testResultsJson`. Mirrors the frontend `normalizeTestResults`
  * + the Zod `testResultsJsonSchema`: drop rows with a bad `source` or empty
@@ -404,6 +543,8 @@ export async function createRxTemplate(
     medicines_json: normalizeMedicines(input.medicines),
     subjective_json: normalizeSubjective(input.subjective),
     objective_json: normalizeObjective(input.objective),
+    plan_json: normalizePlan(input.plan),
+    assessment_json: normalizeAssessment(input.assessment),
     pmh_json: normalizePmh(input.pmh),
     allergies_json: normalizeAllergies(input.allergies),
     scope: input.scope ?? 'subjective_full',
@@ -469,6 +610,10 @@ export async function updateRxTemplate(
   if (input.medicines !== undefined) patch.medicines_json = normalizeMedicines(input.medicines);
   if (input.subjective !== undefined) patch.subjective_json = normalizeSubjective(input.subjective);
   if (input.objective !== undefined) patch.objective_json = normalizeObjective(input.objective);
+  if (input.plan !== undefined) patch.plan_json = normalizePlan(input.plan);
+  if (input.assessment !== undefined) {
+    patch.assessment_json = normalizeAssessment(input.assessment);
+  }
   if (input.pmh !== undefined) patch.pmh_json = normalizePmh(input.pmh);
   if (input.allergies !== undefined) patch.allergies_json = normalizeAllergies(input.allergies);
 

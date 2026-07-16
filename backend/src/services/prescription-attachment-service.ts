@@ -36,7 +36,7 @@ const ALLOWED_MIME = [
  * and does not widen access (verify-not-widen, P2-D2). The `complaintId` is an opaque sanitized
  * folder segment — never matched against the `complaints` JSONB.
  */
-export type AttachmentCategory = 'objective' | 'subjective';
+export type AttachmentCategory = 'objective' | 'subjective' | 'advice';
 
 const COMPLAINT_ID_SEGMENT_MAX = 64;
 
@@ -107,15 +107,15 @@ export async function createUploadUrl(
   const sanitized = sanitizeFilename(filename);
   const ext = sanitized.includes('.') ? '' : getExtensionFromMime(contentType);
   const baseName = sanitized.endsWith(ext) ? sanitized : `${sanitized}${ext}`;
-  // obj-22: objective media gets a `objective/` segment under the prescription folder so the
-  // Objective media strip can filter it without a new column. sdp-02: subjective media gets a
-  // deeper `subjective/{complaintId}/` segment so a photo pins to a complaint. Other categories
-  // keep the legacy `{doctor}/{prescription}/{uuid}-{file}` shape untouched.
+  // obj-22 / sdp-02 / advice-handouts: category tags as path segments under the
+  // prescription folder. Omitted = legacy photo-Rx path.
   let segment = '';
   if (category === 'objective') {
     segment = 'objective/';
   } else if (category === 'subjective') {
     segment = `subjective/${sanitizeComplaintIdSegment(complaintId ?? '')}/`;
+  } else if (category === 'advice') {
+    segment = 'advice/';
   }
   const path = `${doctorId}/${prescriptionId}/${segment}${randomUUID()}-${baseName}`;
 
@@ -233,6 +233,71 @@ export async function getAttachmentDownloadUrl(
 
   await logDataAccess(correlationId, userId, 'prescription_attachment', attachmentId);
   return { downloadUrl: signed.signedUrl };
+}
+
+export interface AdviceHandoutPublicItem {
+  id: string;
+  file_type: string;
+  /** Display name derived from path — never logs the full path. */
+  label: string;
+  download_url: string;
+}
+
+function adviceHandoutLabelFromPath(filePath: string): string {
+  const last = filePath.split('/').pop() ?? '';
+  const stripped = last.replace(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i,
+    '',
+  );
+  return stripped || last || 'Handout';
+}
+
+/**
+ * List advice-tagged attachments with short-lived signed download URLs.
+ * Caller must already have authorized the prescription (e.g. public Rx token).
+ * Only paths containing an `advice` segment are returned — chart media stays private.
+ */
+export async function listAdviceHandoutsForPublicShare(
+  prescriptionId: string,
+  correlationId: string,
+): Promise<AdviceHandoutPublicItem[]> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const { data, error } = await admin
+    .from('prescription_attachments')
+    .select('id, file_path, file_type')
+    .eq('prescription_id', prescriptionId)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    handleSupabaseError(error, correlationId);
+  }
+
+  const rows = (data ?? []).filter((row) =>
+    String(row.file_path ?? '')
+      .split('/')
+      .includes('advice'),
+  );
+
+  const out: AdviceHandoutPublicItem[] = [];
+  for (const row of rows) {
+    const { data: signed, error: signErr } = await admin.storage
+      .from(BUCKET)
+      .createSignedUrl(row.file_path, DOWNLOAD_EXPIRY_SEC);
+    if (signErr || !signed?.signedUrl) {
+      continue;
+    }
+    out.push({
+      id: row.id,
+      file_type: row.file_type,
+      label: adviceHandoutLabelFromPath(row.file_path),
+      download_url: signed.signedUrl,
+    });
+  }
+  return out;
 }
 
 /**

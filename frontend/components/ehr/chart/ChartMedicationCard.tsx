@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { ChevronDown, Sparkles, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Sparkles, Trash2 } from "lucide-react";
 import DrugAutocomplete from "@/components/ehr/DrugAutocomplete";
 import { ChartCardOptionToggle } from "@/components/ehr/chart/ChartCardOptionToggle";
 import { ChartMedAiProposal, type ChartMedAiStatus } from "@/components/ehr/chart/ChartMedAiProposal";
@@ -41,6 +41,7 @@ import {
   chartMedPayloadMergeDraft,
   chartMedSourceFromDb,
   chartMedSourceToDb,
+  customStrengthUnitFromLegacy,
   doseQtyFromSchedule,
   doseScheduleForFrequencyChange,
   doseScheduleOptionsForFrequency,
@@ -79,6 +80,7 @@ import {
   parseMedicineLine,
 } from "@/lib/cockpit/medicine-line-parse";
 import { shouldRequestAiMedParse } from "@/lib/cockpit/should-request-ai-med-parse";
+import { shouldAutoAcceptSingleAiMed } from "@/lib/cockpit/ai-med-autogate";
 import { parseMedicineWithAI, type AiParsedMedicine } from "@/lib/api/medicine-parse";
 import { DOSE_UNIT_OPTIONS, defaultDoseUnitForForm } from "@/lib/medicineCodes";
 import { cn } from "@/lib/utils";
@@ -287,6 +289,24 @@ export function ChartMedicationCard({
           degradeToTyped();
           return;
         }
+        if (
+          shouldAutoAcceptSingleAiMed(trigger, found, fallback?.drug_name)
+        ) {
+          aiAbortRef.current = null;
+          pendingFallbackRef.current = null;
+          setShowKeepAsTyped(false);
+          setAiStatus("idle");
+          setAiMeds([]);
+          onDraftCommit?.(
+            chartMedPayloadMergeDraft(
+              chartMedPayloadFromAiMedicine(found[0]!, {
+                status: draftMed.status,
+              }),
+              draftMed,
+            ),
+          );
+          return;
+        }
         setAiMeds(found);
         setAiStatus("ready");
       })
@@ -383,11 +403,31 @@ export function ChartMedicationCard({
     frequencyUiModeFromCode(row.frequency_code),
   );
   const [doseUnitEditMode, setDoseUnitEditMode] = useState(false);
+  const [foodMoreCustom, setFoodMoreCustom] = useState<string | null>(null);
+  const [stopMoreCustom, setStopMoreCustom] = useState<string | null>(null);
   // Collapsible once it carries a usable sig, or unconditionally in the
   // capture-flow (`defaultCollapsed`) where even a name-only card sits closed.
   const collapsible = !isDraft && !readonly && (isChartMedComplete(row) || defaultCollapsed);
   const showSummary = collapsible && !expanded;
   const prevExpandedRef = useRef(expanded);
+
+  useEffect(() => {
+    if (
+      row.food_timing &&
+      (CHART_MED_FOOD_TIMING_PRIMARY as readonly string[]).includes(row.food_timing)
+    ) {
+      setFoodMoreCustom(null);
+    }
+  }, [row.food_timing]);
+
+  useEffect(() => {
+    if (
+      row.stop_reason &&
+      (CHART_MED_STOP_REASON_PRIMARY as readonly string[]).includes(row.stop_reason)
+    ) {
+      setStopMoreCustom(null);
+    }
+  }, [row.stop_reason]);
 
   useLayoutEffect(() => {
     if (!collapsible) return;
@@ -562,6 +602,10 @@ export function ChartMedicationCard({
             </span>
           ) : null}
         </div>
+        <ChevronDown
+          className="h-4 w-4 shrink-0 text-muted-foreground"
+          aria-hidden
+        />
         {!readonly && (
           <button
             type="button"
@@ -728,7 +772,21 @@ export function ChartMedicationCard({
   // "More" is units-only now — numbers and combos belong in the main field.
   const handleStrengthMoreCommit = (raw: string) => {
     const unit = resolveStrengthUnitInput(raw);
-    if (unit && unit !== "custom") handleStrengthUnitSelect(unit);
+    if (unit && unit !== "custom") {
+      handleStrengthUnitSelect(unit);
+      return;
+    }
+    const unitText = raw.trim();
+    if (!unitText) return;
+    const legacy =
+      row.strength_value != null ? `${row.strength_value} ${unitText}` : unitText;
+    applyPatch({
+      strengthUnit: null,
+      strengthComponents: null,
+      strengthValue: row.strength_value,
+      strength: legacy,
+      dose: doseCustomActive ? row.dose : legacy,
+    });
   };
 
   const handleDoseUnitSelect = (unit: DoseUnit | null) => {
@@ -752,7 +810,7 @@ export function ChartMedicationCard({
       handleDoseUnitSelect(unit);
       return;
     }
-    applyPatch({ doseUnit: null, dose: raw });
+    applyPatch({ doseUnit: null, dose: raw.trim() });
   };
 
   const handleSchedule = (pattern: string) => {
@@ -770,7 +828,7 @@ export function ChartMedicationCard({
       effectiveStrengthUnit as (typeof CHART_MED_STRENGTH_UNIT_PRIMARY)[number],
     )
       ? STRENGTH_CHIP_OPTIONS.find((o) => o.value === effectiveStrengthUnit)?.label ?? ""
-      : null;
+      : customStrengthUnitFromLegacy(row.strength, row.strength_value, row.strength_unit);
 
   const doseMoreText =
     doseCustomActive
@@ -824,7 +882,7 @@ export function ChartMedicationCard({
             aria-label={`Collapse ${row.drug_name}`}
             aria-expanded
           >
-            <ChevronDown className="h-4 w-4" aria-hidden />
+            <ChevronUp className="h-4 w-4" aria-hidden />
           </button>
           {!readonly && (
             <button
@@ -840,92 +898,97 @@ export function ChartMedicationCard({
         </div>
       )}
 
-      <EditorFieldRow label="">
-        {!readonly ? (
-          <ChartMedMoreCombobox
-            inputId={`${testIdPrefix}-form-${row.id}`}
-            placeholder="Form"
-            disabled={busy}
-            value={formComboboxDisplay(row)}
-            suggestions={CHART_MED_FORM_COMBOBOX_OPTIONS}
-            allowCustom
-            resolveMatch={(q) => {
-              const resolved = resolveFormInput(q);
-              return resolved && resolved !== "custom" ? resolved : undefined;
-            }}
-            onCommit={(raw) => {
-              setDoseUnitEditMode(false);
-              applyPatch(chartMedPatchFromFormInput(raw));
-            }}
-            onClear={() => {
-              setDoseUnitEditMode(false);
-              applyPatch({ form: null });
-            }}
-            className="shrink-0"
-            inputClassName="w-[3rem] min-w-[3rem] px-1"
-          />
-        ) : row.form ? (
-          <span className="shrink-0 text-[10px] text-muted-foreground">
-            {formComboboxDisplay(row)}
-          </span>
-        ) : null}
-        <div className="min-w-0 flex-1" onKeyDown={handleNameKeyDown}>
-          {token && !readonly ? (
-            <DrugAutocomplete
-              inputId={`${testIdPrefix}-name-${row.id}`}
-              value={row.drug_name}
-              onChange={(text) => applyPatch({ drugName: text })}
-              onSelect={handleDrugSelect}
-              token={token}
-              placeholder="Medicine — search or type full line + Enter"
-              disabled={busy || readonly}
-              inputClassName={EDITOR_INPUT_CLASS}
+      <div className="flex items-start gap-2">
+        <div className="w-16 shrink-0">
+          {!readonly ? (
+            <ChartMedMoreCombobox
+              inputId={`${testIdPrefix}-form-${row.id}`}
+              placeholder="Form"
+              disabled={busy}
+              value={formComboboxDisplay(row)}
+              suggestions={CHART_MED_FORM_COMBOBOX_OPTIONS}
+              allowCustom
+              resolveMatch={(q) => {
+                const resolved = resolveFormInput(q);
+                return resolved && resolved !== "custom" ? resolved : undefined;
+              }}
+              onCommit={(raw) => {
+                setDoseUnitEditMode(false);
+                applyPatch(chartMedPatchFromFormInput(raw));
+              }}
+              onClear={() => {
+                setDoseUnitEditMode(false);
+                applyPatch({ form: null });
+              }}
+              className="w-full"
+              inputClassName="w-full min-w-0 px-1"
             />
           ) : (
-            <span className="text-xs font-medium">{row.drug_name}</span>
+            <span className="block pt-1 text-[10px] text-muted-foreground">
+              {formComboboxDisplay(row) || "—"}
+            </span>
           )}
         </div>
-        {!readonly && (
-          <ChartCardOptionToggle
-            options={MED_STATUS_OPTIONS}
-            value={row.status}
-            disabled={busy}
-            pastOptionValue="past"
-            ariaLabel={`${row.drug_name} status`}
-            testId={`${testIdPrefix}-status-${row.id}`}
-            onChange={handleStatus}
-          />
-        )}
-        {isDraft && token && !readonly && (
-          <button
-            type="button"
-            disabled={busy || aiStatus === "loading" || !row.drug_name.trim()}
-            onClick={handleRefine}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-primary disabled:opacity-40"
-            aria-label="Read this line with AI"
-            title="Read this line with AI"
-            data-testid={`${testIdPrefix}-ai-refine`}
-          >
-            <Sparkles className="h-4 w-4" />
-          </button>
-        )}
-        {!readonly && !collapsible && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => (isDraft ? onDraftCancel?.() : onRemove())}
-            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive disabled:opacity-50"
-            aria-label={isDraft ? "Cancel add medication" : `Remove ${row.drug_name}`}
-          >
-            <Trash2 className="mx-auto h-4 w-4" />
-          </button>
-        )}
-      </EditorFieldRow>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+          <div className="min-w-0 flex-1" onKeyDown={handleNameKeyDown}>
+            {token && !readonly ? (
+              <DrugAutocomplete
+                inputId={`${testIdPrefix}-name-${row.id}`}
+                value={row.drug_name}
+                onChange={(text) => applyPatch({ drugName: text })}
+                onSelect={handleDrugSelect}
+                token={token}
+                placeholder="Medicine — search or type full line + Enter"
+                disabled={busy || readonly}
+                inputClassName={EDITOR_INPUT_CLASS}
+              />
+            ) : (
+              <span className="text-xs font-medium">{row.drug_name}</span>
+            )}
+          </div>
+          {!readonly && (
+            <ChartCardOptionToggle
+              options={MED_STATUS_OPTIONS}
+              value={row.status}
+              disabled={busy}
+              pastOptionValue="past"
+              ariaLabel={`${row.drug_name} status`}
+              testId={`${testIdPrefix}-status-${row.id}`}
+              onChange={handleStatus}
+            />
+          )}
+          {isDraft && token && !readonly && (
+            <button
+              type="button"
+              disabled={busy || aiStatus === "loading" || !row.drug_name.trim()}
+              onClick={handleRefine}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-primary disabled:opacity-40"
+              aria-label="Read this line with AI"
+              title="Read this line with AI"
+              data-testid={`${testIdPrefix}-ai-refine`}
+            >
+              <Sparkles className="h-4 w-4" />
+            </button>
+          )}
+          {!readonly && !collapsible && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => (isDraft ? onDraftCancel?.() : onRemove())}
+              className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive disabled:opacity-50"
+              aria-label={isDraft ? "Cancel add medication" : `Remove ${row.drug_name}`}
+            >
+              <Trash2 className="mx-auto h-4 w-4" />
+            </button>
+          )}
+        </div>
+      </div>
 
       {isDraft && aiStatus !== "idle" && (
         <ChartMedAiProposal
           status={aiStatus}
           medicines={aiMeds}
+          typedText={row.drug_name.trim()}
           onAdd={handleAddAiMed}
           onAddAll={handleAddAllAiMeds}
           onDismiss={resetAiPanel}
@@ -965,6 +1028,20 @@ export function ChartMedicationCard({
           onSelect={handleStrengthUnitSelect}
           onMoreCommit={handleStrengthMoreCommit}
           onMoreClear={() => {
+            const custom = customStrengthUnitFromLegacy(
+              row.strength,
+              row.strength_value,
+              row.strength_unit,
+            );
+            if (custom) {
+              applyPatch({
+                strengthUnit: null,
+                strengthComponents: null,
+                strength:
+                  row.strength_value != null ? String(row.strength_value) : null,
+              });
+              return;
+            }
             if (
               effectiveStrengthUnit &&
               !CHART_MED_STRENGTH_UNIT_PRIMARY.includes(
@@ -1174,16 +1251,28 @@ export function ChartMedicationCard({
           <ChartMedChipSelect
             primaryValues={CHART_MED_FOOD_TIMING_PRIMARY}
             allOptions={FOOD_TIMING_CHIP_OPTIONS}
-            value={row.food_timing}
+            value={foodMoreCustom ? null : row.food_timing}
+            moreText={foodMoreCustom}
             disabled={busy}
             ariaLabel="Food timing"
-            moreOnNextRow
-            onSelect={(v) => applyPatch({ foodTiming: v })}
+            onSelect={(v) => {
+              setFoodMoreCustom(null);
+              applyPatch({ foodTiming: v });
+            }}
             onMoreCommit={(raw) => {
               const resolved = resolveFoodTimingInput(raw);
-              if (resolved) applyPatch({ foodTiming: resolved });
+              if (resolved) {
+                setFoodMoreCustom(null);
+                applyPatch({ foodTiming: resolved });
+                return;
+              }
+              setFoodMoreCustom(raw.trim());
+              applyPatch({ foodTiming: null });
             }}
-            onMoreClear={() => applyPatch({ foodTiming: null })}
+            onMoreClear={() => {
+              setFoodMoreCustom(null);
+              applyPatch({ foodTiming: null });
+            }}
           />
         )}
       </EditorFieldRow>
@@ -1226,16 +1315,29 @@ export function ChartMedicationCard({
               <ChartMedChipSelect
                 primaryValues={CHART_MED_STOP_REASON_PRIMARY}
                 allOptions={STOP_REASON_CHIP_OPTIONS}
-                value={row.stop_reason}
+                value={stopMoreCustom ? null : row.stop_reason}
+                moreText={stopMoreCustom}
                 disabled={busy}
                 ariaLabel="Stop reason"
                 moreOnNextRow
-                onSelect={(v) => applyPatch({ stopReason: v })}
+                onSelect={(v) => {
+                  setStopMoreCustom(null);
+                  applyPatch({ stopReason: v });
+                }}
                 onMoreCommit={(raw) => {
                   const resolved = resolveStopReasonInput(raw);
-                  if (resolved) applyPatch({ stopReason: resolved });
+                  if (resolved) {
+                    setStopMoreCustom(null);
+                    applyPatch({ stopReason: resolved });
+                    return;
+                  }
+                  setStopMoreCustom(raw.trim());
+                  applyPatch({ stopReason: null });
                 }}
-                onMoreClear={() => applyPatch({ stopReason: null })}
+                onMoreClear={() => {
+                  setStopMoreCustom(null);
+                  applyPatch({ stopReason: null });
+                }}
               />
             )}
           </EditorFieldRow>

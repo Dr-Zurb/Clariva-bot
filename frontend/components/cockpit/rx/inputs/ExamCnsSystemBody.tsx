@@ -3,7 +3,6 @@
 import { useCallback, useState } from "react";
 import { ChevronUp } from "lucide-react";
 import {
-  reAnchorExamCnsFindingCardOnClose,
   scrollExamCnsFindingCardIntoView,
   scrollExamSubsectionIntoView,
 } from "@/lib/cockpit/exam-card-scroll";
@@ -108,9 +107,15 @@ export function ExamCnsSystemBody({
   // subsections (reflexes, sensory, meningeal) grey out. In-clinic unchanged.
   const orderedSubsections = orderSubsectionsForModality(CNS_EXAM_SUBSECTIONS, isTele);
 
-  // Subsections are individually collapsible (multi-open). On mount, expand any
-  // subsection that already has recorded findings; otherwise open Mental status.
-  const { isOpen: isSubsectionOpen, toggle: toggleSubsection } = useExamSubsectionOpenState({
+  // Subsections are individually collapsible (accordion on manual toggle). On mount,
+  // expand the first subsection that already has recorded findings; otherwise Mental status.
+  const {
+    isOpen: isSubsectionOpen,
+    toggle: toggleSubsection,
+    expandAll: expandAllSubsections,
+    collapseAll: collapseAllSubsections,
+  } = useExamSubsectionOpenState({
+    systemId: "cns",
     subsections: CNS_EXAM_SUBSECTIONS,
     initialEntries: finding?.findings ?? [],
     ownedFindingIds: cnsSubsectionOwnedFindingIds,
@@ -130,8 +135,6 @@ export function ExamCnsSystemBody({
     const subsectionScrollKey = resolveCnsCardSubsectionScrollKey(findingId);
     if (subsectionScrollKey) {
       scrollExamSubsectionIntoView(subsectionScrollKey);
-    } else {
-      reAnchorExamCnsFindingCardOnClose(findingId);
     }
   }, []);
 
@@ -242,6 +245,8 @@ export function ExamCnsSystemBody({
         disabled={disabled}
         onMarkNormal={markNormal}
         onClear={clearSection}
+        onExpandAllSubsections={showBody ? expandAllSubsections : undefined}
+        onCollapseAllSubsections={showBody ? collapseAllSubsections : undefined}
       />
 
       {showBody ? (
@@ -349,7 +354,7 @@ export function ExamCnsSystemBody({
 
                   {hasCards ? (
                     <div
-                      className="mt-2 divide-y divide-border/45"
+                      className="mt-2 space-y-0.5"
                       data-testid={`exam-findings-cns-${subsection.id}-cards`}
                     >
                       {structuredDefs.map((def) => (

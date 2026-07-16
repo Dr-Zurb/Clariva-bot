@@ -87,9 +87,10 @@ function minimalPdfData(
       socialHistory: null,
       provisionalDiagnosis: null,
       investigations: null,
+      advice: null,
       followUp: null,
       patientEducation: null,
-      clinicalNotes: null,
+      referral: null,
       medicines: [],
       customSubsections: [],
       ...overrides,
@@ -131,6 +132,50 @@ describe('mapPrescriptionToPdfBody (sh-12)', () => {
     expect(mapPrescriptionToPdfBody({ ...emptyRx }, []).customSubsections).toEqual([]);
   });
 
+  it('merges advice + patient_education into one Advice body (plan advice collapse)', () => {
+    const body = mapPrescriptionToPdfBody(
+      {
+        ...emptyRx,
+        advice: 'Rest',
+        patient_education: 'Hydrate',
+        referral: 'ENT if persists',
+        clinical_notes: 'Private clinician note',
+      },
+      [],
+    );
+    expect(body.advice).toBe('Rest\nHydrate');
+    expect(body.patientEducation).toBeNull();
+    expect(body.referral).toBe('ENT if persists');
+    expect(body).not.toHaveProperty('clinicalNotes');
+  });
+
+  it('derives followUp from structured value+unit when free-text empty (plan-p1)', () => {
+    expect(
+      mapPrescriptionToPdfBody(
+        { ...emptyRx, follow_up: null, follow_up_value: 5, follow_up_unit: 'days' },
+        [],
+      ).followUp,
+    ).toBe('in 5 days');
+    expect(
+      mapPrescriptionToPdfBody(
+        { ...emptyRx, follow_up: 'Call if worse', follow_up_value: 5, follow_up_unit: 'days' },
+        [],
+      ).followUp,
+    ).toBe('in 5 days — Call if worse');
+    expect(
+      mapPrescriptionToPdfBody(
+        { ...emptyRx, follow_up: null, follow_up_value: null, follow_up_unit: 'as_needed' },
+        [],
+      ).followUp,
+    ).toBe('as needed');
+    expect(
+      mapPrescriptionToPdfBody(
+        { ...emptyRx, follow_up: 'in 5 days', follow_up_value: 5, follow_up_unit: 'days' },
+        [],
+      ).followUp,
+    ).toBe('in 5 days');
+  });
+
   it('sanitises and empty-omits custom subsections for output (subj-22)', () => {
     const body = mapPrescriptionToPdfBody(
       {
@@ -157,6 +202,26 @@ describe('mapPrescriptionToPdfBody (sh-12)', () => {
         children: [{ title: 'Prophylaxis', body: 'Doxy' }],
       },
     ]);
+  });
+});
+
+describe('PrescriptionDocument plan sections (plan-p1)', () => {
+  it('renders Advice and Referral after medicines; never Clinical notes or Patient education', () => {
+    const tree = PrescriptionDocument({
+      data: minimalPdfData({
+        advice: 'Rest',
+        referral: 'ENT',
+        patientEducation: null,
+        followUp: 'in 5 days',
+      }),
+    });
+    const labels = collectSectionBlocks(tree).map((s) => s.label);
+    expect(labels).toContain('Advice');
+    expect(labels).toContain('Referral');
+    expect(labels).not.toContain('Patient education');
+    expect(labels).toContain('Follow-up');
+    expect(labels).not.toContain('Clinical notes');
+    expect(labels.indexOf('Follow-up')).toBeLessThan(labels.indexOf('Referral'));
   });
 });
 

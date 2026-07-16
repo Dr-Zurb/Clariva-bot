@@ -135,7 +135,9 @@ describe("family-history", () => {
     const second = addFamilyHistorySiblingCard(first);
     expect(first.siblings).toHaveLength(1);
     expect(second.siblings).toHaveLength(2);
-    expect(first.siblings?.[0]?.id).not.toBe(second.siblings?.[1]?.id);
+    // Newest sibling card is prepended.
+    expect(second.siblings?.[0]?.id).not.toBe(first.siblings?.[0]?.id);
+    expect(second.siblings?.[1]?.id).toBe(first.siblings?.[0]?.id);
   });
 
   it("preserves spaces while editing custom condition on sibling card", () => {

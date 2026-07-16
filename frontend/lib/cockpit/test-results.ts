@@ -14,6 +14,9 @@
  */
 
 import type {
+  LabReport,
+  LabReportEntryMethod,
+  LabReportKind,
   TestResultInterpretation,
   TestResultRow,
   TestResultSource,
@@ -67,6 +70,16 @@ export function normalizeTestResults(
       row.interpretation && TEST_RESULT_INTERPRETATIONS.includes(row.interpretation)
         ? row.interpretation
         : null;
+    // rpt-02/03 — grouping + reference-range fields. Malformed reportId collapses
+    // to null (ungrouped); non-finite bounds collapse to null. These never leak
+    // into the derived `test_results` TEXT (OBJ-D2 byte-identical).
+    const reportId = trimToNull(
+      typeof row.reportId === "string" ? row.reportId : null,
+    );
+    const refLow =
+      typeof row.refLow === "number" && Number.isFinite(row.refLow) ? row.refLow : null;
+    const refHigh =
+      typeof row.refHigh === "number" && Number.isFinite(row.refHigh) ? row.refHigh : null;
     out.push({
       id,
       source: row.source,
@@ -76,6 +89,57 @@ export function normalizeTestResults(
       date: trimToNull(row.date),
       interpretation,
       notes: trimToNull(row.notes),
+      reportId,
+      refLow,
+      refHigh,
+      refText: trimToNull(row.refText),
+    });
+  }
+  return out;
+}
+
+const LAB_REPORT_KINDS: readonly LabReportKind[] = ["lab", "imaging"];
+const LAB_REPORT_ENTRY_METHODS: readonly LabReportEntryMethod[] = [
+  "manual",
+  "extracted",
+];
+
+/**
+ * Hydrate / sanitize `lab_reports_json` headers (rpt-02/03). Malformed headers
+ * drop; empty optional strings collapse to null. Order preserved.
+ */
+export function normalizeLabReports(
+  json: LabReport[] | null | undefined,
+): LabReport[] {
+  if (!Array.isArray(json)) return [];
+  const out: LabReport[] = [];
+  for (const header of json) {
+    if (!header || typeof header !== "object") continue;
+    const title = typeof header.title === "string" ? header.title.trim() : "";
+    if (!title) continue;
+    if (!LAB_REPORT_KINDS.includes(header.kind)) continue;
+    const id =
+      typeof header.id === "string" && header.id.trim()
+        ? header.id.trim()
+        : crypto.randomUUID();
+    const entryMethod =
+      header.entryMethod && LAB_REPORT_ENTRY_METHODS.includes(header.entryMethod)
+        ? header.entryMethod
+        : "manual";
+    const attachmentIds = Array.isArray(header.attachmentIds)
+      ? header.attachmentIds
+          .filter((a): a is string => typeof a === "string" && a.trim().length > 0)
+          .map((a) => a.trim())
+      : [];
+    out.push({
+      id,
+      kind: header.kind,
+      title,
+      reportDate: trimToNull(header.reportDate),
+      labName: trimToNull(header.labName),
+      attachmentIds,
+      findings: trimToNull(header.findings),
+      entryMethod,
     });
   }
   return out;

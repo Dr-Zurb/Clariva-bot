@@ -40,6 +40,8 @@ export interface ChartCatalogComboboxProps {
   inputId: string;
   testId?: string;
   placeholder: string;
+  /** Accessible name when no visible label is wired via htmlFor. */
+  ariaLabel?: string;
   disabled?: boolean;
   /** Catalog entries still available to pick (typically excludes already-added). */
   catalogOptions: ChartCatalogOption[];
@@ -47,6 +49,13 @@ export interface ChartCatalogComboboxProps {
   resolveCatalog: (query: string) => string | undefined;
   customLabel?: (text: string) => string;
   onCommit: (payload: ChartCatalogCommit) => void;
+  /**
+   * When true (e.g. AI / near-miss suggest panel is open), close the list and
+   * forward Enter / Escape to the overlay instead of committing from the input.
+   */
+  suggestOverlayActive?: boolean;
+  onSuggestEnter?: () => void;
+  onSuggestEscape?: () => void;
   /** When true, focus the input (e.g. parent + Add clicked). */
   focusRequest?: boolean;
   onFocusRequestHandled?: () => void;
@@ -56,12 +65,16 @@ export function ChartCatalogCombobox({
   inputId,
   testId,
   placeholder,
+  ariaLabel,
   disabled,
   catalogOptions,
   filterCatalog,
   resolveCatalog,
   customLabel = (text) => `Add "${text}"`,
   onCommit,
+  suggestOverlayActive = false,
+  onSuggestEnter,
+  onSuggestEscape,
   focusRequest,
   onFocusRequestHandled,
 }: ChartCatalogComboboxProps) {
@@ -93,10 +106,17 @@ export function ChartCatalogCombobox({
     onFocusRequestHandled?.();
   }, [focusRequest, onFocusRequestHandled]);
 
-  const finishCommit = useCallback(() => {
+  useEffect(() => {
+    if (!suggestOverlayActive) return;
     setOpen(false);
     setQuery("");
     setHighlighted(0);
+  }, [suggestOverlayActive]);
+
+  const finishCommit = useCallback(() => {
+    setQuery("");
+    setHighlighted(0);
+    setOpen(false);
   }, []);
 
   const commitRow = useCallback(
@@ -154,6 +174,19 @@ export function ChartCatalogCombobox({
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (disabled) return;
+    if (suggestOverlayActive) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        onSuggestEnter?.();
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onSuggestEscape?.();
+        return;
+      }
+      return;
+    }
     if (e.key === "Escape") {
       e.preventDefault();
       setOpen(false);
@@ -182,7 +215,8 @@ export function ChartCatalogCombobox({
     }
   };
 
-  const showDropdown = open && (rows.length > 0 || trimmedQuery.length > 0);
+  const showDropdown =
+    !suggestOverlayActive && open && (rows.length > 0 || trimmedQuery.length > 0);
 
   return (
     <div ref={containerRef} className="relative min-w-0">
@@ -191,6 +225,7 @@ export function ChartCatalogCombobox({
         id={inputId}
         type="text"
         role="combobox"
+        aria-label={ariaLabel}
         aria-expanded={showDropdown}
         aria-controls={listId}
         aria-autocomplete="list"
@@ -200,12 +235,18 @@ export function ChartCatalogCombobox({
         placeholder={placeholder}
         data-testid={testId}
         onChange={(e) => {
+          if (suggestOverlayActive) return;
           setQuery(e.target.value);
           setOpen(true);
           setHighlighted(0);
         }}
         onFocus={() => {
-          if (!disabled) setOpen(true);
+          if (!disabled && !suggestOverlayActive) setOpen(true);
+        }}
+        onClick={() => {
+          // Input may still be focused after a commit that closed the list;
+          // click must reopen even when onFocus does not fire.
+          if (!disabled && !suggestOverlayActive) setOpen(true);
         }}
         onKeyDown={onKeyDown}
         className={cn(

@@ -1,10 +1,15 @@
 "use client";
 
 import { chartCardOptionChipClass } from "@/components/ehr/chart/chart-chip-styles";
+import { cn } from "@/lib/utils";
 
 export interface ChartCardOption<T extends string> {
   value: T;
   label: string;
+  /** Per-option disable (e.g. Secondary when it's the only committed Dx). */
+  disabled?: boolean;
+  /** Native tooltip when the option is unavailable. */
+  title?: string;
 }
 
 export interface ChartCardOptionToggleProps<T extends string> {
@@ -39,16 +44,28 @@ export function ChartCardOptionToggle<T extends string>({
         const isSelected = value === option.value;
         const isPastSelected =
           pastOptionValue != null && isSelected && option.value === pastOptionValue;
+        const groupDisabled = disabled;
+        const optionOnlyDisabled = Boolean(option.disabled) && !groupDisabled;
+        const isUnavailable = groupDisabled || optionOnlyDisabled;
         return (
           <button
             key={option.value}
             type="button"
-            disabled={disabled}
+            disabled={groupDisabled}
+            aria-disabled={isUnavailable || undefined}
             aria-pressed={isSelected}
             aria-label={option.label}
+            title={optionOnlyDisabled ? option.title : undefined}
             data-testid={testId ? `${testId}-${option.value}` : undefined}
-            onClick={() => onChange(option.value)}
-            className={chartCardOptionChipClass(isSelected, isPastSelected)}
+            onClick={() => {
+              if (isUnavailable) return;
+              onChange(option.value);
+            }}
+            className={cn(
+              chartCardOptionChipClass(isSelected, isPastSelected),
+              optionOnlyDisabled &&
+                "cursor-not-allowed line-through opacity-45 hover:border-border hover:text-muted-foreground",
+            )}
           >
             {option.label}
           </button>

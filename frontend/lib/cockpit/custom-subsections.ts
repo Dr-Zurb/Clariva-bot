@@ -138,7 +138,7 @@ export function addCustomSubsection(
   sections: CustomSubsection[],
   section: CustomSubsection,
 ): CustomSubsection[] {
-  return [...sections, normalizeCustomSubsectionInForm(section)];
+  return [normalizeCustomSubsectionInForm(section), ...sections];
 }
 
 export function updateCustomSubsection(
@@ -192,7 +192,10 @@ export function addCustomSubsectionChild(
   const sectionIndex = findSectionIndex(sections, sectionId);
   if (sectionIndex < 0) return sections;
   const section = sections[sectionIndex]!;
-  const children = [...section.children, sanitizeCustomSubsectionChildForStorage(child)];
+  const children = [
+    sanitizeCustomSubsectionChildForStorage(child),
+    ...section.children,
+  ];
   const next = [...sections];
   next[sectionIndex] = { ...section, children };
   return next;

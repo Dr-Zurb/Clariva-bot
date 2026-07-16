@@ -43,6 +43,18 @@ export interface PatientChronicCondition {
   resolved_ago_value: number | null;
   resolved_ago_unit: PatientConditionAgoUnit | null;
   on_treatment: boolean | null;
+  /**
+   * Clinical trajectory of the condition (migration 165): improving | stable |
+   * worsening. Mirrors per-diagnosis acuity. null = not assessed.
+   */
+  acuity: import("@/types/prescription").AssessmentAcuity | null;
+  /**
+   * Optional ICD-11 (MMS) stem code from diagnosis_catalog (migration 166).
+   * null = uncoded free-text condition.
+   */
+  code: string | null;
+  /** Canonical ICD-11 title for `code`. null when uncoded. */
+  code_title: string | null;
   note: string | null;
   archived_at: string | null;
   created_at: string;
@@ -161,6 +173,11 @@ export interface CreatePatientConditionPayload {
   resolvedAgoValue?: number | null;
   resolvedAgoUnit?: PatientConditionAgoUnit | null;
   onTreatment?: boolean | null;
+  acuity?: import("@/types/prescription").AssessmentAcuity | null;
+  /** Optional ICD-11 code (migration 166). */
+  code?: string | null;
+  /** Canonical ICD-11 title for `code`. */
+  codeTitle?: string | null;
   note?: string | null;
 }
 
@@ -173,6 +190,9 @@ export interface UpdatePatientConditionPayload {
   resolvedAgoValue?: number | null;
   resolvedAgoUnit?: PatientConditionAgoUnit | null;
   onTreatment?: boolean | null;
+  acuity?: import("@/types/prescription").AssessmentAcuity | null;
+  code?: string | null;
+  codeTitle?: string | null;
   note?: string | null;
   archivedAt?: string | null;
 }
@@ -279,6 +299,12 @@ export interface AllergyData {
 }
 export interface AllergiesListData {
   allergies: PatientAllergy[];
+  /** Section-level allergy notes (migration 158). */
+  sectionNotes?: string | null;
+}
+
+export interface UpdateAllergySectionNotesPayload {
+  notes?: string | null;
 }
 
 export interface ConditionData {

@@ -24,13 +24,9 @@ import {
   serialiseTree,
   type PaneTreeNode,
 } from "@/lib/patient-profile/v3/foundation";
-import { convertTemplateToTree } from "@/lib/patient-profile/layout-presets-builtin";
-import { layoutNodeToPaneTree } from "@/lib/patient-profile/layout-node-bridge";
 import { buildCockpitTabs } from "@/lib/patient-profile/v3/cockpit-tabs";
-import {
-  getTelemedVideoTemplate,
-  type TelemedVideoContext,
-} from "@/lib/patient-profile/templates";
+import { getDefaultLayoutTree } from "@/lib/patient-profile/v3/default-layouts";
+import type { TelemedVideoContext } from "@/lib/patient-profile/templates";
 import type { PatientProfileLayout } from "@/lib/patient-profile/types";
 import { paneTreeToFlat } from "@/lib/patient-profile/layout-tree";
 import {
@@ -149,8 +145,8 @@ vi.mock("@/components/patient-profile/panes/ObjectivePane", () => ({
   default: () => <div data-testid="pane-objective-body">objective</div>,
 }));
 
-vi.mock("@/components/cockpit/middle/AssessmentStrip", () => ({
-  AssessmentStrip: () => <div data-testid="pane-assessment-body">assessment</div>,
+vi.mock("@/components/cockpit/rx/sections/AssessmentSection", () => ({
+  AssessmentSection: () => <div data-testid="pane-assessment-body">assessment</div>,
 }));
 
 vi.mock("@/components/cockpit/middle/BodyZone", () => ({
@@ -284,9 +280,11 @@ function fixtureCtx(): TelemedVideoContext {
   };
 }
 
+// The v3 Consult default tree — the real production seed (7 panes; ordered
+// investigations folded into Plan). JSON-cloned so each call returns a fresh
+// tree that callers can reshape without mutating the shared singleton.
 function telemedDefaultPaneTree(): PaneTreeNode {
-  const template = getTelemedVideoTemplate(fixtureCtx());
-  return layoutNodeToPaneTree(convertTemplateToTree(template));
+  return JSON.parse(JSON.stringify(getDefaultLayoutTree("consult")));
 }
 
 function reshape(

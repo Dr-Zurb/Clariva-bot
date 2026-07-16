@@ -14,6 +14,8 @@
  * the API surface uses camelCase (mirrors prescription types).
  */
 
+import type { AssessmentAcuity } from './prescription';
+
 // ============================================================================
 // DB row shapes (snake_case — mirrors migration 087)
 // ============================================================================
@@ -48,6 +50,18 @@ export interface PatientChronicCondition {
   resolved_ago_value: number | null;
   resolved_ago_unit: PatientConditionAgoUnit | null;
   on_treatment: boolean | null;
+  /**
+   * Clinical trajectory of the condition (migration 165): improving | stable |
+   * worsening. Mirrors per-diagnosis acuity. NULL = not assessed.
+   */
+  acuity: AssessmentAcuity | null;
+  /**
+   * Optional ICD-11 (MMS) stem code from diagnosis_catalog (migration 166).
+   * NULL = uncoded free-text condition.
+   */
+  code: string | null;
+  /** Canonical ICD-11 title for `code`. NULL when uncoded. */
+  code_title: string | null;
   note: string | null;
   archived_at: string | null;
   created_at: string;
@@ -165,6 +179,11 @@ export interface CreatePatientChronicConditionInput {
   resolvedAgoValue?: number | null;
   resolvedAgoUnit?: PatientConditionAgoUnit | null;
   onTreatment?: boolean | null;
+  acuity?: AssessmentAcuity | null;
+  /** Optional ICD-11 code (migration 166). */
+  code?: string | null;
+  /** Canonical ICD-11 title for `code`. */
+  codeTitle?: string | null;
   note?: string | null;
 }
 
@@ -177,6 +196,9 @@ export interface UpdatePatientChronicConditionInput {
   resolvedAgoValue?: number | null;
   resolvedAgoUnit?: PatientConditionAgoUnit | null;
   onTreatment?: boolean | null;
+  acuity?: AssessmentAcuity | null;
+  code?: string | null;
+  codeTitle?: string | null;
   note?: string | null;
   archivedAt?: string | null;
 }
@@ -307,6 +329,10 @@ export interface MedicalBackgroundGrouped {
 }
 
 export interface UpdateMedicalBackgroundNotesInput {
+  notes?: string | null;
+}
+
+export interface UpdateAllergySectionNotesInput {
   notes?: string | null;
 }
 

@@ -12,6 +12,7 @@
 
 import type { ReactElement } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   RxFormProvider,
@@ -49,6 +50,16 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     updatePrescription: (...args: unknown[]) => mockUpdatePrescription(...args),
     createPrescription: vi.fn(),
+    getPatientMedicalBackground: vi.fn().mockResolvedValue({
+      data: {
+        medicalBackground: {
+          conditions: [],
+          unlinkedMedications: [],
+          links: [],
+          notes: null,
+        },
+      },
+    }),
   };
 });
 
@@ -322,20 +333,25 @@ describe("subj-10 close-gate · Subjective-tab integration smoke", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const prescriptionIdRef = { current: "rx-1" as string | null };
 
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     function renderTab(ui: ReactElement) {
       return render(
-        <RxFormProvider
-          appointmentId="appt-1"
-          patientId="pat-1"
-          token="test-token"
-          entryMode="structured"
-          initialFields={createEmptyRxFormFields()}
-          autosaveEnabled
-          prescriptionIdRef={prescriptionIdRef}
-          onPrescriptionCreated={() => {}}
-        >
-          {ui}
-        </RxFormProvider>,
+        <QueryClientProvider client={queryClient}>
+          <RxFormProvider
+            appointmentId="appt-1"
+            patientId="pat-1"
+            token="test-token"
+            entryMode="structured"
+            initialFields={createEmptyRxFormFields()}
+            autosaveEnabled
+            prescriptionIdRef={prescriptionIdRef}
+            onPrescriptionCreated={() => {}}
+          >
+            {ui}
+          </RxFormProvider>
+        </QueryClientProvider>,
       );
     }
 

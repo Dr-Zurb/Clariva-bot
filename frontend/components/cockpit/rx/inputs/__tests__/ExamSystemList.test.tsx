@@ -90,13 +90,14 @@ function openLymphCard(site: string) {
 }
 
 describe("ExamSystemList (obj-03 · obj-30)", () => {
-  it("renders 5 core cards in registry order", () => {
+  it("renders 5 core cards plus Additional notes in registry order", () => {
     renderExamList();
     const cards = screen.getAllByTestId(/^exam-system-card-/);
-    expect(cards).toHaveLength(5);
-    expect(cards.map((c) => c.getAttribute("data-testid"))).toEqual(
-      EXAM_CORE_SYSTEM_ORDER.map((id) => `exam-system-card-${id}`),
-    );
+    expect(cards).toHaveLength(6);
+    expect(cards.map((c) => c.getAttribute("data-testid"))).toEqual([
+      ...EXAM_CORE_SYSTEM_ORDER.map((id) => `exam-system-card-${id}`),
+      "exam-system-card-additional_notes",
+    ]);
   });
 
   it("starts with nothing selected (implicitly not examined) and shows the count summary", () => {
@@ -307,6 +308,64 @@ describe("ExamSystemList (obj-03 · obj-30)", () => {
     scrollSpy.mockRestore();
   });
 
+  it("accordion: opening one exam system closes siblings", () => {
+    renderExamList();
+    expandSystem("general");
+    expect(screen.getByTestId("exam-toggle-general")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("exam-toggle-cvs")).toHaveAttribute("aria-expanded", "false");
+
+    expandSystem("cvs");
+    expect(screen.getByTestId("exam-toggle-cvs")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("exam-toggle-general")).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("collapses and expands all subsections within a system (General)", () => {
+    renderExamList();
+    expandSystem("general");
+
+    expect(screen.getByTestId("exam-expand-all-subsections-general")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("exam-collapse-all-subsections-general"));
+
+    for (const id of ["demeanor", "appearance", "volume", "peripheral", "nutrition"]) {
+      expect(screen.getByTestId(`general-subsection-${id}`)).toHaveAttribute("data-open", "false");
+    }
+
+    fireEvent.click(screen.getByTestId("exam-expand-all-subsections-general"));
+
+    for (const id of ["demeanor", "appearance", "volume", "peripheral", "nutrition"]) {
+      expect(screen.getByTestId(`general-subsection-${id}`)).toHaveAttribute("data-open", "true");
+    }
+  });
+
+  it("collapses and expands all subsections within CVS", () => {
+    renderExamList();
+    expandSystem("cvs");
+
+    fireEvent.click(screen.getByTestId("exam-collapse-all-subsections-cvs"));
+    expect(screen.getByTestId("cvs-subsection-inspection")).toHaveAttribute("data-open", "false");
+
+    fireEvent.click(screen.getByTestId("exam-expand-all-subsections-cvs"));
+    expect(screen.getByTestId("cvs-subsection-inspection")).toHaveAttribute("data-open", "true");
+  });
+
+  it("does not scroll when per-system Expand all subsections is used", () => {
+    renderExamList();
+    expandSystem("general");
+    const scrollSpy = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
+    fireEvent.click(screen.getByTestId("exam-collapse-all-subsections-general"));
+    fireEvent.click(screen.getByTestId("exam-expand-all-subsections-general"));
+    expect(scrollSpy).not.toHaveBeenCalled();
+    scrollSpy.mockRestore();
+  });
+
+  it("hides per-system subsection disclosure when the system is marked normal", () => {
+    renderExamList();
+    expandSystem("general");
+    fireEvent.click(screen.getByTestId("exam-mark-normal-general"));
+    expect(screen.queryByTestId("exam-expand-all-subsections-general")).toBeNull();
+    expect(screen.queryByTestId("exam-collapse-all-subsections-general")).toBeNull();
+  });
+
   it("sets normal status when expanded and Mark normal is tapped", () => {
     renderExamList();
     expandSystem("resp");
@@ -366,6 +425,53 @@ describe("ExamSystemList (obj-03 · obj-30)", () => {
     expect(screen.getByTestId("exam-summary-general")).toHaveTextContent(
       "Pallor · Conjunctival · Mild",
     );
+  });
+
+  it("persists General subsection notes (Demeanor, Appearance, …)", () => {
+    renderExamList();
+    expandSystem("general");
+    fireEvent.click(screen.getByTestId("general-subsection-toggle-appearance"));
+    fireEvent.change(screen.getByTestId("general-appearance-notes"), {
+      target: { value: "Mild conjunctival pallor" },
+    });
+    expect(readExamFindings()).toEqual([
+      {
+        systemId: "general",
+        status: "abnormal",
+        findings: [
+          {
+            findingId: "general_appearance_notes",
+            attributes: { notes: "Mild conjunctival pallor" },
+          },
+        ],
+        notes: null,
+      },
+    ]);
+    expect(screen.getByTestId("general-subsection-appearance")).toHaveAttribute(
+      "data-open",
+      "true",
+    );
+    expect(screen.getByTestId("general-subsection-demeanor")).toHaveAttribute(
+      "data-open",
+      "false",
+    );
+  });
+
+  it("accordion: opening one General subsection closes siblings", () => {
+    renderExamList();
+    expandSystem("general");
+    expect(screen.getByTestId("general-subsection-demeanor")).toHaveAttribute("data-open", "true");
+    expect(screen.getByTestId("general-subsection-appearance")).toHaveAttribute(
+      "data-open",
+      "false",
+    );
+
+    fireEvent.click(screen.getByTestId("general-subsection-toggle-appearance"));
+    expect(screen.getByTestId("general-subsection-appearance")).toHaveAttribute(
+      "data-open",
+      "true",
+    );
+    expect(screen.getByTestId("general-subsection-demeanor")).toHaveAttribute("data-open", "false");
   });
 
   it("records clubbing with grade, distribution, laterality, and grade help (obj-32)", () => {
@@ -485,6 +591,8 @@ describe("ExamSystemList (obj-03 · obj-30)", () => {
     );
     expect(screen.getByTestId("exam-clear-all")).not.toBeDisabled();
     fireEvent.click(screen.getByTestId("exam-clear-all"));
+    expect(screen.getByTestId("exam-clear-all-dialog")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("exam-clear-all-dialog-confirm"));
     expect(readExamFindings()).toEqual([]);
     expect(screen.getByTestId("exam-summary-counts")).toHaveTextContent(
       "0 normal · 0 abnormal · 5 not examined",

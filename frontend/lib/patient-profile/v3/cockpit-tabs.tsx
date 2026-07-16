@@ -3,7 +3,7 @@
 /**
  * cockpit-tabs.tsx — the Cockpit v3 flat tab registry (cv3t-01 · Phase 5).
  *
- * Returns the eight real leaf tabs as uniform, self-contained `PaneDefinition`s
+ * Returns the seven real leaf tabs as uniform, self-contained `PaneDefinition`s
  * (no `children` / `groupWrapper` / `direction`), each rendering its existing
  * pane body BY REFERENCE. This is the v3 replacement for the nested column
  * template in `templates.tsx`, which the legacy `PatientProfileShell` keeps
@@ -16,10 +16,12 @@
  *   - P5-DL-1 / v3-DL-2 — uniform, self-contained tabs. No tab references a
  *     sibling; cross-tab state flows only through the shared providers mounted
  *     above the shell (`RxFormProvider` / `RxSafetyProvider` / …).
- *   - P5-DL-4 — Investigations and Plan are INDEPENDENT tabs: no
- *     `@[720px]/middle-bottom` container query, no `InvestigationsAutoMerge`.
- *     Both still write the shared `investigationsOrders` field, so the
- *     decouple cannot split state.
+ *   - SOAP fold — Investigations is no longer a standalone tab. Ordered
+ *     investigations live inside the Plan (SOAP "P") tab via `PlanSection`'s
+ *     `InvestigationsChipRow`, which writes the same `investigationsOrders`
+ *     field the old standalone pane did. Lab/imaging RESULTS remain under the
+ *     Objective tab. (Legacy `templates.tsx` still ships the old pane until
+ *     cv3x-03 deletes it.)
  *   - P5-DL-3 / P0-DL-1 — legacy `templates.tsx` is untouched. The type-only
  *     import of the cockpit context below is the one remaining coupling; it is
  *     relocated by cv3x-03 when the column factories are deleted.
@@ -38,6 +40,7 @@ import {
   canEditPrescriptionDraft,
   type CockpitTemplate,
 } from '@/lib/patient-profile/state';
+import { AssessmentSection } from '@/components/cockpit/rx/sections/AssessmentSection';
 // Type-only: the cockpit context contract the page builds (P5-DL-3 — relocated
 // by cv3x-03 when templates.tsx is deleted; no runtime coupling).
 import type {
@@ -51,11 +54,9 @@ import {
 import SnapshotPane from '@/components/patient-profile/panes/SnapshotPane';
 import { ChartRailWithEmptyState } from '@/components/patient-profile/panes/ChartRailWithEmptyState';
 import HistoryPane from '@/components/patient-profile/panes/HistoryPane';
-import InvestigationsPane from '@/components/patient-profile/panes/InvestigationsPane';
 import RxPane from '@/components/patient-profile/panes/RxPane';
 import SubjectivePane from '@/components/patient-profile/panes/SubjectivePane';
 import ObjectivePane from '@/components/patient-profile/panes/ObjectivePane';
-import { AssessmentStrip } from '@/components/cockpit/middle/AssessmentStrip';
 import { BodyZone } from '@/components/cockpit/middle/BodyZone';
 import { EndedConsultBody } from '@/components/cockpit/middle/EndedConsultBody';
 
@@ -70,18 +71,17 @@ const FALLBACK_LAUNCHER_REF: RefObject<TelemedVideoLauncherHandle> =
   createRef<TelemedVideoLauncherHandle>();
 
 /**
- * Stable left-to-right tab order. The palette + blank-seed (cv3t-02) read this
- * so "what tabs exist" stays a single source of truth.
+ * Stable left-to-right tab order. Palette + blank-seed read this so "what tabs
+ * exist" stays a single source of truth. SOAP leaves follow clinical S→O→A→P.
  */
 export const COCKPIT_TAB_ORDER = [
   'snapshot',
   'history',
   'body',
-  'assessment',
-  'investigations-orders',
-  'plan',
   'subjective',
   'objective',
+  'assessment',
+  'plan',
 ] as const;
 
 /** Walk-in subset (no chart, DL-5): the consult body + the Rx plan, in order. */
@@ -145,7 +145,7 @@ function buildReviewBodyTab(ctx: TelemedVideoContext): PaneDefinition {
 }
 
 /**
- * Build the eight uniform leaf tabs for the Cockpit v3 canvas.
+ * Build the seven uniform leaf tabs for the Cockpit v3 canvas.
  *
  * @param ctx        the cockpit context the page builds (`templateContext`).
  * @param templateId the dispatched template id (`selectedTemplateId`). Omit to
@@ -223,32 +223,29 @@ export function buildCockpitTabs(
     title: 'Assessment',
     icon: PANE_ICONS.assessment,
     render: () => (
-      <AssessmentStrip state={ctx.state} appointmentId={appointmentId} />
-    ),
-    naturalSizePct: 8,
-    minSizePx: 60,
-  };
-
-  // P5-DL-4: standalone Investigations — no `@[720px]/middle-bottom` gating div.
-  const investigations: PaneDefinition = {
-    id: 'investigations-orders',
-    title: 'Investigations',
-    icon: PANE_ICONS['investigations-orders'],
-    render: () => (
-      <InvestigationsPane
-        state={ctx.state}
-        appointmentId={appointmentId}
-        hideHeader
-      />
+      <div
+        className="flex h-full min-h-0 flex-col"
+        data-testid="assessment-pane"
+      >
+        {/* Match SubjectivePane / ObjectivePane horizontal inset (px-4). */}
+        <div className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] px-4 pb-3 pt-0">
+          <div className="h-3" aria-hidden />
+          <AssessmentSection
+            heading={null}
+            disabled={!canEditPrescriptionDraft(ctx.state)}
+          />
+        </div>
+      </div>
     ),
     naturalSizePct: 40,
     minSizePx: 200,
   };
 
-  // P5-DL-4: standalone Plan — `RxPane` alone, no `InvestigationsAutoMerge`,
-  // no bundling <div>. The lifted-prop set is a fixed clinical-safety contract
-  // and is transplanted verbatim from the template (dropping any one
-  // double-renders safety / Dx / the "Send Rx & finish" action).
+  // SOAP fold: ordered investigations live inside the Plan tab (`PlanSection`'s
+  // `InvestigationsChipRow`), not a standalone tab. `RxPane` alone, no bundling
+  // <div>. The lifted-prop set is a fixed clinical-safety contract and is
+  // transplanted verbatim from the template (dropping any one double-renders
+  // safety / Dx / the "Send Rx & finish" action).
   const plan: PaneDefinition = {
     id: 'plan',
     title: 'Plan',
@@ -305,11 +302,10 @@ export function buildCockpitTabs(
     snapshot,
     history,
     body,
-    assessment,
-    investigations,
-    plan,
     subjective,
     objective,
+    assessment,
+    plan,
   ];
 }
 

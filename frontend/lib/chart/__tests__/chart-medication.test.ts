@@ -13,6 +13,7 @@ import {
   chartMedSourceFromDb,
   chartMedSourceLabel,
   chartMedSourceToDb,
+  customStrengthUnitFromLegacy,
   doseQtyFromSchedule,
   doseScheduleForFrequencyChange,
   doseScheduleOptionsForFrequency,
@@ -327,6 +328,12 @@ describe("unit More combobox resolvers", () => {
   it("normalizes dose unit aliases", () => {
     expect(resolveDoseUnitInput("ml")).toBe("ml");
     expect(resolveDoseUnitInput("neb")).toBe("custom");
+  });
+
+  it("extracts custom strength unit from legacy text", () => {
+    expect(customStrengthUnitFromLegacy("5 deaf asdf", 5, null)).toBe("deaf asdf");
+    expect(customStrengthUnitFromLegacy("5 mg", 5, "mg")).toBeNull();
+    expect(customStrengthUnitFromLegacy("5", 5, null)).toBeNull();
   });
 });
 

@@ -52,6 +52,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { getPalettePaneIcon, isSoapPaneId } from "@/lib/patient-profile/pane-icons";
 
 export interface CockpitPaletteProps {
   panes: PaneDefinition[];
@@ -172,7 +173,8 @@ export default function CockpitPalette({
       >
         {panes.map((pane) => {
           const hidden = layout.paneState[pane.id]?.hidden ?? true;
-          const Icon = pane.icon ?? LayoutGrid;
+          const Icon = getPalettePaneIcon(pane.id, pane.icon ?? LayoutGrid);
+          const soapInitial = isSoapPaneId(pane.id);
           const tooltipLabel = hidden
             ? `Add ${pane.title}`
             : `Remove ${pane.title}`;
@@ -195,7 +197,13 @@ export default function CockpitPalette({
                   aria-pressed={!hidden}
                   aria-label={tooltipLabel}
                 >
-                  <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  <Icon
+                    className={cn(
+                      "shrink-0",
+                      soapInitial ? "h-4 w-4" : "h-3.5 w-3.5",
+                    )}
+                    aria-hidden
+                  />
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" sideOffset={6}>

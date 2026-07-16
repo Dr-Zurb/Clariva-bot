@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  reAnchorExamSystemCardOnClose,
   scrollExamSystemCardIntoView,
+  scrollObjectiveExamSectionToTop,
 } from "@/lib/cockpit/exam-card-scroll";
 import { ExamSystemCard } from "@/components/cockpit/rx/inputs/ExamSystemCard";
-import { ObjectiveSectionTemplateButton } from "@/components/cockpit/rx/objective/ObjectiveSectionTemplateButton";
+import { ClearAllConfirmDialog } from "@/components/cockpit/rx/ClearAllConfirmDialog";
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import { RX_FIELD_LABEL_CLASS } from "@/components/cockpit/rx/sections/field-styles";
 import { EXAM_CORE_SYSTEM_ORDER, listExamSystems } from "@/lib/cockpit/exam-schema";
@@ -29,20 +29,20 @@ export function ExamSystemList({ disabled = false }: ExamSystemListProps) {
   const systems = listExamSystems();
   const examFindings = state.fields.examFindings;
   const [openIds, setOpenIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
 
-  // Open → glide the card to the top (under the sticky section header) concurrently
-  // with the expand; close → keep it where it is unless it scrolled above the
-  // sticky line. Only single-card toggles scroll — bulk expand/collapse-all
-  // deliberately don't (would be a flurry of jumps).
+  // Accordion: manual open keeps one system card expanded; expand/collapse-all are
+  // bulk survey/reset. Open → glide under the Examination sticky header; close →
+  // re-anchor unless already above the sticky line. Bulk actions do not scroll.
   const setOpen = useCallback((systemId: string, open: boolean) => {
     setOpenIds((prev) => {
+      if (open) return new Set([systemId]);
       const next = new Set(prev);
-      if (open) next.add(systemId);
-      else next.delete(systemId);
+      next.delete(systemId);
       return next;
     });
     if (open) scrollExamSystemCardIntoView(systemId);
-    else reAnchorExamSystemCardOnClose(systemId);
+    else scrollObjectiveExamSectionToTop();
   }, []);
 
   // External request (e.g. a Vitals shortcut) to open + scroll a system card.
@@ -70,10 +70,11 @@ export function ExamSystemList({ disabled = false }: ExamSystemListProps) {
     collapseAll();
   }
 
-  function clearAllExam() {
+  function confirmClearAllExam() {
     if (disabled) return;
     dispatch({ type: "SET_EXAM_FINDINGS", examFindings: [] });
     collapseAll();
+    setClearConfirmOpen(false);
   }
 
   const counts = useMemo(() => {
@@ -84,11 +85,13 @@ export function ExamSystemList({ disabled = false }: ExamSystemListProps) {
       if (finding?.status === "normal") normal += 1;
       else if (finding?.status === "abnormal") abnormal += 1;
     }
-    const notExamined = systems.length - normal - abnormal;
+    const notExamined = EXAM_CORE_SYSTEM_ORDER.length - normal - abnormal;
     return { normal, abnormal, notExamined };
-  }, [examFindings, systems.length]);
+  }, [examFindings]);
 
-  const hasDocumentedExam = counts.normal + counts.abnormal > 0;
+  const hasDocumentedExam =
+    counts.normal + counts.abnormal > 0 ||
+    Boolean(findExamFinding(examFindings, "additional_notes")?.notes?.trim());
 
   const summaryLabel = `${counts.normal} normal · ${counts.abnormal} abnormal · ${counts.notExamined} not examined`;
 
@@ -106,7 +109,6 @@ export function ExamSystemList({ disabled = false }: ExamSystemListProps) {
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-1">
-          {!disabled ? <ObjectiveSectionTemplateButton scope="exam_systemic" /> : null}
           <button
             type="button"
             onClick={expandAll}
@@ -126,7 +128,7 @@ export function ExamSystemList({ disabled = false }: ExamSystemListProps) {
           <button
             type="button"
             disabled={disabled || !hasDocumentedExam}
-            onClick={clearAllExam}
+            onClick={() => setClearConfirmOpen(true)}
             className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground hover:border-primary/60 hover:text-foreground disabled:opacity-50"
             data-testid="exam-clear-all"
           >
@@ -155,6 +157,19 @@ export function ExamSystemList({ disabled = false }: ExamSystemListProps) {
           />
         ))}
       </div>
+      <ClearAllConfirmDialog
+        open={clearConfirmOpen}
+        onOpenChange={setClearConfirmOpen}
+        title="Clear all examination findings?"
+        descriptionLead="This will reset every system to not examined."
+        bullets={[
+          "Normal and abnormal findings",
+          "Per-system notes and finding details",
+          "Additional notes",
+        ]}
+        testId="exam-clear-all-dialog"
+        onConfirm={confirmClearAllExam}
+      />
       </div>
     </TooltipProvider>
   );

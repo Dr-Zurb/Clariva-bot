@@ -102,7 +102,9 @@ export default function RxPane({
   }, []);
 
   const rxWorkspaceBody = (
-    <div className="min-h-0 flex-1 overflow-y-auto">
+    <div className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] px-4 pb-3 pt-0">
+      {/* Match SubjectivePane / ObjectivePane inset when the shell owns the header. */}
+      {hideHeader ? <div className="h-3" aria-hidden /> : null}
       <RxWorkspace
         appointmentId={appointment.id}
         patientId={appointment.patient_id ?? null}

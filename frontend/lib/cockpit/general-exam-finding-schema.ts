@@ -290,6 +290,37 @@ export const GENERAL_EXAM_FINDINGS: readonly GeneralExamFindingDef[] = [
   },
 ] as const;
 
+/** Reserved finding rows for per-subsection free-text notes (General). */
+export const GENERAL_SUBSECTION_NOTES_FINDINGS = [
+  { findingId: "general_demeanor_notes", label: "Demeanor" },
+  { findingId: "general_appearance_notes", label: "Appearance" },
+  { findingId: "general_volume_notes", label: "Volume" },
+  { findingId: "general_peripheral_notes", label: "Peripheral" },
+  { findingId: "general_nutrition_notes", label: "Nutrition" },
+] as const;
+
+const GENERAL_SUBSECTION_NOTES_BY_SUBSECTION_ID: Record<string, string> = {
+  demeanor: "general_demeanor_notes",
+  appearance: "general_appearance_notes",
+  volume: "general_volume_notes",
+  peripheral: "general_peripheral_notes",
+  nutrition: "general_nutrition_notes",
+};
+
+export function generalSubsectionNotesFindingId(subsectionId: string): string | undefined {
+  return GENERAL_SUBSECTION_NOTES_BY_SUBSECTION_ID[subsectionId];
+}
+
+const GENERAL_SUBSECTION_NOTES_BY_FINDING_ID = new Map(
+  GENERAL_SUBSECTION_NOTES_FINDINGS.map((row) => [row.findingId, row.label]),
+);
+
+export function resolveGeneralSubsectionNotesLabel(findingId: string): string | undefined {
+  return GENERAL_SUBSECTION_NOTES_BY_FINDING_ID.get(
+    findingId as (typeof GENERAL_SUBSECTION_NOTES_FINDINGS)[number]["findingId"],
+  );
+}
+
 const GENERAL_FINDING_BY_ID = new Map(
   GENERAL_EXAM_FINDINGS.map((f) => [f.findingId, f]),
 );

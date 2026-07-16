@@ -3,7 +3,6 @@
 import { useCallback, useState } from "react";
 import { ChevronUp } from "lucide-react";
 import {
-  reAnchorExamRespFindingCardOnClose,
   scrollExamRespFindingCardIntoView,
   scrollExamSubsectionIntoView,
 } from "@/lib/cockpit/exam-card-scroll";
@@ -38,6 +37,7 @@ import {
   listRespStructuredFindingsForSubsection,
   listRespSubsectionChips,
   resolveRespAuscultationChipGroupNotesMeta,
+  resolveRespExamFinding,
 } from "@/lib/cockpit/resp-exam-finding-schema";
 import {
   chipLabelToFindingId,
@@ -139,7 +139,13 @@ export function ExamRespSystemBody({
   // in-person-only ones. In-clinic order + open-state are byte-identical.
   const orderedSubsections = orderSubsectionsForModality(RESP_EXAM_SUBSECTIONS, isTele);
 
-  const { isOpen: isSubsectionOpen, toggle: toggleSubsection } = useExamSubsectionOpenState({
+  const {
+    isOpen: isSubsectionOpen,
+    toggle: toggleSubsection,
+    expandAll: expandAllSubsections,
+    collapseAll: collapseAllSubsections,
+  } = useExamSubsectionOpenState({
+    systemId: "resp",
     subsections: RESP_EXAM_SUBSECTIONS,
     initialEntries: finding?.findings ?? [],
     ownedFindingIds: respSubsectionOwnedFindingIds,
@@ -155,10 +161,15 @@ export function ExamRespSystemBody({
     setOpenFindingId(open ? findingId : null);
     if (open) {
       scrollExamRespFindingCardIntoView(findingId);
-    } else if (isRespAuscultationExpandableCardId(findingId)) {
+      return;
+    }
+    if (isRespAuscultationExpandableCardId(findingId)) {
       scrollExamSubsectionIntoView(RESP_AUSCULTATION_SUBSECTION_SCROLL_KEY);
-    } else {
-      reAnchorExamRespFindingCardOnClose(findingId);
+      return;
+    }
+    const def = resolveRespExamFinding(findingId);
+    if (def) {
+      scrollExamSubsectionIntoView(respSubsectionScrollKey(def.subsectionId));
     }
   }, []);
 
@@ -312,6 +323,8 @@ export function ExamRespSystemBody({
         disabled={disabled}
         onMarkNormal={markNormal}
         onClear={clearSection}
+        onExpandAllSubsections={showBody ? expandAllSubsections : undefined}
+        onCollapseAllSubsections={showBody ? collapseAllSubsections : undefined}
       />
 
       {showBody ? (
@@ -440,7 +453,7 @@ export function ExamRespSystemBody({
 
                 {isAuscultation ? (
                   <div
-                    className="mt-2 divide-y divide-border/45"
+                    className="mt-2 space-y-0.5"
                     data-testid="exam-findings-resp-auscultation"
                   >
                     {chipGroups.map((group) => (

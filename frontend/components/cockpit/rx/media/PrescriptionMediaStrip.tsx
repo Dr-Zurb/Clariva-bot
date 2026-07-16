@@ -18,7 +18,7 @@ import { attachmentFilename, isImageAttachment } from "@/lib/cockpit/objective-m
 
 const BUCKET = "prescription-attachments";
 
-export type PrescriptionMediaCategory = "objective" | "subjective";
+export type PrescriptionMediaCategory = "objective" | "subjective" | "advice";
 
 export interface PrescriptionMediaStripProps {
   disabled?: boolean;

@@ -123,15 +123,24 @@ export function examTeleconsultFindingCardShellClass(
   open: boolean,
   isRecorded: boolean,
   limitedOnTeleconsult: boolean,
+  depthToneActive = false,
 ): string {
   return cn(
-    limitedOnTeleconsult && !open && "border border-dashed border-border/50 bg-muted/20",
+    // When depth tone is active the card rail carries structure — drop the dashed
+    // box so teleconsult de-emphasis does not double-mute (vh-03 / peripheral fix).
+    limitedOnTeleconsult &&
+      !open &&
+      !depthToneActive &&
+      "border border-dashed border-border/50 bg-muted/20",
+    limitedOnTeleconsult && !open && depthToneActive && "bg-muted/10",
     open
       ? "my-1 rounded-sm border border-border/70 bg-background px-1 shadow-sm"
       : isRecorded
         ? "bg-muted/10 hover:bg-muted/20"
         : limitedOnTeleconsult
-          ? "hover:bg-muted/25"
+          ? depthToneActive
+            ? "hover:bg-muted/15"
+            : "hover:bg-muted/25"
           : "hover:bg-muted/15",
   );
 }

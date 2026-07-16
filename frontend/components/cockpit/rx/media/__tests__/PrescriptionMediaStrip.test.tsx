@@ -100,6 +100,10 @@ function ComplaintPhotosHarness({
     setSubjectiveSectionHidden: vi.fn(),
     objectiveDefaults: null,
     setObjectiveDefaults: vi.fn(),
+    planDefaults: null,
+    setPlanDefaults: vi.fn(),
+    assessmentDefaults: null,
+    setAssessmentDefaults: vi.fn(),
     providerProps: {
       key: "test",
       appointmentId: "appt-1",

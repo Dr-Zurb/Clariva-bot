@@ -32,7 +32,9 @@
  *
  * Matches the dominant pattern in this codebase (`useSessionOverrun`,
  * `useChartPrefetch`, etc.): `useState` + `useEffect` with a manual
- * cancellation flag. The codebase does NOT use SWR / React Query
+ * cancellation flag. A short module-level memory cache seeds state so
+ * remounts / Strict Mode do not flash the ribbon skeleton twice.
+ * The codebase does NOT use SWR / React Query for this path
  * (confirmed via the docblock in `useChartPrefetch.ts`), so this hook
  * deliberately does not introduce one.
  *
@@ -114,6 +116,52 @@ const EMPTY_RIBBON: RibbonData = {
   error: null,
 };
 
+/** Session memory so remounts / Strict Mode don't flash ribbon skeletons again. */
+const RIBBON_CACHE_TTL_MS = 60_000;
+const ribbonCache = new Map<
+  string,
+  { data: Omit<RibbonData, "isLoading">; at: number }
+>();
+
+function ribbonCacheKey(patientId: string, token: string): string {
+  return `${patientId}::${token.slice(0, 12)}`;
+}
+
+function readRibbonCache(
+  patientId: string,
+  token: string,
+): RibbonData | null {
+  const hit = ribbonCache.get(ribbonCacheKey(patientId, token));
+  if (!hit) return null;
+  if (Date.now() - hit.at > RIBBON_CACHE_TTL_MS) {
+    ribbonCache.delete(ribbonCacheKey(patientId, token));
+    return null;
+  }
+  return { ...hit.data, isLoading: false };
+}
+
+function writeRibbonCache(
+  patientId: string,
+  token: string,
+  data: RibbonData,
+): void {
+  ribbonCache.set(ribbonCacheKey(patientId, token), {
+    data: {
+      identity: data.identity,
+      allergies: data.allergies,
+      chronicConditions: data.chronicConditions,
+      activeMedsCount: data.activeMedsCount,
+      error: data.error,
+    },
+    at: Date.now(),
+  });
+}
+
+/** Test helper — drop ribbon memory cache. */
+export function clearPatientRibbonDataCache(): void {
+  ribbonCache.clear();
+}
+
 // ---------------------------------------------------------------------------
 // Mappers (kept module-local; consumers don't need them)
 // ---------------------------------------------------------------------------
@@ -182,7 +230,13 @@ export function usePatientRibbonData(
   patientId: string | null,
   token: string | null,
 ): RibbonData {
-  const [data, setData] = useState<RibbonData>(EMPTY_RIBBON);
+  const [data, setData] = useState<RibbonData>(() => {
+    if (!patientId || !token) return EMPTY_RIBBON;
+    return readRibbonCache(patientId, token) ?? {
+      ...EMPTY_RIBBON,
+      isLoading: true,
+    };
+  });
 
   useEffect(() => {
     if (!patientId || !token) {
@@ -191,7 +245,12 @@ export function usePatientRibbonData(
     }
 
     let cancelled = false;
-    setData((prev) => ({ ...prev, isLoading: true, error: null }));
+    const cached = readRibbonCache(patientId, token);
+    if (cached) {
+      setData(cached);
+    } else {
+      setData((prev) => ({ ...prev, isLoading: true, error: null }));
+    }
 
     void Promise.allSettled([
       getPatientById(patientId, token),
@@ -234,14 +293,16 @@ export function usePatientRibbonData(
             ? new Error(String(firstError))
             : null;
 
-      setData({
+      const next: RibbonData = {
         identity: deriveIdentity(patient, latestVitals),
         allergies: allergyRows.map(toRibbonAllergy),
         chronicConditions: conditionRows.map(toRibbonChronic),
         activeMedsCount: countActiveMedicines(latestRx),
         isLoading: false,
         error,
-      });
+      };
+      writeRibbonCache(patientId, token, next);
+      setData(next);
     });
 
     return () => {

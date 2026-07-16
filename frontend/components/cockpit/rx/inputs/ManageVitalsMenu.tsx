@@ -2,7 +2,10 @@
 
 import { useMemo, useRef, useState } from "react";
 import { Activity, Eye, EyeOff, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { IconTooltip, IconTooltipGroup } from "@/components/ui/icon-tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { SOAP_TAB_CHROME_ICON_BTN_CLASS } from "@/components/cockpit/rx/SoapTabChromeActions";
 import type { RxFormFields } from "@/components/cockpit/rx/RxFormContext";
 import {
   PUPIL_CLUSTER_MENU_KEY,
@@ -319,17 +322,27 @@ export function ManageVitalsMenu({
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
-          aria-label={triggerLabel}
-          data-testid="vitals-manager-trigger"
-        >
-          <Activity className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          <span>{triggerLabel}</span>
-        </button>
-      </PopoverTrigger>
+      <IconTooltipGroup>
+        <IconTooltip label={triggerLabel}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={cn(SOAP_TAB_CHROME_ICON_BTN_CLASS, "relative")}
+              aria-label={triggerLabel}
+              data-testid="vitals-manager-trigger"
+            >
+              <Activity className="h-3.5 w-3.5" aria-hidden />
+              {hiddenCount > 0 ? (
+                <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-muted-foreground px-0.5 text-[9px] font-semibold leading-none text-background">
+                  {hiddenCount}
+                </span>
+              ) : null}
+            </Button>
+          </PopoverTrigger>
+        </IconTooltip>
+      </IconTooltipGroup>
       <PopoverContent align="end" className="w-[30rem] max-w-[calc(100vw-2rem)] p-0">
         <div className="border-b border-border px-3 py-2.5">
           <p className="text-sm font-medium">Manage vitals</p>

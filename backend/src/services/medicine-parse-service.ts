@@ -61,7 +61,14 @@ const STOP_REASONS = new Set([
 const FOOD_TIMINGS = new Set([
   'before_food', 'after_food', 'with_food', 'empty_stomach', 'bedtime',
 ]);
+const ROUTE_CODES = new Set([
+  'oral', 'IV', 'IM', 'SC', 'topical', 'inhaled', 'rectal', 'nasal', 'sublingual', 'other',
+]);
+const DURATION_UNITS = new Set([
+  'days', 'weeks', 'months', 'until-finished', 'continue',
+]);
 const DOSE_SCHEDULE_RE = /^[\d.]+(?:-[\d.]+){1,3}$/;
+const MAX_ROUTE_SITE_LEN = 60;
 
 /**
  * Explicit origin cues the doctor must actually type before we honour an
@@ -228,11 +235,15 @@ function buildSystemPrompt(): string {
     '    "stoppedAgoUnit": "days"|"weeks"|"months"|"years"|null,',
     '    "stopReason": "resolved"|"side_effects"|"cost"|"patient_choice"|"other"|null,',
     '    "foodTiming": "before_food"|"after_food"|"with_food"|"empty_stomach"|"bedtime"|null,',
+    '    "routeCode": "oral"|"IV"|"IM"|"SC"|"topical"|"inhaled"|"rectal"|"nasal"|"sublingual"|"other"|null,',
+    '    "routeSite": string|null,',
+    '    "durationValue": number|null,',
+    '    "durationUnit": "days"|"weeks"|"months"|"until-finished"|"continue"|null,',
     '    "instructions": string|null',
     '  }]}',
     '',
     'Rules:',
-    '- "name" is the drug in plain English (translate vernacular/Hinglish, e.g. "sugar ki goli" -> the medicine name only if clearly named, else keep the literal drug word).',
+    '- "name" is the drug in plain English (translate vernacular/Hinglish, e.g. "sugar ki goli" -> the medicine name only if clearly named, else keep the literal drug word). Do NOT leave route words (im/iv/sc), form words (injection/inj/tablet/tab), or site words (gluteal/deltoid) inside "name".',
     '- Split DISTINCT drugs into separate array items (e.g. "metformin 500 bd and amlodipine 5 od" -> 2 items).',
     '- frequencyCode: map "od/once"->OD, "bd/twice"->BID, "tds/tid"->TID, "qid"->QID, "hs/at night"->QHS, "sos/prn/as needed"->PRN, "stat"->STAT, "q8h/8 hourly"->Q8H (similarly Q4H/Q6H/Q12H/Q24H), "weekly"->QW. Use ONLY these codes; otherwise null.',
     '- strengthUnit: one of mg, g, mcg, iu, pct ("%"->pct). doseUnit: one of the listed units. Use null if unsure.',
@@ -245,6 +256,11 @@ function buildSystemPrompt(): string {
     '- stoppedAgoValue/stoppedAgoUnit: ONLY when status is "past" AND a stop time is stated ("stopped 2 months ago" → 2 months, "discontinued last year" → 1 year). Map the unit to days/weeks/months/years. This is the time since stopping, distinct from startedAgo.',
     '- stopReason: ONLY when status is "past" and a reason is stated — side_effects (side/adverse effects), cost (too expensive), patient_choice (patient stopped on own), resolved (condition resolved), else other. Use null if no reason stated.',
     '- foodTiming: before_food (before meals/empty stomach/30 min prior), after_food, with_food, empty_stomach, bedtime. Use null if not stated.',
+    '- routeCode: map "im/intramuscular"->IM, "iv/intravenous"->IV, "sc/sq/subcutaneous"->SC, "po/oral"->oral, topical/inhaled/rectal/nasal/sublingual/other when stated. When the line says injection/inj AND a classic injectable site without an explicit route: gluteal/glute/deltoid/thigh/vastus/buttock → IM; abdomen/tummy/flank → SC. Example: "b12 injection gluteal" → routeCode IM. Example: "b12 im gluteal" → routeCode IM.',
+    '- form: set from stated form words — tablet/tab, capsule/cap, syrup/syp, injection/inj, ointment, cream, drops, inhaler, etc. "injection"/"inj" is ALWAYS form, NEVER part of "name". Example: "b12 injection gluteal" → form "injection", name without that word.',
+    '- routeSite: injection/application site when stated — Deltoid, Glute (gluteal/gluteus), Thigh, Abdomen, Upper arm, Face, Scalp, Left/Right/Both (nasal), etc. Example: "b12 injection gluteal" → routeSite "Glute"; "b12 im gluteal" → routeSite "Glute". Use null if not stated. Never put the site in "name" or "instructions".',
+    '- Fill every structured field the line clearly supports (name, form, routeCode, routeSite, strength, dose, frequencyCode, duration, foodTiming). Leave null only what is not stated. Never invent frequency, dose, or strength.',
+    '- durationValue/durationUnit: NEW prescription course length only when clearly a course ("for 5 days", "x 10d", "2 weeks"). Do NOT use startedAgo here. until-finished / continue when stated. Use null if not a course duration.',
     '- "instructions" holds any remaining free text (e.g. "avoid milk", "not with dairy"); never repeat structured fields there.',
     '- Omit (null) anything not stated. Never invent doses, strengths, or frequencies.',
   ].join('\n');
@@ -297,6 +313,57 @@ function boundFrequencyCode(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const key = value.trim().toUpperCase();
   return FREQUENCY_CODES.has(key) ? key : null;
+}
+
+function boundRouteCode(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const raw = value.trim();
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  const aliases: Record<string, string> = {
+    oral: 'oral',
+    po: 'oral',
+    peroral: 'oral',
+    iv: 'IV',
+    intravenous: 'IV',
+    im: 'IM',
+    intramuscular: 'IM',
+    sc: 'SC',
+    sq: 'SC',
+    subcutaneous: 'SC',
+    topical: 'topical',
+    inhaled: 'inhaled',
+    inhalational: 'inhaled',
+    rectal: 'rectal',
+    pr: 'rectal',
+    nasal: 'nasal',
+    intranasal: 'nasal',
+    sublingual: 'sublingual',
+    sl: 'sublingual',
+    other: 'other',
+  };
+  const mapped = aliases[lower] ?? (ROUTE_CODES.has(raw) ? raw : null);
+  return mapped && ROUTE_CODES.has(mapped) ? mapped : null;
+}
+
+function boundDurationUnit(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const lower = value.trim().toLowerCase().replace(/\s+/g, '-');
+  const aliases: Record<string, string> = {
+    day: 'days',
+    days: 'days',
+    week: 'weeks',
+    weeks: 'weeks',
+    month: 'months',
+    months: 'months',
+    continue: 'continue',
+    ongoing: 'continue',
+    'until-finished': 'until-finished',
+    untilfinished: 'until-finished',
+    finished: 'until-finished',
+  };
+  const mapped = aliases[lower] ?? lower;
+  return DURATION_UNITS.has(mapped) ? mapped : null;
 }
 
 function boundShortText(value: unknown, max: number): string | null {
@@ -402,6 +469,10 @@ function boundOne(
     stoppedAgoUnit: isPast ? boundEnum(obj.stoppedAgoUnit, STARTED_AGO_UNITS) : null,
     stopReason: isPast ? boundEnum(obj.stopReason, STOP_REASONS) : null,
     foodTiming: boundEnum(obj.foodTiming, FOOD_TIMINGS),
+    routeCode: boundRouteCode(obj.routeCode),
+    routeSite: boundShortText(obj.routeSite, MAX_ROUTE_SITE_LEN),
+    durationValue: boundNumber(obj.durationValue, MAX_STRENGTH_VALUE),
+    durationUnit: boundDurationUnit(obj.durationUnit),
     instructions: boundShortText(obj.instructions, MAX_INSTRUCTIONS_LEN),
   };
 }

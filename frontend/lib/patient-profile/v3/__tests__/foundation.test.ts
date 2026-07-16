@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   dropPaneIntoZone,
+  swapPaneTreeNodes,
   addToTabsNode,
   setActiveTab,
   paneTreeToFlat,
@@ -83,6 +84,75 @@ describe("cv3s-02: kept engine runs in isolation (v3-DL-1)", () => {
     const tree = root([leaf("a"), leaf("b")]);
     expect(isValidTreeNode(tree)).toBe(true);
     expect(deserialiseTree(serialiseTree(tree))).toEqual(tree);
+  });
+});
+
+describe("cv3d-swap: swapPaneTreeNodes", () => {
+  it("swaps two sibling leaves, preserving each slot's sizePct", () => {
+    const tree = root([leaf("a", 30), leaf("b", 20), leaf("c", 50)]);
+    const r = swapPaneTreeNodes(tree, "a", "c");
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const ids = r.tree.children!.map((n) => n.id);
+      const sizes = r.tree.children!.map((n) => n.sizePct);
+      // Contents traded places; slot widths (30/20/50) unchanged.
+      expect(ids).toEqual(["c", "b", "a"]);
+      expect(sizes).toEqual([30, 20, 50]);
+      expect(paneTreeToFlat(r.tree).paneOrder.sort()).toEqual(["a", "b", "c"]);
+    }
+  });
+
+  it("swaps leaves across different parents", () => {
+    const tree = root([
+      leaf("a", 40),
+      {
+        id: "col",
+        sizePct: 60,
+        hidden: false,
+        direction: "vertical",
+        children: [leaf("b", 70), leaf("c", 30)],
+      },
+    ]);
+    const r = swapPaneTreeNodes(tree, "a", "c");
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      // "c" now sits in the root slot (keeps 40); "a" nests where "c" was (keeps 30).
+      expect(r.tree.children![0]!.id).toBe("c");
+      expect(r.tree.children![0]!.sizePct).toBe(40);
+      const col = r.tree.children![1]!;
+      expect(col.children!.map((n) => n.id)).toEqual(["b", "a"]);
+      expect(col.children![1]!.sizePct).toBe(30);
+    }
+  });
+
+  it("same id → no-op", () => {
+    const tree = root([leaf("a"), leaf("b")]);
+    const r = swapPaneTreeNodes(tree, "a", "a");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("no-op");
+  });
+
+  it("missing id → not-found", () => {
+    const tree = root([leaf("a"), leaf("b")]);
+    const r = swapPaneTreeNodes(tree, "a", "zzz");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("not-found");
+  });
+
+  it("refuses swapping a node with its own ancestor", () => {
+    const tree = root([
+      leaf("a", 40),
+      {
+        id: "col",
+        sizePct: 60,
+        hidden: false,
+        direction: "vertical",
+        children: [leaf("b", 70), leaf("c", 30)],
+      },
+    ]);
+    const r = swapPaneTreeNodes(tree, "col", "b");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("no-op");
   });
 });
 

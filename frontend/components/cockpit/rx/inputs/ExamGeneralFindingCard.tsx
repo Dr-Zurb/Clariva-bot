@@ -34,6 +34,7 @@ import {
   RX_FIELD_INPUT_CLASS,
 } from "@/components/cockpit/rx/sections/field-styles";
 import { Collapse } from "@/components/ui/Collapse";
+import { useDepthToneSurface } from "@/components/ui/sticky-stack";
 import {
   ExamTeleconsultFindingCardHeader,
   examTeleconsultFindingCardShellClass,
@@ -230,6 +231,8 @@ export function ExamGeneralFindingCard({
     definition.findingId === "lymphadenopathy"
       ? parseLymphSites(migrateLymphadenopathyAttributes(attributes))
       : [];
+  // L3 raised row + rail from exam depth context; state-driven tint layers on top.
+  const tone = useDepthToneSurface({ railMinDepth: 0 });
 
   function patchAttributes(patch: Record<string, string | null>) {
     const base = entry ?? createEmptyFindingEntry(definition.findingId);
@@ -276,8 +279,10 @@ export function ExamGeneralFindingCard({
   return (
     <article
       className={cn(
-        "scroll-mt-[calc(var(--collapsible-sticky-top,2.75rem)_+_var(--exam-card-sticky-top,2.75rem))] transition-colors",
-        examTeleconsultFindingCardShellClass(open, isRecorded, limitedOnTeleconsult),
+        "scroll-mt-[var(--sticky-stack,2.75rem)] transition-colors",
+        tone.active && tone.surface,
+        examTeleconsultFindingCardShellClass(open, isRecorded, limitedOnTeleconsult, tone.active),
+        tone.rail,
       )}
       {...{ [EXAM_GENERAL_FINDING_CARD_ATTR]: definition.findingId }}
       data-testid={`general-finding-card-${definition.findingId}`}

@@ -26,6 +26,28 @@ describe("parseMedicineLine", () => {
     expect(p!.instructions).toBe("");
   });
 
+  it("parses bare dose qty before frequency (… 5mg 1 od)", () => {
+    const p = parseMedicineLine("Tolezomab 5mg 1 od");
+    expect(p).not.toBeNull();
+    expect(p!.medicineName).toBe("Tolezomab");
+    expect(p!.dosage).toBe("5 mg");
+    expect(p!.doseQty).toBe(1);
+    expect(p!.doseUnit).toBe("tab");
+    expect(p!.form).toBe("tablet");
+    expect(p!.frequencyCode).toBe("OD");
+    expect(p!.instructions).toBe("");
+    expect(p!.routeCode).toBe("oral");
+  });
+
+  it("does not steal strength as dose on 'drug N od' without a strength unit", () => {
+    const p = parseMedicineLine("amlodipine 5 od");
+    expect(p!.medicineName).toBe("amlodipine");
+    expect(p!.dosage).toBe("5");
+    expect(p!.doseQty).toBeNull();
+    expect(p!.frequencyCode).toBe("OD");
+    expect(p!.instructions).toBe("");
+  });
+
   it("parses a syrup line with spoon dose and form prefix", () => {
     const p = parseMedicineLine("syp dextromethorphan 2 spoon bd 5 days");
     expect(p!.medicineName).toBe("dextromethorphan");
@@ -49,6 +71,42 @@ describe("parseMedicineLine", () => {
     expect(p!.durationValue).toBe(10);
     expect(p!.durationUnit).toBe("days");
     expect(p!.instructions).toBe("avoid face");
+  });
+
+  it("parses IM route + gluteal site out of the drug name", () => {
+    const p = parseMedicineLine("b12 im gluteal");
+    expect(p).not.toBeNull();
+    expect(p!.medicineName.toLowerCase()).toBe("b12");
+    expect(p!.routeCode).toBe("IM");
+    expect(p!.route).toBe("IM · Glute");
+    expect(lineHasSigDetails("b12 im gluteal")).toBe(true);
+  });
+
+  it("parses mid-line injection form + gluteal site without explicit IM", () => {
+    const p = parseMedicineLine("b12 injection gluteal");
+    expect(p).not.toBeNull();
+    expect(p!.medicineName.toLowerCase()).toBe("b12");
+    expect(p!.form).toBe("injection");
+    expect(p!.routeCode).toBe("IM");
+    expect(p!.route).toBe("IM · Glute");
+    expect(p!.instructions).toBe("");
+    expect(lineHasSigDetails("b12 injection gluteal")).toBe(true);
+  });
+
+  it("infers SC from abdomen when form is injection", () => {
+    const p = parseMedicineLine("insulin injection abdomen");
+    expect(p!.medicineName.toLowerCase()).toBe("insulin");
+    expect(p!.form).toBe("injection");
+    expect(p!.routeCode).toBe("SC");
+    expect(p!.route).toBe("SC · Abdomen");
+  });
+
+  it("parses SC abdomen site", () => {
+    const p = parseMedicineLine("insulin sc abdomen od");
+    expect(p!.medicineName.toLowerCase()).toBe("insulin");
+    expect(p!.routeCode).toBe("SC");
+    expect(p!.route).toBe("SC · Abdomen");
+    expect(p!.frequencyCode).toBe("OD");
   });
 
   it("parses 1-0-1 dose patterns into frequency + per-dose qty", () => {

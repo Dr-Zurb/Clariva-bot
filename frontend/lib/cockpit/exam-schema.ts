@@ -364,10 +364,54 @@ export const EXAM_CORE_SYSTEMS: readonly ExamSystemDefinition[] = [
   },
 ] as const;
 
+/**
+ * Sibling free-text card rendered after the five core systems (not part of
+ * Mark-entire-exam-normal / core chip vocabulary). Persists in
+ * `examination_json` as `{ systemId: "additional_notes", status, notes }`.
+ */
+export const EXAM_ADDITIONAL_NOTES_SYSTEM_ID = "additional_notes" as const;
+
+/**
+ * Objective tab L1 Notes — stored in examination_json like other systems, but
+ * rendered as its own L1 section (not inside ExamSystemList).
+ */
+export const EXAM_OBJECTIVE_NOTES_SYSTEM_ID = "objective_notes" as const;
+
+export const EXAM_ADDITIONAL_NOTES_SYSTEM: ExamSystemDefinition = {
+  systemId: EXAM_ADDITIONAL_NOTES_SYSTEM_ID,
+  label: "Additional notes",
+  normalLine: "",
+  subsections: [],
+};
+
+export const EXAM_OBJECTIVE_NOTES_SYSTEM: ExamSystemDefinition = {
+  systemId: EXAM_OBJECTIVE_NOTES_SYSTEM_ID,
+  label: "Notes",
+  normalLine: "",
+  subsections: [],
+};
+
 /** Canonical systemId order — single source for derivation (obj-01) and cards (obj-03). */
 export const EXAM_CORE_SYSTEM_ORDER: readonly string[] = EXAM_CORE_SYSTEMS.map(
   (s) => s.systemId,
 );
+
+/**
+ * Render order for Examination cards: core systems, then Additional notes.
+ * Mark-all-normal still uses {@link EXAM_CORE_SYSTEM_ORDER} only.
+ */
+export const EXAM_RENDER_SYSTEM_ORDER: readonly string[] = [
+  ...EXAM_CORE_SYSTEM_ORDER,
+  EXAM_ADDITIONAL_NOTES_SYSTEM_ID,
+];
+
+/** Order used for derived-text sort (core → exam notes → objective notes → alpha). */
+export const EXAM_DERIVATION_SYSTEM_ORDER: readonly string[] = [
+  ...EXAM_CORE_SYSTEM_ORDER,
+  EXAM_ADDITIONAL_NOTES_SYSTEM_ID,
+  EXAM_OBJECTIVE_NOTES_SYSTEM_ID,
+];
+
 
 /** Shared fallback body for unknown / future specialty systemIds. */
 const DEFAULT_EXAM_SYSTEM_BODY = {
@@ -388,7 +432,13 @@ const DEFAULT_EXAM_SYSTEM_BODY = {
   ],
 } as const satisfies Pick<ExamSystemDefinition, "normalLine" | "subsections">;
 
-const CORE_BY_ID = new Map(EXAM_CORE_SYSTEMS.map((s) => [s.systemId, s]));
+const RENDER_BY_ID = new Map(
+  [
+    ...EXAM_CORE_SYSTEMS,
+    EXAM_ADDITIONAL_NOTES_SYSTEM,
+    EXAM_OBJECTIVE_NOTES_SYSTEM,
+  ].map((s) => [s.systemId, s]),
+);
 
 /** Title-case a slug-style systemId for fallback labels (`msk` → `Msk`). */
 function humanizeExamSystemId(systemId: string): string {
@@ -405,8 +455,8 @@ function humanizeExamSystemId(systemId: string): string {
  */
 export function resolveExamSystem(systemId: string): ExamSystemDefinition {
   const trimmed = systemId.trim();
-  const core = CORE_BY_ID.get(trimmed);
-  if (core) return core;
+  const known = RENDER_BY_ID.get(trimmed);
+  if (known) return known;
 
   return {
     systemId: trimmed,
@@ -419,9 +469,19 @@ export function resolveExamSystem(systemId: string): ExamSystemDefinition {
   };
 }
 
-/** Return the ordered core exam systems (canonical registry list). */
+/** Return core exam systems plus the Additional notes sibling card. */
 export function listExamSystems(): readonly ExamSystemDefinition[] {
-  return EXAM_CORE_SYSTEMS;
+  return [...EXAM_CORE_SYSTEMS, EXAM_ADDITIONAL_NOTES_SYSTEM];
+}
+
+/** True when this systemId is the free-text Additional notes sibling (under Examination). */
+export function isExamAdditionalNotesSystemId(systemId: string): boolean {
+  return systemId === EXAM_ADDITIONAL_NOTES_SYSTEM_ID;
+}
+
+/** True when this systemId is the Objective L1 Notes row. */
+export function isExamObjectiveNotesSystemId(systemId: string): boolean {
+  return systemId === EXAM_OBJECTIVE_NOTES_SYSTEM_ID;
 }
 
 /** Flatten a system's subsection chips into a single ordered list (obj-30). */

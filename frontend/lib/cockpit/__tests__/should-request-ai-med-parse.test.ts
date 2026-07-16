@@ -78,4 +78,14 @@ describe("shouldRequestAiMedParse", () => {
     expect(gate("syp dextromethorphan 2 spoon bd")).toBe(false);
     expect(gate("pan 40 od before food")).toBe(false);
   });
+
+  it("does not fire on bare dose qty before frequency (… 5mg 1 od)", () => {
+    expect(gate("Tolezomab 5mg 1 od")).toBe(false);
+    expect(gate("amlodipine 5 mg 1 od")).toBe(false);
+  });
+
+  it("does not fire on injection + site shorthand (no AI needed)", () => {
+    expect(gate("b12 injection gluteal")).toBe(false);
+    expect(gate("b12 im gluteal")).toBe(false);
+  });
 });

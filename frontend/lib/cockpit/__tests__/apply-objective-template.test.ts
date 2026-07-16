@@ -4,12 +4,14 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  buildObjectiveClearAllActions,
   buildObjectiveCustomBlockTemplateApplyActions,
   buildObjectiveCustomBlockTemplateSavePayload,
   buildObjectiveTemplateApplyActions,
   buildObjectiveTemplateSavePayload,
   objectiveCustomBlockSectionHasContent,
   objectiveScopeHasContent,
+  rxFormHasClearableObjectiveContent,
   templateHasObjectiveContent,
   templateObjectiveScopeHasContent,
 } from "@/lib/cockpit/apply-objective-template";
@@ -39,6 +41,8 @@ function makeTemplate(overrides: Partial<DoctorRxTemplate> = {}): DoctorRxTempla
     medicines_json: [],
     subjective_json: {},
     objective_json: {},
+    plan_json: {},
+    assessment_json: {},
     pmh_json: {},
     allergies_json: {},
     scope: "objective_full",
@@ -121,6 +125,39 @@ describe("apply-objective-template (obj-17)", () => {
     expect(payload.objective?.vitalsHr).toBe(72);
     expect(payload.objective?.examinationJson).toBeUndefined();
     expect(payload.objective?.testResults).toBeUndefined();
+  });
+
+  it("exam_additional_notes save/apply round-trips notes-only finding", () => {
+    const fields = emptyFields();
+    fields.examFindings = [
+      {
+        systemId: "additional_notes",
+        status: "abnormal",
+        findings: [],
+        notes: "Deferred fundoscopy",
+      },
+    ];
+    expect(objectiveScopeHasContent("exam_additional_notes", fields)).toBe(true);
+    const payload = buildObjectiveTemplateSavePayload("exam_additional_notes", fields);
+    expect(payload.scope).toBe("exam_additional_notes");
+    expect(payload.objective?.examinationJson).toEqual([
+      {
+        systemId: "additional_notes",
+        status: "abnormal",
+        findings: [],
+        notes: "Deferred fundoscopy",
+      },
+    ]);
+
+    const template = makeTemplate({
+      scope: "exam_additional_notes",
+      objective_json: payload.objective,
+    });
+    const applied = applyActions(
+      emptyFields(),
+      buildObjectiveTemplateApplyActions("exam_additional_notes", template),
+    );
+    expect(applied.examFindings).toEqual(payload.objective?.examinationJson);
   });
 
   it("exam_systemic save captures all exam findings", () => {
@@ -331,7 +368,7 @@ describe("apply-objective-template result scopes (obj-23)", () => {
     notes: null,
   };
 
-  it("objectiveScopeHasContent gates per result source", () => {
+  it("objectiveScopeHasContent gates Reports (all rows) vs legacy POC", () => {
     const fields = emptyFields();
     expect(objectiveScopeHasContent("test_results", fields)).toBe(false);
     expect(objectiveScopeHasContent("point_of_care", fields)).toBe(false);
@@ -340,22 +377,29 @@ describe("apply-objective-template result scopes (obj-23)", () => {
     expect(objectiveScopeHasContent("test_results", fields)).toBe(true);
     expect(objectiveScopeHasContent("point_of_care", fields)).toBe(false);
 
+    fields.testResultsStructured = [pocRow];
+    expect(objectiveScopeHasContent("test_results", fields)).toBe(true);
+    expect(objectiveScopeHasContent("point_of_care", fields)).toBe(true);
+
     fields.testResultsStructured = [patientRow, pocRow];
     expect(objectiveScopeHasContent("point_of_care", fields)).toBe(true);
   });
 
-  it("test_results save captures only patient_report rows", () => {
+  it("test_results save captures all structured rows (rpt-01)", () => {
     const fields = emptyFields();
     fields.testResultsStructured = [patientRow, pocRow];
 
     const payload = buildObjectiveTemplateSavePayload("test_results", fields);
     expect(payload.scope).toBe("test_results");
-    expect(payload.objective?.testResultsJson).toHaveLength(1);
-    expect(payload.objective?.testResultsJson?.[0]?.name).toBe("Hba1c");
+    expect(payload.objective?.testResultsJson).toHaveLength(2);
+    expect(payload.objective?.testResultsJson?.map((r) => r.name).sort()).toEqual([
+      "Hba1c",
+      "RBS",
+    ]);
     expect(payload.objective?.examinationJson).toBeUndefined();
   });
 
-  it("point_of_care save captures only in_clinic_poc rows", () => {
+  it("point_of_care save captures only in_clinic_poc rows (legacy path)", () => {
     const fields = emptyFields();
     fields.testResultsStructured = [patientRow, pocRow];
 
@@ -365,7 +409,7 @@ describe("apply-objective-template result scopes (obj-23)", () => {
     expect(payload.objective?.testResultsJson?.[0]?.source).toBe("in_clinic_poc");
   });
 
-  it("test_results apply replaces only patient rows, keeps POC rows", () => {
+  it("test_results apply replaces the whole structured set (rpt-01)", () => {
     const fields = emptyFields();
     fields.testResultsStructured = [pocRow, { ...patientRow, name: "Old report" }];
 
@@ -378,16 +422,14 @@ describe("apply-objective-template result scopes (obj-23)", () => {
       fields,
       buildObjectiveTemplateApplyActions("test_results", template, fields),
     );
-    const sources = next.testResultsStructured.map((r) => r.source).sort();
-    expect(sources).toEqual(["in_clinic_poc", "patient_report"]);
-    expect(next.testResultsStructured.find((r) => r.source === "in_clinic_poc")?.name).toBe("RBS");
-    expect(next.testResultsStructured.find((r) => r.source === "patient_report")?.name).toBe(
-      "Hba1c",
-    );
+    expect(next.testResultsStructured).toHaveLength(1);
+    expect(next.testResultsStructured[0]?.name).toBe("Hba1c");
+    expect(next.testResultsStructured[0]?.source).toBe("patient_report");
   });
 
-  it("applied result rows preserve preset content (ids stable for OBJ-D2 parity)", () => {
+  it("remapped point_of_care apply merges only POC rows (ids stable for OBJ-D2)", () => {
     const fields = emptyFields();
+    fields.testResultsStructured = [patientRow];
     const template = makeTemplate({
       scope: "point_of_care",
       objective_json: { testResultsJson: [pocRow] },
@@ -396,9 +438,14 @@ describe("apply-objective-template result scopes (obj-23)", () => {
       fields,
       buildObjectiveTemplateApplyActions("point_of_care", template, fields),
     );
-    expect(next.testResultsStructured).toHaveLength(1);
-    expect(next.testResultsStructured[0]?.name).toBe("RBS");
-    expect(next.testResultsStructured[0]?.source).toBe("in_clinic_poc");
+    expect(next.testResultsStructured.map((r) => r.source).sort()).toEqual([
+      "in_clinic_poc",
+      "patient_report",
+    ]);
+    expect(next.testResultsStructured.find((r) => r.source === "in_clinic_poc")?.name).toBe("RBS");
+    expect(next.testResultsStructured.find((r) => r.source === "patient_report")?.name).toBe(
+      "Hba1c",
+    );
   });
 
   it("objective_full composes result rows and derives identically to hand-entry (OBJ-D2)", () => {
@@ -436,6 +483,42 @@ describe("apply-objective-template result scopes (obj-23)", () => {
     });
     expect(templateHasObjectiveContent(template)).toBe(true);
     expect(templateObjectiveScopeHasContent(template, "point_of_care")).toBe(true);
-    expect(templateObjectiveScopeHasContent(template, "test_results")).toBe(false);
+    // rpt-01: Reports content check includes any structured rows (remap-on-read).
+    expect(templateObjectiveScopeHasContent(template, "test_results")).toBe(true);
+  });
+});
+
+describe("Objective clear-all (tab toolbar)", () => {
+  it("clears vitals, exam, reports, and custom section bodies", () => {
+    const fields = emptyFields();
+    fields.vitalsHr = 88;
+    fields.examFindings = [{ systemId: "general", status: "normal", findings: [], notes: null }];
+    fields.testResults = "Hb 12";
+    fields.testResultsStructured = [
+      {
+        id: "r1",
+        name: "Hb",
+        value: "12",
+        unit: "g/dL",
+        source: "patient_report",
+        notes: null,
+      },
+    ];
+    fields.objectiveCustomSections = [
+      {
+        id: "00000000-0000-4000-8000-000000000001",
+        title: "P/V",
+        body: "notes",
+        children: [],
+      },
+    ];
+    expect(rxFormHasClearableObjectiveContent(fields)).toBe(true);
+    const cleared = applyActions(fields, buildObjectiveClearAllActions(fields));
+    expect(cleared.vitalsHr).toBeNull();
+    expect(cleared.examFindings).toEqual([]);
+    expect(cleared.testResults).toBe("");
+    expect(cleared.testResultsStructured).toEqual([]);
+    expect(cleared.objectiveCustomSections[0]?.title).toBe("P/V");
+    expect(cleared.objectiveCustomSections[0]?.body).toBeNull();
   });
 });

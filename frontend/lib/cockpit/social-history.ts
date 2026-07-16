@@ -19,6 +19,7 @@ import {
 import {
   formatTobaccoProductClause,
   normalizeTobaccoSection,
+  tobaccoSectionHasContent,
   parseLegacySmokingAmountParts,
   parseLegacySmokelessAmountParts,
   splitTobaccoDetailClauseParts,
@@ -32,6 +33,7 @@ import {
   type TobaccoUseSection,
 } from "@/lib/cockpit/social-history-tobacco-products";
 import {
+  alcoholSectionHasContent,
   formatAlcoholDrinkClause,
   formatMaxPerSessionClause,
   normalizeAlcoholSection,
@@ -351,17 +353,17 @@ export function normalizeSocialHistoryStructured(
 
   if (input.smoking) {
     const normalized = normalizeTobaccoSection(input.smoking, "smoking");
-    if (normalized) next.smoking = normalized;
+    if (normalized && tobaccoSectionHasContent(normalized)) next.smoking = normalized;
   }
 
   if (input.smokeless) {
     const normalized = normalizeTobaccoSection(input.smokeless, "smokeless");
-    if (normalized) next.smokeless = normalized;
+    if (normalized && tobaccoSectionHasContent(normalized)) next.smokeless = normalized;
   }
 
   if (input.alcohol) {
     const normalized = normalizeAlcoholSection(input.alcohol);
-    if (normalized) {
+    if (normalized && alcoholSectionHasContent(normalized)) {
       next.alcohol = { ...normalized, drinks: [...normalized.drinks] };
     }
   }
@@ -683,9 +685,14 @@ function mergeTobaccoSectionPartial(
 
 function serializeSmokingSection(smoking: NonNullable<SocialHistoryStructured["smoking"]>): string {
   const normalized = normalizeTobaccoSection(smoking, "smoking")!;
+  if (!normalized.status) {
+    if (normalized.notes?.trim()) return `Smoking: notes: ${normalized.notes.trim()}`;
+    return "";
+  }
   const label = smokingStatusLabel(normalized.status);
   if (normalized.status === "never") {
-    return `Smoking: ${label}`;
+    const notesSuffix = normalized.notes?.trim() ? `, notes: ${normalized.notes.trim()}` : "";
+    return `Smoking: ${label}${notesSuffix}`;
   }
 
   const detailParts: string[] = [];
@@ -695,6 +702,7 @@ function serializeSmokingSection(smoking: NonNullable<SocialHistoryStructured["s
 
   const { packYears: py } = smokingPackYearsFromProducts(normalized.products ?? []);
   if (py != null) detailParts.push(`≈ ${py} pack-yrs`);
+  if (normalized.notes?.trim()) detailParts.push(`notes: ${normalized.notes.trim()}`);
 
   const details = detailParts.length > 0 ? ` (${detailParts.join(", ")})` : "";
   return `Smoking: ${label}${details}`;
@@ -704,8 +712,13 @@ function serializeSmokelessSection(
   smokeless: NonNullable<SocialHistoryStructured["smokeless"]>,
 ): string {
   const normalized = normalizeTobaccoSection(smokeless, "smokeless")!;
+  if (!normalized.status) {
+    if (normalized.notes?.trim()) return `Smokeless: notes: ${normalized.notes.trim()}`;
+    return "";
+  }
   if (normalized.status === "never") {
-    return "Smokeless: No tobacco";
+    const notesSuffix = normalized.notes?.trim() ? `, notes: ${normalized.notes.trim()}` : "";
+    return `Smokeless: No tobacco${notesSuffix}`;
   }
 
   const detailParts: string[] = [];
@@ -718,15 +731,21 @@ function serializeSmokelessSection(
   for (const product of normalized.products ?? []) {
     detailParts.push(formatTobaccoProductClause(product, "smokeless"));
   }
+  if (normalized.notes?.trim()) detailParts.push(`notes: ${normalized.notes.trim()}`);
 
   return `Smokeless: ${detailParts.join(", ")}`;
 }
 
 function serializeAlcoholSection(alcohol: NonNullable<SocialHistoryStructured["alcohol"]>): string {
   const normalized = normalizeAlcoholSection(alcohol)!;
+  if (!normalized.status) {
+    if (normalized.notes?.trim()) return `Alcohol: notes: ${normalized.notes.trim()}`;
+    return "";
+  }
   const label = alcoholStatusLabel(normalized.status);
   if (normalized.status === "never") {
-    return `Alcohol: ${label}`;
+    const notesSuffix = normalized.notes?.trim() ? `, notes: ${normalized.notes.trim()}` : "";
+    return `Alcohol: ${label}${notesSuffix}`;
   }
 
   const detailParts: string[] = [];
@@ -768,6 +787,8 @@ function serializeAlcoholSection(alcohol: NonNullable<SocialHistoryStructured["a
     }
   }
 
+  if (normalized.notes?.trim()) detailParts.push(`notes: ${normalized.notes.trim()}`);
+
   const details = detailParts.length > 0 ? ` (${detailParts.join(", ")})` : "";
   return `Alcohol: ${label}${details}`;
 }
@@ -788,7 +809,7 @@ function serializeSubstancesSectionForHistory(
   return serializeSubstancesSection(substances);
 }
 
-function serializeOccupationSection(
+export function serializeOccupationSection(
   occupation: NonNullable<SocialHistoryStructured["occupation"]>,
 ): string {
   const text = occupation.text?.trim();
@@ -801,7 +822,9 @@ function serializeOccupationSection(
   return `Occupation: ${text ?? ""}${exposureSuffix}`.trim();
 }
 
-function serializeLivingSection(living: NonNullable<SocialHistoryStructured["living"]>): string {
+export function serializeLivingSection(
+  living: NonNullable<SocialHistoryStructured["living"]>,
+): string {
   const parts: string[] = [];
   if (living.situation) {
     parts.push(LIVING_SITUATION_LABELS[living.situation] ?? living.situation);
@@ -810,7 +833,9 @@ function serializeLivingSection(living: NonNullable<SocialHistoryStructured["liv
   return parts.length > 0 ? `Living: ${parts.join(", ")}` : "";
 }
 
-function serializeTravelSection(travel: NonNullable<SocialHistoryStructured["travel"]>): string {
+export function serializeTravelSection(
+  travel: NonNullable<SocialHistoryStructured["travel"]>,
+): string {
   const place = travel.place?.trim();
   const vectorSuffix = travel.vectorRisk ? " (vector-borne area)" : "";
   if (!place && !travel.recent && !travel.vectorRisk) return "";
@@ -1043,9 +1068,9 @@ export function wellbeingClusterHasContent(structured: SocialHistoryStructured):
 export function substanceUseClusterFilledCount(structured: SocialHistoryStructured): number {
   const normalized = normalizeSocialHistoryStructured(structured);
   let count = 0;
-  if (normalized.smoking) count += 1;
-  if (normalized.smokeless) count += 1;
-  if (normalized.alcohol) count += 1;
+  if (tobaccoSectionHasContent(normalized.smoking)) count += 1;
+  if (tobaccoSectionHasContent(normalized.smokeless)) count += 1;
+  if (alcoholSectionHasContent(normalized.alcohol)) count += 1;
   if (substancesHasContent(normalized.substances)) count += 1;
   return count;
 }
@@ -1370,7 +1395,15 @@ function parseParenDetails(value: string): { headline: string; details: string }
 
 function parseSmokingText(value: string): NonNullable<SocialHistoryStructured["smoking"]> {
   const { headline, details } = parseParenDetails(value);
-  const lower = headline.toLowerCase();
+
+  const notesOnlyHeadline = headline.match(/^notes:\s*(.+)$/i);
+  if (notesOnlyHeadline && !details) {
+    return normalizeTobaccoSection({ products: [], notes: notesOnlyHeadline[1].trim() }, "smoking")!;
+  }
+
+  const headlineParts = headline.split(/,\s*/);
+  const statusHeadline = headlineParts[0] ?? headline;
+  const lower = statusHeadline.toLowerCase();
 
   let status: SmokingStatus = "current";
   if (lower.includes("non-smoker")) status = "never";
@@ -1380,6 +1413,11 @@ function parseSmokingText(value: string): NonNullable<SocialHistoryStructured["s
     status,
     products: [],
   };
+
+  for (const part of headlineParts.slice(1)) {
+    const notesMatch = part.match(/^notes:\s*(.+)$/i);
+    if (notesMatch) smoking.notes = notesMatch[1].trim();
+  }
 
   if (!details) return normalizeTobaccoSection(smoking, "smoking")!;
 
@@ -1423,6 +1461,12 @@ function parseSmokingText(value: string): NonNullable<SocialHistoryStructured["s
       continue;
     }
 
+    const notesMatch = trimmed.match(/^notes:\s*(.+)$/i);
+    if (notesMatch) {
+      smoking.notes = notesMatch[1].trim();
+      continue;
+    }
+
     const product = parseTobaccoProductClause(trimmed, "smoking");
     if (product) {
       smoking.products.push(product);
@@ -1445,8 +1489,18 @@ function parseSmokingText(value: string): NonNullable<SocialHistoryStructured["s
 
 function parseSmokelessText(value: string): NonNullable<SocialHistoryStructured["smokeless"]> {
   const valueLower = value.toLowerCase();
-  if (valueLower === "no tobacco") {
-    return { status: "never", products: [] };
+  if (valueLower.startsWith("no tobacco")) {
+    const smokeless: TobaccoUseSection = { status: "never", products: [] };
+    for (const part of splitTobaccoDetailClauseParts(value)) {
+      const notesMatch = part.trim().match(/^notes:\s*(.+)$/i);
+      if (notesMatch) smokeless.notes = notesMatch[1].trim();
+    }
+    return normalizeTobaccoSection(smokeless, "smokeless")!;
+  }
+
+  const notesOnly = value.match(/^notes:\s*(.+)$/i);
+  if (notesOnly) {
+    return normalizeTobaccoSection({ products: [], notes: notesOnly[1].trim() }, "smokeless")!;
   }
 
   const smokeless: TobaccoUseSection = {
@@ -1488,6 +1542,12 @@ function parseSmokelessText(value: string): NonNullable<SocialHistoryStructured[
       continue;
     }
 
+    const notesMatch = trimmed.match(/^notes:\s*(.+)$/i);
+    if (notesMatch) {
+      smokeless.notes = notesMatch[1].trim();
+      continue;
+    }
+
     const product = parseTobaccoProductClause(trimmed, "smokeless");
     if (product) {
       smokeless.products.push(product);
@@ -1512,17 +1572,31 @@ function parseSmokelessText(value: string): NonNullable<SocialHistoryStructured[
 function parseAlcoholText(value: string): NonNullable<SocialHistoryStructured["alcohol"]> {
   const { headline, details } = parseParenDetails(value);
   const headlineLower = headline.toLowerCase();
+
+  const notesOnlyHeadline = headline.match(/^notes:\s*(.+)$/i);
+  if (notesOnlyHeadline && !details) {
+    return normalizeAlcoholSection({ drinks: [], notes: notesOnlyHeadline[1].trim() })!;
+  }
+
+  const headlineParts = headline.split(/,\s*/);
+  const statusHeadline = headlineParts[0] ?? headline;
+  const statusHeadlineLower = statusHeadline.toLowerCase();
   const legacyAlcoholChips = [
     "no alcohol",
     "ex-drinker",
     "occasional alcohol",
     "regular alcohol",
   ];
-  if (!details && legacyAlcoholChips.includes(headlineLower)) {
-    return mapAlcoholChipToStructured(headline);
+  if (!details && legacyAlcoholChips.includes(statusHeadlineLower)) {
+    const mapped = mapAlcoholChipToStructured(statusHeadline);
+    for (const part of headlineParts.slice(1)) {
+      const notesMatch = part.match(/^notes:\s*(.+)$/i);
+      if (notesMatch && mapped) mapped.notes = notesMatch[1].trim();
+    }
+    return normalizeAlcoholSection(mapped)!;
   }
 
-  const lower = headline.toLowerCase();
+  const lower = statusHeadlineLower;
 
   let status: SmokingStatus = "current";
   if (lower.includes("no alcohol")) status = "never";
@@ -1533,6 +1607,11 @@ function parseAlcoholText(value: string): NonNullable<SocialHistoryStructured["a
     status,
     drinks: [],
   };
+
+  for (const part of headlineParts.slice(1)) {
+    const notesMatch = part.match(/^notes:\s*(.+)$/i);
+    if (notesMatch) alcohol.notes = notesMatch[1].trim();
+  }
 
   if (!details) return normalizeAlcoholSection(alcohol)!;
 
@@ -1567,6 +1646,12 @@ function parseAlcoholText(value: string): NonNullable<SocialHistoryStructured["a
       alcohol.quitYearsAgo = Number(quitMatch[1]);
       const storedQuitUnit = normalizeStoredDurationUnit(parseDurationToken(quitMatch[2]));
       if (storedQuitUnit) alcohol.quitYearsUnit = storedQuitUnit;
+      continue;
+    }
+
+    const notesMatch = trimmed.match(/^notes:\s*(.+)$/i);
+    if (notesMatch) {
+      alcohol.notes = notesMatch[1].trim();
       continue;
     }
 
@@ -1658,7 +1743,7 @@ export function setSmoking(
     delete next.smoking;
   } else {
     const normalized = normalizeTobaccoSection(smoking, "smoking");
-    if (normalized) {
+    if (normalized && tobaccoSectionHasContent(normalized)) {
       next.smoking = { ...normalized, products: [...normalized.products] };
     } else {
       delete next.smoking;
@@ -1676,7 +1761,7 @@ export function setSmokeless(
     delete next.smokeless;
   } else {
     const normalized = normalizeTobaccoSection(smokeless, "smokeless");
-    if (normalized) {
+    if (normalized && tobaccoSectionHasContent(normalized)) {
       next.smokeless = { ...normalized, products: [...normalized.products] };
     } else {
       delete next.smokeless;
@@ -1694,7 +1779,7 @@ export function setAlcohol(
     delete next.alcohol;
   } else {
     const normalized = normalizeAlcoholSection(alcohol);
-    if (normalized) {
+    if (normalized && alcoholSectionHasContent(normalized)) {
       next.alcohol = {
         ...normalized,
         drinks: [...normalized.drinks],

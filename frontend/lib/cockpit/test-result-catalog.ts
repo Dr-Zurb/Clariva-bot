@@ -1,5 +1,5 @@
 /**
- * Static chip catalog for structured test-result fast entry (obj-21).
+ * Static chip catalog for structured test-result fast entry (obj-21 / rpt-01).
  *
  * Pure data — mirrors `exam-schema.ts` discipline. Chip vocabulary is UI
  * guidance only; obj-20 Zod does not enforce it. Free-text fallback always
@@ -58,8 +58,32 @@ export const POC_TEST_CHIPS: readonly TestResultCatalogEntry[] = [
   { name: "Peak flow", defaultUnit: "L/min" },
 ];
 
-export function testChipsForSource(
-  source: TestResultSource,
+function dedupeCatalogEntries(
+  entries: readonly TestResultCatalogEntry[],
 ): readonly TestResultCatalogEntry[] {
-  return source === "patient_report" ? PATIENT_REPORT_TEST_CHIPS : POC_TEST_CHIPS;
+  const seen = new Set<string>();
+  const result: TestResultCatalogEntry[] = [];
+  for (const entry of entries) {
+    const key = entry.name.trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(entry);
+  }
+  return result;
+}
+
+/**
+ * Merged Reports chip list (rpt-01): patient-brought + POC quick-adds, deduped
+ * by name (patient-brought wins on collision).
+ */
+export const REPORT_TEST_CHIPS: readonly TestResultCatalogEntry[] = dedupeCatalogEntries([
+  ...PATIENT_REPORT_TEST_CHIPS,
+  ...POC_TEST_CHIPS,
+]);
+
+/** rpt-01: one suggestion list for all sources (section split retired). */
+export function testChipsForSource(
+  _source: TestResultSource,
+): readonly TestResultCatalogEntry[] {
+  return REPORT_TEST_CHIPS;
 }

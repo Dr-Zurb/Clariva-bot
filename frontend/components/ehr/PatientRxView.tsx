@@ -27,9 +27,7 @@
  *     PDF's SectionBlock convention — same skip rule both surfaces).
  *   - `clinicalNotes` is NOT rendered. It's the doctor's private
  *     workspace; the patient view is "what the patient should know".
- *     The PDF treats it as a final section — we deliberately diverge
- *     to keep the patient page clean and trust-friendly. (If product
- *     wants it shown, flip a flag here in v2.)
+ *     The PDF composer also omits clinical notes (plan-p1).
  *   - Medicines render via the same projection helper as the form +
  *     the backend PDF, so structured codes always print as their
  *     long-form label ("Twice daily" not "BID").
@@ -90,8 +88,22 @@ export interface PatientRxViewModel {
   hopi: string | null;
   provisionalDiagnosis: string | null;
   investigations: string | null;
+  /** plan-p1 — patient-facing lifestyle / advice (education folded in). */
+  advice: string | null;
   followUp: string | null;
-  patientEducation: string | null;
+  /**
+   * @deprecated Folded into `advice`. Kept optional for preview callers.
+   */
+  patientEducation?: string | null;
+  /** plan-p1 — patient-facing referral. */
+  referral: string | null;
+  /** Patient-shareable advice handouts (images/PDFs). */
+  adviceHandouts?: Array<{
+    id: string;
+    fileType: string;
+    label: string;
+    downloadUrl: string;
+  }>;
 
   medicines: PatientRxMedicineVM[];
 }
@@ -439,11 +451,30 @@ const PatientRxView: React.FC<PatientRxViewProps> = ({
 
         <MedicineTable meds={viewModel.medicines} />
 
-        <Section
-          label="Patient education"
-          body={viewModel.patientEducation}
-        />
+        <Section label="Advice" body={viewModel.advice} />
         <Section label="Follow-up" body={viewModel.followUp} />
+        <Section label="Referral" body={viewModel.referral} />
+        {(viewModel.adviceHandouts?.length ?? 0) > 0 ? (
+          <section className="mb-4" aria-label="Handouts">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+              Handouts
+            </h3>
+            <ul className="space-y-2">
+              {viewModel.adviceHandouts!.map((h) => (
+                <li key={h.id}>
+                  <a
+                    href={h.downloadUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm font-medium text-blue-600 hover:underline"
+                  >
+                    {h.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
       </div>
 
       {/* Footer + Download */}

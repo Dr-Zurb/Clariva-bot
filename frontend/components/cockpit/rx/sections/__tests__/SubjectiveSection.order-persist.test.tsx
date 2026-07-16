@@ -214,7 +214,7 @@ describe("SubjectiveSection order persistence (subj-26)", () => {
       { timeout: 1500 },
     );
     expect(mockUpdatePrescription).not.toHaveBeenCalled();
-    expect(screen.getByText("Layout saved")).toBeInTheDocument();
+    expect(screen.getByLabelText("Layout saved")).toBeInTheDocument();
   });
 
   it("does not autosave section order when disabled", async () => {

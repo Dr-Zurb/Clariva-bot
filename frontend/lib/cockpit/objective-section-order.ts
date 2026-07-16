@@ -2,11 +2,8 @@
 export const CORE_OBJECTIVE_SECTION_IDS = [
   "vitals",
   "exam",
+  "notes",
   "test_results",
-  "point_of_care",
-  "media",
-  "legacy_exam",
-  "legacy_vitals",
 ] as const;
 
 export type CoreObjectiveSectionId = (typeof CORE_OBJECTIVE_SECTION_IDS)[number];
@@ -24,28 +21,22 @@ const CUSTOM_BLOCK_UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Canonical default render order — reproduces the pre-P3 hardcoded layout in
- * `ObjectiveSection.tsx` (Vitals → exam → patient-brought → POC → legacy blocks).
+ * Canonical default render order — Vitals → exam → Notes → Reports.
+ * (rpt-01: `point_of_care` / `media` retired; legacy free-text sections removed.)
  */
 export const DEFAULT_OBJECTIVE_SECTION_ORDER: StaticObjectiveSectionId[] = [
   "vitals",
   "exam",
+  "notes",
   "test_results",
-  "point_of_care",
-  "media",
-  "legacy_exam",
-  "legacy_vitals",
 ];
 
 /** Human-readable labels for static reorder grips and a11y (obj-11). */
 export const OBJECTIVE_SECTION_LABELS: Record<StaticObjectiveSectionId, string> = {
   vitals: "Vitals",
   exam: "Examination",
-  test_results: "Patient-brought reports",
-  point_of_care: "Point-of-care (in-clinic)",
-  media: "Media & scans",
-  legacy_exam: "Free-text exam (legacy)",
-  legacy_vitals: "Legacy free-text vitals",
+  notes: "Notes",
+  test_results: "Reports",
 };
 
 export function isCustomBlockSectionId(id: string): id is CustomBlockSectionId {
@@ -115,7 +106,8 @@ function defaultIndex(id: ObjectiveSectionId): number {
 
 /**
  * Merge a stored section order with the live registry.
- * - Drops unknown / unavailable ids.
+ * - Drops unknown / unavailable ids (incl. retired `point_of_care` / `media` /
+ *   `legacy_exam` / `legacy_vitals`).
  * - Inserts newly-available ids at their canonical `DEFAULT_OBJECTIVE_SECTION_ORDER` slot.
  * - Preserves doctor-chosen relative order for known stored ids.
  */
@@ -156,9 +148,8 @@ export function normalizeSectionOrder(
 }
 
 /**
- * Where a freshly-added custom block lands in the order: right after the
- * primary `test_results` content, ahead of the legacy fallbacks. Falls back to
- * the end of the order when `test_results` is absent.
+ * Where a freshly-added custom block lands in the order: right after
+ * `test_results`. Falls back to the end of the order when `test_results` is absent.
  */
 export function resolveCustomEmptyChromeIndex(order: readonly ObjectiveSectionId[]): number {
   const testResultsIdx = order.indexOf("test_results");

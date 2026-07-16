@@ -272,6 +272,7 @@ export function EdemaSitesPanel({
               disabled={disabled}
               testId={`general-edema-panel-${entry.site}`}
               bodyId={`general-edema-panel-${entry.site}-body`}
+              closeScrollToSelector='[data-exam-general-finding-card="edema"]'
             >
               <EdemaSiteFields
                 entry={entry}

@@ -107,9 +107,17 @@ function buildViewModel(data: PublicPrescriptionData): PatientRxViewModel {
     hopi: data.prescription.hopi,
     provisionalDiagnosis: data.prescription.provisional_diagnosis,
     investigations: data.prescription.investigations,
+    advice: data.prescription.advice,
     followUp: data.prescription.follow_up,
-    patientEducation: data.prescription.patient_education,
+    patientEducation: null,
+    referral: data.prescription.referral,
     medicines: meds,
+    adviceHandouts: (data.advice_handouts ?? []).map((h) => ({
+      id: h.id,
+      fileType: h.file_type,
+      label: h.label,
+      downloadUrl: h.download_url,
+    })),
   };
 }
 

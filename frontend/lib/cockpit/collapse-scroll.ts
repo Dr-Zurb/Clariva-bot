@@ -244,6 +244,16 @@ export function scrollCollapsibleToStickyTop(el: HTMLElement | null): void {
   scrollCollapsibleToTop(el);
 }
 
+/** Like {@link scrollCollapsibleToStickyTop} but accepts a precomputed margin (e.g. sibling complaint cards). */
+export function scrollCollapsibleToStickyTopWithMargin(
+  el: HTMLElement | null,
+  scrollMarginTopPx: number,
+): void {
+  if (!el) return;
+  el.style.scrollMarginTop = `${scrollMarginTopPx}px`;
+  scrollCollapsibleToTop(el);
+}
+
 /**
  * CLOSE: settle the header to the sticky line as one motion locked to the body fold
  * — same duration (`COLLAPSE_CLOSE_MS`) and ease-out ramp — easing toward the

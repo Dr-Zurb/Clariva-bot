@@ -1,7 +1,12 @@
 "use client";
 
-import { useLayoutEffect, useState, type DragEvent } from "react";
-import { scrollComplaintCardHeaderIntoView } from "@/lib/cockpit/complaint-card-scroll";
+import { useLayoutEffect, useRef, useState, type DragEvent } from "react";
+import {
+  scrollComplaintCardIntoView,
+  scrollParentComplaintCardIntoView,
+  type ComplaintCollapseSource,
+} from "@/lib/cockpit/complaint-card-scroll";
+import { COLLAPSE_CLOSE_MS } from "@/lib/cockpit/collapse-scroll";
 import type { Complaint } from "@/components/cockpit/rx/RxFormContext";
 import { ComplaintCard } from "@/components/cockpit/rx/subjective/ComplaintCard";
 import {
@@ -9,10 +14,15 @@ import {
   type ComplaintCapturePayload,
 } from "@/components/cockpit/rx/subjective/ComplaintCaptureBar";
 import { complaintNamesEquivalent } from "@/lib/cockpit/complaint-search-normalize";
+import { useDepthToneSurface } from "@/components/ui/sticky-stack";
+import { cn } from "@/lib/utils";
+
 const ASSOCIATED_LABEL_CLASS = "block text-xs font-medium text-foreground/80";
 
 export interface AssociatedSymptomsPanelProps {
   parentId: string;
+  /** Scroll anchor for the parent chief-complaint card (close target). */
+  parentScrollInstanceId: string;
   parentName: string;
   /** Suggested common-symptom chips for the parent's category. */
   suggestionChips: string[];
@@ -37,6 +47,7 @@ export interface AssociatedSymptomsPanelProps {
 /** Associated symptoms: capture + chips add mini-cards directly (no tag/Detail step). */
 export function AssociatedSymptomsPanel({
   parentId,
+  parentScrollInstanceId,
   parentName,
   suggestionChips,
   associatedComplaints,
@@ -56,12 +67,38 @@ export function AssociatedSymptomsPanel({
   onAcceptMainNestDrop,
   isMainNestDropTarget = false,
 }: AssociatedSymptomsPanelProps) {
+  const tone = useDepthToneSurface();
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const collapseSourceRef = useRef<ComplaintCollapseSource | null>(null);
+  const prevActiveChildIdRef = useRef<string | null>(null);
 
   useLayoutEffect(() => {
-    if (!activeChildId) return;
-    scrollComplaintCardHeaderIntoView(activeChildId);
-  }, [activeChildId]);
+    const prev = prevActiveChildIdRef.current;
+    prevActiveChildIdRef.current = activeChildId;
+
+    if (activeChildId) {
+      const switched = Boolean(prev && prev !== activeChildId);
+      const delayMs = switched ? COLLAPSE_CLOSE_MS : 0;
+      const childId = activeChildId;
+      const timer = window.setTimeout(() => {
+        scrollComplaintCardIntoView(childId);
+      }, delayMs);
+      return () => window.clearTimeout(timer);
+    }
+
+    // Explicit collapse (header / lip / Escape) → glide the parent complaint
+    // card to the top after the child body fold finishes. Blur-collapse leaves
+    // the doctor where they clicked.
+    if (prev && collapseSourceRef.current === "explicit") {
+      const timer = window.setTimeout(() => {
+        scrollParentComplaintCardIntoView(parentScrollInstanceId);
+      }, COLLAPSE_CLOSE_MS);
+      collapseSourceRef.current = null;
+      return () => window.clearTimeout(timer);
+    }
+
+    collapseSourceRef.current = null;
+  }, [activeChildId, parentScrollInstanceId]);
 
   const captureInputId = `complaint-capture-associated-${parentId}`;
   const isDuplicateName = (name: string) =>
@@ -162,7 +199,10 @@ export function AssociatedSymptomsPanel({
 
       {associatedComplaints.length > 0 ? (
         <div
-          className="space-y-2 border-l-2 border-primary/20 pl-3"
+          className={cn(
+            "space-y-2",
+            !tone.active && "border-l-2 border-primary/20 pl-3",
+          )}
           role="group"
           aria-label={`Associated complaints of ${parentName}`}
         >
@@ -193,9 +233,10 @@ export function AssociatedSymptomsPanel({
                 isReadOnly={disabled}
                 isEditing={!disabled && activeChildId === child.id}
                 onRequestEdit={() => setActiveChildId(child.id)}
-                onRequestCollapse={() =>
-                  setActiveChildId(activeChildId === child.id ? null : activeChildId)
-                }
+                onRequestCollapse={(_idx, source) => {
+                  collapseSourceRef.current = source;
+                  setActiveChildId((active) => (active === child.id ? null : active));
+                }}
                 dragHandleProps={dragHandleProps(childIndex)}
                 token={token}
               />

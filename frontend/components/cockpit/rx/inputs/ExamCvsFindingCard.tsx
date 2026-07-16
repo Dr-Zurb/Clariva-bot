@@ -26,6 +26,7 @@ import {
   RX_FIELD_INPUT_CLASS,
 } from "@/components/cockpit/rx/sections/field-styles";
 import { Collapse } from "@/components/ui/Collapse";
+import { useDepthToneSurface } from "@/components/ui/sticky-stack";
 import {
   Tooltip,
   TooltipContent,
@@ -222,6 +223,7 @@ export function ExamCvsInlineFindingFields({
 }: ExamCvsInlineFindingFieldsProps) {
   const attributes = entry?.attributes ?? {};
   const limitedOnTeleconsult = Boolean(teleconsultFeasibilityHint);
+  const tone = useDepthToneSurface();
 
   function patchAttributes(patch: Record<string, string | null>) {
     const base = entry ?? createEmptyFindingEntry(definition.findingId);
@@ -232,7 +234,9 @@ export function ExamCvsInlineFindingFields({
     <div
       className={cn(
         "space-y-2",
-        limitedOnTeleconsult && "rounded-md border border-dashed border-border/50 bg-muted/20 p-2",
+        limitedOnTeleconsult &&
+          !tone.active &&
+          "rounded-md border border-dashed border-border/50 bg-muted/20 p-2",
       )}
       data-testid={`cvs-inline-finding-${definition.findingId}`}
       data-teleconsult-limited={limitedOnTeleconsult ? "true" : "false"}
@@ -303,6 +307,8 @@ export function ExamCvsFindingCard({
   const isRecorded = Boolean(entry && cvsFindingEntryHasAttributes(entry));
   const detailPreview = entry && isRecorded ? cvsFindingAttributesPreview(entry) : "";
   const attributes = entry?.attributes ?? {};
+  // L3 raised row + rail from exam depth context; state-driven tint layers on top.
+  const tone = useDepthToneSurface({ railMinDepth: 0 });
 
   function patchAttributes(patch: Record<string, string | null>) {
     const base = entry ?? createEmptyFindingEntry(definition.findingId);
@@ -312,12 +318,14 @@ export function ExamCvsFindingCard({
   return (
     <article
       className={cn(
-        "scroll-mt-[calc(var(--collapsible-sticky-top,2.75rem)_+_var(--exam-card-sticky-top,2.75rem))] transition-colors",
+        "scroll-mt-[var(--sticky-stack,2.75rem)] transition-colors",
+        tone.active && tone.surface,
         open
           ? "my-1 rounded-sm border border-border/70 bg-background px-1 shadow-sm"
           : isRecorded
             ? "bg-muted/10 hover:bg-muted/20"
             : "hover:bg-muted/15",
+        tone.rail,
       )}
       {...{ [EXAM_CVS_FINDING_CARD_ATTR]: definition.findingId }}
       data-testid={`cvs-finding-card-${definition.findingId}`}

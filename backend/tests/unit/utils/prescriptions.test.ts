@@ -8,6 +8,7 @@ import {
   validateCreatePrescriptionBody,
   validateUpdatePrescriptionBody,
   validateCreateUploadUrlBody,
+  labReportsJsonSchema,
 } from '../../../src/utils/validation';
 import { ValidationError } from '../../../src/utils/errors';
 
@@ -30,6 +31,308 @@ describe('prescription SOAP validation (cv2-07)', () => {
       const ddx = ['Pharyngitis', 'Tonsillitis'];
       const result = validateUpdatePrescriptionBody({ differentialDiagnosis: ddx });
       expect(result.differentialDiagnosis).toEqual(ddx);
+    });
+
+    it('accepts assessmentNote (trimmed) + a valid assessmentAcuity (asmt-02)', () => {
+      const result = validateUpdatePrescriptionBody({
+        assessmentNote: '  Likely viral URI  ',
+        assessmentAcuity: 'improving',
+      });
+      expect(result.assessmentNote).toBe('Likely viral URI');
+      expect(result.assessmentAcuity).toBe('improving');
+    });
+
+    it('coerces a blank assessmentNote to null (asmt-02)', () => {
+      const result = validateUpdatePrescriptionBody({ assessmentNote: '   ' });
+      expect(result.assessmentNote).toBeNull();
+    });
+
+    it('degrades an unknown assessmentAcuity to null instead of rejecting (asmt-02)', () => {
+      const result = validateUpdatePrescriptionBody({
+        assessmentAcuity: 'critical' as unknown as 'stable',
+      });
+      expect(result.assessmentAcuity).toBeNull();
+    });
+
+    it('accepts diagnosesJson and defaults unknown enums (asmt-03)', () => {
+      const result = validateUpdatePrescriptionBody({
+        diagnosesJson: [
+          {
+            id: 'dx-1',
+            label: 'Viral URI',
+            kind: 'primary',
+            certainty: 'confirmed',
+            status: 'new',
+          },
+          {
+            id: 'dx-2',
+            label: 'GERD',
+            kind: 'maybe' as 'secondary',
+            certainty: 'weird' as 'provisional',
+            status: 'nope' as 'new',
+          },
+        ],
+      });
+      expect(result.diagnosesJson).toHaveLength(2);
+      expect(result.diagnosesJson![0]).toMatchObject({
+        id: 'dx-1',
+        label: 'Viral URI',
+        kind: 'primary',
+        certainty: 'confirmed',
+      });
+      expect(result.diagnosesJson![1]).toMatchObject({
+        id: 'dx-2',
+        label: 'GERD',
+        kind: 'secondary',
+        certainty: 'provisional',
+        status: 'new',
+      });
+    });
+
+    it('drops malformed diagnosesJson rows instead of rejecting (asmt-03)', () => {
+      const result = validateUpdatePrescriptionBody({
+        diagnosesJson: [
+          { id: '', label: 'Bad' },
+          { id: 'ok', label: 'Good', kind: 'primary' },
+          null,
+        ] as unknown as [],
+      });
+      expect(result.diagnosesJson).toEqual([
+        expect.objectContaining({ id: 'ok', label: 'Good', kind: 'primary' }),
+      ]);
+    });
+
+    it('demotes a second primary in diagnosesJson (asmt-03)', () => {
+      const result = validateUpdatePrescriptionBody({
+        diagnosesJson: [
+          { id: 'a', label: 'A', kind: 'primary' },
+          { id: 'b', label: 'B', kind: 'primary' },
+        ],
+      });
+      expect(result.diagnosesJson!.map((r) => r.kind)).toEqual([
+        'primary',
+        'secondary',
+      ]);
+    });
+
+    it('accepts conditionId on a diagnosis row and collapses bad ids to null (asmt-04)', () => {
+      const goodId = '550e8400-e29b-41d4-a716-446655440099';
+      const result = validateUpdatePrescriptionBody({
+        diagnosesJson: [
+          {
+            id: 'dx-1',
+            label: 'HTN',
+            kind: 'primary',
+            conditionId: goodId,
+          },
+          {
+            id: 'dx-2',
+            label: 'DM',
+            kind: 'secondary',
+            conditionId: 'not-a-uuid',
+          },
+        ],
+      });
+      expect(result.diagnosesJson![0].conditionId).toBe(goodId);
+      expect(result.diagnosesJson![1].conditionId).toBeNull();
+      // Bad conditionId must not drop the row.
+      expect(result.diagnosesJson![1].label).toBe('DM');
+    });
+
+    it('accepts differential + excluded and clears conditionId on differentials (asmt-05)', () => {
+      const goodId = '550e8400-e29b-41d4-a716-446655440099';
+      const result = validateUpdatePrescriptionBody({
+        diagnosesJson: [
+          {
+            id: 'dx-1',
+            label: 'URI',
+            kind: 'primary',
+          },
+          {
+            id: 'ddx-1',
+            label: 'Pneumonia',
+            kind: 'differential',
+            certainty: 'excluded',
+            conditionId: goodId,
+          },
+        ],
+      });
+      expect(result.diagnosesJson).toHaveLength(2);
+      expect(result.diagnosesJson![1]).toMatchObject({
+        id: 'ddx-1',
+        kind: 'differential',
+        certainty: 'excluded',
+        conditionId: null,
+      });
+    });
+
+    it('accepts investigationsOrdersJson basket members (inv-lib-05 / INV-D11)', () => {
+      const result = validateUpdatePrescriptionBody({
+        investigationsOrdersJson: [
+          {
+            id: 'iron_studies',
+            label: 'Anemia workup',
+            kind: 'panel',
+            sourcePanelId: 'iron_studies',
+            members: [
+              { id: 'ferritin', label: 'Ferritin', kind: 'analyte' },
+              { id: 'cbc', label: 'CBC', kind: 'panel' },
+            ],
+          },
+        ],
+      });
+      expect(result.investigationsOrdersJson).toEqual([
+        {
+          id: 'iron_studies',
+          label: 'Anemia workup',
+          kind: 'panel',
+          sourcePanelId: 'iron_studies',
+          members: [
+            { id: 'ferritin', label: 'Ferritin', kind: 'analyte' },
+            { id: 'cbc', label: 'CBC', kind: 'panel' },
+          ],
+        },
+      ]);
+    });
+
+    it('accepts investigationsOrdersJson and defaults an unknown kind to custom (inv-lib-05)', () => {
+      const result = validateUpdatePrescriptionBody({
+        investigationsOrdersJson: [
+          { id: 'lft', label: 'LFT', kind: 'panel' },
+          { id: 'custom:foo', label: 'Foo assay', kind: 'weird' as unknown as 'custom' },
+        ],
+      });
+      expect(result.investigationsOrdersJson).toEqual([
+        { id: 'lft', label: 'LFT', kind: 'panel' },
+        { id: 'custom:foo', label: 'Foo assay', kind: 'custom' },
+      ]);
+    });
+
+    it('drops malformed investigationsOrdersJson rows instead of rejecting (inv-lib-05)', () => {
+      const result = validateUpdatePrescriptionBody({
+        investigationsOrdersJson: [
+          { id: '', label: 'Missing id' },
+          { id: 'cbc', label: 'CBC', kind: 'panel' },
+          { id: 'no-label', label: '   ' },
+        ],
+      });
+      expect(result.investigationsOrdersJson).toEqual([
+        { id: 'cbc', label: 'CBC', kind: 'panel' },
+      ]);
+    });
+
+    it('dedupes investigationsOrdersJson by identity, first wins (inv-lib-05)', () => {
+      const result = validateUpdatePrescriptionBody({
+        investigationsOrdersJson: [
+          { id: 'hb', label: 'Haemoglobin', kind: 'analyte' },
+          { id: 'hb', label: 'Hb', kind: 'analyte' },
+        ],
+      });
+      expect(result.investigationsOrdersJson).toEqual([
+        { id: 'hb', label: 'Haemoglobin', kind: 'analyte' },
+      ]);
+    });
+
+    it('maps deprecated rule_out certainty to provisional on ingest', () => {
+      const result = validateUpdatePrescriptionBody({
+        diagnosesJson: [
+          {
+            id: 'dx-1',
+            label: 'URI',
+            kind: 'primary',
+            certainty: 'rule_out',
+          },
+        ],
+      });
+      expect(result.diagnosesJson![0].certainty).toBe('provisional');
+    });
+
+    it('accepts per-diagnosis acuity and clears it on differentials', () => {
+      const result = validateUpdatePrescriptionBody({
+        diagnosesJson: [
+          {
+            id: 'dx-1',
+            label: 'URI',
+            kind: 'primary',
+            acuity: 'improving',
+          },
+          {
+            id: 'ddx-1',
+            label: 'Pneumonia',
+            kind: 'differential',
+            acuity: 'stable',
+          },
+          {
+            id: 'dx-2',
+            label: 'GERD',
+            kind: 'secondary',
+            acuity: 'critical' as 'stable',
+          },
+        ],
+      });
+      expect(result.diagnosesJson![0].acuity).toBe('improving');
+      expect(result.diagnosesJson![1]).toMatchObject({
+        kind: 'differential',
+        acuity: null,
+      });
+      expect(result.diagnosesJson![2].acuity).toBeNull();
+    });
+
+    it('does not demote a differential when a primary already exists (asmt-05)', () => {
+      const result = validateUpdatePrescriptionBody({
+        diagnosesJson: [
+          { id: 'a', label: 'A', kind: 'primary' },
+          { id: 'd', label: 'DDx', kind: 'differential' },
+        ],
+      });
+      expect(result.diagnosesJson!.map((r) => r.kind)).toEqual([
+        'primary',
+        'differential',
+      ]);
+    });
+
+    it('accepts optional ICD-11 code/codeTitle and defaults them to null (asmt-06)', () => {
+      const result = validateUpdatePrescriptionBody({
+        diagnosesJson: [
+          {
+            id: 'dx-1',
+            label: 'Hypertension',
+            kind: 'primary',
+            code: 'BA00',
+            codeTitle: 'Essential hypertension',
+          },
+          {
+            id: 'dx-2',
+            label: 'Uncoded free text',
+            kind: 'secondary',
+          },
+        ],
+      });
+      expect(result.diagnosesJson![0]).toMatchObject({
+        code: 'BA00',
+        codeTitle: 'Essential hypertension',
+      });
+      // Uncoded rows still validate (ASMT-D3) with null coding.
+      expect(result.diagnosesJson![1].code).toBeNull();
+      expect(result.diagnosesJson![1].codeTitle).toBeNull();
+    });
+
+    it('collapses a malformed code to null without dropping the row (asmt-06)', () => {
+      const result = validateUpdatePrescriptionBody({
+        diagnosesJson: [
+          {
+            id: 'dx-1',
+            label: 'Diabetes',
+            kind: 'primary',
+            code: 123 as unknown as string,
+            codeTitle: '',
+          },
+        ],
+      });
+      expect(result.diagnosesJson).toHaveLength(1);
+      expect(result.diagnosesJson![0].label).toBe('Diabetes');
+      expect(result.diagnosesJson![0].code).toBeNull();
+      expect(result.diagnosesJson![0].codeTitle).toBeNull();
     });
 
     it('accepts nested associatedComplaints on complaints (subj-12)', () => {
@@ -207,6 +510,10 @@ describe('prescription SOAP validation (cv2-07)', () => {
         date: '2026-06-10',
         interpretation: 'high',
         notes: 'fasting',
+        reportId: null,
+        refLow: null,
+        refHigh: null,
+        refText: null,
       });
       expect(result.testResultsJson![1]).toEqual({
         id: 'r2',
@@ -217,6 +524,10 @@ describe('prescription SOAP validation (cv2-07)', () => {
         date: null,
         interpretation: null,
         notes: null,
+        reportId: null,
+        refLow: null,
+        refHigh: null,
+        refText: null,
       });
     });
 
@@ -246,6 +557,47 @@ describe('prescription SOAP validation (cv2-07)', () => {
     it('accepts an empty array (legacy free-text passthrough)', () => {
       const result = validateUpdatePrescriptionBody({ testResultsJson: [] });
       expect(result.testResultsJson).toEqual([]);
+    });
+
+    it('preserves reportId + reference-range fields (rpt-02)', () => {
+      const result = validateUpdatePrescriptionBody({
+        testResultsJson: [
+          {
+            id: 'r1',
+            source: 'patient_report',
+            name: 'Hb',
+            value: '9.5',
+            unit: 'g/dL',
+            reportId: 'rep-1',
+            refLow: 12,
+            refHigh: 16,
+            refText: '12–16',
+          },
+        ],
+      });
+      expect(result.testResultsJson![0]).toMatchObject({
+        reportId: 'rep-1',
+        refLow: 12,
+        refHigh: 16,
+        refText: '12–16',
+      });
+    });
+
+    it('collapses a malformed reportId to null without dropping the row (rpt-02)', () => {
+      const result = validateUpdatePrescriptionBody({
+        testResultsJson: [
+          {
+            id: 'r1',
+            source: 'in_clinic_poc',
+            name: 'RBS',
+            reportId: 42 as unknown as string,
+            refLow: 'bad' as unknown as number,
+          },
+        ],
+      });
+      expect(result.testResultsJson).toHaveLength(1);
+      expect(result.testResultsJson![0].reportId).toBeNull();
+      expect(result.testResultsJson![0].refLow).toBeNull();
     });
   });
 
@@ -828,6 +1180,15 @@ describe('attachment upload-url category (obj-22)', () => {
     expect(result.category).toBe('objective');
   });
 
+  it('accepts the advice category tag for patient handouts', () => {
+    const result = validateCreateUploadUrlBody({
+      filename: 'diagram.png',
+      contentType: 'image/png',
+      category: 'advice',
+    });
+    expect(result.category).toBe('advice');
+  });
+
   it('omits category for a legacy photo-Rx upload (undefined, not an error)', () => {
     const result = validateCreateUploadUrlBody({ filename: 'rx.jpg', contentType: 'image/jpeg' });
     expect(result.category).toBeUndefined();
@@ -881,5 +1242,56 @@ describe('attachment upload-url subjective complaint pin (sdp-02)', () => {
         complaintId: 'c'.repeat(65),
       })
     ).toThrow(ValidationError);
+  });
+});
+
+describe('labReportsJsonSchema validation (rpt-02 / migration 159)', () => {
+  it('preserves a valid header, defaulting attachmentIds and collapsing empties', () => {
+    const result = labReportsJsonSchema.parse([
+      {
+        id: 'rep-1',
+        kind: 'lab',
+        title: '  CBC panel  ',
+        reportDate: '2026-07-01',
+        labName: '',
+        entryMethod: 'extracted',
+      },
+    ]);
+    expect(result).toEqual([
+      {
+        id: 'rep-1',
+        kind: 'lab',
+        title: 'CBC panel',
+        reportDate: '2026-07-01',
+        labName: null,
+        attachmentIds: [],
+        findings: null,
+        entryMethod: 'extracted',
+      },
+    ]);
+  });
+
+  it('drops a malformed header (missing title / bad kind) without rejecting the save', () => {
+    const result = labReportsJsonSchema.parse([
+      { id: 'a', kind: 'lab', title: '   ' },
+      { id: 'b', kind: 'ultrasound', title: 'USG abdomen' },
+      { kind: 'imaging', title: 'No id' },
+      { id: 'c', kind: 'imaging', title: 'X-ray chest', findings: 'Clear lung fields' },
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result![0]).toMatchObject({ id: 'c', kind: 'imaging', findings: 'Clear lung fields' });
+  });
+
+  it('defaults an absent / unknown entryMethod to manual', () => {
+    const result = labReportsJsonSchema.parse([
+      { id: 'r1', kind: 'lab', title: 'LFT' },
+      { id: 'r2', kind: 'lab', title: 'KFT', entryMethod: 'imported' },
+    ]);
+    expect(result![0].entryMethod).toBe('manual');
+    expect(result![1].entryMethod).toBe('manual');
+  });
+
+  it('returns undefined for an absent field (passthrough)', () => {
+    expect(labReportsJsonSchema.parse(undefined)).toBeUndefined();
   });
 });

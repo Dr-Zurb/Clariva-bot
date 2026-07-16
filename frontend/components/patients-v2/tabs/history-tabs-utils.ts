@@ -1,5 +1,6 @@
 import type { Appointment, AppointmentStatus, ConsultationModality } from "@/types/appointment";
 import type { PrescriptionWithRelations } from "@/types/prescription";
+import { resolveFollowUpForOutput } from "@/lib/cockpit/follow-up-format";
 
 export type VisitModalityFilter = "all" | ConsultationModality;
 export type VisitStatusFilter = "all" | AppointmentStatus | "scheduled";
@@ -172,7 +173,12 @@ export function buildRxSummaryText(rx: PrescriptionWithRelations): string {
       lines.push(`- ${parts.join(" ")}`);
     }
   }
-  if (rx.follow_up) lines.push(`Follow-up: ${rx.follow_up}`);
+  const followUp = resolveFollowUpForOutput(
+    rx.follow_up,
+    rx.follow_up_value,
+    rx.follow_up_unit,
+  );
+  if (followUp) lines.push(`Follow-up: ${followUp}`);
   return lines.join("\n");
 }
 

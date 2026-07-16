@@ -91,6 +91,12 @@ function renderWithShell(
     setSubjectiveSectionCollapsed: vi.fn(),
     subjectiveSectionHidden: [],
     setSubjectiveSectionHidden: vi.fn(),
+    objectiveDefaults: null,
+    setObjectiveDefaults: vi.fn(),
+    planDefaults: null,
+    setPlanDefaults: vi.fn(),
+    assessmentDefaults: null,
+    setAssessmentDefaults: vi.fn(),
     providerProps: {
       key: "test",
       appointmentId: "appt-1",
@@ -175,7 +181,10 @@ function hiddenPatchCalls() {
 }
 
 async function waitForSettingsLoaded() {
-  await waitFor(() => expect(mockGetDoctorSettings).toHaveBeenCalled());
+  await waitFor(() => {
+    expect(mockGetDoctorSettings).toHaveBeenCalled();
+    expect(screen.queryByTestId("subjective-layout-skeleton")).not.toBeInTheDocument();
+  });
 }
 
 describe("SubjectiveSection visibility persistence (subj-35 / subj-38)", () => {
@@ -307,6 +316,10 @@ describe("SubjectiveSection visibility persistence (subj-35 / subj-38)", () => {
         setSubjectiveSectionCollapsed: vi.fn(),
         subjectiveSectionHidden: shellHidden,
         setSubjectiveSectionHidden: vi.fn(),
+        objectiveDefaults: null,
+        setObjectiveDefaults: vi.fn(),
+        planDefaults: null,
+        setPlanDefaults: vi.fn(),
         providerProps: {
           key: "test",
           appointmentId: "appt-1",
@@ -503,6 +516,11 @@ describe("SubjectiveSection visibility persistence (subj-35 / subj-38)", () => {
     fireEvent.click(
       screen.getByTestId(`section-manager-remove-${toCustomBlockSectionId(CUSTOM_BLOCK_ID)}`),
     );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("delete-custom-section-confirm")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId("delete-custom-section-confirm"));
 
     await waitFor(() => {
       const order = readRenderedSectionOrder(container);

@@ -18,6 +18,11 @@ import {
   getDoctorSettings,
 } from "@/lib/api";
 import type { PatientRxViewModel } from "@/components/ehr/PatientRxView";
+import { resolveFollowUpForOutput } from "@/lib/cockpit/follow-up-format";
+import {
+  referralPartsFromFields,
+  resolveReferralForOutput,
+} from "@/lib/cockpit/plan-quick-picks";
 import {
   computePreSendWarnings,
   focusTargetFor,
@@ -126,8 +131,14 @@ export function useRxCommitActions({
       hopi: fields.hopi.trim() || null,
       provisionalDiagnosis: fields.provisionalDiagnosis.trim() || null,
       investigations: fields.investigationsOrders.trim() || null,
-      followUp: fields.followUp.trim() || null,
-      patientEducation: fields.patientEducation.trim() || null,
+      advice: fields.advice.trim() || null,
+      followUp: resolveFollowUpForOutput(
+        fields.followUp,
+        fields.followUpValue,
+        fields.followUpUnit,
+      ),
+      patientEducation: null,
+      referral: resolveReferralForOutput(referralPartsFromFields(fields)),
       medicines: medicines
         .filter((m) => m.medicineName.trim())
         .map((m) => ({
@@ -335,7 +346,9 @@ export function useRxCommitActions({
       hasInvestigations:
         isStructured && fields.investigationsOrders.trim().length > 0,
       hasPatientEducation:
-        isStructured && fields.patientEducation.trim().length > 0,
+        isStructured &&
+        (fields.advice.trim().length > 0 ||
+          fields.patientEducation.trim().length > 0),
       hasDiagnosis: isStructured
         ? fields.provisionalDiagnosis.trim().length > 0
         : true,

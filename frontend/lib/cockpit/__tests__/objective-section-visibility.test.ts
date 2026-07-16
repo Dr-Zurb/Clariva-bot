@@ -19,10 +19,8 @@ const MOUNTABLE = resolveAvailableSectionIds();
 const FULL_ORDER: ObjectiveSectionId[] = [
   "vitals",
   "exam",
+  "notes",
   "test_results",
-  "point_of_care",
-  "legacy_exam",
-  "legacy_vitals",
 ];
 
 describe("resolveVisibleSections (obj-12 / P10-D2)", () => {
@@ -34,16 +32,14 @@ describe("resolveVisibleSections (obj-12 / P10-D2)", () => {
     expect(resolveVisibleSections(FULL_ORDER, ["test_results"], MOUNTABLE)).toEqual([
       "vitals",
       "exam",
-      "point_of_care",
-      "legacy_exam",
-      "legacy_vitals",
+      "notes",
     ]);
   });
 
   it("leaves a hidden id that is not currently mountable untouched", () => {
-    // `legacy_exam` is hidden but not in the mountable set → passes through.
+    // `notes` is hidden but not in the mountable set → passes through.
     const mountable: ObjectiveSectionId[] = ["vitals", "exam", "test_results"];
-    expect(resolveVisibleSections(FULL_ORDER, ["legacy_exam"], mountable)).toContain("legacy_exam");
+    expect(resolveVisibleSections(FULL_ORDER, ["notes"], mountable)).toContain("notes");
   });
 
   it("can hide every section (all-hidden ⇒ empty render plan)", () => {
@@ -64,11 +60,8 @@ describe("isSectionHidden (obj-12)", () => {
 describe("hiddenOverridesToPersist (obj-12 / P10-D4)", () => {
   it("keeps only known static ids and dedupes preserving first occurrence", () => {
     expect(
-      hiddenOverridesToPersist(
-        ["test_results", "test_results", "legacy_exam"],
-        MOUNTABLE,
-      ),
-    ).toEqual(["test_results", "legacy_exam"]);
+      hiddenOverridesToPersist(["test_results", "test_results", "notes"], MOUNTABLE),
+    ).toEqual(["test_results", "notes"]);
   });
 
   it("drops unknown and custom_block ids (custom blocks are deleted, not hidden)", () => {
@@ -85,7 +78,7 @@ describe("hiddenOverridesToPersist (obj-12 / P10-D4)", () => {
   });
 
   it("retains hidden ids even when not currently mountable (cross-context intent)", () => {
-    expect(hiddenOverridesToPersist(["legacy_vitals"], ["vitals"])).toEqual(["legacy_vitals"]);
+    expect(hiddenOverridesToPersist(["notes"], ["vitals"])).toEqual(["notes"]);
   });
 });
 

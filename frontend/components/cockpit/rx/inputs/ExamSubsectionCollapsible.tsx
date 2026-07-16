@@ -1,10 +1,18 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
-import { EXAM_SUBSECTION_ATTR, scrollExamSubsectionIntoView } from "@/lib/cockpit/exam-card-scroll";
+import { useAccordionOpenState } from "@/lib/cockpit/accordion-open-state";
+import { EXAM_SUBSECTION_ATTR, scrollExamSubsectionIntoView, scrollExamSystemCardToTop } from "@/lib/cockpit/exam-card-scroll";
 import { RX_EXAM_SUBSECTION_HEADING_CLASS } from "@/components/cockpit/rx/sections/field-styles";
+import { resolveSoapNestedStatusDotClass } from "@/components/cockpit/rx/sections/section-chrome";
 import { Collapse } from "@/components/ui/Collapse";
+import {
+  CollapsibleDepthProvider,
+  StickyStackProvider,
+  useDepthToneSurface,
+  useStickyHeader,
+} from "@/components/ui/sticky-stack";
 import {
   listSubsectionsByFeasibility,
   resolveInPersonSubsectionRemoteHint,
@@ -127,6 +135,16 @@ export function ExamSubsectionCollapsible({
   children,
 }: ExamSubsectionCollapsibleProps) {
   const hintId = tag?.hint ? `${systemId}-subsection-hint-${subsectionId}` : undefined;
+  // Pin this subsection header beneath the section + system-card headers (3rd
+  // level, under the cap), publishing the advanced offset to the finding cards.
+  const { headerRef, pinned, headerStyle, childValue, bodyStyle, pinnedShadowClass } =
+    useStickyHeader(true);
+  // Depth-tone (opt-in via the exam depth context seeded on the system card):
+  // subsections are the recessed L2 well. Layered UNDER the teleconsult
+  // de-emphasis — a de-emphasised subsection keeps its exact muted/dashed
+  // treatment. The left rail lives on L3 finding rows only so the first row
+  // in a list does not pick up a double spine.
+  const tone = useDepthToneSurface({ railMinDepth: 0 });
 
   return (
     <section
@@ -135,11 +153,29 @@ export function ExamSubsectionCollapsible({
       data-deemphasised={deemphasised ? "true" : "false"}
       {...{ [EXAM_SUBSECTION_ATTR]: scrollKey }}
       className={cn(
-        "scroll-mt-[calc(var(--collapsible-sticky-top,2.75rem)_+_var(--exam-card-sticky-top,2.75rem))] rounded-md border border-border/60 bg-muted/15 px-2.5 py-2",
-        deemphasised && "border-dashed border-border/50 bg-muted/25",
+        "scroll-mt-[var(--sticky-stack,2.75rem)] rounded-md border border-border/60 px-2.5 py-2",
+        deemphasised
+          ? "border-dashed border-border/50 bg-muted/25"
+          : tone.active
+            ? tone.surface
+            : "bg-muted/15",
       )}
     >
-      <div className="flex w-full items-center gap-2">
+      <div
+        ref={headerRef}
+        style={headerStyle}
+        className={cn(
+          "flex w-full items-center gap-2",
+          // Full-bleed opaque header so finding cards scroll cleanly beneath it.
+          pinned && "-mx-2.5 -mt-2 rounded-t-md bg-card px-2.5 py-2",
+          pinned && open && "border-b border-border/60",
+          pinned && pinnedShadowClass,
+        )}
+      >
+        <span
+          className={resolveSoapNestedStatusDotClass("objective", hasData, "leaf")}
+          aria-hidden
+        />
         <button
           type="button"
           disabled={disabled}
@@ -153,9 +189,6 @@ export function ExamSubsectionCollapsible({
             deemphasised && "text-muted-foreground",
           )}
         >
-          {hasData && !open ? (
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary/70" aria-hidden />
-          ) : null}
           <h4
             className={cn(
               "shrink-0",
@@ -190,8 +223,14 @@ export function ExamSubsectionCollapsible({
         </span>
       ) : null}
 
-      <Collapse open={open} id={`${systemId}-subsection-body-${subsectionId}`}>
-        {children}
+      <Collapse open={open} id={`${systemId}-subsection-body-${subsectionId}`} style={bodyStyle}>
+        <StickyStackProvider value={childValue}>
+          {tone.active && tone.depth !== null ? (
+            <CollapsibleDepthProvider depth={tone.depth + 1}>{children}</CollapsibleDepthProvider>
+          ) : (
+            children
+          )}
+        </StickyStackProvider>
       </Collapse>
     </section>
   );
@@ -264,6 +303,8 @@ interface SubsectionLike {
 }
 
 export interface UseExamSubsectionOpenStateOptions<S extends SubsectionLike> {
+  /** Exam system slug (`general`, `cvs`, …) — used to scroll the parent card on close. */
+  systemId: string;
   subsections: readonly S[];
   /** Entries at mount — used to auto-expand subsections that already have content. */
   initialEntries: ExamFindingEntry[];
@@ -282,12 +323,17 @@ export interface UseExamSubsectionOpenStateOptions<S extends SubsectionLike> {
   excludeFromAutoOpen?: (subsection: S) => boolean;
 }
 
+/** Accordion default: at most one subsection open — first match in registry order. */
+export { pickAccordionOpenId } from "@/lib/cockpit/accordion-open-state";
+
 /**
- * Multi-open subsection collapse state. Auto-expands subsections that already
- * have recorded findings at mount; otherwise opens `fallbackOpenIds`. Opening a
- * subsection glides it under the sticky headers.
+ * Subsection collapse state (accordion on manual toggle; bulk expand/collapse-all).
+ * Auto-expands the first subsection (in registry order) that has recorded findings
+ * at mount; otherwise opens `fallbackOpenIds`. Opening a subsection via toggle
+ * closes siblings; expand-all opens every subsection for survey mode.
  */
 export function useExamSubsectionOpenState<S extends SubsectionLike>({
+  systemId,
   subsections,
   initialEntries,
   ownedFindingIds,
@@ -296,43 +342,47 @@ export function useExamSubsectionOpenState<S extends SubsectionLike>({
   initialExtraOpenIds,
   excludeFromAutoOpen,
 }: UseExamSubsectionOpenStateOptions<S>) {
-  const [openIds, setOpenIds] = useState<Set<string>>(() => {
-    const excludedIds = new Set<string>(
-      excludeFromAutoOpen
-        ? subsections.filter((s) => excludeFromAutoOpen(s)).map((s) => s.id)
-        : [],
-    );
-    const initial = new Set<string>();
-    for (const id of initialExtraOpenIds ?? []) {
-      if (!excludedIds.has(id)) initial.add(id);
-    }
-    for (const subsection of subsections) {
-      if (excludedIds.has(subsection.id)) continue;
-      const owned = ownedFindingIds(subsection);
-      if (initialEntries.some((e) => owned.has(e.findingId))) initial.add(subsection.id);
-    }
-    if (initial.size === 0) {
-      for (const id of fallbackOpenIds ?? []) {
-        if (!excludedIds.has(id)) initial.add(id);
+  const accordion = useAccordionOpenState({
+    items: subsections,
+    initialOpenIds: (() => {
+      const excludedIds = new Set<string>(
+        excludeFromAutoOpen
+          ? subsections.filter((s) => excludeFromAutoOpen(s)).map((s) => s.id)
+          : [],
+      );
+      const initial: string[] = [];
+      for (const id of initialExtraOpenIds ?? []) {
+        if (!excludedIds.has(id)) initial.push(id);
       }
-    }
-    return initial;
+      for (const subsection of subsections) {
+        if (excludedIds.has(subsection.id)) continue;
+        const owned = ownedFindingIds(subsection);
+        if (initialEntries.some((e) => owned.has(e.findingId))) initial.push(subsection.id);
+      }
+      if (initial.length === 0) {
+        for (const id of fallbackOpenIds ?? []) {
+          if (!excludedIds.has(id)) initial.push(id);
+        }
+      }
+      return initial;
+    })(),
   });
 
   function isOpen(subsectionId: string): boolean {
-    return openIds.has(subsectionId);
+    return accordion.isOpen(subsectionId);
   }
 
   function toggle(subsectionId: string) {
-    const willOpen = !openIds.has(subsectionId);
-    setOpenIds((prev) => {
-      const next = new Set(prev);
-      if (willOpen) next.add(subsectionId);
-      else next.delete(subsectionId);
-      return next;
-    });
+    const willOpen = !accordion.openIds.has(subsectionId);
+    accordion.toggle(subsectionId);
     if (willOpen) scrollExamSubsectionIntoView(scrollKeyFor(subsectionId));
+    else scrollExamSystemCardToTop(systemId);
   }
 
-  return { isOpen, toggle };
+  return {
+    isOpen,
+    toggle,
+    expandAll: accordion.expandAll,
+    collapseAll: accordion.collapseAll,
+  };
 }

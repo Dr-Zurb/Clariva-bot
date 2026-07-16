@@ -16,8 +16,12 @@ export interface ChartMedMoreComboboxProps {
   /** Committed display text shown when the field is idle. */
   value?: string;
   suggestions: readonly ChartMedMoreOption[];
+  /**
+   * When true (default), Enter/blur commits free-typed text even if it is not
+   * a catalog match. Catalog suggestions still appear in the dropdown — there
+   * is no separate "Use …" row.
+   */
   allowCustom?: boolean;
-  customLabel?: (text: string) => string;
   /** Map typed/selected text to a catalog value when matched. */
   resolveMatch?: (query: string) => string | undefined;
   onCommit: (query: string) => void;
@@ -26,9 +30,7 @@ export interface ChartMedMoreComboboxProps {
   inputClassName?: string;
 }
 
-type MoreRow =
-  | { kind: "catalog"; value: string; label: string }
-  | { kind: "custom"; text: string };
+type MoreRow = { kind: "catalog"; value: string; label: string };
 
 function defaultFilter(options: readonly ChartMedMoreOption[], query: string): ChartMedMoreOption[] {
   const q = query.trim().toLowerCase();
@@ -48,7 +50,6 @@ export function ChartMedMoreCombobox({
   value = "",
   suggestions,
   allowCustom = true,
-  customLabel = (text) => `Use "${text}"`,
   resolveMatch,
   onCommit,
   onClear,
@@ -60,26 +61,29 @@ export function ChartMedMoreCombobox({
   const inputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(value);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  /** After a local commit, keep draft if the parent did not mirror it into `value`. */
+  const retainDraftAfterCommitRef = useRef(false);
 
   useEffect(() => {
+    if (retainDraftAfterCommitRef.current) {
+      retainDraftAfterCommitRef.current = false;
+      if (value.trim()) setDraft(value);
+      return;
+    }
     if (!open) setDraft(value);
   }, [value, open]);
 
   const filtered = useMemo(() => defaultFilter(suggestions, draft), [draft, suggestions]);
 
   const rows = useMemo((): MoreRow[] => {
-    const trimmed = draft.trim();
-    const catalogMatch = trimmed && resolveMatch ? resolveMatch(trimmed) : undefined;
-    const list: MoreRow[] = filtered.map((opt) => ({
-      kind: "catalog",
+    return filtered.map((opt) => ({
+      kind: "catalog" as const,
       value: opt.value,
       label: opt.label,
     }));
-    if (allowCustom && trimmed && !catalogMatch) {
-      list.push({ kind: "custom", text: trimmed });
-    }
-    return list;
-  }, [allowCustom, draft, filtered, resolveMatch]);
+  }, [filtered]);
 
   const [highlighted, setHighlighted] = useState(0);
 
@@ -97,20 +101,32 @@ export function ChartMedMoreCombobox({
       const trimmed = text.trim();
       if (!trimmed) {
         onClear?.();
+        setDraft("");
         finish();
         return;
       }
+      const catalogHit = resolveMatch?.(trimmed);
+      if (!allowCustom && !catalogHit) {
+        setDraft(value);
+        finish();
+        return;
+      }
+      retainDraftAfterCommitRef.current = true;
+      setDraft(trimmed);
       onCommit(trimmed);
       finish();
     },
-    [finish, onClear, onCommit],
+    [allowCustom, finish, onClear, onCommit, resolveMatch, value],
   );
 
   const commitRow = useCallback(
     (row: MoreRow) => {
-      commitText(row.kind === "catalog" ? row.label : row.text);
+      retainDraftAfterCommitRef.current = true;
+      setDraft(row.label);
+      onCommit(row.label);
+      finish();
     },
-    [commitText],
+    [finish, onCommit],
   );
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -123,6 +139,24 @@ export function ChartMedMoreCombobox({
     }
     if (e.key === "Enter") {
       e.preventDefault();
+      const trimmed = draft.trim();
+      const exactCatalog =
+        trimmed &&
+        rows.find(
+          (row) =>
+            row.label.toLowerCase() === trimmed.toLowerCase() ||
+            row.value.toLowerCase() === trimmed.toLowerCase(),
+        );
+      if (exactCatalog) {
+        commitRow(exactCatalog);
+        return;
+      }
+      // Prefer free-typed text over a merely highlighted suggestion so custom
+      // units (e.g. "deaf asdf") are not replaced by the first filtered row.
+      if (trimmed && (allowCustom || resolveMatch?.(trimmed))) {
+        commitText(draft);
+        return;
+      }
       if (highlighted >= 0 && highlighted < rows.length) {
         commitRow(rows[highlighted]!);
         return;
@@ -140,6 +174,15 @@ export function ChartMedMoreCombobox({
       e.preventDefault();
       if (rows.length > 0) setHighlighted((i) => Math.max(i - 1, 0));
     }
+  };
+
+  const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    const next = e.relatedTarget as Node | null;
+    if (next && containerRef.current?.contains(next)) return;
+    window.requestAnimationFrame(() => {
+      if (containerRef.current?.contains(document.activeElement)) return;
+      commitText(inputRef.current?.value ?? draftRef.current);
+    });
   };
 
   const showDropdown = open && rows.length > 0;
@@ -169,10 +212,16 @@ export function ChartMedMoreCombobox({
             setHighlighted(0);
           }
         }}
-        onBlur={() => commitText(draft)}
+        onClick={() => {
+          if (!disabled) {
+            setOpen(true);
+            setHighlighted(0);
+          }
+        }}
+        onBlur={handleBlur}
         onKeyDown={onKeyDown}
         className={cn(
-          "h-8 w-[4.75rem] min-w-[4rem] rounded-md border border-border bg-background px-1.5 py-1 text-[10px] text-foreground",
+          "h-8 w-[5.5rem] min-w-[4.5rem] rounded-md border border-border bg-background px-1.5 py-1 text-[10px] text-foreground",
           "placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50",
           value.trim() && !open && "border-primary/40",
           showDropdown && "rounded-b-none border-b-transparent border-primary/30",
@@ -187,22 +236,20 @@ export function ChartMedMoreCombobox({
         >
           {rows.map((row, index) => {
             const active = index === highlighted;
-            const label = row.kind === "catalog" ? row.label : customLabel(row.text);
             return (
               <li
-                key={row.kind === "catalog" ? row.value : `custom-${row.text}`}
+                key={row.value}
                 role="option"
                 aria-selected={active}
                 className={cn(
                   "cursor-pointer px-2 py-1.5 text-foreground",
-                  row.kind === "custom" && "border-t border-border/60 italic text-muted-foreground",
                   active && "bg-primary/10 font-medium",
                 )}
                 onMouseEnter={() => setHighlighted(index)}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => commitRow(row)}
               >
-                {label}
+                {row.label}
               </li>
             );
           })}

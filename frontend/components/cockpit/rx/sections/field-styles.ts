@@ -10,6 +10,29 @@ export const RX_SECTION_HEADING_CLASS =
 /** Exam system card title (General, Cardiovascular, …) — CollapsibleContainer parity. */
 export const RX_EXAM_SYSTEM_TITLE_CLASS = "text-sm font-medium text-foreground/80";
 
+/**
+ * Peer zone headings inside Assessment (Diagnoses, Known conditions,
+ * Additional notes) — same visual weight as exam system titles; not the
+ * quieter nested IPPA subsection token.
+ */
+export const RX_ASSESSMENT_ZONE_HEADING_CLASS =
+  "block text-sm font-medium text-foreground/80";
+
+/**
+ * Light bordered surface for Assessment peer zones — groups each zone without
+ * a heavy card stack (border + soft tint + padding).
+ */
+export const RX_ASSESSMENT_ZONE_CONTAINER_CLASS =
+  "space-y-2 rounded-md border border-border/60 bg-muted/10 px-2.5 py-2.5";
+
+/**
+ * Plan peer-zone chrome — same surface weight as Assessment zones so S/O/A/P
+ * scan as one family of SOAP editors.
+ */
+export const RX_PLAN_ZONE_HEADING_CLASS = RX_ASSESSMENT_ZONE_HEADING_CLASS;
+
+export const RX_PLAN_ZONE_CONTAINER_CLASS = RX_ASSESSMENT_ZONE_CONTAINER_CLASS;
+
 /** IPPA subsection + exam notes group labels inside a system card. */
 export const RX_EXAM_SUBSECTION_HEADING_CLASS =
   "text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80";

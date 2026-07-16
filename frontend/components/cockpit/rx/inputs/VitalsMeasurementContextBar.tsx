@@ -26,7 +26,7 @@ function ContextSelect<T extends string>({
       value={value ?? ""}
       onChange={(e) => onChange(e.target.value as T)}
       className={cn(
-        "mt-0 h-8 w-auto shrink-0 rounded-md border border-border px-3 py-2 text-xs",
+        "mt-0 h-8 min-w-0 max-w-full rounded-md border border-border px-3 py-2 text-xs",
         "focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary",
         className,
       )}
@@ -72,7 +72,7 @@ export function VitalsMeasurementContextBar(): JSX.Element {
           onChange={updateMeasuredBy}
           options={BP_MEASURED_BY_OPTIONS}
           ariaLabel="Vitals measured by"
-          className="min-w-[7rem]"
+          className="min-w-0 max-w-full"
         />
         <span className="text-muted-foreground">at</span>
         <ContextSelect
@@ -80,7 +80,7 @@ export function VitalsMeasurementContextBar(): JSX.Element {
           onChange={updateSetting}
           options={BP_SETTING_OPTIONS}
           ariaLabel="Vitals measurement setting"
-          className="min-w-[7rem]"
+          className="min-w-0 max-w-full"
         />
       </div>
       <p className="text-xs text-muted-foreground">

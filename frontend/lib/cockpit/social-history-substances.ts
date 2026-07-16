@@ -58,6 +58,8 @@ export interface SubstanceUseItem {
   years?: number;
   yearsUnit?: SocialHistoryDurationUnit;
   phase?: SubstancePhase;
+  /** Free-text context for this substance row. */
+  note?: string;
 }
 
 export interface SubstancesSectionInput {
@@ -334,6 +336,8 @@ function normalizeSubstanceItem(raw: SubstanceUseItem): SubstanceUseItem {
   const storedDurationUnit = normalizeStoredDurationUnit(raw.yearsUnit);
   if (storedDurationUnit) cleaned.yearsUnit = storedDurationUnit;
   if (raw.phase) cleaned.phase = raw.phase;
+  const note = raw.note?.trim();
+  if (note) cleaned.note = note;
   return cleaned;
 }
 
@@ -364,7 +368,12 @@ export function normalizeSubstancesSection(
   const migrated = migrateLegacySubstances(input);
 
   if (migrated.status === "never") {
-    return { status: "never", items: [] };
+    const neverNotes = migrated.notes?.trim();
+    return {
+      status: "never",
+      items: [],
+      ...(neverNotes ? { notes: neverNotes } : {}),
+    };
   }
 
   const items = ensureSubstanceItemIds(migrated.items ?? [])
@@ -374,7 +383,9 @@ export function normalizeSubstancesSection(
   const notes = migrated.notes?.trim();
   const status = migrated.status ?? (items.length > 0 ? "current" : undefined);
 
-  if (status === "never") return { status: "never", items: [] };
+  if (status === "never") {
+    return { status: "never", items: [], ...(notes ? { notes } : {}) };
+  }
   if (!status && items.length === 0 && !notes) return null;
 
   return {
@@ -454,6 +465,7 @@ function serializeSubstanceItemClause(item: SubstanceUseItem): string {
     parts.push(formatSocialHistoryDurationSuffix(item.years, item.yearsUnit));
   }
   if (item.phase === "past") parts.push("past");
+  if (item.note?.trim()) parts.push(`notes: ${item.note.trim()}`);
 
   if (parts.length === 0) return label;
   return `${label} (${parts.join(" · ")})`;
@@ -463,7 +475,10 @@ export function serializeSubstancesSection(section: SubstancesSectionInput): str
   const normalized = normalizeSubstancesSection(section);
   if (!normalized) return "";
 
-  if (normalized.status === "never") return "Substances: Denies use";
+  if (normalized.status === "never") {
+    const notesSuffix = normalized.notes?.trim() ? `, notes: ${normalized.notes.trim()}` : "";
+    return `Substances: Denies use${notesSuffix}`;
+  }
 
   const itemClauses = normalized.items.map(serializeSubstanceItemClause).filter(Boolean);
   const prefix =
@@ -546,6 +561,7 @@ function resolveTypeKey(label: string): string {
 
 function isKnownSubstanceParenToken(token: string): boolean {
   const t = token.trim();
+  if (/^notes:\s*.+$/i.test(t)) return true;
   if (!t) return true;
   if (t.toLowerCase() === "past") return true;
   if (parseFrequencyPhrase(t).frequencyUnit) return true;
@@ -580,6 +596,12 @@ function parseSubstanceItemSegment(segment: string): SubstanceUseItem | null {
       if (!t) continue;
       if (t.toLowerCase() === "past") {
         item.phase = "past";
+        continue;
+      }
+
+      const notesMatch = t.match(/^notes:\s*(.+)$/i);
+      if (notesMatch) {
+        item.note = notesMatch[1].trim();
         continue;
       }
 
@@ -634,7 +656,14 @@ function parseSubstanceItemSegment(segment: string): SubstanceUseItem | null {
 export function parseSubstancesText(value: string): SubstancesSectionInput {
   const raw = value.trim();
   if (!raw) return { items: [] };
-  if (/^denies use$/i.test(raw)) return { status: "never", items: [] };
+  if (/^denies use/i.test(raw)) {
+    const section: SubstancesSectionInput = { status: "never", items: [] };
+    for (const part of raw.split(/,\s*/)) {
+      const notesMatch = part.trim().match(/^notes:\s*(.+)$/i);
+      if (notesMatch) section.notes = notesMatch[1].trim();
+    }
+    return normalizeSubstancesSection(section) ?? { status: "never", items: [] };
+  }
 
   let status: SubstanceUseStatus | undefined;
   let body = raw;

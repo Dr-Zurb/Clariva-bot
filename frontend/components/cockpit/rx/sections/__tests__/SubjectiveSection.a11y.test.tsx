@@ -105,6 +105,14 @@ describe("subj-27 · Subjective reorder a11y + integration sweep", () => {
     }
   });
 
+  it("exposes a tab scroll-top anchor for L1 close-scroll (parity with Plan/Objective)", async () => {
+    const { container } = renderWithRxForm(<SubjectiveSection heading={null} />);
+    await waitFor(() => expect(mockGetDoctorSettings).toHaveBeenCalled());
+
+    const root = container.querySelector("#rx-symptoms");
+    expect(root).toHaveAttribute("data-testid", "subjective-scroll-top");
+  });
+
   it("focus order is sane: each section's grip precedes its content in the DOM", async () => {
     const { container } = renderWithRxForm(<SubjectiveSection heading={null} />);
     await waitFor(() => expect(mockGetDoctorSettings).toHaveBeenCalled());

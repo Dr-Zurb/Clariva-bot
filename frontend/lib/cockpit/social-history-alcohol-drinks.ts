@@ -12,7 +12,7 @@ import {
   DEFAULT_SOCIAL_HISTORY_THRESHOLDS,
   SOCIAL_HISTORY_THRESHOLDS,
 } from "@/lib/cockpit/social-history-thresholds";
-import { splitTobaccoDetailClauseParts } from "@/lib/cockpit/social-history-tobacco-products";
+import { splitTobaccoDetailClauseParts, parseClauseNoteSuffix } from "@/lib/cockpit/social-history-tobacco-products";
 
 export type AlcoholStatus = "never" | "current" | "ex";
 export type AlcoholDrinkPhase = "current" | "past";
@@ -41,6 +41,8 @@ export interface AlcoholDrinkRow {
   quitYearsUnit?: SocialHistoryDurationUnit;
   /** Optional ABV override (0–100 %); blank = assumed strength for the drink type. */
   abv?: number;
+  /** Free-text context for this drink row. */
+  note?: string;
 }
 
 export interface LegacyAlcoholFlatFields {
@@ -49,7 +51,7 @@ export interface LegacyAlcoholFlatFields {
 }
 
 export interface AlcoholUseSection {
-  status: AlcoholStatus;
+  status?: AlcoholStatus;
   drinks: AlcoholDrinkRow[];
   /** @deprecated Use drink row frequency; stripped on normalize. */
   pattern?: "occasional" | "weekend" | "daily" | "binge";
@@ -70,6 +72,8 @@ export interface AlcoholUseSection {
   unitsPerWeek?: number;
   quitYearsAgo?: number;
   quitYearsUnit?: SocialHistoryDurationUnit;
+  /** Section-level free-text notes (not per-drink). */
+  notes?: string;
 }
 
 export const ALCOHOL_DRINK_TYPES = [
@@ -532,6 +536,7 @@ export function formatAlcoholDrinkClause(drink: AlcoholDrinkRow): string {
     clause += `, ${formatDurationSuffix(drink.years, drink.yearsUnit)}`;
   }
   clause += formatDrinkPhaseClause(drink);
+  if (drink.note?.trim()) clause += `; notes: ${drink.note.trim()}`;
   return clause;
 }
 
@@ -585,6 +590,7 @@ export function formatAlcoholDrinkPreviewSentence(drink: AlcoholDrinkRow): strin
           : `quit ${drink.quitYearsAgo} years ago`,
     );
   }
+  if (drink.note?.trim()) parts.push(drink.note.trim());
   return parts.join(" · ");
 }
 
@@ -697,6 +703,10 @@ export function parseAlcoholDrinkClause(raw: string): AlcoholDrinkRow | null {
   let trimmed = raw.trim();
   if (!trimmed) return null;
 
+  const noteParsed = parseClauseNoteSuffix(trimmed);
+  trimmed = noteParsed.rest;
+  const noteFields = noteParsed.note ? { note: noteParsed.note } : {};
+
   const phaseParsed = parseDrinkPhaseSuffix(trimmed);
   trimmed = phaseParsed.rest;
 
@@ -716,6 +726,7 @@ export function parseAlcoholDrinkClause(raw: string): AlcoholDrinkRow | null {
     ...(phaseParsed.quitYearsUnit
       ? { quitYearsUnit: normalizeStoredDurationUnit(phaseParsed.quitYearsUnit) }
       : {}),
+    ...noteFields,
   };
 
   const abvParsed = extractAbvFromClause(trimmed);
@@ -955,6 +966,8 @@ function normalizeDrinkRow(drink: AlcoholDrinkRow): AlcoholDrinkRow {
   if (coerced.abv != null && coerced.abv > 0 && coerced.abv <= 100) {
     row.abv = Math.round(coerced.abv * 10) / 10;
   }
+  const note = coerced.note?.trim();
+  if (note) row.note = note;
   return row;
 }
 
@@ -1053,7 +1066,22 @@ export function normalizeAlcoholSection(
     if (maxPerSession) next.maxPerSession = maxPerSession;
   }
 
+  if (sectionQuit != null) next.quitYearsAgo = sectionQuit;
+  if (sectionQuitUnit === "months") next.quitYearsUnit = "months";
+
+  const notes = input.notes?.trim();
+  if (notes) next.notes = notes;
+
   return next;
+}
+
+export function alcoholSectionHasContent(
+  input: (AlcoholUseSection & LegacyAlcoholFlatFields) | null | undefined,
+): boolean {
+  if (!input) return false;
+  if (input.notes?.trim()) return true;
+  if (input.status) return true;
+  return false;
 }
 
 function normalizeAuditCAnswers(input: AuditCAnswers): AuditCAnswers | undefined {

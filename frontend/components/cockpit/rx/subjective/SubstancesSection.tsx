@@ -9,6 +9,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { CollapsibleEntryCard } from "@/components/cockpit/rx/inputs/CollapsibleEntryCard";
+import { SocialHistorySectionNotesField } from "@/components/cockpit/rx/subjective/SocialHistorySectionNotesField";
 import { RX_FIELD_INPUT_CLASS } from "@/components/cockpit/rx/sections/field-styles";
 import { cn } from "@/lib/utils";
 import type { SocialHistoryDurationUnit } from "@/lib/cockpit/social-history-indices";
@@ -139,6 +140,7 @@ function SubstanceItemRow({
   if (item.years != null) {
     previewParts.push(`for ${item.years} ${durationUnitChipLabel(durationUnit)}`);
   }
+  if (item.note?.trim()) previewParts.push(item.note.trim());
   const preview = previewParts.join(" · ") || undefined;
 
   const titleNode = (
@@ -486,6 +488,24 @@ function SubstanceItemRow({
           IV use — consider infection risk and BBV screening
         </p>
       )}
+
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <label htmlFor={`social-substance-note-${item.id}`} className={ROW_LABEL_CLASS}>
+          Note
+        </label>
+        <input
+          id={`social-substance-note-${item.id}`}
+          type="text"
+          value={item.note ?? ""}
+          disabled={disabled}
+          placeholder="Additional context"
+          aria-label={`Note for ${displayLabel}`}
+          maxLength={200}
+          data-testid={`social-substances-item-${index}-note`}
+          onChange={(e) => onPatch({ note: e.target.value.trim() || undefined })}
+          className={cn(RX_FIELD_INPUT_CLASS, "h-8 min-w-0 flex-1 text-xs")}
+        />
+      </div>
     </CollapsibleEntryCard>
   );
 }
@@ -533,7 +553,7 @@ export function SubstancesSection({
       return;
     }
     if (nextStatus === "never") {
-      updateSection({ status: "never", items: [] });
+      updateSection({ status: "never", items: [], notes: normalized?.notes });
       return;
     }
     updateSection({
@@ -549,7 +569,7 @@ export function SubstancesSection({
     });
     updateSection({
       status: status ?? "current",
-      items: [...items, newItem],
+      items: [newItem, ...items],
       notes: normalized?.notes,
     });
   };
@@ -649,33 +669,24 @@ export function SubstancesSection({
             </div>
           )}
 
-          <div className="space-y-1">
-            <label
-              htmlFor={`${inputIdPrefix}-substances-notes`}
-              className="text-xs font-medium text-foreground/80"
-            >
-              Notes (optional)
-            </label>
-            <input
-              id={`${inputIdPrefix}-substances-notes`}
-              type="text"
-              disabled={disabled}
-              value={normalized?.notes ?? ""}
-              maxLength={200}
-              placeholder="Context, treatment, harm reduction…"
-              data-testid="social-substances-notes"
-              onChange={(e) =>
-                updateSection({
-                  status: status ?? "current",
-                  items,
-                  notes: e.target.value.trim() || undefined,
-                })
-              }
-              className={cn(RX_FIELD_INPUT_CLASS, "h-8 text-xs")}
-            />
-          </div>
         </>
       )}
+
+      <SocialHistorySectionNotesField
+        id={`${inputIdPrefix}-substances-notes`}
+        testId="social-substances-notes"
+        disabled={disabled}
+        value={normalized?.notes ?? ""}
+        placeholder="Context, treatment, harm reduction…"
+        onChange={(notes) =>
+          updateSection({
+            ...(normalized ?? { items: [] }),
+            status,
+            items,
+            notes,
+          })
+        }
+      />
 
       {hints.length > 0 && (
         <div className="space-y-1" data-testid="social-substances-hints" role="status">

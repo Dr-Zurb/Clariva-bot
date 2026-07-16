@@ -79,8 +79,8 @@ vi.mock("@/components/patient-profile/panes/SubjectivePane", () => ({
 vi.mock("@/components/patient-profile/panes/ObjectivePane", () => ({
   default: () => <div data-testid="pane-objective-body">objective</div>,
 }));
-vi.mock("@/components/cockpit/middle/AssessmentStrip", () => ({
-  AssessmentStrip: () => <div data-testid="pane-assessment-body">assessment</div>,
+vi.mock("@/components/cockpit/rx/sections/AssessmentSection", () => ({
+  AssessmentSection: () => <div data-testid="pane-assessment-body">assessment</div>,
 }));
 vi.mock("@/components/cockpit/middle/BodyZone", () => ({
   BodyZone: () => <div data-testid="pane-body-body">body</div>,
@@ -159,7 +159,7 @@ describe("cv3l-04: Phase 6 layouts integration", () => {
     cleanup();
   });
 
-  it("seeds Consult (all eight panes visible) on first open", async () => {
+  it("seeds Consult (all seven panes visible) on first open", async () => {
     render(
       <CockpitV3Shell panes={productionRegistry()} storageKey="cv3l-04:seed" />,
     );
@@ -175,7 +175,7 @@ describe("cv3l-04: Phase 6 layouts integration", () => {
     expect(screen.queryByTestId("cockpit-v3-empty-state")).not.toBeInTheDocument();
   });
 
-  it("switches to Read via mod+shift+2 and hides body/investigations/plan", async () => {
+  it("switches to Read via mod+shift+2 and hides body/plan", async () => {
     render(
       <CockpitV3Shell panes={productionRegistry()} storageKey="cv3l-04:read" />,
     );
@@ -190,10 +190,7 @@ describe("cv3l-04: Phase 6 layouts integration", () => {
         screen.getByRole("button", { name: "Add Consult" }),
       ).toHaveAttribute("data-palette-on-canvas", "false");
     });
-    // Read hides body, investigations-orders, plan.
-    expect(
-      screen.getByRole("button", { name: "Add Investigations" }),
-    ).toHaveAttribute("data-palette-on-canvas", "false");
+    // Read hides body, plan.
     expect(
       screen.getByRole("button", { name: "Add Plan" }),
     ).toHaveAttribute("data-palette-on-canvas", "false");
@@ -244,7 +241,7 @@ describe("cv3l-04: Phase 6 layouts integration", () => {
 
     fireEvent.click(screen.getByTestId("cockpit-v3-undo"));
 
-    // Back to Consult — all eight visible again.
+    // Back to Consult — all seven visible again.
     await waitFor(() => {
       expect(
         screen.getByRole("button", { name: "Remove Plan" }),
@@ -336,7 +333,6 @@ function labelFor(id: string): string {
     history: "History",
     body: "Consult",
     assessment: "Assessment",
-    "investigations-orders": "Investigations",
     plan: "Plan",
     subjective: "Subjective",
     objective: "Objective",

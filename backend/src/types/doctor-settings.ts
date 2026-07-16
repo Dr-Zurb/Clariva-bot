@@ -59,6 +59,41 @@ export const CUSTOM_VITAL_LABEL_MAX = 60;
 export const CUSTOM_VITAL_UNIT_MAX = 16;
 export const CUSTOM_VITAL_ID_MAX = 80;
 
+/**
+ * plan-investigations-library: a single doctor-saved custom investigation order
+ * (named basket vocabulary for the Plan combobox). Config only — not PHI.
+ * Distinct from `doctor_rx_templates` scope `investigations_orders` (full-list
+ * presets).
+ */
+export interface DoctorInvestigationCustomOrderMember {
+  id: string;
+  label: string;
+  kind: 'panel' | 'analyte' | 'imaging' | 'custom';
+}
+
+export interface DoctorInvestigationCustomOrder {
+  /** Stable id, typically `custom:<normalized label>`. */
+  id: string;
+  label: string;
+  members?: DoctorInvestigationCustomOrderMember[];
+  /** How many times this order was committed in Plan. */
+  useCount: number;
+  /** Explicit save or auto-promote after repeat use. */
+  pinned: boolean;
+  /** ISO timestamp of last bump/save. */
+  updatedAt: string;
+}
+
+/** Caps + field lengths — kept in lockstep with Zod + frontend helpers. */
+export const INVESTIGATIONS_CUSTOM_ORDERS_MAX = 40;
+export const INVESTIGATIONS_CUSTOM_ORDER_ID_MAX = 120;
+export const INVESTIGATIONS_CUSTOM_ORDER_LABEL_MAX = 80;
+export const INVESTIGATIONS_CUSTOM_ORDER_MEMBERS_MAX = 40;
+export const INVESTIGATIONS_CUSTOM_ORDER_MEMBER_ID_MAX = 120;
+export const INVESTIGATIONS_CUSTOM_ORDER_MEMBER_LABEL_MAX = 80;
+/** Auto-promote into the combobox once useCount reaches this threshold. */
+export const INVESTIGATIONS_CUSTOM_ORDER_AUTO_PROMOTE_USES = 2;
+
 /** CC-08 / 099: legacy flat three-column cockpit layout snapshot. */
 export type LegacyPresetLayout = {
   slots: ['chart' | 'body' | 'rx', 'chart' | 'body' | 'rx', 'chart' | 'body' | 'rx'];
@@ -335,6 +370,50 @@ export interface DoctorSettingsRow {
    */
   objective_custom_sections: CustomSubsection[];
   /**
+   * plan chrome / migration 173: per-doctor default Plan-tab section order.
+   * Empty array = canonical default layout. Section-id strings only (not PHI).
+   * UI-only — does not affect PDF/output order.
+   */
+  plan_section_order: string[];
+  /**
+   * plan chrome / migration 173: per-doctor default Plan-tab section collapse
+   * map `{ [sectionId]: isOpen }` (true = open). Empty object = canonical default.
+   */
+  plan_section_collapsed: Record<string, boolean>;
+  /**
+   * plan chrome / migration 173: per-doctor hidden Plan-tab sections — a delta
+   * set of static section-id strings. Empty array = nothing hidden. View-only.
+   */
+  plan_section_hidden: string[];
+  /**
+   * assessment chrome / migration 174: per-doctor default Assessment-tab section
+   * order. Empty array = canonical default layout. Section-id strings only (not PHI).
+   * UI-only — does not affect PDF/output order.
+   */
+  assessment_section_order: string[];
+  /**
+   * assessment chrome / migration 174: per-doctor default Assessment-tab section
+   * collapse map `{ [sectionId]: isOpen }` (true = open). Empty object = canonical default.
+   */
+  assessment_section_collapsed: Record<string, boolean>;
+  /**
+   * assessment chrome / migration 174: per-doctor hidden Assessment-tab sections —
+   * a delta set of static section-id strings. Empty array = nothing hidden. View-only.
+   */
+  assessment_section_hidden: string[];
+  /**
+   * assessment-plan-custom-sections / migration 178: per-doctor default custom
+   * Assessment-tab sections. Seeds fresh visits when empty; doctor-authored
+   * headings/structure only (mirrors objective_custom_sections). Not PHI.
+   */
+  assessment_custom_sections: CustomSubsection[];
+  /**
+   * assessment-plan-custom-sections / migration 178: per-doctor default custom
+   * Plan-tab sections. Seeds fresh visits when empty; doctor-authored headings/
+   * structure only (mirrors objective_custom_sections). Not PHI.
+   */
+  plan_custom_sections: CustomSubsection[];
+  /**
    * vit-02 / migration 156: per-doctor hidden vitals — a delta set of registry
    * vital-key strings the doctor has hidden. Empty/absent = nothing hidden
    * (classic-core default). View-only; never affects PDF/examination_findings/
@@ -349,6 +428,12 @@ export interface DoctorSettingsRow {
    * units/group), NOT PHI — custom-vital VALUES ride in prescriptions.vitals_json.
    */
   vitals_custom?: CustomVitalDef[];
+  /**
+   * plan-investigations-library / migration 169: per-doctor custom investigation
+   * order vocabulary for the Plan combobox. Empty/absent = none. Config only
+   * (labels/members), not PHI. Distinct from rx-template investigations_orders.
+   */
+  investigations_custom_orders?: DoctorInvestigationCustomOrder[];
   /**
    * R-MOD-full (migration 106): global template pin. `null` = auto-select per
    * modality + state (cockpit-v2 default). Non-null must be one of

@@ -11,6 +11,12 @@ import {
 } from "react";
 import { ChevronDown, ChevronUp, Pencil } from "lucide-react";
 import { CollapsibleContainer } from "@/components/ui/CollapsibleContainer";
+import {
+  resolveSubjectiveSectionIcon,
+  sectionHeaderIcon,
+} from "@/components/cockpit/rx/sections/section-chrome";
+import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
+import { useDepthToneSurface } from "@/components/ui/sticky-stack";
 import { SectionReorderLeadingAction } from "@/components/cockpit/rx/subjective/SortableSectionShell";
 import {
   CUSTOM_SUBSECTION_CHILDREN_MAX,
@@ -115,9 +121,20 @@ function CustomSubsectionChildRow({
     if (focusOnMount) titleRef.current?.focus();
   }, [focusOnMount]);
 
+  const tone = useDepthToneSurface();
+
   return (
     <div
-      className="rounded-md border border-border/70 bg-background/60 p-2 space-y-2"
+      className={cn(
+        "rounded-md p-2 space-y-2",
+        tone.active
+          ? cn(
+              "border border-border/60",
+              !tone.recessed && "shadow-sm",
+              tone.surface,
+            )
+          : "border border-border/70 bg-background/60",
+      )}
       data-testid={`custom-subsection-child-${child.id}`}
       role="group"
       aria-labelledby={titleId}
@@ -194,12 +211,25 @@ function CustomSubsectionChildRow({
 
 export interface CustomSubsectionBlockProps {
   section: CustomSubsection;
-  sectionId: SubjectiveSectionId;
+  /**
+   * Section id for the reorder grip / scroll target. Subjective passes a
+   * `SubjectiveSectionId`; Assessment/Plan pass their own `custom_block:` id
+   * (string) and supply their own `leadingActions` grip.
+   */
+  sectionId: string;
   disabled?: boolean;
   focusTitleOnMount?: boolean;
   pendingChildFocusId?: string | null;
   /** Header-mounted scoped template controls (subj-40). */
   templateActions?: ReactNode;
+  /**
+   * Reorder grip node. When omitted, falls back to the subjective
+   * `SectionReorderLeadingAction` (reads the subjective reorder context).
+   * Assessment/Plan inject their own drag handle here.
+   */
+  leadingActions?: ReactNode;
+  /** Scroll-to selector on collapse. Defaults to the subjective tab top. */
+  scrollSelector?: string;
   onUpdate: (patch: Partial<CustomSubsection>) => void;
   onRemove: () => void;
   onAddChild: () => void;
@@ -216,6 +246,8 @@ export function CustomSubsectionBlock({
   focusTitleOnMount,
   pendingChildFocusId,
   templateActions,
+  leadingActions,
+  scrollSelector,
   onUpdate,
   onRemove,
   onAddChild,
@@ -278,9 +310,11 @@ export function CustomSubsectionBlock({
     />
   );
 
-  const headerLeadingActions = disabled ? null : (
-    <SectionReorderLeadingAction sectionId={sectionId} />
-  );
+  const headerLeadingActions = disabled
+    ? null
+    : (leadingActions ?? (
+        <SectionReorderLeadingAction sectionId={sectionId as SubjectiveSectionId} />
+      ));
 
   const headerActions = disabled ? null : (
     <>
@@ -313,14 +347,20 @@ export function CustomSubsectionBlock({
       id={`custom-subsection-${section.id}`}
       testId={`custom-subsection-${section.id}`}
       title={isEditingTitle ? undefined : displayTitle}
+      sectionIcon={sectionHeaderIcon(
+        resolveSubjectiveSectionIcon(sectionId as SubjectiveSectionId) ??
+          resolveSubjectiveSectionIcon("custom_subsections")!,
+      )}
       interactiveTitle={isEditingTitle ? headerTitleInput : undefined}
       preview={preview}
       toggleLabel={`Toggle ${displayTitle}`}
       scrollOnExpand
+      closeScrollToSelector={scrollSelector ?? SUBJECTIVE_SCROLL_TOP_SELECTOR}
       stickyHeader
       leadingActions={headerLeadingActions}
       actions={headerActions}
       defaultOpen
+      depthTone
       bodyClassName="space-y-3"
     >
       <div className="space-y-2">

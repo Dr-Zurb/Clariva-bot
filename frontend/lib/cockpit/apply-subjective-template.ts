@@ -25,16 +25,19 @@ import type { Complaint } from "@/types/prescription";
 import type { CreateRxTemplatePayload } from "@/types/rx-template";
 import type { SubjectiveCarryForwardSelection } from "@/lib/cockpit/carry-forward-subjective";
 import {
+  EMPTY_FAMILY_HISTORY_STRUCTURED,
   hasFamilyHistoryStructuredContent,
   normalizeFamilyHistoryStructured,
   serializeFamilyHistory,
 } from "@/lib/cockpit/family-history";
 import {
+  EMPTY_PAST_SURGICAL_HISTORY_STRUCTURED,
   hasPastSurgicalHistoryStructuredContent,
   normalizePastSurgicalHistoryStructured,
   serializePastSurgicalHistory,
 } from "@/lib/cockpit/past-surgical-history";
 import {
+  EMPTY_SOCIAL_HISTORY_STRUCTURED,
   hasSocialHistoryStructuredContent,
   normalizeSocialHistoryStructured,
   serializeSocialHistory,
@@ -43,7 +46,11 @@ import {
 /** Form-state subsection scopes wired in subj-16 (excludes server-backed PMH/allergies). */
 export type FormStateTemplateScope = Extract<
   RxTemplateScope,
-  "chief_complaints" | "past_surgical" | "family_history" | "social_history"
+  | "chief_complaints"
+  | "past_surgical"
+  | "family_history"
+  | "social_history"
+  | "free_text_notes"
 >;
 
 export const FORM_STATE_TEMPLATE_SCOPES: FormStateTemplateScope[] = [
@@ -51,6 +58,7 @@ export const FORM_STATE_TEMPLATE_SCOPES: FormStateTemplateScope[] = [
   "past_surgical",
   "family_history",
   "social_history",
+  "free_text_notes",
 ];
 
 function scopeToCarryForwardSelection(
@@ -83,13 +91,15 @@ export function scopeHasContent(scope: FormStateTemplateScope, fields: RxFormFie
         hasPastSurgicalHistoryStructuredContent(fields.pastSurgicalHistoryStructured) ||
         Boolean(fields.pastSurgicalHistory.trim())
       );
+    case "free_text_notes":
+      return Boolean(fields.hopi.trim());
   }
 }
 
 export function buildScopedTemplateSavePayload(
   scope: FormStateTemplateScope,
   fields: RxFormFields,
-): Pick<CreateRxTemplatePayload, "subjective" | "medicines" | "scope"> {
+): Pick<CreateRxTemplatePayload, "subjective" | "medicines" | "scope" | "hopi"> {
   const full = buildSubjectiveTemplateSavePayload(fields);
   const subj = full.subjective ?? {};
 
@@ -127,6 +137,12 @@ export function buildScopedTemplateSavePayload(
           pastSurgicalHistoryStructured: subj.pastSurgicalHistoryStructured,
         },
       };
+    case "free_text_notes":
+      return {
+        scope,
+        medicines: [],
+        hopi: fields.hopi.trim() || null,
+      };
   }
 }
 
@@ -135,6 +151,9 @@ export function buildScopedTemplateApplyActions(
   scope: FormStateTemplateScope,
   template: DoctorRxTemplate,
 ): RxFormAction[] {
+  if (scope === "free_text_notes") {
+    return [{ type: "SET_FIELD", key: "hopi", value: template.hopi?.trim() ?? "" }];
+  }
   const subj = templateSubjective(template);
   return buildSubjectiveCarryForwardActions(
     {
@@ -198,7 +217,79 @@ export function rxFormHasSubjectiveContent(fields: RxFormFields): boolean {
   return false;
 }
 
-/** Whole-subjective save guard — form-state fields and/or a PMH snapshot (subj-18). */
+/** Visit-fillable content only (ignores custom-section title shells). */
+function customSubsectionHasVisitBody(section: CustomSubsection): boolean {
+  if (section.body?.trim()) return true;
+  return (section.children ?? []).some((child) => Boolean(child.body?.trim()));
+}
+
+/**
+ * Whether Clear all has form-state visit content to wipe.
+ * Chart-backed PMH / allergies are intentionally excluded (same as templates).
+ */
+export function rxFormHasClearableSubjectiveContent(fields: RxFormFields): boolean {
+  if (fields.complaints.some((c) => c.name.trim())) return true;
+  if (fields.cc.trim()) return true;
+  if (fields.hopi.trim()) return true;
+  if (hasFamilyHistoryStructuredContent(fields.familyHistoryStructured)) return true;
+  if (fields.familyHistory.trim()) return true;
+  if (hasSocialHistoryStructuredContent(fields.socialHistoryStructured)) return true;
+  if (fields.socialHistory.trim()) return true;
+  if (hasPastSurgicalHistoryStructuredContent(fields.pastSurgicalHistoryStructured)) return true;
+  if (fields.pastSurgicalHistory.trim()) return true;
+  if (fields.customSubsections.some(customSubsectionHasVisitBody)) return true;
+  return false;
+}
+
+/** Strip visit bodies; keep custom section titles / child titles (exam-card analogue). */
+function clearCustomSubsectionVisitBodies(
+  sections: readonly CustomSubsection[],
+): CustomSubsection[] {
+  return sections.map((section) => ({
+    id: section.id,
+    title: section.title,
+    body: null,
+    children: (section.children ?? []).map((child) => ({
+      id: child.id,
+      title: child.title,
+      body: null,
+    })),
+  }));
+}
+
+/**
+ * Reducer actions that empty form-state subjective fields (complaints, histories,
+ * free-text notes, custom visit bodies). Does not touch chart-backed PMH/allergies.
+ */
+export function buildSubjectiveClearAllActions(fields: RxFormFields): RxFormAction[] {
+  const actions: RxFormAction[] = [
+    { type: "SET_COMPLAINTS", complaints: [] },
+    { type: "SET_FIELD", key: "cc", value: "" },
+    {
+      type: "SET_FAMILY_HISTORY_STRUCTURED",
+      structured: { ...EMPTY_FAMILY_HISTORY_STRUCTURED },
+    },
+    {
+      type: "SET_SOCIAL_HISTORY_STRUCTURED",
+      structured: { ...EMPTY_SOCIAL_HISTORY_STRUCTURED },
+    },
+    {
+      type: "SET_PAST_SURGICAL_HISTORY_STRUCTURED",
+      structured: { ...EMPTY_PAST_SURGICAL_HISTORY_STRUCTURED },
+    },
+  ];
+
+  if (fields.customSubsections.length > 0) {
+    actions.push({
+      type: "SET_CUSTOM_SUBSECTIONS",
+      sections: clearCustomSubsectionVisitBodies(fields.customSubsections),
+    });
+  }
+
+  return actions;
+}
+
+/** Whole-subjective save guard — form-state fields and/or a PMH snapshot. */
 export function fullSubjectiveHasContent(
   fields: RxFormFields,
   pmh?: RxTemplatePmh | null,

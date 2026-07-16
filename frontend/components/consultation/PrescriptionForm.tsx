@@ -40,6 +40,11 @@ import TemplatePicker from "@/components/ehr/TemplatePicker";
 import PrescriptionPatientPreview from "./PrescriptionPatientPreview";
 import PrescriptionPreSendCheck from "./PrescriptionPreSendCheck";
 import type { PatientRxViewModel } from "@/components/ehr/PatientRxView";
+import { resolveFollowUpForOutput } from "@/lib/cockpit/follow-up-format";
+import {
+  referralPartsFromFields,
+  resolveReferralForOutput,
+} from "@/lib/cockpit/plan-quick-picks";
 import { RxSafetyProvider } from "@/components/cockpit/rx/RxSafetyContext";
 import { useRxSafety } from "@/components/cockpit/rx/RxSafetyContext";
 import {
@@ -58,6 +63,7 @@ import {
   canSendPrescription,
   type CockpitState,
 } from "@/lib/patient-profile/state";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const ALLOWED_MIME = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
 const MAX_ATTACHMENTS = 5;
@@ -159,8 +165,16 @@ interface PrescriptionFormProps {
 
 function PrescriptionFormLoading(): JSX.Element {
   return (
-    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-      <p className="text-sm text-gray-500">Loading prescription…</p>
+    <div
+      className="flex flex-col gap-3 rounded-lg border border-border/60 bg-muted/30 p-4"
+      data-testid="prescription-form-loading"
+      aria-busy="true"
+      aria-label="Loading prescription"
+    >
+      <Skeleton className="h-4 w-40" />
+      <Skeleton className="h-9 w-full" />
+      <Skeleton className="h-9 w-full" />
+      <Skeleton className="h-24 w-full" />
     </div>
   );
 }
@@ -221,7 +235,12 @@ export default function PrescriptionForm(props: PrescriptionFormProps) {
     providerProps,
   } = setup;
 
-  if (loading || !initialFields) {
+  // Cockpit mounts `<RxFormProvider>` + shell above Plan with empty fields while
+  // the draft loads; soft-`RESET` when it arrives. Blocking Plan on `loading` or
+  // null `setup.initialFields` made it lag S/O/A (provider already has empties).
+  // Standalone mounts (in-call mini-panel) still wait for the draft.
+  const underCockpitShell = parentShell != null || existingProvider != null;
+  if (!underCockpitShell && (loading || !initialFields)) {
     return <PrescriptionFormLoading />;
   }
 
@@ -438,8 +457,17 @@ function PrescriptionFormBody({
     if (template.investigations !== null)
       setField("investigationsOrders", template.investigations);
     if (template.follow_up !== null) setField("followUp", template.follow_up);
-    if (template.patient_education !== null)
-      setField("patientEducation", template.patient_education);
+    if (template.patient_education !== null) {
+      const edu = template.patient_education.trim();
+      if (edu) {
+        setField(
+          "advice",
+          fields.advice.trim()
+            ? `${fields.advice.trim()}\n${edu}`
+            : edu,
+        );
+      }
+    }
     if (template.clinical_notes !== null)
       setField("clinicalNotes", template.clinical_notes);
 
@@ -549,8 +577,14 @@ function PrescriptionFormBody({
       hopi: fields.hopi.trim() || null,
       provisionalDiagnosis: fields.provisionalDiagnosis.trim() || null,
       investigations: fields.investigationsOrders.trim() || null,
-      followUp: fields.followUp.trim() || null,
-      patientEducation: fields.patientEducation.trim() || null,
+      advice: fields.advice.trim() || null,
+      followUp: resolveFollowUpForOutput(
+        fields.followUp,
+        fields.followUpValue,
+        fields.followUpUnit,
+      ),
+      patientEducation: null,
+      referral: resolveReferralForOutput(referralPartsFromFields(fields)),
       medicines: medicines
         .filter((m) => m.medicineName.trim())
         .map((m) => ({
@@ -705,8 +739,15 @@ function PrescriptionFormBody({
     const inv = investigationsFromPrescription(lastEpisodeRx);
     if (inv) setField("investigationsOrders", inv);
     if (lastEpisodeRx.follow_up !== null) setField("followUp", lastEpisodeRx.follow_up ?? "");
-    if (lastEpisodeRx.patient_education !== null)
-      setField("patientEducation", lastEpisodeRx.patient_education ?? "");
+    {
+      const mergedAdvice = [
+        lastEpisodeRx.advice?.trim() || "",
+        lastEpisodeRx.patient_education?.trim() || "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      if (mergedAdvice) setField("advice", mergedAdvice);
+    }
     if (lastEpisodeRx.clinical_notes !== null)
       setField("clinicalNotes", lastEpisodeRx.clinical_notes ?? "");
 
@@ -918,7 +959,10 @@ function PrescriptionFormBody({
     const warnings = computePreSendWarnings({
       filledMedicineCount,
       hasInvestigations: isStructured && fields.investigationsOrders.trim().length > 0,
-      hasPatientEducation: isStructured && fields.patientEducation.trim().length > 0,
+      hasPatientEducation:
+        isStructured &&
+        (fields.advice.trim().length > 0 ||
+          fields.patientEducation.trim().length > 0),
       // Photo-only mode: no diagnosis input rendered â†’ not applicable.
       hasDiagnosis: isStructured ? fields.provisionalDiagnosis.trim().length > 0 : true,
       hasAttachments: attachments.length > 0,
@@ -1049,16 +1093,11 @@ function PrescriptionFormBody({
 
   return (
     <div className="space-y-4">
-      {/* Header: T2.13 SaveStatus pill replaces the explicit Save draft
-          button. The pill carries the autosave state surface and acts
-          as the retry affordance on failure. */}
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-gray-700">Prescription</h3>
-        <div className="flex items-center gap-2">
-          {/* EHR Sub-batch B1 / T2.14 â€” "Copy from last visit". Only
-              renders when the appointment is part of a care episode
-              AND a prior Rx exists (the lookup endpoint returns null
-              in either no-episode / no-prior-Rx case). */}
+      {/* Header utilities: T2.14 copy-from-last + T2.13 SaveStatus.
+          Legacy "Prescription" title + full-Rx "Templates" button removed —
+          Plan / Subjective / Objective own scoped template entry points. */}
+      {(lastEpisodeRx || !actionsInFooter) && (
+        <div className="flex items-center justify-end gap-2">
           {lastEpisodeRx && (
             <button
               type="button"
@@ -1070,17 +1109,6 @@ function PrescriptionFormBody({
               Copy from last visit
             </button>
           )}
-          {/* EHR Sub-batch B1 / T2.12 â€” Templates entry point. Disabled
-              while a save flow is in flight to keep state changes
-              serialised. */}
-          <button
-            type="button"
-            onClick={() => setTemplatePickerOpen(true)}
-            disabled={saving}
-            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
-          >
-            Templates
-          </button>
           {!actionsInFooter && (
             <SaveStatus
               state={autoSaveState}
@@ -1092,10 +1120,9 @@ function PrescriptionFormBody({
             />
           )}
         </div>
-      </div>
+      )}
 
-      {/* T2.12 â€” Templates picker. Mounts conditionally; no portal
-          required for the v1 surface. */}
+      {/* T2.12 — Templates picker (keyboard / Plan shortcut via onOpenTemplates). */}
       <TemplatePicker
         open={templatePickerOpen}
         onClose={() => setTemplatePickerOpen(false)}
@@ -1212,33 +1239,24 @@ function PrescriptionFormBody({
       )}
 
       {/*
-       * Action area â€” two-row layout (cockpit Rx-redesign).
+       * Action area — two-row layout (cockpit Rx-redesign).
        *
-       *   Row 1 (utility, low-frequency):
-       *     [ Preview as patient ]                   [ Save as template ]
+       *   Row 1 (utility, low-frequency; non-cockpit only):
+       *     [ Preview as patient ]
        *
        *   Row 2 (commit, every visit):
-       *     [ Send Rx ]   [ Send Rx & finish â–¸ ]   [ Finish visit ]
+       *     [ Send Rx ]   [ Send Rx & finish ▸ ]   [ Finish visit ]
        *
-       * Visual hierarchy:
-       *   - "Send Rx & finish â–¸" is the only PRIMARY CTA (solid blue).
-       *   - All other buttons share the same OUTLINED-PRIMARY look
-       *     (blue border + blue text on white) so they read as equally
-       *     reachable secondary actions â€” none of them feel like an
-       *     afterthought greyed-out chip.
+       * Save-as-template lives on scoped Plan / SOAP template icons —
+       * the legacy full-Rx footer button was removed.
        *
-       * Bracketed buttons in Row 2 are cockpit-only â€” they're hidden
+       * Bracketed buttons in Row 2 are cockpit-only — they're hidden
        * outside the cockpit (`onFinish` not supplied), so the form
        * still works on legacy mounts (just shows Row 1 + "Send Rx").
        */}
       <div className="flex flex-col gap-2">
-        {/* Row 1 — utility (Preview + Send live in shell footer when actionsInFooter) */}
-        <div
-          className={`flex flex-wrap items-center gap-2 ${
-            actionsInFooter ? "justify-end" : "justify-between"
-          }`}
-        >
-          {!actionsInFooter ? (
+        {!actionsInFooter ? (
+          <div className="flex flex-wrap items-center gap-2 justify-between">
             <button
               type="button"
               onClick={handleOpenPreview}
@@ -1248,18 +1266,8 @@ function PrescriptionFormBody({
             >
               {previewLoading ? "Loading…" : "Preview as patient"}
             </button>
-          ) : null}
-
-          <button
-            type="button"
-            onClick={() => void handleSaveAsTemplate()}
-            disabled={saving || uploading}
-            className="rounded-md border border-blue-600 bg-white px-3 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-            title="Save the current prescription as a reusable template"
-          >
-            Save as template
-          </button>
-        </div>
+          </div>
+        ) : null}
 
         {!actionsInFooter && (
           <div className="flex flex-wrap items-center gap-2">
@@ -1270,7 +1278,7 @@ function PrescriptionFormBody({
             data-rx-send-btn
             className="rounded-md border border-blue-600 bg-white px-3 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
           >
-            {saving && !finishAfterSendRef.current ? "Sendingâ€¦" : "Send Rx"}
+            {saving && !finishAfterSendRef.current ? "Sending…" : "Send Rx"}
           </button>
 
           {onFinish && (

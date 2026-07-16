@@ -16,6 +16,12 @@ import {
 } from "@/components/cockpit/rx/RxFormContext";
 import { ComplaintCard } from "@/components/cockpit/rx/subjective/ComplaintCard";
 import { CollapsibleContainer } from "@/components/ui/CollapsibleContainer";
+import {
+  resolveSubjectiveSectionIcon,
+  sectionHeaderIcon,
+} from "@/components/cockpit/rx/sections/section-chrome";
+import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
+import { usePersistedOpenId } from "@/lib/cockpit/use-persisted-entry-open";
 import { SectionReorderLeadingAction } from "@/components/cockpit/rx/subjective/SortableSectionShell";
 import {
   ComplaintCaptureBar,
@@ -35,9 +41,10 @@ import {
 import {
   CHIEF_COMPLAINTS_SECTION_ID,
   scrollComplaintCaptureIntoView,
-  scrollComplaintCardHeaderIntoView,
+  scrollComplaintCardIntoView,
   type ComplaintCollapseSource,
 } from "@/lib/cockpit/complaint-card-scroll";
+import { COLLAPSE_CLOSE_MS } from "@/lib/cockpit/collapse-scroll";
 import { formatComplaintDisplayName } from "@/lib/cockpit/complaint-display";
 import { complaintNamesEquivalent } from "@/lib/cockpit/complaint-search-normalize";
 import {
@@ -105,13 +112,16 @@ export function ComplaintList({
   sectionOpen,
   onSectionOpenChange,
 }: ComplaintListProps) {
-  const { state, dispatch, token } = useRxForm();
+  const { appointmentId, state, dispatch, token } = useRxForm();
   const { complaints } = state.fields;
 
   const [instanceIds, setInstanceIds] = useState<string[]>(() =>
     complaints.map((c) => c.id),
   );
-  const [activeInstanceId, setActiveInstanceId] = useState<string | null>(null);
+  const [activeInstanceId, setActiveInstanceId] = usePersistedOpenId(
+    appointmentId,
+    "complaints",
+  );
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTargetState | null>(null);
   const [demoteError, setDemoteError] = useState<string | null>(null);
@@ -125,7 +135,8 @@ export function ComplaintList({
       const added = complaints.length - instanceIds.length;
       const newIds = nextInstanceIds(added, instanceSeqRef.current);
       instanceSeqRef.current += added;
-      setInstanceIds((prev) => [...prev, ...newIds]);
+      // Prepend — matches newest-first complaint order from addComplaintToTree.
+      setInstanceIds((prev) => [...newIds, ...prev]);
     } else if (complaints.length < instanceIds.length) {
       setInstanceIds((prev) => prev.slice(0, complaints.length));
     }
@@ -136,8 +147,15 @@ export function ComplaintList({
     prevActiveInstanceIdRef.current = activeInstanceId;
 
     if (activeInstanceId) {
-      scrollComplaintCardHeaderIntoView(activeInstanceId);
-      return;
+      // Accordion switch: wait for the previous card's close fold before gliding
+      // the new card to the top so the landing is measured post-collapse.
+      const switched = Boolean(prev && prev !== activeInstanceId);
+      const delayMs = switched ? COLLAPSE_CLOSE_MS : 0;
+      const instanceId = activeInstanceId;
+      const timer = window.setTimeout(() => {
+        scrollComplaintCardIntoView(instanceId);
+      }, delayMs);
+      return () => window.clearTimeout(timer);
     }
 
     // Deliberate collapse (header / lip / Escape) → bring capture bar back into
@@ -537,9 +555,12 @@ export function ComplaintList({
       id={CHIEF_COMPLAINTS_SECTION_ID}
       ariaLabel="Chief complaints"
       title="Chief complaints"
+      sectionIcon={sectionHeaderIcon(resolveSubjectiveSectionIcon("chief_complaints")!)}
       toggleLabel="Toggle chief complaints"
       scrollOnExpand
+      closeScrollToSelector={SUBJECTIVE_SCROLL_TOP_SELECTOR}
       stickyHeader
+      depthTone
       count={complaints.length}
       open={sectionOpen}
       onOpenChange={onSectionOpenChange}

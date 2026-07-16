@@ -10,7 +10,6 @@ import {
   type HTMLAttributes,
   type ReactNode,
 } from "react";
-import { Stethoscope, User } from "lucide-react";
 import { ExamSystemList } from "@/components/cockpit/rx/inputs/ExamSystemList";
 import { VitalsGrid } from "@/components/cockpit/rx/inputs/VitalsGrid";
 import { TestResultsList } from "@/components/cockpit/rx/objective/TestResultsList";
@@ -27,7 +26,6 @@ import {
   ObjectiveWholeTemplateButton,
 } from "@/components/cockpit/rx/objective/ObjectiveSectionTemplateButton";
 import { ManageObjectiveSectionsMenu } from "@/components/cockpit/rx/objective/ManageObjectiveSectionsMenu";
-import { ObjectiveSpecialtyPacksStrip } from "@/components/cockpit/rx/objective/ObjectiveSpecialtyPacksStrip";
 import {
   ObjectiveCustomSectionBlock,
   ObjectiveCustomSectionsChrome,
@@ -37,8 +35,25 @@ import {
   RX_FIELD_LABEL_CLASS,
   RX_SECTION_HEADING_CLASS,
 } from "@/components/cockpit/rx/sections/field-styles";
-import { parseExam, serializeExam } from "@/lib/cockpit/exam-findings";
+import {
+  SOAP_TAB_HEADING_ICON,
+  SoapTabFamilyProvider,
+  SoapSectionListSkeleton,
+  resolveObjectiveSectionIcon,
+  sectionHeaderIcon,
+  soapTabHeadingClassName,
+} from "@/components/cockpit/rx/sections/section-chrome";
+import { OBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import { createEmptyCustomSubsection } from "@/lib/cockpit/custom-subsections";
+import {
+  buildObjectiveClearAllActions,
+  rxFormHasClearableObjectiveContent,
+} from "@/lib/cockpit/apply-objective-template";
+import { ClearAllConfirmDialog } from "@/components/cockpit/rx/ClearAllConfirmDialog";
+import {
+  SoapTabExpandCollapseClearButtons,
+  SoapTabLayoutSaveStatus,
+} from "@/components/cockpit/rx/SoapTabChromeActions";
 import { getAppointmentById, getDoctorSettings } from "@/lib/api";
 import {
   DEFAULT_OBJECTIVE_SECTION_ORDER,
@@ -83,9 +98,6 @@ import {
 
 const DOCTOR_LAYOUT_AUTOSAVE_MS = 500;
 
-const EXAM_TEXTAREA_CLASS =
-  "block w-full resize-y border-0 bg-transparent px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
-
 /** obj-14 registry fallback seed — full exam, nothing hidden (never blank). */
 const REGISTRY_DEFAULT_LAYOUT: DefaultLayout = {
   defaultOrder: [...DEFAULT_OBJECTIVE_SECTION_ORDER],
@@ -96,11 +108,8 @@ const REGISTRY_DEFAULT_LAYOUT: DefaultLayout = {
 const OBJECTIVE_COLLAPSE_DEFAULTS: Record<StaticObjectiveSectionId, boolean> = {
   vitals: true,
   exam: true,
+  notes: true,
   test_results: true,
-  point_of_care: false,
-  media: false,
-  legacy_exam: false,
-  legacy_vitals: false,
 };
 
 export interface ObjectiveSectionProps {
@@ -133,7 +142,6 @@ export function ObjectiveSection({
   const { state, setField, token, dispatch, appointmentId } = useRxForm();
   const shell = usePrescriptionFormShell();
   const { fields } = state;
-  const exam = parseExam(fields.examinationFindings);
   const objectiveCustomSections = fields.objectiveCustomSections;
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
 
@@ -147,7 +155,9 @@ export function ObjectiveSection({
   const lastPersistedCollapseRef = useRef<string | null>(null);
   const lastPersistedHiddenRef = useRef<string | null>(null);
   const hasHydratedCollapseRef = useRef(false);
-  const hasHydratedHiddenRef = useRef(false);
+  // When shell already has objective defaults, seed-aware hidden is applied in
+  // useState below — skip the one-shot effect so we don't flash empty → seeded.
+  const hasHydratedHiddenRef = useRef(shell?.objectiveDefaults != null);
 
   const [storedSectionOrder, setStoredSectionOrder] = useState<ObjectiveSectionId[] | null>(
     shell?.objectiveDefaults?.sectionOrder ?? null,
@@ -159,20 +169,47 @@ export function ObjectiveSection({
   const [storedSectionHidden, setStoredSectionHidden] =
     useState<ObjectiveSectionHiddenSet | null>(shell?.objectiveDefaults?.sectionHidden ?? null);
   const [openById, setOpenById] = useState<Record<string, boolean>>({});
-  const [hiddenIds, setHiddenIds] = useState<ObjectiveSectionHiddenSet>([]);
+  const [hiddenIds, setHiddenIds] = useState<ObjectiveSectionHiddenSet>(() => {
+    if (shell?.objectiveDefaults == null) return [];
+    const seed = shell.objectiveSeed ?? REGISTRY_DEFAULT_LAYOUT;
+    return resolveEffectiveLayout({
+      seed,
+      storedOrder: [],
+      storedHidden: shell.objectiveDefaults.sectionHidden,
+    }).hidden;
+  });
   // obj-14 (OBJ-D6): modality/specialty default seed. `undefined` = still
   // resolving (gates the one-shot hydration so the seed lands on first paint);
   // `null` = no seed available → registry default (never blank).
-  const [seedLayout, setSeedLayout] = useState<DefaultLayout | null | undefined>(undefined);
-  const [doctorSpecialty, setDoctorSpecialty] = useState<string | null>(null);
+  const [seedLayout, setSeedLayout] = useState<DefaultLayout | null | undefined>(() =>
+    shell?.objectiveDefaults != null ? (shell.objectiveSeed ?? null) : undefined,
+  );
 
   const customBlockIds = useMemo(
     () => objectiveCustomSections.map((s) => s.id),
     [objectiveCustomSections],
   );
+  const customBlockIdsRef = useRef(customBlockIds);
+  customBlockIdsRef.current = customBlockIds;
 
-  const canonicalOrder = useMemo(() => resolveInitialSectionOrder([]), []);
-  const [sectionOrder, setSectionOrder] = useState<ObjectiveSectionId[]>(canonicalOrder);
+  // Empty until order + seed hydrate — avoids DEFAULT → doctor-order flash.
+  const [sectionOrder, setSectionOrder] = useState<ObjectiveSectionId[]>(() => {
+    const stored = shell?.objectiveDefaults?.sectionOrder;
+    if (stored == null || shell?.objectiveDefaults == null) return [];
+    const seed = shell.objectiveSeed ?? REGISTRY_DEFAULT_LAYOUT;
+    const { baseOrder } = resolveEffectiveLayout({
+      seed,
+      storedOrder: stored,
+      storedHidden: [],
+    });
+    return resolveInitialSectionOrder(baseOrder, customBlockIds);
+  });
+
+  const layoutHydrated =
+    storedSectionOrder !== null &&
+    storedSectionHidden !== null &&
+    seedLayout !== undefined &&
+    sectionOrder.length > 0;
 
   // Menu lists / hidden-set apply to the static registry only; custom blocks are
   // managed by add/remove (P10-D4) and always pass through resolveVisibleSections.
@@ -217,6 +254,48 @@ export function ObjectiveSection({
     [],
   );
 
+  const expandAllSections = useCallback(() => {
+    setOpenById((prev) => {
+      const next = { ...prev };
+      for (const id of visibleSectionOrder) {
+        next[id] = true;
+      }
+      return next;
+    });
+  }, [visibleSectionOrder]);
+
+  const collapseAllSections = useCallback(() => {
+    setOpenById((prev) => {
+      const next = { ...prev };
+      for (const id of visibleSectionOrder) {
+        next[id] = false;
+      }
+      return next;
+    });
+  }, [visibleSectionOrder]);
+
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [clearBusy, setClearBusy] = useState(false);
+
+  const hasClearableObjective = useMemo(
+    () => rxFormHasClearableObjectiveContent(fields),
+    [fields],
+  );
+
+  const clearAllObjective = useCallback(() => {
+    if (disabled || !hasClearableObjective) return;
+    setClearBusy(true);
+    try {
+      for (const action of buildObjectiveClearAllActions(fields)) {
+        dispatch(action);
+      }
+      collapseAllSections();
+      setClearConfirmOpen(false);
+    } finally {
+      setClearBusy(false);
+    }
+  }, [collapseAllSections, disabled, dispatch, fields, hasClearableObjective]);
+
   // ---- obj-14: resolve the modality/specialty default seed (view-only) --------
   useEffect(() => {
     // In the cockpit the seed travels with the shell (computed once during
@@ -243,7 +322,6 @@ export function ObjectiveSection({
             specialty: settingsRes.data.settings.specialty ?? null,
           }),
         );
-        setDoctorSpecialty(settingsRes.data.settings.specialty ?? null);
       } catch {
         if (!cancelled) setSeedLayout(null);
       }
@@ -252,15 +330,6 @@ export function ObjectiveSection({
       cancelled = true;
     };
   }, [shell?.objectiveDefaults, shell?.objectiveSeed, appointmentId, token]);
-
-  // obj-18: specialty for starter packs — standalone path sets this in the seed
-  // fetch above; the cockpit shell path reads it off the shell (carried there by
-  // the setup, which already fetched settings) — no extra round-trip, so the
-  // "hydrate from shell without fetching" invariant (obj-11/12/15) is preserved.
-  useEffect(() => {
-    if (shell?.objectiveDefaults == null) return;
-    setDoctorSpecialty(shell.objectiveSpecialty ?? null);
-  }, [shell?.objectiveDefaults, shell?.objectiveSpecialty]);
 
   // ---- Hydration: stored order + collapse from per-doctor default --------------
   useEffect(() => {
@@ -339,7 +408,7 @@ export function ObjectiveSection({
       storedOrder: storedSectionOrder,
       storedHidden: [],
     });
-    const resolved = resolveInitialSectionOrder(baseOrder, customBlockIds);
+    const resolved = resolveInitialSectionOrder(baseOrder, customBlockIdsRef.current);
     setSectionOrder(resolved);
     // Only the static projection is persisted (custom_block ids re-mint per visit, P10-D4 / §3.3).
     lastPersistedSectionOrderRef.current = JSON.stringify(
@@ -350,10 +419,21 @@ export function ObjectiveSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storedSectionOrder, seedLayout]);
 
+  const customBlockIdsKey = customBlockIds.join(",");
+
   // Keep the live order in sync with the current custom blocks (add/remove/re-mint).
   useEffect(() => {
-    setSectionOrder((prev) => syncCustomBlockIdsInOrder(prev, customBlockIds));
-  }, [customBlockIds]);
+    setSectionOrder((prev) => {
+      const next = syncCustomBlockIdsInOrder(prev, customBlockIds);
+      if (
+        next.length === prev.length &&
+        next.every((id, index) => id === prev[index])
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }, [customBlockIds, customBlockIdsKey]);
 
   useEffect(() => {
     if (storedSectionHidden === null || seedLayout === undefined) return;
@@ -381,6 +461,7 @@ export function ObjectiveSection({
   useEffect(() => {
     if (storedSectionCollapsed === null) return;
     if (hasHydratedCollapseRef.current) return;
+    if (Object.keys(defaultsById).length === 0) return;
     hasHydratedCollapseRef.current = true;
 
     const resolved = resolveSectionOpenState(storedSectionCollapsed, defaultsById);
@@ -388,9 +469,9 @@ export function ObjectiveSection({
     lastPersistedCollapseRef.current = serializeCollapseOverrides(
       collapseOverridesToPersist(resolved, defaultsById),
     );
-    // Intentionally omit defaultsById — one-shot hydrate; live defaults merge at render via effectiveOpenById.
+    // Intentionally omit further defaultsById changes — one-shot after first non-empty defaults.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- subsequent stored map writes must not clobber openById
-  }, [storedSectionCollapsed]);
+  }, [storedSectionCollapsed, defaultsById]);
 
   // ---- Debounced delta-autosave: order ----------------------------------------
   useEffect(() => {
@@ -569,83 +650,54 @@ export function ObjectiveSection({
   );
 
   // ---- Section content registry -----------------------------------------------
+  const objectiveNotesText =
+    fields.examFindings.find((f) => f.systemId === "objective_notes")?.notes ?? "";
+
   const sectionBody = useMemo((): Record<StaticObjectiveSectionId, ReactNode> => {
     return {
       vitals: <VitalsGrid />,
       exam: <ExamSystemList disabled={disabled} />,
-      test_results: (
-        <TestResultsList
-          source="patient_report"
-          disabled={disabled}
-          showLegacyTextarea
-        />
-      ),
-      point_of_care: (
-        <TestResultsList source="in_clinic_poc" disabled={disabled} />
-      ),
-      media: <ObjectiveMediaStrip disabled={disabled} />,
-      legacy_exam: (
-        <div className="rounded-md border border-border bg-card">
-          <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
-            <User className="h-4 w-4 text-muted-foreground" aria-hidden />
-            <label htmlFor="exam-general" className="text-xs font-medium text-foreground">
-              General Examination
-            </label>
-          </div>
+      notes: (
+        <div className="space-y-2">
+          <label htmlFor="objective-notes" className={RX_FIELD_LABEL_CLASS}>
+            Visit notes
+          </label>
           <textarea
-            id="exam-general"
-            rows={3}
-            value={exam.general}
-            onChange={(e) =>
-              setField("examinationFindings", serializeExam(e.target.value, exam.systemic))
-            }
-            className={EXAM_TEXTAREA_CLASS}
-            placeholder="e.g. Alert, oriented, in no distress"
-            maxLength={3000}
-            disabled={disabled}
-          />
-
-          <div className="h-px bg-border" aria-hidden />
-
-          <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
-            <Stethoscope className="h-4 w-4 text-muted-foreground" aria-hidden />
-            <label htmlFor="exam-systemic" className="text-xs font-medium text-foreground">
-              Systemic Examination
-            </label>
-          </div>
-          <textarea
-            id="exam-systemic"
+            id="objective-notes"
             rows={4}
-            value={exam.systemic}
-            onChange={(e) =>
-              setField("examinationFindings", serializeExam(exam.general, e.target.value))
-            }
-            className={EXAM_TEXTAREA_CLASS}
-            placeholder="e.g. Chest clear, HS S1+S2 normal, abdomen soft"
-            maxLength={3000}
+            value={objectiveNotesText}
+            onChange={(e) => {
+              const trimmed = e.target.value.trim();
+              if (!trimmed) {
+                dispatch({ type: "CLEAR_EXAM_SYSTEM", systemId: "objective_notes" });
+                return;
+              }
+              dispatch({
+                type: "SET_EXAM_SYSTEM",
+                systemId: "objective_notes",
+                status: "abnormal",
+                findings: [],
+                notes: e.target.value,
+              });
+            }}
+            className={RX_FIELD_INPUT_CLASS}
+            placeholder="Objective notes that don't fit vitals, exam, or reports…"
+            maxLength={2000}
             disabled={disabled}
+            data-testid="objective-notes-textarea"
           />
         </div>
       ),
-      legacy_vitals: (
-        <>
-          <label htmlFor="vitalsText" className={RX_FIELD_LABEL_CLASS}>
-            Vitals (free-text — legacy)
-          </label>
-          <input
-            id="vitalsText"
-            type="text"
-            value={fields.vitalsText}
-            onChange={(e) => setField("vitalsText", e.target.value)}
-            className={RX_FIELD_INPUT_CLASS}
-            placeholder="Free-text vitals (deprecated — use the grid above)"
-            maxLength={1000}
-            disabled={disabled}
-          />
-        </>
+      // rpt-01: one "Reports" section — all structured rows + media strip folded in.
+      // `media` is no longer a standalone section id; the attachment strip renders here.
+      test_results: (
+        <div className="space-y-4">
+          <TestResultsList disabled={disabled} showLegacyTextarea />
+          <ObjectiveMediaStrip disabled={disabled} />
+        </div>
       ),
     };
-  }, [disabled, exam.general, exam.systemic, fields.vitalsText, setField]);
+  }, [disabled, dispatch, objectiveNotesText]);
 
   const renderSection = (sectionId: ObjectiveSectionId) => {
     const isStatic = isStaticObjectiveSectionId(sectionId);
@@ -682,25 +734,31 @@ export function ObjectiveSection({
     ) : undefined;
 
     if (isStatic) {
-      // obj-23: result scopes reuse the same per-section template button (save/apply
-      // only that source's structured rows via the shared engine).
+      // obj-23 / rpt-01: Reports templates save/apply all structured rows; legacy
+      // `point_of_care` templates remapped on read in the picker.
       const sectionActions =
         disabled
           ? undefined
           : sectionId === "vitals"
             ? <ObjectiveSectionTemplateButton scope="vitals" />
+            : sectionId === "exam"
+              ? <ObjectiveSectionTemplateButton scope="exam_systemic" />
+            : sectionId === "notes"
+              ? <ObjectiveSectionTemplateButton scope="objective_notes" />
             : sectionId === "test_results"
               ? <ObjectiveSectionTemplateButton scope="test_results" />
-              : sectionId === "point_of_care"
-                ? <ObjectiveSectionTemplateButton scope="point_of_care" />
-                : undefined;
+              : undefined;
+      const sectionIconDef = resolveObjectiveSectionIcon(sectionId);
       inner = (
         <CollapsibleContainer
           title={title}
+          sectionIcon={sectionIconDef ? sectionHeaderIcon(sectionIconDef) : undefined}
           toggleLabel={`Toggle ${title}`}
+          testId={`objective-section-${sectionId}`}
           leadingActions={leadingActions}
           actions={sectionActions}
           scrollOnExpand
+          closeScrollToSelector={OBJECTIVE_SCROLL_TOP_SELECTOR}
           stickyHeader
           open={collapseControlled ? displayOpenById[sectionId] : undefined}
           onOpenChange={
@@ -756,29 +814,50 @@ export function ObjectiveSection({
     );
   };
 
-  const showAllHiddenEmptyState = visibleSectionOrder.length === 0;
+  const showAllHiddenEmptyState = layoutHydrated && visibleSectionOrder.length === 0;
+  const ObjectiveTabIcon = SOAP_TAB_HEADING_ICON.objective;
+
+  // Depth tone is opt-in per field section (CollapsibleContainer depthTone), not at this tab wrapper.
 
   return (
-    <section aria-label="Objective" className="space-y-3">
-      {heading !== null && <h3 className={RX_SECTION_HEADING_CLASS}>{heading}</h3>}
+    <SoapTabFamilyProvider family="objective">
+    <section
+      aria-label="Objective"
+      className="space-y-3"
+      data-testid="objective-scroll-top"
+    >
+      {heading !== null ? (
+        <h3 className={soapTabHeadingClassName("objective", RX_SECTION_HEADING_CLASS)}>
+          <ObjectiveTabIcon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+          {heading}
+        </h3>
+      ) : null}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="mr-auto flex min-h-9 items-center gap-2">
-          {layoutSaveStatus === "saved" ||
-          collapseSaveStatus === "saved" ||
-          visibilitySaveStatus === "saved" ? (
-            <span className="text-xs text-muted-foreground" role="status">
-              Layout saved
-            </span>
-          ) : null}
-          {layoutSaveStatus === "error" ||
-          collapseSaveStatus === "error" ||
-          visibilitySaveStatus === "error" ? (
-            <span className="text-xs text-destructive" role="status">
-              Could not save layout
-            </span>
-          ) : null}
+      {/* Icon-only chrome — one nowrap row at typical column widths. */}
+      <div className="flex min-h-9 flex-nowrap items-center gap-0.5">
+        <div className="mr-auto flex min-w-0 items-center">
+          <SoapTabLayoutSaveStatus
+            saved={
+              layoutSaveStatus === "saved" ||
+              collapseSaveStatus === "saved" ||
+              visibilitySaveStatus === "saved"
+            }
+            error={
+              layoutSaveStatus === "error" ||
+              collapseSaveStatus === "error" ||
+              visibilitySaveStatus === "error"
+            }
+          />
         </div>
+        <SoapTabExpandCollapseClearButtons
+          expandTestId="objective-expand-all"
+          collapseTestId="objective-collapse-all"
+          clearTestId="objective-clear-all"
+          onExpandAll={expandAllSections}
+          onCollapseAll={collapseAllSections}
+          onClearAll={() => setClearConfirmOpen(true)}
+          clearDisabled={disabled || !hasClearableObjective}
+        />
         {!disabled ? <ObjectiveWholeTemplateButton disabled={disabled} /> : null}
         <ManageObjectiveSectionsMenu
           disabled={disabled}
@@ -794,10 +873,6 @@ export function ObjectiveSection({
         />
       </div>
 
-      {!disabled ? (
-        <ObjectiveSpecialtyPacksStrip specialty={doctorSpecialty} disabled={disabled} />
-      ) : null}
-
       {showAllHiddenEmptyState ? (
         <div
           className="rounded-md border border-dashed border-border bg-muted/10 px-3 py-4 text-center"
@@ -812,11 +887,32 @@ export function ObjectiveSection({
             Manage sections
           </button>
         </div>
+      ) : !layoutHydrated ? (
+        <SoapSectionListSkeleton testId="objective-layout-skeleton" rows={4} />
       ) : (
-        visibleSectionOrder.map((sectionId) => renderSection(sectionId))
+        <>
+          {visibleSectionOrder.map((sectionId) => renderSection(sectionId))}
+          <ObjectiveCustomSectionsChrome disabled={disabled} onAdd={handleAddCustomSection} />
+        </>
       )}
-
-      <ObjectiveCustomSectionsChrome disabled={disabled} onAdd={handleAddCustomSection} />
+      <ClearAllConfirmDialog
+        open={clearConfirmOpen}
+        onOpenChange={(open) => {
+          if (!clearBusy) setClearConfirmOpen(open);
+        }}
+        title="Clear all objective content?"
+        descriptionLead="This cannot be undone from this screen."
+        bullets={[
+          "Vitals",
+          "Structured examination findings",
+          "Reports / test results",
+          "Custom section notes (titles kept)",
+        ]}
+        busy={clearBusy}
+        testId="objective-clear-all-dialog"
+        onConfirm={clearAllObjective}
+      />
     </section>
+    </SoapTabFamilyProvider>
   );
 }

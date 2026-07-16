@@ -20,22 +20,44 @@ const UNITS: { value: FollowUpUnit; label: string }[] = [
   { value: "as_needed", label: "as needed" },
 ];
 
-export function FollowUpPicker() {
+export interface FollowUpPickerProps {
+  /** When true, omits the field label (Plan zone shell supplies the heading). */
+  hideLabel?: boolean;
+  /** When true, omits the helper hint (Plan zone owns copy). */
+  hideHint?: boolean;
+}
+
+export function FollowUpPicker({
+  hideLabel = false,
+  hideHint = false,
+}: FollowUpPickerProps = {}) {
   const { state, setField } = useRxForm();
-  const isAsNeeded = state.fields.followUpUnit === "as_needed";
+  const unit = state.fields.followUpUnit;
+  const value = state.fields.followUpValue;
+  const isAsNeeded = unit === "as_needed";
+  const hasInterval = unit != null || value != null;
+
+  const clearStructured = () => {
+    setField("followUpValue", null);
+    setField("followUpUnit", null);
+  };
 
   return (
     <div className="space-y-1.5">
-      <span className={RX_FIELD_LABEL_CLASS}>Follow-up (structured)</span>
-      <div className="mt-1 flex items-center gap-2">
-        <span className="text-sm text-muted-foreground">in</span>
+      {!hideLabel ? (
+        <span className={RX_FIELD_LABEL_CLASS}>Follow-up (structured)</span>
+      ) : null}
+      <div className={`${hideLabel ? "" : "mt-1 "}flex flex-wrap items-center gap-2`}>
+        {!isAsNeeded ? (
+          <span className="text-sm text-muted-foreground">in</span>
+        ) : null}
         <input
           type="number"
           inputMode="numeric"
-          min={0}
+          min={1}
           max={3650}
           step={1}
-          value={isAsNeeded ? "" : (state.fields.followUpValue ?? "")}
+          value={isAsNeeded ? "" : (value ?? "")}
           onChange={(e) => {
             const raw = e.target.value;
             if (raw === "") {
@@ -43,15 +65,19 @@ export function FollowUpPicker() {
               return;
             }
             const n = Number(raw);
-            if (Number.isFinite(n)) setField("followUpValue", Math.round(n));
+            if (!Number.isFinite(n) || n <= 0) {
+              setField("followUpValue", null);
+              return;
+            }
+            setField("followUpValue", Math.round(n));
           }}
           disabled={isAsNeeded}
-          placeholder="0"
+          placeholder={isAsNeeded ? "—" : "e.g. 1"}
           className={`${RX_FIELD_INPUT_CLASS} mt-0 w-20`}
           aria-label="Follow-up value"
         />
         <Select
-          value={state.fields.followUpUnit ?? ""}
+          value={unit ?? ""}
           onValueChange={(v) => {
             const next = (v || null) as FollowUpUnit | null;
             setField("followUpUnit", next);
@@ -59,7 +85,7 @@ export function FollowUpPicker() {
           }}
         >
           <SelectTrigger className="w-36" aria-label="Follow-up unit">
-            <SelectValue placeholder="unit…" />
+            <SelectValue placeholder="When…" />
           </SelectTrigger>
           <SelectContent>
             {UNITS.map((u) => (
@@ -69,11 +95,22 @@ export function FollowUpPicker() {
             ))}
           </SelectContent>
         </Select>
+        {hasInterval ? (
+          <button
+            type="button"
+            className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+            onClick={clearStructured}
+            aria-label="Clear follow-up interval"
+          >
+            Clear
+          </button>
+        ) : null}
       </div>
-      <p className="text-xs text-muted-foreground">
-        Leave blank if no follow-up needed, or use the free-text below for special
-        instructions.
-      </p>
+      {!hideHint ? (
+        <p className="text-xs text-muted-foreground">
+          Leave blank if no follow-up needed. Use Notes below for extra instructions on the Rx.
+        </p>
+      ) : null}
     </div>
   );
 }

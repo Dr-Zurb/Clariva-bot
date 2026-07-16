@@ -82,16 +82,22 @@ export function ChartMedChipSelect<T extends string>({
         className={
           moreOnNextRow
             ? "w-full min-w-0 [&_input]:w-full [&_input]:min-w-0 [&_ul]:min-w-full"
-            : undefined
+            : "min-w-[5.5rem] [&_input]:w-[6.5rem] [&_input]:min-w-[5.5rem]"
         }
         resolveMatch={(query) => {
           const lower = query.trim().toLowerCase();
-          const hit = allOptions.find(
+          const exact = allOptions.find(
             (o) =>
               o.value.toLowerCase() === lower ||
               o.label.toLowerCase() === lower,
           );
-          return hit?.value;
+          if (exact) return exact.value;
+          const prefixHits = allOptions.filter(
+            (o) =>
+              o.label.toLowerCase().startsWith(lower) ||
+              o.value.toLowerCase().startsWith(lower),
+          );
+          return prefixHits.length === 1 ? prefixHits[0]!.value : undefined;
         }}
         onCommit={onMoreCommit}
         onClear={onMoreClear}

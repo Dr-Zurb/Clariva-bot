@@ -59,6 +59,7 @@ import {
   vitalFieldShortLabel,
   vitalGridSpan,
   vitalSparklineLabel,
+  VITALS_CONTAINER_CLASS,
   VITALS_GRID_CLASS,
   VITAL_CLUSTER_GRID_CLASS,
   VITALS_GROUP_CARD_CLASS,
@@ -460,8 +461,8 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className={`${VITALS_CONTAINER_CLASS} space-y-4`}>
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
         <Button
           type="button"
           variant="outline"
@@ -473,7 +474,7 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
         >
           All within normal limits
         </Button>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-1">
           <AllVitalTrendsDialog
             byMetric={byMetric}
             categoricalTimelines={categoricalTimelines}

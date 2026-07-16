@@ -9,7 +9,7 @@
  *  - cc, hopi (string, useState)                    → fields.cc, fields.hopi
  *  - provisionalDiagnosis (string, useState)        → fields.provisionalDiagnosis
  *  - investigations (string, useState)              → fields.investigationsOrders
- *  - followUp (string, useState)                    → fields.followUp (legacy free-text)
+ *  - followUp (string) — notes only; patient output merges with structured
  *  - patientEducation (string, useState)            → fields.patientEducation
  *  - clinicalNotes (string, useState)               → fields.clinicalNotes
  *  - medicines (MedicineEntry[], useState)          → fields.medicines (reducer-managed)
@@ -31,7 +31,7 @@
  *  - differential_diagnosis (string[])
  *  - advice
  *  - follow_up_value (number) + follow_up_unit ('days' | 'weeks' | 'months' | 'as_needed')
- *  - referral
+ *  - referral (chips + notes composed on save)
  *  - test_results
  *  - vitals_text (legacy placeholder — no current UI input; preserved for cv2-07)
  */
@@ -64,6 +64,7 @@ import {
   resolveComplaintAttributeFields,
 } from "@/lib/cockpit/complaint-schema";
 import { formatFeverDisplaySummary } from "@/lib/cockpit/fever-temperature";
+import { deriveInvestigationOrdersJson } from "@/lib/cockpit/investigation-order-catalog";
 import {
   EMPTY_SOCIAL_HISTORY_STRUCTURED,
   hasSocialHistoryStructuredContent,
@@ -121,8 +122,29 @@ import { normalizeAbdFindingEntries } from "@/lib/cockpit/abd-exam-migrations";
 import { normalizeCnsFindingEntries } from "@/lib/cockpit/cns-exam-migrations";
 import {
   deriveTestResults,
+  normalizeLabReports,
   normalizeTestResults,
 } from "@/lib/cockpit/test-results";
+import {
+  deriveDifferentialDiagnosis,
+  derivePrimaryDiagnosis,
+  enforceSinglePrimary,
+  normalizeDiagnoses,
+  seedAcuityFromLegacyVisit,
+  seedDifferentialsFromLegacy,
+  seedPrimaryDiagnosisFromLegacy,
+  sortDiagnosesPrimaryFirst,
+} from "@/lib/cockpit/diagnoses";
+import {
+  hydrateFollowUpNotes,
+} from "@/lib/cockpit/follow-up-format";
+import {
+  hydrateReferralFields,
+  resolveReferralForOutput,
+  referralPartsFromFields,
+} from "@/lib/cockpit/plan-quick-picks";
+import { hydrateAdviceField } from "@/lib/cockpit/advice-format";
+import { DOSE_UNIT_OPTIONS } from "@/lib/medicineCodes";
 import {
   hydrateMeasurementContextFromPrescription,
   hydrateVitalProvenanceFromPrescription,
@@ -171,12 +193,15 @@ import type {
   VitalsTempSite,
 } from "@/lib/cockpit/categorical-vitals-schema";
 import type {
+  AssessmentAcuity,
   Complaint,
+  DiagnosisRow,
   ExamFindingEntry,
   ExamSystemFinding,
   ExamSystemStatus,
   PrescriptionType,
   PrescriptionWithRelations,
+  LabReport,
   TestResultRow,
   UpdatePrescriptionPayload,
   VitalsBpLimb,
@@ -194,9 +219,16 @@ export type FollowUpUnit = "days" | "weeks" | "months" | "as_needed";
 export type { Complaint } from "@/types/prescription";
 export type { ExamFindingEntry, ExamSystemFinding, ExamSystemStatus } from "@/types/prescription";
 export type {
+  LabReport,
   TestResultRow,
   TestResultSource,
   TestResultInterpretation,
+} from "@/types/prescription";
+export type {
+  DiagnosisRow,
+  DiagnosisKind,
+  DiagnosisCertainty,
+  DiagnosisStatus,
 } from "@/types/prescription";
 export type { VitalsBpLimb, VitalsBpPosture, BpContext, BpReading, GlucoseContext, GlucoseReading, MeasurementContext } from "@/types/prescription";
 export type { SocialHistoryStructured } from "@/lib/cockpit/social-history";
@@ -310,8 +342,38 @@ export interface RxFormFields {
    */
   objectiveCustomSections: CustomSubsection[];
 
+  /**
+   * assessment-plan-custom-sections — per-visit custom Assessment sections
+   * (depth-2 tree, mirrors subjective customs). Seeded from the doctor default
+   * (`assessment_custom_sections`); persisted to
+   * `prescriptions.assessment_custom_sections` and included (sanitised) in PDF/SMS.
+   */
+  assessmentCustomSections: CustomSubsection[];
+
+  /**
+   * assessment-plan-custom-sections — per-visit custom Plan sections (depth-2
+   * tree). Seeded from `plan_custom_sections`; persisted to
+   * `prescriptions.plan_custom_sections` and included (sanitised) in PDF/SMS.
+   */
+  planCustomSections: CustomSubsection[];
+
   provisionalDiagnosis: string;
   differentialDiagnosis: string[];
+  /**
+   * assessment-tab / migration 161 — structured diagnosis rows. Primary label
+   * derives into `provisionalDiagnosis` on save (ASMT-D4). Empty = legacy
+   * free-text passthrough for the strip / payload.
+   */
+  diagnoses: DiagnosisRow[];
+
+  /**
+   * assessment-tab / migration 160 — visit-level impression note + acuity.
+   * Dormant writers: Assessment UI no longer edits these. Kept in form state
+   * for hydrate/back-compat; payload always emits null so columns stay empty.
+   * Per-diagnosis acuity lives on `diagnoses[].acuity`.
+   */
+  assessmentNote: string;
+  assessmentAcuity: AssessmentAcuity | null;
 
   /** Renamed DB column `investigations_orders`; API field stays `investigations`. */
   investigationsOrders: string;
@@ -321,6 +383,14 @@ export interface RxFormFields {
   followUp: string;
   followUpValue: number | null;
   followUpUnit: FollowUpUnit | null;
+  /**
+   * Referral chips (urgency / specialties / reason) + free notes.
+   * `referral` is notes only in the form; save/PDF compose via
+   * `resolveReferralForOutput`. Hydrate splits the persisted TEXT back.
+   */
+  referralUrgency: string | null;
+  referralSpecialties: string[];
+  referralReason: string | null;
   referral: string;
   testResults: string;
   /**
@@ -329,6 +399,11 @@ export interface RxFormFields {
    * leaves the legacy free-text `testResults` untouched (OBJ-D2 passthrough).
    */
   testResultsStructured: TestResultRow[];
+  /**
+   * Lab/imaging report headers grouping structured rows (rpt-02/03). Client form
+   * state only until the save-path wires `lab_reports_json` through the API.
+   */
+  labReports: LabReport[];
 
   patientEducation: string;
   clinicalNotes: string;
@@ -390,6 +465,46 @@ export type RxFormAction =
   | { type: "REMOVE_OBJECTIVE_CUSTOM_SECTION"; index: number }
   | { type: "REORDER_OBJECTIVE_CUSTOM_SECTIONS"; fromIndex: number; toIndex: number }
   | { type: "SET_OBJECTIVE_CUSTOM_SECTIONS"; sections: CustomSubsection[] }
+  // assessment-plan-custom-sections — Assessment custom sections (depth-2, mirrors subjective).
+  | { type: "ADD_ASSESSMENT_CUSTOM_SECTION"; section: CustomSubsection }
+  | { type: "UPDATE_ASSESSMENT_CUSTOM_SECTION"; index: number; patch: Partial<CustomSubsection> }
+  | { type: "REMOVE_ASSESSMENT_CUSTOM_SECTION"; index: number }
+  | { type: "REORDER_ASSESSMENT_CUSTOM_SECTIONS"; fromIndex: number; toIndex: number }
+  | { type: "ADD_ASSESSMENT_CUSTOM_SECTION_CHILD"; sectionId: string; child: CustomSubsectionChild }
+  | {
+      type: "UPDATE_ASSESSMENT_CUSTOM_SECTION_CHILD";
+      sectionId: string;
+      childIndex: number;
+      patch: Partial<CustomSubsectionChild>;
+    }
+  | { type: "REMOVE_ASSESSMENT_CUSTOM_SECTION_CHILD"; sectionId: string; childIndex: number }
+  | {
+      type: "REORDER_ASSESSMENT_CUSTOM_SECTION_CHILDREN";
+      sectionId: string;
+      fromIndex: number;
+      toIndex: number;
+    }
+  | { type: "SET_ASSESSMENT_CUSTOM_SECTIONS"; sections: CustomSubsection[] }
+  // assessment-plan-custom-sections — Plan custom sections (depth-2, mirrors subjective).
+  | { type: "ADD_PLAN_CUSTOM_SECTION"; section: CustomSubsection }
+  | { type: "UPDATE_PLAN_CUSTOM_SECTION"; index: number; patch: Partial<CustomSubsection> }
+  | { type: "REMOVE_PLAN_CUSTOM_SECTION"; index: number }
+  | { type: "REORDER_PLAN_CUSTOM_SECTIONS"; fromIndex: number; toIndex: number }
+  | { type: "ADD_PLAN_CUSTOM_SECTION_CHILD"; sectionId: string; child: CustomSubsectionChild }
+  | {
+      type: "UPDATE_PLAN_CUSTOM_SECTION_CHILD";
+      sectionId: string;
+      childIndex: number;
+      patch: Partial<CustomSubsectionChild>;
+    }
+  | { type: "REMOVE_PLAN_CUSTOM_SECTION_CHILD"; sectionId: string; childIndex: number }
+  | {
+      type: "REORDER_PLAN_CUSTOM_SECTION_CHILDREN";
+      sectionId: string;
+      fromIndex: number;
+      toIndex: number;
+    }
+  | { type: "SET_PLAN_CUSTOM_SECTIONS"; sections: CustomSubsection[] }
   | {
       type: "SET_EXAM_SYSTEM";
       systemId: string;
@@ -404,8 +519,16 @@ export type RxFormAction =
   | { type: "ADD_TEST_RESULT"; row: TestResultRow }
   | { type: "UPDATE_TEST_RESULT"; id: string; patch: Partial<TestResultRow> }
   | { type: "REMOVE_TEST_RESULT"; id: string }
-  | { type: "ADD_DDX"; entry: string }
-  | { type: "REMOVE_DDX"; index: number }
+  | { type: "SET_LAB_REPORTS"; labReports: LabReport[] }
+  | { type: "ADD_LAB_REPORT"; report: LabReport }
+  | { type: "UPDATE_LAB_REPORT"; id: string; patch: Partial<LabReport> }
+  | { type: "REMOVE_LAB_REPORT"; id: string }
+  /** Scaffold a panel: append report header + all analyte rows in one action. */
+  | { type: "ADD_LAB_PANEL"; report: LabReport; rows: TestResultRow[] }
+  | { type: "SET_DIAGNOSES"; diagnoses: DiagnosisRow[] }
+  | { type: "ADD_DIAGNOSIS"; diagnosis: DiagnosisRow }
+  | { type: "UPDATE_DIAGNOSIS"; id: string; patch: Partial<DiagnosisRow> }
+  | { type: "REMOVE_DIAGNOSIS"; id: string }
   | { type: "SAVE_START" }
   | { type: "SAVE_SUCCESS"; lastSavedAt: string }
   | { type: "SAVE_ERROR"; error: string }
@@ -494,17 +617,26 @@ export function createEmptyRxFormFields(
     examinationFindings: "",
     examFindings: [],
     objectiveCustomSections: [],
+    assessmentCustomSections: [],
+    planCustomSections: [],
     provisionalDiagnosis: "",
     differentialDiagnosis: [],
+    diagnoses: [],
+    assessmentNote: "",
+    assessmentAcuity: null,
     investigationsOrders: "",
     medicines: seedMedicines,
     advice: "",
     followUp: "",
     followUpValue: null,
     followUpUnit: null,
+    referralUrgency: null,
+    referralSpecialties: [],
+    referralReason: null,
     referral: "",
     testResults: "",
     testResultsStructured: [],
+    labReports: [],
     patientEducation: "",
     clinicalNotes: "",
     fromPrescriptionId: null,
@@ -744,12 +876,17 @@ function extractLegacyCvsPulseNote(
   return note ? note : null;
 }
 
-/** Deterministic order: core registry index first, then alpha by systemId. */
+/** Deterministic order: core registry index first, then exam/objective notes, then alpha. */
 function compareExamSystems(a: ExamSystemFinding, b: ExamSystemFinding): number {
-  const ai = EXAM_CORE_SYSTEM_ORDER.indexOf(a.systemId);
-  const bi = EXAM_CORE_SYSTEM_ORDER.indexOf(b.systemId);
-  const aRank = ai === -1 ? EXAM_CORE_SYSTEM_ORDER.length : ai;
-  const bRank = bi === -1 ? EXAM_CORE_SYSTEM_ORDER.length : bi;
+  const order = [
+    ...EXAM_CORE_SYSTEM_ORDER,
+    "additional_notes",
+    "objective_notes",
+  ];
+  const ai = order.indexOf(a.systemId);
+  const bi = order.indexOf(b.systemId);
+  const aRank = ai === -1 ? order.length : ai;
+  const bRank = bi === -1 ? order.length : bi;
   if (aRank !== bRank) return aRank - bRank;
   return a.systemId.localeCompare(b.systemId);
 }
@@ -764,6 +901,11 @@ export const TELECONSULT_EXAM_CAVEAT =
 
 function renderExamSystemLine(finding: ExamSystemFinding, teleconsult: boolean): string {
   const label = resolveExamSystem(finding.systemId).label;
+  // Free-text sibling / L1 notes: emit notes only (no Normal / chip body).
+  if (finding.systemId === "additional_notes" || finding.systemId === "objective_notes") {
+    const notes = finding.notes?.trim();
+    return notes ? `${label}: ${notes}` : "";
+  }
   let body: string;
   if (finding.status === "normal") {
     // Teleconsult "normal" must not over-claim auscultation/palpation (TC-D4):
@@ -806,7 +948,9 @@ export function deriveExaminationFindingsFromExam(
   const body = [...normalized]
     .sort(compareExamSystems)
     .map((finding) => renderExamSystemLine(finding, teleconsult))
+    .filter((line) => line.length > 0)
     .join("\n");
+  if (!body) return "";
   return teleconsult ? `${body}\n${TELECONSULT_EXAM_CAVEAT}` : body;
 }
 
@@ -971,18 +1115,64 @@ export function rxFormFieldsFromPrescription(
     // obj-13: per-visit instances seed from the doctor default (in ObjectiveSection),
     // not from the row — their content already derived into examination_findings (OBJ-D2).
     objectiveCustomSections: [],
-    provisionalDiagnosis: rx.provisional_diagnosis ?? "",
-    differentialDiagnosis: rx.differential_diagnosis ?? [],
+    // assessment-plan-custom-sections: dedicated columns (mirror subjective customs).
+    // Hydrate from the row; fresh visits seed from doctor defaults in provider setup.
+    assessmentCustomSections: normalizeCustomSubsections(rx.assessment_custom_sections),
+    planCustomSections: normalizeCustomSubsections(rx.plan_custom_sections),
+    // asmt-03 / asmt-05: prefer structured diagnoses_json; else seed one
+    // primary from legacy free-text. Also seed differential cards from any
+    // legacy differential_diagnosis[] not already represented (ASMT-D4′).
+    // Seed primary acuity from dormant visit-level assessment_acuity when
+    // the structured rows have none. Keep provisionalDiagnosis +
+    // differentialDiagnosis mirrors in sync for the strip glance.
+    ...(() => {
+      const fromJson = normalizeDiagnoses(rx.diagnoses_json);
+      let diagnoses =
+        fromJson.length > 0
+          ? sortDiagnosesPrimaryFirst(fromJson)
+          : seedPrimaryDiagnosisFromLegacy(rx.provisional_diagnosis);
+      const seededDdx = seedDifferentialsFromLegacy(
+        rx.differential_diagnosis,
+        diagnoses,
+      );
+      if (seededDdx.length > 0) {
+        diagnoses = sortDiagnosesPrimaryFirst(
+          enforceSinglePrimary([...diagnoses, ...seededDdx]),
+        );
+      }
+      diagnoses = seedAcuityFromLegacyVisit(diagnoses, rx.assessment_acuity);
+      const provisionalDiagnosis =
+        diagnoses.length > 0
+          ? derivePrimaryDiagnosis(diagnoses)
+          : (rx.provisional_diagnosis ?? "");
+      const differentialDiagnosis =
+        diagnoses.some((d) => d.kind === "differential")
+          ? deriveDifferentialDiagnosis(diagnoses)
+          : (rx.differential_diagnosis ?? []);
+      return { diagnoses, provisionalDiagnosis, differentialDiagnosis };
+    })(),
+    // Visit-level note/acuity are dormant — keep hydrate for display of old
+    // data if needed, but UI no longer edits them.
+    assessmentNote: rx.assessment_note ?? "",
+    assessmentAcuity: rx.assessment_acuity ?? null,
     investigationsOrders: investigationsFromPrescription(rx),
     medicines,
-    advice: rx.advice ?? "",
-    followUp: rx.follow_up ?? "",
+    advice: hydrateAdviceField(rx.advice, rx.patient_education),
+    // Notes only — strip persisted patient-facing echoes (follow-up polish).
+    followUp: hydrateFollowUpNotes(
+      rx.follow_up,
+      rx.follow_up_value,
+      rx.follow_up_unit,
+    ),
     followUpValue: rx.follow_up_value ?? null,
     followUpUnit: rx.follow_up_unit ?? null,
-    referral: rx.referral ?? "",
+    ...hydrateReferralFields(rx.referral),
     testResults: rx.test_results ?? "",
     testResultsStructured: normalizeTestResults(rx.test_results_json),
-    patientEducation: rx.patient_education ?? "",
+    // rpt-03: hydrate when the column is present; empty when absent / save-path deferred.
+    labReports: normalizeLabReports(rx.lab_reports_json),
+    // Folded into `advice` on hydrate; column kept null on save.
+    patientEducation: "",
     clinicalNotes: rx.clinical_notes ?? "",
     fromPrescriptionId: null,
   };
@@ -1090,6 +1280,14 @@ export function buildRxPayload(
       ? serializeCustomSubsections(storedCustomSubsections)
       : null;
 
+  // assessment-plan-custom-sections: dedicated columns (mirror subjective).
+  const storedAssessmentCustomSections = serializeCustomSubsectionsForPayload(
+    fields.assessmentCustomSections,
+  );
+  const storedPlanCustomSections = serializeCustomSubsectionsForPayload(
+    fields.planCustomSections,
+  );
+
   // objective-tab / OBJ-D2 — derive examination_findings from the structured
   // exam when present; otherwise leave the legacy free-text untouched (the
   // byte-parity passthrough contract, P1-D2). obj-13 appends any non-empty
@@ -1171,10 +1369,28 @@ export function buildRxPayload(
     pastSurgicalHistoryStructured: hasPastSurgicalStructured ? pastSurgicalStructured : null,
     customSubsections: storedCustomSubsections,
     customSubsectionsText: derivedCustomSubsectionsText,
-    provisionalDiagnosis: fields.provisionalDiagnosis.trim() || null,
+    assessmentCustomSections: storedAssessmentCustomSections,
+    planCustomSections: storedPlanCustomSections,
+    // asmt-03 / ASMT-D4: when structured diagnoses are present, derive
+    // provisionalDiagnosis from the primary label (byte-identical for a
+    // single-Dx visit). Empty structured set = legacy free-text passthrough.
+    provisionalDiagnosis: (() => {
+      const storedDiagnoses = normalizeDiagnoses(fields.diagnoses);
+      if (storedDiagnoses.length > 0) {
+        return derivePrimaryDiagnosis(storedDiagnoses) || null;
+      }
+      return fields.provisionalDiagnosis.trim() || null;
+    })(),
+    diagnosesJson: normalizeDiagnoses(fields.diagnoses),
     investigations: fields.investigationsOrders.trim() || null,
+    // plan-investigations-library / migration 167 — structured orders derived
+    // from the chip labels (INV-D8); the flat `investigations` string above
+    // stays authoritative for output so readers are byte-identical.
+    investigationsOrdersJson: deriveInvestigationOrdersJson(fields.investigationsOrders),
+    // Notes only in `follow_up` TEXT; PDF/SMS merge with structured at read time.
     followUp: fields.followUp.trim() || null,
-    patientEducation: fields.patientEducation.trim() || null,
+    // Single Advice bucket — legacy patient_education cleared on write.
+    patientEducation: null,
     clinicalNotes: fields.clinicalNotes.trim() || null,
     vitalsBpSystolic: primaryBp.systolic,
     vitalsBpDiastolic: primaryBp.diastolic,
@@ -1194,12 +1410,29 @@ export function buildRxPayload(
     vitalsWaistCm: fields.vitalsWaistCm,
     examinationFindings: derivedExaminationFindings,
     examinationJson: storedExamFindings,
-    differentialDiagnosis:
-      fields.differentialDiagnosis.length > 0 ? fields.differentialDiagnosis : null,
+    // asmt-05 / ASMT-D4′: derive differentialDiagnosis from non-excluded
+    // differential cards. When no structured diagnoses exist, fall back to
+    // the legacy chip-field passthrough (byte-identical for equal content).
+    differentialDiagnosis: (() => {
+      const storedDiagnoses = normalizeDiagnoses(fields.diagnoses);
+      if (storedDiagnoses.length > 0) {
+        const derived = deriveDifferentialDiagnosis(storedDiagnoses);
+        return derived.length > 0 ? derived : null;
+      }
+      return fields.differentialDiagnosis.length > 0
+        ? fields.differentialDiagnosis
+        : null;
+    })(),
+    // Clinician-private impression note (ASMT-D5): trimmed, empty → null; never
+    // rendered on patient output. Visit-level acuity stays dormant — per-diagnosis
+    // acuity lives in diagnosesJson.
+    assessmentNote: fields.assessmentNote.trim() || null,
+    assessmentAcuity: null,
     advice: fields.advice.trim() || null,
     followUpValue: fields.followUpValue,
     followUpUnit: fields.followUpUnit,
-    referral: fields.referral.trim() || null,
+    // Chips + notes compose into the single `referral` TEXT column.
+    referral: resolveReferralForOutput(referralPartsFromFields(fields)),
     testResults: derivedTestResults,
     testResultsJson: storedTestResults,
     ...(hasVitalsJsonContent(storedVitalsJson) ? { vitalsJson: storedVitalsJson } : {}),
@@ -1219,7 +1452,10 @@ export function buildRxPayload(
         durationUnit: m.durationUnit,
         routeCode: m.routeCode,
         doseQty: m.doseQty,
-        doseUnit: m.doseUnit,
+        doseUnit:
+          m.doseUnit && DOSE_UNIT_OPTIONS.some((o) => o.unit === m.doseUnit)
+            ? m.doseUnit
+            : null,
         form: m.form?.trim() || null,
         foodTiming: m.foodTiming,
       })),
@@ -1242,6 +1478,32 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
           String(action.value ?? ""),
         );
       }
+      // asmt-03 / asmt-05: strip glance edits `provisionalDiagnosis` — keep the
+      // primary structured row label in sync (seed one primary when empty).
+      // Never write the strip label onto a differential card.
+      if (action.key === "provisionalDiagnosis") {
+        const label = String(action.value ?? "");
+        if (nextFields.diagnoses.length > 0) {
+          const primaryId =
+            nextFields.diagnoses.find((d) => d.kind === "primary")?.id ??
+            nextFields.diagnoses.find((d) => d.kind === "secondary")?.id;
+          if (primaryId) {
+            nextFields.diagnoses = nextFields.diagnoses.map((row) =>
+              row.id === primaryId ? { ...row, label } : row,
+            );
+          } else if (label.trim()) {
+            // Only differentials present — seed a primary alongside them.
+            nextFields.diagnoses = sortDiagnosesPrimaryFirst(
+              enforceSinglePrimary([
+                ...seedPrimaryDiagnosisFromLegacy(label),
+                ...nextFields.diagnoses,
+              ]),
+            );
+          }
+        } else if (label.trim()) {
+          nextFields.diagnoses = seedPrimaryDiagnosisFromLegacy(label);
+        }
+      }
       return {
         ...state,
         fields: nextFields,
@@ -1261,19 +1523,23 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
         ...state,
         fields: {
           ...state.fields,
-          medicines: [...state.fields.medicines, action.medicine],
+          medicines: [action.medicine, ...state.fields.medicines],
         },
         isDirty: true,
         submitError: null,
       };
     case "REMOVE_MEDICINE": {
       const { medicines } = state.fields;
-      if (medicines.length <= 1) return state;
+      const next =
+        medicines.length <= 1
+          ? // Capture-bar flow: clearing the last named card leaves a hidden blank seed.
+            [{ ...EMPTY_RX_MEDICINE }]
+          : medicines.filter((_, i) => i !== action.index);
       return {
         ...state,
         fields: {
           ...state.fields,
-          medicines: medicines.filter((_, i) => i !== action.index),
+          medicines: next,
         },
         isDirty: true,
         submitError: null,
@@ -1638,6 +1904,234 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
         submitError: null,
       };
     }
+    // assessment-plan-custom-sections — Assessment custom sections (depth-2).
+    case "ADD_ASSESSMENT_CUSTOM_SECTION": {
+      const assessmentCustomSections = addCustomSubsection(
+        state.fields.assessmentCustomSections,
+        action.section,
+      );
+      return {
+        ...state,
+        fields: { ...state.fields, assessmentCustomSections },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    case "UPDATE_ASSESSMENT_CUSTOM_SECTION": {
+      const assessmentCustomSections = updateCustomSubsection(
+        state.fields.assessmentCustomSections,
+        action.index,
+        action.patch,
+      );
+      return {
+        ...state,
+        fields: { ...state.fields, assessmentCustomSections },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    case "REMOVE_ASSESSMENT_CUSTOM_SECTION": {
+      const assessmentCustomSections = removeCustomSubsection(
+        state.fields.assessmentCustomSections,
+        action.index,
+      );
+      return {
+        ...state,
+        fields: { ...state.fields, assessmentCustomSections },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    case "REORDER_ASSESSMENT_CUSTOM_SECTIONS": {
+      const assessmentCustomSections = reorderCustomSubsections(
+        state.fields.assessmentCustomSections,
+        action.fromIndex,
+        action.toIndex,
+      );
+      return {
+        ...state,
+        fields: { ...state.fields, assessmentCustomSections },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    case "ADD_ASSESSMENT_CUSTOM_SECTION_CHILD": {
+      const assessmentCustomSections = addCustomSubsectionChild(
+        state.fields.assessmentCustomSections,
+        action.sectionId,
+        action.child,
+      );
+      return {
+        ...state,
+        fields: { ...state.fields, assessmentCustomSections },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    case "UPDATE_ASSESSMENT_CUSTOM_SECTION_CHILD": {
+      const assessmentCustomSections = updateCustomSubsectionChild(
+        state.fields.assessmentCustomSections,
+        action.sectionId,
+        action.childIndex,
+        action.patch,
+      );
+      return {
+        ...state,
+        fields: { ...state.fields, assessmentCustomSections },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    case "REMOVE_ASSESSMENT_CUSTOM_SECTION_CHILD": {
+      const assessmentCustomSections = removeCustomSubsectionChild(
+        state.fields.assessmentCustomSections,
+        action.sectionId,
+        action.childIndex,
+      );
+      return {
+        ...state,
+        fields: { ...state.fields, assessmentCustomSections },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    case "REORDER_ASSESSMENT_CUSTOM_SECTION_CHILDREN": {
+      const assessmentCustomSections = reorderCustomSubsectionChildren(
+        state.fields.assessmentCustomSections,
+        action.sectionId,
+        action.fromIndex,
+        action.toIndex,
+      );
+      return {
+        ...state,
+        fields: { ...state.fields, assessmentCustomSections },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    case "SET_ASSESSMENT_CUSTOM_SECTIONS": {
+      const assessmentCustomSections = normalizeCustomSubsections(action.sections);
+      return {
+        ...state,
+        fields: { ...state.fields, assessmentCustomSections },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    // assessment-plan-custom-sections — Plan custom sections (depth-2).
+    case "ADD_PLAN_CUSTOM_SECTION": {
+      const planCustomSections = addCustomSubsection(
+        state.fields.planCustomSections,
+        action.section,
+      );
+      return {
+        ...state,
+        fields: { ...state.fields, planCustomSections },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    case "UPDATE_PLAN_CUSTOM_SECTION": {
+      const planCustomSections = updateCustomSubsection(
+        state.fields.planCustomSections,
+        action.index,
+        action.patch,
+      );
+      return {
+        ...state,
+        fields: { ...state.fields, planCustomSections },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    case "REMOVE_PLAN_CUSTOM_SECTION": {
+      const planCustomSections = removeCustomSubsection(
+        state.fields.planCustomSections,
+        action.index,
+      );
+      return {
+        ...state,
+        fields: { ...state.fields, planCustomSections },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    case "REORDER_PLAN_CUSTOM_SECTIONS": {
+      const planCustomSections = reorderCustomSubsections(
+        state.fields.planCustomSections,
+        action.fromIndex,
+        action.toIndex,
+      );
+      return {
+        ...state,
+        fields: { ...state.fields, planCustomSections },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    case "ADD_PLAN_CUSTOM_SECTION_CHILD": {
+      const planCustomSections = addCustomSubsectionChild(
+        state.fields.planCustomSections,
+        action.sectionId,
+        action.child,
+      );
+      return {
+        ...state,
+        fields: { ...state.fields, planCustomSections },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    case "UPDATE_PLAN_CUSTOM_SECTION_CHILD": {
+      const planCustomSections = updateCustomSubsectionChild(
+        state.fields.planCustomSections,
+        action.sectionId,
+        action.childIndex,
+        action.patch,
+      );
+      return {
+        ...state,
+        fields: { ...state.fields, planCustomSections },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    case "REMOVE_PLAN_CUSTOM_SECTION_CHILD": {
+      const planCustomSections = removeCustomSubsectionChild(
+        state.fields.planCustomSections,
+        action.sectionId,
+        action.childIndex,
+      );
+      return {
+        ...state,
+        fields: { ...state.fields, planCustomSections },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    case "REORDER_PLAN_CUSTOM_SECTION_CHILDREN": {
+      const planCustomSections = reorderCustomSubsectionChildren(
+        state.fields.planCustomSections,
+        action.sectionId,
+        action.fromIndex,
+        action.toIndex,
+      );
+      return {
+        ...state,
+        fields: { ...state.fields, planCustomSections },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    case "SET_PLAN_CUSTOM_SECTIONS": {
+      const planCustomSections = normalizeCustomSubsections(action.sections);
+      return {
+        ...state,
+        fields: { ...state.fields, planCustomSections },
+        isDirty: true,
+        submitError: null,
+      };
+    }
     case "SET_EXAM_SYSTEM": {
       const findings = normalizeExamFindingEntries(action.findings);
       const examFindings = upsertExamSystem(state.fields.examFindings, {
@@ -1707,7 +2201,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
         ...state,
         fields: {
           ...state.fields,
-          testResultsStructured: [...state.fields.testResultsStructured, action.row],
+          testResultsStructured: [action.row, ...state.fields.testResultsStructured],
         },
         isDirty: true,
         submitError: null,
@@ -1736,28 +2230,134 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
         isDirty: true,
         submitError: null,
       };
-    case "ADD_DDX":
+    case "SET_LAB_REPORTS":
       return {
         ...state,
         fields: {
           ...state.fields,
-          differentialDiagnosis: [...state.fields.differentialDiagnosis, action.entry],
+          labReports: normalizeLabReports(action.labReports),
         },
         isDirty: true,
         submitError: null,
       };
-    case "REMOVE_DDX":
+    case "ADD_LAB_REPORT":
       return {
         ...state,
         fields: {
           ...state.fields,
-          differentialDiagnosis: state.fields.differentialDiagnosis.filter(
-            (_, i) => i !== action.index,
+          labReports: [action.report, ...state.fields.labReports],
+        },
+        isDirty: true,
+        submitError: null,
+      };
+    case "UPDATE_LAB_REPORT":
+      return {
+        ...state,
+        fields: {
+          ...state.fields,
+          labReports: state.fields.labReports.map((report) =>
+            report.id === action.id ? { ...report, ...action.patch, id: report.id } : report,
           ),
         },
         isDirty: true,
         submitError: null,
       };
+    case "REMOVE_LAB_REPORT":
+      return {
+        ...state,
+        fields: {
+          ...state.fields,
+          labReports: state.fields.labReports.filter((report) => report.id !== action.id),
+          // Collapse linked rows to ungrouped (unknown reportId → Other results).
+          testResultsStructured: state.fields.testResultsStructured.map((row) =>
+            row.reportId === action.id ? { ...row, reportId: null } : row,
+          ),
+        },
+        isDirty: true,
+        submitError: null,
+      };
+    case "ADD_LAB_PANEL":
+      return {
+        ...state,
+        fields: {
+          ...state.fields,
+          labReports: [action.report, ...state.fields.labReports],
+          testResultsStructured: [
+            ...action.rows,
+            ...state.fields.testResultsStructured,
+          ],
+        },
+        isDirty: true,
+        submitError: null,
+      };
+    case "SET_DIAGNOSES": {
+      const diagnoses = sortDiagnosesPrimaryFirst(
+        enforceSinglePrimary(normalizeDiagnoses(action.diagnoses)),
+      );
+      return {
+        ...state,
+        fields: {
+          ...state.fields,
+          diagnoses,
+          provisionalDiagnosis: derivePrimaryDiagnosis(diagnoses),
+          differentialDiagnosis: deriveDifferentialDiagnosis(diagnoses),
+        },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    case "ADD_DIAGNOSIS": {
+      // Newest card first within its kind group after primary-first sort.
+      const next = [action.diagnosis, ...state.fields.diagnoses];
+      const diagnoses = sortDiagnosesPrimaryFirst(enforceSinglePrimary(next));
+      return {
+        ...state,
+        fields: {
+          ...state.fields,
+          diagnoses,
+          provisionalDiagnosis: derivePrimaryDiagnosis(diagnoses),
+          differentialDiagnosis: deriveDifferentialDiagnosis(diagnoses),
+        },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    case "UPDATE_DIAGNOSIS": {
+      const patched = state.fields.diagnoses.map((row) =>
+        row.id === action.id ? { ...row, ...action.patch, id: row.id } : row,
+      );
+      const promoteId =
+        action.patch.kind === "primary" ? action.id : undefined;
+      const diagnoses = sortDiagnosesPrimaryFirst(
+        enforceSinglePrimary(patched, promoteId),
+      );
+      return {
+        ...state,
+        fields: {
+          ...state.fields,
+          diagnoses,
+          provisionalDiagnosis: derivePrimaryDiagnosis(diagnoses),
+          differentialDiagnosis: deriveDifferentialDiagnosis(diagnoses),
+        },
+        isDirty: true,
+        submitError: null,
+      };
+    }
+    case "REMOVE_DIAGNOSIS": {
+      const remaining = state.fields.diagnoses.filter((row) => row.id !== action.id);
+      const diagnoses = sortDiagnosesPrimaryFirst(enforceSinglePrimary(remaining));
+      return {
+        ...state,
+        fields: {
+          ...state.fields,
+          diagnoses,
+          provisionalDiagnosis: derivePrimaryDiagnosis(diagnoses),
+          differentialDiagnosis: deriveDifferentialDiagnosis(diagnoses),
+        },
+        isDirty: true,
+        submitError: null,
+      };
+    }
     case "SAVE_START":
       return { ...state, isSaving: true, submitError: null };
     case "SAVE_SUCCESS":

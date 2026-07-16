@@ -25,6 +25,7 @@ import CockpitCanvas from "./CockpitCanvas";
 import CockpitDndContext, {
   type CockpitDropMovePayload,
   type CockpitDropReorderPayload,
+  type CockpitDropSwapPayload,
 } from "./CockpitDndContext";
 import CockpitPalette from "./CockpitPalette";
 import CockpitMobileFallback from "./CockpitMobileFallback";
@@ -132,11 +133,16 @@ export default function CockpitV3Shell({
         layoutUxToast.error("Pause the consult before rearranging.");
         return;
       }
-      const res = layout.movePane(
-        route.sourcePaneId,
-        route.targetGroupId,
-        route.zone,
-      );
+      const res = route.gutter
+        ? layout.moveIntoGutter(
+            route.sourcePaneId,
+            route.gutter.parentId,
+            route.gutter.leftChildId,
+            route.gutter.rightChildId,
+            route.targetGroupId,
+            route.zone,
+          )
+        : layout.movePane(route.sourcePaneId, route.targetGroupId, route.zone);
       toastOnCapRejection(res);
       if (res.ok) {
         trackCockpitV3DragDrop({
@@ -159,9 +165,29 @@ export default function CockpitV3Shell({
         layout.reorderWithinGroup(
           route.groupId,
           route.sourcePaneId,
-          route.beforePaneId,
+          route.overPaneId,
+          route.place,
         ),
       );
+    },
+    [canDragPane, layout],
+  );
+
+  const handleSwap = useCallback(
+    (route: CockpitDropSwapPayload) => {
+      if (!canDragPane(route.sourcePaneId)) {
+        layoutUxToast.error("Pause the consult before rearranging.");
+        return;
+      }
+      const res = layout.swapLeaves(route.sourceGroupId, route.targetGroupId);
+      toastOnCapRejection(res);
+      if (res.ok) {
+        trackCockpitV3DragDrop({
+          sourcePaneId: route.sourcePaneId,
+          targetGroupId: route.targetGroupId,
+          zone: "center",
+        });
+      }
     },
     [canDragPane, layout],
   );
@@ -203,6 +229,7 @@ export default function CockpitV3Shell({
         paneById={paneByIdRecord}
         onDrop={handleDrop}
         onReorder={handleReorder}
+        onSwap={handleSwap}
       >
         <div ref={canvasMeasureRef} className="min-h-0 flex-1">
           <CockpitCanvas

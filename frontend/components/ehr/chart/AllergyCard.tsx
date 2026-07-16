@@ -9,12 +9,13 @@ import {
   CHART_COMPACT_INPUT_CLASS,
 } from "@/components/ehr/chart/chart-chip-styles";
 import { scrollAllergyCardHeaderIntoView } from "@/lib/chart/chart-allergy-scroll";
-import { scrollCollapsibleToTop } from "@/lib/cockpit/collapse-scroll";
+import { scrollCollapsibleToStickyTop } from "@/lib/cockpit/collapse-scroll";
 import {
   appendAllergyReaction,
   availableAllergyReactionQuickAdd,
 } from "@/lib/cockpit/common-allergens";
 import { Collapse } from "@/components/ui/Collapse";
+import { StickyStackProvider, useStickyHeader } from "@/components/ui/sticky-stack";
 import { cn } from "@/lib/utils";
 import type { PatientAllergy, PatientAllergySeverity } from "@/types/patient-chart";
 
@@ -127,6 +128,8 @@ export function AllergyCard({
     () => availableAllergyReactionQuickAdd(reactionDraft),
     [reactionDraft],
   );
+  // Pin beneath the Allergies section header (L1 under L0 sticky stack).
+  const { headerRef, pinned, headerStyle, childValue, bodyStyle } = useStickyHeader(canExpand);
 
   useEffect(() => {
     setReactionDraft(allergy.reaction ?? "");
@@ -145,7 +148,7 @@ export function AllergyCard({
     if (expanded) {
       scrollAllergyCardHeaderIntoView(cardRef.current);
     } else {
-      scrollCollapsibleToTop(cardRef.current?.closest("section") ?? null);
+      scrollCollapsibleToStickyTop(cardRef.current?.closest("section") ?? null);
     }
   }, [canExpand, expanded]);
 
@@ -225,7 +228,7 @@ export function AllergyCard({
   return (
     <div
       ref={cardRef}
-      className="scroll-mt-[var(--collapsible-sticky-top,2.75rem)] rounded-md border border-border/60 bg-background transition-colors"
+      className="relative overflow-clip scroll-mt-[var(--sticky-stack,2.75rem)] rounded-md border border-border/60 bg-background transition-colors"
       data-testid={`${testIdPrefix}-card-${allergy.id}`}
       data-open={expanded ? "true" : "false"}
       onKeyDown={(e) => {
@@ -233,9 +236,12 @@ export function AllergyCard({
       }}
     >
       <div
+        ref={headerRef}
+        style={headerStyle}
         className={cn(
-          "flex items-center gap-2 px-2 py-1.5",
-          expanded && "border-b border-border/60 bg-muted/25",
+          "flex items-center gap-2 rounded-t-md px-2 py-1.5",
+          expanded && "border-b border-border/60",
+          pinned ? "bg-background shadow-sm" : expanded && "bg-muted/25",
         )}
         data-testid={
           expanded
@@ -293,7 +299,8 @@ export function AllergyCard({
       </div>
 
       {canExpand ? (
-        <Collapse open={expanded} id={bodyId} className="space-y-2 px-2.5 pb-2.5 pt-2">
+        <Collapse open={expanded} id={bodyId} style={bodyStyle} className="space-y-2 px-2.5 pb-2.5 pt-2">
+          <StickyStackProvider value={childValue}>
           {!readonly ? (
             <>
               <ChartEditorFieldRow label="Severity">
@@ -343,6 +350,7 @@ export function AllergyCard({
           ) : detail ? (
             <p className="text-xs text-muted-foreground">{detail}</p>
           ) : null}
+          </StickyStackProvider>
         </Collapse>
       ) : readonly && detail ? (
         <p className="px-2.5 pb-2 text-xs text-muted-foreground">{detail}</p>

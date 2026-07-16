@@ -72,6 +72,32 @@ describe("deriveExaminationFindingsFromExam (obj-01)", () => {
   it("returns an empty string for an empty list", () => {
     expect(deriveExaminationFindingsFromExam([])).toBe("");
   });
+
+  it("renders Additional notes as notes-only and sorts after core systems", () => {
+    const text = deriveExaminationFindingsFromExam([
+      {
+        systemId: "additional_notes",
+        status: "abnormal",
+        findings: [],
+        notes: "Patient anxious; deferred fundoscopy",
+      },
+      GENERAL,
+    ]);
+    expect(text).toBe(
+      [
+        "General: Normal",
+        "Additional notes: Patient anxious; deferred fundoscopy",
+      ].join("\n"),
+    );
+  });
+
+  it("skips Additional notes rows with empty notes", () => {
+    expect(
+      deriveExaminationFindingsFromExam([
+        { systemId: "additional_notes", status: "abnormal", findings: [], notes: "  " },
+      ]),
+    ).toBe("");
+  });
 });
 
 describe("normalizeExamFindings (obj-01)", () => {

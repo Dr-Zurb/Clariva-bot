@@ -136,6 +136,25 @@ describe("social-history-substances", () => {
     expect(text).toContain("14 d");
   });
 
+  it("round-trips item notes in clause TEXT", () => {
+    const text = serializeSubstancesSection({
+      status: "current",
+      items: [
+        createSubstanceItem("cannabis", {
+          amount: 1,
+          amountUnit: "joints",
+          note: "weekends only",
+        }),
+      ],
+    });
+    expect(text).toContain("notes: weekends only");
+    const parsed = parseSubstancesText(text.replace(/^Substances:\s*Current use — /, ""));
+    expect(parsed.items[0]).toMatchObject({
+      type: "cannabis",
+      note: "weekends only",
+    });
+  });
+
   it("dedupes add chips for types already on chart", () => {
     const chips = availableSubstanceAddChips([
       createSubstanceItem("cannabis"),

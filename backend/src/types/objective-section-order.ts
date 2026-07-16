@@ -7,9 +7,8 @@
 export const OBJECTIVE_SECTION_ID_VALUES = [
   'vitals',
   'exam',
+  'notes',
   'test_results',
-  'legacy_exam',
-  'legacy_vitals',
 ] as const;
 
 export type StaticObjectiveSectionId = (typeof OBJECTIVE_SECTION_ID_VALUES)[number];

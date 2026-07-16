@@ -22,6 +22,16 @@ vi.mock("@/components/cockpit/rx/inputs/VitalsGrid", () => ({
   VitalsGrid: () => <div data-testid="vitals-grid-stub" />,
 }));
 
+vi.mock("@/components/cockpit/rx/inputs/ExamSystemList", () => ({
+  ExamSystemList: ({ disabled }: { disabled?: boolean }) => (
+    <div data-testid="exam-system-list">
+      <button type="button" data-testid="exam-mark-all-normal" disabled={disabled}>
+        Mark all normal
+      </button>
+    </div>
+  ),
+}));
+
 const mockGetDoctorSettings = vi.fn();
 const mockPatchDoctorSettings = vi.fn();
 const mockUpdatePrescription = vi.fn();
@@ -31,6 +41,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     getDoctorSettings: (...args: unknown[]) => mockGetDoctorSettings(...args),
+    getAppointmentById: vi.fn().mockResolvedValue({ data: { appointment: { consultation_type: "in_clinic" } } }),
     patchDoctorSettings: (...args: unknown[]) => mockPatchDoctorSettings(...args),
     updatePrescription: (...args: unknown[]) => mockUpdatePrescription(...args),
     createPrescription: vi.fn(),
@@ -85,6 +96,10 @@ function renderWithShell(ui: ReactElement, shell: Partial<RxFormProviderSetup>) 
     setSubjectiveSectionHidden: vi.fn(),
     objectiveDefaults: null,
     setObjectiveDefaults: vi.fn(),
+    planDefaults: null,
+    setPlanDefaults: vi.fn(),
+    assessmentDefaults: null,
+    setAssessmentDefaults: vi.fn(),
     providerProps: {
       key: "test",
       appointmentId: "appt-1",
@@ -178,8 +193,8 @@ describe("ManageObjectiveSectionsMenu — hide/unhide (obj-12)", () => {
     const { container } = renderWithRxForm(<ObjectiveSection heading={null} />);
     await waitForSettingsLoaded();
 
-    await hideSectionViaMenu("Patient-brought reports");
-    await hideSectionViaMenu("Legacy free-text vitals");
+    await hideSectionViaMenu("Reports");
+    await hideSectionViaMenu("Notes");
 
     await waitFor(
       () => {
@@ -188,7 +203,7 @@ describe("ManageObjectiveSectionsMenu — hide/unhide (obj-12)", () => {
           objective_section_hidden: string[];
         };
         expect(last.objective_section_hidden).toEqual(
-          expect.arrayContaining(["test_results", "legacy_vitals"]),
+          expect.arrayContaining(["test_results", "notes"]),
         );
         expect(last.objective_section_hidden).not.toContain("vitals");
       },
@@ -197,7 +212,7 @@ describe("ManageObjectiveSectionsMenu — hide/unhide (obj-12)", () => {
 
     const order = readRenderedSectionOrder(container);
     expect(order).not.toContain("test_results");
-    expect(order).not.toContain("legacy_vitals");
+    expect(order).not.toContain("notes");
     expect(order).toContain("vitals");
     expect(mockUpdatePrescription).not.toHaveBeenCalled();
   });
@@ -206,15 +221,17 @@ describe("ManageObjectiveSectionsMenu — hide/unhide (obj-12)", () => {
     renderWithRxForm(<ObjectiveSection heading={null} />);
     await waitForSettingsLoaded();
 
-    expect(screen.getByTestId("objective-section-manager-trigger")).toHaveTextContent(
+    expect(screen.getByTestId("objective-section-manager-trigger")).toHaveAttribute(
+      "aria-label",
       "Manage sections",
     );
 
     await hideSectionViaMenu("Examination");
 
     await waitFor(() => {
-      expect(screen.getByTestId("objective-section-manager-trigger")).toHaveTextContent(
-        "1 hidden",
+      expect(screen.getByTestId("objective-section-manager-trigger")).toHaveAttribute(
+        "aria-label",
+        "Sections · 1 hidden",
       );
     });
   });
@@ -224,7 +241,7 @@ describe("ManageObjectiveSectionsMenu — hide/unhide (obj-12)", () => {
       objectiveDefaults: {
         sectionOrder: [],
         sectionCollapsed: {},
-        sectionHidden: ["test_results", "legacy_exam"] as ObjectiveSectionId[],
+        sectionHidden: ["test_results", "notes"] as ObjectiveSectionId[],
         customSections: [],
       },
     });
@@ -232,7 +249,7 @@ describe("ManageObjectiveSectionsMenu — hide/unhide (obj-12)", () => {
     await waitFor(() => {
       const order = readRenderedSectionOrder(container);
       expect(order).not.toContain("test_results");
-      expect(order).not.toContain("legacy_exam");
+      expect(order).not.toContain("notes");
       expect(order).toContain("vitals");
     });
     expect(mockGetDoctorSettings).not.toHaveBeenCalled();
@@ -246,11 +263,8 @@ describe("ManageObjectiveSectionsMenu — hide/unhide (obj-12)", () => {
         sectionHidden: [
           "vitals",
           "exam",
+          "notes",
           "test_results",
-          "point_of_care",
-          "media",
-          "legacy_exam",
-          "legacy_vitals",
         ] as ObjectiveSectionId[],
         customSections: [],
       },

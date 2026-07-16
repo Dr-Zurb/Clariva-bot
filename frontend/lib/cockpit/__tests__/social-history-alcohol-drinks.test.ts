@@ -70,6 +70,23 @@ describe("social-history-alcohol-drinks", () => {
     expect(formatAlcoholDrinkClause(parsed!)).toBe(clause);
   });
 
+  it("round-trips drink notes in clause TEXT", () => {
+    const clause = formatAlcoholDrinkClause(
+      createAlcoholDrink("wine", {
+        amount: 2,
+        amountUnit: "glass",
+        frequency: 1,
+        frequencyUnit: "week",
+        note: "only with meals",
+      }),
+    );
+    expect(clause).toContain("; notes: only with meals");
+    expect(parseAlcoholDrinkClause(clause)).toMatchObject({
+      type: "wine",
+      note: "only with meals",
+    });
+  });
+
   it("migrates legacy types and unitsPerWeek to drinks", () => {
     const normalized = normalizeAlcoholSection({
       status: "current",

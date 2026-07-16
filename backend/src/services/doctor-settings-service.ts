@@ -25,6 +25,7 @@ import {
   type LegacyPresetLayout,
   type CockpitTemplateOverride,
   type CustomVitalDef,
+  type DoctorInvestigationCustomOrder,
   type DoctorSettingsRow,
   type OpdMode,
   type PatientFlowAdvance,
@@ -40,8 +41,15 @@ import {
   objectiveSectionOrderSchema,
   objectiveSectionCollapsedSchema,
   objectiveSectionHiddenSchema,
+  planSectionOrderSchema,
+  planSectionCollapsedSchema,
+  planSectionHiddenSchema,
+  assessmentSectionOrderSchema,
+  assessmentSectionCollapsedSchema,
+  assessmentSectionHiddenSchema,
   vitalsCustomSchema,
   vitalsHiddenSchema,
+  investigationsCustomOrdersSchema,
 } from '../utils/validation';
 import {
   sanitizeSubjectiveSectionOrder,
@@ -53,6 +61,16 @@ import {
   sanitizeObjectiveSectionCollapsed,
   sanitizeObjectiveSectionHidden,
 } from '../types/objective-section-order';
+import {
+  sanitizePlanSectionOrder,
+  sanitizePlanSectionCollapsed,
+  sanitizePlanSectionHidden,
+} from '../types/plan-section-order';
+import {
+  sanitizeAssessmentSectionOrder,
+  sanitizeAssessmentSectionCollapsed,
+  sanitizeAssessmentSectionHidden,
+} from '../types/assessment-section-order';
 import { sanitizeVitalsHidden } from '../types/vitals-hidden';
 import { mergeServiceCatalogOnSave } from '../utils/service-catalog-normalize';
 import {
@@ -100,8 +118,21 @@ const SELECT_COLUMNS =
   'objective_section_collapsed, ' +
   'objective_section_hidden, ' +
   'objective_custom_sections, ' +
+  // plan chrome (migration 173): per-doctor plan layout config.
+  'plan_section_order, ' +
+  'plan_section_collapsed, ' +
+  'plan_section_hidden, ' +
+  // assessment chrome (migration 174): per-doctor assessment layout config.
+  'assessment_section_order, ' +
+  'assessment_section_collapsed, ' +
+  'assessment_section_hidden, ' +
+  // assessment-plan-custom-sections (migration 178): per-doctor default custom sections.
+  'assessment_custom_sections, ' +
+  'plan_custom_sections, ' +
   // vit-14 (migration 157): per-doctor custom-vital definitions.
   'vitals_custom, ' +
+  // plan-investigations-library (migration 169): custom investigation orders.
+  'investigations_custom_orders, ' +
   // vit-07 (migration 156): per-doctor hidden vitals set.
   'vitals_hidden, ' +
   // R-MOD-full (migration 106): global cockpit template pin.
@@ -153,8 +184,21 @@ const DEFAULT_SETTINGS: DoctorSettingsRow = {
   objective_section_collapsed: {},
   objective_section_hidden: [],
   objective_custom_sections: [],
+  // plan chrome: empty arrays/object are the DB-side defaults (canonical layout).
+  plan_section_order: [],
+  plan_section_collapsed: {},
+  plan_section_hidden: [],
+  // assessment chrome: empty arrays/object are the DB-side defaults (canonical layout).
+  assessment_section_order: [],
+  assessment_section_collapsed: {},
+  assessment_section_hidden: [],
+  // assessment-plan-custom-sections: empty arrays are the DB-side defaults (no seed).
+  assessment_custom_sections: [],
+  plan_custom_sections: [],
   // vit-14: per-doctor custom-vital definitions (empty = none).
   vitals_custom: [],
+  // plan-investigations-library: per-doctor custom investigation orders (empty = none).
+  investigations_custom_orders: [],
   // vit-07: per-doctor hidden vitals (empty = factory default).
   vitals_hidden: [],
   // R-MOD-full: NULL = auto-select per modality + state.
@@ -349,6 +393,82 @@ function normalizeObjectiveSectionHiddenInRow(row: DoctorSettingsRow): DoctorSet
   };
 }
 
+function normalizePlanSectionOrderInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as { plan_section_order?: unknown }).plan_section_order;
+  if (!Array.isArray(raw)) {
+    return { ...row, plan_section_order: [] };
+  }
+  return {
+    ...row,
+    plan_section_order: sanitizePlanSectionOrder(
+      raw.filter((id): id is string => typeof id === 'string'),
+    ),
+  };
+}
+
+function normalizePlanSectionCollapsedInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as { plan_section_collapsed?: unknown }).plan_section_collapsed;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ...row, plan_section_collapsed: {} };
+  }
+  return {
+    ...row,
+    plan_section_collapsed: sanitizePlanSectionCollapsed(raw as Record<string, unknown>),
+  };
+}
+
+function normalizePlanSectionHiddenInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as { plan_section_hidden?: unknown }).plan_section_hidden;
+  if (!Array.isArray(raw)) {
+    return { ...row, plan_section_hidden: [] };
+  }
+  return {
+    ...row,
+    plan_section_hidden: sanitizePlanSectionHidden(
+      raw.filter((id): id is string => typeof id === 'string'),
+    ),
+  };
+}
+
+function normalizeAssessmentSectionOrderInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as { assessment_section_order?: unknown }).assessment_section_order;
+  if (!Array.isArray(raw)) {
+    return { ...row, assessment_section_order: [] };
+  }
+  return {
+    ...row,
+    assessment_section_order: sanitizeAssessmentSectionOrder(
+      raw.filter((id): id is string => typeof id === 'string'),
+    ),
+  };
+}
+
+function normalizeAssessmentSectionCollapsedInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as { assessment_section_collapsed?: unknown }).assessment_section_collapsed;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ...row, assessment_section_collapsed: {} };
+  }
+  return {
+    ...row,
+    assessment_section_collapsed: sanitizeAssessmentSectionCollapsed(
+      raw as Record<string, unknown>,
+    ),
+  };
+}
+
+function normalizeAssessmentSectionHiddenInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as { assessment_section_hidden?: unknown }).assessment_section_hidden;
+  if (!Array.isArray(raw)) {
+    return { ...row, assessment_section_hidden: [] };
+  }
+  return {
+    ...row,
+    assessment_section_hidden: sanitizeAssessmentSectionHidden(
+      raw.filter((id): id is string => typeof id === 'string'),
+    ),
+  };
+}
+
 function normalizeObjectiveCustomSectionsInRow(row: DoctorSettingsRow): DoctorSettingsRow {
   const raw = (row as { objective_custom_sections?: unknown }).objective_custom_sections;
   if (!Array.isArray(raw)) {
@@ -357,12 +477,39 @@ function normalizeObjectiveCustomSectionsInRow(row: DoctorSettingsRow): DoctorSe
   return { ...row, objective_custom_sections: raw as CustomSubsection[] };
 }
 
+function normalizeAssessmentCustomSectionsInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as { assessment_custom_sections?: unknown }).assessment_custom_sections;
+  if (!Array.isArray(raw)) {
+    return { ...row, assessment_custom_sections: [] };
+  }
+  return { ...row, assessment_custom_sections: raw as CustomSubsection[] };
+}
+
+function normalizePlanCustomSectionsInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as { plan_custom_sections?: unknown }).plan_custom_sections;
+  if (!Array.isArray(raw)) {
+    return { ...row, plan_custom_sections: [] };
+  }
+  return { ...row, plan_custom_sections: raw as CustomSubsection[] };
+}
+
 function normalizeVitalsCustomInRow(row: DoctorSettingsRow): DoctorSettingsRow {
   const raw = (row as { vitals_custom?: unknown }).vitals_custom;
   if (!Array.isArray(raw)) {
     return { ...row, vitals_custom: [] };
   }
   return { ...row, vitals_custom: raw as CustomVitalDef[] };
+}
+
+function normalizeInvestigationsCustomOrdersInRow(row: DoctorSettingsRow): DoctorSettingsRow {
+  const raw = (row as { investigations_custom_orders?: unknown }).investigations_custom_orders;
+  if (!Array.isArray(raw)) {
+    return { ...row, investigations_custom_orders: [] };
+  }
+  return {
+    ...row,
+    investigations_custom_orders: raw as DoctorInvestigationCustomOrder[],
+  };
 }
 
 function normalizeVitalsHiddenInRow(row: DoctorSettingsRow): DoctorSettingsRow {
@@ -379,21 +526,39 @@ function normalizeVitalsHiddenInRow(row: DoctorSettingsRow): DoctorSettingsRow {
 }
 
 function normalizeDoctorSettingsApiRow(row: DoctorSettingsRow): DoctorSettingsRow {
-  return normalizeVitalsHiddenInRow(
-    normalizeVitalsCustomInRow(
-      normalizeObjectiveCustomSectionsInRow(
-        normalizeObjectiveSectionHiddenInRow(
-          normalizeObjectiveSectionCollapsedInRow(
-            normalizeObjectiveSectionOrderInRow(
-              normalizeSubjectiveSectionHiddenInRow(
-                normalizeSubjectiveSectionCollapsedInRow(
-                  normalizeSubjectiveSectionOrderInRow(
-                    normalizeSubjectiveCustomSubsectionsInRow(
-                      normalizeUserTemplatesInRow(normalizeServiceOfferingsInRow(row)),
+  return normalizeInvestigationsCustomOrdersInRow(
+    normalizeVitalsHiddenInRow(
+      normalizeVitalsCustomInRow(
+        normalizePlanCustomSectionsInRow(
+          normalizeAssessmentCustomSectionsInRow(
+            normalizeAssessmentSectionHiddenInRow(
+          normalizeAssessmentSectionCollapsedInRow(
+            normalizeAssessmentSectionOrderInRow(
+              normalizePlanSectionHiddenInRow(
+                normalizePlanSectionCollapsedInRow(
+                  normalizePlanSectionOrderInRow(
+                    normalizeObjectiveCustomSectionsInRow(
+                      normalizeObjectiveSectionHiddenInRow(
+                        normalizeObjectiveSectionCollapsedInRow(
+                          normalizeObjectiveSectionOrderInRow(
+                            normalizeSubjectiveSectionHiddenInRow(
+                              normalizeSubjectiveSectionCollapsedInRow(
+                                normalizeSubjectiveSectionOrderInRow(
+                                  normalizeSubjectiveCustomSubsectionsInRow(
+                                    normalizeUserTemplatesInRow(normalizeServiceOfferingsInRow(row)),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
               ),
+            ),
+          ),
             ),
           ),
         ),
@@ -790,10 +955,28 @@ export interface UpdateDoctorSettingsPayload {
   objective_section_hidden?: string[];
   /** obj-10: per-doctor default custom Objective-tab sections (replaces entire array). */
   objective_custom_sections?: CustomSubsection[];
+  /** plan chrome: per-doctor default Plan-tab section order (replaces entire array). */
+  plan_section_order?: string[];
+  /** plan chrome: per-doctor default Plan-tab section collapse map (replaces entire object). */
+  plan_section_collapsed?: Record<string, boolean>;
+  /** plan chrome: per-doctor hidden Plan-tab section set (replaces entire array). */
+  plan_section_hidden?: string[];
+  /** assessment chrome: per-doctor default Assessment-tab section order (replaces entire array). */
+  assessment_section_order?: string[];
+  /** assessment chrome: per-doctor default Assessment-tab section collapse map (replaces entire object). */
+  assessment_section_collapsed?: Record<string, boolean>;
+  /** assessment chrome: per-doctor hidden Assessment-tab section set (replaces entire array). */
+  assessment_section_hidden?: string[];
+  /** assessment-plan-custom-sections: per-doctor default custom Assessment sections (replaces entire array). */
+  assessment_custom_sections?: CustomSubsection[];
+  /** assessment-plan-custom-sections: per-doctor default custom Plan sections (replaces entire array). */
+  plan_custom_sections?: CustomSubsection[];
   /** vit-14: per-doctor custom-vital definitions (replaces entire array). */
   vitals_custom?: CustomVitalDef[];
   /** vit-07: per-doctor hidden vitals set (replaces entire array). */
   vitals_hidden?: string[];
+  /** plan-investigations-library: per-doctor custom investigation orders. */
+  investigations_custom_orders?: DoctorInvestigationCustomOrder[];
 }
 
 /**
@@ -980,6 +1163,62 @@ export async function updateDoctorSettings(
     payload.objective_section_hidden = parsed.data;
   }
 
+  if (payload.plan_section_order !== undefined) {
+    const parsed = planSectionOrderSchema.safeParse(payload.plan_section_order);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ValidationError(first?.message ?? 'Invalid plan_section_order');
+    }
+    payload.plan_section_order = parsed.data;
+  }
+
+  if (payload.plan_section_collapsed !== undefined) {
+    const parsed = planSectionCollapsedSchema.safeParse(payload.plan_section_collapsed);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ValidationError(first?.message ?? 'Invalid plan_section_collapsed');
+    }
+    payload.plan_section_collapsed = parsed.data;
+  }
+
+  if (payload.plan_section_hidden !== undefined) {
+    const parsed = planSectionHiddenSchema.safeParse(payload.plan_section_hidden);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ValidationError(first?.message ?? 'Invalid plan_section_hidden');
+    }
+    payload.plan_section_hidden = parsed.data;
+  }
+
+  if (payload.assessment_section_order !== undefined) {
+    const parsed = assessmentSectionOrderSchema.safeParse(payload.assessment_section_order);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ValidationError(first?.message ?? 'Invalid assessment_section_order');
+    }
+    payload.assessment_section_order = parsed.data;
+  }
+
+  if (payload.assessment_section_collapsed !== undefined) {
+    const parsed = assessmentSectionCollapsedSchema.safeParse(
+      payload.assessment_section_collapsed,
+    );
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ValidationError(first?.message ?? 'Invalid assessment_section_collapsed');
+    }
+    payload.assessment_section_collapsed = parsed.data;
+  }
+
+  if (payload.assessment_section_hidden !== undefined) {
+    const parsed = assessmentSectionHiddenSchema.safeParse(payload.assessment_section_hidden);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ValidationError(first?.message ?? 'Invalid assessment_section_hidden');
+    }
+    payload.assessment_section_hidden = parsed.data;
+  }
+
   if (payload.objective_custom_sections !== undefined) {
     const parsed = objectiveCustomSectionsSchema.safeParse(payload.objective_custom_sections);
     if (!parsed.success) {
@@ -998,6 +1237,42 @@ export async function updateDoctorSettings(
     }));
   }
 
+  if (payload.assessment_custom_sections !== undefined) {
+    const parsed = objectiveCustomSectionsSchema.safeParse(payload.assessment_custom_sections);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ValidationError(first?.message ?? 'Invalid assessment_custom_sections');
+    }
+    payload.assessment_custom_sections = parsed.data.map((section) => ({
+      id: section.id,
+      title: section.title,
+      body: section.body ?? null,
+      children: (section.children ?? []).map((child) => ({
+        id: child.id,
+        title: child.title,
+        body: child.body ?? null,
+      })),
+    }));
+  }
+
+  if (payload.plan_custom_sections !== undefined) {
+    const parsed = objectiveCustomSectionsSchema.safeParse(payload.plan_custom_sections);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ValidationError(first?.message ?? 'Invalid plan_custom_sections');
+    }
+    payload.plan_custom_sections = parsed.data.map((section) => ({
+      id: section.id,
+      title: section.title,
+      body: section.body ?? null,
+      children: (section.children ?? []).map((child) => ({
+        id: child.id,
+        title: child.title,
+        body: child.body ?? null,
+      })),
+    }));
+  }
+
   if (payload.vitals_custom !== undefined) {
     const parsed = vitalsCustomSchema.safeParse(payload.vitals_custom);
     if (!parsed.success) {
@@ -1005,6 +1280,17 @@ export async function updateDoctorSettings(
       throw new ValidationError(first?.message ?? 'Invalid vitals_custom');
     }
     payload.vitals_custom = parsed.data;
+  }
+
+  if (payload.investigations_custom_orders !== undefined) {
+    const parsed = investigationsCustomOrdersSchema.safeParse(
+      payload.investigations_custom_orders,
+    );
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      throw new ValidationError(first?.message ?? 'Invalid investigations_custom_orders');
+    }
+    payload.investigations_custom_orders = parsed.data;
   }
 
   if (payload.vitals_hidden !== undefined) {
@@ -1072,8 +1358,17 @@ export async function updateDoctorSettings(
     'objective_section_collapsed',
     'objective_section_hidden',
     'objective_custom_sections',
+    'plan_section_order',
+    'plan_section_collapsed',
+    'plan_section_hidden',
+    'assessment_section_order',
+    'assessment_section_collapsed',
+    'assessment_section_hidden',
+    'assessment_custom_sections',
+    'plan_custom_sections',
     'vitals_custom',
     'vitals_hidden',
+    'investigations_custom_orders',
   ];
   for (const key of allowedKeys) {
     if (key in payload) {

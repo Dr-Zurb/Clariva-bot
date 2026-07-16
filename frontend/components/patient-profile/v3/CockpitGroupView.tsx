@@ -3,7 +3,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef } from "react";
 import type { GroupImperativeHandle } from "react-resizable-panels";
 import {
-  ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
@@ -11,6 +10,7 @@ import type { PaneDefinition, PaneTreeNode } from "@/lib/patient-profile/v3/foun
 import { MIN_COMFORTABLE_ROW_PX } from "@/lib/patient-profile/v3/column-cap";
 import { cn } from "@/lib/utils";
 import type { CockpitV3Layout } from "@/lib/patient-profile/v3/useCockpitV3Layout";
+import CockpitGutterHandle from "./CockpitGutterHandle";
 import CockpitLeafView from "./CockpitLeafView";
 
 /** Fallback column min-width (px) for a pane that doesn't declare `minSizePx`. */
@@ -208,12 +208,15 @@ function CockpitSplitGroup({
                 (withHandle) is the discoverable affordance; the orientation prop
                 fixes horizontal separators that previously collapsed to a 1px
                 corner sliver (react-resizable-panels v4 dropped the data attr
-                the old styling relied on). */}
+                the old styling relied on). Doubles as a gutter drop target:
+                dropping a tab on the seam inserts it as a new panel between the
+                two children it divides. */}
             {index > 0 ? (
-              <ResizableHandle
-                withHandle
+              <CockpitGutterHandle
+                parentId={node.id}
+                leftChildId={visibleChildren[index - 1]!.id}
+                rightChildId={child.id}
                 orientation={orientation}
-                className="bg-transparent hover:bg-border/60 data-[separator=drag]:bg-primary/60 data-[separator=active]:bg-primary/60"
               />
             ) : null}
             <ResizablePanel

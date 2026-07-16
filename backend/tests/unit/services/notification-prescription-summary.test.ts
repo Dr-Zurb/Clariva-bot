@@ -65,6 +65,24 @@ describe('buildPrescriptionTextSummary custom subsections (subj-22)', () => {
     expect(summary).toContain('**Diagnosis:** Tension headache');
     expect(summary).toContain('**Follow-up:** 1 week');
   });
+  it('includes advice and referral when present (plan-p1)', () => {
+    const summary = buildPrescriptionTextSummary(
+      {
+        provisional_diagnosis: 'URI',
+        advice: 'Rest',
+        patient_education: 'Hydrate',
+        follow_up: null,
+        follow_up_value: 5,
+        follow_up_unit: 'days',
+        referral: 'ENT if persists',
+      },
+      'Test Clinic',
+    );
+    expect(summary).toContain('**Advice:** Rest\nHydrate');
+    expect(summary).not.toContain('**Patient education:**');
+    expect(summary).toContain('**Follow-up:** in 5 days');
+    expect(summary).toContain('**Referral:** ENT if persists');
+  });
 });
 
 describe('buildPrescriptionTextSummary exam isolation (obj-04 close-gate)', () => {

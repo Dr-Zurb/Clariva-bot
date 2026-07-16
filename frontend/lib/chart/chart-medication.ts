@@ -235,6 +235,25 @@ export function resolveStrengthUnitInput(raw: string): StrengthUnit | "custom" |
   return "custom";
 }
 
+/**
+ * Trailing free-text strength unit when structured unit is unset
+ * (e.g. dosage/strength "5 scoop" → "scoop").
+ */
+export function customStrengthUnitFromLegacy(
+  strengthText: string | null | undefined,
+  strengthValue: number | null | undefined,
+  strengthUnit: StrengthUnit | null | undefined,
+): string | null {
+  if (strengthUnit) return null;
+  if (strengthValue == null || !strengthText?.trim()) return null;
+  const escaped = String(strengthValue).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const rest = strengthText
+    .trim()
+    .replace(new RegExp(`^${escaped}\\s*`, "i"), "")
+    .trim();
+  return rest || null;
+}
+
 export function resolveDoseUnitInput(raw: string): DoseUnit | "custom" | null {
   const text = raw.trim();
   if (!text) return null;
@@ -831,7 +850,7 @@ export function resolveStopReasonInput(raw: string): PatientMedicationStopReason
 
 /** Top food-timing chips — remainder in the typable More combobox. */
 export const CHART_MED_FOOD_TIMING_PRIMARY = [
-  "with_food",
+  "after_food",
   "empty_stomach",
   "before_food",
 ] as const satisfies readonly FoodTiming[];
@@ -845,10 +864,14 @@ export const FOOD_TIMING_CHIP_OPTIONS = FOOD_TIMING_OPTIONS.map((o) => ({
 export function resolveFoodTimingInput(raw: string): FoodTiming | null {
   const q = raw.trim().toLowerCase();
   if (!q) return null;
-  const hit = FOOD_TIMING_OPTIONS.find(
+  const exact = FOOD_TIMING_OPTIONS.find(
     (o) => o.code.toLowerCase() === q || o.label.toLowerCase() === q,
   );
-  return hit?.code ?? null;
+  if (exact) return exact.code;
+  const prefixHits = FOOD_TIMING_OPTIONS.filter(
+    (o) => o.label.toLowerCase().startsWith(q) || o.code.toLowerCase().startsWith(q),
+  );
+  return prefixHits.length === 1 ? prefixHits[0]!.code : null;
 }
 
 export interface ChartMedicationPatch {

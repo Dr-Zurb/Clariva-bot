@@ -79,6 +79,7 @@ function renderContext(
 ) {
   const onDrop = props.onDrop ?? vi.fn();
   const onReorder = props.onReorder ?? vi.fn();
+  const onSwap = props.onSwap ?? vi.fn();
   render(
     <CockpitDndContext
       paneById={{
@@ -87,12 +88,13 @@ function renderContext(
       }}
       onDrop={onDrop}
       onReorder={onReorder}
+      onSwap={onSwap}
       {...props}
     >
       <div data-testid="canvas" />
     </CockpitDndContext>,
   );
-  return { onDrop, onReorder };
+  return { onDrop, onReorder, onSwap };
 }
 
 function fireDragMove(event: DragMoveEvent) {
@@ -158,6 +160,34 @@ describe("CockpitDndContext routing (cv3d-03)", () => {
     });
   });
 
+  it("body-centre drop routes swap via onSwap", () => {
+    const onSwap = vi.fn();
+    renderContext({ onSwap });
+
+    const swapEvent = {
+      active: {
+        id: "cockpit-v3-tab-g1-rx",
+        data: { current: { paneId: "rx", groupId: "g1" } },
+      },
+      over: bodyOver,
+      // Pointer lands dead-centre of the 200×200 body (100,100).
+      delta: { x: 90, y: 90 },
+      activatorEvent: new MouseEvent("pointerdown", { clientX: 10, clientY: 10 }),
+      collisions: null,
+    } as DragMoveEvent;
+
+    fireDragMove(swapEvent);
+    fireDragEnd(swapEvent as unknown as DragEndEvent);
+
+    expect(onSwap).toHaveBeenCalledOnce();
+    expect(onSwap).toHaveBeenCalledWith({
+      kind: "swap",
+      sourceGroupId: "g1",
+      targetGroupId: "g2",
+      sourcePaneId: "rx",
+    });
+  });
+
   it("tab-bar drop routes center move", () => {
     const onDrop = vi.fn();
     renderContext({ onDrop });
@@ -206,7 +236,75 @@ describe("CockpitDndContext routing (cv3d-03)", () => {
       kind: "reorder",
       groupId: "g1",
       sourcePaneId: "rx",
-      beforePaneId: "chart",
+      overPaneId: "chart",
+      place: "before",
+    });
+  });
+
+  it("same-group sibling tab right-half drop routes reorder after", () => {
+    const onReorder = vi.fn();
+    renderContext({ onReorder });
+
+    fireDragEnd({
+      active: {
+        id: "cockpit-v3-tab-g1-rx",
+        data: { current: { paneId: "rx", groupId: "g1" } },
+      },
+      over: {
+        id: "cockpit-v3-tab-g1-chart",
+        data: {
+          current: { groupId: "g1", sortableTabId: "chart", paneId: "chart" },
+        },
+        rect: { top: 0, left: 0, width: 80, height: 28 },
+      },
+      // Pointer starts at (0,0); delta lands in the right half of the 80px tab.
+      delta: { x: 60, y: 0 },
+      activatorEvent: new MouseEvent("pointerdown", { clientX: 0, clientY: 0 }),
+      collisions: null,
+    } as DragEndEvent);
+
+    expect(onReorder).toHaveBeenCalledOnce();
+    expect(onReorder).toHaveBeenCalledWith({
+      kind: "reorder",
+      groupId: "g1",
+      sourcePaneId: "rx",
+      overPaneId: "chart",
+      place: "after",
+    });
+  });
+
+  it("same-group trailing strip end routes reorder after last pane", () => {
+    const onReorder = vi.fn();
+    renderContext({ onReorder });
+
+    fireDragEnd({
+      active: {
+        id: "cockpit-v3-tab-g1-rx",
+        data: { current: { paneId: "rx", groupId: "g1" } },
+      },
+      over: {
+        id: "cockpit-v3-tab-end-g1",
+        data: {
+          current: {
+            groupId: "g1",
+            tabStripEnd: true,
+            lastPaneId: "chart",
+          },
+        },
+        rect: { top: 0, left: 200, width: 120, height: 28 },
+      },
+      delta: { x: 220, y: 0 },
+      activatorEvent: new MouseEvent("pointerdown", { clientX: 0, clientY: 0 }),
+      collisions: null,
+    } as DragEndEvent);
+
+    expect(onReorder).toHaveBeenCalledOnce();
+    expect(onReorder).toHaveBeenCalledWith({
+      kind: "reorder",
+      groupId: "g1",
+      sourcePaneId: "rx",
+      overPaneId: "chart",
+      place: "after",
     });
   });
 

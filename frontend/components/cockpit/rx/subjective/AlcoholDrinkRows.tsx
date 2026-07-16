@@ -415,6 +415,7 @@ function CompactDrinkCard({
   // (already shown in the header), then append the weekly-units estimate.
   const previewSegments = previewSentence ? previewSentence.split(" · ").slice(1) : [];
   if (rowUnits != null) previewSegments.push(`≈ ${rowUnits} units/week`);
+  if (drink.note?.trim()) previewSegments.push(drink.note.trim());
   const preview = previewSegments.join(" · ") || undefined;
 
   const titleNode = (
@@ -727,6 +728,24 @@ function CompactDrinkCard({
           )}
         </p>
       )}
+
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <label htmlFor={`${testIdPrefix}-note-${drink.id}`} className={ROW_LABEL_CLASS}>
+          Note
+        </label>
+        <input
+          id={`${testIdPrefix}-note-${drink.id}`}
+          type="text"
+          value={drink.note ?? ""}
+          disabled={disabled}
+          placeholder="Additional context"
+          aria-label={`Note for ${displayLabel}`}
+          maxLength={200}
+          data-testid={`${testIdPrefix}-note-${index}`}
+          onChange={(e) => onChange({ note: e.target.value.trim() || undefined })}
+          className={cn(RX_FIELD_INPUT_CLASS, "h-8 min-w-0 flex-1 text-xs")}
+        />
+      </div>
     </CollapsibleEntryCard>
   );
 }
@@ -782,7 +801,7 @@ export function AlcoholDrinkRows({
                 disabled={disabled}
                 aria-label={`Add ${option.label}`}
                 data-testid={`${testIdPrefix}-add-${option.value}`}
-                onClick={() => onChange([...drinks, createAlcoholDrink(option.value)])}
+                onClick={() => onChange([createAlcoholDrink(option.value), ...drinks])}
                 className={ADD_CHIP_CLASS}
               >
                 + {option.label}

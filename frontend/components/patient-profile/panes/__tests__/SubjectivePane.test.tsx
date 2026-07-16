@@ -34,14 +34,13 @@ function renderWithRxForm(ui: ReactElement) {
 }
 
 describe("SubjectivePane", () => {
-  it("renders complaint cards, visit histories, and free-text fallback", () => {
+  it("renders complaint cards and additional notes fallback", () => {
     renderWithRxForm(<SubjectivePane hideHeader />);
     expect(screen.getByLabelText("Subjective")).toBeInTheDocument();
     expect(screen.getByLabelText("Chief complaints")).toBeInTheDocument();
-    expect(screen.getByLabelText("Visit histories")).toBeInTheDocument();
-    expect(screen.getByText("Free-text notes (optional)")).toBeInTheDocument();
+    expect(screen.getByText("Additional Notes")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText("Free-text notes (optional)"));
+    fireEvent.click(screen.getByText("Additional Notes"));
     expect(screen.getByLabelText("Additional history notes")).toBeInTheDocument();
   });
 

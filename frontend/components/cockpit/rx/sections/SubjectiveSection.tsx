@@ -25,6 +25,7 @@ import { PatientAllergiesZone } from "@/components/cockpit/rx/subjective/Patient
 import { PastSurgicalHistoryField } from "@/components/cockpit/rx/subjective/PastSurgicalHistoryField";
 import { CustomSubsectionBlock } from "@/components/cockpit/rx/subjective/CustomSubsectionBlock";
 import { CustomSectionTemplateButton } from "@/components/cockpit/rx/subjective/CustomSectionTemplateButton";
+import { SubjectiveSectionTemplateButton } from "@/components/cockpit/rx/subjective/SubjectiveSectionTemplateButton";
 import { DeleteCustomSectionDialog } from "@/components/cockpit/rx/subjective/DeleteCustomSectionDialog";
 import {
   CustomSubsectionsChrome,
@@ -42,6 +43,7 @@ import {
   SectionReorderLeadingAction,
 } from "@/components/cockpit/rx/subjective/SortableSectionShell";
 import { CollapsibleContainer } from "@/components/ui/CollapsibleContainer";
+import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import type { PatientChartMode } from "@/types/patient-chart";
 import {
   customBlockIdFromSectionId,
@@ -89,6 +91,23 @@ import {
   RX_FIELD_LABEL_CLASS,
   RX_SECTION_HEADING_CLASS,
 } from "@/components/cockpit/rx/sections/field-styles";
+import {
+  SOAP_TAB_HEADING_ICON,
+  SoapTabFamilyProvider,
+  SoapSectionListSkeleton,
+  resolveSubjectiveSectionIcon,
+  sectionHeaderIcon,
+  soapTabHeadingClassName,
+} from "@/components/cockpit/rx/sections/section-chrome";
+import {
+  buildSubjectiveClearAllActions,
+  rxFormHasClearableSubjectiveContent,
+} from "@/lib/cockpit/apply-subjective-template";
+import { ClearAllConfirmDialog } from "@/components/cockpit/rx/ClearAllConfirmDialog";
+import {
+  SoapTabExpandCollapseClearButtons,
+  SoapTabLayoutSaveStatus,
+} from "@/components/cockpit/rx/SoapTabChromeActions";
 
 const DOCTOR_LAYOUT_AUTOSAVE_MS = 500;
 
@@ -186,23 +205,35 @@ export function SubjectiveSection({
   const hasHydratedCollapseRef = useRef(false);
   const hasHydratedHiddenRef = useRef(false);
   const [openById, setOpenById] = useState<Record<SubjectiveSectionId, boolean>>({});
-  const [hiddenIds, setHiddenIds] = useState<SubjectiveSectionHiddenSet>([]);
+  const [hiddenIds, setHiddenIds] = useState<SubjectiveSectionHiddenSet>(
+    () => shell?.subjectiveSectionHidden ?? [],
+  );
   const [sectionManagerOpen, setSectionManagerOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteDialogLoading, setDeleteDialogLoading] = useState(false);
   const [deleteDialogBusy, setDeleteDialogBusy] = useState(false);
   const [deleteArchiveNotice, setDeleteArchiveNotice] = useState<string | null>(null);
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [clearBusy, setClearBusy] = useState(false);
   const [pendingDeleteSectionId, setPendingDeleteSectionId] =
     useState<SubjectiveSectionId | null>(null);
   const [pendingDeleteCounts, setPendingDeleteCounts] =
     useState<LinkedCustomSectionTemplateCounts | null>(null);
 
-  const canonicalOrder = useMemo(
-    () => resolveInitialSectionOrder([], linkedChart, customBlockIds),
-    [customBlockIds, linkedChart],
-  );
+  // Empty until order hydrates — painting DEFAULT_SECTION_ORDER first caused a
+  // visible rearrange when doctor settings arrived.
+  const [sectionOrder, setSectionOrder] = useState<SubjectiveSectionId[]>(() => {
+    const stored = shell?.subjectiveSectionOrder;
+    if (stored == null) return [];
+    return resolveInitialSectionOrder(stored, linkedChart, customBlockIds);
+  });
 
-  const [sectionOrder, setSectionOrder] = useState<SubjectiveSectionId[]>(canonicalOrder);
+  const layoutHydrated =
+    storedSectionOrder !== null &&
+    storedSectionHidden !== null &&
+    // Wait until the resolve effect has populated order — otherwise we flash
+    // "all hidden" / empty while sectionOrder is still [].
+    sectionOrder.length > 0;
 
   const mountableIds = useMemo(
     () => resolveAvailableSectionIds(linkedChart, customBlockIds),
@@ -261,6 +292,62 @@ export function SubjectiveSection({
     },
     [],
   );
+
+  /** Bulk survey/reset — no scroll (matches ExamSystemList). */
+  const expandAllSections = useCallback(() => {
+    setOpenById((prev) => {
+      const next = { ...prev };
+      for (const id of visibleSectionOrder) {
+        next[id] = true;
+      }
+      return next;
+    });
+  }, [visibleSectionOrder]);
+
+  const collapseAllSections = useCallback(() => {
+    setOpenById((prev) => {
+      const next = { ...prev };
+      for (const id of visibleSectionOrder) {
+        next[id] = false;
+      }
+      return next;
+    });
+  }, [visibleSectionOrder]);
+
+  const hasClearableSubjective = useMemo(() => {
+    if (rxFormHasClearableSubjectiveContent(fields)) return true;
+    return Boolean(pmhBridge?.hasContent());
+  }, [fields, pmhBridge]);
+
+  const clearAllSubjective = useCallback(async () => {
+    if (disabled || !hasClearableSubjective) return;
+    setClearBusy(true);
+    try {
+      for (const action of buildSubjectiveClearAllActions(fields)) {
+        dispatch(action);
+      }
+      if (pmhBridge?.hasContent()) {
+        await pmhBridge.clearAll();
+      }
+      collapseAllSections();
+      setClearConfirmOpen(false);
+    } finally {
+      setClearBusy(false);
+    }
+  }, [collapseAllSections, disabled, dispatch, fields, hasClearableSubjective, pmhBridge]);
+
+  const clearConfirmBullets = useMemo(() => {
+    const bullets = [
+      "Chief complaints and free-text notes",
+      "Family, social, and past surgical history",
+      "Custom section notes (section titles kept)",
+    ];
+    if (pmhBridge) {
+      bullets.push("Past medical history on the patient chart (conditions and medications)");
+      bullets.push("Allergies are not cleared");
+    }
+    return bullets;
+  }, [pmhBridge]);
 
   const sectionOpenControl = useMemo(
     () =>
@@ -348,6 +435,9 @@ export function SubjectiveSection({
   useEffect(() => {
     if (storedSectionCollapsed === null) return;
     if (hasHydratedCollapseRef.current) return;
+    // Wait until section order has produced defaults — otherwise stored overrides
+    // are dropped against an empty defaults map and never re-applied.
+    if (Object.keys(defaultsById).length === 0) return;
     hasHydratedCollapseRef.current = true;
 
     const resolved = resolveSectionOpenState(storedSectionCollapsed, defaultsById);
@@ -355,9 +445,9 @@ export function SubjectiveSection({
     lastPersistedCollapseRef.current = serializeCollapseOverrides(
       collapseOverridesToPersist(resolved, defaultsById),
     );
-    // Intentionally omit defaultsById — one-shot hydrate; live defaults merge at render via effectiveOpenById.
+    // Intentionally omit further defaultsById changes — one-shot after first non-empty defaults.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- subsequent stored map writes must not clobber openById
-  }, [storedSectionCollapsed]);
+  }, [storedSectionCollapsed, defaultsById]);
 
   useEffect(() => {
     if (storedSectionHidden === null) return;
@@ -374,12 +464,22 @@ export function SubjectiveSection({
 
   useEffect(() => {
     if (storedSectionOrder === null) return;
-    setSectionOrder((prev) => syncCustomBlockIdsInOrder(prev, customBlockIds, linkedChart));
+    setSectionOrder((prev) => {
+      const next = syncCustomBlockIdsInOrder(prev, customBlockIds, linkedChart);
+      if (
+        next.length === prev.length &&
+        next.every((id, index) => id === prev[index])
+      ) {
+        return prev;
+      }
+      return next;
+    });
   }, [customBlockIds, linkedChart, storedSectionOrder]);
 
   useEffect(() => {
     if (customSubsections.length > prevCustomBlockCountRef.current) {
-      const added = customSubsections[customSubsections.length - 1];
+      // Newest section is prepended — focus the first entry.
+      const added = customSubsections[0];
       if (added) focusBlockIdRef.current = added.id;
     }
     prevCustomBlockCountRef.current = customSubsections.length;
@@ -665,9 +765,11 @@ export function SubjectiveSection({
       chief_complaints: <ComplaintList disabled={disabled} {...sectionOpenProps("chief_complaints")} />,
       free_text_notes: (
         <CollapsibleContainer
-          title="Free-text notes (optional)"
-          toggleLabel="Toggle free-text notes"
+          title="Additional Notes"
+          sectionIcon={sectionHeaderIcon(resolveSubjectiveSectionIcon("free_text_notes")!)}
+          toggleLabel="Toggle additional notes"
           scrollOnExpand
+          closeScrollToSelector={SUBJECTIVE_SCROLL_TOP_SELECTOR}
           stickyHeader
           open={collapseControlled ? displayOpenById.free_text_notes : undefined}
           onOpenChange={
@@ -676,7 +778,13 @@ export function SubjectiveSection({
               : undefined
           }
           defaultOpen={collapseControlled ? undefined : false}
+          depthTone
           leadingActions={<SectionReorderLeadingAction sectionId="free_text_notes" />}
+          actions={
+            !disabled ? (
+              <SubjectiveSectionTemplateButton scope="free_text_notes" />
+            ) : undefined
+          }
         >
           <label htmlFor="hopi-fallback" className={RX_FIELD_LABEL_CLASS}>
             Additional history notes
@@ -721,6 +829,7 @@ export function SubjectiveSection({
           disabled={disabled}
           onChange={setPastSurgicalHistoryStructured}
           scrollOnExpand
+          closeScrollToSelector={SUBJECTIVE_SCROLL_TOP_SELECTOR}
           {...sectionOpenProps("past_surgical")}
         />
       );
@@ -755,12 +864,13 @@ export function SubjectiveSection({
   }, [customSubsections.length, disabled, visibleSectionOrder]);
 
   const showAllHiddenEmptyState = useMemo(() => {
+    if (!layoutHydrated) return false;
     const hasRenderableSection = visibleSectionOrder.some((sectionId) => {
       if (isCustomBlockSectionId(sectionId)) return true;
       return isStaticSubjectiveSectionId(sectionId);
     });
     return !hasRenderableSection;
-  }, [visibleSectionOrder]);
+  }, [layoutHydrated, visibleSectionOrder]);
 
   const renderSortableSection = (
     sectionId: SubjectiveSectionId,
@@ -811,68 +921,77 @@ export function SubjectiveSection({
     );
   };
 
+  const SubjectiveTabIcon = SOAP_TAB_HEADING_ICON.subjective;
+
   return (
     <SubjectivePmhBridgeProvider setBridge={setPmhBridge}>
-      <section id="rx-symptoms" aria-label="Subjective" className="space-y-3">
-        {heading !== null && <h3 className={RX_SECTION_HEADING_CLASS}>{heading}</h3>}
+      <SoapTabFamilyProvider family="subjective">
+      {/* Depth tone is opt-in per field section (CollapsibleContainer depthTone), not here. */}
+      <section
+        id="rx-symptoms"
+        aria-label="Subjective"
+        className="space-y-3"
+        data-testid="subjective-scroll-top"
+      >
+        {heading !== null ? (
+          <h3 className={soapTabHeadingClassName("subjective", RX_SECTION_HEADING_CLASS)}>
+            <SubjectiveTabIcon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+            {heading}
+          </h3>
+        ) : null}
 
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="mr-auto flex min-h-9 items-center gap-2">
-            {layoutSaveStatus === "saved" ||
-            collapseSaveStatus === "saved" ||
-            visibilitySaveStatus === "saved" ? (
-              <span className="text-xs text-muted-foreground" role="status">
-                Layout saved
-              </span>
-            ) : null}
-            {layoutSaveStatus === "error" ||
-            collapseSaveStatus === "error" ||
-            visibilitySaveStatus === "error" ? (
-              <span className="text-xs text-destructive" role="status">
-                Could not save layout
-              </span>
-            ) : null}
+        <div className="flex min-h-9 flex-nowrap items-center gap-0.5">
+          <div className="mr-auto flex min-w-0 items-center gap-1">
+            <SoapTabLayoutSaveStatus
+              saved={
+                layoutSaveStatus === "saved" ||
+                collapseSaveStatus === "saved" ||
+                visibilitySaveStatus === "saved"
+              }
+              error={
+                layoutSaveStatus === "error" ||
+                collapseSaveStatus === "error" ||
+                visibilitySaveStatus === "error"
+              }
+            />
             {deleteArchiveNotice ? (
-              <span className="text-xs text-amber-700 dark:text-amber-400" role="status">
+              <span
+                className="truncate text-xs text-amber-700 dark:text-amber-400"
+                role="status"
+              >
                 {deleteArchiveNotice}
               </span>
             ) : null}
           </div>
+          <SoapTabExpandCollapseClearButtons
+            expandTestId="subjective-expand-all"
+            collapseTestId="subjective-collapse-all"
+            clearTestId="subjective-clear-all"
+            onExpandAll={expandAllSections}
+            onCollapseAll={collapseAllSections}
+            onClearAll={() => setClearConfirmOpen(true)}
+            clearDisabled={disabled || !hasClearableSubjective}
+          />
           {!disabled ? (
-            <div className="flex flex-wrap items-center gap-2">
+            <>
               <CarryForwardButton disabled={disabled} />
               <SubjectivePresetButton disabled={disabled} pmhBridge={pmhBridge} />
-              <SectionManagerMenu
-                disabled={disabled}
-                open={sectionManagerOpen}
-                onOpenChange={setSectionManagerOpen}
-                sectionOrder={sectionOrder}
-                mountableIds={mountableIds}
-                hiddenIds={hiddenIds}
-                customSubsections={customSubsections}
-                fields={fields}
-                onToggleHidden={handleToggleSectionHidden}
-                onMoveSection={handleMoveSectionById}
-                onAddCustomSection={handleAddCustomSection}
-                onRemoveCustomSection={requestRemoveCustomSection}
-              />
-            </div>
-          ) : (
-            <SectionManagerMenu
-              disabled={disabled}
-              open={sectionManagerOpen}
-              onOpenChange={setSectionManagerOpen}
-              sectionOrder={sectionOrder}
-              mountableIds={mountableIds}
-              hiddenIds={hiddenIds}
-              customSubsections={customSubsections}
-              fields={fields}
-              onToggleHidden={handleToggleSectionHidden}
-              onMoveSection={handleMoveSectionById}
-              onAddCustomSection={handleAddCustomSection}
-              onRemoveCustomSection={requestRemoveCustomSection}
-            />
-          )}
+            </>
+          ) : null}
+          <SectionManagerMenu
+            disabled={disabled}
+            open={sectionManagerOpen}
+            onOpenChange={setSectionManagerOpen}
+            sectionOrder={sectionOrder}
+            mountableIds={mountableIds}
+            hiddenIds={hiddenIds}
+            customSubsections={customSubsections}
+            fields={fields}
+            onToggleHidden={handleToggleSectionHidden}
+            onMoveSection={handleMoveSectionById}
+            onAddCustomSection={handleAddCustomSection}
+            onRemoveCustomSection={requestRemoveCustomSection}
+          />
         </div>
 
         {showAllHiddenEmptyState ? (
@@ -891,7 +1010,9 @@ export function SubjectiveSection({
           </div>
         ) : null}
 
-        {!showAllHiddenEmptyState
+        {!layoutHydrated ? (
+          <SoapSectionListSkeleton testId="subjective-layout-skeleton" />
+        ) : !showAllHiddenEmptyState
           ? renderItems.map((item, index) => {
           if (item.kind === "custom-empty") {
             return <CustomSubsectionsChrome key="custom-empty" disabled={disabled} variant="empty" />;
@@ -988,6 +1109,7 @@ export function SubjectiveSection({
 
         <CustomSubsectionsChrome disabled={disabled} variant="footer" />
       </section>
+      </SoapTabFamilyProvider>
 
       <DeleteCustomSectionDialog
         open={deleteDialogOpen}
@@ -997,6 +1119,18 @@ export function SubjectiveSection({
         busy={deleteDialogBusy}
         onCancel={handleCancelDeleteCustomSection}
         onConfirm={handleConfirmDeleteCustomSection}
+      />
+      <ClearAllConfirmDialog
+        open={clearConfirmOpen}
+        onOpenChange={(open) => {
+          if (!clearBusy) setClearConfirmOpen(open);
+        }}
+        title="Clear all subjective content?"
+        descriptionLead="This cannot be undone from this screen."
+        bullets={clearConfirmBullets}
+        busy={clearBusy}
+        testId="subjective-clear-all-dialog"
+        onConfirm={clearAllSubjective}
       />
     </SubjectivePmhBridgeProvider>
   );

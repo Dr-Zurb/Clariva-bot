@@ -9,8 +9,11 @@ import type {
   SubjectiveSectionId,
 } from "@/lib/cockpit/subjective-section-order";
 import type { ObjectiveSectionId } from "@/lib/cockpit/objective-section-order";
+import type { PlanSectionId } from "@/lib/cockpit/plan-section-order";
+import type { AssessmentSectionId } from "@/lib/cockpit/assessment-section-order";
 import type { CustomSubsection } from "@/types/prescription";
 import type { CustomVitalDef } from "@/lib/cockpit/vitals-custom";
+import type { DoctorInvestigationCustomOrder } from "@/lib/cockpit/investigations-custom-orders";
 
 /** OPD scheduling: fixed slots vs token queue (migration 028). */
 export type OpdMode = 'slot' | 'queue';
@@ -198,6 +201,40 @@ export interface DoctorSettings {
   objective_section_hidden?: ObjectiveSectionId[];
   /** obj-10: per-doctor default custom Objective-tab sections template (obj-13 consumes). */
   objective_custom_sections?: CustomSubsection[];
+  /** plan chrome: per-doctor default Plan-tab section order. Empty = canonical default. */
+  plan_section_order?: PlanSectionId[];
+  /**
+   * plan chrome: per-doctor default Plan-tab section collapse map
+   * `{ [sectionId]: isOpen }` (true = open). Empty/absent = canonical default.
+   */
+  plan_section_collapsed?: Record<string, boolean>;
+  /**
+   * plan chrome: per-doctor hidden Plan-tab sections — a delta set of section-id
+   * strings. Empty/absent = nothing hidden.
+   */
+  plan_section_hidden?: PlanSectionId[];
+  /** assessment chrome: per-doctor default Assessment-tab section order. Empty = canonical default. */
+  assessment_section_order?: AssessmentSectionId[];
+  /**
+   * assessment chrome: per-doctor default Assessment-tab section collapse map
+   * `{ [sectionId]: isOpen }` (true = open). Empty/absent = canonical default.
+   */
+  assessment_section_collapsed?: Record<string, boolean>;
+  /**
+   * assessment chrome: per-doctor hidden Assessment-tab sections — a delta set of
+   * section-id strings. Empty/absent = nothing hidden.
+   */
+  assessment_section_hidden?: AssessmentSectionId[];
+  /**
+   * assessment-plan-custom-sections: per-doctor default custom Assessment
+   * sections. Seeds fresh visits; empty/absent = none.
+   */
+  assessment_custom_sections?: CustomSubsection[];
+  /**
+   * assessment-plan-custom-sections: per-doctor default custom Plan sections.
+   * Seeds fresh visits; empty/absent = none.
+   */
+  plan_custom_sections?: CustomSubsection[];
   /**
    * vit-02 / migration 156: per-doctor hidden vitals — a delta set of registry
    * vital-key strings. Empty/absent = nothing hidden (classic-core default).
@@ -210,6 +247,12 @@ export interface DoctorSettings {
    * visits; empty/absent = none. Config (labels/units/group), not PHI.
    */
   vitals_custom?: CustomVitalDef[];
+  /**
+   * plan-investigations-library / migration 169: per-doctor custom investigation
+   * order vocabulary for the Plan combobox. Empty/absent = none. Config only,
+   * not PHI. Distinct from rx-template investigations_orders.
+   */
+  investigations_custom_orders?: DoctorInvestigationCustomOrder[];
   created_at: string;
   updated_at: string;
 }
@@ -276,8 +319,26 @@ export type PatchDoctorSettingsPayload = Partial<{
   objective_section_hidden?: ObjectiveSectionId[];
   /** obj-10: replace per-doctor default custom Objective-tab sections template. */
   objective_custom_sections?: CustomSubsection[];
+  /** plan chrome: replace per-doctor default Plan-tab section order. */
+  plan_section_order?: PlanSectionId[];
+  /** plan chrome: replace per-doctor default Plan-tab section collapse map. */
+  plan_section_collapsed?: Record<string, boolean>;
+  /** plan chrome: replace per-doctor hidden Plan-tab section set. */
+  plan_section_hidden?: PlanSectionId[];
+  /** assessment chrome: replace per-doctor default Assessment-tab section order. */
+  assessment_section_order?: AssessmentSectionId[];
+  /** assessment chrome: replace per-doctor default Assessment-tab section collapse map. */
+  assessment_section_collapsed?: Record<string, boolean>;
+  /** assessment chrome: replace per-doctor hidden Assessment-tab section set. */
+  assessment_section_hidden?: AssessmentSectionId[];
+  /** assessment-plan-custom-sections: replace per-doctor default custom Assessment sections. */
+  assessment_custom_sections?: CustomSubsection[];
+  /** assessment-plan-custom-sections: replace per-doctor default custom Plan sections. */
+  plan_custom_sections?: CustomSubsection[];
   /** vit-07: replace per-doctor hidden vitals set (registry vital-key strings). */
   vitals_hidden?: string[];
   /** vit-14: replace per-doctor custom-vital definitions. */
   vitals_custom?: CustomVitalDef[];
+  /** plan-investigations-library: replace per-doctor custom investigation orders. */
+  investigations_custom_orders?: DoctorInvestigationCustomOrder[];
 }>;

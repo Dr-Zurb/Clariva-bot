@@ -28,6 +28,8 @@
  */
 
 import { Request, Response } from 'express';
+import { resolveAdviceForOutput } from '../utils/advice-format';
+import { resolveFollowUpForOutput } from '../utils/follow-up-format';
 import { asyncHandler } from '../utils/async-handler';
 import { successResponse } from '../utils/response';
 import { AppError, NotFoundError, ValidationError } from '../utils/errors';
@@ -37,6 +39,7 @@ import {
   generatePrescriptionPdf,
   getFreshSignedUrlForExistingPdf,
 } from '../services/prescription-pdf-service';
+import { listAdviceHandoutsForPublicShare } from '../services/prescription-attachment-service';
 import { verifyRxToken } from '../services/prescription-token-service';
 import { logger } from '../config/logger';
 import { logDataAccess } from '../utils/audit-logger';
@@ -135,7 +138,7 @@ export const getPublicPrescriptionHandler = asyncHandler(
             // mapping below).
             // TODO(cv2-07): rename the public response field once the
             // patient-facing client migrates.
-            'id, doctor_id, appointment_id, type, cc, hopi, provisional_diagnosis, investigations_orders, follow_up, patient_education, sent_to_patient_at, created_at, updated_at, patient_id',
+            'id, doctor_id, appointment_id, type, cc, hopi, provisional_diagnosis, investigations_orders, follow_up, follow_up_value, follow_up_unit, patient_education, advice, referral, sent_to_patient_at, created_at, updated_at, patient_id',
           )
           .eq('id', id)
           .single(),
@@ -160,7 +163,11 @@ export const getPublicPrescriptionHandler = asyncHandler(
       | 'provisional_diagnosis'
       | 'investigations_orders'
       | 'follow_up'
+      | 'follow_up_value'
+      | 'follow_up_unit'
       | 'patient_education'
+      | 'advice'
+      | 'referral'
       | 'sent_to_patient_at'
       | 'created_at'
       | 'updated_at'
@@ -250,6 +257,23 @@ export const getPublicPrescriptionHandler = asyncHandler(
       }
     }
 
+    // Advice handouts (patient-shareable attachments only — advice/ path tag).
+    let adviceHandouts: Awaited<
+      ReturnType<typeof listAdviceHandoutsForPublicShare>
+    > = [];
+    try {
+      adviceHandouts = await listAdviceHandoutsForPublicShare(rx.id, correlationId);
+    } catch (err) {
+      logger.warn(
+        {
+          correlationId,
+          prescriptionId: rx.id,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        'public-prescription: advice handouts soft-failed',
+      );
+    }
+
     // ---- Audit (informational; no PHI in metadata) -------------------------
     // The patient is unauthenticated so we use the doctor_id as the
     // subject — the row attests that a patient-facing read happened
@@ -282,8 +306,15 @@ export const getPublicPrescriptionHandler = asyncHandler(
             // patient-facing client keeps rendering without churn.
             // TODO(cv2-07): rename response field once the patient client migrates.
             investigations: rx.investigations_orders,
-            follow_up: rx.follow_up,
-            patient_education: rx.patient_education,
+            advice: resolveAdviceForOutput(rx.advice, rx.patient_education),
+            follow_up: resolveFollowUpForOutput(
+              rx.follow_up,
+              rx.follow_up_value,
+              rx.follow_up_unit,
+            ),
+            // Folded into advice — kept null for client compat.
+            patient_education: null,
+            referral: rx.referral,
             sent_to_patient_at: rx.sent_to_patient_at,
             created_at: rx.created_at,
             prescription_medicines: medicines,
@@ -302,6 +333,7 @@ export const getPublicPrescriptionHandler = asyncHandler(
             appointment_date: apt?.appointment_date ?? null,
           },
           signed_pdf_url: signedPdfUrl,
+          advice_handouts: adviceHandouts,
           token_expires_at:
             verifyResult.exp !== undefined
               ? new Date(verifyResult.exp * 1000).toISOString()

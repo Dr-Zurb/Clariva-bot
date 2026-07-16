@@ -38,6 +38,8 @@ export const queryKeys = {
     overview: () => [...queryKeys.patient(patientId).all, "overview"] as const,
     vitals: () => [...queryKeys.patient(patientId).all, "vitals"] as const,
     conditions: () => [...queryKeys.patient(patientId).all, "conditions"] as const,
+    medicalBackground: () =>
+      [...queryKeys.patient(patientId).all, "medical-background"] as const,
     allergies: () => [...queryKeys.patient(patientId).all, "allergies"] as const,
     prescriptions: () =>
       [...queryKeys.patient(patientId).all, "prescriptions", "recent"] as const,

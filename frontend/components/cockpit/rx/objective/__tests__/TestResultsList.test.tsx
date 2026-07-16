@@ -19,6 +19,10 @@ const HBA1C: TestResultRow = {
   interpretation: "high",
   date: null,
   notes: null,
+  reportId: null,
+  refLow: null,
+  refHigh: null,
+  refText: null,
 };
 
 const RBS: TestResultRow = {
@@ -30,6 +34,10 @@ const RBS: TestResultRow = {
   interpretation: null,
   date: null,
   notes: null,
+  reportId: null,
+  refLow: null,
+  refHigh: null,
+  refText: null,
 };
 
 function renderWithRxForm(
@@ -53,28 +61,25 @@ function renderWithRxForm(
   );
 }
 
-describe("TestResultsList (obj-21)", () => {
-  it("filters rows by source and dispatches ADD_TEST_RESULT with the section source", () => {
+describe("TestResultsList (obj-21 / rpt-01)", () => {
+  it("renders all sources in one list and adds a patient_report row by default", () => {
     const fields = createEmptyRxFormFields();
     fields.testResultsStructured = [HBA1C, RBS];
-    renderWithRxForm(
-      <TestResultsList source="patient_report" showLegacyTextarea />,
-      fields,
-    );
+    renderWithRxForm(<TestResultsList showLegacyTextarea />, fields);
 
-    expect(screen.getByTestId("test-results-list-patient_report")).toBeInTheDocument();
+    expect(screen.getByTestId("test-results-list")).toBeInTheDocument();
     expect(screen.getByTestId(`test-result-row-${HBA1C.id}`)).toBeInTheDocument();
-    expect(screen.queryByTestId(`test-result-row-${RBS.id}`)).not.toBeInTheDocument();
+    expect(screen.getByTestId(`test-result-row-${RBS.id}`)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId("test-results-add-patient_report"));
+    fireEvent.click(screen.getByTestId("test-results-add"));
     const cards = screen.getAllByTestId(/^test-result-row-/);
-    expect(cards.length).toBe(2);
+    expect(cards.length).toBe(3);
   });
 
   it("updates interpretation and source via reducer actions", () => {
     const fields = createEmptyRxFormFields();
     fields.testResultsStructured = [{ ...HBA1C, interpretation: null }];
-    renderWithRxForm(<TestResultsList source="patient_report" />, fields);
+    renderWithRxForm(<TestResultsList />, fields);
 
     fireEvent.click(screen.getByTestId(`test-result-interpretation-${HBA1C.id}-high`));
     expect(screen.getByTestId(`test-result-interpretation-${HBA1C.id}-high`)).toHaveAttribute(
@@ -83,13 +88,16 @@ describe("TestResultsList (obj-21)", () => {
     );
 
     fireEvent.click(screen.getByTestId(`test-result-source-${HBA1C.id}-in_clinic_poc`));
-    expect(screen.queryByTestId(`test-result-row-${HBA1C.id}`)).not.toBeInTheDocument();
+    expect(screen.getByTestId(`test-result-source-${HBA1C.id}-in_clinic_poc`)).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
   });
 
   it("removes a row via REMOVE_TEST_RESULT", () => {
     const fields = createEmptyRxFormFields();
     fields.testResultsStructured = [HBA1C];
-    renderWithRxForm(<TestResultsList source="patient_report" />, fields);
+    renderWithRxForm(<TestResultsList />, fields);
 
     fireEvent.click(screen.getByTestId(`test-result-remove-${HBA1C.id}`));
     expect(screen.queryByTestId(`test-result-row-${HBA1C.id}`)).not.toBeInTheDocument();
@@ -103,8 +111,8 @@ describe("TestResultsList (obj-21)", () => {
     expect(payload.testResultsJson).toEqual([HBA1C, RBS]);
   });
 
-  it("keeps the legacy textarea as the escape hatch in the patient-brought section", () => {
-    renderWithRxForm(<TestResultsList source="patient_report" showLegacyTextarea />);
+  it("keeps the legacy textarea as the escape hatch", () => {
+    renderWithRxForm(<TestResultsList showLegacyTextarea />);
     expect(screen.getByTestId("test-results-legacy-textarea")).toBeInTheDocument();
     expect(
       screen.getByLabelText("Test results (free-text — legacy escape hatch)"),
@@ -114,11 +122,31 @@ describe("TestResultsList (obj-21)", () => {
   it("renders read-only summaries without edit inputs when disabled", () => {
     const fields = createEmptyRxFormFields();
     fields.testResultsStructured = [HBA1C];
-    renderWithRxForm(<TestResultsList source="patient_report" disabled />, fields);
+    renderWithRxForm(<TestResultsList disabled />, fields);
 
     const card = screen.getByTestId(`test-result-row-${HBA1C.id}`);
     expect(within(card).getByText("HbA1c: 7.8 % (High)")).toBeInTheDocument();
     expect(screen.queryByTestId(`test-result-name-${HBA1C.id}`)).not.toBeInTheDocument();
-    expect(screen.queryByTestId("test-results-add-patient_report")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("test-results-add")).not.toBeInTheDocument();
+  });
+
+  it("scaffolds a CBC panel under a report header from the library picker", () => {
+    renderWithRxForm(<TestResultsList />);
+
+    fireEvent.click(screen.getByTestId("test-results-library"));
+    fireEvent.click(screen.getByTestId("test-results-panel-cbc"));
+
+    const groups = screen.getAllByTestId(/^test-results-group-/);
+    expect(groups.length).toBe(1);
+    expect(groups[0]).toHaveTextContent("CBC");
+    expect(screen.getAllByTestId(/^test-result-row-/).length).toBeGreaterThanOrEqual(5);
+    expect(screen.getByDisplayValue("Haemoglobin")).toBeInTheDocument();
+  });
+
+  it("adds a blank custom test row", () => {
+    renderWithRxForm(<TestResultsList />);
+    fireEvent.click(screen.getByTestId("test-results-add"));
+    expect(screen.getByTestId("test-results-add")).toHaveTextContent("Add custom test");
+    expect(screen.getAllByTestId(/^test-result-row-/)).toHaveLength(1);
   });
 });

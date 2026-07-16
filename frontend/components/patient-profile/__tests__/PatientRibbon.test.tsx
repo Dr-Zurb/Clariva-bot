@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import "@testing-library/jest-dom";
 import type { Appointment } from "@/types/appointment";
@@ -18,18 +18,45 @@ vi.mock("@/components/ui/tooltip", () => ({
     <span data-testid="tooltip-content">{children}</span>
   ),
 }));
+
+vi.mock("@/components/patient-profile/panes/SnapshotPane", () => ({
+  default: () => <div data-testid="mock-snapshot-pane">SnapshotPane</div>,
+}));
+
+vi.mock("@/components/patient-profile/panes/HistoryPane", () => ({
+  default: () => <div data-testid="mock-history-pane">HistoryPane</div>,
+}));
+
+vi.mock("@/components/ehr/sections/AllergiesSection", () => ({
+  default: () => <div data-testid="mock-allergies-section">AllergiesSection</div>,
+}));
+
+vi.mock("@/components/ehr/sections/PreviousRxSection", () => ({
+  default: () => <div data-testid="mock-previous-rx-section">PreviousRxSection</div>,
+}));
+
 import {
   RxFormProvider,
   createEmptyRxFormFields,
 } from "@/components/cockpit/rx/RxFormContext";
 import { PatientRibbon } from "@/components/patient-profile/PatientRibbon";
+import SideSheetHost from "@/components/patient-profile/SideSheetHost";
 
 const prescriptionIdRef = { current: null as string | null };
 
 const mockRibbonData = {
   identity: { ageYears: 42, sex: "M" as const, weightKg: 68 },
-  allergies: [],
-  chronicConditions: [],
+  allergies: [] as Array<{
+    id: string;
+    name: string;
+    reaction?: string | null;
+    severity?: "mild" | "moderate" | "severe" | null;
+  }>,
+  chronicConditions: [] as Array<{
+    id: string;
+    name: string;
+    since?: string | null;
+  }>,
   activeMedsCount: 0,
   isLoading: false,
   error: null,
@@ -72,6 +99,7 @@ function makeAppointment(
 function renderRibbon(options?: {
   provisionalDiagnosis?: string;
   safetyVisible?: boolean;
+  appointment?: Appointment;
 }) {
   const fields = createEmptyRxFormFields();
   if (options?.provisionalDiagnosis !== undefined) {
@@ -99,7 +127,12 @@ function renderRibbon(options?: {
       prescriptionIdRef={prescriptionIdRef}
       onPrescriptionCreated={() => {}}
     >
-      <PatientRibbon appointment={makeAppointment()} token="test-token" />
+      <SideSheetHost>
+        <PatientRibbon
+          appointment={options?.appointment ?? makeAppointment()}
+          token="test-token"
+        />
+      </SideSheetHost>
     </RxFormProvider>,
   );
 }
@@ -108,6 +141,8 @@ describe("PatientRibbon indicator labels (cnc-04)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useOptionalRxSafetyMock.mockReturnValue(null);
+    mockRibbonData.allergies = [];
+    mockRibbonData.activeMedsCount = 0;
   });
 
   it("safety indicator has aria-label", () => {
@@ -168,12 +203,87 @@ describe("PatientRibbon indicator labels (cnc-04)", () => {
         prescriptionIdRef={prescriptionIdRef}
         onPrescriptionCreated={() => {}}
       >
-        <PatientRibbon
-          appointment={makeAppointment({ patient_id: null })}
-          token="test-token"
-        />
+        <SideSheetHost>
+          <PatientRibbon
+            appointment={makeAppointment({ patient_id: null })}
+            token="test-token"
+          />
+        </SideSheetHost>
       </RxFormProvider>,
     );
-    expect(container.firstChild).toBeNull();
+    expect(container.querySelector('[data-testid="patient-ribbon"]')).toBeNull();
+  });
+});
+
+describe("PatientRibbon expand surfaces (ribbon-expand Phase 1)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useOptionalRxSafetyMock.mockReturnValue(null);
+    mockRibbonData.allergies = [];
+    mockRibbonData.activeMedsCount = 0;
+  });
+
+  it("opens SnapshotPane in a side sheet from the chart trigger", async () => {
+    renderRibbon();
+
+    fireEvent.click(screen.getByTestId("ribbon-open-chart"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("side-sheet-host")).toBeInTheDocument();
+      expect(screen.getByTestId("mock-snapshot-pane")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Patient chart" }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("opens HistoryPane in a side sheet from the history trigger", async () => {
+    renderRibbon();
+
+    fireEvent.click(screen.getByTestId("ribbon-open-history"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("side-sheet-host")).toBeInTheDocument();
+      expect(screen.getByTestId("mock-history-pane")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Visit history" }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("opens AllergiesSection in a popover from the allergies trigger", async () => {
+    renderRibbon();
+
+    fireEvent.click(screen.getByTestId("ribbon-allergies-trigger"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ribbon-allergies-popover")).toBeInTheDocument();
+      expect(screen.getByTestId("mock-allergies-section")).toBeInTheDocument();
+    });
+  });
+
+  it("opens PreviousRxSection in a popover from the meds trigger", async () => {
+    mockRibbonData.activeMedsCount = 2;
+    renderRibbon();
+
+    fireEvent.click(screen.getByTestId("ribbon-meds-trigger"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ribbon-meds-popover")).toBeInTheDocument();
+      expect(screen.getByTestId("mock-previous-rx-section")).toBeInTheDocument();
+    });
+  });
+
+  it("keeps allergy severity chips visible in the glance strip", () => {
+    mockRibbonData.allergies = [
+      {
+        id: "a1",
+        name: "Penicillin",
+        severity: "severe",
+        reaction: "Anaphylaxis",
+      },
+    ];
+    renderRibbon();
+    expect(screen.getByLabelText(/allergy: penicillin/i)).toBeInTheDocument();
   });
 });

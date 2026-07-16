@@ -60,12 +60,12 @@ export const CHART_CHIP_CLASS =
   "inline-flex max-w-full items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-xs";
 
 export const CHART_QUICK_CHIP_CLASS =
-  "min-h-8 rounded-full border border-dashed border-border px-2.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground disabled:opacity-50";
+  "min-h-8 rounded-full border border-dashed border-border px-2.5 text-[11px] text-muted-foreground transition-[color,background-color,border-color] hover:border-primary/60 hover:text-foreground disabled:opacity-50";
 
 export function chartQuickChipClass(isSelected = false): string {
   if (!isSelected) return CHART_QUICK_CHIP_CLASS;
   return cn(
-    "min-h-8 rounded-full border px-2.5 text-[11px] transition-colors disabled:opacity-50",
+    "min-h-8 rounded-full border border-solid px-2.5 text-[11px] transition-[color,background-color,border-color] disabled:opacity-50",
     CHART_SELECT_CHIP_SELECTED_CLASS,
   );
 }

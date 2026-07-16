@@ -42,7 +42,7 @@ describe("normalizeSpecialty", () => {
   });
 });
 
-describe("resolveDefaultLayout · modality maps (§G)", () => {
+describe("resolveDefaultLayout · modality maps (§G / rpt-01)", () => {
   it("in_clinic → full registry exam, nothing hidden", () => {
     expect(resolveDefaultLayout({ modality: "in_clinic" })).toEqual({
       defaultOrder: [...DEFAULT_OBJECTIVE_SECTION_ORDER],
@@ -50,30 +50,23 @@ describe("resolveDefaultLayout · modality maps (§G)", () => {
     });
   });
 
-  it("video → observed exam + uploads; in-clinic POC + legacy free-text hidden (obj-23)", () => {
+  it("video → observed exam + Reports (media inside); nothing hidden by default", () => {
     expect(resolveDefaultLayout({ modality: "video" })).toEqual({
       defaultOrder: [...DEFAULT_OBJECTIVE_SECTION_ORDER],
-      defaultHidden: ["point_of_care", "legacy_exam", "legacy_vitals"],
+      defaultHidden: [],
     });
-    // uploads (media) stay visible over video (obj-23 emphasis)
-    expect(resolveDefaultLayout({ modality: "video" }).defaultHidden).not.toContain("media");
+    expect(resolveDefaultLayout({ modality: "video" }).defaultHidden).not.toContain(
+      "test_results",
+    );
   });
 
-  it("voice/text (async) → patient-reported + uploads; structured/POC/legacy hidden (obj-23)", () => {
+  it("voice/text (async) → Reports lead; structured exam hidden", () => {
     const voice = resolveDefaultLayout({ modality: "voice" });
     expect(voice.defaultOrder[0]).toBe("test_results");
-    expect(voice.defaultHidden).toEqual([
-      "exam",
-      "point_of_care",
-      "legacy_exam",
-      "legacy_vitals",
-    ]);
-    // text mirrors voice
+    expect(voice.defaultHidden).toEqual(["exam"]);
     expect(resolveDefaultLayout({ modality: "text" })).toEqual(voice);
-    // never all-hidden — vitals + test_results + media (uploads) stay visible
     expect(voice.defaultHidden).not.toContain("vitals");
     expect(voice.defaultHidden).not.toContain("test_results");
-    expect(voice.defaultHidden).not.toContain("media");
   });
 
   it("unknown / absent modality → registry default (never blank)", () => {
@@ -91,24 +84,15 @@ describe("resolveDefaultLayout · specialty emphasis (§E2, section-level)", () 
     expect(resolveDefaultLayout({ modality: "in_clinic", specialty: "Dermatology" }).defaultOrder).toEqual([
       "exam",
       "vitals",
+      "notes",
       "test_results",
-      "point_of_care",
-      "media",
-      "legacy_exam",
-      "legacy_vitals",
     ]);
   });
 
   it("cardiology emphasises vitals + exam front, leaving hidden untouched", () => {
     const layout = resolveDefaultLayout({ modality: "voice", specialty: "Cardiology" });
     expect(layout.defaultOrder.slice(0, 2)).toEqual(["vitals", "exam"]);
-    // specialty never changes the modality hidden set
-    expect(layout.defaultHidden).toEqual([
-      "exam",
-      "point_of_care",
-      "legacy_exam",
-      "legacy_vitals",
-    ]);
+    expect(layout.defaultHidden).toEqual(["exam"]);
   });
 
   it("unknown / gp specialty leaves the modality order unchanged", () => {
@@ -130,13 +114,13 @@ describe("resolveDefaultLayout · specialty emphasis (§E2, section-level)", () 
 describe("resolveEffectiveLayout · override-wins layering (P3-D5)", () => {
   const seed: DefaultLayout = {
     defaultOrder: [...DEFAULT_OBJECTIVE_SECTION_ORDER],
-    defaultHidden: ["legacy_exam", "legacy_vitals"],
+    defaultHidden: ["exam"],
   };
 
   it("falls back to the seed order/hidden when the doctor has no override", () => {
     expect(resolveEffectiveLayout({ seed, storedOrder: [], storedHidden: [] })).toEqual({
       baseOrder: [...DEFAULT_OBJECTIVE_SECTION_ORDER],
-      hidden: ["legacy_exam", "legacy_vitals"],
+      hidden: ["exam"],
     });
   });
 
@@ -150,10 +134,6 @@ describe("resolveEffectiveLayout · override-wins layering (P3-D5)", () => {
   });
 
   it("stored hidden wins wholesale over the seed hidden (not a union)", () => {
-    // A doctor who has configured visibility fully controls it — so a section
-    // the seed would hide (legacy_*) can still be shown once the doctor has any
-    // explicit hide. This avoids an un-showable seed-hidden section (no
-    // explicitly-shown delta exists; P10-D4 tri-state is a follow-up).
     const { hidden } = resolveEffectiveLayout({
       seed,
       storedOrder: [],

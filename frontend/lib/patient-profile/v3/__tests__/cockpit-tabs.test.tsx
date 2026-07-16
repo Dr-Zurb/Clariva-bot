@@ -1,7 +1,7 @@
 /**
  * cockpit-tabs.test.tsx — the Cockpit v3 flat tab registry (cv3t-01 · Phase 5).
  *
- * Structural contract only: `buildCockpitTabs` returns the eight real leaf tabs
+ * Structural contract only: `buildCockpitTabs` returns the seven real leaf tabs
  * as uniform, top-level `PaneDefinition`s (no `children`), in a stable order,
  * with correct ids / titles / icons. The body tab flips Consult ↔ Visit-summary
  * by template id (and by derived state), and the walk-in subset is `[body,
@@ -9,20 +9,8 @@
  * not the pane bodies (those are ported by reference, P5-DL-2).
  */
 
-import { describe, it, expect } from 'vitest';
-import {
-  Heart,
-  Clock,
-  Stethoscope,
-  Beaker,
-  Pill,
-  Quote,
-  Activity,
-  Video,
-  Phone,
-  MessageSquare,
-  CheckCircle2,
-} from 'lucide-react';
+import { describe, it, expect, vi } from 'vitest';
+import { render } from '@testing-library/react';
 import {
   buildCockpitTabs,
   buildWalkInCockpitTabs,
@@ -32,6 +20,24 @@ import {
 import type { TelemedVideoContext } from '@/lib/patient-profile/templates';
 import type { CockpitTemplate } from '@/lib/patient-profile/state';
 import type { CockpitConsultationModality } from '@/lib/patient-profile/state';
+import {
+  Heart,
+  Clock,
+  Stethoscope,
+  Pill,
+  Quote,
+  Activity,
+  Video,
+  Phone,
+  MessageSquare,
+  CheckCircle2,
+} from 'lucide-react';
+
+vi.mock('@/components/cockpit/rx/sections/AssessmentSection', () => ({
+  AssessmentSection: () => (
+    <div data-testid="pane-assessment-editor">assessment editor</div>
+  ),
+}));
 
 function fixtureCtx(
   overrides: Partial<TelemedVideoContext> = {},
@@ -64,7 +70,6 @@ const EXPECTED_TITLES: Record<string, string> = {
   history: 'History',
   body: 'Consult',
   assessment: 'Assessment',
-  'investigations-orders': 'Investigations',
   plan: 'Plan',
   subjective: 'Subjective',
   objective: 'Objective',
@@ -74,17 +79,22 @@ const EXPECTED_ICONS = {
   snapshot: Heart,
   history: Clock,
   assessment: Stethoscope,
-  'investigations-orders': Beaker,
   plan: Pill,
   subjective: Quote,
   objective: Activity,
 } as const;
 
 describe('buildCockpitTabs — flat registry shape (cv3t-01)', () => {
-  it('returns the eight leaf tabs in the canonical order', () => {
+  it('returns the seven leaf tabs in the canonical order', () => {
     const tabs = buildCockpitTabs(fixtureCtx(), 'telemed-video');
-    expect(tabs).toHaveLength(8);
+    expect(tabs).toHaveLength(7);
     expect(tabs.map((t) => t.id)).toEqual([...COCKPIT_TAB_ORDER]);
+    expect(COCKPIT_TAB_ORDER.slice(3)).toEqual([
+      'subjective',
+      'objective',
+      'assessment',
+      'plan',
+    ]);
   });
 
   it('every tab is a uniform top-level leaf (no children/groupWrapper/direction)', () => {
@@ -99,7 +109,7 @@ describe('buildCockpitTabs — flat registry shape (cv3t-01)', () => {
     }
   });
 
-  it('keeps stable ids + titles for the six clean tabs + investigations', () => {
+  it('keeps stable ids + titles for the seven clean tabs', () => {
     const byId = new Map(
       buildCockpitTabs(fixtureCtx(), 'telemed-video').map((t) => [t.id, t]),
     );
@@ -111,14 +121,25 @@ describe('buildCockpitTabs — flat registry shape (cv3t-01)', () => {
     }
   });
 
-  it('Investigations and Plan are independent top-level tabs (P5-DL-4)', () => {
+  it('assessment tab renders the full AssessmentSection editor (not the strip)', () => {
+    const assessment = buildCockpitTabs(fixtureCtx(), 'telemed-video').find(
+      (t) => t.id === 'assessment',
+    );
+    expect(assessment?.naturalSizePct).toBeGreaterThan(20);
+    expect(assessment?.minSizePx).toBeGreaterThan(100);
+    const { container } = render(assessment!.render!());
+    expect(
+      container.querySelector('[data-testid="pane-assessment-editor"]'),
+    ).toBeTruthy();
+  });
+
+  it('has no standalone Investigations tab — folded into Plan (SOAP)', () => {
     const tabs = buildCockpitTabs(fixtureCtx(), 'telemed-video');
     const investigations = tabs.find((t) => t.id === 'investigations-orders');
     const plan = tabs.find((t) => t.id === 'plan');
-    expect(investigations).toBeDefined();
+    // Ordered investigations now live inside the Plan tab's InvestigationsChipRow.
+    expect(investigations).toBeUndefined();
     expect(plan).toBeDefined();
-    // Neither nests the other; both are siblings at the top level.
-    expect(investigations?.children).toBeUndefined();
     expect(plan?.children).toBeUndefined();
   });
 });

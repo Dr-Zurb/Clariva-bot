@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { COLLAPSE_CLOSE_MS, COLLAPSE_OPEN_MS } from "@/lib/cockpit/collapse-scroll";
 import { cn } from "@/lib/utils";
 
@@ -11,6 +11,12 @@ export interface CollapseProps {
   id?: string;
   /** Class applied to the innermost content wrapper (padding, spacing, …). */
   className?: string;
+  /**
+   * Inline style for the innermost content wrapper — e.g. to publish a
+   * `--sticky-stack` CSS var to the body's descendants without affecting the
+   * enclosing section's own scroll-margin.
+   */
+  style?: CSSProperties;
   /** Override the direction-aware default duration (open/close) for both directions. */
   durationMs?: number;
   children: ReactNode;
@@ -37,6 +43,7 @@ export function Collapse({
   open,
   id,
   className,
+  style,
   durationMs,
   children,
 }: CollapseProps): JSX.Element {
@@ -109,7 +116,9 @@ export function Collapse({
           open && overflowVisible ? "overflow-visible" : "overflow-clip",
         )}
       >
-        <div className={className}>{children}</div>
+        <div className={className} style={style}>
+          {children}
+        </div>
       </div>
     </div>
   );

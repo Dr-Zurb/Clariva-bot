@@ -432,6 +432,17 @@ function serializeQuitPart(item: CaffeineUseItem): string | null {
   return `quit ${formatSocialHistoryDurationSuffix(item.quitYearsAgo, item.quitYearsUnit)} ago`;
 }
 
+export function serializeCaffeineItemPreview(item: CaffeineUseItem): string | undefined {
+  const clause = serializeCaffeineItemClause(item);
+  const label = caffeineDisplayLabel(item);
+  if (!clause || clause === label) return undefined;
+  const wrapped = `${label} (`;
+  if (clause.startsWith(wrapped) && clause.endsWith(")")) {
+    return clause.slice(wrapped.length, -1);
+  }
+  return clause;
+}
+
 function serializeCaffeineItemClause(item: CaffeineUseItem): string {
   const label = caffeineDisplayLabel(item);
   const parts: string[] = [];

@@ -16,6 +16,7 @@ import {
   saveObjectiveCustomSectionsDefault,
   type CustomSubsection,
 } from "@/lib/cockpit/custom-objective-sections";
+import { OBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import { cn } from "@/lib/utils";
 
 const CUSTOM_SECTION_TITLE_MAX = 200;
@@ -99,6 +100,7 @@ export function ObjectiveCustomSectionBlock({
       preview={section.body?.trim() || null}
       toggleLabel={`Toggle ${displayTitle}`}
       scrollOnExpand
+      closeScrollToSelector={OBJECTIVE_SCROLL_TOP_SELECTOR}
       stickyHeader
       leadingActions={disabled ? undefined : leadingActions}
       actions={headerActions}

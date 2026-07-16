@@ -46,7 +46,9 @@ import { generatePrescriptionPdf } from './prescription-pdf-service';
 import { mintRxToken, buildShareUrl } from './prescription-token-service';
 import { incrementDoctorDrugUsageOnSend } from './doctor-drug-usage-service';
 import { serializeCustomSubsections } from '../utils/custom-subsections';
-import type { CustomSubsection } from '../types/prescription';
+import { resolveAdviceForOutput } from '../utils/advice-format';
+import { resolveFollowUpForOutput } from '../utils/follow-up-format';
+import type { CustomSubsection, FollowUpUnit } from '../types/prescription';
 
 // ============================================================================
 // Types
@@ -489,8 +491,16 @@ export function buildPrescriptionTextSummary(rx: {
   // the Prescription row, so the rename is transparent at the call site.
   investigations_orders?: string | null;
   follow_up?: string | null;
+  follow_up_value?: number | null;
+  follow_up_unit?: FollowUpUnit | null;
+  advice?: string | null;
+  referral?: string | null;
+  patient_education?: string | null;
   // subj-22: doctor-defined custom subjective subsections (depth-2 JSONB).
   custom_subsections?: CustomSubsection[] | null;
+  // assessment-plan-custom-sections: custom Assessment / Plan sections (depth-2 JSONB).
+  assessment_custom_sections?: CustomSubsection[] | null;
+  plan_custom_sections?: CustomSubsection[] | null;
   prescription_medicines?: Array<{
     medicine_name: string;
     dosage?: string | null;
@@ -520,8 +530,32 @@ export function buildPrescriptionTextSummary(rx: {
   if (rx.investigations_orders) {
     lines.push(`\n**Investigations:** ${rx.investigations_orders}`);
   }
-  if (rx.follow_up) {
-    lines.push(`\n**Follow-up:** ${rx.follow_up}`);
+  const advice = resolveAdviceForOutput(rx.advice, rx.patient_education);
+  if (advice) {
+    lines.push(`\n**Advice:** ${advice}`);
+  }
+  const followUp = resolveFollowUpForOutput(
+    rx.follow_up,
+    rx.follow_up_value,
+    rx.follow_up_unit,
+  );
+  if (followUp) {
+    lines.push(`\n**Follow-up:** ${followUp}`);
+  }
+  const referral = rx.referral?.trim();
+  if (referral) {
+    lines.push(`\n**Referral:** ${referral}`);
+  }
+  // assessment-plan-custom-sections: append custom Assessment sections (mirrors
+  // subjective customs). Empty sections/children are omitted by the serializer.
+  const assessmentCustomText = serializeCustomSubsections(rx.assessment_custom_sections);
+  if (assessmentCustomText) {
+    lines.push(`\n**Assessment notes:**\n${assessmentCustomText}`);
+  }
+  // assessment-plan-custom-sections: append custom Plan sections.
+  const planCustomText = serializeCustomSubsections(rx.plan_custom_sections);
+  if (planCustomText) {
+    lines.push(`\n**Plan notes:**\n${planCustomText}`);
   }
   // subj-22: append the custom-subsections mirror as an additive block.
   // Empty sections/children are omitted by the serializer; nothing is added

@@ -724,6 +724,47 @@ describe("social-history v1 dimension API (legacy chip UI)", () => {
   });
 });
 
+describe("social-history section notes", () => {
+  it("round-trips smoking, smokeless, alcohol, and substances section notes", () => {
+    const structured: SocialHistoryStructured = {
+      smoking: { status: "never", products: [], notes: "passive exposure at home" },
+      smokeless: { status: "never", products: [], notes: "denies chew" },
+      alcohol: { status: "never", drinks: [], notes: "social only" },
+      substances: { status: "never", items: [], notes: "denies illicit use" },
+    };
+    const text = serializeSocialHistory(structured);
+    expect(text).toContain("Smoking: Non-smoker, notes: passive exposure at home");
+    expect(text).toContain("Smokeless: No tobacco, notes: denies chew");
+    expect(text).toContain("Alcohol: No alcohol, notes: social only");
+    expect(text).toContain("Substances: Denies use, notes: denies illicit use");
+
+    const roundTripped = parseSocialHistoryAsStructured(text);
+    expect(roundTripped.smoking?.notes).toBe("passive exposure at home");
+    expect(roundTripped.smokeless?.notes).toBe("denies chew");
+    expect(roundTripped.alcohol?.notes).toBe("social only");
+    expect(roundTripped.substances?.notes).toBe("denies illicit use");
+  });
+
+  it("serializes notes-only sections without status", () => {
+    const structured: SocialHistoryStructured = {
+      smoking: { products: [], notes: "partner smokes" },
+      alcohol: { drinks: [], notes: "rare festivals" },
+    };
+    const text = serializeSocialHistory(structured);
+    expect(text).toContain("Smoking: notes: partner smokes");
+    expect(text).toContain("Alcohol: notes: rare festivals");
+    expect(parseSocialHistoryAsStructured(text).smoking?.notes).toBe("partner smokes");
+    expect(parseSocialHistoryAsStructured(text).alcohol?.notes).toBe("rare festivals");
+  });
+
+  it("counts sections with notes toward substance cluster fill", () => {
+    const structured: SocialHistoryStructured = {
+      smoking: { products: [], notes: "counseling planned" },
+    };
+    expect(substanceUseClusterFilledCount(structured)).toBe(1);
+  });
+});
+
 describe("social-history clusters", () => {
   it("serializes substance use cluster independently", () => {
     const structured: SocialHistoryStructured = {
