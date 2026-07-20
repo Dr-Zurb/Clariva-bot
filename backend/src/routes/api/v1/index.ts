@@ -22,6 +22,7 @@ import catalogRoutes from './catalog';
 import meRoutes from './me';
 import adminRoutes from './admin';
 import dashboardEventsRoutes from './dashboard-events';
+import dashboardInsightsRoutes from './dashboard-insights';
 import diagnosesRoutes from './diagnoses';
 import investigationsRoutes from './investigations';
 import doctorDrugFavoritesRoutes from './doctor-drug-favorites';
@@ -118,6 +119,10 @@ router.use('/admin', adminRoutes);
 // Plan 07 / Task 30: doctor dashboard event feed (recording-replay
 // notifications today; widens additively in Plans 08/09).
 router.use('/dashboard/events', dashboardEventsRoutes);
+
+// insights-v1 · ins-01: read-only, doctor-scoped, range-aware Tier-1
+// practice-health aggregates (GET /dashboard/insights/overview).
+router.use('/dashboard/insights', dashboardInsightsRoutes);
 
 // Patient seeing flow · pf-02: doctor-scoped diagnosis-tag autocomplete
 // for the wrap-up dialog (powers GET /diagnoses/recent).

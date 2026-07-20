@@ -5230,3 +5230,163 @@ export async function acknowledgeDashboardEvent(
   err.body = json;
   throw err;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// insights-v1 · ins-01 / ins-02: Practice-health overview (Tier-1 aggregates).
+//
+// Aggregate-only, doctor-scoped, range-aware. Never returns patient rows or
+// raw payments — only counts, sums, and rates.
+// Backend: backend/src/controllers/dashboard-insights-controller.ts
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface PracticeHealthOverview {
+  range: { from: string; to: string };
+  volume: {
+    total: number;
+    byStatus: Record<string, number>;
+    byModality: Record<string, number>;
+  };
+  /** 0..1 */
+  noShowRate: number;
+  revenueCapturedMinor: number;
+  currency: string;
+  /** Present when captured payments span more than one currency. */
+  mixedCurrency?: boolean;
+  consult: {
+    /** 0..1 */
+    completionRate: number;
+    medianDurationSeconds: number;
+  };
+}
+
+export interface GetPracticeHealthOverviewOptions {
+  from: string;
+  to: string;
+}
+
+export async function getPracticeHealthOverview(
+  token: string,
+  options: GetPracticeHealthOverviewOptions,
+): Promise<ApiSuccess<PracticeHealthOverview>> {
+  const params = new URLSearchParams({
+    from: options.from,
+    to: options.to,
+  });
+  return request<PracticeHealthOverview>(
+    `/api/v1/dashboard/insights/overview?${params.toString()}`,
+    { token },
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// insights-v1 · ins-03: Booking funnel + review SLA (Tier-2 aggregates).
+// Aggregate counts only — never patient / payment / conversation rows.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface BookingFunnelOverview {
+  range: { from: string; to: string };
+  funnel: {
+    slotsSelected: number;
+    slotsConsumed: number;
+    paymentsCaptured: number;
+    appointmentsConfirmed: number;
+  };
+  review: {
+    pending: number;
+    medianResolutionSeconds: number;
+    breachedSla: number;
+  };
+}
+
+export async function getBookingFunnelOverview(
+  token: string,
+  options: GetPracticeHealthOverviewOptions,
+): Promise<ApiSuccess<BookingFunnelOverview>> {
+  const params = new URLSearchParams({
+    from: options.from,
+    to: options.to,
+  });
+  return request<BookingFunnelOverview>(
+    `/api/v1/dashboard/insights/funnel?${params.toString()}`,
+    { token },
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// insights-v1 · ins-04: Clinical mix (Tier-3 de-identified aggregates).
+// `{ label, count, code? }` only — never patient ids or free-text notes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ClinicalMixItem {
+  label: string;
+  count: number;
+  code?: string;
+}
+
+export interface ClinicalMixOverview {
+  range: { from: string; to: string };
+  topDiagnoses: ClinicalMixItem[];
+  topMedicines: ClinicalMixItem[];
+  topInvestigations: ClinicalMixItem[];
+  diagnosesSource: "diagnoses_json" | "diagnosis_tags" | "none";
+}
+
+export interface GetClinicalMixOverviewOptions
+  extends GetPracticeHealthOverviewOptions {
+  limit?: number;
+}
+
+export async function getClinicalMixOverview(
+  token: string,
+  options: GetClinicalMixOverviewOptions,
+): Promise<ApiSuccess<ClinicalMixOverview>> {
+  const params = new URLSearchParams({
+    from: options.from,
+    to: options.to,
+  });
+  if (typeof options.limit === "number") {
+    params.set("limit", String(options.limit));
+  }
+  return request<ClinicalMixOverview>(
+    `/api/v1/dashboard/insights/clinical-mix?${params.toString()}`,
+    { token },
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// insights-v1 · ins-05: Telehealth quality (Tier-4 aggregates).
+// Modality mix / switches / join rate / call-quality percentiles only —
+// never per-session or per-sample rows.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface CallQualitySummary {
+  p50Rtt: number | null;
+  p95Rtt: number | null;
+  avgPacketLoss: number | null;
+}
+
+export interface TelehealthQualityOverview {
+  range: { from: string; to: string };
+  modalityMix: { text: number; voice: number; video: number };
+  switches: { upgrades: number; downgrades: number };
+  /** 0..1 */
+  joinSuccessRate: number;
+  quality: {
+    video: CallQualitySummary;
+    voice: CallQualitySummary;
+  };
+}
+
+export async function getTelehealthQualityOverview(
+  token: string,
+  options: GetPracticeHealthOverviewOptions,
+): Promise<ApiSuccess<TelehealthQualityOverview>> {
+  const params = new URLSearchParams({
+    from: options.from,
+    to: options.to,
+  });
+  return request<TelehealthQualityOverview>(
+    `/api/v1/dashboard/insights/telehealth?${params.toString()}`,
+    { token },
+  );
+}

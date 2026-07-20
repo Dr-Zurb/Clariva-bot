@@ -27,6 +27,18 @@ export const queryKeys = {
     appointments: () => [...queryKeys.dashboard.all, "appointments"] as const,
     pendingReviews: () => [...queryKeys.dashboard.all, "pending-reviews"] as const,
     rxSentToday: () => [...queryKeys.dashboard.all, "rx-sent-today"] as const,
+    /** insights-v1 · practice-health overview keyed by ISO date range. */
+    practiceHealth: (range: { from: string; to: string }) =>
+      [...queryKeys.dashboard.all, "practice-health", range] as const,
+    /** insights-v1 · booking funnel + review SLA keyed by ISO date range. */
+    bookingFunnel: (range: { from: string; to: string }) =>
+      [...queryKeys.dashboard.all, "booking-funnel", range] as const,
+    /** insights-v1 · clinical mix keyed by ISO date range (+ limit). */
+    clinicalMix: (range: { from: string; to: string; limit?: number }) =>
+      [...queryKeys.dashboard.all, "clinical-mix", range] as const,
+    /** insights-v1 · telehealth quality keyed by ISO date range. */
+    telehealthQuality: (range: { from: string; to: string }) =>
+      [...queryKeys.dashboard.all, "telehealth-quality", range] as const,
   },
   patients: {
     all: ["patients"] as const,
