@@ -15,6 +15,7 @@
 | **p1** | [`p1-launch-critical/`](./p1-launch-critical/) | Data deletion, consent-persist fix, token lifecycle, Meta App Review ops | 🟡 In progress — `ilr-02` ✅ `ilr-03` ✅ `ilr-04` ✅ · `ilr-01` ops (ongoing) · `ilr-05` close-gate ready |
 | **p2** | [`p2-bot-reliability/`](./p2-bot-reliability/) | Throttle desync, non-text mid-funnel, staff-review stall, webhook signature | 📋 Scaffolded — after p1 |
 | **p3** | [`p3-bot-polish/`](./p3-bot-polish/) | Funnel dead-ends, fallbacks, brand/copy, returning memory, comment→conversation link | 📋 Scaffolded — after p2 |
+| **p4** | [`p4-direct-instagram-login/`](./p4-direct-instagram-login/) | Direct Instagram Login connect (no Facebook Page) + IG token refresh | 📋 Scaffolded — can parallel ops with p1; code after decision lock |
 
 ---
 
@@ -27,6 +28,7 @@
 | **ILR-D3** | Launch-blockers (p1) ship before reliability (p2) before polish (p3). |
 | **ILR-D4** | PHI / consent / deletion / migration-adjacent tasks run on **Opus**; decision lock confirmed before Wave 1 of each phase. |
 | **ILR-D5** | Meta App Review + business verification is an **ops track** started immediately (parallel to p1 code). |
+| **ILR-D6** | Direct Instagram Login (no Facebook Page) is a **pre-launch onboarding win** — clean OAuth swap + IG token refresh; generalized 3-social connections table deferred. |
 
 ---
 
@@ -50,6 +52,11 @@
 | ilr-14 | p3 | Fee↔book intent + returning-patient memory flag |
 | ilr-15 | p3 | Comment lead → conversation link (+ doctor_id scope) |
 | ilr-16 | p3 | Close gate p3 |
+| ilr-17 | p4 | Meta App: Instagram Login product + App Review (ops) |
+| ilr-18 | p4 | OAuth swap: Instagram Login connect (code) |
+| ilr-19 | p4 | IG long-lived token refresh in health sweep |
+| ilr-20 | p4 | Settings UI copy: drop Facebook Page dead-ends |
+| ilr-21 | p4 | Close gate p4 |
 
 ---
 

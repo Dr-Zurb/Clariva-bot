@@ -43,7 +43,7 @@ Patients mostly stay in **Instagram + lightweight web join/book pages**. Doctors
 
 | Capability | Where | Notes |
 |------------|-------|-------|
-| Instagram OAuth connect (Page + IG Business) | `instagram-connect-service.ts`, `/api/v1/settings/instagram` | Gated on doctor verification |
+| Instagram OAuth connect (today: Facebook Page–linked) | `instagram-connect-service.ts`, `/api/v1/settings/instagram` | Gated on doctor verification; **direct Instagram Login** planned in [`instagram-launch-readiness` p4](../../Daily-plans/July%202026/25-07-2026/instagram-launch-readiness/p4-direct-instagram-login/) |
 | Instagram DM webhook → AI funnel | `instagram-dm-webhook-handler.ts`, `run-conversation-turn.ts` | Channel-agnostic conversation engine |
 | Instagram comment → lead + proactive DM | `instagram-comment-webhook-handler.ts`, `comment-leads` | Fixed public reply copy |
 | Channel adapter port + registry | `backend/src/workers/channels/` | `ChannelId = 'instagram' \| 'whatsapp'` |
@@ -107,6 +107,7 @@ These are sequencing / scoping decisions. Per-phase deep dives MUST respect them
 |-------|-------|------|----------------|--------|---------------|
 | **P0 — Meta infra hardening** | Token refresh, data deletion, webhook sig, comment→conversation link | A (foundation) | ~3–5 days | **In flight** → [`instagram-launch-readiness`](../../Daily-plans/July%202026/25-07-2026/instagram-launch-readiness/) | **Pre-launch** (now) |
 | **IG polish — bot reliability + copy** | Throttle/non-text/staff-review/funnel dead-ends + copy | A | ~1–2 weeks | **In flight** → same program (p2/p3) | **Pre-launch** (after P0) |
+| **IG direct Login** | Connect without Facebook Page; IG token refresh | A (onboarding) | ~2–4 days code + App Review lead time | **Scaffolded** → [`p4-direct-instagram-login`](../../Daily-plans/July%202026/25-07-2026/instagram-launch-readiness/p4-direct-instagram-login/) | **Pre-launch** (ops-parallel; unlocks real-doctor self-serve) |
 | **P1a — WhatsApp outbound fan-out** | WA connect + templates; fan out payment/consult-ready/reminders/Rx | A | Large + KYC lead time | **Post-sales** | Trigger: ~10 paying doctors with steady weekly consults |
 | **P1b — WhatsApp inbound intake** | AI booking funnel over WhatsApp | A | Medium on top of P1a | **Post-sales** | After P1a |
 | **P2 — Calendar sync** | Google Calendar (+ Outlook later) | B | Medium | `Drafted` | Post-launch fast-follow |
@@ -126,16 +127,16 @@ PRE-LAUNCH (now)                    POST-SALES                         TRACTION 
  │                                    │                                      │
  ▼                                    ▼                                      ▼
 Instagram launch-readiness     →  P1a WA outbound  →  P1b WA inbound    P4 Pharmacy
-  (P0 harden + bot polish)        (trigger: ~10 paying doctors)         P5 Labs
-  + Meta App Review ops            P2 Calendar / P3 Web widget          P7 Gulf pay
-                                                                         P8 CAPI
+  (P0 harden + bot polish         (trigger: ~10 paying doctors)         P5 Labs
+   + direct IG Login p4)           P2 Calendar / P3 Web widget          P7 Gulf pay
+  + Meta App Review ops                                                 P8 CAPI
 ```
 
-**Rationale (locked 2026-07-25):**
+**Rationale (locked 2026-07-25; p4 added 2026-07-26):**
 
 1. **MVP = one channel that works.** Discovery is on Instagram. WhatsApp is convenience/reach, not a launch requirement — defer until sales prove demand.
-2. **Pre-launch = harden + polish Instagram** — P0 Meta infra + bot reliability/polish (see `instagram-launch-readiness` program). Shared engine polish also benefits future WhatsApp for free.
-3. **WhatsApp after sales** — P1a outbound first (notifications land where patients read), then P1b inbound. Design notes below stay; no task files until the trigger.
+2. **Pre-launch = harden + polish Instagram** — P0 Meta infra + bot reliability/polish + **direct Instagram Login** (no Facebook Page) so Instagram-only doctors can connect (see `instagram-launch-readiness` program). Shared engine polish also benefits future WhatsApp for free.
+3. **WhatsApp after sales** — P1a outbound first (notifications land where patients read), then P1b inbound. Design notes below stay; no task files until the trigger. Facebook + WhatsApp as separate Integrations cards come with that later work.
 4. **Pharmacy/labs post-traction** — partner BD; not MVP.
 5. **P6–P8** — credibility / market / ads triggers only.
 
