@@ -1,24 +1,51 @@
 /**
- * Instagram Connect Service Unit Tests (e-task-2, e-task-4)
+ * Instagram Connect Service Unit Tests (e-task-2, e-task-4, ilr-18)
  *
  * Tests getDoctorIdByPageId: returns doctor_id when row exists,
  * null when no row; throws when admin client unavailable or query fails.
  * Tests disconnectInstagram: deletes row for doctor_id; idempotent when no row; throws when admin client null.
+ * Tests Instagram Login OAuth URL scopes + short-lived code exchange parsing.
  *
  * No PHI in test data (TESTING.md).
  */
 
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import axios from 'axios';
 import {
   getDoctorIdByPageId,
   disconnectInstagram,
   getInstagramDashboardStatus,
+  buildMetaOAuthUrl,
+  exchangeCodeForShortLivedToken,
+  exchangeForLongLivedToken,
+  refreshInstagramLongLivedToken,
 } from '../../../src/services/instagram-connect-service';
 import * as database from '../../../src/config/database';
 
 jest.mock('../../../src/config/database', () => ({
   getSupabaseAdminClient: jest.fn(),
 }));
+
+jest.mock('axios');
+const mockedAxios = axios as jest.Mocked<typeof axios>;
+
+jest.mock('../../../src/config/env', () => {
+  const actual = jest.requireActual('../../../src/config/env') as {
+    env: Record<string, unknown>;
+  };
+  return {
+    env: new Proxy(actual.env, {
+      get(target, prop: string) {
+        if (prop === 'INSTAGRAM_APP_ID') return 'ig-app-id-test';
+        if (prop === 'INSTAGRAM_APP_SECRET') return 'ig-app-secret-test-min-32-chars!!';
+        if (prop === 'INSTAGRAM_REDIRECT_URI') {
+          return 'https://api.example.com/api/v1/settings/instagram/callback';
+        }
+        return target[prop];
+      },
+    }),
+  };
+});
 
 const mockedDb = database as jest.Mocked<typeof database>;
 
@@ -166,5 +193,73 @@ describe('Instagram Connect Service – disconnectInstagram (e-task-4)', () => {
     await expect(disconnectInstagram(doctorId, 'corr-1')).rejects.toThrow(
       'Service role client not available'
     );
+  });
+});
+
+describe('Instagram Login OAuth (ilr-18)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('buildMetaOAuthUrl uses Instagram authorize + business scopes', () => {
+    const url = buildMetaOAuthUrl('signed-state');
+    expect(url).toContain('https://www.instagram.com/oauth/authorize?');
+    expect(url).toContain('client_id=ig-app-id-test');
+    expect(url).toContain('instagram_business_basic');
+    expect(url).toContain('instagram_business_manage_messages');
+    expect(url).toContain('instagram_business_manage_comments');
+    expect(url).not.toContain('pages_show_list');
+    expect(url).not.toContain('facebook.com');
+    expect(url).toContain('state=signed-state');
+  });
+
+  it('exchangeCodeForShortLivedToken POSTs form body and parses top-level response', async () => {
+    mockedAxios.post.mockResolvedValueOnce({
+      data: { access_token: 'short-tok', user_id: '17841400000000000' },
+    } as never);
+
+    const result = await exchangeCodeForShortLivedToken('auth-code#_', 'corr-x');
+
+    expect(result).toEqual({
+      accessToken: 'short-tok',
+      userId: '17841400000000000',
+    });
+    expect(mockedAxios.post).toHaveBeenCalledWith(
+      'https://api.instagram.com/oauth/access_token',
+      expect.stringContaining('grant_type=authorization_code'),
+      expect.objectContaining({
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      })
+    );
+    const body = String(mockedAxios.post.mock.calls[0]?.[1]);
+    expect(body).toContain('code=auth-code');
+    expect(body).not.toContain('%23_');
+  });
+
+  it('exchangeForLongLivedToken uses ig_exchange_token', async () => {
+    mockedAxios.get.mockResolvedValueOnce({
+      data: { access_token: 'long-tok', expires_in: 5184000 },
+    } as never);
+
+    await expect(exchangeForLongLivedToken('short-tok', 'corr-ll')).resolves.toEqual({
+      accessToken: 'long-tok',
+      expiresIn: 5184000,
+    });
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      'https://graph.instagram.com/access_token',
+      expect.objectContaining({
+        params: expect.objectContaining({
+          grant_type: 'ig_exchange_token',
+          access_token: 'short-tok',
+        }),
+      })
+    );
+  });
+
+  it('refreshInstagramLongLivedToken returns null on failure (no throw)', async () => {
+    mockedAxios.get.mockRejectedValueOnce(new Error('network'));
+    await expect(
+      refreshInstagramLongLivedToken('long-tok', 'corr-rf')
+    ).resolves.toBeNull();
   });
 });

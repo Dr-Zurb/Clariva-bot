@@ -73,9 +73,9 @@ export default function InstagramConnect({ token }: InstagramConnectProps) {
       const errParam = params.get("error");
       const errMsg =
         errParam === "page_already_linked"
-          ? "This Instagram page is already linked to another account."
+          ? "This Instagram account is already linked to another Halo Aid account."
           : errParam === "no_pages"
-            ? "No Facebook Page found. Please link a Page to your Instagram account."
+            ? "Could not find an Instagram professional account. Switch to a Business or Creator account, then try again."
             : errParam === "doctor_not_verified"
               ? "Verify your medical registration before connecting Instagram."
               : "Connection was not completed.";
@@ -186,7 +186,8 @@ export default function InstagramConnect({ token }: InstagramConnectProps) {
       </div>
       <h2 className="font-semibold text-gray-900">Instagram</h2>
       <p className="mt-1 text-sm text-gray-600">
-        Connect Instagram to receive patient messages and manage appointments.
+        Connect your Instagram professional account (Business or Creator) to
+        receive patient DMs and manage appointments. No Facebook Page required.
       </p>
       {message && (
         <div
@@ -238,8 +239,8 @@ export default function InstagramConnect({ token }: InstagramConnectProps) {
           {(status.health.reconnectRecommended || status.health.level === "error") && (
             <p className="mt-2 text-xs">
               Use <span className="font-medium">Disconnect</span> then{" "}
-              <span className="font-medium">Connect Instagram</span> below to refresh your Meta token.
-              Full checklist: <code className="rounded bg-white/60 px-1">docs/Reference/engineering/operations/setup/instagram-setup.md</code> (Troubleshooting).
+              <span className="font-medium">Connect Instagram</span> below to
+              refresh your Instagram connection.
             </p>
           )}
         </div>

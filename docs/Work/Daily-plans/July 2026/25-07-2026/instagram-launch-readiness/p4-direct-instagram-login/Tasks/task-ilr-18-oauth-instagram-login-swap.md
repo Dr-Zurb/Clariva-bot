@@ -11,7 +11,7 @@ Replace Facebook Page OAuth in `instagram-connect-service` / controller with **I
 
 **Program / Phase:** instagram-launch-readiness · p4 · Wave 1  
 **Estimated Time:** ~2–4 hours  
-**Status:** ⏳ PENDING  
+**Status:** ✅ DONE (2026-07-26)  
 **Change Type:** Update existing  
 **Depends on:** ILR4-D1…D3 confirmed; OQ-1 = no production FB-linked doctors  
 **Model:** Prefer Sonnet if clean swap; **Opus** if OQ-1 forces dual-path

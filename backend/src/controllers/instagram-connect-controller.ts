@@ -27,7 +27,7 @@ import {
   buildMetaOAuthUrl,
   exchangeCodeForShortLivedToken,
   exchangeForLongLivedToken,
-  getPageTokenAndInstagramAccount,
+  getInstagramUserInfo,
   saveDoctorInstagram,
   disconnectInstagram,
   getInstagramDashboardStatus,
@@ -121,25 +121,31 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
     throw new DoctorNotVerifiedError(DOCTOR_VERIFY_FIRST_MESSAGE);
   }
 
-  const { accessToken: shortLived, userId: facebookUserId } = await exchangeCodeForShortLivedToken(
+  // Instagram Login (ilr-18): code → short-lived → long-lived IG user token → /me.
+  // No Facebook Page list. facebook_user_id is unavailable on this path (null).
+  const { accessToken: shortLived, userId: exchangeUserId } = await exchangeCodeForShortLivedToken(
     code,
     correlationId
   );
-  const longLivedUserToken = await exchangeForLongLivedToken(shortLived, correlationId);
-  const { pageAccessToken, instagramPageId, facebookPageId, instagramUsername } = await getPageTokenAndInstagramAccount(
-    longLivedUserToken,
+  const { accessToken: longLivedToken, expiresIn } = await exchangeForLongLivedToken(
+    shortLived,
     correlationId
   );
+  const { userId: meUserId, username } = await getInstagramUserInfo(longLivedToken, correlationId);
+  const instagramAccountId = meUserId || exchangeUserId;
+  const tokenExpiresAt =
+    expiresIn != null ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
 
   try {
     await saveDoctorInstagram(
       doctorId,
       {
-        instagram_page_id: instagramPageId,
-        facebook_page_id: facebookPageId,
-        instagram_access_token: pageAccessToken,
-        instagram_username: instagramUsername ?? null,
-        facebook_user_id: facebookUserId ?? null,
+        instagram_page_id: instagramAccountId,
+        facebook_page_id: null,
+        instagram_access_token: longLivedToken,
+        instagram_username: username ?? null,
+        facebook_user_id: null,
+        instagram_token_expires_at: tokenExpiresAt,
       },
       correlationId
     );

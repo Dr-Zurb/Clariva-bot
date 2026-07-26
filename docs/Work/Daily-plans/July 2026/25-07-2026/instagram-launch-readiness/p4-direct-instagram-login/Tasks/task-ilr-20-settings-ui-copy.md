@@ -10,7 +10,7 @@ Update Instagram Settings card copy/errors so doctors are not told to create a F
 
 **Program / Phase:** instagram-launch-readiness · p4 · Wave 1  
 **Estimated Time:** ~1 hour  
-**Status:** ⏳ PENDING  
+**Status:** ✅ DONE (2026-07-26)  
 **Depends on:** `ilr-18` (error codes may change)  
 **Model:** Composer
 

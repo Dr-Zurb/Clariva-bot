@@ -15,7 +15,7 @@
 | **p1** | [`p1-launch-critical/`](./p1-launch-critical/) | Data deletion, consent-persist fix, token lifecycle, Meta App Review ops | 🟡 In progress — `ilr-02` ✅ `ilr-03` ✅ `ilr-04` ✅ · `ilr-01` ops (ongoing) · `ilr-05` close-gate ready |
 | **p2** | [`p2-bot-reliability/`](./p2-bot-reliability/) | Throttle desync, non-text mid-funnel, staff-review stall, webhook signature | 📋 Scaffolded — after p1 |
 | **p3** | [`p3-bot-polish/`](./p3-bot-polish/) | Funnel dead-ends, fallbacks, brand/copy, returning memory, comment→conversation link | 📋 Scaffolded — after p2 |
-| **p4** | [`p4-direct-instagram-login/`](./p4-direct-instagram-login/) | Direct Instagram Login connect (no Facebook Page) + IG token refresh | 📋 Scaffolded — can parallel ops with p1; code after decision lock |
+| **p4** | [`p4-direct-instagram-login/`](./p4-direct-instagram-login/) | Direct Instagram Login connect (no Facebook Page) + IG token refresh | 🟡 Code ✅ (`ilr-18`–`20`) · **`ilr-17` Meta ops** (App Review) still open · `ilr-21` close when Dev connect verified |
 
 ---
 

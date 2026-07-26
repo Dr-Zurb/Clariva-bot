@@ -21,7 +21,7 @@ jest.mock('../../../src/services/instagram-connect-service', () => ({
   verifyState: jest.fn(),
   exchangeCodeForShortLivedToken: jest.fn(),
   exchangeForLongLivedToken: jest.fn(),
-  getPageTokenAndInstagramAccount: jest.fn(),
+  getInstagramUserInfo: jest.fn(),
   saveDoctorInstagram: jest.fn(),
   disconnectInstagram: jest.fn(),
   getInstagramDashboardStatus: jest.fn(),

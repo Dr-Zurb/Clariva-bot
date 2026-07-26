@@ -10,7 +10,7 @@ Instagram Login long-lived tokens last ~60 days and support **refresh** via Grap
 
 **Program / Phase:** instagram-launch-readiness · p4 · Wave 1  
 **Estimated Time:** ~2–3 hours  
-**Status:** ⏳ PENDING  
+**Status:** ✅ DONE (2026-07-26) — wired into `forceRefreshInstagramHealth`  
 **Depends on:** `ilr-18` (tokens are IG user tokens)  
 **Model:** Sonnet
 
