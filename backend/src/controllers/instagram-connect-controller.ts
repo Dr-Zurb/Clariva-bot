@@ -16,7 +16,11 @@ import { asyncHandler } from '../utils/async-handler';
 import { successResponse } from '../utils/response';
 import { logAuditEvent } from '../utils/audit-logger';
 import { env } from '../config/env';
-import { ConflictError, UnauthorizedError } from '../utils/errors';
+import {
+  ConflictError,
+  DoctorNotVerifiedError,
+  UnauthorizedError,
+} from '../utils/errors';
 import {
   createState,
   verifyState,
@@ -28,6 +32,10 @@ import {
   disconnectInstagram,
   getInstagramDashboardStatus,
 } from '../services/instagram-connect-service';
+import { isDoctorVerified } from '../services/doctor-verification-service';
+
+const DOCTOR_VERIFY_FIRST_MESSAGE =
+  'Verify your medical registration before connecting Instagram. Open Get verified in the dashboard.';
 
 /**
  * GET /api/v1/settings/instagram/status
@@ -50,10 +58,17 @@ export const statusHandler = asyncHandler(async (req: Request, res: Response) =>
  * Requires auth. Redirects 302 to Meta OAuth dialog.
  */
 export const connectHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
   const userId = req.user?.id;
 
   if (!userId) {
     throw new UnauthorizedError('Authentication required');
+  }
+
+  // ver-05: unverified doctors cannot start OAuth (patient-facing activation).
+  const verified = await isDoctorVerified(userId, correlationId);
+  if (!verified) {
+    throw new DoctorNotVerifiedError(DOCTOR_VERIFY_FIRST_MESSAGE);
   }
 
   const state = createState(userId);
@@ -91,7 +106,25 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
 
   const doctorId = verifyState(stateParam);
 
-  const { accessToken: shortLived } = await exchangeCodeForShortLivedToken(code, correlationId);
+  // ver-05 defense-in-depth: block token exchange/save if not verified
+  // (e.g. stale OAuth state minted before the gate).
+  const verified = await isDoctorVerified(doctorId, correlationId);
+  if (!verified) {
+    const redirectUri = env.INSTAGRAM_FRONTEND_REDIRECT_URI;
+    if (redirectUri) {
+      const errUrl = new URL(redirectUri);
+      errUrl.searchParams.set('connected', '0');
+      errUrl.searchParams.set('error', 'doctor_not_verified');
+      res.redirect(302, errUrl.toString());
+      return;
+    }
+    throw new DoctorNotVerifiedError(DOCTOR_VERIFY_FIRST_MESSAGE);
+  }
+
+  const { accessToken: shortLived, userId: facebookUserId } = await exchangeCodeForShortLivedToken(
+    code,
+    correlationId
+  );
   const longLivedUserToken = await exchangeForLongLivedToken(shortLived, correlationId);
   const { pageAccessToken, instagramPageId, facebookPageId, instagramUsername } = await getPageTokenAndInstagramAccount(
     longLivedUserToken,
@@ -106,6 +139,7 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
         facebook_page_id: facebookPageId,
         instagram_access_token: pageAccessToken,
         instagram_username: instagramUsername ?? null,
+        facebook_user_id: facebookUserId ?? null,
       },
       correlationId
     );

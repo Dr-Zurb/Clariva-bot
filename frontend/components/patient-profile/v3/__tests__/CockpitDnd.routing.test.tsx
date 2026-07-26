@@ -308,17 +308,13 @@ describe("CockpitDndContext routing (cv3d-03)", () => {
     });
   });
 
-  it("shell guard refuses body drop during live consult", () => {
-    const canDragPane = (id: string) => !(id === "body");
+  it("allows body drop during live consult (no rearrange lock)", () => {
+    mockMovePane.mockReturnValue({ ok: true });
     const handleDrop = (route: {
       sourcePaneId: string;
       targetGroupId: string;
       zone: string;
     }) => {
-      if (!canDragPane(route.sourcePaneId)) {
-        mockLayoutUxToastError("Pause the consult before rearranging.");
-        return;
-      }
       const res = mockMovePane(route.sourcePaneId, route.targetGroupId, route.zone);
       mockToastOnCapRejection(res);
       if (res.ok) mockTrackCockpitV3DragDrop(route);
@@ -337,11 +333,9 @@ describe("CockpitDndContext routing (cv3d-03)", () => {
       collisions: null,
     } as DragEndEvent);
 
-    expect(mockLayoutUxToastError).toHaveBeenCalledWith(
-      "Pause the consult before rearranging.",
-    );
-    expect(mockMovePane).not.toHaveBeenCalled();
-    expect(mockTrackCockpitV3DragDrop).not.toHaveBeenCalled();
+    expect(mockLayoutUxToastError).not.toHaveBeenCalled();
+    expect(mockMovePane).toHaveBeenCalled();
+    expect(mockTrackCockpitV3DragDrop).toHaveBeenCalled();
   });
 
   it("cap rejection toasts and skips telemetry", () => {

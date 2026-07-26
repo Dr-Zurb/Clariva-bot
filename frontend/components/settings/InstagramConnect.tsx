@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { createClient } from "@/lib/supabase/client";
+import Link from "next/link";
 import { formatDateTime } from "@/lib/format-date";
 import {
   getInstagramStatus,
@@ -9,26 +9,31 @@ import {
   disconnectInstagram,
   type InstagramStatusData,
 } from "@/lib/api";
+import { useVerificationStatusQuery } from "@/hooks/queries/useVerificationStatusQuery";
+
+interface InstagramConnectProps {
+  /** Access token from the server page (ver-05 soft-block). */
+  token: string;
+}
 
 /**
  * Instagram connection status and Connect/Disconnect actions.
  * Requires authenticated user (dashboard layout guards). Uses session token for API calls.
+ * ver-05: Connect is soft-blocked until license verification clears.
  * @see e-task-5; FRONTEND_STANDARDS (loading, error, a11y); FRONTEND_COMPLIANCE (no PII in logs)
  */
-export default function InstagramConnect() {
+export default function InstagramConnect({ token }: InstagramConnectProps) {
   const [status, setStatus] = useState<InstagramStatusData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [connectLoading, setConnectLoading] = useState(false);
   const [disconnectLoading, setDisconnectLoading] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const verification = useVerificationStatusQuery(token);
+  const mustVerifyFirst =
+    !!verification.data && verification.data.status !== "verified";
 
   const fetchStatus = useCallback(async () => {
-    const supabase = createClient();
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const token = session?.access_token;
     if (!token) {
       setError("Not signed in");
       setLoading(false);
@@ -48,7 +53,7 @@ export default function InstagramConnect() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [token]);
 
   useEffect(() => {
     fetchStatus();
@@ -71,20 +76,23 @@ export default function InstagramConnect() {
           ? "This Instagram page is already linked to another account."
           : errParam === "no_pages"
             ? "No Facebook Page found. Please link a Page to your Instagram account."
-            : "Connection was not completed.";
+            : errParam === "doctor_not_verified"
+              ? "Verify your medical registration before connecting Instagram."
+              : "Connection was not completed.";
       setMessage({ type: "error", text: errMsg });
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, [fetchStatus]);
 
   const handleConnect = async () => {
-    const supabase = createClient();
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const token = session?.access_token;
     if (!token) {
       setError("Not signed in");
+      return;
+    }
+    if (mustVerifyFirst) {
+      setError(
+        "Verify your medical registration before connecting Instagram.",
+      );
       return;
     }
     setConnectLoading(true);
@@ -93,8 +101,17 @@ export default function InstagramConnect() {
     try {
       await redirectToInstagramConnect(token);
       // Redirect initiated; do not set error — navigation may complete shortly.
-    } catch {
-      setError("Could not start connect. Please try again.");
+    } catch (err) {
+      const statusCode =
+        err && typeof err === "object" && "status" in err
+          ? (err as { status?: number }).status
+          : undefined;
+      const msg = err instanceof Error ? err.message : null;
+      setError(
+        statusCode === 403 && msg
+          ? msg
+          : "Could not start connect. Please try again.",
+      );
     } finally {
       setConnectLoading(false);
     }
@@ -105,11 +122,6 @@ export default function InstagramConnect() {
       "Are you sure? Incoming DMs will no longer be handled."
     );
     if (!confirmed) return;
-    const supabase = createClient();
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const token = session?.access_token;
     if (!token) {
       setError("Not signed in");
       return;
@@ -258,15 +270,29 @@ export default function InstagramConnect() {
               </p>
             )}
             <p className="text-gray-600">Not connected</p>
-            <button
-              type="button"
-              onClick={handleConnect}
-              disabled={connectLoading}
-              className="mt-2 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
-              aria-label="Connect Instagram"
-            >
-              {connectLoading ? "Redirecting…" : "Connect Instagram"}
-            </button>
+            {mustVerifyFirst ? (
+              <div className="mt-2 space-y-2">
+                <p className="text-sm text-amber-800" role="status">
+                  Verify your medical registration before connecting Instagram.
+                </p>
+                <Link
+                  href="/dashboard/get-verified"
+                  className="inline-flex rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                >
+                  Get verified
+                </Link>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleConnect}
+                disabled={connectLoading || verification.isLoading}
+                className="mt-2 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+                aria-label="Connect Instagram"
+              >
+                {connectLoading ? "Redirecting…" : "Connect Instagram"}
+              </button>
+            )}
           </>
         )}
       </div>

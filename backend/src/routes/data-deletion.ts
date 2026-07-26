@@ -1,10 +1,13 @@
 /**
- * Meta Data Deletion Callback
+ * Meta Data Deletion Callback (instagram-launch-readiness · ilr-02).
  *
- * Meta POSTs to this URL when a user requests data deletion via
- * Settings & Privacy → Settings → Apps and Websites → Remove app.
+ * Meta POSTs to this URL when a person who authorized the app via Facebook
+ * Login removes it (Settings & Privacy → Apps and Websites → Remove app).
+ * In Clariva that person is the DOCTOR, so honoring the request means
+ * disconnecting their Instagram connection. See meta-data-deletion-service.ts
+ * for the identity mapping and deletion-scope rationale.
  *
- * Required response: { url: string, confirmation_code: string }
+ * Required response: { url: string, confirmation_code: string }.
  * @see https://developers.facebook.com/docs/development/create-an-app/app-dashboard/data-deletion-callback/
  */
 
@@ -12,23 +15,30 @@ import { Router, Request, Response } from 'express';
 import { createHmac } from 'crypto';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
+import { asyncHandler } from '../utils/async-handler';
+import {
+  recordAndProcessMetaDeletion,
+  getMetaDeletionStatus,
+} from '../services/meta-data-deletion-service';
 
 const router = Router();
 
-// Frontend base URL for status page (user can check deletion status)
-// Set FRONTEND_URL or use INSTAGRAM_FRONTEND_REDIRECT_URI base (e.g. https://clariva-bot.vercel.app)
-const getDataDeletionBaseUrl = (): string => {
-  const u = process.env.FRONTEND_URL || process.env.INSTAGRAM_FRONTEND_REDIRECT_URI;
-  if (u) {
+/**
+ * Public frontend origin for the deletion status page. Prefers FRONTEND_URL,
+ * falls back to the connect redirect's origin, then a safe default.
+ */
+function getDataDeletionBaseUrl(): string {
+  const configured = env.FRONTEND_URL || env.INSTAGRAM_FRONTEND_REDIRECT_URI;
+  if (configured) {
     try {
-      const parsed = new URL(u);
+      const parsed = new URL(configured);
       return `${parsed.protocol}//${parsed.host}`;
     } catch {
-      // fallback
+      // fall through to default
     }
   }
   return 'https://clariva-bot.vercel.app';
-};
+}
 
 function base64UrlDecode(input: string): Buffer {
   const base64 = input.replace(/-/g, '+').replace(/_/g, '/');
@@ -36,16 +46,15 @@ function base64UrlDecode(input: string): Buffer {
 }
 
 function parseSignedRequest(signedRequest: string): { user_id?: string } | null {
-  if (!signedRequest || !env.INSTAGRAM_APP_SECRET) return null;
+  const appSecret = env.INSTAGRAM_APP_SECRET || env.META_APP_SECRET;
+  if (!signedRequest || !appSecret) return null;
   const parts = signedRequest.split('.', 2);
   if (parts.length !== 2) return null;
   const [encodedSig, payload] = parts;
   try {
     const sig = base64UrlDecode(encodedSig);
     const data = JSON.parse(base64UrlDecode(payload).toString('utf8'));
-    const expectedSig = createHmac('sha256', env.INSTAGRAM_APP_SECRET)
-      .update(payload)
-      .digest();
+    const expectedSig = createHmac('sha256', appSecret).update(payload).digest();
     if (!sig.equals(expectedSig)) {
       logger.warn('Data deletion callback: invalid signature');
       return null;
@@ -56,35 +65,64 @@ function parseSignedRequest(signedRequest: string): { user_id?: string } | null 
   }
 }
 
-router.post('/', (req: Request, res: Response) => {
-  const correlationId = (req as { correlationId?: string }).correlationId || 'unknown';
-  const signedRequest = req.body?.signed_request as string | undefined;
+/**
+ * POST /data-deletion-callback — Meta data-deletion request.
+ * Always answers with the Meta-required shape; the service never throws.
+ */
+router.post(
+  '/',
+  asyncHandler(async (req: Request, res: Response) => {
+    const correlationId = req.correlationId || 'unknown';
+    const signedRequest = req.body?.signed_request as string | undefined;
 
-  if (!signedRequest) {
-    logger.warn({ correlationId }, 'Data deletion callback: missing signed_request');
-    res.status(400).json({ error: 'Missing signed_request' });
-    return;
-  }
+    if (!signedRequest) {
+      logger.warn({ correlationId }, 'Data deletion callback: missing signed_request');
+      res.status(400).json({ error: 'Missing signed_request' });
+      return;
+    }
 
-  const data = parseSignedRequest(signedRequest);
-  const userId = data?.user_id;
+    const data = parseSignedRequest(signedRequest);
+    const userId = data?.user_id;
 
-  if (userId) {
-    logger.info(
-      { correlationId, userId },
-      'Data deletion request received from Meta (queue for processing)'
-    );
-    // TODO: Queue actual deletion job - match userId to our stored user/patient data
-    // For now we acknowledge; implement deletion in worker when user mapping is clear
-  }
+    if (!userId) {
+      // Bad/unverifiable payload. Still return a valid shape so Meta does not
+      // retry indefinitely, but there is nothing to erase.
+      logger.warn({ correlationId }, 'Data deletion callback: unverified or missing user_id');
+      const fallbackCode = `del-${Date.now()}-invalid`;
+      res.status(200).json({
+        url: `${getDataDeletionBaseUrl()}/data-deletion?code=${fallbackCode}`,
+        confirmation_code: fallbackCode,
+      });
+      return;
+    }
 
-  const confirmationCode = `del-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  const statusUrl = `${getDataDeletionBaseUrl()}/data-deletion?code=${confirmationCode}`;
+    const { confirmationCode } = await recordAndProcessMetaDeletion(userId, correlationId);
 
-  res.status(200).json({
-    url: statusUrl,
-    confirmation_code: confirmationCode,
-  });
-});
+    res.status(200).json({
+      url: `${getDataDeletionBaseUrl()}/data-deletion?code=${confirmationCode}`,
+      confirmation_code: confirmationCode,
+    });
+  })
+);
+
+/**
+ * GET /data-deletion-callback/status?code=... — real progress for the status
+ * page. Returns 'unknown' for unrecognized codes (no existence leak).
+ */
+router.get(
+  '/status',
+  asyncHandler(async (req: Request, res: Response) => {
+    const correlationId = req.correlationId || 'unknown';
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+
+    if (!code) {
+      res.status(400).json({ error: 'Missing code' });
+      return;
+    }
+
+    const status = await getMetaDeletionStatus(code, correlationId);
+    res.status(200).json({ code, status });
+  })
+);
 
 export default router;

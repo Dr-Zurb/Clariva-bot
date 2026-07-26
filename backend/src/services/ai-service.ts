@@ -1905,7 +1905,7 @@ function buildResponseSystemPrompt(
     !suppressAllConsultationFees &&
     (promptOpts?.competingVisitTypeBuckets === true ||
       promptOpts?.silentAssignmentStrict === true);
-  const practiceName = doctorContext?.practice_name?.trim() || 'Clariva Care';
+  const practiceName = doctorContext?.practice_name?.trim() || 'Halo Aid';
   let prompt = RESPONSE_SYSTEM_PROMPT_BASE.replace(
     /practice's assistant/g,
     `${practiceName}'s assistant`

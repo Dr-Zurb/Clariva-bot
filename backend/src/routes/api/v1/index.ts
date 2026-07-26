@@ -23,6 +23,10 @@ import meRoutes from './me';
 import adminRoutes from './admin';
 import dashboardEventsRoutes from './dashboard-events';
 import dashboardInsightsRoutes from './dashboard-insights';
+import dashboardOnboardingRoutes from './dashboard-onboarding';
+import verificationRoutes from './verification';
+import adminVerificationRoutes from './admin-verifications';
+import adminDoctorsRoutes from './admin-doctors';
 import diagnosesRoutes from './diagnoses';
 import investigationsRoutes from './investigations';
 import doctorDrugFavoritesRoutes from './doctor-drug-favorites';
@@ -31,6 +35,7 @@ import complaintMasterRoutes from './complaint-master';
 import medicinesRoutes from './medicines';
 import noteFavoritesRoutes from './note-favorites';
 import pushRoutes from './push';
+import authRoutes from './auth';
 
 const router = Router();
 
@@ -44,6 +49,10 @@ const router = Router();
 // Health check endpoint (versioned)
 // GET /api/v1/health
 router.use('/health', healthRoutes);
+
+// Public auth helpers (auth-password · AP-D17)
+// POST /api/v1/auth/email-status
+router.use('/auth', authRoutes);
 
 // Appointment endpoints
 // GET /api/v1/appointments/available-slots
@@ -123,6 +132,24 @@ router.use('/dashboard/events', dashboardEventsRoutes);
 // insights-v1 · ins-01: read-only, doctor-scoped, range-aware Tier-1
 // practice-health aggregates (GET /dashboard/insights/overview).
 router.use('/dashboard/insights', dashboardInsightsRoutes);
+
+// doctor-onboarding-v1 · onb-01: read-only go-live checklist booleans
+// (GET /dashboard/onboarding/status).
+router.use('/dashboard/onboarding', dashboardOnboardingRoutes);
+
+// doctor-verification-v1 · ver-03: doctor-facing verification submit/status
+// (POST /verification/upload-url, /submit; GET /verification/status).
+router.use('/verification', verificationRoutes);
+
+// doctor-verification-v1 · ver-04: ops/admin review endpoints, gated by
+// CRON_SECRET (GET/POST /admin/verifications...). The generic /admin router
+// above only defines /archival-preview and falls through (next()) for other
+// paths, so this dedicated sub-router is reached.
+router.use('/admin/verifications', adminVerificationRoutes);
+
+// admin-console-v3 · acon3-01: doctors directory (GET /admin/doctors).
+// Invite path retired in auth-v2 (self-serve Google + Email OTP).
+router.use('/admin/doctors', adminDoctorsRoutes);
 
 // Patient seeing flow · pf-02: doctor-scoped diagnosis-tag autocomplete
 // for the wrap-up dialog (powers GET /diagnoses/recent).

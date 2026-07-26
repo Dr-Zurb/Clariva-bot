@@ -50,6 +50,7 @@ import { sendAppointmentRescheduledToDoctor } from './notification-service';
 import { logger } from '../config/logger';
 import {
   InternalError,
+  DoctorNotVerifiedError,
   NotFoundError,
   ServiceSelectionNotFinalizedPaymentError,
   StaffServiceReviewPendingPaymentError,
@@ -57,6 +58,7 @@ import {
   ValidationError,
 } from '../utils/errors';
 import { evaluatePublicBookingPaymentGate } from '../utils/public-booking-payment-gate';
+import { isDoctorVerified } from './doctor-verification-service';
 import { resolveSessionDayMode } from './opd/opd-mode-service';
 import { getQueueTokenForAppointment } from './opd/opd-queue-service';
 import type { OpdMode } from '../types/doctor-settings';
@@ -596,13 +598,19 @@ export async function processSlotSelectionAndPay(
 
   const state = await getConversationState(conversationId, correlationId);
   const doctorSettings = await getDoctorSettings(doctorId);
+  const doctorVerified = await isDoctorVerified(doctorId, correlationId);
 
-  const payGate = evaluatePublicBookingPaymentGate(state, doctorSettings);
+  const payGate = evaluatePublicBookingPaymentGate(state, doctorSettings, {
+    doctorVerified,
+  });
   if (!payGate.allowed) {
     logger.info(
       { correlationId, conversationId, booking_payment_gate_denied: payGate.reason },
       'booking_payment_gate_denied'
     );
+    if (payGate.reason === 'doctor_not_verified') {
+      throw new DoctorNotVerifiedError();
+    }
     if (payGate.reason === 'staff_review_pending') {
       throw new StaffServiceReviewPendingPaymentError();
     }

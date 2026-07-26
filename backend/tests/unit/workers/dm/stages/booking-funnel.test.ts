@@ -60,6 +60,8 @@ import { resolveStage } from '../../../../../src/workers/dm/stage-router';
 import type { DmTurnContext } from '../../../../../src/workers/dm/stage-router';
 import type { Conversation } from '../../../../../src/types/database';
 import { buildRecordingConsentAskMessage } from '../../../../../src/utils/dm-copy';
+import { persistPatientAfterConsent } from '../../../../../src/services/consent-service';
+import { buildBookingPageUrl } from '../../../../../src/services/slot-selection-service';
 
 function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
   return {
@@ -150,6 +152,27 @@ describe('bookingFunnelStage', () => {
     expect(result.reply).toBe(
       buildRecordingConsentAskMessage({ practiceName: 'Test Clinic' })
     );
+  });
+
+  it('ilr-03: consent persist failure → no slot link; stay on consent', async () => {
+    jest.mocked(persistPatientAfterConsent).mockResolvedValueOnce({ success: false } as never);
+
+    const ctx = minimalTurnCtx({
+      state: {
+        step: 'consent',
+        collectedFields: ['name', 'phone', 'reason_for_visit'],
+        updatedAt: new Date().toISOString(),
+      },
+      text: 'yes',
+    });
+
+    const result = await bookingFunnelStage.handle(ctx);
+    expect(result.branch).toBe('consent_flow');
+    expect(result.nextState.step).toBe('consent');
+    expect(result.reply).toMatch(/trouble saving/i);
+    expect(result.reply).not.toMatch(/https?:\/\//);
+    expect(result.reply.toLowerCase()).not.toContain('example.com/book');
+    expect(buildBookingPageUrl).not.toHaveBeenCalled();
   });
 
   it('emergency at recording_consent step defers to legacy (emergency gate must still fire)', () => {

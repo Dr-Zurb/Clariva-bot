@@ -8,13 +8,20 @@ import {
   type RxFormFields,
 } from "@/components/cockpit/rx/RxFormContext";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { getLastPrescriptionInEpisode, getPatientById } from "@/lib/api";
+import {
+  getDoctorSettings,
+  getLastPrescriptionInEpisode,
+  getPatientById,
+} from "@/lib/api";
 import type { PrescriptionWithRelations } from "@/types/prescription";
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual,
+    getDoctorSettings: vi
+      .fn()
+      .mockResolvedValue({ data: { settings: { vitals_hidden: [], vitals_custom: [] } } }),
     getLastPrescriptionInEpisode: vi
       .fn()
       .mockResolvedValue({ data: { prescription: null } }),
@@ -76,13 +83,11 @@ vi.mock("@/lib/cockpit/vitals-visibility", async (importOriginal) => {
   };
 });
 
-import { fetchVitalsHidden } from "@/lib/cockpit/vitals-visibility";
-
 const mockedGetLast = vi.mocked(getLastPrescriptionInEpisode);
-const mockedFetchVitalsHidden = vi.mocked(fetchVitalsHidden);
+const mockedGetDoctorSettings = vi.mocked(getDoctorSettings);
 
 async function waitForVitalsSettingsLoaded() {
-  await waitFor(() => expect(mockedFetchVitalsHidden).toHaveBeenCalled());
+  await waitFor(() => expect(mockedGetDoctorSettings).toHaveBeenCalled());
 }
 
 async function revealVital(menuLabel: string) {

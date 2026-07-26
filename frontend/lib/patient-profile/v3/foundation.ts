@@ -37,6 +37,7 @@ export {
   moveSiblingIntoGutter,
   addToTabsNode,
   hidePaneToRoot,
+  hideLeafToRoot,
   extractFromTabsNode,
   moveLeafBetweenTabs,
   setActiveTab,

@@ -355,8 +355,8 @@ export function useCallMediaSession(
       modality === "video" ? "Video consult" : "Voice consult";
     const meta = buildMetadata({
       title,
-      artist: callerName || "Clariva",
-      album: "Clariva",
+      artist: callerName || "Halo Aid",
+      album: "Halo Aid",
       artwork: [
         { src: "/brand/logomark.svg", sizes: "any", type: "image/svg+xml" },
       ],

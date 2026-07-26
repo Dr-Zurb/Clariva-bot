@@ -14,7 +14,12 @@
  */
 
 export interface PaneTreeNode {
-  /** Stable id for this node. For leaves, derived: when paneIds.length === 1, this equals paneIds[0]; otherwise a synthetic `__tabs_<n>` id. */
+  /**
+   * Stable structural id for this node (ResizablePanel key). Defaults often
+   * match `paneIds[0]` for single-pane leaves, but after a slot-preserving
+   * swap the shell id may diverge from the active pane id; prefer `paneIds` /
+   * `activeTabId` for clinical identity. Multi-tab leaves use `__tabs_<n>`.
+   */
   id: string;
   /** Absolute size as % of the OUTER group (root = % of viewport). 0–100. */
   sizePct: number;
@@ -130,6 +135,99 @@ export function upgradeV4LeavesToV5(root: PaneTreeNode): PaneTreeNode {
       paneIds: [n.id],
       activeTabId: n.id,
     };
+  }
+  return walk(root);
+}
+
+/**
+ * Repair a (possibly corrupted) tree so it is safe to render:
+ *   1. Each pane lives in exactly one leaf — later duplicates are dropped
+ *      (an emptied leaf is pruned, single-child splits collapse).
+ *   2. Every structural node id is globally unique — later duplicates are
+ *      re-minted (single-pane leaf → its paneId when free, else `__tabs_*`;
+ *      split → `__split_*`). The outermost node keeps its id (e.g. `__root__`).
+ *
+ * Idempotent on a well-formed tree. Guards against react-resizable-panels'
+ * "Panel ids must be unique" crash when a persisted layout was corrupted by an
+ * earlier mutation bug (e.g. an id ↔ pane divergence that let a later insert
+ * mint a colliding node id).
+ */
+export function sanitizePaneTree(root: PaneTreeNode): PaneTreeNode {
+  const deduped = dedupePanesInTree(root);
+  const safe =
+    deduped ??
+    ({
+      id: "__root__",
+      sizePct: 100,
+      hidden: false,
+      direction: "horizontal",
+      children: [],
+    } satisfies PaneTreeNode);
+  return dedupeNodeIdsInTree(safe);
+}
+
+/** Bottom-up: keep each pane's first host leaf, prune empties, collapse splits. */
+function dedupePanesInTree(root: PaneTreeNode): PaneTreeNode | null {
+  const seen = new Set<string>();
+  function walk(n: PaneTreeNode): PaneTreeNode | null {
+    if (n.children && n.children.length > 0) {
+      const kids = n.children
+        .map(walk)
+        .filter((c): c is PaneTreeNode => c !== null);
+      if (kids.length === 0) return null;
+      if (kids.length === 1 && n.id !== "__root__") return kids[0]!;
+      const same =
+        kids.length === n.children.length &&
+        kids.every((c, i) => c === n.children![i]);
+      return same ? n : { ...n, children: kids };
+    }
+    const raw = n.paneIds && n.paneIds.length > 0 ? n.paneIds : [n.id];
+    const paneIds = raw.filter((p) => !seen.has(p));
+    if (paneIds.length === 0) return null;
+    for (const p of paneIds) seen.add(p);
+    if (paneIds.length === raw.length) return n;
+    const activeTabId =
+      n.activeTabId && paneIds.includes(n.activeTabId)
+        ? n.activeTabId
+        : paneIds[0]!;
+    return { ...n, paneIds, activeTabId };
+  }
+  return walk(root);
+}
+
+/** Top-down: keep the first occurrence of each node id, re-mint later clashes. */
+function dedupeNodeIdsInTree(root: PaneTreeNode): PaneTreeNode {
+  const seen = new Set<string>();
+  let counter = 0;
+  const fresh = (prefix: string): string => {
+    let id: string;
+    do {
+      id = `${prefix}${counter++}`;
+    } while (seen.has(id));
+    return id;
+  };
+  function walk(n: PaneTreeNode): PaneTreeNode {
+    let id = n.id;
+    const isLeaf = !(n.children && n.children.length > 0);
+    if (seen.has(id)) {
+      if (isLeaf) {
+        const panes = n.paneIds && n.paneIds.length > 0 ? n.paneIds : [n.id];
+        id =
+          panes.length === 1 && !seen.has(panes[0]!)
+            ? panes[0]!
+            : fresh("__tabs_");
+      } else {
+        id = fresh("__split_");
+      }
+    }
+    seen.add(id);
+    if (!isLeaf) {
+      const kids = n.children!.map(walk);
+      const childrenSame = kids.every((c, i) => c === n.children![i]);
+      if (id === n.id && childrenSame) return n;
+      return { ...n, id, children: kids };
+    }
+    return id === n.id ? n : { ...n, id };
   }
   return walk(root);
 }

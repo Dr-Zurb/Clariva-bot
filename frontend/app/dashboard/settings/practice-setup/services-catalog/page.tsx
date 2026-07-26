@@ -52,12 +52,14 @@ import {
   ModeSwitchConfirmDialog,
   type ModeSwitchAction,
 } from "@/components/practice-setup/ModeSwitchConfirmDialog";
+import { PracticeCurrencyPanel } from "@/components/settings/PracticeCurrencyPanel";
 
 function snapshot(services: ServiceOfferingDraft[]): string {
   return JSON.stringify({ services });
 }
 
 export default function ServicesCatalogPage() {
+  const [accessToken, setAccessToken] = useState("");
   const [settings, setSettings] = useState<DoctorSettings | null>(null);
   const [services, setServices] = useState<ServiceOfferingDraft[]>([]);
   const [loading, setLoading] = useState(true);
@@ -125,6 +127,7 @@ export default function ServicesCatalogPage() {
       setLoading(false);
       return;
     }
+    setAccessToken(token);
     setError(null);
     try {
       const res = await getDoctorSettings(token);
@@ -976,11 +979,13 @@ export default function ServicesCatalogPage() {
         saveBlockedReason={saveDisableReason}
         onSave={performSave}
       />
-      <h1 className="text-2xl font-semibold text-gray-900">Services catalog</h1>
-      <p className="mt-1 text-gray-600">
-        Set up your consultation types and teleconsult prices (text, voice, video). Follow-up discounts can differ by
-        channel. These prices feed into quotes and checkout when patients book remote visits.
+      <h1 className="text-2xl font-semibold text-foreground">Pricing</h1>
+      <p className="mt-1 text-muted-foreground">
+        Practice currency plus consultation types and teleconsult prices (text,
+        voice, video). These feed into quotes and checkout when patients book.
       </p>
+
+      {accessToken ? <PracticeCurrencyPanel token={accessToken} /> : null}
 
       {/*
        * Plan 03 / Task 12 — catalog mode branch.

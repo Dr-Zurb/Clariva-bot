@@ -22,6 +22,7 @@ import {
   fireEvent,
   waitFor,
   cleanup,
+  act,
 } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
@@ -61,16 +62,6 @@ vi.mock("@/components/patient-profile/panes/ChartRailWithEmptyState", () => ({
   ),
 }));
 
-vi.mock("@/components/patient-profile/panes/SnapshotPane", () => ({
-  default: function SnapshotStub() {
-    return <div data-testid="pane-snapshot-body">snapshot</div>;
-  },
-}));
-
-vi.mock("@/components/patient-profile/panes/HistoryPane", () => ({
-  default: () => <div data-testid="pane-history-body">history</div>,
-}));
-
 vi.mock("@/components/patient-profile/panes/ConsultationBodyPane", () => ({
   default: () => <div data-testid="pane-body-body">body</div>,
 }));
@@ -101,6 +92,18 @@ vi.mock("@/components/cockpit/middle/BodyZone", () => ({
 
 vi.mock("@/components/cockpit/middle/EndedConsultBody", () => ({
   EndedConsultBody: () => <div data-testid="pane-ended-body">ended</div>,
+}));
+
+// Body tab now renders a portal slot; shell-only tests stub the slot so the
+// visible Consult body still exposes the legacy pane-body-body test id.
+vi.mock("@/components/patient-profile/ConsultSurfaceContext", () => ({
+  ConsultSurfaceProvider: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
+  ConsultSurfaceSlot: () => <div data-testid="pane-body-body">body</div>,
+  ConsultSurfaceHost: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
 }));
 
 vi.mock("@/components/patient-profile/panes/RxPane", () => ({
@@ -185,8 +188,6 @@ function renderProductionShellWithKey(
 
 /** id → body testid the per-leaf mocks render (cv3t-03 build-up coverage). */
 const TAB_BODY_TESTID: Record<string, string> = {
-  snapshot: "pane-snapshot-body",
-  history: "pane-history-body",
   body: "pane-body-body",
   assessment: "pane-assessment-body",
   plan: "pane-plan-body",
@@ -199,6 +200,19 @@ function palettePaneIds(): string[] {
   return Array.from(
     palette.querySelectorAll<HTMLElement>("[data-palette-pane-id]"),
   ).map((el) => el.getAttribute("data-palette-pane-id")!);
+}
+
+function applyConsultLayoutHotkey() {
+  act(() => {
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "1",
+        shiftKey: true,
+        ctrlKey: true,
+        bubbles: true,
+      }),
+    );
+  });
 }
 
 describe("cv3t-02: flat registry guards", () => {
@@ -241,13 +255,13 @@ describe("cv3t-02: flat registry guards", () => {
     );
   });
 
-  it("blankLayout seeds all seven production leaf ids hidden", () => {
+  it("blankLayout seeds all five production leaf ids hidden", () => {
     const panes = productionRegistry();
     const layout = blankLayout(panes);
     const flat = blankLayoutFlat(panes);
 
     expect(flat.paneOrder).toEqual([...COCKPIT_TAB_ORDER]);
-    expect(flat.paneOrder).toHaveLength(7);
+    expect(flat.paneOrder).toHaveLength(5);
     for (const id of COCKPIT_TAB_ORDER) {
       expect(flat.paneState[id]?.hidden).toBe(true);
     }
@@ -264,7 +278,7 @@ describe("cv3t-02: production build-up path", () => {
     cleanup();
   });
 
-  it("seeds Consult on first open, lists seven real leaf tabs (no column wrappers)", async () => {
+  it("seeds Consult on first open, lists five real leaf tabs (no column wrappers)", async () => {
     renderProductionShell();
 
     await waitFor(() => {
@@ -277,27 +291,24 @@ describe("cv3t-02: production build-up path", () => {
       expect(palettePaneIds()).not.toContain(wrapperId);
     }
 
-    expect(screen.getByTestId("pane-snapshot-body")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Remove Snapshot" }),
-    ).toHaveAttribute("data-palette-on-canvas", "true");
+    expect(screen.getByTestId("pane-body-body")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Remove Consult" }),
-    ).toBeInTheDocument();
+    ).toHaveAttribute("data-palette-on-canvas", "true");
     expect(screen.getByRole("button", { name: "Remove Plan" })).toBeInTheDocument();
   });
 
-  it("Consult seed mounts Snapshot and Plan bodies without palette add", async () => {
+  it("Consult seed mounts body and Plan bodies without palette add", async () => {
     renderProductionShell();
 
     await waitFor(() => {
-      expect(screen.getByTestId("pane-snapshot-body")).toBeInTheDocument();
+      expect(screen.getByTestId("pane-body-body")).toBeInTheDocument();
       expect(screen.getByTestId("pane-plan-body")).toBeInTheDocument();
       expect(screen.getByTestId("cockpit-v3-canvas")).toBeInTheDocument();
     });
     expect(screen.queryByTestId("cockpit-v3-empty-state")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Remove Snapshot" }),
+      screen.getByRole("button", { name: "Remove Consult" }),
     ).toHaveAttribute("data-palette-on-canvas", "true");
     expect(
       screen.getByRole("button", { name: "Remove Plan" }),
@@ -308,29 +319,29 @@ describe("cv3t-02: production build-up path", () => {
     renderProductionShell();
 
     await waitFor(() => {
-      expect(screen.getByTestId("pane-snapshot-body")).toBeInTheDocument();
+      expect(screen.getByTestId("pane-plan-body")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Remove Snapshot" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove Plan" }));
     await waitFor(() => {
-      expect(screen.queryByTestId("pane-snapshot-body")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("pane-plan-body")).not.toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Reset to Consult" }));
+    applyConsultLayoutHotkey();
 
     await waitFor(() => {
-      expect(screen.getByTestId("pane-snapshot-body")).toBeInTheDocument();
+      expect(screen.getByTestId("pane-plan-body")).toBeInTheDocument();
     });
     expect(screen.queryByTestId("cockpit-v3-empty-state")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Remove Snapshot" }),
+      screen.getByRole("button", { name: "Remove Plan" }),
     ).toHaveAttribute("data-palette-on-canvas", "true");
   });
 });
 
 /**
  * cv3t-03 — the build-up axis the cv3x-01 matrix lacked, proven on the
- * production registry. Closes: every one of the seven tabs mounts real content;
+ * production registry. Closes: every one of the five tabs mounts real content;
  * a multi-tab layout persists across reload; exactly one safety/action dock in
  * a built-up arrangement (the lifted-props no-duplication check, end-to-end).
  */
@@ -343,7 +354,7 @@ describe("cv3t-03: build-up parity axis (production registry)", () => {
     cleanup();
   });
 
-  it("every one of the seven tabs mounts its real body on Consult seed", async () => {
+  it("every one of the five tabs mounts its real body on Consult seed", async () => {
     renderProductionShell();
 
     await waitFor(() => {

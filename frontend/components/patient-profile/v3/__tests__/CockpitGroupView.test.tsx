@@ -24,6 +24,7 @@ const layoutStub: CockpitV3Layout = {
   setLeafSize: vi.fn(),
   setActiveTab: mockSetActiveTab,
   closeTab: mockCloseTab,
+  closeLeaf: vi.fn(),
   addPane: vi.fn(),
   removePane: vi.fn(),
   splitLeafDir: vi.fn(),

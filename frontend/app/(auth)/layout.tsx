@@ -13,6 +13,12 @@ export default async function AuthLayout({
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (user) redirect("/dashboard");
+  // auth-v2: incomplete profiles must not bounce through /dashboard first.
+  if (user) {
+    if (user.user_metadata?.profile_completed !== true) {
+      redirect("/complete-profile");
+    }
+    redirect("/dashboard");
+  }
   return <>{children}</>;
 }

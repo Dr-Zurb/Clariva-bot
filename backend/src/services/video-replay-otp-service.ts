@@ -141,7 +141,7 @@ function requireAdmin(): NonNullable<ReturnType<typeof getSupabaseAdminClient>> 
 
 function buildOtpSmsBody(code: string): string {
   return (
-    `Your Clariva video replay code is ${code}. Valid for 5 minutes. ` +
+    `Your Halo Aid video replay code is ${code}. Valid for 5 minutes. ` +
     `If you didn't request this, ignore this SMS.`
   );
 }

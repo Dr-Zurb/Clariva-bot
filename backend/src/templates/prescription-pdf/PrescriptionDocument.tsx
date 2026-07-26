@@ -14,7 +14,7 @@
  *   ├──────────────────────────────────────────────────────────────┤
  *   │ Advice · Education · Follow-up · Referral (plan-p1)          │  ← flows
  *   ├──────────────────────────────────────────────────────────────┤
- *   │ Footer (signature line + Clariva attribution + Rx-ID + page) │  ← REPEATS per page
+ *   │ Footer (signature line + Halo Aid attribution + Rx-ID + page) │  ← REPEATS per page
  *   └──────────────────────────────────────────────────────────────┘
  *
  * Clinical notes are doctor-private and are NOT rendered on the patient PDF

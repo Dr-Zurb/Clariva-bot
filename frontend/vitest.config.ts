@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import path from "path";
 
 /**
- * Vitest configuration for the Clariva frontend.
+ * Vitest configuration for the Halo Aid frontend.
  *
  * Key concerns solved here:
  *   - `"jsx": "preserve"` in tsconfig.json is required by Next.js but

@@ -5,6 +5,8 @@ import { Header } from "./Header";
 import { Sidebar } from "./Sidebar";
 import { GlobalCommandPalette } from "./GlobalCommandPalette";
 import { useDashboardCounts } from "@/hooks/useDashboardCounts";
+import { useOnboardingStatusQuery } from "@/hooks/queries/useOnboardingStatusQuery";
+import { useVerificationStatusQuery } from "@/hooks/queries/useVerificationStatusQuery";
 import { DashboardPushOptInPrompt } from "@/components/dashboard/DashboardPushOptInPrompt";
 import { NavPerfTracker } from "@/lib/nav-perf/nav-timing";
 import { QueryProvider } from "@/components/providers/QueryProvider";
@@ -32,6 +34,8 @@ interface DashboardShellProps {
    * Also used by useDashboardCounts to poll badge counts.
    */
   token?: string;
+  /** admin-console-v2: show Admin console link in the profile menu. */
+  isAdmin?: boolean;
   children: React.ReactNode;
 }
 
@@ -53,7 +57,12 @@ export function DashboardShell(props: DashboardShellProps) {
   );
 }
 
-function DashboardShellInner({ userEmail, token, children }: DashboardShellProps) {
+function DashboardShellInner({
+  userEmail,
+  token,
+  isAdmin = false,
+  children,
+}: DashboardShellProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   // Default false (expanded) avoids SSR/hydration mismatch — real value is
   // read from localStorage in the effect below (one-frame reconcile on mount).
@@ -105,7 +114,13 @@ function DashboardShellInner({ userEmail, token, children }: DashboardShellProps
 
   const handleOpenPalette = useCallback(() => setPaletteOpen(true), []);
 
-  const { counts } = useDashboardCounts(token ?? "");
+  const accessToken = token ?? "";
+  const { counts } = useDashboardCounts(accessToken);
+  const { data: onboarding } = useOnboardingStatusQuery(accessToken);
+  const { data: verification } = useVerificationStatusQuery(accessToken);
+  // GS-D5: one setup tab — hide only when setup + license are both done.
+  const hideGettingStarted =
+    onboarding?.complete === true && verification?.status === "verified";
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
@@ -113,6 +128,7 @@ function DashboardShellInner({ userEmail, token, children }: DashboardShellProps
       <Header
         userEmail={userEmail}
         token={token}
+        isAdmin={isAdmin}
         onMenuToggle={() => setMobileMenuOpen((prev) => !prev)}
         onOpenSearch={handleOpenPalette}
       />
@@ -123,6 +139,7 @@ function DashboardShellInner({ userEmail, token, children }: DashboardShellProps
           counts={counts}
           collapsed={sidebarCollapsed}
           onToggleCollapse={handleToggleCollapse}
+          hideGettingStarted={hideGettingStarted}
         />
         <main
           className="min-h-0 flex-1 overflow-auto p-4 md:p-6"

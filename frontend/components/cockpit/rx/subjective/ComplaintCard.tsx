@@ -572,8 +572,21 @@ interface ComplaintCardSummaryProps {
   parentName?: string;
   readOnly?: boolean;
   disabled?: boolean;
+  /** When true, row toggles collapse (same DOM as collapsed — no header swap). */
+  expanded?: boolean;
+  /**
+   * Show collapsed-only meta (detail chips / note). Revealed at close start (as
+   * the body begins folding) so the reveal is part of the single close motion —
+   * not a separate pop after the fold settles.
+   */
+  showCollapsedMeta?: boolean;
+  /** Depth-0 open cards pin under the section sticky header. */
+  stickyHeader?: boolean;
+  /** Non-sticky surface (tone / card) when the header is not pinned. */
+  headerSurfaceClass?: string;
   onPatch?: (index: number, patch: Partial<Complaint>) => void;
   onRequestEdit?: (index: number) => void;
+  onRequestCollapse?: (index: number, source: ComplaintCollapseSource) => void;
   onRemove?: (index: number) => void;
   onPromote?: (index: number) => void;
   promoteBlockedReason?: string | null;
@@ -590,10 +603,17 @@ function complaintSummaryAriaLabel(
   depth: 0 | 1,
   parentName: string | undefined,
   readOnly: boolean,
+  expanded: boolean,
 ): string {
   const suffix = buildComplaintAssociatedSuffix(value);
   const displayName = formatComplaintDisplayName(value.name);
   const nameWithCount = suffix ? `${displayName} · ${suffix}` : displayName;
+  if (expanded) {
+    if (depth === 1 && parentName) {
+      return `Associated symptom ${index + 1} of ${parentName}: ${nameWithCount} — collapse`;
+    }
+    return `Complaint ${index + 1}: ${nameWithCount} — collapse`;
+  }
   if (depth === 1 && parentName) {
     return readOnly
       ? `Associated symptom ${index + 1} of ${parentName}: ${nameWithCount}`
@@ -605,10 +625,9 @@ function complaintSummaryAriaLabel(
 }
 
 /**
- * Collapsed complaint row. Renders only the inner row (no card border / instance
- * attr) so it can sit inside the persistent `ComplaintCard` root that owns the
- * border and animates the body via `Collapse`. When editable it is the whole-row
- * "tap to edit" button; read-only it is a static row.
+ * Persistent complaint header (open + closed). Same DOM for both states so close
+ * is only the body height fold — no end-of-close chrome swap. Collapsed: whole-row
+ * "tap to edit". Expanded: whole-row / chevron collapse. Read-only: static row.
  *
  * Narrow panes (SOAP 2×2): stack name above duration/actions via `@container/complaints`
  * so the label is not crushed by the fixed Duration field + icon chrome.
@@ -620,8 +639,13 @@ function ComplaintSummaryRow({
   parentName,
   readOnly = false,
   disabled = false,
+  expanded = false,
+  showCollapsedMeta = false,
+  stickyHeader = false,
+  headerSurfaceClass,
   onPatch,
   onRequestEdit,
+  onRequestCollapse,
   onRemove,
   onPromote,
   promoteBlockedReason,
@@ -630,7 +654,9 @@ function ComplaintSummaryRow({
   parsedCue,
 }: ComplaintCardSummaryProps) {
   const associatedNames = listAssociatedComplaintNames(value);
-  const displayName = formatComplaintDisplayName(value.name);
+  const displayName =
+    formatComplaintDisplayName(value.name) ||
+    (depth === 1 ? "Associated symptom" : "Untitled complaint");
   const badgeLabel = depth === 1 ? `A${index + 1}` : String(index + 1);
   const dragLabel =
     depth === 1 && parentName
@@ -645,17 +671,29 @@ function ComplaintSummaryRow({
     depth === 1
       ? `Associated symptom ${index + 1} details`
       : `Complaint ${index + 1} details`;
+  const collapseHeaderLabel =
+    depth === 1 && parentName
+      ? `Collapse associated symptom ${index + 1} of ${parentName}`
+      : `Collapse complaint ${index + 1}`;
   const promoteLabel =
     depth === 1 && parentName
       ? `Move ${value.name.trim() || "symptom"} to main complaints`
       : `Move complaint ${index + 1} to main complaints`;
   const canPromote = depth === 1 && Boolean(onPromote) && value.name.trim().length > 0;
+  const metaVisible =
+    showCollapsedMeta && (detailSummary.hasRow || hasNotes);
 
-  function handleExpandKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+  function handleRowActivate() {
+    if (readOnly) return;
+    if (expanded) onRequestCollapse?.(index, "explicit");
+    else onRequestEdit?.(index);
+  }
+
+  function handleRowKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     if (readOnly) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      onRequestEdit?.(index);
+      handleRowActivate();
     }
   }
 
@@ -685,14 +723,21 @@ function ComplaintSummaryRow({
           <>
             <button
               type="button"
+              disabled={disabled}
               onClick={(e) => {
                 e.stopPropagation();
-                onRequestEdit?.(index);
+                if (expanded) onRequestCollapse?.(index, "explicit");
+                else onRequestEdit?.(index);
               }}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-              aria-label={detailsLabel}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground disabled:opacity-50"
+              aria-label={expanded ? collapseHeaderLabel : detailsLabel}
+              aria-expanded={expanded}
             >
-              <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
+              {expanded ? (
+                <ChevronDown className="h-4 w-4" aria-hidden />
+              ) : (
+                <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
+              )}
             </button>
             {canPromote ? (
               <ComplaintPromoteButton
@@ -704,11 +749,12 @@ function ComplaintSummaryRow({
             ) : null}
             <button
               type="button"
+              disabled={disabled}
               onClick={(e) => {
                 e.stopPropagation();
                 onRemove?.(index);
               }}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/60 hover:text-destructive"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/60 hover:text-destructive disabled:opacity-50"
               aria-label={`Remove complaint ${index + 1}`}
             >
               <Trash2 className="h-3.5 w-3.5" aria-hidden />
@@ -722,16 +768,32 @@ function ComplaintSummaryRow({
     // Container must be an ancestor of the querying flex — same element cannot query itself.
     <div className="@container/complaints min-w-0 w-full">
       <div
+        {...{ [COMPLAINT_CARD_HEADER_ATTR]: true }}
         role={readOnly ? undefined : "button"}
         tabIndex={readOnly ? undefined : 0}
-        onClick={readOnly ? undefined : () => onRequestEdit?.(index)}
-        onKeyDown={readOnly ? undefined : handleExpandKeyDown}
+        onClick={readOnly ? undefined : handleRowActivate}
+        onKeyDown={readOnly ? undefined : handleRowKeyDown}
         className={cn(
-          "group relative flex min-h-9 cursor-pointer gap-1.5 px-2 py-1.5 text-left hover:bg-muted/40 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-inset data-[readonly=true]:cursor-default data-[readonly=true]:hover:bg-transparent",
+          "group relative flex min-h-9 gap-1.5 px-2 py-1.5 text-left focus:outline-none focus:ring-2 focus:ring-ring focus:ring-inset",
           "flex-col @[22rem]/complaints:flex-row @[22rem]/complaints:items-center",
+          readOnly
+            ? "cursor-default"
+            : "cursor-pointer hover:bg-muted/40",
+          expanded && "border-b border-border/60",
+          stickyHeader
+            ? "sticky top-[var(--collapsible-sticky-top,2.75rem)] z-10 scroll-mt-[var(--collapsible-sticky-top,2.75rem)] bg-background shadow-sm"
+            : cn("scroll-mt-2", headerSurfaceClass),
         )}
         data-readonly={readOnly || undefined}
-        aria-label={complaintSummaryAriaLabel(index, value, depth, parentName, readOnly)}
+        aria-label={complaintSummaryAriaLabel(
+          index,
+          value,
+          depth,
+          parentName,
+          readOnly,
+          expanded,
+        )}
+        aria-expanded={readOnly ? undefined : expanded}
       >
         {depth === 0 && mainListDropIntent === "nest" ? (
           <span className="pointer-events-none absolute inset-x-2 bottom-1 truncate text-center text-[10px] font-medium text-primary">
@@ -757,7 +819,7 @@ function ComplaintSummaryRow({
                 <ComplaintAssociatedNamesInline names={associatedNames} />
               ) : null}
             </div>
-            {detailSummary.hasRow || hasNotes ? (
+            {metaVisible ? (
               <div className="mt-0.5 flex min-w-0 items-center gap-0.5 overflow-hidden">
                 {detailSummary.hasRow ? (
                   <ComplaintCardDetailSummaryLine
@@ -1959,39 +2021,10 @@ export function ComplaintCard({
 
   const suggestionCount = suggestedFieldCount(suggestions);
   const associatedComplaints = value.associatedComplaints ?? [];
-  const badgeLabel = depth === 1 ? `A${index + 1}` : String(index + 1);
-  const collapseHeaderLabel =
-    depth === 1 && parentName
-      ? `Collapse associated symptom ${index + 1} of ${parentName}`
-      : `Collapse complaint ${index + 1}`;
   const collapseLipLabel =
     depth === 1 && parentName
       ? `Finish and collapse associated symptom ${index + 1} of ${parentName}`
       : `Finish and collapse complaint ${index + 1}`;
-  const collapseNameLabel =
-    depth === 1 && parentName
-      ? `Associated symptom ${index + 1} of ${parentName}: ${value.name.trim() || "symptom"} — collapse`
-      : `Complaint ${index + 1}: ${value.name.trim() || "Untitled complaint"} — collapse`;
-  const dragLabel =
-    depth === 1 && parentName
-      ? `Drag associated symptom ${index + 1} of ${parentName}`
-      : `Drag complaint ${index + 1}`;
-  const associatedNames = listAssociatedComplaintNames(value);
-  const associatedSuffix = buildComplaintAssociatedSuffix(value);
-  const associatedNamesTitle = associatedSuffix ?? undefined;
-  const expandedDisplayName =
-    formatComplaintDisplayName(value.name) ||
-    (depth === 1 ? "Associated symptom" : "Untitled complaint");
-  const removeLabel =
-    depth === 1 && parentName
-      ? `Remove associated symptom ${index + 1} of ${parentName}`
-      : `Remove complaint ${index + 1}`;
-  const promoteLabel =
-    depth === 1 && parentName
-      ? `Move ${value.name.trim() || "symptom"} to main complaints`
-      : `Move complaint ${index + 1} to main complaints`;
-  const canPromote = depth === 1 && Boolean(onPromote) && value.name.trim().length > 0;
-
   const handleComplaintSelect = (complaint: ComplaintMasterRow) => {
     const nextCategory = isComplaintCategory(complaint.category)
       ? complaint.category
@@ -2051,16 +2084,14 @@ export function ComplaintCard({
     }
   };
 
-  // Depth-0 expanded card pins its header beneath the sticky "Chief complaints"
-  // section header (the `--collapsible-sticky-top` var is published by the
-  // section's CollapsibleContainer). `overflow-clip` (not `hidden`) clips the
-  // card body without creating a scroll container, so the sticky header
-  // resolves against the pane instead of this card. Depth-1 (associated) cards
-  // render inside the parent body and must not pin (avoids a 3rd sticky level).
-  const stickyHeader = depth === 0;
+  // Depth-0 *open* card pins its header beneath the sticky "Chief complaints"
+  // section header. Unpin as soon as close starts so the persistent header
+  // scrolls with the card during the body fold. Depth-1 must not pin.
+  const stickyHeader = depth === 0 && expanded;
 
   // Depth-based tonal alternation (inherited from Chief complaints root `depthTone`).
   const tone = useDepthToneSurface();
+  const headerSurfaceClass = tone.active ? tone.surface : "bg-card";
 
   const expandedBody = bodyMounted ? (
     <>
@@ -2281,102 +2312,27 @@ export function ComplaintCard({
         }
       }}
     >
-      {bodyMounted ? (
-      <div
-        {...{ [COMPLAINT_CARD_HEADER_ATTR]: true }}
-        className={cn(
-          "flex min-h-9 items-center gap-1.5 border-b border-border/60 px-2",
-          stickyHeader
-            ? "sticky top-[var(--collapsible-sticky-top,2.75rem)] z-10 scroll-mt-[var(--collapsible-sticky-top,2.75rem)] bg-background shadow-sm"
-            : cn("scroll-mt-2", tone.active ? tone.surface : "bg-card"),
-        )}
-      >
-        <ComplaintCardDragHandle
-          dragHandleProps={dragHandleProps}
-          ariaLabel={dragLabel}
-          stopPropagation
-        />
-        <ComplaintCardBadge label={badgeLabel} />
-
-        <button
-          type="button"
-          disabled={rowDisabled}
-          onClick={() => onRequestCollapse?.(index, "explicit")}
-          className="min-h-8 min-w-0 flex-1 truncate rounded-sm px-1 text-left text-sm font-medium leading-tight hover:bg-muted/50 disabled:opacity-50"
-          aria-label={collapseNameLabel}
-          aria-expanded
-        >
-          {expandedDisplayName}
-          {associatedSuffix && depth === 0 ? (
-            <span
-              className="font-normal text-muted-foreground"
-              title={associatedNamesTitle}
-            >
-              {" "}
-              · {associatedSuffix}
-            </span>
-          ) : null}
-        </button>
-
-        {!isReadOnly ? (
-          <ComplaintCardDurationField
-            index={index}
-            value={value}
-            disabled={rowDisabled}
-            onDurationChange={(duration) => handlePatch({ duration })}
-          />
-        ) : null}
-
-        <button
-          type="button"
-          disabled={rowDisabled}
-          onClick={() => onRequestCollapse?.(index, "explicit")}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground disabled:opacity-50"
-          aria-label={collapseHeaderLabel}
-          aria-expanded
-        >
-          <ChevronDown className="h-4 w-4" aria-hidden />
-        </button>
-
-        {!isReadOnly && canPromote ? (
-          <ComplaintPromoteButton
-            ariaLabel={promoteLabel}
-            disabled={rowDisabled}
-            blockedReason={promoteBlockedReason}
-            onPromote={() => onPromote!(index)}
-          />
-        ) : null}
-
-        {!isReadOnly ? (
-          <button
-            type="button"
-            onClick={() => onRemove(index)}
-            disabled={rowDisabled}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/60 hover:text-destructive disabled:opacity-50"
-            aria-label={removeLabel}
-          >
-            <Trash2 className="h-3.5 w-3.5" aria-hidden />
-          </button>
-        ) : null}
-      </div>
-      ) : (
-        <ComplaintSummaryRow
-          index={index}
-          value={value}
-          depth={depth}
-          parentName={parentName}
-          readOnly={isReadOnly}
-          disabled={disabled}
-          onPatch={onPatch}
-          onRequestEdit={onRequestEdit}
-          onRemove={onRemove}
-          onPromote={onPromote}
-          promoteBlockedReason={promoteBlockedReason}
-          mainListDropIntent={mainListDropIntent}
-          dragHandleProps={dragHandleProps}
-          parsedCue={parsedCueNode}
-        />
-      )}
+      <ComplaintSummaryRow
+        index={index}
+        value={value}
+        depth={depth}
+        parentName={parentName}
+        readOnly={isReadOnly}
+        disabled={rowDisabled}
+        expanded={expanded}
+        showCollapsedMeta={!expanded}
+        stickyHeader={stickyHeader}
+        headerSurfaceClass={headerSurfaceClass}
+        onPatch={onPatch}
+        onRequestEdit={onRequestEdit}
+        onRequestCollapse={onRequestCollapse}
+        onRemove={onRemove}
+        onPromote={onPromote}
+        promoteBlockedReason={promoteBlockedReason}
+        mainListDropIntent={mainListDropIntent}
+        dragHandleProps={dragHandleProps}
+        parsedCue={parsedCueNode}
+      />
 
       <Collapse open={expanded}>
         {tone.active && tone.depth !== null ? (

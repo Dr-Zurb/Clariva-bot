@@ -9,8 +9,10 @@ import {
   getTelehealthQualityOverview,
   getPrescriptionsForPatient,
   getServiceStaffReviews,
+  listPatientAllergies,
   listPatientConditions,
 } from "@/lib/api";
+import type { AllergiesListData } from "@/types/patient-chart";
 import { getPatientOverview } from "@/lib/api/patients";
 import { listVitalsHistory } from "@/lib/api/patient-chart";
 import { requireApiBaseUrl } from "@/lib/api-base";
@@ -71,6 +73,26 @@ export function patientConditionsQueryOptions(token: string, patientId: string) 
     queryFn: async () => {
       const res = await listPatientConditions(token, patientId);
       return res.data.conditions ?? [];
+    },
+    staleTime: STALE.CLINICAL,
+  } as const;
+}
+
+/** Normalized allergies list payload for the shared patient allergies query. */
+export type PatientAllergiesQueryData = {
+  allergies: NonNullable<AllergiesListData["allergies"]>;
+  sectionNotes: string | null;
+};
+
+export function patientAllergiesQueryOptions(token: string, patientId: string) {
+  return {
+    queryKey: queryKeys.patient(patientId).allergies(),
+    queryFn: async (): Promise<PatientAllergiesQueryData> => {
+      const res = await listPatientAllergies(token, patientId);
+      return {
+        allergies: res.data.allergies ?? [],
+        sectionNotes: res.data.sectionNotes ?? null,
+      };
     },
     staleTime: STALE.CLINICAL,
   } as const;

@@ -35,14 +35,21 @@ import {
   readPersistedLayout,
   v4TreeLayoutStorageKey,
 } from "@/lib/patient-profile/useShellLayout";
-import { layoutUxToast } from "@/lib/patient-profile/layout-ux-toast";
-
 vi.mock("@/hooks/useMediaQuery", () => ({
   useMediaQuery: vi.fn(() => true),
 }));
 
-vi.mock("@/lib/patient-profile/layout-ux-toast", () => ({
-  layoutUxToast: { error: vi.fn(), info: vi.fn() },
+vi.mock("@/lib/patient-profile/v3/useCockpitLayoutPresets", () => ({
+  MAX_SAVED_LAYOUTS: 5,
+  useCockpitLayoutPresets: () => ({
+    presets: [],
+    isLoading: false,
+    canSaveMore: true,
+    savePreset: vi.fn(),
+    deletePresetById: vi.fn(),
+    renamePresetById: vi.fn(),
+    refetch: vi.fn(),
+  }),
 }));
 
 vi.mock("@/lib/patient-profile/telemetry", () => ({
@@ -243,7 +250,7 @@ describe("CockpitDnd integration (cv3d-04)", () => {
     expect(dndSource).toMatch(/activationConstraint:\s*\{\s*distance:\s*8\s*\}/);
   });
 
-  it("guard — consultActive disables body tab drag source", () => {
+  it("Consult (body) stays draggable while consultActive (live teleconsult)", () => {
     render(
       <CockpitV3Shell
         panes={makePanes(["chart", "body"])}
@@ -256,19 +263,10 @@ describe("CockpitDnd integration (cv3d-04)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add BODY" }));
 
     const bodySortable = sortableCalls.find((c) => c.id.includes("-body"));
-    expect(bodySortable?.disabled).toBe(true);
+    expect(bodySortable?.disabled).toBe(false);
 
     const chartSortable = sortableCalls.find((c) => c.id.includes("-chart"));
     expect(chartSortable?.disabled).toBe(false);
-  });
-
-  it("guard — shell wires live-consult refusal toast string", () => {
-    const shellSource = fs.readFileSync(
-      path.resolve(__dirname, "../CockpitV3Shell.tsx"),
-      "utf8",
-    );
-    expect(shellSource).toContain("Pause the consult before rearranging.");
-    expect(vi.mocked(layoutUxToast.error)).not.toHaveBeenCalled();
   });
 
   it("dock anchoring — safety and action docks outside DndContext; footer fires", () => {

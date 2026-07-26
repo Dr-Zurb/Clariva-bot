@@ -24,6 +24,7 @@ function makeLayout(initial: PaneTreeNode) {
       return paneTree;
     },
     applyLayout,
+    discardFocusSession: vi.fn(),
     paneState: {},
     addPane: vi.fn(),
     removePane: vi.fn(),

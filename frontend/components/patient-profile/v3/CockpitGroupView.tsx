@@ -119,10 +119,20 @@ function CockpitSplitGroup({
   const groupRef = useRef<GroupImperativeHandle | null>(null);
   const isRebalancingRef = useRef(false);
   const orientation = node.direction ?? "horizontal";
-  const visibleChildren = useMemo(
-    () => (node.children ?? []).filter((child) => !child.hidden),
-    [node.children],
-  );
+  const visibleChildren = useMemo(() => {
+    // Last-resort guard: react-resizable-panels hard-throws if two panels in a
+    // group share an id. A corrupted tree (duplicate ids) must degrade to a
+    // dropped panel, never crash the whole cockpit. `sanitizePaneTree` should
+    // heal this upstream; this keeps render defensive regardless.
+    const seen = new Set<string>();
+    const out: PaneTreeNode[] = [];
+    for (const child of node.children ?? []) {
+      if (child.hidden || seen.has(child.id)) continue;
+      seen.add(child.id);
+      out.push(child);
+    }
+    return out;
+  }, [node.children]);
   const visibleKey = visibleChildren.map((child) => child.id).join(",");
 
   const normalizedSizes = useMemo(

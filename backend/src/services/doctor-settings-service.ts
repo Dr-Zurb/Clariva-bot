@@ -93,8 +93,14 @@ import {
 import { validateOwnership } from '../utils/db-helpers';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataAccess, logDataModification, logAuditEvent } from '../utils/audit-logger';
-import { InternalError, NotFoundError, ValidationError } from '../utils/errors';
+import {
+  DoctorNotVerifiedError,
+  InternalError,
+  NotFoundError,
+  ValidationError,
+} from '../utils/errors';
 import { parseLayoutTreeNode, parsePaneTreeV3 } from '../api/routes/cockpit-layout-presets';
+import { isDoctorVerified } from './doctor-verification-service';
 
 const SELECT_COLUMNS =
   'doctor_id, appointment_fee_minor, appointment_fee_currency, country, ' +
@@ -996,6 +1002,17 @@ export async function updateDoctorSettings(
   correlationId: string
 ): Promise<DoctorSettingsRow> {
   validateOwnership(doctorId, userId);
+
+  // ver-05: unverified doctors cannot unpause the Instagram receptionist
+  // (connected-but-paused must stay paused until license verification clears).
+  if (payload.instagram_receptionist_paused === false) {
+    const verified = await isDoctorVerified(doctorId, correlationId);
+    if (!verified) {
+      throw new DoctorNotVerifiedError(
+        'Verify your medical registration before activating the Instagram receptionist. Open Get verified in the dashboard.'
+      );
+    }
+  }
 
   if (
     payload.slot_interval_minutes !== undefined &&

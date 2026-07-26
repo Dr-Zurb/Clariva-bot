@@ -74,7 +74,22 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseAdminClient } from '../config/database';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
+import { insertDashboardEvent } from '../services/dashboard-events-service';
 import { logAuditEvent } from '../utils/audit-logger';
+
+/**
+ * Candidate for the auto-no-show flip. Carries the fields needed for the
+ * Alerts v2 `appointment_no_show` feed row (alr2-03) without a second
+ * appointment round-trip after the UPDATE.
+ */
+interface NoShowCandidate {
+  id: string;
+  doctorId: string;
+  minutes: number;
+  appointmentDate: string;
+  /** Nullable — empty display name falls back to "A patient" in the UI. */
+  patientId: string | null;
+}
 
 // ============================================================================
 // Constants
@@ -357,9 +372,9 @@ async function runNoShowPass(args: {
 
   // 1b. Per-doctor candidate scan, accumulating into a global candidate pool
   //     capped at BATCH_SIZE_CAP. Each candidate carries its doctor's
-  //     opted-in minute window so the audit row records *why* it was flipped.
-  type Candidate = { id: string; doctorId: string; minutes: number };
-  const candidates: Candidate[] = [];
+  //     opted-in minute window so the audit row records *why* it was flipped,
+  //     plus appointment_date / patient_id for the Alerts v2 feed emit.
+  const candidates: NoShowCandidate[] = [];
 
   for (const ds of doctors) {
     if (args.shouldAbort()) return;
@@ -385,7 +400,7 @@ async function runNoShowPass(args: {
 
     const { data: rows, error: scanErr } = await args.admin
       .from('appointments')
-      .select('id, doctor_id, appointment_date')
+      .select('id, doctor_id, appointment_date, patient_id')
       .eq('doctor_id', ds.doctor_id)
       .in('status', ['pending', 'confirmed'])
       .lt('appointment_date', cutoffIso)
@@ -445,7 +460,15 @@ async function runNoShowPass(args: {
     for (const r of rows) {
       const id = r.id as string;
       if (excludedIds.has(id)) continue;
-      candidates.push({ id, doctorId: r.doctor_id as string, minutes });
+      const appointmentDate = r.appointment_date as string;
+      if (!appointmentDate) continue;
+      candidates.push({
+        id,
+        doctorId:        r.doctor_id as string,
+        minutes,
+        appointmentDate,
+        patientId:       (r.patient_id as string | null) ?? null,
+      });
       if (candidates.length >= BATCH_SIZE_CAP) break;
     }
   }
@@ -465,7 +488,7 @@ async function runNoShowPass(args: {
 async function flipToNoShow(args: {
   admin:         SupabaseClient;
   correlationId: string;
-  candidate:     { id: string; doctorId: string; minutes: number };
+  candidate:     NoShowCandidate;
   result:        AutoNoShowTickResult;
 }): Promise<void> {
   const nowIso = new Date().toISOString();
@@ -519,6 +542,17 @@ async function flipToNoShow(args: {
     },
   });
 
+  // Alerts v2 · alr2-03 — doctor feed entry for the silent auto flip.
+  // OQ-1 LOCKED: only the worker path emits (manual doctor-initiated
+  // no-shows do not — the doctor already knows). Feed-insert failures
+  // must never regress the flip (flip is the source of truth).
+  await emitAppointmentNoShowEvent({
+    admin:         args.admin,
+    correlationId: args.correlationId,
+    candidate:     args.candidate,
+    result:        args.result,
+  });
+
   logger.info(
     {
       correlationId:    args.correlationId,
@@ -528,6 +562,99 @@ async function flipToNoShow(args: {
     },
     'auto-no-show-worker: appointment flipped to no_show',
   );
+}
+
+/**
+ * Resolve `patients.name` the same way the replay-notification path does
+ * (Decision-4 bar: name only; empty → UI "A patient"). Never throws.
+ */
+async function resolvePatientDisplayName(
+  admin: SupabaseClient,
+  patientId: string | null,
+  correlationId: string,
+): Promise<string> {
+  if (!patientId) return '';
+  try {
+    const { data: patient, error } = await admin
+      .from('patients')
+      .select('name')
+      .eq('id', patientId)
+      .maybeSingle();
+    if (error) {
+      logger.warn(
+        {
+          correlationId,
+          patientId,
+          error: error.message,
+        },
+        'auto-no-show-worker: patient name lookup failed (using empty display name)',
+      );
+      return '';
+    }
+    return ((patient as { name: string | null } | null)?.name ?? '').trim();
+  } catch (err) {
+    logger.warn(
+      {
+        correlationId,
+        patientId,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      'auto-no-show-worker: patient name lookup threw (using empty display name)',
+    );
+    return '';
+  }
+}
+
+async function emitAppointmentNoShowEvent(args: {
+  admin:         SupabaseClient;
+  correlationId: string;
+  candidate:     NoShowCandidate;
+  result:        AutoNoShowTickResult;
+}): Promise<void> {
+  try {
+    const patientDisplayName = await resolvePatientDisplayName(
+      args.admin,
+      args.candidate.patientId,
+      args.correlationId,
+    );
+    const insertResult = await insertDashboardEvent({
+      doctorId:  args.candidate.doctorId,
+      eventKind: 'appointment_no_show',
+      sessionId: null,
+      payload: {
+        severity:             'info',
+        appointment_id:       args.candidate.id,
+        patient_display_name: patientDisplayName,
+        appointment_date:     args.candidate.appointmentDate,
+      },
+      dedupeKey: args.candidate.id,
+    });
+    logger.info(
+      {
+        correlationId: args.correlationId,
+        appointmentId: args.candidate.id,
+        doctorId:      args.candidate.doctorId,
+        eventId:       insertResult.eventId,
+        inserted:      insertResult.inserted,
+      },
+      'auto-no-show-worker: appointment_no_show dashboard event ' +
+        (insertResult.inserted ? 'inserted' : 'deduped'),
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn(
+      {
+        correlationId: args.correlationId,
+        appointmentId: args.candidate.id,
+        doctorId:      args.candidate.doctorId,
+        error:         message,
+      },
+      'auto-no-show-worker: dashboard-event insert failed (non-fatal; flip already persisted)',
+    );
+    args.result.errors.push(
+      `dashboard_event(${args.candidate.id}): ${message}`,
+    );
+  }
 }
 
 // ============================================================================

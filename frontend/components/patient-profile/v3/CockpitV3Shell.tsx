@@ -19,7 +19,6 @@ import { useCockpitLayoutSwitcher } from "@/lib/patient-profile/v3/useCockpitLay
 import { useCockpitLayoutPresets } from "@/lib/patient-profile/v3/useCockpitLayoutPresets";
 import { useCockpitLayoutHotkeys } from "@/lib/patient-profile/v3/useCockpitLayoutHotkeys";
 import { toastOnCapRejection } from "@/lib/patient-profile/v3/cockpit-cap-toast";
-import { layoutUxToast } from "@/lib/patient-profile/layout-ux-toast";
 import { trackCockpitV3DragDrop } from "@/lib/patient-profile/telemetry";
 import CockpitCanvas from "./CockpitCanvas";
 import CockpitDndContext, {
@@ -33,7 +32,10 @@ import CockpitMobileFallback from "./CockpitMobileFallback";
 export interface CockpitV3ShellProps {
   panes?: PaneDefinition[];
   storageKey?: string;
-  /** When true, the body tab is not draggable (v3-DL-6). */
+  /**
+   * Previously locked Consult (`body`) drag while live (v3-DL-6). Kept for
+   * call-site compat — Consult is freely rearrangeable during teleconsult now.
+   */
   consultActive?: boolean;
   /** Anchored clinical-safety chrome (v3-DL-6 / P0-DL-3). */
   safetyDock?: ReactNode;
@@ -57,11 +59,12 @@ export interface CockpitV3ShellProps {
 export default function CockpitV3Shell({
   panes = [],
   storageKey = "cockpit-v3-default",
-  consultActive = false,
+  consultActive: _consultActive = false,
   safetyDock,
   actionDock,
   token,
 }: CockpitV3ShellProps) {
+  void _consultActive;
   const isLg = useMediaQuery("(min-width: 1024px)", true);
 
   const { paneById: paneByIdRecord } = useMemo(
@@ -122,17 +125,12 @@ export default function CockpitV3Shell({
     layoutSwitcher.applyDefaultLayout,
   );
 
-  const canDragPane = useCallback(
-    (paneId: string) => !(paneId === "body" && consultActive),
-    [consultActive],
-  );
+  // All panes (including Consult / `body` during live teleconsult) are
+  // rearrangeable — the old live-consult drag lock was inconvenient in practice.
+  const canDragPane = useCallback((_paneId: string) => true, []);
 
   const handleDrop = useCallback(
     (route: CockpitDropMovePayload) => {
-      if (!canDragPane(route.sourcePaneId)) {
-        layoutUxToast.error("Pause the consult before rearranging.");
-        return;
-      }
       const res = route.gutter
         ? layout.moveIntoGutter(
             route.sourcePaneId,
@@ -152,15 +150,11 @@ export default function CockpitV3Shell({
         });
       }
     },
-    [canDragPane, layout],
+    [layout],
   );
 
   const handleReorder = useCallback(
     (route: CockpitDropReorderPayload) => {
-      if (!canDragPane(route.sourcePaneId)) {
-        layoutUxToast.error("Pause the consult before rearranging.");
-        return;
-      }
       toastOnCapRejection(
         layout.reorderWithinGroup(
           route.groupId,
@@ -170,15 +164,11 @@ export default function CockpitV3Shell({
         ),
       );
     },
-    [canDragPane, layout],
+    [layout],
   );
 
   const handleSwap = useCallback(
     (route: CockpitDropSwapPayload) => {
-      if (!canDragPane(route.sourcePaneId)) {
-        layoutUxToast.error("Pause the consult before rearranging.");
-        return;
-      }
       const res = layout.swapLeaves(route.sourceGroupId, route.targetGroupId);
       toastOnCapRejection(res);
       if (res.ok) {
@@ -189,7 +179,7 @@ export default function CockpitV3Shell({
         });
       }
     },
-    [canDragPane, layout],
+    [layout],
   );
 
   if (!isLg) {

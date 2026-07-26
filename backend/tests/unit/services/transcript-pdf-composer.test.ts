@@ -187,7 +187,7 @@ describe('composeTranscriptPdfStream', () => {
     expectPdfContains(buf, 'Patient');
     // Footer watermark (renders on every page).
     expectPdfContains(buf, 'Confidential');
-    expectPdfContains(buf, 'Signed: Clariva Transcript Service');
+    expectPdfContains(buf, 'Signed: Halo Aid Transcript Service');
   });
 
   it('renders the "transcription pending" banner for voice consults awaiting transcription', async () => {

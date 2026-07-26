@@ -39,6 +39,22 @@ export const queryKeys = {
     /** insights-v1 · telehealth quality keyed by ISO date range. */
     telehealthQuality: (range: { from: string; to: string }) =>
       [...queryKeys.dashboard.all, "telehealth-quality", range] as const,
+    /** doctor-onboarding-v1 · go-live checklist booleans. */
+    onboardingStatus: () =>
+      [...queryKeys.dashboard.all, "onboarding-status"] as const,
+    /** doctor-verification-v1 · verification status (unverified/pending/...). */
+    verificationStatus: () =>
+      [...queryKeys.dashboard.all, "verification-status"] as const,
+  },
+  /** admin-console-v1 · verification review (no PHI in keys — status filter only). */
+  admin: {
+    all: ["admin"] as const,
+    verifications: (status: string) =>
+      [...queryKeys.admin.all, "verifications", status] as const,
+    verificationDetail: (doctorId: string) =>
+      [...queryKeys.admin.all, "verification", doctorId] as const,
+    doctors: (status: string) =>
+      [...queryKeys.admin.all, "doctors", status] as const,
   },
   patients: {
     all: ["patients"] as const,
@@ -59,6 +75,11 @@ export const queryKeys = {
       [...queryKeys.patient(patientId).all, "vitals-trends"] as const,
     growthDemographics: () =>
       [...queryKeys.patient(patientId).all, "growth-demographics"] as const,
+  }),
+  consult: (appointmentId: string) => ({
+    all: ["consult", appointmentId] as const,
+    lastVisitVitals: () =>
+      [...queryKeys.consult(appointmentId).all, "last-visit-vitals"] as const,
   }),
   opd: {
     all: ["opd"] as const,

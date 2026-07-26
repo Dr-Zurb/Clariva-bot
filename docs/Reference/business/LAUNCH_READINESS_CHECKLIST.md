@@ -95,6 +95,7 @@ For **every** vendor that can touch PHI: a signed **DPA** (BAA once US), data **
 - [ ] **[P0]** **Deepgram** (`voice-transcription-deepgram.ts`) — DPA + no-retention of audio/transcripts.
 - [ ] **[P0]** **Twilio** (`voice/video-session-twilio.ts`) — DPA; recordings stored in-region; retention controlled.
 - [ ] **[P0]** **Meta (Instagram/WhatsApp)** — data-sharing minimised + disclosed in privacy policy.
+- [ ] **[P0]** **Meta App Review + Business Verification + Advanced Access** — required so real doctors (not only app role holders) can connect Instagram and the bot can message real patients. Track in [`ilr-01`](../../Work/Daily-plans/July%202026/25-07-2026/instagram-launch-readiness/p1-launch-critical/Tasks/task-ilr-01-meta-app-review-ops.md). Depends on a working data-deletion callback ([`ilr-02`](../../Work/Daily-plans/July%202026/25-07-2026/instagram-launch-readiness/p1-launch-critical/Tasks/task-ilr-02-data-deletion-callback.md)).
 - [ ] **[P0]** **Razorpay / PayPal** — only payment metadata stored; no card data (PCI handled by gateway).
 - [ ] **[P1]** **Resend** (email) — DPA; no PII in templates/logs.
 - [ ] **[P0]** **Subprocessor register published** and linked from the Privacy Policy (create `docs/Reference/engineering/compliance/SUBPROCESSORS.md`).

@@ -171,3 +171,41 @@ export const publicSessionLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: false,
 });
+
+/**
+ * Public signup email-status preflight (auth-password · AP-D17).
+ * 20 req/min per IP — intentional existence check; keep enumeration slow.
+ */
+export const publicAuthEmailStatusLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  keyGenerator: (req: Request) => {
+    return ipKeyGenerator(req.ip || req.socket.remoteAddress || 'unknown', false);
+  },
+  handler: async (req: Request, res: Response) => {
+    await logSecurityEvent(
+      req.correlationId || 'unknown',
+      undefined,
+      'rate_limit_exceeded',
+      'medium',
+      req.ip,
+      'Public auth email-status rate limit exceeded'
+    );
+    const error = new TooManyRequestsError(
+      'Too many requests. Wait a moment and try again.'
+    );
+    return res.status(429).json(
+      errorResponse(
+        {
+          code: 'TooManyRequestsError',
+          message: error.message,
+          statusCode: 429,
+        },
+        req
+      )
+    );
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+});

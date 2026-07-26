@@ -1,6 +1,6 @@
-# Clariva Doctor Dashboard (Frontend)
+# Halo Aid Doctor Dashboard (Frontend)
 
-Next.js frontend for the Clariva Doctor Dashboard. This app lives in the **monorepo** alongside the backend: backend in `backend/`, frontend in `frontend/`.
+Next.js frontend for the Halo Aid Doctor Dashboard. This app lives in the **monorepo** alongside the backend: backend in `backend/`, frontend in `frontend/`.
 
 ## Run the frontend
 
@@ -62,6 +62,6 @@ Node 18+ (or 20 LTS) recommended. See `package.json` `engines` field.
 
 ## PWA share-target (text consult)
 
-On **Android Chrome**, after the patient installs Clariva as a PWA (`manifest.json` → Add to Home screen), photos and PDFs shared from other apps (Camera, Gallery, Files) can target **Clariva** in the system share sheet. The service worker stages the file and opens the active text consult composer.
+On **Android Chrome**, after the patient installs Halo Aid as a PWA (`manifest.json` → Add to Home screen), photos and PDFs shared from other apps (Camera, Gallery, Files) can target **Halo Aid** in the system share sheet. The service worker stages the file and opens the active text consult composer.
 
-**iOS Safari does not support the Web Share Target API.** Installed or in-browser, iOS users will not see Clariva in the share sheet; they should attach files with the in-chat 📎 picker or camera button instead.
+**iOS Safari does not support the Web Share Target API.** Installed or in-browser, iOS users will not see Halo Aid in the share sheet; they should attach files with the in-chat 📎 picker or camera button instead.

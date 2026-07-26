@@ -149,11 +149,13 @@ function BookPageContent() {
         if (res.data.bookingAllowed === false) {
           const why = res.data.bookingBlockedReason;
           const msg =
-            why === "staff_review_pending"
-              ? "Your visit type is still being confirmed by the clinic. Please return to your chat thread — we’ll send you a link when you can schedule and pay."
-              : why === "service_selection_not_finalized"
-                ? "Please finish confirming your visit type in chat with the clinic before choosing a time here."
-                : "This scheduling link is not ready yet. Please return to the chat for the next step.";
+            why === "doctor_not_verified"
+              ? "This clinic is not yet accepting bookings. Please try again later."
+              : why === "staff_review_pending"
+                ? "Your visit type is still being confirmed by the clinic. Please return to your chat thread — we’ll send you a link when you can schedule and pay."
+                : why === "service_selection_not_finalized"
+                  ? "Please finish confirming your visit type in chat with the clinic before choosing a time here."
+                  : "This scheduling link is not ready yet. Please return to the chat for the next step.";
           setPageError(msg);
           setPageLoading(false);
           return;

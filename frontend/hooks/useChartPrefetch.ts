@@ -26,7 +26,7 @@
  * This codebase does not use React Query / SWR.  All API calls use
  * `cache: "no-store"`.  The prefetch benefit is therefore:
  *   a) **Backend-side caching**: if the backend has in-memory or Redis
- *      caching for these queries (as Clariva does for read-heavy chart
+ *      caching for these queries (as Halo Aid does for read-heavy chart
  *      endpoints), hitting the endpoint once warms it for the imminent
  *      section mount.
  *   b) **DNS / TCP warm-up**: the network connection is already
@@ -38,7 +38,7 @@
  *      (reading from here instead of issuing a second network call).
  *
  * # Token
- * The Clariva chart endpoints are authenticated.  `token` is required —
+ * The Halo Aid chart endpoints are authenticated.  `token` is required —
  * pass the same doctor JWT used everywhere else in ConsultationCockpit.
  * (The spec sketch omits it, but the codebase has no token context; all
  * neighbour hooks accept `token` as an explicit parameter.)

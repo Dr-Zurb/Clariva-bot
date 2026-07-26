@@ -40,7 +40,7 @@ export interface Payment {
   amount_minor: number;
   currency: string;
   status: PaymentStatus;
-  /** Clariva platform fee in smallest unit (paise). 5% or flat for < threshold. Migration 022. */
+  /** Halo Aid platform fee in smallest unit (paise). 5% or flat for < threshold. Migration 022. */
   platform_fee_minor?: number | null;
   /** GST (18% on platform fee) in smallest unit. Migration 022. */
   gst_minor?: number | null;

@@ -158,10 +158,15 @@ export function ComplaintList({
       return () => window.clearTimeout(timer);
     }
 
-    // Deliberate collapse (header / lip / Escape) → bring capture bar back into
-    // view. Blur-collapse (doc clicked Family history, etc.) → leave them there.
+    // Deliberate collapse (header / lip / Escape) → settle the capture bar back
+    // into view *concurrently* with the body fold (live re-measurement tracks the
+    // shrinking card), so close reads as one motion instead of fold-then-scroll.
+    // The header is unified now (no mid-close swap), so there's nothing to race.
+    // Blur-collapse (doc clicked Family history, etc.) → leave them there.
     if (prev && collapseSourceRef.current === "explicit") {
+      collapseSourceRef.current = null;
       scrollComplaintCaptureIntoView();
+      return;
     }
     collapseSourceRef.current = null;
   }, [activeInstanceId]);

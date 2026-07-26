@@ -22,20 +22,20 @@ export const metadata: Metadata = {
     ? new URL(process.env.NEXT_PUBLIC_APP_URL)
     : undefined,
   title: {
-    default: "Clariva",
-    template: "%s · Clariva",
+    default: "Halo Aid",
+    template: "%s · Halo Aid",
   },
   description: "Digital infrastructure for doctors operating on social media.",
-  applicationName: "Clariva",
+  applicationName: "Halo Aid",
   manifest: "/manifest.json",
   icons: {
     icon: "/icon.svg",
   },
   openGraph: {
-    title: "Clariva",
+    title: "Halo Aid",
     description: "Digital infrastructure for doctors operating on social media.",
     type: "website",
-    siteName: "Clariva",
+    siteName: "Halo Aid",
     images: [{ url: "/brand/og.svg", width: 1200, height: 630 }],
   },
   twitter: {

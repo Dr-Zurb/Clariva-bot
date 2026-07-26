@@ -60,7 +60,7 @@ export function requireApiBaseUrl(): string {
   }
   if (!base) {
     throw new Error(
-      "API base URL is not configured. Set NEXT_PUBLIC_API_URL to your Clariva backend origin (e.g. https://your-api.onrender.com) in Vercel Environment Variables. For server-only overrides, set API_URL or BACKEND_API_URL."
+      "API base URL is not configured. Set NEXT_PUBLIC_API_URL to your Halo Aid backend origin (e.g. https://your-api.onrender.com) in Vercel Environment Variables. For server-only overrides, set API_URL or BACKEND_API_URL."
     );
   }
   return base;

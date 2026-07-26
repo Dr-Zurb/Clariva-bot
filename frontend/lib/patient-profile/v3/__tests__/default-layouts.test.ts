@@ -17,36 +17,27 @@ const PANE_IDS = [...COCKPIT_TAB_ORDER];
 
 const VISIBLE_BY_LAYOUT: Record<DefaultLayoutId, readonly string[]> = {
   consult: PANE_IDS,
-  read: ["snapshot", "assessment", "history", "subjective", "objective"],
-  document: [
-    "snapshot",
-    "assessment",
-    "subjective",
-    "objective",
-    "plan",
-  ],
+  read: ["assessment", "subjective", "objective"],
+  document: ["assessment", "subjective", "objective", "plan"],
   review: PANE_IDS,
 };
 
 const HIDDEN_BY_LAYOUT: Record<DefaultLayoutId, readonly string[]> = {
   consult: [],
   read: ["body", "plan"],
-  document: ["body", "history"],
+  document: ["body"],
   review: [],
 };
 
 const STRUCTURAL_IDS = new Set([
   "__root__",
-  "col-left",
   "col-mid",
   "col-right",
   "read-left",
-  "read-center",
   "read-right",
   "doc-left",
   "doc-mid",
   "doc-right",
-  "review-left",
   "review-mid",
   "review-right",
 ]);
@@ -152,14 +143,14 @@ describe("default-layouts (cv3l-01)", () => {
   });
 
   it.each(DEFAULT_LAYOUTS.map((e) => [e.id, e.tree] as const))(
-    "%s tree passes validators and the seven-pane invariant",
+    "%s tree passes validators and the five-pane invariant",
     (id, tree) => {
       expect(isValidTreeNode(tree)).toBe(true);
       assertLeafContracts(tree);
 
       const paneIds = collectPaneIds(tree);
       expect(paneIds.sort()).toEqual([...PANE_IDS].sort());
-      expect(new Set(paneIds).size).toBe(7);
+      expect(new Set(paneIds).size).toBe(PANE_IDS.length);
 
       expect(visiblePaneIds(tree).sort()).toEqual(
         [...VISIBLE_BY_LAYOUT[id]].sort(),

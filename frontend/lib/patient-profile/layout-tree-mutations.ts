@@ -612,8 +612,11 @@ export function hidePaneToRoot(
   if (!located) return { ok: false, reason: "not-found" };
   const { container } = located;
 
+  // Key by structural leaf id, not paneId — after tab siblings close, a sole
+  // occupant often still lives in a synthetic `__tabs_*` leaf whose id ≠ paneId.
+  // Looking up by paneId then silently no-ops (ok:true, unchanged tree).
   const hideInPlace = (): PaneTreeNode =>
-    updatePaneTreeNodeById(tree, paneId, (n) => ({ ...n, hidden: true }));
+    updatePaneTreeNodeById(tree, container.id, (n) => ({ ...n, hidden: true }));
 
   // Flat single-pane column under the root already collapses cleanly (the root
   // filters hidden children) — hide in place to keep its position.
@@ -656,6 +659,83 @@ export function hidePaneToRoot(
           children: [removed.tree, hiddenLeaf],
         };
   return { ok: true, tree: rootTree };
+}
+
+/**
+ * Close an entire leaf (all tabs in that pane slot). Re-homes every pane in the
+ * leaf as a hidden single-pane leaf under `__root__` so the palette can restore
+ * each one independently — the structural leaf itself is removed (or emptied).
+ *
+ * Single-pane leaves delegate to {@link hidePaneToRoot} for identical semantics
+ * (including hide-in-place for flat root columns).
+ *
+ * Failure modes:
+ *   - `not-found` — `leafId` is missing or is not a leaf.
+ */
+export function hideLeafToRoot(
+  tree: PaneTreeNode,
+  leafId: string,
+): PaneTreeOk | PaneTreeErr<"not-found"> {
+  const leaf = findPaneTreeNodeById(tree, leafId);
+  if (!leaf || !isPaneTreeLeaf(leaf)) {
+    return { ok: false, reason: "not-found" };
+  }
+
+  const paneIds =
+    leaf.paneIds && leaf.paneIds.length > 0 ? [...leaf.paneIds] : [leaf.id];
+
+  if (paneIds.length === 1) {
+    return hidePaneToRoot(tree, paneIds[0]!);
+  }
+
+  const sizePct = leaf.sizePct;
+  const without = replacePaneTreeNodeById(tree, leafId, null);
+
+  let root: PaneTreeNode;
+  if (without === null) {
+    root = {
+      id: "__root__",
+      sizePct: 100,
+      hidden: false,
+      direction: "horizontal",
+      children: [],
+    };
+  } else if (without.id === "__root__") {
+    root = without;
+  } else {
+    root = {
+      id: "__root__",
+      sizePct: 100,
+      hidden: false,
+      direction: "horizontal",
+      children: [without],
+    };
+  }
+
+  const hiddenLeaves: PaneTreeNode[] = [];
+  for (const paneId of paneIds) {
+    if (findPaneTreeNodeById(root, paneId)) {
+      // Rare after pruning the source leaf — keep structural ids unique.
+      root = updatePaneTreeNodeById(root, paneId, (n) => ({
+        ...n,
+        hidden: true,
+      }));
+    } else {
+      hiddenLeaves.push(makeSinglePaneLeaf(paneId, sizePct, true));
+    }
+  }
+
+  if (hiddenLeaves.length === 0) {
+    return { ok: true, tree: root };
+  }
+
+  return {
+    ok: true,
+    tree: {
+      ...root,
+      children: [...(root.children ?? []), ...hiddenLeaves],
+    },
+  };
 }
 
 function resolveInsertIndex(length: number, position: TabsAddPosition): number {
@@ -808,12 +888,16 @@ export function extractFromTabsNode(
 }
 
 /**
- * Swap two whole leaf containers in place (v3 swap-panes / cv3d-swap).
+ * Swap two nodes in place (v3 swap-panes / cv3d-swap / Show here).
  *
- * Slot-preserving: each node moves into the other's position but adopts the
- * DESTINATION slot's `sizePct`, so the surrounding grid geometry is unchanged —
- * only the two panes trade places (matching the geometry-preserving gutter
- * reorder). Node ids and any nested structure travel with each node.
+ * Each node keeps its own `id` and content (`paneIds` / `activeTabId` / nested
+ * children) and simply trades POSITION, inheriting the destination slot's
+ * geometry (`sizePct` + `hidden`). Preserving position geometry keeps panel
+ * dimensions from jumping on a swap; binding `id` to content keeps the
+ * structural id ↔ pane naming invariant intact (a leaf named after a pane must
+ * host that pane). Divorcing them — parking pane "b" in a slot still called "a"
+ * — lets a later `makeSinglePaneLeaf(paneId)` mint a colliding node id and trip
+ * react-resizable-panels' "Panel ids must be unique" guard.
  *
  * Failure modes:
  *   - "not-found" — either id is absent from the tree.
@@ -835,8 +919,19 @@ export function swapPaneTreeNodes(
     return { ok: false, reason: "no-op" };
   }
 
-  const aReplacement: PaneTreeNode = { ...nodeB, sizePct: nodeA.sizePct };
-  const bReplacement: PaneTreeNode = { ...nodeA, sizePct: nodeB.sizePct };
+  // Move each node to the other's slot, inheriting that slot's geometry. Keeping
+  // `hidden` per-position also avoids importing `hidden: true` into a visible
+  // slot on a Show-here swap with a hidden host (which would collapse it).
+  const aReplacement: PaneTreeNode = {
+    ...nodeB,
+    sizePct: nodeA.sizePct,
+    hidden: nodeA.hidden,
+  };
+  const bReplacement: PaneTreeNode = {
+    ...nodeA,
+    sizePct: nodeB.sizePct,
+    hidden: nodeB.hidden,
+  };
 
   // Single pass — return the replacement WITHOUT recursing into it so the
   // swapped-in node's own id is not matched again.

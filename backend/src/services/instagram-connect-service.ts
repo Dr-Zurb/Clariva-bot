@@ -532,6 +532,64 @@ export async function getInstagramDashboardStatus(
 }
 
 /**
+ * Force-refresh Instagram token health via Meta debug_token (bypasses 5-min cache).
+ * Used by the daily health sweep (ilr-04). Returns null if not connected / no token.
+ */
+export async function forceRefreshInstagramHealth(
+  doctorId: string,
+  correlationId: string
+): Promise<InstagramHealthSummary | null> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) {
+    throw new InternalError('Service role client not available for Instagram health refresh');
+  }
+
+  const { data, error } = await supabase
+    .from('doctor_instagram')
+    .select(
+      'instagram_access_token, instagram_last_dm_success_at'
+    )
+    .eq('doctor_id', doctorId)
+    .maybeSingle();
+
+  if (error) handleSupabaseError(error, correlationId);
+
+  const row = data as Pick<
+    DoctorInstagramHealthRow,
+    'instagram_access_token' | 'instagram_last_dm_success_at'
+  > | null;
+  if (!row?.instagram_access_token) {
+    return null;
+  }
+
+  const { data: debugData, requestFailed } = await fetchMetaDebugToken(
+    row.instagram_access_token,
+    correlationId
+  );
+  const summary = summarizeHealthFromMetaAndRow(
+    debugData,
+    row.instagram_last_dm_success_at,
+    requestFailed
+  );
+  const tokenExpiresIso =
+    summary.tokenExpiresAt ??
+    (typeof debugData?.expires_at === 'number' && debugData.expires_at > 0
+      ? new Date(debugData.expires_at * 1000).toISOString()
+      : null);
+
+  await persistInstagramHealth(doctorId, summary, tokenExpiresIso, correlationId);
+
+  return {
+    level: summary.level,
+    checkedAt: new Date().toISOString(),
+    tokenExpiresAt: tokenExpiresIso,
+    lastDmSuccessAt: row.instagram_last_dm_success_at,
+    message: summary.message,
+    reconnectRecommended: summary.reconnectRecommended,
+  };
+}
+
+/**
  * Record last successful bot DM (worker). Best-effort; no throw.
  */
 export async function recordInstagramLastDmSuccess(doctorId: string, correlationId?: string): Promise<void> {
@@ -984,6 +1042,8 @@ export interface SaveDoctorInstagramInput {
   facebook_page_id?: string | null;
   instagram_access_token: string;
   instagram_username?: string | null;
+  /** ilr-02: Facebook app-scoped user id of the authorizing doctor (reverse-maps the Meta data-deletion callback). */
+  facebook_user_id?: string | null;
 }
 
 /**
@@ -1010,6 +1070,7 @@ export async function saveDoctorInstagram(
     facebook_page_id: input.facebook_page_id ?? null,
     instagram_access_token: input.instagram_access_token.trim(),
     instagram_username: input.instagram_username ?? null,
+    facebook_user_id: input.facebook_user_id ?? null,
     instagram_health_checked_at: null,
     instagram_health_level: null,
     instagram_health_error_code: null,

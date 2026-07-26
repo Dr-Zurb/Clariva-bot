@@ -49,8 +49,14 @@ export interface PaneTabStripV3Props {
   paneById: Record<string, PaneDefinition>;
   /** Fired when the user clicks a tab. */
   onActivateTab: (paneId: string) => void;
-  /** Fired when the user clicks a tab's close (×) button. */
+  /** Fired when the user clicks a tab's close (×) button (multi-tab leaves only). */
   onCloseTab?: (paneId: string) => void;
+  /**
+   * Fired when the user clicks the trailing leaf-close control. Closes the whole
+   * pane slot (all tabs). Always shown when provided — single-tab leaves have no
+   * per-tab × so this is their only close affordance.
+   */
+  onCloseLeaf?: () => void;
   /**
    * Optional context-menu opener for an individual tab. When provided, right-click
    * on a tab button invokes this (cv3c-03 palette / context menu).
@@ -64,10 +70,15 @@ export interface PaneTabStripV3Props {
   /** Optional className for the outer strip. */
   className?: string;
   /**
-   * When false for a pane id, that tab's drag source is disabled (e.g. body
-   * during a live consult — v3-DL-6). Defaults to always draggable.
+   * When false for a pane id, that tab's drag source is disabled.
+   * Defaults to always draggable (including Consult during live teleconsult).
    */
   isTabDraggable?: (paneId: string) => boolean;
+  /**
+   * Trailing chrome after tabs / overflow (e.g. Focus control — ctf-03).
+   * Rendered once per leaf, not per tab chip.
+   */
+  trailingActions?: React.ReactNode;
 }
 
 function SortableTab({
@@ -209,6 +220,37 @@ function TabCloseButton({
   );
 }
 
+function LeafCloseButton({
+  label,
+  tooltip,
+  onCloseLeaf,
+}: {
+  label: string;
+  tooltip: string;
+  onCloseLeaf: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          data-testid="pane-leaf-close-button"
+          aria-label={label}
+          onClick={onCloseLeaf}
+          className={cn(
+            "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground",
+            "transition-colors hover:bg-accent hover:text-foreground",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          )}
+        >
+          <X className="h-3.5 w-3.5" aria-hidden />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{tooltip}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 interface ScrollHints {
   overflowing: boolean;
   canLeft: boolean;
@@ -248,13 +290,27 @@ export default function PaneTabStripV3({
   paneById,
   onActivateTab,
   onCloseTab,
+  onCloseLeaf,
   onContextMenuTab,
   wrapTab,
   className,
   isTabDraggable = () => true,
+  trailingActions,
 }: PaneTabStripV3Props): React.JSX.Element | null {
   const visiblePaneIds = paneIds.slice(0, VISIBLE_TAB_LIMIT);
   const overflowPaneIds = paneIds.slice(VISIBLE_TAB_LIMIT);
+  // Per-tab × only when the leaf hosts multiple tabs; single-tab leaves use the
+  // trailing leaf-close control (window-chrome style).
+  const showPerTabClose = Boolean(onCloseTab) && paneIds.length > 1;
+  const activeTitle = paneById[activeTabId]?.title ?? activeTabId;
+  const leafCloseLabel =
+    paneIds.length > 1
+      ? `Close all tabs in this pane`
+      : `Close ${activeTitle}`;
+  const leafCloseTooltip =
+    paneIds.length > 1
+      ? "Close this pane (all tabs)"
+      : `Close ${activeTitle}`;
   const scrollRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{
@@ -517,7 +573,7 @@ export default function PaneTabStripV3({
                             <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
                           ) : null}
                           <span className="max-w-[140px] truncate">{pane.title}</span>
-                          {onCloseTab ? (
+                          {showPerTabClose && onCloseTab ? (
                             <TabCloseButton paneId={paneId} onCloseTab={onCloseTab} />
                           ) : null}
                         </button>
@@ -614,7 +670,7 @@ export default function PaneTabStripV3({
                             <Icon className="h-4 w-4 shrink-0" aria-hidden />
                           ) : null}
                           <span className="min-w-0 flex-1 truncate">{pane.title}</span>
-                          {onCloseTab ? (
+                          {showPerTabClose && onCloseTab ? (
                             <TabCloseButton paneId={paneId} onCloseTab={onCloseTab} />
                           ) : null}
                           {isActive ? (
@@ -629,6 +685,21 @@ export default function PaneTabStripV3({
                   })}
                 </DropdownMenuContent>
               </DropdownMenu>
+            </div>
+          ) : null}
+          {trailingActions || onCloseLeaf ? (
+            <div
+              data-testid="pane-tab-strip-trailing-actions"
+              className="flex shrink-0 items-center border-l border-border/40 px-1"
+            >
+              {trailingActions}
+              {onCloseLeaf ? (
+                <LeafCloseButton
+                  label={leafCloseLabel}
+                  tooltip={leafCloseTooltip}
+                  onCloseLeaf={onCloseLeaf}
+                />
+              ) : null}
             </div>
           ) : null}
         </div>
