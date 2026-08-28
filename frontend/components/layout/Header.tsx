@@ -24,6 +24,8 @@ interface HeaderProps {
    * notifications bell. Empty string suppresses the bell entirely.
    */
   token?: string;
+  /** admin-console-v2: show Admin console link in the profile menu. */
+  isAdmin?: boolean;
   onMenuToggle?: () => void;
   /**
    * task-ui-B4 — invoked when the user clicks the Cmd-K search trigger.
@@ -52,6 +54,7 @@ interface HeaderProps {
 export function Header({
   userEmail,
   token,
+  isAdmin = false,
   onMenuToggle,
   onOpenSearch,
 }: HeaderProps) {
@@ -96,10 +99,10 @@ export function Header({
         <Link
           href="/dashboard"
           className="flex select-none items-center gap-2"
-          aria-label="Clariva home"
+          aria-label="Halo Aid home"
         >
           <Image
-            src="/brand/logomark.svg"
+            src="/brand/halo-logomark.svg"
             alt=""
             width={28}
             height={28}
@@ -108,7 +111,7 @@ export function Header({
             aria-hidden="true"
           />
           <span className="hidden text-base font-semibold text-foreground sm:inline">
-            Clariva
+            Halo Aid
           </span>
         </Link>
 
@@ -195,7 +198,7 @@ export function Header({
         {token ? <DashboardEventsBell token={token} /> : null}
 
         {/* Profile dropdown — logout + settings + theme placeholder */}
-        <HeaderProfileMenu userEmail={userEmail} />
+        <HeaderProfileMenu userEmail={userEmail} isAdmin={isAdmin} />
       </div>
     </header>
   );

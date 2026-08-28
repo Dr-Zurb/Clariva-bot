@@ -1010,13 +1010,12 @@ describe("useShellLayout — knownLeafIds hydration guard (csl-03)", () => {
   });
 
   it("discards a persisted layout whose leaf ids do NOT intersect the current template", () => {
-    // Seed a fully-valid v4 layout with stale v1 ids.
+    // Zero overlap with the current registry — prune cannot salvage.
     const stale = v5FromFlat({
-      paneOrder: ["chart", "body", "rx"],
+      paneOrder: ["chart", "rx"],
       paneState: {
-        chart: { sizePct: 26, hidden: false },
-        body: { sizePct: 48, hidden: false },
-        rx: { sizePct: 26, hidden: false },
+        chart: { sizePct: 50, hidden: false },
+        rx: { sizePct: 50, hidden: false },
       },
     });
     localStorage.setItem(
@@ -1041,9 +1040,9 @@ describe("useShellLayout — knownLeafIds hydration guard (csl-03)", () => {
     ).toBeNull();
   });
 
-  it("discards a partially-overlapping persisted layout (missing template leaves)", () => {
-    // Partial overlap — `snapshot` matches but the rest of the v2 template is
-    // absent; column toggles would update ids that do not exist in storage.
+  it("prunes a partially-overlapping persisted layout (missing template leaves)", () => {
+    // Partial overlap — keep known ids, strip unknown `chart`, append missing
+    // known leaves as hidden (ribbon-expand Phase 2B prune).
     const partial = v5FromFlat({
       paneOrder: ["snapshot", "chart", "body"],
       paneState: {
@@ -1066,13 +1065,17 @@ describe("useShellLayout — knownLeafIds hydration guard (csl-03)", () => {
       }),
     );
 
-    expect(result.current.paneOrder).toEqual(V2_LEAVES);
+    expect(result.current.paneOrder.sort()).toEqual([...V2_LEAVES].sort());
+    expect(result.current.paneOrder).not.toContain("chart");
+    expect(result.current.paneState.snapshot?.hidden).toBe(false);
+    expect(result.current.paneState.body?.hidden).toBe(false);
+    // Persisted rewrite kept the pruned tree.
     expect(
       localStorage.getItem(v4TreeLayoutStorageKey(STORAGE_KEY)),
-    ).toBeNull();
+    ).not.toBeNull();
   });
 
-  it("discards a persisted layout carrying an UNKNOWN (removed) leaf — the investigations-orders ghost", () => {
+  it("prunes a persisted layout carrying an UNKNOWN (removed) leaf — the investigations-orders ghost", () => {
     // Current registry after the SOAP fold: seven leaves, no investigations-orders.
     const SEVEN_LEAVES = V2_LEAVES.filter((id) => id !== "investigations-orders");
     const sevenDefaultState: Record<string, PaneRuntimeState> =
@@ -1080,8 +1083,7 @@ describe("useShellLayout — knownLeafIds hydration guard (csl-03)", () => {
         SEVEN_LEAVES.map((id) => [id, { sizePct: 14, hidden: false }]),
       );
 
-    // Saved layout still has every current leaf PLUS the removed one, so the
-    // "missing leaf" guard alone would keep it and render an empty ghost column.
+    // Saved layout still has every current leaf PLUS the removed one.
     const ghost = v5FromFlat({
       paneOrder: [...SEVEN_LEAVES, "investigations-orders"],
       paneState: {
@@ -1103,12 +1105,12 @@ describe("useShellLayout — knownLeafIds hydration guard (csl-03)", () => {
       }),
     );
 
-    // Ghost discarded; hook fell back to the clean seven-leaf default.
-    expect(result.current.paneOrder).toEqual(SEVEN_LEAVES);
+    // Ghost pruned away; known leaves preserved (not a full discard/reseed).
+    expect(result.current.paneOrder.sort()).toEqual([...SEVEN_LEAVES].sort());
     expect(result.current.paneOrder).not.toContain("investigations-orders");
     expect(
       localStorage.getItem(v4TreeLayoutStorageKey(STORAGE_KEY)),
-    ).toBeNull();
+    ).not.toBeNull();
   });
 
   it("preserves legacy behavior when knownLeafIds is omitted", () => {
@@ -1172,13 +1174,13 @@ describe("useShellLayout — knownLeafIds hydration guard (csl-03)", () => {
   });
 
   it("also clears legacy v3 keys so re-hydration cannot resurrect stale ids", () => {
+    // Zero-overlap legacy payload — prune fails → discard clears both keys.
     const staleV3 = {
       version: 3 as const,
-      paneOrder: ["chart", "body", "rx"],
+      paneOrder: ["chart", "rx"],
       paneState: {
-        chart: { sizePct: 26, hidden: false },
-        body: { sizePct: 48, hidden: false },
-        rx: { sizePct: 26, hidden: false },
+        chart: { sizePct: 50, hidden: false },
+        rx: { sizePct: 50, hidden: false },
       },
     };
     const LEGACY_KEY = "test:legacy:v3";

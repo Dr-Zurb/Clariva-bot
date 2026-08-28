@@ -1,8 +1,9 @@
+import { LegalShell } from "@/components/legal/LegalShell";
 import { DataDeletionClient } from "./DataDeletionClient";
 
 export const metadata = {
-  title: "Data Deletion Request | Clariva Care",
-  description: "How to request deletion of your data from Clariva Care",
+  title: "Data Deletion Request | Halo Aid",
+  description: "How to request deletion of your data from Halo Aid",
 };
 
 /**
@@ -10,35 +11,26 @@ export const metadata = {
  *
  * Plan 02 · Task 33 extended the old Meta-compliance landing page
  * (static copy only) with a real request form driven by
- * `<DataDeletionClient>`. The legal / "here is how we handle
- * deletion" copy stays intact on this page so the URL continues to
- * satisfy the Meta app-review requirement — the interactive pieces
- * are layered underneath.
- *
- * Design choices:
- *   - The request form accepts a booking-token path (pasted from
- *     the patient's last DM, or auto-populated if the URL carries
- *     `?bookingToken=...`). This avoids shipping a patient auth
- *     system for v1 while still giving us a verifiable HMAC trail.
- *   - We render a soft warning banner explaining the 7-day grace
- *     window and the legal retention carve-out, consistent with
- *     the explainer DM sent post-finalize.
+ * `<DataDeletionClient>`. Legal copy stays intact for Meta app-review.
+ * Visual chrome updated by halo-aid-legal (`LegalShell`).
  */
 export default function DataDeletionPage() {
   return (
-    <main className="min-h-screen p-8 max-w-3xl mx-auto">
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">
+    <LegalShell activeHref="/data-deletion">
+      <h1 className="text-3xl font-bold tracking-tight text-foreground">
         Data Deletion Request
       </h1>
-      <p className="text-sm text-gray-500 mb-8">
+      <p className="mt-2 text-sm text-muted-foreground">
         How to request deletion of your personal data
       </p>
 
-      <DataDeletionClient />
+      <div className="mt-8">
+        <DataDeletionClient />
+      </div>
 
-      <div className="prose prose-gray max-w-none space-y-6 text-gray-700 mt-10">
-        <section>
-          <h2 className="text-lg font-semibold text-gray-900 mt-6">
+      <div className="mt-10 space-y-8 text-foreground/80">
+        <section className="space-y-3">
+          <h2 className="text-lg font-semibold text-foreground">
             Your Right to Deletion
           </h2>
           <p>
@@ -47,8 +39,8 @@ export default function DataDeletionPage() {
           </p>
         </section>
 
-        <section>
-          <h2 className="text-lg font-semibold text-gray-900 mt-6">
+        <section className="space-y-3">
+          <h2 className="text-lg font-semibold text-foreground">
             How We Handle Deletion
           </h2>
           <p>
@@ -60,44 +52,51 @@ export default function DataDeletionPage() {
             your personal identifiers (name, phone, email) are removed from our
             systems, and we send you one final confirmation message.
           </p>
-          <p className="mt-3">
+          <p>
             The clinical portions of your medical record (appointments,
-            prescriptions, consultation transcripts) are retained under the
-            medical-record retention obligations of the Digital Personal Data
-            Protection Act 2023 and GDPR Article 9. Your doctor continues to
-            have access to those records for clinical follow-up; the records
-            themselves are not deleted.
+            prescriptions, consultation notes and transcripts) are retained
+            because your doctor is required to keep clinical records. Your doctor
+            continues to have access to those records for clinical follow-up; the
+            records themselves are not deleted. If you want those records removed,
+            that is a decision for the practice that holds them, and you should
+            contact them directly.
           </p>
         </section>
 
-        <section>
-          <h2 className="text-lg font-semibold text-gray-900 mt-6">
+        <section className="space-y-3">
+          <h2 className="text-lg font-semibold text-foreground">
             Other Ways to Request Deletion
           </h2>
           <p>If you prefer not to use the form above, you can also:</p>
-          <ol className="list-decimal pl-6 mt-2 space-y-2">
+          <ol className="list-decimal space-y-2 pl-6">
             <li>
-              <strong>Via Facebook/Instagram:</strong> If you connected our app
-              through Facebook or Instagram, go to Settings &amp; Privacy →
-              Settings → Apps and Websites, find Clariva Care, and click
-              &quot;Remove&quot; or &quot;Send Request&quot; to trigger a data
-              deletion request. We will receive the request and process it.
+              <strong className="text-foreground">Via Facebook/Instagram:</strong>{" "}
+              If you connected our app through Facebook or Instagram, go to
+              Settings &amp; Privacy → Settings → Apps and Websites, find Halo
+              Aid, and click &quot;Remove&quot; or &quot;Send Request&quot; to
+              trigger a data deletion request. We will receive the request and
+              process it.
             </li>
             <li>
-              <strong>Via email:</strong> Contact the healthcare practice you
-              booked with and ask them to forward your deletion request to us.
-              Include your name, phone number, and/or the Instagram handle you
-              used so we can identify your records.
+              <strong className="text-foreground">Via email:</strong> Write to{" "}
+              <a
+                href="mailto:founder@haloaid.com"
+                className="font-medium text-primary underline-offset-4 hover:underline"
+              >
+                founder@haloaid.com
+              </a>{" "}
+              with the subject &quot;Data Deletion Request&quot;. Include the
+              identifiers you used — name, phone number, and/or the Instagram
+              handle — so we can find your records.
             </li>
             <li>
-              <strong>Via our contact:</strong> Email the contact address listed
-              in our Meta app settings (Basic Settings → Contact email) with the
-              subject &quot;Data Deletion Request&quot; and include the
-              identifiers you used (name, phone, Instagram handle).
+              <strong className="text-foreground">Via your practice:</strong>{" "}
+              Contact the healthcare practice you booked with and ask them to
+              action or forward your deletion request.
             </li>
           </ol>
         </section>
       </div>
-    </main>
+    </LegalShell>
   );
 }

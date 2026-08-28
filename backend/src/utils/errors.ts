@@ -90,6 +90,19 @@ export class ServiceSelectionNotFinalizedPaymentError extends ForbiddenError {
 }
 
 /**
+ * doctor-verification-v1 · ver-05: doctor has not completed license verification.
+ * Patient-facing booking uses the default message; doctor-facing paths pass a
+ * custom message (e.g. IG connect / unpause receptionist).
+ */
+export class DoctorNotVerifiedError extends ForbiddenError {
+  constructor(
+    message: string = 'This clinic is not yet accepting bookings. Please try again later.'
+  ) {
+    super(message);
+  }
+}
+
+/**
  * Conflict error (409)
  * Used when there's a conflict with the current state
  */

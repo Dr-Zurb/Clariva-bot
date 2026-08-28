@@ -1,7 +1,7 @@
 /**
  * cockpit-tabs.test.tsx — the Cockpit v3 flat tab registry (cv3t-01 · Phase 5).
  *
- * Structural contract only: `buildCockpitTabs` returns the seven real leaf tabs
+ * Structural contract only: `buildCockpitTabs` returns the five real leaf tabs
  * as uniform, top-level `PaneDefinition`s (no `children`), in a stable order,
  * with correct ids / titles / icons. The body tab flips Consult ↔ Visit-summary
  * by template id (and by derived state), and the walk-in subset is `[body,
@@ -14,6 +14,7 @@ import { render } from '@testing-library/react';
 import {
   buildCockpitTabs,
   buildWalkInCockpitTabs,
+  renderConsultBodySurface,
   COCKPIT_TAB_ORDER,
   WALK_IN_TAB_IDS,
 } from '@/lib/patient-profile/v3/cockpit-tabs';
@@ -21,8 +22,6 @@ import type { TelemedVideoContext } from '@/lib/patient-profile/templates';
 import type { CockpitTemplate } from '@/lib/patient-profile/state';
 import type { CockpitConsultationModality } from '@/lib/patient-profile/state';
 import {
-  Heart,
-  Clock,
   Stethoscope,
   Pill,
   Quote,
@@ -37,6 +36,20 @@ vi.mock('@/components/cockpit/rx/sections/AssessmentSection', () => ({
   AssessmentSection: () => (
     <div data-testid="pane-assessment-editor">assessment editor</div>
   ),
+}));
+
+vi.mock('@/components/cockpit/middle/BodyZone', () => ({
+  BodyZone: ({ variant }: { variant: string }) => (
+    <div
+      data-testid="body-zone-surface"
+      data-variant={variant}
+      aria-label="Video consultation surface"
+    />
+  ),
+}));
+
+vi.mock('@/components/cockpit/middle/EndedConsultBody', () => ({
+  EndedConsultBody: () => <div data-testid="ended-consult-surface" />,
 }));
 
 function fixtureCtx(
@@ -66,8 +79,6 @@ function fixtureCtx(
 }
 
 const EXPECTED_TITLES: Record<string, string> = {
-  snapshot: 'Snapshot',
-  history: 'History',
   body: 'Consult',
   assessment: 'Assessment',
   plan: 'Plan',
@@ -76,8 +87,6 @@ const EXPECTED_TITLES: Record<string, string> = {
 };
 
 const EXPECTED_ICONS = {
-  snapshot: Heart,
-  history: Clock,
   assessment: Stethoscope,
   plan: Pill,
   subjective: Quote,
@@ -85,16 +94,23 @@ const EXPECTED_ICONS = {
 } as const;
 
 describe('buildCockpitTabs — flat registry shape (cv3t-01)', () => {
-  it('returns the seven leaf tabs in the canonical order', () => {
+  it('returns the five leaf tabs in the canonical order', () => {
     const tabs = buildCockpitTabs(fixtureCtx(), 'telemed-video');
-    expect(tabs).toHaveLength(7);
+    expect(tabs).toHaveLength(5);
     expect(tabs.map((t) => t.id)).toEqual([...COCKPIT_TAB_ORDER]);
-    expect(COCKPIT_TAB_ORDER.slice(3)).toEqual([
+    expect(COCKPIT_TAB_ORDER).toEqual([
+      'body',
       'subjective',
       'objective',
       'assessment',
       'plan',
     ]);
+  });
+
+  it('does not register Snapshot or History tabs (ribbon owns those)', () => {
+    const ids = buildCockpitTabs(fixtureCtx(), 'telemed-video').map((t) => t.id);
+    expect(ids).not.toContain('snapshot');
+    expect(ids).not.toContain('history');
   });
 
   it('every tab is a uniform top-level leaf (no children/groupWrapper/direction)', () => {
@@ -109,7 +125,7 @@ describe('buildCockpitTabs — flat registry shape (cv3t-01)', () => {
     }
   });
 
-  it('keeps stable ids + titles for the seven clean tabs', () => {
+  it('keeps stable ids + titles for the five clean tabs', () => {
     const byId = new Map(
       buildCockpitTabs(fixtureCtx(), 'telemed-video').map((t) => [t.id, t]),
     );
@@ -196,6 +212,27 @@ describe('buildCockpitTabs — the Consult / Visit-summary body tab', () => {
     }
     const reviewTabs = buildCockpitTabs(fixtureCtx({ state: 'terminal' }));
     expect(reviewTabs.some((t) => t.id === 'body')).toBe(true);
+  });
+
+  it('body tab render is a ConsultSurfaceSlot (stable host owns BodyZone)', () => {
+    const body = buildCockpitTabs(fixtureCtx(), 'telemed-video').find(
+      (t) => t.id === 'body',
+    );
+    const { container } = render(body!.render!());
+    expect(
+      container.querySelector('[data-testid="consult-surface-slot"]'),
+    ).toBeTruthy();
+  });
+
+  it('renderConsultBodySurface builds the live BodyZone for the host', () => {
+    const { container } = render(
+      renderConsultBodySurface(fixtureCtx(), 'telemed-video'),
+    );
+    // BodyZone wraps ConsultationBodyPane; without mocks we at least get the
+    // region landmark from BodyZone's aria-label.
+    expect(
+      container.querySelector('[aria-label="Video consultation surface"]'),
+    ).toBeTruthy();
   });
 });
 

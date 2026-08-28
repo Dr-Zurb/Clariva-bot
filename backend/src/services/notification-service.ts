@@ -1106,6 +1106,52 @@ export async function sendCommentLeadToDoctor(
   return sent;
 }
 
+/**
+ * ilr-04: Nudge doctor to reconnect Instagram when token health says so.
+ * No PHI — only generic reconnect guidance + settings link when known.
+ */
+export async function sendInstagramReconnectNudgeToDoctor(
+  doctorId: string,
+  healthMessage: string,
+  correlationId: string
+): Promise<boolean> {
+  const to = await getDoctorEmail(doctorId, correlationId);
+  if (!to) {
+    logger.info(
+      { correlationId, doctorId },
+      'Instagram reconnect nudge email skipped (no doctor email)'
+    );
+    return true;
+  }
+
+  let settingsHint = 'Open your Clariva dashboard → Settings → Integrations → Instagram to reconnect.';
+  const redirect = env.INSTAGRAM_FRONTEND_REDIRECT_URI;
+  if (redirect) {
+    try {
+      const u = new URL(redirect);
+      settingsHint = `Reconnect here: ${u.origin}/dashboard/settings (Integrations → Instagram).`;
+    } catch {
+      // keep generic hint
+    }
+  }
+
+  const safeMessage = (healthMessage || 'Your Instagram connection needs attention.').slice(0, 200);
+  const subject = 'Action needed: reconnect Instagram';
+  const text = `${safeMessage}\n\n${settingsHint}\n\nIf the token expires, patients may stop receiving bot replies and booking links.`;
+
+  const sent = await sendEmail(to, subject, text, correlationId);
+  if (sent) {
+    await auditNotificationSent(
+      correlationId,
+      'instagram_reconnect_nudge_email',
+      'doctor',
+      'doctor',
+      doctorId
+    );
+  }
+  return sent;
+}
+
 // ============================================================================
 // Patient: Urgent-moment fan-out helpers (Plan 01 · Task 16)
 // ----------------------------------------------------------------------------

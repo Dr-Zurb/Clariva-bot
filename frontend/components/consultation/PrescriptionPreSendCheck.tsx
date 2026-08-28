@@ -293,7 +293,7 @@ export default function PrescriptionPreSendCheck({
 
         {/* Footer disclaimer (per source plan §T4 risk note) */}
         <p className="px-4 pb-2 text-xs text-gray-500">
-          Clariva checks for ~200 known interactions and documented
+          Halo Aid checks for ~200 known interactions and documented
           allergies. This is not a substitute for your clinical
           judgment.
         </p>

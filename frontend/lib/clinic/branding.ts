@@ -29,7 +29,7 @@
  *      hydration sweep). Returns separate date + time lines so the
  *      header can stack them or inline them depending on viewport.
  *   3. **`actorInitials(name)` reuse note** — the avatar fallback
- *      ("CL" for "Clariva Clinic") is deliberately NOT reimplemented
+ *      ("HA" for "Halo Aid") is deliberately NOT reimplemented
  *      here; B1's lobby header reuses the existing
  *      `frontend/lib/call/actor-avatar.ts` `actorInitials` /
  *      `actorColor` helpers (originally extracted by B2 for
@@ -89,7 +89,7 @@ export interface ClinicBranding {
   /**
    * Two-letter initials for the avatar / logo placeholder. Computed
    * via the shared `actorInitials` helper so the lobby and the in-call
-   * caller card use the same algorithm (e.g. "Clariva Clinic" → "CC").
+   * caller card use the same algorithm (e.g. "Halo Aid" → "HA").
    */
   initials: string;
   /**

@@ -1,4 +1,4 @@
-# Clariva backend - production image
+# Halo Aid backend - production image
 # Build: docker build -t clariva-backend .
 # Run: docker run -p 3000:3000 --env-file .env clariva-backend
 # See docs/setup/deployment-runbook.md for full deploy steps.

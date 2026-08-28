@@ -1,11 +1,15 @@
 /**
  * Unit tests for `services/dashboard-events-service.ts`
- * (Plan 07 · Task 30 — Mutual replay notifications).
+ * (Plan 07 · Task 30 + Alerts v2 · alr2-02).
  *
  * Pins:
- *   - `insertDashboardEvent` is idempotent on
- *     `(doctor_id, payload->>'recording_access_audit_id')` so retries
- *     from a Twilio 5xx don't double-fire feed entries.
+ *   - `insertDashboardEvent` is idempotent on a caller `dedupeKey`
+ *     (written to `dedupe_key`) via unique-violation recovery (ALR2-D5).
+ *   - Legacy `recordingAccessAuditId` still dedupes (JSONB pre-check +
+ *     maps onto `dedupeKey`).
+ *   - New payload kinds (`booking_review_sla_breach`,
+ *     `appointment_no_show`) round-trip through `toEvent` via the list
+ *     path.
  *   - `getDashboardEventsForDoctor` honors `unreadOnly`, applies the
  *     `(created_at, id)` cursor, and returns `nextCursor` only when a
  *     next page exists (we fetch limit+1 internally).
@@ -37,6 +41,8 @@ import {
   insertDashboardEvent,
   getDashboardEventsForDoctor,
   markDashboardEventAcknowledged,
+  type AppointmentNoShowPayload,
+  type BookingReviewSlaBreachPayload,
   type PatientReplayedRecordingPayload,
 } from '../../../src/services/dashboard-events-service';
 import { NotFoundError, ValidationError } from '../../../src/utils/errors';
@@ -62,11 +68,13 @@ interface CapturedCall {
 }
 
 interface DashboardEventsMockInit {
-  /** Rows returned by the idempotency pre-check (insert pre-step). */
+  /** Rows returned by the legacy audit-id JSONB pre-check. */
   preCheckRows?: Array<{ id: string }>;
+  /** Rows returned by the post-unique-violation dedupe_key lookup. */
+  dedupeLookupRows?: Array<{ id: string }>;
   /** Row returned by the insert .select('id').single() chain. */
   insertReturn?: { id: string } | null;
-  insertError?:  { message: string } | null;
+  insertError?:  { message: string; code?: string } | null;
   /** Rows returned by the paginated select (limit+1 already applied by caller). */
   selectRows?:   unknown[];
   selectError?:  { message: string } | null;
@@ -108,12 +116,20 @@ function buildMock(opts: DashboardEventsMockInit = {}): {
     };
     chain.limit = (n: number): unknown => {
       call.limit = n;
-      // The pre-check uses `.limit(1)` and awaits the chain directly —
-      // surface preCheckRows on the first such call.
-      if (!preCheckUsed && n === 1 && 'payload->>recording_access_audit_id' in call.filters) {
-        preCheckUsed = true;
+      // Legacy audit-id JSONB pre-check OR post-23505 dedupe_key lookup —
+      // both use `.limit(1)` and await the chain directly.
+      if (n === 1 && 'payload->>recording_access_audit_id' in call.filters) {
+        if (!preCheckUsed) {
+          preCheckUsed = true;
+          return Promise.resolve({
+            data:  opts.preCheckRows ?? [],
+            error: null,
+          });
+        }
+      }
+      if (n === 1 && 'dedupe_key' in call.filters) {
         return Promise.resolve({
-          data:  opts.preCheckRows ?? [],
+          data:  opts.dedupeLookupRows ?? [],
           error: null,
         });
       }
@@ -226,7 +242,7 @@ describe('insertDashboardEvent — input validation', () => {
 });
 
 describe('insertDashboardEvent — happy path', () => {
-  it('inserts a fresh row with the expected column shape', async () => {
+  it('inserts a fresh row with dedupe_key mapped from recordingAccessAuditId', async () => {
     const { client, calls } = buildMock({
       insertReturn: { id: 'evt-1' },
     });
@@ -242,7 +258,7 @@ describe('insertDashboardEvent — happy path', () => {
 
     expect(result).toEqual({ inserted: true, eventId: 'evt-1' });
 
-    // Two calls: the idempotency pre-check (select), then the actual insert.
+    // Two calls: the legacy JSONB pre-check (select), then the actual insert.
     expect(calls).toHaveLength(2);
     expect(calls[0]?.kind).toBe('select');
     expect(calls[0]?.filters).toMatchObject({
@@ -251,16 +267,45 @@ describe('insertDashboardEvent — happy path', () => {
     });
     expect(calls[1]?.kind).toBe('insert');
     expect(calls[1]?.payload).toEqual({
-      doctor_id:  'doc-1',
-      event_kind: 'patient_replayed_recording',
-      session_id: 'sess-1',
-      payload:    VALID_PAYLOAD,
+      doctor_id:   'doc-1',
+      event_kind:  'patient_replayed_recording',
+      session_id:  'sess-1',
+      payload:     VALID_PAYLOAD,
+      dedupe_key:  'audit-1',
     });
   });
 
-  it('skips the idempotency pre-check when no recordingAccessAuditId is supplied', async () => {
+  it('writes an explicit dedupeKey without the legacy JSONB pre-check', async () => {
     const { client, calls } = buildMock({
       insertReturn: { id: 'evt-2' },
+    });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(client as never);
+
+    const result = await insertDashboardEvent({
+      doctorId:  'doc-1',
+      eventKind: 'appointment_no_show',
+      sessionId: null,
+      payload:   {
+        severity:             'info',
+        appointment_id:       'appt-1',
+        patient_display_name: 'Ravi',
+        appointment_date:     '2026-07-20T10:00:00Z',
+      } satisfies AppointmentNoShowPayload,
+      dedupeKey: 'appt-1',
+    });
+
+    expect(result).toEqual({ inserted: true, eventId: 'evt-2' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.kind).toBe('insert');
+    expect(calls[0]?.payload).toMatchObject({
+      dedupe_key: 'appt-1',
+      event_kind: 'appointment_no_show',
+    });
+  });
+
+  it('skips dedupe when neither dedupeKey nor recordingAccessAuditId is supplied', async () => {
+    const { client, calls } = buildMock({
+      insertReturn: { id: 'evt-3' },
     });
     mockedDb.getSupabaseAdminClient.mockReturnValue(client as never);
 
@@ -271,14 +316,15 @@ describe('insertDashboardEvent — happy path', () => {
       payload:   VALID_PAYLOAD,
     });
 
-    expect(result).toEqual({ inserted: true, eventId: 'evt-2' });
+    expect(result).toEqual({ inserted: true, eventId: 'evt-3' });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.kind).toBe('insert');
+    expect(calls[0]?.payload).not.toHaveProperty('dedupe_key');
   });
 });
 
 describe('insertDashboardEvent — idempotency', () => {
-  it('returns the existing event when a duplicate (doctor, audit_id) pair is found', async () => {
+  it('returns the existing event when a legacy (doctor, audit_id) pair is found', async () => {
     const { client, calls } = buildMock({
       preCheckRows: [{ id: 'evt-existing' }],
     });
@@ -296,10 +342,42 @@ describe('insertDashboardEvent — idempotency', () => {
     // Only the pre-check ran — no insert.
     expect(calls.filter((c) => c.kind === 'insert')).toHaveLength(0);
   });
+
+  it('returns the existing event when a concurrent insert hits the unique index (23505)', async () => {
+    const { client, calls } = buildMock({
+      insertError:       { message: 'duplicate key', code: '23505' },
+      dedupeLookupRows:  [{ id: 'evt-winner' }],
+    });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(client as never);
+
+    const result = await insertDashboardEvent({
+      doctorId:  'doc-1',
+      eventKind: 'booking_review_sla_breach',
+      sessionId: null,
+      payload:   {
+        severity:             'action_needed',
+        review_request_id:    'rev-1',
+        patient_display_name: 'Meera',
+        requested_at:         '2026-07-19T08:00:00Z',
+        sla_deadline_at:      '2026-07-20T08:00:00Z',
+      } satisfies BookingReviewSlaBreachPayload,
+      dedupeKey: 'rev-1',
+    });
+
+    expect(result).toEqual({ inserted: false, eventId: 'evt-winner' });
+    expect(calls.filter((c) => c.kind === 'insert')).toHaveLength(1);
+    const lookup = calls.find(
+      (c) => c.kind === 'select' && 'dedupe_key' in c.filters,
+    );
+    expect(lookup?.filters).toMatchObject({
+      doctor_id:  'doc-1',
+      dedupe_key: 'rev-1',
+    });
+  });
 });
 
 describe('insertDashboardEvent — failure paths', () => {
-  it('throws InternalError when the insert returns an error', async () => {
+  it('throws InternalError when the insert returns a non-unique error', async () => {
     const { client } = buildMock({
       insertError: { message: 'connection lost' },
     });
@@ -339,6 +417,59 @@ function makeRow(overrides: Partial<{
     created_at:      overrides.created_at      ?? '2026-04-19T10:00:00Z',
   };
 }
+
+describe('insertDashboardEvent — new payload kinds round-trip via list', () => {
+  it('maps booking_review_sla_breach + appointment_no_show through toEvent', async () => {
+    const slaPayload: BookingReviewSlaBreachPayload = {
+      severity:             'action_needed',
+      review_request_id:    'rev-9',
+      patient_display_name: 'Meera',
+      requested_at:         '2026-07-19T08:00:00Z',
+      sla_deadline_at:      '2026-07-20T08:00:00Z',
+    };
+    const noShowPayload: AppointmentNoShowPayload = {
+      severity:             'info',
+      appointment_id:       'appt-9',
+      patient_display_name: 'Ravi',
+      appointment_date:     '2026-07-20T10:00:00Z',
+    };
+
+    const { client } = buildMock({
+      selectRows: [
+        makeRow({
+          id:         'evt-sla',
+          event_kind: 'booking_review_sla_breach',
+          session_id: null,
+          payload:    slaPayload,
+        }),
+        makeRow({
+          id:         'evt-ns',
+          event_kind: 'appointment_no_show',
+          session_id: null,
+          payload:    noShowPayload,
+        }),
+      ],
+    });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(client as never);
+
+    const result = await getDashboardEventsForDoctor({
+      doctorId: 'doc-1',
+      limit:    20,
+    });
+
+    expect(result.events).toHaveLength(2);
+    expect(result.events[0]).toMatchObject({
+      id:        'evt-sla',
+      eventKind: 'booking_review_sla_breach',
+      payload:   slaPayload,
+    });
+    expect(result.events[1]).toMatchObject({
+      id:        'evt-ns',
+      eventKind: 'appointment_no_show',
+      payload:   noShowPayload,
+    });
+  });
+});
 
 describe('getDashboardEventsForDoctor', () => {
   it('returns events with no nextCursor when fewer than limit+1 rows are returned', async () => {

@@ -7,9 +7,10 @@
  *
  * Reads RxFormContext from the lifted provider in PatientProfilePage (csf-01).
  */
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import PaneHeader from "@/components/patient-profile/PaneHeader";
 import { ObjectiveSection } from "@/components/cockpit/rx/sections/ObjectiveSection";
+import { SoapSectionListSkeleton } from "@/components/cockpit/rx/sections/section-chrome";
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import { trackCockpitV2RHistoryLanded } from "@/lib/patient-profile/telemetry";
 import { parseExam } from "@/lib/cockpit/exam-findings";
@@ -25,6 +26,19 @@ export default function ObjectivePane({
   hideHeader = false,
 }: ObjectivePaneProps): JSX.Element {
   const { state } = useRxForm();
+
+  // Defer the heavy ObjectiveSection subtree (VitalsGrid + ExamSystemList +
+  // TestResultsList + media) off the tab-add critical path. In the cockpit the
+  // doctor's objective layout is warm (preloaded on the RxForm shell), so
+  // ObjectiveSection otherwise mounts fully-hydrated with NO skeleton — its big
+  // synchronous first render is what made adding Objective feel laggy vs the
+  // lighter SOAP tabs. Paint the pane frame + a skeleton immediately, then mount
+  // the real content on the next animation frame (after the add has painted).
+  const [contentReady, setContentReady] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setContentReady(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   useEffect(() => {
     if (!appointmentId) return;
@@ -68,7 +82,11 @@ export default function ObjectivePane({
           that make the close fold look brittle. */}
       <div className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] px-4 pb-3 pt-0">
         <div className="h-3" aria-hidden />
-        <ObjectiveSection heading={null} />
+        {contentReady ? (
+          <ObjectiveSection heading={null} />
+        ) : (
+          <SoapSectionListSkeleton testId="objective-pane-mount-skeleton" rows={4} />
+        )}
       </div>
     </div>
   );

@@ -10,11 +10,15 @@ import { DateTime } from 'luxon';
 import { env } from '../config/env';
 import { processBatchedPayouts } from '../services/payout-service';
 import { runStaffReviewTimeoutJob } from '../services/service-staff-review-service';
+import { runBookingReviewSlaAlertJob } from '../services/booking-review-sla-alert-service';
 import { runStablePatternDetectionJob } from '../services/service-match-learning-policy-service';
 import { runAbandonedBookingReminderJob } from '../services/abandoned-booking-reminder';
 import { runConsultationPrePingJob } from '../services/consultation-pre-ping-job';
 import { runAccountDeletionFinalizeJob } from '../workers/account-deletion-cron';
 import { runRecordingArchivalJob } from '../workers/recording-archival-cron';
+import { runDashboardEventsRetentionJob } from '../workers/dashboard-events-retention-cron';
+import { runInstagramTokenHealthJob } from '../workers/instagram-token-health-cron';
+import { runGhostAccountSweepJob } from '../workers/ghost-account-sweep-cron';
 import { runVoiceTranscriptionJob } from '../workers/voice-transcription-worker';
 import { runVideoEscalationTimeoutJob } from '../workers/video-escalation-timeout-worker';
 import { runModalityPendingTimeoutJob } from '../workers/modality-pending-timeout-worker';
@@ -158,6 +162,134 @@ router.post('/staff-review-timeouts', async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: { code: 'InternalError', message: 'Staff review timeout job failed' },
+    });
+  }
+});
+
+/**
+ * POST /cron/booking-review-sla-alerts
+ *
+ * Alerts v2 · alr2-04 (OQ-2 LOCKED: cron route, not in-process interval).
+ * Notify-only scan: emit `booking_review_sla_breach` for pending reviews
+ * past `sla_deadline_at`. Does NOT close/timeout the review (that stays
+ * on `/cron/staff-review-timeouts`).
+ * Schedule externally every ~15 minutes UTC with the same CRON_SECRET.
+ */
+router.post('/booking-review-sla-alerts', async (req: Request, res: Response) => {
+  if (!verifyCronAuth(req)) {
+    return res.status(401).json({
+      success: false,
+      error: { code: 'Unauthorized', message: 'Invalid or missing cron secret' },
+    });
+  }
+
+  const correlationId = `cron-booking-review-sla-alert-${Date.now()}`;
+
+  try {
+    const data = await runBookingReviewSlaAlertJob(correlationId);
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ correlationId, error: msg }, 'Cron booking-review SLA alerts failed');
+    return res.status(500).json({
+      success: false,
+      error: { code: 'InternalError', message: 'Booking-review SLA alert job failed' },
+    });
+  }
+});
+
+/**
+ * POST /cron/dashboard-events-retention
+ *
+ * Alerts v2 · alr2-05 (ALR2-D8 / OQ-3 LOCKED: 90 days).
+ * Deletes acknowledged `doctor_dashboard_events` older than
+ * `DASHBOARD_EVENTS_RETENTION_DAYS`. Unread rows always survive.
+ * Service-role delete (admin client bypasses RLS; no DELETE policy).
+ * Schedule externally **once per day** (e.g. ~03:00 IST) with the
+ * same CRON_SECRET as payouts.
+ */
+router.post('/dashboard-events-retention', async (req: Request, res: Response) => {
+  if (!verifyCronAuth(req)) {
+    return res.status(401).json({
+      success: false,
+      error: { code: 'Unauthorized', message: 'Invalid or missing cron secret' },
+    });
+  }
+
+  const correlationId = `cron-dashboard-events-retention-${Date.now()}`;
+
+  try {
+    const data = await runDashboardEventsRetentionJob(correlationId);
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ correlationId, error: msg }, 'Cron dashboard-events retention failed');
+    return res.status(500).json({
+      success: false,
+      error: { code: 'InternalError', message: 'Dashboard-events retention job failed' },
+    });
+  }
+});
+
+/**
+ * POST /cron/instagram-token-health
+ *
+ * ilr-04: Proactive Meta debug_token sweep for connected doctors + email
+ * reconnect nudge on transition into reconnectRecommended.
+ * Schedule externally **once per day** with the same CRON_SECRET.
+ */
+router.post('/instagram-token-health', async (req: Request, res: Response) => {
+  if (!verifyCronAuth(req)) {
+    return res.status(401).json({
+      success: false,
+      error: { code: 'Unauthorized', message: 'Invalid or missing cron secret' },
+    });
+  }
+
+  const correlationId = `cron-instagram-token-health-${Date.now()}`;
+
+  try {
+    const data = await runInstagramTokenHealthJob(correlationId);
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ correlationId, error: msg }, 'Cron Instagram token health failed');
+    return res.status(500).json({
+      success: false,
+      error: { code: 'InternalError', message: 'Instagram token health job failed' },
+    });
+  }
+});
+
+/**
+ * POST /cron/ghost-account-sweep
+ *
+ * auth-v2 · Model C. Prunes abandoned `auth.users` rows created by the single
+ * passwordless door (Google / Email OTP create-on-first-auth) that never
+ * completed onboarding, never engaged verification, and hold no data. Ships
+ * DARK — dry-run unless `GHOST_ACCOUNT_SWEEP_ENABLED === 'true'`. Deletion is
+ * irreversible (service-role `auth.admin.deleteUser`, FK CASCADE). Schedule
+ * externally **once per day** (off-peak) with the same CRON_SECRET.
+ */
+router.post('/ghost-account-sweep', async (req: Request, res: Response) => {
+  if (!verifyCronAuth(req)) {
+    return res.status(401).json({
+      success: false,
+      error: { code: 'Unauthorized', message: 'Invalid or missing cron secret' },
+    });
+  }
+
+  const correlationId = `cron-ghost-account-sweep-${Date.now()}`;
+
+  try {
+    const data = await runGhostAccountSweepJob(correlationId);
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ correlationId, error: msg }, 'Cron ghost-account sweep failed');
+    return res.status(500).json({
+      success: false,
+      error: { code: 'InternalError', message: 'Ghost-account sweep job failed' },
     });
   }
 });

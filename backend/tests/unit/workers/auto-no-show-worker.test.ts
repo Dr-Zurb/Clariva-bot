@@ -50,6 +50,13 @@ jest.mock('../../../src/utils/audit-logger', () => ({
   logAuditEvent: (...a: unknown[]) => mockLogAuditEvent(...a),
 }));
 
+const mockInsertDashboardEvent = jest.fn<
+  (...args: unknown[]) => Promise<{ inserted: boolean; eventId: string }>
+>();
+jest.mock('../../../src/services/dashboard-events-service', () => ({
+  insertDashboardEvent: (...a: unknown[]) => mockInsertDashboardEvent(...a),
+}));
+
 import * as database from '../../../src/config/database';
 import {
   runAutoNoShowTick,
@@ -75,6 +82,7 @@ interface AppointmentRow {
   doctor_id:        string;
   appointment_date: string; // ISO
   status:           AppointmentStatus;
+  patient_id?:      string | null;
   updated_at?:      string;
 }
 
@@ -84,10 +92,16 @@ interface ConsultationSessionRow {
   actual_ended_at:   string | null;
 }
 
+interface PatientRow {
+  id:   string;
+  name: string | null;
+}
+
 interface FakeDb {
   doctor_settings:        DoctorSettingsRow[];
   appointments:           AppointmentRow[];
   consultation_sessions:  ConsultationSessionRow[];
+  patients:               PatientRow[];
 }
 
 interface FilterState {
@@ -184,6 +198,12 @@ function buildFakeAdmin(db: FakeDb, opts: { failOn?: Partial<Record<string, stri
         state.limit = n;
         return buildSelectChain(state);
       },
+      maybeSingle: async () => {
+        const result = await terminal();
+        if (result.error) return result;
+        const rows = (result.data as unknown[]) ?? [];
+        return { data: rows[0] ?? null, error: null };
+      },
       then: (resolve: (v: unknown) => void, reject?: (e: unknown) => void) =>
         terminal().then(resolve, reject),
     };
@@ -269,6 +289,7 @@ function emptyDb(): FakeDb {
     doctor_settings:       [],
     appointments:          [],
     consultation_sessions: [],
+    patients:              [],
   };
 }
 
@@ -280,6 +301,10 @@ describe('runAutoNoShowTick', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockLogAuditEvent.mockResolvedValue(undefined);
+    mockInsertDashboardEvent.mockResolvedValue({
+      inserted: true,
+      eventId:  'evt-mock',
+    });
   });
 
   afterEach(() => {
@@ -325,6 +350,8 @@ describe('runAutoNoShowTick', () => {
       expect(arg.metadata.source).toBe('worker');
       expect(arg.metadata.thresholdMinutes).toBe(30);
     }
+    // Alerts v2 · alr2-03 — one feed emit per flip.
+    expect(mockInsertDashboardEvent).toHaveBeenCalledTimes(3);
   });
 
   it('makes zero flips when every doctor has auto_no_show_after_min = NULL (P-D7 default)', async () => {
@@ -553,6 +580,101 @@ describe('runAutoNoShowTick', () => {
     expect(result.errors.length).toBe(1);
     expect(result.errors[0]).toContain('consultation_sessions_scan');
     expect(db.appointments[0].status).toBe('pending');
+  });
+
+  // ── Alerts v2 · alr2-03 — appointment_no_show feed emit ─────────────────
+
+  it('emits one appointment_no_show event per flip with the Decision-4 payload', async () => {
+    const db = emptyDb();
+    const apptDate = isoMinutesAgo(45);
+    db.doctor_settings.push({ doctor_id: DOCTOR_A, auto_no_show_after_min: 30 });
+    db.patients.push({ id: 'pat-1', name: '  Ravi  ' });
+    db.appointments.push({
+      id:               'apt-emit',
+      doctor_id:        DOCTOR_A,
+      appointment_date: apptDate,
+      status:           'pending',
+      patient_id:       'pat-1',
+    });
+
+    const fake = buildFakeAdmin(db);
+    mockedDb.getSupabaseAdminClient.mockReturnValue(fake as never);
+
+    const result = await runAutoNoShowTick({
+      correlationId: 'test-emit',
+      wrapUpSweep:   false,
+    });
+
+    expect(result.noShowFlipped).toBe(1);
+    expect(mockInsertDashboardEvent).toHaveBeenCalledTimes(1);
+    expect(mockInsertDashboardEvent).toHaveBeenCalledWith({
+      doctorId:  DOCTOR_A,
+      eventKind: 'appointment_no_show',
+      sessionId: null,
+      payload: {
+        severity:             'info',
+        appointment_id:       'apt-emit',
+        patient_display_name: 'Ravi',
+        appointment_date:     apptDate,
+      },
+      dedupeKey: 'apt-emit',
+    });
+  });
+
+  it('does not re-emit on a re-tick after the appointment is already no_show', async () => {
+    const db = emptyDb();
+    db.doctor_settings.push({ doctor_id: DOCTOR_A, auto_no_show_after_min: 30 });
+    db.appointments.push({
+      id:               'apt-once',
+      doctor_id:        DOCTOR_A,
+      appointment_date: isoMinutesAgo(45),
+      status:           'pending',
+    });
+
+    const fake = buildFakeAdmin(db);
+    mockedDb.getSupabaseAdminClient.mockReturnValue(fake as never);
+
+    const first = await runAutoNoShowTick({
+      correlationId: 'test-dedupe-1',
+      wrapUpSweep:   false,
+    });
+    expect(first.noShowFlipped).toBe(1);
+    expect(mockInsertDashboardEvent).toHaveBeenCalledTimes(1);
+
+    mockInsertDashboardEvent.mockClear();
+
+    const second = await runAutoNoShowTick({
+      correlationId: 'test-dedupe-2',
+      wrapUpSweep:   false,
+    });
+    expect(second.noShowFlipped).toBe(0);
+    expect(mockInsertDashboardEvent).not.toHaveBeenCalled();
+  });
+
+  it('swallows feed-insert failures so the no-show flip still succeeds', async () => {
+    const db = emptyDb();
+    db.doctor_settings.push({ doctor_id: DOCTOR_A, auto_no_show_after_min: 30 });
+    db.appointments.push({
+      id:               'apt-fail-emit',
+      doctor_id:        DOCTOR_A,
+      appointment_date: isoMinutesAgo(45),
+      status:           'confirmed',
+    });
+
+    mockInsertDashboardEvent.mockRejectedValueOnce(new Error('events insert boom'));
+
+    const fake = buildFakeAdmin(db);
+    mockedDb.getSupabaseAdminClient.mockReturnValue(fake as never);
+
+    const result = await runAutoNoShowTick({
+      correlationId: 'test-emit-fail',
+      wrapUpSweep:   false,
+    });
+
+    expect(result.noShowFlipped).toBe(1);
+    expect(db.appointments[0].status).toBe('no_show');
+    expect(result.errors.some((e) => e.includes('dashboard_event(apt-fail-emit)'))).toBe(true);
+    expect(mockLogAuditEvent).toHaveBeenCalledTimes(1);
   });
 });
 

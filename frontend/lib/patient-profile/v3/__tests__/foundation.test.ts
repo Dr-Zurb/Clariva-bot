@@ -88,21 +88,26 @@ describe("cv3s-02: kept engine runs in isolation (v3-DL-1)", () => {
 });
 
 describe("cv3d-swap: swapPaneTreeNodes", () => {
-  it("swaps two sibling leaves, preserving each slot's sizePct", () => {
+  it("swaps leaf positions, keeping id↔pane bound and each slot's sizePct", () => {
     const tree = root([leaf("a", 30), leaf("b", 20), leaf("c", 50)]);
     const r = swapPaneTreeNodes(tree, "a", "c");
     expect(r.ok).toBe(true);
     if (r.ok) {
-      const ids = r.tree.children!.map((n) => n.id);
-      const sizes = r.tree.children!.map((n) => n.sizePct);
-      // Contents traded places; slot widths (30/20/50) unchanged.
-      expect(ids).toEqual(["c", "b", "a"]);
-      expect(sizes).toEqual([30, 20, 50]);
+      const kids = r.tree.children!;
+      // Nodes trade position (id follows its pane); slot sizes stay put so
+      // panel dimensions do not jump.
+      expect(kids.map((n) => n.id)).toEqual(["c", "b", "a"]);
+      expect(kids.map((n) => n.sizePct)).toEqual([30, 20, 50]);
+      // Each leaf's id still matches the pane it hosts (naming invariant).
+      expect(kids[0]!.paneIds).toEqual(["c"]);
+      expect(kids[0]!.activeTabId).toBe("c");
+      expect(kids[2]!.paneIds).toEqual(["a"]);
+      expect(kids[2]!.activeTabId).toBe("a");
       expect(paneTreeToFlat(r.tree).paneOrder.sort()).toEqual(["a", "b", "c"]);
     }
   });
 
-  it("swaps leaves across different parents", () => {
+  it("swaps leaves across different parents, id following its pane", () => {
     const tree = root([
       leaf("a", 40),
       {
@@ -116,13 +121,94 @@ describe("cv3d-swap: swapPaneTreeNodes", () => {
     const r = swapPaneTreeNodes(tree, "a", "c");
     expect(r.ok).toBe(true);
     if (r.ok) {
-      // "c" now sits in the root slot (keeps 40); "a" nests where "c" was (keeps 30).
+      // "c" takes "a"'s slot at "a"'s size; "a" takes "c"'s slot at "c"'s size.
       expect(r.tree.children![0]!.id).toBe("c");
       expect(r.tree.children![0]!.sizePct).toBe(40);
+      expect(r.tree.children![0]!.paneIds).toEqual(["c"]);
       const col = r.tree.children![1]!;
       expect(col.children!.map((n) => n.id)).toEqual(["b", "a"]);
       expect(col.children![1]!.sizePct).toBe(30);
+      expect(col.children![1]!.paneIds).toEqual(["a"]);
     }
+  });
+
+  it("inherits slot geometry when swapping with a hidden leaf (Show here)", () => {
+    const tree = root([
+      leaf("assessment", 8),
+      { ...leaf("body", 42), hidden: true },
+      leaf("plan", 50),
+    ]);
+    const beforeSizes = tree.children!.map((n) => n.sizePct);
+    const r = swapPaneTreeNodes(tree, "assessment", "body");
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const kids = r.tree.children!;
+      // body moves into the visible slot (stays visible); assessment moves into
+      // the hidden slot. Each id still matches its pane.
+      expect(kids.map((n) => n.id)).toEqual(["body", "assessment", "plan"]);
+      expect(kids.map((n) => n.sizePct)).toEqual(beforeSizes);
+      expect(kids.map((n) => n.hidden)).toEqual([false, true, false]);
+      expect(kids[0]!.paneIds).toEqual(["body"]);
+      expect(kids[0]!.activeTabId).toBe("body");
+      expect(kids[1]!.paneIds).toEqual(["assessment"]);
+      // Visible child count unchanged — no rebalance collapse.
+      expect(kids.filter((n) => !n.hidden)).toHaveLength(2);
+    }
+  });
+
+  it("swaps multi-tab leaf identities as a unit", () => {
+    const tabsA: PaneTreeNode = {
+      id: "__tabs_a",
+      sizePct: 40,
+      hidden: false,
+      paneIds: ["a", "x"],
+      activeTabId: "x",
+    };
+    const tabsB: PaneTreeNode = {
+      id: "__tabs_b",
+      sizePct: 60,
+      hidden: false,
+      paneIds: ["b"],
+      activeTabId: "b",
+    };
+    const r = swapPaneTreeNodes(root([tabsA, tabsB]), "__tabs_a", "__tabs_b");
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const [a, b] = r.tree.children!;
+      // Each tabs node keeps its id + tabs, trading position/size only.
+      expect(a!.id).toBe("__tabs_b");
+      expect(a!.sizePct).toBe(40);
+      expect(a!.paneIds).toEqual(["b"]);
+      expect(a!.activeTabId).toBe("b");
+      expect(b!.id).toBe("__tabs_a");
+      expect(b!.sizePct).toBe(60);
+      expect(b!.paneIds).toEqual(["a", "x"]);
+      expect(b!.activeTabId).toBe("x");
+    }
+  });
+
+  it("keeps ids pane-bound so a later single-pane insert cannot collide", () => {
+    // Regression for the "Panel ids must be unique; id X used more than once"
+    // crash: a slot-preserving swap that PINNED ids used to park pane "c" in a
+    // slot still named "a". A subsequent edge drop then minted
+    // makeSinglePaneLeaf("a"), colliding with that mis-named slot → two nodes
+    // share id "a" → react-resizable-panels throws on render.
+    const tree = root([leaf("a", 50), leaf("b", 25), leaf("c", 25)]);
+    const swapped = swapPaneTreeNodes(tree, "a", "c");
+    expect(swapped.ok).toBe(true);
+    if (!swapped.ok) return;
+    // Pop pane "a" out to a new east slot (mints makeSinglePaneLeaf("a")).
+    const dropped = dropPaneIntoZone(swapped.tree, "a", "b", "east");
+    expect(dropped.ok).toBe(true);
+    if (!dropped.ok) return;
+    const nodeIds: string[] = [];
+    const walk = (n: PaneTreeNode) => {
+      nodeIds.push(n.id);
+      for (const c of n.children ?? []) walk(c);
+    };
+    walk(dropped.tree);
+    // No two structural nodes share an id (would map to duplicate panel ids).
+    expect(new Set(nodeIds).size).toBe(nodeIds.length);
   });
 
   it("same id → no-op", () => {

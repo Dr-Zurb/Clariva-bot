@@ -23,6 +23,14 @@ declare global {
       correlationId?: string;
 
       /**
+       * Resolved admin actor (set by the admin authz guard, admin-console-v1).
+       * The admin's `auth.users` id when authenticated via an admin JWT, or the
+       * literal `'ops'` when authenticated via the CRON_SECRET fallback. Used to
+       * stamp `reviewed_by` on verification actions.
+       */
+      adminActor?: string;
+
+      /**
        * Request start time (set by request-timing middleware)
        * Used for calculating request duration
        */

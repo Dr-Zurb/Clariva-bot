@@ -483,6 +483,8 @@ export interface DoctorInstagram {
   facebook_page_id: string | null;
   instagram_access_token: string;
   instagram_username: string | null;
+  /** ilr-02: Facebook app-scoped user id of the authorizing doctor; reverse-maps the Meta data-deletion callback. NULL for pre-ilr-02 connections. */
+  facebook_user_id?: string | null;
   /** RBH-10: last debug_token refresh */
   instagram_health_checked_at?: Date | string | null;
   instagram_health_level?: string | null;
@@ -491,6 +493,25 @@ export interface DoctorInstagram {
   instagram_last_dm_success_at?: Date | string | null;
   created_at: Date;
   updated_at: Date;
+}
+
+/**
+ * Meta data-deletion request audit (ilr-02, migration 186).
+ * One row per Meta data-deletion callback, keyed by the confirmation_code Meta
+ * echoes to the user. Service-role only (RLS enabled, no policies). Never log
+ * meta_user_id.
+ */
+export type MetaDataDeletionStatus = 'received' | 'completed' | 'no_match' | 'failed';
+
+export interface MetaDataDeletionRequest {
+  confirmation_code: string;
+  meta_user_id: string;
+  status: MetaDataDeletionStatus;
+  matched_doctor_id: string | null;
+  detail: string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+  completed_at: Date | string | null;
 }
 
 /**
@@ -691,6 +712,15 @@ export type InsertBlockedTime = Omit<BlockedTime, 'id' | 'created_at'>;
 export type InsertDoctorInstagram = Omit<
   DoctorInstagram,
   'created_at' | 'updated_at'
+>;
+
+/**
+ * Data required to record a Meta data-deletion request (ilr-02).
+ * (Omits auto-managed fields: created_at, updated_at, completed_at)
+ */
+export type InsertMetaDataDeletionRequest = Omit<
+  MetaDataDeletionRequest,
+  'created_at' | 'updated_at' | 'completed_at'
 >;
 
 export type InsertOpdQueueEntry = Omit<OpdQueueEntry, 'id' | 'created_at' | 'updated_at'>;

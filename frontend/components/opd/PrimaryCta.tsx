@@ -29,7 +29,7 @@ export default function PrimaryCta({
   if (status === "completed") {
     return (
       <p className="text-sm text-gray-600" role="status">
-        This visit is completed. Thank you for using Clariva Care.
+        This visit is completed. Thank you for using Halo Aid.
       </p>
     );
   }

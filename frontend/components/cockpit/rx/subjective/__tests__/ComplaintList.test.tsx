@@ -144,6 +144,7 @@ async function enterCaptureComplaint(name: string) {
 
 describe("ComplaintList", () => {
   beforeEach(() => {
+    sessionStorage.clear();
     mockUpdatePrescription.mockClear();
     prescriptionIdRef.current = "rx-1";
     mockDefaultComplaintSearch();
@@ -488,8 +489,7 @@ describe("ComplaintList", () => {
       screen.getByRole("button", { name: /^Collapse complaint 1$/i }),
     );
 
-    // The editor body stays mounted through the close fold (deferred unmount),
-    // so wait for it to drop and the summary row to take over.
+    // Header stays mounted (unified); wait for the deferred body unmount.
     await waitFor(() => {
       expect(screen.queryByLabelText("Complaint name")).not.toBeInTheDocument();
     });
@@ -523,6 +523,8 @@ describe("ComplaintList", () => {
 
       fireEvent.click(screen.getByRole("button", { name: /^Collapse complaint 1$/i }));
 
+      // Settles concurrently with the fold (fires at close start, not deferred) so
+      // close reads as one motion; the live glide re-measures as the card shrinks.
       expect(complaintCardScroll.scrollComplaintCaptureIntoView).toHaveBeenCalledTimes(1);
     });
 
@@ -539,6 +541,7 @@ describe("ComplaintList", () => {
         screen.getByRole("button", { name: /^Finish and collapse complaint 1$/i }),
       );
 
+      // Fires at close start (concurrent with the fold), not after it.
       expect(complaintCardScroll.scrollComplaintCaptureIntoView).toHaveBeenCalledTimes(1);
     });
 
@@ -577,7 +580,7 @@ describe("ComplaintList", () => {
       screen.getByRole("button", { name: /^Finish and collapse complaint 1$/i }),
     );
 
-    // Body unmounts after the close fold (deferred unmount); summary then shows.
+    // Body unmounts after the close fold (deferred unmount).
     await waitFor(() => {
       expect(screen.queryByLabelText("Complaint name")).not.toBeInTheDocument();
     });

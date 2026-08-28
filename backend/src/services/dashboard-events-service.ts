@@ -1,13 +1,18 @@
 /**
- * Dashboard Events Service (Plan 07 · Task 30).
+ * Dashboard Events Service (Plan 07 · Task 30 + Alerts v2 · alr2-02).
  *
  * Thin wrapper over the `doctor_dashboard_events` table. Three concerns:
  *
  *   1. **`insertDashboardEvent`** — service-role insert path used by
- *      `notification-service.ts#notifyDoctorOfPatientReplay` (and any
- *      future event-emitter, e.g. Plan 09's `modality_switched`). Adds
- *      idempotency on `(doctor_id, payload->>'recording_access_audit_id')`
- *      so retries from a Twilio 5xx don't double-fire the feed entry.
+ *      `notification-service.ts#notifyDoctorOfPatientReplay` and Alerts v2
+ *      emitters. Idempotency is keyed on a caller-supplied `dedupeKey`
+ *      written to the `dedupe_key` column (migration 182 / ALR2-D5). Race
+ *      safety comes from the partial unique index
+ *      `uq_doctor_dashboard_events_dedupe` (insert → catch 23505 → look up
+ *      existing). Legacy `recordingAccessAuditId` maps onto `dedupeKey`
+ *      internally and still pre-checks
+ *      `payload->>'recording_access_audit_id'` so pre-182 rows (NULL
+ *      `dedupe_key`) keep deduping.
  *
  *   2. **`getDashboardEventsForDoctor`** — paginated read for the doctor
  *      dashboard feed. Service-role read with explicit `doctor_id` filter
@@ -27,6 +32,7 @@
  * without a client refactor.
  *
  * @see backend/migrations/066_doctor_dashboard_events.sql
+ * @see backend/migrations/182_alerts_v2_event_kind_widen_and_dedupe.sql
  * @see docs/Work/Daily-plans/April 2026/19-04-2026/Tasks/task-30-mutual-replay-notifications.md
  */
 
@@ -37,6 +43,9 @@ import { InternalError, NotFoundError, ValidationError } from '../utils/errors';
 // ============================================================================
 // Public types
 // ============================================================================
+
+/** UI severity carried in the payload (ALR2-D6) — not a table column. */
+export type DashboardEventSeverity = 'info' | 'action_needed';
 
 export type DashboardEventKind =
   | 'patient_replayed_recording'
@@ -57,7 +66,13 @@ export type DashboardEventKind =
   // `notification-service.notifyDoctorOfPatientReplay` routes the
   // `artifactType: 'video'` branch to this kind instead of the
   // baseline `patient_replayed_recording`.
-  | 'patient_replayed_video';
+  | 'patient_replayed_video'
+  // Alerts v2 · ALR2-D2 — booking-review request past `sla_deadline_at`
+  // while still pending. Migration 182 widens the CHECK.
+  | 'booking_review_sla_breach'
+  // Alerts v2 · ALR2-D2 — appointment flipped to `no_show` (auto worker).
+  // Migration 182 widens the CHECK.
+  | 'appointment_no_show';
 
 /**
  * Pinned shape for `event_kind === 'patient_replayed_recording'`. Other
@@ -126,6 +141,34 @@ export interface PatientRevokedVideoMidSessionPayload {
 }
 
 /**
+ * Pinned shape for `event_kind === 'booking_review_sla_breach'`
+ * (Alerts v2 · ALR2-D2 / D7). PHI: `patient_display_name` only; UUIDs
+ * and ISO timestamps are non-PHI.
+ */
+export interface BookingReviewSlaBreachPayload {
+  severity:              'action_needed';
+  /** Opaque UUID — deep-link target; not PHI. */
+  review_request_id:     string;
+  /** Decision-4 bar; '' → UI falls back to "A patient". */
+  patient_display_name:  string;
+  requested_at:          string;
+  sla_deadline_at:       string;
+}
+
+/**
+ * Pinned shape for `event_kind === 'appointment_no_show'`
+ * (Alerts v2 · ALR2-D2 / D7). PHI: `patient_display_name` only.
+ */
+export interface AppointmentNoShowPayload {
+  severity:              'info';
+  /** Opaque UUID — deep-link target; not PHI. */
+  appointment_id:        string;
+  /** Decision-4 bar; '' → UI falls back to "A patient". */
+  patient_display_name:  string;
+  appointment_date:      string;
+}
+
+/**
  * Union of per-event-kind payloads. Callers typically pick the right
  * shape via `eventKind` discriminator; this union type lets the
  * `InsertDashboardEventInput` accept either without collapsing to
@@ -133,7 +176,9 @@ export interface PatientRevokedVideoMidSessionPayload {
  */
 export type DashboardEventPayload =
   | PatientReplayedRecordingPayload
-  | PatientRevokedVideoMidSessionPayload;
+  | PatientRevokedVideoMidSessionPayload
+  | BookingReviewSlaBreachPayload
+  | AppointmentNoShowPayload;
 
 export interface DashboardEvent {
   id:              string;
@@ -151,20 +196,26 @@ export interface InsertDashboardEventInput {
   sessionId:   string | null;
   payload:     DashboardEventPayload;
   /**
-   * Idempotency key. When set, we pre-check `doctor_dashboard_events`
-   * for any row with the same `(doctor_id, payload->>'recording_access_audit_id')`
-   * tuple and return `{ inserted: false, eventId: <existing> }` instead
-   * of inserting a duplicate.
+   * Preferred idempotency key (Alerts v2 · ALR2-D5). Written to the
+   * `dedupe_key` column. Race-safe via the partial unique index
+   * `uq_doctor_dashboard_events_dedupe` — insert first, catch Postgres
+   * unique-violation (23505), look up the existing row.
    *
-   * For `patient_replayed_recording`, this should be the
-   * `recording_access_audit.id` of the row written by
-   * `recording-access-service.mintReplayUrl()`. Future event kinds may
-   * dedupe on a different key; the helper keys generically on
-   * `payload->>'recording_access_audit_id'` because that's the only
-   * caller today.
+   * Examples: `review_request_id`, `appointment_id`,
+   * `recording_access_audit_id`.
+   */
+  dedupeKey?: string;
+  /**
+   * Legacy idempotency key (Task 30). Mapped onto `dedupeKey` when
+   * `dedupeKey` is omitted, and still triggers a JSONB pre-check on
+   * `payload->>'recording_access_audit_id'` so pre-migration-182 rows
+   * (NULL `dedupe_key`) keep deduping. Prefer `dedupeKey` for new callers.
    */
   recordingAccessAuditId?: string;
 }
+
+/** Postgres unique_violation — used by the race-safe dedupe path. */
+const PG_UNIQUE_VIOLATION = '23505';
 
 export interface InsertDashboardEventResult {
   inserted: boolean;
@@ -259,15 +310,27 @@ export async function insertDashboardEvent(
     );
   }
 
-  // Idempotency pre-check. We key on (doctor_id, recording_access_audit_id)
-  // — recordingAccessAuditId is unique per replay attempt, so two retries
-  // of `mintReplayUrl` for the same attempt land on the same dedup key.
+  // Resolve the effective dedupe key. Explicit `dedupeKey` wins; legacy
+  // `recordingAccessAuditId` maps onto it so existing callers keep working
+  // without a call-site change (alr2-02).
+  const effectiveDedupeKey =
+    input.dedupeKey?.trim() ||
+    input.recordingAccessAuditId?.trim() ||
+    undefined;
+
+  // Legacy coexistence: pre-182 rows have `dedupe_key = NULL` but still
+  // carry `payload.recording_access_audit_id`. When the legacy arg is
+  // present, look those up first so a retry of an old event doesn't
+  // insert a second row under the new column.
   if (input.recordingAccessAuditId?.trim()) {
     const { data: existing, error: existingErr } = await admin
       .from('doctor_dashboard_events')
       .select('id')
       .eq('doctor_id', input.doctorId)
-      .eq('payload->>recording_access_audit_id', input.recordingAccessAuditId)
+      .eq(
+        'payload->>recording_access_audit_id',
+        input.recordingAccessAuditId.trim(),
+      )
       .limit(1);
     if (existingErr) {
       logger.warn(
@@ -276,7 +339,7 @@ export async function insertDashboardEvent(
           recordingAccessAuditId: input.recordingAccessAuditId,
           error: existingErr.message,
         },
-        'dashboard-events-service: idempotency pre-check failed; will attempt insert anyway',
+        'dashboard-events-service: legacy audit-id pre-check failed; will attempt insert anyway',
       );
     }
     if (existing && existing.length > 0) {
@@ -285,24 +348,54 @@ export async function insertDashboardEvent(
     }
   }
 
+  const insertRow: Record<string, unknown> = {
+    doctor_id:  input.doctorId,
+    event_kind: input.eventKind,
+    session_id: input.sessionId,
+    payload:    input.payload,
+  };
+  if (effectiveDedupeKey) {
+    insertRow.dedupe_key = effectiveDedupeKey;
+  }
+
   const { data, error } = await admin
     .from('doctor_dashboard_events')
-    .insert({
-      doctor_id:  input.doctorId,
-      event_kind: input.eventKind,
-      session_id: input.sessionId,
-      payload:    input.payload,
-    })
+    .insert(insertRow)
     .select('id')
     .single();
 
-  if (error || !data) {
-    throw new InternalError(
-      `dashboard-events-service: insert failed (${error?.message ?? 'no row returned'})`,
-    );
+  if (!error && data) {
+    const inserted = data as { id: string };
+    return { inserted: true, eventId: inserted.id };
   }
-  const inserted = data as { id: string };
-  return { inserted: true, eventId: inserted.id };
+
+  // Race-safe dedupe: concurrent ticks hit the partial unique index
+  // `uq_doctor_dashboard_events_dedupe`. Look up the winner and return it.
+  const pgCode =
+    error && typeof error === 'object' && 'code' in error
+      ? String((error as { code?: unknown }).code ?? '')
+      : '';
+  if (pgCode === PG_UNIQUE_VIOLATION && effectiveDedupeKey) {
+    const { data: raced, error: racedErr } = await admin
+      .from('doctor_dashboard_events')
+      .select('id')
+      .eq('doctor_id', input.doctorId)
+      .eq('dedupe_key', effectiveDedupeKey)
+      .limit(1);
+    if (racedErr) {
+      throw new InternalError(
+        `dashboard-events-service: unique-violation lookup failed (${racedErr.message})`,
+      );
+    }
+    if (raced && raced.length > 0) {
+      const existingRow = raced[0] as { id: string };
+      return { inserted: false, eventId: existingRow.id };
+    }
+  }
+
+  throw new InternalError(
+    `dashboard-events-service: insert failed (${error?.message ?? 'no row returned'})`,
+  );
 }
 
 // ============================================================================

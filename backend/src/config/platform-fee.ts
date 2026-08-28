@@ -1,7 +1,7 @@
 /**
  * Platform Fee Configuration (monetization - migration 022)
  *
- * Computes Clariva platform fee: 5% or ₹25 flat for consultations < ₹500.
+ * Computes Halo Aid platform fee: 5% or ₹25 flat for consultations < ₹500.
  * GST 18% on platform fee (doctor pays, exclusive).
  *
  * All amounts in smallest unit (paise INR, cents USD).

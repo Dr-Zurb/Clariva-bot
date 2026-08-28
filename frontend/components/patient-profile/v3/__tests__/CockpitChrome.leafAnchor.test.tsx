@@ -279,7 +279,9 @@ function expectEmptyStateWithSnapshot() {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("cv3p-01: leaf-anchored empty-state (P3-DL-2)", () => {
+// Phase 2 retired Snapshot from the tab registry — chart-rail empty-state now
+// lives on the patient ribbon side sheet, not a cockpit leaf anchor.
+describe.skip("cv3p-01: leaf-anchored empty-state (P3-DL-2)", () => {
   beforeEach(() => {
     chartSignals.isLoading = false;
     localStorage.clear();

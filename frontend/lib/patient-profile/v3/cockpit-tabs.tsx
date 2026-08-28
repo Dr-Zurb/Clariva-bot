@@ -3,7 +3,7 @@
 /**
  * cockpit-tabs.tsx — the Cockpit v3 flat tab registry (cv3t-01 · Phase 5).
  *
- * Returns the seven real leaf tabs as uniform, self-contained `PaneDefinition`s
+ * Returns the five real leaf tabs as uniform, self-contained `PaneDefinition`s
  * (no `children` / `groupWrapper` / `direction`), each rendering its existing
  * pane body BY REFERENCE. This is the v3 replacement for the nested column
  * template in `templates.tsx`, which the legacy `PatientProfileShell` keeps
@@ -22,14 +22,18 @@
  *     field the old standalone pane did. Lab/imaging RESULTS remain under the
  *     Objective tab. (Legacy `templates.tsx` still ships the old pane until
  *     cv3x-03 deletes it.)
+ *   - Ribbon-expand Phase 2 — Snapshot / History are no longer tabs. Chart +
+ *     visit history open from `PatientRibbon` side sheets; pane components stay.
  *   - P5-DL-3 / P0-DL-1 — legacy `templates.tsx` is untouched. The type-only
  *     import of the cockpit context below is the one remaining coupling; it is
  *     relocated by cv3x-03 when the column factories are deleted.
  *
  * The body tab is relabelled "Consult" (live) / "Visit summary" (review) with a
- * modality/state icon, branching `BodyZone` ↔ `EndedConsultBody` internally —
- * one tab, internal switch (no second tab). The shell keys the live-drag guard
- * off the stable id `body`.
+ * modality/state icon — one tab, internal switch (no second tab). The tab
+ * itself only mounts `<ConsultSurfaceSlot />`; the real `BodyZone` /
+ * `EndedConsultBody` surface is hosted once by `<ConsultSurfaceHost>` on the
+ * page so layout moves never remount the live Twilio room. The shell keys
+ * persistence / DnD off the stable id `body`.
  */
 
 import { createRef, type RefObject } from 'react';
@@ -51,17 +55,15 @@ import {
   PANE_ICONS,
   BODY_VARIANT_ICONS,
 } from '@/lib/patient-profile/pane-icons';
-import SnapshotPane from '@/components/patient-profile/panes/SnapshotPane';
-import { ChartRailWithEmptyState } from '@/components/patient-profile/panes/ChartRailWithEmptyState';
-import HistoryPane from '@/components/patient-profile/panes/HistoryPane';
 import RxPane from '@/components/patient-profile/panes/RxPane';
 import SubjectivePane from '@/components/patient-profile/panes/SubjectivePane';
 import ObjectivePane from '@/components/patient-profile/panes/ObjectivePane';
+import { ConsultSurfaceSlot } from '@/components/patient-profile/ConsultSurfaceContext';
 import { BodyZone } from '@/components/cockpit/middle/BodyZone';
 import { EndedConsultBody } from '@/components/cockpit/middle/EndedConsultBody';
 
 // Prop-type bridges (mirror templates.tsx; the duplication dies with cv3x-03).
-type PaneAppointment = React.ComponentProps<typeof SnapshotPane>['appointment'];
+type PaneAppointment = React.ComponentProps<typeof BodyZone>['appointment'];
 type PaneLauncherRef = React.ComponentProps<typeof BodyZone>['launcherRef'];
 type LiveBodyVariant = 'video' | 'voice' | 'text';
 type BodyVariant = LiveBodyVariant | 'review';
@@ -73,10 +75,9 @@ const FALLBACK_LAUNCHER_REF: RefObject<TelemedVideoLauncherHandle> =
 /**
  * Stable left-to-right tab order. Palette + blank-seed read this so "what tabs
  * exist" stays a single source of truth. SOAP leaves follow clinical S→O→A→P.
+ * Chart (Snapshot) + visit History live on the patient ribbon, not here.
  */
 export const COCKPIT_TAB_ORDER = [
-  'snapshot',
-  'history',
   'body',
   'subjective',
   'objective',
@@ -119,16 +120,25 @@ function liveBodyHeightFor(variant: LiveBodyVariant): number {
   }
 }
 
-/** The review body tab — an informational "Visit summary" strip (ecb-01). */
-function buildReviewBodyTab(ctx: TelemedVideoContext): PaneDefinition {
-  const session = ctx.appointment.consultation_session ?? null;
-  const sessionModality: 'text' | 'voice' | 'video' | null =
-    session?.modality ?? null;
-  return {
-    id: 'body',
-    title: 'Visit summary',
-    icon: BODY_VARIANT_ICONS.review,
-    render: () => (
+/**
+ * Real Consult / Visit-summary surface for `<ConsultSurfaceHost>`.
+ * Kept here so page + tab registry share one BodyZone / EndedConsultBody
+ * construction (P5-DL-2 port-by-reference).
+ */
+export function renderConsultBodySurface(
+  ctx: TelemedVideoContext,
+  templateId: CockpitTemplate = mapStateToTemplate(
+    ctx.state,
+    ctx.appointment.consultation_type ?? null,
+    null,
+  ),
+): React.ReactElement {
+  const bodyVariant = bodyVariantFor(templateId);
+  if (bodyVariant === 'review') {
+    const session = ctx.appointment.consultation_session ?? null;
+    const sessionModality: 'text' | 'voice' | 'video' | null =
+      session?.modality ?? null;
+    return (
       <EndedConsultBody
         state={ctx.state}
         appointmentStatus={ctx.appointment.status}
@@ -138,14 +148,40 @@ function buildReviewBodyTab(ctx: TelemedVideoContext): PaneDefinition {
         durationSeconds={ctx.appointment.consultation_duration_seconds ?? null}
         appointmentId={ctx.appointment.id}
       />
-    ),
+    );
+  }
+
+  const appointment = ctx.appointment as PaneAppointment;
+  const launcherRef = (ctx.launcherRef ??
+    FALLBACK_LAUNCHER_REF) as PaneLauncherRef;
+  return (
+    <BodyZone
+      variant={bodyVariant}
+      state={ctx.state}
+      appointment={appointment}
+      token={ctx.token}
+      launcherRef={launcherRef}
+      onRxSent={ctx.onRxSent}
+      onMarkNoShow={ctx.onMarkNoShow}
+      hideHeader
+    />
+  );
+}
+
+/** Review body tab descriptor — slot only; surface lives in the host. */
+function buildReviewBodyTab(): PaneDefinition {
+  return {
+    id: 'body',
+    title: 'Visit summary',
+    icon: BODY_VARIANT_ICONS.review,
+    render: () => <ConsultSurfaceSlot />,
     naturalSizePct: 12,
     minSizePx: 64,
   };
 }
 
 /**
- * Build the seven uniform leaf tabs for the Cockpit v3 canvas.
+ * Build the five uniform leaf tabs for the Cockpit v3 canvas.
  *
  * @param ctx        the cockpit context the page builds (`templateContext`).
  * @param templateId the dispatched template id (`selectedTemplateId`). Omit to
@@ -162,58 +198,19 @@ export function buildCockpitTabs(
   const appointment = ctx.appointment as PaneAppointment;
   const appointmentId = ctx.appointment.id;
   const patientId = appointment.patient_id ?? null;
-  const launcherRef = (ctx.launcherRef ??
-    FALLBACK_LAUNCHER_REF) as PaneLauncherRef;
 
   const bodyVariant = bodyVariantFor(templateId);
 
-  const snapshot: PaneDefinition = {
-    id: 'snapshot',
-    title: 'Snapshot',
-    icon: PANE_ICONS.snapshot,
-    hideShellHeader: true,
-    render: () => (
-      <ChartRailWithEmptyState
-        appointmentId={appointmentId}
-        patientId={patientId}
-        token={ctx.token}
-      >
-        <SnapshotPane appointment={appointment} token={ctx.token} />
-      </ChartRailWithEmptyState>
-    ),
-    naturalSizePct: 40,
-    minSizePx: 200,
-  };
-
-  const history: PaneDefinition = {
-    id: 'history',
-    title: 'History',
-    icon: PANE_ICONS.history,
-    hideShellHeader: true,
-    render: () => <HistoryPane appointment={appointment} token={ctx.token} />,
-    naturalSizePct: 60,
-    minSizePx: 240,
-  };
-
   const body: PaneDefinition =
     bodyVariant === 'review'
-      ? buildReviewBodyTab(ctx)
+      ? buildReviewBodyTab()
       : {
           id: 'body',
           title: 'Consult',
           icon: BODY_VARIANT_ICONS[bodyVariant],
-          render: () => (
-            <BodyZone
-              variant={bodyVariant}
-              state={ctx.state}
-              appointment={appointment}
-              token={ctx.token}
-              launcherRef={launcherRef}
-              onRxSent={ctx.onRxSent}
-              onMarkNoShow={ctx.onMarkNoShow}
-              hideHeader
-            />
-          ),
+          // Slot only — `<ConsultSurfaceHost>` on PatientProfilePage mounts
+          // BodyZone once so pane moves never tear down the live room.
+          render: () => <ConsultSurfaceSlot />,
           naturalSizePct: liveBodyHeightFor(bodyVariant),
           minSizePx: bodyVariant === 'voice' ? 60 : 280,
         };
@@ -298,15 +295,7 @@ export function buildCockpitTabs(
     minSizePx: 220,
   };
 
-  return [
-    snapshot,
-    history,
-    body,
-    subjective,
-    objective,
-    assessment,
-    plan,
-  ];
+  return [body, subjective, objective, assessment, plan];
 }
 
 /**

@@ -20,8 +20,13 @@ import CommandBar from "@/components/patient-profile/CommandBar";
 import KeyboardHelpHost from "@/components/patient-profile/KeyboardHelpHost";
 import CockpitV3Shell from "@/components/patient-profile/v3/CockpitV3Shell";
 import {
+  ConsultSurfaceHost,
+  ConsultSurfaceProvider,
+} from "@/components/patient-profile/ConsultSurfaceContext";
+import {
   buildCockpitTabs,
   buildWalkInCockpitTabs,
+  renderConsultBodySurface,
 } from "@/lib/patient-profile/v3/cockpit-tabs";
 import type { PaneDefinition } from "@/lib/patient-profile/types";
 import {
@@ -300,6 +305,10 @@ export default function PatientProfilePage({
     token,
   });
 
+  // Built-in tabs use a portal slot for Consult; test-injected `panesProp`
+  // trees render their own bodies and must not mount the stable host.
+  const useStableConsultHost = panesProp == null;
+
   const pageContent = (
     // `-m-4 md:-m-6` cancels the parent `<DashboardShell>` `p-4 md:p-6`
     // padding so the patient-profile shell bleeds edge-to-edge — matches
@@ -311,58 +320,67 @@ export default function PatientProfilePage({
     // of the bottom. `calc(100% + padding)` fills `<main>`'s padding box so
     // the footer sits flush. Requires a definite height chain on ancestors
     // (DashboardShell row + main both use `min-h-0 flex-1`).
-    <div className="-m-4 md:-m-6 flex h-[calc(100%_+_2rem)] md:h-[calc(100%_+_3rem)] min-h-0 flex-col overflow-hidden">
-      {/* Mount keyboard handlers once at the page root. */}
-      <CommandBar />
-      <KeyboardHelpHost />
-      {/* ── Cockpit header (includes CockpitQueueRail internally) ─────────── */}
-      <CockpitHeader
-        appointment={appt}
-        state={state}
-        token={token}
-        onStartConsult={handleStartConsult}
-        onReschedule={handleReschedule}
-        onCancelAppointment={handleCancelAppointment}
-        onMarkNoShow={handleMarkNoShow}
-        onFinishVisit={handleFinishVisit}
-        finishBusy={finishBusy}
-      />
-
-      {/* ── Patient context ribbon (crb-03) ──────────────────────────────── */}
-      {/* Mounted only for known-patient desktop views. Walk-in (!showChart)
-          skips the ribbon per DL-6/7. Mobile <lg viewport hidden via Tailwind.
-          The ribbon's Dx live-mirror calls `useRxForm()` and `<RxFormProvider>`
-          is always mounted around this subtree (see end of component), so no
-          extra provider gate is needed here. */}
-      {showChart && (
-        <div className="hidden lg:block">
-          <PatientRibbon appointment={appt} token={token} />
-        </div>
-      )}
-
-      {/* ── Cockpit v3 shell — takes remaining vertical space ─────────────── */}
-      <div className="min-h-0 flex-1">
-        <CockpitV3Shell
-          panes={v3Panes}
-          storageKey={storageKey}
+    <ConsultSurfaceProvider>
+      <div className="-m-4 md:-m-6 flex h-[calc(100%_+_2rem)] md:h-[calc(100%_+_3rem)] min-h-0 flex-col overflow-hidden">
+        {/* Mount keyboard handlers once at the page root. */}
+        <CommandBar />
+        <KeyboardHelpHost />
+        {/* ── Cockpit header (includes CockpitQueueRail internally) ─────────── */}
+        <CockpitHeader
+          appointment={appt}
+          state={state}
           token={token}
-          consultActive={state === "live"}
-          safetyDock={<SafetyStickyStrip appointmentId={appt.id} />}
-          actionDock={
-            <CockpitRxActionDock
-              state={state}
-              appointmentId={appt.id}
-              patientId={appt.patient_id ?? null}
-              token={token}
-              finishBusy={finishBusy}
-              onFinish={() => void handleFinishVisit()}
-              onSent={handleRxSent}
-            />
-          }
+          onStartConsult={handleStartConsult}
+          onReschedule={handleReschedule}
+          onCancelAppointment={handleCancelAppointment}
+          onMarkNoShow={handleMarkNoShow}
+          onFinishVisit={handleFinishVisit}
+          finishBusy={finishBusy}
         />
-      </div>
 
-    </div>
+        {/* ── Patient context ribbon (crb-03) ──────────────────────────────── */}
+        {/* Mounted only for known-patient desktop views. Walk-in (!showChart)
+            skips the ribbon per DL-6/7. Mobile <lg viewport hidden via Tailwind.
+            The ribbon's Dx live-mirror calls `useRxForm()` and `<RxFormProvider>`
+            is always mounted around this subtree (see end of component), so no
+            extra provider gate is needed here. */}
+        {showChart && (
+          <div className="hidden lg:block">
+            <PatientRibbon appointment={appt} token={token} />
+          </div>
+        )}
+
+        {/* ── Cockpit v3 shell — takes remaining vertical space ─────────────── */}
+        <div className="min-h-0 flex-1">
+          <CockpitV3Shell
+            panes={v3Panes}
+            storageKey={storageKey}
+            token={token}
+            consultActive={state === "live"}
+            safetyDock={<SafetyStickyStrip appointmentId={appt.id} />}
+            actionDock={
+              <CockpitRxActionDock
+                state={state}
+                appointmentId={appt.id}
+                patientId={appt.patient_id ?? null}
+                token={token}
+                finishBusy={finishBusy}
+                onFinish={() => void handleFinishVisit()}
+                onSent={handleRxSent}
+              />
+            }
+          />
+        </div>
+
+        {/* Stable Consult host — portals BodyZone into the body pane slot so
+            moving / retargeting Consult never remounts the live Twilio room. */}
+        {useStableConsultHost ? (
+          <ConsultSurfaceHost>
+            {renderConsultBodySurface(templateContext, selectedTemplateId)}
+          </ConsultSurfaceHost>
+        ) : null}
+      </div>
+    </ConsultSurfaceProvider>
   );
 
   // `<RxFormProvider>` mounts on first paint with empty fields (autosave off).

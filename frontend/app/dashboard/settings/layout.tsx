@@ -1,22 +1,14 @@
-"use client";
-
-import { usePathname } from "next/navigation";
-import { Breadcrumb } from "@/components/layout/Breadcrumb";
+import { SettingsLayoutClient } from "@/components/settings/SettingsLayoutClient";
 
 /**
- * Settings layout: breadcrumb only. No tab bar; navigation via sidebar.
- * Key on pathname ensures child pages remount when navigating, so they always fetch fresh data.
+ * Settings layout — thin Server Component wrapping client breadcrumb chrome.
+ * Leaf pages use useSessionAccessToken (not requireDashboardAuth) because of
+ * the Client layout tree under DashboardShell.
  */
 export default function SettingsLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const pathname = usePathname();
-  return (
-    <div>
-      <Breadcrumb />
-      <div key={pathname ?? "settings"}>{children}</div>
-    </div>
-  );
+  return <SettingsLayoutClient>{children}</SettingsLayoutClient>;
 }

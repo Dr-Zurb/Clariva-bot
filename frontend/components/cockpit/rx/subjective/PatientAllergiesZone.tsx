@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import AllergiesSection from "@/components/ehr/sections/AllergiesSection";
 import {
   SubjectiveSectionTemplateHeaderActions,
@@ -14,6 +14,7 @@ import {
 import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import { SectionReorderLeadingAction } from "@/components/cockpit/rx/subjective/SortableSectionShell";
 import { formatCountSummary } from "@/components/patient-profile/panes/snapshot-pane-summary";
+import { usePatientAllergiesQuery } from "@/hooks/queries/usePatientAllergiesQuery";
 import type { PatientChartMode } from "@/types/patient-chart";
 
 const BACKGROUND_LAYOUT = "in-call" as const;
@@ -33,17 +34,16 @@ export function PatientAllergiesZone({
   sectionOpen,
   onSectionOpenChange,
 }: PatientAllergiesZoneProps) {
-  const [allergyCount, setAllergyCount] = useState<number | null>(null);
-  const [sectionNotes, setSectionNotes] = useState<string | null>(null);
+  // Shared query — tab-switch remount paints count/preview from cache (PMH parity).
+  const allergiesQuery = usePatientAllergiesQuery(token, patientId);
+  const allergyCount = allergiesQuery.data ? allergiesQuery.data.allergies.length : null;
+  const sectionNotes = allergiesQuery.data?.sectionNotes ?? null;
   const [localOpen, setLocalOpen] = useState(false);
   const zoneOpen = sectionOpen ?? localOpen;
   const handleZoneOpenChange = onSectionOpenChange ?? setLocalOpen;
   const allergyControlsRef = useRef<SectionTemplateControlsBinding | null>(null);
   const [allergyControlsReady, setAllergyControlsReady] = useState(false);
   const readonly = mode === "readonly";
-
-  const handleAllergyCount = useCallback((n: number) => setAllergyCount(n), []);
-  const handleSectionNotesChange = useCallback((notes: string | null) => setSectionNotes(notes), []);
 
   const allergySummary = formatCountSummary(
     allergyCount,
@@ -92,8 +92,6 @@ export function PatientAllergiesZone({
         mode={mode}
         templateControlsRef={allergyControlsRef}
         onTemplateControlsReadyChange={setAllergyControlsReady}
-        onCountChange={handleAllergyCount}
-        onSectionNotesChange={handleSectionNotesChange}
       />
     </CollapsibleContainer>
   );

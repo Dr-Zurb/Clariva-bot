@@ -105,22 +105,25 @@ export function ServicesLandingCard({ href, label }: Props) {
   return (
     <Link
       href={href}
-      className="flex flex-col rounded-lg border border-gray-200 bg-white p-5 shadow-sm transition-shadow hover:border-blue-200 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+      className="flex flex-col rounded-lg border border-border bg-card p-5 shadow-sm transition-shadow hover:border-primary/30 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       data-testid="services-landing-card"
       data-catalog-mode={state.mode ?? "null"}
     >
-      <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+      <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
         <ModeIcon mode={iconMode} />
       </div>
       <div className="flex items-start justify-between gap-2">
-        <h3 className="font-semibold text-gray-900">{label}</h3>
+        <h3 className="font-semibold text-foreground">{label}</h3>
         <HealthBadge count={state.healthCount} />
       </div>
-      <p className="mt-1 text-sm text-gray-600" data-testid="services-landing-subtitle">
+      <p
+        className="mt-1 text-sm text-muted-foreground"
+        data-testid="services-landing-subtitle"
+      >
         {subtitle}
       </p>
       <p
-        className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-blue-600"
+        className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary"
         data-testid="services-landing-cta"
       >
         {state.cta}

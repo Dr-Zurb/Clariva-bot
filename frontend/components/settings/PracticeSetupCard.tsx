@@ -8,19 +8,24 @@ interface PracticeSetupCardProps {
 }
 
 /**
- * Card for Practice Setup landing. Icon + label + description.
+ * Card for Settings / Practice setup landings (settings-refresh · SR-D2).
  */
-export function PracticeSetupCard({ href, label, description, icon }: PracticeSetupCardProps) {
+export function PracticeSetupCard({
+  href,
+  label,
+  description,
+  icon,
+}: PracticeSetupCardProps) {
   return (
     <Link
       href={href}
-      className="flex flex-col rounded-lg border border-gray-200 bg-white p-5 shadow-sm transition-shadow hover:border-blue-200 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+      className="flex flex-col rounded-lg border border-border bg-card p-5 shadow-sm transition-shadow hover:border-primary/30 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
     >
-      <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+      <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
         {icon}
       </div>
-      <h3 className="font-semibold text-gray-900">{label}</h3>
-      <p className="mt-1 text-sm text-gray-600">{description}</p>
+      <h3 className="font-semibold text-foreground">{label}</h3>
+      <p className="mt-1 text-sm text-muted-foreground">{description}</p>
     </Link>
   );
 }

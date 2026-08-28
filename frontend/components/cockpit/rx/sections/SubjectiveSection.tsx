@@ -150,13 +150,57 @@ function buildSubjectiveSectionCollapseDefaults(
     catalog.past_surgical = hasPastSurgicalHistoryStructuredContent(pastSurgicalHistoryStructured);
   }
 
-  const result: Record<SubjectiveSectionId, boolean> = {};
+  const result = {} as Record<SubjectiveSectionId, boolean>;
   for (const id of sectionOrder) {
     if (!isStaticSubjectiveSectionId(id)) continue;
     const defaultOpen = catalog[id];
     if (defaultOpen !== undefined) result[id] = defaultOpen;
   }
   return result;
+}
+
+/** First-paint collapse seed — avoids default-open → stored-closed flicker on remount. */
+function seedSubjectiveCollapseOpen(args: {
+  sectionCollapsed: SubjectiveSectionCollapseMap | null | undefined;
+  sectionOrder: SubjectiveSectionId[] | null | undefined;
+  linkedChart: boolean;
+  customBlockIds: readonly string[];
+  familyHistoryStructured: FamilyHistoryStructured;
+  pastSurgicalHistoryStructured: PastSurgicalHistoryStructured;
+}): {
+  openById: Record<SubjectiveSectionId, boolean>;
+  ready: boolean;
+  persistedKey: string | null;
+} {
+  const {
+    sectionCollapsed: stored,
+    sectionOrder: storedOrder,
+    linkedChart,
+    customBlockIds,
+    familyHistoryStructured,
+    pastSurgicalHistoryStructured,
+  } = args;
+  if (stored == null || storedOrder == null) {
+    return { openById: {} as Record<SubjectiveSectionId, boolean>, ready: false, persistedKey: null };
+  }
+  const order = resolveInitialSectionOrder(storedOrder, linkedChart, customBlockIds);
+  const defaults = buildSubjectiveSectionCollapseDefaults(
+    linkedChart,
+    order,
+    familyHistoryStructured,
+    pastSurgicalHistoryStructured,
+  );
+  if (Object.keys(defaults).length === 0) {
+    return { openById: {} as Record<SubjectiveSectionId, boolean>, ready: false, persistedKey: null };
+  }
+  const resolved = resolveSectionOpenState(stored, defaults);
+  return {
+    openById: resolved,
+    ready: true,
+    persistedKey: serializeCollapseOverrides(
+      collapseOverridesToPersist(resolved, defaults),
+    ),
+  };
 }
 
 type RenderItem =
@@ -200,11 +244,26 @@ export function SubjectiveSection({
   );
   const [collapseSaveStatus, setCollapseSaveStatus] = useState<SaveOrderStatus>("idle");
   const [visibilitySaveStatus, setVisibilitySaveStatus] = useState<SaveOrderStatus>("idle");
-  const lastPersistedCollapseRef = useRef<string | null>(null);
+  const collapseSeedRef = useRef<ReturnType<typeof seedSubjectiveCollapseOpen> | null>(null);
+  if (collapseSeedRef.current === null) {
+    collapseSeedRef.current = seedSubjectiveCollapseOpen({
+      sectionCollapsed: shell?.subjectiveSectionCollapsed,
+      sectionOrder: shell?.subjectiveSectionOrder,
+      linkedChart,
+      customBlockIds,
+      familyHistoryStructured: fields.familyHistoryStructured,
+      pastSurgicalHistoryStructured: fields.pastSurgicalHistoryStructured,
+    });
+  }
+  const collapseSeed = collapseSeedRef.current;
+  const lastPersistedCollapseRef = useRef<string | null>(collapseSeed.persistedKey);
   const lastPersistedHiddenRef = useRef<string | null>(null);
-  const hasHydratedCollapseRef = useRef(false);
+  const hasHydratedCollapseRef = useRef(collapseSeed.ready);
   const hasHydratedHiddenRef = useRef(false);
-  const [openById, setOpenById] = useState<Record<SubjectiveSectionId, boolean>>({});
+  const [openById, setOpenById] = useState<Record<SubjectiveSectionId, boolean>>(
+    () => collapseSeed.openById,
+  );
+  const [collapseReady, setCollapseReady] = useState(() => collapseSeed.ready);
   const [hiddenIds, setHiddenIds] = useState<SubjectiveSectionHiddenSet>(
     () => shell?.subjectiveSectionHidden ?? [],
   );
@@ -266,8 +325,8 @@ export function SubjectiveSection({
   const collapseControlled = collapseHydrated || Boolean(token);
 
   const effectiveOpenById = useMemo((): Record<SubjectiveSectionId, boolean> => {
-    if (!collapseControlled) return {};
-    const merged: Record<SubjectiveSectionId, boolean> = {};
+    if (!collapseControlled) return {} as Record<SubjectiveSectionId, boolean>;
+    const merged = {} as Record<SubjectiveSectionId, boolean>;
     for (const [id, defaultOpen] of Object.entries(defaultsById)) {
       merged[id as SubjectiveSectionId] = openById[id as SubjectiveSectionId] ?? defaultOpen;
     }
@@ -275,16 +334,24 @@ export function SubjectiveSection({
   }, [collapseControlled, defaultsById, openById]);
 
   const displayOpenById = useMemo((): Record<SubjectiveSectionId, boolean> => {
-    if (!collapseControlled) return {};
-    if (!collapseHydrated) {
-      const collapsed: Record<SubjectiveSectionId, boolean> = {};
+    if (!collapseControlled) return {} as Record<SubjectiveSectionId, boolean>;
+    // Hold closed until stored map is applied — never paint canonical defaults
+    // for one frame (tab switch / remount flicker: open → stored-closed).
+    if (!collapseHydrated || !collapseReady) {
+      const collapsed = {} as Record<SubjectiveSectionId, boolean>;
       for (const id of Object.keys(defaultsById) as SubjectiveSectionId[]) {
         collapsed[id] = false;
       }
       return collapsed;
     }
     return effectiveOpenById;
-  }, [collapseControlled, collapseHydrated, defaultsById, effectiveOpenById]);
+  }, [
+    collapseControlled,
+    collapseHydrated,
+    collapseReady,
+    defaultsById,
+    effectiveOpenById,
+  ]);
 
   const handleSectionOpenChange = useCallback(
     (sectionId: SubjectiveSectionId, open: boolean) => {
@@ -442,6 +509,7 @@ export function SubjectiveSection({
 
     const resolved = resolveSectionOpenState(storedSectionCollapsed, defaultsById);
     setOpenById(resolved);
+    setCollapseReady(true);
     lastPersistedCollapseRef.current = serializeCollapseOverrides(
       collapseOverridesToPersist(resolved, defaultsById),
     );

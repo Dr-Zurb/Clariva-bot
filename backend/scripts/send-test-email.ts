@@ -23,8 +23,8 @@ async function main() {
   console.log('Sending test email to:', recipient);
   const ok = await sendEmail(
     recipient,
-    'Clariva test – notifications working',
-    'This is a test email from the Clariva backend. If you got this, Resend and your env are set up correctly.',
+    'Halo Aid test – notifications working',
+    'This is a test email from the Halo Aid backend. If you got this, Resend and your env are set up correctly.',
     correlationId
   );
   if (ok) {

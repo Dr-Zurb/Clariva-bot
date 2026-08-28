@@ -639,9 +639,6 @@ export const bookingFunnelStage = {
                 );
               }
             }
-            const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-            const mrnHint = await getPatientIdHintForSlot(conversation.patient_id, correlationId);
-            const baseSlotMsg = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
             const sharedBase: ConversationState = mergeBooking(
               { ...state, lastIntent: intentResult.intent, updatedAt: new Date().toISOString() },
               {
@@ -649,10 +646,16 @@ export const bookingFunnelStage = {
                 extraNotes: extraNotes ?? state.booking?.extraNotes,
               }
             );
+            // ilr-03: never send a slot link or advance to awaiting_slot_selection when
+            // consent/demographics persist failed — patient must retry from consent.
             if (!persistResult.success) {
               replyText =
-                `I had trouble saving your details - please say 'book appointment' to re-share them if needed. Meanwhile, ${baseSlotMsg}`;
-              state = setStage(sharedBase, 'awaiting_slot_selection');
+                "I had trouble saving your details — please reply **Yes** again to retry, or say 'book appointment' to re-share them.";
+              state = {
+                ...sharedBase,
+                step: 'consent',
+                updatedAt: new Date().toISOString(),
+              };
             } else if (isSlotBookingBlockedPendingStaffReview(sharedBase)) {
               const gate = transitionToAwaitingStaffServiceConfirmation(
                 sharedBase,
@@ -663,6 +666,9 @@ export const bookingFunnelStage = {
               state = gate.state;
               replyText = gate.replyText;
             } else {
+              const slotLink = buildBookingPageUrl(conversation.id, doctorId);
+              const mrnHint = await getPatientIdHintForSlot(conversation.patient_id, correlationId);
+              const baseSlotMsg = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
               replyText = sharedBase.bookingForOther?.pendingOtherBooking
                 ? `${baseSlotMsg}\n\nWould you like to book for your ${sharedBase.bookingForOther.pendingOtherBooking.relation} now?`
                 : baseSlotMsg;

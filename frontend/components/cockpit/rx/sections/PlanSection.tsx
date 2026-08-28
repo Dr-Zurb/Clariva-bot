@@ -199,6 +199,34 @@ function buildCollapseDefaults(
   return result;
 }
 
+/** First-paint collapse seed — avoids default-open → stored-closed flicker on remount. */
+function seedPlanCollapseOpen(
+  sectionCollapsed: PlanSectionCollapseMap | null | undefined,
+  sectionOrder: PlanSectionId[] | null | undefined,
+  customBlockIds: readonly string[],
+): {
+  openById: Record<string, boolean>;
+  ready: boolean;
+  persistedKey: string | null;
+} {
+  if (sectionCollapsed == null || sectionOrder == null) {
+    return { openById: {}, ready: false, persistedKey: null };
+  }
+  const order = resolveInitialSectionOrder(sectionOrder, customBlockIds);
+  const defaults = buildCollapseDefaults(order);
+  if (Object.keys(defaults).length === 0) {
+    return { openById: {}, ready: false, persistedKey: null };
+  }
+  const resolved = resolveSectionOpenState(sectionCollapsed, defaults);
+  return {
+    openById: resolved,
+    ready: true,
+    persistedKey: serializeCollapseOverrides(
+      collapseOverridesToPersist(resolved, defaults),
+    ),
+  };
+}
+
 export interface PlanSectionProps {
   heading?: string | null;
   disabled?: boolean;
@@ -277,10 +305,20 @@ export function PlanSection({
   const [sectionManagerOpen, setSectionManagerOpen] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [clearBusy, setClearBusy] = useState(false);
+  const collapseSeedRef = useRef<ReturnType<typeof seedPlanCollapseOpen> | null>(null);
+  if (collapseSeedRef.current === null) {
+    collapseSeedRef.current = seedPlanCollapseOpen(
+      shell?.planDefaults?.sectionCollapsed,
+      shell?.planDefaults?.sectionOrder,
+      customBlockIds,
+    );
+  }
+  const collapseSeed = collapseSeedRef.current;
+
   const lastPersistedSectionOrderRef = useRef<string | null>(null);
-  const lastPersistedCollapseRef = useRef<string | null>(null);
+  const lastPersistedCollapseRef = useRef<string | null>(collapseSeed.persistedKey);
   const lastPersistedHiddenRef = useRef<string | null>(null);
-  const hasHydratedCollapseRef = useRef(false);
+  const hasHydratedCollapseRef = useRef(collapseSeed.ready);
   const hasHydratedHiddenRef = useRef(false);
 
   const [storedSectionOrder, setStoredSectionOrder] = useState<PlanSectionId[] | null>(
@@ -292,7 +330,10 @@ export function PlanSection({
     );
   const [storedSectionHidden, setStoredSectionHidden] =
     useState<PlanSectionHiddenSet | null>(shell?.planDefaults?.sectionHidden ?? null);
-  const [openById, setOpenById] = useState<Record<string, boolean>>({});
+  const [openById, setOpenById] = useState<Record<string, boolean>>(
+    () => collapseSeed.openById,
+  );
+  const [collapseReady, setCollapseReady] = useState(() => collapseSeed.ready);
   const [hiddenIds, setHiddenIds] = useState<PlanSectionHiddenSet>(
     () => shell?.planDefaults?.sectionHidden ?? [],
   );
@@ -334,7 +375,9 @@ export function PlanSection({
 
   const displayOpenById = useMemo((): Record<string, boolean> => {
     if (!collapseControlled) return {};
-    if (!collapseHydrated) {
+    // Hold closed until stored map is applied — never paint canonical defaults
+    // for one frame (tab switch / remount flicker: open → stored-closed).
+    if (!collapseHydrated || !collapseReady) {
       const collapsed: Record<string, boolean> = {};
       for (const id of Object.keys(defaultsById)) {
         collapsed[id] = false;
@@ -342,7 +385,13 @@ export function PlanSection({
       return collapsed;
     }
     return effectiveOpenById;
-  }, [collapseControlled, collapseHydrated, defaultsById, effectiveOpenById]);
+  }, [
+    collapseControlled,
+    collapseHydrated,
+    collapseReady,
+    defaultsById,
+    effectiveOpenById,
+  ]);
 
   const handleSectionOpenChange = useCallback(
     (sectionId: PlanSectionId, open: boolean) => {
@@ -521,6 +570,7 @@ export function PlanSection({
 
     const resolved = resolveSectionOpenState(storedSectionCollapsed, defaultsById);
     setOpenById(resolved);
+    setCollapseReady(true);
     lastPersistedCollapseRef.current = serializeCollapseOverrides(
       collapseOverridesToPersist(resolved, defaultsById),
     );

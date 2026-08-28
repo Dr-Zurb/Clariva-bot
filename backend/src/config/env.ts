@@ -138,6 +138,9 @@ const envSchema = z.object({
   INSTAGRAM_REDIRECT_URI: z.string().url().optional(),
   // After successful connect, redirect browser here (e.g. https://app.example.com/dashboard/settings/instagram); if unset, callback returns JSON
   INSTAGRAM_FRONTEND_REDIRECT_URI: z.string().url().optional(),
+  // ilr-02: Public frontend base URL for the Meta data-deletion status page
+  // (e.g. https://clariva-bot.vercel.app). Falls back to INSTAGRAM_FRONTEND_REDIRECT_URI's origin when unset.
+  FRONTEND_URL: z.string().url().optional(),
 
   /**
    * rcp-13: Register WhatsApp channel adapter in the webhook registry.
@@ -527,6 +530,24 @@ const envSchema = z.object({
       return Math.max(1, Number.isNaN(n) ? 7 : n);
     }),
 
+  /**
+   * Alerts v2 · alr2-05 (ALR2-D8 / OQ-3 LOCKED: 90 days).
+   *
+   * How long acknowledged `doctor_dashboard_events` rows are kept before
+   * the nightly retention sweep deletes them. Unread rows are never
+   * deleted regardless of age. Floor of 1 day so a mis-set `0` cannot
+   * wipe the entire acknowledged feed in one tick.
+   *
+   * Schedule: `POST /cron/dashboard-events-retention` (daily).
+   */
+  DASHBOARD_EVENTS_RETENTION_DAYS: z
+    .string()
+    .default('90')
+    .transform((v) => {
+      const n = parseInt(v, 10);
+      return Math.max(1, Number.isNaN(n) ? 90 : n);
+    }),
+
   // ==========================================================================
   // Plan 05 · Task 25 — Voice transcription pipeline
   // ==========================================================================
@@ -664,6 +685,45 @@ const envSchema = z.object({
     .string()
     .default('false')
     .transform((v) => v === 'true' || v === '1'),
+
+  // ==========================================================================
+  // auth-v2 · ghost-account sweep (Model C)
+  // ==========================================================================
+  /**
+   * Hard-delete kill switch for the ghost-account sweep cron. Auth-v2 is
+   * "one door" — Google / Email OTP create a user on first auth (there is no
+   * separate sign-up), so abandoned attempts (typos, curiosity, half-finished
+   * onboarding) leave harmless-but-untidy `auth.users` rows. This sweep prunes
+   * accounts that never completed onboarding, never engaged verification, and
+   * hold no data.
+   *
+   * When any value other than `'true'`/`'1'` (default `'false'`), the cron runs
+   * in **dry-run**: it identifies candidates and logs them (userId + created_at
+   * only — never email/PII) but deletes nothing. Flip to `'true'` only after
+   * the dry-run output has been observed as sane, mirroring the
+   * `ARCHIVAL_HARD_DELETE_ENABLED` flag-flip ritual.
+   *
+   * The deletion is irreversible (`auth.admin.deleteUser`, FK CASCADE removes
+   * dependent rows), so the flag ships dark.
+   */
+  GHOST_ACCOUNT_SWEEP_ENABLED: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true' || v === '1'),
+
+  /**
+   * Minimum account age (days) before an incomplete account is eligible for the
+   * ghost sweep. A doctor mid-onboarding must never be swept, so this is the
+   * grace window between first auth and cleanup. Floor of 1 day so a mis-set
+   * `0` cannot delete accounts created earlier the same day. Default 7.
+   */
+  GHOST_ACCOUNT_SWEEP_MIN_AGE_DAYS: z
+    .string()
+    .default('7')
+    .transform((v) => {
+      const n = parseInt(v, 10);
+      return Math.max(1, Number.isNaN(n) ? 7 : n);
+    }),
 });
 
 /**

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import {
   AlertDialog,
@@ -46,7 +46,8 @@ import {
   indexCustomVitalTrendSeries,
 } from "@/lib/cockpit/custom-vitals-trends";
 import { useVitalsTrendsQuery } from "@/hooks/queries/useVitalsTrendsQuery";
-import { getPatientById } from "@/lib/api";
+import { useDoctorSettingsQuery } from "@/hooks/queries/useDoctorSettingsQuery";
+import { getPatientById, type ApiSuccess, type DoctorSettingsData } from "@/lib/api";
 import { computeBmi } from "@/lib/cockpit/bmi";
 import {
   resolveCategoricalVital,
@@ -83,7 +84,6 @@ import {
   resolvePupilClusterMenuLabel,
 } from "@/lib/cockpit/pupil-cluster";
 import {
-  fetchVitalsHidden,
   isVitalHidden,
   resolveEffectiveVitalsHidden,
   resolveDefaultVitalsLayout,
@@ -101,8 +101,8 @@ import type { VitalTrendMetricKey } from "@/lib/cockpit/vitals-trends";
 import { buildVitalsMenuCatalog } from "@/lib/cockpit/vitals-menu-catalog";
 import {
   customVitalDefsStructureKey,
-  fetchCustomVitals,
   mergeCustomVitalDefs,
+  normalizeCustomVitalDefs,
   saveCustomVitalsDefault,
   updateCustomVitalDef,
   type CustomVitalDef,
@@ -134,6 +134,33 @@ export interface VitalsGridProps {
 
 export function VitalsGrid({ disabled = false }: VitalsGridProps) {
   const { state, token, patientId, setField } = useRxForm();
+  const queryClient = useQueryClient();
+  // Shared, cached doctor-settings read. Both the custom-vital defs and the
+  // hidden-vital set live here, so re-mounting the Objective pane serves them
+  // from cache instead of hitting /settings/doctor twice on every mount.
+  const settingsQuery = useDoctorSettingsQuery(token);
+
+  // Write-through: keep the cached settings in sync with our own saves so a
+  // pane re-add reads the just-persisted value (staleTime is STATIC).
+  const patchDoctorSettingsCache = useCallback(
+    (patch: Partial<DoctorSettingsData["settings"]>) => {
+      queryClient.setQueryData<ApiSuccess<DoctorSettingsData>>(
+        queryKeys.opd.doctorSettings(),
+        (old) =>
+          old
+            ? {
+                ...old,
+                data: {
+                  ...old.data,
+                  settings: { ...old.data.settings, ...patch },
+                },
+              }
+            : old,
+      );
+    },
+    [queryClient],
+  );
+
   const ghost = useLastVisitVitals();
   const { byMetric, categoricalTimelines, customTrendSeries, customTextTimelines, isLoading } =
     useVitalsTrendsQuery(token, patientId);
@@ -144,24 +171,17 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
   const lastPersistedCustomRef = useRef<string>("");
 
   useEffect(() => {
-    if (!token || hasSeededCustomRef.current) return;
-    let cancelled = false;
-    void fetchCustomVitals(token)
-      .then((stored) => {
-        if (cancelled) return;
-        hasSeededCustomRef.current = true;
-        lastPersistedCustomRef.current = customVitalDefsStructureKey(stored);
-        setField("vitalsCustomDefs", mergeCustomVitalDefs(state.fields.vitalsCustomDefs, stored));
-      })
-      .catch(() => {
-        // Non-blocking — keep any defs already seeded from the prescription.
-      });
-    return () => {
-      cancelled = true;
-    };
-    // Seed once on mount when the token is available.
+    if (hasSeededCustomRef.current) return;
+    const settings = settingsQuery.data?.data.settings;
+    if (!settings) return;
+    const stored = normalizeCustomVitalDefs(settings.vitals_custom);
+    hasSeededCustomRef.current = true;
+    lastPersistedCustomRef.current = customVitalDefsStructureKey(stored);
+    setField("vitalsCustomDefs", mergeCustomVitalDefs(state.fields.vitalsCustomDefs, stored));
+    // Seed once from the shared (cached) doctor-settings read; on error the
+    // query yields no data so we keep any defs already seeded from the rx.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [settingsQuery.data]);
 
   const persistCustomDefs = useCallback(
     (defs: CustomVitalDef[]) => {
@@ -172,12 +192,13 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
         try {
           const saved = await saveCustomVitalsDefault(token, defs);
           lastPersistedCustomRef.current = customVitalDefsStructureKey(saved);
+          patchDoctorSettingsCache({ vitals_custom: saved });
         } catch {
           // Autosave failure is non-blocking — retried on the next add/remove.
         }
       })();
     },
-    [token],
+    [patchDoctorSettingsCache, token],
   );
 
   const handleAddCustomVital = useCallback(
@@ -235,18 +256,16 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
     null,
   );
   const hasHydratedHiddenRef = useRef(false);
+  const hasSeededHiddenRef = useRef(false);
   const lastPersistedHiddenRef = useRef<string>("");
 
   useEffect(() => {
-    if (!token) return;
-    let cancelled = false;
-    void fetchVitalsHidden(token).then((hidden) => {
-      if (!cancelled) setStoredVitalsHidden(hidden);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
+    if (hasSeededHiddenRef.current) return;
+    const settings = settingsQuery.data?.data.settings;
+    if (!settings) return;
+    hasSeededHiddenRef.current = true;
+    setStoredVitalsHidden((settings.vitals_hidden ?? []) as VitalsHiddenSet);
+  }, [settingsQuery.data]);
 
   useEffect(() => {
     if (storedVitalsHidden === null) return;
@@ -275,6 +294,7 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
           const saved = await saveVitalsHidden(token, toPersist);
           lastPersistedHiddenRef.current = serializeVitalsHidden(saved);
           setStoredVitalsHidden(saved);
+          patchDoctorSettingsCache({ vitals_hidden: saved });
         } catch {
           // Autosave failure is non-blocking — doctor can retry via another toggle.
         }
@@ -282,7 +302,7 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
     }, DOCTOR_LAYOUT_AUTOSAVE_MS);
 
     return () => window.clearTimeout(timer);
-  }, [disabled, hiddenIds, storedVitalsHidden, token]);
+  }, [disabled, hiddenIds, patchDoctorSettingsCache, storedVitalsHidden, token]);
 
   const applyToggleHidden = useCallback((key: VitalVisibilityKey) => {
     const bpKeys = expandBpClusterVisibilityKeys(key);

@@ -46,32 +46,37 @@ interface NowNextCardProps {
  */
 const STALE_SESSION_HOURS = 12;
 
-function isSessionStale(startedAt: string | null): boolean {
+function isSessionStale(startedAt: string | null, nowMs: number): boolean {
   if (!startedAt) return false;
   return (
-    Date.now() - new Date(startedAt).getTime() >
+    nowMs - new Date(startedAt).getTime() >
     STALE_SESSION_HOURS * 60 * 60 * 1000
   );
 }
 
-function findActiveAppointment(appointments: Appointment[]): Appointment | null {
+function findActiveAppointment(
+  appointments: Appointment[],
+  nowMs: number,
+): Appointment | null {
   for (const appt of appointments) {
     const s = appt.consultation_session;
     if (!s) continue;
     if (s.status !== "live") continue;
-    if (isSessionStale(s.actual_started_at)) continue;
+    if (isSessionStale(s.actual_started_at, nowMs)) continue;
     return appt;
   }
   return null;
 }
 
-function findNextAppointment(appointments: Appointment[]): Appointment | null {
-  const now = Date.now();
+function findNextAppointment(
+  appointments: Appointment[],
+  nowMs: number,
+): Appointment | null {
   const upcoming = appointments
     .filter(
       (appt) =>
         (appt.status === "pending" || appt.status === "confirmed") &&
-        new Date(appt.appointment_date).getTime() >= now,
+        new Date(appt.appointment_date).getTime() >= nowMs,
     )
     .sort(
       (a, b) =>
@@ -79,6 +84,19 @@ function findNextAppointment(appointments: Appointment[]): Appointment | null {
         new Date(b.appointment_date).getTime(),
     );
   return upcoming[0] ?? null;
+}
+
+/** Far-future until mount so Active/Next/Idle trees match SSR HTML. */
+const HYDRATION_SAFE_NOW_MS = Date.parse("9999-12-31T23:59:59.999Z");
+
+function useHydrationSafeNowMs(): number {
+  const [nowMs, setNowMs] = useState<number | null>(null);
+  useEffect(() => {
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  return nowMs ?? HYDRATION_SAFE_NOW_MS;
 }
 
 // ---------------------------------------------------------------------------
@@ -349,10 +367,15 @@ function LoadingSkeleton() {
 export function NowNextCard({ token }: NowNextCardProps) {
   const { appointments, loading, error, refetch } =
     useTodaysAppointments(token);
+  const nowMs = useHydrationSafeNowMs();
 
-  const activeAppt = appointments ? findActiveAppointment(appointments) : null;
+  const activeAppt = appointments
+    ? findActiveAppointment(appointments, nowMs)
+    : null;
   const nextAppt =
-    !activeAppt && appointments ? findNextAppointment(appointments) : null;
+    !activeAppt && appointments
+      ? findNextAppointment(appointments, nowMs)
+      : null;
   const isEmpty =
     !loading && !error && appointments !== null && !activeAppt && !nextAppt;
 

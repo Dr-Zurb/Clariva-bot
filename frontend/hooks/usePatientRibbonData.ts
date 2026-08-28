@@ -1,32 +1,18 @@
 "use client";
 
 /**
- * usePatientRibbonData (cockpit-ribbon crb-01)
+ * usePatientRibbonData (cockpit-ribbon crb-01 · ribbon rethink 2026-07-17)
  *
- * Composes existing chart endpoints into the data shape `<PatientRibbon>`
- * (crb-02) needs. The ribbon has five slots; this hook owns four of them
- * (identity, allergies, chronic conditions, active medications count).
- * The fifth slot — `🎯 Treating Dx` — is read by the component directly
- * from `useRxForm()` and is intentionally NOT subscribed here.
+ * Composes chart endpoints into the data shape `<PatientRibbon>` needs:
+ * allergies, chronic conditions, and **active chart medications**
+ * (`patient_medications` where status=active and not archived).
  *
- * # Discovery decisions (documented per crb-01 acceptance gate)
+ * Demographics (age / sex / weight) live in the cockpit header beside the
+ * patient name — not fetched here.
  *
- * - **Identity path**: PATH 2 — `getPatientById`. Path 1
- *   (`appointment.patient_demographics`) was the preferred zero-cost
- *   option per the task spec, but a workspace-wide grep for
- *   `patient_demographics` returns no matches: cs-03 has not landed in
- *   this code path yet. Weight is not on the `Patient` row either, so
- *   we issue a second call to `listPatientVitals(..., { limit: 1 })`
- *   and pull `weight_kg` from the most recent reading.
- *   See follow-up inbox entry "patient_demographics on appointment-detail
- *   response — needed for cockpit-ribbon Path 1 optimization".
- *
- * - **Active meds count path**: PATH A — most recent prescription via
- *   `listRecentPrescriptionsByPatient(..., { limit: 1 })`. The recent
- *   endpoint already returns a server-computed `medicine_count` on each
- *   `PrescriptionRecentSummary`, so we use it as-is rather than fetching
- *   the full medicines array and filtering client-side. The recent
- *   endpoint is also already excluding drafts server-side.
+ * Meds are NOT derived from the most recent prescription. "Still taking from
+ * last Rx" belongs on the chart via explicit `continue` → chart promotion
+ * (separate follow-up); the ribbon only counts the chart source of truth.
  *
  * # Fetch pattern
  *
@@ -34,49 +20,31 @@
  * `useChartPrefetch`, etc.): `useState` + `useEffect` with a manual
  * cancellation flag. A short module-level memory cache seeds state so
  * remounts / Strict Mode do not flash the ribbon skeleton twice.
- * The codebase does NOT use SWR / React Query for this path
- * (confirmed via the docblock in `useChartPrefetch.ts`), so this hook
- * deliberately does not introduce one.
  *
  * # Edge cases
  *
- * - `patientId == null` (walk-in) → returns the empty shape synchronously
- *   with `isLoading: false`.
- * - `token == null` → same as walk-in (no auth, no data).
- * - Per-endpoint failure → the first error wins on `error`; the other
- *   slots still render whatever data they got. The component is
- *   expected to render partial data; we never block the whole ribbon.
+ * - `patientId == null` (walk-in) → empty shape, `isLoading: false`.
+ * - `token == null` → same.
+ * - Per-endpoint failure → first error wins on `error`; other slots still render.
  *
- * @see frontend/hooks/useChartPrefetch.ts — closest precedent (composed chart fetch)
- * @see frontend/hooks/useSessionOverrun.ts — useState+useEffect pattern
- * @see docs/Work/Daily-plans/May 2026/21-05-2026/cockpit-ribbon/Tasks/task-crb-01-ribbon-data-hook.md
+ * @see frontend/components/patient-profile/PatientRibbon.tsx
  */
 
 import { useEffect, useState } from "react";
 import {
-  getPatientById,
   listPatientAllergies,
   listPatientConditions,
-  listPatientVitals,
-  listRecentPrescriptionsByPatient,
+  listPatientMedications,
 } from "@/lib/api";
-import type { Patient } from "@/types/patient";
 import type {
   PatientAllergy,
   PatientChronicCondition,
-  PatientVitalsReading,
+  PatientMedication,
 } from "@/types/patient-chart";
-import type { PrescriptionRecentSummary } from "@/types/prescription";
 
 // ---------------------------------------------------------------------------
 // Public surface
 // ---------------------------------------------------------------------------
-
-export interface RibbonIdentity {
-  ageYears: number | null;
-  sex: "M" | "F" | "O" | null;
-  weightKg: number | null;
-}
 
 export interface RibbonAllergyChip {
   id: string;
@@ -92,25 +60,28 @@ export interface RibbonChronicChip {
   since?: string | null;
 }
 
+/** Active chart medication shown in the ribbon meds popover. */
+export interface RibbonMedChip {
+  id: string;
+  name: string;
+  /** Compact sig when available (dose / frequency). */
+  detail?: string | null;
+}
+
 export interface RibbonData {
-  identity: RibbonIdentity;
   allergies: RibbonAllergyChip[];
   chronicConditions: RibbonChronicChip[];
+  /** Active, non-archived chart medications (PMH / additional). */
+  activeMeds: RibbonMedChip[];
   activeMedsCount: number;
   isLoading: boolean;
   error: Error | null;
 }
 
-const EMPTY_IDENTITY: RibbonIdentity = {
-  ageYears: null,
-  sex: null,
-  weightKg: null,
-};
-
 const EMPTY_RIBBON: RibbonData = {
-  identity: EMPTY_IDENTITY,
   allergies: [],
   chronicConditions: [],
+  activeMeds: [],
   activeMedsCount: 0,
   isLoading: false,
   error: null,
@@ -137,6 +108,11 @@ function readRibbonCache(
     ribbonCache.delete(ribbonCacheKey(patientId, token));
     return null;
   }
+  // Guard against stale cache shapes from before the ribbon rethink.
+  if (!Array.isArray(hit.data.activeMeds)) {
+    ribbonCache.delete(ribbonCacheKey(patientId, token));
+    return null;
+  }
   return { ...hit.data, isLoading: false };
 }
 
@@ -147,9 +123,9 @@ function writeRibbonCache(
 ): void {
   ribbonCache.set(ribbonCacheKey(patientId, token), {
     data: {
-      identity: data.identity,
       allergies: data.allergies,
       chronicConditions: data.chronicConditions,
+      activeMeds: data.activeMeds,
       activeMedsCount: data.activeMedsCount,
       error: data.error,
     },
@@ -163,41 +139,8 @@ export function clearPatientRibbonDataCache(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Mappers (kept module-local; consumers don't need them)
+// Mappers
 // ---------------------------------------------------------------------------
-
-function computeAgeYears(dateOfBirth: string | null | undefined): number | null {
-  if (!dateOfBirth) return null;
-  const dob = new Date(dateOfBirth);
-  if (Number.isNaN(dob.getTime())) return null;
-  const now = new Date();
-  let age = now.getFullYear() - dob.getFullYear();
-  const monthDelta = now.getMonth() - dob.getMonth();
-  if (monthDelta < 0 || (monthDelta === 0 && now.getDate() < dob.getDate())) {
-    age -= 1;
-  }
-  return age >= 0 ? age : null;
-}
-
-function normalizeSex(gender: string | null | undefined): RibbonIdentity["sex"] {
-  if (!gender) return null;
-  const g = gender.trim().toLowerCase();
-  if (g === "m" || g === "male") return "M";
-  if (g === "f" || g === "female") return "F";
-  return "O";
-}
-
-function deriveIdentity(
-  patient: Patient | null,
-  latestVitals: PatientVitalsReading | null,
-): RibbonIdentity {
-  if (!patient && !latestVitals) return EMPTY_IDENTITY;
-  return {
-    ageYears: computeAgeYears(patient?.date_of_birth),
-    sex: normalizeSex(patient?.gender),
-    weightKg: latestVitals?.weight_kg ?? null,
-  };
-}
 
 function toRibbonAllergy(row: PatientAllergy): RibbonAllergyChip {
   return {
@@ -216,10 +159,32 @@ function toRibbonChronic(row: PatientChronicCondition): RibbonChronicChip {
   };
 }
 
-function countActiveMedicines(
-  latest: PrescriptionRecentSummary | null,
-): number {
-  return latest?.medicine_count ?? 0;
+function isActiveChartMed(row: PatientMedication): boolean {
+  return row.status === "active" && row.archived_at == null;
+}
+
+function formatMedDetail(row: PatientMedication): string | null {
+  const parts: string[] = [];
+  const strength = row.strength?.trim() || row.dose?.trim();
+  if (strength) parts.push(strength);
+  if (row.frequency?.trim()) parts.push(row.frequency.trim());
+  else if (row.dose_schedule?.trim()) parts.push(row.dose_schedule.trim());
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+function toRibbonMed(row: PatientMedication): RibbonMedChip {
+  return {
+    id: row.id,
+    name: row.drug_name,
+    detail: formatMedDetail(row),
+  };
+}
+
+/** Exported for unit tests — active chart meds only. */
+export function selectActiveChartMeds(
+  rows: PatientMedication[],
+): RibbonMedChip[] {
+  return rows.filter(isActiveChartMed).map(toRibbonMed);
 }
 
 // ---------------------------------------------------------------------------
@@ -253,22 +218,14 @@ export function usePatientRibbonData(
     }
 
     void Promise.allSettled([
-      getPatientById(patientId, token),
-      listPatientVitals(token, patientId, { limit: 1 }),
       listPatientAllergies(token, patientId),
       listPatientConditions(token, patientId),
-      listRecentPrescriptionsByPatient(token, patientId, { limit: 1 }),
+      listPatientMedications(token, patientId),
     ]).then((results) => {
       if (cancelled) return;
 
-      const [patientRes, vitalsRes, allergiesRes, conditionsRes, rxRes] = results;
+      const [allergiesRes, conditionsRes, medsRes] = results;
 
-      const patient: Patient | null =
-        patientRes.status === "fulfilled" ? patientRes.value.data.patient : null;
-      const latestVitals: PatientVitalsReading | null =
-        vitalsRes.status === "fulfilled"
-          ? vitalsRes.value.data.vitals[0] ?? null
-          : null;
       const allergyRows: PatientAllergy[] =
         allergiesRes.status === "fulfilled"
           ? allergiesRes.value.data.allergies ?? []
@@ -277,12 +234,11 @@ export function usePatientRibbonData(
         conditionsRes.status === "fulfilled"
           ? conditionsRes.value.data.conditions ?? []
           : [];
-      const latestRx: PrescriptionRecentSummary | null =
-        rxRes.status === "fulfilled"
-          ? rxRes.value.data.prescriptions[0] ?? null
-          : null;
+      const medicationRows: PatientMedication[] =
+        medsRes.status === "fulfilled"
+          ? medsRes.value.data.medications ?? []
+          : [];
 
-      // First rejection wins; partial data still renders.
       const firstError = results
         .map((r) => (r.status === "rejected" ? (r.reason as unknown) : null))
         .find((e): e is unknown => e !== null);
@@ -293,11 +249,12 @@ export function usePatientRibbonData(
             ? new Error(String(firstError))
             : null;
 
+      const activeMeds = selectActiveChartMeds(medicationRows);
       const next: RibbonData = {
-        identity: deriveIdentity(patient, latestVitals),
         allergies: allergyRows.map(toRibbonAllergy),
         chronicConditions: conditionRows.map(toRibbonChronic),
-        activeMedsCount: countActiveMedicines(latestRx),
+        activeMeds,
+        activeMedsCount: activeMeds.length,
         isLoading: false,
         error,
       };

@@ -104,20 +104,14 @@ The ribbon lacks two things Snapshot has:
 
 **Product lock:** Remove Snapshot / History from the canvas and palette (heart + clock). Ribbon is the only entry for chart + visit history. Implement as **2A then 2B** — do not hard-delete without a prune migration (layouts are linked).
 
-### Phase 2A — demote out of defaults (safe first cut)
-- In all four trees in `default-layouts.ts`, hide `snapshot` + `history` (`hiddenLeaf`).
-- Rebuild trees so the left chart column is not an empty shell:
-  - **Consult / Review:** drop dedicated left Snapshot/History column; give space to mid (Consult/SOAP) or right (S/O).
-  - **Read:** stop centering History — recenter on Assessment + Subjective/Objective (or Plan).
-  - **Document:** hide Snapshot as well (History already hidden).
-- Keep ids in `COCKPIT_TAB_ORDER` temporarily so persisted layouts are not wiped mid-transition.
-- Update `default-layouts.test.ts` visible/hidden expectations.
+### Phase 2A — demote out of defaults (safe first cut) ✅ folded into 2B
+- Rebuilt all four trees without a left chart column (Consult/Review mid+right; Read assessment+S/O; Document assessment+S/O+plan).
 
-### Phase 2B — remove from registry + palette (final)
-- Remove `snapshot` / `history` from `COCKPIT_TAB_ORDER` and `buildCockpitTabs`.
-- Keep `SnapshotPane` / `HistoryPane` — ribbon still mounts them in the side sheet.
-- **Layout prune (critical):** do **not** rely on discard-and-reset in `useShellLayout`. Add a prune that strips `snapshot`/`history` from persisted trees + saved presets, rebalances sibling sizes, and only then falls back to default if invalid.
-- Update palette, `isFullEightPaneRegistry` count/name, ChartRail empty-state wiring, and cockpit layout tests that assume those ids.
+### Phase 2B — remove from registry + palette (final) ✅ shipped 2026-07-16
+- Removed `snapshot` / `history` from `COCKPIT_TAB_ORDER` and `buildCockpitTabs` (5 tabs: body, S, O, A, P).
+- Kept `SnapshotPane` / `HistoryPane` — ribbon still mounts them in the side sheet.
+- **Layout prune:** `prune-layout-leaves.ts` strips unknown ids, appends missing known as hidden, rebalances; wired into `useShellLayout` hydration + `useCockpitLayoutSwitcher.applySavedLayout`. Discard only when prune fails (zero overlap).
+- Updated palette (automatic via panes prop), `isFullEightPaneRegistry` (tracks new count), and cockpit layout tests.
 
 ---
 
@@ -152,3 +146,15 @@ Per `DEFINITION_OF_DONE.md` / agent contract — run and pass, do not skip:
 - Manual light+dark desktop smoke per RX-05.
 
 **Zero backend, zero migration, zero RLS in Phase 1.**
+
+---
+
+## Ribbon rethink (2026-07-17) ✅ shipped (frontend slice)
+
+Locked and implemented:
+- **Drop identity** from the ribbon (age / sex / weight stay in the header beside the name).
+- **💊 = active chart meds** — `patient_medications` where `status === "active"` and not archived (PMH condition meds + additional meds). Not last-visit Rx count.
+- **Meds popover** lists those chart med names (not `PreviousRxSection`).
+
+Deferred (not in this slice):
+- Promote Rx lines with `duration_unit: "continue"` into `patient_medications` on send — needed so “still taking from last Rx” lands on the chart automatically. No duration-matching heuristic on the ribbon.

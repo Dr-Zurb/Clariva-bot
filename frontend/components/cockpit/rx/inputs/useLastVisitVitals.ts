@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import { getLastPrescriptionInEpisode } from "@/lib/api";
 import type { GhostVitals } from "@/components/cockpit/rx/inputs/VitalsExtended";
 import { vitalsByStorage, type ColumnVitalKey } from "@/lib/cockpit/vitals-schema";
 import type { PrescriptionWithRelations } from "@/types/prescription";
+import { queryKeys } from "@/lib/query/keys";
+import { STALE } from "@/lib/query/stale";
 
 /** Maps each column-backed vital key to its canonical column on a prescription row. */
 const GHOST_COLUMN: Record<ColumnVitalKey, keyof PrescriptionWithRelations> = {
@@ -44,23 +46,19 @@ function extractGhostVitals(rx: PrescriptionWithRelations): GhostVitals {
  */
 export function useLastVisitVitals(): GhostVitals | null {
   const { token, appointmentId } = useRxForm();
-  const [ghost, setGhost] = useState<GhostVitals | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    getLastPrescriptionInEpisode(token, appointmentId)
-      .then((res) => {
-        if (cancelled) return;
-        const rx = res.data.prescription;
-        setGhost(rx ? extractGhostVitals(rx) : null);
-      })
-      .catch(() => {
-        if (!cancelled) setGhost(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [token, appointmentId]);
+  // React Query cache (P2-D5): the ghost is a read-only reference, so a pane
+  // re-add serves it from cache instead of re-hitting last-in-episode.
+  const query = useQuery({
+    queryKey: queryKeys.consult(appointmentId).lastVisitVitals(),
+    queryFn: async (): Promise<GhostVitals | null> => {
+      const res = await getLastPrescriptionInEpisode(token, appointmentId);
+      const rx = res.data.prescription;
+      return rx ? extractGhostVitals(rx) : null;
+    },
+    enabled: Boolean(token) && Boolean(appointmentId),
+    staleTime: STALE.CLINICAL,
+  });
 
-  return ghost;
+  return query.data ?? null;
 }

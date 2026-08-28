@@ -31,10 +31,6 @@ vi.mock("@/components/ehr/sections/AllergiesSection", () => ({
   default: () => <div data-testid="mock-allergies-section">AllergiesSection</div>,
 }));
 
-vi.mock("@/components/ehr/sections/PreviousRxSection", () => ({
-  default: () => <div data-testid="mock-previous-rx-section">PreviousRxSection</div>,
-}));
-
 import {
   RxFormProvider,
   createEmptyRxFormFields,
@@ -45,7 +41,6 @@ import SideSheetHost from "@/components/patient-profile/SideSheetHost";
 const prescriptionIdRef = { current: null as string | null };
 
 const mockRibbonData = {
-  identity: { ageYears: 42, sex: "M" as const, weightKg: 68 },
   allergies: [] as Array<{
     id: string;
     name: string;
@@ -57,6 +52,7 @@ const mockRibbonData = {
     name: string;
     since?: string | null;
   }>,
+  activeMeds: [] as Array<{ id: string; name: string; detail?: string | null }>,
   activeMedsCount: 0,
   isLoading: false,
   error: null,
@@ -142,7 +138,15 @@ describe("PatientRibbon indicator labels (cnc-04)", () => {
     vi.clearAllMocks();
     useOptionalRxSafetyMock.mockReturnValue(null);
     mockRibbonData.allergies = [];
+    mockRibbonData.activeMeds = [];
     mockRibbonData.activeMedsCount = 0;
+  });
+
+  it("does not render demographics identity (header owns age/sex)", () => {
+    renderRibbon();
+    expect(screen.queryByText(/42 y/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^M$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no demographics/i)).not.toBeInTheDocument();
   });
 
   it("safety indicator has aria-label", () => {
@@ -220,6 +224,7 @@ describe("PatientRibbon expand surfaces (ribbon-expand Phase 1)", () => {
     vi.clearAllMocks();
     useOptionalRxSafetyMock.mockReturnValue(null);
     mockRibbonData.allergies = [];
+    mockRibbonData.activeMeds = [];
     mockRibbonData.activeMedsCount = 0;
   });
 
@@ -262,7 +267,11 @@ describe("PatientRibbon expand surfaces (ribbon-expand Phase 1)", () => {
     });
   });
 
-  it("opens PreviousRxSection in a popover from the meds trigger", async () => {
+  it("lists active chart medications in the meds popover", async () => {
+    mockRibbonData.activeMeds = [
+      { id: "m1", name: "Atorvastatin", detail: "10 mg" },
+      { id: "m2", name: "Telmisartan", detail: "40 mg" },
+    ];
     mockRibbonData.activeMedsCount = 2;
     renderRibbon();
 
@@ -270,7 +279,9 @@ describe("PatientRibbon expand surfaces (ribbon-expand Phase 1)", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("ribbon-meds-popover")).toBeInTheDocument();
-      expect(screen.getByTestId("mock-previous-rx-section")).toBeInTheDocument();
+      expect(screen.getByTestId("ribbon-meds-list")).toBeInTheDocument();
+      expect(screen.getByText("Atorvastatin")).toBeInTheDocument();
+      expect(screen.getByText("Telmisartan")).toBeInTheDocument();
     });
   });
 

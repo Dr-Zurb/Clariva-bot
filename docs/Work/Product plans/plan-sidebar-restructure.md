@@ -162,7 +162,7 @@ Tick the column you want for each row. This table mirrors the per-item details b
 
 | ID | Item | Promote? (Y/N) | Notes |
 |----|------|----------------|-------|
-| S4.1 | Real `Insights` content (KPIs / mini-charts / source mix) | [ ] | A separate plan once a doctor asks. v1 is just the URL stake. |
+| S4.1 | Real `Insights` content (KPIs / mini-charts / source mix) | [x — Promoted 2026-07-21] | Deferral overridden; a doctor asked. Promoted to [`../Daily-plans/July 2026/21-07-2026/insights-v1/plan-insights-v1-batch.md`](../Daily-plans/July%202026/21-07-2026/insights-v1/plan-insights-v1-batch.md). |
 | S4.2 | Reroute "back to list" links from `/dashboard/appointments` → `/dashboard/opd-today` | [ ] | Worth doing; out of scope here so we don't smear two refactors together. |
 | S4.3 | Rename `service_staff_review_requests` table + `/api/v1/service-staff-reviews` endpoint to match the UI | [ ] | DL-10 forbids it. Pure cosmetic value; the column / endpoint name is internal. |
 | S4.4 | Sidebar bottom slot — show doctor name + practice name (Notion-style) | [ ] | See S-Q3. Easy follow-up if we miss the visual breathing room. |
