@@ -25,7 +25,7 @@ function categoricalSelectValue(
   fields: RxFormFields,
   key: CategoricalVitalKey,
 ): string {
-  const value = (fields as Record<string, unknown>)[key];
+  const value = (fields as unknown as Record<string, unknown>)[key];
   if (value == null || value === "") return "";
   return String(value);
 }
