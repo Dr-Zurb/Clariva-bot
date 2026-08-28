@@ -54,11 +54,12 @@ export default function DataDeletionPage() {
           </p>
           <p>
             The clinical portions of your medical record (appointments,
-            prescriptions, consultation transcripts) are retained under the
-            medical-record retention obligations of the Digital Personal Data
-            Protection Act 2023 and GDPR Article 9. Your doctor continues to
-            have access to those records for clinical follow-up; the records
-            themselves are not deleted.
+            prescriptions, consultation notes and transcripts) are retained
+            because your doctor is required to keep clinical records. Your doctor
+            continues to have access to those records for clinical follow-up; the
+            records themselves are not deleted. If you want those records removed,
+            that is a decision for the practice that holds them, and you should
+            contact them directly.
           </p>
         </section>
 
@@ -77,17 +78,21 @@ export default function DataDeletionPage() {
               process it.
             </li>
             <li>
-              <strong className="text-foreground">Via email:</strong> Contact the
-              healthcare practice you booked with and ask them to forward your
-              deletion request to us. Include your name, phone number, and/or
-              the Instagram handle you used so we can identify your records.
+              <strong className="text-foreground">Via email:</strong> Write to{" "}
+              <a
+                href="mailto:founder@haloaid.com"
+                className="font-medium text-primary underline-offset-4 hover:underline"
+              >
+                founder@haloaid.com
+              </a>{" "}
+              with the subject &quot;Data Deletion Request&quot;. Include the
+              identifiers you used — name, phone number, and/or the Instagram
+              handle — so we can find your records.
             </li>
             <li>
-              <strong className="text-foreground">Via our contact:</strong> Email
-              the contact address listed in our Meta app settings (Basic Settings
-              → Contact email) with the subject &quot;Data Deletion Request&quot;
-              and include the identifiers you used (name, phone, Instagram
-              handle).
+              <strong className="text-foreground">Via your practice:</strong>{" "}
+              Contact the healthcare practice you booked with and ask them to
+              action or forward your deletion request.
             </li>
           </ol>
         </section>
