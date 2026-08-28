@@ -21,6 +21,15 @@ export interface CategoricalVitalSelectProps {
   inlineLabelClassName?: string;
 }
 
+function categoricalSelectValue(
+  fields: RxFormFields,
+  key: CategoricalVitalKey,
+): string {
+  const value = (fields as Record<string, unknown>)[key];
+  if (value == null || value === "") return "";
+  return String(value);
+}
+
 const INLINE_CONTEXT_LABELS: Partial<Record<CategoricalVitalKey, string>> = {
   vitalsO2DeliveryMethod: "On",
   vitalsSpo2Device: "Device",
@@ -56,11 +65,11 @@ export function CategoricalVitalSelect({
         </label>
         <select
           id={vitalKey}
-          value={state.fields[vitalKey] ?? ""}
+          value={categoricalSelectValue(state.fields, vitalKey)}
           onChange={(e) =>
             setField(
-              vitalKey,
-              (e.target.value || null) as RxFormFields[typeof vitalKey],
+              vitalKey as keyof RxFormFields,
+              (e.target.value || null) as RxFormFields[keyof RxFormFields],
             )
           }
           className={cn(
@@ -91,11 +100,11 @@ export function CategoricalVitalSelect({
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
         <select
           id={vitalKey}
-          value={state.fields[vitalKey] ?? ""}
+          value={categoricalSelectValue(state.fields, vitalKey)}
           onChange={(e) =>
             setField(
-              vitalKey,
-              (e.target.value || null) as RxFormFields[typeof vitalKey],
+              vitalKey as keyof RxFormFields,
+              (e.target.value || null) as RxFormFields[keyof RxFormFields],
             )
           }
           className={cn(RX_FIELD_INPUT_CLASS, "mt-0 h-7 min-w-0 max-w-full flex-1 py-1 text-xs")}
