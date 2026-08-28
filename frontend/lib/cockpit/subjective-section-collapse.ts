@@ -15,7 +15,7 @@ export function resolveSectionOpenState(
   stored: Readonly<SubjectiveSectionCollapseMap>,
   defaultsById: Readonly<Record<SubjectiveSectionId, boolean>>,
 ): Record<SubjectiveSectionId, boolean> {
-  const resolved: Record<SubjectiveSectionId, boolean> = {};
+  const resolved = {} as Record<SubjectiveSectionId, boolean>;
 
   for (const id of Object.keys(defaultsById) as SubjectiveSectionId[]) {
     const defaultOpen = defaultsById[id]!;

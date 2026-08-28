@@ -150,7 +150,7 @@ function buildSubjectiveSectionCollapseDefaults(
     catalog.past_surgical = hasPastSurgicalHistoryStructuredContent(pastSurgicalHistoryStructured);
   }
 
-  const result: Record<SubjectiveSectionId, boolean> = {};
+  const result = {} as Record<SubjectiveSectionId, boolean>;
   for (const id of sectionOrder) {
     if (!isStaticSubjectiveSectionId(id)) continue;
     const defaultOpen = catalog[id];
@@ -266,8 +266,8 @@ export function SubjectiveSection({
   const collapseControlled = collapseHydrated || Boolean(token);
 
   const effectiveOpenById = useMemo((): Record<SubjectiveSectionId, boolean> => {
-    if (!collapseControlled) return {};
-    const merged: Record<SubjectiveSectionId, boolean> = {};
+    if (!collapseControlled) return {} as Record<SubjectiveSectionId, boolean>;
+    const merged = {} as Record<SubjectiveSectionId, boolean>;
     for (const [id, defaultOpen] of Object.entries(defaultsById)) {
       merged[id as SubjectiveSectionId] = openById[id as SubjectiveSectionId] ?? defaultOpen;
     }
@@ -275,9 +275,9 @@ export function SubjectiveSection({
   }, [collapseControlled, defaultsById, openById]);
 
   const displayOpenById = useMemo((): Record<SubjectiveSectionId, boolean> => {
-    if (!collapseControlled) return {};
+    if (!collapseControlled) return {} as Record<SubjectiveSectionId, boolean>;
     if (!collapseHydrated) {
-      const collapsed: Record<SubjectiveSectionId, boolean> = {};
+      const collapsed = {} as Record<SubjectiveSectionId, boolean>;
       for (const id of Object.keys(defaultsById) as SubjectiveSectionId[]) {
         collapsed[id] = false;
       }
