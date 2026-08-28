@@ -186,10 +186,14 @@ import {
 } from "@/lib/cockpit/vital-notes";
 import type {
   VitalsAvpu,
+  VitalsGlucoseDevice,
   VitalsGlucoseTiming,
+  VitalsHrSource,
   VitalsO2DeliveryMethod,
   VitalsPulseRhythm,
   VitalsPupilReactivity,
+  VitalsSpo2Device,
+  VitalsTempDevice,
   VitalsTempSite,
 } from "@/lib/cockpit/categorical-vitals-schema";
 import type {
@@ -320,12 +324,16 @@ export interface RxFormFields {
   vitalsFetalHeartRateBpm: number | null;
   vitalsFundalHeightCm: number | null;
   vitalsO2DeliveryMethod: VitalsO2DeliveryMethod | null;
+  vitalsSpo2Device: VitalsSpo2Device | null;
   vitalsGlucoseTiming: VitalsGlucoseTiming | null;
+  vitalsGlucoseDevice: VitalsGlucoseDevice | null;
   vitalsPupilReactivityLeft: VitalsPupilReactivity | null;
   vitalsPupilReactivityRight: VitalsPupilReactivity | null;
   vitalsAvpu: VitalsAvpu | null;
   vitalsPulseRhythm: VitalsPulseRhythm | null;
+  vitalsHrSource: VitalsHrSource | null;
   vitalsTempSite: VitalsTempSite | null;
+  vitalsTempDevice: VitalsTempDevice | null;
 
   examinationFindings: string;
   /**
