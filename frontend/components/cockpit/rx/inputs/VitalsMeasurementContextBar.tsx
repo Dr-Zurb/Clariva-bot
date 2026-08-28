@@ -42,7 +42,7 @@ function ContextSelect<T extends string>({
 }
 
 /** Visit-level who / where — applies to all vitals unless overridden per reading. */
-export function VitalsMeasurementContextBar(): JSX.Element {
+export function VitalsMeasurementContextBar(): JSX.Element | null {
   const { state, setField } = useRxForm();
   const context = state.fields.vitalsMeasurementContext;
   const measuredBy = context.measuredBy;
