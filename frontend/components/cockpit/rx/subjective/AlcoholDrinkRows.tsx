@@ -87,7 +87,7 @@ function frequencyUnitChangePatch(
     patch.frequency = 7;
   } else if (nextUnit === "month" && drink.frequency == null) {
     patch.frequency = 1;
-  } else if (drink.frequency === 1 && freqUnit === "day" && nextUnit !== "day") {
+  } else if (drink.frequency === 1 && freqUnit === "day") {
     patch.frequency = undefined;
   }
   return patch;
