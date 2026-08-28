@@ -200,7 +200,7 @@ export function DiagnosisRowsList({
 
   // asmt-07: gated AI ICD-11 resolver — fires only on the free-text (no catalog
   // match) path. Suggestion-only; the typed text is kept if declined (ASMT-D3).
-  const [aiStatus, setAiStatus] = useState<DiagnosisAiStatus>("idle");
+  const [aiStatus, setAiStatus] = useState<DiagnosisAiStatus | "idle">("idle");
   const [aiSuggestions, setAiSuggestions] = useState<DiagnosisResolveSuggestion[]>([]);
   const [aiTypedText, setAiTypedText] = useState("");
   const aiAbortRef = useRef<AbortController | null>(null);
