@@ -597,7 +597,7 @@ function CompactDrinkCard({
           </optgroup>
         </select>
 
-        {needsFrequencyCount && freqUnit !== "day" && (
+        {needsFrequencyCount && (
           <>
             <input
               type="number"

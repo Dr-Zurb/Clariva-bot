@@ -416,7 +416,7 @@ function CaffeineItemCard({
           </optgroup>
         </select>
 
-        {needsFrequencyCount && item.frequencyUnit !== "day" && (
+        {needsFrequencyCount && (
           <>
             <input
               type="number"
