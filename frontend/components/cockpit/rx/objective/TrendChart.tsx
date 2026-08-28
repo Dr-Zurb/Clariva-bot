@@ -126,7 +126,9 @@ function TrendChartTooltip({
 }
 
 function yAxisLabel(lines: TrendChartLine[], axisId: TrendChartYAxisId): string {
-  const units = [...new Set(lines.filter((l) => (l.yAxisId ?? "left") === axisId).map((l) => l.unit))];
+  const units = Array.from(
+    new Set(lines.filter((l) => (l.yAxisId ?? "left") === axisId).map((l) => l.unit)),
+  );
   return units.join(" · ");
 }
 
