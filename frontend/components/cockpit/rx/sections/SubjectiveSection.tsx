@@ -204,7 +204,9 @@ export function SubjectiveSection({
   const lastPersistedHiddenRef = useRef<string | null>(null);
   const hasHydratedCollapseRef = useRef(false);
   const hasHydratedHiddenRef = useRef(false);
-  const [openById, setOpenById] = useState<Record<SubjectiveSectionId, boolean>>({});
+  const [openById, setOpenById] = useState<Record<SubjectiveSectionId, boolean>>(
+    {} as Record<SubjectiveSectionId, boolean>,
+  );
   const [hiddenIds, setHiddenIds] = useState<SubjectiveSectionHiddenSet>(
     () => shell?.subjectiveSectionHidden ?? [],
   );
