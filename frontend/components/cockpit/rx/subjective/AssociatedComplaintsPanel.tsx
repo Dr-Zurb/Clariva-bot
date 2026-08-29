@@ -1,6 +1,13 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type DragEvent } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type DragEvent,
+  type SetStateAction,
+} from "react";
 import {
   scrollComplaintCardIntoView,
   scrollParentComplaintCardIntoView,
@@ -28,7 +35,7 @@ export interface AssociatedSymptomsPanelProps {
   suggestionChips: string[];
   associatedComplaints: Complaint[];
   activeChildId: string | null;
-  setActiveChildId: (id: string | null) => void;
+  setActiveChildId: Dispatch<SetStateAction<string | null>>;
   disabled?: boolean;
   token?: string;
   onAddChild: (payload: ComplaintCapturePayload) => void;
