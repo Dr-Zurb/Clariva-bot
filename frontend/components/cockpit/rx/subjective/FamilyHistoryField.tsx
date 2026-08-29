@@ -92,7 +92,7 @@ export type FamilyHistoryConditionCommitPayload =
   | { kind: "custom"; text: string };
 
 function buildConditionComboboxRows(
-  filteredDefs: typeof FAMILY_HISTORY_CONDITION_CATALOG,
+  filteredDefs: (typeof FAMILY_HISTORY_CONDITION_CATALOG)[number][],
   query: string,
 ): ComboboxRow[] {
   const trimmed = query.trim();

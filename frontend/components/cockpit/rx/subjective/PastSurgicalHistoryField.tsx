@@ -67,7 +67,7 @@ type CommitPayload =
   | { kind: "custom"; text: string };
 
 function buildComboboxRows(
-  filteredDefs: typeof PAST_SURGICAL_PROCEDURE_CATALOG,
+  filteredDefs: (typeof PAST_SURGICAL_PROCEDURE_CATALOG)[number][],
   query: string,
 ): ComboboxRow[] {
   const trimmed = query.trim();
