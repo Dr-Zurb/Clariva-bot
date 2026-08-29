@@ -104,6 +104,34 @@ interface AuditRowPayload {
   patient_response:   PatientEscalationOutcome | null;
   requested_at:       string;
   responded_at:       string | null;
+  grant_expires_at?:  string | null;
+  grant_extended_at?: string | null;
+  initiated_by?:      "doctor" | "patient" | null;
+}
+
+/**
+ * rec-25 — an offer arrives as an already-answered INSERT. Asking the
+ * patient to consent to their own request is theatre. Also refuse a
+ * patient-initiated row that somehow landed pending.
+ */
+export function shouldOpenConsentModal(row: {
+  patient_response: PatientEscalationOutcome | null;
+  initiated_by?: "doctor" | "patient" | null;
+}): boolean {
+  if (row.initiated_by === "patient") return false;
+  return row.patient_response === null;
+}
+
+/**
+ * Mount-probe: GET derived state only becomes a modal stub when a
+ * doctor request is pending. An offer derives as
+ * `locked: already_recording_video`.
+ */
+export function pendingStubFromEscalationState(
+  state: VideoEscalationStateData,
+): Pick<PendingConsentRequest, "requestId" | "expiresAt"> | null {
+  if (state.kind !== "requesting") return null;
+  return { requestId: state.requestId, expiresAt: state.expiresAt };
 }
 
 /**
@@ -130,10 +158,7 @@ function toPendingFromRow(row: AuditRowPayload): PendingConsentRequest {
 function toPendingFromState(
   state: VideoEscalationStateData,
 ): Pick<PendingConsentRequest, "requestId" | "expiresAt"> | null {
-  if (state.kind === "requesting") {
-    return { requestId: state.requestId, expiresAt: state.expiresAt };
-  }
-  return null;
+  return pendingStubFromEscalationState(state);
 }
 
 export function usePatientVideoConsentRequest(
@@ -172,13 +197,14 @@ export function usePatientVideoConsentRequest(
       const client = createClient();
       const { data, error } = await client
         .from("video_escalation_audit")
-        .select("id, session_id, reason, preset_reason_code, patient_response, requested_at, responded_at")
+        .select("id, session_id, reason, preset_reason_code, patient_response, requested_at, responded_at, grant_expires_at, grant_extended_at, initiated_by")
         .eq("id", stub.requestId)
         .maybeSingle();
       if (error || !data) {
         // Row not yet visible to this session (RLS race or Realtime
         // propagation lag). Surface a placeholder so the modal can still
-        // open; the INSERT event will enrich it within 1s.
+        // open; the INSERT event will enrich it within 1s. Offers never
+        // derive as `requesting`, so this path is doctor-request only.
         setPending({
           requestId:        stub.requestId,
           expiresAt:        stub.expiresAt,
@@ -187,8 +213,7 @@ export function usePatientVideoConsentRequest(
         });
         return;
       }
-      if (data.patient_response) {
-        // Already resolved between state lookup + row read. No-op.
+      if (!shouldOpenConsentModal(data as AuditRowPayload)) {
         setPending(null);
         return;
       }
@@ -228,7 +253,7 @@ export function usePatientVideoConsentRequest(
         (payload) => {
           const row = payload.new as AuditRowPayload | undefined;
           if (!row) return;
-          if (row.patient_response !== null) return;
+          if (!shouldOpenConsentModal(row)) return;
           setPending(toPendingFromRow(row));
         },
       )

@@ -13,6 +13,19 @@ vi.mock("@/hooks/useMediaQuery", () => ({
   useMediaQuery: vi.fn(() => true),
 }));
 
+vi.mock("@/lib/patient-profile/v3/useCockpitLayoutPresets", () => ({
+  MAX_SAVED_LAYOUTS: 5,
+  useCockpitLayoutPresets: () => ({
+    presets: [],
+    isLoading: false,
+    canSaveMore: true,
+    savePreset: vi.fn(),
+    deletePresetById: vi.fn(),
+    renamePresetById: vi.fn(),
+    refetch: vi.fn(),
+  }),
+}));
+
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import CockpitV3Shell from "../CockpitV3Shell";
 
@@ -88,6 +101,17 @@ describe("CockpitV3Shell", () => {
     expect(screen.queryByTestId("cockpit-v3-palette")).not.toBeInTheDocument();
     expect(document.querySelector("[data-testid='p2-cockpit-v3-dnd-context']")).toBeNull();
   });
+
+  it("renders consultSurfaceHost as a child (portal host for Consult)", () => {
+    render(
+      <CockpitV3Shell
+        panes={makePanes(["body"])}
+        storageKey="shell-chrome-host"
+        consultSurfaceHost={<div data-testid="consult-surface-host-prop" />}
+      />,
+    );
+    expect(screen.getByTestId("consult-surface-host-prop")).toBeInTheDocument();
+  });
 });
 
 describe("CockpitV3Shell forbidden imports (P0-DL-4)", () => {
@@ -109,4 +133,17 @@ describe("CockpitV3Shell forbidden imports (P0-DL-4)", () => {
       }
     });
   }
+
+  it("keeps consultSurfaceHost inside CallStageChromeProvider", () => {
+    const source = fs.readFileSync(
+      path.join(v3Dir, "CockpitV3Shell.tsx"),
+      "utf8",
+    );
+    const providerOpen = source.indexOf("<CallStageChromeProvider");
+    const host = source.indexOf("{consultSurfaceHost}");
+    const providerClose = source.indexOf("</CallStageChromeProvider>");
+    expect(providerOpen).toBeGreaterThan(-1);
+    expect(host).toBeGreaterThan(providerOpen);
+    expect(host).toBeLessThan(providerClose);
+  });
 });

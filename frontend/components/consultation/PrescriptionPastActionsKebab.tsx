@@ -64,9 +64,10 @@ export default function PrescriptionPastActionsKebab({
   const [busyAction, setBusyAction] = useState<
     "resend" | "regenerate" | "copy" | null
   >(null);
-  const [toast, setToast] = useState<{ kind: ToastKind; message: string } | null>(
-    null,
-  );
+  const [toast, setToast] = useState<{
+    kind: ToastKind;
+    message: string;
+  } | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
 
@@ -181,7 +182,7 @@ export default function PrescriptionPastActionsKebab({
             ? "Sent to patient (email + DM)"
             : parts.length === 1
               ? `Sent to patient (${parts[0]} only)`
-              : "Sent to patient",
+              : "Sent to patient"
         );
         onResendSuccess?.();
       } else {
@@ -190,7 +191,7 @@ export default function PrescriptionPastActionsKebab({
           "error",
           reason === "no_patient_link"
             ? "Patient has no linked email or DM channel"
-            : "Resend failed — please try again",
+            : "Resend failed — please try again"
         );
       }
     } catch (err) {
@@ -232,11 +233,7 @@ export default function PrescriptionPastActionsKebab({
         onClick={() => setOpen((v) => !v)}
         className="rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
       >
-        {isBusy ? (
-          <SpinnerIcon />
-        ) : (
-          <KebabIcon />
-        )}
+        {isBusy ? <SpinnerIcon /> : <KebabIcon />}
       </button>
 
       {open && !isBusy && (
@@ -255,12 +252,9 @@ export default function PrescriptionPastActionsKebab({
               hint="Re-fires DM + email"
             />
             <MenuItem
-              onClick={() => {
-                setOpen(false);
-                setConfirm("regenerate");
-              }}
+              disabled
               label="Regenerate PDF"
-              hint="Use after editing letterhead"
+              hint="Sent prescriptions keep their original letterhead"
             />
             <MenuItem
               onClick={handleCopyShareLink}
@@ -307,17 +301,20 @@ function MenuItem({
   label,
   hint,
   onClick,
+  disabled,
 }: {
   label: string;
   hint: string;
-  onClick: () => void;
+  onClick?: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       role="menuitem"
-      onClick={onClick}
-      className="block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 focus:bg-gray-50 focus:outline-none"
+      disabled={disabled}
+      onClick={disabled ? undefined : onClick}
+      className="block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 focus:bg-gray-50 focus:outline-none disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent"
     >
       <span className="block font-medium">{label}</span>
       <span className="mt-0.5 block text-xs text-gray-500">{hint}</span>
@@ -353,8 +350,7 @@ function ConfirmModal({
     return () => document.removeEventListener("keydown", onKey);
   }, [onCancel]);
 
-  const title =
-    kind === "resend" ? "Resend prescription?" : "Regenerate PDF?";
+  const title = kind === "resend" ? "Resend prescription?" : "Regenerate PDF?";
   const body =
     kind === "resend"
       ? "We'll re-send the prescription via DM and email. The patient will receive a new notification."

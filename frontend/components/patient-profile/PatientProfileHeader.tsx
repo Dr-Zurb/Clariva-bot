@@ -36,7 +36,6 @@ import { useSearchParams } from "next/navigation";
 import { SplitStartButton } from "@/components/patient-profile/SplitStartButton";
 import {
   Check,
-  CheckCircle,
   Copy,
   MessageSquare,
   Mic,
@@ -251,6 +250,8 @@ export interface CockpitHeaderProps {
    * wrap_up CTA to prevent duplicate requests.
    */
   finishBusy?: boolean;
+  /** Whether an in-clinic "Start visit" check-in is in flight. */
+  startBusy?: boolean;
   /**
    * ISO datetime of the next scheduled slot. Forwarded to RunningBehindBadge.
    * Badge is hidden when absent.
@@ -277,7 +278,8 @@ export default function CockpitHeader({
   onCancelAppointment,
   onMarkNoShow,
   onFinishVisit,
-  finishBusy,
+  finishBusy: _finishBusy,
+  startBusy,
   nextSlotAt,
 }: CockpitHeaderProps) {
   const [visitDetailsOpen, setVisitDetailsOpen] = useState(false);
@@ -387,36 +389,54 @@ export default function CockpitHeader({
   let primaryCta: React.ReactNode = null;
 
   if (state === "ready") {
-    const startOptions = [
-      {
-        value: "text" as const,
-        label: "Text",
-        icon: <MessageSquare className="h-3.5 w-3.5" aria-hidden />,
-        disabled: !hasPatientPhone,
-        disabledReason: "Patient phone required for text consult",
-        booked: bookedModality === "text",
-      },
-      {
-        value: "voice" as const,
-        label: "Voice",
-        icon: <Mic className="h-3.5 w-3.5" aria-hidden />,
-        booked: bookedModality === "voice",
-      },
-      {
-        value: "video" as const,
-        label: "Video",
-        icon: <Video className="h-3.5 w-3.5" aria-hidden />,
-        booked: bookedModality === "video",
-      },
-    ];
-    primaryCta = (
-      <SplitStartButton
-        primary={bookedModality}
-        options={startOptions}
-        onAction={onStartConsult}
-        primaryIcon={<ModalityIcon modality={bookedModality} />}
-      />
-    );
+    if (bookedModality === "in_clinic") {
+      primaryCta = (
+        <Button
+          type="button"
+          variant="default"
+          size="sm"
+          onClick={handlePrimaryClick}
+          disabled={startBusy}
+          className="gap-1.5"
+        >
+          {startBusy && (
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          )}
+          {startBusy ? "Starting…" : (cta?.label ?? "Start visit")}
+        </Button>
+      );
+    } else {
+      const startOptions = [
+        {
+          value: "text" as const,
+          label: "Text",
+          icon: <MessageSquare className="h-3.5 w-3.5" aria-hidden />,
+          disabled: !hasPatientPhone,
+          disabledReason: "Patient phone required for text consult",
+          booked: bookedModality === "text",
+        },
+        {
+          value: "voice" as const,
+          label: "Voice",
+          icon: <Mic className="h-3.5 w-3.5" aria-hidden />,
+          booked: bookedModality === "voice",
+        },
+        {
+          value: "video" as const,
+          label: "Video",
+          icon: <Video className="h-3.5 w-3.5" aria-hidden />,
+          booked: bookedModality === "video",
+        },
+      ];
+      primaryCta = (
+        <SplitStartButton
+          primary={bookedModality}
+          options={startOptions}
+          onAction={onStartConsult}
+          primaryIcon={<ModalityIcon modality={bookedModality} />}
+        />
+      );
+    }
   } else if (state === "lobby") {
     primaryCta = (
       <Button
@@ -434,24 +454,9 @@ export default function CockpitHeader({
         {cta!.label}
       </Button>
     );
-  } else if (state === "live") {
-    // mark-no-show for text/in_clinic moves to the kebab menu (cs-02)
+  } else if (state === "live" || state === "wrap_up") {
+    // Finish lives on the footer Done button.
     primaryCta = null;
-  } else if (state === "wrap_up") {
-    primaryCta = (
-      <Button
-        type="button"
-        variant="default"
-        size="sm"
-        onClick={handlePrimaryClick}
-        disabled={finishBusy}
-        className="gap-1.5"
-      >
-        <CheckCircle className="h-3.5 w-3.5" aria-hidden />
-        {/* wrap_up ⇒ primaryCtaFor is always non-null */}
-        {finishBusy ? "Finishing…" : cta!.label}
-      </Button>
-    );
   } else if (state === "ended") {
     // cp-04: ended state shows no primary action in the header — Completed badge only.
     // Show a subdued "Completed" status pill; the NextPatientCountdown in the

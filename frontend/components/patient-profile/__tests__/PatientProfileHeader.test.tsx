@@ -296,8 +296,8 @@ describe("CockpitHeader snapshots", () => {
     expect(container).toMatchSnapshot();
   });
 
-  it("renders wrap_up state", () => {
-    const container = renderHeader(
+  it("renders wrap_up state without a header finish button", () => {
+    renderHeader(
       "wrap_up",
       {
         patient_age: 55,
@@ -315,7 +315,10 @@ describe("CockpitHeader snapshots", () => {
       } as any,
       { finishBusy: false },
     );
-    expect(container).toMatchSnapshot();
+    expect(screen.getByRole("heading", { name: /ravi sharma/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /done with patient/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders ended state — no primary CTA, shows Completed badge", () => {
@@ -527,5 +530,44 @@ describe("CockpitHeader · BackLink (nav-back-01)", () => {
     renderHeader("ready");
     const link = screen.getByRole("link", { name: "Back to Patient profile" });
     expect(link).toHaveAttribute("href", "/dashboard/patients-v2/pat-1");
+  });
+});
+
+describe("in-clinic visit CTAs", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("ready × in_clinic shows Start visit and does not offer tele modalities", () => {
+    renderHeader("ready", { consultation_type: "in_clinic" });
+    expect(
+      screen.getByRole("button", { name: /start visit/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /choose option/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("ready × in_clinic Start visit calls onStartConsult('in_clinic')", () => {
+    renderHeader("ready", { consultation_type: "in_clinic" });
+    fireEvent.click(screen.getByRole("button", { name: /start visit/i }));
+    expect(DEFAULT_HANDLERS.onStartConsult).toHaveBeenCalledWith("in_clinic");
+  });
+
+  it("live × in_clinic has no header finish button", () => {
+    renderHeader("live", { consultation_type: "in_clinic" });
+    expect(
+      screen.queryByRole("button", { name: /done with patient/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /start visit/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("wrap_up has no header finish button", () => {
+    renderHeader("wrap_up", { consultation_type: "video" });
+    expect(
+      screen.queryByRole("button", { name: /done with patient/i }),
+    ).not.toBeInTheDocument();
   });
 });

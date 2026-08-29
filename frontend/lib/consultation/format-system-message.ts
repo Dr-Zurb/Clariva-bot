@@ -82,6 +82,14 @@ function formatMuteChangedBody(
 
 ): string {
 
+  const collapseCount =
+    metadata && typeof metadata.mute_collapse_count === "number"
+      ? metadata.mute_collapse_count
+      : null;
+  if (collapseCount != null && collapseCount > 1) {
+    return `Microphone toggled ${collapseCount} times`;
+  }
+
   const meta = asMuteChangedMetadata(metadata);
 
   if (!meta || typeof meta.muted !== "boolean") {

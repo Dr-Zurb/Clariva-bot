@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   connect,
   createLocalAudioTrack,
@@ -15,6 +22,11 @@ import EndCallConfirmModal from "./EndCallConfirmModal";
 import VoicePostCallSplash from "./VoicePostCallSplash";
 import CallPostCallSummary from "./CallPostCallSummary";
 import {
+  earlierCallStartedAt,
+  resolveCallStartedAt,
+  storeCallStartedAt,
+} from "@/lib/call/call-started-at";
+import {
   classifyDisconnect,
   type DisconnectReason,
 } from "@/lib/voice/classify-disconnect";
@@ -24,7 +36,9 @@ import CallerCardHeader, {
 } from "./CallerCardHeader";
 import MicMeterBar from "./MicMeterBar";
 import RecordingPausedIndicator from "./RecordingPausedIndicator";
-import RecordingControls from "./RecordingControls";
+import RecordingControls, {
+  OPEN_RECORDING_PAUSE_EVENT,
+} from "./RecordingControls";
 import { createClient } from "@/lib/supabase/client";
 import { useRecordingState } from "@/hooks/useRecordingState";
 import {
@@ -37,9 +51,8 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Check, MoreHorizontal } from "lucide-react";
+import { Check, MessageSquare, MoreHorizontal } from "lucide-react";
 import {
-  pauseRecording,
   postConsultationHoldChanged,
   postConsultationMuteChanged,
   postConsultationVoiceQuality,
@@ -262,8 +275,9 @@ export interface VoiceConsultRoomProps {
    */
   localActorName?: string;
   /**
-   * Plan 07 readonly replay — session bounds for a static duration
-   * label. Ignored unless `mode === 'readonly'`.
+   * Session start for the live duration chip (and Plan 07 readonly
+   * static duration with `sessionEndedAt`). Typically
+   * `consultation_sessions.actual_started_at` — survives page refresh.
    */
   sessionStartedAt?: string | Date | null;
   sessionEndedAt?: string | Date | null;
@@ -278,6 +292,18 @@ export interface VoiceConsultRoomProps {
    * `live` state only.
    */
   onMarkNoShow?: () => void | Promise<void>;
+  /**
+   * Host-mounted modality-change launcher (triggerless). Kept outside
+   * the More ▾ dropdown so opening options / modals isn't torn down
+   * when the menu closes.
+   */
+  modalityChangeSlot?: ReactNode;
+  /** Opens the host modality-change options panel from the More ▾ item. */
+  onRequestChangeModality?: () => void;
+  /** Disables the More ▾ "Change modality" row (pending / exhausted). */
+  modalityChangeDisabled?: boolean;
+  /** Tooltip / title when the More ▾ row is disabled. */
+  modalityChangeDisabledReason?: string;
   /**
    * task-voice-C5 — parent set when restoring from sessionStorage crash-
    * recovery cache. Renders a brief "Reconnected — welcome back" banner.
@@ -343,6 +369,10 @@ export default function VoiceConsultRoom({
   onRemoteLeft,
   mode = "default",
   onMarkNoShow,
+  modalityChangeSlot,
+  onRequestChangeModality,
+  modalityChangeDisabled = false,
+  modalityChangeDisabledReason,
   practiceName,
   counterpartyName,
   counterpartyAvatarUrl,
@@ -353,6 +383,12 @@ export default function VoiceConsultRoom({
 }: VoiceConsultRoomProps) {
   const isCockpit = mode === "cockpit";
   const isReadonly = mode === "readonly";
+  const durationSessionId =
+    companion?.sessionId ?? recordingSessionId ?? null;
+  const sessionStartedAtRef = useRef(sessionStartedAt);
+  sessionStartedAtRef.current = sessionStartedAt;
+  const durationSessionIdRef = useRef(durationSessionId);
+  durationSessionIdRef.current = durationSessionId;
   const isDesktopLayout = useMediaQuery("(min-width: 768px)", true);
   const audioOutput = useAudioOutputDevice();
   const noiseSuppression = useNoiseSuppressionPreference();
@@ -372,10 +408,31 @@ export default function VoiceConsultRoom({
   const [endConfirmOpen, setEndConfirmOpen] = useState(false);
   const [showPatientPendingBanner, setShowPatientPendingBanner] =
     useState(false);
-  // voice-A1 — anchor for the live mm:ss timer. Set once on the first
-  // Twilio `room.connected`; never reset across reconnect / hold so the
-  // chip keeps counting (matches VideoRoom + useCallDuration doctrine).
-  const [connectedAt, setConnectedAt] = useState<Date | null>(null);
+  // voice-A1 — live mm:ss anchor. Prefer server / sessionStorage so a
+  // refresh continues from session start (matches VideoRoom).
+  const [connectedAt, setConnectedAt] = useState<Date | null>(() =>
+    isReadonly
+      ? null
+      : resolveCallStartedAt({
+          sessionStartedAt,
+          sessionId: durationSessionId,
+        }),
+  );
+
+  useEffect(() => {
+    if (isReadonly) return;
+    const resolved = resolveCallStartedAt({
+      sessionStartedAt,
+      sessionId: durationSessionId,
+    });
+    if (!resolved) return;
+    setConnectedAt((prev) => {
+      const next = earlierCallStartedAt(prev, resolved);
+      if (next) storeCallStartedAt(durationSessionId, next);
+      return next;
+    });
+  }, [isReadonly, sessionStartedAt, durationSessionId]);
+
   const staticDurationSeconds = isReadonly
     ? resolveStaticSessionDuration(sessionStartedAt, sessionEndedAt)
     : "";
@@ -639,6 +696,7 @@ export default function VoiceConsultRoom({
   const {
     state: recordingState,
     applyIncomingMessage: applyRecordingSystemMessage,
+    refresh: refreshRecordingState,
   } = useRecordingState({
     sessionId: recordingSessionId ?? null,
     token:     recordingToken ?? null,
@@ -837,7 +895,16 @@ export default function VoiceConsultRoom({
         setRoomState(room);
         setLocalParticipant(room.localParticipant);
         setStatus("connected");
-        setConnectedAt((prev) => prev ?? new Date());
+        setConnectedAt((prev) => {
+          if (prev) return prev;
+          const next =
+            resolveCallStartedAt({
+              sessionStartedAt: sessionStartedAtRef.current,
+              sessionId: durationSessionIdRef.current,
+            }) ?? new Date();
+          storeCallStartedAt(durationSessionIdRef.current, next);
+          return next;
+        });
 
         if (room.participants.size > 0) {
           room.participants.forEach(onRemoteParticipantConnected);
@@ -1499,26 +1566,29 @@ export default function VoiceConsultRoom({
         {/* task-cockpit-fix-3: In cockpit mode, show compact recording pill instead of full controls.
             Full RecordingControls accessible via More ▾. */}
         {recordingEnabled && recordingSessionId && recordingToken ? (
-          isCockpit ? (
-            recordingState.loading ? null : recordingState.paused ? (
-              <div className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">
-                <span aria-hidden>⏸</span>
-                <span>Paused</span>
-              </div>
-            ) : (
-              <div className="inline-flex items-center gap-1 rounded-full border border-red-300 bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-700">
-                <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-red-600" aria-hidden />
-                <span>REC</span>
-              </div>
-            )
-          ) : (
+          <>
+            {isCockpit ? (
+              recordingState.loading ? null : recordingState.paused ? (
+                <div className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                  <span aria-hidden>⏸</span>
+                  <span>Paused</span>
+                </div>
+              ) : (
+                <div className="inline-flex items-center gap-1 rounded-full border border-red-300 bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-700">
+                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-red-600" aria-hidden />
+                  <span>REC</span>
+                </div>
+              )
+            ) : null}
             <RecordingControls
               sessionId={recordingSessionId}
               token={recordingToken}
               currentUserRole={role === "patient" ? "patient" : "doctor"}
               state={recordingState}
+              hideTrigger={isCockpit}
+              onRefresh={() => void refreshRecordingState()}
             />
-          )
+          </>
         ) : null}
         
         {!isReadonly ? (
@@ -1655,6 +1725,26 @@ export default function VoiceConsultRoom({
         >
           End call
         </button>
+        {isCockpit ? (
+          <button
+            type="button"
+            data-testid="in-call-chat-toggle"
+            onClick={() => setShowInCallChat((v) => !v)}
+            aria-pressed={showInCallChat}
+            aria-label={
+              showInCallChat ? "Hide in-call chat" : "Show in-call chat"
+            }
+            title={showInCallChat ? "Hide in-call chat" : "Show in-call chat"}
+            className={
+              "inline-flex items-center justify-center rounded-md border p-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 " +
+              (showInCallChat
+                ? "border-blue-300 bg-blue-50 text-blue-800"
+                : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50")
+            }
+          >
+            <MessageSquare className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        ) : null}
         {/* task-cockpit-fix-3: More ▾ overflow menu in cockpit mode */}
         {isCockpit && (
           <DropdownMenu>
@@ -1668,6 +1758,23 @@ export default function VoiceConsultRoom({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-52">
+              {onRequestChangeModality ? (
+                <>
+                  <DropdownMenuItem
+                    disabled={modalityChangeDisabled}
+                    title={
+                      modalityChangeDisabled
+                        ? modalityChangeDisabledReason ||
+                          "Modality change unavailable"
+                        : "Change modality"
+                    }
+                    onClick={() => onRequestChangeModality()}
+                  >
+                    Change modality
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              ) : null}
               {/* Recording */}
               {recordingEnabled && recordingSessionId && recordingToken &&
               role !== "patient" ? (
@@ -1689,21 +1796,9 @@ export default function VoiceConsultRoom({
                     ) : (
                       <DropdownMenuItem
                         onClick={() => {
-                          const reason = window.prompt(
-                            "Reason for pausing recording (5–200 characters):",
+                          window.dispatchEvent(
+                            new Event(OPEN_RECORDING_PAUSE_EVENT),
                           );
-                          if (
-                            reason &&
-                            reason.trim().length >= 5 &&
-                            recordingToken &&
-                            recordingSessionId
-                          ) {
-                            pauseRecording(
-                              recordingToken,
-                              recordingSessionId,
-                              reason.trim(),
-                            ).catch(() => {});
-                          }
                         }}
                       >
                         Pause recording
@@ -1712,16 +1807,6 @@ export default function VoiceConsultRoom({
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
               ) : null}
-              <DropdownMenuSeparator />
-              {/* Show in-call chat */}
-              <DropdownMenuItem onClick={() => setShowInCallChat((v) => !v)}>
-                {showInCallChat ? (
-                  <Check className="mr-2 h-4 w-4" />
-                ) : (
-                  <span className="mr-2 inline-block w-4" />
-                )}
-                Show in-call chat
-              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}
@@ -1737,6 +1822,9 @@ export default function VoiceConsultRoom({
     <RecordingPausedIndicator
       state={recordingState}
       currentUserRole={role === "patient" ? "patient" : "doctor"}
+      sessionId={recordingSessionId}
+      token={recordingToken}
+      onRefresh={() => void refreshRecordingState()}
       className="mx-3 mt-2 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800"
     />
   ) : null;
@@ -1904,6 +1992,9 @@ export default function VoiceConsultRoom({
       data-has-companion={companion ? "true" : "false"}
     >
       {header}
+      {modalityChangeSlot ? (
+        <div data-testid="modality-change-slot">{modalityChangeSlot}</div>
+      ) : null}
       {recordingBanner}
       {pendingBanner}
       {showRejoinBanner && tabPresence.status !== "kicked" ? (

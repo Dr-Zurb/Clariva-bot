@@ -4,7 +4,17 @@
  * AllergiesSection — patient_allergies with capture bar + collapsible cards (Subjective tab).
  */
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { RX_FIELD_INPUT_CLASS } from "@/components/cockpit/rx/sections/field-styles";
 import { AllergyCard, type AllergyCardPatch } from "@/components/ehr/chart/AllergyCard";
 import { ChartCatalogCombobox } from "@/components/ehr/chart/ChartCatalogCombobox";
@@ -12,7 +22,6 @@ import { ChartQuickAddChips } from "@/components/ehr/chart/ChartQuickAddChips";
 import {
   archivePatientAllergy,
   createPatientAllergy,
-  listPatientAllergies,
   updatePatientAllergy,
   updatePatientAllergySectionNotes,
 } from "@/lib/api";
@@ -35,6 +44,12 @@ import {
   type SectionTemplateControlsBinding,
 } from "@/components/cockpit/rx/subjective/SubjectiveSectionTemplateButton";
 import { ALLERGIES_CAPTURE_SECTION_ID } from "@/lib/chart/chart-allergy-scroll";
+import { usePatientAllergiesQuery } from "@/hooks/queries/usePatientAllergiesQuery";
+import {
+  patientAllergiesQueryOptions,
+  type PatientAllergiesQueryData,
+} from "@/lib/query/options";
+import { queryKeys } from "@/lib/query/keys";
 import type {
   PatientAllergy,
   PatientAllergySeverity,
@@ -52,7 +67,7 @@ interface AllergiesSectionProps {
   onCountChange?: (count: number) => void;
   onSectionNotesChange?: (notes: string | null) => void;
   /** Header-mounted template controls read live bindings from this ref. */
-  templateControlsRef?: RefObject<SectionTemplateControlsBinding | null>;
+  templateControlsRef?: MutableRefObject<SectionTemplateControlsBinding | null>;
   onTemplateControlsReadyChange?: (ready: boolean) => void;
 }
 
@@ -81,10 +96,18 @@ export default function AllergiesSection({
   onTemplateControlsReadyChange,
 }: AllergiesSectionProps) {
   const inputId = useId();
+  const queryClient = useQueryClient();
+  const allergiesKey = queryKeys.patient(patientId).allergies();
   const { stableKey, linkRealId } = useStableMedKey();
-  const [rows, setRows] = useState<PatientAllergy[] | null>(null);
-  const [sectionNotes, setSectionNotes] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const allergiesQuery = usePatientAllergiesQuery(token, patientId);
+  const rows = allergiesQuery.data?.allergies ?? null;
+  const sectionNotes = allergiesQuery.data?.sectionNotes ?? null;
+  const loadError =
+    allergiesQuery.isError && !allergiesQuery.data
+      ? allergiesQuery.error instanceof Error
+        ? allergiesQuery.error.message
+        : "Failed to load allergies"
+      : null;
   const [actionError, setActionError] = useState<string | null>(null);
   const [templateNotice, setTemplateNotice] = useState<string | null>(null);
   const [focusCombobox, setFocusCombobox] = useState(false);
@@ -100,47 +123,56 @@ export default function AllergiesSection({
     [onSectionNotesChange],
   );
 
+  const setAllergiesData = useCallback(
+    (
+      update:
+        | PatientAllergiesQueryData
+        | null
+        | ((prev: PatientAllergiesQueryData | null) => PatientAllergiesQueryData | null),
+    ) => {
+      queryClient.setQueryData<PatientAllergiesQueryData | null>(allergiesKey, (prev) =>
+        typeof update === "function" ? update(prev ?? null) : update,
+      );
+    },
+    [allergiesKey, queryClient],
+  );
+
+  const setRows = useCallback(
+    (
+      update:
+        | PatientAllergy[]
+        | null
+        | ((prev: PatientAllergy[] | null) => PatientAllergy[] | null),
+    ) => {
+      setAllergiesData((prev) => {
+        const prevRows = prev?.allergies ?? null;
+        const nextRows = typeof update === "function" ? update(prevRows) : update;
+        if (nextRows === null) return prev;
+        return {
+          allergies: nextRows,
+          sectionNotes: prev?.sectionNotes ?? null,
+        };
+      });
+    },
+    [setAllergiesData],
+  );
+
   const reloadAllergies = useCallback(async () => {
-    try {
-      const res = await listPatientAllergies(token, patientId);
-      const data = res.data.allergies ?? [];
-      const notes = res.data.sectionNotes ?? null;
-      setRows(data);
-      setSectionNotes(notes);
-      onCountChange?.(data.length);
-      reportSectionNotes(notes);
-    } catch {
-      // Keep the current optimistic state if the resync fails.
-    }
-  }, [onCountChange, patientId, reportSectionNotes, token]);
+    await queryClient.invalidateQueries({
+      queryKey: patientAllergiesQueryOptions(token, patientId).queryKey,
+    });
+  }, [patientId, queryClient, token]);
 
   useEffect(() => {
     if (addOpen) setFocusCombobox(true);
   }, [addOpen]);
 
+  // Keep zone header preview in sync (including cache hits on remount).
   useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        const res = await listPatientAllergies(token, patientId);
-        if (cancelled) return;
-        const data = res.data.allergies ?? [];
-        const notes = res.data.sectionNotes ?? null;
-        setRows(data);
-        setSectionNotes(notes);
-        onCountChange?.(data.length);
-        reportSectionNotes(notes);
-      } catch (err) {
-        if (cancelled) return;
-        setLoadError(err instanceof Error ? err.message : "Failed to load allergies");
-        setRows([]);
-      }
-    }
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [token, patientId, onCountChange, reportSectionNotes]);
+    if (!allergiesQuery.data) return;
+    onCountChange?.(allergiesQuery.data.allergies.length);
+    reportSectionNotes(allergiesQuery.data.sectionNotes);
+  }, [allergiesQuery.data, onCountChange, reportSectionNotes]);
 
   useEffect(() => {
     return () => {
@@ -167,7 +199,10 @@ export default function AllergiesSection({
     (notes: string) => {
       if (readonly) return;
       const normalized = notes.trim() ? notes : null;
-      setSectionNotes(normalized);
+      setAllergiesData((prev) => ({
+        allergies: prev?.allergies ?? [],
+        sectionNotes: normalized,
+      }));
       reportSectionNotes(normalized);
       pendingSectionNotesRef.current = notes;
       if (sectionNotesTimerRef.current) clearTimeout(sectionNotesTimerRef.current);
@@ -176,7 +211,7 @@ export default function AllergiesSection({
         void flushSectionNotesSave();
       }, FIELD_SAVE_DEBOUNCE_MS);
     },
-    [flushSectionNotesSave, readonly, reportSectionNotes],
+    [flushSectionNotesSave, readonly, reportSectionNotes, setAllergiesData],
   );
 
   const catalogOptions = useMemo(() => {
@@ -281,7 +316,7 @@ export default function AllergiesSection({
         return "error";
       }
     },
-    [linkRealId, onAddOpenChange, onCountChange, patientId, readonly, rows, token],
+    [linkRealId, onAddOpenChange, onCountChange, patientId, readonly, rows, setRows, token],
   );
 
   const applyTemplate = useAllergyTemplateApply({
@@ -301,7 +336,9 @@ export default function AllergiesSection({
 
   const controlsReady = !readonly && rows !== null && !!templateControlsRef;
 
-  useEffect(() => {
+  // useLayoutEffect so zone header template icons enable before paint when the
+  // allergies query cache already has rows (tab-switch remount).
+  useLayoutEffect(() => {
     if (!templateControlsRef) return;
     if (controlsReady) {
       templateControlsRef.current = {
@@ -314,7 +351,7 @@ export default function AllergiesSection({
     }
   }, [applyTemplate, buildTemplateSave, controlsReady, templateControlsRef]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     onTemplateControlsReadyChange?.(controlsReady);
     return () => onTemplateControlsReadyChange?.(false);
   }, [controlsReady, onTemplateControlsReadyChange]);

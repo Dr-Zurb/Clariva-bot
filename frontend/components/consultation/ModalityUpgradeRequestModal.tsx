@@ -253,7 +253,7 @@ export default function ModalityUpgradeRequestModal(
       );
       return;
     }
-    const displayName = "Clariva";
+    const displayName = "Halo Aid";
     const description = `Upgrade consult to ${capitalize(targetModality)}`;
     void openCheckout({
       keyId,

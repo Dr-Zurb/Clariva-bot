@@ -2,76 +2,55 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  pauseVideoRecording,
+  resumeVideoRecording,
   revokeVideoRecording,
   VideoEscalationError,
 } from "@/lib/api/recording-escalation";
+import { markGrantHaltConfirm } from "@/lib/rec24-halt-marks";
 
 /**
- * Plan 08 · Task 42 · Decision 10 LOCKED.
+ * Plan 08 · Task 42 + rec-24.
  *
- * Overlay pill that both parties see during a mid-consult video
- * recording. Shape: `🔴 Recording video` on a semi-opaque red
- * background with a 2s pulse animation on the dot. Patient variant
- * adds a trailing `·` + `[Stop]` link that opens a small confirmation
- * tooltip (NOT a modal — task-42 Notes #1 resolution).
- *
- * The component is intentionally side-effect-light: the network call
- * lives in `revokeVideoRecording`, and the Realtime-driven hide
- * happens via the parent (`<VideoRoom>`) re-rendering with
- * `isActive={false}` once the `video_escalation_audit.revoked_at`
- * UPDATE propagates through `useVideoEscalationState`. Keeping the
- * subscription out of this component avoids a race between the local
- * tooltip dismiss and the Realtime-driven fade-out.
- *
- * ## Accessibility
- *
- *   - `role="status"` + `aria-live="polite"` on the container so the
- *     indicator's appearance / disappearance is announced to screen
- *     readers without interrupting.
- *   - Patient `[Stop]` is a `<button>` with a descriptive
- *     `aria-label` that clarifies audio continues.
- *   - Keyboard focus: `[Stop]` is reachable via Tab; `Enter` / `Space`
- *     triggers the tooltip; the tooltip's CTAs are focusable in
- *     order; `Esc` closes the tooltip.
- *   - Pulse animation honours `prefers-reduced-motion` via the
- *     Tailwind `motion-reduce:animate-none` variant (falls back to a
- *     solid red dot).
- *
- * ## Positioning (by parent)
- *
- * The parent `<VideoRoom>` mounts the indicator inside the video
- * canvas area. The component is layout-agnostic — it renders a pill
- * with no fixed positioning. The parent is responsible for the
- * `absolute top-4 right-4` (desktop) / top-right of the `[Video]`
- * tab (mobile) framing. See task-42 acceptance "Positioning".
- *
- * @see docs/Work/Daily-plans/April 2026/19-04-2026/Tasks/task-42-video-recording-indicator-and-patient-revoke.md
+ * Overlay pill both parties see during a mid-consult video grant.
+ * Patient gets persistently visible Pause (single tap) and Stop
+ * (confirm tooltip). Halt of local video is a callback from VideoRoom
+ * — this component stays side-effect-light (JSDoc of the original
+ * task-42 file: do not reach into the room).
  */
 
 export interface VideoRecordingIndicatorProps {
-  /** When true, the indicator is visible. Driven by the parent's
-   *  escalation-state hook (`state.kind === 'locked' && reason ===
-   *  'already_recording_video'`). False fades the indicator out. */
   isActive:          boolean;
-  /** Doctor view shows the indicator only. Patient view adds the
-   *  `[Stop]` affordance + confirmation tooltip. */
   viewerRole:        "doctor" | "patient";
-  /** `consultation_sessions.id`. Required for the patient revoke
-   *  call; the doctor view ignores it. */
   sessionId?:        string | null;
-  /** Supabase auth JWT for the patient revoke call. Required when
-   *  `viewerRole === 'patient'`. */
   token?:            string | null;
-  /** Optional Tailwind overrides on the outer wrapper. The parent
-   *  typically passes `absolute top-4 right-4 z-20` or similar. */
   className?:        string;
+  grantSecondsRemaining?: number | null;
+  grantIsSettling?: boolean;
+  /** rec-26. Parent surface owns the status words; this is controls only. */
+  hideStatusText?: boolean;
+  /** rec-24. Grant is paused; still active. */
+  videoPaused?: boolean;
+  /**
+   * rec-24 / REC4-D7. Parent-owned camera gate after halt.
+   * `"stopping"` / `"confirming"` — never "stopped" until the server
+   * confirms audio-only.
+   */
+  cameraGate?: "stopping" | "confirming" | null;
+  /** Called synchronously before the pause/stop network call. */
+  onHaltLocalVideo?: (intent: "pause" | "stop") => void;
+  /** Called only after resume 200. */
+  onRestoreLocalVideo?: () => void;
+  onCameraGateChange?: (gate: "stopping" | "confirming" | null) => void;
 }
 
 type Stage =
-  | "idle"           // tooltip closed
-  | "confirming"    // tooltip open, awaiting patient CTA
-  | "submitting"    // patient hit "Yes, stop" — awaiting server
-  | "error";        // server returned an error — inline message shown
+  | "idle"
+  | "confirming"
+  | "submitting_stop"
+  | "submitting_pause"
+  | "submitting_resume"
+  | "error";
 
 export default function VideoRecordingIndicator({
   isActive,
@@ -79,15 +58,20 @@ export default function VideoRecordingIndicator({
   sessionId,
   token,
   className,
+  grantSecondsRemaining = null,
+  grantIsSettling = false,
+  hideStatusText = false,
+  videoPaused = false,
+  cameraGate = null,
+  onHaltLocalVideo,
+  onRestoreLocalVideo,
+  onCameraGateChange,
 }: VideoRecordingIndicatorProps): JSX.Element | null {
   const [stage, setStage] = useState<Stage>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const stopButtonRef = useRef<HTMLButtonElement | null>(null);
+  const pauseButtonRef = useRef<HTMLButtonElement | null>(null);
 
-  // When the indicator is dismissed externally (isActive flips to
-  // false via the Realtime-driven re-render), collapse the tooltip
-  // so a stale "confirming" stage doesn't flash after a successful
-  // revoke. Also resets any error message.
   useEffect(() => {
     if (!isActive) {
       setStage("idle");
@@ -95,16 +79,12 @@ export default function VideoRecordingIndicator({
     }
   }, [isActive]);
 
-  // Close the tooltip on Esc from anywhere in the document while it's
-  // open. Task-42 acceptance "Interactions — Esc = cancel".
   useEffect(() => {
     if (stage !== "confirming" && stage !== "error") return;
     function onKey(e: KeyboardEvent): void {
       if (e.key === "Escape") {
         setStage("idle");
         setErrorMessage(null);
-        // Return focus to the [Stop] button so keyboard users don't
-        // lose their place in the tab order.
         stopButtonRef.current?.focus();
       }
     }
@@ -112,13 +92,17 @@ export default function VideoRecordingIndicator({
     return () => window.removeEventListener("keydown", onKey);
   }, [stage]);
 
-  const canRevoke = viewerRole === "patient" && Boolean(sessionId && token);
+  const canControl = viewerRole === "patient" && Boolean(sessionId && token);
+  const busy =
+    stage === "submitting_stop" ||
+    stage === "submitting_pause" ||
+    stage === "submitting_resume";
 
   const handleStopTap = useCallback(() => {
-    if (!canRevoke) return;
+    if (!canControl || busy) return;
     setStage("confirming");
     setErrorMessage(null);
-  }, [canRevoke]);
+  }, [busy, canControl]);
 
   const handleCancel = useCallback(() => {
     setStage("idle");
@@ -126,24 +110,17 @@ export default function VideoRecordingIndicator({
     stopButtonRef.current?.focus();
   }, []);
 
-  const handleConfirm = useCallback(async () => {
+  const handleConfirmStop = useCallback(async () => {
     if (!sessionId || !token) return;
-    setStage("submitting");
+    markGrantHaltConfirm("stop");
+    onHaltLocalVideo?.("stop");
+    onCameraGateChange?.("stopping");
+    setStage("submitting_stop");
     setErrorMessage(null);
     try {
       await revokeVideoRecording(token, sessionId);
-      // Success: collapse the tooltip. The indicator itself will
-      // fade out once the parent's `useVideoEscalationState`
-      // observes the `video_escalation_audit.revoked_at` UPDATE via
-      // Realtime (~500ms typical). We don't self-hide here because
-      // the indicator is driven by `isActive`, and hiding it
-      // optimistically would cause a flicker if Realtime reported
-      // a different terminal state.
       setStage("idle");
     } catch (err) {
-      // Task-42 acceptance "On promise reject: show inline error
-      // 'Couldn't stop recording. Try again.' + re-enable [Yes, stop].
-      // No auto-retry."
       const friendly =
         err instanceof VideoEscalationError
           ? err.message
@@ -151,19 +128,74 @@ export default function VideoRecordingIndicator({
             ? err.message
             : "Couldn't stop recording. Please try again.";
       setErrorMessage(friendly);
+      onCameraGateChange?.("confirming");
       setStage("error");
     }
-  }, [sessionId, token]);
+  }, [onCameraGateChange, onHaltLocalVideo, sessionId, token]);
 
-  // --- Render ---
+  const handlePause = useCallback(async () => {
+    if (!sessionId || !token || busy) return;
+    markGrantHaltConfirm("pause");
+    onHaltLocalVideo?.("pause");
+    onCameraGateChange?.("confirming");
+    setStage("submitting_pause");
+    setErrorMessage(null);
+    try {
+      await pauseVideoRecording(token, sessionId);
+      onCameraGateChange?.(null);
+      setStage("idle");
+    } catch (err) {
+      const friendly =
+        err instanceof VideoEscalationError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Couldn't pause video recording. Please try again.";
+      setErrorMessage(friendly);
+      setStage("idle");
+    }
+  }, [busy, onCameraGateChange, onHaltLocalVideo, sessionId, token]);
 
-  // `isActive` drives both the fade and the presence of the patient
-  // CTA surface. When false we still render (empty div) briefly so
-  // the fade-out animation plays, but the non-active state is
-  // unmounted below the fade to keep the DOM clean.
+  const handleResume = useCallback(async () => {
+    if (!sessionId || !token || busy) return;
+    setStage("submitting_resume");
+    setErrorMessage(null);
+    try {
+      await resumeVideoRecording(token, sessionId);
+      onRestoreLocalVideo?.();
+      onCameraGateChange?.(null);
+      setStage("idle");
+    } catch (err) {
+      const friendly =
+        err instanceof VideoEscalationError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Couldn't resume video recording. Please try again.";
+      setErrorMessage(friendly);
+      setStage("idle");
+    }
+  }, [busy, onCameraGateChange, onRestoreLocalVideo, sessionId, token]);
+
   if (!isActive && stage === "idle") return null;
 
   const reduceMotionSafe = "motion-reduce:animate-none";
+
+  const statusLabel = (() => {
+    if (cameraGate === "stopping" || grantIsSettling) {
+      return "Stopping video…";
+    }
+    if (cameraGate === "confirming") {
+      return "Confirming…";
+    }
+    if (videoPaused) {
+      return "Video paused — you can resume";
+    }
+    if (grantSecondsRemaining !== null) {
+      return `Saving video · ${Math.max(0, grantSecondsRemaining)}s`;
+    }
+    return "Saving video";
+  })();
 
   return (
     <div
@@ -172,32 +204,76 @@ export default function VideoRecordingIndicator({
       aria-atomic="true"
       data-testid="video-recording-indicator"
       className={[
-        "pointer-events-none flex items-start justify-end",
+        "pointer-events-none flex flex-col items-end",
         className ?? "",
       ].join(" ")}
     >
       <div
         className={[
           "pointer-events-auto relative inline-flex items-center gap-2",
-          "rounded-full px-3 py-1.5 text-sm font-medium text-white shadow-md",
-          "bg-red-600/90 backdrop-blur-sm",
-          // Fade transition — 200ms in, 400ms out per task-42.
+          hideStatusText
+            ? "text-sm font-medium text-slate-800"
+            : [
+                "rounded-full px-3 py-1.5 text-sm font-medium text-white shadow-md",
+                videoPaused
+                  ? "bg-amber-600/90 backdrop-blur-sm"
+                  : "bg-red-600/90 backdrop-blur-sm",
+              ].join(" "),
           "transition-opacity duration-200 ease-out",
           isActive ? "opacity-100" : "opacity-0 duration-[400ms]",
         ].join(" ")}
       >
-        <span
-          aria-hidden="true"
-          className={[
-            "h-2.5 w-2.5 rounded-full bg-white",
-            "animate-pulse",
-            reduceMotionSafe,
-          ].join(" ")}
-        />
-        <span className="leading-snug">Recording video</span>
-
-        {viewerRole === "patient" && canRevoke ? (
+        {hideStatusText ? null : (
           <>
+            <span
+              aria-hidden="true"
+              className={[
+                "h-2.5 w-2.5 rounded-full bg-white",
+                videoPaused ? "" : "animate-pulse",
+                reduceMotionSafe,
+              ].join(" ")}
+            />
+            <span className="leading-snug">{statusLabel}</span>
+          </>
+        )}
+
+        {viewerRole === "patient" && canControl ? (
+          <>
+            <span aria-hidden="true" className="opacity-60">
+              ·
+            </span>
+            {videoPaused ? (
+              <button
+                type="button"
+                onClick={() => void handleResume()}
+                disabled={busy}
+                aria-label="Resume video saving; audio will continue"
+                className={[
+                  "underline underline-offset-2 disabled:opacity-70",
+                  hideStatusText
+                    ? "decoration-slate-500 hover:decoration-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-600"
+                    : "decoration-white/80 hover:decoration-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white",
+                ].join(" ")}
+              >
+                {stage === "submitting_resume" ? "Resuming…" : "Resume"}
+              </button>
+            ) : (
+              <button
+                ref={pauseButtonRef}
+                type="button"
+                onClick={() => void handlePause()}
+                disabled={busy}
+                aria-label="Pause video saving; you can resume without being asked again. Audio will continue."
+                className={[
+                  "underline underline-offset-2 disabled:opacity-70",
+                  hideStatusText
+                    ? "decoration-slate-500 hover:decoration-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-600"
+                    : "decoration-white/80 hover:decoration-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white",
+                ].join(" ")}
+              >
+                {stage === "submitting_pause" ? "Pausing…" : "Pause — you can resume"}
+              </button>
+            )}
             <span aria-hidden="true" className="opacity-60">
               ·
             </span>
@@ -206,54 +282,44 @@ export default function VideoRecordingIndicator({
               type="button"
               onClick={handleStopTap}
               aria-label="Stop video recording; audio will continue"
-              aria-expanded={stage !== "idle"}
+              aria-expanded={stage === "confirming" || stage === "error" || stage === "submitting_stop"}
               aria-haspopup="dialog"
               className={[
-                "underline underline-offset-2 decoration-white/80",
-                "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white",
-                "hover:decoration-white",
-                "disabled:opacity-70",
+                "underline underline-offset-2 disabled:opacity-70",
+                hideStatusText
+                  ? "decoration-slate-500 hover:decoration-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-600"
+                  : "decoration-white/80 hover:decoration-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white",
               ].join(" ")}
-              disabled={stage === "submitting"}
+              disabled={busy}
             >
               Stop
             </button>
 
-            {(stage === "confirming" || stage === "submitting" || stage === "error") ? (
+            {(stage === "confirming" || stage === "submitting_stop" || stage === "error") ? (
               <RevokeConfirmTooltip
                 stage={stage}
                 errorMessage={errorMessage}
                 onCancel={handleCancel}
-                onConfirm={handleConfirm}
+                onConfirm={handleConfirmStop}
               />
             ) : null}
           </>
         ) : null}
       </div>
+      {errorMessage && stage === "idle" ? (
+        <p
+          role="alert"
+          className="pointer-events-auto mt-1 max-w-xs text-right text-xs text-red-700"
+        >
+          {errorMessage}
+        </p>
+      ) : null}
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Confirmation tooltip — small popover anchored to the [Stop] link.
-// ---------------------------------------------------------------------------
-//
-// Deliberately inlined in the same file (task-42 acceptance allows
-// either inline OR a sibling component). Inline keeps the coordination
-// between the outer button's `aria-expanded` and the inner dialog
-// simple, and avoids a third top-level component for a 50-line
-// popover.
-//
-// ## Why not a full modal
-//
-// Task-42 Notes #1 resolution: a modal gates the patient behind
-// friction that implies "are you sure you really want to control your
-// own privacy?". The tooltip's small-confirm strikes the right balance
-// — prevents mis-tap without patronising. Copy explicitly calls out
-// that audio continues.
-
 interface RevokeConfirmTooltipProps {
-  stage:        Extract<Stage, "confirming" | "submitting" | "error">;
+  stage:        "confirming" | "submitting_stop" | "error";
   errorMessage: string | null;
   onCancel:     () => void;
   onConfirm:    () => void | Promise<void>;
@@ -268,28 +334,17 @@ function RevokeConfirmTooltip({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const confirmButtonRef = useRef<HTMLButtonElement | null>(null);
 
-  // Move focus into the tooltip on open so keyboard users can
-  // navigate without tabbing through the rest of the page first. We
-  // focus the primary action ([Yes, stop]) so Enter confirms.
   useEffect(() => {
     if (stage === "confirming") {
       confirmButtonRef.current?.focus();
     }
   }, [stage]);
 
-  // Tap-outside to cancel. Task-42 acceptance "Tap-outside = cancel".
-  // We register on mousedown + touchstart so the cancel fires before
-  // the target element's click — avoids a weird "tooltip closed but
-  // the outer element's click also ran" race.
   useEffect(() => {
     function onOutside(e: MouseEvent | TouchEvent): void {
       const target = e.target as Node | null;
       if (!containerRef.current || !target) return;
       if (!containerRef.current.contains(target)) {
-        // Only cancel when the tooltip is interactively open. A
-        // submitting state is mid-network-call; clicking outside
-        // during that split-second shouldn't cancel a server-side
-        // revoke.
         if (stage === "confirming" || stage === "error") {
           onCancel();
         }
@@ -303,7 +358,7 @@ function RevokeConfirmTooltip({
     };
   }, [stage, onCancel]);
 
-  const submitting = stage === "submitting";
+  const submitting = stage === "submitting_stop";
 
   const tooltipId = useMemo(
     () => `video-recording-revoke-tooltip-${Math.random().toString(36).slice(2, 10)}`,
@@ -318,10 +373,6 @@ function RevokeConfirmTooltip({
       aria-labelledby={`${tooltipId}-title`}
       aria-describedby={`${tooltipId}-body`}
       data-testid="video-recording-revoke-tooltip"
-      // The tooltip sits below the indicator (auto-flip up is a
-      // nice-to-have; v1 assumes the indicator is top-right so down
-      // has room). Pointer-events auto so clicks register even when
-      // the outer wrapper (indicator) is pointer-events-none.
       className={[
         "absolute left-1/2 top-full z-30 mt-2 w-64 -translate-x-1/2",
         "rounded-md border border-slate-200 bg-white p-3 text-left shadow-lg",
@@ -332,7 +383,8 @@ function RevokeConfirmTooltip({
         Stop video recording?
       </p>
       <p id={`${tooltipId}-body`} className="mt-1 text-slate-600">
-        Audio will continue.
+        Audio will continue. Your camera will turn off until you turn
+        it back on.
       </p>
       {errorMessage ? (
         <p

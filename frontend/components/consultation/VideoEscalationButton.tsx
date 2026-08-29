@@ -19,6 +19,7 @@ import {
 import {
   useVideoEscalationState,
   formatMinuteSecond,
+  videoEscalationRequestsLeftCopy,
 } from "@/hooks/useVideoEscalationState";
 
 /**
@@ -50,13 +51,14 @@ import {
  *                                         from Task 42 takes the real
  *                                         estate).
  *
- * ## Why free-text is required on EVERY preset
+ * ## Why the modal has no free-text note
  *
- * See task-40 Note #1 — the preset radios are a convenience for the common
- * shape, but the audit trail benefits from one sentence of clinical
- * specificity on every row. Enforced by `REASON_MIN` below; mirrored by
- * `video_escalation_audit.reason`'s `char_length BETWEEN 5 AND 200` CHECK
- * (Migration 070).
+ * rec-15 closed the same hole on pause: a doctor-typed sentence is PHI
+ * in a governance table. The patient still sees a reason — the server
+ * writes a canonical sentence for the chosen preset (Migration 070's
+ * 5..200 CHECK stays satisfied). REC4-D9 deferred *optional* free text
+ * because relaxing the column needs a migration; this path never writes
+ * client text.
  *
  * ## Why close-the-modal does NOT cancel the pending request
  *
@@ -67,14 +69,11 @@ import {
  * @see docs/Work/Daily-plans/April 2026/19-04-2026/Tasks/task-40-doctor-video-escalation-button-and-reason-modal.md
  */
 
-const REASON_MIN = 5;
-const REASON_MAX = 200;
-
 const PRESET_OPTIONS: Array<{ code: VideoEscalationPresetReason; label: string }> = [
   { code: "visible_symptom",    label: "Need to see a visible symptom"    },
   { code: "document_procedure", label: "Need to document a procedure"     },
   { code: "patient_request",    label: "Patient request"                  },
-  { code: "other",              label: "Other (elaborate)"                },
+  { code: "other",              label: "Other clinical reason"            },
 ];
 
 export interface VideoEscalationButtonProps {
@@ -131,8 +130,8 @@ export default function VideoEscalationButton({
     cooldownSecondsRemaining,
     waitingSecondsRemaining,
     markRequesting,
-    markCooldown,
     markLocked,
+    refresh,
   } = useVideoEscalationState({
     sessionId,
     token,
@@ -140,29 +139,24 @@ export default function VideoEscalationButton({
   });
 
   const [modalOpen,  setModalOpen]  = useState(false);
-  const [modalStage, setModalStage] = useState<"idle" | "requesting" | "declined" | "timedout">(
-    "idle",
-  );
-  const [preset,     setPreset]     = useState<VideoEscalationPresetReason>("other");
-  const [reason,     setReason]     = useState("");
-  const [reasonBlurred, setReasonBlurred] = useState(false);
+  const [modalStage, setModalStage] = useState<
+    "idle" | "requesting" | "declined" | "timedout" | "stopped"
+  >("idle");
+  const [preset,     setPreset]     = useState<VideoEscalationPresetReason | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const titleId      = useId();
-  const reasonFieldId = useId();
-  const reasonCounterId = useId();
-  const errorId      = useId();
   const waitingLiveId = useId();
 
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const dialogRef   = useRef<HTMLDivElement | null>(null);
 
-  // Focus the textarea when the modal opens in idle stage.
   useEffect(() => {
-    if (modalOpen && modalStage === "idle" && textareaRef.current) {
-      textareaRef.current.focus();
-    }
+    if (!modalOpen || modalStage !== "idle") return;
+    const first = dialogRef.current?.querySelector<HTMLInputElement>(
+      'input[type="radio"]',
+    );
+    first?.focus();
   }, [modalOpen, modalStage]);
 
   // --- Derived: state → modalStage autoroll when the Realtime event lands ---
@@ -180,9 +174,13 @@ export default function VideoEscalationButton({
       return;
     }
     if (state.kind === "cooldown") {
-      // decline OR timeout. We prefer the hook's `lastOutcome` as the
-      // source of truth since it was derived from the audit row.
-      setModalStage(state.lastOutcome === "timeout" ? "timedout" : "declined");
+      if (state.lastOutcome === "timeout") {
+        setModalStage("timedout");
+      } else if (state.lastOutcome === "stopped") {
+        setModalStage("stopped");
+      } else {
+        setModalStage("declined");
+      }
     }
   }, [state, modalOpen, modalStage]);
 
@@ -195,21 +193,7 @@ export default function VideoEscalationButton({
     currentUserRole === "patient" ||
     (state.kind === "locked" && state.reason === "already_recording_video");
 
-  // -------------------------------------------------------------------------
-  // Validation helpers
-  // -------------------------------------------------------------------------
-  const reasonTrimmed = reason.trim();
-  const reasonLength  = reasonTrimmed.length;
-  const reasonValid   = reasonLength >= REASON_MIN && reasonLength <= REASON_MAX;
-  const reasonError   = !reasonBlurred
-    ? null
-    : reasonLength === 0
-      ? `Please describe why video is needed (at least ${REASON_MIN} characters).`
-      : reasonLength < REASON_MIN
-        ? "A bit more detail, please (at least 5 characters)."
-        : reasonLength > REASON_MAX
-          ? `Please keep it under ${REASON_MAX} characters.`
-          : null;
+  const presetValid = preset !== null;
 
   // -------------------------------------------------------------------------
   // Button label + disabled state
@@ -226,9 +210,7 @@ export default function VideoEscalationButton({
   // Handlers
   // -------------------------------------------------------------------------
   const openModal = useCallback((): void => {
-    setReason("");
-    setPreset("other");
-    setReasonBlurred(false);
+    setPreset(null);
     setSubmitError(null);
     setSubmitting(false);
     setModalStage("idle");
@@ -247,7 +229,7 @@ export default function VideoEscalationButton({
     (event: KeyboardEvent<HTMLDivElement>): void => {
       if (event.key !== "Escape") return;
       // Esc closes during idle + terminal stages, NOT during the first
-      // submission attempt (submitting) — avoids losing the reason mid-POST.
+      // submission attempt (submitting) — avoids dropping the in-flight POST.
       if (submitting) {
         event.preventDefault();
         return;
@@ -259,7 +241,7 @@ export default function VideoEscalationButton({
   );
 
   const handleSubmit = useCallback(async (): Promise<void> => {
-    if (!reasonValid || submitting) return;
+    if (!preset || submitting) return;
     if (!token || !doctorId) {
       setSubmitError("Authentication expired. Please refresh the page.");
       return;
@@ -271,38 +253,21 @@ export default function VideoEscalationButton({
         sessionId,
         doctorId,
         presetReasonCode: preset,
-        reason:           reasonTrimmed,
       });
-      // Count the attempt on the local state machine. The server is the
-      // source of truth on `attemptsUsed`, but for optimistic sequencing
-      // we assume attempt #1 unless the hook already saw a prior row.
-      const priorAttempts: 0 | 1 =
-        state.kind === "cooldown" || (state.kind === "idle" && state.attemptsUsed === 1)
-          ? 1
-          : 0;
-      const attemptsUsed = (priorAttempts + 1) as 1 | 2;
+      const fallbackUsed: 1 | 2 =
+        state.kind === "idle" && state.attemptsUsed === 1 ? 2 : 1;
       markRequesting({
         requestId:    result.requestId,
         expiresAt:    result.expiresAt,
-        attemptsUsed,
+        attemptsUsed: result.attemptsUsed ?? fallbackUsed,
       });
       setModalStage("requesting");
     } catch (err) {
       if (err instanceof VideoEscalationError) {
         if (err.code === "RATE_LIMITED") {
-          // Server refused because we're already at max attempts or still
-          // cooling down. Flip local state to match + close the modal;
-          // the button will surface the cooldown countdown.
-          const availableAt = err.cooldownAvailableAt;
-          if (availableAt) {
-            markCooldown({
-              availableAt,
-              attemptsUsed: 2, // server said no more — treat as terminal
-              lastOutcome:  "decline",
-            });
-          } else {
-            markLocked("max_attempts");
-          }
+          // Don't guess `attemptsUsed` — a 30s stop debounce is also a
+          // 429, and stamping used=2 would lie (rec-23 §1.6).
+          await refresh();
           setModalOpen(false);
           return;
         }
@@ -322,12 +287,10 @@ export default function VideoEscalationButton({
     }
   }, [
     doctorId,
-    markCooldown,
     markLocked,
     markRequesting,
+    refresh,
     preset,
-    reasonTrimmed,
-    reasonValid,
     sessionId,
     state,
     submitting,
@@ -362,7 +325,7 @@ export default function VideoEscalationButton({
       {/* Decline/timeout cooldown caption under the button (helper text) */}
       {state.kind === "cooldown" ? (
         <p className="text-xs text-gray-500" aria-live="polite">
-          {state.attemptsUsed === 1 ? "1 request left this consult." : "No requests left this consult."}
+          {videoEscalationRequestsLeftCopy(state.attemptsUsed)}
         </p>
       ) : null}
 
@@ -385,7 +348,8 @@ export default function VideoEscalationButton({
                 </h2>
                 <p className="mb-4 text-sm text-gray-600">
                   The patient will be asked to consent before video is
-                  recorded. Tell them why you need to record video.
+                  recorded. Choose why you need video — they will see
+                  this reason.
                 </p>
 
                 <fieldset className="mb-4">
@@ -414,48 +378,6 @@ export default function VideoEscalationButton({
                   </div>
                 </fieldset>
 
-                <label
-                  htmlFor={reasonFieldId}
-                  className="mb-1 block text-sm font-medium text-gray-800"
-                >
-                  Clinical note (required)
-                </label>
-                <textarea
-                  id={reasonFieldId}
-                  ref={textareaRef}
-                  value={reason}
-                  onChange={(e) => {
-                    const next = e.target.value.slice(0, REASON_MAX);
-                    setReason(next);
-                    // Clear blur-driven errors while typing; they re-surface on blur.
-                    if (reasonBlurred) setReasonBlurred(false);
-                  }}
-                  onBlur={() => setReasonBlurred(true)}
-                  placeholder="e.g. Rash on left forearm, red border, ~2cm"
-                  maxLength={REASON_MAX}
-                  rows={4}
-                  aria-describedby={`${reasonCounterId} ${reasonError ? errorId : ""}`.trim()}
-                  aria-invalid={reasonError !== null}
-                  className="mb-1 w-full rounded-md border border-gray-300 p-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  data-testid="video-escalation-reason-textarea"
-                />
-                <div
-                  id={reasonCounterId}
-                  aria-live="polite"
-                  className={`mb-2 text-right text-xs ${
-                    reasonLength > REASON_MAX - 5
-                      ? "text-red-700"
-                      : "text-gray-500"
-                  }`}
-                >
-                  {reasonLength} / {REASON_MAX}
-                </div>
-
-                {reasonError ? (
-                  <p id={errorId} role="alert" className="mb-2 text-xs text-red-700">
-                    {reasonError}
-                  </p>
-                ) : null}
                 {submitError ? (
                   <p role="alert" className="mb-2 text-xs text-red-700">
                     {submitError}
@@ -479,7 +401,7 @@ export default function VideoEscalationButton({
                   <button
                     type="button"
                     onClick={() => void handleSubmit()}
-                    disabled={!reasonValid || submitting}
+                    disabled={!presetValid || submitting}
                     className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                     data-testid="video-escalation-modal-submit"
                   >
@@ -523,12 +445,14 @@ export default function VideoEscalationButton({
                   </button>
                 </div>
               </>
-            ) : modalStage === "declined" || modalStage === "timedout" ? (
+            ) : modalStage === "declined" || modalStage === "timedout" || modalStage === "stopped" ? (
               <>
                 <h2 id={titleId} className="mb-1 text-base font-semibold text-gray-900">
                   {modalStage === "declined"
                     ? "Patient declined video recording"
-                    : "Patient did not respond in time"}
+                    : modalStage === "timedout"
+                      ? "Patient did not respond in time"
+                      : "Video recording stopped"}
                 </h2>
                 {modalStage === "declined" ? (
                   <p className="mb-3 text-sm text-gray-600">
@@ -541,9 +465,11 @@ export default function VideoEscalationButton({
                     : "You can try again now."}
                 </p>
                 <p className="mb-4 text-xs text-gray-500">
-                  {state.kind === "cooldown" && state.attemptsUsed === 1
-                    ? "1 request left this consult."
-                    : "No requests left this consult."}
+                  {videoEscalationRequestsLeftCopy(
+                    state.kind === "cooldown" || state.kind === "idle"
+                      ? state.attemptsUsed
+                      : 0,
+                  )}
                 </p>
                 <div className="flex items-center justify-end">
                   <button
@@ -682,13 +608,10 @@ function useMemoButtonMeta({
 function remainingAttemptsCopy(
   state: ReturnType<typeof useVideoEscalationState>["state"],
 ): string {
-  if (state.kind === "cooldown") {
-    return state.attemptsUsed === 1
-      ? "You have 1 request left per consult."
-      : "No requests left per consult.";
-  }
-  if (state.kind === "idle" && state.attemptsUsed === 1) {
-    return "You have 1 request left per consult.";
+  if (state.kind === "cooldown" || state.kind === "idle") {
+    if (state.attemptsUsed <= 0) return "You have 2 requests per consult.";
+    if (state.attemptsUsed === 1) return "You have 1 request left per consult.";
+    return "No requests left per consult.";
   }
   return "You have 2 requests per consult.";
 }

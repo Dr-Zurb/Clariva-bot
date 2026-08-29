@@ -309,8 +309,8 @@ export function CockpitQueueRail({
           </div>
         )}
 
-        {/* View all — ghost link at the trailing edge */}
-        {!isLoading && totalCount > 0 && (
+        {/* View all — ghost link at the trailing edge (hidden mid-call). */}
+        {!isLoading && totalCount > 0 && state !== "live" && (
           <Link
             href={viewAllHref}
             className={cn(

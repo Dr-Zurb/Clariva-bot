@@ -8,11 +8,11 @@ import {
   ChevronsUpDown,
   MoreHorizontal,
 } from "lucide-react";
-import { PatientQuickPeek } from "@/components/patients-v2/list/PatientQuickPeek";
 import {
   PATIENTS_TABLE_COLUMNS,
   type CellContext,
 } from "@/components/patients-v2/list/PatientsTableColumns";
+import { prefetchVisiblePatientQuickPeeks } from "@/components/patients-v2/list/patientQuickPeekCache";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -21,14 +21,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
@@ -51,7 +45,6 @@ const SKELETON_ROWS = 10;
 export interface PatientsTableProps {
   filters: PatientListFilters;
   visibleColumns: PatientListColumnId[];
-  density: "compact" | "comfortable";
   selectedPatientIds: string[];
   onSelectionChange: (ids: string[]) => void;
   onSortChange: (sort: PatientListSortId | undefined) => void;
@@ -60,6 +53,10 @@ export interface PatientsTableProps {
   token: string;
   refreshKey?: number;
   onDataLoaded?: (rows: PatientSummary[]) => void;
+  /** Full roster rows when available — used to discover known tags. */
+  onRosterLoaded?: (rows: PatientSummary[]) => void;
+  onFilterByTag?: (tag: string) => void;
+  onRemoveTag?: (patientId: string, tag: string) => void;
 }
 
 function nextSortForColumn(
@@ -101,7 +98,6 @@ function sortIndicator(
 export function PatientsTable({
   filters,
   visibleColumns,
-  density,
   selectedPatientIds,
   onSelectionChange,
   onSortChange,
@@ -110,6 +106,9 @@ export function PatientsTable({
   token,
   refreshKey = 0,
   onDataLoaded,
+  onRosterLoaded,
+  onFilterByTag,
+  onRemoveTag,
 }: PatientsTableProps) {
   const [copyToast, setCopyToast] = useState<string | null>(null);
 
@@ -125,11 +124,17 @@ export function PatientsTable({
 
   const {
     data,
-    isLoading: loading,
+    isLoading,
+    isFetching,
+    isPlaceholderData,
     error: queryError,
     refetch,
+    rosterPatients,
   } = usePatientsListQuery(token, listFilters, refreshKey);
 
+  // Full skeleton only on cold load — keep rows while segment/page refetches.
+  const showSkeleton = isLoading && !data;
+  const showRefreshing = isFetching && Boolean(data);
   const rows = data?.patients ?? [];
   const total = data?.total ?? 0;
   const error = queryError
@@ -138,15 +143,46 @@ export function PatientsTable({
       : "Failed to load patients"
     : null;
 
+  const loadedIdsKey = (data?.patients ?? [])
+    .map((p) => `${p.id}:${(p.patient_tags ?? []).join(",")}:${p.patient_tag ?? ""}`)
+    .join("|");
   useEffect(() => {
-    if (data?.patients) onDataLoaded?.(data.patients);
-  }, [data?.patients, onDataLoaded]);
+    if (!data?.patients) return;
+    onDataLoaded?.(data.patients);
+    // Fingerprint by ids+tags — projected arrays are new references every recompute.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, [loadedIdsKey, onDataLoaded]);
+
+  const rosterKey = (rosterPatients ?? [])
+    .map((p) => `${p.id}:${(p.patient_tags ?? []).join(",")}:${p.patient_tag ?? ""}`)
+    .join("|");
+  useEffect(() => {
+    if (!rosterPatients?.length) return;
+    onRosterLoaded?.(rosterPatients);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, [rosterKey, onRosterLoaded]);
 
   useEffect(() => {
     if (!copyToast) return;
     const t = window.setTimeout(() => setCopyToast(null), 2000);
     return () => window.clearTimeout(t);
   }, [copyToast]);
+
+  // Warm hover peeks for on-screen rows after the list settles (idle if available).
+  const visiblePeekIdsKey = rows.map((p) => p.id).join("|");
+  useEffect(() => {
+    if (!token || rows.length === 0) return;
+    const ids = rows.map((p) => p.id);
+    const run = () => prefetchVisiblePatientQuickPeeks(token, ids);
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+      const idleId = window.requestIdleCallback(run, { timeout: 1200 });
+      return () => window.cancelIdleCallback(idleId);
+    }
+    const t = window.setTimeout(run, 200);
+    return () => window.clearTimeout(t);
+    // Fingerprint by ids — row array identity churns on refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, [token, visiblePeekIdsKey]);
 
   const activeColumns = useMemo(() => {
     return PATIENTS_TABLE_COLUMNS.filter((col) => {
@@ -159,12 +195,17 @@ export function PatientsTable({
   const cellCtx: CellContext = useMemo(
     () => ({
       showRiskPills,
+      token,
       onCopyMrn: (msg) => setCopyToast(msg),
+      onCopyPhone: (msg) => setCopyToast(msg),
+      onFilterByTag,
+      onRemoveTag,
     }),
-    [showRiskPills],
+    [showRiskPills, token, onFilterByTag, onRemoveTag],
   );
 
-  const rowPy = density === "compact" ? "py-1" : "py-3";
+  /** Single list density (compact) — no UI toggle. */
+  const rowPy = "py-1";
   const allSelected = rows.length > 0 && rows.every((r) => selectedPatientIds.includes(r.id));
   const someSelected =
     rows.some((r) => selectedPatientIds.includes(r.id)) && !allSelected;
@@ -193,7 +234,7 @@ export function PatientsTable({
   const start = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const end = Math.min(page * PAGE_SIZE, total);
   const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const hasActiveFilter = Boolean(filters.q || filters.segment);
+  const hasActiveFilter = Boolean(filters.q || filters.segment || filters.tag);
 
   const handleHeaderSort = (columnId: string, sortKey?: PatientListSortId) => {
     if (!sortKey) return;
@@ -202,40 +243,83 @@ export function PatientsTable({
 
   if (error) {
     return (
-      <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6 text-center">
-        <p className="text-sm text-destructive">Couldn&apos;t load patients. {error}</p>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="mt-3"
-          onClick={() => {
-            void refetch();
-          }}
-        >
-          Retry
-        </Button>
+      <div className="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-destructive/30 bg-destructive/5 p-8 text-center">
+        <div className="max-w-sm space-y-2">
+          <p className="text-sm font-medium text-destructive">
+            Couldn&apos;t load patients
+          </p>
+          <p className="text-sm text-muted-foreground">{error}</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-2"
+            onClick={() => {
+              void refetch();
+            }}
+          >
+            Retry
+          </Button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
       {copyToast ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-md bg-foreground px-4 py-2 text-sm text-background shadow-lg"
+        >
+          {copyToast}
+        </div>
+      ) : null}
+
+      {showRefreshing ? (
         <p
-          className="text-center text-xs text-muted-foreground"
+          className="shrink-0 text-center text-xs text-muted-foreground"
           role="status"
           aria-live="polite"
         >
-          {copyToast}
+          {isPlaceholderData ? "Updating list…" : "Refreshing…"}
         </p>
       ) : null}
 
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-10">
+      <div
+        className={cn(
+          "min-h-0 flex-1 overflow-auto rounded-lg border border-border/50 shadow-sm",
+          showRefreshing && "opacity-80",
+        )}
+      >
+        {!showSkeleton && rows.length === 0 ? (
+          <div className="flex min-h-[16rem] flex-col items-center justify-center rounded-lg border border-dashed border-border/60 bg-muted/10 p-12 text-center">
+            <p className="text-sm font-medium text-foreground">
+              {hasActiveFilter ? "No matching patients" : "No patients yet"}
+            </p>
+            <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+              {hasActiveFilter
+                ? "Try clearing search, worklist, or tag filters."
+                : "Patients appear here after their first registered visit."}
+            </p>
+            {hasActiveFilter && onClearFilters ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-4"
+                onClick={onClearFilters}
+              >
+                Clear filters
+              </Button>
+            ) : null}
+          </div>
+        ) : (
+        <table className="w-full caption-bottom text-sm">
+          <TableHeader className="[&_tr]:border-b">
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="sticky top-0 z-10 w-10 bg-muted/60 backdrop-blur">
                 <Checkbox
                   checked={allSelected ? true : someSelected ? "indeterminate" : false}
                   onCheckedChange={toggleAll}
@@ -243,7 +327,13 @@ export function PatientsTable({
                 />
               </TableHead>
               {activeColumns.map((col) => (
-                <TableHead key={col.id} className={col.headerClass}>
+                <TableHead
+                  key={col.id}
+                  className={cn(
+                    "sticky top-0 z-10 bg-muted/60 text-xs font-semibold uppercase tracking-wide text-muted-foreground backdrop-blur",
+                    col.headerClass,
+                  )}
+                >
                   {col.sortKey ? (
                     <button
                       type="button"
@@ -258,13 +348,13 @@ export function PatientsTable({
                   )}
                 </TableHead>
               ))}
-              <TableHead className="w-10">
+              <TableHead className="sticky top-0 z-10 w-10 bg-muted/60 backdrop-blur">
                 <span className="sr-only">Actions</span>
               </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {loading
+            {showSkeleton
               ? Array.from({ length: SKELETON_ROWS }).map((_, i) => (
                   <TableRow key={`sk-${i}`}>
                     <TableCell>
@@ -282,110 +372,82 @@ export function PatientsTable({
                 ))
               : null}
 
-            {!loading && rows.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={activeColumns.length + 2}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  {hasActiveFilter ? (
-                    <>
-                      No patients match the current filter.{" "}
-                      {onClearFilters ? (
-                        <button
-                          type="button"
-                          className="text-primary hover:underline"
-                          onClick={onClearFilters}
-                        >
-                          Clear filter
-                        </button>
-                      ) : (
-                        "Clear filter to see all."
-                      )}
-                    </>
-                  ) : (
-                    "No patients yet. Add one to get started."
-                  )}
-                </TableCell>
-              </TableRow>
-            ) : null}
 
-            {!loading &&
+            {!showSkeleton &&
               rows.map((patient) => (
-                <HoverCard key={patient.id} openDelay={400} closeDelay={100}>
-                  <HoverCardTrigger asChild>
-                    <TableRow
-                      data-state={
-                        selectedPatientIds.includes(patient.id) ? "selected" : undefined
-                      }
-                      className={cn(rowPy)}
-                      onKeyDown={(e) => {
-                        if (e.key === " " && e.currentTarget === e.target) {
-                          e.preventDefault();
-                        }
-                      }}
+                <TableRow
+                  key={patient.id}
+                  data-state={
+                    selectedPatientIds.includes(patient.id) ? "selected" : undefined
+                  }
+                  className={cn(rowPy)}
+                  onKeyDown={(e) => {
+                    if (e.key === " " && e.currentTarget === e.target) {
+                      e.preventDefault();
+                    }
+                  }}
+                >
+                  <TableCell className={rowPy}>
+                    <Checkbox
+                      checked={selectedPatientIds.includes(patient.id)}
+                      onCheckedChange={() => toggleOne(patient.id)}
+                      aria-label={`Select ${patient.name}`}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </TableCell>
+                  {activeColumns.map((col) => (
+                    <TableCell
+                      key={col.id}
+                      className={cn(rowPy, col.cellClass)}
                     >
-                      <TableCell className={rowPy}>
-                        <Checkbox
-                          checked={selectedPatientIds.includes(patient.id)}
-                          onCheckedChange={() => toggleOne(patient.id)}
-                          aria-label={`Select ${patient.name}`}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      </TableCell>
-                      {activeColumns.map((col) => (
-                        <TableCell
-                          key={col.id}
-                          className={cn(rowPy, col.cellClass)}
-                        >
-                          {col.cell(patient, cellCtx)}
-                        </TableCell>
-                      ))}
-                      <TableCell className={rowPy}>
-                        <RowActionsMenu patient={patient} onCopyMrn={() => setCopyToast("Copied MRN")} />
-                      </TableCell>
-                    </TableRow>
-                  </HoverCardTrigger>
-                  <HoverCardContent
-                    side="right"
-                    align="start"
-                    className="w-96 max-w-[24rem]"
-                  >
-                    <PatientQuickPeek patientId={patient.id} token={token} />
-                  </HoverCardContent>
-                </HoverCard>
+                      {col.cell(patient, cellCtx)}
+                    </TableCell>
+                  ))}
+                  <TableCell className={rowPy}>
+                    <RowActionsMenu
+                      patient={patient}
+                      onCopyMrn={() => setCopyToast("Copied MRN")}
+                      onCopyPhone={() => setCopyToast("Copied phone")}
+                    />
+                  </TableCell>
+                </TableRow>
               ))}
           </TableBody>
-        </Table>
+        </table>
+        )}
       </div>
 
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-sm text-muted-foreground">
+      <div className="flex shrink-0 flex-col gap-2 border-t border-border/60 pt-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
         <p>
-          Showing {start}-{end} of {total}
+          {lastPage <= 1
+            ? `${total} patient${total === 1 ? "" : "s"}`
+            : `Showing ${start}–${end} of ${total}`}
         </p>
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={page <= 1 || loading}
-            onClick={() => onPageChange(page - 1)}
-          >
-            Previous
-          </Button>
-          <span className="tabular-nums">
-            Page {page} of {lastPage}
-          </span>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={page >= lastPage || loading || page * PAGE_SIZE >= total}
-            onClick={() => onPageChange(page + 1)}
-          >
-            Next
-          </Button>
-        </div>
+        {lastPage > 1 ? (
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={page <= 1 || showSkeleton}
+              onClick={() => onPageChange(page - 1)}
+            >
+              Previous
+            </Button>
+            <span className="tabular-nums">
+              Page {page} of {lastPage}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={page >= lastPage || showSkeleton || page * PAGE_SIZE >= total}
+              onClick={() => onPageChange(page + 1)}
+            >
+              Next
+            </Button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -394,10 +456,14 @@ export function PatientsTable({
 function RowActionsMenu({
   patient,
   onCopyMrn,
+  onCopyPhone,
 }: {
   patient: PatientSummary;
   onCopyMrn: () => void;
+  onCopyPhone: () => void;
 }) {
+  const telHref = `tel:${patient.phone.replace(/\s/g, "")}`;
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -416,10 +482,26 @@ function RowActionsMenu({
         <DropdownMenuItem asChild>
           <Link href={`/dashboard/patients-v2/${patient.id}`}>View profile</Link>
         </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <a href={telHref} onClick={(e) => e.stopPropagation()}>
+            Call
+          </a>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const ok = await copyToClipboard(patient.phone);
+            if (ok) onCopyPhone();
+          }}
+        >
+          Copy phone
+        </DropdownMenuItem>
         {patient.medical_record_number ? (
           <DropdownMenuItem
             onClick={async (e) => {
               e.preventDefault();
+              e.stopPropagation();
               const ok = await copyToClipboard(patient.medical_record_number!);
               if (ok) onCopyMrn();
             }}

@@ -24,7 +24,7 @@
  *   1. Missing/invalid `?t=` → render error CTA, no API call.
  *   2. Backend rejects token (401 / NotFound) → render error CTA.
  *   3. `sessionStatus === 'scheduled'` → render holding screen, poll
- *      every 30s until status flips to `'live'`.
+ *      ~5s near start / 30s if far out until status flips to `'live'`.
  *   4. `sessionStatus === 'live'` → mount `<TextConsultRoom>`.
  *   5. `sessionStatus in ('ended', 'cancelled', 'no_show')` → render
  *      end-state notice. Plan 07 will add the chat-history link.
@@ -33,6 +33,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import {
+  postLobbyHeartbeat,
   requestTextSessionToken,
   type TextConsultSessionStatus,
   type TextConsultTokenExchangeData,
@@ -45,7 +46,20 @@ import {
   registerTextConsultVisit,
 } from "@/lib/text/share-target-bridge";
 
-const SCHEDULED_POLL_MS = 30_000;
+const LOBBY_HEARTBEAT_MS = 5_000;
+const HOLDING_POLL_NEAR_MS = 5_000;
+const HOLDING_POLL_FAR_MS = 30_000;
+/** Match CONSULTATION_CHECKIN_LEAD_MINUTES default (crc-08 / CRC-D10). */
+const CHECKIN_LEAD_MS = 30 * 60 * 1000;
+
+function holdingPollIntervalMs(scheduledStartAt?: string): number {
+  if (!scheduledStartAt) return HOLDING_POLL_NEAR_MS;
+  const start = Date.parse(scheduledStartAt);
+  if (Number.isNaN(start)) return HOLDING_POLL_NEAR_MS;
+  return start - Date.now() <= CHECKIN_LEAD_MS
+    ? HOLDING_POLL_NEAR_MS
+    : HOLDING_POLL_FAR_MS;
+}
 
 interface PageState {
   phase: "loading" | "error" | "holding" | "live" | "ended";
@@ -255,7 +269,21 @@ export default function PatientTextConsultPage() {
     };
   }, [prefillFromShare]);
 
-  // Holding-screen poll — re-run exchange every 30s until status changes.
+  // Lobby heartbeat (crc-08). Stops once live — presence is a lobby signal.
+  useEffect(() => {
+    if (state.phase !== "holding") return;
+    const tok = urlTokenRef.current.trim();
+    if (!tok) return;
+    void postLobbyHeartbeat(tok).catch(() => undefined);
+    const id = window.setInterval(() => {
+      void postLobbyHeartbeat(tok).catch(() => undefined);
+    }, LOBBY_HEARTBEAT_MS);
+    return () => window.clearInterval(id);
+  }, [state.phase]);
+
+  const holdingPollMs = holdingPollIntervalMs(state.data?.scheduledStartAt);
+
+  // Holding-screen poll — near the slot ~5s (CRC-D10); far-future stays 30s.
   useEffect(() => {
     if (state.phase !== "holding") return;
     const interval = setInterval(() => {
@@ -271,9 +299,9 @@ export default function PatientTextConsultPage() {
           setState({ phase: "holding", data });
         }
       })();
-    }, SCHEDULED_POLL_MS);
+    }, holdingPollMs);
     return () => clearInterval(interval);
-  }, [state.phase, exchange]);
+  }, [state.phase, holdingPollMs, exchange]);
 
   // Token refresh hook handed to <TextConsultRoom> — used on Supabase 401.
   const handleTokenRefresh = useCallback(async (): Promise<string> => {

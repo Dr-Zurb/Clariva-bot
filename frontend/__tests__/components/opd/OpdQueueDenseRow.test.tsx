@@ -100,8 +100,8 @@ describe("OpdQueueDenseRow", () => {
     expect(screen.getByText("MRN-001")).toBeInTheDocument();
     // Phone
     expect(screen.getByText("+91 98765 43210")).toBeInTheDocument();
-    // Sex / Age
-    expect(screen.getByText(/F\s*·\s*34/)).toBeInTheDocument();
+    // Age / Sex
+    expect(screen.getByText(/34\s*·\s*F/)).toBeInTheDocument();
     // Service
     expect(screen.getByText("General Consultation")).toBeInTheDocument();
     // Reason (truncated to 40 chars — "Fever and cough" is shorter so no ellipsis)
@@ -215,7 +215,29 @@ describe("OpdQueueDenseRow", () => {
     const entry = makeEntry({ queueStatus: "in_consultation" });
     const { container } = renderRow({ entry });
 
-    expect(container.firstChild).toHaveClass("bg-green-50/60");
+    expect(container.firstChild).toHaveClass("bg-green-100/70");
+    expect(screen.getByText("In consult")).toBeInTheDocument();
+  });
+
+  it("shows Incomplete consult when doctor stepped away", async () => {
+    const { markConsultSteppedAway, clearConsultSteppedAway } = await import(
+      "@/lib/cockpit/consult-stepped-away"
+    );
+    const entry = makeEntry({
+      appointmentId: "appt-stepped-away",
+      queueStatus: "in_consultation",
+    });
+    markConsultSteppedAway(entry.appointmentId);
+    try {
+      const { container } = renderRow({ entry });
+      expect(screen.getByText("Incomplete")).toBeInTheDocument();
+      expect(container.firstChild).toHaveClass("bg-amber-50/80");
+      expect(
+        screen.getByLabelText(/Incomplete consult/i),
+      ).toBeInTheDocument();
+    } finally {
+      clearConsultSteppedAway(entry.appointmentId);
+    }
   });
 
   // ── Whole-row click ──

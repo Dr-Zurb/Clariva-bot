@@ -381,7 +381,7 @@ function applyPaneTree(paneTree: PaneTreeNode) {
 }
 
 function clickDockedSend() {
-  const sendBtn = screen.getByRole("button", { name: /send rx & finish/i });
+  const sendBtn = screen.getByRole("button", { name: /review/i });
   fireEvent.click(sendBtn);
 }
 
@@ -458,9 +458,9 @@ describe("cv3p-01: CockpitChrome re-parent (R-CHROME3)", () => {
       expect(mockSendAndFinish).toHaveBeenCalledOnce();
     });
 
-    it("fires send after plan moves to the chart rail", () => {
+    it("fires send after plan moves beside subjective", () => {
       renderChromeShell();
-      const moved = reshape(telemedDefaultPaneTree(), "plan", "snapshot", "north");
+      const moved = reshape(telemedDefaultPaneTree(), "plan", "subjective", "north");
       applyPaneTree(moved);
 
       expect(screen.getByTestId("cockpit-v3-action-dock")).toContainElement(
@@ -470,9 +470,9 @@ describe("cv3p-01: CockpitChrome re-parent (R-CHROME3)", () => {
       expect(mockSendAndFinish).toHaveBeenCalledOnce();
     });
 
-    it("fires send after plan is tabbed under snapshot", () => {
+    it("fires send after plan is tabbed under assessment", () => {
       renderChromeShell();
-      const tabbed = reshape(telemedDefaultPaneTree(), "plan", "snapshot", "center");
+      const tabbed = reshape(telemedDefaultPaneTree(), "plan", "assessment", "center");
       applyPaneTree(tabbed);
 
       clickDockedSend();
@@ -495,7 +495,7 @@ describe("cv3p-01: CockpitChrome re-parent (R-CHROME3)", () => {
       safetySurface.clashesCount = 2;
 
       renderChromeShell();
-      const moved = reshape(telemedDefaultPaneTree(), "plan", "history", "north");
+      const moved = reshape(telemedDefaultPaneTree(), "plan", "subjective", "north");
       applyPaneTree(moved);
 
       const safetyDock = screen.getByTestId("cockpit-v3-safety-dock");
@@ -525,33 +525,33 @@ describe("cv3p-01: CockpitChrome re-parent (R-CHROME3)", () => {
     it("shows footer send in live and ended; hides in terminal", () => {
       renderChromeShell(telemedDefaultPaneTree(), { state: "live" });
       expect(
-        screen.getByRole("button", { name: /send rx & finish/i }),
+        screen.getByRole("button", { name: /review/i }),
       ).toBeInTheDocument();
 
       cleanup();
       renderChromeShell(telemedDefaultPaneTree(), { state: "ended" });
       expect(
-        screen.getByRole("button", { name: /send rx & finish/i }),
+        screen.getByRole("button", { name: /review/i }),
       ).toBeInTheDocument();
 
       cleanup();
       renderChromeShell(telemedDefaultPaneTree(), { state: "terminal" });
       expect(
-        screen.queryByRole("button", { name: /send rx & finish/i }),
+        screen.queryByRole("button", { name: /review/i }),
       ).not.toBeInTheDocument();
       expect(screen.getByTestId("cockpit-v3-action-dock")).toBeInTheDocument();
     });
   });
 
-  describe("body/live guard (v3-DL-6)", () => {
-    it("disables body tab drag when consultActive", () => {
+  describe("body during live teleconsult", () => {
+    it("keeps Consult (body) draggable when consultActive", () => {
       renderChromeShell(telemedDefaultPaneTree(), { consultActive: true });
 
       const bodySortable = sortableCalls.find((c) => c.id.includes("-body"));
-      expect(bodySortable?.disabled).toBe(true);
+      expect(bodySortable?.disabled).toBe(false);
 
-      const chartSortable = sortableCalls.find((c) => c.id.includes("-snapshot"));
-      expect(chartSortable?.disabled).toBe(false);
+      const subjectiveSortable = sortableCalls.find((c) => c.id.includes("-subjective"));
+      expect(subjectiveSortable?.disabled).toBe(false);
     });
   });
 

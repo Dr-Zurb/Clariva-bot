@@ -16,8 +16,12 @@ export default async function DashboardLayout({
     data: { user },
   } = await getServerUser();
   if (!user) redirect("/login");
+  if (user.app_metadata?.role === "receptionist") redirect("/desk");
 
   const userEmail = user.email ?? null;
+  // admin-console-v2 · acon2-01: visibility-only flag for the profile-menu
+  // "Admin console" link. Real access still gated by requireAdminAuth.
+  const isAdmin = user.app_metadata?.role === "admin";
 
   // Plan 07 · Task 30: pass the access token through so the header bell
   // (`<DashboardEventsBell>`) can poll `/dashboard/events` for unread
@@ -28,7 +32,7 @@ export default async function DashboardLayout({
   const token = session?.access_token ?? "";
 
   return (
-    <DashboardShell userEmail={userEmail} token={token}>
+    <DashboardShell userEmail={userEmail} token={token} isAdmin={isAdmin}>
       {children}
     </DashboardShell>
   );

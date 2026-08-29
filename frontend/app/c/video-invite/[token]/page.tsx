@@ -63,6 +63,11 @@ import {
   recordExtraParticipantLeft,
   type ExchangeExtraParticipantResult,
 } from "@/lib/api";
+import {
+  AUTO_PUBLISH_VIDEO_CONSTRAINTS,
+  CONSULT_PREFERRED_VIDEO_CODECS,
+  consultVideoBandwidthProfile,
+} from "@/lib/video/twilio-connect-profile";
 
 interface PageState {
   phase:
@@ -139,11 +144,18 @@ export default function VideoInvitePage() {
     let tracks: LocalTrack[] = [];
     let room: Room | null = null;
     try {
-      tracks = await createLocalTracks({ audio: true, video: true });
+      tracks = await createLocalTracks({
+        audio: true,
+        video: { ...AUTO_PUBLISH_VIDEO_CONSTRAINTS },
+      });
       localTracksRef.current = tracks;
       room = await connect(exchange.twilioToken, {
         name: exchange.roomName,
         tracks,
+        preferredVideoCodecs: CONSULT_PREFERRED_VIDEO_CODECS,
+        enableDscp: true,
+        maxVideoBitrate: 2_000_000,
+        bandwidthProfile: consultVideoBandwidthProfile(2_000_000),
       });
       roomRef.current = room;
 

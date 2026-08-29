@@ -78,6 +78,7 @@ export function HeightVitalField({
   ctx,
   rangeCtx,
   ghost,
+  ghostSourceLabel = "prev",
   sparkline,
   trailing,
   gridSpan = 1,
@@ -230,13 +231,14 @@ export function HeightVitalField({
           displayText={`${ghostCm} cm`}
           onApply={() => setField("vitalsHtCm", ghostCm)}
           testId="vital-last-visit-vitalsHtCm"
+          sourceLabel={ghostSourceLabel}
         />
       ) : unitSymbol === "cm" && ghostCm != null ? (
         <span
           className="block text-[10px] text-muted-foreground/70"
-          aria-label={`Last visit ${label}: ${ghostCm} cm`}
+          aria-label={`${ghostSourceLabel} ${label}: ${ghostCm} cm`}
         >
-          prev {ghostCm} cm
+          {ghostSourceLabel} {ghostCm} cm
         </span>
       ) : null}
       {unitSymbol === "ft/in" && ghostFtIn != null && canonical == null ? (
@@ -245,13 +247,14 @@ export function HeightVitalField({
           displayText={`${ghostFtIn.feet} ft ${ghostFtIn.inches} in`}
           onApply={() => setField("vitalsHtCm", ghostCm!)}
           testId="vital-last-visit-vitalsHtCm-ftin"
+          sourceLabel={ghostSourceLabel}
         />
       ) : unitSymbol === "ft/in" && ghostFtIn != null ? (
         <span
           className="block text-[10px] text-muted-foreground/70"
-          aria-label={`Last visit ${label}: ${ghostFtIn.feet} ft ${ghostFtIn.inches} in`}
+          aria-label={`${ghostSourceLabel} ${label}: ${ghostFtIn.feet} ft ${ghostFtIn.inches} in`}
         >
-          prev {ghostFtIn.feet} ft {ghostFtIn.inches} in
+          {ghostSourceLabel} {ghostFtIn.feet} ft {ghostFtIn.inches} in
         </span>
       ) : null}
     </div>

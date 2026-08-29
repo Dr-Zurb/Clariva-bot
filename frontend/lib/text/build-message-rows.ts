@@ -29,13 +29,53 @@ export type MessageBatchRow = {
   showTimestamp: boolean;
 };
 
-export type MessageRow = MessageSeparatorRow | MessageSingleRow | MessageBatchRow;
+export type MessageUnreadRow = {
+  __type: "unread";
+  key: string;
+  count: number;
+  firstMessageId: string;
+};
+
+export type MessageRow =
+  | MessageSeparatorRow
+  | MessageSingleRow
+  | MessageBatchRow
+  | MessageUnreadRow;
+
+export function formatUnreadDividerLabel(count: number): string {
+  if (count >= 100) return "99+ unread messages";
+  if (count === 1) return "1 unread message";
+  return `${count} unread messages`;
+}
+
+/** WhatsApp-style chip pinned above the first unread row for this open. */
+export function insertUnreadDivider(
+  rows: MessageRow[],
+  divider: { messageId: string; count: number } | null
+): MessageRow[] {
+  if (!divider || divider.count <= 0) return rows;
+  const index = findMessageRowIndex(rows, divider.messageId);
+  if (index < 0) return rows;
+  if (rows[index]?.__type === "unread") return rows;
+  return [
+    ...rows.slice(0, index),
+    {
+      __type: "unread",
+      key: `unread-sep-${divider.messageId}`,
+      count: divider.count,
+      firstMessageId: divider.messageId,
+    },
+    ...rows.slice(index),
+  ];
+}
 
 /**
  * Flatten grouped messages into render rows with day separators interleaved (text-A4 + B8).
  * Memoised by callers on `messages` reference change.
  */
-export function buildMessageRows(messages: ConsultationMessage[]): MessageRow[] {
+export function buildMessageRows(
+  messages: ConsultationMessage[]
+): MessageRow[] {
   const groups = groupMessages(messages);
   const rows: MessageRow[] = [];
   let lastRenderedDate: string | null = null;
@@ -86,7 +126,7 @@ export function buildMessageRows(messages: ConsultationMessage[]): MessageRow[] 
 export function countMessagesInRows(rows: MessageRow[]): number {
   let count = 0;
   for (const row of rows) {
-    if (row.__type === "separator") continue;
+    if (row.__type === "separator" || row.__type === "unread") continue;
     count += row.__type === "batch" ? row.messages.length : 1;
   }
   return count;
@@ -97,8 +137,12 @@ export function shouldVirtualizeMessageList(rows: MessageRow[]): boolean {
 }
 
 /** Row index for scrollToMessage — matches singles and batch members (text-B4). */
-export function findMessageRowIndex(rows: MessageRow[], messageId: string): number {
+export function findMessageRowIndex(
+  rows: MessageRow[],
+  messageId: string
+): number {
   return rows.findIndex((row) => {
+    if (row.__type === "unread") return row.firstMessageId === messageId;
     if (row.__type === "single") return row.message.id === messageId;
     if (row.__type === "batch") {
       return row.messages.some((m) => m.id === messageId);

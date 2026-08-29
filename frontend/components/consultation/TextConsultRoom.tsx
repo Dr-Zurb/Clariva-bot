@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -12,12 +13,28 @@ import {
   type ChangeEvent,
 } from "react";
 import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
-import { Clock, Loader2 } from "lucide-react";
+import { Clock, Loader2, Paperclip, Send, X } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useRouter } from "next/navigation";
 import { createScopedRealtimeClient } from "@/lib/supabase/scoped-client";
 import { signAttachmentUrls } from "@/lib/api";
 import { formatDate, formatTime } from "@/lib/format-date";
-import { buildMessageRows } from "@/lib/text/build-message-rows";
+import {
+  buildMessageRows,
+  insertUnreadDivider,
+} from "@/lib/text/build-message-rows";
+import { filterInCallThread } from "@/lib/text/filter-patient-in-call-thread";
+import { collapseMuteSystemMessages } from "@/lib/text/collapse-mute-system-messages";
 import {
   applyMarkdownToolbarAction,
   renderMarkdownLite,
@@ -66,7 +83,18 @@ import {
 } from "@/lib/push/local-notifications";
 import { ConnectionQualityBadge } from "@/components/consultation/ConnectionQualityBadge";
 import { findLastEditableOwnMessage } from "@/lib/text/edit-message-eligibility";
-import type { ConsultationMessage, ConsultationMessageKind } from "@/lib/text/types";
+import type {
+  ConsultationMessage,
+  ConsultationMessageKind,
+} from "@/lib/text/types";
+import {
+  advanceChatReadWatermark,
+  countUnreadInbound,
+  firstUnreadInboundId,
+  isAtOrBeforeCursor,
+  peerJustJoined,
+  runOpenChatScroll,
+} from "@/lib/call/patient-mobile-chrome";
 
 /**
  * Text consultation chat room (Plan 04 · Task 19).
@@ -134,6 +162,8 @@ export interface IncomingMessageMeta {
   id: string;
   kind: ConsultationMessageKind;
   senderRole: "doctor" | "patient" | "system";
+  /** Realtime sender — host unread badge ignores the local user's own echo. */
+  senderId?: string;
   /**
    * Plan 07 · Task 28 — exposed so host surfaces can derive
    * `<RecordingPausedIndicator>` state from the chat's Realtime stream
@@ -220,10 +250,9 @@ export interface TextConsultRoomProps {
    *   - `'standalone'` (default — Plan 04 Task 19 baseline): full-page
    *     chat, full header, wide bubbles, composer pinned. Used at
    *     `/c/text/[sessionId]` on the patient side.
-   *   - `'panel'`: mounted in a side panel inside `<VideoRoom>`. Hides
-   *     the header (parent room owns the framing), narrows bubble
-   *     max-width, drops the outer rounded-border (parent's panel edge
-   *     already supplies it). Min container width target: 320px.
+   *   - `'panel'`: mounted in a side panel inside `<VideoRoom>`. Slim
+   *     "In-call chat" header (+ optional close), narrow bubbles,
+   *     compact composer. Min container width target: ~240px.
    *   - `'canvas'`: mounted as the main canvas inside `<VoiceConsultRoom>`
    *     (Task 24c). Keeps a slim header (avatar + counterparty name),
    *     medium-width bubbles. No outer border because the parent frames.
@@ -241,6 +270,19 @@ export interface TextConsultRoomProps {
    */
   onIncomingMessage?: (msg: IncomingMessageMeta) => void;
   /**
+   * Host unread badge: report the merged-thread count whenever the
+   * list or read cursor changes. Duplicate Realtime INSERTs cannot
+   * inflate this — `mergeMessages` already keys by id.
+   */
+  onUnreadCountChange?: (count: number) => void;
+  /**
+   * True while the host is showing this thread (open panel / expanded
+   * sheet / Chat tab). Defaults to true so standalone / always-on
+   * surfaces mark the thread read. VideoRoom passes false when the
+   * panel is closed so those messages stay unread.
+   */
+  chatVisible?: boolean;
+  /**
    * CP-D5: Mark patient as no-show while the text consult is live.
    * When supplied (cockpit + doctor role only), renders a destructive-ghost
    * button next to the composer with a 2-step confirm pattern matching
@@ -253,6 +295,21 @@ export interface TextConsultRoomProps {
    * composer attachment row on first mount (live mode only).
    */
   initialShareTargetFiles?: File[];
+  /**
+   * Cockpit panel — close control in the chat header (hides the side pane).
+   * Ignored for standalone / canvas.
+   */
+  onClosePanel?: () => void;
+  /**
+   * Optional canned replies above an empty live composer. Patient
+   * mobile video companion only — omitted everywhere else.
+   */
+  quickReplies?: readonly string[];
+  /**
+   * Patient-phone sheet: drop the "In-call chat" header (the sheet
+   * owns close) and filter join-banner spam.
+   */
+  hidePanelHeader?: boolean;
 }
 
 type ChatMessage = ConsultationMessage;
@@ -316,7 +373,9 @@ export interface ComposerAttachment {
 const MAX_COMPOSER_ATTACHMENTS = 5;
 
 /** text-B9 — true when the drag payload includes OS files (not in-app drags). */
-export function dragDataTransferHasFiles(dataTransfer: DataTransfer | null): boolean {
+export function dragDataTransferHasFiles(
+  dataTransfer: DataTransfer | null
+): boolean {
   if (!dataTransfer) return false;
   return Array.from(dataTransfer.types).includes("Files");
 }
@@ -386,8 +445,13 @@ const TYPING_IDLE_MS = 3_000;
 /** Floor between successive typing:true broadcasts. */
 const TYPING_BROADCAST_THROTTLE_MS = 1_000;
 
-/** text-A7 — cap `viewed-bottom` broadcasts during rapid INSERT bursts. */
-const VIEWED_BOTTOM_THROTTLE_MS = 500;
+/**
+ * text-A7 — cap `viewed-bottom` broadcasts during rapid INSERT bursts.
+ * The trailing flush re-sends the newest cursor when the window closes,
+ * so this is pure rate limiting — worst-case added tick latency equals
+ * this value.
+ */
+const VIEWED_BOTTOM_THROTTLE_MS = 250;
 
 /**
  * Receiver-side cap: hide the typing indicator if no typing:true arrives
@@ -403,6 +467,13 @@ const COMPOSER_COUNTER_DISPLAY_THRESHOLD = 500;
 
 /** T1.6 — UX hard cap; send + Enter-key path blocked above this. */
 const COMPOSER_HARD_CAP = 4000;
+
+/** Short in-call inserts for the doctor attach menu (not clinical advice). */
+const IN_CALL_DOCTOR_INSERTS = [
+  "Please come closer to the camera",
+  "I can hear you",
+  "One moment",
+] as const;
 
 /** T1.2 — persisted dismissal for the inline keyboard-hint row. */
 const CHAT_HINT_DISMISSED_KEY = "chat_hint_dismissed_v1";
@@ -441,7 +512,9 @@ const ATTACHMENT_BUCKET = "consultation-attachments";
 // ============================================================================
 
 function isUuid(s: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    s
+  );
 }
 
 interface ConsultationMessageReactionRow {
@@ -452,7 +525,9 @@ interface ConsultationMessageReactionRow {
   created_at: string;
 }
 
-function rowToReaction(row: ConsultationMessageReactionRow): ConsultationMessageReaction | null {
+function rowToReaction(
+  row: ConsultationMessageReactionRow
+): ConsultationMessageReaction | null {
   if (!isReactionEmoji(row.emoji)) return null;
   return {
     id: row.id,
@@ -472,7 +547,9 @@ function rowToMessage(row: ConsultationMessageRow): ChatMessage {
       ? projected.sender_role
       : "system";
   const kind: ConsultationMessageKind =
-    projected.kind === "attachment" || projected.kind === "system" ? projected.kind : "text";
+    projected.kind === "attachment" || projected.kind === "system"
+      ? projected.kind
+      : "text";
   return {
     id: projected.id,
     sessionId: projected.session_id,
@@ -575,8 +652,13 @@ export default function TextConsultRoom({
   consultEndedAt,
   layout = "standalone",
   onIncomingMessage,
+  onUnreadCountChange,
+  chatVisible = true,
   onMarkNoShow,
   initialShareTargetFiles,
+  onClosePanel,
+  quickReplies,
+  hidePanelHeader = false,
 }: TextConsultRoomProps): JSX.Element {
   const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -597,9 +679,12 @@ export default function TextConsultRoom({
   /** text-B6 — inline edit target (one bubble at a time). C6 Up-arrow sets this via startEditOnMessage. */
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editSaving, setEditSaving] = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState<{ messageId: string } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    messageId: string;
+  } | null>(null);
   const [actionToast, setActionToast] = useState<string | null>(null);
-  const [connection, setConnection] = useState<ConnectionStatus>("reconnecting");
+  const [connection, setConnection] =
+    useState<ConnectionStatus>("reconnecting");
 
   const chatQuality = useChatQualitySampler({
     sessionId,
@@ -635,20 +720,26 @@ export default function TextConsultRoom({
   const sawCounterpartyMessageRef = useRef(false);
   /** task-text-D7 — latest realtime inbound row for local notification hook. */
   const latestInboundMessageRef = useRef<ChatMessage | null>(null);
-  const [latestInboundMessageId, setLatestInboundMessageId] = useState<string | null>(null);
+  const [latestInboundMessageId, setLatestInboundMessageId] = useState<
+    string | null
+  >(null);
   const [inboundMessageReceived, setInboundMessageReceived] = useState(false);
-  const [localNotifPromptHidden, setLocalNotifPromptHidden] = useState(() =>
-    isLocalNotifPromptDismissed(sessionId) || isLocalNotifPromptSnoozed(sessionId),
+  const [localNotifPromptHidden, setLocalNotifPromptHidden] = useState(
+    () =>
+      isLocalNotifPromptDismissed(sessionId) ||
+      isLocalNotifPromptSnoozed(sessionId)
   );
   const [localNotifPermission, setLocalNotifPermission] = useState<
     NotificationPermission | "unsupported"
   >(() => {
-    if (typeof window === "undefined" || !("Notification" in window)) return "unsupported";
+    if (typeof window === "undefined" || !("Notification" in window))
+      return "unsupported";
     return Notification.permission;
   });
 
   const showLocalNotificationConsentPrompt =
     mode === "live" &&
+    layout !== "panel" &&
     currentUserRole === "patient" &&
     inboundMessageReceived &&
     localNotifPermission === "default" &&
@@ -657,6 +748,7 @@ export default function TextConsultRoom({
     !isLocalNotifPromptDismissed(sessionId);
 
   const showPushOptInBanner =
+    layout !== "panel" &&
     pushOptInEnabled &&
     pushOptInEligible &&
     pushSubscription.permission === "default" &&
@@ -679,33 +771,38 @@ export default function TextConsultRoom({
   useEffect(() => {
     connectionRef.current = connection;
   }, [connection]);
-  const [sessionStatus, setSessionStatus] = useState<TextConsultSessionStatus>(initialStatus);
+  const [sessionStatus, setSessionStatus] =
+    useState<TextConsultSessionStatus>(initialStatus);
   const [composer, setComposer] = useState("");
   /** text-C3 — interim dictation transcript (local-only; never sent until Send). */
   const [partialTranscript, setPartialTranscript] = useState("");
   const [dictationLocale, setDictationLocale] = useState(() => {
     if (typeof navigator === "undefined") return "en-IN";
     const lang = navigator.language;
-    return SPEECH_RECOGNITION_LOCALES.some((l) => l.value === lang) ? lang : "en-IN";
+    return SPEECH_RECOGNITION_LOCALES.some((l) => l.value === lang)
+      ? lang
+      : "en-IN";
   });
   const [micPermissionDenied, setMicPermissionDenied] = useState(false);
   const stopDictationRef = useRef<() => void>(() => {});
   const [replyTo, setReplyTo] = useState<ReplyToTarget | null>(null);
-  const [composerAttachments, setComposerAttachments] = useState<ComposerAttachment[]>([]);
+  const [composerAttachments, setComposerAttachments] = useState<
+    ComposerAttachment[]
+  >([]);
   /** text-D1 — crash-recovery draft banner (sessionStorage hydrate). */
   const [showRestoreBanner, setShowRestoreBanner] = useState(false);
   const draftSaveEnabledRef = useRef(false);
   const draftHydratedRef = useRef(false);
   const { hydratedDraft, saveDraft, clearDraft } = useComposerDraft(
     sessionId,
-    mode === "readonly",
+    mode === "readonly"
   );
   /** text-D2 — patient-only multi-tab kick (newest tab wins). */
   const { evicted, takeOver } = useTabPresenceClaim(
     sessionId,
     currentUserRole,
     accessToken,
-    mode === "live",
+    mode === "live"
   );
   const evictedRef = useRef(evicted);
   useEffect(() => {
@@ -749,7 +846,9 @@ export default function TextConsultRoom({
    * out — the cache is refreshed by `signedUrlMintingRef` allowing
    * per-row retry on the next render.
    */
-  const [signedAttachmentUrls, setSignedAttachmentUrls] = useState<Record<string, string>>({});
+  const [signedAttachmentUrls, setSignedAttachmentUrls] = useState<
+    Record<string, string>
+  >({});
 
   /**
    * Plan 06 attachments — lightweight banner for client-side validation
@@ -765,8 +864,62 @@ export default function TextConsultRoom({
   useEffect(() => {
     onIncomingMessageRef.current = onIncomingMessage;
   }, [onIncomingMessage]);
+  const onUnreadCountChangeRef = useRef(onUnreadCountChange);
+  useEffect(() => {
+    onUnreadCountChangeRef.current = onUnreadCountChange;
+  }, [onUnreadCountChange]);
+  // Read cursor. Starts at epoch and is stamped from the newest row of
+  // the initial catch-up SELECT — server timestamps only. Seeding it
+  // from the local clock swallowed inbound messages whenever the device
+  // clock ran ahead of the server.
+  const [chatReadAt, setChatReadAt] = useState("");
+  const chatReadAtRef = useRef(chatReadAt);
+  chatReadAtRef.current = chatReadAt;
+  const unreadOpenReadAtRef = useRef<string | null>(null);
+  const unreadDividerRef = useRef<{
+    messageId: string;
+    count: number;
+  } | null>(null);
+  if (!chatVisible) {
+    unreadOpenReadAtRef.current = null;
+    unreadDividerRef.current = null;
+  } else if (unreadOpenReadAtRef.current === null) {
+    const readAt = chatReadAtRef.current;
+    unreadOpenReadAtRef.current = readAt;
+    const messageId = firstUnreadInboundId(messages, {
+      selfId: currentUserId,
+      readAt,
+    });
+    const count = countUnreadInbound(messages, {
+      selfId: currentUserId,
+      readAt,
+    });
+    unreadDividerRef.current =
+      messageId && count > 0 ? { messageId, count } : null;
+  }
+  const unreadDivider = chatVisible ? unreadDividerRef.current : null;
+  useLayoutEffect(() => {
+    if (!chatVisible) return;
+    setChatReadAt((prev) => advanceChatReadWatermark(messages, prev));
+    // Pass the newest acked timestamp explicitly — `messagesRef` is
+    // synced in a later effect, so reading it here would broadcast a
+    // cursor that lags one message behind.
+    markThreadReadRef.current(advanceChatReadWatermark(messages, "") || undefined);
+  }, [chatVisible, messages]);
+  useLayoutEffect(() => {
+    onUnreadCountChangeRef.current?.(
+      countUnreadInbound(messages, {
+        selfId: currentUserId,
+        readAt: chatReadAt,
+      })
+    );
+  }, [messages, chatReadAt, currentUserId]);
 
-  const maybeBroadcastViewedBottomRef = useRef<(atOverride?: string) => void>(() => {});
+  const maybeBroadcastViewedBottomRef = useRef<(atOverride?: string) => void>(
+    () => {}
+  );
+  const markThreadReadRef = useRef<(atOverride?: string) => void>(() => {});
+  const replayEstablishedReadCursorRef = useRef<() => void>(() => {});
   const broadcastViewedBottomClearRef = useRef<() => void>(() => {});
   const applyViewedBottomFromPeerRef = useRef<
     (userId: string | undefined, at: string | null | undefined) => void
@@ -776,24 +929,46 @@ export default function TextConsultRoom({
   const accessTokenRef = useRef(accessToken);
   const clientRef = useRef<SupabaseClient | null>(null);
   const insertChannelRef = useRef<RealtimeChannel | null>(null);
+  const connectGenerationRef = useRef(0);
   const reactionsChannelRef = useRef<RealtimeChannel | null>(null);
   const presenceChannelRef = useRef<RealtimeChannel | null>(null);
-  const reactionsByMessageIdRef = useRef<Record<string, ConsultationMessageReaction[]>>({});
+  const reactionsByMessageIdRef = useRef<
+    Record<string, ConsultationMessageReaction[]>
+  >({});
   const loadedReactionMessageIdsRef = useRef<Set<string>>(new Set());
   const messagesRef = useRef<ChatMessage[]>([]);
   const lastSeenAtRef = useRef<string | null>(null);
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const counterpartyTypingCapRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const counterpartyTypingCapRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
   const lastTypingBroadcastRef = useRef<number>(0);
   const lastViewedBottomBroadcastRef = useRef<number>(0);
+  const lastViewedBottomAtRef = useRef<string | null>(null);
+  const establishedReadAtRef = useRef<string | null>(null);
+  /**
+   * Newest read cursor the peer has ever announced. Survives merges and
+   * reconnects so a receipt that outruns our own INSERT ack still turns
+   * the row blue once the ack lands.
+   */
+  const peerReadAtRef = useRef<string | null>(null);
+  const peerWasPresentRef = useRef(false);
+  /** Once-ever guard for seeding `chatReadAt` from the first catch-up. */
+  const initialReadStampRef = useRef(false);
+  const pendingViewedBottomAtRef = useRef<string | null>(null);
+  const viewedBottomTrailingRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   // text-C6 — separate state for the mounted textarea element so the
   // `useComposerHotkeys` effect can resubscribe once it appears. Refs
   // don't trigger re-renders, so the hook would otherwise see `null`
   // for the initial mount and never re-bind.
-  const [composerEl, setComposerEl] = useState<HTMLTextAreaElement | null>(null);
+  const [composerEl, setComposerEl] = useState<HTMLTextAreaElement | null>(
+    null
+  );
   const setComposerRef = useCallback((el: HTMLTextAreaElement | null) => {
     composerRef.current = el;
     setComposerEl(el);
@@ -812,23 +987,58 @@ export default function TextConsultRoom({
   /** text-C1 — gallery fallback from the camera preview overlay (no capture). */
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
   /** Auto-clears the attachment-error banner so it doesn't pin the UI. */
-  const attachmentErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const actionToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const deleteConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const attachmentErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
+  const actionToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
+  const deleteConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
   /**
    * Tracks signed-URL fetches in-flight per message id so the lazy-mint
    * effect doesn't fire duplicate requests for the same row across
    * re-renders (the `messages` dep churns frequently).
    */
   const signedUrlMintingRef = useRef<Set<string>>(new Set());
-  const scrollToBottomRef = useRef<((behavior?: ScrollBehavior) => void) | null>(null);
+  const scrollToBottomRef = useRef<
+    ((behavior?: ScrollBehavior) => void) | null
+  >(null);
   const scrollToMessageRef = useRef<
-    ((id: string, opts?: { highlight?: boolean }) => void) | null
+    | ((
+        id: string,
+        opts?: {
+          highlight?: boolean;
+          behavior?: ScrollBehavior;
+          align?: "start" | "center" | "end";
+        }
+      ) => void)
+    | null
   >(null);
   const wasAtBottomRef = useRef(true);
+  useLayoutEffect(() => {
+    if (!chatVisible) return;
+    const firstUnread = unreadDividerRef.current?.messageId ?? null;
+    markThreadReadRef.current();
+    return runOpenChatScroll(() => {
+      if (firstUnread) {
+        scrollToMessageRef.current?.(firstUnread, {
+          behavior: "auto",
+          align: "start",
+        });
+        wasAtBottomRef.current = false;
+        return;
+      }
+      scrollToBottomRef.current?.("auto");
+      wasAtBottomRef.current = true;
+    });
+  }, [chatVisible]);
   const queuedSendsRef = useRef<ChatMessage[]>([]);
   const offlineSinceRef = useRef<number | null>(null);
-  const offlineBadgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const offlineBadgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
   // Tracks when the tab last went hidden (mobile minimize / desktop tab
   // switch). Read by the visibilitychange handler to decide whether to
   // force a reconnect on resume vs. preserve a healthy WS through a
@@ -836,7 +1046,9 @@ export default function TextConsultRoom({
   const hiddenAtRef = useRef<number | null>(null);
   // Debounce timer for non-online connection state transitions. Avoids
   // flashing the "Reconnecting…" badge for sub-second blips.
-  const connectionDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectionDebounceTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
   const mountedRef = useRef(true);
 
   // ------------------------------------------------------------------------
@@ -848,7 +1060,7 @@ export default function TextConsultRoom({
   const [noShowStep, setNoShowStep] = useState<"idle" | "confirm">("idle");
   const [noShowBusy, setNoShowBusy] = useState(false);
   const noShowConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
+    null
   );
   const handleMarkNoShowClick = useCallback(() => {
     if (!onMarkNoShow) return;
@@ -859,7 +1071,7 @@ export default function TextConsultRoom({
       }
       noShowConfirmTimerRef.current = setTimeout(
         () => setNoShowStep("idle"),
-        4_000,
+        4_000
       );
       return;
     }
@@ -909,7 +1121,9 @@ export default function TextConsultRoom({
           body: hydratedDraft.replyTo.body,
           senderName: hydratedDraft.replyTo.sender_name,
           senderRole:
-            hydratedDraft.replyTo.sender_role === "doctor" ? "doctor" : "patient",
+            hydratedDraft.replyTo.sender_role === "doctor"
+              ? "doctor"
+              : "patient",
         });
       }
       setShowRestoreBanner(true);
@@ -948,8 +1162,8 @@ export default function TextConsultRoom({
           (a) =>
             a.file.name === meta.name &&
             a.mime === meta.mime &&
-            a.sizeBytes === meta.sizeBytes,
-        ),
+            a.sizeBytes === meta.sizeBytes
+        )
       );
     const bodyModified = composer.trim() !== hydratedDraft.body.trim();
     if (allReattached && bodyModified) {
@@ -993,19 +1207,32 @@ export default function TextConsultRoom({
    * paths even when partially initialised.
    */
   const teardown = useCallback(() => {
-    if (insertChannelRef.current && clientRef.current) {
-      clientRef.current.removeChannel(insertChannelRef.current);
-    }
-    if (reactionsChannelRef.current && clientRef.current) {
-      clientRef.current.removeChannel(reactionsChannelRef.current);
-    }
-    if (presenceChannelRef.current && clientRef.current) {
-      clientRef.current.removeChannel(presenceChannelRef.current);
+    const client = clientRef.current;
+    if (client) {
+      try {
+        client.removeAllChannels();
+      } catch {
+        // mid-leave channels can throw; disconnect still closes the socket
+      }
+      try {
+        client.realtime.disconnect();
+      } catch {
+        // already closed
+      }
     }
     insertChannelRef.current = null;
     reactionsChannelRef.current = null;
     presenceChannelRef.current = null;
     clientRef.current = null;
+    // The new channel starts with no read cursor, so drop the de-dupe key
+    // or the peer never receives our cursor again after a reconnect.
+    lastViewedBottomAtRef.current = null;
+    pendingViewedBottomAtRef.current = null;
+    peerWasPresentRef.current = false;
+    if (viewedBottomTrailingRef.current) {
+      clearTimeout(viewedBottomTrailingRef.current);
+      viewedBottomTrailingRef.current = null;
+    }
   }, []);
 
   /**
@@ -1036,7 +1263,7 @@ export default function TextConsultRoom({
       }
       return ((data ?? []) as ConsultationMessageRow[]).map(rowToMessage);
     },
-    [sessionId],
+    [sessionId]
   );
 
   /**
@@ -1044,50 +1271,54 @@ export default function TextConsultRoom({
    * sends don't double up when the Realtime echo arrives) and keeps
    * chronological order.
    */
-  const mergeMessages = useCallback((incoming: ChatMessage[]) => {
-    if (incoming.length === 0) return;
-    setMessages((prev) => {
-      const byId = new Map(prev.map((m) => [m.id, m]));
-      for (const msg of incoming) {
-        const existing = byId.get(msg.id);
-        if (existing) {
-          if (
-            existing.pending &&
-            existing.senderId === currentUserId &&
-            !msg.pending
-          ) {
-            chatQualityRef.current.onMessageAck(msg.id);
+  const mergeMessages = useCallback(
+    (incoming: ChatMessage[]) => {
+      if (incoming.length === 0) return;
+      setMessages((prev) => {
+        const byId = new Map(prev.map((m) => [m.id, m]));
+        for (const msg of incoming) {
+          const existing = byId.get(msg.id);
+          if (existing) {
+            if (
+              existing.pending &&
+              existing.senderId === currentUserId &&
+              !msg.pending
+            ) {
+              chatQualityRef.current.onMessageAck(msg.id);
+            }
+            // Promote optimistic row to server-acked: clear pending, refresh ts.
+            byId.set(msg.id, {
+              ...existing,
+              ...msg,
+              pending: false,
+              failed: false,
+              retryBody: undefined,
+              seen: existing.seen ?? false,
+            });
+          } else {
+            byId.set(msg.id, { ...msg, seen: msg.seen ?? false });
           }
-          // Promote optimistic row to server-acked: clear pending, refresh ts.
-          byId.set(msg.id, {
-            ...existing,
-            ...msg,
-            pending: false,
-            failed: false,
-            retryBody: undefined,
-            seen: existing.seen ?? false,
-          });
-        } else {
-          byId.set(msg.id, { ...msg, seen: msg.seen ?? false });
         }
-      }
-      const merged = Array.from(byId.values()).sort(
-        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-      );
-      // Update lastSeenAt to the most recent server-acked row.
-      for (let i = merged.length - 1; i >= 0; i -= 1) {
-        if (!merged[i].pending && !merged[i].failed) {
-          lastSeenAtRef.current = merged[i].createdAt;
-          break;
+        const merged = Array.from(byId.values()).sort(
+          (a, b) =>
+            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+        // Update lastSeenAt to the most recent server-acked row.
+        for (let i = merged.length - 1; i >= 0; i -= 1) {
+          if (!merged[i].pending && !merged[i].failed) {
+            lastSeenAtRef.current = merged[i].createdAt;
+            break;
+          }
         }
-      }
-      return merged;
-    });
-  }, [currentUserId]);
+        return merged;
+      });
+    },
+    [currentUserId]
+  );
 
   const visibleMessageIdSet = useCallback((): Set<string> => {
     return new Set(
-      messagesRef.current.filter((m) => m.kind !== "system").map((m) => m.id),
+      messagesRef.current.filter((m) => m.kind !== "system").map((m) => m.id)
     );
   }, []);
 
@@ -1103,13 +1334,13 @@ export default function TextConsultRoom({
       });
       for (const id of messageIds) loadedReactionMessageIdsRef.current.add(id);
     },
-    [],
+    []
   );
 
   const fetchReactionsForMessageIds = useCallback(
     async (client: SupabaseClient, messageIds: string[]): Promise<void> => {
       const pending = messageIds.filter(
-        (id) => !loadedReactionMessageIdsRef.current.has(id),
+        (id) => !loadedReactionMessageIdsRef.current.has(id)
       );
       if (pending.length === 0) return;
       const { data, error } = await client
@@ -1122,7 +1353,7 @@ export default function TextConsultRoom({
         .filter((r): r is ConsultationMessageReaction => r !== null);
       mergeReactionsForMessages(parsed, pending);
     },
-    [mergeReactionsForMessages],
+    [mergeReactionsForMessages]
   );
 
   const mergeReactionEvent = useCallback(
@@ -1147,73 +1378,185 @@ export default function TextConsultRoom({
         if (!row || !visible.has(row.message_id)) return;
         setReactionsByMessageId((prev) => ({
           ...prev,
-          [row.message_id]: (prev[row.message_id] ?? []).filter((r) => r.id !== row.id),
+          [row.message_id]: (prev[row.message_id] ?? []).filter(
+            (r) => r.id !== row.id
+          ),
         }));
       }
     },
-    [visibleMessageIdSet],
+    [visibleMessageIdSet]
   );
 
   // ------------------------------------------------------------------------
   // text-A7 — viewed-bottom broadcast (seen ✓✓ derivation)
   // ------------------------------------------------------------------------
 
-  const broadcastViewedBottom = useCallback(
+  const sendViewedBottom = useCallback(
     (at: string | null) => {
-      if (mode === "readonly") return;
       const ch = presenceChannelRef.current;
       if (!ch) return;
-      const now = Date.now();
-      if (at !== null && now - lastViewedBottomBroadcastRef.current < VIEWED_BOTTOM_THROTTLE_MS) {
-        return;
-      }
-      if (at !== null) lastViewedBottomBroadcastRef.current = now;
+      lastViewedBottomAtRef.current = at;
+      if (at !== null) establishedReadAtRef.current = at;
       void ch.send({
         type: "broadcast",
         event: "viewed-bottom",
         payload: { user_id: currentUserId, at },
       });
     },
-    [currentUserId, mode],
+    [currentUserId]
+  );
+
+  const broadcastViewedBottom = useCallback(
+    (at: string | null, opts?: { force?: boolean }) => {
+      if (mode === "readonly") return;
+      if (!presenceChannelRef.current) return;
+      if (at === null) {
+        sendViewedBottom(null);
+        return;
+      }
+      if (!opts?.force && at === lastViewedBottomAtRef.current) return;
+      const elapsed = Date.now() - lastViewedBottomBroadcastRef.current;
+      if (!opts?.force && elapsed < VIEWED_BOTTOM_THROTTLE_MS) {
+        // Coalesce the burst instead of dropping it — a dropped cursor left
+        // the peer's ticks grey until their next scroll.
+        pendingViewedBottomAtRef.current = at;
+        if (!viewedBottomTrailingRef.current) {
+          viewedBottomTrailingRef.current = setTimeout(
+            () => {
+              viewedBottomTrailingRef.current = null;
+              const pending = pendingViewedBottomAtRef.current;
+              pendingViewedBottomAtRef.current = null;
+              if (pending === null) return;
+              lastViewedBottomBroadcastRef.current = Date.now();
+              sendViewedBottom(pending);
+            },
+            VIEWED_BOTTOM_THROTTLE_MS - elapsed
+          );
+        }
+        return;
+      }
+      pendingViewedBottomAtRef.current = null;
+      lastViewedBottomBroadcastRef.current = Date.now();
+      sendViewedBottom(at);
+    },
+    [mode, sendViewedBottom]
   );
 
   const maybeBroadcastViewedBottom = useCallback(
     (atOverride?: string) => {
       if (mode === "readonly") return;
       if (connectionRef.current !== "online") return;
-      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState !== "visible"
+      )
+        return;
       if (!wasAtBottomRef.current) return;
       const msgs = messagesRef.current;
       const at =
-        atOverride ?? (msgs.length > 0 ? msgs[msgs.length - 1].createdAt : null);
+        atOverride ??
+        (msgs.length > 0 ? msgs[msgs.length - 1].createdAt : null);
       if (!at) return;
+      establishedReadAtRef.current = at;
       broadcastViewedBottom(at);
     },
-    [broadcastViewedBottom, mode],
+    [broadcastViewedBottom, mode]
   );
+
+  /**
+   * An open chat panel counts as read even when the reader is parked on the
+   * unread chip, so the peer's ticks turn blue without waiting for a scroll
+   * to the bottom.
+   */
+  const markThreadRead = useCallback(
+    (atOverride?: string) => {
+      if (mode === "readonly") return;
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState !== "visible"
+      )
+        return;
+      const msgs = messagesRef.current;
+      const at =
+        atOverride ??
+        (msgs.length > 0 ? msgs[msgs.length - 1].createdAt : null);
+      if (!at) return;
+      establishedReadAtRef.current = at;
+      broadcastViewedBottom(at);
+    },
+    [broadcastViewedBottom, mode]
+  );
+
+  /**
+   * Same cursor, new audience — a sender who reconnected or reloaded
+   * never heard the original broadcast.
+   */
+  const replayEstablishedReadCursor = useCallback(() => {
+    const at = establishedReadAtRef.current;
+    if (!at) return;
+    broadcastViewedBottom(at, { force: true });
+  }, [broadcastViewedBottom]);
 
   const broadcastViewedBottomClear = useCallback(() => {
     broadcastViewedBottom(null);
   }, [broadcastViewedBottom]);
 
+  /**
+   * Turn own acked rows at or before the peer's cursor blue. Pending
+   * rows stay grey — the server hasn't stored them, so the peer cannot
+   * have seen them; the re-apply effect below picks them up on ack.
+   */
+  const applyPeerReadCursor = useCallback(() => {
+    const cursor = peerReadAtRef.current;
+    if (!cursor) return;
+    setMessages((prev) => {
+      let changed = false;
+      const next = prev.map((m) => {
+        if (
+          m.senderId === currentUserId &&
+          !m.seen &&
+          !m.pending &&
+          isAtOrBeforeCursor(m.createdAt, cursor)
+        ) {
+          changed = true;
+          return { ...m, seen: true };
+        }
+        return m;
+      });
+      return changed ? next : prev;
+    });
+  }, [currentUserId]);
+
   const applyViewedBottomFromPeer = useCallback(
     (userId: string | undefined, at: string | null | undefined) => {
       if (!userId || userId === currentUserId) return;
       if (at == null) return;
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.senderId === currentUserId && m.createdAt <= at && !m.seen
-            ? { ...m, seen: true }
-            : m,
-        ),
-      );
+      const prevCursor = peerReadAtRef.current;
+      if (prevCursor === null || isAtOrBeforeCursor(prevCursor, at)) {
+        peerReadAtRef.current = at;
+      }
+      applyPeerReadCursor();
     },
-    [currentUserId],
+    [applyPeerReadCursor, currentUserId]
   );
+
+  // The receipt usually beats our own INSERT ack: the one-shot apply
+  // used to miss the still-pending row and the tick stayed grey until
+  // the peer's NEXT broadcast. Re-apply the remembered cursor whenever
+  // rows change so the ack itself completes the blue tick.
+  useEffect(() => {
+    applyPeerReadCursor();
+  }, [messages, applyPeerReadCursor]);
 
   useEffect(() => {
     maybeBroadcastViewedBottomRef.current = maybeBroadcastViewedBottom;
   }, [maybeBroadcastViewedBottom]);
+  useEffect(() => {
+    markThreadReadRef.current = markThreadRead;
+  }, [markThreadRead]);
+  useEffect(() => {
+    replayEstablishedReadCursorRef.current = replayEstablishedReadCursor;
+  }, [replayEstablishedReadCursor]);
   useEffect(() => {
     broadcastViewedBottomClearRef.current = broadcastViewedBottomClear;
   }, [broadcastViewedBottomClear]);
@@ -1250,6 +1593,20 @@ export default function TextConsultRoom({
     }, 1200);
   }, []);
 
+  /**
+   * Seed the read cursor from the newest row of the FIRST catch-up
+   * SELECT — a server timestamp, so history counts as read at join
+   * without trusting the device clock. Empty history keeps the epoch
+   * cursor, so the first inbound message correctly counts as unread.
+   */
+  const stampInitialReadCursor = useCallback((rows: ChatMessage[]) => {
+    if (initialReadStampRef.current) return;
+    initialReadStampRef.current = true;
+    const newest = rows.length > 0 ? rows[rows.length - 1].createdAt : null;
+    if (!newest) return;
+    setChatReadAt((prev) => (prev === "" ? newest : prev));
+  }, []);
+
   const applyCounterpartyTyping = useCallback((typing: boolean) => {
     if (counterpartyTypingCapRef.current) {
       clearTimeout(counterpartyTypingCapRef.current);
@@ -1271,6 +1628,7 @@ export default function TextConsultRoom({
    */
   const connect = useCallback(async (): Promise<boolean> => {
     if (!mountedRef.current) return false;
+    const generation = ++connectGenerationRef.current;
     teardown();
     setConnectionGuarded("reconnecting");
 
@@ -1294,7 +1652,10 @@ export default function TextConsultRoom({
     // could land between SELECT and subscribe.
     try {
       const missed = await fetchMissedMessages(client);
-      if (!mountedRef.current) return false;
+      if (!mountedRef.current || generation !== connectGenerationRef.current) {
+        return false;
+      }
+      stampInitialReadCursor(missed);
       mergeMessages(missed);
       const reactionMessageIds = messagesRef.current
         .filter((m) => m.kind !== "system")
@@ -1304,13 +1665,20 @@ export default function TextConsultRoom({
       const code = (err as { code?: string }).code;
       if (code === "401") {
         const refreshed = await refreshToken();
-        if (!refreshed || !mountedRef.current) return false;
+        if (
+          !refreshed ||
+          !mountedRef.current ||
+          generation !== connectGenerationRef.current
+        ) {
+          return false;
+        }
         // Rebuild with fresh token and retry.
         teardown();
         client = buildClient(refreshed);
         clientRef.current = client;
         try {
           const missed = await fetchMissedMessages(client);
+          stampInitialReadCursor(missed);
           mergeMessages(missed);
           const reactionMessageIds = messagesRef.current
             .filter((m) => m.kind !== "system")
@@ -1337,6 +1705,10 @@ export default function TextConsultRoom({
     // depends on `connection` doesn't show a misleading
     // "Reconnecting…" badge — but in readonly the watermark replaces
     // the badge entirely, so this mostly matters for ARIA cleanliness.
+    if (!mountedRef.current || generation !== connectGenerationRef.current) {
+      return false;
+    }
+
     if (mode === "readonly") {
       setConnectionGuarded("online");
       reconnectAttemptRef.current = 0;
@@ -1359,6 +1731,22 @@ export default function TextConsultRoom({
       typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    // Same leftover-channel eviction as presence: Strict Mode / reconnect
+    // can leave a prior `messages:${sessionId}:*` subscribed, and each
+    // INSERT would then fire the host unread badge more than once.
+    const messageTopicPrefix = `messages:${sessionId}:`;
+    for (const c of client.getChannels()) {
+      if (
+        c.topic.startsWith(messageTopicPrefix) ||
+        c.topic.startsWith(`realtime:${messageTopicPrefix}`)
+      ) {
+        try {
+          void client.removeChannel(c);
+        } catch {
+          // best-effort — if the channel is mid-leave, ignore
+        }
+      }
+    }
     const insertChannel = client
       .channel(`messages:${sessionId}:${insertNonce}`)
       .on(
@@ -1405,6 +1793,7 @@ export default function TextConsultRoom({
               id: msg.id,
               kind: msg.kind,
               senderRole: msg.senderRole,
+              senderId: msg.senderId,
               systemEvent: msg.systemEvent ?? null,
               body: msg.body,
               metadata: msg.metadata ?? null,
@@ -1412,7 +1801,7 @@ export default function TextConsultRoom({
           } catch {
             // best-effort — host responsibility
           }
-        },
+        }
       )
       .on(
         "postgres_changes",
@@ -1427,7 +1816,7 @@ export default function TextConsultRoom({
           const visible = messagesRef.current.some((m) => m.id === row.id);
           if (!visible) return;
           mergeMessages([rowToMessage(row)]);
-        },
+        }
       )
       .subscribe((status) => {
         if (!mountedRef.current) return;
@@ -1471,7 +1860,7 @@ export default function TextConsultRoom({
             new: payload.new as ConsultationMessageReactionRow,
             old: payload.old as ConsultationMessageReactionRow,
           });
-        },
+        }
       )
       .subscribe();
     reactionsChannelRef.current = reactionsChannel;
@@ -1495,7 +1884,10 @@ export default function TextConsultRoom({
     for (const c of client.getChannels()) {
       // supabase-realtime-js prefixes the topic with `realtime:` once
       // the channel has been subscribed; check both forms defensively.
-      if (c.topic === presenceTopic || c.topic === `realtime:${presenceTopic}`) {
+      if (
+        c.topic === presenceTopic ||
+        c.topic === `realtime:${presenceTopic}`
+      ) {
         try {
           void client.removeChannel(c);
         } catch {
@@ -1511,7 +1903,11 @@ export default function TextConsultRoom({
         const state = presenceChannel.presenceState();
         // Anyone present whose key differs from ours = counterparty online.
         const others = Object.keys(state).filter((k) => k !== currentUserId);
-        setCounterpartyOnline(others.length > 0);
+        const present = others.length > 0;
+        const joined = peerJustJoined(peerWasPresentRef.current, present);
+        peerWasPresentRef.current = present;
+        setCounterpartyOnline(present);
+        if (joined) replayEstablishedReadCursorRef.current();
       })
       .on("broadcast", { event: "typing" }, ({ payload }) => {
         const p = payload as { user_id?: string; typing?: boolean };
@@ -1521,6 +1917,11 @@ export default function TextConsultRoom({
       .on("broadcast", { event: "viewed-bottom" }, ({ payload }) => {
         const p = payload as { user_id?: string; at?: string | null };
         applyViewedBottomFromPeerRef.current(p?.user_id, p?.at);
+      })
+      .on("broadcast", { event: "viewed-bottom-ping" }, ({ payload }) => {
+        const p = payload as { user_id?: string };
+        if (!p || p.user_id === currentUserId) return;
+        replayEstablishedReadCursorRef.current();
       })
       .subscribe(async (status) => {
         if (status !== "SUBSCRIBED") return;
@@ -1535,6 +1936,15 @@ export default function TextConsultRoom({
           // ourselves and can chat. Counterparty just won't see our dot.
         }
         maybeBroadcastViewedBottomRef.current();
+        // Ask peers to replay their read cursor. A reload wipes local
+        // `seen` state, and a quick refresh rejoins presence under the
+        // same key — the absent → present edge never fires on the other
+        // side, so the edge-triggered replay alone is not enough.
+        void presenceChannel.send({
+          type: "broadcast",
+          event: "viewed-bottom-ping",
+          payload: { user_id: currentUserId },
+        });
       });
     presenceChannelRef.current = presenceChannel;
 
@@ -1567,14 +1977,18 @@ export default function TextConsultRoom({
     if (offlineSinceRef.current === null) {
       offlineSinceRef.current = Date.now();
       // Flip to "offline" if we stay down past 30s — surface the red badge.
-      if (offlineBadgeTimerRef.current) clearTimeout(offlineBadgeTimerRef.current);
+      if (offlineBadgeTimerRef.current)
+        clearTimeout(offlineBadgeTimerRef.current);
       offlineBadgeTimerRef.current = setTimeout(() => {
         if (mountedRef.current && offlineSinceRef.current !== null) {
           setConnectionGuarded("offline");
         }
       }, 30_000);
     }
-    const idx = Math.min(reconnectAttemptRef.current, RECONNECT_BACKOFF_MS.length - 1);
+    const idx = Math.min(
+      reconnectAttemptRef.current,
+      RECONNECT_BACKOFF_MS.length - 1
+    );
     const delay = RECONNECT_BACKOFF_MS[idx];
     reconnectAttemptRef.current += 1;
     if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
@@ -1609,7 +2023,9 @@ export default function TextConsultRoom({
         if (msg.reply_to_id) {
           insertRow.reply_to_id = msg.reply_to_id;
         }
-        const { error } = await client.from("consultation_messages").insert(insertRow);
+        const { error } = await client
+          .from("consultation_messages")
+          .insert(insertRow);
         if (error) {
           const status = (error as { status?: number; code?: string }).status;
           if (status === 401) {
@@ -1632,9 +2048,7 @@ export default function TextConsultRoom({
             ? "rate-limited"
             : "unknown";
           if (localRateLimited) {
-            setActionToast(
-              "You're sending too fast — wait a few seconds.",
-            );
+            setActionToast("You're sending too fast — wait a few seconds.");
             if (actionToastTimerRef.current) {
               clearTimeout(actionToastTimerRef.current);
             }
@@ -1653,8 +2067,8 @@ export default function TextConsultRoom({
                     failureReason,
                     retryBody: body,
                   }
-                : m,
-            ),
+                : m
+            )
           );
           return;
         }
@@ -1670,8 +2084,8 @@ export default function TextConsultRoom({
                   failureReason: undefined,
                   retryBody: undefined,
                 }
-              : m,
-          ),
+              : m
+          )
         );
         chatQualityRef.current.onMessageAck(msg.id);
         // text-D5 — record the ack in the local rate-limit window so
@@ -1691,94 +2105,108 @@ export default function TextConsultRoom({
                   failureReason: "unknown",
                   retryBody: body,
                 }
-              : m,
-          ),
+              : m
+          )
         );
       }
     },
-    [clearDraft, currentUserId, currentUserRole, refreshToken, scheduleReconnect, sessionId],
+    [
+      clearDraft,
+      currentUserId,
+      currentUserRole,
+      refreshToken,
+      scheduleReconnect,
+      sessionId,
+    ]
   );
 
-  const handleSend = useCallback((opts?: { forceQueue?: boolean }) => {
-    // text-C6 — `forceQueue` is accepted to satisfy the Cmd/Ctrl+Enter
-    // contract (explicit "send now even though I know we're
-    // reconnecting"). Today's send path always creates an optimistic
-    // pending bubble regardless of connection — the "queued" UX lives
-    // purely in the send-button state — so the flag does not need to
-    // branch behaviour. Preserved on the API for forward compatibility
-    // if a future bubble-level "queued" overlay needs to know that the
-    // user opted in to immediate display.
-    void opts?.forceQueue;
-    stopDictationRef.current();
-    setPartialTranscript("");
-    if (sending) return;
-    if (composer.length > COMPOSER_HARD_CAP) return;
-    const body = composer.trim();
-    if (composerAttachments.length > 0) {
+  const handleSend = useCallback(
+    (opts?: { forceQueue?: boolean; body?: string }) => {
+      // text-C6 — `forceQueue` is accepted to satisfy the Cmd/Ctrl+Enter
+      // contract (explicit "send now even though I know we're
+      // reconnecting"). Today's send path always creates an optimistic
+      // pending bubble regardless of connection — the "queued" UX lives
+      // purely in the send-button state — so the flag does not need to
+      // branch behaviour. Preserved on the API for forward compatibility
+      // if a future bubble-level "queued" overlay needs to know that the
+      // user opted in to immediate display.
+      void opts?.forceQueue;
+      stopDictationRef.current();
+      setPartialTranscript("");
+      if (sending) return;
+      if (!opts?.body && composer.length > COMPOSER_HARD_CAP) return;
+      const body = (opts?.body ?? composer).trim();
+      if (!opts?.body && composerAttachments.length > 0) {
+        if (sessionStatus !== "live") return;
+        void sendComposerAttachments();
+        return;
+      }
+      if (!body) return;
       if (sessionStatus !== "live") return;
-      void sendComposerAttachments();
-      return;
-    }
-    if (!body) return;
-    if (sessionStatus !== "live") return;
-    if (!isUuid(currentUserId)) return; // safety — sender_id is UUID NOT NULL
+      if (!isUuid(currentUserId)) return; // safety — sender_id is UUID NOT NULL
 
-    const id =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const optimistic: ChatMessage = {
-      id,
+      const id =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const optimistic: ChatMessage = {
+        id,
+        sessionId,
+        senderId: currentUserId,
+        senderRole: currentUserRole,
+        body,
+        createdAt: new Date().toISOString(),
+        kind: "text",
+        pending: true,
+        reply_to_id: replyTo?.id ?? null,
+      };
+      setMessages((prev) => [...prev, optimistic]);
+      chatQualityRef.current.onOptimisticSend(id);
+      if (!opts?.body) setComposer("");
+      setReplyTo(null);
+      setSending(true);
+      // Stop typing on send.
+      broadcastTyping(false);
+      void doSendInsert(optimistic).finally(() => {
+        setSending(false);
+      });
+      requestAnimationFrame(() => {
+        scrollToBottomRef.current?.("auto");
+      });
+      // broadcastTyping is declared after handleSend in source order but
+      // is hoisted via useCallback ref — including it in deps would create
+      // a forward reference that ESLint can't statically resolve. The
+      // closure picks up the latest broadcastTyping at call time.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [
+      composer,
+      composerAttachments.length,
+      currentUserId,
+      currentUserRole,
+      doSendInsert,
+      replyTo,
+      sending,
       sessionId,
-      senderId: currentUserId,
-      senderRole: currentUserRole,
-      body,
-      createdAt: new Date().toISOString(),
-      kind: "text",
-      pending: true,
-      reply_to_id: replyTo?.id ?? null,
-    };
-    setMessages((prev) => [...prev, optimistic]);
-    chatQualityRef.current.onOptimisticSend(id);
-    setComposer("");
-    setReplyTo(null);
-    setSending(true);
-    // Stop typing on send.
-    broadcastTyping(false);
-    void doSendInsert(optimistic).finally(() => {
-      setSending(false);
-    });
-    requestAnimationFrame(() => {
-      scrollToBottomRef.current?.("auto");
-    });
-    // broadcastTyping is declared after handleSend in source order but
-    // is hoisted via useCallback ref — including it in deps would create
-    // a forward reference that ESLint can't statically resolve. The
-    // closure picks up the latest broadcastTyping at call time.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    composer,
-    composerAttachments.length,
-    currentUserId,
-    currentUserRole,
-    doSendInsert,
-    replyTo,
-    sending,
-    sessionId,
-    sessionStatus,
-  ]);
+      sessionStatus,
+    ]
+  );
 
   const messageSenderDisplayName = useCallback(
     (m: ChatMessage): string => {
       if (m.senderId === currentUserId) return "You";
-      return counterpartyName?.trim() || (m.senderRole === "doctor" ? "Doctor" : "Patient");
+      return (
+        counterpartyName?.trim() ||
+        (m.senderRole === "doctor" ? "Doctor" : "Patient")
+      );
     },
-    [counterpartyName, currentUserId],
+    [counterpartyName, currentUserId]
   );
 
   useEffect(() => {
     const msg = latestInboundMessageRef.current;
-    if (!latestInboundMessageId || !msg || msg.senderId === currentUserId) return;
+    if (!latestInboundMessageId || !msg || msg.senderId === currentUserId)
+      return;
     fireLocalNotification({
       title: messageSenderDisplayName(msg),
       body: msg.body,
@@ -1787,20 +2215,26 @@ export default function TextConsultRoom({
       sender: msg.senderId,
       mode,
     });
-  }, [currentUserId, latestInboundMessageId, messageSenderDisplayName, mode, sessionId]);
+  }, [
+    currentUserId,
+    latestInboundMessageId,
+    messageSenderDisplayName,
+    mode,
+    sessionId,
+  ]);
 
-  const lookupMessageById = useCallback(
-    (id: string): ChatMessage | null => {
-      const found = messagesRef.current.find((m) => m.id === id);
-      if (!found || found.deleted_at) return null;
-      return found;
-    },
-    [],
-  );
-
-  const scrollToMessage = useCallback((id: string, opts?: { highlight?: boolean }) => {
-    scrollToMessageRef.current?.(id, opts);
+  const lookupMessageById = useCallback((id: string): ChatMessage | null => {
+    const found = messagesRef.current.find((m) => m.id === id);
+    if (!found || found.deleted_at) return null;
+    return found;
   }, []);
+
+  const scrollToMessage = useCallback(
+    (id: string, opts?: { highlight?: boolean }) => {
+      scrollToMessageRef.current?.(id, opts);
+    },
+    []
+  );
 
   const handleStartReply = useCallback(
     (message: ChatMessage) => {
@@ -1819,7 +2253,7 @@ export default function TextConsultRoom({
       });
       composerRef.current?.focus();
     },
-    [messageSenderDisplayName],
+    [messageSenderDisplayName]
   );
 
   const retryFailed = useCallback(
@@ -1835,7 +2269,7 @@ export default function TextConsultRoom({
         rateLimitRef.current.isRateLimited
       ) {
         setActionToast(
-          `Wait ${rateLimitRef.current.cooldownSecondsRemaining}s before retrying.`,
+          `Wait ${rateLimitRef.current.cooldownSecondsRemaining}s before retrying.`
         );
         if (actionToastTimerRef.current) {
           clearTimeout(actionToastTimerRef.current);
@@ -1853,7 +2287,7 @@ export default function TextConsultRoom({
         failureReason: undefined,
       });
     },
-    [doSendInsert],
+    [doSendInsert]
   );
 
   const discardFailed = useCallback((localId: string) => {
@@ -1871,7 +2305,8 @@ export default function TextConsultRoom({
    */
   const flashAttachmentError = useCallback((msg: string) => {
     setAttachmentError(msg);
-    if (attachmentErrorTimerRef.current) clearTimeout(attachmentErrorTimerRef.current);
+    if (attachmentErrorTimerRef.current)
+      clearTimeout(attachmentErrorTimerRef.current);
     attachmentErrorTimerRef.current = setTimeout(() => {
       if (mountedRef.current) setAttachmentError(null);
     }, 4_000);
@@ -1885,7 +2320,10 @@ export default function TextConsultRoom({
     }, 4_000);
   }, []);
 
-  const speechRecognitionSupported = useMemo(() => isSpeechRecognitionSupported(), []);
+  const speechRecognitionSupported = useMemo(
+    () => isSpeechRecognitionSupported(),
+    []
+  );
 
   const {
     isListening: isDictating,
@@ -1902,7 +2340,9 @@ export default function TextConsultRoom({
       setPartialTranscript("");
       if (err.error === "not-allowed" || err.error === "service-not-allowed") {
         setMicPermissionDenied(true);
-        flashActionToast("Microphone permission denied. Enable in browser settings.");
+        flashActionToast(
+          "Microphone permission denied. Enable in browser settings."
+        );
       }
     },
     onSilenceTimeout: () => {
@@ -1917,7 +2357,9 @@ export default function TextConsultRoom({
 
   const handleDictationToggle = useCallback(() => {
     if (micPermissionDenied) {
-      flashActionToast("Microphone permission denied. Enable in browser settings.");
+      flashActionToast(
+        "Microphone permission denied. Enable in browser settings."
+      );
       return;
     }
     if (isDictating) {
@@ -1942,16 +2384,14 @@ export default function TextConsultRoom({
     }
   }, []);
 
-  const armDeleteConfirm = useCallback(
-    (messageId: string) => {
-      setDeleteConfirm({ messageId });
-      if (deleteConfirmTimerRef.current) clearTimeout(deleteConfirmTimerRef.current);
-      deleteConfirmTimerRef.current = setTimeout(() => {
-        if (mountedRef.current) setDeleteConfirm(null);
-      }, 5_000);
-    },
-    [],
-  );
+  const armDeleteConfirm = useCallback((messageId: string) => {
+    setDeleteConfirm({ messageId });
+    if (deleteConfirmTimerRef.current)
+      clearTimeout(deleteConfirmTimerRef.current);
+    deleteConfirmTimerRef.current = setTimeout(() => {
+      if (mountedRef.current) setDeleteConfirm(null);
+    }, 5_000);
+  }, []);
 
   const userNameById = useCallback(
     (userId: string): string => {
@@ -1961,19 +2401,19 @@ export default function TextConsultRoom({
         (currentUserRole === "doctor" ? "Patient" : "Your doctor")
       );
     },
-    [counterpartyName, currentUserId, currentUserRole],
+    [counterpartyName, currentUserId, currentUserRole]
   );
 
   const handleOpenReactionPicker = useCallback(
     (
       messageId: string,
       anchor: HTMLElement,
-      coords?: { x: number; y: number },
+      coords?: { x: number; y: number }
     ) => {
       if (mode === "readonly") return;
       setReactionPicker({ messageId, anchor, coords });
     },
-    [mode],
+    [mode]
   );
 
   const handleCloseReactionPicker = useCallback(() => {
@@ -1982,12 +2422,15 @@ export default function TextConsultRoom({
 
   const openLightbox = useCallback(
     (messageId: string) => {
-      const images = buildChatImageLightboxImages(messages, signedAttachmentUrls);
+      const images = buildChatImageLightboxImages(
+        messages,
+        signedAttachmentUrls
+      );
       const index = images.findIndex((img) => img.messageId === messageId);
       if (index < 0) return;
       setLightboxState({ images, index });
     },
-    [messages, signedAttachmentUrls],
+    [messages, signedAttachmentUrls]
   );
 
   const closeLightbox = useCallback(() => {
@@ -2003,13 +2446,15 @@ export default function TextConsultRoom({
       const snapshot = { ...reactionsByMessageIdRef.current };
       const rows = snapshot[messageId] ?? [];
       const existing = rows.find(
-        (r) => r.user_id === currentUserId && r.emoji === emoji,
+        (r) => r.user_id === currentUserId && r.emoji === emoji
       );
 
       if (existing) {
         setReactionsByMessageId((prev) => ({
           ...prev,
-          [messageId]: (prev[messageId] ?? []).filter((r) => r.id !== existing.id),
+          [messageId]: (prev[messageId] ?? []).filter(
+            (r) => r.id !== existing.id
+          ),
         }));
         const { error } = await client
           .from("consultation_message_reactions")
@@ -2051,7 +2496,9 @@ export default function TextConsultRoom({
         if (code === "23505") {
           setReactionsByMessageId((prev) => ({
             ...prev,
-            [messageId]: (prev[messageId] ?? []).filter((r) => r.id !== optimisticId),
+            [messageId]: (prev[messageId] ?? []).filter(
+              (r) => r.id !== optimisticId
+            ),
           }));
           return;
         }
@@ -2060,17 +2507,19 @@ export default function TextConsultRoom({
         return;
       }
 
-      const serverRow = data ? rowToReaction(data as ConsultationMessageReactionRow) : null;
+      const serverRow = data
+        ? rowToReaction(data as ConsultationMessageReactionRow)
+        : null;
       if (serverRow) {
         setReactionsByMessageId((prev) => {
           const withoutOptimistic = (prev[messageId] ?? []).filter(
-            (r) => r.id !== optimisticId && r.id !== serverRow.id,
+            (r) => r.id !== optimisticId && r.id !== serverRow.id
           );
           return { ...prev, [messageId]: [...withoutOptimistic, serverRow] };
         });
       }
     },
-    [currentUserId, flashAttachmentError, mode],
+    [currentUserId, flashAttachmentError, mode]
   );
 
   const handleReactionPick = useCallback(
@@ -2078,7 +2527,7 @@ export default function TextConsultRoom({
       if (!reactionPicker) return;
       void toggleReaction(reactionPicker.messageId, emoji);
     },
-    [reactionPicker, toggleReaction],
+    [reactionPicker, toggleReaction]
   );
 
   const handleStartEdit = useCallback((message: ChatMessage) => {
@@ -2110,7 +2559,7 @@ export default function TextConsultRoom({
       mergeMessages([rowToMessage(data as ConsultationMessageRow)]);
       setEditingMessageId(null);
     },
-    [flashActionToast, mergeMessages, mode],
+    [flashActionToast, mergeMessages, mode]
   );
 
   const handleSoftDeleteRequest = useCallback(
@@ -2118,7 +2567,7 @@ export default function TextConsultRoom({
       if (message.deleted_at) return;
       armDeleteConfirm(message.id);
     },
-    [armDeleteConfirm],
+    [armDeleteConfirm]
   );
 
   const handleSoftDeleteConfirm = useCallback(async () => {
@@ -2138,7 +2587,13 @@ export default function TextConsultRoom({
       return;
     }
     mergeMessages([rowToMessage(data as ConsultationMessageRow)]);
-  }, [clearDeleteConfirm, deleteConfirm, flashActionToast, mergeMessages, mode]);
+  }, [
+    clearDeleteConfirm,
+    deleteConfirm,
+    flashActionToast,
+    mergeMessages,
+    mode,
+  ]);
 
   const handleTogglePin = useCallback(
     async (messageId: string) => {
@@ -2159,7 +2614,7 @@ export default function TextConsultRoom({
       const isPinned = !!target.pinned_at;
       if (!isPinned) {
         const pinnedCount = messagesRef.current.filter(
-          (m) => m.pinned_at && !m.deleted_at,
+          (m) => m.pinned_at && !m.deleted_at
         ).length;
         if (pinnedCount >= MAX_PINNED_MESSAGES) {
           flashActionToast("Maximum 3 pinned messages. Unpin one first.");
@@ -2194,7 +2649,7 @@ export default function TextConsultRoom({
 
       mergeMessages([rowToMessage(rows[0])]);
     },
-    [currentUserId, currentUserRole, flashActionToast, mergeMessages, mode],
+    [currentUserId, currentUserRole, flashActionToast, mergeMessages, mode]
   );
 
   const revokeComposerPreview = useCallback((previewUrl: string) => {
@@ -2213,7 +2668,7 @@ export default function TextConsultRoom({
         return prev.filter((a) => a.localId !== localId);
       });
     },
-    [revokeComposerPreview],
+    [revokeComposerPreview]
   );
 
   const composerAttachmentsRef = useRef(composerAttachments);
@@ -2223,7 +2678,8 @@ export default function TextConsultRoom({
 
   useEffect(() => {
     return () => {
-      for (const a of composerAttachmentsRef.current) revokeComposerPreview(a.previewUrl);
+      for (const a of composerAttachmentsRef.current)
+        revokeComposerPreview(a.previewUrl);
     };
   }, [revokeComposerPreview]);
 
@@ -2249,18 +2705,20 @@ export default function TextConsultRoom({
   const openCameraPreview = useCallback(
     (file: File) => {
       if (!file.type.startsWith("image/")) {
-        flashAttachmentError(`${file.name || "File"}: only images can be captured here.`);
+        flashAttachmentError(
+          `${file.name || "File"}: only images can be captured here.`
+        );
         return;
       }
       if (!ATTACHMENT_MIME_ALLOWLIST.has(file.type)) {
         flashAttachmentError(
-          `${file.name || "File"}: only images, PDFs, and text files are accepted.`,
+          `${file.name || "File"}: only images, PDFs, and text files are accepted.`
         );
         return;
       }
       if (file.size > ATTACHMENT_MAX_BYTES) {
         flashAttachmentError(
-          `${file.name || "File"}: max 10 MB (got ${formatBytesShort(file.size)}).`,
+          `${file.name || "File"}: max 10 MB (got ${formatBytesShort(file.size)}).`
         );
         return;
       }
@@ -2272,7 +2730,7 @@ export default function TextConsultRoom({
         };
       });
     },
-    [flashAttachmentError, revokeComposerPreview],
+    [flashAttachmentError, revokeComposerPreview]
   );
 
   const handleCameraCapture = useCallback(
@@ -2282,7 +2740,7 @@ export default function TextConsultRoom({
       if (!file) return;
       openCameraPreview(file);
     },
-    [openCameraPreview],
+    [openCameraPreview]
   );
 
   const handleGalleryCaptureForCamera = useCallback(
@@ -2292,7 +2750,7 @@ export default function TextConsultRoom({
       if (!file) return;
       openCameraPreview(file);
     },
-    [openCameraPreview],
+    [openCameraPreview]
   );
 
   const handleCameraPreviewSend = useCallback(
@@ -2306,13 +2764,13 @@ export default function TextConsultRoom({
       }
       if (!ATTACHMENT_MIME_ALLOWLIST.has(file.type)) {
         flashAttachmentError(
-          `${file.name || "File"}: only images, PDFs, and text files are accepted.`,
+          `${file.name || "File"}: only images, PDFs, and text files are accepted.`
         );
         return;
       }
       if (file.size > ATTACHMENT_MAX_BYTES) {
         flashAttachmentError(
-          `${file.name || "File"}: max 10 MB (got ${formatBytesShort(file.size)}).`,
+          `${file.name || "File"}: max 10 MB (got ${formatBytesShort(file.size)}).`
         );
         return;
       }
@@ -2333,7 +2791,7 @@ export default function TextConsultRoom({
       setComposer(caption);
       setCameraPreview(null);
     },
-    [cameraPreview, composerAttachments.length, flashAttachmentError],
+    [cameraPreview, composerAttachments.length, flashAttachmentError]
   );
 
   const handleCameraPreviewRetake = useCallback(() => {
@@ -2381,13 +2839,13 @@ export default function TextConsultRoom({
 
       if (!ATTACHMENT_MIME_ALLOWLIST.has(file.type)) {
         flashAttachmentError(
-          `${file.name || "File"}: only images, PDFs, and text files are accepted.`,
+          `${file.name || "File"}: only images, PDFs, and text files are accepted.`
         );
         return;
       }
       if (file.size > ATTACHMENT_MAX_BYTES) {
         flashAttachmentError(
-          `${file.name || "File"}: max 10 MB (got ${formatBytesShort(file.size)}).`,
+          `${file.name || "File"}: max 10 MB (got ${formatBytesShort(file.size)}).`
         );
         return;
       }
@@ -2452,8 +2910,8 @@ export default function TextConsultRoom({
           prev.map((m) =>
             m.id === messageId
               ? { ...m, pending: false, failed: false, retryBody: undefined }
-              : m,
-          ),
+              : m
+          )
         );
       } catch (err) {
         // Best-effort cleanup of the orphan storage object so we don't
@@ -2468,16 +2926,22 @@ export default function TextConsultRoom({
         flashAttachmentError(
           err instanceof Error && err.message
             ? `Upload failed: ${err.message}`
-            : "Upload failed. Please try again.",
+            : "Upload failed. Please try again."
         );
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === messageId ? { ...m, pending: false, failed: true } : m,
-          ),
+            m.id === messageId ? { ...m, pending: false, failed: true } : m
+          )
         );
       }
     },
-    [currentUserId, currentUserRole, flashAttachmentError, sessionId, sessionStatus],
+    [
+      currentUserId,
+      currentUserRole,
+      flashAttachmentError,
+      sessionId,
+      sessionStatus,
+    ]
   );
 
   /**
@@ -2488,8 +2952,10 @@ export default function TextConsultRoom({
     (files: FileList | null, source: "files" | "camera" | "drop") => {
       if (!files || files.length === 0) return;
       const list = Array.from(files);
-      if (source === "files" && fileInputRef.current) fileInputRef.current.value = "";
-      if (source === "camera" && cameraInputRef.current) cameraInputRef.current.value = "";
+      if (source === "files" && fileInputRef.current)
+        fileInputRef.current.value = "";
+      if (source === "camera" && cameraInputRef.current)
+        cameraInputRef.current.value = "";
 
       setComposerAttachments((prev) => {
         const room = MAX_COMPOSER_ATTACHMENTS - prev.length;
@@ -2497,7 +2963,7 @@ export default function TextConsultRoom({
           flashAttachmentError(
             source === "drop"
               ? `Maximum 5 attachments per send. ${list.length} file${list.length === 1 ? "" : "s"} dropped were ignored.`
-              : "Maximum 5 attachments per send.",
+              : "Maximum 5 attachments per send."
           );
           return prev;
         }
@@ -2506,7 +2972,7 @@ export default function TextConsultRoom({
           flashAttachmentError(
             source === "drop"
               ? `Maximum 5 attachments per send. ${ignored} file${ignored === 1 ? "" : "s"} dropped were ignored.`
-              : "Maximum 5 attachments per send.",
+              : "Maximum 5 attachments per send."
           );
         }
         const slice = list.slice(0, room);
@@ -2515,13 +2981,13 @@ export default function TextConsultRoom({
           if (next.length >= MAX_COMPOSER_ATTACHMENTS) break;
           if (!ATTACHMENT_MIME_ALLOWLIST.has(file.type)) {
             flashAttachmentError(
-              `${file.name || "File"}: only images, PDFs, and text files are accepted.`,
+              `${file.name || "File"}: only images, PDFs, and text files are accepted.`
             );
             continue;
           }
           if (file.size > ATTACHMENT_MAX_BYTES) {
             flashAttachmentError(
-              `${file.name || "File"}: max 10 MB (got ${formatBytesShort(file.size)}).`,
+              `${file.name || "File"}: max 10 MB (got ${formatBytesShort(file.size)}).`
             );
             continue;
           }
@@ -2540,7 +3006,7 @@ export default function TextConsultRoom({
         return next;
       });
     },
-    [flashAttachmentError],
+    [flashAttachmentError]
   );
 
   const shareTargetConsumedRef = useRef(false);
@@ -2587,7 +3053,7 @@ export default function TextConsultRoom({
       if (!e.dataTransfer.files?.length) return;
       handleFilePick(e.dataTransfer.files, "drop");
     },
-    [handleFilePick],
+    [handleFilePick]
   );
 
   /**
@@ -2626,20 +3092,22 @@ export default function TextConsultRoom({
       return { att, messageId, objectKey };
     });
 
-    const optimistic: ChatMessage[] = planned.map(({ att, messageId, objectKey }, i) => ({
-      id: messageId,
-      sessionId,
-      senderId: currentUserId,
-      senderRole: currentUserRole,
-      body: i === 0 ? caption : "",
-      createdAt: new Date().toISOString(),
-      kind: "attachment" as const,
-      attachmentUrl: objectKey,
-      attachmentMimeType: att.mime,
-      attachmentByteSize: att.sizeBytes,
-      batch_id: batchId,
-      pending: true,
-    }));
+    const optimistic: ChatMessage[] = planned.map(
+      ({ att, messageId, objectKey }, i) => ({
+        id: messageId,
+        sessionId,
+        senderId: currentUserId,
+        senderRole: currentUserRole,
+        body: i === 0 ? caption : "",
+        createdAt: new Date().toISOString(),
+        kind: "attachment" as const,
+        attachmentUrl: objectKey,
+        attachmentMimeType: att.mime,
+        attachmentByteSize: att.sizeBytes,
+        batch_id: batchId,
+        pending: true,
+      })
+    );
 
     setMessages((prev) => [...prev, ...optimistic]);
     setSending(true);
@@ -2660,28 +3128,30 @@ export default function TextConsultRoom({
           uploadedKeys.push(objectKey);
 
           const { messageId } = planned[idx];
-          const { error: insertError } = await client.from("consultation_messages").insert({
-            id: messageId,
-            session_id: sessionId,
-            sender_id: currentUserId,
-            sender_role: currentUserRole,
-            kind: "attachment",
-            body: idx === 0 ? caption || null : null,
-            attachment_url: objectKey,
-            attachment_mime_type: att.mime,
-            attachment_byte_size: att.sizeBytes,
-            batch_id: batchId,
-          });
+          const { error: insertError } = await client
+            .from("consultation_messages")
+            .insert({
+              id: messageId,
+              session_id: sessionId,
+              sender_id: currentUserId,
+              sender_role: currentUserRole,
+              kind: "attachment",
+              body: idx === 0 ? caption || null : null,
+              attachment_url: objectKey,
+              attachment_mime_type: att.mime,
+              attachment_byte_size: att.sizeBytes,
+              batch_id: batchId,
+            });
           if (insertError) throw insertError;
-        }),
+        })
       );
 
       setMessages((prev) =>
         prev.map((m) =>
           optimistic.some((o) => o.id === m.id)
             ? { ...m, pending: false, failed: false, retryBody: undefined }
-            : m,
-        ),
+            : m
+        )
       );
       for (const att of snapshot) revokeComposerPreview(att.previewUrl);
       setComposerAttachments([]);
@@ -2702,7 +3172,7 @@ export default function TextConsultRoom({
       flashAttachmentError(
         err instanceof Error && err.message
           ? `Upload failed: ${err.message}`
-          : "Upload failed. Please try again.",
+          : "Upload failed. Please try again."
       );
     } finally {
       setSending(false);
@@ -2773,7 +3243,7 @@ export default function TextConsultRoom({
       if (/^https?:\/\//.test(path)) {
         if (!signedAttachmentUrls[m.id]) {
           setSignedAttachmentUrls((prev) =>
-            prev[m.id] === path ? prev : { ...prev, [m.id]: path },
+            prev[m.id] === path ? prev : { ...prev, [m.id]: path }
           );
         }
         continue;
@@ -2833,7 +3303,7 @@ export default function TextConsultRoom({
         if (typeof console !== "undefined") {
           console.warn(
             "[TextConsultRoom] signAttachmentUrls failed; will retry on next message mutation",
-            err,
+            err
           );
         }
       } finally {
@@ -2858,7 +3328,8 @@ export default function TextConsultRoom({
       if (!ch) return;
       const now = Date.now();
       if (typing) {
-        if (now - lastTypingBroadcastRef.current < TYPING_BROADCAST_THROTTLE_MS) return;
+        if (now - lastTypingBroadcastRef.current < TYPING_BROADCAST_THROTTLE_MS)
+          return;
         lastTypingBroadcastRef.current = now;
       }
       void ch.send({
@@ -2867,7 +3338,7 @@ export default function TextConsultRoom({
         payload: { user_id: currentUserId, typing, ts: now },
       });
     },
-    [currentUserId],
+    [currentUserId]
   );
 
   const handleComposerChange = useCallback(
@@ -2882,14 +3353,19 @@ export default function TextConsultRoom({
       } else {
         broadcastTyping(false);
       }
-      // Auto-grow.
+      // Auto-grow. Clear the inline height when empty so the field
+      // does not keep a leftover 2-line box (that pushed Send down).
       const ta = e.target;
       ta.style.height = "auto";
+      if (!ta.value) {
+        ta.style.height = "";
+        return;
+      }
       const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 20;
       const maxPx = lineHeight * COMPOSER_MAX_LINES + 16; // padding fudge
       ta.style.height = Math.min(ta.scrollHeight, maxPx) + "px";
     },
-    [broadcastTyping],
+    [broadcastTyping]
   );
 
   const handleMarkdownToolbar = useCallback(
@@ -2898,7 +3374,7 @@ export default function TextConsultRoom({
       if (!ta) return;
       applyMarkdownToolbarAction(ta, composer, setComposer, action);
     },
-    [composer],
+    [composer]
   );
 
   const handleComposerKeyDown = useCallback(
@@ -2911,7 +3387,7 @@ export default function TextConsultRoom({
         handleSend();
       }
     },
-    [handleSend],
+    [handleSend]
   );
 
   const handleSubmit = useCallback(
@@ -2919,7 +3395,7 @@ export default function TextConsultRoom({
       e.preventDefault();
       handleSend();
     },
-    [handleSend],
+    [handleSend]
   );
 
   // ------------------------------------------------------------------------
@@ -2934,7 +3410,8 @@ export default function TextConsultRoom({
     if (typeof window === "undefined" || !window.matchMedia) return undefined;
     const mq = window.matchMedia("(pointer: fine)");
     setHasHardwareKeyboard(mq.matches);
-    const onChange = (e: MediaQueryListEvent) => setHasHardwareKeyboard(e.matches);
+    const onChange = (e: MediaQueryListEvent) =>
+      setHasHardwareKeyboard(e.matches);
     // Older Safari only supports the deprecated addListener API.
     if (typeof mq.addEventListener === "function") {
       mq.addEventListener("change", onChange);
@@ -2984,7 +3461,10 @@ export default function TextConsultRoom({
   }, []);
 
   const handleEditLastOwn = useCallback(() => {
-    const target = findLastEditableOwnMessage(messagesRef.current, currentUserId);
+    const target = findLastEditableOwnMessage(
+      messagesRef.current,
+      currentUserId
+    );
     if (!target) return;
     setEditingMessageId(target.id);
   }, [currentUserId]);
@@ -3115,15 +3595,24 @@ export default function TextConsultRoom({
     }
 
     return () => {
+      connectGenerationRef.current += 1;
       mountedRef.current = false;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-      if (counterpartyTypingCapRef.current) clearTimeout(counterpartyTypingCapRef.current);
-      if (offlineBadgeTimerRef.current) clearTimeout(offlineBadgeTimerRef.current);
-      if (attachmentErrorTimerRef.current) clearTimeout(attachmentErrorTimerRef.current);
-      if (actionToastTimerRef.current) clearTimeout(actionToastTimerRef.current);
-      if (deleteConfirmTimerRef.current) clearTimeout(deleteConfirmTimerRef.current);
-      if (connectionDebounceTimerRef.current) clearTimeout(connectionDebounceTimerRef.current);
+      if (viewedBottomTrailingRef.current)
+        clearTimeout(viewedBottomTrailingRef.current);
+      if (counterpartyTypingCapRef.current)
+        clearTimeout(counterpartyTypingCapRef.current);
+      if (offlineBadgeTimerRef.current)
+        clearTimeout(offlineBadgeTimerRef.current);
+      if (attachmentErrorTimerRef.current)
+        clearTimeout(attachmentErrorTimerRef.current);
+      if (actionToastTimerRef.current)
+        clearTimeout(actionToastTimerRef.current);
+      if (deleteConfirmTimerRef.current)
+        clearTimeout(deleteConfirmTimerRef.current);
+      if (connectionDebounceTimerRef.current)
+        clearTimeout(connectionDebounceTimerRef.current);
       teardown();
       if (typeof window !== "undefined") {
         window.removeEventListener("beforeunload", onBeforeUnload);
@@ -3155,7 +3644,7 @@ export default function TextConsultRoom({
         broadcastViewedBottomClear();
       }
     },
-    [broadcastViewedBottomClear, maybeBroadcastViewedBottom],
+    [broadcastViewedBottomClear, maybeBroadcastViewedBottom]
   );
 
   const handleJumpToLatest = useCallback(() => {
@@ -3179,7 +3668,8 @@ export default function TextConsultRoom({
     if (mode === "readonly") return "This is a read-only view.";
     const ended = statusError(sessionStatus);
     if (ended) return ended;
-    if (connection === "offline") return "Reconnecting — your message will send when back online.";
+    if (connection === "offline")
+      return "Reconnecting — your message will send when back online.";
     if (connection === "reconnecting")
       return "Reconnecting — your message will send when back online.";
     return null;
@@ -3199,9 +3689,17 @@ export default function TextConsultRoom({
         ? "bg-amber-100 text-amber-800"
         : "bg-red-100 text-red-800";
   const statusBadgeDot =
-    connection === "online" ? "bg-green-500" : connection === "reconnecting" ? "bg-amber-500" : "bg-red-500";
+    connection === "online"
+      ? "bg-green-500"
+      : connection === "reconnecting"
+        ? "bg-amber-500"
+        : "bg-red-500";
   const statusBadgeText =
-    connection === "online" ? "Online" : connection === "reconnecting" ? "Reconnecting…" : "Offline";
+    connection === "online"
+      ? "Online"
+      : connection === "reconnecting"
+        ? "Reconnecting…"
+        : "Offline";
 
   const sendButtonState = useMemo(
     () =>
@@ -3219,10 +3717,16 @@ export default function TextConsultRoom({
       connection,
       sending,
       rateLimit.isRateLimited,
-    ],
+    ]
   );
 
-  const messageRows = useMemo(() => buildMessageRows(messages), [messages]);
+  const messageRows = useMemo(() => {
+    const collapsed = collapseMuteSystemMessages(messages);
+    const rows = buildMessageRows(
+      layout === "panel" ? filterInCallThread(collapsed) : collapsed
+    );
+    return insertUnreadDivider(rows, unreadDivider);
+  }, [layout, messages, unreadDivider]);
 
   const pinnedMessages = useMemo(
     () =>
@@ -3230,10 +3734,10 @@ export default function TextConsultRoom({
         .filter((m) => m.pinned_at && !m.deleted_at)
         .sort(
           (a, b) =>
-            new Date(b.pinned_at!).getTime() - new Date(a.pinned_at!).getTime(),
+            new Date(b.pinned_at!).getTime() - new Date(a.pinned_at!).getTime()
         )
         .slice(0, MAX_PINNED_MESSAGES),
-    [messages],
+    [messages]
   );
 
   const pinCapReached = pinnedMessages.length >= MAX_PINNED_MESSAGES;
@@ -3282,8 +3786,10 @@ export default function TextConsultRoom({
       ? "relative flex h-[100dvh] w-full flex-col bg-white md:h-[640px] md:max-h-[80dvh] md:min-h-[480px] md:rounded-lg md:border md:border-gray-200"
       : layout === "canvas"
         ? "relative flex h-full min-h-[320px] w-full flex-col bg-white"
-        : // 'panel'
-          "relative flex h-full min-h-[320px] w-full flex-col bg-white";
+        : // 'panel' — min-h-0 so cockpit companion can form a scrollport;
+          // parents that need a floor (join-page side panel) set their own.
+          "relative flex h-full min-h-0 w-full flex-col bg-background";
+  const isPanel = layout === "panel";
   return (
     <div
       className={containerClass}
@@ -3291,6 +3797,28 @@ export default function TextConsultRoom({
       data-layout={layout}
       data-mode={mode}
     >
+      {isPanel && !hidePanelHeader ? (
+        <div
+          className="flex shrink-0 items-center gap-2 border-b border-border px-2.5 py-1.5"
+          data-testid="text-consult-room-panel-header"
+        >
+          <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+            Chat
+          </p>
+          {onClosePanel ? (
+            <button
+              type="button"
+              onClick={onClosePanel}
+              aria-label="Close chat"
+              title="Close chat"
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              data-testid="text-consult-room-close-panel"
+            >
+              <X className="h-4 w-4" aria-hidden />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {/* Plan 07 · Task 31 — readonly watermark replaces the standard
           online/typing header. Online dot + Reconnecting badge are
           meaningless when no Realtime sub is attached, so we suppress
@@ -3334,7 +3862,13 @@ export default function TextConsultRoom({
           }
         >
           <div className="min-w-0 flex-1">
-            <p className={layout === "canvas" ? "truncate text-xs font-semibold text-gray-900" : "truncate text-sm font-semibold text-gray-900"}>
+            <p
+              className={
+                layout === "canvas"
+                  ? "truncate text-xs font-semibold text-gray-900"
+                  : "truncate text-sm font-semibold text-gray-900"
+              }
+            >
               {counterpartyLabel}
             </p>
             <p className="flex items-center gap-2 text-xs text-gray-500">
@@ -3356,11 +3890,19 @@ export default function TextConsultRoom({
               mode={mode}
             />
             <span
-              className={"inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium " + statusBadgeClass}
+              className={
+                "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium " +
+                statusBadgeClass
+              }
               role="status"
               aria-live="polite"
             >
-              <span className={"inline-block h-1.5 w-1.5 rounded-full " + statusBadgeDot} aria-hidden />
+              <span
+                className={
+                  "inline-block h-1.5 w-1.5 rounded-full " + statusBadgeDot
+                }
+                aria-hidden
+              />
               {statusBadgeText}
             </span>
           </div>
@@ -3382,7 +3924,9 @@ export default function TextConsultRoom({
               "aria-dropeffect": "copy" as const,
             }
           : {})}
-        data-testid={dropZoneEnabled ? "text-consult-room-drop-zone" : undefined}
+        data-testid={
+          dropZoneEnabled ? "text-consult-room-drop-zone" : undefined
+        }
       >
         {dropZoneEnabled && dragOverActive ? (
           <div
@@ -3402,621 +3946,863 @@ export default function TextConsultRoom({
           </div>
         ) : null}
 
-      {/* Messages list — text-D3: Virtuoso when >100 messages */}
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        {mode === "live" && layout === "panel" && currentUserRole === "doctor" ? (
-          <div className="flex justify-end border-b border-gray-100 bg-white px-2 py-1">
-            <ConnectionQualityBadge
+        {/* Messages list — text-D3: Virtuoso when >100 messages */}
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          {showLocalNotificationConsentPrompt ? (
+            <LocalNotificationConsentPrompt
               sessionId={sessionId}
-              accessToken={accessToken}
-              currentUserRole={currentUserRole}
-              mode={mode}
+              onEnabled={() => {
+                if (typeof window !== "undefined" && "Notification" in window) {
+                  setLocalNotifPermission(Notification.permission);
+                }
+                setLocalNotifPromptHidden(true);
+              }}
+              onSnooze={() => {
+                snoozeLocalNotifPrompt(sessionId);
+                setLocalNotifPromptHidden(true);
+              }}
+              onDismiss={() => {
+                dismissLocalNotifPrompt(sessionId);
+                setLocalNotifPromptHidden(true);
+              }}
             />
+          ) : null}
+          {showPushOptInBanner ? (
+            <PushOptInBanner
+              counterpartyLabel={pushCounterpartyLabel}
+              onEnable={pushSubscription.subscribe}
+              onDismiss={pushSubscription.dismissOptIn}
+            />
+          ) : null}
+          <PinnedMessagesBanner
+            pinned={pinnedMessages}
+            currentUserRole={currentUserRole}
+            layout={layout}
+            onJumpToPin={(id) => scrollToMessage(id, { highlight: true })}
+            onUnpin={
+              mode === "live" && currentUserRole === "doctor"
+                ? handleTogglePin
+                : undefined
+            }
+          />
+          {layout === "panel" && messageRows.length === 0 ? (
+            <div
+              data-testid="in-call-chat-empty"
+              className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center"
+            >
+              <p className="text-sm font-medium text-gray-700">
+                {currentUserRole === "patient"
+                  ? "Message the doctor"
+                  : "Message the patient"}
+              </p>
+              <p className="mt-1 text-xs text-gray-500">
+                {currentUserRole === "patient"
+                  ? "Your call stays on screen. Type below or use a quick reply."
+                  : "Join and mute updates stay on the call, not in this thread."}
+              </p>
+            </div>
+          ) : (
+            <MessageList
+              rows={messageRows}
+              layout={layout}
+              mode={mode}
+              currentUserId={currentUserId}
+              currentUserRole={currentUserRole}
+              signedAttachmentUrls={signedAttachmentUrls}
+              reactionsByMessageId={reactionsByMessageId}
+              userNameById={userNameById}
+              counterpartyName={counterpartyName}
+              editingMessageId={editingMessageId}
+              editSaving={editSaving}
+              pinCapReached={pinCapReached}
+              lookupMessageById={lookupMessageById}
+              getSenderDisplayName={messageSenderDisplayName}
+              onScrollChange={handleListScrollChange}
+              scrollToMessageRef={scrollToMessageRef}
+              scrollToBottomRef={scrollToBottomRef}
+              onStartReply={mode === "live" ? handleStartReply : undefined}
+              onRetryFailed={retryFailed}
+              onDiscardFailed={discardFailed}
+              onStartEdit={mode === "live" ? handleStartEdit : undefined}
+              onSaveEdit={mode === "live" ? handleSaveEdit : undefined}
+              onCancelEdit={mode === "live" ? handleCancelEdit : undefined}
+              onSoftDelete={
+                mode === "live" ? handleSoftDeleteRequest : undefined
+              }
+              onTogglePin={
+                mode === "live" && currentUserRole === "doctor"
+                  ? handleTogglePin
+                  : undefined
+              }
+              onToggleReaction={mode === "live" ? toggleReaction : undefined}
+              onOpenReactionPicker={
+                mode === "live" ? handleOpenReactionPicker : undefined
+              }
+              onOpenLightbox={openLightbox}
+            />
+          )}
+          {mode === "live" ? (
+            <TextChatJumpToLatest
+              unreadCount={unreadSinceScrollUp}
+              onJump={handleJumpToLatest}
+            />
+          ) : null}
+        </div>
+
+        {/* Pre-session banner (when status === 'scheduled') */}
+        {sessionStatus === "scheduled" && !ended ? (
+          <div className="border-t border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
+            Your consult hasn’t started yet. The chat will open as soon as the
+            doctor begins the session.
           </div>
         ) : null}
-        {showLocalNotificationConsentPrompt ? (
-          <LocalNotificationConsentPrompt
-            sessionId={sessionId}
-            onEnabled={() => {
-              if (typeof window !== "undefined" && "Notification" in window) {
-                setLocalNotifPermission(Notification.permission);
-              }
-              setLocalNotifPromptHidden(true);
-            }}
-            onSnooze={() => {
-              snoozeLocalNotifPrompt(sessionId);
-              setLocalNotifPromptHidden(true);
-            }}
-            onDismiss={() => {
-              dismissLocalNotifPrompt(sessionId);
-              setLocalNotifPromptHidden(true);
-            }}
-          />
-        ) : null}
-        {showPushOptInBanner ? (
-          <PushOptInBanner
-            counterpartyLabel={pushCounterpartyLabel}
-            onEnable={pushSubscription.subscribe}
-            onDismiss={pushSubscription.dismissOptIn}
-          />
-        ) : null}
-        <PinnedMessagesBanner
-          pinned={pinnedMessages}
-          currentUserRole={currentUserRole}
-          layout={layout}
-          onJumpToPin={(id) => scrollToMessage(id, { highlight: true })}
-          onUnpin={mode === "live" && currentUserRole === "doctor" ? handleTogglePin : undefined}
-        />
-        <MessageList
-          rows={messageRows}
-          layout={layout}
-          mode={mode}
-          currentUserId={currentUserId}
-          currentUserRole={currentUserRole}
-          signedAttachmentUrls={signedAttachmentUrls}
-          reactionsByMessageId={reactionsByMessageId}
-          userNameById={userNameById}
-          counterpartyName={counterpartyName}
-          editingMessageId={editingMessageId}
-          editSaving={editSaving}
-          pinCapReached={pinCapReached}
-          lookupMessageById={lookupMessageById}
-          getSenderDisplayName={messageSenderDisplayName}
-          onScrollChange={handleListScrollChange}
-          scrollToMessageRef={scrollToMessageRef}
-          scrollToBottomRef={scrollToBottomRef}
-          onStartReply={mode === "live" ? handleStartReply : undefined}
-          onRetryFailed={retryFailed}
-          onDiscardFailed={discardFailed}
-          onStartEdit={mode === "live" ? handleStartEdit : undefined}
-          onSaveEdit={mode === "live" ? handleSaveEdit : undefined}
-          onCancelEdit={mode === "live" ? handleCancelEdit : undefined}
-          onSoftDelete={mode === "live" ? handleSoftDeleteRequest : undefined}
-          onTogglePin={
-            mode === "live" && currentUserRole === "doctor" ? handleTogglePin : undefined
-          }
-          onToggleReaction={mode === "live" ? toggleReaction : undefined}
-          onOpenReactionPicker={mode === "live" ? handleOpenReactionPicker : undefined}
-          onOpenLightbox={openLightbox}
-        />
-        {mode === "live" ? (
-          <TextChatJumpToLatest
-            unreadCount={unreadSinceScrollUp}
-            onJump={handleJumpToLatest}
-          />
-        ) : null}
-      </div>
 
-      {/* Pre-session banner (when status === 'scheduled') */}
-      {sessionStatus === "scheduled" && !ended ? (
-        <div className="border-t border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
-          Your consult hasn’t started yet. The chat will open as soon as the doctor begins the session.
-        </div>
-      ) : null}
-
-      {/* End-state banner — suppressed in readonly because the
+        {/* End-state banner — suppressed in readonly because the
           watermark header already says "view of your consultation on
           {date}", which conveys the same "this is over" signal without
           stacking two banners. */}
-      {ended && mode !== "readonly" ? (
-        <div className="border-t border-gray-200 bg-gray-50 px-4 py-2 text-xs text-gray-700">{ended}</div>
-      ) : null}
+        {ended && mode !== "readonly" ? (
+          <div className="border-t border-gray-200 bg-gray-50 px-4 py-2 text-xs text-gray-700">
+            {ended}
+          </div>
+        ) : null}
 
-      {/* Plan 06 attachments — transient validation / upload error banner.
+        {/* Plan 06 attachments — transient validation / upload error banner.
           Auto-clears after 4s via flashAttachmentError; no dismiss UI
           because the timeout is short and stacking is disabled (each
           flash replaces the prior). Suppressed in readonly because the
           composer is gone. */}
-      {mode === "live" && attachmentError ? (
-        <div
-          role="alert"
-          className="border-t border-red-200 bg-red-50 px-4 py-2 text-xs text-red-800"
-          data-testid="text-consult-room-attachment-error"
-        >
-          {attachmentError}
-        </div>
-      ) : null}
-
-      {mode === "live" && deleteConfirm ? (
-        <div
-          role="alert"
-          className="border-t border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900"
-          data-testid="text-consult-room-delete-confirm"
-        >
-          <span>Delete this message? This can&apos;t be undone.</span>
-          <span className="ml-2 inline-flex gap-2">
-            <button
-              type="button"
-              onClick={() => void handleSoftDeleteConfirm()}
-              className="font-medium underline hover:text-amber-950 focus:outline-none focus:ring-2 focus:ring-amber-500"
-            >
-              Delete
-            </button>
-            <button
-              type="button"
-              onClick={clearDeleteConfirm}
-              className="underline hover:text-amber-950 focus:outline-none focus:ring-2 focus:ring-amber-500"
-            >
-              Cancel
-            </button>
-          </span>
-        </div>
-      ) : null}
-
-      {mode === "live" && actionToast ? (
-        <div
-          role="status"
-          className="border-t border-gray-200 bg-gray-50 px-4 py-2 text-xs text-gray-700"
-          data-testid="text-consult-room-action-toast"
-        >
-          {actionToast}
-        </div>
-      ) : null}
-
-      {/* Counterparty typing — above composer; panel has no header so this
-          is the only surface for typing in that layout. */}
-      {mode === "live" && !ended && counterpartyTyping ? (
-        <div
-          className="flex items-center gap-2 border-t border-gray-100 bg-white px-3 py-1 text-xs text-gray-500"
-          aria-live="polite"
-          data-testid="text-consult-room-typing-indicator"
-        >
-          <Avatar role={counterpartyRole} size="xs" />
-          <span
-            className="inline-flex gap-0.5"
-            aria-label={`${counterpartyLabel} is typing`}
+        {mode === "live" && attachmentError ? (
+          <div
+            role="alert"
+            className="border-t border-red-200 bg-red-50 px-4 py-2 text-xs text-red-800"
+            data-testid="text-consult-room-attachment-error"
           >
-            <span className="animate-typing-dot">·</span>
-            <span className="animate-typing-dot [animation-delay:150ms]">·</span>
-            <span className="animate-typing-dot [animation-delay:300ms]">·</span>
-          </span>
-        </div>
-      ) : null}
+            {attachmentError}
+          </div>
+        ) : null}
 
-      {/* Composer — hidden while evicted (text-D2 overlay blocks interaction). */}
-      {mode === "live" && !ended && !evicted ? (
-        <form
-          onSubmit={handleSubmit}
-          data-host={layout}
-          className="group border-t border-gray-200 bg-white px-3 py-2"
-        >
-          {/* CP-D5: in-call mark-no-show parity with video / voice rooms.
-              Rendered only when the prop is supplied (cockpit + doctor role).
-              type="button" prevents accidental form submission. */}
-          {onMarkNoShow && (
-            <div className="mb-1.5 flex justify-end">
+        {mode === "live" && deleteConfirm ? (
+          <div
+            role="alert"
+            className="border-t border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900"
+            data-testid="text-consult-room-delete-confirm"
+          >
+            <span>Delete this message? This can&apos;t be undone.</span>
+            <span className="ml-2 inline-flex gap-2">
               <button
                 type="button"
-                onClick={handleMarkNoShowClick}
-                disabled={noShowBusy}
-                title={
-                  noShowStep === "confirm"
-                    ? "Click again to confirm no-show"
-                    : "Mark this patient as a no-show"
-                }
-                aria-label={
-                  noShowStep === "confirm"
-                    ? "Confirm marking patient as no-show"
-                    : "Mark patient as no-show"
-                }
-                className={
-                  noShowStep === "confirm"
-                    ? "rounded-md border border-red-600 bg-red-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-60"
-                    : "rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-60"
-                }
+                onClick={() => void handleSoftDeleteConfirm()}
+                className="font-medium underline hover:text-amber-950 focus:outline-none focus:ring-2 focus:ring-amber-500"
               >
-                {noShowBusy
-                  ? "Marking…"
-                  : noShowStep === "confirm"
-                    ? "Confirm no-show?"
-                    : "Mark no-show"}
+                Delete
               </button>
-            </div>
-          )}
-          {/* Plan 06 attachments — hidden file inputs. Paperclip uses the
+              <button
+                type="button"
+                onClick={clearDeleteConfirm}
+                className="underline hover:text-amber-950 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              >
+                Cancel
+              </button>
+            </span>
+          </div>
+        ) : null}
+
+        {mode === "live" && actionToast ? (
+          <div
+            role="status"
+            className="border-t border-gray-200 bg-gray-50 px-4 py-2 text-xs text-gray-700"
+            data-testid="text-consult-room-action-toast"
+          >
+            {actionToast}
+          </div>
+        ) : null}
+
+        {/* Counterparty typing — above composer; panel has no header so this
+          is the only surface for typing in that layout. */}
+        {mode === "live" && !ended && counterpartyTyping ? (
+          <div
+            className="flex items-center gap-2 border-t border-gray-100 bg-white px-3 py-1 text-xs text-gray-500"
+            aria-live="polite"
+            data-testid="text-consult-room-typing-indicator"
+          >
+            <Avatar role={counterpartyRole} size="xs" />
+            <span
+              className="inline-flex gap-0.5"
+              aria-label={`${counterpartyLabel} is typing`}
+            >
+              <span className="animate-typing-dot">·</span>
+              <span className="animate-typing-dot [animation-delay:150ms]">
+                ·
+              </span>
+              <span className="animate-typing-dot [animation-delay:300ms]">
+                ·
+              </span>
+            </span>
+          </div>
+        ) : null}
+
+        {/* Composer — hidden while evicted (text-D2 overlay blocks interaction). */}
+        {mode === "live" && !ended && !evicted ? (
+          <form
+            onSubmit={handleSubmit}
+            data-host={layout}
+            className={
+              isPanel
+                ? hidePanelHeader
+                  ? "group border-t border-border bg-background px-2 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))]"
+                  : "group border-t border-border bg-background px-2 py-1.5"
+                : "group border-t border-gray-200 bg-white px-3 py-2"
+            }
+          >
+            {/* CP-D5: mark-no-show — skip in panel (cockpit More ▾ owns it). */}
+            {onMarkNoShow && !isPanel ? (
+              <div className="mb-1.5 flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleMarkNoShowClick}
+                  disabled={noShowBusy}
+                  title={
+                    noShowStep === "confirm"
+                      ? "Click again to confirm no-show"
+                      : "Mark this patient as a no-show"
+                  }
+                  aria-label={
+                    noShowStep === "confirm"
+                      ? "Confirm marking patient as no-show"
+                      : "Mark patient as no-show"
+                  }
+                  className={
+                    noShowStep === "confirm"
+                      ? "rounded-md border border-red-600 bg-red-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-60"
+                      : "rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-60"
+                  }
+                >
+                  {noShowBusy
+                    ? "Marking…"
+                    : noShowStep === "confirm"
+                      ? "Confirm no-show?"
+                      : "Mark no-show"}
+                </button>
+              </div>
+            ) : null}
+            {/* Plan 06 attachments — hidden file inputs. Paperclip uses the
               multi-type picker; camera uses capture + preview overlay (C1);
               gallery input is for "Switch to gallery" from that overlay. */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,application/pdf"
-            multiple
-            className="hidden"
-            onChange={(e) => void handleFilePick(e.target.files, "files")}
-            data-testid="text-consult-room-file-input"
-          />
-          <input
-            ref={cameraInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={handleCameraCapture}
-            data-testid="text-consult-room-camera-input"
-          />
-          <input
-            ref={galleryInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={handleGalleryCaptureForCamera}
-            data-testid="text-consult-room-gallery-input"
-          />
-          <div className="flex flex-col gap-1">
-            {showRestoreBanner && hydratedDraft ? (
-              <div
-                className="border-l-2 border-yellow-400 bg-yellow-50 px-3 py-1 text-xs text-yellow-800"
-                data-testid="text-consult-room-draft-restore-banner"
-              >
-                Your draft was restored.
-                {hydratedDraft.attachmentMeta.length > 0 ? (
-                  <>
-                    {" "}
-                    Re-attach:{" "}
-                    {hydratedDraft.attachmentMeta.map((a) => a.name).join(", ")}
-                  </>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={handleDiscardDraft}
-                  className="ml-2 underline"
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,application/pdf"
+              multiple
+              className="hidden"
+              onChange={(e) => void handleFilePick(e.target.files, "files")}
+              data-testid="text-consult-room-file-input"
+            />
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={handleCameraCapture}
+              data-testid="text-consult-room-camera-input"
+            />
+            <input
+              ref={galleryInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleGalleryCaptureForCamera}
+              data-testid="text-consult-room-gallery-input"
+            />
+            <div className="flex flex-col gap-1">
+              {quickReplies &&
+              quickReplies.length > 0 &&
+              composer.trim() === "" &&
+              composerAttachments.length === 0 &&
+              sessionStatus === "live" &&
+              composerLockReason === null ? (
+                <div
+                  data-testid="patient-chat-quick-replies"
+                  className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                 >
-                  Discard
-                </button>
-              </div>
-            ) : null}
-            {layout === "standalone" ? (
-              <div
-                className="flex flex-wrap items-center gap-0.5"
-                data-testid="text-consult-room-markdown-toolbar"
-                role="toolbar"
-                aria-label="Formatting"
-              >
-                {(
-                  [
-                    ["bold", "B", "Bold"],
-                    ["italic", "I", "Italic"],
-                    ["strike", "S", "Strikethrough"],
-                    ["code", "</>", "Inline code"],
-                    ["link", "🔗", "Link"],
-                    ["list", "≡", "Bullet list"],
-                  ] as const
-                ).map(([action, label, title]) => (
-                  <button
-                    key={action}
-                    type="button"
-                    title={title}
-                    aria-label={title}
-                    disabled={composerLockReason !== null}
-                    onClick={() => handleMarkdownToolbar(action)}
-                    className="min-w-[28px] rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 font-mono text-xs text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            {replyTo ? (
-              <div
-                className="flex items-start gap-2 border-l-2 border-blue-500 bg-blue-50 px-3 py-1.5 text-xs"
-                data-testid="text-consult-room-reply-banner"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium text-gray-900">
-                    Replying to {replyTo.senderName}
-                  </div>
-                  <div className="truncate text-gray-600">
-                    {renderMarkdownLite(replyTo.body, { compact: true })}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setReplyTo(null)}
-                  className="shrink-0 text-lg leading-none text-gray-500 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  aria-label="Cancel reply"
-                >
-                  ×
-                </button>
-              </div>
-            ) : null}
-            {composerAttachments.length > 0 ? (
-              <div
-                className="flex gap-2 overflow-x-auto pb-2"
-                data-testid="text-consult-room-attachment-preview"
-              >
-                {composerAttachments.map((a) => (
-                  <div key={a.localId} className="relative h-16 w-16 flex-shrink-0">
-                    {a.mime.startsWith("image/") ? (
-                      /* eslint-disable-next-line @next/next/no-img-element -- blob preview */
-                      <img
-                        src={a.previewUrl}
-                        alt=""
-                        className="h-full w-full rounded object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center rounded bg-gray-100 text-lg">
-                        📄
-                      </div>
-                    )}
+                  {quickReplies.map((label) => (
                     <button
+                      key={label}
                       type="button"
-                      onClick={() => removeComposerAttachment(a.localId)}
-                      className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs text-white"
-                      aria-label="Remove attachment"
+                      onClick={() => handleSend({ body: label })}
+                      className="shrink-0 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                     >
-                      ×
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {showRestoreBanner && hydratedDraft ? (
+                <div
+                  className="border-l-2 border-yellow-400 bg-yellow-50 px-3 py-1 text-xs text-yellow-800"
+                  data-testid="text-consult-room-draft-restore-banner"
+                >
+                  Your draft was restored.
+                  {hydratedDraft.attachmentMeta.length > 0 ? (
+                    <>
+                      {" "}
+                      Re-attach:{" "}
+                      {hydratedDraft.attachmentMeta
+                        .map((a) => a.name)
+                        .join(", ")}
+                    </>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={handleDiscardDraft}
+                    className="ml-2 underline"
+                  >
+                    Discard
+                  </button>
+                </div>
+              ) : null}
+              {layout === "standalone" ? (
+                <div
+                  className="flex flex-wrap items-center gap-0.5"
+                  data-testid="text-consult-room-markdown-toolbar"
+                  role="toolbar"
+                  aria-label="Formatting"
+                >
+                  {(
+                    [
+                      ["bold", "B", "Bold"],
+                      ["italic", "I", "Italic"],
+                      ["strike", "S", "Strikethrough"],
+                      ["code", "</>", "Inline code"],
+                      ["link", "🔗", "Link"],
+                      ["list", "≡", "Bullet list"],
+                    ] as const
+                  ).map(([action, label, title]) => (
+                    <button
+                      key={action}
+                      type="button"
+                      title={title}
+                      aria-label={title}
+                      disabled={composerLockReason !== null}
+                      onClick={() => handleMarkdownToolbar(action)}
+                      className="min-w-[28px] rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 font-mono text-xs text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {replyTo ? (
+                <div
+                  className="flex items-start gap-2 border-l-2 border-blue-500 bg-blue-50 px-3 py-1.5 text-xs"
+                  data-testid="text-consult-room-reply-banner"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-gray-900">
+                      Replying to {replyTo.senderName}
+                    </div>
+                    <div className="truncate text-gray-600">
+                      {renderMarkdownLite(replyTo.body, { compact: true })}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setReplyTo(null)}
+                    className="shrink-0 text-lg leading-none text-gray-500 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    aria-label="Cancel reply"
+                  >
+                    ×
+                  </button>
+                </div>
+              ) : null}
+              {composerAttachments.length > 0 ? (
+                <div
+                  className="flex gap-2 overflow-x-auto pb-2"
+                  data-testid="text-consult-room-attachment-preview"
+                >
+                  {composerAttachments.map((a) => (
+                    <div
+                      key={a.localId}
+                      className="relative h-16 w-16 flex-shrink-0"
+                    >
+                      {a.mime.startsWith("image/") ? (
+                        /* eslint-disable-next-line @next/next/no-img-element -- blob preview */
+                        <img
+                          src={a.previewUrl}
+                          alt=""
+                          className="h-full w-full rounded object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center rounded bg-gray-100 text-lg">
+                          📄
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removeComposerAttachment(a.localId)}
+                        className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs text-white"
+                        aria-label="Remove attachment"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <div
+                className={
+                  isPanel
+                    ? "flex min-w-0 items-end gap-1"
+                    : "flex items-end gap-2"
+                }
+              >
+                {isPanel ? null : (
+                  <button
+                    type="button"
+                    onClick={triggerFilePicker}
+                    disabled={composerLockReason !== null}
+                    title="Attach images or PDF"
+                    aria-label="Attach images or PDF"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-gray-600 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:text-gray-300"
+                    data-testid="text-consult-room-file-button"
+                  >
+                    📎
+                  </button>
+                )}
+                {isPanel ? (
+                  <div
+                    data-testid="in-call-composer-bar"
+                    className="flex min-w-0 flex-1 items-end gap-0.5 rounded-2xl border border-border bg-muted/50 px-1 py-0.5"
+                  >
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          type="button"
+                          disabled={composerLockReason !== null}
+                          title="Attach or more"
+                          aria-label="Attach or more"
+                          className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-background hover:text-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+                          data-testid="text-consult-room-file-button"
+                        >
+                          <Paperclip className="h-4 w-4" aria-hidden />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="start"
+                        side="top"
+                        className="w-56"
+                      >
+                        <DropdownMenuItem
+                          disabled={composerLockReason !== null}
+                          onClick={triggerFilePicker}
+                        >
+                          Attach file
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={composerLockReason !== null}
+                          onClick={triggerCameraPicker}
+                        >
+                          Take photo
+                        </DropdownMenuItem>
+                        {speechRecognitionSupported ? (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              disabled={composerLockReason !== null}
+                              onClick={handleDictationToggle}
+                            >
+                              {isDictating ? "Stop dictation" : "Dictate"}
+                            </DropdownMenuItem>
+                            <DropdownMenuSub>
+                              <DropdownMenuSubTrigger
+                                disabled={
+                                  composerLockReason !== null || isDictating
+                                }
+                              >
+                                Dictation language
+                              </DropdownMenuSubTrigger>
+                              <DropdownMenuSubContent className="w-44">
+                                {SPEECH_RECOGNITION_LOCALES.map((loc) => (
+                                  <DropdownMenuItem
+                                    key={loc.value}
+                                    disabled={
+                                      composerLockReason !== null || isDictating
+                                    }
+                                    onClick={() =>
+                                      setDictationLocale(loc.value)
+                                    }
+                                  >
+                                    {dictationLocale === loc.value ? "✓ " : ""}
+                                    {loc.label}
+                                  </DropdownMenuItem>
+                                ))}
+                              </DropdownMenuSubContent>
+                            </DropdownMenuSub>
+                          </>
+                        ) : null}
+                        {currentUserRole === "doctor" ? (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                              Insert
+                            </DropdownMenuLabel>
+                            {IN_CALL_DOCTOR_INSERTS.map((label) => (
+                              <DropdownMenuItem
+                                key={label}
+                                disabled={composerLockReason !== null}
+                                onClick={() => handleSend({ body: label })}
+                              >
+                                {label}
+                              </DropdownMenuItem>
+                            ))}
+                          </>
+                        ) : null}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                    <div className="relative min-h-8 min-w-0 flex-1">
+                      {partialTranscript ? (
+                        <div
+                          aria-hidden
+                          className="pointer-events-none absolute inset-0 overflow-hidden px-1.5 py-1.5 text-sm leading-5 text-foreground whitespace-pre-wrap break-words"
+                          data-testid="text-consult-room-dictation-overlay"
+                        >
+                          <span className="whitespace-pre-wrap">
+                            {composer}
+                          </span>
+                          <span className="italic text-muted-foreground">
+                            {partialTranscript}
+                          </span>
+                        </div>
+                      ) : null}
+                      <textarea
+                        ref={setComposerRef}
+                        value={composer}
+                        onChange={handleComposerChange}
+                        onKeyDown={handleComposerKeyDown}
+                        placeholder={composerLockReason ?? "Message"}
+                        disabled={composerLockReason !== null}
+                        title={composerLockReason ?? undefined}
+                        rows={1}
+                        aria-label="Message"
+                        className={
+                          "relative z-[1] max-h-24 min-h-8 w-full resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-1.5 text-sm leading-5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-60 " +
+                          (partialTranscript
+                            ? "text-transparent caret-foreground"
+                            : "")
+                        }
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={sendButtonDisabled}
+                      aria-label={
+                        sendButtonState === "rate-limited"
+                          ? `Rate limit hit — wait ${rateLimit.cooldownSecondsRemaining}s before sending again`
+                          : "Send message"
+                      }
+                      aria-busy={sendButtonState === "sending"}
+                      title={
+                        sendButtonState === "queued"
+                          ? "Will send when back online"
+                          : sendButtonState === "rate-limited"
+                            ? `Wait ${rateLimit.cooldownSecondsRemaining}s before sending again`
+                            : "Send"
+                      }
+                      data-send-state={sendButtonState}
+                      data-testid="text-consult-room-send-inline"
+                      className={
+                        "mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full focus:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed " +
+                        (sendButtonState === "idle"
+                          ? "text-muted-foreground"
+                          : sendButtonState === "disabled-too-long"
+                            ? "bg-red-100 text-red-600"
+                            : sendButtonState === "rate-limited"
+                              ? "bg-amber-100 text-amber-700"
+                              : sendButtonState === "queued"
+                                ? "bg-blue-600 text-white opacity-80"
+                                : "bg-blue-600 text-white hover:bg-blue-700")
+                      }
+                    >
+                      {sendButtonState === "sending" ? (
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                      ) : sendButtonState === "rate-limited" ? (
+                        <span className="text-[10px] font-medium">
+                          {rateLimit.cooldownSecondsRemaining}s
+                        </span>
+                      ) : (
+                        <Send className="h-4 w-4" aria-hidden />
+                      )}
                     </button>
                   </div>
-                ))}
-              </div>
-            ) : null}
-            <div className="flex items-end gap-2">
-              {/* text-C1 — camera-direct with preview overlay; all layouts. */}
-              <button
-                type="button"
-                onClick={triggerCameraPicker}
-                disabled={composerLockReason !== null}
-                title="Take photo"
-                aria-label="Take photo"
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full p-2 text-gray-600 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:text-gray-300"
-                data-testid="text-consult-room-camera-button"
-              >
-                📷
-              </button>
-              <button
-                type="button"
-                onClick={triggerFilePicker}
-                disabled={composerLockReason !== null}
-                title="Attach images or PDF"
-                aria-label="Attach images or PDF"
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-gray-600 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:text-gray-300"
-                data-testid="text-consult-room-file-button"
-              >
-                📎
-              </button>
-              {speechRecognitionSupported ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleDictationToggle}
-                    disabled={composerLockReason !== null}
-                    aria-pressed={isDictating}
-                    aria-label={isDictating ? "Stop dictation" : "Start dictation"}
-                    title={
-                      isDictating
-                        ? "Recording — tap to stop"
-                        : "Dictate (audio processed by your browser; not stored)"
-                    }
-                    className={
-                      "relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:text-gray-300 " +
-                      (isDictating
-                        ? "animate-pulse bg-red-100 text-red-700"
-                        : "text-gray-600 hover:bg-gray-100")
-                    }
-                    data-testid="text-consult-room-dictation-button"
-                  >
-                    🎙
-                    {isDictating ? (
-                      <span
-                        className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500"
-                        aria-hidden
-                      />
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={triggerCameraPicker}
+                      disabled={composerLockReason !== null}
+                      title="Take photo"
+                      aria-label="Take photo"
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full p-2 text-gray-600 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:text-gray-300"
+                      data-testid="text-consult-room-camera-button"
+                    >
+                      📷
+                    </button>
+                    {speechRecognitionSupported ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={handleDictationToggle}
+                          disabled={composerLockReason !== null}
+                          aria-pressed={isDictating}
+                          aria-label={
+                            isDictating ? "Stop dictation" : "Start dictation"
+                          }
+                          title={
+                            isDictating
+                              ? "Recording — tap to stop"
+                              : "Dictate (audio processed by your browser; not stored)"
+                          }
+                          className={
+                            "relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:text-gray-300 " +
+                            (isDictating
+                              ? "animate-pulse bg-red-100 text-red-700"
+                              : "text-gray-600 hover:bg-gray-100")
+                          }
+                          data-testid="text-consult-room-dictation-button"
+                        >
+                          🎙
+                          {isDictating ? (
+                            <span
+                              className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500"
+                              aria-hidden
+                            />
+                          ) : null}
+                        </button>
+                        <select
+                          value={dictationLocale}
+                          onChange={(e) => setDictationLocale(e.target.value)}
+                          disabled={composerLockReason !== null || isDictating}
+                          aria-label="Dictation language"
+                          title="Dictation language"
+                          className="h-9 max-w-[5.5rem] shrink-0 rounded-lg border border-gray-300 bg-white px-1.5 text-xs text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-gray-100 group-data-[host=canvas]:max-w-[6.5rem] group-data-[host=standalone]:max-w-[7.5rem]"
+                          data-testid="text-consult-room-dictation-locale"
+                        >
+                          {SPEECH_RECOGNITION_LOCALES.map((loc) => (
+                            <option key={loc.value} value={loc.value}>
+                              {loc.label}
+                            </option>
+                          ))}
+                        </select>
+                      </>
                     ) : null}
-                  </button>
-                  <select
-                    value={dictationLocale}
-                    onChange={(e) => setDictationLocale(e.target.value)}
-                    disabled={composerLockReason !== null || isDictating}
-                    aria-label="Dictation language"
-                    title="Dictation language"
-                    className="h-9 max-w-[5.5rem] shrink-0 rounded-lg border border-gray-300 bg-white px-1.5 text-xs text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-gray-100 group-data-[host=panel]:max-w-[4.25rem] group-data-[host=canvas]:max-w-[6.5rem] group-data-[host=standalone]:max-w-[7.5rem]"
-                    data-testid="text-consult-room-dictation-locale"
-                  >
-                    {SPEECH_RECOGNITION_LOCALES.map((loc) => (
-                      <option key={loc.value} value={loc.value}>
-                        {layout === "panel" ? loc.value : loc.label}
-                      </option>
-                    ))}
-                  </select>
-                </>
-              ) : null}
-              <div className="relative min-h-[36px] flex-1">
-                {partialTranscript ? (
-                  <div
-                    aria-hidden
-                    className="pointer-events-none absolute inset-0 overflow-hidden rounded-2xl border border-transparent px-3 py-2 text-sm leading-[1.25rem] text-gray-900 whitespace-pre-wrap break-words"
-                    data-testid="text-consult-room-dictation-overlay"
-                  >
-                    <span className="whitespace-pre-wrap">{composer}</span>
-                    <span className="text-gray-400 italic">{partialTranscript}</span>
+                  </>
+                )}
+                {isPanel ? null : (
+                  <div className="relative min-h-[36px] flex-1">
+                    {partialTranscript ? (
+                      <div
+                        aria-hidden
+                        className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-2xl border border-transparent px-3 py-2 text-sm leading-[1.25rem] text-gray-900"
+                        data-testid="text-consult-room-dictation-overlay"
+                      >
+                        <span className="whitespace-pre-wrap">{composer}</span>
+                        <span className="italic text-gray-400">
+                          {partialTranscript}
+                        </span>
+                      </div>
+                    ) : null}
+                    <textarea
+                      ref={setComposerRef}
+                      value={composer}
+                      onChange={handleComposerChange}
+                      onKeyDown={handleComposerKeyDown}
+                      placeholder={composerLockReason ?? "Type a message…"}
+                      disabled={composerLockReason !== null}
+                      title={composerLockReason ?? undefined}
+                      rows={1}
+                      aria-label="Message"
+                      className={
+                        "relative z-[1] min-h-[36px] w-full resize-none rounded-2xl border border-gray-300 px-3 py-2 text-sm placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-gray-100 " +
+                        (partialTranscript
+                          ? "bg-transparent text-transparent caret-gray-900"
+                          : "bg-white text-gray-900")
+                      }
+                    />
                   </div>
-                ) : null}
-                <textarea
-                  ref={setComposerRef}
-                  value={composer}
-                  onChange={handleComposerChange}
-                  onKeyDown={handleComposerKeyDown}
-                  placeholder={composerLockReason ?? "Type a message…"}
-                  disabled={composerLockReason !== null}
-                  title={composerLockReason ?? undefined}
-                  rows={1}
-                  aria-label="Message"
-                  className={
-                    "relative z-[1] min-h-[36px] w-full resize-none rounded-2xl border border-gray-300 px-3 py-2 text-sm placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-gray-100 " +
-                    (partialTranscript
-                      ? "bg-transparent text-transparent caret-gray-900"
-                      : "bg-white text-gray-900")
-                  }
-                />
+                )}
               </div>
-            </div>
-            {!hintDismissed ? (
-              <div
-                className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-xs text-gray-500 group-data-[host=canvas]:hidden"
-                data-testid="text-consult-room-keyboard-hint"
-                data-has-hardware-keyboard={hasHardwareKeyboard || undefined}
-              >
-                <kbd className="rounded border border-gray-300 bg-gray-100 px-1 py-0.5 font-mono text-[10px]">
-                  Enter
-                </kbd>
-                <span>to send ·</span>
-                <kbd className="rounded border border-gray-300 bg-gray-100 px-1 py-0.5 font-mono text-[10px]">
-                  Shift+Enter
-                </kbd>
-                <span>for newline ·</span>
-                {/* text-C6 — extra shortcuts surfaced only when a
+              {!hintDismissed && !isPanel ? (
+                <div
+                  className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-xs text-gray-500 group-data-[host=canvas]:hidden"
+                  data-testid="text-consult-room-keyboard-hint"
+                  data-has-hardware-keyboard={hasHardwareKeyboard || undefined}
+                >
+                  <kbd className="rounded border border-gray-300 bg-gray-100 px-1 py-0.5 font-mono text-[10px]">
+                    Enter
+                  </kbd>
+                  <span>to send ·</span>
+                  <kbd className="rounded border border-gray-300 bg-gray-100 px-1 py-0.5 font-mono text-[10px]">
+                    Shift+Enter
+                  </kbd>
+                  <span>for newline ·</span>
+                  {/* text-C6 — extra shortcuts surfaced only when a
                     hardware keyboard is plausible (`(pointer: fine)`).
                     Touch-only devices keep the A2 hint untouched. */}
-                {hasHardwareKeyboard ? (
-                  <>
-                    <kbd className="rounded border border-gray-300 bg-gray-100 px-1 py-0.5 font-mono text-[10px]">
-                      Esc
-                    </kbd>
-                    <span>to clear ·</span>
-                    <kbd className="rounded border border-gray-300 bg-gray-100 px-1 py-0.5 font-mono text-[10px]">
-                      ↑
-                    </kbd>
-                    <span>to edit last ·</span>
-                  </>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={dismissChatHint}
-                  className="font-medium text-blue-600 underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
-                >
-                  Got it
-                </button>
-              </div>
-            ) : null}
-            {composer.length >= COMPOSER_COUNTER_DISPLAY_THRESHOLD ? (
-              <div className="flex flex-col items-end gap-0.5">
-                <span
-                  className={
-                    composer.length > COMPOSER_HARD_CAP
-                      ? "text-xs text-red-600"
-                      : "text-xs text-gray-500"
-                  }
-                  aria-live="polite"
-                  data-testid="text-consult-room-char-counter"
-                >
-                  {composer.length} / {COMPOSER_HARD_CAP}
-                </span>
-                {composer.length > COMPOSER_HARD_CAP ? (
-                  <p
-                    className="text-xs text-red-600"
-                    data-testid="text-consult-room-too-long-cta"
+                  {hasHardwareKeyboard ? (
+                    <>
+                      <kbd className="rounded border border-gray-300 bg-gray-100 px-1 py-0.5 font-mono text-[10px]">
+                        Esc
+                      </kbd>
+                      <span>to clear ·</span>
+                      <kbd className="rounded border border-gray-300 bg-gray-100 px-1 py-0.5 font-mono text-[10px]">
+                        ↑
+                      </kbd>
+                      <span>to edit last ·</span>
+                    </>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={dismissChatHint}
+                    className="font-medium text-blue-600 underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
                   >
-                    Message too long —{" "}
-                    <button
-                      type="button"
-                      onClick={() => void attachComposerAsFile()}
-                      className="font-medium underline underline-offset-2 hover:text-red-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-1"
+                    Got it
+                  </button>
+                </div>
+              ) : null}
+              {composer.length >= COMPOSER_COUNTER_DISPLAY_THRESHOLD ? (
+                <div className="flex flex-col items-end gap-0.5">
+                  <span
+                    className={
+                      composer.length > COMPOSER_HARD_CAP
+                        ? "text-xs text-red-600"
+                        : "text-xs text-gray-500"
+                    }
+                    aria-live="polite"
+                    data-testid="text-consult-room-char-counter"
+                  >
+                    {composer.length} / {COMPOSER_HARD_CAP}
+                  </span>
+                  {composer.length > COMPOSER_HARD_CAP ? (
+                    <p
+                      className="text-xs text-red-600"
+                      data-testid="text-consult-room-too-long-cta"
                     >
-                      attach as file instead
-                    </button>
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-            <div className="flex justify-end">
-              <button
-                type="submit"
-                disabled={sendButtonDisabled}
-                aria-label={
-                  sendButtonState === "rate-limited"
-                    ? `Rate limit hit — wait ${rateLimit.cooldownSecondsRemaining}s before sending again`
-                    : "Send message"
-                }
-                aria-busy={sendButtonState === "sending"}
-                title={
-                  sendButtonState === "queued"
-                    ? "Will send when back online"
-                    : sendButtonState === "rate-limited"
-                      ? `Wait ${rateLimit.cooldownSecondsRemaining}s before sending again`
-                      : undefined
-                }
-                data-send-state={sendButtonState}
-                data-rate-limit-cooldown={
-                  sendButtonState === "rate-limited"
-                    ? rateLimit.cooldownSecondsRemaining
-                    : undefined
-                }
-                className={
-                  "relative flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-full px-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 disabled:cursor-not-allowed " +
-                  sendButtonClass
-                }
-              >
-                {sendButtonState === "sending" ? (
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                ) : sendButtonState === "queued" ? (
-                  <>
-                    <span>Send</span>
-                    <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                  </>
-                ) : sendButtonState === "rate-limited" ? (
-                  <>
-                    <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                    <span>{rateLimit.cooldownSecondsRemaining}s</span>
-                  </>
-                ) : (
-                  "Send"
-                )}
-              </button>
+                      Message too long —{" "}
+                      <button
+                        type="button"
+                        onClick={() => void attachComposerAsFile()}
+                        className="font-medium underline underline-offset-2 hover:text-red-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-1"
+                      >
+                        attach as file instead
+                      </button>
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              {!isPanel ? (
+                <div className="flex justify-end">
+                  <button
+                    type="submit"
+                    disabled={sendButtonDisabled}
+                    aria-label={
+                      sendButtonState === "rate-limited"
+                        ? `Rate limit hit — wait ${rateLimit.cooldownSecondsRemaining}s before sending again`
+                        : "Send message"
+                    }
+                    aria-busy={sendButtonState === "sending"}
+                    title={
+                      sendButtonState === "queued"
+                        ? "Will send when back online"
+                        : sendButtonState === "rate-limited"
+                          ? `Wait ${rateLimit.cooldownSecondsRemaining}s before sending again`
+                          : undefined
+                    }
+                    data-send-state={sendButtonState}
+                    data-rate-limit-cooldown={
+                      sendButtonState === "rate-limited"
+                        ? rateLimit.cooldownSecondsRemaining
+                        : undefined
+                    }
+                    className={
+                      "relative flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-full px-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 disabled:cursor-not-allowed " +
+                      sendButtonClass
+                    }
+                  >
+                    {sendButtonState === "sending" ? (
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                    ) : sendButtonState === "queued" ? (
+                      <>
+                        <span>Send</span>
+                        <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                      </>
+                    ) : sendButtonState === "rate-limited" ? (
+                      <>
+                        <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                        <span>{rateLimit.cooldownSecondsRemaining}s</span>
+                      </>
+                    ) : (
+                      "Send"
+                    )}
+                  </button>
+                </div>
+              ) : null}
             </div>
-          </div>
-        </form>
-      ) : null}
-      {mode === "live" && reactionPicker ? (
-        <ReactionPicker
-          messageId={reactionPicker.messageId}
-          anchor={reactionPicker.anchor}
-          coords={reactionPicker.coords}
-          open
-          onClose={handleCloseReactionPicker}
-          onPick={handleReactionPick}
-        />
-      ) : null}
-      {/* text-D2 — patient multi-tab kick overlay (z-50 above banners/lightbox). */}
-      {evicted ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          data-testid="text-consult-eviction-overlay"
-          className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/95 p-6 text-center"
-        >
-          <h2 className="mb-2 text-lg font-semibold">
-            This consultation is open in another tab
-          </h2>
-          <p className="mb-4 text-sm text-gray-600">
-            Switch to that tab to continue, or take over here.
-          </p>
-          <button
-            type="button"
-            onClick={takeOver}
-            className="rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          </form>
+        ) : null}
+        {mode === "live" && reactionPicker ? (
+          <ReactionPicker
+            messageId={reactionPicker.messageId}
+            anchor={reactionPicker.anchor}
+            coords={reactionPicker.coords}
+            open
+            onClose={handleCloseReactionPicker}
+            onPick={handleReactionPick}
+          />
+        ) : null}
+        {/* text-D2 — patient multi-tab kick overlay (z-50 above banners/lightbox). */}
+        {evicted ? (
+          <div
+            role="dialog"
+            aria-modal="true"
+            data-testid="text-consult-eviction-overlay"
+            className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/95 p-6 text-center"
           >
-            Take over
-          </button>
-        </div>
-      ) : null}
+            <h2 className="mb-2 text-lg font-semibold">
+              This consultation is open in another tab
+            </h2>
+            <p className="mb-4 text-sm text-gray-600">
+              Switch to that tab to continue, or take over here.
+            </p>
+            <button
+              type="button"
+              onClick={takeOver}
+              className="rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+            >
+              Take over
+            </button>
+          </div>
+        ) : null}
 
-      {mode === "live" && !ended && cameraPreview ? (
-        <CameraPreviewOverlay
-          previewUrl={cameraPreview.previewUrl}
-          onRetake={handleCameraPreviewRetake}
-          onSwitchToGallery={handleCameraPreviewSwitchToGallery}
-          onCancel={closeCameraPreview}
-          onSend={handleCameraPreviewSend}
-          sendDisabled={composerAttachments.length >= MAX_COMPOSER_ATTACHMENTS}
-        />
-      ) : null}
-      {lightboxState ? (
-        <ImageLightbox
-          images={lightboxState.images}
-          initialIndex={lightboxState.index}
-          onClose={closeLightbox}
-        />
-      ) : null}
+        {mode === "live" && !ended && cameraPreview ? (
+          <CameraPreviewOverlay
+            previewUrl={cameraPreview.previewUrl}
+            onRetake={handleCameraPreviewRetake}
+            onSwitchToGallery={handleCameraPreviewSwitchToGallery}
+            onCancel={closeCameraPreview}
+            onSend={handleCameraPreviewSend}
+            sendDisabled={
+              composerAttachments.length >= MAX_COMPOSER_ATTACHMENTS
+            }
+          />
+        ) : null}
+        {lightboxState ? (
+          <ImageLightbox
+            images={lightboxState.images}
+            initialIndex={lightboxState.index}
+            onClose={closeLightbox}
+          />
+        ) : null}
       </div>
     </div>
   );

@@ -4,10 +4,10 @@
  * `<ModalityChangeLauncher>` — controls-bar entry point for mid-consult
  * modality switching (Plan 09 · Task 54 · Decision 11 LOCKED).
  *
- * Mounted inside every room via `<LiveConsultPanel modalitySwitchSlot>`
- * (the slot is already reserved — see `LiveConsultPanel.tsx`). Renders
- * a single `🔀 Change modality` button. Clicking opens a popover with
- * the user's role-appropriate options:
+ * Cockpit video/voice mounts use `triggerVariant="none"` and open from
+ * the room More ▾ menu. Text (and legacy) mounts still use the default
+ * bordered button via `<LiveConsultPanel modalitySwitchSlot>`. Clicking
+ * opens a popover with the user's role-appropriate options:
  *
  *   · Patient — upgrade picker (only modalities strictly above
  *     current) + downgrade picker (strictly below). Both surfaced for
@@ -49,6 +49,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
 import ModalityUpgradeRequestModal from "./ModalityUpgradeRequestModal";
 import PatientDowngradeModal from "./PatientDowngradeModal";
@@ -149,6 +150,24 @@ export interface ModalityChangeLauncherProps {
   }) => void;
   /** Hide the launcher entirely (e.g. after the session ends). */
   disabled?: boolean;
+  /**
+   * Visual trigger. `"button"` (default) is the bordered controls-bar
+   * CTA used under text rooms / legacy mounts. `"none"` hides the
+   * trigger — the host opens the options panel via controlled
+   * `open` / `onOpenChange` (cockpit More ▾ menu).
+   */
+  triggerVariant?: "button" | "none";
+  /** Controlled open state for the options popover. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /**
+   * Fired whenever availability for the More-menu item changes so the
+   * host can disable the menu row while a request is pending / exhausted.
+   */
+  onAvailabilityChange?: (state: {
+    disabled: boolean;
+    reason: string;
+  }) => void;
 }
 
 // ----------------------------------------------------------------------------
@@ -178,6 +197,10 @@ export default function ModalityChangeLauncher(
     patientDisplayName,
     onTransitionApplied,
     disabled,
+    triggerVariant = "button",
+    open: openProp,
+    onOpenChange,
+    onAvailabilityChange,
   } = props;
 
   const [state, setState] = useState<ModalityChangeStateResponse["state"]>(
@@ -185,10 +208,22 @@ export default function ModalityChangeLauncher(
   );
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState<boolean>(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState<boolean>(false);
   const [openModal, setOpenModal] = useState<OpenModal>({ kind: "none" });
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
+  const openControlled = openProp !== undefined;
+  const open = openControlled ? Boolean(openProp) : uncontrolledOpen;
+
+  const setOpen = useCallback(
+    (next: boolean | ((prev: boolean) => boolean)) => {
+      const resolved =
+        typeof next === "function" ? next(open) : next;
+      if (!openControlled) setUncontrolledOpen(resolved);
+      onOpenChange?.(resolved);
+    },
+    [open, openControlled, onOpenChange],
+  );
 
   // ---- Fetch state ---------------------------------------------------------
   const refresh = useCallback(async () => {
@@ -290,14 +325,9 @@ export default function ModalityChangeLauncher(
     const onClickOutside = (e: MouseEvent) => {
       const target = e.target as Node | null;
       if (!target) return;
-      if (
-        popoverRef.current &&
-        !popoverRef.current.contains(target) &&
-        buttonRef.current &&
-        !buttonRef.current.contains(target)
-      ) {
-        setOpen(false);
-      }
+      if (popoverRef.current?.contains(target)) return;
+      if (buttonRef.current?.contains(target)) return;
+      setOpen(false);
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -311,7 +341,7 @@ export default function ModalityChangeLauncher(
       window.removeEventListener("mousedown", onClickOutside);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [open]);
+  }, [open, setOpen]);
 
   // ---- Derived state -------------------------------------------------------
   const currentModality: Modality = state?.currentModality ?? "text";
@@ -370,6 +400,23 @@ export default function ModalityChangeLauncher(
     return "";
   })();
 
+  const availabilityRef = useRef<{ disabled: boolean; reason: string } | null>(
+    null,
+  );
+  useEffect(() => {
+    const next = { disabled: launcherDisabled, reason: disabledTooltip };
+    const prev = availabilityRef.current;
+    if (
+      prev &&
+      prev.disabled === next.disabled &&
+      prev.reason === next.reason
+    ) {
+      return;
+    }
+    availabilityRef.current = next;
+    onAvailabilityChange?.(next);
+  }, [launcherDisabled, disabledTooltip, onAvailabilityChange]);
+
   // ---- Handlers for each CTA ----------------------------------------------
   const handleUpgradeClick = useCallback(
     (target: Modality) => {
@@ -381,7 +428,7 @@ export default function ModalityChangeLauncher(
         setOpenModal({ kind: "doctor_upgrade", target: target as "voice" | "video" });
       }
     },
-    [userRole],
+    [userRole, setOpen],
   );
 
   const handleDowngradeClick = useCallback(
@@ -394,7 +441,7 @@ export default function ModalityChangeLauncher(
         setOpenModal({ kind: "doctor_downgrade", target: target as "text" | "voice" });
       }
     },
-    [userRole],
+    [userRole, setOpen],
   );
 
   const closeOpenModal = useCallback(() => {
@@ -459,70 +506,85 @@ export default function ModalityChangeLauncher(
   };
 
   // ---- Render --------------------------------------------------------------
-  if (nothingToOffer && !anythingPending && !loading && !error) {
+  if (
+    triggerVariant === "button" &&
+    nothingToOffer &&
+    !anythingPending &&
+    !loading &&
+    !error
+  ) {
     // Neither direction possible (shouldn't occur in practice — every
     // modality has at least one neighbour on the ladder — defensive).
+    // Controlled/"none" mounts stay mounted so the More menu can still
+    // surface a disabled reason.
     return null;
   }
 
-  return (
-    <div className="relative inline-block">
-      <button
-        ref={buttonRef}
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-disabled={launcherDisabled}
-        title={launcherDisabled ? disabledTooltip : "Change modality"}
-        onClick={() => {
-          if (launcherDisabled) return;
-          setOpen((prev) => !prev);
-        }}
-        className="inline-flex min-h-[48px] items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-800 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+  const optionsPanel =
+    open && !launcherDisabled ? (
+      <div
+        ref={popoverRef}
+        role="menu"
+        aria-label="Modality change options"
+        data-testid="modality-change-options"
+        className={
+          triggerVariant === "none"
+            ? "fixed bottom-24 left-1/2 z-[80] w-72 -translate-x-1/2 rounded-lg border border-gray-200 bg-white p-2 shadow-xl"
+            : "absolute bottom-full right-0 z-40 mb-2 w-72 rounded-lg border border-gray-200 bg-white p-2 shadow-xl"
+        }
       >
-        <span aria-hidden>🔀</span>
-        <span>Change modality</span>
-      </button>
+        <p className="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
+          Change modality
+        </p>
 
-      {open && !launcherDisabled && (
-        <div
-          ref={popoverRef}
-          role="menu"
-          aria-label="Modality change options"
-          className="absolute bottom-full right-0 z-40 mb-2 w-72 rounded-lg border border-gray-200 bg-white p-2 shadow-xl"
-        >
-          <p className="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
-            Change modality
-          </p>
-
-          {upgradeTargets.length > 0 && (
-            <div className="mt-1">
-              <p className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-gray-400">
-                Upgrade to
-              </p>
-              <div className="flex flex-col">
-                {upgradeTargets.map(renderUpgradeItem)}
-              </div>
+        {upgradeTargets.length > 0 && (
+          <div className="mt-1">
+            <p className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-gray-400">
+              Upgrade to
+            </p>
+            <div className="flex flex-col">
+              {upgradeTargets.map(renderUpgradeItem)}
             </div>
-          )}
+          </div>
+        )}
 
-          {downgradeTargets.length > 0 && (
-            <div className="mt-2">
-              <p className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-gray-400">
-                Downgrade to
-              </p>
-              <div className="flex flex-col">
-                {downgradeTargets.map(renderDowngradeItem)}
-              </div>
+        {downgradeTargets.length > 0 && (
+          <div className="mt-2">
+            <p className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-gray-400">
+              Downgrade to
+            </p>
+            <div className="flex flex-col">
+              {downgradeTargets.map(renderDowngradeItem)}
             </div>
-          )}
+          </div>
+        )}
 
-          <p className="mt-2 px-2 py-1 text-[11px] text-gray-500">
-            Max 1 upgrade + 1 downgrade per consult.
-          </p>
-        </div>
-      )}
+        <p className="mt-2 px-2 py-1 text-[11px] text-gray-500">
+          Max 1 upgrade + 1 downgrade per consult.
+        </p>
+      </div>
+    ) : open && launcherDisabled ? (
+      <div
+        ref={popoverRef}
+        role="status"
+        data-testid="modality-change-disabled"
+        className={
+          triggerVariant === "none"
+            ? "fixed bottom-24 left-1/2 z-[80] w-72 -translate-x-1/2 rounded-lg border border-gray-200 bg-white p-3 text-sm text-gray-700 shadow-xl"
+            : "absolute bottom-full right-0 z-40 mb-2 w-72 rounded-lg border border-gray-200 bg-white p-3 text-sm text-gray-700 shadow-xl"
+        }
+      >
+        {disabledTooltip || "Modality change unavailable."}
+      </div>
+    ) : null;
 
+  const portaledOptions =
+    optionsPanel && triggerVariant === "none" && typeof document !== "undefined"
+      ? createPortal(optionsPanel, document.body)
+      : optionsPanel;
+
+  const modals = (
+    <>
       {/* Click-launched modals — only one mounts at a time. */}
       {openModal.kind === "patient_upgrade" && (
         <ModalityUpgradeRequestModal
@@ -609,6 +671,39 @@ export default function ModalityChangeLauncher(
       <span hidden aria-hidden>
         {patientDisplayName}
       </span>
+    </>
+  );
+
+  if (triggerVariant === "none") {
+    return (
+      <div data-testid="modality-change-launcher-host">
+        {portaledOptions}
+        {modals}
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative inline-block">
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-disabled={launcherDisabled}
+        title={launcherDisabled ? disabledTooltip : "Change modality"}
+        onClick={() => {
+          if (launcherDisabled) return;
+          setOpen((prev) => !prev);
+        }}
+        className="inline-flex min-h-[48px] items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-800 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+      >
+        <span aria-hidden>🔀</span>
+        <span>Change modality</span>
+      </button>
+
+      {portaledOptions}
+      {modals}
     </div>
   );
 }

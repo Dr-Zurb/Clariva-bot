@@ -4,8 +4,13 @@ import { useCallback, useEffect, useState } from "react";
 import { Header } from "./Header";
 import { Sidebar } from "./Sidebar";
 import { GlobalCommandPalette } from "./GlobalCommandPalette";
+import {
+  DashboardLiveFocusProvider,
+  useDashboardLiveFocus,
+} from "./DashboardLiveFocusContext";
 import { useDashboardCounts } from "@/hooks/useDashboardCounts";
-import { DashboardPushOptInPrompt } from "@/components/dashboard/DashboardPushOptInPrompt";
+import { useOnboardingStatusQuery } from "@/hooks/queries/useOnboardingStatusQuery";
+import { useVerificationStatusQuery } from "@/hooks/queries/useVerificationStatusQuery";
 import { NavPerfTracker } from "@/lib/nav-perf/nav-timing";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 
@@ -32,6 +37,8 @@ interface DashboardShellProps {
    * Also used by useDashboardCounts to poll badge counts.
    */
   token?: string;
+  /** admin-console-v2: show Admin console link in the profile menu. */
+  isAdmin?: boolean;
   children: React.ReactNode;
 }
 
@@ -48,16 +55,26 @@ interface DashboardShellProps {
 export function DashboardShell(props: DashboardShellProps) {
   return (
     <QueryProvider>
-      <DashboardShellInner {...props} />
+      <DashboardLiveFocusProvider>
+        <DashboardShellInner {...props} />
+      </DashboardLiveFocusProvider>
     </QueryProvider>
   );
 }
 
-function DashboardShellInner({ userEmail, token, children }: DashboardShellProps) {
+function DashboardShellInner({
+  userEmail,
+  token,
+  isAdmin = false,
+  children,
+}: DashboardShellProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   // Default false (expanded) avoids SSR/hydration mismatch — real value is
   // read from localStorage in the effect below (one-frame reconcile on mount).
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const { liveFocus } = useDashboardLiveFocus();
+  // Live consult temporarily forces icon-rail nav without writing localStorage.
+  const effectiveSidebarCollapsed = liveFocus || sidebarCollapsed;
   // task-ui-B4 — Cmd-K palette open state. Lifted here so the header
   // search trigger and the global keyboard listener can both flip it.
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -105,14 +122,24 @@ function DashboardShellInner({ userEmail, token, children }: DashboardShellProps
 
   const handleOpenPalette = useCallback(() => setPaletteOpen(true), []);
 
-  const { counts } = useDashboardCounts(token ?? "");
+  const accessToken = token ?? "";
+  const { counts } = useDashboardCounts(accessToken);
+  const { data: onboarding } = useOnboardingStatusQuery(accessToken);
+  const { data: verification } = useVerificationStatusQuery(accessToken);
+  // GS-D5: one setup tab — hide only when setup + license are both done.
+  const hideGettingStarted =
+    onboarding?.complete === true && verification?.status === "verified";
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div
+      className="flex h-screen flex-col overflow-hidden"
+      data-live-focus={liveFocus ? "true" : "false"}
+    >
       <NavPerfTracker />
       <Header
         userEmail={userEmail}
         token={token}
+        isAdmin={isAdmin}
         onMenuToggle={() => setMobileMenuOpen((prev) => !prev)}
         onOpenSearch={handleOpenPalette}
       />
@@ -121,15 +148,15 @@ function DashboardShellInner({ userEmail, token, children }: DashboardShellProps
           isMobileOpen={mobileMenuOpen}
           onClose={() => setMobileMenuOpen(false)}
           counts={counts}
-          collapsed={sidebarCollapsed}
+          collapsed={effectiveSidebarCollapsed}
           onToggleCollapse={handleToggleCollapse}
+          hideGettingStarted={hideGettingStarted}
         />
         <main
-          className="min-h-0 flex-1 overflow-auto p-4 md:p-6"
+          className="flex min-h-0 flex-1 flex-col overflow-auto p-4 md:p-6"
           id="dashboard-main"
           tabIndex={-1}
         >
-          {token ? <DashboardPushOptInPrompt accessToken={token} /> : null}
           {children}
         </main>
       </div>

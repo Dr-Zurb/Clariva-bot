@@ -1,19 +1,25 @@
 /**
- * Unit tests for opdSlotSectioning (Vitest).
+ * Unit tests for chip-mirrored slot sections (Vitest).
  */
 
 import { describe, it, expect } from "vitest";
 import {
-  bucketSlotRowsForSections,
-  computeNowDividerPlacement,
-  showActiveSlotSection,
+  orderSlotRowsFlat,
+  partitionSlotRowsForList,
+  sectionDefaultOpen,
+  shouldRenderChipSection,
+  SLOT_CHIP_SECTION_HINT,
+  SLOT_CHIP_SECTION_LABEL,
+  SLOT_CHIP_SECTION_ORDER,
+  slotPriorityRank,
 } from "@/components/opd/opdSlotSectioning";
-import type { SlotSessionRow } from "@/types/opd-doctor";
+import type { SlotSessionRow, VisitLifecycle } from "@/types/opd-doctor";
 
 function row(
   id: string,
   slotStatus: SlotSessionRow["slotStatus"],
-  scheduledAt: string
+  scheduledAt: string,
+  extras: Partial<SlotSessionRow> = {}
 ): SlotSessionRow {
   return {
     appointmentId: id,
@@ -38,93 +44,152 @@ function row(
     opdEventType: null,
     patientId: "p1",
     patientNote: null,
+    ...extras,
   };
 }
 
-describe("bucketSlotRowsForSections", () => {
-  it("places active statuses into active, sorted by scheduledAt", () => {
-    const filtered = [
-      row("b", "upcoming", "2026-05-16T11:00:00.000Z"),
-      row("a", "grace", "2026-05-16T09:00:00.000Z"),
-    ];
-    const b = bucketSlotRowsForSections(filtered);
-    expect(b.active.map((r) => r.appointmentId)).toEqual(["a", "b"]);
-    expect(b.done).toHaveLength(0);
-    expect(b.missed).toHaveLength(0);
-    expect(b.overflow).toHaveLength(0);
-    expect(b.cancelledOnly).toHaveLength(0);
+function axesRow(
+  id: string,
+  lifecycle: VisitLifecycle,
+  scheduledAt: string,
+  band: "early" | "due" | "late" | null
+): SlotSessionRow {
+  return row(
+    id,
+    lifecycle === "scheduled"
+      ? band === "late"
+        ? "running_late"
+        : "upcoming"
+      : lifecycle === "in_consult"
+        ? "in_consultation"
+        : lifecycle === "incomplete"
+          ? "in_consultation"
+          : lifecycle === "completed"
+            ? "completed"
+            : lifecycle === "no_show"
+              ? "missed"
+              : "cancelled",
+    scheduledAt,
+    {
+      lifecycle,
+      timing:
+        band == null
+          ? null
+          : { minutesToStart: band === "late" ? -10 : 10, band },
+      tags: [],
+    }
+  );
+}
+
+describe("chip section mirror", () => {
+  it("exposes every status chip label (minus All)", () => {
+    expect(
+      SLOT_CHIP_SECTION_ORDER.map((k) => SLOT_CHIP_SECTION_LABEL[k])
+    ).toEqual([
+      "Incomplete",
+      "Overdue",
+      "Upcoming",
+      "Done",
+      "No show",
+      "Overflow",
+      "Cancelled",
+    ]);
   });
 
-  it("splits completed, missed, overflow, and cancelled", () => {
-    const filtered = [
-      row("c1", "cancelled", "2026-05-16T08:00:00.000Z"),
-      row("d1", "completed", "2026-05-16T10:00:00.000Z"),
-      row("m1", "missed", "2026-05-16T09:30:00.000Z"),
-      row("o1", "overflow", "2026-05-16T12:00:00.000Z"),
-    ];
-    const b = bucketSlotRowsForSections(filtered);
-    expect(b.cancelledOnly.map((r) => r.appointmentId)).toEqual(["c1"]);
-    expect(b.done.map((r) => r.appointmentId)).toEqual(["d1"]);
-    expect(b.missed.map((r) => r.appointmentId)).toEqual(["m1"]);
-    expect(b.overflow.map((r) => r.appointmentId)).toEqual(["o1"]);
-    expect(b.active).toHaveLength(0);
+  it("documents Overflow for doctors", () => {
+    expect(SLOT_CHIP_SECTION_HINT.overflow).toMatch(
+      /outside the normal slot grid/i
+    );
+  });
+
+  it("always renders every chip section on All", () => {
+    for (const section of SLOT_CHIP_SECTION_ORDER) {
+      expect(shouldRenderChipSection("all", section, 0)).toBe(true);
+    }
+  });
+
+  it("on Overdue chip only renders the Overdue section", () => {
+    expect(shouldRenderChipSection("running_late", "late", 12)).toBe(true);
+    expect(shouldRenderChipSection("running_late", "incomplete", 1)).toBe(
+      false
+    );
+    expect(shouldRenderChipSection("running_late", "upcoming", 0)).toBe(false);
   });
 });
 
-describe("computeNowDividerPlacement", () => {
-  const t0 = "2026-05-16T08:00:00.000Z";
-  const t1 = "2026-05-16T10:00:00.000Z";
-  const t2 = "2026-05-16T12:00:00.000Z";
-
-  it("returns all_past when every row starts before now", () => {
-    const now = new Date("2026-05-16T15:00:00.000Z").getTime();
-    expect(
-      computeNowDividerPlacement(
-        [row("a", "upcoming", t0), row("b", "upcoming", t1)],
-        now
-      )
-    ).toEqual({ kind: "all_past" });
-  });
-
-  it("returns all_future when first row is at or after now", () => {
-    const now = new Date("2026-05-16T09:30:00.000Z").getTime();
-    expect(
-      computeNowDividerPlacement(
-        [row("a", "upcoming", t1), row("b", "upcoming", t2)],
-        now
-      )
-    ).toEqual({ kind: "all_future" });
-  });
-
-  it("returns split when some rows are before now and some after", () => {
-    const now = new Date("2026-05-16T10:30:00.000Z").getTime();
-    expect(
-      computeNowDividerPlacement(
-        [row("a", "upcoming", t0), row("b", "upcoming", t1), row("c", "upcoming", t2)],
-        now
-      )
-    ).toEqual({ kind: "split", beforeCount: 2 });
-  });
-
-  it("returns all_future for empty active (callers skip rendering)", () => {
-    expect(computeNowDividerPlacement([], Date.now())).toEqual({
-      kind: "all_future",
-    });
+describe("partitionSlotRowsForList", () => {
+  it("buckets into chip sections including overflow and cancelled", () => {
+    const filtered = [
+      axesRow("soon", "scheduled", "2026-05-16T11:00:00.000Z", "due"),
+      axesRow("done", "completed", "2026-05-16T07:00:00.000Z", null),
+      axesRow("late", "scheduled", "2026-05-16T09:00:00.000Z", "late"),
+      axesRow("inc", "incomplete", "2026-05-16T08:00:00.000Z", "late"),
+      axesRow("live", "in_consult", "2026-05-16T08:30:00.000Z", "late"),
+      axesRow("miss", "no_show", "2026-05-16T06:00:00.000Z", null),
+      axesRow("can", "cancelled", "2026-05-16T05:00:00.000Z", null),
+      row("ov", "overflow", "2026-05-16T12:00:00.000Z", {
+        tags: ["overflow"],
+      }),
+    ];
+    const p = partitionSlotRowsForList(filtered);
+    expect(p.incomplete.map((r) => r.appointmentId)).toEqual(["inc", "live"]);
+    expect(p.late.map((r) => r.appointmentId)).toEqual(["late"]);
+    expect(p.upcoming.map((r) => r.appointmentId)).toEqual(["soon"]);
+    expect(p.done.map((r) => r.appointmentId)).toEqual(["done"]);
+    expect(p.missed.map((r) => r.appointmentId)).toEqual(["miss"]);
+    expect(p.overflow.map((r) => r.appointmentId)).toEqual(["ov"]);
+    expect(p.cancelled.map((r) => r.appointmentId)).toEqual(["can"]);
   });
 });
 
-describe("showActiveSlotSection", () => {
-  it("is true for all and active chip filters", () => {
-    expect(showActiveSlotSection("all")).toBe(true);
-    expect(showActiveSlotSection("upcoming")).toBe(true);
-    expect(showActiveSlotSection("grace")).toBe(true);
-    expect(showActiveSlotSection("running_late")).toBe(true);
-    expect(showActiveSlotSection("in_consultation")).toBe(true);
+describe("orderSlotRowsFlat", () => {
+  it("orders Incomplete → Overdue → Upcoming → Done → No show → Overflow → Cancelled", () => {
+    const filtered = [
+      axesRow("soon", "scheduled", "2026-05-16T11:00:00.000Z", "due"),
+      axesRow("late", "scheduled", "2026-05-16T09:00:00.000Z", "late"),
+      axesRow("inc", "incomplete", "2026-05-16T08:00:00.000Z", "late"),
+      axesRow("can", "cancelled", "2026-05-16T05:00:00.000Z", null),
+      row("ov", "overflow", "2026-05-16T12:00:00.000Z", {
+        tags: ["overflow"],
+      }),
+    ];
+    expect(orderSlotRowsFlat(filtered).map((r) => r.appointmentId)).toEqual([
+      "inc",
+      "late",
+      "soon",
+      "ov",
+      "can",
+    ]);
   });
+});
 
-  it("is false for completed / missed / cancelled", () => {
-    expect(showActiveSlotSection("completed")).toBe(false);
-    expect(showActiveSlotSection("missed")).toBe(false);
-    expect(showActiveSlotSection("cancelled")).toBe(false);
+describe("sectionDefaultOpen", () => {
+  it("opens Incomplete / Overdue / Upcoming on All", () => {
+    expect(sectionDefaultOpen("all", "incomplete")).toBe(true);
+    expect(sectionDefaultOpen("all", "late")).toBe(true);
+    expect(sectionDefaultOpen("all", "upcoming")).toBe(true);
+    expect(sectionDefaultOpen("all", "done")).toBe(false);
+    expect(sectionDefaultOpen("all", "overflow")).toBe(false);
+    expect(sectionDefaultOpen("all", "cancelled")).toBe(false);
+  });
+});
+
+describe("slotPriorityRank", () => {
+  it("ranks late between incomplete and upcoming", () => {
+    expect(
+      slotPriorityRank(
+        axesRow("inc", "incomplete", "2026-05-16T08:00:00.000Z", "late")
+      )
+    ).toBe(0);
+    expect(
+      slotPriorityRank(
+        axesRow("late", "scheduled", "2026-05-16T09:00:00.000Z", "late")
+      )
+    ).toBe(1);
+    expect(
+      slotPriorityRank(
+        axesRow("soon", "scheduled", "2026-05-16T11:00:00.000Z", "due")
+      )
+    ).toBe(2);
   });
 });

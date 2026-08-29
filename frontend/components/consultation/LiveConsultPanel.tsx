@@ -7,9 +7,11 @@ import type { Appointment } from "@/types/appointment";
  * Modality-agnostic host that frames the active consultation.
  *
  * Plan 03 · Task 20 ships the slot-based shell; later plans fill the slots:
- *   - Plan 02 Task 27 → `bannerSlot` (`<SessionStartBanner>`)
+ *   - `bannerSlot` — optional host banner above the room
  *   - Plan 07         → `recordingSlot` (`<RecordingControls>`)
  *   - Plan 09         → `modalitySwitchSlot` (`<ModalityChangeLauncher>`)
+ *                       for text / legacy. Cockpit video+voice pass null
+ *                       here and mount the launcher inside the room More ▾.
  *   - Plan 04         → text room (`<TextConsultRoom>`) replaces the placeholder
  *   - Plan 05         → voice room (`<VoiceConsultRoom>`) replaces the placeholder
  *
@@ -45,6 +47,12 @@ export interface LiveConsultPanelProps {
    *  modality-specific child (e.g. `<VideoRoom .../>`). When omitted, the panel
    *  renders a per-modality placeholder. */
   roomSlot?: ReactNode;
+  /**
+   * Live-focus chrome: room fills available height; modality switch collapses
+   * into a disclosure so it doesn't compete with in-call controls.
+   * Default true for cockpit mounts.
+   */
+  fillHeight?: boolean;
 }
 
 export default function LiveConsultPanel({
@@ -53,18 +61,46 @@ export default function LiveConsultPanel({
   recordingSlot,
   modalitySwitchSlot,
   roomSlot,
+  fillHeight = true,
 }: LiveConsultPanelProps) {
   return (
-    <div className="space-y-4">
-      {bannerSlot ? <div data-slot="banner">{bannerSlot}</div> : null}
-      {recordingSlot ? <div data-slot="recording">{recordingSlot}</div> : null}
+    <div
+      className={
+        fillHeight
+          ? "flex h-full min-h-0 flex-1 flex-col gap-2 bg-card"
+          : "space-y-4"
+      }
+      data-testid="live-consult-panel"
+      data-fill-height={fillHeight ? "true" : "false"}
+    >
+      {bannerSlot ? <div data-slot="banner" className="shrink-0">{bannerSlot}</div> : null}
+      {recordingSlot ? (
+        <div data-slot="recording" className="shrink-0">
+          {recordingSlot}
+        </div>
+      ) : null}
 
-      <div data-slot="room">
+      <div
+        data-slot="room"
+        className={fillHeight ? "min-h-0 flex-1" : undefined}
+      >
         {roomSlot ?? <RoomPlaceholder modality={modality} />}
       </div>
 
       {modalitySwitchSlot ? (
-        <div data-slot="modality-switch">{modalitySwitchSlot}</div>
+        fillHeight ? (
+          <details
+            data-slot="modality-switch"
+            className="shrink-0 rounded-md border border-border/70 bg-muted/30 px-3 py-1.5 text-sm"
+          >
+            <summary className="cursor-pointer select-none text-xs font-medium text-muted-foreground hover:text-foreground">
+              Change modality
+            </summary>
+            <div className="mt-2 pb-1">{modalitySwitchSlot}</div>
+          </details>
+        ) : (
+          <div data-slot="modality-switch">{modalitySwitchSlot}</div>
+        )
       ) : null}
     </div>
   );

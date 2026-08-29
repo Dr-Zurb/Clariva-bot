@@ -214,8 +214,14 @@ export default function RxWorkspace({
   // ------------------------------------------------------------------
   // Layout
   // ------------------------------------------------------------------
+  // Cockpit Plan already scrolls in `<RxPane>` (same pattern as Subjective /
+  // Objective). A second `h-full` + overflow-y-auto here stacked two bars.
   return (
-      <div className="flex h-full flex-col overflow-hidden">
+      <div
+        className={
+          cockpitMode ? undefined : "flex h-full flex-col overflow-hidden"
+        }
+      >
         {patientId ? (
           <PreviousRxSideSheetAnchor
             appointmentId={appointmentId}
@@ -228,8 +234,13 @@ export default function RxWorkspace({
         {/* Allergy/DDI banners: `<SafetyStickyStrip>` in middle-bottom overlay
             (cmr-02 / cmr-06), not inside this scroll region. */}
 
-        {/* ── Form body (scrolls) ───────────────────────────────────── */}
-        <div ref={scrollRef} className="relative flex-1 overflow-y-auto">
+        {/* ── Form body (scrolls in standalone; cockpit defers to RxPane) ─ */}
+        <div
+          ref={scrollRef}
+          className={
+            cockpitMode ? "relative" : "relative flex-1 overflow-y-auto"
+          }
+        >
           {/* Read-only overlay when state === "ended" */}
           {!canEdit && state === "ended" && (
             <div

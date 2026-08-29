@@ -7,12 +7,15 @@ import {
   buildMessageRows,
   countMessagesInRows,
   findMessageRowIndex,
+  formatUnreadDividerLabel,
+  insertUnreadDivider,
   shouldVirtualizeMessageList,
 } from "../build-message-rows";
 import type { ConsultationMessage } from "../types";
 
 function msg(
-  partial: Partial<ConsultationMessage> & Pick<ConsultationMessage, "id" | "senderId" | "kind">,
+  partial: Partial<ConsultationMessage> &
+    Pick<ConsultationMessage, "id" | "senderId" | "kind">
 ): ConsultationMessage {
   return {
     sessionId: "s1",
@@ -42,9 +45,20 @@ describe("buildMessageRows", () => {
       }),
     ];
     const rows = buildMessageRows(messages);
-    expect(rows.map((r) => r.__type)).toEqual(["separator", "single", "separator", "single"]);
-    expect(rows[0]).toMatchObject({ __type: "separator", dateISO: "2026-04-27" });
-    expect(rows[2]).toMatchObject({ __type: "separator", dateISO: "2026-04-28" });
+    expect(rows.map((r) => r.__type)).toEqual([
+      "separator",
+      "single",
+      "separator",
+      "single",
+    ]);
+    expect(rows[0]).toMatchObject({
+      __type: "separator",
+      dateISO: "2026-04-27",
+    });
+    expect(rows[2]).toMatchObject({
+      __type: "separator",
+      dateISO: "2026-04-28",
+    });
   });
 
   it("emits batch rows for multi-attachment groups", () => {
@@ -72,7 +86,12 @@ describe("buildMessageRows", () => {
 
   it("findMessageRowIndex resolves singles and batch members", () => {
     const batchId = "batch-x";
-    const single = msg({ id: "solo", kind: "text", senderId: "u1", body: "hi" });
+    const single = msg({
+      id: "solo",
+      kind: "text",
+      senderId: "u1",
+      body: "hi",
+    });
     const b1 = msg({
       id: "b1",
       kind: "attachment",
@@ -90,15 +109,59 @@ describe("buildMessageRows", () => {
     });
     const rows = buildMessageRows([single, b1, b2]);
     expect(findMessageRowIndex(rows, "solo")).toBeGreaterThanOrEqual(0);
-    expect(findMessageRowIndex(rows, "b2")).toBe(findMessageRowIndex(rows, "b1"));
+    expect(findMessageRowIndex(rows, "b2")).toBe(
+      findMessageRowIndex(rows, "b1")
+    );
     expect(findMessageRowIndex(rows, "missing")).toBe(-1);
+  });
+});
+
+describe("insertUnreadDivider", () => {
+  it("pins a chip above the first unread and prefers that row for scroll", () => {
+    const older = msg({
+      id: "old",
+      kind: "text",
+      senderId: "u1",
+      body: "read",
+      createdAt: "2026-04-27T10:00:00.000Z",
+    });
+    const newer = msg({
+      id: "new",
+      kind: "text",
+      senderId: "u2",
+      body: "unread",
+      createdAt: "2026-04-28T10:00:00.000Z",
+    });
+    const rows = insertUnreadDivider(buildMessageRows([older, newer]), {
+      messageId: "new",
+      count: 3,
+    });
+    const unread = rows.find((r) => r.__type === "unread");
+    expect(unread).toMatchObject({
+      __type: "unread",
+      count: 3,
+      firstMessageId: "new",
+    });
+    expect(findMessageRowIndex(rows, "new")).toBe(
+      rows.findIndex((r) => r.__type === "unread")
+    );
+    expect(countMessagesInRows(rows)).toBe(2);
+    expect(insertUnreadDivider(rows, { messageId: "new", count: 3 })).toBe(
+      rows
+    );
+  });
+
+  it("labels the chip like WhatsApp", () => {
+    expect(formatUnreadDividerLabel(1)).toBe("1 unread message");
+    expect(formatUnreadDividerLabel(3)).toBe("3 unread messages");
+    expect(formatUnreadDividerLabel(120)).toBe("99+ unread messages");
   });
 });
 
 describe("shouldVirtualizeMessageList", () => {
   it("virtualizes only above the message threshold", () => {
     const short = Array.from({ length: 100 }, (_, i) =>
-      msg({ id: `m-${i}`, kind: "text", senderId: "u1", body: `msg ${i}` }),
+      msg({ id: `m-${i}`, kind: "text", senderId: "u1", body: `msg ${i}` })
     );
     const shortRows = buildMessageRows(short);
     expect(countMessagesInRows(shortRows)).toBe(100);

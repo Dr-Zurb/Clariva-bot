@@ -14,9 +14,9 @@ dotenv.config({ path: envPath, override: true });
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // Pre-existing project-wide TS debt (~90 errors) blocks `next build`
-  // typecheck. Runtime/dev is fine; remove this once `npx tsc --noEmit` is
-  // green for app sources.
+  // Pre-existing project-wide TS debt (~90 errors outside the vitals fixes)
+  // blocks `next build` typecheck. Runtime/dev is fine; tighten and remove
+  // this once `npx tsc --noEmit` is green for app sources.
   typescript: {
     ignoreBuildErrors: true,
   },

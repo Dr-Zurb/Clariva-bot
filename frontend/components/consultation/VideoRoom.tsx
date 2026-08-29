@@ -1,10 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   connect,
   createLocalTracks,
   createLocalVideoTrack,
+  type LocalAudioTrack,
   type LocalParticipant,
   type LocalVideoTrack,
   type RemoteAudioTrack,
@@ -12,29 +19,108 @@ import {
   type RemoteVideoTrack,
   type Room,
 } from "twilio-video";
-import { SessionStartBanner } from "./SessionStartBanner";
 import TextConsultRoom, { type IncomingMessageMeta } from "./TextConsultRoom";
 import RecordingPausedIndicator from "./RecordingPausedIndicator";
-import RecordingControls from "./RecordingControls";
+import RecordingControls, {
+  OPEN_RECORDING_PAUSE_EVENT,
+} from "./RecordingControls";
 import VideoEscalationButton from "./VideoEscalationButton";
 import VideoConsentModal from "./VideoConsentModal";
+import PatientVideoOfferButton from "./PatientVideoOfferButton";
+import DoctorVideoGrantExtendButton from "./DoctorVideoGrantExtendButton";
 import VideoRecordingIndicator from "./VideoRecordingIndicator";
-import VideoTile, { type SelfViewPosition } from "./VideoTile";
-import NetworkBars from "./NetworkBars";
-import CallerCardOverlay, {
-  type CallerCardStatus,
-} from "./CallerCardOverlay";
+import RecordingStatusSurface, {
+  deriveVideoStatusKind,
+} from "./RecordingStatusSurface";
+import { markGrantHaltDone } from "@/lib/rec24-halt-marks";
+import VideoTile, {
+  clampVideoZoom,
+  nextVideoRotation,
+  nextVideoZoom,
+  type SelfViewPosition,
+  type VideoObjectFit,
+  type VideoRotation,
+} from "./VideoTile";
+import {
+  SELF_VIEW_FLIP_HORIZONTAL,
+  selfViewOnStart,
+  type FeaturedTile,
+} from "@/lib/call/self-view-position";
+import {
+  earlierCallStartedAt,
+  resolveCallStartedAt,
+  storeCallStartedAt,
+} from "@/lib/call/call-started-at";
+import {
+  COCKPIT_CTRL,
+  COCKPIT_CTRL_CLUSTER,
+  COCKPIT_CTRL_CLUSTER_CENTER,
+  COCKPIT_CTRL_CLUSTER_END,
+  COCKPIT_CTRL_CLUSTER_START,
+  COCKPIT_CTRL_DOCK,
+  COCKPIT_CTRL_LEAVE,
+  COCKPIT_CTRL_MORE,
+  COCKPIT_CTRL_PILL,
+  COCKPIT_CTRL_SELECTED,
+  COCKPIT_STAGE_SHELL,
+  LEGACY_CTRL_LEAVE,
+  cockpitHoldClass,
+  cockpitLayoutSwitcherVertical,
+  cockpitToggleClass,
+  legacyHoldClass,
+  legacyToggleClass,
+} from "@/lib/call/cockpit-call-controls";
+import { useAutoHideChrome } from "@/hooks/useAutoHideChrome";
+import {
+  PATIENT_CHAT_QUICK_REPLIES,
+  PATIENT_CHAT_SNAP_HALF,
+  PATIENT_CHAT_SNAP_PEEK,
+  defaultTileObjectFit,
+  effectiveCallLayout,
+  isPatientChatExpanded,
+  isPatientDesktopChrome,
+  isPatientMobileChrome,
+  shouldCountChatUnread,
+  nextPatientStageLayout,
+  patientChatCoverFraction,
+  patientDockBottom,
+  patientInspectChrome,
+  toggleDocumentFullscreen,
+  patientSplitAxis,
+  patientStageHeightCss,
+  togglePatientChatSnap,
+} from "@/lib/call/patient-mobile-chrome";
+import PatientChatSheet from "./PatientChatSheet";
+import ConnectionReportBars from "./ConnectionReportBars";
+import CallerCardOverlay, { type CallerCardStatus } from "./CallerCardOverlay";
+import CallControlTooltip from "./CallControlTooltip";
+import CallStageHeader from "./CallStageHeader";
+import { useCallStageChrome } from "./CallStageChromeContext";
 import VolumeSlider from "./VolumeSlider";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   createBoostedAudioRouter,
   type BoostedAudioRouter,
 } from "@/lib/audio/gain-node";
+import {
+  localAudioTracksDisagreeWithMute,
+  republishLocalAudioTracks,
+  setLocalAudioTracksMuted,
+  unpublishLocalAudioTracks,
+} from "@/lib/call/mute-local-audio";
 import VideoQualityPicker, {
   isQualityOption,
   maxSubscriptionBitrateForQuality,
   videoConstraintsForQuality,
   type QualityOption,
 } from "./VideoQualityPicker";
+import {
+  AUTO_PUBLISH_VIDEO_CONSTRAINTS,
+  CONSULT_PREFERRED_VIDEO_CODECS,
+  consultVideoBandwidthProfile,
+  pinRemoteVideoQuality,
+} from "@/lib/video/twilio-connect-profile";
+import { assignActiveCameraToTrackOptions } from "@/lib/video/camera-facing";
 // Sub-batch E · task-video-E1 — pure adaptive-bitrate state machine.
 // Lives in `lib/video/` so the decision logic is unit-testable
 // without React or Twilio. The hook below glues it to the Twilio
@@ -47,12 +133,13 @@ import {
   type AdaptiveControllerState,
   type AdaptiveLevel,
 } from "@/lib/video/adaptive-bitrate";
+import { resolveSelfTileAudioOnly } from "@/lib/video/audio-only-ui";
 import AudioFallbackBanner from "./AudioFallbackBanner";
 import BatteryWarningBanner, {
   type BatteryBannerMode,
 } from "./BatteryWarningBanner";
 import { useBatterySaver } from "@/hooks/useBatterySaver";
-import { CameraSwitchButton } from "./CameraSwitchButton";
+import { CameraSwitchButton, FlipCameraGlyph } from "./CameraSwitchButton";
 import { useCameraSwitch } from "@/hooks/useCameraSwitch";
 // Sub-batch F · task-video-F1 — patch the E.4 rejoin cache on every
 // in-call camera switch so a refresh-restored session re-acquires the
@@ -92,9 +179,7 @@ import {
   SnapshotError,
 } from "@/lib/video/snapshot-capture";
 import type { Annotation } from "@/lib/video/snapshot-annotations";
-import InCallQuickActions, {
-  type QuickAction,
-} from "./InCallQuickActions";
+import InCallQuickActions, { type QuickAction } from "./InCallQuickActions";
 import InCallActionPanel from "./InCallActionPanel";
 import FollowUpInlineBooker from "./FollowUpInlineBooker";
 import ThreeWayInvitePanel from "./ThreeWayInvitePanel";
@@ -104,7 +189,6 @@ import {
   postConsultationMuteChanged,
   postConsultationQuickActionBanner,
   postConsultationVideoQuality,
-  pauseRecording,
   resumeRecording,
 } from "@/lib/api";
 import {
@@ -133,19 +217,30 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Check, MoreHorizontal } from "lucide-react";
+import {
+  Check,
+  Columns2,
+  Maximize,
+  MessageSquare,
+  Mic,
+  MicOff,
+  Minimize,
+  MoreHorizontal,
+  Pause,
+  PhoneOff,
+  Play,
+  Rows2,
+  Square,
+  Video,
+  VideoOff,
+} from "lucide-react";
 
 // Sub-batch A · task-video-A5 — module-scope constants so the mount
 // effect + tap callback below don't recreate them every render (and so
 // `react-hooks/exhaustive-deps` stays clean without bloating the dep
 // array with stable references).
 const SELF_VIEW_STORAGE_KEY = "video-self-view-position";
-const SELF_VIEW_NEXT_POSITION: Record<SelfViewPosition, SelfViewPosition> = {
-  BR: "BL",
-  BL: "TL",
-  TL: "TR",
-  TR: "BR",
-};
+const FEATURED_TILE_STORAGE_KEY = "video-featured-tile";
 
 // Sub-batch A · task-video-A6 — mirror toggle persistence. Default ON
 // because every native selfie camera (FaceTime, WhatsApp, Meet, …)
@@ -157,10 +252,46 @@ const MIRROR_STORAGE_KEY = "video-self-view-mirror";
 // device). Default `'speaker'` per decision §7 — recommended for
 // two-party clinical use. Distinct key from A5 / A6 because layout
 // is independent of self-view position / mirror (Speaker layout
-// uses A5's corner overlay; Gallery + Sidebar render the self tile
-// inline so A5's position state is dormant in those layouts).
+// uses A5's corner overlay; Gallery is inline; Sidebar reuses A5's
+// L/R side so self can sit left or right without a second preference).
 const LAYOUT_STORAGE_KEY = "video-layout";
 const DEFAULT_LAYOUT: VideoLayout = "speaker";
+
+/**
+ * Patient-phone scene chip (layout + fullscreen). 44px hit target
+ * per WCAG 2.5.5; translucent so it reads as a video overlay rather than
+ * a page control.
+ */
+const PATIENT_STAGE_CHIP =
+  "flex h-11 w-11 items-center justify-center rounded-full bg-black/55 text-white " +
+  "backdrop-blur-sm transition-colors hover:bg-black/70 focus:outline-none " +
+  "focus-visible:ring-2 focus-visible:ring-white";
+
+/** Floating pill over the video — not the cockpit light dock. */
+const PATIENT_DOCK =
+  "absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-1/2 z-40 " +
+  "flex -translate-x-1/2 items-center gap-2 rounded-full bg-black/55 px-2 py-2 " +
+  "backdrop-blur-sm transition-opacity duration-200";
+
+const PATIENT_DOCK_BTN =
+  "inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-white " +
+  "hover:bg-white/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-white";
+
+const PATIENT_DOCK_BTN_ACTIVE =
+  "inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-red-500 " +
+  "text-white hover:bg-red-500/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-white";
+
+const PATIENT_DOCK_RESUME =
+  "inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-emerald-500 " +
+  "text-white hover:bg-emerald-500/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-white";
+
+const PATIENT_DOCK_LEAVE =
+  "inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-red-600 " +
+  "text-white hover:bg-red-600/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-white";
+
+function patientDockToggleClass(active: boolean): string {
+  return active ? PATIENT_DOCK_BTN_ACTIVE : PATIENT_DOCK_BTN;
+}
 
 // Sub-batch B · task-video-B9 — remote-audio volume persistence (per
 // device, per modality). Default 100 = OS-normal level. Voice B4 will
@@ -212,8 +343,8 @@ import { useVideoEscalationState } from "@/hooks/useVideoEscalationState";
 // subscribes to it directly (B2). `connectedAt` state stays in
 // `<VideoRoom>` because it's the source of truth that gets passed
 // down; the overlay derives the formatted label internally.
+import { useConnectionBeaconSender } from "@/hooks/useConnectionBeacon";
 import { useNetworkQuality } from "@/hooks/useNetworkQuality";
-import { useVideoCallStats } from "@/hooks/useVideoCallStats";
 
 interface VideoRoomProps {
   accessToken: string;
@@ -221,13 +352,6 @@ interface VideoRoomProps {
   onDisconnect?: () => void;
   /** When "patient", remote label is "Doctor" from the start (no transition). Omit to derive from room identity. */
   role?: "doctor" | "patient";
-  /**
-   * Plan 02 · Task 27 — doctor-side recording-consent banner. When both
-   * `sessionId` + `doctorToken` are provided, renders
-   * <SessionStartBanner> above the video grid. The banner itself
-   * collapses to null when the patient did not decline, so passing
-   * these props on every consult is safe.
-   */
   sessionId?: string;
   doctorToken?: string;
   /**
@@ -424,9 +548,10 @@ interface VideoRoomProps {
   /**
    * task-cockpit-fix-3 — cockpit compact mode. In "cockpit", non-essential
    * controls (Mirror, Volume, Quality, Background, PiP, Share, Snapshot,
-   * Camera switch, Orientation lock) collapse into a `More ▾` overflow menu.
-   * The companion chat panel is hidden by default; it can be re-enabled via
-   * the "Show in-call chat" item in `More ▾`. Default: "default" — existing
+   * Orientation lock) collapse into a `More ▾` overflow menu.
+   * Camera switch stays on the dock (front ↔ back is a primary derm
+   * action). The companion chat panel is hidden by default; it can be
+   * re-enabled via the dock chat icon. Default: "default" — existing
    * behaviour preserved byte-for-byte.
    */
   mode?: "default" | "cockpit";
@@ -453,6 +578,27 @@ interface VideoRoomProps {
    * the `live` state only.
    */
   onMarkNoShow?: () => void | Promise<void>;
+  /**
+   * Host-mounted modality-change launcher (triggerless). Kept outside
+   * the More ▾ dropdown so opening options / modals isn't torn down
+   * when the menu closes. Typically `<ModalityChangeLauncher triggerVariant="none" />`.
+   */
+  modalityChangeSlot?: ReactNode;
+  /**
+   * Opens the host modality-change options panel from the More ▾ item.
+   * When omitted, the menu row is hidden.
+   */
+  onRequestChangeModality?: () => void;
+  /** Disables the More ▾ "Change modality" row (pending / exhausted). */
+  modalityChangeDisabled?: boolean;
+  /** Tooltip / title when the More ▾ row is disabled. */
+  modalityChangeDisabledReason?: string;
+  /**
+   * Session start for the live duration chip — typically
+   * `consultation_sessions.actual_started_at`. Survives page refresh so
+   * the timer continues from the original start instead of 00:00.
+   */
+  sessionStartedAt?: string | Date | null;
 }
 
 /**
@@ -486,10 +632,21 @@ export default function VideoRoom({
   onRemoteJoined,
   onRemoteLeft,
   onMarkNoShow,
+  modalityChangeSlot,
+  onRequestChangeModality,
+  modalityChangeDisabled = false,
+  modalityChangeDisabledReason,
+  sessionStartedAt = null,
 }: VideoRoomProps) {
-  const [status, setStatus] = useState<"connecting" | "connected" | "disconnected" | "error">(
-    "connecting"
-  );
+  const durationSessionId =
+    companion?.sessionId ?? sessionId ?? recordingSessionId ?? null;
+  const sessionStartedAtRef = useRef(sessionStartedAt);
+  sessionStartedAtRef.current = sessionStartedAt;
+  const durationSessionIdRef = useRef(durationSessionId);
+  durationSessionIdRef.current = durationSessionId;
+  const [status, setStatus] = useState<
+    "connecting" | "connected" | "disconnected" | "error"
+  >("connecting");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [remoteLabel, setRemoteLabel] = useState<"Doctor" | "Patient">(
     role === "patient" ? "Doctor" : "Patient"
@@ -499,12 +656,36 @@ export default function VideoRoom({
   // task-cockpit-fix-3 — companion chat is suppressed by default in cockpit
   // mode. The More ▾ "Show in-call chat" item toggles this flag.
   const [showInCallChat, setShowInCallChat] = useState(false);
+  const [patientDesktopChatOpen, setPatientDesktopChatOpen] = useState(true);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const patientStageBoxRef = useRef<HTMLDivElement>(null);
+  const [fullscreenActive, setFullscreenActive] = useState(false);
+  const [cockpitPaneWidth, setCockpitPaneWidth] = useState(0);
+  const { fillTabActive, exitFillTab } = useCallStageChrome();
+
+  const openInCallChat = useCallback(() => {
+    setShowInCallChat(true);
+  }, []);
+
+  const closeInCallChat = useCallback(() => {
+    setShowInCallChat(false);
+  }, []);
+
+  const toggleInCallChat = useCallback(() => {
+    if (showInCallChat) closeInCallChat();
+    else openInCallChat();
+  }, [showInCallChat, closeInCallChat, openInCallChat]);
   const onDisconnectRef = useRef(onDisconnect);
   onDisconnectRef.current = onDisconnect;
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const roomRef = useRef<Room | null>(null);
-  const localTracksRef = useRef<Awaited<ReturnType<typeof createLocalTracks>>>([]);
+  const localTracksRef = useRef<Awaited<ReturnType<typeof createLocalTracks>>>(
+    []
+  );
+  // Dedicated mic handle (mirrors VoiceConsultRoom `localTrackRef`) so
+  // mute never depends on Map iteration order of publications.
+  const localAudioTrackRef = useRef<LocalAudioTrack | null>(null);
   const hasNotifiedDisconnectRef = useRef(false);
   const hasDisconnectedRef = useRef(false);
 
@@ -529,7 +710,7 @@ export default function VideoRoom({
   // ------------------------------------------------------------------------
   const ourLocalEndCalledRef = useRef(false);
   const lastTwilioErrorRef = useRef<{ code?: number; message?: string } | null>(
-    null,
+    null
   );
   const remoteEndedFirstRef = useRef(false);
 
@@ -594,18 +775,30 @@ export default function VideoRoom({
   // ------------------------------------------------------------------------
   // Sub-batch A · task-video-A3 — call-duration timer.
   //
-  // Set ONCE on the first Twilio `connected` event in `connectRoom`
-  // below; never reset across reconnect / hold (B3, B4) so the timer
-  // keeps counting per the doctrine in task-A3 §"Pause behavior on
-  // lifecycle". `useCallDuration` is the pull-forward of the voice T1.1
-  // / A1 hook — voice batch can import it from the same path once they
-  // pick up A1.
-  //
-  // No `mode='readonly'` branch here — `<VideoRoom>` has no readonly
-  // prop today (Plan 07 history viewer renders elsewhere); when that
-  // ships, the static-duration fallback lives there, NOT in this hook.
+  // Anchor for the live mm:ss chip. Prefer server `actual_started_at`
+  // (or same-tab sessionStorage) so a page refresh does not reset to
+  // 00:00. Still set at most once per mount for Twilio reconnect/hold;
+  // a later server hydrate may pull the anchor earlier if needed.
   // ------------------------------------------------------------------------
-  const [connectedAt, setConnectedAt] = useState<Date | null>(null);
+  const [connectedAt, setConnectedAt] = useState<Date | null>(() =>
+    resolveCallStartedAt({
+      sessionStartedAt,
+      sessionId: durationSessionId,
+    })
+  );
+
+  useEffect(() => {
+    const resolved = resolveCallStartedAt({
+      sessionStartedAt,
+      sessionId: durationSessionId,
+    });
+    if (!resolved) return;
+    setConnectedAt((prev) => {
+      const next = earlierCallStartedAt(prev, resolved);
+      if (next) storeCallStartedAt(durationSessionId, next);
+      return next;
+    });
+  }, [sessionStartedAt, durationSessionId]);
 
   // ------------------------------------------------------------------------
   // Sub-batch A · task-video-A4 — end-call confirmation modal.
@@ -633,7 +826,7 @@ export default function VideoRoom({
   const [noShowStep, setNoShowStep] = useState<"idle" | "confirm">("idle");
   const [noShowBusy, setNoShowBusy] = useState(false);
   const noShowConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
+    null
   );
   const handleMarkNoShowClick = useCallback(() => {
     if (!onMarkNoShow) return;
@@ -644,7 +837,7 @@ export default function VideoRoom({
       }
       noShowConfirmTimerRef.current = setTimeout(
         () => setNoShowStep("idle"),
-        4_000,
+        4_000
       );
       return;
     }
@@ -673,11 +866,10 @@ export default function VideoRoom({
   //
   // The remote tile now fills the entire video pane and the self tile
   // floats over it as a PiP in one of four corners. Default `'BR'`
-  // matches WhatsApp / Meet / Doximity. A single tap (or Enter/Space
-  // keypress on the focused tile) cycles BR → BL → TL → TR → BR
-  // (counter-clockwise), and every flip is persisted to localStorage
-  // under `video-self-view-position` so the choice survives page
-  // refresh AND any subsequent rejoin from the same device.
+  // matches WhatsApp / Meet / Doximity. Drag the PiP to snap a
+  // corner; tap / Enter / Space swaps who is featured. Corner and
+  // featured tile persist under separate localStorage keys so a
+  // refresh / rejoin keeps both.
   //
   // SSR safety: initial render uses the default; the mount effect
   // reads localStorage and updates if a stored value exists. The
@@ -693,7 +885,12 @@ export default function VideoRoom({
     if (typeof window === "undefined") return;
     try {
       const stored = window.localStorage.getItem(SELF_VIEW_STORAGE_KEY);
-      if (stored === "TL" || stored === "TR" || stored === "BL" || stored === "BR") {
+      if (
+        stored === "TL" ||
+        stored === "TR" ||
+        stored === "BL" ||
+        stored === "BR"
+      ) {
         setSelfViewPosition(stored);
       }
     } catch {
@@ -703,19 +900,66 @@ export default function VideoRoom({
     }
   }, []);
 
-  const handleSelfViewTap = useCallback(() => {
-    setSelfViewPosition((current) => {
-      const next = SELF_VIEW_NEXT_POSITION[current];
-      if (typeof window !== "undefined") {
-        try {
-          window.localStorage.setItem(SELF_VIEW_STORAGE_KEY, next);
-        } catch {
-          // see mount-effect comment — best-effort persistence.
-        }
+  const persistSelfViewPosition = useCallback((next: SelfViewPosition) => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(SELF_VIEW_STORAGE_KEY, next);
+    } catch {
+      // see mount-effect comment — best-effort persistence.
+    }
+  }, []);
+
+  const [featuredTile, setFeaturedTile] = useState<FeaturedTile>("remote");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = window.localStorage.getItem(FEATURED_TILE_STORAGE_KEY);
+      if (stored === "remote" || stored === "self") {
+        setFeaturedTile(stored);
       }
+    } catch {
+      // Same private-browsing / quota fallback as the corner key.
+    }
+  }, []);
+
+  const persistFeaturedTile = useCallback((next: FeaturedTile) => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(FEATURED_TILE_STORAGE_KEY, next);
+    } catch {
+      // see mount-effect comment — best-effort persistence.
+    }
+  }, []);
+
+  const handleSpeakerSwap = useCallback(() => {
+    setFeaturedTile((current) => {
+      const next: FeaturedTile = current === "remote" ? "self" : "remote";
+      persistFeaturedTile(next);
       return next;
     });
-  }, []);
+  }, [persistFeaturedTile]);
+
+  const handlePipCorner = useCallback(
+    (next: SelfViewPosition) => {
+      setSelfViewPosition(next);
+      persistSelfViewPosition(next);
+    },
+    [persistSelfViewPosition]
+  );
+
+  /**
+   * Gallery / Sidebar — swap You and Patient via the tile action bar.
+   */
+  const handleInlineSwapTap = useCallback(() => {
+    setSelfViewPosition((current) => {
+      const next = SELF_VIEW_FLIP_HORIZONTAL[current];
+      persistSelfViewPosition(next);
+      return next;
+    });
+  }, [persistSelfViewPosition]);
+
+  const inlineSelfOnStart = selfViewOnStart(selfViewPosition);
 
   // ------------------------------------------------------------------------
   // Sub-batch A · task-video-A6 — self-view mirror toggle.
@@ -738,6 +982,53 @@ export default function VideoRoom({
   // ------------------------------------------------------------------------
   const [mirrorSelf, setMirrorSelf] = useState(true);
 
+  // Local viewing transforms (Fit/Fill + zoom + 90° rotate). CSS-only —
+  // does not change the Twilio track the other party receives. Zoom is
+  // for inspecting lesions; rotate uprights a sideways phone camera.
+  // `null` = follow the per-surface default (which depends on viewport, so
+  // it can't be a `useState` initial value without a hydration mismatch).
+  // Any explicit value is a user override from the Fit / Fill control.
+  const [remoteTileFit, setRemoteTileFit] = useState<VideoObjectFit | null>(
+    null
+  );
+  const [remoteTileRotation, setRemoteTileRotation] =
+    useState<VideoRotation>(0);
+  const [remoteTileZoom, setRemoteTileZoom] = useState(1);
+  const [selfTileFit, setSelfTileFit] = useState<VideoObjectFit | null>(null);
+  const [selfTileRotation, setSelfTileRotation] = useState<VideoRotation>(0);
+  const [selfTileZoom, setSelfTileZoom] = useState(1);
+
+  const handleRemoteObjectFit = useCallback((fit: VideoObjectFit) => {
+    setRemoteTileFit(fit);
+  }, []);
+  const handleRemoteRotate = useCallback((delta: 90 | -90) => {
+    setRemoteTileRotation((current) => nextVideoRotation(current, delta));
+  }, []);
+  const handleRemoteZoom = useCallback((delta: 1 | -1) => {
+    setRemoteTileZoom((current) => nextVideoZoom(current, delta));
+  }, []);
+  const handleRemoteZoomTo = useCallback((zoom: number) => {
+    setRemoteTileZoom(clampVideoZoom(zoom));
+  }, []);
+  const handleRemoteZoomReset = useCallback(() => {
+    setRemoteTileZoom(1);
+  }, []);
+  const handleSelfObjectFit = useCallback((fit: VideoObjectFit) => {
+    setSelfTileFit(fit);
+  }, []);
+  const handleSelfRotate = useCallback((delta: 90 | -90) => {
+    setSelfTileRotation((current) => nextVideoRotation(current, delta));
+  }, []);
+  const handleSelfZoom = useCallback((delta: 1 | -1) => {
+    setSelfTileZoom((current) => nextVideoZoom(current, delta));
+  }, []);
+  const handleSelfZoomTo = useCallback((zoom: number) => {
+    setSelfTileZoom(clampVideoZoom(zoom));
+  }, []);
+  const handleSelfZoomReset = useCallback(() => {
+    setSelfTileZoom(1);
+  }, []);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -757,7 +1048,7 @@ export default function VideoRoom({
         try {
           window.localStorage.setItem(
             MIRROR_STORAGE_KEY,
-            next ? "true" : "false",
+            next ? "true" : "false"
           );
         } catch {
           // see selfViewPosition mount-effect — best-effort persistence.
@@ -778,11 +1069,11 @@ export default function VideoRoom({
   //                  Clinical-friendly: doctor + patient look at each
   //                  other through the dominant tile.
   //   `'gallery'`  — pre-A5 default. Equal side-by-side tiles
-  //                  (`md:grid-cols-2`); self-view inline (A5's corner
-  //                  overlay is dormant). Useful for chat-style
-  //                  consults where both parties want symmetry.
-  //   `'sidebar'`  — desktop-only 70/30 split. Remote tile flex-[7];
-  //                  self tile flex-[3] in a right column. On mobile
+  //                  (`md:grid-cols-2`); self-view inline. Useful for
+  //                  chat-style consults where both parties want symmetry.
+  //   `'sidebar'`  — desktop/landscape 70/30 split. Remote flex-[7];
+  //                  self flex-[3]. Tap self flips L/R via A5 corner
+  //                  (CSS reverse keeps DOM order stable). On mobile
   //                  the switcher hides this option AND the parent
   //                  derives `effectiveLayout = 'speaker'` so a
   //                  persisted-from-desktop value doesn't break the
@@ -798,29 +1089,76 @@ export default function VideoRoom({
   // for the future PR.
   // ------------------------------------------------------------------------
   const [layout, setLayout] = useState<VideoLayout>(DEFAULT_LAYOUT);
+  // Prefer per-surface layout memory: cockpit (doctor laptop) vs patient
+  // join (usually phone) vs legacy doctor default page. Each defaults to
+  // Speaker so a prior Sidebar choice doesn't poison the other surface.
+  const layoutStorageKey = isCockpit
+    ? `${LAYOUT_STORAGE_KEY}-cockpit`
+    : role === "patient"
+      ? `${LAYOUT_STORAGE_KEY}-patient`
+      : LAYOUT_STORAGE_KEY;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      const stored = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
+      const stored = window.localStorage.getItem(layoutStorageKey);
       if (stored !== null && isVideoLayout(stored)) {
         setLayout(stored);
+      } else if (isCockpit) {
+        setLayout(DEFAULT_LAYOUT);
       }
     } catch {
       // see selfViewPosition mount-effect — silent fallback.
     }
+  }, [isCockpit, layoutStorageKey]);
+
+  const handleLayoutChange = useCallback(
+    (next: VideoLayout) => {
+      setLayout(next);
+      if (typeof window !== "undefined") {
+        try {
+          window.localStorage.setItem(layoutStorageKey, next);
+        } catch {
+          // see selfViewPosition mount-effect — best-effort persistence.
+        }
+      }
+    },
+    [layoutStorageKey]
+  );
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onFsChange = () => {
+      setFullscreenActive(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
   }, []);
 
-  const handleLayoutChange = useCallback((next: VideoLayout) => {
-    setLayout(next);
-    if (typeof window !== "undefined") {
-      try {
-        window.localStorage.setItem(LAYOUT_STORAGE_KEY, next);
-      } catch {
-        // see selfViewPosition mount-effect — best-effort persistence.
-      }
+  const handleExpandFullscreen = useCallback(() => {
+    // Patient phone — fullscreen the document so the portaled chat
+    // sheet still paints. Cockpit keeps the stage element (no sheet).
+    if (role === "patient") {
+      toggleDocumentFullscreen();
+      return;
     }
-  }, []);
+    const el = stageRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+      return;
+    }
+    void el.requestFullscreen?.();
+  }, [role]);
+
+  const handleExitExpand = useCallback(() => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+    }
+    if (fillTabActive) {
+      exitFillTab();
+    }
+  }, [exitFillTab, fillTabActive]);
 
   // Sub-batch B · task-video-B6 — viewport tracker for the
   // Sidebar-on-mobile degrade path. We use `matchMedia('(min-width:
@@ -839,7 +1177,10 @@ export default function VideoRoom({
   const [isDesktop, setIsDesktop] = useState<boolean>(false);
 
   useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    if (
+      typeof window === "undefined" ||
+      typeof window.matchMedia !== "function"
+    ) {
       return;
     }
     const mq = window.matchMedia("(min-width: 768px)");
@@ -853,10 +1194,19 @@ export default function VideoRoom({
     }
     // Older Safari fallback (`addListener` / `removeListener`).
     if (typeof (mq as { addListener?: unknown }).addListener === "function") {
-      (mq as { addListener: (cb: (e: MediaQueryListEvent) => void) => void }).addListener(onChange);
+      (
+        mq as { addListener: (cb: (e: MediaQueryListEvent) => void) => void }
+      ).addListener(onChange);
       return () => {
-        if (typeof (mq as { removeListener?: unknown }).removeListener === "function") {
-          (mq as { removeListener: (cb: (e: MediaQueryListEvent) => void) => void }).removeListener(onChange);
+        if (
+          typeof (mq as { removeListener?: unknown }).removeListener ===
+          "function"
+        ) {
+          (
+            mq as {
+              removeListener: (cb: (e: MediaQueryListEvent) => void) => void;
+            }
+          ).removeListener(onChange);
         }
       };
     }
@@ -887,10 +1237,49 @@ export default function VideoRoom({
   // orientation. The CSS gate on the switcher
   // (`hidden md:inline-flex landscape:inline-flex`) was widened
   // in lockstep so JS + CSS agree.
-  const effectiveLayout: VideoLayout =
-    layout === "sidebar" && !isDesktop && orient === "portrait"
-      ? "speaker"
-      : layout;
+  //
+  // Patient phones always stay on Speaker — Gallery / Sidebar
+  // persist from a prior desktop session and the layout switcher
+  // is hidden on this surface.
+  const isPatientMobile = isPatientMobileChrome({ role, isDesktop });
+  const isPatientDesktop = isPatientDesktopChrome({ role, isDesktop });
+  const isPatientChrome = role === "patient";
+  const isIconDock = isCockpit || isPatientChrome;
+  /** Doctor cockpit + patient laptop share the same light stage / dock. */
+  const isDesktopChrome = isCockpit || isPatientDesktop;
+  useEffect(() => {
+    if (!isDesktopChrome) return;
+    const el = stageRef.current;
+    if (!el) return;
+    const update = () => {
+      setCockpitPaneWidth(el.getBoundingClientRect().width);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [isDesktopChrome, status]);
+  const cockpitLayoutVertical = cockpitLayoutSwitcherVertical(cockpitPaneWidth);
+  const tileFitDefault = defaultTileObjectFit({ role, isDesktop });
+  const effectiveRemoteFit: VideoObjectFit = remoteTileFit ?? tileFitDefault;
+  const effectiveSelfFit: VideoObjectFit = selfTileFit ?? tileFitDefault;
+  /**
+   * Whether the host gives this room a real height box to fill.
+   *
+   * Cockpit gets `h-full` from the consult pane; the patient join page
+   * gives the room a `100dvh` column. Both must fill it — the Speaker
+   * stage positions BOTH tiles `absolute inset-0`, so it has zero
+   * intrinsic height and collapses to a sliver if any ancestor is
+   * auto-height (Gallery / Sidebar keep their tiles in flow, which is
+   * why only Speaker collapsed). The legacy doctor default page has no
+   * height box, so it keeps its content-sized behaviour.
+   */
+  const fillsHostHeight = isCockpit || role === "patient";
+  const effectiveLayout: VideoLayout = effectiveCallLayout(layout, {
+    role,
+    isDesktop,
+    orient,
+  });
 
   // ------------------------------------------------------------------------
   // Sub-batch C · task-video-C2 — virtual background / blur.
@@ -926,10 +1315,10 @@ export default function VideoRoom({
   // references so a route change doesn't leak ~2.5 MB of WASM.
   // ------------------------------------------------------------------------
   const [background, setBackground] = useState<BackgroundPreference>(
-    DEFAULT_BACKGROUND_PREFERENCE,
+    DEFAULT_BACKGROUND_PREFERENCE
   );
   const backgroundRef = useRef<BackgroundPreference>(
-    DEFAULT_BACKGROUND_PREFERENCE,
+    DEFAULT_BACKGROUND_PREFERENCE
   );
   const [backgroundSwitchInFlight, setBackgroundSwitchInFlight] =
     useState<boolean>(false);
@@ -981,7 +1370,7 @@ export default function VideoRoom({
         try {
           window.localStorage.setItem(
             BACKGROUND_STORAGE_KEY,
-            serializeBackgroundPreference(next),
+            serializeBackgroundPreference(next)
           );
         } catch {
           // Storage may be unavailable; non-fatal.
@@ -989,7 +1378,7 @@ export default function VideoRoom({
       }
 
       const videoTrack = localTracksRef.current.find(
-        (t) => t.kind === "video",
+        (t) => t.kind === "video"
       ) as LocalVideoTrack | undefined;
       if (!videoTrack) {
         // No active video track (audio-only quality OR pre-connect).
@@ -1012,14 +1401,14 @@ export default function VideoRoom({
           try {
             window.localStorage.setItem(
               BACKGROUND_STORAGE_KEY,
-              serializeBackgroundPreference(prev),
+              serializeBackgroundPreference(prev)
             );
           } catch {
             // ignore — best effort.
           }
         }
         setBackgroundNotice(
-          "Couldn't apply background effect. Your camera is unchanged.",
+          "Couldn't apply background effect. Your camera is unchanged."
         );
         if (process.env.NODE_ENV !== "production") {
           console.warn("Virtual background apply failed:", err);
@@ -1028,14 +1417,14 @@ export default function VideoRoom({
         setBackgroundSwitchInFlight(false);
       }
     },
-    [],
+    []
   );
 
   // Cleanup background processor + cache on unmount.
   useEffect(() => {
     return () => {
       const videoTrack = localTracksRef.current.find(
-        (t) => t.kind === "video",
+        (t) => t.kind === "video"
       ) as LocalVideoTrack | undefined;
       if (videoTrack) {
         try {
@@ -1143,8 +1532,7 @@ export default function VideoRoom({
     useState<RemoteParticipant | null>(null);
 
   const localNetworkQuality = useNetworkQuality(localParticipant);
-  const remoteNetworkQuality = useNetworkQuality(remoteParticipant);
-  const callStats = useVideoCallStats(roomState);
+  useConnectionBeaconSender(roomState);
 
   // task-cockpit-fix-5 — notify parent when remote participant presence changes
   // so the launcher can show/hide <PatientJoinLink>.
@@ -1226,14 +1614,14 @@ export default function VideoRoom({
           postConsultationVideoQuality(
             capturedBearer,
             capturedSessionId,
-            samples,
+            samples
           ),
       });
     } catch (err) {
       if (process.env.NODE_ENV !== "production") {
         console.warn(
           "Failed to start QoS reporter:",
-          err instanceof Error ? err.message : err,
+          err instanceof Error ? err.message : err
         );
       }
       return;
@@ -1287,7 +1675,7 @@ export default function VideoRoom({
   const [remoteScreenTrack, setRemoteScreenTrack] =
     useState<RemoteVideoTrack | null>(null);
   const [screenShareNotice, setScreenShareNotice] = useState<string | null>(
-    null,
+    null
   );
 
   // Auto-clear the inline notice after a short window — same
@@ -1338,9 +1726,10 @@ export default function VideoRoom({
       }
     | { active: false }
   >({ active: false });
-  const [snapshotExternalToast, setSnapshotExternalToast] = useState<
-    { kind: "success" | "error"; message: string } | null
-  >(null);
+  const [snapshotExternalToast, setSnapshotExternalToast] = useState<{
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
 
   // ------------------------------------------------------------------------
   // Sub-batch C · task-video-C6 — In-call quick actions panel state.
@@ -1357,12 +1746,13 @@ export default function VideoRoom({
   // can fire concurrently in principle (doctor takes a snapshot, then
   // sends an Rx) — keeping them split avoids one stomping the other.
   // ------------------------------------------------------------------------
-  const [quickActionPanel, setQuickActionPanel] = useState<
-    QuickAction | null
-  >(null);
-  const [quickActionToast, setQuickActionToast] = useState<
-    { kind: "success" | "error"; message: string } | null
-  >(null);
+  const [quickActionPanel, setQuickActionPanel] = useState<QuickAction | null>(
+    null
+  );
+  const [quickActionToast, setQuickActionToast] = useState<{
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
 
   // Auto-dismiss the quick-action toast after 3.5s. Mirrors the
   // dismissal cadence the snapshot toast uses inside <SnapshotControls>.
@@ -1381,6 +1771,28 @@ export default function VideoRoom({
   // mount).
   const isSharingActive =
     screen.localScreenTrack !== null || remoteScreenTrack !== null;
+
+  const inlineSwapActive =
+    !isSharingActive &&
+    (effectiveLayout === "gallery" || effectiveLayout === "sidebar");
+  const speakerSwapActive = !isSharingActive && effectiveLayout === "speaker";
+  const inlineSwapTap = inlineSwapActive
+    ? handleInlineSwapTap
+    : speakerSwapActive
+      ? handleSpeakerSwap
+      : undefined;
+  const speakerSelfFeatured = speakerSwapActive && featuredTile === "self";
+  const speakerPip = speakerSwapActive
+    ? {
+        position: selfViewPosition,
+        onTap: handleSpeakerSwap,
+        onMove: handlePipCorner,
+        aspect: isPatientMobile
+          ? ("portrait" as const)
+          : ("landscape" as const),
+        clearDock: isPatientMobile,
+      }
+    : undefined;
 
   const handleToggleScreenShare = useCallback(async () => {
     if (screen.localScreenTrack) {
@@ -1444,7 +1856,7 @@ export default function VideoRoom({
   // mute / camera there's no `volume_changed` event to emit.
   // ------------------------------------------------------------------------
   const [volumePercent, setVolumePercent] = useState<number>(
-    DEFAULT_VOLUME_PERCENT,
+    DEFAULT_VOLUME_PERCENT
   );
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const audioRouterRef = useRef<BoostedAudioRouter | null>(null);
@@ -1480,10 +1892,7 @@ export default function VideoRoom({
     volumePercentRef.current = volumePercent;
     if (typeof window !== "undefined") {
       try {
-        window.localStorage.setItem(
-          VOLUME_STORAGE_KEY,
-          String(volumePercent),
-        );
+        window.localStorage.setItem(VOLUME_STORAGE_KEY, String(volumePercent));
       } catch {
         // best-effort persistence; private-browsing / quota errors
         // shouldn't crash the call.
@@ -1599,7 +2008,7 @@ export default function VideoRoom({
   // silent (no notification on every recovery cycle).
   // ------------------------------------------------------------------------
   const adaptiveStateRef = useRef<AdaptiveControllerState>(
-    makeInitialAdaptiveState(),
+    makeInitialAdaptiveState()
   );
   const [adaptiveNotice, setAdaptiveNotice] = useState<string | null>(null);
 
@@ -1649,8 +2058,9 @@ export default function VideoRoom({
   //                                       second restore.
   // ------------------------------------------------------------------------
   const [autoFallbackActive, setAutoFallbackActive] = useState(false);
-  const [autoFallbackCooldownEndsAt, setAutoFallbackCooldownEndsAt] =
-    useState<number | null>(null);
+  const [autoFallbackCooldownEndsAt, setAutoFallbackCooldownEndsAt] = useState<
+    number | null
+  >(null);
   const autoFallbackCooldownEndsAtRef = useRef<number | null>(null);
   const autoFallbackAttemptRef = useRef(0);
   const autoFallbackEngagedAtRef = useRef<number | null>(null);
@@ -1749,7 +2159,7 @@ export default function VideoRoom({
         level: AdaptiveLevel,
         engageOptions?: {
           reason?: "low_bandwidth" | "battery_low" | "battery_critical";
-        },
+        }
       ) => Promise<void>)
     | null
   >(null);
@@ -1779,7 +2189,7 @@ export default function VideoRoom({
         if (process.env.NODE_ENV !== "production") {
           console.warn(
             "Battery-critical applyAdaptiveLevel failed:",
-            err instanceof Error ? err.message : err,
+            err instanceof Error ? err.message : err
           );
         }
       });
@@ -1825,11 +2235,29 @@ export default function VideoRoom({
   // exhaustive-deps' "binding ends in Ref → assume stable" heuristic
   // applies (otherwise we'd have to add `cameraSwitch` to the
   // useCallback dep arrays, which churns on every render).
+  const [cameraSwitchNotice, setCameraSwitchNotice] = useState<string | null>(
+    null
+  );
+  useEffect(() => {
+    if (cameraSwitchNotice === null) return;
+    const handle = setTimeout(() => setCameraSwitchNotice(null), 4000);
+    return () => clearTimeout(handle);
+  }, [cameraSwitchNotice]);
+
   const cameraSwitch = useCameraSwitch({
     room: roomState,
     localTracksRef,
     initialDeviceId: chosenCameraId,
     cameraOffRef,
+    onSwitchUnavailable: (reason) => {
+      setCameraSwitchNotice(
+        reason === "not-connected"
+          ? "Camera switch isn't ready yet — wait a moment and try again."
+          : reason === "permission-denied"
+            ? "Camera access was denied. Check browser permissions and try again."
+            : "Couldn't switch camera. Try again."
+      );
+    },
     onAttachLocal: (track) => {
       if (localVideoRef.current) {
         track.attach(localVideoRef.current);
@@ -1871,7 +2299,7 @@ export default function VideoRoom({
           try {
             window.localStorage.setItem(
               MIRROR_STORAGE_KEY,
-              shouldMirror ? "true" : "false",
+              shouldMirror ? "true" : "false"
             );
           } catch {
             // Best-effort, same as `handleToggleMirror`.
@@ -1889,9 +2317,13 @@ export default function VideoRoom({
   // tiny re-render on every device switch (already happens
   // anyway because `cameraSwitch.current` is React state).
   const cameraSwitchDeviceIdRef = useRef<string | null>(null);
+  const cameraSwitchFacingRef = useRef(cameraSwitch.currentFacing);
   useEffect(() => {
     cameraSwitchDeviceIdRef.current = cameraSwitch.currentDeviceId;
   }, [cameraSwitch.currentDeviceId]);
+  useEffect(() => {
+    cameraSwitchFacingRef.current = cameraSwitch.currentFacing;
+  }, [cameraSwitch.currentFacing]);
 
   // ------------------------------------------------------------------------
   // Sub-batch E · task-video-E3 — multi-tab kick / multi-monitor warn.
@@ -1956,6 +2388,7 @@ export default function VideoRoom({
       }
     });
     localTracksRef.current = [];
+    localAudioTrackRef.current = null;
 
     // Disconnect cleanly from Twilio. We removeAllListeners first so the
     // `'disconnected'` handler doesn't fire its own teardown + classifier
@@ -2048,17 +2481,75 @@ export default function VideoRoom({
    */
   const [activeTab, setActiveTab] = useState<"video" | "chat">("video");
   /**
-   * Unread-count badge on the Chat tab (mobile). Capped at 99+ at render
-   * time. Increments when an incoming Realtime INSERT arrives AND the
-   * user is currently on the Video tab (the chat screen is not visible).
-   * System rows never count — per task-38 Note #4 a banner shouldn't
-   * pull the user away from the video.
+   * Unread-count badge on the Chat icon. Absolute count from the
+   * merged thread (`onUnreadCountChange`), not +1 per Realtime event.
+   * Hidden while the thread is already on screen.
    */
   const [unreadCount, setUnreadCount] = useState(0);
-  const activeTabRef = useRef(activeTab);
   useEffect(() => {
-    activeTabRef.current = activeTab;
-  }, [activeTab]);
+    if (showInCallChat || patientDesktopChatOpen) setUnreadCount(0);
+  }, [showInCallChat, patientDesktopChatOpen]);
+  const [patientChatSnap, setPatientChatSnap] = useState<
+    number | string | null
+  >(PATIENT_CHAT_SNAP_PEEK);
+  const handlePatientChatToggle = useCallback(() => {
+    setPatientChatSnap((current) => togglePatientChatSnap(current));
+  }, []);
+  useEffect(() => {
+    if (isPatientChatExpanded(patientChatSnap)) setUnreadCount(0);
+  }, [patientChatSnap]);
+  const patientChatOpen =
+    isPatientMobile && isPatientChatExpanded(patientChatSnap);
+  const [chatDragFraction, setChatDragFraction] = useState<number | null>(null);
+  const [patientStageSize, setPatientStageSize] = useState({
+    width: 0,
+    height: 0,
+  });
+  useEffect(() => {
+    if (!isPatientMobile) return;
+    const el = patientStageBoxRef.current;
+    if (!el) return;
+    const update = () => {
+      const rect = el.getBoundingClientRect();
+      setPatientStageSize({ width: rect.width, height: rect.height });
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [isPatientMobile, patientChatOpen]);
+  const chatCoverFraction =
+    chatDragFraction ?? patientChatCoverFraction(patientChatSnap);
+  const patientStageHeight = isPatientMobile
+    ? patientStageHeightCss(chatCoverFraction)
+    : "";
+  const patientSplit = isPatientMobile
+    ? patientSplitAxis(patientStageSize.width, patientStageSize.height)
+    : "rows";
+  const remoteInspect = isPatientMobile
+    ? patientInspectChrome({
+        layout: effectiveLayout,
+        split: patientSplit,
+        tile: "remote",
+        selfOnStart: inlineSelfOnStart,
+      })
+    : null;
+  const selfInspect = isPatientMobile
+    ? patientInspectChrome({
+        layout: effectiveLayout,
+        split: patientSplit,
+        tile: "self",
+        selfOnStart: inlineSelfOnStart,
+      })
+    : null;
+  const effectiveSpeakerPip = speakerPip
+    ? {
+        ...speakerPip,
+        position: selfViewPosition,
+        clearDock: isPatientMobile,
+        compact: patientChatOpen,
+      }
+    : undefined;
 
   /**
    * Companion chat auth state. Resolved on mount when `companion` is set.
@@ -2155,7 +2646,7 @@ export default function VideoRoom({
     if (companion?.onPatientTokenRefresh) {
       const token = await companion.onPatientTokenRefresh();
       setChatAuth((prev) =>
-        prev.status === "ready" ? { ...prev, accessToken: token } : prev,
+        prev.status === "ready" ? { ...prev, accessToken: token } : prev
       );
       return token;
     }
@@ -2191,10 +2682,12 @@ export default function VideoRoom({
   // Plan 02 · Task 28 — recording pause/resume state (optional, off by default)
   // ------------------------------------------------------------------------
   const recordingEnabled = Boolean(recordingSessionId && recordingToken);
-  const recordingRole: "doctor" | "patient" = role === "patient" ? "patient" : "doctor";
+  const recordingRole: "doctor" | "patient" =
+    role === "patient" ? "patient" : "doctor";
   const {
     state: recordingState,
     applyIncomingMessage: applyRecordingSystemMessage,
+    refresh: refreshRecordingState,
   } = useRecordingState({
     sessionId: recordingSessionId ?? "",
     token: recordingToken ?? "",
@@ -2211,37 +2704,39 @@ export default function VideoRoom({
   // indicator but not the [Stop] CTA).
   const escalationHook = useVideoEscalationState({
     sessionId: recordingSessionId ?? null,
-    token:     recordingToken ?? null,
-    enabled:   recordingEnabled,
+    token: recordingToken ?? null,
+    enabled: recordingEnabled,
   });
   const isVideoRecordingActive =
     escalationHook.state.kind === "locked" &&
     escalationHook.state.reason === "already_recording_video";
+  const isVideoGrantPaused =
+    isVideoRecordingActive &&
+    Boolean(
+      escalationHook.state.kind === "locked" &&
+        escalationHook.state.videoPaused,
+    );
+  const [recordingCameraGate, setRecordingCameraGate] = useState<
+    "stopping" | "confirming" | null
+  >(null);
 
-  const handleIncomingChatMessage = useCallback((msg: IncomingMessageMeta) => {
-    // Plan 02 · Task 28 — forward every message to the recording-state hook.
-    // It filters to `senderRole === 'system'` + known `systemEvent` kinds
-    // internally, so unrelated chatter is a cheap no-op.
-    applyRecordingSystemMessage({
-      kind: msg.kind,
-      senderRole: msg.senderRole,
-      systemEvent: msg.systemEvent ?? null,
-      body: msg.body,
-    });
-    // System rows never count toward the unread badge (task-38 Note #4).
-    if (msg.kind === "system") return;
-    // Don't count messages the local user sent — their Realtime echo
-    // arrives with their own senderId; the host can't see senderId here
-    // but role === currentUserRole catches both doctor + patient. v1
-    // doctors are the primary consumer so we gate on 'doctor' here;
-    // refinement TODO if task-24c surfaces a false-positive self-count
-    // on patient side.
-    if (msg.senderRole === (role ?? "doctor")) return;
-    // Only bump while the user is on the Video tab — if they're on the
-    // Chat tab they're already seeing the message.
-    if (activeTabRef.current === "chat") return;
-    setUnreadCount((n) => Math.min(n + 1, 999));
-  }, [role, applyRecordingSystemMessage]);
+  const handleIncomingChatMessage = useCallback(
+    (msg: IncomingMessageMeta) => {
+      // Plan 02 · Task 28 — forward every message to the recording-state hook.
+      // It filters to `senderRole === 'system'` + known `systemEvent` kinds
+      // internally, so unrelated chatter is a cheap no-op.
+      applyRecordingSystemMessage({
+        kind: msg.kind,
+        senderRole: msg.senderRole,
+        systemEvent: msg.systemEvent ?? null,
+        body: msg.body,
+      });
+    },
+    [applyRecordingSystemMessage]
+  );
+  const handleUnreadCountChange = useCallback((n: number) => {
+    setUnreadCount(Math.min(n, 999));
+  }, []);
 
   const selectTab = useCallback((next: "video" | "chat") => {
     setActiveTab(next);
@@ -2298,6 +2793,7 @@ export default function VideoRoom({
         if ("stop" in track && typeof track.stop === "function") track.stop();
       });
       localTracksRef.current = [];
+      localAudioTrackRef.current = null;
       roomRef.current = null;
       // Sub-batch B · task-video-B9 — close the AudioContext so
       // unmount doesn't leak a Web Audio graph (Chrome reports a
@@ -2341,9 +2837,7 @@ export default function VideoRoom({
         // Resolve the initial video constraint:
         //   audio-only → `false` (no LocalVideoTrack created at all).
         //   explicit resolution → use the resolution map.
-        //   auto → keep the legacy 640x480 floor for now (matches
-        //     pre-B8 behaviour; flips to "let Twilio negotiate"
-        //     when E1 ships).
+        //   auto → 720p30 (see AUTO_PUBLISH_VIDEO_CONSTRAINTS).
         const videoConstraint =
           persistedQuality === "audio-only"
             ? false
@@ -2355,8 +2849,11 @@ export default function VideoRoom({
                     : {}),
                 }
               : chosenCameraId
-                ? { deviceId: { ideal: chosenCameraId }, width: 640, height: 480 }
-                : { width: 640, height: 480 };
+                ? {
+                    deviceId: { ideal: chosenCameraId },
+                    ...AUTO_PUBLISH_VIDEO_CONSTRAINTS,
+                  }
+                : { ...AUTO_PUBLISH_VIDEO_CONSTRAINTS };
         localTracks = await createLocalTracks({
           audio: audioConstraint,
           video: videoConstraint,
@@ -2368,12 +2865,17 @@ export default function VideoRoom({
         // comment at the top of this useEffect for full rationale.)
         if (cancelled) {
           localTracks.forEach((track) => {
-            if ("stop" in track && typeof track.stop === "function") track.stop();
+            if ("stop" in track && typeof track.stop === "function")
+              track.stop();
           });
           localTracks = [];
           return;
         }
         localTracksRef.current = localTracks;
+        const seededAudio = localTracks.find(
+          (t): t is LocalAudioTrack => t.kind === "audio"
+        );
+        localAudioTrackRef.current = seededAudio ?? null;
 
         room = await connect(accessToken, {
           name: roomName,
@@ -2397,12 +2899,16 @@ export default function VideoRoom({
           // dominant speaker (whoever's talking) gets bandwidth
           // priority. Defaults to 'grid' otherwise; explicit is
           // safer (decision documented).
-          bandwidthProfile: {
-            video: {
-              mode: "collaboration",
-              maxSubscriptionBitrate: initialMaxSubBitrate,
-            },
-          },
+          //
+          // H.264 first (hardware encode on phones) then VP8 without
+          // simulcast. `enableDscp` tags packets so the Wi-Fi AP can
+          // prioritize them. Track switch-off is manual so cockpit
+          // layout doesn't unsubscribe the remote camera.
+          preferredVideoCodecs: CONSULT_PREFERRED_VIDEO_CODECS,
+          enableDscp: true,
+          maxVideoBitrate:
+            initialMaxSubBitrate > 0 ? initialMaxSubBitrate : undefined,
+          bandwidthProfile: consultVideoBandwidthProfile(initialMaxSubBitrate),
         });
         // Strict-Mode cancellation checkpoint #2 — the effect was
         // torn down while Twilio was negotiating the connection.
@@ -2431,27 +2937,46 @@ export default function VideoRoom({
           }
           room = null;
           localTracks.forEach((track) => {
-            if ("stop" in track && typeof track.stop === "function") track.stop();
+            if ("stop" in track && typeof track.stop === "function")
+              track.stop();
           });
           localTracks = [];
           localTracksRef.current = [];
+          localAudioTrackRef.current = null;
           return;
         }
         roomRef.current = room;
         // Reactive handles for the network-quality + stats hooks.
         setRoomState(room);
         setLocalParticipant(room.localParticipant);
+        // Prefer the published audio track for mute (same object Twilio sends).
+        const publishedAudio = Array.from(
+          room.localParticipant.audioTracks.values()
+        ).find((publication) => publication.track)?.track;
+        if (publishedAudio) {
+          localAudioTrackRef.current = publishedAudio;
+        }
 
         if (!role) {
           const identity = room.localParticipant.identity;
-          setRemoteLabel(identity.startsWith("patient-") ? "Doctor" : "Patient");
+          setRemoteLabel(
+            identity.startsWith("patient-") ? "Doctor" : "Patient"
+          );
         }
         setStatus("connected");
-        // Sub-batch A · task-video-A3 — seed the call-duration anchor
-        // exactly once. Functional setter guards against a Twilio
-        // re-connect path resetting the chip to 00:00; once set, the
-        // timer keeps counting through reconnect (B4) + hold (B3).
-        setConnectedAt((prev) => prev ?? new Date());
+        // Seed the call-duration anchor exactly once. Prefer session
+        // start (server / sessionStorage); fall back to now on first
+        // connect and persist so a refresh continues the same clock.
+        setConnectedAt((prev) => {
+          if (prev) return prev;
+          const next =
+            resolveCallStartedAt({
+              sessionStartedAt: sessionStartedAtRef.current,
+              sessionId: durationSessionIdRef.current,
+            }) ?? new Date();
+          storeCallStartedAt(durationSessionIdRef.current, next);
+          return next;
+        });
 
         const videoTrack = localTracks.find((t) => t.kind === "video");
         if (videoTrack && localVideoRef.current) {
@@ -2471,12 +2996,12 @@ export default function VideoRoom({
         if (videoTrack && backgroundRef.current !== "off") {
           applyBackgroundToTrack(
             videoTrack as LocalVideoTrack,
-            backgroundRef.current,
+            backgroundRef.current
           ).catch((err) => {
             if (process.env.NODE_ENV !== "production") {
               console.warn(
                 "Failed to apply virtual background on connect:",
-                err,
+                err
               );
             }
           });
@@ -2488,10 +3013,18 @@ export default function VideoRoom({
         // The existing track-attach calls stay as-is so the `<video>`
         // ref binding is preserved across toggles; only the overlay
         // changes.
-        const wireRemoteVideoTrack = (
-          track: { kind: string; isEnabled?: boolean; on?: (event: string, cb: () => void) => void },
-        ) => {
+        const wireRemoteVideoTrack = (track: {
+          kind: string;
+          isEnabled?: boolean;
+          on?: (event: string, cb: () => void) => void;
+          switchOn?: () => unknown;
+          setPriority?: (priority: "low" | "standard" | "high") => unknown;
+        }) => {
           if (track.kind !== "video") return;
+          // Both `clientTrackSwitchOffControl` and `contentPreferencesMode`
+          // are 'manual' at connect, so nothing keeps this track switched on
+          // + high priority unless we say so.
+          pinRemoteVideoQuality(track);
           // Initial sync — the peer may have joined with camera already off.
           if (typeof track.isEnabled === "boolean") {
             setRemoteCameraOff(!track.isEnabled);
@@ -2529,9 +3062,7 @@ export default function VideoRoom({
         // scenario (decision §6 in the task file — limit 2 screens
         // max) only clears the slot for THIS specific track, not
         // a different one that's still live.
-        const clearRemoteScreenIfMatches = (
-          track: { sid?: string },
-        ) => {
+        const clearRemoteScreenIfMatches = (track: { sid?: string }) => {
           setRemoteScreenTrack((current) => {
             if (current === null) return current;
             // RemoteVideoTrack carries `sid` per Twilio types;
@@ -2719,7 +3250,7 @@ export default function VideoRoom({
         room.on("participantDisconnected", (participant) => {
           remoteEndedFirstRef.current = true;
           setRemoteParticipant((current) =>
-            current && current.sid === participant.sid ? null : current,
+            current && current.sid === participant.sid ? null : current
           );
           // Sub-batch C · task-video-C5 — belt-and-braces clear
           // for the remote screen tile if the peer leaves
@@ -2848,7 +3379,9 @@ export default function VideoRoom({
           code: (err as { code?: number })?.code,
         });
         setStatus("error");
-        setErrorMessage(err instanceof Error ? err.message : "Failed to connect");
+        setErrorMessage(
+          err instanceof Error ? err.message : "Failed to connect"
+        );
       }
     };
 
@@ -2866,69 +3399,216 @@ export default function VideoRoom({
 
   useEffect(() => {
     if (status !== "connected") return;
-    const videoTrack = localTracksRef.current.find((t) => t.kind === "video");
-    if (videoTrack && localVideoRef.current) {
-      videoTrack.attach(localVideoRef.current);
-    }
-  }, [status]);
+    // Re-bind after Gallery/Speaker/Sidebar swaps only. Do NOT reattach
+    // on in-call chat toggle — cockpit chat is an overlay; re-attach()
+    // was flashing both tiles black.
+    const reattach = () => {
+      const videoTrack = localTracksRef.current.find((t) => t.kind === "video");
+      if (videoTrack && localVideoRef.current) {
+        videoTrack.attach(localVideoRef.current);
+      }
+      const remote = remoteParticipant;
+      if (remote && remoteVideoRef.current) {
+        remote.videoTracks.forEach((publication) => {
+          const track = publication.track;
+          if (track && remoteVideoRef.current) {
+            track.attach(remoteVideoRef.current);
+          }
+        });
+      }
+    };
+    reattach();
+    const raf = requestAnimationFrame(reattach);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: reattach on layout
+  }, [status, effectiveLayout, remoteParticipant]);
 
   const emitMuteChangedBanner = useCallback(
     (nextMuted: boolean) => {
       if (!companion?.sessionId || chatAuth.status !== "ready") return;
       const actorName = role === "patient" ? "Patient" : "Doctor";
-      postConsultationMuteChanged(
-        chatAuth.accessToken,
-        companion.sessionId,
-        { muted: nextMuted, actorName },
-      ).catch((err) => {
+      postConsultationMuteChanged(chatAuth.accessToken, companion.sessionId, {
+        muted: nextMuted,
+        actorName,
+      }).catch((err) => {
         if (process.env.NODE_ENV !== "production") {
           console.warn(
             "Failed to post mute_changed banner:",
-            err instanceof Error ? err.message : err,
+            err instanceof Error ? err.message : err
           );
         }
       });
     },
-    [companion, chatAuth, role],
+    [companion, chatAuth, role]
+  );
+
+  const collectLocalAudioTracks = useCallback((): LocalAudioTrack[] => {
+    const tracks = new Set<LocalAudioTrack>();
+    if (localAudioTrackRef.current) {
+      tracks.add(localAudioTrackRef.current);
+    }
+    for (const track of localTracksRef.current) {
+      if (track.kind === "audio") {
+        tracks.add(track);
+      }
+    }
+    const room = roomRef.current;
+    if (room?.localParticipant) {
+      room.localParticipant.audioTracks.forEach((publication) => {
+        if (publication.track) {
+          tracks.add(publication.track);
+        }
+      });
+      // Some SDK paths only surface audio on the combined `tracks` map.
+      room.localParticipant.tracks.forEach((publication) => {
+        if (publication.kind === "audio" && publication.track) {
+          tracks.add(publication.track as LocalAudioTrack);
+        }
+      });
+    }
+    return Array.from(tracks);
+  }, []);
+
+  const getLocalVideoTrack = useCallback(() => {
+    const room = roomRef.current;
+    if (room?.localParticipant) {
+      const published = Array.from(
+        room.localParticipant.videoTracks.values()
+      ).find((publication) => {
+        const track = publication.track;
+        if (!track) return false;
+        // Screen-share is a separate LocalVideoTrack; keep camera only.
+        return track.name !== "screen" && track.name !== "screen-share";
+      });
+      if (published?.track) return published.track;
+    }
+    return localTracksRef.current.find((t) => t.kind === "video") ?? null;
+  }, []);
+
+  const haltLocalVideoForRecording = useCallback(
+    (intent: "pause" | "stop") => {
+      const videoTrack = getLocalVideoTrack() as {
+        disable?: () => void;
+      } | null;
+      if (videoTrack && typeof videoTrack.disable === "function") {
+        videoTrack.disable();
+      }
+      setCameraOff(true);
+      markGrantHaltDone(intent);
+    },
+    [getLocalVideoTrack],
+  );
+
+  const restoreLocalVideoAfterResume = useCallback(() => {
+    const videoTrack = getLocalVideoTrack() as {
+      enable?: () => void;
+    } | null;
+    if (videoTrack && typeof videoTrack.enable === "function") {
+      videoTrack.enable();
+    }
+    setCameraOff(false);
+  }, [getLocalVideoTrack]);
+
+  useEffect(() => {
+    if (recordingCameraGate === "stopping" && !isVideoRecordingActive) {
+      setRecordingCameraGate(null);
+    }
+  }, [isVideoRecordingActive, recordingCameraGate]);
+
+  // Latest mute bit for MediaSession / hold without stale closures.
+  const micMutedRef = useRef(micMuted);
+  micMutedRef.current = micMuted;
+
+  /**
+   * Hard mic mute:
+   *   mute   → disable + force RTP sender tracks off + **unpublish**
+   *   unmute → enable + **republish**
+   * Soft disable alone was not stopping send on this stack.
+   */
+  const applyMicMuted = useCallback(
+    (nextMuted: boolean) => {
+      const tracks = collectLocalAudioTracks();
+      const participant = roomRef.current?.localParticipant ?? null;
+      if (tracks.length === 0) {
+        console.warn(
+          "[VideoRoom] applyMicMuted: no local audio tracks — mute no-op",
+          { nextMuted }
+        );
+        return;
+      }
+      localAudioTrackRef.current = tracks[0] ?? null;
+
+      // Optimistic UI so the button flips even if publish awaits.
+      const changed = micMutedRef.current !== nextMuted;
+      micMutedRef.current = nextMuted;
+      setMicMuted(nextMuted);
+
+      setLocalAudioTracksMuted(tracks, nextMuted);
+
+      if (nextMuted) {
+        unpublishLocalAudioTracks(participant, tracks);
+      } else {
+        void republishLocalAudioTracks(participant, tracks).then(() => {
+          // Re-assert enable after publish (Twilio can reset clone state).
+          setLocalAudioTracksMuted(tracks, false);
+        });
+      }
+
+      if (
+        process.env.NODE_ENV !== "production" &&
+        nextMuted &&
+        localAudioTracksDisagreeWithMute(tracks, true)
+      ) {
+        console.warn(
+          "[VideoRoom] applyMicMuted: isEnabled still true after hard mute (unpublished anyway)",
+          {
+            states: tracks.map((t) => ({
+              isEnabled: t.isEnabled,
+              mstEnabled: t.mediaStreamTrack?.enabled,
+            })),
+          }
+        );
+      }
+
+      if (changed) {
+        emitMuteChangedBanner(nextMuted);
+      }
+    },
+    [collectLocalAudioTracks, emitMuteChangedBanner]
   );
 
   const handleToggleMic = useCallback(() => {
-    const audioTrack = localTracksRef.current.find((t) => t.kind === "audio");
-    if (!audioTrack) return;
-    // `LocalAudioTrack` exposes `.enable()` / `.disable()` (Twilio Video SDK).
-    // The runtime check guards a future track type from breaking the toggle.
-    if (typeof (audioTrack as { enable?: () => unknown }).enable !== "function") return;
-    if (typeof (audioTrack as { disable?: () => unknown }).disable !== "function") return;
-    setMicMuted((prev) => {
-      const nextMuted = !prev;
-      if (prev) {
-        (audioTrack as { enable: () => void }).enable();
-      } else {
-        (audioTrack as { disable: () => void }).disable();
-      }
-      emitMuteChangedBanner(nextMuted);
-      return nextMuted;
-    });
-  }, [emitMuteChangedBanner]);
+    // Hold already hides the Mute button; drive from the ref so rapid
+    // clicks don't toggle against a stale React state snapshot.
+    applyMicMuted(!micMutedRef.current);
+  }, [applyMicMuted]);
 
   const handleToggleCamera = useCallback(() => {
-    const videoTrack = localTracksRef.current.find((t) => t.kind === "video");
+    if (recordingCameraGate) return;
+    const videoTrack = getLocalVideoTrack() as {
+      enable?: () => void;
+      disable?: () => void;
+      isEnabled?: boolean;
+    } | null;
     if (!videoTrack) return;
     // `LocalVideoTrack` exposes `.enable()` / `.disable()` (Twilio Video SDK).
     // We use disable rather than unpublish — it keeps the track alive,
     // just stops sending frames; re-enabling snaps back without a
     // renegotiation lag (~500ms vs ~1s+).
-    if (typeof (videoTrack as { enable?: () => unknown }).enable !== "function") return;
-    if (typeof (videoTrack as { disable?: () => unknown }).disable !== "function") return;
-    setCameraOff((prev) => {
-      if (prev) {
-        (videoTrack as { enable: () => void }).enable();
-      } else {
-        (videoTrack as { disable: () => void }).disable();
-      }
-      return !prev;
-    });
-  }, []);
+    if (typeof videoTrack.enable !== "function") return;
+    if (typeof videoTrack.disable !== "function") return;
+    const currentlyEnabled =
+      typeof videoTrack.isEnabled === "boolean"
+        ? videoTrack.isEnabled
+        : !cameraOff;
+    if (currentlyEnabled) {
+      videoTrack.disable();
+      setCameraOff(true);
+    } else {
+      videoTrack.enable();
+      setCameraOff(false);
+    }
+  }, [cameraOff, getLocalVideoTrack, recordingCameraGate]);
 
   // Sub-batch B · task-video-B3 — hold call.
   //
@@ -2961,8 +3641,18 @@ export default function VideoRoom({
   // already wired, so the future PR is a one-line prop flip when
   // the backend signal arrives.
   const hold = useHoldState();
+  const [patientMoreOpen, setPatientMoreOpen] = useState(false);
+  const patientChrome = useAutoHideChrome({
+    hideDelayMs: 4000,
+    forceVisible:
+      !isPatientMobile ||
+      hold.onHold ||
+      status !== "connected" ||
+      patientMoreOpen ||
+      isPatientChatExpanded(patientChatSnap) ||
+      unreadCount > 0,
+  });
   const handleToggleHold = useCallback(() => {
-    const audioTrack = localTracksRef.current.find((t) => t.kind === "audio");
     const videoTrack = localTracksRef.current.find((t) => t.kind === "video");
 
     const result = hold.toggleHold({
@@ -2970,66 +3660,57 @@ export default function VideoRoom({
       cameraOffBefore: cameraOff,
     });
 
+    const audioTracks = collectLocalAudioTracks();
+    const participant = roomRef.current?.localParticipant ?? null;
+
     if (result.next === true) {
-      // Going INTO hold — disable both tracks. Audio-only mode has
-      // no video track; the typeof guard skips the video branch.
-      if (
-        audioTrack &&
-        typeof (audioTrack as { disable?: () => unknown }).disable === "function"
-      ) {
-        (audioTrack as { disable: () => void }).disable();
-      }
+      // Going INTO hold — hard-mute mic (unpublish) + disable camera.
+      setLocalAudioTracksMuted(audioTracks, true);
+      unpublishLocalAudioTracks(participant, audioTracks);
       if (
         videoTrack &&
-        typeof (videoTrack as { disable?: () => unknown }).disable === "function"
+        typeof (videoTrack as { disable?: () => unknown }).disable ===
+          "function"
       ) {
         (videoTrack as { disable: () => void }).disable();
       }
-      // Reflect the disabled state in the UI flags so the rest of
-      // the component (self-tile avatar overlay, button visuals)
-      // stays consistent. The snapshot remembers the original state
-      // so resume can restore them.
+      micMutedRef.current = true;
       setMicMuted(true);
       setCameraOff(true);
     } else {
-      // Coming OUT of hold — restore each track to its pre-hold
-      // state. If the user was muted before holding, leave the
-      // audio track disabled (and `micMuted = true`); same for
-      // camera. Resume is NOT "unmute everything".
-      //
-      // Same defensive `enable?`/`disable?` typeof guards as the
-      // mute/camera handlers above — Twilio's `LocalAudioTrack` /
-      // `LocalVideoTrack` declare `enable()` + `disable()` in their
-      // .d.ts but a future SDK rev or a different track-like
-      // implementation in tests could miss them; the guards keep
-      // the call site safe.
+      // Coming OUT of hold — restore pre-hold mic/camera. Resume is
+      // NOT "unmute everything".
       const snapshot = result.snapshot;
-      if (audioTrack) {
-        if (snapshot.micMutedBefore) {
-          if (typeof (audioTrack as { disable?: () => unknown }).disable === "function") {
-            (audioTrack as { disable: () => void }).disable();
-          }
-        } else {
-          if (typeof (audioTrack as { enable?: () => unknown }).enable === "function") {
-            (audioTrack as { enable: () => void }).enable();
-          }
-        }
+      micMutedRef.current = snapshot.micMutedBefore;
+      setMicMuted(snapshot.micMutedBefore);
+      setCameraOff(snapshot.cameraOffBefore);
+      if (snapshot.micMutedBefore) {
+        setLocalAudioTracksMuted(audioTracks, true);
+        unpublishLocalAudioTracks(participant, audioTracks);
+      } else {
+        void republishLocalAudioTracks(participant, audioTracks).then(() => {
+          setLocalAudioTracksMuted(audioTracks, false);
+        });
       }
       if (videoTrack) {
         if (snapshot.cameraOffBefore) {
-          if (typeof (videoTrack as { disable?: () => unknown }).disable === "function") {
+          if (
+            typeof (videoTrack as { disable?: () => unknown }).disable ===
+            "function"
+          ) {
             (videoTrack as { disable: () => void }).disable();
           }
         } else {
-          if (typeof (videoTrack as { enable?: () => unknown }).enable === "function") {
+          if (
+            typeof (videoTrack as { enable?: () => unknown }).enable ===
+            "function"
+          ) {
             (videoTrack as { enable: () => void }).enable();
           }
         }
       }
-      setMicMuted(snapshot.micMutedBefore);
-      setCameraOff(snapshot.cameraOffBefore);
     }
-  }, [hold, micMuted, cameraOff]);
+  }, [hold, micMuted, cameraOff, collectLocalAudioTracks]);
 
   // Sub-batch B · task-video-B4 — reconnection UX.
   //
@@ -3087,12 +3768,7 @@ export default function VideoRoom({
   //   - prevents a second click queueing a stacked switch
   //   - makes the in-progress state visible to the user
   //
-  // For 'auto' we use `videoConstraintsForQuality('auto')` which
-  // returns null (no explicit dimensions) — Twilio + the camera
-  // negotiate the best available. Today's connect-path uses 640x480
-  // as the default; we deliberately DON'T re-pin to that on switch-
-  // to-auto because once E1 ships, "auto" should let adaptive bitrate
-  // take over without a hard floor.
+  // For 'auto' we use `videoConstraintsForQuality('auto')` → 720p30.
   const handleQualityChange = useCallback(
     async (next: QualityOption) => {
       const prev = qualityRef.current;
@@ -3122,7 +3798,7 @@ export default function VideoRoom({
 
       setQualitySwitchInFlight(true);
       const oldVideoTrack = localTracksRef.current.find(
-        (t) => t.kind === "video",
+        (t) => t.kind === "video"
       ) as LocalVideoTrack | undefined;
 
       try {
@@ -3141,7 +3817,7 @@ export default function VideoRoom({
               // ditto.
             }
             localTracksRef.current = localTracksRef.current.filter(
-              (t) => t !== oldVideoTrack,
+              (t) => t !== oldVideoTrack
             );
             // Clear the local <video> element's srcObject so the last
             // frame doesn't freeze on screen (the avatar overlay
@@ -3159,10 +3835,8 @@ export default function VideoRoom({
         const trackOptions: Parameters<typeof createLocalVideoTrack>[0] =
           constraints
             ? { ...constraints }
-            : // 'auto' — let Twilio negotiate. We deliberately omit
-              // dimensions so adaptive (E1) and the camera can do
-              // their job. Today this means Twilio's sensible
-              // defaults (640x480 or thereabouts).
+            : // Unreachable for known QualityOptions other than a
+              // future unknown value — 'auto' now returns 720p30.
               {};
         // Sub-batch F · task-video-F1 — prefer the in-call switch's
         // active deviceId over the connect-time `chosenCameraId`. If
@@ -3170,11 +3844,11 @@ export default function VideoRoom({
         // republish (this picker swap, an adaptive downgrade, a
         // try-video-again) must keep them on back-cam — otherwise the
         // republish path would silently snap them back to front.
-        const effectiveDeviceId =
-          cameraSwitchDeviceIdRef.current ?? chosenCameraId;
-        if (effectiveDeviceId) {
-          trackOptions.deviceId = { ideal: effectiveDeviceId };
-        }
+        // iOS facingMode flip may not yield a deviceId; stamp that too.
+        assignActiveCameraToTrackOptions(trackOptions, {
+          deviceId: cameraSwitchDeviceIdRef.current ?? chosenCameraId,
+          facing: cameraSwitchFacingRef.current,
+        });
 
         const newVideoTrack = await createLocalVideoTrack(trackOptions);
 
@@ -3206,7 +3880,7 @@ export default function VideoRoom({
             // ignore.
           }
           localTracksRef.current = localTracksRef.current.filter(
-            (t) => t !== oldVideoTrack,
+            (t) => t !== oldVideoTrack
           );
         }
 
@@ -3242,17 +3916,16 @@ export default function VideoRoom({
         // quality change) would silently disable blur until the
         // user re-clicked the picker.
         if (backgroundRef.current !== "off") {
-          applyBackgroundToTrack(
-            newVideoTrack,
-            backgroundRef.current,
-          ).catch((err) => {
-            if (process.env.NODE_ENV !== "production") {
-              console.warn(
-                "Failed to re-apply virtual background after quality swap:",
-                err,
-              );
+          applyBackgroundToTrack(newVideoTrack, backgroundRef.current).catch(
+            (err) => {
+              if (process.env.NODE_ENV !== "production") {
+                console.warn(
+                  "Failed to re-apply virtual background after quality swap:",
+                  err
+                );
+              }
             }
-          });
+          );
         }
       } catch (err) {
         // Camera permission revoked OR device removed mid-call OR
@@ -3268,7 +3941,7 @@ export default function VideoRoom({
         setQualitySwitchInFlight(false);
       }
     },
-    [status, chosenCameraId, cameraOff, autoFallbackActive],
+    [status, chosenCameraId, cameraOff, autoFallbackActive]
   );
 
   // ------------------------------------------------------------------------
@@ -3317,7 +3990,7 @@ export default function VideoRoom({
       level: AdaptiveLevel,
       engageOptions?: {
         reason?: "low_bandwidth" | "battery_low" | "battery_critical";
-      },
+      }
     ) => {
       const room = roomRef.current;
       if (!room || status !== "connected") return;
@@ -3341,7 +4014,7 @@ export default function VideoRoom({
       // banner is the disambiguating UI for "auto-fallback active".
       if (level === "audio-only") {
         const oldVideoTrack = localTracksRef.current.find(
-          (t) => t.kind === "video",
+          (t) => t.kind === "video"
         ) as LocalVideoTrack | undefined;
 
         if (oldVideoTrack) {
@@ -3356,7 +4029,7 @@ export default function VideoRoom({
             // ditto.
           }
           localTracksRef.current = localTracksRef.current.filter(
-            (t) => t !== oldVideoTrack,
+            (t) => t !== oldVideoTrack
           );
           if (localVideoRef.current) {
             // Defense-in-depth — clear srcObject so the last frame
@@ -3399,12 +4072,12 @@ export default function VideoRoom({
               // the trigger evidence) so we send null.
               thresholdLevel: reason === "low_bandwidth" ? 1 : null,
               reason,
-            },
+            }
           ).catch((err) => {
             if (process.env.NODE_ENV !== "production") {
               console.warn(
                 "Failed to post auto_audio_fallback banner:",
-                err instanceof Error ? err.message : err,
+                err instanceof Error ? err.message : err
               );
             }
           });
@@ -3413,7 +4086,7 @@ export default function VideoRoom({
       }
 
       const oldVideoTrack = localTracksRef.current.find(
-        (t) => t.kind === "video",
+        (t) => t.kind === "video"
       ) as LocalVideoTrack | undefined;
 
       // No video track to republish (user previously chose audio-
@@ -3429,11 +4102,10 @@ export default function VideoRoom({
       // Sub-batch F · task-video-F1 — prefer the in-call switch's
       // active deviceId over the connect-time `chosenCameraId`. See
       // `handleQualityChange` for the full rationale.
-      const effectiveDeviceId =
-        cameraSwitchDeviceIdRef.current ?? chosenCameraId;
-      if (effectiveDeviceId) {
-        trackOptions.deviceId = { ideal: effectiveDeviceId };
-      }
+      assignActiveCameraToTrackOptions(trackOptions, {
+        deviceId: cameraSwitchDeviceIdRef.current ?? chosenCameraId,
+        facing: cameraSwitchFacingRef.current,
+      });
 
       try {
         const newVideoTrack = await createLocalVideoTrack(trackOptions);
@@ -3462,7 +4134,7 @@ export default function VideoRoom({
           // ditto.
         }
         localTracksRef.current = localTracksRef.current.filter(
-          (t) => t !== oldVideoTrack,
+          (t) => t !== oldVideoTrack
         );
 
         await roomRef.current.localParticipant.publishTrack(newVideoTrack);
@@ -3486,17 +4158,16 @@ export default function VideoRoom({
         // + `stop()`. Without this, every adaptive transition
         // would silently drop blur/replace.
         if (backgroundRef.current !== "off") {
-          applyBackgroundToTrack(
-            newVideoTrack,
-            backgroundRef.current,
-          ).catch((err) => {
-            if (process.env.NODE_ENV !== "production") {
-              console.warn(
-                "Failed to re-apply virtual background after adaptive republish:",
-                err,
-              );
+          applyBackgroundToTrack(newVideoTrack, backgroundRef.current).catch(
+            (err) => {
+              if (process.env.NODE_ENV !== "production") {
+                console.warn(
+                  "Failed to re-apply virtual background after adaptive republish:",
+                  err
+                );
+              }
             }
-          });
+          );
         }
       } catch (err) {
         // Camera permission revoked OR device removed mid-call OR
@@ -3521,7 +4192,7 @@ export default function VideoRoom({
       inCallActions,
       companion?.sessionId,
       role,
-    ],
+    ]
   );
 
   // Sub-batch E · task-video-E2 — "Try video again" handler. Mirrors
@@ -3567,11 +4238,10 @@ export default function VideoRoom({
     // Sub-batch F · task-video-F1 — prefer the in-call switch's
     // active deviceId over the connect-time `chosenCameraId`. See
     // `handleQualityChange` for the full rationale.
-    const effectiveDeviceId =
-      cameraSwitchDeviceIdRef.current ?? chosenCameraId;
-    if (effectiveDeviceId) {
-      trackOptions.deviceId = { ideal: effectiveDeviceId };
-    }
+    assignActiveCameraToTrackOptions(trackOptions, {
+      deviceId: cameraSwitchDeviceIdRef.current ?? chosenCameraId,
+      facing: cameraSwitchFacingRef.current,
+    });
 
     try {
       const newVideoTrack = await createLocalVideoTrack(trackOptions);
@@ -3602,17 +4272,16 @@ export default function VideoRoom({
       }
 
       if (backgroundRef.current !== "off") {
-        applyBackgroundToTrack(
-          newVideoTrack,
-          backgroundRef.current,
-        ).catch((err) => {
-          if (process.env.NODE_ENV !== "production") {
-            console.warn(
-              "Failed to re-apply virtual background after fallback restore:",
-              err,
-            );
+        applyBackgroundToTrack(newVideoTrack, backgroundRef.current).catch(
+          (err) => {
+            if (process.env.NODE_ENV !== "production") {
+              console.warn(
+                "Failed to re-apply virtual background after fallback restore:",
+                err
+              );
+            }
           }
-        });
+        );
       }
 
       // Banner unmounts only after the republish has succeeded —
@@ -3637,12 +4306,12 @@ export default function VideoRoom({
             kind: "restored",
             attempt: autoFallbackAttemptRef.current,
             durationSeconds,
-          },
+          }
         ).catch((err) => {
           if (process.env.NODE_ENV !== "production") {
             console.warn(
               "Failed to post auto_audio_recovered banner:",
-              err instanceof Error ? err.message : err,
+              err instanceof Error ? err.message : err
             );
           }
         });
@@ -3752,7 +4421,7 @@ export default function VideoRoom({
         // we don't double-fire.
         const message = adaptiveToastMessage(
           result.reason,
-          result.transitionTo,
+          result.transitionTo
         );
         if (message) setAdaptiveNotice(message);
         applyAdaptiveLevelRef.current(result.transitionTo);
@@ -3787,12 +4456,17 @@ export default function VideoRoom({
     const tracks = localTracksRef.current;
 
     tracks.forEach((track) => {
-      if ("detach" in track && typeof (track as { detach: (el?: HTMLElement) => void }).detach === "function") {
+      if (
+        "detach" in track &&
+        typeof (track as { detach: (el?: HTMLElement) => void }).detach ===
+          "function"
+      ) {
         (track as { detach: (el?: HTMLElement) => void }).detach();
       }
       if ("stop" in track && typeof track.stop === "function") track.stop();
     });
     localTracksRef.current = [];
+    localAudioTrackRef.current = null;
 
     if (room) {
       room.removeAllListeners();
@@ -3815,7 +4489,7 @@ export default function VideoRoom({
         twilioError: lastTwilioErrorRef.current,
         ourLocalEndCalled: ourLocalEndCalledRef.current,
         remoteEndedFirst: remoteEndedFirstRef.current,
-      }),
+      })
     );
     setStatus("disconnected");
     // Sub-batch A · task-video-A8 — explicit clear because
@@ -3830,55 +4504,14 @@ export default function VideoRoom({
     }
   }, []);
 
-  // ------------------------------------------------------------------------
-  // Sub-batch A · task-video-A8 — tooltip bodies for the two
-  // `<NetworkBars>` mounts. Built here (not in JSX) because they're
-  // shared between self + remote AND get the same `callStats`
-  // values regardless of which side renders them. The remote-side
-  // popover hides the local-only fields (FPS / send bitrate) since
-  // they describe THIS device, not the counterparty.
-  // ------------------------------------------------------------------------
-  const renderStatsRow = (label: string, value: string | null) => (
-    <div className="flex items-center justify-between gap-3 py-0.5">
-      <span className="text-gray-500">{label}</span>
-      <span className="font-mono text-gray-900">{value ?? "—"}</span>
-    </div>
-  );
-
-  const formatMs = (n: number | null) => (n == null ? null : `${n} ms`);
-  const formatRes = (
-    r: { width: number; height: number } | null,
-  ) => (r == null ? null : `${r.width}×${r.height}`);
-  const formatFps = (n: number | null) => (n == null ? null : `${n}`);
-  const formatKbps = (n: number | null) =>
-    n == null
-      ? null
-      : n >= 1000
-        ? `${(n / 1000).toFixed(1)} Mbps`
-        : `${n} kbps`;
-
-  const localStatsTooltip = (
-    <div className="space-y-0.5">
-      <p className="mb-1 font-semibold text-gray-900">Your connection</p>
-      {renderStatsRow("Quality", localNetworkQuality.level == null ? null : `${localNetworkQuality.level}/5`)}
-      {renderStatsRow("RTT", formatMs(callStats.rttMs))}
-      {renderStatsRow("Jitter", formatMs(callStats.jitterMs))}
-      {renderStatsRow("Resolution", formatRes(callStats.resolution))}
-      {renderStatsRow("FPS", formatFps(callStats.fps))}
-      {renderStatsRow("Sending", formatKbps(callStats.kbpsSend))}
-      {renderStatsRow("Receiving", formatKbps(callStats.kbpsReceive))}
-    </div>
-  );
-
-  const remoteStatsTooltip = (
-    <div className="space-y-0.5">
-      <p className="mb-1 font-semibold text-gray-900">{remoteLabel}&apos;s connection</p>
-      {renderStatsRow("Quality", remoteNetworkQuality.level == null ? null : `${remoteNetworkQuality.level}/5`)}
-      <p className="mt-2 text-[11px] leading-snug text-gray-500">
-        Detailed stats (RTT / jitter / bitrate) are only available for
-        your own connection.
-      </p>
-    </div>
+  const remoteConnectionBars = (
+    <ConnectionReportBars
+      room={roomState}
+      variant="remote"
+      remoteParticipant={remoteParticipant}
+      label={`${remoteLabel}'s connection`}
+      caption={isCockpit ? "Patient" : undefined}
+    />
   );
 
   // Sub-batch C · task-video-C4 — annotation entry handler.
@@ -3932,7 +4565,7 @@ export default function VideoRoom({
         wasPlaying,
       });
     },
-    [localVideoRef, remoteVideoRef],
+    [localVideoRef, remoteVideoRef]
   );
 
   // Sub-batch C · task-video-C4 — annotation cancel handler. Resumes
@@ -3960,10 +4593,7 @@ export default function VideoRoom({
   // annotations })`, then mirrors the success/error to the snapshot
   // controls' toast surface.
   const handleAnnotateSave = useCallback(
-    async (payload: {
-      blob: Blob;
-      annotations: ReadonlyArray<Annotation>;
-    }) => {
+    async (payload: { blob: Blob; annotations: ReadonlyArray<Annotation> }) => {
       if (!annotation.active) return;
       if (!companion || chatAuth.status !== "ready") {
         setSnapshotExternalToast({
@@ -4019,7 +4649,7 @@ export default function VideoRoom({
       handleAnnotateCancel,
       localVideoRef,
       remoteVideoRef,
-    ],
+    ]
   );
 
   // ------------------------------------------------------------------------
@@ -4057,7 +4687,7 @@ export default function VideoRoom({
             kind: "follow_up_scheduled",
             appointmentId: result.appointmentId,
             scheduledAt: result.scheduledAt,
-          },
+          }
         );
         setQuickActionToast({
           kind: "success",
@@ -4071,13 +4701,16 @@ export default function VideoRoom({
         });
         if (err instanceof Error && process.env.NODE_ENV !== "production") {
           // eslint-disable-next-line no-console
-          console.warn("Failed to post follow_up_scheduled banner:", err.message);
+          console.warn(
+            "Failed to post follow_up_scheduled banner:",
+            err.message
+          );
         }
       } finally {
         setQuickActionPanel(null);
       }
     },
-    [companion?.sessionId, inCallActions],
+    [companion?.sessionId, inCallActions]
   );
 
   // Sub-batch A · task-video-A4 — leave-button click handler.
@@ -4094,7 +4727,7 @@ export default function VideoRoom({
       }
       setEndConfirmOpen(true);
     },
-    [role, handleLeave],
+    [role, handleLeave]
   );
 
   const handleEndConfirmCancel = useCallback(() => {
@@ -4118,10 +4751,9 @@ export default function VideoRoom({
   // both consult surfaces.
   //
   // Action mapping (decision §14, locked from voice C10):
-  //   - MediaSession `pause`         → handleToggleMic (mute mic).
-  //   - MediaSession `play`          → handleToggleMic (unmute).
-  //     Browser only surfaces ONE button at a time based on
-  //     `playbackState`, so passing the same toggle is safe.
+  //   - MediaSession `pause` → mute mic (idempotent).
+  //   - MediaSession `play`  → NO-OP (unmute is in-app only). Synthetic
+  //     `play` from remote <audio> was re-enabling the mic after Mute.
   //   - MediaSession `stop` / `stoptransport` → handleEndConfirmConfirm.
   //   - SW notification `mute`/`end` actions are forwarded by the
   //     SW back to the same callbacks via postMessage.
@@ -4139,8 +4771,13 @@ export default function VideoRoom({
     modality: "video",
     isMuted: micMuted,
     isOnHold: hold.onHold,
-    onPause: handleToggleMic,
-    onPlay: handleToggleMic,
+    // pause → mute (headset / SW notification). play must NOT unmute:
+    // remote <audio> / OS media keys synthesize `play` and were flipping
+    // the mic back on immediately after Mute.
+    onPause: () => applyMicMuted(true),
+    onPlay: () => {
+      /* intentionally empty — unmute only via in-app Unmute button */
+    },
     onStop: handleEndConfirmConfirm,
   });
 
@@ -4189,11 +4826,7 @@ export default function VideoRoom({
       // wired (legacy callsites), we skip straight to the
       // placeholder — the contract is "summary degrades gracefully
       // when bearer creds aren't in scope".
-      if (
-        !summaryDismissed &&
-        recordingSessionId &&
-        recordingToken
-      ) {
+      if (!summaryDismissed && recordingSessionId && recordingToken) {
         return (
           <CallPostCallSummary
             sessionId={recordingSessionId}
@@ -4304,7 +4937,9 @@ export default function VideoRoom({
   // future PR).
   let callerCardRecordingStatus: "idle" | "recording" | "paused" = "idle";
   let callerCardRecordingTooltip: string | undefined;
-  if (recordingEnabled) {
+  // Cockpit already shows a top REC / Paused pill — skip the per-tile
+  // "Recording" badge so live UI isn't double-labeled.
+  if (recordingEnabled && !isCockpit) {
     if (recordingState.paused) {
       callerCardRecordingStatus = "paused";
       callerCardRecordingTooltip = "Recording is paused. [More]";
@@ -4316,62 +4951,105 @@ export default function VideoRoom({
     }
   }
 
-  // Sub-batch B · task-video-B8 — when the user has chosen 'audio-only',
-  // we've torn down the LocalVideoTrack entirely (see
-  // `handleQualityChange`'s audio-only branch). The self-tile would
-  // otherwise render a black frame; OR'ing the audio-only state into
-  // `cameraOff` reuses A2's avatar overlay path. Camera-off button
-  // (also from A2) is hidden in audio-only mode below since there's no
-  // track to toggle.
-  const isAudioOnly = quality === "audio-only";
+  // Manual picker 'audio-only' OR adaptive/battery auto-fallback both
+  // tear down LocalVideoTrack. Auto-fallback leaves the picker on
+  // 'auto', so we must OR `autoFallbackActive` — otherwise the self
+  // tile stays a black <video> and Camera off stays clickable.
+  const isAudioOnly = resolveSelfTileAudioOnly({
+    quality,
+    autoFallbackActive,
+  });
   const selfTileCameraOff = cameraOff || isAudioOnly;
 
   // Pulled into a local const so both desktop and mobile layouts can
   // render the SAME element (display: hidden on mobile when the Chat
   // tab is selected). Must stay mounted: tearing down Twilio's room on
   // tab-switch would cost 2-5s reconnect (Note #3).
+  const chatVisible = !shouldCountChatUnread({
+    role,
+    isDesktop,
+    isCockpit,
+    patientChatExpanded: isPatientChatExpanded(patientChatSnap),
+    patientDesktopChatOpen,
+    cockpitChatOpen: showInCallChat,
+    activeTab,
+  });
+  const showChatUnreadBadge = unreadCount > 0 && !chatVisible;
+
   const videoPane = (
-    <div className="flex flex-1 flex-col space-y-4">
-      {sessionId && doctorToken ? (
-        <SessionStartBanner sessionId={sessionId} doctorToken={doctorToken} />
+    <div
+      ref={isDesktopChrome ? stageRef : undefined}
+      data-testid={isIconDock ? "call-stage" : undefined}
+      className={
+        isDesktopChrome
+          ? "flex h-full min-h-0 flex-1 flex-col " + COCKPIT_STAGE_SHELL
+          : isPatientMobile
+            ? "relative flex h-full min-h-0 flex-1 flex-col"
+            : fillsHostHeight
+              ? "flex h-full min-h-0 flex-1 flex-col space-y-4"
+              : "flex flex-1 flex-col space-y-4"
+      }
+    >
+      {isDesktopChrome ? (
+        <CallStageHeader
+          counterpartyName={remoteLabel}
+          connectedAt={connectedAt}
+          remoteNetworkLevel={null}
+          remoteNetworkBars={remoteConnectionBars}
+          status={callerCardStatus}
+          recordingActive={Boolean(
+            recordingEnabled &&
+            !recordingState.loading &&
+            !recordingState.paused
+          )}
+          recordingPaused={Boolean(recordingEnabled && recordingState.paused)}
+          onExpandFullscreen={handleExpandFullscreen}
+          fillTabActive={fillTabActive}
+          fullscreenActive={fullscreenActive}
+          onExitExpand={
+            fillTabActive || fullscreenActive ? handleExitExpand : undefined
+          }
+        />
       ) : null}
       {recordingEnabled && recordingSessionId && recordingToken ? (
-        isCockpit ? (
-          // task-cockpit-fix-3 — compact recording pill. Full RecordingControls
-          // lives in the More ▾ dropdown; this pill is a passive status indicator.
-          recordingState.loading ? null : recordingState.paused ? (
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800">
-              <span aria-hidden>⏸</span>
-              <span>Paused</span>
-            </div>
-          ) : (
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-red-300 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">
-              <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-red-600" aria-hidden />
-              <span>REC</span>
-            </div>
-          )
-        ) : (
-          <div className="flex flex-col gap-2">
-            <RecordingPausedIndicator state={recordingState} currentUserRole={recordingRole} />
-            <div className="flex flex-wrap items-start gap-3">
-              <RecordingControls
-                sessionId={recordingSessionId}
-                token={recordingToken}
-                currentUserRole={recordingRole}
-                state={recordingState}
-              />
-              {/* Plan 08 · Task 40 · Decision 10 LOCKED — doctor-only. The
+        <div className="flex flex-col gap-2">
+          <RecordingPausedIndicator
+            state={recordingState}
+            currentUserRole={recordingRole}
+            sessionId={recordingSessionId}
+            token={recordingToken}
+            onRefresh={() => void refreshRecordingState()}
+          />
+          <div className="flex flex-wrap items-start gap-3">
+            <RecordingControls
+              sessionId={recordingSessionId}
+              token={recordingToken}
+              currentUserRole={recordingRole}
+              state={recordingState}
+              hideTrigger={isDesktopChrome}
+              onRefresh={() => void refreshRecordingState()}
+            />
+            {/* Plan 08 · Task 40 · Decision 10 LOCKED — doctor-only. The
                   button self-filters on `currentUserRole === 'patient'` and
                   hides itself when video is already recording (Task 42's
                   indicator takes over), so the mount is unconditional. */}
+            {!isDesktopChrome ? (
               <VideoEscalationButton
                 sessionId={recordingSessionId}
                 token={recordingToken}
                 currentUserRole={recordingRole}
               />
-            </div>
+            ) : null}
+            <PatientVideoOfferButton
+              sessionId={recordingSessionId}
+              token={recordingToken}
+              currentUserRole={recordingRole}
+              state={escalationHook.state}
+              cooldownSecondsRemaining={escalationHook.cooldownSecondsRemaining}
+              onRefresh={() => void escalationHook.refresh()}
+            />
           </div>
-        )
+        </div>
       ) : null}
       {/* Plan 08 · Task 41 · Decision 10 LOCKED — patient-side consent modal.
           Self-gates on `enabled={recordingRole === 'patient'}` so the doctor
@@ -4414,19 +5092,15 @@ export default function VideoRoom({
        *   3. caller-card overlay (absolute, z-15)         — B2
        *   4. hold + reconnect banners (absolute, z-30)    — B3 + B4
        *
-       * Sub-batch B · task-video-B6 — the tile container uses
-       * `display: contents` (`className="contents"`) for Speaker so
-       * the children behave as direct children of THIS `<div
-       * className="relative">` wrapper — the floating self tile
-       * (`absolute`) still anchors to the wrapper, NOT to the
-       * container. For Gallery / Sidebar the container becomes a
-       * normal grid / flex parent. Keeping the same React subtree
-       * across layout swaps is critical: Twilio's `track.attach()`
-       * binding lives on the `<video>` DOM node, and React
-       * reconciliation preserves the node only when its parent
-       * stays in the same JSX position. Toggling `display: contents`
-       * (a CSS-only change) avoids any DOM remount → no Twilio
-       * re-attach needed → no audio/video flicker on layout swap.
+       * Sub-batch B · task-video-B6 — tile container keeps REAL
+       * wrapper boxes in every layout (no `display: contents`).
+       * Chrome has flaky MediaStream/`<video>` behavior when a
+       * parent flips into/out of `contents` during Gallery ↔
+       * Speaker swaps — black self-preview until a later reattach.
+       * Speaker uses an absolute fill stage; floating PiP anchors
+       * to the self wrapper (`absolute inset-0`), which matches the
+       * outer relative stage. Gallery / Sidebar use grid / flex.
+       * JSX tile order stays fixed so React preserves `<video>` nodes.
        *
        * The card sits at z-15 so the floating self-tile (z-20) renders
        * ABOVE it when the user pins the PiP to TR/TL — matches B2's
@@ -4469,10 +5143,7 @@ export default function VideoRoom({
        *   Hidden during hold (the call isn't actively at risk
        *   from backgrounding while paused).
        */}
-      <IOSPWABanner
-        isIOSPWA={callMediaSession.isIOSPWA}
-        hidden={hold.onHold}
-      />
+      <IOSPWABanner isIOSPWA={callMediaSession.isIOSPWA} hidden={hold.onHold} />
       {screen.localScreenTrack ? (
         <div
           role="status"
@@ -4502,14 +5173,103 @@ export default function VideoRoom({
           </span>
         </div>
       ) : null}
-      <div className="relative">
+      <div
+        ref={isPatientMobile ? patientStageBoxRef : undefined}
+        data-testid={isPatientMobile ? "patient-video-stage" : undefined}
+        data-split-axis={isPatientMobile ? patientSplit : undefined}
+        className={
+          // Speaker's tiles are both `absolute inset-0` — without
+          // `flex-1` here the stage has no height to anchor against.
+          fillsHostHeight
+            ? "relative min-h-0 overflow-hidden " +
+              (patientStageHeight ? "shrink-0" : "flex-1")
+            : effectiveLayout === "gallery" || effectiveLayout === "sidebar"
+              ? "relative min-h-[50vh] flex-1 overflow-hidden md:min-h-[60vh]"
+              : "relative"
+        }
+        style={
+          patientStageHeight
+            ? {
+                height: patientStageHeight,
+                transition: chatDragFraction ? "none" : "height 200ms ease-out",
+              }
+            : undefined
+        }
+        onPointerDown={isPatientMobile ? patientChrome.reveal : undefined}
+      >
+        {/*
+         * Auto audio-only banner — absolute overlay at the TOP of the
+         * stage. Must not sit after the h-full tile grid as a sticky
+         * sibling: cockpit `overflow-hidden` clips that placement, so
+         * doctors only saw a black self-tile + chat system rows.
+         */}
+        {autoFallbackActive ? (
+          <div
+            className="pointer-events-none absolute inset-x-0 top-0 z-40"
+            data-testid="audio-fallback-banner-slot"
+          >
+            <div className="pointer-events-auto">
+              <AudioFallbackBanner
+                onTryVideoAgain={handleTryVideoAgain}
+                cooldownActive={autoFallbackCooldownEndsAt != null}
+                cooldownEndsAt={autoFallbackCooldownEndsAt}
+                restoreInFlight={restoreInFlight}
+              />
+            </div>
+          </div>
+        ) : null}
         {recordingEnabled ? (
-          <VideoRecordingIndicator
-            isActive={isVideoRecordingActive}
-            viewerRole={recordingRole}
-            sessionId={recordingSessionId ?? null}
-            token={recordingToken ?? null}
-            className="absolute right-3 top-3 z-20"
+          <RecordingStatusSurface
+            audioPaused={Boolean(recordingState.paused)}
+            videoKind={deriveVideoStatusKind({
+              videoActive: isVideoRecordingActive,
+              videoPaused: isVideoGrantPaused,
+              settling: Boolean(
+                escalationHook.grantIsSettling ||
+                  recordingCameraGate === "stopping",
+              ),
+            })}
+            grantSecondsRemaining={escalationHook.grantSecondsRemaining}
+            className="absolute right-3 top-3 z-20 max-w-xs"
+            videoControls={
+              isVideoRecordingActive ? (
+                <VideoRecordingIndicator
+                  isActive
+                  hideStatusText
+                  viewerRole={recordingRole}
+                  sessionId={recordingSessionId ?? null}
+                  token={recordingToken ?? null}
+                  grantSecondsRemaining={escalationHook.grantSecondsRemaining}
+                  grantIsSettling={escalationHook.grantIsSettling}
+                  videoPaused={isVideoGrantPaused}
+                  cameraGate={recordingCameraGate}
+                  onHaltLocalVideo={haltLocalVideoForRecording}
+                  onRestoreLocalVideo={restoreLocalVideoAfterResume}
+                  onCameraGateChange={setRecordingCameraGate}
+                />
+              ) : null
+            }
+            extra={
+              recordingRole === "doctor" &&
+              isVideoRecordingActive &&
+              recordingSessionId &&
+              recordingToken ? (
+                <DoctorVideoGrantExtendButton
+                  sessionId={recordingSessionId}
+                  token={recordingToken}
+                  currentUserRole={recordingRole}
+                  extensionSpent={Boolean(
+                    escalationHook.state.kind === "locked" &&
+                      escalationHook.state.reason === "already_recording_video" &&
+                      escalationHook.state.extensionSpent,
+                  )}
+                  grantSettling={escalationHook.grantIsSettling}
+                  onExtended={() => {
+                    void escalationHook.refresh();
+                  }}
+                />
+              ) : null
+            }
           />
         ) : null}
         {/*
@@ -4564,6 +5324,10 @@ export default function VideoRoom({
         <div
           data-testid="video-tile-container"
           data-layout={isSharingActive ? "share-strip" : effectiveLayout}
+          data-featured={speakerSwapActive ? featuredTile : undefined}
+          data-self-edge={
+            inlineSwapActive ? (inlineSelfOnStart ? "start" : "end") : undefined
+          }
           className={
             isSharingActive
               ? // Sub-batch C · task-video-C5 — compact horizontal
@@ -4575,37 +5339,41 @@ export default function VideoRoom({
                 // stability discipline as the speaker→gallery swap).
                 "flex h-24 flex-row gap-2 transition-all duration-200 ease-in-out md:h-32"
               : effectiveLayout === "gallery"
-                ? // Sub-batch F · task-video-F2 — `landscape:grid-cols-2`
-                  // forces side-by-side at ALL widths in landscape
-                  // orientation. The default `grid-cols-1` gives
-                  // stacked tiles in mobile portrait; without the
-                  // landscape override, a phone in landscape
-                  // (typically still sub-`md` width-wise) would
-                  // keep the stacked layout — wasting the wide
-                  // canvas with one tile sitting above the other.
-                  "grid grid-cols-1 gap-3 transition-all duration-200 ease-in-out landscape:grid-cols-2 md:grid-cols-2"
+                ? // vsf-01 — fill the stage. Patient phone follows the
+                  // measured box: tall → rows, square/wide (chat open)
+                  // → columns. Other surfaces: portrait rows, md/landscape columns.
+                  isPatientMobile
+                  ? patientSplit === "cols"
+                    ? "grid h-full min-h-0 grid-cols-2 grid-rows-1 gap-2 transition-all duration-200 ease-in-out"
+                    : "grid h-full min-h-0 grid-cols-1 grid-rows-2 gap-2 transition-all duration-200 ease-in-out"
+                  : "grid h-full min-h-0 grid-cols-1 grid-rows-2 gap-2 transition-all duration-200 ease-in-out landscape:grid-cols-2 landscape:grid-rows-1 md:grid-cols-2 md:grid-rows-1"
                 : effectiveLayout === "sidebar"
-                  ? // Sub-batch F · task-video-F2 — same idea for
-                    // Sidebar. Default mobile portrait stacks the
-                    // remote on top of the rail; landscape (mobile
-                    // OR desktop) goes horizontal so the 70/30
-                    // split actually reads as a sidebar.
-                    "flex flex-col gap-3 transition-all duration-200 ease-in-out landscape:flex-row md:flex-row"
-                  : "contents"
+                  ? // vsf-01 — full-height split. Portrait stacks;
+                    // landscape/md+ is 70/30. DOM order stays remote→self
+                    // so Twilio <video> nodes never remount; CSS reverse
+                    // puts self on the start edge when A5 corner is left.
+                    inlineSelfOnStart
+                    ? "flex h-full min-h-0 flex-col-reverse gap-2 transition-all duration-200 ease-in-out landscape:flex-row-reverse md:flex-row-reverse"
+                    : "flex h-full min-h-0 flex-col gap-2 transition-all duration-200 ease-in-out landscape:flex-row md:flex-row"
+                  : // Speaker — real stage box (never `contents`); remote
+                    // fills; self PiP anchors to its absolute sibling.
+                    "relative h-full min-h-0 w-full"
           }
         >
           <div
             className={
               isSharingActive
-                ? "min-w-0 flex-1"
+                ? "min-h-0 min-w-0 flex-1"
                 : effectiveLayout === "sidebar"
-                  ? // F2 — `landscape:basis-[70%] landscape:flex-grow`
-                    // matches the sidebar split in mobile landscape
-                    // (the parent flex container also opted-in via
-                    // `landscape:flex-row` above). Desktop continues
-                    // through the `md:` variants unchanged.
-                    "min-w-0 landscape:basis-[70%] landscape:flex-grow md:basis-[70%] md:flex-grow"
-                  : "contents"
+                  ? "min-h-0 min-w-0 flex-1 landscape:basis-[70%] md:basis-[70%]"
+                  : effectiveLayout === "gallery"
+                    ? // order swaps visual slots without remounting.
+                      inlineSelfOnStart
+                      ? "order-2 min-h-0 min-w-0"
+                      : "order-1 min-h-0 min-w-0"
+                    : speakerSelfFeatured
+                      ? "pointer-events-none absolute inset-0 min-h-0 min-w-0"
+                      : "absolute inset-0 min-h-0 min-w-0"
             }
           >
             <VideoTile
@@ -4614,19 +5382,52 @@ export default function VideoRoom({
               cameraOff={remoteCameraOff}
               actorName={remoteLabel}
               hideLabel
+              fill={!isSharingActive}
+              objectFit={effectiveRemoteFit}
+              floating={speakerSelfFeatured ? effectiveSpeakerPip : undefined}
+              rotation={remoteTileRotation}
+              zoom={remoteTileZoom}
+              viewControls={{
+                onObjectFitChange: handleRemoteObjectFit,
+                onRotate: handleRemoteRotate,
+                onZoom: handleRemoteZoom,
+                onZoomTo: handleRemoteZoomTo,
+                onZoomReset: handleRemoteZoomReset,
+                onSwap:
+                  isPatientMobile && effectiveLayout === "speaker"
+                    ? undefined
+                    : inlineSwapTap,
+                revealOnTap: isPatientChrome || isCockpit,
+                cycleRotate: isPatientMobile,
+                inspectVariant: isPatientMobile ? "touch" : "desktop",
+                inspectPlacement: remoteInspect?.placement,
+                inspectClearDock: remoteInspect?.clearDock,
+                inspectHideZoom: remoteInspect?.hideZoom,
+              }}
               pendingText={
-                status === "connecting" ? `Waiting for ${remoteLabel.toLowerCase()}…` : null
+                status === "connecting"
+                  ? `Waiting for ${remoteLabel.toLowerCase()}…`
+                  : status === "connected" && !remoteParticipant
+                    ? `Waiting for ${remoteLabel.toLowerCase()}…`
+                    : null
               }
             />
           </div>
           <div
             className={
               isSharingActive
-                ? "min-w-0 flex-1"
+                ? "min-h-0 min-w-0 flex-1"
                 : effectiveLayout === "sidebar"
-                  ? // F2 — same landscape pairing on the rail side.
-                    "min-w-0 landscape:basis-[30%] landscape:flex-shrink-0 md:basis-[30%] md:flex-shrink-0"
-                  : "contents"
+                  ? "min-h-0 min-w-0 flex-1 landscape:basis-[30%] landscape:flex-shrink-0 md:basis-[30%] md:flex-shrink-0"
+                  : effectiveLayout === "gallery"
+                    ? inlineSelfOnStart
+                      ? "order-1 min-h-0 min-w-0"
+                      : "order-2 min-h-0 min-w-0"
+                    : // Speaker — sized stage sibling so floating PiP
+                      // corners resolve against the same box as remote.
+                      speakerSelfFeatured
+                      ? "absolute inset-0 min-h-0 min-w-0"
+                      : "pointer-events-none absolute inset-0 min-h-0 min-w-0"
             }
           >
             <VideoTile
@@ -4636,60 +5437,217 @@ export default function VideoRoom({
               actorName={role === "patient" ? "Patient" : "Doctor"}
               muteSelf
               mirror={mirrorSelf}
+              objectFit={effectiveSelfFit}
+              rotation={selfTileRotation}
+              zoom={selfTileZoom}
+              cameraFlipping={cameraSwitch.isFlipping}
+              viewControls={{
+                onObjectFitChange: handleSelfObjectFit,
+                onRotate: handleSelfRotate,
+                onZoom: handleSelfZoom,
+                onZoomTo: handleSelfZoomTo,
+                onZoomReset: handleSelfZoomReset,
+                onSwap:
+                  isPatientMobile && effectiveLayout === "speaker"
+                    ? undefined
+                    : inlineSwapTap,
+                revealOnTap: isPatientChrome || isCockpit,
+                cycleRotate: isPatientMobile,
+                inspectVariant: isPatientMobile ? "touch" : "desktop",
+                inspectPlacement: selfInspect?.placement,
+                inspectClearDock: selfInspect?.clearDock,
+                inspectHideZoom: selfInspect?.hideZoom,
+              }}
               // C5 — show labels in the compact share-strip so
               // the user can tell "You" from the counterparty
               // at thumbnail size; otherwise preserve the
               // existing speaker-mode hide.
               hideLabel={!isSharingActive && effectiveLayout === "speaker"}
+              // vsf-01 — fill Gallery/Sidebar cells; Speaker self fills
+              // only when featured (otherwise it is the PiP).
+              fill={
+                !isSharingActive &&
+                (effectiveLayout === "gallery" ||
+                  effectiveLayout === "sidebar" ||
+                  speakerSelfFeatured)
+              }
               pendingText={status === "connecting" ? "Starting camera…" : null}
-              // Speaker — float as A5 corner overlay (anchors to outer
-              // `relative` wrapper because the tile container above
-              // uses `display: contents`).
-              // Gallery / Sidebar — render inline (no `floating` prop);
-              // A5's `selfViewPosition` state is dormant in those
-              // layouts but preserved so swapping back to Speaker
-              // restores the corner.
+              bottomLeftOverlay={
+                !isPatientChrome &&
+                status === "connected" &&
+                !isAudioOnly &&
+                !hold.onHold &&
+                !selfTileCameraOff &&
+                (role === "patient" || cameraSwitch.canFlip) ? (
+                  <button
+                    type="button"
+                    onClick={() => void cameraSwitch.flip()}
+                    disabled={cameraSwitch.isFlipping}
+                    aria-label={
+                      cameraSwitch.currentFacing === "front"
+                        ? "Switch to back camera"
+                        : cameraSwitch.currentFacing === "back"
+                          ? "Switch to front camera"
+                          : "Switch camera"
+                    }
+                    title="Switch camera"
+                    data-testid="self-camera-flip"
+                    className="flex h-11 items-center gap-1.5 rounded-full bg-black/60 px-3 text-sm font-medium text-white hover:bg-black/75 focus:outline-none focus:ring-2 focus:ring-white disabled:opacity-50"
+                  >
+                    <FlipCameraGlyph />
+                    <span>Flip</span>
+                  </button>
+                ) : null
+              }
+              // Speaker — float as A5 corner overlay (anchors to this
+              // absolute inset sibling, same size as the stage).
               //
               // C5 — when share-strip is active, force inline so
               // the self tile lives next to the remote camera in
               // the bottom strip rather than floating over the
               // (much larger) screen-share tile above.
               floating={
-                !isSharingActive && effectiveLayout === "speaker"
-                  ? {
-                      position: selfViewPosition,
-                      onTap: handleSelfViewTap,
-                    }
+                speakerSwapActive && !speakerSelfFeatured
+                  ? effectiveSpeakerPip
                   : undefined
               }
             />
           </div>
         </div>
-        <CallerCardOverlay
-          counterparty={{
-            // Real names land when `doctor_settings.display_name` /
-            // `patients.full_name` are wired through the join token
-            // (out of scope here). Today `name === role` so the card
-            // suppresses the duplicate role row internally.
-            name: remoteLabel,
-            role: remoteLabel,
-          }}
-          connectedAt={connectedAt}
-          remoteNetworkLevel={remoteParticipant ? remoteNetworkQuality.level : null}
-          remoteStatsTooltip={remoteStatsTooltip}
-          status={callerCardStatus}
-          // Sub-batch B · task-video-B10 — wired for real now. The
-          // existing `<VideoRecordingIndicator>` (corner red dot)
-          // STAYS — it owns the SR `role="status" aria-live="polite"`
-          // announcement contract for the legacy non-companion mount
-          // path AND covers the audio-only recording case. The card
-          // pill is the second visual surface where attention
-          // naturally lands (the call header) — together they close
-          // the "wait, are we being recorded?" anxiety loop without
-          // creating a third source-of-truth.
-          recordingStatus={callerCardRecordingStatus}
-          recordingTooltip={callerCardRecordingTooltip}
-        />
+        {/*
+         * Patient-phone scene chips — layout + document fullscreen.
+         * Fit / rotate / zoom live on the tile (tap to inspect).
+         * Fullscreen targets documentElement (Join tap + this chip)
+         * so the chat sheet stays inside the fullscreen tree.
+         * Right edge, below the caller card (`top-20`).
+         */}
+        {isPatientMobile && status === "connected" && !hold.onHold ? (
+          <div
+            className={
+              "absolute right-3 z-30 flex flex-col gap-2 transition-opacity duration-200 " +
+              (patientChatOpen ? "top-14 " : "top-20 ") +
+              (patientChrome.visible || patientChatOpen
+                ? "opacity-100"
+                : "pointer-events-none opacity-0")
+            }
+            data-testid="patient-stage-chips"
+          >
+            <button
+              type="button"
+              data-testid="patient-stage-layout"
+              onClick={() =>
+                handleLayoutChange(nextPatientStageLayout(effectiveLayout))
+              }
+              aria-label={
+                effectiveLayout === "speaker"
+                  ? patientSplit === "cols"
+                    ? "Split both videos side by side"
+                    : "Stack both videos top and bottom"
+                  : "Show one large video"
+              }
+              className={PATIENT_STAGE_CHIP}
+            >
+              {effectiveLayout === "speaker" ? (
+                patientSplit === "cols" ? (
+                  <Columns2
+                    className="h-[18px] w-[18px]"
+                    strokeWidth={2}
+                    aria-hidden
+                  />
+                ) : (
+                  <Rows2
+                    className="h-[18px] w-[18px]"
+                    strokeWidth={2}
+                    aria-hidden
+                  />
+                )
+              ) : (
+                <Square
+                  className="h-[18px] w-[18px]"
+                  strokeWidth={2}
+                  aria-hidden
+                />
+              )}
+            </button>
+            <button
+              type="button"
+              data-testid="patient-stage-fullscreen"
+              onClick={handleExpandFullscreen}
+              aria-label={
+                fullscreenActive ? "Exit fullscreen" : "Enter fullscreen"
+              }
+              className={PATIENT_STAGE_CHIP}
+            >
+              {fullscreenActive ? (
+                <Minimize
+                  className="h-[18px] w-[18px]"
+                  strokeWidth={2}
+                  aria-hidden
+                />
+              ) : (
+                <Maximize
+                  className="h-[18px] w-[18px]"
+                  strokeWidth={2}
+                  aria-hidden
+                />
+              )}
+            </button>
+          </div>
+        ) : null}
+        {isDesktopChrome &&
+        cockpitLayoutVertical &&
+        status === "connected" &&
+        !hold.onHold ? (
+          <div
+            className="absolute right-2 top-1/2 z-30 -translate-y-1/2"
+            data-testid="cockpit-layout-rail"
+          >
+            <VideoLayoutSwitcher
+              value={layout}
+              onChange={handleLayoutChange}
+              tone="cockpit"
+              orientation="vertical"
+            />
+          </div>
+        ) : null}
+        {/* Desktop chrome uses CallStageHeader above the stage (no face overlay). */}
+        {!isDesktopChrome ? (
+          <CallerCardOverlay
+            counterparty={{
+              // Real names land when `doctor_settings.display_name` /
+              // `patients.full_name` are wired through the join token
+              // (out of scope here). Today `name === role` so the card
+              // suppresses the duplicate role row internally.
+              name: remoteLabel,
+              role: remoteLabel,
+            }}
+            connectedAt={connectedAt}
+            remoteNetworkLevel={null}
+            remoteNetworkBars={remoteConnectionBars}
+            status={callerCardStatus}
+            // Sub-batch B · task-video-B10 — wired for real now. The
+            // existing `<VideoRecordingIndicator>` (corner red dot)
+            // STAYS — it owns the SR `role="status" aria-live="polite"`
+            // announcement contract for the legacy non-companion mount
+            // path AND covers the audio-only recording case. The card
+            // pill is the second visual surface where attention
+            // naturally lands (the call header) — together they close
+            // the "wait, are we being recorded?" anxiety loop without
+            // creating a third source-of-truth.
+            recordingStatus={callerCardRecordingStatus}
+            recordingTooltip={callerCardRecordingTooltip}
+            compact={patientChatOpen}
+            alwaysVisible={patientChatOpen}
+            className={
+              isPatientMobile &&
+              !patientChatOpen &&
+              !patientChrome.visible &&
+              !hold.onHold
+                ? "pointer-events-none !opacity-0"
+                : undefined
+            }
+          />
+        ) : null}
         {/*
          * Sub-batch B · task-video-B3 — hold overlay.
          *   Self variant is the only one rendered today (see hook +
@@ -4707,28 +5665,6 @@ export default function VideoRoom({
         {hold.onHold ? (
           <HoldCallBanner variant="self" onResume={handleToggleHold} />
         ) : null}
-        {/*
-         * Sub-batch E · task-video-E2 — auto audio-only fallback
-         * banner. Sticky at top of the video canvas (above tiles).
-         * Mounted INSIDE the relative wrapper so it stacks with the
-         * recording indicator (z-20) + hold banner (z-30); the
-         * fallback banner uses z-30 so it sits above the recording
-         * pill, matching the hold banner's visual prominence — both
-         * banners answer "what's happening right now?" when active.
-         *
-         * Banner is shown to BOTH roles (doctor + patient) — both
-         * sides see the local camera teardown and need the
-         * explanation. The "Try video again" handler is only
-         * meaningful on the side that fell back, but the banner
-         * + button only mount when local fallback fires (no
-         * counterparty mirror in v1).
-         *
-         * Out of scope for Phase 1: counterparty banner (the
-         * patient's chat companion already shows the
-         * `auto_audio_fallback` system row as a transcript-grade
-         * breadcrumb, and A2's `remoteCameraOff` avatar covers the
-         * visual answer to "where did the video go").
-         */}
         {/*
          * Sub-batch E · task-video-E4 — crash-recovery rejoin welcome
          * banner. Renders ONLY when the parent mounted us from a cached
@@ -4761,14 +5697,6 @@ export default function VideoRoom({
               <span>Reconnected — welcome back</span>
             </div>
           </div>
-        ) : null}
-        {autoFallbackActive ? (
-          <AudioFallbackBanner
-            onTryVideoAgain={handleTryVideoAgain}
-            cooldownActive={autoFallbackCooldownEndsAt != null}
-            cooldownEndsAt={autoFallbackCooldownEndsAt}
-            restoreInFlight={restoreInFlight}
-          />
         ) : null}
         {/*
          * Sub-batch F · task-video-F4 — battery-saver banner.
@@ -4822,7 +5750,7 @@ export default function VideoRoom({
                   if (process.env.NODE_ENV !== "production") {
                     console.warn(
                       "Battery-low applyAdaptiveLevel failed:",
-                      err instanceof Error ? err.message : err,
+                      err instanceof Error ? err.message : err
                     );
                   }
                 });
@@ -4851,7 +5779,7 @@ export default function VideoRoom({
                         if (process.env.NODE_ENV !== "production") {
                           console.warn(
                             "Battery-recovery handleTryVideoAgain failed:",
-                            err instanceof Error ? err.message : err,
+                            err instanceof Error ? err.message : err
                           );
                         }
                       });
@@ -4969,14 +5897,22 @@ export default function VideoRoom({
                 className="text-blue-600"
               >
                 <rect x="3" y="5" width="18" height="14" rx="2" />
-                <rect x="12" y="11" width="7" height="6" rx="1" fill="currentColor" stroke="none" />
+                <rect
+                  x="12"
+                  y="11"
+                  width="7"
+                  height="6"
+                  rx="1"
+                  fill="currentColor"
+                  stroke="none"
+                />
               </svg>
               <p className="text-sm font-medium text-gray-900">
                 Currently in Picture-in-Picture
               </p>
               <p className="max-w-xs text-xs text-gray-600">
-                The video is floating in its own window. You can drag,
-                resize, or close it from there.
+                The video is floating in its own window. You can drag, resize,
+                or close it from there.
               </p>
               <button
                 type="button"
@@ -4987,6 +5923,108 @@ export default function VideoRoom({
               </button>
             </div>
           </div>
+        ) : null}
+        {isPatientMobile && patientChatOpen && status === "connected" ? (
+          <div
+            data-testid="patient-split-controls"
+            className="absolute inset-x-0 bottom-0 z-30 flex items-center justify-center pb-2 pt-6"
+          >
+            <div className="flex items-center gap-1 rounded-full bg-black/55 px-1.5 py-1.5 backdrop-blur-sm">
+              {hold.onHold ? null : (
+                <>
+                  <button
+                    type="button"
+                    data-testid="patient-sheet-mute"
+                    onClick={handleToggleMic}
+                    aria-pressed={micMuted}
+                    aria-label={
+                      micMuted ? "Unmute microphone" : "Mute microphone"
+                    }
+                    className={
+                      micMuted ? PATIENT_DOCK_BTN_ACTIVE : PATIENT_DOCK_BTN
+                    }
+                  >
+                    {micMuted ? (
+                      <MicOff className="h-5 w-5" strokeWidth={2} aria-hidden />
+                    ) : (
+                      <Mic className="h-5 w-5" strokeWidth={2} aria-hidden />
+                    )}
+                  </button>
+                  {isAudioOnly ? null : (
+                    <button
+                      type="button"
+                      data-testid="patient-sheet-camera"
+                      onClick={handleToggleCamera}
+                      disabled={Boolean(recordingCameraGate)}
+                      aria-pressed={cameraOff}
+                      aria-label={
+                        recordingCameraGate === "stopping"
+                          ? "Camera blocked while video recording is stopping"
+                          : recordingCameraGate === "confirming"
+                            ? "Camera blocked while video recording is confirming"
+                            : cameraOff
+                              ? "Turn camera on"
+                              : "Turn camera off"
+                      }
+                      className={
+                        cameraOff ? PATIENT_DOCK_BTN_ACTIVE : PATIENT_DOCK_BTN
+                      }
+                    >
+                      {cameraOff ? (
+                        <VideoOff
+                          className="h-5 w-5"
+                          strokeWidth={2}
+                          aria-hidden
+                        />
+                      ) : (
+                        <Video
+                          className="h-5 w-5"
+                          strokeWidth={2}
+                          aria-hidden
+                        />
+                      )}
+                    </button>
+                  )}
+                  {isAudioOnly || cameraOff ? null : (
+                    <button
+                      type="button"
+                      data-testid="patient-sheet-flip"
+                      onClick={() => void cameraSwitch.flip()}
+                      disabled={cameraSwitch.isFlipping}
+                      aria-label={
+                        cameraSwitch.currentFacing === "front"
+                          ? "Switch to back camera"
+                          : cameraSwitch.currentFacing === "back"
+                            ? "Switch to front camera"
+                            : "Switch camera"
+                      }
+                      className={PATIENT_DOCK_BTN}
+                    >
+                      <FlipCameraGlyph />
+                    </button>
+                  )}
+                </>
+              )}
+              <button
+                type="button"
+                data-testid="patient-sheet-leave"
+                onClick={handleLeaveClick}
+                aria-label="Leave call"
+                className={PATIENT_DOCK_LEAVE}
+              >
+                <PhoneOff className="h-5 w-5" strokeWidth={2} aria-hidden />
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {isPatientMobile &&
+        patientChrome.visible &&
+        patientDockBottom(patientChatSnap) !== "" ? (
+          <div
+            aria-hidden
+            data-testid="patient-dock-scrim"
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-[25] h-28 bg-gradient-to-t from-black/50 to-transparent"
+          />
         ) : null}
       </div>
       {/*
@@ -5058,6 +6096,16 @@ export default function VideoRoom({
           {adaptiveNotice}
         </div>
       ) : null}
+      {cameraSwitchNotice ? (
+        <div
+          role="status"
+          aria-live="polite"
+          data-testid="camera-switch-notice"
+          className="self-start rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+        >
+          {cameraSwitchNotice}
+        </div>
+      ) : null}
       {/*
        * Sub-batch A · task-video-A1 + A2 — controls bar.
        *   Today: [Mute] [Camera] [Leave call]
@@ -5075,723 +6123,1231 @@ export default function VideoRoom({
        * error/disconnected, and showing a no-op button would mislead
        * the user.
        */}
-      <div className="flex flex-wrap items-center gap-2 self-start">
-        {status === "connected" ? (
-          <>
-            {/*
-             * Sub-batch A · task-video-A8 — your-side network bars.
-             *   Mounted only when connected (the hook returns
-             *     `level === null` pre-connect anyway, but the bars
-             *     would render as a measuring placeholder which is
-             *     misleading next to the disabled control buttons).
-             *   Tooltip shows the full diagnostic dump (RTT / jitter /
-             *     resolution / FPS / bitrates) — what doctors will
-             *     reach for to triage "patient looks frozen".
-             *   Background is a subtle gray pill so the bars don't
-             *     fight the buttons visually; same height (~36 px) as
-             *     the buttons so the row stays balanced.
-             */}
-            <div className="flex h-9 items-center rounded-md border border-gray-200 bg-white px-2">
-              <NetworkBars
-                level={localNetworkQuality.level}
-                label="Your network"
-                tooltip={localStatsTooltip}
-              />
-            </div>
-            {/*
-             * Sub-batch B · task-video-B3 — when the call is on hold
-             * the action cluster collapses to just [Resume] [Leave].
-             * Mute / Camera / Mirror / Volume / Quality are hidden
-             * because they're no-ops while both tracks are
-             * disabled (clicking Mute on a disabled audio track
-             * would silently do nothing — confusing). Resume is
-             * the explicit way out; Leave still works as the
-             * abandon-call escape hatch.
-             */}
-            {hold.onHold ? null : (
-              <button
-                type="button"
-                onClick={handleToggleMic}
-                aria-pressed={micMuted}
-                title={micMuted ? "Muted — click to unmute" : "Mute your microphone"}
-                className={
-                  "rounded-md px-4 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 " +
-                  (micMuted
-                    ? "bg-amber-100 text-amber-900 ring-1 ring-amber-300 focus:ring-amber-400"
-                    : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:ring-gray-300")
-                }
-              >
-                {micMuted ? "Unmute" : "Mute"}
-              </button>
-            )}
-            {/*
-             * Sub-batch B · task-video-B8 — hide the Camera off/on
-             * button when in audio-only mode. The picker has torn
-             * down the LocalVideoTrack entirely, so there's nothing
-             * for `handleToggleCamera` to enable/disable; clicking
-             * would be a silent no-op. Keep the button slot stable
-             * in non-audio-only modes (the picker is the path back
-             * to video).
-             *
-             * Sub-batch B · task-video-B3 — also hide while on
-             * hold (see Mute gate above).
-             */}
-            {isAudioOnly || hold.onHold ? null : (
-              <button
-                type="button"
-                onClick={handleToggleCamera}
-                aria-pressed={cameraOff}
-                title={cameraOff ? "Camera off — click to turn on" : "Turn off your camera"}
-                className={
-                  "rounded-md px-4 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 " +
-                  (cameraOff
-                    ? "bg-amber-100 text-amber-900 ring-1 ring-amber-300 focus:ring-amber-400"
-                    : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:ring-gray-300")
-                }
-              >
-                {cameraOff ? "Camera on" : "Camera off"}
-              </button>
-            )}
-            {/*
-             * Sub-batch F · task-video-F1 — camera switch (front ↔ back).
-             *   Lives between Camera and Hold so it sits with the other
-             *     publisher-side video toggles (Camera off, Mirror).
-             *   Hidden in audio-only (no video track to switch) and
-             *     while on hold (action cluster collapses to Resume +
-             *     Leave) — same gate as the Camera button above.
-             *   The component returns `null` internally when there's
-             *     only one camera (`hasMultipleCameras: false`); keeping
-             *     it mounted unconditionally lets the device-change
-             *     event surface a freshly-plugged USB camera without a
-             *     re-render dance here.
-             */}
-            {!isCockpit && (isAudioOnly || hold.onHold ? null : (
-              <CameraSwitchButton
-                devices={cameraSwitch.devices}
-                current={cameraSwitch.currentDeviceId}
-                flip={cameraSwitch.flip}
-                switchTo={cameraSwitch.switchTo}
-                isFlipping={cameraSwitch.isFlipping}
-                hasMultipleCameras={cameraSwitch.hasMultipleCameras}
-              />
-            ))}
-            {/*
-             * Sub-batch B · task-video-B3 — Hold / Resume button.
-             *   Lives between Camera and Mirror — semantically
-             *     adjacent to the publisher-side mute/camera
-             *     toggles (it's a "pause both" superset).
-             *   Visible at all times while connected (so the user
-             *     can engage hold from a normal state) AND while on
-             *     hold (so it acts as the "Resume" CTA — same
-             *     button, different label/state). The overlay
-             *     banner ALSO has its own Resume button for
-             *     redundancy / discoverability when the user's
-             *     attention is on the video canvas, not the
-             *     controls strip.
-             *   Plan 07 history viewer (`mode='readonly'`) — when
-             *     that prop ships on `<VideoRoom>`, gate this
-             *     button on `mode !== 'readonly'`. Today the prop
-             *     doesn't exist; gating is a no-op.
-             */}
-            <button
-              type="button"
-              onClick={handleToggleHold}
-              aria-pressed={hold.onHold}
-              title={hold.onHold ? "Resume the call" : "Put the call on hold"}
-              className={
-                "rounded-md px-4 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 " +
-                (hold.onHold
-                  ? "bg-emerald-600 text-white hover:bg-emerald-700 focus:ring-emerald-500"
-                  : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:ring-gray-300")
-              }
-            >
-              {hold.onHold ? "Resume" : "Hold"}
-            </button>
-            {/*
-             * Sub-batch A · task-video-A6 — mirror toggle.
-             *   Default mirror=true (matches FaceTime / WhatsApp / Meet).
-             *   Pressed/amber state = mirror OFF (the non-default state),
-             *     mirroring the mute + camera buttons' convention
-             *     (amber = "currently in the toggled-from-default state").
-             *   Action-style label flips: "Mirror off" when ON / "Mirror on"
-             *     when OFF — same idiom as the Camera button.
-             *   Visible only when connected (parent `<>` branch above) so
-             *     it never appears as a no-op during connecting/error.
-             */}
-            {/*
-             * Sub-batch B · task-video-B8 — hide Mirror toggle in
-             * audio-only mode (no video → mirror is meaningless).
-             * Same reasoning as the Camera button gate above.
-             *
-             * Sub-batch B · task-video-B3 — also hide while on
-             * hold (action cluster collapses to Resume + Leave).
-             */}
-            {!isCockpit && (isAudioOnly || hold.onHold ? null : (
-              <button
-                type="button"
-                onClick={handleToggleMirror}
-                aria-pressed={!mirrorSelf}
-                title={
-                  mirrorSelf
-                    ? "Self-view is mirrored — click to show the unmirrored view"
-                    : "Self-view is not mirrored — click to mirror it (recommended)"
-                }
-                className={
-                  "rounded-md px-4 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 " +
-                  (!mirrorSelf
-                    ? "bg-amber-100 text-amber-900 ring-1 ring-amber-300 focus:ring-amber-400"
-                    : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:ring-gray-300")
-                }
-              >
-                {mirrorSelf ? "Mirror off" : "Mirror on"}
-              </button>
-            ))}
-            {/*
-             * Sub-batch B · task-video-B9 — remote-audio volume slider.
-             *   Lives inline in the controls bar (right of Mirror, left
-             *     of Leave) — the same neighborhood as `<NetworkBars>`
-             *     because both are listener-side controls, not
-             *     publisher-side toggles.
-             *   Disabled until the remote audio track is wired
-             *     (`audioRouterRef` is null pre-attach) so dragging the
-             *     slider before the counterparty publishes audio
-             *     doesn't fake a level change. Layout slot is reserved
-             *     either way so the controls row doesn't reflow when
-             *     audio lands ~1s after `connected`.
-             *   Voice batch will mount the SAME `<VolumeSlider>` with
-             *     its own storage key — visual + UX parity comes free.
-             */}
-            {/*
-             * Sub-batch B · task-video-B3 — hide volume slider
-             * while on hold (the remote is paused; volume slider
-             * is meaningless when there's no audio playing).
-             */}
-            {!isCockpit && (hold.onHold ? null : (
-              <VolumeSlider
-                value={volumePercent}
-                onChange={handleVolumeChange}
-                disabled={audioRouterRef.current == null}
-                ariaLabel={`${remoteLabel}'s volume`}
-              />
-            ))}
-            {/*
-             * Sub-batch B · task-video-B8 — manual quality picker.
-             *   Lives at the end of the controls cluster (right of
-             *     VolumeSlider, left of Leave) — semantically the
-             *     "scope" of the call (resolution / data plan), so
-             *     it bookends the per-action controls.
-             *   `disabled` while a switch is in flight (Twilio is
-             *     mid republish) — prevents stacked toggles that
-             *     would leak tracks.
-             *   Mounted only when connected (`status === 'connected'`
-             *     parent gate) — pre-connect we don't have a room
-             *     to apply changes against. Persisted value is read
-             *     at connect time, so the picker shows the right
-             *     selection from the moment it appears.
-             *   Coupling-stub for E1 (when adaptive bitrate ships):
-             *     'auto' = E1 owns the cap, picker is a no-op. Any
-             *     explicit choice = E1 stands down. Today (no E1)
-             *     'auto' just means the connect-time defaults apply.
-             */}
-            {/*
-             * Sub-batch B · task-video-B3 — hide quality picker
-             * while on hold (no video to negotiate quality on).
-             * Reappears on Resume with the persisted value.
-             */}
-            {!isCockpit && (hold.onHold ? null : (
-              <VideoQualityPicker
-                value={quality}
-                onChange={handleQualityChange}
-                disabled={qualitySwitchInFlight}
-              />
-            ))}
-            {/*
-             * Sub-batch B · task-video-B6 — layout switcher.
-             *   Sits right of the quality picker and left of Leave —
-             *     "scope of the call" cluster (quality + tile
-             *     arrangement) bookends the per-action toggles.
-             *   Hidden during hold (same precedent as Mute / Camera /
-             *     Mirror / Volume / Quality) — when the call is
-             *     paused, the action cluster collapses to Resume +
-             *     Leave and layout choice is irrelevant.
-             *   Sidebar option auto-hides on mobile via the
-             *     switcher's per-option `hidden md:inline-flex`
-             *     gate; the parent `effectiveLayout` derivation
-             *     also degrades a persisted Sidebar value to
-             *     Speaker on mobile, so JS + CSS gates agree.
-             *   `<VideoLayoutSwitcher>` is video-only today; voice
-             *     consults don't have a tile arrangement to swap.
-             *     If voice ever ships a multi-tile layout (3-way
-             *     call territory), the component can be lifted to
-             *     `frontend/components/consultation/` and consumed
-             *     verbatim — same separation pattern as
-             *     `<VolumeSlider>` (B9) and `<VideoQualityPicker>`
-             *     (B8).
-             */}
-            {hold.onHold ? null : (
-              <VideoLayoutSwitcher
-                value={layout}
-                onChange={handleLayoutChange}
-              />
-            )}
-            {/*
-             * Sub-batch F · task-video-F2 — orientation lock toggle.
-             *   Sits immediately right of `<VideoLayoutSwitcher>`
-             *     because the two together are "how the video is
-             *     presented" (layout pick + orientation pin).
-             *   `canLock` is false on iOS Safari and any non-PWA
-             *     non-fullscreen browser; the button silently
-             *     null-renders in those cases (per spec —
-             *     Acceptance: "If !canLock: don't render").
-             *   Spec asked for the button to live in a controls-bar
-             *     overflow menu (decision §32). No overflow menu
-             *     exists in the bar today — A4's `<VideoControlsBar>`
-             *     extraction never shipped. Inlining here is the
-             *     cheapest path that respects the visibility +
-             *     accessibility requirements; once an overflow menu
-             *     ships, this button can move with no API changes.
-             *   Hidden during hold (same precedent as B6 / Mute /
-             *     Camera) — there's no rendered video for an
-             *     orientation lock to scope.
-             */}
-            {!isCockpit && (
-              <OrientationLockButton
-                canLock={orientation.canLock}
-                isLocked={orientation.isLocked}
-                orient={orient}
-                lock={orientation.lock}
-                unlock={orientation.unlock}
-                hidden={hold.onHold}
-              />
-            )}
-            {/*
-             * Sub-batch C · task-video-C2 — virtual background picker.
-             *   Sits right of the layout switcher and left of the PiP
-             *     button — same "scope of the call" cluster as
-             *     quality + layout. Background is the most "I'm
-             *     ready to look professional" affordance so it lives
-             *     near the call-prep controls, not buried in an
-             *     overflow.
-             *   Hidden during hold (same precedent as B6 / B7 / B8 /
-             *     B9 / Mute / Camera) — the call is paused, the
-             *     processor isn't even running on a frame, surfacing
-             *     the picker would be misleading.
-             *   `disabled` reflects the inflight `addProcessor` swap
-             *     so the user can't queue up flapping toggles during
-             *     the 1-2s TFLite model load on first apply.
-             *   The component is video-only today; voice consults
-             *     don't have a video track to process. If voice
-             *     ever ships a "video preview while on a voice call"
-             *     surface, the picker can be lifted to
-             *     `frontend/components/consultation/` and consumed
-             *     verbatim — same separation pattern as B6 / B8 / B9.
-             */}
-            {!isCockpit && (hold.onHold ? null : (
-              <VirtualBackgroundPicker
-                value={background}
-                onChange={handleBackgroundChange}
-                disabled={backgroundSwitchInFlight}
-              />
-            ))}
-            {/*
-             * Sub-batch B · task-video-B7 — Picture-in-Picture button.
-             *   Decision §8 — `pip.isSupported === false` (Safari pre-iOS
-             *     14, in-app webviews like Instagram / FB / TikTok / WeChat)
-             *     hides the button entirely. Same precedent as B6's
-             *     Sidebar-on-mobile gate ("hide instead of warn").
-             *   Hidden during hold for the same reason as Mute / Camera /
-             *     Quality / Layout — the call is paused and the remote
-             *     video is the placeholder, so popping it out adds nothing.
-             *   Not hidden during reconnect — a user might WANT to keep
-             *     the (transient frozen) remote tile visible while
-             *     poking around their EHR; the PiP placeholder will
-             *     show the same frozen frame the in-app tile shows.
-             *   Active state ("Exit PiP") is its own label — no
-             *     `aria-pressed` because some screen readers
-             *     mis-announce "pressed" toggles in a row of unrelated
-             *     buttons. Two distinct labels is clearer.
-             *   Inline SVG glyph (no Lucide in deps yet — same constraint
-             *     as B6 / B8). The glyph is the standard "small box
-             *     in larger box" PiP icon, drawn at 16x16 to match
-             *     the layout-switcher buttons.
-             */}
-            {!isCockpit && pip.isSupported && !hold.onHold ? (
-              <button
-                type="button"
-                onClick={handleTogglePip}
-                aria-label={
-                  pip.isActive
-                    ? "Exit Picture-in-Picture"
-                    : "Enter Picture-in-Picture"
-                }
-                title={
-                  pip.isActive
-                    ? "Exit Picture-in-Picture"
-                    : "Picture-in-Picture"
-                }
-                className={`inline-flex items-center justify-center gap-1.5 rounded-md border px-2.5 py-1.5 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 ${
-                  pip.isActive
-                    ? "border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 focus:ring-blue-500"
-                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:ring-blue-500"
-                }`}
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <rect x="3" y="5" width="18" height="14" rx="2" />
-                  <rect x="12" y="11" width="7" height="6" rx="1" fill="currentColor" stroke="none" />
-                </svg>
-                <span>{pip.isActive ? "Exit PiP" : "PiP"}</span>
-              </button>
-            ) : null}
-            {/*
-             * Sub-batch C · task-video-C5 — Share-screen button.
-             *   `screen.isSupported === false` (iOS Safari, any
-             *     browser without `getDisplayMedia`) hides the
-             *     button entirely. Same precedent as B7's PiP gate
-             *     and B6's Sidebar-on-mobile gate ("hide instead
-             *     of warn").
-             *   Hidden during hold for the same reason as Mute /
-             *     Camera / Quality / Layout / PiP — the call is
-             *     paused and there's no published video to add a
-             *     screen track to.
-             *   Active state ("Stop sharing") gets a red tint —
-             *     destructive action precedent (matches the
-             *     Leave-call button + the Stop overlay on
-             *     `<ScreenShareTile variant='self'>`).
-             *   `disabled` while `screen.isStarting === true`
-             *     covers the brief window between clicking Share
-             *     and the OS picker resolving — prevents a
-             *     double-click from queueing two pickers.
-             *   Inline SVG monitor glyph (no Lucide in deps yet —
-             *     same constraint as B6 / B7 / B8 / C2).
-             */}
-            {!isCockpit && screen.isSupported && !hold.onHold ? (
-              <button
-                type="button"
-                onClick={handleToggleScreenShare}
-                disabled={screen.isStarting}
-                aria-label={
-                  screen.localScreenTrack
-                    ? "Stop sharing your screen"
-                    : "Share your screen"
-                }
-                title={
-                  screen.localScreenTrack
-                    ? "Stop sharing your screen"
-                    : "Share your screen"
-                }
-                className={`inline-flex items-center justify-center gap-1.5 rounded-md border px-2.5 py-1.5 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 ${
-                  screen.localScreenTrack
-                    ? "border-red-300 bg-red-50 text-red-700 hover:bg-red-100 focus:ring-red-500"
-                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:ring-blue-500"
-                }`}
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <rect x="2" y="3" width="20" height="14" rx="2" />
-                  <line x1="8" y1="21" x2="16" y2="21" />
-                  <line x1="12" y1="17" x2="12" y2="21" />
-                  {screen.localScreenTrack ? (
-                    <line x1="4" y1="4" x2="20" y2="20" />
-                  ) : null}
-                </svg>
-                <span>
-                  {screen.localScreenTrack ? "Stop sharing" : "Share"}
-                </span>
-              </button>
-            ) : null}
-            {/*
-             * Sub-batch C · task-video-C3 — snapshot controls.
-             *   Mounted to the right of the Share button (clinical-
-             *     workflow tools cluster together; UX precedent
-             *     Slack/Zoom both follow).
-             *   Hidden during hold for the same reason as the rest
-             *     of the dynamic actions (Mute / Camera / Quality /
-             *     Layout / PiP / Share) — there's no live video to
-             *     capture from while the call is paused.
-             *   Hidden when `chatAuth` isn't ready — the snapshot
-             *     route requires the same Bearer JWT the chat
-             *     channel uses; without it the button is dead, and
-             *     hiding (vs disabled) matches the Plan-06 chat-
-             *     unavailable doctrine ("if the channel is dead,
-             *     don't tease features that depend on it").
-             *   Companion-only — Plan 06 attachments live on the
-             *     companion chat; a video call without the
-             *     companion chat (rare, only when text-token mint
-             *     fails) has no surface to render the snapshot row
-             *     into. Hide for symmetry.
-             *   `mode='readonly'` — same as Share button: not
-             *     wired today; gate when the prop lands.
-             */}
-            {!isCockpit && companion && chatAuth.status === "ready" ? (
-              <SnapshotControls
-                remoteVideoRef={remoteVideoRef}
-                localVideoRef={localVideoRef}
-                sessionId={companion.sessionId}
-                accessToken={chatAuth.accessToken}
-                onRequestAnnotate={handleRequestAnnotate}
-                externalToast={snapshotExternalToast}
-              />
-            ) : null}
-            {/* task-cockpit-fix-3 — More ▾ overflow menu (cockpit mode only).
-                All C-tier surfaces (Mirror, Background, Quality, PiP, Share,
-                Snapshot, Annotate, Recording, Chat toggle) live here when
-                isCockpit is true. */}
-            {isCockpit && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    aria-label="More room controls"
-                    className="inline-flex items-center justify-center gap-1 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-                  >
-                    <MoreHorizontal className="h-4 w-4" aria-hidden />
-                    <span className="sr-only">More</span>
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  {/* Recording */}
-                  {recordingEnabled && recordingSessionId && recordingToken && recordingRole === "doctor" ? (
-                    <DropdownMenuSub>
-                      <DropdownMenuSubTrigger>Recording</DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent>
-                        {recordingState.paused ? (
-                          <DropdownMenuItem
-                            onClick={() => {
-                              if (recordingToken && recordingSessionId) {
-                                resumeRecording(recordingToken, recordingSessionId).catch(() => {});
-                              }
-                            }}
-                          >
-                            Resume recording
-                          </DropdownMenuItem>
-                        ) : (
-                          <DropdownMenuItem
-                            onClick={() => {
-                              const reason = window.prompt(
-                                "Reason for pausing recording (5–200 characters):",
-                              );
-                              if (
-                                reason &&
-                                reason.trim().length >= 5 &&
-                                recordingToken &&
-                                recordingSessionId
-                              ) {
-                                pauseRecording(
-                                  recordingToken,
-                                  recordingSessionId,
-                                  reason.trim(),
-                                ).catch(() => {});
-                              }
-                            }}
-                          >
-                            Pause recording
-                          </DropdownMenuItem>
-                        )}
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
-                  ) : null}
-                  {/* Mirror */}
-                  {!isAudioOnly && !hold.onHold ? (
-                    <DropdownMenuItem onClick={handleToggleMirror}>
-                      {mirrorSelf ? (
-                        <Check className="mr-2 h-4 w-4" />
-                      ) : (
-                        <span className="mr-2 inline-block w-4" />
-                      )}
-                      Mirror video
-                    </DropdownMenuItem>
-                  ) : null}
-                  {/* Background */}
-                  {!hold.onHold && !isAudioOnly ? (
-                    <DropdownMenuSub>
-                      <DropdownMenuSubTrigger>Background</DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent>
-                        {(
-                          [
-                            { value: "off", label: "Off" },
-                            { value: "blur-light", label: "Blur" },
-                            { value: "blur-heavy", label: "Strong blur" },
-                          ] as const
-                        ).map(({ value, label }) => (
-                          <DropdownMenuItem
-                            key={value}
-                            onClick={() => handleBackgroundChange(value)}
-                          >
-                            {background === value ? (
-                              <Check className="mr-2 h-4 w-4" />
-                            ) : (
-                              <span className="mr-2 inline-block w-4" />
-                            )}
-                            {label}
-                          </DropdownMenuItem>
-                        ))}
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
-                  ) : null}
-                  {/* Quality */}
-                  {!hold.onHold ? (
-                    <DropdownMenuSub>
-                      <DropdownMenuSubTrigger>Connection quality</DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent>
-                        {(
-                          ["auto", "1080p", "720p", "480p", "audio-only"] as const
-                        ).map((q) => (
-                          <DropdownMenuItem
-                            key={q}
-                            onClick={() => handleQualityChange(q)}
-                            disabled={qualitySwitchInFlight}
-                          >
-                            {quality === q ? (
-                              <Check className="mr-2 h-4 w-4" />
-                            ) : (
-                              <span className="mr-2 inline-block w-4" />
-                            )}
-                            {q === "audio-only" ? "Audio only" : q}
-                          </DropdownMenuItem>
-                        ))}
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
-                  ) : null}
-                  {/* PiP */}
-                  {pip.isSupported && !hold.onHold ? (
-                    <DropdownMenuItem onClick={handleTogglePip}>
-                      {pip.isActive ? (
-                        <Check className="mr-2 h-4 w-4" />
-                      ) : (
-                        <span className="mr-2 inline-block w-4" />
-                      )}
-                      Picture-in-picture
-                    </DropdownMenuItem>
-                  ) : null}
-                  {/* Share screen */}
-                  {screen.isSupported && !hold.onHold ? (
-                    <DropdownMenuItem
-                      onClick={handleToggleScreenShare}
-                      disabled={screen.isStarting}
-                    >
-                      {screen.localScreenTrack ? (
-                        <Check className="mr-2 h-4 w-4" />
-                      ) : (
-                        <span className="mr-2 inline-block w-4" />
-                      )}
-                      Share screen
-                    </DropdownMenuItem>
-                  ) : null}
-                  {/* Snapshot + Annotate */}
-                  {companion && chatAuth.status === "ready" && !hold.onHold ? (
-                    <>
-                      <DropdownMenuItem
-                        onClick={() => {
-                          // Rendered inside a dropdown — close the menu first, then
-                          // trigger snapshot via the same externalToast channel
-                          // SnapshotControls uses. This keeps snapshot logic
-                          // self-contained and avoids duplicating the API call here.
-                        }}
-                      >
-                        <span className="mr-2 inline-block w-4" />
-                        Save snapshot
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => {
-                          // Annotate frame — same note as Save snapshot above.
-                        }}
-                      >
-                        <span className="mr-2 inline-block w-4" />
-                        Annotate frame
-                      </DropdownMenuItem>
-                    </>
-                  ) : null}
-                  <DropdownMenuSeparator />
-                  {/* Show in-call chat */}
-                  <DropdownMenuItem onClick={() => setShowInCallChat((v) => !v)}>
-                    {showInCallChat ? (
-                      <Check className="mr-2 h-4 w-4" />
-                    ) : (
-                      <span className="mr-2 inline-block w-4" />
-                    )}
-                    Show in-call chat
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-          </>
-        ) : null}
-        {/*
-         * Cockpit Rx-redesign — "Mark no-show" destructive ghost button.
-         *
-         * Sits immediately before "Leave call" so the destructive cluster
-         * is grouped (industry precedent: Zoom / Meet keep terminal
-         * actions together). Two-step confirm (idle → "Confirm no-show?")
-         * mirrors the inline pattern in <CockpitHeader> + <TodaysSchedule>;
-         * confirm step auto-cancels after 4s.
-         *
-         * Rendered only when `onMarkNoShow` is supplied — patient mounts,
-         * legacy non-cockpit mounts, and post-call states never see it.
-         * Hidden when the call is on hold (parallel to Mute / Camera /
-         * Quality / Layout) — no actionable surface during pause.
-         */}
-        {onMarkNoShow && !hold.onHold ? (
-          <button
-            type="button"
-            onClick={handleMarkNoShowClick}
-            disabled={noShowBusy}
-            title={
-              noShowStep === "confirm"
-                ? "Click again to confirm no-show"
-                : "Mark this patient as a no-show"
-            }
-            aria-label={
-              noShowStep === "confirm"
-                ? "Confirm marking patient as no-show"
-                : "Mark patient as no-show"
-            }
-            className={
-              noShowStep === "confirm"
-                ? "rounded-md border border-red-600 bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-60"
-                : "rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-60"
-            }
-          >
-            {noShowBusy
-              ? "Marking…"
-              : noShowStep === "confirm"
-                ? "Confirm no-show?"
-                : "Mark no-show"}
-          </button>
-        ) : null}
-        <button
-          type="button"
-          onClick={handleLeaveClick}
-          title={
-            role !== "patient"
-              ? "Shift-click to skip the confirmation"
+      {/* Host modality launcher stays mounted outside More ▾ so its
+          options / modals survive menu close. Do not use `hidden` —
+          modality modals are fixed but not portaled. */}
+      {modalityChangeSlot ? (
+        <div data-testid="modality-change-slot">{modalityChangeSlot}</div>
+      ) : null}
+      <TooltipProvider delayDuration={250}>
+        <div
+          data-testid="call-controls-bar"
+          data-chrome={
+            isPatientMobile
+              ? "patient-mobile"
+              : isPatientDesktop
+                ? "patient-desktop"
+                : undefined
+          }
+          className={
+            isDesktopChrome
+              ? // Light dock footer — reserved height (not absolute) so the
+                // stage height chain stays intact; clusters match the
+                // doctor Consult column.
+                COCKPIT_CTRL_DOCK
+              : isPatientMobile
+                ? PATIENT_DOCK +
+                  (patientChrome.visible &&
+                  patientDockBottom(patientChatSnap) !== ""
+                    ? " opacity-100"
+                    : " pointer-events-none opacity-0")
+                : "flex flex-wrap items-center gap-2 self-start"
+          }
+          style={
+            isPatientMobile && patientDockBottom(patientChatSnap)
+              ? { bottom: patientDockBottom(patientChatSnap) }
               : undefined
           }
-          className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
         >
-          Leave call
-        </button>
-      </div>
+          {status === "connected" ? (
+            <>
+              {/* Status cluster (left) */}
+              <div
+                className={
+                  isDesktopChrome ? COCKPIT_CTRL_CLUSTER_START : "contents"
+                }
+                data-cluster={isDesktopChrome ? "status" : undefined}
+              >
+                {/*
+                 * Sub-batch A · task-video-A8 — your-side network bars.
+                 *   Mounted only when connected (the hook returns
+                 *     `level === null` pre-connect anyway, but the bars
+                 *     would render as a measuring placeholder which is
+                 *     misleading next to the disabled control buttons).
+                 *   Tooltip shows the full diagnostic dump (RTT / jitter /
+                 *     resolution / FPS / bitrates) — what doctors will
+                 *     reach for to triage "patient looks frozen".
+                 *   Background is a subtle gray pill so the bars don't
+                 *     fight the buttons visually; same height (~36 px) as
+                 *     the buttons so the row stays balanced.
+                 */}
+                {!isPatientMobile ? (
+                  <div
+                    className={
+                      isDesktopChrome
+                        ? COCKPIT_CTRL_PILL
+                        : "flex h-9 items-center rounded-md border border-gray-200 bg-white px-2"
+                    }
+                  >
+                    <ConnectionReportBars
+                      room={roomState}
+                      variant="local"
+                      localParticipant={localParticipant}
+                      label="Your connection"
+                      caption={isDesktopChrome ? "You" : undefined}
+                    />
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Media + view cluster (center) */}
+              <div
+                className={
+                  isDesktopChrome ? COCKPIT_CTRL_CLUSTER_CENTER : "contents"
+                }
+                data-cluster={isDesktopChrome ? "media" : undefined}
+              >
+                {/*
+                 * Sub-batch B · task-video-B3 — when the call is on hold
+                 * the action cluster collapses to just [Resume] [Leave].
+                 * Mute / Camera / Mirror / Volume / Quality are hidden
+                 * because they're no-ops while both tracks are
+                 * disabled (clicking Mute on a disabled audio track
+                 * would silently do nothing — confusing). Resume is
+                 * the explicit way out; Leave still works as the
+                 * abandon-call escape hatch.
+                 */}
+                {hold.onHold
+                  ? null
+                  : (() => {
+                      const micLabel = micMuted
+                        ? "Muted — click to unmute"
+                        : "Mute microphone";
+                      const micButton = (
+                        <button
+                          type="button"
+                          data-testid="mic-mute-button"
+                          onClick={handleToggleMic}
+                          aria-pressed={micMuted}
+                          aria-label={
+                            micMuted ? "Unmute microphone" : "Mute microphone"
+                          }
+                          title={isIconDock ? undefined : micLabel}
+                          className={
+                            isDesktopChrome
+                              ? cockpitToggleClass(micMuted)
+                              : isPatientMobile
+                                ? patientDockToggleClass(micMuted)
+                                : legacyToggleClass(micMuted)
+                          }
+                        >
+                          {isIconDock ? (
+                            micMuted ? (
+                              <MicOff
+                                className="h-[18px] w-[18px]"
+                                strokeWidth={2}
+                                aria-hidden
+                              />
+                            ) : (
+                              <Mic
+                                className="h-[18px] w-[18px]"
+                                strokeWidth={2}
+                                aria-hidden
+                              />
+                            )
+                          ) : micMuted ? (
+                            "Unmute"
+                          ) : (
+                            "Mute"
+                          )}
+                        </button>
+                      );
+                      return isDesktopChrome ? (
+                        <CallControlTooltip label={micLabel}>
+                          {micButton}
+                        </CallControlTooltip>
+                      ) : (
+                        micButton
+                      );
+                    })()}
+                {/*
+                 * Sub-batch B · task-video-B8 — hide the Camera off/on
+                 * button when in audio-only mode. The picker has torn
+                 * down the LocalVideoTrack entirely, so there's nothing
+                 * for `handleToggleCamera` to enable/disable; clicking
+                 * would be a silent no-op. Keep the button slot stable
+                 * in non-audio-only modes (the picker is the path back
+                 * to video).
+                 *
+                 * Sub-batch B · task-video-B3 — also hide while on
+                 * hold (see Mute gate above).
+                 */}
+                {isAudioOnly || hold.onHold
+                  ? null
+                  : (() => {
+                      const camLabel = cameraOff
+                        ? "Camera off — click to turn on"
+                        : "Turn camera off";
+                      const camButton = (
+                        <button
+                          type="button"
+                          onClick={handleToggleCamera}
+                          disabled={Boolean(recordingCameraGate)}
+                          aria-pressed={cameraOff}
+                          aria-label={
+                            recordingCameraGate === "stopping"
+                              ? "Camera blocked while video recording is stopping"
+                              : recordingCameraGate === "confirming"
+                                ? "Camera blocked while video recording is confirming"
+                                : cameraOff
+                                  ? "Turn camera on"
+                                  : "Turn camera off"
+                          }
+                          title={isIconDock ? undefined : camLabel}
+                          className={
+                            isDesktopChrome
+                              ? cockpitToggleClass(cameraOff)
+                              : isPatientMobile
+                                ? patientDockToggleClass(cameraOff)
+                                : legacyToggleClass(cameraOff)
+                          }
+                        >
+                          {isIconDock ? (
+                            cameraOff ? (
+                              <VideoOff
+                                className="h-[18px] w-[18px]"
+                                strokeWidth={2}
+                                aria-hidden
+                              />
+                            ) : (
+                              <Video
+                                className="h-[18px] w-[18px]"
+                                strokeWidth={2}
+                                aria-hidden
+                              />
+                            )
+                          ) : cameraOff ? (
+                            "Camera on"
+                          ) : (
+                            "Camera off"
+                          )}
+                        </button>
+                      );
+                      return isDesktopChrome ? (
+                        <CallControlTooltip label={camLabel}>
+                          {camButton}
+                        </CallControlTooltip>
+                      ) : (
+                        camButton
+                      );
+                    })()}
+                {isPatientMobile &&
+                !isAudioOnly &&
+                !hold.onHold &&
+                !cameraOff &&
+                (role === "patient" || cameraSwitch.canFlip) ? (
+                  <button
+                    type="button"
+                    onClick={() => void cameraSwitch.flip()}
+                    disabled={cameraSwitch.isFlipping}
+                    aria-label={
+                      cameraSwitch.currentFacing === "front"
+                        ? "Switch to back camera"
+                        : cameraSwitch.currentFacing === "back"
+                          ? "Switch to front camera"
+                          : "Switch camera"
+                    }
+                    title="Switch camera"
+                    data-testid="self-camera-flip"
+                    className={PATIENT_DOCK_BTN}
+                  >
+                    <FlipCameraGlyph />
+                  </button>
+                ) : null}
+                {/*
+                 * Sub-batch F · task-video-F1 — camera switch (front ↔ back).
+                 *   Lives between Camera and Hold so it sits with the other
+                 *     publisher-side video toggles (Camera off, Mirror).
+                 *   Hidden in audio-only (no video track to switch) and
+                 *     while on hold (action cluster collapses to Resume +
+                 *     Leave) — same gate as the Camera button above.
+                 *   Shown in cockpit too — front/back is a primary derm
+                 *     action, not a More ▾ item. `canFlip` covers iOS
+                 *     phones that only enumerate one camera.
+                 */}
+                {isAudioOnly || hold.onHold || isPatientMobile ? null : (
+                  <CameraSwitchButton
+                    devices={cameraSwitch.devices}
+                    current={cameraSwitch.currentDeviceId}
+                    flip={cameraSwitch.flip}
+                    switchTo={cameraSwitch.switchTo}
+                    isFlipping={cameraSwitch.isFlipping}
+                    hasMultipleCameras={cameraSwitch.hasMultipleCameras}
+                    canFlip={cameraSwitch.canFlip}
+                    currentFacing={cameraSwitch.currentFacing}
+                    tone={isDesktopChrome ? "cockpit" : "default"}
+                  />
+                )}
+                {/*
+                 * Sub-batch B · task-video-B3 — Hold / Resume button.
+                 *   Lives between Camera and Mirror — semantically
+                 *     adjacent to the publisher-side mute/camera
+                 *     toggles (it's a "pause both" superset).
+                 *   Visible at all times while connected (so the user
+                 *     can engage hold from a normal state) AND while on
+                 *     hold (so it acts as the "Resume" CTA — same
+                 *     button, different label/state). The overlay
+                 *     banner ALSO has its own Resume button for
+                 *     redundancy / discoverability when the user's
+                 *     attention is on the video canvas, not the
+                 *     controls strip.
+                 *   Plan 07 history viewer (`mode='readonly'`) — when
+                 *     that prop ships on `<VideoRoom>`, gate this
+                 *     button on `mode !== 'readonly'`. Today the prop
+                 *     doesn't exist; gating is a no-op.
+                 */}
+                {!isPatientMobile || hold.onHold
+                  ? (() => {
+                      const holdLabel = hold.onHold
+                        ? "Resume call"
+                        : "Put call on hold";
+                      const holdButton = (
+                        <button
+                          type="button"
+                          onClick={handleToggleHold}
+                          aria-pressed={hold.onHold}
+                          aria-label={holdLabel}
+                          title={isIconDock ? undefined : holdLabel}
+                          className={
+                            isDesktopChrome
+                              ? cockpitHoldClass(hold.onHold)
+                              : isPatientMobile
+                                ? hold.onHold
+                                  ? PATIENT_DOCK_RESUME
+                                  : PATIENT_DOCK_BTN
+                                : legacyHoldClass(hold.onHold)
+                          }
+                        >
+                          {isIconDock ? (
+                            hold.onHold ? (
+                              <Play
+                                className="h-[18px] w-[18px]"
+                                strokeWidth={2}
+                                aria-hidden
+                              />
+                            ) : (
+                              <Pause
+                                className="h-[18px] w-[18px]"
+                                strokeWidth={2}
+                                aria-hidden
+                              />
+                            )
+                          ) : hold.onHold ? (
+                            "Resume"
+                          ) : (
+                            "Hold"
+                          )}
+                        </button>
+                      );
+                      return isDesktopChrome ? (
+                        <CallControlTooltip label={holdLabel}>
+                          {holdButton}
+                        </CallControlTooltip>
+                      ) : (
+                        holdButton
+                      );
+                    })()
+                  : null}
+                {isDesktopChrome && !hold.onHold ? (
+                  <span
+                    aria-hidden
+                    className="mx-1 h-5 w-px shrink-0 bg-border"
+                  />
+                ) : null}
+                {/*
+                 * Sub-batch A · task-video-A6 — mirror toggle.
+                 *   Default mirror=true (matches FaceTime / WhatsApp / Meet).
+                 *   Pressed/amber state = mirror OFF (the non-default state),
+                 *     mirroring the mute + camera buttons' convention
+                 *     (amber = "currently in the toggled-from-default state").
+                 *   Action-style label flips: "Mirror off" when ON / "Mirror on"
+                 *     when OFF — same idiom as the Camera button.
+                 *   Visible only when connected (parent `<>` branch above) so
+                 *     it never appears as a no-op during connecting/error.
+                 */}
+                {/*
+                 * Sub-batch B · task-video-B8 — hide Mirror toggle in
+                 * audio-only mode (no video → mirror is meaningless).
+                 * Same reasoning as the Camera button gate above.
+                 *
+                 * Sub-batch B · task-video-B3 — also hide while on
+                 * hold (action cluster collapses to Resume + Leave).
+                 */}
+                {!isCockpit &&
+                  !isPatientChrome &&
+                  (isAudioOnly || hold.onHold ? null : (
+                    <button
+                      type="button"
+                      onClick={handleToggleMirror}
+                      aria-pressed={!mirrorSelf}
+                      title={
+                        mirrorSelf
+                          ? "Self-view is mirrored — click to show the unmirrored view"
+                          : "Self-view is not mirrored — click to mirror it (recommended)"
+                      }
+                      className={
+                        "rounded-md px-4 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 " +
+                        (!mirrorSelf
+                          ? "bg-amber-100 text-amber-900 ring-1 ring-amber-300 focus:ring-amber-400"
+                          : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:ring-gray-300")
+                      }
+                    >
+                      {mirrorSelf ? "Mirror off" : "Mirror on"}
+                    </button>
+                  ))}
+                {/*
+                 * Sub-batch B · task-video-B9 — remote-audio volume slider.
+                 *   Lives inline in the controls bar (right of Mirror, left
+                 *     of Leave) — the same neighborhood as `<NetworkBars>`
+                 *     because both are listener-side controls, not
+                 *     publisher-side toggles.
+                 *   Disabled until the remote audio track is wired
+                 *     (`audioRouterRef` is null pre-attach) so dragging the
+                 *     slider before the counterparty publishes audio
+                 *     doesn't fake a level change. Layout slot is reserved
+                 *     either way so the controls row doesn't reflow when
+                 *     audio lands ~1s after `connected`.
+                 *   Voice batch will mount the SAME `<VolumeSlider>` with
+                 *     its own storage key — visual + UX parity comes free.
+                 */}
+                {/*
+                 * Sub-batch B · task-video-B3 — hide volume slider
+                 * while on hold (the remote is paused; volume slider
+                 * is meaningless when there's no audio playing).
+                 */}
+                {!isCockpit &&
+                  !isPatientChrome &&
+                  (hold.onHold ? null : (
+                    <VolumeSlider
+                      value={volumePercent}
+                      onChange={handleVolumeChange}
+                      disabled={audioRouterRef.current == null}
+                      ariaLabel={`${remoteLabel}'s volume`}
+                    />
+                  ))}
+                {/*
+                 * Sub-batch B · task-video-B8 — manual quality picker.
+                 *   Lives at the end of the controls cluster (right of
+                 *     VolumeSlider, left of Leave) — semantically the
+                 *     "scope" of the call (resolution / data plan), so
+                 *     it bookends the per-action controls.
+                 *   `disabled` while a switch is in flight (Twilio is
+                 *     mid republish) — prevents stacked toggles that
+                 *     would leak tracks.
+                 *   Mounted only when connected (`status === 'connected'`
+                 *     parent gate) — pre-connect we don't have a room
+                 *     to apply changes against. Persisted value is read
+                 *     at connect time, so the picker shows the right
+                 *     selection from the moment it appears.
+                 *   Coupling-stub for E1 (when adaptive bitrate ships):
+                 *     'auto' = E1 owns the cap, picker is a no-op. Any
+                 *     explicit choice = E1 stands down. Today (no E1)
+                 *     'auto' just means the connect-time defaults apply.
+                 */}
+                {/*
+                 * Sub-batch B · task-video-B3 — hide quality picker
+                 * while on hold (no video to negotiate quality on).
+                 * Reappears on Resume with the persisted value.
+                 */}
+                {!isCockpit &&
+                  !isPatientChrome &&
+                  (hold.onHold ? null : (
+                    <VideoQualityPicker
+                      value={quality}
+                      onChange={handleQualityChange}
+                      disabled={qualitySwitchInFlight}
+                    />
+                  ))}
+                {/*
+                 * Sub-batch B · task-video-B6 — layout switcher.
+                 *   Sits right of the quality picker and left of Leave —
+                 *     "scope of the call" cluster (quality + tile
+                 *     arrangement) bookends the per-action toggles.
+                 *   Hidden during hold (same precedent as Mute / Camera /
+                 *     Mirror / Volume / Quality) — when the call is
+                 *     paused, the action cluster collapses to Resume +
+                 *     Leave and layout choice is irrelevant.
+                 *   Sidebar option auto-hides on mobile via the
+                 *     switcher's per-option `hidden md:inline-flex`
+                 *     gate; the parent `effectiveLayout` derivation
+                 *     also degrades a persisted Sidebar value to
+                 *     Speaker on mobile, so JS + CSS gates agree.
+                 *   `<VideoLayoutSwitcher>` is video-only today; voice
+                 *     consults don't have a tile arrangement to swap.
+                 *     If voice ever ships a multi-tile layout (3-way
+                 *     call territory), the component can be lifted to
+                 *     `frontend/components/consultation/` and consumed
+                 *     verbatim — same separation pattern as
+                 *     `<VolumeSlider>` (B9) and `<VideoQualityPicker>`
+                 *     (B8).
+                 */}
+                {hold.onHold ||
+                isPatientMobile ||
+                cockpitLayoutVertical ? null : (
+                  <VideoLayoutSwitcher
+                    value={layout}
+                    onChange={handleLayoutChange}
+                    tone={isDesktopChrome ? "cockpit" : "default"}
+                  />
+                )}
+                {/*
+                 * Sub-batch F · task-video-F2 — orientation lock toggle.
+                 *   Sits immediately right of `<VideoLayoutSwitcher>`
+                 *     because the two together are "how the video is
+                 *     presented" (layout pick + orientation pin).
+                 *   `canLock` is false on iOS Safari and any non-PWA
+                 *     non-fullscreen browser; the button silently
+                 *     null-renders in those cases (per spec —
+                 *     Acceptance: "If !canLock: don't render").
+                 *   Spec asked for the button to live in a controls-bar
+                 *     overflow menu (decision §32). No overflow menu
+                 *     exists in the bar today — A4's `<VideoControlsBar>`
+                 *     extraction never shipped. Inlining here is the
+                 *     cheapest path that respects the visibility +
+                 *     accessibility requirements; once an overflow menu
+                 *     ships, this button can move with no API changes.
+                 *   Hidden during hold (same precedent as B6 / Mute /
+                 *     Camera) — there's no rendered video for an
+                 *     orientation lock to scope.
+                 */}
+                {!isCockpit && !isPatientChrome && (
+                  <OrientationLockButton
+                    canLock={orientation.canLock}
+                    isLocked={orientation.isLocked}
+                    orient={orient}
+                    lock={orientation.lock}
+                    unlock={orientation.unlock}
+                    hidden={hold.onHold}
+                  />
+                )}
+                {/*
+                 * Sub-batch C · task-video-C2 — virtual background picker.
+                 *   Sits right of the layout switcher and left of the PiP
+                 *     button — same "scope of the call" cluster as
+                 *     quality + layout. Background is the most "I'm
+                 *     ready to look professional" affordance so it lives
+                 *     near the call-prep controls, not buried in an
+                 *     overflow.
+                 *   Hidden during hold (same precedent as B6 / B7 / B8 /
+                 *     B9 / Mute / Camera) — the call is paused, the
+                 *     processor isn't even running on a frame, surfacing
+                 *     the picker would be misleading.
+                 *   `disabled` reflects the inflight `addProcessor` swap
+                 *     so the user can't queue up flapping toggles during
+                 *     the 1-2s TFLite model load on first apply.
+                 *   The component is video-only today; voice consults
+                 *     don't have a video track to process. If voice
+                 *     ever ships a "video preview while on a voice call"
+                 *     surface, the picker can be lifted to
+                 *     `frontend/components/consultation/` and consumed
+                 *     verbatim — same separation pattern as B6 / B8 / B9.
+                 */}
+                {!isCockpit &&
+                  !isPatientChrome &&
+                  (hold.onHold ? null : (
+                    <VirtualBackgroundPicker
+                      value={background}
+                      onChange={handleBackgroundChange}
+                      disabled={backgroundSwitchInFlight}
+                    />
+                  ))}
+                {/*
+                 * Sub-batch B · task-video-B7 — Picture-in-Picture button.
+                 *   Decision §8 — `pip.isSupported === false` (Safari pre-iOS
+                 *     14, in-app webviews like Instagram / FB / TikTok / WeChat)
+                 *     hides the button entirely. Same precedent as B6's
+                 *     Sidebar-on-mobile gate ("hide instead of warn").
+                 *   Hidden during hold for the same reason as Mute / Camera /
+                 *     Quality / Layout — the call is paused and the remote
+                 *     video is the placeholder, so popping it out adds nothing.
+                 *   Not hidden during reconnect — a user might WANT to keep
+                 *     the (transient frozen) remote tile visible while
+                 *     poking around their EHR; the PiP placeholder will
+                 *     show the same frozen frame the in-app tile shows.
+                 *   Active state ("Exit PiP") is its own label — no
+                 *     `aria-pressed` because some screen readers
+                 *     mis-announce "pressed" toggles in a row of unrelated
+                 *     buttons. Two distinct labels is clearer.
+                 *   Inline SVG glyph (no Lucide in deps yet — same constraint
+                 *     as B6 / B8). The glyph is the standard "small box
+                 *     in larger box" PiP icon, drawn at 16x16 to match
+                 *     the layout-switcher buttons.
+                 */}
+                {!isCockpit &&
+                !isPatientChrome &&
+                pip.isSupported &&
+                !hold.onHold ? (
+                  <button
+                    type="button"
+                    onClick={handleTogglePip}
+                    aria-label={
+                      pip.isActive
+                        ? "Exit Picture-in-Picture"
+                        : "Enter Picture-in-Picture"
+                    }
+                    title={
+                      pip.isActive
+                        ? "Exit Picture-in-Picture"
+                        : "Picture-in-Picture"
+                    }
+                    className={`inline-flex items-center justify-center gap-1.5 rounded-md border px-2.5 py-1.5 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+                      pip.isActive
+                        ? "border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 focus:ring-blue-500"
+                        : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:ring-blue-500"
+                    }`}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <rect x="3" y="5" width="18" height="14" rx="2" />
+                      <rect
+                        x="12"
+                        y="11"
+                        width="7"
+                        height="6"
+                        rx="1"
+                        fill="currentColor"
+                        stroke="none"
+                      />
+                    </svg>
+                    <span>{pip.isActive ? "Exit PiP" : "PiP"}</span>
+                  </button>
+                ) : null}
+                {/*
+                 * Sub-batch C · task-video-C5 — Share-screen button.
+                 *   `screen.isSupported === false` (iOS Safari, any
+                 *     browser without `getDisplayMedia`) hides the
+                 *     button entirely. Same precedent as B7's PiP gate
+                 *     and B6's Sidebar-on-mobile gate ("hide instead
+                 *     of warn").
+                 *   Hidden during hold for the same reason as Mute /
+                 *     Camera / Quality / Layout / PiP — the call is
+                 *     paused and there's no published video to add a
+                 *     screen track to.
+                 *   Active state ("Stop sharing") gets a red tint —
+                 *     destructive action precedent (matches the
+                 *     Leave-call button + the Stop overlay on
+                 *     `<ScreenShareTile variant='self'>`).
+                 *   `disabled` while `screen.isStarting === true`
+                 *     covers the brief window between clicking Share
+                 *     and the OS picker resolving — prevents a
+                 *     double-click from queueing two pickers.
+                 *   Inline SVG monitor glyph (no Lucide in deps yet —
+                 *     same constraint as B6 / B7 / B8 / C2).
+                 */}
+                {!isCockpit &&
+                !isPatientChrome &&
+                screen.isSupported &&
+                !hold.onHold ? (
+                  <button
+                    type="button"
+                    onClick={handleToggleScreenShare}
+                    disabled={screen.isStarting}
+                    aria-label={
+                      screen.localScreenTrack
+                        ? "Stop sharing your screen"
+                        : "Share your screen"
+                    }
+                    title={
+                      screen.localScreenTrack
+                        ? "Stop sharing your screen"
+                        : "Share your screen"
+                    }
+                    className={`inline-flex items-center justify-center gap-1.5 rounded-md border px-2.5 py-1.5 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 ${
+                      screen.localScreenTrack
+                        ? "border-red-300 bg-red-50 text-red-700 hover:bg-red-100 focus:ring-red-500"
+                        : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:ring-blue-500"
+                    }`}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <rect x="2" y="3" width="20" height="14" rx="2" />
+                      <line x1="8" y1="21" x2="16" y2="21" />
+                      <line x1="12" y1="17" x2="12" y2="21" />
+                      {screen.localScreenTrack ? (
+                        <line x1="4" y1="4" x2="20" y2="20" />
+                      ) : null}
+                    </svg>
+                    <span>
+                      {screen.localScreenTrack ? "Stop sharing" : "Share"}
+                    </span>
+                  </button>
+                ) : null}
+                {/*
+                 * Sub-batch C · task-video-C3 — snapshot controls.
+                 *   Mounted to the right of the Share button (clinical-
+                 *     workflow tools cluster together; UX precedent
+                 *     Slack/Zoom both follow).
+                 *   Hidden during hold for the same reason as the rest
+                 *     of the dynamic actions (Mute / Camera / Quality /
+                 *     Layout / PiP / Share) — there's no live video to
+                 *     capture from while the call is paused.
+                 *   Hidden when `chatAuth` isn't ready — the snapshot
+                 *     route requires the same Bearer JWT the chat
+                 *     channel uses; without it the button is dead, and
+                 *     hiding (vs disabled) matches the Plan-06 chat-
+                 *     unavailable doctrine ("if the channel is dead,
+                 *     don't tease features that depend on it").
+                 *   Companion-only — Plan 06 attachments live on the
+                 *     companion chat; a video call without the
+                 *     companion chat (rare, only when text-token mint
+                 *     fails) has no surface to render the snapshot row
+                 *     into. Hide for symmetry.
+                 *   `mode='readonly'` — same as Share button: not
+                 *     wired today; gate when the prop lands.
+                 */}
+                {!isCockpit &&
+                !isPatientChrome &&
+                companion &&
+                chatAuth.status === "ready" ? (
+                  <SnapshotControls
+                    remoteVideoRef={remoteVideoRef}
+                    localVideoRef={localVideoRef}
+                    sessionId={companion.sessionId}
+                    accessToken={chatAuth.accessToken}
+                    onRequestAnnotate={handleRequestAnnotate}
+                    externalToast={snapshotExternalToast}
+                  />
+                ) : null}
+              </div>
+
+              {/* Session cluster (right) — Chat + More + Leave */}
+              <div
+                className={
+                  isDesktopChrome ? COCKPIT_CTRL_CLUSTER_END : "contents"
+                }
+                data-cluster={isDesktopChrome ? "session" : undefined}
+              >
+                {isPatientChrome && companion ? (
+                  <button
+                    type="button"
+                    data-testid="patient-chat-toggle"
+                    onClick={() => {
+                      setUnreadCount(0);
+                      if (isPatientMobile) {
+                        handlePatientChatToggle();
+                        return;
+                      }
+                      setPatientDesktopChatOpen((open) => !open);
+                    }}
+                    aria-pressed={
+                      isPatientMobile
+                        ? isPatientChatExpanded(patientChatSnap)
+                        : patientDesktopChatOpen
+                    }
+                    aria-label={
+                      unreadCount > 0
+                        ? `Chat, ${unreadCount} unread`
+                        : (
+                              isPatientMobile
+                                ? isPatientChatExpanded(patientChatSnap)
+                                : patientDesktopChatOpen
+                            )
+                          ? "Hide chat"
+                          : "Show chat"
+                    }
+                    className={
+                      "relative " +
+                      (isPatientDesktop
+                        ? patientDesktopChatOpen
+                          ? COCKPIT_CTRL_SELECTED
+                          : COCKPIT_CTRL
+                        : patientDockToggleClass(
+                            isPatientChatExpanded(patientChatSnap)
+                          ))
+                    }
+                  >
+                    <MessageSquare
+                      className="h-[18px] w-[18px]"
+                      strokeWidth={2}
+                      aria-hidden
+                    />
+                    {unreadCount > 0 ? (
+                      <span
+                        data-testid="chat-unread-badge"
+                        aria-hidden
+                        className="absolute -right-1 -top-1 inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-red-600 px-1 py-0.5 text-[10px] font-semibold leading-none text-white"
+                      >
+                        {unreadCount > 99 ? "99+" : unreadCount}
+                      </span>
+                    ) : null}
+                  </button>
+                ) : null}
+                {isCockpit ? (
+                  <CallControlTooltip
+                    label={
+                      unreadCount > 0
+                        ? `${unreadCount} unread chat ${unreadCount === 1 ? "message" : "messages"}`
+                        : showInCallChat
+                          ? "Hide in-call chat"
+                          : "Show in-call chat"
+                    }
+                  >
+                    <button
+                      type="button"
+                      data-testid="in-call-chat-toggle"
+                      onClick={() => {
+                        setUnreadCount(0);
+                        toggleInCallChat();
+                      }}
+                      aria-pressed={showInCallChat}
+                      aria-label={
+                        unreadCount > 0
+                          ? `Show chat, ${unreadCount} unread`
+                          : showInCallChat
+                            ? "Hide in-call chat"
+                            : "Show in-call chat"
+                      }
+                      className={
+                        "relative " +
+                        (showInCallChat ? COCKPIT_CTRL_SELECTED : COCKPIT_CTRL)
+                      }
+                    >
+                      <MessageSquare
+                        className="h-[18px] w-[18px]"
+                        strokeWidth={2}
+                        aria-hidden
+                      />
+                      {showChatUnreadBadge ? (
+                        <span
+                          data-testid="chat-unread-badge"
+                          aria-hidden
+                          className="absolute -right-1 -top-1 inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-red-600 px-1 py-0.5 text-[10px] font-semibold leading-none text-white"
+                        >
+                          {unreadCount > 99 ? "99+" : unreadCount}
+                        </span>
+                      ) : null}
+                    </button>
+                  </CallControlTooltip>
+                ) : null}
+                {/* More ▾ overflow — cockpit (icon dock) and patient phone
+                (overlay icon dock). C-tier surfaces live here. */}
+                {isIconDock && (
+                  <DropdownMenu
+                    onOpenChange={
+                      isPatientMobile ? setPatientMoreOpen : undefined
+                    }
+                  >
+                    {isCockpit ? (
+                      <CallControlTooltip label="More controls">
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            aria-label="More room controls"
+                            className={COCKPIT_CTRL_MORE}
+                          >
+                            <MoreHorizontal
+                              className="h-[18px] w-[18px]"
+                              strokeWidth={2}
+                              aria-hidden
+                            />
+                            <span className="sr-only">More</span>
+                          </button>
+                        </DropdownMenuTrigger>
+                      </CallControlTooltip>
+                    ) : (
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          type="button"
+                          data-testid="patient-more-controls"
+                          aria-label="More room controls"
+                          className={
+                            isPatientDesktop
+                              ? COCKPIT_CTRL_MORE
+                              : PATIENT_DOCK_BTN
+                          }
+                        >
+                          <MoreHorizontal
+                            className="h-[18px] w-[18px]"
+                            strokeWidth={2}
+                            aria-hidden
+                          />
+                          <span className="sr-only">More</span>
+                        </button>
+                      </DropdownMenuTrigger>
+                    )}
+                    <DropdownMenuContent align="end" className="w-56">
+                      {isPatientMobile && !hold.onHold ? (
+                        <>
+                          <DropdownMenuItem onClick={handleToggleHold}>
+                            Put call on hold
+                          </DropdownMenuItem>
+                          {orientation.canLock ? (
+                            <DropdownMenuItem
+                              onClick={() => {
+                                if (orientation.isLocked) {
+                                  void orientation.unlock();
+                                  return;
+                                }
+                                void orientation.lock(orient);
+                              }}
+                            >
+                              {orientation.isLocked
+                                ? "Unlock orientation"
+                                : "Lock orientation"}
+                            </DropdownMenuItem>
+                          ) : null}
+                          <DropdownMenuSeparator />
+                        </>
+                      ) : null}
+                      {onRequestChangeModality ? (
+                        <>
+                          <DropdownMenuItem
+                            disabled={modalityChangeDisabled}
+                            title={
+                              modalityChangeDisabled
+                                ? modalityChangeDisabledReason ||
+                                  "Modality change unavailable"
+                                : "Change modality"
+                            }
+                            onClick={() => onRequestChangeModality()}
+                          >
+                            Change modality
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                        </>
+                      ) : null}
+                      {/* Recording */}
+                      {recordingEnabled &&
+                      recordingSessionId &&
+                      recordingToken &&
+                      recordingRole === "doctor" ? (
+                        <DropdownMenuSub>
+                          <DropdownMenuSubTrigger>
+                            Recording
+                          </DropdownMenuSubTrigger>
+                          <DropdownMenuSubContent>
+                            {recordingState.paused ? (
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  if (recordingToken && recordingSessionId) {
+                                    resumeRecording(
+                                      recordingToken,
+                                      recordingSessionId
+                                    ).catch(() => {});
+                                  }
+                                }}
+                              >
+                                Resume recording
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  window.dispatchEvent(
+                                    new Event(OPEN_RECORDING_PAUSE_EVENT),
+                                  );
+                                }}
+                              >
+                                Pause recording
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuSubContent>
+                        </DropdownMenuSub>
+                      ) : null}
+                      {/* Mirror */}
+                      {!isAudioOnly && !hold.onHold ? (
+                        <DropdownMenuItem onClick={handleToggleMirror}>
+                          {mirrorSelf ? (
+                            <Check className="mr-2 h-4 w-4" />
+                          ) : (
+                            <span className="mr-2 inline-block w-4" />
+                          )}
+                          Mirror video
+                        </DropdownMenuItem>
+                      ) : null}
+                      {/* Background */}
+                      {!hold.onHold && !isAudioOnly ? (
+                        <DropdownMenuSub>
+                          <DropdownMenuSubTrigger>
+                            Background
+                          </DropdownMenuSubTrigger>
+                          <DropdownMenuSubContent>
+                            {(
+                              [
+                                { value: "off", label: "Off" },
+                                { value: "blur-light", label: "Blur" },
+                                { value: "blur-heavy", label: "Strong blur" },
+                              ] as const
+                            ).map(({ value, label }) => (
+                              <DropdownMenuItem
+                                key={value}
+                                onClick={() => handleBackgroundChange(value)}
+                              >
+                                {background === value ? (
+                                  <Check className="mr-2 h-4 w-4" />
+                                ) : (
+                                  <span className="mr-2 inline-block w-4" />
+                                )}
+                                {label}
+                              </DropdownMenuItem>
+                            ))}
+                          </DropdownMenuSubContent>
+                        </DropdownMenuSub>
+                      ) : null}
+                      {/* Quality */}
+                      {!hold.onHold ? (
+                        <DropdownMenuSub>
+                          <DropdownMenuSubTrigger>
+                            Connection quality
+                          </DropdownMenuSubTrigger>
+                          <DropdownMenuSubContent>
+                            {(
+                              [
+                                "auto",
+                                "1080p",
+                                "720p",
+                                "480p",
+                                "audio-only",
+                              ] as const
+                            ).map((q) => (
+                              <DropdownMenuItem
+                                key={q}
+                                onClick={() => handleQualityChange(q)}
+                                disabled={qualitySwitchInFlight}
+                              >
+                                {quality === q ? (
+                                  <Check className="mr-2 h-4 w-4" />
+                                ) : (
+                                  <span className="mr-2 inline-block w-4" />
+                                )}
+                                {q === "audio-only" ? "Audio only" : q}
+                              </DropdownMenuItem>
+                            ))}
+                          </DropdownMenuSubContent>
+                        </DropdownMenuSub>
+                      ) : null}
+                      {/* PiP */}
+                      {pip.isSupported && !hold.onHold ? (
+                        <DropdownMenuItem onClick={handleTogglePip}>
+                          {pip.isActive ? (
+                            <Check className="mr-2 h-4 w-4" />
+                          ) : (
+                            <span className="mr-2 inline-block w-4" />
+                          )}
+                          Picture-in-picture
+                        </DropdownMenuItem>
+                      ) : null}
+                      {/* Share screen */}
+                      {screen.isSupported && !hold.onHold ? (
+                        <DropdownMenuItem
+                          onClick={handleToggleScreenShare}
+                          disabled={screen.isStarting}
+                        >
+                          {screen.localScreenTrack ? (
+                            <Check className="mr-2 h-4 w-4" />
+                          ) : (
+                            <span className="mr-2 inline-block w-4" />
+                          )}
+                          Share screen
+                        </DropdownMenuItem>
+                      ) : null}
+                      {/* Snapshot + Annotate */}
+                      {companion &&
+                      chatAuth.status === "ready" &&
+                      !hold.onHold ? (
+                        <>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              // Rendered inside a dropdown — close the menu first, then
+                              // trigger snapshot via the same externalToast channel
+                              // SnapshotControls uses. This keeps snapshot logic
+                              // self-contained and avoids duplicating the API call here.
+                            }}
+                          >
+                            <span className="mr-2 inline-block w-4" />
+                            Save snapshot
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              // Annotate frame — same note as Save snapshot above.
+                            }}
+                          >
+                            <span className="mr-2 inline-block w-4" />
+                            Annotate frame
+                          </DropdownMenuItem>
+                        </>
+                      ) : null}
+                      {onMarkNoShow && !hold.onHold ? (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            disabled={noShowBusy}
+                            onClick={() => void handleMarkNoShowClick()}
+                            className="text-red-600 focus:text-red-700"
+                          >
+                            {noShowBusy
+                              ? "Marking…"
+                              : noShowStep === "confirm"
+                                ? "Confirm no-show?"
+                                : "Mark no-show"}
+                          </DropdownMenuItem>
+                        </>
+                      ) : null}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+                {/*
+                 * Cockpit Rx-redesign — "Mark no-show" destructive ghost button.
+                 *
+                 * Sits immediately before "Leave call" so the destructive cluster
+                 * is grouped (industry precedent: Zoom / Meet keep terminal
+                 * actions together). Two-step confirm (idle → "Confirm no-show?")
+                 * mirrors the inline pattern in <CockpitHeader> + <TodaysSchedule>;
+                 * confirm step auto-cancels after 4s.
+                 *
+                 * Rendered only when `onMarkNoShow` is supplied — patient mounts,
+                 * legacy non-cockpit mounts, and post-call states never see it.
+                 * Hidden when the call is on hold (parallel to Mute / Camera /
+                 * Quality / Layout) — no actionable surface during pause.
+                 */}
+                {/* Cockpit: Mark no-show lives in More ▾ so Leave stays primary. */}
+                {onMarkNoShow && !hold.onHold && !isCockpit ? (
+                  <button
+                    type="button"
+                    onClick={handleMarkNoShowClick}
+                    disabled={noShowBusy}
+                    title={
+                      noShowStep === "confirm"
+                        ? "Click again to confirm no-show"
+                        : "Mark this patient as a no-show"
+                    }
+                    aria-label={
+                      noShowStep === "confirm"
+                        ? "Confirm marking patient as no-show"
+                        : "Mark patient as no-show"
+                    }
+                    className={
+                      noShowStep === "confirm"
+                        ? "rounded-md border border-red-600 bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-60"
+                        : "rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-60"
+                    }
+                  >
+                    {noShowBusy
+                      ? "Marking…"
+                      : noShowStep === "confirm"
+                        ? "Confirm no-show?"
+                        : "Mark no-show"}
+                  </button>
+                ) : null}
+                {(() => {
+                  const leaveLabel =
+                    role !== "patient"
+                      ? "Leave call — Shift-click to skip the confirmation"
+                      : "Leave call";
+                  const leaveButton = (
+                    <button
+                      type="button"
+                      onClick={handleLeaveClick}
+                      aria-label="Leave call"
+                      title={isIconDock ? undefined : leaveLabel}
+                      className={
+                        isDesktopChrome
+                          ? COCKPIT_CTRL_LEAVE
+                          : isPatientMobile
+                            ? PATIENT_DOCK_LEAVE
+                            : LEGACY_CTRL_LEAVE
+                      }
+                    >
+                      {isIconDock ? (
+                        <PhoneOff
+                          className="h-[18px] w-[18px]"
+                          strokeWidth={2}
+                          aria-hidden
+                        />
+                      ) : (
+                        "Leave call"
+                      )}
+                    </button>
+                  );
+                  return isDesktopChrome ? (
+                    <CallControlTooltip label={leaveLabel}>
+                      {leaveButton}
+                    </CallControlTooltip>
+                  ) : (
+                    leaveButton
+                  );
+                })()}
+              </div>
+            </>
+          ) : (
+            <div
+              className={
+                isDesktopChrome
+                  ? "col-span-3 justify-self-end " + COCKPIT_CTRL_CLUSTER
+                  : "contents"
+              }
+            >
+              {(() => {
+                const leaveLabel =
+                  role !== "patient"
+                    ? "Leave call — Shift-click to skip the confirmation"
+                    : "Leave call";
+                const leaveButton = (
+                  <button
+                    type="button"
+                    onClick={handleLeaveClick}
+                    aria-label="Leave call"
+                    title={isIconDock ? undefined : leaveLabel}
+                    className={
+                      isDesktopChrome
+                        ? COCKPIT_CTRL_LEAVE
+                        : isPatientMobile
+                          ? PATIENT_DOCK_LEAVE
+                          : LEGACY_CTRL_LEAVE
+                    }
+                  >
+                    {isIconDock ? (
+                      <PhoneOff
+                        className="h-[18px] w-[18px]"
+                        strokeWidth={2}
+                        aria-hidden
+                      />
+                    ) : (
+                      "Leave call"
+                    )}
+                  </button>
+                );
+                return isDesktopChrome ? (
+                  <CallControlTooltip label={leaveLabel}>
+                    {leaveButton}
+                  </CallControlTooltip>
+                ) : (
+                  leaveButton
+                );
+              })()}
+            </div>
+          )}
+        </div>
+      </TooltipProvider>
       {/*
        * Sub-batch A · task-video-A4 — confirmation modal mount.
        * Mounted inside `videoPane` so the existing companion-chat layout
@@ -5948,18 +7504,44 @@ export default function VideoRoom({
   );
 
   // --------------------------------------------------------------------------
-  // Render — no companion → preserve legacy one-pane layout verbatim
-  // task-cockpit-fix-3 — in cockpit mode, suppress companion chat by default
-  // (showInCallChat = false) and render the same single-pane layout.
+  // Render — no companion → one-pane layout
+  //
+  // Cockpit with companion: ALWAYS keep the video-pane wrapper mounted
+  // (even when chat is hidden). Toggling Show in-call chat used to swap
+  // between two different trees, remounting `<video>` and dropping
+  // Twilio attach() — black tiles until a layout switch reattached.
   // --------------------------------------------------------------------------
 
-  if (!companion || (isCockpit && !showInCallChat)) {
-    return <div className="flex w-full flex-col">{videoPane}</div>;
+  if (!companion) {
+    return (
+      <div
+        className={
+          fillsHostHeight
+            ? "flex h-full min-h-0 w-full flex-col"
+            : "flex w-full flex-col"
+        }
+      >
+        {videoPane}
+      </div>
+    );
   }
 
   // --------------------------------------------------------------------------
   // Render — companion chat side panel / tab switcher
   // --------------------------------------------------------------------------
+
+  // Join-page: chat always in the side column. Cockpit: overlay drawer —
+  // video stage size never changes when toggling (no black flicker).
+  const showChatPane = isPatientMobile
+    ? false
+    : isCockpit
+      ? showInCallChat
+      : isPatientDesktop
+        ? patientDesktopChatOpen
+        : true;
+  // Always mount in cockpit so the first open is the same width
+  // transition as later toggles (no remount, no Focus steal).
+  const mountChatPane = true;
 
   const chatPane =
     chatAuth.status === "ready" ? (
@@ -5971,10 +7553,29 @@ export default function VideoRoom({
         sessionStatus="live"
         layout="panel"
         onIncomingMessage={handleIncomingChatMessage}
+        onUnreadCountChange={handleUnreadCountChange}
+        chatVisible={chatVisible}
         onRequestTokenRefresh={handleChatTokenRefresh}
+        quickReplies={isPatientMobile ? PATIENT_CHAT_QUICK_REPLIES : undefined}
+        hidePanelHeader={isPatientMobile}
+        onClosePanel={
+          isCockpit
+            ? closeInCallChat
+            : isPatientMobile
+              ? () => setPatientChatSnap(PATIENT_CHAT_SNAP_PEEK)
+              : isPatientDesktop
+                ? () => setPatientDesktopChatOpen(false)
+                : undefined
+        }
       />
     ) : chatAuth.status === "pending" ? (
-      <div className="flex h-full min-h-[320px] flex-col items-center justify-center p-4 text-sm text-gray-500">
+      <div
+        className={
+          isCockpit
+            ? "flex h-full min-h-0 flex-col items-center justify-center p-4 text-sm text-muted-foreground"
+            : "flex h-full min-h-[320px] flex-col items-center justify-center p-4 text-sm text-gray-500"
+        }
+      >
         Opening chat…
       </div>
     ) : (
@@ -5986,7 +7587,11 @@ export default function VideoRoom({
         const canRetry = Boolean(companion.onCompanionRetry);
         return (
           <div
-            className="flex h-full min-h-[320px] flex-col gap-2 p-4 text-sm text-gray-500"
+            className={
+              isCockpit
+                ? "flex h-full min-h-0 flex-col gap-2 p-4 text-sm text-muted-foreground"
+                : "flex h-full min-h-[320px] flex-col gap-2 p-4 text-sm text-gray-500"
+            }
             data-companion-tile="unavailable"
           >
             <p className="font-medium text-gray-700">Chat unavailable</p>
@@ -6021,11 +7626,26 @@ export default function VideoRoom({
   const unreadBadgeText = unreadCount > 99 ? "99+" : String(unreadCount);
 
   return (
-    <div className="flex w-full flex-col" data-has-companion="true">
+    <div
+      className={
+        fillsHostHeight
+          ? // Must fill the host box — without h-full/min-h-0 the
+            // video stage collapses (black tiles) and the chat list
+            // grows past the pane with no scrollport.
+            "flex h-full min-h-0 w-full flex-col"
+          : "flex w-full flex-col"
+      }
+      data-has-companion="true"
+      data-companion-layout={isDesktopChrome ? "cockpit" : "default"}
+      data-chat-open={showChatPane ? "true" : "false"}
+    >
       {/* Mobile (<768px): tab switcher. Hidden on md+. Also hidden in cockpit
           mode — the cockpit has its own navigation chrome. */}
       <div
-        className={"mb-3 flex gap-2 border-b border-gray-200 md:hidden" + (isCockpit ? " hidden" : "")}
+        className={
+          "mb-3 flex gap-2 border-b border-gray-200 md:hidden" +
+          (isIconDock ? " hidden" : "")
+        }
         role="tablist"
         aria-label="Consultation surface"
       >
@@ -6073,37 +7693,93 @@ export default function VideoRoom({
         Layout:
           - Mobile (<md):  single column. The inactive tab's pane is
             CSS-hidden (not unmounted) so Twilio's Room stays connected
-            across tab switches (task-38 Note #3). Unmounting + remounting
-            `<TextConsultRoom>` on every tab switch would also churn
-            Realtime subscriptions, so we keep it mounted too.
-          - Desktop (≥md): two-pane flex row. Left = video (flex-1).
+            across tab switches (task-38 Note #3).
+          - Desktop join (≥md): two-pane flex row. Left = video (flex-1).
             Right = chat panel (clamp 320-480px, target 30vw).
+          - Cockpit: same side-by-side split (chat never covers video).
+            Chat collapses to width 0 when closed; after first open the
+            pane stays mounted so toggles don't remount `<video>` /
+            reattach tracks (no black flash).
       */}
-      <div className="flex flex-col md:flex-row md:gap-4">
+      <div
+        className={
+          isCockpit
+            ? "flex min-h-0 flex-1 flex-row overflow-hidden"
+            : isPatientDesktop
+              ? "flex min-h-0 flex-1 flex-row overflow-hidden"
+              : fillsHostHeight
+                ? "flex min-h-0 flex-1 flex-col md:flex-row md:gap-4"
+                : "flex flex-col md:flex-row md:gap-4"
+        }
+      >
         <div
           id="video-pane"
           role="tabpanel"
           aria-label="Video"
           className={
-            "flex flex-1 " +
-            (activeTab === "video" ? "" : "hidden ") +
+            (isDesktopChrome
+              ? // min-w-[280px] matches MIN_VIDEO_STAGE_WITH_CHAT_PX when chat open
+                "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden " +
+                (showChatPane ? "min-w-[280px] " : "")
+              : fillsHostHeight
+                ? "flex min-h-0 min-w-0 flex-1 "
+                : "flex flex-1 ") +
+            (isPatientMobile || activeTab === "video" ? "" : "hidden ") +
             "md:flex"
           }
         >
           {videoPane}
         </div>
-        <div
-          id="chat-pane"
-          role="tabpanel"
-          aria-label="Companion chat"
-          className={
-            "flex " +
-            (activeTab === "chat" ? "" : "hidden ") +
-            "md:flex md:w-[clamp(320px,30vw,480px)] md:flex-shrink-0 md:border-l md:border-gray-200 md:pl-4"
-          }
-        >
-          <div className="flex h-full w-full flex-col">{chatPane}</div>
-        </div>
+        {isPatientMobile ? (
+          <PatientChatSheet
+            snap={patientChatSnap}
+            onSnapChange={setPatientChatSnap}
+            onVisibleFraction={setChatDragFraction}
+            onClose={() => setPatientChatSnap(PATIENT_CHAT_SNAP_PEEK)}
+          >
+            {chatPane}
+          </PatientChatSheet>
+        ) : mountChatPane ? (
+          <div
+            id="chat-pane"
+            role="tabpanel"
+            aria-label="Companion chat"
+            aria-hidden={
+              (isCockpit || isPatientDesktop) && !showChatPane
+                ? true
+                : undefined
+            }
+            className={
+              isCockpit || isPatientDesktop
+                ? "flex min-h-0 flex-shrink-0 flex-col overflow-hidden border-l bg-background " +
+                  (showChatPane
+                    ? "border-border"
+                    : "pointer-events-none border-transparent opacity-0")
+                : // `TextConsultRoom layout='panel'` is `h-full min-h-0`, so
+                  // the tab pane has to be a real flex box on mobile or the
+                  // message list loses its scrollport.
+                  "flex " +
+                  (fillsHostHeight ? "min-h-0 flex-1 " : "") +
+                  (activeTab === "chat" ? "" : "hidden ") +
+                  "md:flex md:min-h-[320px] md:w-[clamp(320px,30vw,480px)] md:flex-shrink-0 md:border-l md:border-gray-200 md:pl-4 md:flex-none"
+            }
+            style={
+              isCockpit || isPatientDesktop
+                ? { width: showChatPane ? 300 : 0 }
+                : undefined
+            }
+          >
+            <div
+              className={
+                isCockpit || isPatientDesktop
+                  ? "flex h-full min-h-0 w-full min-w-[240px] flex-col overflow-hidden"
+                  : "flex h-full w-full flex-col"
+              }
+            >
+              {chatPane}
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

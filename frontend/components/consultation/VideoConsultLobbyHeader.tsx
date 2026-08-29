@@ -17,7 +17,7 @@
  *   └──────────────────────────────────────────────┘
  *
  * The logo slot today is always the initials placeholder
- * (`'CC'` for "Clariva Clinic"); when voice B2 ships the `logo_url`
+ * (`'HA'` for "Halo Aid"); when voice B2 ships the `logo_url`
  * column + backend pipe, the same slot renders the `<img>` (handled
  * inside this component, transparent to callers).
  *

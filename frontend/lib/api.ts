@@ -53,6 +53,7 @@ import type {
   UpdateMedicalBackgroundNotesPayload,
   UpdateAllergySectionNotesPayload,
   UpdatePatientVitalsPayload,
+  PatientVitalsReading,
   VitalsData,
   VitalsListData,
 } from "@/types/patient-chart";
@@ -139,7 +140,7 @@ async function request<T>(
       );
     if (isNetworkFailure) {
       throw new Error(
-        "Could not reach the Clariva API. Check that the backend is running (npm run dev in backend/) and that NEXT_PUBLIC_API_URL matches your setup."
+        "Could not reach the Halo Aid API. Check that the backend is running (npm run dev in backend/) and that NEXT_PUBLIC_API_URL matches your setup."
       );
     }
     throw err;
@@ -162,7 +163,7 @@ async function request<T>(
       const trimmed = text.trimStart();
       if (trimmed.startsWith("<") || trimmed.startsWith("<!")) {
         message =
-          "The dashboard could not reach the Clariva API (received HTML instead of JSON). Set NEXT_PUBLIC_API_URL in your deployment to your backend origin (e.g. https://your-api.onrender.com), with no trailing slash.";
+          "The dashboard could not reach the Halo Aid API (received HTML instead of JSON). Set NEXT_PUBLIC_API_URL in your deployment to your backend origin (e.g. https://your-api.onrender.com), with no trailing slash.";
       }
     }
     const err = new Error(message) as Error & {
@@ -244,6 +245,42 @@ export async function createAppointment(
     body: JSON.stringify(payload),
     cache: "no-store",
   });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ appointment: Appointment }>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<{ appointment: Appointment }>;
+}
+
+/**
+ * Stamp clinic arrival (receptionist-portal RQ6).
+ * Same endpoint the desk uses. Idempotent.
+ */
+export async function postAppointmentCheckIn(
+  token: string,
+  appointmentId: string
+): Promise<ApiSuccess<{ appointment: Appointment }>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/appointments/${encodeURIComponent(appointmentId)}/check-in`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    }
+  );
   const json = (await res.json().catch(() => ({}))) as
     | ApiSuccess<{ appointment: Appointment }>
     | ApiError;
@@ -408,7 +445,17 @@ export async function redirectToInstagramConnect(token: string): Promise<void> {
     }
   );
   if (!res.ok) {
-    throw new Error("Could not start Instagram connect");
+    const json = (await res.json().catch(() => ({}))) as ApiError | unknown;
+    const message =
+      typeof json === "object" &&
+      json !== null &&
+      "error" in json &&
+      typeof (json as ApiError).error?.message === "string"
+        ? (json as ApiError).error.message
+        : "Could not start Instagram connect";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
   }
   const json = (await res.json()) as { redirectUrl?: string };
   if (json?.redirectUrl) {
@@ -496,6 +543,187 @@ export async function patchDoctorSettings(
     throw err;
   }
   return json as ApiSuccess<DoctorSettingsData>;
+}
+
+export const BRANDING_LOGO_ALLOWED_MIME = ["image/png", "image/jpeg"] as const;
+export const BRANDING_LOGO_MAX_BYTES = 2 * 1024 * 1024;
+export const CLINIC_BRANDING_BUCKET = "clinic-branding";
+
+export async function getBrandingLogoUploadUrl(
+  token: string,
+  contentType: (typeof BRANDING_LOGO_ALLOWED_MIME)[number],
+): Promise<ApiSuccess<{ path: string; token: string }>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/settings/doctor/branding/logo-upload-url`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ contentType }),
+      cache: "no-store",
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ path: string; token: string }>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json as ApiSuccess<{ path: string; token: string }>;
+}
+
+export async function putBrandingLogo(
+  token: string,
+  data: string,
+): Promise<
+  ApiSuccess<{ logoVersion: number; logoPreviewUrl: string | null }>
+> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/settings/doctor/branding/logo`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ data }),
+      cache: "no-store",
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ logoVersion: number; logoPreviewUrl: string | null }>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json as ApiSuccess<{
+    logoVersion: number;
+    logoPreviewUrl: string | null;
+  }>;
+}
+
+export async function deleteBrandingLogo(
+  token: string,
+): Promise<ApiSuccess<{ deleted: boolean }>> {
+  return deleteBrandingAsset(token, "logo");
+}
+
+export async function putBrandingHeader(
+  token: string,
+  data: string,
+): Promise<
+  ApiSuccess<{ headerVersion: number; headerPreviewUrl: string | null }>
+> {
+  const json = await putBrandingAsset(token, "header", data);
+  return json as ApiSuccess<{
+    headerVersion: number;
+    headerPreviewUrl: string | null;
+  }>;
+}
+
+export async function putBrandingFooter(
+  token: string,
+  data: string,
+): Promise<
+  ApiSuccess<{ footerVersion: number; footerPreviewUrl: string | null }>
+> {
+  const json = await putBrandingAsset(token, "footer", data);
+  return json as ApiSuccess<{
+    footerVersion: number;
+    footerPreviewUrl: string | null;
+  }>;
+}
+
+export async function deleteBrandingHeader(
+  token: string,
+): Promise<ApiSuccess<{ deleted: boolean }>> {
+  return deleteBrandingAsset(token, "header");
+}
+
+export async function deleteBrandingFooter(
+  token: string,
+): Promise<ApiSuccess<{ deleted: boolean }>> {
+  return deleteBrandingAsset(token, "footer");
+}
+
+export async function putBrandingBackground(
+  token: string,
+  data: string,
+): Promise<
+  ApiSuccess<{ backgroundVersion: number; backgroundPreviewUrl: string | null }>
+> {
+  const json = await putBrandingAsset(token, "background", data);
+  return json as ApiSuccess<{
+    backgroundVersion: number;
+    backgroundPreviewUrl: string | null;
+  }>;
+}
+
+export async function deleteBrandingBackground(
+  token: string,
+): Promise<ApiSuccess<{ deleted: boolean }>> {
+  return deleteBrandingAsset(token, "background");
+}
+
+async function putBrandingAsset(
+  token: string,
+  slot: "logo" | "header" | "footer" | "background",
+  data: string,
+): Promise<ApiSuccess<Record<string, unknown>>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/settings/doctor/branding/${slot}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ data }),
+      cache: "no-store",
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<Record<string, unknown>>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json as ApiSuccess<Record<string, unknown>>;
+}
+
+async function deleteBrandingAsset(
+  token: string,
+  slot: "logo" | "header" | "footer" | "background",
+): Promise<ApiSuccess<{ deleted: boolean }>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/settings/doctor/branding/${slot}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ deleted: boolean }>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json as ApiSuccess<{ deleted: boolean }>;
 }
 
 export interface ModeScheduleTestDateData {
@@ -1274,10 +1502,11 @@ export interface BookingPageCatalogApi {
 /** ARM-09: matcher band for /book UI (no PHI). */
 export type ServiceCatalogMatchConfidenceApi = "high" | "medium" | "low";
 
-/** ARM-10: why /book cannot proceed to payment yet */
+/** ARM-10 / ver-05: why /book cannot proceed to payment yet */
 export type BookingBlockedReasonApi =
   | "staff_review_pending"
-  | "service_selection_not_finalized";
+  | "service_selection_not_finalized"
+  | "doctor_not_verified";
 
 export interface SlotPageInfoData {
   doctorId: string;
@@ -1449,71 +1678,6 @@ export async function selectSlotAndPay(
     throw err;
   }
   return json as ApiSuccess<SelectSlotAndPayData>;
-}
-
-/**
- * Plan 02 · Task 27 — Persist the patient's recording-consent decision.
- *
- * Fires AFTER `selectSlotAndPay` returns (which gives us `appointmentId`)
- * and BEFORE the frontend redirects to the payment URL. Uses the booking
- * token from the URL for auth (patients are not logged in).
- *
- * Returns void on success (backend returns 204). Caller should catch and
- * log errors but should not block the payment redirect on failure — a
- * missed consent write still leaves the row in the default-NULL state,
- * which Plan 04 / 05 handle as "no explicit opt-out = proceed".
- */
-export async function postRecordingConsent(
-  bookingToken: string,
-  appointmentId: string,
-  decision: boolean,
-  consentVersion: string
-): Promise<void> {
-  const res = await fetch(
-    `${requireApiBaseUrl()}/api/v1/appointments/${encodeURIComponent(appointmentId)}/recording-consent`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ decision, consentVersion, bookingToken }),
-      cache: "no-store",
-    }
-  );
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    let message = "Failed to record consent";
-    try {
-      const parsed = JSON.parse(text) as ApiError;
-      if (isApiError(parsed)) {
-        message = parsed.error.message;
-      }
-    } catch {
-      // swallow parse failure; use default message
-    }
-    const err = new Error(message) as Error & { status?: number };
-    err.status = res.status;
-    throw err;
-  }
-}
-
-/**
- * Plan 02 · Task 27 — Read recording-consent decision for a session.
- * Doctor-only (requires auth). Used by the `<SessionStartBanner>` to
- * decide whether to render the "patient declined recording" notice.
- */
-export interface RecordingConsentForSessionData {
-  decision: boolean | null;
-  capturedAt: string | null;
-  version: string | null;
-}
-
-export async function getRecordingConsentForSession(
-  token: string,
-  sessionId: string
-): Promise<ApiSuccess<RecordingConsentForSessionData>> {
-  return request<RecordingConsentForSessionData>(
-    `/api/v1/consultation/${encodeURIComponent(sessionId)}/recording-consent`,
-    { token }
-  );
 }
 
 /**
@@ -1733,18 +1897,33 @@ export interface StartConsultationData {
   };
 }
 
-export interface GetConsultationTokenData {
-  token: string;
-  roomName: string;
-  /**
-   * `consultation_sessions.id` — surfaced so the patient join page can
-   * call `POST /api/v1/consultation/:sessionId/text-token` for the
-   * companion chat (Plan 06 Decision 9 / voice-0B). Optional only for
-   * defensive-typing during the deploy window where backend + frontend
-   * may briefly disagree; once both ship together this is always
-   * present in practice.
-   */
-  sessionId?: string;
+export type GetConsultationTokenData =
+  | {
+      status?: "live";
+      token: string;
+      roomName: string;
+      /**
+       * `consultation_sessions.id` — surfaced so the patient join page can
+       * call `POST /api/v1/consultation/:sessionId/text-token` for the
+       * companion chat (Plan 06 Decision 9 / voice-0B). Optional only for
+       * defensive-typing during the deploy window where backend + frontend
+       * may briefly disagree; once both ship together this is always
+       * present in practice.
+       */
+      sessionId?: string;
+    }
+  | {
+      /** Doctor has not started yet — patient lobby (crc-04). */
+      status: "lobby";
+      appointmentId: string;
+      scheduledStartAt: string | null;
+      consultationType: string | null;
+    };
+
+export interface LobbyHeartbeatData {
+  checkedInAt: string;
+  lastSeenAt: string;
+  presence: "waiting" | "stepped_away" | "unknown";
 }
 
 /**
@@ -1840,6 +2019,78 @@ export async function getConsultationTokenForPatient(
     throw err;
   }
   return json as ApiSuccess<GetConsultationTokenData>;
+}
+
+/**
+ * POST /api/v1/bookings/session/lobby-heartbeat?token=
+ * Stamps patient lobby presence (crc-02).
+ */
+export async function postLobbyHeartbeat(
+  patientToken: string
+): Promise<ApiSuccess<LobbyHeartbeatData>> {
+  const params = new URLSearchParams({ token: patientToken });
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/bookings/session/lobby-heartbeat?${params.toString()}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+    }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<LobbyHeartbeatData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<LobbyHeartbeatData>;
+}
+
+export interface LobbyPresenceTokenData {
+  token: string;
+  expiresAt: string;
+  appointmentId: string;
+}
+
+/**
+ * POST /api/v1/bookings/session/lobby-presence-token?token=
+ * HMAC → purpose-minted Realtime JWT for lobby presence (crc-14).
+ */
+export async function requestLobbyPresenceToken(
+  patientToken: string
+): Promise<ApiSuccess<LobbyPresenceTokenData>> {
+  const params = new URLSearchParams({ token: patientToken });
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/bookings/session/lobby-presence-token?${params.toString()}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+    }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<LobbyPresenceTokenData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<LobbyPresenceTokenData>;
 }
 
 // -----------------------------------------------------------------------------
@@ -2048,22 +2299,27 @@ export interface RecordingStateData {
   paused:      boolean;
   pausedAt?:   string;
   pausedBy?:   string;
+  /** Who issued the open pause. Do not infer from `pausedBy`. */
+  pausedByRole?: "doctor" | "patient";
+  /** Preset code, or `not_recorded_in_preset_form` for legacy rows. */
   pauseReason?: string;
   resumedAt?:  string;
+  /** Server-owned ISO deadline. Countdown is derived from this. */
+  autoResumeAt?: string;
+  autoResumeExtensionsUsed?: 0 | 1;
+  autoResumeBoundMs?: number;
 }
 
 /**
- * POST /api/v1/consultation/:sessionId/recording/pause — doctor-only.
+ * POST /api/v1/consultation/:sessionId/recording/pause
  *
- * Decision 4 LOCKED: a reason ≥5 / ≤200 chars is required. The backend
- * enforces the same bounds; this helper does NOT pre-validate so all
- * validation errors surface via the standardised API error envelope
- * (keeps the copy consistent between client + server without duplication).
+ * Doctor: `{ reasonCode }` — one of the five presets.
+ * Patient: omit `reasonCode`; the server records `patient_request`.
  */
 export async function pauseRecording(
   token: string,
   sessionId: string,
-  reason: string,
+  reasonCode?: string,
 ): Promise<ApiSuccess<null>> {
   const res = await fetch(
     `${requireApiBaseUrl()}/api/v1/consultation/${encodeURIComponent(sessionId)}/recording/pause`,
@@ -2073,7 +2329,7 @@ export async function pauseRecording(
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ reason }),
+      body: JSON.stringify(reasonCode ? { reasonCode } : {}),
       cache: "no-store",
     },
   );
@@ -2098,8 +2354,8 @@ export async function pauseRecording(
 }
 
 /**
- * POST /api/v1/consultation/:sessionId/recording/resume — doctor-only.
- * No body; resume has no reason requirement (Decision 4).
+ * POST /api/v1/consultation/:sessionId/recording/resume.
+ * No body. The actor who paused may resume; a counterparty is refused.
  */
 export async function resumeRecording(
   token: string,
@@ -2134,6 +2390,47 @@ export async function resumeRecording(
     throw err;
   }
   return json as ApiSuccess<null>;
+}
+
+export interface ExtendRecordingPauseData {
+  autoResumeAt: string;
+  autoResumeExtensionsUsed: 1;
+}
+
+/**
+ * POST /api/v1/consultation/:sessionId/recording/pause/extend — doctor-only.
+ * Extends an open pause by the server's 5-minute bound, once.
+ */
+export async function extendRecordingPause(
+  token: string,
+  sessionId: string,
+): Promise<ApiSuccess<ExtendRecordingPauseData>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/consultation/${encodeURIComponent(sessionId)}/recording/pause/extend`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<ExtendRecordingPauseData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json;
 }
 
 /**
@@ -2282,8 +2579,13 @@ export async function mintReplayAudioUrl(
    * 30-day window or just verified via `verifyVideoReplayOtp`).
    */
   artifactKind: "audio" | "video" = "audio",
+  /** rec-29: mint this composition. Omit to keep the single-artifact resolver. */
+  compositionSid?: string,
 ): Promise<ApiSuccess<ReplayMintData>> {
-  const qs = artifactKind === "video" ? "?artifactKind=video" : "";
+  const params = new URLSearchParams();
+  if (artifactKind === "video") params.set("artifactKind", "video");
+  if (compositionSid) params.set("compositionSid", compositionSid);
+  const qs = params.toString() ? `?${params.toString()}` : "";
   const res = await fetch(
     `${requireApiBaseUrl()}/api/v1/consultation/${encodeURIComponent(sessionId)}/replay/audio/mint${qs}`,
     {
@@ -2347,6 +2649,12 @@ export async function getReplayUrl(
   };
 }
 
+export interface ReplayCompositionRef {
+  compositionSid: string;
+  startedAt: string;
+  durationSeconds: number | null;
+}
+
 export interface ReplayStatusData {
   available: boolean;
   /** Set when `available === false`. */
@@ -2355,12 +2663,14 @@ export interface ReplayStatusData {
   selfServeExpiresAt?: string;
   /**
    * Plan 08 · Task 44: `true` when at least one completed video
-   * composition exists for this session. Drives the "Show video"
-   * toggle on `<RecordingReplayPlayer>`. Never an access gate — a
-   * patient with `hasVideo=true` may still be blocked at mint time
-   * by the 30-day OTP window.
+   * composition exists. Derived from `videoCompositions`. Never an
+   * access gate — a patient may still be blocked at mint by OTP.
    */
   hasVideo?: boolean;
+  /** Completed audio legs, `startedAt` ascending. rec-29 / REC5-D4. */
+  audioCompositions?: ReplayCompositionRef[];
+  /** Completed video legs, `startedAt` ascending. rec-29 / REC5-D4. */
+  videoCompositions?: ReplayCompositionRef[];
 }
 
 /**
@@ -2377,6 +2687,47 @@ export async function getReplayStatus(
 ): Promise<ApiSuccess<ReplayStatusData>> {
   return request<ReplayStatusData>(
     `/api/v1/consultation/${encodeURIComponent(sessionId)}/replay/status`,
+    { token },
+  );
+}
+
+export type RecordingGapReasonCode =
+  | "patient_request"
+  | "sensitive_disclosure"
+  | "third_party_present"
+  | "administrative"
+  | "technical"
+  | "not_recorded_in_preset_form";
+
+export interface RecordingGap {
+  wallStartedAt: string;
+  wallEndedAt: string | null;
+  durationMs: number | null;
+  actorRole: "doctor" | "patient" | "system";
+  reasonCode: RecordingGapReasonCode;
+  closedAs: "manual_resume" | "auto_resume" | "session_ended_while_paused" | "unclosed";
+  mediaOffsetMs: {
+    audio: number | null;
+    video: number | null;
+  };
+}
+
+export interface RecordingGapsData {
+  schemaVersion: 1;
+  gaps: RecordingGap[];
+}
+
+/**
+ * GET /api/v1/consultation/:sessionId/replay/gaps
+ *
+ * Ledger-derived pause gaps for the replay player (rec-18). Read-only.
+ */
+export async function getRecordingGaps(
+  token: string,
+  sessionId: string,
+): Promise<ApiSuccess<RecordingGapsData>> {
+  return request<RecordingGapsData>(
+    `/api/v1/consultation/${encodeURIComponent(sessionId)}/replay/gaps`,
     { token },
   );
 }
@@ -2876,6 +3227,16 @@ export async function getLastPrescriptionInEpisode(
   );
 }
 
+export async function getAppointmentDeskVitals(
+  token: string,
+  appointmentId: string
+): Promise<ApiSuccess<{ vitals: PatientVitalsReading | null }>> {
+  return request<{ vitals: PatientVitalsReading | null }>(
+    `/api/v1/appointments/${encodeURIComponent(appointmentId)}/desk-vitals`,
+    { token }
+  );
+}
+
 // ============================================================================
 // EHR Sub-batch B2 / T3.16 — Public prescription share-link surface
 // ============================================================================
@@ -2906,9 +3267,48 @@ export interface PublicPrescriptionData {
     specialty: string | null;
     clinic_name: string | null;
     clinic_address: string | null;
+    qualifications?: string | null;
+    registration_number?: string | null;
+    letterhead_preset?: "classic" | "centred" | "preprinted" | "banner" | null;
+    letterhead_accent_color?: string | null;
+    letterhead_chrome_color?: string | null;
+    letterhead_patient_color?: string | null;
+    has_logo?: boolean;
+    has_header?: boolean;
+    has_footer?: boolean;
+    header_height_mm?: number;
+    footer_height_mm?: number;
+    page_margin_top_mm?: number;
+    page_margin_right_mm?: number;
+    page_margin_bottom_mm?: number;
+    page_margin_left_mm?: number;
+    logo_size?: "small" | "medium" | "large";
+    patient_identity_preset?: "open_letter" | "compact" | "grid";
+    show_patient_phone?: boolean;
+    show_patient_guardian?: boolean;
+    show_patient_mrn?: boolean;
+    show_patient_address?: boolean;
+    letterhead_footer_line?: string | null;
+    hide_halo_credit?: boolean;
+    letterhead_background_preset?: "none" | "paper" | "cross" | "upload";
+    letterhead_background_opacity?: number;
+    has_background?: boolean;
+    letterhead_header_fit?: "fit" | "fill" | "stretch";
+    letterhead_footer_fit?: "fit" | "fill" | "stretch";
+    letterhead_background_fit?: "fit" | "fill" | "stretch";
+    letterhead_header_text_size?: "small" | "medium" | "large";
+    letterhead_patient_text_size?: "small" | "medium" | "large";
+    letterhead_body_text_size?: "small" | "medium" | "large";
   };
   patient: {
     display_name: string;
+    age?: string | null;
+    gender?: string | null;
+    phone?: string | null;
+    guardian_name?: string | null;
+    guardian_relation?: string | null;
+    address?: string | null;
+    medical_record_number?: string | null;
   };
   appointment: {
     id: string | null;
@@ -3352,6 +3752,11 @@ export interface PrescriptionShareLinkData {
   expiresAt: string;
 }
 
+/** Doctor print — reminted (or on-demand) 24h signed PDF URL. */
+export interface PrescriptionPdfUrlData {
+  signedUrl: string;
+}
+
 /**
  * Send prescription to patient via DM/email. Requires auth token.
  */
@@ -3424,6 +3829,37 @@ export async function regeneratePrescriptionPdf(
  * existing prescription (no side effects beyond logging the doctor
  * action). Used by the "Copy share link" kebab item.
  */
+export async function getPrescriptionPdfUrl(
+  token: string,
+  prescriptionId: string,
+): Promise<ApiSuccess<PrescriptionPdfUrlData>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/prescriptions/${prescriptionId}/pdf-url`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<PrescriptionPdfUrlData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<PrescriptionPdfUrlData>;
+}
+
 export async function createPrescriptionShareLink(
   token: string,
   prescriptionId: string,
@@ -4769,6 +5205,200 @@ export async function getServiceStaffReviews(
   );
 }
 
+/** ibi-03: read-only receptionist DM message (PHI — do not log content). */
+export interface InteractionMessage {
+  id: string;
+  conversation_id: string;
+  sender_type: "patient" | "doctor" | "system";
+  content: string;
+  intent: string | null;
+  created_at: string;
+}
+
+export type InteractionMessagesData = {
+  messages: InteractionMessage[];
+  hasMoreOlder: boolean;
+};
+
+/**
+ * Read-only DM thread for a conversation owned by the logged-in doctor (ibi-03).
+ * Newest page by default; pass `before` (ISO) to load older messages.
+ */
+export async function getInteractionMessages(
+  token: string,
+  conversationId: string,
+  opts: { limit?: number; before?: string } = {}
+): Promise<ApiSuccess<InteractionMessagesData>> {
+  const params = new URLSearchParams();
+  if (opts.limit != null) params.set("limit", String(opts.limit));
+  if (opts.before) params.set("before", opts.before);
+  const qs = params.toString();
+  return request<InteractionMessagesData>(
+    `/api/v1/interactions/${encodeURIComponent(conversationId)}/messages${
+      qs ? `?${qs}` : ""
+    }`,
+    { token }
+  );
+}
+
+/** ibi-06: fused Inbox status chip. */
+export type InteractionFusedStatus =
+  | "new_lead"
+  | "in_conversation"
+  | "needs_review"
+  | "booking_pending"
+  | "booked"
+  | "paid"
+  | "cancelled"
+  | "no_show";
+
+/** Lifecycle stages in the Inbox funnel rail (excludes no_show + needs_review). */
+export const INBOX_FUNNEL_STAGES: {
+  value: Exclude<InteractionFusedStatus, "needs_review" | "no_show">;
+  label: string;
+}[] = [
+  { value: "new_lead", label: "New" },
+  { value: "in_conversation", label: "Chatting" },
+  { value: "booking_pending", label: "Booking in progress" },
+  { value: "booked", label: "On calendar" },
+  { value: "paid", label: "Confirmed" },
+  { value: "cancelled", label: "Cancelled" },
+];
+
+export type InteractionStageCounts = {
+  all: number;
+  new_lead: number;
+  in_conversation: number;
+  booking_pending: number;
+  booked: number;
+  paid: number;
+  cancelled: number;
+  needs_review: number;
+};
+
+export function emptyInteractionStageCounts(): InteractionStageCounts {
+  return {
+    all: 0,
+    new_lead: 0,
+    in_conversation: 0,
+    booking_pending: 0,
+    booked: 0,
+    paid: 0,
+    cancelled: 0,
+    needs_review: 0,
+  };
+}
+
+export type InteractionTimelineStepType =
+  | "comment_captured"
+  | "first_dm"
+  | "booking_started"
+  | "slot_selected"
+  | "needs_review"
+  | "booked"
+  | "paid"
+  | "rescheduled";
+
+export interface InteractionTimelineStep {
+  type: InteractionTimelineStepType;
+  at: string;
+  comment_lead_id?: string;
+  conversation_id?: string;
+  appointment_id?: string;
+  review_id?: string;
+}
+
+export interface InteractionListItem {
+  id: string;
+  kind: "conversation" | "comment_lead";
+  channel: "instagram" | "facebook" | "whatsapp";
+  /** Conversation chatter patient (may be an unregistered placeholder). */
+  patient_id: string | null;
+  patient_display_name: string | null;
+  medical_record_number: string | null;
+  lead_label: string;
+  last_message_snippet: string | null;
+  status: InteractionFusedStatus;
+  has_comment_lead: boolean;
+  needs_review: boolean;
+  appointment_id: string | null;
+  /** Patient the visit is for — may differ from chatter when booking for family. */
+  appointment_patient_id: string | null;
+  appointment_patient_display_name: string | null;
+  appointment_patient_mrn: string | null;
+  platform_external_id: string | null;
+  /** Public @handle / display name from Meta (for profile deep links). */
+  platform_username: string | null;
+  /** Cached Meta profile_pic CDN URL (may be null / expired). */
+  avatar_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type InteractionsListData = {
+  interactions: InteractionListItem[];
+  nextCursor: string | null;
+  /** Null when the server skipped the stage scan (poll / load-more). */
+  counts: InteractionStageCounts | null;
+};
+
+export type InteractionDetail = InteractionListItem & {
+  timeline: InteractionTimelineStep[];
+  /** Full comment body when kind=comment_lead. */
+  comment_text?: string | null;
+};
+
+export type InteractionDetailData = {
+  interaction: InteractionDetail;
+};
+
+export async function getInteractions(
+  token: string,
+  opts: {
+    scope?: "signal" | "all";
+    channel?: "instagram" | "facebook" | "whatsapp";
+    status?: InteractionFusedStatus;
+    statuses?: InteractionFusedStatus[];
+    dateFrom?: string;
+    dateTo?: string;
+    cursor?: string;
+    limit?: number;
+    /** When false, skip funnel stage scan (polls). Default true on first page. */
+    includeCounts?: boolean;
+  } = {}
+): Promise<ApiSuccess<InteractionsListData>> {
+  const params = new URLSearchParams();
+  if (opts.scope) params.set("scope", opts.scope);
+  if (opts.channel) params.set("channel", opts.channel);
+  if (opts.statuses?.length) {
+    params.set("status", opts.statuses.join(","));
+  } else if (opts.status) {
+    params.set("status", opts.status);
+  }
+  if (opts.dateFrom) params.set("dateFrom", opts.dateFrom);
+  if (opts.dateTo) params.set("dateTo", opts.dateTo);
+  if (opts.cursor) params.set("cursor", opts.cursor);
+  if (opts.limit != null) params.set("limit", String(opts.limit));
+  if (opts.includeCounts != null) {
+    params.set("includeCounts", opts.includeCounts ? "true" : "false");
+  }
+  const qs = params.toString();
+  return request<InteractionsListData>(
+    `/api/v1/interactions${qs ? `?${qs}` : ""}`,
+    { token }
+  );
+}
+
+export async function getInteraction(
+  token: string,
+  interactionId: string
+): Promise<ApiSuccess<InteractionDetailData>> {
+  return request<InteractionDetailData>(
+    `/api/v1/interactions/${encodeURIComponent(interactionId)}`,
+    { token }
+  );
+}
+
 export async function postConfirmServiceStaffReview(
   token: string,
   reviewId: string,
@@ -5145,9 +5775,25 @@ export async function postCatalogPreviewMatch(
 // Backend: backend/src/controllers/dashboard-events-controller.ts
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Pinned payload shape for `event_kind === 'patient_replayed_recording'`. */
+/**
+ * Event kinds mirrored from `dashboard-events-service.ts`
+ * (ALR-D8 + Alerts v2 · ALR2-D2). Read-model only — no wire change.
+ */
+export type DashboardEventKind =
+  | "patient_replayed_recording"
+  | "patient_revoked_video_mid_session"
+  | "patient_replayed_video"
+  | "booking_review_sla_breach"
+  | "appointment_no_show";
+
+/** UI severity carried in the payload (ALR2-D6) — not a table column. */
+export type DashboardEventSeverity = "info" | "action_needed";
+
+/** Pinned payload for recording / video replay kinds. */
 export interface PatientReplayedRecordingPayload {
-  artifact_type: "audio" | "transcript";
+  artifact_type: "audio" | "transcript" | "video";
+  /** Additive (Task 32); treat undefined as reviewed at the UI layer. */
+  action_kind?: "reviewed" | "downloaded";
   recording_access_audit_id: string;
   patient_display_name: string;
   replayed_at: string;
@@ -5157,16 +5803,64 @@ export interface PatientReplayedRecordingPayload {
   escalation_reason?: string;
 }
 
-export type DashboardEventKind = "patient_replayed_recording";
+/** Pinned payload for `patient_revoked_video_mid_session`. */
+export interface PatientRevokedVideoMidSessionPayload {
+  video_escalation_audit_id: string;
+  revoked_at: string;
+  patient_display_name: string;
+  consult_started_at: string | null;
+}
 
-export interface DashboardEvent {
+/** Pinned payload for `booking_review_sla_breach` (Alerts v2 · ALR2-D7). */
+export interface BookingReviewSlaBreachPayload {
+  severity: "action_needed";
+  /** Opaque UUID — deep-link target; not PHI. */
+  review_request_id: string;
+  patient_display_name: string;
+  requested_at: string;
+  sla_deadline_at: string;
+}
+
+/** Pinned payload for `appointment_no_show` (Alerts v2 · ALR2-D7). */
+export interface AppointmentNoShowPayload {
+  severity: "info";
+  /** Opaque UUID — deep-link target; not PHI. */
+  appointment_id: string;
+  patient_display_name: string;
+  appointment_date: string;
+}
+
+export type DashboardEventPayload =
+  | PatientReplayedRecordingPayload
+  | PatientRevokedVideoMidSessionPayload
+  | BookingReviewSlaBreachPayload
+  | AppointmentNoShowPayload;
+
+type DashboardEventBase = {
   id: string;
-  eventKind: DashboardEventKind;
   sessionId: string | null;
-  payload: PatientReplayedRecordingPayload;
   acknowledgedAt: string | null;
   createdAt: string;
-}
+};
+
+/** Discriminated on `eventKind` so feed copy can narrow the payload. */
+export type DashboardEvent =
+  | (DashboardEventBase & {
+      eventKind: "patient_replayed_recording" | "patient_replayed_video";
+      payload: PatientReplayedRecordingPayload;
+    })
+  | (DashboardEventBase & {
+      eventKind: "patient_revoked_video_mid_session";
+      payload: PatientRevokedVideoMidSessionPayload;
+    })
+  | (DashboardEventBase & {
+      eventKind: "booking_review_sla_breach";
+      payload: BookingReviewSlaBreachPayload;
+    })
+  | (DashboardEventBase & {
+      eventKind: "appointment_no_show";
+      payload: AppointmentNoShowPayload;
+    });
 
 export interface DashboardEventsResponse {
   events: DashboardEvent[];
@@ -5229,4 +5923,841 @@ export async function acknowledgeDashboardEvent(
   err.status = res.status;
   err.body = json;
   throw err;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// insights-v1 · ins-01 / ins-02: Practice-health overview (Tier-1 aggregates).
+//
+// Aggregate-only, doctor-scoped, range-aware. Never returns patient rows or
+// raw payments — only counts, sums, and rates.
+// Backend: backend/src/controllers/dashboard-insights-controller.ts
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface PracticeHealthOverview {
+  range: { from: string; to: string };
+  volume: {
+    total: number;
+    byStatus: Record<string, number>;
+    byModality: Record<string, number>;
+  };
+  /** 0..1 */
+  noShowRate: number;
+  revenueCapturedMinor: number;
+  currency: string;
+  /** Present when captured payments span more than one currency. */
+  mixedCurrency?: boolean;
+  consult: {
+    /** 0..1 */
+    completionRate: number;
+    medianDurationSeconds: number;
+  };
+}
+
+export interface GetPracticeHealthOverviewOptions {
+  from: string;
+  to: string;
+}
+
+export async function getPracticeHealthOverview(
+  token: string,
+  options: GetPracticeHealthOverviewOptions,
+): Promise<ApiSuccess<PracticeHealthOverview>> {
+  const params = new URLSearchParams({
+    from: options.from,
+    to: options.to,
+  });
+  return request<PracticeHealthOverview>(
+    `/api/v1/dashboard/insights/overview?${params.toString()}`,
+    { token },
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// insights-v1 · ins-03: Booking funnel + review SLA (Tier-2 aggregates).
+// Aggregate counts only — never patient / payment / conversation rows.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface BookingFunnelOverview {
+  range: { from: string; to: string };
+  funnel: {
+    slotsSelected: number;
+    slotsConsumed: number;
+    paymentsCaptured: number;
+    appointmentsConfirmed: number;
+  };
+  review: {
+    pending: number;
+    medianResolutionSeconds: number;
+    breachedSla: number;
+  };
+}
+
+export async function getBookingFunnelOverview(
+  token: string,
+  options: GetPracticeHealthOverviewOptions,
+): Promise<ApiSuccess<BookingFunnelOverview>> {
+  const params = new URLSearchParams({
+    from: options.from,
+    to: options.to,
+  });
+  return request<BookingFunnelOverview>(
+    `/api/v1/dashboard/insights/funnel?${params.toString()}`,
+    { token },
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// insights-v1 · ins-04: Clinical mix (Tier-3 de-identified aggregates).
+// `{ label, count, code? }` only — never patient ids or free-text notes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ClinicalMixItem {
+  label: string;
+  count: number;
+  code?: string;
+}
+
+export interface ClinicalMixOverview {
+  range: { from: string; to: string };
+  topDiagnoses: ClinicalMixItem[];
+  topMedicines: ClinicalMixItem[];
+  topInvestigations: ClinicalMixItem[];
+  diagnosesSource: "diagnoses_json" | "diagnosis_tags" | "none";
+}
+
+export interface GetClinicalMixOverviewOptions
+  extends GetPracticeHealthOverviewOptions {
+  limit?: number;
+}
+
+export async function getClinicalMixOverview(
+  token: string,
+  options: GetClinicalMixOverviewOptions,
+): Promise<ApiSuccess<ClinicalMixOverview>> {
+  const params = new URLSearchParams({
+    from: options.from,
+    to: options.to,
+  });
+  if (typeof options.limit === "number") {
+    params.set("limit", String(options.limit));
+  }
+  return request<ClinicalMixOverview>(
+    `/api/v1/dashboard/insights/clinical-mix?${params.toString()}`,
+    { token },
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// insights-v1 · ins-05: Telehealth quality (Tier-4 aggregates).
+// Modality mix / switches / join rate / call-quality percentiles only —
+// never per-session or per-sample rows.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface CallQualitySummary {
+  p50Rtt: number | null;
+  p95Rtt: number | null;
+  avgPacketLoss: number | null;
+}
+
+export interface TelehealthQualityOverview {
+  range: { from: string; to: string };
+  modalityMix: { text: number; voice: number; video: number };
+  switches: { upgrades: number; downgrades: number };
+  /** 0..1 */
+  joinSuccessRate: number;
+  quality: {
+    video: CallQualitySummary;
+    voice: CallQualitySummary;
+  };
+}
+
+export async function getTelehealthQualityOverview(
+  token: string,
+  options: GetPracticeHealthOverviewOptions,
+): Promise<ApiSuccess<TelehealthQualityOverview>> {
+  const params = new URLSearchParams({
+    from: options.from,
+    to: options.to,
+  });
+  return request<TelehealthQualityOverview>(
+    `/api/v1/dashboard/insights/telehealth?${params.toString()}`,
+    { token },
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// doctor-onboarding-v1 · onb-01/02: go-live checklist booleans (read-only).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface OnboardingStatus {
+  instagramConnected: boolean;
+  practiceInfoSet: boolean;
+  pricingSet: boolean;
+  availabilitySet: boolean;
+  complete: boolean;
+}
+
+export async function getOnboardingStatus(
+  token: string,
+): Promise<ApiSuccess<OnboardingStatus>> {
+  return request<OnboardingStatus>("/api/v1/dashboard/onboarding/status", {
+    token,
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// doctor-verification-v1 · ver-03: doctor get-verified submit + status.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type VerificationStatus =
+  | "unverified"
+  | "pending_review"
+  | "verified"
+  | "rejected"
+  | "changes_requested";
+
+export interface VerificationStatusView {
+  status: VerificationStatus;
+  submittedAt: string | null;
+  reviewedAt: string | null;
+  rejectReason: string | null;
+}
+
+export type VerificationDocKind = "certificate" | "gov_id";
+
+export const VERIFICATION_ALLOWED_MIME = [
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+] as const;
+
+export interface VerificationUploadUrlData {
+  path: string;
+  token: string;
+}
+
+export interface SubmitVerificationPayload {
+  fullName: string;
+  registrationNumber: string;
+  councilState: string;
+  specialty?: string;
+  certificatePath: string;
+  govIdPath?: string;
+}
+
+/** GET the doctor's own verification status (fresh account → unverified). */
+export async function getVerificationStatus(
+  token: string,
+): Promise<ApiSuccess<VerificationStatusView>> {
+  return request<VerificationStatusView>("/api/v1/verification/status", {
+    token,
+  });
+}
+
+/** rec-11 — doctor recording attestation status + six clauses. */
+export interface RecordingAttestationStatusView {
+  accepted: boolean;
+  policyVersion: string;
+  acceptedAt: string | null;
+  clauses: string[];
+}
+
+export async function getRecordingAttestationStatus(
+  token: string,
+): Promise<ApiSuccess<RecordingAttestationStatusView>> {
+  return request<RecordingAttestationStatusView>("/api/v1/recording-attestation", {
+    token,
+  });
+}
+
+export async function acceptRecordingAttestation(
+  token: string,
+): Promise<ApiSuccess<RecordingAttestationStatusView>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/recording-attestation`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({}),
+      cache: "no-store",
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<RecordingAttestationStatusView>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<RecordingAttestationStatusView>;
+}
+
+/**
+ * POST for a short-lived signed upload URL. Returns { path, token } for
+ * `supabase.storage.from("doctor-verification-docs").uploadToSignedUrl(...)`.
+ */
+export async function getVerificationUploadUrl(
+  token: string,
+  body: { kind: VerificationDocKind; contentType: string },
+): Promise<ApiSuccess<VerificationUploadUrlData>> {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/verification/upload-url`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<VerificationUploadUrlData>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json as ApiSuccess<VerificationUploadUrlData>;
+}
+
+/** POST the verification submission → status moves to pending_review. */
+export async function submitVerification(
+  token: string,
+  body: SubmitVerificationPayload,
+): Promise<ApiSuccess<VerificationStatusView>> {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/verification/submit`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<VerificationStatusView>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json as ApiSuccess<VerificationStatusView>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin verification review (admin-console-v1 · acon-02)
+// Gated by admin JWT (`app_metadata.role='admin'`). No CRON_SECRET in browser.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Admin list item — no signed URLs. */
+export interface AdminVerificationListItem {
+  doctorId: string;
+  status: VerificationStatus;
+  fullName: string | null;
+  registrationNumber: string | null;
+  councilState: string | null;
+  specialty: string | null;
+  submittedAt: string | null;
+}
+
+/** Admin detail — includes short-lived signed document URLs. */
+export interface AdminVerificationDetail extends AdminVerificationListItem {
+  reviewedAt: string | null;
+  reviewedBy: string | null;
+  rejectReason: string | null;
+  certificateSignedUrl: string | null;
+  govIdSignedUrl: string | null;
+}
+
+export type AdminVerificationListStatus = Exclude<
+  VerificationStatus,
+  "unverified"
+>;
+
+/** GET /api/v1/admin/verifications?status=… */
+export async function listAdminVerifications(
+  token: string,
+  status: AdminVerificationListStatus = "pending_review",
+): Promise<ApiSuccess<{ items: AdminVerificationListItem[] }>> {
+  const qs = new URLSearchParams({ status });
+  return request<{ items: AdminVerificationListItem[] }>(
+    `/api/v1/admin/verifications?${qs.toString()}`,
+    { token },
+  );
+}
+
+/** GET /api/v1/admin/verifications/:doctorId */
+export async function getAdminVerificationDetail(
+  token: string,
+  doctorId: string,
+): Promise<ApiSuccess<AdminVerificationDetail>> {
+  return request<AdminVerificationDetail>(
+    `/api/v1/admin/verifications/${encodeURIComponent(doctorId)}`,
+    { token },
+  );
+}
+
+/** POST /api/v1/admin/verifications/:doctorId/approve */
+export async function approveAdminVerification(
+  token: string,
+  doctorId: string,
+): Promise<ApiSuccess<{ doctorId: string; status: "verified" }>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/admin/verifications/${encodeURIComponent(doctorId)}/approve`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({}),
+      cache: "no-store",
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ doctorId: string; status: "verified" }>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json as ApiSuccess<{ doctorId: string; status: "verified" }>;
+}
+
+/** POST /api/v1/admin/verifications/:doctorId/reject */
+export async function rejectAdminVerification(
+  token: string,
+  doctorId: string,
+  reason: string,
+): Promise<ApiSuccess<{ doctorId: string; status: "rejected" }>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/admin/verifications/${encodeURIComponent(doctorId)}/reject`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ reason }),
+      cache: "no-store",
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ doctorId: string; status: "rejected" }>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json as ApiSuccess<{ doctorId: string; status: "rejected" }>;
+}
+
+/** POST /api/v1/admin/verifications/:doctorId/request-changes */
+export async function requestChangesAdminVerification(
+  token: string,
+  doctorId: string,
+  note: string,
+): Promise<ApiSuccess<{ doctorId: string; status: "changes_requested" }>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/admin/verifications/${encodeURIComponent(doctorId)}/request-changes`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ note }),
+      cache: "no-store",
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ doctorId: string; status: "changes_requested" }>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json as ApiSuccess<{
+    doctorId: string;
+    status: "changes_requested";
+  }>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin doctors directory (admin-console-v3 · acon3-02; invite retired auth-v2)
+// Gated by admin JWT. Email is for UI identity only — never log it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type AdminDoctorFunnelStatus =
+  | "onboarding"
+  | "pending_review"
+  | "verified"
+  | "rejected"
+  | "changes_requested";
+
+export interface AdminDoctorListItem {
+  doctorId: string;
+  email: string;
+  fullName: string | null;
+  practiceName: string | null;
+  specialty: string | null;
+  funnelStatus: AdminDoctorFunnelStatus;
+  verificationStatus: VerificationStatus | null;
+  lastSignInAt: string | null;
+  createdAt: string | null;
+}
+
+/** GET /api/v1/admin/doctors?status=… (status optional) */
+export async function listAdminDoctors(
+  token: string,
+  status?: AdminDoctorFunnelStatus,
+): Promise<ApiSuccess<{ items: AdminDoctorListItem[] }>> {
+  const qs = status ? `?${new URLSearchParams({ status }).toString()}` : "";
+  return request<{ items: AdminDoctorListItem[] }>(
+    `/api/v1/admin/doctors${qs}`,
+    { token },
+  );
+}
+
+export type AdminClinicStaffStatus = "active" | "suspended";
+
+export interface AdminClinicStaffItem {
+  id: string;
+  doctorId: string;
+  doctorEmail: string | null;
+  staffUserId: string;
+  staffEmail: string | null;
+  displayName: string | null;
+  role: string;
+  status: AdminClinicStaffStatus;
+  createdAt: string;
+}
+
+export async function listAdminClinicStaff(
+  token: string
+): Promise<ApiSuccess<{ items: AdminClinicStaffItem[] }>> {
+  return request<{ items: AdminClinicStaffItem[] }>("/api/v1/admin/clinic-staff", {
+    token,
+  });
+}
+
+export async function provisionAdminClinicStaff(
+  token: string,
+  body: { email: string; doctorId: string; displayName?: string }
+): Promise<
+  ApiSuccess<{
+    item: AdminClinicStaffItem;
+    created: boolean;
+    temporaryPassword?: string;
+  }>
+> {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/admin/clinic-staff`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{
+        item: AdminClinicStaffItem;
+        created: boolean;
+        temporaryPassword?: string;
+      }>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json;
+}
+
+export async function deleteAdminClinicStaff(
+  token: string,
+  id: string
+): Promise<ApiSuccess<{ deleted: boolean }>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/admin/clinic-staff/${encodeURIComponent(id)}`,
+    {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ deleted: boolean }>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json;
+}
+
+export async function patchAdminClinicStaff(
+  token: string,
+  id: string,
+  body: { status?: AdminClinicStaffStatus; displayName?: string }
+): Promise<ApiSuccess<{ staff: { id: string; status: AdminClinicStaffStatus } }>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/admin/clinic-staff/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ staff: { id: string; status: AdminClinicStaffStatus } }>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json;
+}
+
+export async function patchAdminClinicStaffStatus(
+  token: string,
+  id: string,
+  status: AdminClinicStaffStatus
+): Promise<ApiSuccess<{ staff: { id: string; status: AdminClinicStaffStatus } }>> {
+  return patchAdminClinicStaff(token, id, { status });
+}
+
+export interface DoctorClinicStaffItem {
+  id: string;
+  staffUserId: string;
+  staffEmail: string | null;
+  displayName: string | null;
+  role: string;
+  status: AdminClinicStaffStatus;
+  createdAt: string;
+}
+
+export async function listDoctorClinicStaff(
+  token: string
+): Promise<ApiSuccess<{ items: DoctorClinicStaffItem[] }>> {
+  return request<{ items: DoctorClinicStaffItem[] }>("/api/v1/clinic-staff", {
+    token,
+  });
+}
+
+export async function provisionDoctorClinicStaff(
+  token: string,
+  body: { email: string; displayName?: string }
+): Promise<
+  ApiSuccess<{
+    item: DoctorClinicStaffItem;
+    created: boolean;
+    temporaryPassword?: string;
+  }>
+> {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/clinic-staff`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{
+        item: DoctorClinicStaffItem;
+        created: boolean;
+        temporaryPassword?: string;
+      }>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json;
+}
+
+export async function deleteDoctorClinicStaff(
+  token: string,
+  id: string
+): Promise<ApiSuccess<{ deleted: boolean }>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/clinic-staff/${encodeURIComponent(id)}`,
+    {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ deleted: boolean }>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json;
+}
+
+export async function patchDoctorClinicStaff(
+  token: string,
+  id: string,
+  body: { status?: AdminClinicStaffStatus; displayName?: string }
+): Promise<ApiSuccess<{ staff: { id: string; status: AdminClinicStaffStatus } }>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/clinic-staff/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ staff: { id: string; status: AdminClinicStaffStatus } }>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json;
+}
+
+export async function patchDoctorClinicStaffStatus(
+  token: string,
+  id: string,
+  status: AdminClinicStaffStatus
+): Promise<ApiSuccess<{ staff: { id: string; status: AdminClinicStaffStatus } }>> {
+  return patchDoctorClinicStaff(token, id, { status });
+}
+
+export type PaymentCollectionMode = "bookings_only" | "prepaid";
+
+export interface DoctorGatewayStatus {
+  connected: boolean;
+  gateway: "razorpay" | null;
+  maskedKeyId: string | null;
+  status: "pending" | "connected" | "invalid" | "disconnected" | null;
+  lastVerifiedAt: string | null;
+  paymentCollectionMode: PaymentCollectionMode;
+  webhookConfigured: boolean;
+  webhookUrl: string | null;
+}
+
+export async function getDoctorGateway(
+  token: string,
+): Promise<ApiSuccess<DoctorGatewayStatus>> {
+  return request("/api/v1/payments/gateway", { token });
+}
+
+export async function connectDoctorGateway(
+  token: string,
+  keyId: string,
+  keySecret: string,
+  webhookSecret?: string,
+): Promise<ApiSuccess<DoctorGatewayStatus>> {
+  const base = requireApiBaseUrl();
+  const res = await fetch(`${base}/api/v1/payments/gateway`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      keyId,
+      keySecret,
+      ...(webhookSecret ? { webhookSecret } : {}),
+    }),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<DoctorGatewayStatus>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json as ApiSuccess<DoctorGatewayStatus>;
+}
+
+export async function setPaymentCollectionMode(
+  token: string,
+  mode: PaymentCollectionMode,
+): Promise<ApiSuccess<DoctorGatewayStatus>> {
+  const base = requireApiBaseUrl();
+  const res = await fetch(`${base}/api/v1/payments/collection-mode`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ mode }),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<DoctorGatewayStatus>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json as ApiSuccess<DoctorGatewayStatus>;
+}
+
+/** GET /api/v1/billing/me — doctor meter + invoices (billing P2a). */
+export async function getMyBilling(
+  token: string,
+  billingPeriod?: string,
+): Promise<ApiSuccess<import("@/types/billing").DoctorBillingSnapshot>> {
+  const qs = billingPeriod
+    ? `?${new URLSearchParams({ billingPeriod }).toString()}`
+    : "";
+  return request(`/api/v1/billing/me${qs}`, { token });
 }

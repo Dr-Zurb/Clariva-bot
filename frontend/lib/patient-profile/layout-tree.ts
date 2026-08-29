@@ -14,8 +14,21 @@
  */
 
 export interface PaneTreeNode {
-  /** Stable id for this node. For leaves, derived: when paneIds.length === 1, this equals paneIds[0]; otherwise a synthetic `__tabs_<n>` id. */
+  /**
+   * Structural / clinical leaf id. For single-pane leaves this matches the
+   * hosted pane (`paneIds[0]`). Show-here / swap move this id with the pane
+   * content so later inserts cannot mint a colliding node id.
+   * Multi-tab leaves use `__tabs_<n>`. Prefer `paneIds` / `activeTabId` for
+   * clinical identity when reading a leaf.
+   */
   id: string;
+  /**
+   * Stable DOM / react-resizable-panels id for this geometric slot. Stays in
+   * the slot across Show-here swaps (content + `id` move; `panelKey` does not)
+   * so panels are not remounted. Falls back to `id` when unset (pre-swap /
+   * legacy layouts).
+   */
+  panelKey?: string;
   /** Absolute size as % of the OUTER group (root = % of viewport). 0–100. */
   sizePct: number;
   /** Excluded from the visible layout (toggled off via PaneToggleBar). */
@@ -38,8 +51,14 @@ export interface PaneTreeNode {
   activeTabId?: string;
 }
 
+/** DOM id for react-resizable-panels — slot-stable when `panelKey` is set. */
+export function cockpitPanelDomId(node: PaneTreeNode): string {
+  return node.panelKey ?? node.id;
+}
+
 const SERIALISE_KEYS = [
   "id",
+  "panelKey",
   "sizePct",
   "hidden",
   "direction",
@@ -86,6 +105,9 @@ export function isValidTreeNode(value: unknown): value is PaneTreeNode {
   ) {
     return false;
   }
+  if (v.panelKey !== undefined) {
+    if (typeof v.panelKey !== "string" || v.panelKey.length === 0) return false;
+  }
   if (v.children !== undefined) {
     if (!Array.isArray(v.children)) return false;
     for (const child of v.children) {
@@ -130,6 +152,160 @@ export function upgradeV4LeavesToV5(root: PaneTreeNode): PaneTreeNode {
       paneIds: [n.id],
       activeTabId: n.id,
     };
+  }
+  return walk(root);
+}
+
+/**
+ * Repair a (possibly corrupted) tree so it is safe to render:
+ *   1. Each pane lives in exactly one leaf — later duplicates are dropped
+ *      (an emptied leaf is pruned, single-child splits collapse).
+ *   2. Every structural node id is globally unique — later duplicates are
+ *      re-minted (single-pane leaf → its paneId when free, else `__tabs_*`;
+ *      split → `__split_*`). The outermost node keeps its id (e.g. `__root__`).
+ *
+ * Idempotent on a well-formed tree. Guards against react-resizable-panels'
+ * "Panel ids must be unique" crash when a persisted layout was corrupted by an
+ * earlier mutation bug (e.g. an id ↔ pane divergence that let a later insert
+ * mint a colliding node id).
+ */
+export function sanitizePaneTree(root: PaneTreeNode): PaneTreeNode {
+  const deduped = dedupePanesInTree(root);
+  const safe =
+    deduped ??
+    ({
+      id: "__root__",
+      sizePct: 100,
+      hidden: false,
+      direction: "horizontal",
+      children: [],
+    } satisfies PaneTreeNode);
+  return dedupePanelDomIdsInTree(dedupeNodeIdsInTree(safe));
+}
+
+/** Bottom-up: keep each pane's first host leaf, prune empties, collapse splits. */
+function dedupePanesInTree(root: PaneTreeNode): PaneTreeNode | null {
+  const seen = new Set<string>();
+  function walk(n: PaneTreeNode): PaneTreeNode | null {
+    if (n.children && n.children.length > 0) {
+      const kids = n.children
+        .map(walk)
+        .filter((c): c is PaneTreeNode => c !== null);
+      if (kids.length === 0) return null;
+      if (kids.length === 1 && n.id !== "__root__") return kids[0]!;
+      const same =
+        kids.length === n.children.length &&
+        kids.every((c, i) => c === n.children![i]);
+      return same ? n : { ...n, children: kids };
+    }
+    const raw = n.paneIds && n.paneIds.length > 0 ? n.paneIds : [n.id];
+    const paneIds = raw.filter((p) => !seen.has(p));
+    if (paneIds.length === 0) return null;
+    for (const p of paneIds) seen.add(p);
+    if (paneIds.length === raw.length) return n;
+    const activeTabId =
+      n.activeTabId && paneIds.includes(n.activeTabId)
+        ? n.activeTabId
+        : paneIds[0]!;
+    return { ...n, paneIds, activeTabId };
+  }
+  return walk(root);
+}
+
+/** Top-down: keep the first occurrence of each node id, re-mint later clashes. */
+function dedupeNodeIdsInTree(root: PaneTreeNode): PaneTreeNode {
+  const seen = new Set<string>();
+  let counter = 0;
+  const fresh = (prefix: string): string => {
+    let id: string;
+    do {
+      id = `${prefix}${counter++}`;
+    } while (seen.has(id));
+    return id;
+  };
+  function walk(n: PaneTreeNode): PaneTreeNode {
+    let id = n.id;
+    const isLeaf = !(n.children && n.children.length > 0);
+    if (seen.has(id)) {
+      if (isLeaf) {
+        const panes = n.paneIds && n.paneIds.length > 0 ? n.paneIds : [n.id];
+        id =
+          panes.length === 1 && !seen.has(panes[0]!)
+            ? panes[0]!
+            : fresh("__tabs_");
+      } else {
+        id = fresh("__split_");
+      }
+    }
+    seen.add(id);
+    if (!isLeaf) {
+      const kids = n.children!.map(walk);
+      const childrenSame = kids.every((c, i) => c === n.children![i]);
+      if (id === n.id && childrenSame) return n;
+      return { ...n, id, children: kids };
+    }
+    return id === n.id ? n : { ...n, id };
+  }
+  return walk(root);
+}
+
+function omitPanelKey(node: PaneTreeNode): PaneTreeNode {
+  if (node.panelKey === undefined) return node;
+  const { panelKey: _omit, ...rest } = node;
+  return rest;
+}
+
+/**
+ * `panelKey` is slot-stable across Show-here swaps. After a tab is extracted
+ * into a new leaf named after that pane, the old slot's leftover `panelKey`
+ * can match the new leaf's `id` — react-resizable-panels then throws
+ * "Panel ids must be unique". Prefer each node's unique `id` over a colliding
+ * `panelKey`.
+ */
+function dedupePanelDomIdsInTree(root: PaneTreeNode): PaneTreeNode {
+  const claimedIds = new Set<string>();
+  function collectIds(n: PaneTreeNode): void {
+    claimedIds.add(n.id);
+    n.children?.forEach(collectIds);
+  }
+  collectIds(root);
+
+  const usedPanelKeys = new Set<string>();
+  function walk(n: PaneTreeNode): PaneTreeNode {
+    const kids = n.children?.map(walk);
+    const childrenSame =
+      !kids || kids.every((c, i) => c === n.children![i]);
+    let next: PaneTreeNode = childrenSame ? n : { ...n, children: kids };
+    const key = next.panelKey;
+    if (key && key !== next.id && claimedIds.has(key)) {
+      next = omitPanelKey(next);
+    } else if (key && usedPanelKeys.has(key)) {
+      next = omitPanelKey(next);
+    } else if (key) {
+      usedPanelKeys.add(key);
+    }
+    return next;
+  }
+  return walk(root);
+}
+
+/**
+ * Drop `panelKey` on any node where it would collide with `id` as a
+ * ResizablePanel DOM id (`cockpitPanelDomId` = panelKey ?? id). Used after
+ * extracting `id` into a new leaf so the vacated slot cannot keep that key.
+ */
+export function stripPanelKeysCollidingWithId(
+  root: PaneTreeNode,
+  id: string,
+): PaneTreeNode {
+  function walk(n: PaneTreeNode): PaneTreeNode {
+    const kids = n.children?.map(walk);
+    const childrenSame =
+      !kids || kids.every((c, i) => c === n.children![i]);
+    const strip = n.panelKey === id && n.id !== id;
+    if (!strip && childrenSame) return n;
+    const next = childrenSame ? n : { ...n, children: kids };
+    return strip ? omitPanelKey(next) : next;
   }
   return walk(root);
 }

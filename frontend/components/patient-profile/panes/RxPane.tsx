@@ -102,7 +102,7 @@ export default function RxPane({
   }, []);
 
   const rxWorkspaceBody = (
-    <div className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] px-4 pb-3 pt-0">
+    <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain [overflow-anchor:none] px-4 pb-3 pt-0">
       {/* Match SubjectivePane / ObjectivePane inset when the shell owns the header. */}
       {hideHeader ? <div className="h-3" aria-hidden /> : null}
       <RxWorkspace
@@ -125,8 +125,12 @@ export default function RxPane({
     </div>
   );
 
+  // Shell-owned header: still need an h-full flex column so flex-1 +
+  // overflow-y-auto resolve against the leaf height (stacked splits).
   if (hideHeader) {
-    return rxWorkspaceBody;
+    return (
+      <div className="flex h-full min-h-0 flex-col">{rxWorkspaceBody}</div>
+    );
   }
 
   const showPreviousRx = state !== "terminal";

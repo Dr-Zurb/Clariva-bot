@@ -1,3 +1,15 @@
+/** Axis 3 — chips. Declared early so queue + slot rows can share it. */
+export type SlotTag =
+  | 'overflow'
+  | 'walk_in'
+  | 'return_visit'
+  | 'rebooked'
+  | 'early_invited'
+  | 'delayed'
+  | 'doctor_away'
+  | 'patient_waiting'
+  | 'patient_stepped_away';
+
 /**
  * Doctor-only OPD queue row.
  *
@@ -40,10 +52,19 @@ export interface DoctorQueueSessionRow {
   patientId: string | null;
   /** appointments.notes — booking message from patient (PHI; doctor-scoped). */
   patientNote: string | null;
+  /** Desk or lobby arrival stamp (RQ6). */
+  patientCheckedInAt?: string | null;
+
+  /** Lobby presence tags (crc-02). Optional for older payloads. */
+  tags?: SlotTag[];
 }
 
-// ── Slot session (sl-01) ───────────────────────────────────────────────────
+// ── Slot session (sl-01 / osm-02) ───────────────────────────────────────────
 
+/**
+ * @deprecated Prefer `VisitLifecycle` + `SlotTiming` + `SlotTag` (OSM-D1).
+ * Kept for one release (OSM-D7). `grace` is legacy and unemitted.
+ */
 export type SlotStatus =
   | 'upcoming'
   | 'grace'
@@ -54,10 +75,34 @@ export type SlotStatus =
   | 'cancelled'
   | 'overflow';
 
+/** Axis 1 — primary badge. */
+export type VisitLifecycle =
+  | 'scheduled'
+  | 'in_consult'
+  | 'incomplete'
+  | 'completed'
+  | 'cancelled'
+  | 'no_show';
+
+/** Axis 2 — null when lifecycle is terminal. */
+export interface SlotTiming {
+  minutesToStart: number;
+  band: 'early' | 'due' | 'late';
+}
+
 export interface SlotSessionRow {
   appointmentId: string;
   position: number;
+  /**
+   * @deprecated OSM-D7 compat. Prefer `lifecycle` / `timing` / `tags`.
+   */
   slotStatus: SlotStatus;
+  /** Axis 1 — present from osm-02; optional for older payloads. */
+  lifecycle?: VisitLifecycle;
+  /** Axis 2 */
+  timing?: SlotTiming | null;
+  /** Axis 3 */
+  tags?: SlotTag[];
   appointmentStatus: string;
   scheduledAt: string;
   durationMinutes: number | null;
@@ -83,6 +128,8 @@ export interface SlotSessionRow {
 
   patientId: string | null;
   patientNote: string | null;
+  /** Desk or lobby arrival stamp (RQ6). */
+  patientCheckedInAt?: string | null;
 }
 
 export interface SlotSessionCounts {
@@ -90,6 +137,8 @@ export interface SlotSessionCounts {
   upcoming: number;
   running_late: number;
   in_consultation: number;
+  /** osm-02 — session started, not live, appointment not completed. */
+  incomplete?: number;
   completed: number;
   missed: number;
   cancelled: number;

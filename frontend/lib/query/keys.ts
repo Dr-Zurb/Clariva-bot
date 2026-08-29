@@ -27,6 +27,37 @@ export const queryKeys = {
     appointments: () => [...queryKeys.dashboard.all, "appointments"] as const,
     pendingReviews: () => [...queryKeys.dashboard.all, "pending-reviews"] as const,
     rxSentToday: () => [...queryKeys.dashboard.all, "rx-sent-today"] as const,
+    /** insights-v1 · practice-health overview keyed by ISO date range. */
+    practiceHealth: (range: { from: string; to: string }) =>
+      [...queryKeys.dashboard.all, "practice-health", range] as const,
+    /** insights-v1 · booking funnel + review SLA keyed by ISO date range. */
+    bookingFunnel: (range: { from: string; to: string }) =>
+      [...queryKeys.dashboard.all, "booking-funnel", range] as const,
+    /** insights-v1 · clinical mix keyed by ISO date range (+ limit). */
+    clinicalMix: (range: { from: string; to: string; limit?: number }) =>
+      [...queryKeys.dashboard.all, "clinical-mix", range] as const,
+    /** insights-v1 · telehealth quality keyed by ISO date range. */
+    telehealthQuality: (range: { from: string; to: string }) =>
+      [...queryKeys.dashboard.all, "telehealth-quality", range] as const,
+    /** doctor-onboarding-v1 · go-live checklist booleans. */
+    onboardingStatus: () =>
+      [...queryKeys.dashboard.all, "onboarding-status"] as const,
+    /** doctor-verification-v1 · verification status (unverified/pending/...). */
+    verificationStatus: () =>
+      [...queryKeys.dashboard.all, "verification-status"] as const,
+    recordingAttestation: () =>
+      [...queryKeys.dashboard.all, "recording-attestation"] as const,
+  },
+  /** admin-console-v1 · verification review (no PHI in keys — status filter only). */
+  admin: {
+    all: ["admin"] as const,
+    verifications: (status: string) =>
+      [...queryKeys.admin.all, "verifications", status] as const,
+    verificationDetail: (doctorId: string) =>
+      [...queryKeys.admin.all, "verification", doctorId] as const,
+    doctors: (status: string) =>
+      [...queryKeys.admin.all, "doctors", status] as const,
+    clinicStaff: () => [...queryKeys.admin.all, "clinic-staff"] as const,
   },
   patients: {
     all: ["patients"] as const,
@@ -48,11 +79,27 @@ export const queryKeys = {
     growthDemographics: () =>
       [...queryKeys.patient(patientId).all, "growth-demographics"] as const,
   }),
+  consult: (appointmentId: string) => ({
+    all: ["consult", appointmentId] as const,
+    lastVisitVitals: () =>
+      [...queryKeys.consult(appointmentId).all, "last-visit-vitals"] as const,
+    deskVitals: () => [...queryKeys.consult(appointmentId).all, "desk-vitals"] as const,
+  }),
+  clinicStaff: {
+    all: ["clinic-staff"] as const,
+    mine: () => [...queryKeys.clinicStaff.all, "mine"] as const,
+  },
   opd: {
     all: ["opd"] as const,
     queueSession: (dateIso: string) =>
       [...queryKeys.opd.all, "queue-session", dateIso] as const,
     session: (dateIso: string) => [...queryKeys.opd.all, "session", dateIso] as const,
     doctorSettings: () => [...queryKeys.opd.all, "doctor-settings"] as const,
+  },
+  /** Front-desk portal — keys are date / context only, never patient names. */
+  desk: {
+    all: ["desk"] as const,
+    context: () => [...queryKeys.desk.all, "context"] as const,
+    today: (dateIso: string) => [...queryKeys.desk.all, "today", dateIso] as const,
   },
 } as const;

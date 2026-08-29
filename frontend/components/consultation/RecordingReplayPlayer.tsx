@@ -33,11 +33,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  getRecordingGaps,
   getReplayStatus,
   mintReplayAudioUrl,
+  type RecordingGap,
+  type ReplayCompositionRef,
   type ReplayDenyReason,
   type ReplayStatusData,
 } from "@/lib/api";
+import { pauseReasonBannerLabel } from "./RecordingPausedIndicator";
 import { getVideoReplayOtpState } from "@/lib/api/video-replay-otp";
 import { formatDate, formatDateTime } from "@/lib/format-date";
 import VideoReplayWarningModal from "./VideoReplayWarningModal";
@@ -80,17 +84,17 @@ type PlayerPhase =
   | { kind: "loading" }
   | { kind: "checking_error"; message: string }
   | { kind: "unavailable"; reason: ReplayDenyReason; selfServeExpiresAt?: string }
-  | { kind: "ready"; selfServeExpiresAt?: string; hasVideo: boolean }
+  | { kind: "ready"; selfServeExpiresAt?: string }
   | { kind: "minting" }
   | {
       kind: "playing";
       signedUrl: string;
       expiresAt: string;
       mode: ArtifactMode;
-      hasVideo: boolean;
+      compositionSid: string;
       selfServeExpiresAt?: string;
     }
-  | { kind: "mint_error"; message: string };
+  | { kind: "mint_error"; message: string; compositionSid: string; mode: ArtifactMode };
 
 /**
  * Plan 08 · Task 44 · Decision 10 LOCKED — overlay video-toggle flow.
@@ -186,8 +190,17 @@ export default function RecordingReplayPlayer(
   const [videoFlow, setVideoFlow] = useState<VideoFlowPhase>({ kind: "idle" });
   // Timestamp used in the video watermark overlay. Set on video mint.
   const [videoReplayStartedAt, setVideoReplayStartedAt] = useState<string | null>(null);
+  const [audioLegs, setAudioLegs] = useState<ReplayCompositionRef[]>([]);
+  const [videoLegs, setVideoLegs] = useState<ReplayCompositionRef[]>([]);
+  const [videoUnlocked, setVideoUnlocked] = useState(false);
+  const [legError, setLegError] = useState<{ sid: string; message: string } | null>(
+    null,
+  );
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [gaps, setGaps] = useState<RecordingGap[] | null>(null);
+  const [gapsError, setGapsError] = useState<string | null>(null);
+  const selfServeRef = useRef<string | undefined>(undefined);
 
   // ---------------------------------------------------------------------------
   // Mount: preflight (no audit).
@@ -200,10 +213,22 @@ export default function RecordingReplayPlayer(
         if (cancelled) return;
         const data = res.data as ReplayStatusData;
         if (data.available) {
+          const nextAudio =
+            data.audioCompositions && data.audioCompositions.length > 0
+              ? data.audioCompositions
+              : [{ compositionSid: "", startedAt: "", durationSeconds: null }];
+          const nextVideo =
+            data.videoCompositions && data.videoCompositions.length > 0
+              ? data.videoCompositions
+              : data.hasVideo
+                ? [{ compositionSid: "", startedAt: "", durationSeconds: null }]
+                : [];
+          setAudioLegs(nextAudio);
+          setVideoLegs(nextVideo);
+          selfServeRef.current = data.selfServeExpiresAt;
           setPhase({
             kind: "ready",
             selfServeExpiresAt: data.selfServeExpiresAt,
-            hasVideo: Boolean(data.hasVideo),
           });
         } else {
           setPhase({
@@ -226,14 +251,29 @@ export default function RecordingReplayPlayer(
     };
   }, [sessionId, token]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await getRecordingGaps(token, sessionId);
+        if (cancelled) return;
+        setGaps(res.data.gaps);
+        setGapsError(null);
+      } catch {
+        if (cancelled) return;
+        setGaps(null);
+        setGapsError("Gap information could not be loaded.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, token]);
+
   // ---------------------------------------------------------------------------
   // Mint helper (writes audit on the backend).
   // ---------------------------------------------------------------------------
-  const hasVideoAvailable = useMemo(() => {
-    if (phase.kind === "ready") return phase.hasVideo;
-    if (phase.kind === "playing") return phase.hasVideo;
-    return false;
-  }, [phase]);
+  const hasVideoAvailable = videoLegs.length > 0;
 
   const currentMode: ArtifactMode = useMemo(() => {
     if (phase.kind === "playing") return phase.mode;
@@ -243,24 +283,33 @@ export default function RecordingReplayPlayer(
   const currentSelfServeExpiresAt: string | undefined = useMemo(() => {
     if (phase.kind === "ready") return phase.selfServeExpiresAt;
     if (phase.kind === "playing") return phase.selfServeExpiresAt;
-    return undefined;
+    if (phase.kind === "mint_error") return selfServeRef.current;
+    return selfServeRef.current;
   }, [phase]);
 
   const mintAndPlay = useCallback(
-    async (mode: ArtifactMode = "audio") => {
+    async (mode: ArtifactMode = "audio", compositionSid?: string) => {
+      const sid = compositionSid?.trim() ?? "";
       setPhase({ kind: "minting" });
+      setLegError(null);
       try {
-        const res = await mintReplayAudioUrl(token, sessionId, mode);
+        const res = await mintReplayAudioUrl(
+          token,
+          sessionId,
+          mode,
+          sid || undefined,
+        );
         const data = res.data;
         if (mode === "video") {
           setVideoReplayStartedAt(new Date().toISOString());
+          setVideoUnlocked(true);
         }
         setPhase({
           kind: "playing",
           signedUrl: data.signedUrl,
           expiresAt: data.expiresAt,
           mode,
-          hasVideo: hasVideoAvailable || mode === "video",
+          compositionSid: sid || data.artifactRef || "",
           selfServeExpiresAt: currentSelfServeExpiresAt,
         });
       } catch (err) {
@@ -270,79 +319,61 @@ export default function RecordingReplayPlayer(
           details?: Record<string, unknown>;
         };
         if (e.code === "video_otp_required") {
-          // The 30-day window has lapsed (or never existed). Open the
-          // OTP modal with the `lastVerifiedAt` hint carried in the
-          // error payload so the modal can render "last verified N
-          // days ago" copy.
           const raw = e.details?.lastVerifiedAt;
           const lastVerifiedAt =
             typeof raw === "string" ? raw : raw === null ? null : null;
           setVideoFlow({ kind: "otp", lastVerifiedAt });
-          // Roll phase back to `ready` so the background UI isn't
-          // stuck on the "Loading recording…" state while the modal
-          // is up.
-          setPhase((prev) =>
-            prev.kind === "minting"
-              ? {
-                  kind: "ready",
-                  hasVideo: true,
-                  ...(currentSelfServeExpiresAt
-                    ? { selfServeExpiresAt: currentSelfServeExpiresAt }
-                    : {}),
-                }
-              : prev,
-          );
-          return;
-        }
-        if (e.code === "no_video_artifact") {
-          // Video toggled but no video composition for this session.
-          // Surface the denial copy and roll the toggle back to audio.
-          setVideoFlow({ kind: "idle" });
           setPhase({
-            kind: "unavailable",
-            reason: "artifact_not_found",
+            kind: "ready",
+            ...(currentSelfServeExpiresAt
+              ? { selfServeExpiresAt: currentSelfServeExpiresAt }
+              : {}),
           });
           return;
         }
-        if (
-          e.code === "revoked" ||
-          e.code === "artifact_not_ready" ||
-          e.code === "artifact_not_found" ||
-          e.code === "beyond_self_serve_window" ||
-          e.code === "not_a_participant"
-        ) {
-          setPhase({ kind: "unavailable", reason: e.code as ReplayDenyReason });
+        if (e.code === "beyond_self_serve_window" || e.code === "not_a_participant") {
+          setPhase({ kind: "unavailable", reason: e.code });
           return;
         }
         const message =
           e.status === 429
             ? "You've requested replay too many times. Please wait a few minutes."
             : e.message || "Could not load the recording.";
-        setPhase({ kind: "mint_error", message });
+        const multi =
+          (mode === "audio" ? audioLegs.length : videoLegs.length) > 1;
+        if (multi || e.code === "artifact_not_found" || e.code === "revoked" || e.code === "artifact_not_ready" || e.code === "no_video_artifact") {
+          if (e.code === "no_video_artifact" && videoLegs.length <= 1) {
+            setVideoFlow({ kind: "idle" });
+            setVideoUnlocked(false);
+          }
+          setLegError({ sid, message });
+          setPhase({
+            kind: "mint_error",
+            message,
+            compositionSid: sid,
+            mode,
+          });
+          return;
+        }
+        setPhase({ kind: "mint_error", message, compositionSid: sid, mode });
       }
     },
-    [currentSelfServeExpiresAt, hasVideoAvailable, sessionId, token],
+    [audioLegs.length, currentSelfServeExpiresAt, sessionId, token, videoLegs.length],
   );
 
   // ---------------------------------------------------------------------------
   // Video toggle flow orchestration (Plan 08 · Task 44 · Decision 10 LOCKED).
   // ---------------------------------------------------------------------------
   const handleToggleShowVideo = useCallback(() => {
-    // Only patients traverse the OTP gate; doctors may already be
-    // privileged to replay video via other surfaces but the toggle
-    // itself is authored for patient replay. We still let doctors
-    // switch modes (they skip the OTP backend-side).
-    if (currentMode === "video") {
-      // Toggle off → switch back to audio. Mint a fresh audio URL so
-      // the <audio> element gets a valid src; cheaper than reading
-      // the stale video URL into audio.
+    if (currentMode === "video" || videoUnlocked) {
       setVideoReplayStartedAt(null);
-      void mintAndPlay("audio");
+      setVideoUnlocked(false);
+      const firstAudio = audioLegs[0]?.compositionSid;
+      void mintAndPlay("audio", firstAudio || undefined);
       return;
     }
-    // Toggle on → open warning modal first.
     setVideoFlow({ kind: "warning" });
-  }, [currentMode, mintAndPlay]);
+  }, [audioLegs, currentMode, mintAndPlay, videoUnlocked]);
 
   const handleWarningCancel = useCallback(() => {
     setVideoFlow({ kind: "idle" });
@@ -352,8 +383,19 @@ export default function RecordingReplayPlayer(
     // For doctors, skip OTP + go straight to mint; the backend OTP
     // gate is patient-only.
     if (callerRole !== "patient") {
+      setVideoFlow({ kind: "idle" });
+      if (videoLegs.length > 1) {
+        setVideoUnlocked(true);
+        setPhase({
+          kind: "ready",
+          ...(currentSelfServeExpiresAt
+            ? { selfServeExpiresAt: currentSelfServeExpiresAt }
+            : {}),
+        });
+        return;
+      }
       setVideoFlow({ kind: "minting" });
-      await mintAndPlay("video");
+      await mintAndPlay("video", videoLegs[0]?.compositionSid || undefined);
       setVideoFlow({ kind: "idle" });
       return;
     }
@@ -363,8 +405,12 @@ export default function RecordingReplayPlayer(
     try {
       const res = await getVideoReplayOtpState(token, sessionId);
       if (!res.data.required) {
-        await mintAndPlay("video");
         setVideoFlow({ kind: "idle" });
+        if (videoLegs.length > 1) {
+          setVideoUnlocked(true);
+          return;
+        }
+        await mintAndPlay("video", videoLegs[0]?.compositionSid || undefined);
         return;
       }
       setVideoFlow({ kind: "otp", lastVerifiedAt: res.data.lastVerifiedAt });
@@ -373,17 +419,22 @@ export default function RecordingReplayPlayer(
       // send an OTP and surface a specific error if that fails.
       setVideoFlow({ kind: "otp", lastVerifiedAt: null });
     }
-  }, [callerRole, mintAndPlay, sessionId, token]);
+  }, [callerRole, currentSelfServeExpiresAt, mintAndPlay, sessionId, token, videoLegs]);
 
   const handleOtpCancel = useCallback(() => {
     setVideoFlow({ kind: "idle" });
   }, []);
 
   const handleOtpVerified = useCallback(async () => {
-    setVideoFlow({ kind: "minting" });
-    await mintAndPlay("video");
     setVideoFlow({ kind: "idle" });
-  }, [mintAndPlay]);
+    if (videoLegs.length > 1) {
+      setVideoUnlocked(true);
+      return;
+    }
+    setVideoFlow({ kind: "minting" });
+    await mintAndPlay("video", videoLegs[0]?.compositionSid || undefined);
+    setVideoFlow({ kind: "idle" });
+  }, [mintAndPlay, videoLegs]);
 
   // ---------------------------------------------------------------------------
   // Apply persisted playback rate whenever the playing element appears.
@@ -424,7 +475,7 @@ export default function RecordingReplayPlayer(
   // ---------------------------------------------------------------------------
   const handleMediaError = useCallback(() => {
     if (phase.kind !== "playing") return;
-    void mintAndPlay(phase.mode);
+    void mintAndPlay(phase.mode, phase.compositionSid || undefined);
   }, [phase, mintAndPlay]);
 
   // ---------------------------------------------------------------------------
@@ -472,16 +523,23 @@ export default function RecordingReplayPlayer(
         real estate — the toggle is a small affordance, not a primary
         CTA, matching Decision 10's "audio-is-the-default" posture.
       */}
-      {hasVideoAvailable && (phase.kind === "ready" || phase.kind === "playing") && (
+      {hasVideoAvailable &&
+        (phase.kind === "ready" ||
+          phase.kind === "playing" ||
+          phase.kind === "mint_error") && (
         <div className="mt-2 flex items-center justify-between rounded-md border border-gray-100 bg-gray-50 px-3 py-1.5 text-xs text-gray-700">
           <span className="flex items-center gap-1.5">
             <span aria-hidden>🎥</span>
-            <span>Video version available</span>
+            <span>
+              {videoLegs.length > 1
+                ? `${videoLegs.length} video parts of this consult`
+                : "Video version available"}
+            </span>
           </span>
           <label className="inline-flex cursor-pointer items-center gap-2 select-none">
             <input
               type="checkbox"
-              checked={currentMode === "video"}
+              checked={currentMode === "video" || videoUnlocked}
               onChange={handleToggleShowVideo}
               className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
             />
@@ -518,11 +576,54 @@ export default function RecordingReplayPlayer(
           <UnavailableBlock reason={phase.reason} callerRole={callerRole} />
         )}
 
-        {phase.kind === "ready" && (
+        {(phase.kind === "ready" ||
+          phase.kind === "playing" ||
+          phase.kind === "mint_error") &&
+          videoUnlocked &&
+          videoLegs.length > 1 && (
+          <CompositionLegList
+            kind="video"
+            legs={videoLegs}
+            activeSid={
+              phase.kind === "playing" && phase.mode === "video"
+                ? phase.compositionSid
+                : null
+            }
+            errorSid={legError?.sid ?? null}
+            errorMessage={legError?.message ?? null}
+            onSelect={(sid) => void mintAndPlay("video", sid || undefined)}
+          />
+        )}
+
+        {(phase.kind === "ready" ||
+          phase.kind === "playing" ||
+          phase.kind === "mint_error") &&
+          !videoUnlocked &&
+          currentMode !== "video" &&
+          audioLegs.length > 1 && (
+          <CompositionLegList
+            kind="audio"
+            legs={audioLegs}
+            activeSid={
+              phase.kind === "playing" && phase.mode === "audio"
+                ? phase.compositionSid
+                : null
+            }
+            errorSid={legError?.sid ?? null}
+            errorMessage={legError?.message ?? null}
+            onSelect={(sid) => void mintAndPlay("audio", sid || undefined)}
+          />
+        )}
+
+        {phase.kind === "ready" &&
+          !videoUnlocked &&
+          audioLegs.length <= 1 && (
           <div className="flex flex-col gap-3">
             <button
               type="button"
-              onClick={() => void mintAndPlay("audio")}
+              onClick={() =>
+                void mintAndPlay("audio", audioLegs[0]?.compositionSid || undefined)
+              }
               className="inline-flex w-full items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
             >
               Play recording
@@ -539,14 +640,16 @@ export default function RecordingReplayPlayer(
           <p className="text-sm text-gray-500">Loading recording…</p>
         )}
 
-        {phase.kind === "mint_error" && (
+        {phase.kind === "mint_error" && audioLegs.length <= 1 && !videoUnlocked && (
           <div className="flex flex-col gap-2">
             <p role="alert" className="text-sm text-red-600">
               {phase.message}
             </p>
             <button
               type="button"
-              onClick={() => void mintAndPlay(currentMode)}
+              onClick={() =>
+                void mintAndPlay(phase.mode, phase.compositionSid || undefined)
+              }
               className="self-start rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
             >
               Try again
@@ -571,6 +674,11 @@ export default function RecordingReplayPlayer(
             <SpeedPicker
               rate={playbackRate}
               onChange={handleSpeedChange}
+            />
+            <RecordingReplayGapList
+              gaps={gaps}
+              loadError={gapsError}
+              artifact="audio"
             />
           </div>
         )}
@@ -615,8 +723,21 @@ export default function RecordingReplayPlayer(
               &ldquo;patient watched the video&rdquo; entry on their
               dashboard.
             </p>
+            <RecordingReplayGapList
+              gaps={gaps}
+              loadError={gapsError}
+              artifact="video"
+            />
           </div>
         )}
+
+        {phase.kind !== "playing" ? (
+          <RecordingReplayGapList
+            gaps={gaps}
+            loadError={gapsError}
+            artifact="audio"
+          />
+        ) : null}
       </div>
 
       <footer className="mt-3 border-t border-gray-100 pt-2 text-[11px] leading-relaxed text-gray-500">
@@ -640,6 +761,149 @@ export default function RecordingReplayPlayer(
         onVerified={() => void handleOtpVerified()}
       />
     </section>
+  );
+}
+
+export function formatGapDuration(durationMs: number | null): string {
+  if (durationMs == null || durationMs < 0) return "duration not recorded";
+  const totalSec = Math.max(0, Math.round(durationMs / 1000));
+  if (totalSec < 60) {
+    return `${totalSec} second${totalSec === 1 ? "" : "s"} not recorded`;
+  }
+  const minutes = Math.round(totalSec / 60);
+  return `${minutes} minute${minutes === 1 ? "" : "s"} not recorded`;
+}
+
+export function formatMediaOffset(offsetMs: number | null): string | null {
+  if (offsetMs == null || !Number.isFinite(offsetMs) || offsetMs < 0) return null;
+  const totalSec = Math.floor(offsetMs / 1000);
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return `${min}:${sec.toString().padStart(2, "0")}`;
+}
+
+function gapActorLabel(role: RecordingGap["actorRole"]): string {
+  if (role === "patient") return "Patient";
+  if (role === "system") return "System";
+  return "Doctor";
+}
+
+export function RecordingReplayGapList({
+  gaps,
+  loadError,
+  artifact,
+}: {
+  gaps: RecordingGap[] | null;
+  loadError: string | null;
+  artifact: "audio" | "video";
+}): JSX.Element | null {
+  if (loadError) {
+    return (
+      <p
+        role="status"
+        data-testid="recording-replay-gaps-error"
+        className="text-xs text-amber-800"
+      >
+        {loadError} Playback still works.
+      </p>
+    );
+  }
+  if (!gaps || gaps.length === 0) return null;
+
+  return (
+    <div
+      data-testid="recording-replay-gaps"
+      className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2"
+    >
+      <p className="text-xs font-medium text-slate-700">
+        Recording gaps
+      </p>
+      <ol className="mt-1 list-none space-y-1">
+        {gaps.map((gap, index) => {
+          const offset = formatMediaOffset(gap.mediaOffsetMs[artifact]);
+          const reason = pauseReasonBannerLabel(gap.reasonCode);
+          const duration = formatGapDuration(gap.durationMs);
+          const when = offset
+            ? `At ${offset} in this recording`
+            : "During this consult (position unknown)";
+          return (
+            <li
+              key={`${gap.wallStartedAt}-${index}`}
+              tabIndex={0}
+              className="rounded-sm px-1 py-0.5 text-xs text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-600"
+            >
+              {when}
+              {" — "}
+              {gapActorLabel(gap.actorRole)}
+              {" · "}
+              {reason}
+              {" · "}
+              {duration}
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+function formatLegDuration(seconds: number | null): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) {
+    return "duration unknown";
+  }
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function CompositionLegList(props: {
+  kind: ArtifactMode;
+  legs: ReplayCompositionRef[];
+  activeSid: string | null;
+  errorSid: string | null;
+  errorMessage: string | null;
+  onSelect: (compositionSid: string) => void;
+}): JSX.Element {
+  return (
+    <div
+      data-testid={`replay-${props.kind}-legs`}
+      className="mb-3 flex flex-col gap-1.5"
+    >
+      <p className="text-xs font-medium text-gray-600">
+        Consecutive {props.kind} parts of this consult
+      </p>
+      <ol className="flex flex-col gap-1">
+        {props.legs.map((leg, index) => {
+          const selected = Boolean(props.activeSid) && props.activeSid === leg.compositionSid;
+          const failed = Boolean(props.errorSid) && props.errorSid === leg.compositionSid;
+          return (
+            <li key={leg.compositionSid || `leg-${index}`}>
+              <button
+                type="button"
+                aria-pressed={selected}
+                onClick={() => props.onSelect(leg.compositionSid)}
+                className={[
+                  "flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-xs",
+                  selected
+                    ? "border-blue-600 bg-blue-50 text-blue-900"
+                    : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50",
+                ].join(" ")}
+              >
+                <span>
+                  Part {index + 1} of {props.legs.length}
+                </span>
+                <span className="text-gray-500">{formatLegDuration(leg.durationSeconds)}</span>
+              </button>
+              {failed && props.errorMessage ? (
+                <p role="alert" className="mt-1 text-xs text-red-600">
+                  {props.errorMessage}
+                </p>
+              ) : null}
+            </li>
+          );
+        })}
+      </ol>
+    </div>
   );
 }
 

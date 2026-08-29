@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
+import { SwitchCamera } from "lucide-react";
 
 import type {
   CameraDeviceInfo,
   CameraFacing,
 } from "@/hooks/useCameraSwitch";
+import { COCKPIT_CTRL } from "@/lib/call/cockpit-call-controls";
+import CallControlTooltip from "./CallControlTooltip";
 
 /**
  * Sub-batch F · task-video-F1 — camera switch button.
@@ -26,10 +29,8 @@ import type {
  *     posture; viewport correctly tracks the actual visible width.
  *   - It makes responsive previews in dev tools work correctly.
  *
- * The whole component renders nothing when `hasMultipleCameras` is
- * false — there's only one camera, the button would do nothing, and
- * empty UI is better than a disabled-forever control. The host
- * (`<VideoRoom>`) is responsible for the audio-only / hold gates.
+ * The whole component renders nothing when neither `canFlip` nor
+ * `hasMultipleCameras` is true.
  *
  * Visual conventions match the existing controls bar (mute, camera-
  * off, mirror, hold buttons): same height (`h-9`), same gray
@@ -47,9 +48,15 @@ interface CameraSwitchButtonProps {
   switchTo: (deviceId: string) => Promise<void> | void;
   isFlipping: boolean;
   hasMultipleCameras: boolean;
+  /** Broader than `hasMultipleCameras` — iOS single-device facingMode. */
+  canFlip?: boolean;
+  /** Live-track facing; wins over the device-list heuristic for the label. */
+  currentFacing?: CameraFacing;
   /** Optional override for breakpoint detection. Useful in tests
    *  + Storybook. Defaults to `window.matchMedia(min-width:768px)`. */
   forceLayout?: "mobile" | "desktop";
+  /** Cockpit dock uses icon-only circular buttons. */
+  tone?: "default" | "cockpit";
 }
 
 // ---------------------------------------------------------------------------
@@ -89,37 +96,21 @@ function useIsDesktopViewport(): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Glyph
-//
-// Inline SVG of a "flip camera" icon — two arrowed quarter-arcs
-// suggesting rotation around a central camera. 18×18 to match the
-// other button text glyphs.
+// Glyph — Lucide SwitchCamera (camera + circling arrows). The old
+// body-plus-chevrons mark read as a still camera, not a flip.
 // ---------------------------------------------------------------------------
 
-function FlipCameraGlyph(): React.JSX.Element {
+export function FlipCameraGlyph({
+  className = "h-[18px] w-[18px]",
+}: {
+  className?: string;
+}): React.JSX.Element {
   return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      focusable="false"
-    >
-      {/* Camera body */}
-      <rect x="3" y="7" width="18" height="12" rx="2" />
-      {/* Lens */}
-      <circle cx="12" cy="13" r="2.5" />
-      {/* Top mount + flash slit */}
-      <path d="M9 4h6l1 3H8l1-3z" />
-      {/* Rotation arrows: small chevrons at NE + SW corners */}
-      <path d="M19 11l1.5 1.5L19 14" />
-      <path d="M5 14l-1.5-1.5L5 11" />
-    </svg>
+    <SwitchCamera
+      className={className}
+      strokeWidth={2}
+      aria-hidden
+    />
   );
 }
 
@@ -134,29 +125,39 @@ function MobileFlipButton(props: {
    *  affordance ("Switch to back camera"). Falls back to a generic
    *  copy when facing is unknown. */
   nextFacingLabel: string;
+  tone?: "default" | "cockpit";
 }): React.JSX.Element {
-  const { flip, isFlipping, nextFacingLabel } = props;
+  const { flip, isFlipping, nextFacingLabel, tone = "default" } = props;
 
   const handleClick = () => {
     if (isFlipping) return;
     void flip();
   };
 
-  return (
+  const button = (
     <button
       type="button"
       onClick={handleClick}
       disabled={isFlipping}
       aria-label={nextFacingLabel}
-      title={nextFacingLabel}
+      title={tone === "cockpit" ? undefined : nextFacingLabel}
       data-testid="camera-flip-button"
       className={
-        "flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-300 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+        tone === "cockpit"
+          ? COCKPIT_CTRL
+          : "flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-300 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
       }
     >
       <FlipCameraGlyph />
     </button>
   );
+
+  if (tone === "cockpit") {
+    return (
+      <CallControlTooltip label={nextFacingLabel}>{button}</CallControlTooltip>
+    );
+  }
+  return button;
 }
 
 // ---------------------------------------------------------------------------
@@ -239,7 +240,10 @@ export function CameraSwitchButton(
     switchTo,
     isFlipping,
     hasMultipleCameras,
+    canFlip,
+    currentFacing: currentFacingProp,
     forceLayout,
+    tone = "default",
   } = props;
 
   const isDesktopViewport = useIsDesktopViewport();
@@ -258,21 +262,28 @@ export function CameraSwitchButton(
     hasMeasuredRef.current = true;
   }, []);
 
-  if (!hasMultipleCameras) return null;
+  if (!(canFlip ?? hasMultipleCameras)) return null;
 
   // Compute the affordance label for the mobile button. Looks at
   // the CURRENT device's facing and offers the OTHER facing's
-  // copy.
+  // copy. Live-track facing wins — iOS may list one device whose
+  // label still says "front" after a facingMode flip.
   const currentDevice =
     current != null ? devices.find((d) => d.deviceId === current) : undefined;
-  const currentFacing: CameraFacing = currentDevice?.facing ?? "unknown";
+  const currentFacing: CameraFacing =
+    currentFacingProp && currentFacingProp !== "unknown"
+      ? currentFacingProp
+      : (currentDevice?.facing ?? "unknown");
   const nextFacingLabel = (() => {
     if (currentFacing === "front") return "Switch to back camera";
     if (currentFacing === "back") return "Switch to front camera";
     return "Switch camera";
   })();
 
-  if (isDesktop) {
+  // Cockpit dock is icon-only; a <select> breaks the cluster. Always
+  // flip. Desktop dropdown stays for the patient/legacy toolbar when
+  // there are labelled cameras to pick from.
+  if (isDesktop && tone !== "cockpit" && hasMultipleCameras) {
     return (
       <DesktopDropdown
         devices={devices}
@@ -288,6 +299,7 @@ export function CameraSwitchButton(
       flip={flip}
       isFlipping={isFlipping}
       nextFacingLabel={nextFacingLabel}
+      tone={tone}
     />
   );
 }

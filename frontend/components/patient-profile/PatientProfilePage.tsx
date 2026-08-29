@@ -5,23 +5,37 @@ import {
   deriveCockpitState,
   shouldShowChartRail,
   mapStateToTemplate,
+  shouldAutoStartInClinicVisit,
+  IN_CLINIC_APPOINTMENT_UPDATED_EVENT,
   type CockpitTemplateOverride,
 } from "@/lib/patient-profile/state";
 import {
+  postAppointmentCheckIn,
   postAppointmentWrapUp,
   postDoctorMarkNoShow,
 } from "@/lib/api";
 import { getDoctorSettingsShared } from "@/lib/api/doctor-settings-shared";
 import type { Appointment, ConsultationModality } from "@/types/appointment";
 import CockpitHeader from "@/components/patient-profile/PatientProfileHeader";
+import {
+  CockpitLeaveGuard,
+  type CockpitLeaveExit,
+} from "@/components/patient-profile/CockpitLeaveGuard";
 import { PatientRibbon } from "@/components/patient-profile/PatientRibbon";
+import { clearConsultSteppedAway } from "@/lib/cockpit/consult-stepped-away";
 import type { ConsultationLauncherHandle } from "@/components/consultation/ConsultationLauncher";
+import { useDashboardLiveFocus } from "@/components/layout/DashboardLiveFocusContext";
 import CommandBar from "@/components/patient-profile/CommandBar";
 import KeyboardHelpHost from "@/components/patient-profile/KeyboardHelpHost";
 import CockpitV3Shell from "@/components/patient-profile/v3/CockpitV3Shell";
 import {
+  ConsultSurfaceHost,
+  ConsultSurfaceProvider,
+} from "@/components/patient-profile/ConsultSurfaceContext";
+import {
   buildCockpitTabs,
   buildWalkInCockpitTabs,
+  renderConsultBodySurface,
 } from "@/lib/patient-profile/v3/cockpit-tabs";
 import type { PaneDefinition } from "@/lib/patient-profile/types";
 import {
@@ -86,12 +100,17 @@ export default function PatientProfilePage({
   const [appt, setAppt] = useState<Appointment>(appointmentProp);
 
   const launcherRef = useRef<ConsultationLauncherHandle>(null);
+  const autoStartedIdRef = useRef<string | null>(null);
   const [rxMedicineCount, setRxMedicineCount] = useState(0);
 
-  // ── Finish-visit state ────────────────────────────────────────────────────
+  // ── Finish-visit / start-visit state ──────────────────────────────────────
+  const [startBusy, setStartBusy] = useState(false);
   const [finishBusy, setFinishBusy] = useState(false);
   const [, setFinishError] = useState<string | null>(null);
   const finishErrorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [leaveExit, setLeaveExit] = useState<CockpitLeaveExit | null>(null);
+  const leaveExitRef = useRef<CockpitLeaveExit | null>(null);
+  leaveExitRef.current = leaveExit;
 
   const clearFinishErrorLater = useCallback(() => {
     if (finishErrorTimer.current) clearTimeout(finishErrorTimer.current);
@@ -138,9 +157,24 @@ export default function PatientProfilePage({
       deriveCockpitState({
         appointmentStatus: appt.status,
         session: appt.consultation_session ?? null,
+        consultationType: appt.consultation_type ?? null,
+        patientCheckedInAt: appt.patient_checked_in_at ?? null,
       }),
-    [appt.status, appt.consultation_session],
+    [
+      appt.status,
+      appt.consultation_session,
+      appt.consultation_type,
+      appt.patient_checked_in_at,
+    ]
   );
+
+  const { setLiveFocus } = useDashboardLiveFocus();
+  // Collapse dashboard nav while a consult is live; restore on leave/unmount.
+  useEffect(() => {
+    const active = state === "live";
+    setLiveFocus(active);
+    return () => setLiveFocus(false);
+  }, [state, setLiveFocus]);
 
   const hasPatientId = Boolean(appt.patient_id);
   const showChart = shouldShowChartRail(state, hasPatientId);
@@ -149,21 +183,73 @@ export default function PatientProfilePage({
   // layout doesn't clobber the saved widths for the standard 3-pane layout.
   const storageKey =
     storageKeyProp ??
-    (showChart
-      ? TELEMED_VIDEO_LAYOUT_STORAGE_KEY
-      : WALKIN_LAYOUT_STORAGE_KEY);
+    (showChart ? TELEMED_VIDEO_LAYOUT_STORAGE_KEY : WALKIN_LAYOUT_STORAGE_KEY);
 
   // ── CockpitHeader handlers ────────────────────────────────────────────────
 
   const handleStartConsult = useCallback(
     (modality: ConsultationModality) => {
-      // Map `in_clinic` → `video` to match the launcher's resolveBookedModality.
-      const m: "text" | "voice" | "video" =
-        modality === "in_clinic" ? "video" : modality;
-      launcherRef.current?.start(m);
+      const isInClinic =
+        modality === "in_clinic" || appt.consultation_type === "in_clinic";
+      if (isInClinic) {
+        if (startBusy) return;
+        setStartBusy(true);
+        void postAppointmentCheckIn(token, appt.id)
+          .then((res) => {
+            setAppt(res.data.appointment);
+          })
+          .catch((err: unknown) => {
+            console.error("[PatientProfilePage] Start visit failed:", err);
+          })
+          .finally(() => {
+            setStartBusy(false);
+          });
+        return;
+      }
+      if (modality === "text" || modality === "voice" || modality === "video") {
+        launcherRef.current?.start(modality);
+      }
     },
-    [],
+    [appt.consultation_type, appt.id, startBusy, token]
   );
+
+  useEffect(() => {
+    if (autoStartedIdRef.current === appt.id) return;
+    if (
+      !shouldAutoStartInClinicVisit({
+        consultationType: appt.consultation_type ?? null,
+        appointmentStatus: appt.status,
+        patientCheckedInAt: appt.patient_checked_in_at ?? null,
+        appointmentDate: appt.appointment_date,
+      })
+    ) {
+      return;
+    }
+    autoStartedIdRef.current = appt.id;
+    handleStartConsult("in_clinic");
+  }, [
+    appt.id,
+    appt.status,
+    appt.consultation_type,
+    appt.patient_checked_in_at,
+    appt.appointment_date,
+    handleStartConsult,
+  ]);
+
+  useEffect(() => {
+    const onUpdated = (event: Event) => {
+      const next = (event as CustomEvent<Appointment>).detail;
+      if (!next?.id || next.id !== appt.id) return;
+      setAppt(next);
+    };
+    window.addEventListener(IN_CLINIC_APPOINTMENT_UPDATED_EVENT, onUpdated);
+    return () => {
+      window.removeEventListener(
+        IN_CLINIC_APPOINTMENT_UPDATED_EVENT,
+        onUpdated
+      );
+    };
+  }, [appt.id]);
 
   const handleReschedule = useCallback(() => {
     // TODO: wire to the reschedule / book-again flow.
@@ -173,28 +259,44 @@ export default function PatientProfilePage({
     // TODO: wire to the cancel appointment flow.
   }, []);
 
-  const handleFinishVisit = useCallback(async () => {
-    if (finishBusy) return;
-    if (appt.status === "completed") return;
+  const handleFinishVisit = useCallback(async (): Promise<boolean> => {
+    if (finishBusy) return false;
+    if (appt.status === "completed") {
+      clearConsultSteppedAway(appt.id);
+      return true;
+    }
     if (appt.status === "cancelled" || appt.status === "no_show") {
-      setFinishError(`Cannot finish a ${appt.status.replace("_", "-")} appointment.`);
+      setFinishError(
+        `Cannot finish a ${appt.status.replace("_", "-")} appointment.`
+      );
       clearFinishErrorLater();
-      return;
+      return false;
     }
     setFinishError(null);
     setFinishBusy(true);
     try {
       const res = await postAppointmentWrapUp(token, appt.id, {});
       setAppt(res.data.appointment);
+      clearConsultSteppedAway(appt.id);
+      return true;
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to finish visit";
+      const message =
+        err instanceof Error ? err.message : "Failed to finish visit";
       setFinishError(message);
       clearFinishErrorLater();
       console.error("[PatientProfilePage] Finish visit failed:", err);
+      return false;
     } finally {
       setFinishBusy(false);
     }
   }, [appt.id, appt.status, finishBusy, token, clearFinishErrorLater]);
+
+  // Re-entering the cockpit means the doctor is actively on this visit again.
+  useEffect(() => {
+    if (state === "live" || state === "wrap_up") {
+      clearConsultSteppedAway(appt.id);
+    }
+  }, [appt.id, state]);
 
   const handleMarkNoShow = useCallback(async () => {
     try {
@@ -218,9 +320,9 @@ export default function PatientProfilePage({
       mapStateToTemplate(
         state,
         appt.consultation_type ?? null,
-        cockpitTemplateOverride,
+        cockpitTemplateOverride
       ),
-    [state, appt.consultation_type, cockpitTemplateOverride],
+    [state, appt.consultation_type, cockpitTemplateOverride]
   );
 
   // tmr-05: one-shot telemetry — first mount per modality template per session.
@@ -271,7 +373,7 @@ export default function PatientProfilePage({
       handleMarkNoShow,
       handleFinishVisit,
       finishBusy,
-    ],
+    ]
   );
 
   // ── Cockpit v3 flat tab registry (cv3t-01 · Phase 5) ──────────────────────
@@ -283,7 +385,7 @@ export default function PatientProfilePage({
       showChart
         ? buildCockpitTabs(templateContext, selectedTemplateId)
         : buildWalkInCockpitTabs(templateContext, selectedTemplateId),
-    [showChart, templateContext, selectedTemplateId],
+    [showChart, templateContext, selectedTemplateId]
   );
 
   const v3Panes = panesProp ?? v3Tabs;
@@ -300,6 +402,10 @@ export default function PatientProfilePage({
     token,
   });
 
+  // Built-in tabs use a portal slot for Consult; test-injected `panesProp`
+  // trees render their own bodies and must not mount the stable host.
+  const useStableConsultHost = panesProp == null;
+
   const pageContent = (
     // `-m-4 md:-m-6` cancels the parent `<DashboardShell>` `p-4 md:p-6`
     // padding so the patient-profile shell bleeds edge-to-edge — matches
@@ -311,58 +417,91 @@ export default function PatientProfilePage({
     // of the bottom. `calc(100% + padding)` fills `<main>`'s padding box so
     // the footer sits flush. Requires a definite height chain on ancestors
     // (DashboardShell row + main both use `min-h-0 flex-1`).
-    <div className="-m-4 md:-m-6 flex h-[calc(100%_+_2rem)] md:h-[calc(100%_+_3rem)] min-h-0 flex-col overflow-hidden">
-      {/* Mount keyboard handlers once at the page root. */}
-      <CommandBar />
-      <KeyboardHelpHost />
-      {/* ── Cockpit header (includes CockpitQueueRail internally) ─────────── */}
-      <CockpitHeader
-        appointment={appt}
-        state={state}
-        token={token}
-        onStartConsult={handleStartConsult}
-        onReschedule={handleReschedule}
-        onCancelAppointment={handleCancelAppointment}
-        onMarkNoShow={handleMarkNoShow}
-        onFinishVisit={handleFinishVisit}
-        finishBusy={finishBusy}
-      />
-
-      {/* ── Patient context ribbon (crb-03) ──────────────────────────────── */}
-      {/* Mounted only for known-patient desktop views. Walk-in (!showChart)
-          skips the ribbon per DL-6/7. Mobile <lg viewport hidden via Tailwind.
-          The ribbon's Dx live-mirror calls `useRxForm()` and `<RxFormProvider>`
-          is always mounted around this subtree (see end of component), so no
-          extra provider gate is needed here. */}
-      {showChart && (
-        <div className="hidden lg:block">
-          <PatientRibbon appointment={appt} token={token} />
-        </div>
-      )}
-
-      {/* ── Cockpit v3 shell — takes remaining vertical space ─────────────── */}
-      <div className="min-h-0 flex-1">
-        <CockpitV3Shell
-          panes={v3Panes}
-          storageKey={storageKey}
+    <ConsultSurfaceProvider>
+      <div className="-m-4 md:-m-6 flex h-[calc(100%_+_2rem)] md:h-[calc(100%_+_3rem)] min-h-0 flex-col overflow-hidden">
+        {/* Mount keyboard handlers once at the page root. */}
+        <CommandBar />
+        <KeyboardHelpHost />
+        {/* ── Cockpit header (includes CockpitQueueRail internally) ─────────── */}
+        <CockpitHeader
+          appointment={appt}
+          state={state}
           token={token}
-          consultActive={state === "live"}
-          safetyDock={<SafetyStickyStrip appointmentId={appt.id} />}
-          actionDock={
-            <CockpitRxActionDock
-              state={state}
-              appointmentId={appt.id}
-              patientId={appt.patient_id ?? null}
-              token={token}
-              finishBusy={finishBusy}
-              onFinish={() => void handleFinishVisit()}
-              onSent={handleRxSent}
-            />
-          }
+          onStartConsult={handleStartConsult}
+          onReschedule={handleReschedule}
+          onCancelAppointment={handleCancelAppointment}
+          onMarkNoShow={handleMarkNoShow}
+          onFinishVisit={handleFinishVisit}
+          finishBusy={finishBusy}
+          startBusy={startBusy}
         />
-      </div>
 
-    </div>
+        <CockpitLeaveGuard
+          appointmentId={appt.id}
+          active={state === "live" || state === "wrap_up"}
+          onLeaveIntent={setLeaveExit}
+        />
+
+        {/* ── Patient context ribbon (crb-03) ──────────────────────────────── */}
+        {/* Mounted only for known-patient desktop views. Walk-in (!showChart)
+            skips the ribbon per DL-6/7. Mobile <lg viewport hidden via Tailwind.
+            Hidden during live consult so video + chart get the vertical room. */}
+        {showChart && state !== "live" && (
+          <div className="hidden lg:block">
+            <PatientRibbon appointment={appt} token={token} />
+          </div>
+        )}
+
+        {/* ── Cockpit v3 shell — takes remaining vertical space ─────────────── */}
+        <div className="min-h-0 flex-1">
+          <CockpitV3Shell
+            panes={v3Panes}
+            storageKey={storageKey}
+            token={token}
+            consultActive={state === "live"}
+            safetyDock={<SafetyStickyStrip appointmentId={appt.id} />}
+            actionDock={
+              <CockpitRxActionDock
+                state={state}
+                appointmentId={appt.id}
+                patientId={appt.patient_id ?? null}
+                patientName={appt.patient_name}
+                patientIdentity={{
+                  phone: appt.patient_phone,
+                  ageYears: appt.patient_age,
+                  sex: appt.patient_sex,
+                  guardianName: appt.patient_guardian_name,
+                  guardianRelation: appt.patient_guardian_relation,
+                  mrn: appt.patient_mrn,
+                  visitDate: appt.appointment_date,
+                }}
+                token={token}
+                finishBusy={finishBusy}
+                leaveExit={leaveExit}
+                onFinish={() => {
+                  void handleFinishVisit().then((ok) => {
+                    if (ok) leaveExitRef.current?.continueAfterFinish();
+                  });
+                }}
+                onSent={handleRxSent}
+              />
+            }
+            // Must be a React child of CallStageChromeProvider inside the shell
+            // so portaled VideoRoom receives chat min-width / Focus widen.
+            consultSurfaceHost={
+              useStableConsultHost ? (
+                <ConsultSurfaceHost>
+                  {renderConsultBodySurface(
+                    templateContext,
+                    selectedTemplateId
+                  )}
+                </ConsultSurfaceHost>
+              ) : null
+            }
+          />
+        </div>
+      </div>
+    </ConsultSurfaceProvider>
   );
 
   // `<RxFormProvider>` mounts on first paint with empty fields (autosave off).
@@ -390,7 +529,7 @@ export default function PatientProfilePage({
 
 /** tmr-04: reads `doctor_settings.cockpit_template_override` once per mount. */
 function useDoctorCockpitTemplateOverride(
-  token: string,
+  token: string
 ): CockpitTemplateOverride {
   const [override, setOverride] = useState<CockpitTemplateOverride>(null);
 

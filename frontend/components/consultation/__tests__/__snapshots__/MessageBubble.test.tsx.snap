@@ -8,31 +8,57 @@ exports[`MessageBubble snapshots > renders a doctor text message 1`] = `
       data-message-id="msg-001"
       role="listitem"
     >
-      <p
-        class="mb-0.5 flex items-center gap-1 px-1 text-[11px] text-gray-500"
-      >
-        <span>
-          15:45
-        </span>
-      </p>
       <div
-        class="max-w-[80%] message-body whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm shadow-sm bg-blue-600 text-white"
+        class="max-w-[80%] relative flex w-full justify-end self-end"
       >
-        <span
-          class="inline-flex w-full flex-wrap items-end gap-x-1"
+        <div
+          class="message-body w-max max-w-full whitespace-pre-wrap break-words px-2.5 pb-1 pt-1.5 text-[14.5px] leading-[1.35] shadow-sm rounded-2xl rounded-tr-md border border-blue-200 bg-blue-50 text-slate-900"
         >
-          <span
-            class="min-w-0 flex-1"
-          >
+          <span>
             Plan discussed — follow up in two weeks.
           </span>
           <span
-            aria-label="Delivered"
-            class="text-gray-500 text-xs ml-1 shrink-0"
+            class="inline-flex items-center gap-0.5 float-right ml-2 mt-1 text-gray-500"
+            data-testid="message-bubble-meta"
           >
-            ✓
+            <time
+              class="text-[11px] leading-none tabular-nums"
+            >
+              15:45
+            </time>
+            <span
+              class="inline-flex"
+              data-testid="message-delivery-ticks"
+            >
+              <span
+                aria-label="Delivered"
+                class="inline-flex shrink-0 text-gray-400"
+                data-delivery="delivered"
+              >
+                <svg
+                  aria-hidden="true"
+                  class="lucide lucide-check-check h-3.5 w-3.5"
+                  fill="none"
+                  height="24"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2.5"
+                  viewBox="0 0 24 24"
+                  width="24"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    d="M18 6 7 17l-5-5"
+                  />
+                  <path
+                    d="m22 10-7.5 7.5L13 16"
+                  />
+                </svg>
+              </span>
+            </span>
           </span>
-        </span>
+        </div>
       </div>
     </li>
   </ul>
@@ -48,28 +74,30 @@ exports[`MessageBubble snapshots > renders a failed-send bubble 1`] = `
       data-message-id="msg-failed"
       role="listitem"
     >
-      <p
-        class="mb-0.5 flex items-center gap-1 px-1 text-[11px] text-gray-500"
-      >
-        <span>
-          15:45
-        </span>
-      </p>
       <div
-        class="max-w-[80%] message-body whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm shadow-sm bg-blue-600 text-white"
+        class="max-w-[80%] relative flex w-full justify-end self-end"
       >
-        <span
-          class="inline-flex w-full flex-wrap items-end gap-x-1"
+        <div
+          class="message-body w-max max-w-full whitespace-pre-wrap break-words px-2.5 pb-1 pt-1.5 text-[14.5px] leading-[1.35] shadow-sm rounded-2xl rounded-tr-md border border-blue-200 bg-blue-50 text-slate-900"
         >
-          <span
-            class="min-w-0 flex-1"
-          >
+          <span>
             Message that failed to send.
           </span>
-        </span>
+          <span
+            class="inline-flex items-center gap-0.5 float-right ml-2 mt-1 text-gray-500"
+            data-testid="message-bubble-meta"
+          >
+            <time
+              class="text-[11px] leading-none tabular-nums"
+            >
+              15:45
+            </time>
+          </span>
+        </div>
       </div>
       <div
         class="mt-1 flex items-center gap-2 text-xs text-red-700"
+        data-failure-reason="unknown"
       >
         <span>
           Failed to send
@@ -100,25 +128,26 @@ exports[`MessageBubble snapshots > renders a patient text message 1`] = `
       data-message-id="msg-patient"
       role="listitem"
     >
-      <p
-        class="mb-0.5 flex items-center gap-1 px-1 text-[11px] text-gray-500"
-      >
-        <span>
-          15:45
-        </span>
-      </p>
       <div
-        class="max-w-[80%] message-body whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm shadow-sm bg-white text-gray-900 border border-gray-200"
+        class="max-w-[80%] relative flex w-full justify-start self-start"
       >
-        <span
-          class="inline-flex w-full flex-wrap items-end gap-x-1"
+        <div
+          class="message-body w-max max-w-full whitespace-pre-wrap break-words px-2.5 pb-1 pt-1.5 text-[14.5px] leading-[1.35] shadow-sm rounded-2xl rounded-tl-md bg-gray-100 text-gray-900"
         >
-          <span
-            class="min-w-0 flex-1"
-          >
+          <span>
             Thank you, doctor.
           </span>
-        </span>
+          <span
+            class="inline-flex items-center gap-0.5 float-right ml-2 mt-1 text-gray-500"
+            data-testid="message-bubble-meta"
+          >
+            <time
+              class="text-[11px] leading-none tabular-nums"
+            >
+              15:45
+            </time>
+          </span>
+        </div>
       </div>
     </li>
   </ul>
@@ -133,47 +162,73 @@ exports[`MessageBubble snapshots > renders a reply with quoted parent preview 1`
       data-message-id="msg-reply"
       role="listitem"
     >
-      <p
-        class="mb-0.5 flex items-center gap-1 px-1 text-[11px] text-gray-500"
-      >
-        <span>
-          15:45
-        </span>
-      </p>
       <div
-        class="max-w-[80%] message-body whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm shadow-sm bg-blue-600 text-white"
+        class="max-w-[80%] relative flex w-full justify-end self-end"
       >
-        <button
-          aria-label="Jump to message from Doctor"
-          class="mb-1.5 w-full min-w-0 rounded border-l-2 pl-2 pr-1 py-1 text-left text-xs border-white/40 bg-white/10 text-white/90 hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1"
-          type="button"
+        <div
+          class="message-body w-max max-w-full whitespace-pre-wrap break-words px-2.5 pb-1 pt-1.5 text-[14.5px] leading-[1.35] shadow-sm rounded-2xl rounded-tr-md border border-blue-200 bg-blue-50 text-slate-900"
         >
-          <div
-            class="truncate font-medium"
+          <button
+            aria-label="Jump to message from Doctor"
+            class="mb-1.5 w-full min-w-0 rounded border-l-2 pl-2 pr-1 py-1 text-left text-xs border-blue-400 bg-white/70 text-gray-700 hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1"
+            type="button"
           >
-            Doctor
-          </div>
-          <div
-            class="truncate opacity-90"
-          >
-            Take 5mg twice a day
-          </div>
-        </button>
-        <span
-          class="inline-flex w-full flex-wrap items-end gap-x-1"
-        >
-          <span
-            class="min-w-0 flex-1"
-          >
+            <div
+              class="truncate font-medium"
+            >
+              Doctor
+            </div>
+            <div
+              class="truncate opacity-90"
+            >
+              Take 5mg twice a day
+            </div>
+          </button>
+          <span>
             Got it
           </span>
           <span
-            aria-label="Delivered"
-            class="text-gray-500 text-xs ml-1 shrink-0"
+            class="inline-flex items-center gap-0.5 float-right ml-2 mt-1 text-gray-500"
+            data-testid="message-bubble-meta"
           >
-            ✓
+            <time
+              class="text-[11px] leading-none tabular-nums"
+            >
+              15:45
+            </time>
+            <span
+              class="inline-flex"
+              data-testid="message-delivery-ticks"
+            >
+              <span
+                aria-label="Delivered"
+                class="inline-flex shrink-0 text-gray-400"
+                data-delivery="delivered"
+              >
+                <svg
+                  aria-hidden="true"
+                  class="lucide lucide-check-check h-3.5 w-3.5"
+                  fill="none"
+                  height="24"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2.5"
+                  viewBox="0 0 24 24"
+                  width="24"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    d="M18 6 7 17l-5-5"
+                  />
+                  <path
+                    d="m22 10-7.5 7.5L13 16"
+                  />
+                </svg>
+              </span>
+            </span>
           </span>
-        </span>
+        </div>
       </div>
     </li>
   </ul>
@@ -228,24 +283,15 @@ exports[`MessageBubble snapshots > renders an attachment message 1`] = `
       data-message-id="msg-001"
       role="listitem"
     >
-      <p
-        class="mb-0.5 flex items-center gap-1 px-1 text-[11px] text-gray-500"
-      >
-        <span>
-          15:45
-        </span>
-      </p>
       <div
-        class="max-w-[80%] message-body whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm shadow-sm bg-blue-600 text-white"
+        class="max-w-[80%] relative flex w-full justify-end self-end"
       >
-        <span
-          class="inline-flex w-full flex-wrap items-end gap-x-1"
+        <div
+          class="message-body w-max max-w-full whitespace-pre-wrap break-words px-2.5 pb-1 pt-1.5 text-[14.5px] leading-[1.35] shadow-sm rounded-2xl rounded-tr-md border border-blue-200 bg-blue-50 text-slate-900"
         >
-          <span
-            class="min-w-0 flex-1"
-          >
+          <span>
             <span
-              class="inline-flex items-center gap-1.5 text-white/85"
+              class="inline-flex items-center gap-1.5 text-gray-500"
             >
               <span
                 aria-hidden="true"
@@ -260,12 +306,47 @@ exports[`MessageBubble snapshots > renders an attachment message 1`] = `
             </span>
           </span>
           <span
-            aria-label="Delivered"
-            class="text-gray-500 text-xs ml-1 shrink-0"
+            class="inline-flex items-center gap-0.5 float-right ml-2 mt-1 text-gray-500"
+            data-testid="message-bubble-meta"
           >
-            ✓
+            <time
+              class="text-[11px] leading-none tabular-nums"
+            >
+              15:45
+            </time>
+            <span
+              class="inline-flex"
+              data-testid="message-delivery-ticks"
+            >
+              <span
+                aria-label="Delivered"
+                class="inline-flex shrink-0 text-gray-400"
+                data-delivery="delivered"
+              >
+                <svg
+                  aria-hidden="true"
+                  class="lucide lucide-check-check h-3.5 w-3.5"
+                  fill="none"
+                  height="24"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2.5"
+                  viewBox="0 0 24 24"
+                  width="24"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    d="M18 6 7 17l-5-5"
+                  />
+                  <path
+                    d="m22 10-7.5 7.5L13 16"
+                  />
+                </svg>
+              </span>
+            </span>
           </span>
-        </span>
+        </div>
       </div>
     </li>
   </ul>
@@ -280,25 +361,57 @@ exports[`MessageBubble snapshots > renders in readonly mode without failed-send 
       data-message-id="msg-001"
       role="listitem"
     >
-      <p
-        class="mb-0.5 flex items-center gap-1 px-1 text-[11px] text-gray-500"
-      >
-        <span>
-          15:45
-        </span>
-      </p>
       <div
-        class="max-w-[80%] message-body whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm shadow-sm bg-blue-600 text-white"
+        class="max-w-[80%] relative flex w-full justify-end self-end"
       >
-        <span
-          class="inline-flex w-full flex-wrap items-end gap-x-1"
+        <div
+          class="message-body w-max max-w-full whitespace-pre-wrap break-words px-2.5 pb-1 pt-1.5 text-[14.5px] leading-[1.35] shadow-sm rounded-2xl rounded-tr-md border border-blue-200 bg-blue-50 text-slate-900"
         >
-          <span
-            class="min-w-0 flex-1"
-          >
+          <span>
             Read-only history line.
           </span>
-        </span>
+          <span
+            class="inline-flex items-center gap-0.5 float-right ml-2 mt-1 text-gray-500"
+            data-testid="message-bubble-meta"
+          >
+            <time
+              class="text-[11px] leading-none tabular-nums"
+            >
+              15:45
+            </time>
+            <span
+              class="inline-flex"
+              data-testid="message-delivery-ticks"
+            >
+              <span
+                aria-label="Read"
+                class="inline-flex shrink-0 text-blue-600"
+                data-delivery="read"
+              >
+                <svg
+                  aria-hidden="true"
+                  class="lucide lucide-check-check h-3.5 w-3.5"
+                  fill="none"
+                  height="24"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2.5"
+                  viewBox="0 0 24 24"
+                  width="24"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    d="M18 6 7 17l-5-5"
+                  />
+                  <path
+                    d="m22 10-7.5 7.5L13 16"
+                  />
+                </svg>
+              </span>
+            </span>
+          </span>
+        </div>
       </div>
     </li>
   </ul>

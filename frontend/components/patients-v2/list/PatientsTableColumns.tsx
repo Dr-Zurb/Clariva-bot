@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
 import {
   Building2,
   Calendar,
@@ -11,15 +10,24 @@ import {
   Mic,
   Phone,
   Video,
+  X,
 } from "lucide-react";
+import { PatientQuickPeek } from "@/components/patients-v2/list/PatientQuickPeek";
+import { prefetchPatientQuickPeek } from "@/components/patients-v2/list/patientQuickPeekCache";
 import { Badge } from "@/components/ui/badge";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
 import type { PatientListColumnId } from "@/lib/patients-v2/list-preferences";
 import {
   copyToClipboard,
+  formatPatientDisplayName,
   formatRelativeDate,
   formatTableDemographics,
-  maskPhoneDisplay,
 } from "@/lib/patients-v2/list-utils";
+import { coercePatientTags } from "@/lib/patients-v2/patient-tags";
 import { cn } from "@/lib/utils";
 import type { PatientListSortId, PatientSummary } from "@/types/patient";
 import type { ConsultationModality } from "@/types/appointment";
@@ -37,7 +45,14 @@ export interface PatientsTableColumn {
 
 export interface CellContext {
   showRiskPills: boolean;
+  /** Auth token for name-hover quick peek. */
+  token?: string;
   onCopyMrn?: (message: string) => void;
+  onCopyPhone?: (message: string) => void;
+  /** Click patient_tag badge → filter list by that tag. */
+  onFilterByTag?: (tag: string) => void;
+  /** × on badge → remove that tag from this patient only. */
+  onRemoveTag?: (patientId: string, tag: string) => void;
 }
 
 function initials(name: string): string {
@@ -71,13 +86,7 @@ function RiskPills({ patient }: { patient: PatientSummary }) {
       </Badge>,
     );
   }
-  if ((patient.open_episodes_count ?? 0) > 0) {
-    pills.push(
-      <Badge key="episodes" variant="secondary" className="text-[10px] px-1.5 py-0">
-        Open episode
-      </Badge>,
-    );
-  }
+  // Care-package "open episode" omitted — billing concept, not a doctor list signal.
   if (patient.overdue_followup) {
     pills.push(
       <Badge key="followup" variant="outline" className="text-[10px] px-1.5 py-0 border-warning text-warning">
@@ -86,7 +95,8 @@ function RiskPills({ patient }: { patient: PatientSummary }) {
     );
   }
   if (pills.length === 0) return null;
-  return <div className="mt-0.5 flex flex-wrap gap-1">{pills}</div>;
+  // Inline, no wrap — keeps list row height uniform with tag-free rows.
+  return <div className="flex shrink-0 items-center gap-1">{pills}</div>;
 }
 
 export function avatarCell(patient: PatientSummary): React.ReactNode {
@@ -104,14 +114,83 @@ export function nameAndRiskPillsCell(
   patient: PatientSummary,
   ctx: CellContext,
 ): React.ReactNode {
+  const tags = coercePatientTags(patient.patient_tags, patient.patient_tag);
+  const visible = tags.slice(0, 2);
+  const extra = tags.length - visible.length;
+  const token = ctx.token;
   return (
-    <div className="min-w-[10rem]">
-      <Link
-        href={`/dashboard/patients-v2/${patient.id}`}
-        className="font-medium text-foreground hover:text-primary hover:underline"
-      >
-        {patient.name}
-      </Link>
+    <div className="flex min-w-[10rem] max-w-full items-center gap-1.5">
+      {token ? (
+        <HoverCard openDelay={100} closeDelay={100}>
+          <HoverCardTrigger asChild>
+            <Link
+              href={`/dashboard/patients-v2/${patient.id}`}
+              className="min-w-0 truncate font-medium text-foreground hover:text-primary hover:underline"
+              onPointerEnter={() => {
+                void prefetchPatientQuickPeek(token, patient.id);
+              }}
+            >
+              {formatPatientDisplayName(patient.name)}
+            </Link>
+          </HoverCardTrigger>
+          <HoverCardContent
+            side="bottom"
+            align="start"
+            sideOffset={8}
+            collisionPadding={24}
+            className="w-96 max-w-[min(24rem,calc(100vw-3rem))]"
+          >
+            <PatientQuickPeek patientId={patient.id} token={token} />
+          </HoverCardContent>
+        </HoverCard>
+      ) : (
+        <Link
+          href={`/dashboard/patients-v2/${patient.id}`}
+          className="min-w-0 truncate font-medium text-foreground hover:text-primary hover:underline"
+        >
+          {formatPatientDisplayName(patient.name)}
+        </Link>
+      )}
+      {visible.map((tag) => (
+        <span
+          key={tag}
+          className="inline-flex h-5 max-w-[8rem] shrink-0 items-center rounded-md bg-secondary text-secondary-foreground"
+        >
+          <button
+            type="button"
+            className="min-w-0 truncate py-0 pl-1.5 pr-0.5 text-[10px] font-medium leading-none hover:underline"
+            title={`Filter by tag ${tag}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              ctx.onFilterByTag?.(tag);
+            }}
+          >
+            {tag}
+          </button>
+          {ctx.onRemoveTag ? (
+            <button
+              type="button"
+              className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-r-md text-muted-foreground hover:bg-muted hover:text-foreground"
+              title={`Remove tag ${tag}`}
+              aria-label={`Remove tag ${tag}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                ctx.onRemoveTag?.(patient.id, tag);
+              }}
+            >
+              <X className="h-3 w-3" strokeWidth={2.5} aria-hidden />
+            </button>
+          ) : null}
+        </span>
+      ))}
+      {extra > 0 ? (
+        <span
+          className="shrink-0 text-[10px] text-muted-foreground"
+          title={tags.slice(2).join(", ")}
+        >
+          +{extra}
+        </span>
+      ) : null}
       {ctx.showRiskPills ? <RiskPills patient={patient} /> : null}
     </div>
   );
@@ -145,38 +224,35 @@ export function mrnCell(patient: PatientSummary, ctx: CellContext): React.ReactN
   );
 }
 
-export function PhoneCellInner({ patient }: { patient: PatientSummary }) {
-  const [revealed, setRevealed] = useState(false);
-  const display = revealed ? patient.phone : maskPhoneDisplay(patient.phone);
-
+/** Full phone on doctor Patients list — click to copy (no tel: link). */
+export function PhoneCellInner({
+  patient,
+  ctx,
+}: {
+  patient: PatientSummary;
+  ctx: CellContext;
+}) {
+  const phone = patient.phone;
+  if (!phone) return <span className="text-muted-foreground">—</span>;
   return (
-    <div className="flex items-center gap-1.5">
-      <button
-        type="button"
-        className="text-sm text-muted-foreground hover:text-foreground"
-        onClick={(e) => {
-          e.stopPropagation();
-          setRevealed(true);
-          window.setTimeout(() => setRevealed(false), 5000);
-        }}
-      >
-        {display}
-      </button>
-      <a
-        href={`tel:${patient.phone.replace(/\s/g, "")}`}
-        className="text-primary hover:text-primary/80"
-        aria-label="Call patient"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <Phone className="h-3.5 w-3.5" />
-      </a>
-    </div>
+    <button
+      type="button"
+      className="inline-flex items-center gap-1 text-sm tabular-nums hover:text-primary"
+      title="Click to copy"
+      onClick={async (e) => {
+        e.stopPropagation();
+        const ok = await copyToClipboard(phone);
+        if (ok) ctx.onCopyPhone?.("Copied phone");
+      }}
+    >
+      {phone}
+      <Copy className="h-3 w-3 opacity-60" aria-hidden />
+    </button>
   );
 }
 
-
-export function phoneCell(patient: PatientSummary): React.ReactNode {
-  return <PhoneCellInner patient={patient} />;
+export function phoneCell(patient: PatientSummary, ctx: CellContext): React.ReactNode {
+  return <PhoneCellInner patient={patient} ctx={ctx} />;
 }
 
 export function lastVisitCell(patient: PatientSummary): React.ReactNode {
@@ -213,20 +289,6 @@ export function nextVisitCell(patient: PatientSummary): React.ReactNode {
         </Badge>
       ) : null}
     </div>
-  );
-}
-
-export function openEpisodesCell(patient: PatientSummary): React.ReactNode {
-  const count = patient.open_episodes_count ?? 0;
-  if (count === 0) return <span className="text-muted-foreground">0</span>;
-  return (
-    <Link
-      href={`/dashboard/patients-v2?segment=has-open-episodes&q=${encodeURIComponent(patient.name)}`}
-      className="font-medium text-primary hover:underline"
-      onClick={(e) => e.stopPropagation()}
-    >
-      {count}
-    </Link>
   );
 }
 
@@ -286,7 +348,7 @@ export const PATIENTS_TABLE_COLUMNS: ReadonlyArray<PatientsTableColumn> = [
     label: "Phone",
     optional: true,
     defaultVisible: true,
-    cell: (p) => phoneCell(p),
+    cell: (p, ctx) => phoneCell(p, ctx),
   },
   {
     id: "last-visit",
@@ -302,13 +364,6 @@ export const PATIENTS_TABLE_COLUMNS: ReadonlyArray<PatientsTableColumn> = [
     optional: true,
     defaultVisible: false,
     cell: (p) => nextVisitCell(p),
-  },
-  {
-    id: "open-episodes",
-    label: "Open episodes",
-    optional: true,
-    defaultVisible: false,
-    cell: (p) => openEpisodesCell(p),
   },
   {
     id: "source-channel",

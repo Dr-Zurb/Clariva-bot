@@ -139,7 +139,7 @@ function ShareTargetPageInner() {
       <main className="flex min-h-[100dvh] items-center justify-center bg-gray-50 px-4">
         <StatusCard
           title="No active text consult to share to"
-          body="Open a consult first, then share photos or PDFs from your gallery. On Android, install Clariva as an app to see it in the share sheet."
+          body="Open a consult first, then share photos or PDFs from your gallery. On Android, install Halo Aid as an app to see it in the share sheet."
         />
       </main>
     );
@@ -160,15 +160,15 @@ function ShareTargetPageInner() {
                 <button
                   type="button"
                   onClick={() => goToConsult(consult.sessionId, stagedKeys)}
-                  className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-left transition hover:border-teal-300 hover:bg-teal-50"
+                  className="flex w-full items-center justify-between rounded-lg border border-border bg-muted/40 px-4 py-3 text-left transition hover:border-primary/40 hover:bg-primary/5"
                 >
                   <span>
-                    <span className="block text-sm font-medium text-gray-900">{label}</span>
-                    <span className="mt-0.5 block text-xs text-gray-500">
+                    <span className="block text-sm font-medium text-foreground">{label}</span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">
                       {formatConsultStart(consult.scheduledStartAt)}
                     </span>
                   </span>
-                  <span className="text-sm font-medium text-teal-700">Share here</span>
+                  <span className="text-sm font-medium text-primary">Share here</span>
                 </button>
               </li>
             );

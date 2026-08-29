@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -208,6 +208,40 @@ export default function PrescriptionForm(props: PrescriptionFormProps) {
     clinicName: string | null;
     clinicAddress: string | null;
     timezone: string;
+    qualifications: string | null;
+    logoUrl: string | null;
+    headerUrl: string | null;
+    footerUrl: string | null;
+    headerHeightMm: number;
+    footerHeightMm: number;
+    letterheadPreset: "classic" | "centred" | "preprinted" | "banner" | null;
+    accentColor: string | null;
+    chromeColor: string | null;
+    patientColor: string | null;
+    logoSize: "small" | "medium" | "large";
+    patientIdentityPreset: "open_letter" | "compact" | "grid";
+    showPatientPhone: boolean;
+    showPatientGuardian: boolean;
+    showPatientMrn: boolean;
+    showPatientAddress: boolean;
+    footerLine: string | null;
+    hideHaloCredit: boolean;
+    backgroundUrl: string | null;
+    backgroundPreset: "none" | "paper" | "cross" | "upload";
+    backgroundOpacity: number;
+    headerFit: "fit" | "fill" | "stretch";
+    footerFit: "fit" | "fill" | "stretch";
+    backgroundFit: "fit" | "fill" | "stretch";
+    headerTextSize: "small" | "medium" | "large";
+    patientTextSize: "small" | "medium" | "large";
+    bodyTextSize: "small" | "medium" | "large";
+    pageSize: "a4" | "a5";
+    preprintMarginTopMm: number;
+    preprintMarginBottomMm: number;
+    pageMarginTopMm: number;
+    pageMarginRightMm: number;
+    pageMarginBottomMm: number;
+    pageMarginLeftMm: number;
   } | null>(null);
   const [lastEpisodeRx, setLastEpisodeRx] =
     useState<PrescriptionWithRelations | null>(null);
@@ -324,6 +358,40 @@ type PrescriptionFormBodyProps = PrescriptionFormProps & {
     clinicName: string | null;
     clinicAddress: string | null;
     timezone: string;
+    qualifications: string | null;
+    logoUrl: string | null;
+    headerUrl: string | null;
+    footerUrl: string | null;
+    headerHeightMm: number;
+    footerHeightMm: number;
+    letterheadPreset: "classic" | "centred" | "preprinted" | "banner" | null;
+    accentColor: string | null;
+    chromeColor: string | null;
+    patientColor: string | null;
+    logoSize: "small" | "medium" | "large";
+    patientIdentityPreset: "open_letter" | "compact" | "grid";
+    showPatientPhone: boolean;
+    showPatientGuardian: boolean;
+    showPatientMrn: boolean;
+    showPatientAddress: boolean;
+    footerLine: string | null;
+    hideHaloCredit: boolean;
+    backgroundUrl: string | null;
+    backgroundPreset: "none" | "paper" | "cross" | "upload";
+    backgroundOpacity: number;
+    headerFit: "fit" | "fill" | "stretch";
+    footerFit: "fit" | "fill" | "stretch";
+    backgroundFit: "fit" | "fill" | "stretch";
+    headerTextSize: "small" | "medium" | "large";
+    patientTextSize: "small" | "medium" | "large";
+    bodyTextSize: "small" | "medium" | "large";
+    pageSize: "a4" | "a5";
+    preprintMarginTopMm: number;
+    preprintMarginBottomMm: number;
+    pageMarginTopMm: number;
+    pageMarginRightMm: number;
+    pageMarginBottomMm: number;
+    pageMarginLeftMm: number;
   } | null>;
   lastEpisodeRx: PrescriptionWithRelations | null;
   setLastEpisodeRx: React.Dispatch<
@@ -565,8 +633,42 @@ function PrescriptionFormBody({
     return {
       doctorName: meta?.doctorName ?? "Doctor",
       doctorSpecialty: meta?.doctorSpecialty ?? null,
+      qualifications: meta?.qualifications ?? null,
       clinicName: meta?.clinicName ?? null,
       clinicAddress: meta?.clinicAddress ?? null,
+      logoUrl: meta?.logoUrl ?? null,
+      headerUrl: meta?.headerUrl ?? null,
+      footerUrl: meta?.footerUrl ?? null,
+      headerHeightMm: meta?.headerHeightMm ?? 35,
+      footerHeightMm: meta?.footerHeightMm ?? 20,
+      letterheadPreset: meta?.letterheadPreset ?? null,
+      accentColor: meta?.accentColor ?? null,
+      chromeColor: meta?.chromeColor ?? null,
+      patientColor: meta?.patientColor ?? null,
+      logoSize: meta?.logoSize ?? "medium",
+      patientIdentityPreset: meta?.patientIdentityPreset ?? "open_letter",
+      showPatientPhone: meta?.showPatientPhone !== false,
+      showPatientGuardian: meta?.showPatientGuardian !== false,
+      showPatientMrn: meta?.showPatientMrn !== false,
+      showPatientAddress: meta?.showPatientAddress !== false,
+      footerLine: meta?.footerLine ?? null,
+      hideHaloCredit: meta?.hideHaloCredit === true,
+      backgroundUrl: meta?.backgroundUrl ?? null,
+      backgroundPreset: meta?.backgroundPreset ?? "none",
+      backgroundOpacity: meta?.backgroundOpacity ?? 15,
+      headerFit: meta?.headerFit ?? "stretch",
+      footerFit: meta?.footerFit ?? "stretch",
+      backgroundFit: meta?.backgroundFit ?? "fill",
+      headerTextSize: meta?.headerTextSize ?? "medium",
+      patientTextSize: meta?.patientTextSize ?? "medium",
+      bodyTextSize: meta?.bodyTextSize ?? "medium",
+      pageSize: meta?.pageSize ?? "a4",
+      preprintMarginTopMm: meta?.preprintMarginTopMm ?? 40,
+      preprintMarginBottomMm: meta?.preprintMarginBottomMm ?? 30,
+      pageMarginTopMm: meta?.pageMarginTopMm ?? 12,
+      pageMarginRightMm: meta?.pageMarginRightMm ?? 12,
+      pageMarginBottomMm: meta?.pageMarginBottomMm ?? 12,
+      pageMarginLeftMm: meta?.pageMarginLeftMm ?? 12,
       patientName: "Patient",
       // Preview deliberately omits a visit-date label â€” the form
       // doesn't carry the appointment timestamp in client state and
@@ -646,6 +748,47 @@ function PrescriptionFormBody({
           clinicName: settings?.practice_name?.trim() || null,
           clinicAddress: settings?.address_summary?.trim() || null,
           timezone: settings?.timezone || "Asia/Kolkata",
+          qualifications: settings?.qualifications?.trim() || null,
+          logoUrl: settings?.logo_preview_url ?? null,
+          headerUrl: settings?.header_preview_url ?? null,
+          footerUrl: settings?.footer_preview_url ?? null,
+          headerHeightMm: settings?.header_height_mm ?? 35,
+          footerHeightMm: settings?.footer_height_mm ?? 20,
+          letterheadPreset: settings?.letterhead_preset ?? null,
+          accentColor: settings?.letterhead_accent_color ?? null,
+          chromeColor: settings?.letterhead_chrome_color ?? null,
+          patientColor: settings?.letterhead_patient_color ?? null,
+          logoSize: settings?.logo_size ?? "medium",
+          patientIdentityPreset: settings?.patient_identity_preset ?? "open_letter",
+          showPatientPhone: settings?.show_patient_phone !== false,
+          showPatientGuardian: settings?.show_patient_guardian !== false,
+          showPatientMrn: settings?.show_patient_mrn !== false,
+          showPatientAddress: settings?.show_patient_address !== false,
+          footerLine: settings?.letterhead_footer_line ?? null,
+          hideHaloCredit: settings?.hide_halo_credit === true,
+          backgroundPreset: settings?.letterhead_background_preset ?? "none",
+          backgroundOpacity: settings?.letterhead_background_opacity ?? 15,
+          headerFit: settings?.letterhead_header_fit ?? "stretch",
+          footerFit: settings?.letterhead_footer_fit ?? "stretch",
+          backgroundFit: settings?.letterhead_background_fit ?? "fill",
+          headerTextSize: settings?.letterhead_header_text_size ?? "medium",
+          patientTextSize: settings?.letterhead_patient_text_size ?? "medium",
+          bodyTextSize: settings?.letterhead_body_text_size ?? "medium",
+          pageSize: settings?.page_size === "a5" ? "a5" : "a4",
+          preprintMarginTopMm: settings?.preprint_margin_top_mm ?? 40,
+          preprintMarginBottomMm: settings?.preprint_margin_bottom_mm ?? 30,
+          pageMarginTopMm: settings?.page_margin_top_mm ?? 12,
+          pageMarginRightMm: settings?.page_margin_right_mm ?? 12,
+          pageMarginBottomMm: settings?.page_margin_bottom_mm ?? 12,
+          pageMarginLeftMm: settings?.page_margin_left_mm ?? 12,
+          backgroundUrl:
+            settings?.letterhead_background_preset === "paper"
+              ? "/letterhead/bg-paper.png"
+              : settings?.letterhead_background_preset === "cross"
+                ? "/letterhead/bg-cross.png"
+                : settings?.letterhead_background_preset === "upload"
+                  ? settings?.background_preview_url ?? null
+                  : null,
         };
       } catch {
         // Soft-fail. The preview opens with the literal "Doctor"
@@ -656,6 +799,40 @@ function PrescriptionFormBody({
           clinicName: null,
           clinicAddress: null,
           timezone: "Asia/Kolkata",
+          qualifications: null,
+          logoUrl: null,
+          headerUrl: null,
+          footerUrl: null,
+          headerHeightMm: 35,
+          footerHeightMm: 20,
+          letterheadPreset: null,
+          accentColor: null,
+          chromeColor: null,
+          patientColor: null,
+          logoSize: "medium",
+          patientIdentityPreset: "open_letter",
+          showPatientPhone: true,
+          showPatientGuardian: true,
+          showPatientMrn: true,
+          showPatientAddress: true,
+          footerLine: null,
+          hideHaloCredit: false,
+          backgroundUrl: null,
+          backgroundPreset: "none",
+          backgroundOpacity: 15,
+          headerFit: "stretch",
+          footerFit: "stretch",
+          backgroundFit: "fill",
+          headerTextSize: "medium",
+          patientTextSize: "medium",
+          bodyTextSize: "medium",
+          pageSize: "a4",
+          preprintMarginTopMm: 40,
+          preprintMarginBottomMm: 30,
+          pageMarginTopMm: 12,
+          pageMarginRightMm: 12,
+          pageMarginBottomMm: 12,
+          pageMarginLeftMm: 12,
         };
       } finally {
         setPreviewLoading(false);

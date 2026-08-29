@@ -50,6 +50,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     getDoctorSettings: (...args: unknown[]) => mockGetDoctorSettings(...args),
     patchDoctorSettings: (...args: unknown[]) => mockPatchDoctorSettings(...args),
+    getAppointmentDeskVitals: vi.fn().mockResolvedValue({ data: { vitals: null } }),
     getLastPrescriptionInEpisode: vi
       .fn()
       .mockResolvedValue({ data: { prescription: null } }),

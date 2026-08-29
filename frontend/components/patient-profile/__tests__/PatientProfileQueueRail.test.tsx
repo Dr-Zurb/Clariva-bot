@@ -22,6 +22,8 @@ import type { PipelineEntry } from "@/hooks/useDoctorDayPipeline";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams("from=opd-today&date=2026-08-09"),
+  usePathname: () => "/dashboard/appointments/appt-2",
 }));
 
 // Radix Tooltip needs a pointer-events-capable DOM — stub it out for snapshots
@@ -95,13 +97,13 @@ function pipelineResult(
 function renderRail(
   overrides: {
     currentAppointmentId?: string | null;
-    state?: "active" | "terminal";
+    state?: "ready" | "lobby" | "live" | "wrap_up" | "ended" | "terminal";
   } = {},
 ) {
   return render(
     <CockpitQueueRail
       currentAppointmentId={overrides.currentAppointmentId ?? "appt-2"}
-      state={overrides.state ?? "active"}
+      state={overrides.state ?? "ready"}
       token="tok"
     />,
   );
@@ -283,7 +285,7 @@ describe("CockpitQueueRail", () => {
     });
     expect(prevLink).toHaveAttribute(
       "href",
-      "/dashboard/appointments/appt-1",
+      "/dashboard/appointments/appt-1?from=opd-today&date=2026-08-09",
     );
   });
 
@@ -306,7 +308,7 @@ describe("CockpitQueueRail", () => {
     });
     expect(nextLink).toHaveAttribute(
       "href",
-      "/dashboard/appointments/appt-3",
+      "/dashboard/appointments/appt-3?from=opd-today&date=2026-08-09",
     );
   });
 
@@ -322,6 +324,17 @@ describe("CockpitQueueRail", () => {
 
     const link = screen.getByRole("link", { name: /View all \(12\)/i });
     expect(link).toHaveAttribute("href", expect.stringContaining("/dashboard/opd-today"));
+  });
+
+  it("hides View all while a consult is live", () => {
+    const entries = [
+      makeEntry({ id: "appt-1", tokenNumber: 1 }),
+      makeEntry({ id: "appt-2", tokenNumber: 2, isCurrent: true }),
+    ];
+    pipelineResult(entries, 1, { totalCount: 12 });
+    renderRail({ state: "live" });
+
+    expect(screen.queryByRole("link", { name: /View all/i })).toBeNull();
   });
 
   // ── Walk-in removal ──────────────────────────────────────────────────────

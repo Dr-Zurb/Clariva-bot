@@ -10,9 +10,9 @@
  * (`bg-blue-600`, etc.) keep working because we only EXTEND the default
  * Tailwind palette.
  *
- * Default palette (locked 2026-05-05 in plan-ui-system-redesign.md UI-D3):
- *   - Primary  : teal-700 family   (HSL 188 70% 30%)
- *   - Accent   : amber-500 family  (HSL 38 92% 50%)
+ * Default palette (UI-D3 2026-05-05, primary rebranded 2026-07-21 · halo-aid-blue-theme):
+ *   - Primary  : Halo Aid royal blue  (HSL 223 79% 50% ≈ #1E56E0)
+ *   - Accent   : amber-500 family     (HSL 38 92% 50%) — completion / "Sent"
  *   - Neutrals : slate ramp
  *   - Status   : emerald (success) / amber (warning) / rose (destructive)
  *                / sky (info)
@@ -24,38 +24,38 @@
 @layer base {
   :root {
     /* Surfaces */
-    --background: 0 0% 100%;            /* white */
-    --foreground: 222 47% 11%;          /* slate-900 */
+    --background: 0 0% 100%; /* white */
+    --foreground: 222 47% 11%; /* slate-900 */
     --card: 0 0% 100%;
     --card-foreground: 222 47% 11%;
     --popover: 0 0% 100%;
     --popover-foreground: 222 47% 11%;
 
     /* Brand */
-    --primary: 188 70% 30%;             /* teal-700 ish — clinical, trust-coded */
+    --primary: 223 79% 50%; /* Halo Aid royal — #1E56E0 */
     --primary-foreground: 0 0% 100%;
-    --accent: 38 92% 50%;               /* amber-500 — completion / "Sent" */
+    --accent: 38 92% 50%; /* amber-500 — completion / "Sent" */
     --accent-foreground: 24 10% 10%;
 
     /* Neutrals */
-    --secondary: 210 40% 96%;           /* slate-100 */
+    --secondary: 210 40% 96%; /* slate-100 */
     --secondary-foreground: 222 47% 11%;
     --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;    /* slate-500 ish */
+    --muted-foreground: 215 16% 47%; /* slate-500 ish */
 
     /* Lines & focus */
-    --border: 214 32% 91%;              /* slate-200 */
+    --border: 214 32% 91%; /* slate-200 */
     --input: 214 32% 91%;
-    --ring: 188 70% 30%;                /* match primary */
+    --ring: 223 79% 50%; /* match primary */
 
     /* Status (only used in chips / banners — never as page bg per UI-D3) */
-    --destructive: 0 72% 51%;           /* rose-600 ish */
+    --destructive: 0 72% 51%; /* rose-600 ish */
     --destructive-foreground: 0 0% 100%;
-    --success: 142 71% 38%;             /* emerald-600 */
+    --success: 142 71% 38%; /* emerald-600 */
     --success-foreground: 0 0% 100%;
-    --warning: 38 92% 50%;              /* amber-500 */
+    --warning: 38 92% 50%; /* amber-500 */
     --warning-foreground: 24 10% 10%;
-    --info: 199 89% 48%;                /* sky-500 */
+    --info: 199 89% 48%; /* sky-500 */
     --info-foreground: 0 0% 100%;
 
     /* Radius */
@@ -70,7 +70,7 @@
     --popover: 222 47% 9%;
     --popover-foreground: 210 40% 98%;
 
-    --primary: 188 65% 45%;
+    --primary: 223 70% 58%; /* lighter Halo blue for dim surfaces */
     --primary-foreground: 222 47% 7%;
     --accent: 38 92% 55%;
     --accent-foreground: 24 10% 10%;
@@ -82,7 +82,7 @@
 
     --border: 217 33% 17%;
     --input: 217 33% 17%;
-    --ring: 188 65% 45%;
+    --ring: 223 70% 58%;
 
     --destructive: 0 63% 50%;
     --destructive-foreground: 210 40% 98%;
@@ -98,6 +98,25 @@
 @layer base {
   * {
     border-color: hsl(var(--border));
+    /* Dense 4-column cockpit: native overlay bars are ~15px and steal width. */
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.38);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.55);
   }
   body {
     background-color: hsl(var(--background));
@@ -111,17 +130,26 @@
 @layer utilities {
   /* Apply to numeric tables (vitals, dosage rows, queue wait times) so digits don't jitter. */
   .font-tabular {
-    font-feature-settings: "tnum" on, "lnum" on;
+    font-feature-settings:
+      "tnum" on,
+      "lnum" on;
   }
 }
 
-/* Halo Aid marketing tokens — landing / legal / pricing only. */
+/* ============================================================================
+ * Halo Aid — marketing helper tokens (landing page gradients / navy / mist)
+ *
+ * Global `--primary` is now Halo royal blue (halo-aid-blue-theme · HAB-D1).
+ * These `--halo-*` vars stay for landing-specific navy, sky gradient, and mist
+ * washes. Consume with Tailwind arbitrary values, e.g.
+ * `bg-[hsl(var(--halo-blue))]` / `text-[hsl(var(--halo-navy))]`.
+ * ========================================================================== */
 .halo {
-  --halo-blue: 223 79% 50%;
-  --halo-sky: 210 100% 59%;
-  --halo-navy: 220 76% 24%;
-  --halo-ink: 222 47% 11%;
-  --halo-mist: 214 100% 97%;
+  --halo-blue: 223 79% 50%; /* #1E56E0 royal — primary CTA / links / mark */
+  --halo-sky: 210 100% 59%; /* #2E9BFF sky — gradient end / accent */
+  --halo-navy: 220 76% 24%; /* #0F2E6E navy — headings / wordmark */
+  --halo-ink: 222 47% 11%; /* body text (matches --foreground) */
+  --halo-mist: 214 100% 97%; /* very light blue section wash */
 }
 
 .halo-gradient {
@@ -130,4 +158,32 @@
     hsl(var(--halo-blue)),
     hsl(var(--halo-sky))
   );
+}
+
+/* In-call / pre-call front↔back camera flip — 3D card turn, not a hard cut. */
+@keyframes video-camera-flip {
+  0% {
+    transform: perspective(1100px) rotateY(0deg);
+  }
+  42% {
+    transform: perspective(1100px) rotateY(90deg);
+  }
+  58% {
+    transform: perspective(1100px) rotateY(90deg);
+  }
+  100% {
+    transform: perspective(1100px) rotateY(0deg);
+  }
+}
+
+.video-camera-flip {
+  animation: video-camera-flip 520ms cubic-bezier(0.4, 0, 0.2, 1);
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+}
+
+/* Patient-phone document fullscreen — no white flash behind the stage. */
+html:fullscreen,
+html:-webkit-full-screen {
+  background-color: #000;
 }

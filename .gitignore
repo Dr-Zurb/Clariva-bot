@@ -4,6 +4,9 @@
 .env.*.local
 Clariva-bot render.env
 
+# Company statutory documents (COI, PAN, TAN). Never push to a remote.
+HaloAid /Important Docs/
+
 # Dependencies
 node_modules/
 

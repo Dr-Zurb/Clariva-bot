@@ -17,7 +17,7 @@
  * @see docs/Work/Daily-plans/May 2026/08-05-2026/Tasks/task-oq-11-session-toolbar.md
  */
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Clock, RefreshCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils";
 import type { DoctorQueueSessionRow } from "@/types/opd-doctor";
 import { BroadcastDelayPopover } from "./shared/BroadcastDelayPopover";
 import { OfferEarlyJoinPopover } from "./shared/OfferEarlyJoinPopover";
+import { OpdSessionDatePicker } from "./shared/OpdSessionDatePicker";
 import {
   resolveQueueDelayTarget,
   resolveQueueEarlyJoinTarget,
@@ -107,21 +108,6 @@ export function OpdQueueSessionToolbar({
 
   const [refreshPending, setRefreshPending] = useState(false);
 
-  const dateInputRef = useRef<HTMLInputElement>(null);
-  const handleDateClick = () => {
-    const el = dateInputRef.current;
-    if (!el) return;
-    try {
-      const withPicker = el as HTMLInputElement & {
-        showPicker?: () => void;
-      };
-      withPicker.showPicker?.();
-    } catch {
-      // SecurityError in cross-origin frames — silently ignore; native picker
-      // still opens on the calendar icon click.
-    }
-  };
-
   const handleRefresh = () => {
     setRefreshPending(true);
     onRefresh();
@@ -140,17 +126,9 @@ export function OpdQueueSessionToolbar({
       )}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <input
-          ref={dateInputRef}
-          type="date"
+        <OpdSessionDatePicker
           value={sessionDate}
-          onChange={(e) => onChangeSessionDate(e.target.value)}
-          onClick={handleDateClick}
-          aria-label="Session date"
-          className={cn(
-            "h-7 cursor-pointer rounded-md border border-input bg-background px-2 text-xs font-medium text-foreground",
-            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          )}
+          onChange={onChangeSessionDate}
         />
         {mode === null ? (
           <Skeleton className="h-6 w-20 rounded-full" />
@@ -198,7 +176,7 @@ export function OpdQueueSessionToolbar({
       <div className="flex flex-wrap items-center gap-2">
         <span className="flex items-center gap-1 text-xs text-muted-foreground">
           <Clock className="h-3 w-3 shrink-0" />
-          Last updated {timeAgo(lastUpdatedAt)}
+          Updated {timeAgo(lastUpdatedAt)}
         </span>
 
         <TooltipProvider>

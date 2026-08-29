@@ -1,8 +1,8 @@
 /**
  * P5 — SideSheetHost provider-gap regression.
  *
- * Real-body smoke test for the crash doctors hit when adding the History or
- * Plan tab from the palette: those panes (HistoryPane, PlanSection, Rx
+ * Real-body smoke test for the crash doctors hit when adding the Plan tab
+ * from the palette: that pane (PlanSection, Rx
  * favorites / previous-Rx) call `useSideSheet()`, which throws when no
  * `<SideSheetHost>` is mounted above them. The prior build-up parity tests
  * mocked those panes to inert stubs, so the gap slipped through.
@@ -22,11 +22,24 @@ vi.mock("@/hooks/useMediaQuery", () => ({
   useMediaQuery: vi.fn(() => true),
 }));
 
+vi.mock("@/lib/patient-profile/v3/useCockpitLayoutPresets", () => ({
+  MAX_SAVED_LAYOUTS: 5,
+  useCockpitLayoutPresets: () => ({
+    presets: [],
+    isLoading: false,
+    canSaveMore: true,
+    savePreset: vi.fn(),
+    deletePresetById: vi.fn(),
+    renamePresetById: vi.fn(),
+    refetch: vi.fn(),
+  }),
+}));
+
 import CockpitV3Shell from "../CockpitV3Shell";
 import SideSheetHost, { useSideSheet } from "@/components/patient-profile/SideSheetHost";
 import type { PaneDefinition } from "@/lib/patient-profile/v3/foundation";
 
-/** A pane body that exercises the REAL side-sheet context (like HistoryPane). */
+/** A pane body that exercises the REAL side-sheet context (like PlanSection). */
 function SideSheetConsumerBody() {
   const sheet = useSideSheet();
   return (
@@ -39,8 +52,8 @@ function SideSheetConsumerBody() {
 function consumerRegistry(): PaneDefinition[] {
   return [
     {
-      id: "history",
-      title: "History",
+      id: "plan",
+      title: "Plan",
       render: () => <SideSheetConsumerBody />,
     },
   ];
@@ -72,7 +85,7 @@ describe("P5: side-sheet panes mount under a host in the v3 shell", () => {
       expect(screen.getByTestId("cockpit-v3-empty-state")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Add History" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Plan" }));
 
     await waitFor(() => {
       expect(screen.getByTestId("side-sheet-consumer")).toBeInTheDocument();
@@ -80,7 +93,7 @@ describe("P5: side-sheet panes mount under a host in the v3 shell", () => {
     // The pane resolved the real context (open() is a function), proving the
     // host is wired — not a no-op fallback. Before the page-root SideSheetHost
     // fix, mounting this pane threw "useSideSheet() must be used within
-    // <SideSheetHost>" — the exact crash on Add History / Add Plan. (The hook's
+    // <SideSheetHost>" — the exact crash on Add Plan. (The hook's
     // no-host guard itself is covered by SideSheetHost.test.tsx.)
     expect(screen.getByTestId("side-sheet-consumer")).toHaveTextContent("ok");
   });

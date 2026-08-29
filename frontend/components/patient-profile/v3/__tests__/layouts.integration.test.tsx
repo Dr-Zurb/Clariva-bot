@@ -61,12 +61,6 @@ vi.mock("@/components/patient-profile/panes/ChartRailWithEmptyState", () => ({
   ),
 }));
 
-vi.mock("@/components/patient-profile/panes/SnapshotPane", () => ({
-  default: () => <div data-testid="pane-snapshot-body">snapshot</div>,
-}));
-vi.mock("@/components/patient-profile/panes/HistoryPane", () => ({
-  default: () => <div data-testid="pane-history-body">history</div>,
-}));
 vi.mock("@/components/patient-profile/panes/ConsultationBodyPane", () => ({
   default: () => <div data-testid="pane-body-body">body</div>,
 }));
@@ -93,6 +87,7 @@ vi.mock("@/components/patient-profile/panes/RxPane", () => ({
 }));
 
 import CockpitV3Shell from "../CockpitV3Shell";
+import { v4TreeLayoutStorageKey } from "@/lib/patient-profile/useShellLayout";
 import {
   buildCockpitTabs,
   COCKPIT_TAB_ORDER,
@@ -159,7 +154,7 @@ describe("cv3l-04: Phase 6 layouts integration", () => {
     cleanup();
   });
 
-  it("seeds Consult (all seven panes visible) on first open", async () => {
+  it("seeds Consult (all five panes visible) on first open", async () => {
     render(
       <CockpitV3Shell panes={productionRegistry()} storageKey="cv3l-04:seed" />,
     );
@@ -194,9 +189,15 @@ describe("cv3l-04: Phase 6 layouts integration", () => {
     expect(
       screen.getByRole("button", { name: "Add Plan" }),
     ).toHaveAttribute("data-palette-on-canvas", "false");
-    // Read keeps snapshot/history/assessment/subjective/objective visible.
+    // Read keeps assessment/subjective/objective visible.
     expect(
-      screen.getByRole("button", { name: "Remove History" }),
+      screen.getByRole("button", { name: "Remove Assessment" }),
+    ).toHaveAttribute("data-palette-on-canvas", "true");
+    expect(
+      screen.getByRole("button", { name: "Remove Subjective" }),
+    ).toHaveAttribute("data-palette-on-canvas", "true");
+    expect(
+      screen.getByRole("button", { name: "Remove Objective" }),
     ).toHaveAttribute("data-palette-on-canvas", "true");
   });
 
@@ -210,15 +211,12 @@ describe("cv3l-04: Phase 6 layouts integration", () => {
 
     applyLayoutHotkey("3");
 
-    // Document hides body + history.
+    // Document hides body.
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: "Add History" }),
+        screen.getByRole("button", { name: "Add Consult" }),
       ).toHaveAttribute("data-palette-on-canvas", "false");
     });
-    expect(
-      screen.getByRole("button", { name: "Add Consult" }),
-    ).toHaveAttribute("data-palette-on-canvas", "false");
     expect(
       screen.getByRole("button", { name: "Remove Plan" }),
     ).toHaveAttribute("data-palette-on-canvas", "true");
@@ -241,7 +239,7 @@ describe("cv3l-04: Phase 6 layouts integration", () => {
 
     fireEvent.click(screen.getByTestId("cockpit-v3-undo"));
 
-    // Back to Consult — all seven visible again.
+    // Back to Consult — all five visible again.
     await waitFor(() => {
       expect(
         screen.getByRole("button", { name: "Remove Plan" }),
@@ -263,7 +261,7 @@ describe("cv3l-04: Phase 6 layouts integration", () => {
     applyLayoutHotkey("3"); // Document
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: "Add History" }),
+        screen.getByRole("button", { name: "Add Consult" }),
       ).toHaveAttribute("data-palette-on-canvas", "false");
     });
 
@@ -271,7 +269,7 @@ describe("cv3l-04: Phase 6 layouts integration", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: "Remove History" }),
+        screen.getByRole("button", { name: "Remove Plan" }),
       ).toHaveAttribute("data-palette-on-canvas", "true");
     });
     expect(screen.queryByTestId("cockpit-v3-empty-state")).not.toBeInTheDocument();
@@ -293,6 +291,49 @@ describe("cv3l-04: Phase 6 layouts integration", () => {
     await waitFor(() => {
       expect(screen.getByTestId("cockpit-v3-empty-state")).toBeInTheDocument();
     });
+  });
+
+  it("heals a corrupted persisted layout (duplicate node ids) instead of crashing", async () => {
+    // A tree carrying two nodes with id "objective" (the shape a buggy swap +
+    // later insert left behind) used to hard-crash react-resizable-panels with
+    // "Panel ids must be unique". Hydration must sanitize it to a renderable tree.
+    const storageKey = "cv3l-04:corrupt";
+    const corrupt = {
+      version: 5,
+      paneTree: {
+        id: "__root__",
+        sizePct: 100,
+        hidden: false,
+        direction: "horizontal",
+        children: [
+          { id: "objective", sizePct: 20, hidden: false, paneIds: ["objective"], activeTabId: "objective" },
+          // Mis-named slot (id "objective" but hosts "body") — the divergence.
+          { id: "objective", sizePct: 20, hidden: false, paneIds: ["body"], activeTabId: "body" },
+          { id: "assessment", sizePct: 20, hidden: false, paneIds: ["assessment"], activeTabId: "assessment" },
+          { id: "plan", sizePct: 20, hidden: false, paneIds: ["plan"], activeTabId: "plan" },
+          { id: "subjective", sizePct: 20, hidden: false, paneIds: ["subjective"], activeTabId: "subjective" },
+        ],
+      },
+    };
+    localStorage.setItem(
+      v4TreeLayoutStorageKey(storageKey),
+      JSON.stringify(corrupt),
+    );
+
+    render(
+      <CockpitV3Shell panes={productionRegistry()} storageKey={storageKey} />,
+    );
+
+    // Renders the canvas (no thrown "Panel ids must be unique") and shows all panes.
+    await waitFor(() => {
+      expect(screen.getByTestId("cockpit-v3-canvas")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("button", { name: "Remove Objective" }),
+    ).toHaveAttribute("data-palette-on-canvas", "true");
+    expect(
+      screen.getByRole("button", { name: "Remove Consult" }),
+    ).toHaveAttribute("data-palette-on-canvas", "true");
   });
 
   it("reload restores the persisted (switched) layout, not the seed", async () => {
@@ -329,8 +370,6 @@ describe("cv3l-04: Phase 6 layouts integration", () => {
 /** Palette label for a pane id (body tab is "Consult" live). */
 function labelFor(id: string): string {
   const map: Record<string, string> = {
-    snapshot: "Snapshot",
-    history: "History",
     body: "Consult",
     assessment: "Assessment",
     plan: "Plan",

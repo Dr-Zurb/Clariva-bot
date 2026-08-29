@@ -2,10 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Check } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { DemoScheduler } from "@/components/marketing/DemoScheduler";
 import { MarketingFooter } from "@/components/marketing/MarketingFooter";
 import { MarketingNav } from "@/components/marketing/MarketingNav";
-import { SIGNUP_HREF, haloPrimaryButton } from "@/components/marketing/constants";
+import { SIGNUP_HREF } from "@/components/marketing/constants";
 
 const TITLE = "Book a Halo Aid demo";
 const DESCRIPTION =
@@ -35,6 +35,10 @@ const BULLETS = [
   "Ask anything — no commitment, 20 minutes",
 ] as const;
 
+/**
+ * Public demo booking page (halo-aid-demo-cta). Embeds Cal.com EU event
+ * `halo.aid/demo` under shared marketing chrome.
+ */
 export default function DemoPage() {
   return (
     <div className="halo flex min-h-screen flex-col bg-white text-[hsl(var(--halo-ink))]">
@@ -52,7 +56,7 @@ export default function DemoPage() {
               </h1>
               <p className="mt-4 text-lg text-[hsl(var(--halo-ink))]/70">
                 Live walkthrough of how Halo Aid turns Instagram DMs into booked
-                consultations. Email us and we will send a time.
+                consultations. Pick a time that works for you.
               </p>
               <ul className="mx-auto mt-8 max-w-md space-y-3 text-left">
                 {BULLETS.map((item) => (
@@ -70,13 +74,10 @@ export default function DemoPage() {
                   </li>
                 ))}
               </ul>
-              <div className="mt-10">
-                <Button asChild className={haloPrimaryButton}>
-                  <a href="mailto:founder@haloaid.com?subject=Halo%20Aid%20demo">
-                    Email founder@haloaid.com
-                  </a>
-                </Button>
-              </div>
+            </div>
+
+            <div className="mx-auto mt-12 max-w-4xl">
+              <DemoScheduler />
             </div>
 
             <p className="mt-8 text-center text-sm text-[hsl(var(--halo-ink))]/60">

@@ -1,6 +1,7 @@
 "use client";
 
-import { User, Settings, Sun, LogOut } from "lucide-react";
+import { User, Settings, Sun, LogOut, ShieldCheck } from "lucide-react";
+import Link from "next/link";
 import { useLogout } from "@/hooks/useLogout";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +15,8 @@ import {
 
 interface HeaderProfileMenuProps {
   userEmail?: string | null;
+  /** admin-console-v2 · acon2-01: show Admin console (admins only). */
+  isAdmin?: boolean;
 }
 
 /**
@@ -23,8 +26,9 @@ interface HeaderProfileMenuProps {
  *   1. Doctor email (muted label)
  *   2. Settings → /dashboard/settings
  *   3. Theme toggle placeholder (U5.4 will wire dim mode)
- *   4. ── separator ──
- *   5. Log out (calls supabase.auth.signOut)
+ *   4. Admin console → /admin/verifications (admins only)
+ *   5. ── separator ──
+ *   6. Log out (calls supabase.auth.signOut)
  *
  * The standalone <LogoutButton> is intentionally NOT rendered in the header
  * anymore — its action is inlined here. LogoutButton.tsx remains exported
@@ -32,7 +36,10 @@ interface HeaderProfileMenuProps {
  *
  * @see task-ui-B1-header-redesign.md § Profile dropdown
  */
-export function HeaderProfileMenu({ userEmail }: HeaderProfileMenuProps) {
+export function HeaderProfileMenu({
+  userEmail,
+  isAdmin = false,
+}: HeaderProfileMenuProps) {
   const handleLogout = useLogout();
 
   function handleThemeToggle() {
@@ -63,10 +70,13 @@ export function HeaderProfileMenu({ userEmail }: HeaderProfileMenuProps) {
         )}
 
         <DropdownMenuItem asChild>
-          <a href="/dashboard/settings" className="flex cursor-pointer items-center gap-2">
+          <Link
+            href="/dashboard/settings"
+            className="flex cursor-pointer items-center gap-2"
+          >
             <Settings className="h-4 w-4" />
             Settings
-          </a>
+          </Link>
         </DropdownMenuItem>
 
         <DropdownMenuItem
@@ -76,6 +86,18 @@ export function HeaderProfileMenu({ userEmail }: HeaderProfileMenuProps) {
           <Sun className="h-4 w-4" />
           Theme: light / dim
         </DropdownMenuItem>
+
+        {isAdmin ? (
+          <DropdownMenuItem asChild>
+            <Link
+              href="/admin/verifications"
+              className="flex cursor-pointer items-center gap-2"
+            >
+              <ShieldCheck className="h-4 w-4" />
+              Admin console
+            </Link>
+          </DropdownMenuItem>
+        ) : null}
 
         <DropdownMenuSeparator />
 

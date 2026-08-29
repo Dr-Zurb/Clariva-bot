@@ -29,6 +29,7 @@ import {
   primaryCtaFor,
   shouldMountLauncher,
   mapStateToTemplate,
+  shouldAutoStartInClinicVisit,
   type CockpitState,
   type CockpitAppointmentStatus,
   type CockpitConsultationModality,
@@ -90,6 +91,84 @@ describe("deriveCockpitState — pending / confirmed × no session", () => {
         session: undefined,
       }),
     ).toBe<CockpitState>("ready");
+  });
+
+  it("in_clinic × no check-in × no session → ready", () => {
+    expect(
+      deriveCockpitState({
+        appointmentStatus: "confirmed",
+        session: null,
+        consultationType: "in_clinic",
+        patientCheckedInAt: null,
+      }),
+    ).toBe<CockpitState>("ready");
+  });
+
+  it("video × checked in × no session → ready (check-in is not a tele start)", () => {
+    expect(
+      deriveCockpitState({
+        appointmentStatus: "confirmed",
+        session: null,
+        consultationType: "video",
+        patientCheckedInAt: "2026-08-24T03:00:00.000Z",
+      }),
+    ).toBe<CockpitState>("ready");
+  });
+});
+
+describe("deriveCockpitState — in_clinic check-in is the start signal", () => {
+  it("in_clinic × checked in × no session → live", () => {
+    expect(
+      deriveCockpitState({
+        appointmentStatus: "confirmed",
+        session: null,
+        consultationType: "in_clinic",
+        patientCheckedInAt: "2026-08-24T03:00:00.000Z",
+      }),
+    ).toBe<CockpitState>("live");
+  });
+
+  it("in_clinic × checked in × scheduled session → live", () => {
+    const session = makeSession({ status: "scheduled", provider_session_id: null });
+    expect(
+      deriveCockpitState({
+        appointmentStatus: "pending",
+        session,
+        consultationType: "in_clinic",
+        patientCheckedInAt: "2026-08-24T03:00:00.000Z",
+      }),
+    ).toBe<CockpitState>("live");
+  });
+
+  it("in_clinic × checked in × live video session → live (tele session wins)", () => {
+    const session = makeSession({
+      modality: "video",
+      status: "live",
+      provider_session_id: "RM_abc123",
+    });
+    expect(
+      deriveCockpitState({
+        appointmentStatus: "confirmed",
+        session,
+        consultationType: "in_clinic",
+        patientCheckedInAt: "2026-08-24T03:00:00.000Z",
+      }),
+    ).toBe<CockpitState>("live");
+  });
+
+  it("in_clinic × checked in × ended session → wrap_up (tele session wins)", () => {
+    const session = makeSession({
+      status: "ended",
+      actual_ended_at: "2026-08-24T03:30:00.000Z",
+    });
+    expect(
+      deriveCockpitState({
+        appointmentStatus: "confirmed",
+        session,
+        consultationType: "in_clinic",
+        patientCheckedInAt: "2026-08-24T03:00:00.000Z",
+      }),
+    ).toBe<CockpitState>("wrap_up");
   });
 });
 
@@ -347,13 +426,21 @@ describe("primaryCtaFor", () => {
     undefined,
   ];
 
-  it("ready → { label: 'Start consult', action: 'start' }", () => {
+  it("ready → { label: 'Start consult', action: 'start' } (tele + unset)", () => {
     for (const m of MODALITIES) {
+      if (m === "in_clinic") continue;
       expect(primaryCtaFor("ready", m)).toEqual({
         label: "Start consult",
         action: "start",
       });
     }
+  });
+
+  it("ready × in_clinic → { label: 'Start visit', action: 'start' }", () => {
+    expect(primaryCtaFor("ready", "in_clinic")).toEqual({
+      label: "Start visit",
+      action: "start",
+    });
   });
 
   it("lobby → { label: 'Resend join link', action: 'resend' }", () => {
@@ -365,8 +452,9 @@ describe("primaryCtaFor", () => {
     }
   });
 
-  it("live → { label: 'End consult', action: 'end' }", () => {
+  it("live → { label: 'End consult', action: 'end' } (tele + unset)", () => {
     for (const m of MODALITIES) {
+      if (m === "in_clinic") continue;
       expect(primaryCtaFor("live", m)).toEqual({
         label: "End consult",
         action: "end",
@@ -374,12 +462,13 @@ describe("primaryCtaFor", () => {
     }
   });
 
-  it("wrap_up → { label: 'Done with patient', action: 'wrap-up' }", () => {
+  it("live × in_clinic → null (finish is the footer Done button)", () => {
+    expect(primaryCtaFor("live", "in_clinic")).toBeNull();
+  });
+
+  it("wrap_up → null (finish is the footer Done button)", () => {
     for (const m of MODALITIES) {
-      expect(primaryCtaFor("wrap_up", m)).toEqual({
-        label: "Done with patient",
-        action: "wrap-up",
-      });
+      expect(primaryCtaFor("wrap_up", m)).toBeNull();
     }
   });
 
@@ -453,4 +542,78 @@ describe("mapStateToTemplate", () => {
       expect(mapStateToTemplate(state, modality, override)).toBe(expected);
     },
   );
+});
+
+describe("shouldAutoStartInClinicVisit", () => {
+  const now = new Date("2026-08-24T12:00:00.000Z");
+
+  it("starts an in-clinic visit dated today when not yet checked in", () => {
+    expect(
+      shouldAutoStartInClinicVisit(
+        {
+          consultationType: "in_clinic",
+          appointmentStatus: "confirmed",
+          patientCheckedInAt: null,
+          appointmentDate: "2026-08-24T04:15:00.000Z",
+        },
+        now,
+      ),
+    ).toBe(true);
+  });
+
+  it("starts an overdue in-clinic visit", () => {
+    expect(
+      shouldAutoStartInClinicVisit(
+        {
+          consultationType: "in_clinic",
+          appointmentStatus: "pending",
+          patientCheckedInAt: null,
+          appointmentDate: "2026-08-23T10:00:00.000Z",
+        },
+        now,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not start a future-dated in-clinic visit", () => {
+    expect(
+      shouldAutoStartInClinicVisit(
+        {
+          consultationType: "in_clinic",
+          appointmentStatus: "confirmed",
+          patientCheckedInAt: null,
+          appointmentDate: "2026-08-31T10:00:00.000Z",
+        },
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not start when already checked in", () => {
+    expect(
+      shouldAutoStartInClinicVisit(
+        {
+          consultationType: "in_clinic",
+          appointmentStatus: "confirmed",
+          patientCheckedInAt: "2026-08-24T03:00:00.000Z",
+          appointmentDate: "2026-08-24T04:15:00.000Z",
+        },
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not start a video consult", () => {
+    expect(
+      shouldAutoStartInClinicVisit(
+        {
+          consultationType: "video",
+          appointmentStatus: "confirmed",
+          patientCheckedInAt: null,
+          appointmentDate: "2026-08-24T04:15:00.000Z",
+        },
+        now,
+      ),
+    ).toBe(false);
+  });
 });

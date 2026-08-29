@@ -94,14 +94,13 @@ export function AssociatedSymptomsPanel({
     }
 
     // Explicit collapse (header / lip / Escape) → glide the parent complaint
-    // card to the top after the child body fold finishes. Blur-collapse leaves
-    // the doctor where they clicked.
+    // card to the top *concurrently* with the child body fold (live glide tracks
+    // the shrink), so close is one motion, not fold-then-scroll. Blur-collapse
+    // leaves the doctor where they clicked.
     if (prev && collapseSourceRef.current === "explicit") {
-      const timer = window.setTimeout(() => {
-        scrollParentComplaintCardIntoView(parentScrollInstanceId);
-      }, COLLAPSE_CLOSE_MS);
       collapseSourceRef.current = null;
-      return () => window.clearTimeout(timer);
+      scrollParentComplaintCardIntoView(parentScrollInstanceId);
+      return;
     }
 
     collapseSourceRef.current = null;

@@ -170,7 +170,7 @@ export default function PrescriptionPreSendCheck({
       role="dialog"
       aria-modal="true"
       aria-labelledby="pre-send-check-title"
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 sm:items-center"
+      className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/50 p-4 sm:items-center"
       onClick={() => {
         if (!sending) onCancel();
       }}
@@ -293,7 +293,7 @@ export default function PrescriptionPreSendCheck({
 
         {/* Footer disclaimer (per source plan §T4 risk note) */}
         <p className="px-4 pb-2 text-xs text-gray-500">
-          Clariva checks for ~200 known interactions and documented
+          Halo Aid checks for ~200 known interactions and documented
           allergies. This is not a substitute for your clinical
           judgment.
         </p>

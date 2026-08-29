@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, type ReactNode } from "react";
-import { ChevronDown, ChevronUp, Minus } from "lucide-react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -12,18 +12,18 @@ export interface KpiTileProps {
   icon: ReactNode;
   severity?: "default" | "attention";
   onClick?: () => void;
+  /** Warm list cache on hover/focus before click. */
+  onPrefetch?: () => void;
   isActive?: boolean;
   muted?: boolean;
 }
 
 function formatDelta(delta: number): string {
-  if (delta === 0) return "—";
   const abs = Math.abs(delta);
   return delta > 0 ? `↑ ${abs}` : `↓ ${abs}`;
 }
 
 function deltaColorClass(delta: number, invert: boolean): string {
-  if (delta === 0) return "text-muted-foreground";
   const rising = delta > 0;
   const good = invert ? !rising : rising;
   return good ? "text-emerald-600 dark:text-emerald-400" : "text-destructive";
@@ -37,6 +37,7 @@ export const KpiTile = forwardRef<HTMLButtonElement, KpiTileProps>(function KpiT
     icon,
     severity = "default",
     onClick,
+    onPrefetch,
     isActive = false,
     muted = false,
   },
@@ -44,6 +45,8 @@ export const KpiTile = forwardRef<HTMLButtonElement, KpiTileProps>(function KpiT
 ) {
   const isLoading = count === null || delta7d === null;
   const invert = severity === "attention";
+  const showDelta =
+    !isLoading && !muted && delta7d !== null && delta7d !== 0;
 
   const countDisplay =
     muted && !isLoading ? "—" : count !== null ? String(count) : null;
@@ -51,10 +54,12 @@ export const KpiTile = forwardRef<HTMLButtonElement, KpiTileProps>(function KpiT
   const ariaLabel =
     isLoading || count === null
       ? label
-      : `${label}: ${count}, 7-day change ${delta7d ?? 0}`;
+      : showDelta
+        ? `${label}: ${count}, 7-day change ${delta7d}`
+        : `${label}: ${count}`;
 
   const shellClass = cn(
-    "rounded-xl border bg-card p-4 text-left w-full",
+    "rounded-lg border bg-card p-3 text-left w-full md:p-4",
     "hover:shadow-sm transition-shadow",
     severity === "attention" &&
       "border-amber-200 bg-amber-50/30 dark:border-amber-800 dark:bg-amber-950/30",
@@ -73,35 +78,38 @@ export const KpiTile = forwardRef<HTMLButtonElement, KpiTileProps>(function KpiT
         {isLoading ? (
           <Skeleton className="h-8 w-16" />
         ) : (
-          <span className="text-3xl font-semibold tabular-nums">{countDisplay}</span>
+          <span
+            className={cn(
+              "text-2xl font-semibold tabular-nums md:text-3xl",
+              !muted && count === 0 && "text-muted-foreground/70",
+            )}
+          >
+            {countDisplay}
+          </span>
         )}
       </div>
-      <div className="mt-1 flex items-center gap-0.5 text-xs font-medium">
-        {isLoading ? (
+      {isLoading ? (
+        <div className="mt-1 flex items-center gap-0.5 text-xs font-medium">
           <Skeleton className="h-4 w-10" />
-        ) : muted ? (
-          <span className="text-muted-foreground tabular-nums">—</span>
-        ) : delta7d !== null ? (
-          <>
-            {delta7d === 0 ? (
-              <Minus className="size-3.5 text-muted-foreground" aria-hidden />
-            ) : delta7d > 0 ? (
-              <ChevronUp
-                className={cn("size-3.5", deltaColorClass(delta7d, invert))}
-                aria-hidden
-              />
-            ) : (
-              <ChevronDown
-                className={cn("size-3.5", deltaColorClass(delta7d, invert))}
-                aria-hidden
-              />
-            )}
-            <span className={cn("tabular-nums", deltaColorClass(delta7d, invert))}>
-              {formatDelta(delta7d)}
-            </span>
-          </>
-        ) : null}
-      </div>
+        </div>
+      ) : showDelta && delta7d !== null ? (
+        <div className="mt-1 flex items-center gap-0.5 text-xs font-medium">
+          {delta7d > 0 ? (
+            <ChevronUp
+              className={cn("size-3.5", deltaColorClass(delta7d, invert))}
+              aria-hidden
+            />
+          ) : (
+            <ChevronDown
+              className={cn("size-3.5", deltaColorClass(delta7d, invert))}
+              aria-hidden
+            />
+          )}
+          <span className={cn("tabular-nums", deltaColorClass(delta7d, invert))}>
+            {formatDelta(delta7d)}
+          </span>
+        </div>
+      ) : null}
     </>
   );
 
@@ -112,6 +120,8 @@ export const KpiTile = forwardRef<HTMLButtonElement, KpiTileProps>(function KpiT
         type="button"
         className={shellClass}
         onClick={onClick}
+        onPointerEnter={onPrefetch}
+        onFocus={onPrefetch}
         aria-pressed={isActive}
         aria-label={ariaLabel}
         role="tab"

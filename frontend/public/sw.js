@@ -1,7 +1,7 @@
 /* eslint-disable no-restricted-globals */
 
 /**
- * Service worker for Clariva consult PWA — first revision.
+ * Service worker for Halo Aid consult PWA — first revision.
  *
  * Sub-batch F · task-video-F3 / voice C10 — bears the foundation
  * for the persistent foreground notification path that keeps a
@@ -115,7 +115,7 @@ self.addEventListener("push", (event) => {
       });
       if (shouldSuppressWebPush(wins, payload)) return;
 
-      await self.registration.showNotification(payload.title || "Clariva", {
+      await self.registration.showNotification(payload.title || "Halo Aid", {
         body: payload.body || "",
         icon: payload.icon || "/icons/icon-192.png",
         badge: payload.badge || "/icons/badge-72.png",

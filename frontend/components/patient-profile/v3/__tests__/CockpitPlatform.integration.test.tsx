@@ -280,8 +280,7 @@ function fixtureCtx(): TelemedVideoContext {
   };
 }
 
-// The v3 Consult default tree — the real production seed (7 panes; ordered
-// investigations folded into Plan). JSON-cloned so each call returns a fresh
+// The v3 Consult default tree — the real production seed (5 panes). JSON-cloned
 // tree that callers can reshape without mutating the shared singleton.
 function telemedDefaultPaneTree(): PaneTreeNode {
   return JSON.parse(JSON.stringify(getDefaultLayoutTree("consult")));
@@ -375,16 +374,16 @@ describe("CockpitPlatform integration (cv3p-04 gate)", () => {
     const { rerender } = render(platformShellUi(storageKey));
 
     const base = telemedDefaultPaneTree();
-    const movedPlan = reshape(base, "plan", "snapshot", "north");
+    const movedPlan = reshape(base, "plan", "subjective", "north");
     applyPaneTree(movedPlan);
 
     expect(screen.getByTestId("cockpit-v3-safety-dock")).toBeInTheDocument();
     expect(screen.getByTestId("cockpit-v3-action-dock")).toBeInTheDocument();
     expect(screen.getByTestId("safety-sticky-strip")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /send rx & finish/i }));
+    fireEvent.click(screen.getByRole("button", { name: /review/i }));
     expect(mockSendAndFinish).toHaveBeenCalledOnce();
 
-    const tabbed = reshape(base, "plan", "snapshot", "center");
+    const tabbed = reshape(base, "plan", "assessment", "center");
     applyPaneTree(tabbed);
 
     const splitOut = reshape(base, "plan", "body", "west");

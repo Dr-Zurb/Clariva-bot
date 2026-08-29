@@ -230,65 +230,82 @@ export function OpdQueueMobileList({
         </div>
       )}
 
-      {/* Active section */}
-      {(active.length > 0 || filter === "all" || ACTIVE_STATUSES.has(filter as string)) && (
+      {filter !== "all" ? (
         <>
-          <GroupDivider label="Active" count={active.length} />
-          {active.length === 0 ? (
-            <div className="px-4 py-4 text-center text-sm text-muted-foreground">
-              No active patients.
-            </div>
-          ) : (
-            active.map((entry) => (
-              <OpdQueueMobileCard
-                key={entry.entryId}
-                entry={entry}
-                onOpen={onOpen}
-                isNextUp={entry.entryId === nextUpId}
-              />
-            ))
-          )}
+          {active.map((entry) => (
+            <OpdQueueMobileCard
+              key={entry.entryId}
+              entry={entry}
+              onOpen={onOpen}
+              isNextUp={entry.entryId === nextUpId}
+            />
+          ))}
+          {done.map((entry) => (
+            <OpdQueueMobileCard
+              key={entry.entryId}
+              entry={entry}
+              onOpen={onOpen}
+              dimmed
+            />
+          ))}
+          {missed.map((entry) => (
+            <OpdQueueMobileCard
+              key={entry.entryId}
+              entry={entry}
+              onOpen={onOpen}
+              dimmed
+            />
+          ))}
         </>
-      )}
-
-      {/* Done today section */}
-      {(done.length > 0 || filter === "completed") && (
+      ) : (
         <>
-          <GroupDivider label="Done today" count={done.length} />
-          {done.length === 0 ? (
-            <div className="px-4 py-4 text-center text-sm text-muted-foreground">
-              No completed patients.
-            </div>
-          ) : (
-            done.map((entry) => (
-              <OpdQueueMobileCard
-                key={entry.entryId}
-                entry={entry}
-                onOpen={onOpen}
-                dimmed
-              />
-            ))
+          {/* Active section — always shown on All */}
+          <>
+            <GroupDivider label="Active" count={active.length} />
+            {active.length === 0 ? (
+              <div className="px-4 py-4 text-center text-sm text-muted-foreground">
+                No active patients.
+              </div>
+            ) : (
+              active.map((entry) => (
+                <OpdQueueMobileCard
+                  key={entry.entryId}
+                  entry={entry}
+                  onOpen={onOpen}
+                  isNextUp={entry.entryId === nextUpId}
+                />
+              ))
+            )}
+          </>
+
+          {/* Done today section */}
+          {done.length > 0 && (
+            <>
+              <GroupDivider label="Done today" count={done.length} />
+              {done.map((entry) => (
+                <OpdQueueMobileCard
+                  key={entry.entryId}
+                  entry={entry}
+                  onOpen={onOpen}
+                  dimmed
+                />
+              ))}
+            </>
           )}
-        </>
-      )}
 
-      {/* No-show / skipped section */}
-      {(missed.length > 0 || filter === "no_show" || filter === "skipped") && (
-        <>
-          <GroupDivider label="No-show / skipped" count={missed.length} />
-          {missed.length === 0 ? (
-            <div className="px-4 py-4 text-center text-sm text-muted-foreground">
-              No missed or skipped patients.
-            </div>
-          ) : (
-            missed.map((entry) => (
-              <OpdQueueMobileCard
-                key={entry.entryId}
-                entry={entry}
-                onOpen={onOpen}
-                dimmed
-              />
-            ))
+          {/* No-show / skipped section */}
+          {missed.length > 0 && (
+            <>
+              <GroupDivider label="No-show / skipped" count={missed.length} />
+              {missed.map((entry) => (
+                <OpdQueueMobileCard
+                  key={entry.entryId}
+                  entry={entry}
+                  onOpen={onOpen}
+                  dimmed
+                />
+              ))}
+            </>
           )}
         </>
       )}

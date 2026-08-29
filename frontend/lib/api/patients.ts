@@ -14,9 +14,11 @@ import type { ApiError, ApiSuccess } from "@/lib/api";
 import { requireApiBaseUrl } from "@/lib/api-base";
 import type {
   DuplicateGroupPatient,
+  Patient,
   PatientListFilters,
   PatientsListPagedData,
   PatientOverviewData,
+  PatientQuickPeekData,
   PatientsKpis,
   PatientSavedView,
   PossibleDuplicatesData,
@@ -88,6 +90,7 @@ export async function getPatientsList(
   const params = new URLSearchParams();
   if (filters.q) params.set("q", filters.q);
   if (filters.segment) params.set("segment", filters.segment);
+  if (filters.tag) params.set("tag", filters.tag);
   if (filters.sort) params.set("sort", filters.sort);
   if (filters.page !== undefined) params.set("page", String(filters.page));
   if (filters.pageSize !== undefined) params.set("pageSize", String(filters.pageSize));
@@ -102,18 +105,85 @@ export async function getPatientsList(
   return parseApiEnvelope<PatientsListPagedData>(res, "Failed to load patients");
 }
 
+export type ManualPatientMatch = {
+  patientId: string;
+  name: string;
+  phone: string;
+  age?: number | null;
+  gender?: string | null;
+  medicalRecordNumber?: string | null;
+};
+
+export type CreateManualPatientBody = {
+  name: string;
+  phone: string;
+  age?: number;
+  gender?: string;
+  confirmNew?: boolean;
+};
+
+export class ManualPatientConflictError extends Error {
+  status = 409;
+  matches: ManualPatientMatch[];
+
+  constructor(message: string, matches: ManualPatientMatch[]) {
+    super(message);
+    this.name = "ManualPatientConflictError";
+    this.matches = matches;
+  }
+}
+
 /**
- * PATCH /api/v1/patients/bulk-tag — set patient_tag on multiple patients (pr-07).
+ * POST /api/v1/patients — doctor or staff manual registration.
+ * Throws ManualPatientConflictError when possible duplicates need confirmNew.
+ */
+export async function createManualPatient(
+  token: string,
+  body: CreateManualPatientBody
+): Promise<Patient> {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/patients`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ patient: Patient }>
+    | ApiError;
+  if (res.status === 409 && isApiError(json)) {
+    const raw = json.error.details?.matches;
+    const matches = Array.isArray(raw)
+      ? raw.filter(
+          (row): row is ManualPatientMatch =>
+            Boolean(row) &&
+            typeof row === "object" &&
+            typeof (row as ManualPatientMatch).patientId === "string"
+        )
+      : [];
+    throw new ManualPatientConflictError(json.error.message, matches);
+  }
+  if (!res.ok) throwFromResponse(res, json, "Failed to add patient");
+  if (isApiError(json)) {
+    throwFromResponse(res, json, "Failed to add patient");
+  }
+  return (json as ApiSuccess<{ patient: Patient }>).data.patient;
+}
+
+export type BulkTagOp = "add" | "remove" | "set" | "clear";
+
+/**
+ * PATCH /api/v1/patients/bulk-tag — add/remove/set/clear tags (patients-multi-tag).
+ * Legacy `{ tag }` still accepted by the server.
  */
 export async function bulkTagPatients(
   token: string,
   ids: string[],
-  tag: string | null,
+  body: { op: BulkTagOp; tags?: string[] } | { tag: string | null },
 ): Promise<{ updated: number }> {
   const res = await fetch(`${requireApiBaseUrl()}/api/v1/patients/bulk-tag`, {
     method: "PATCH",
     headers: authHeaders(token),
-    body: JSON.stringify({ ids, tag }),
+    body: JSON.stringify({ ids, ...body }),
     cache: "no-store",
   });
   return parseApiEnvelope<{ updated: number }>(res, "Failed to apply tag");
@@ -143,6 +213,65 @@ export async function getPatientOverview(
     },
   );
   return parseApiEnvelope<PatientOverviewData>(res, "Failed to load patient overview");
+}
+
+export interface ConsultTimelineArtifacts {
+  hasRecording: boolean;
+  recordingDeleted: boolean;
+  hasTranscript: boolean;
+  hasPrescription: boolean;
+  hasSnapshots: boolean;
+}
+
+export interface ConsultTimelineEntry {
+  sessionId: string;
+  appointmentId: string;
+  consultedAt: string;
+  modality: "text" | "voice" | "video";
+  durationSeconds: number | null;
+  artifacts: ConsultTimelineArtifacts;
+}
+
+export interface ConsultTimelineData {
+  items: ConsultTimelineEntry[];
+  hasMore: boolean;
+}
+
+/** GET /api/v1/patients/:id/consult-timeline — rec-28 doctor consult list. */
+export async function getPatientConsultTimeline(
+  token: string,
+  patientId: string,
+  options: { limit?: number; offset?: number } = {},
+): Promise<ConsultTimelineData> {
+  const params = new URLSearchParams();
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.offset !== undefined) params.set("offset", String(options.offset));
+  const qs = params.toString();
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/patients/${encodeURIComponent(patientId)}/consult-timeline${qs ? `?${qs}` : ""}`,
+    {
+      headers: authHeaders(token),
+      cache: "no-store",
+    },
+  );
+  return parseApiEnvelope<ConsultTimelineData>(res, "Failed to load consult timeline");
+}
+
+/**
+ * GET /api/v1/patients/:id/overview?view=peek — slim hover-card payload.
+ */
+export async function getPatientQuickPeek(
+  token: string,
+  patientId: string,
+): Promise<PatientQuickPeekData> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/patients/${encodeURIComponent(patientId)}/overview?view=peek`,
+    {
+      headers: authHeaders(token),
+      cache: "no-store",
+    },
+  );
+  return parseApiEnvelope<PatientQuickPeekData>(res, "Failed to load patient quick-peek");
 }
 
 /**

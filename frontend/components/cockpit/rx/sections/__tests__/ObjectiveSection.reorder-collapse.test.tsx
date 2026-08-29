@@ -312,7 +312,7 @@ describe("ObjectiveSection collapse-memory (obj-11)", () => {
     expect(mockUpdatePrescription).not.toHaveBeenCalled();
   });
 
-  it("hydrates collapse state from the shell without fetching", async () => {
+  it("hydrates collapse state from the shell without fetching", () => {
     renderWithShell(<ObjectiveSection heading={null} />, {
       objectiveDefaults: {
         sectionOrder: [],
@@ -322,16 +322,15 @@ describe("ObjectiveSection collapse-memory (obj-11)", () => {
       },
     });
 
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Toggle Vitals" })).toHaveAttribute(
-        "aria-expanded",
-        "false",
-      );
-      expect(screen.getByRole("button", { name: "Toggle Notes" })).toHaveAttribute(
-        "aria-expanded",
-        "false",
-      );
-    });
+    // Sync first paint — tab switch remount must not flash canonical default-open.
+    expect(screen.getByRole("button", { name: "Toggle Vitals" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: "Toggle Notes" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     expect(mockGetDoctorSettings).not.toHaveBeenCalled();
   });
 

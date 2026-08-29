@@ -23,6 +23,7 @@ export {
   isLayoutCramped,
   CRAMPED_ROOT_SIBLINGS,
   resolveMoveSourcePaneId,
+  cockpitPanelDomId,
 } from "@/lib/patient-profile/layout-tree";
 export type {
   PaneTreeNode,
@@ -37,6 +38,7 @@ export {
   moveSiblingIntoGutter,
   addToTabsNode,
   hidePaneToRoot,
+  hideLeafToRoot,
   extractFromTabsNode,
   moveLeafBetweenTabs,
   setActiveTab,

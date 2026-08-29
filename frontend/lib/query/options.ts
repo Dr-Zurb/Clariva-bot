@@ -3,10 +3,16 @@ import {
   getDashboardEvents,
   getDoctorOpdQueueSession,
   getDoctorSettings,
+  getBookingFunnelOverview,
+  getClinicalMixOverview,
+  getPracticeHealthOverview,
+  getTelehealthQualityOverview,
   getPrescriptionsForPatient,
   getServiceStaffReviews,
+  listPatientAllergies,
   listPatientConditions,
 } from "@/lib/api";
+import type { AllergiesListData } from "@/types/patient-chart";
 import { getPatientOverview } from "@/lib/api/patients";
 import { listVitalsHistory } from "@/lib/api/patient-chart";
 import { requireApiBaseUrl } from "@/lib/api-base";
@@ -67,6 +73,26 @@ export function patientConditionsQueryOptions(token: string, patientId: string) 
     queryFn: async () => {
       const res = await listPatientConditions(token, patientId);
       return res.data.conditions ?? [];
+    },
+    staleTime: STALE.CLINICAL,
+  } as const;
+}
+
+/** Normalized allergies list payload for the shared patient allergies query. */
+export type PatientAllergiesQueryData = {
+  allergies: NonNullable<AllergiesListData["allergies"]>;
+  sectionNotes: string | null;
+};
+
+export function patientAllergiesQueryOptions(token: string, patientId: string) {
+  return {
+    queryKey: queryKeys.patient(patientId).allergies(),
+    queryFn: async (): Promise<PatientAllergiesQueryData> => {
+      const res = await listPatientAllergies(token, patientId);
+      return {
+        allergies: res.data.allergies ?? [],
+        sectionNotes: res.data.sectionNotes ?? null,
+      };
     },
     staleTime: STALE.CLINICAL,
   } as const;
@@ -142,5 +168,76 @@ export function doctorSettingsQueryOptions(token: string) {
     queryKey: queryKeys.opd.doctorSettings(),
     queryFn: () => getDoctorSettings(token),
     staleTime: STALE.STATIC,
+  } as const;
+}
+
+/**
+ * insights-v1 · Tier-1 practice-health overview for a selected date range.
+ * Range is part of the query key so flipping 7 / 30 / 90 refetches cleanly.
+ */
+export function practiceHealthQueryOptions(
+  token: string,
+  range: { from: string; to: string },
+) {
+  return {
+    queryKey: queryKeys.dashboard.practiceHealth(range),
+    queryFn: async () => {
+      const res = await getPracticeHealthOverview(token, range);
+      return res.data;
+    },
+    staleTime: STALE.COUNTS,
+  } as const;
+}
+
+/**
+ * insights-v1 · Tier-2 booking funnel + review SLA for a selected date range.
+ */
+export function bookingFunnelQueryOptions(
+  token: string,
+  range: { from: string; to: string },
+) {
+  return {
+    queryKey: queryKeys.dashboard.bookingFunnel(range),
+    queryFn: async () => {
+      const res = await getBookingFunnelOverview(token, range);
+      return res.data;
+    },
+    staleTime: STALE.COUNTS,
+  } as const;
+}
+
+/**
+ * insights-v1 · Tier-3 de-identified clinical mix (top Dx / meds / investigations).
+ */
+export function clinicalMixQueryOptions(
+  token: string,
+  range: { from: string; to: string },
+  limit = 10,
+) {
+  const keyRange = { ...range, limit };
+  return {
+    queryKey: queryKeys.dashboard.clinicalMix(keyRange),
+    queryFn: async () => {
+      const res = await getClinicalMixOverview(token, { ...range, limit });
+      return res.data;
+    },
+    staleTime: STALE.COUNTS,
+  } as const;
+}
+
+/**
+ * insights-v1 · Tier-4 telehealth quality (modality mix, join success, RTT).
+ */
+export function telehealthQualityQueryOptions(
+  token: string,
+  range: { from: string; to: string },
+) {
+  return {
+    queryKey: queryKeys.dashboard.telehealthQuality(range),
+    queryFn: async () => {
+      const res = await getTelehealthQualityOverview(token, range);
+      return res.data;
+    },
+    staleTime: STALE.COUNTS,
   } as const;
 }

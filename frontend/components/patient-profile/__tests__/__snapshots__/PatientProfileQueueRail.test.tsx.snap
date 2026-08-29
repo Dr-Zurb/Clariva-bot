@@ -14,7 +14,7 @@ exports[`CockpitQueueRail > matches three-slot snapshot 1`] = `
       <a
         aria-label="Previous patient: Ananya Bose"
         class="inline-flex items-center gap-1.5 rounded border text-xs border-border bg-transparent px-2 py-1 font-normal text-muted-foreground hover:opacity-80 transition-opacity"
-        href="/dashboard/appointments/a1"
+        href="/dashboard/appointments/a1?from=opd-today&date=2026-08-09"
       >
         <span
           aria-hidden="true"
@@ -43,12 +43,12 @@ exports[`CockpitQueueRail > matches three-slot snapshot 1`] = `
           <p
             class="text-muted-foreground/80"
           >
-            03:30 pm
+            03:30 PM
           </p>
           <p
             class="text-muted-foreground/80"
           >
-            Waited 205h 34m
+            Waited 2207h 39m
           </p>
         </div>
       </div>
@@ -102,12 +102,12 @@ exports[`CockpitQueueRail > matches three-slot snapshot 1`] = `
         <p
           class="text-muted-foreground/80"
         >
-          03:30 pm
+          03:30 PM
         </p>
         <p
           class="text-muted-foreground/80"
         >
-          Waited 205h 34m
+          Waited 2207h 39m
         </p>
       </div>
     </div>
@@ -134,7 +134,7 @@ exports[`CockpitQueueRail > matches three-slot snapshot 1`] = `
       <a
         aria-label="Next patient: Rahul Verma"
         class="inline-flex items-center gap-1.5 rounded border text-xs border-border bg-transparent px-2 py-1 font-normal text-muted-foreground hover:opacity-80 transition-opacity"
-        href="/dashboard/appointments/a3"
+        href="/dashboard/appointments/a3?from=opd-today&date=2026-08-09"
       >
         <span
           aria-hidden="true"
@@ -163,12 +163,12 @@ exports[`CockpitQueueRail > matches three-slot snapshot 1`] = `
           <p
             class="text-muted-foreground/80"
           >
-            03:30 pm
+            03:30 PM
           </p>
           <p
             class="text-muted-foreground/80"
           >
-            Waited 205h 34m
+            Waited 2207h 39m
           </p>
         </div>
       </div>
@@ -176,7 +176,7 @@ exports[`CockpitQueueRail > matches three-slot snapshot 1`] = `
   </div>
   <a
     class="ml-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
-    href="/dashboard/opd-today?date=2026-05-17"
+    href="/dashboard/opd-today?date=2026-08-09"
   >
     View all (
     8

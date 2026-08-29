@@ -44,32 +44,38 @@ export default function ConsultationBodyPane({
   onMarkNoShow,
   hideHeader = false,
 }: ConsultationBodyPaneProps): JSX.Element {
+  const body = (
+    <CenterPane
+      state={state}
+      appointment={appointment}
+      token={token}
+      launcherRef={launcherRef}
+      onRxSent={onRxSent}
+      onMarkNoShow={onMarkNoShow}
+    />
+  );
+
+  // Live video needs a definite height (overflow-hidden), not a scrollport —
+  // overflow-y-auto breaks flex-1 descendants so the call stage collapses.
+  const bodyScrollClass =
+    state === "live"
+      ? "flex min-h-0 flex-1 flex-col overflow-hidden"
+      : "min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain";
+
+  // Shell-owned header: keep the same h-full → flex-1 scroll chain so Ready
+  // / live rooms scroll inside stacked (horizontal-gutter) leaves.
   if (hideHeader) {
     return (
-      <CenterPane
-        state={state}
-        appointment={appointment}
-        token={token}
-        launcherRef={launcherRef}
-        onRxSent={onRxSent}
-        onMarkNoShow={onMarkNoShow}
-      />
+      <div className="flex h-full min-h-0 flex-col">
+        <div className={bodyScrollClass}>{body}</div>
+      </div>
     );
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <PaneHeader title="Consultation" titleId="cockpit-body-title" />
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <CenterPane
-          state={state}
-          appointment={appointment}
-          token={token}
-          launcherRef={launcherRef}
-          onRxSent={onRxSent}
-          onMarkNoShow={onMarkNoShow}
-        />
-      </div>
+      <div className={bodyScrollClass}>{body}</div>
     </div>
   );
 }

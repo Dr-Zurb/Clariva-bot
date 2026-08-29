@@ -85,6 +85,14 @@ export interface LooseTrackStats {
   dimensions?: { width?: number; height?: number };
   frameRate?: number;
   timestamp?: number;
+  /**
+   * Local video only — why the encoder is holding quality back. `'cpu'`
+   * means the device can't encode fast enough (throttle resolution/fps),
+   * `'bandwidth'` means the uplink is the limit (lower the bitrate cap).
+   */
+  qualityLimitationReason?: string;
+  /** Remote video only — cumulative count of decode freezes. */
+  freezeCount?: number;
 }
 
 export interface LooseStatsReport {
@@ -109,38 +117,43 @@ export function pickFirst<T>(arr: T[] | undefined): T | undefined {
  * stats. Audio is the most-reliable RTT source (video has buffering
  * effects). Returns null if the SDK hasn't populated the field yet.
  *
- * Heuristic for seconds-vs-ms: values < 10 are clearly seconds (a real
- * RTT is rarely below 10ms in production), values >= 10 are ms.
+ * Unit comes from the field name, not magnitude: `roundTripTime` is
+ * seconds (Twilio 2.x), `roundTripTimeMS` is already milliseconds.
+ * A Mumbai-region 5 ms RTT must stay 5, not 5000.
  */
 export function readRtt(report: LooseStatsReport): number | null {
   const audio = pickFirst(report.localAudioTrackStats);
   if (!audio) return null;
-  if (typeof audio.roundTripTime === "number" && Number.isFinite(audio.roundTripTime)) {
-    return audio.roundTripTime < 10
-      ? Math.round(audio.roundTripTime * 1000)
-      : Math.round(audio.roundTripTime);
-  }
-  if (typeof audio.roundTripTimeMS === "number" && Number.isFinite(audio.roundTripTimeMS)) {
+  if (
+    typeof audio.roundTripTimeMS === "number" &&
+    Number.isFinite(audio.roundTripTimeMS)
+  ) {
     return Math.round(audio.roundTripTimeMS);
+  }
+  if (
+    typeof audio.roundTripTime === "number" &&
+    Number.isFinite(audio.roundTripTime)
+  ) {
+    return Math.round(audio.roundTripTime * 1000);
   }
   return null;
 }
 
 /**
- * Extract jitter in milliseconds. Same seconds-vs-ms heuristic as
- * `readRtt` (Twilio's `jitter` is documented in seconds; values < 1 are
- * clearly seconds).
+ * Extract jitter in milliseconds. `jitter` is seconds; `jitterBufferMs`
+ * is already milliseconds.
  */
 export function readJitter(report: LooseStatsReport): number | null {
   const audio = pickFirst(report.localAudioTrackStats);
   if (!audio) return null;
-  if (typeof audio.jitter === "number" && Number.isFinite(audio.jitter)) {
-    return audio.jitter < 1
-      ? Math.round(audio.jitter * 1000)
-      : Math.round(audio.jitter);
-  }
-  if (typeof audio.jitterBufferMs === "number" && Number.isFinite(audio.jitterBufferMs)) {
+  if (
+    typeof audio.jitterBufferMs === "number" &&
+    Number.isFinite(audio.jitterBufferMs)
+  ) {
     return Math.round(audio.jitterBufferMs);
+  }
+  if (typeof audio.jitter === "number" && Number.isFinite(audio.jitter)) {
+    return Math.round(audio.jitter * 1000);
   }
   return null;
 }
@@ -156,18 +169,7 @@ export function readJitter(report: LooseStatsReport): number | null {
 export function readResolution(
   report: LooseStatsReport,
 ): { width: number; height: number } | null {
-  const video = pickFirst(report.localVideoTrackStats);
-  if (!video?.dimensions) return null;
-  const { width, height } = video.dimensions;
-  if (
-    typeof width !== "number" ||
-    typeof height !== "number" ||
-    !Number.isFinite(width) ||
-    !Number.isFinite(height)
-  ) {
-    return null;
-  }
-  return { width: Math.round(width), height: Math.round(height) };
+  return readDimensions(pickFirst(report.localVideoTrackStats));
 }
 
 /**
@@ -181,6 +183,53 @@ export function readFps(report: LooseStatsReport): number | null {
     return null;
   }
   return Math.round(video.frameRate);
+}
+
+/**
+ * Incoming video resolution — what we're actually receiving from the peer,
+ * as opposed to `readResolution`'s send-side view. This is the number that
+ * says whether a soft remote tile is the peer's encode or our own scaling.
+ */
+export function readRemoteResolution(
+  report: LooseStatsReport,
+): { width: number; height: number } | null {
+  return readDimensions(pickFirst(report.remoteVideoTrackStats));
+}
+
+/** Incoming video frame rate (fps we're receiving from the peer). */
+export function readRemoteFps(report: LooseStatsReport): number | null {
+  const video = pickFirst(report.remoteVideoTrackStats);
+  if (!video || typeof video.frameRate !== "number" || !Number.isFinite(video.frameRate)) {
+    return null;
+  }
+  return Math.round(video.frameRate);
+}
+
+/**
+ * Cumulative decode-freeze count on the incoming video track. A climbing
+ * value during a call is the clearest "it's stuttering" signal available —
+ * bitrate alone can look healthy while frames arrive in bursts.
+ */
+export function readRemoteFreezeCount(report: LooseStatsReport): number | null {
+  const video = pickFirst(report.remoteVideoTrackStats);
+  if (!video || typeof video.freezeCount !== "number" || !Number.isFinite(video.freezeCount)) {
+    return null;
+  }
+  return Math.max(0, Math.round(video.freezeCount));
+}
+
+/**
+ * Why our own encoder is limiting quality: `'cpu'` (device too slow),
+ * `'bandwidth'` (uplink too small), or `'none'`. Returns null when the SDK
+ * hasn't populated it. This is what separates "their phone is struggling"
+ * from "their network is struggling" without guessing.
+ */
+export function readQualityLimitationReason(
+  report: LooseStatsReport,
+): string | null {
+  const video = pickFirst(report.localVideoTrackStats);
+  const reason = video?.qualityLimitationReason;
+  return typeof reason === "string" && reason.length > 0 ? reason : null;
 }
 
 /**
@@ -246,6 +295,62 @@ export function readPacketLossPct(report: LooseStatsReport): number | null {
   return Math.max(0, Math.min(100, Math.round(pct * 100) / 100));
 }
 
+export interface PacketLossCounters {
+  lost: number;
+  sent: number;
+}
+
+/** Cumulative audio loss counters — pair with `computeWindowedLossPct`. */
+export function readPacketLossCounters(
+  report: LooseStatsReport,
+): PacketLossCounters | null {
+  const audio = pickFirst(report.localAudioTrackStats);
+  if (!audio) return null;
+  const lost = audio.packetsLost;
+  const sent = audio.packetsSent;
+  if (
+    typeof lost !== "number" ||
+    typeof sent !== "number" ||
+    !Number.isFinite(lost) ||
+    !Number.isFinite(sent)
+  ) {
+    return null;
+  }
+  return { lost, sent };
+}
+
+/**
+ * Loss over the last sample window. Lifetime `readPacketLossPct` stays
+ * for post-call analytics; the live report must not stay poisoned by
+ * a dropout in minute one.
+ */
+export function computeWindowedLossPct(
+  current: PacketLossCounters | null,
+  prev: PacketLossCounters | null,
+): number | null {
+  if (!current || !prev) return null;
+  const dLost = current.lost - prev.lost;
+  const dSent = current.sent - prev.sent;
+  if (dLost < 0 || dSent < 0) return 0;
+  const total = dLost + dSent;
+  if (total <= 0) return 0;
+  const pct = (dLost / total) * 100;
+  if (!Number.isFinite(pct)) return null;
+  return Math.max(0, Math.min(100, Math.round(pct * 100) / 100));
+}
+
+/** Exponential moving average. First sample wins; nulls do not reset. */
+export function smoothMetric(
+  prev: number | null,
+  next: number | null,
+  alpha = 0.35,
+): number | null {
+  if (next == null) return prev;
+  if (prev == null) return next;
+  if (!Number.isFinite(prev) || !Number.isFinite(next)) return next;
+  return Math.round(prev * (1 - alpha) + next * alpha);
+}
+
 /**
  * Compute kbps from a cumulative byte counter. Returns `null` for the
  * first sample (no prior to delta against), real values thereafter.
@@ -275,6 +380,23 @@ export function computeKbps(
 // ============================================================================
 // Internal helpers
 // ============================================================================
+
+/** Shared dimension reader for the send- and receive-side parsers. */
+function readDimensions(
+  video: LooseTrackStats | undefined,
+): { width: number; height: number } | null {
+  if (!video?.dimensions) return null;
+  const { width, height } = video.dimensions;
+  if (
+    typeof width !== "number" ||
+    typeof height !== "number" ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height)
+  ) {
+    return null;
+  }
+  return { width: Math.round(width), height: Math.round(height) };
+}
 
 /**
  * Scale Twilio's audio level into the 0..100 NUMERIC(5,2) shape used

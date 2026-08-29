@@ -201,8 +201,9 @@ export function AddSlotDialog({
           reasonForVisit: reason.trim() || undefined,
           notes: notes.trim() || undefined,
           freeOfCost: true,
-          opdEventType:
-            formMode === "overflow" ? "return_after_completed" : "standard",
+          // osm-04: overflow is booking_origin, not return_after_completed.
+          opdEventType: "standard",
+          bookingOrigin: formMode === "overflow" ? "overflow" : "booked",
           relatedAppointmentId: relatedAppointmentId ?? undefined,
         });
 

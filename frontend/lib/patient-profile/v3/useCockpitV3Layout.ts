@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef } from "react";
 import {
   useShellLayout,
   v4TreeLayoutStorageKey,
+  type ApplyLayoutOptions,
   type UseShellLayoutOptions,
 } from "@/lib/patient-profile/useShellLayout";
 import {
@@ -14,6 +15,7 @@ import {
   moveSiblingIntoGutter,
   addToTabsNode,
   hidePaneToRoot,
+  hideLeafToRoot,
   MAX_LEAVES,
   type DropZone,
   type PaneTreeNode,
@@ -24,6 +26,8 @@ import {
   findBalancedStackTarget,
 } from "@/lib/patient-profile/v3/column-cap";
 import type { CockpitMutationResult } from "@/lib/patient-profile/v3/cockpit-cap-toast";
+import { usePaneFocusSession } from "@/lib/patient-profile/v3/usePaneFocusSession";
+import { findHostLeafInTree } from "@/lib/patient-profile/v3/focus-leaf";
 
 function findPaneTreeNodeById(root: PaneTreeNode, nodeId: string): PaneTreeNode | null {
   if (root.id === nodeId) return root;
@@ -77,7 +81,9 @@ export function useCockpitV3Layout(opts: UseCockpitV3LayoutOptions) {
   } = opts;
   const shell = useShellLayout({ storageKey, ...shellOpts });
   const blankSeedAppliedRef = useRef(false);
-  const { hydrated, applyLayout } = shell;
+  const { hydrated, applyLayout, setPersistSuspended } = shell;
+  const paneTreeRef = useRef(shell.paneTree);
+  paneTreeRef.current = shell.paneTree;
 
   useEffect(() => {
     if (!blankDefaultTree || !hydrated || blankSeedAppliedRef.current) return;
@@ -91,20 +97,51 @@ export function useCockpitV3Layout(opts: UseCockpitV3LayoutOptions) {
     );
   }, [blankDefaultTree, hydrated, applyLayout, storageKey]);
 
+  const applyFocusTree = useCallback(
+    (tree: PaneTreeNode, options?: ApplyLayoutOptions) => {
+      applyLayout({ version: LAYOUT_VERSION, paneTree: tree }, options);
+    },
+    [applyLayout],
+  );
+
+  const {
+    isFocused,
+    focusedLeafId,
+    ratio,
+    mode,
+    focusPrior,
+    enterSplit,
+    enterFocus,
+    enterPrimary,
+    enterPeek,
+    exitFocus,
+    toggleFocus,
+    discardFocusSession,
+  } = usePaneFocusSession({
+    getTree: () => paneTreeRef.current,
+    applyTree: applyFocusTree,
+    setPersistSuspended,
+  });
+
   const dispatchEngine = useCallback(
     (
       fn: (
         tree: PaneTreeNode,
       ) => { ok: boolean; tree?: PaneTreeNode; reason?: string },
+      applyOptions?: ApplyLayoutOptions,
     ): CockpitMutationResult => {
       const res = fn(shell.paneTree);
       if (res.ok && res.tree) {
-        shell.applyLayout({ version: LAYOUT_VERSION, paneTree: res.tree });
+        discardFocusSession();
+        shell.applyLayout(
+          { version: LAYOUT_VERSION, paneTree: res.tree },
+          applyOptions,
+        );
         return { ok: true };
       }
       return { ok: false, reason: res.reason };
     },
-    [shell],
+    [discardFocusSession, shell],
   );
 
   const addPane = useCallback(
@@ -275,10 +312,39 @@ export function useCockpitV3Layout(opts: UseCockpitV3LayoutOptions) {
       sourceGroupId: string,
       targetGroupId: string,
     ): CockpitMutationResult =>
-      dispatchEngine((tree) =>
-        swapPaneTreeNodes(tree, sourceGroupId, targetGroupId),
+      // panelKey keeps ResizablePanel DOM ids stable — skip splitter rebalance.
+      dispatchEngine(
+        (tree) => swapPaneTreeNodes(tree, sourceGroupId, targetGroupId),
+        { rebalance: false },
       ),
     [dispatchEngine],
+  );
+
+  /**
+   * Always-on Show here (CTF-D18–D19 / D22): put `targetPaneId` in this leaf's
+   * slot. Same leaf tab → setActiveTab; else slot-preserving host swap
+   * (`swapPaneTreeNodes` keeps id/sizePct/hidden). No companion path.
+   */
+  const showPaneHere = useCallback(
+    (groupId: string, targetPaneId: string): CockpitMutationResult => {
+      const tree = paneTreeRef.current;
+      const leaf = findPaneTreeNodeById(tree, groupId);
+      if (!leaf) return { ok: false, reason: "not-found" };
+      const paneIds =
+        leaf.paneIds && leaf.paneIds.length > 0 ? leaf.paneIds : [leaf.id];
+
+      if (paneIds.includes(targetPaneId)) {
+        shell.setActiveTab(groupId, targetPaneId);
+        return { ok: true };
+      }
+
+      const targetHost = findHostLeafInTree(tree, targetPaneId);
+      if (!targetHost) return { ok: false, reason: "not-found" };
+      if (targetHost.id === groupId) return { ok: true };
+
+      return swapLeaves(groupId, targetHost.id);
+    },
+    [shell, swapLeaves],
   );
 
   const closeTab = useCallback(
@@ -294,16 +360,52 @@ export function useCockpitV3Layout(opts: UseCockpitV3LayoutOptions) {
     [dispatchEngine, shell],
   );
 
+  /** Close the whole leaf (all tabs in the slot). Empty cockpit allowed. */
+  const closeLeaf = useCallback(
+    (groupId: string): CockpitMutationResult => {
+      return dispatchEngine((tree) => hideLeafToRoot(tree, groupId));
+    },
+    [dispatchEngine],
+  );
+
   const resetLayout = useCallback(() => {
+    discardFocusSession();
     if (blankDefaultTree) {
       applyLayout({ version: LAYOUT_VERSION, paneTree: blankDefaultTree });
     } else {
       shell.resetLayout();
     }
-  }, [blankDefaultTree, applyLayout, shell]);
+  }, [blankDefaultTree, applyLayout, discardFocusSession, shell]);
+
+  // CTF-D6: first manual resize while Focused exits Focus and keeps post-drag sizes.
+  const setGroupSizes = useCallback(
+    (groupId: string, sizes: Record<string, number>) => {
+      discardFocusSession();
+      shell.setGroupSizes(groupId, sizes);
+    },
+    [discardFocusSession, shell],
+  );
+
+  const setLeafSize = useCallback(
+    (nodeId: string, sizePct: number) => {
+      discardFocusSession();
+      shell.setLeafSize(nodeId, sizePct);
+    },
+    [discardFocusSession, shell],
+  );
+
+  const setPaneSize = useCallback(
+    (id: string, sizePct: number) => {
+      setLeafSize(id, sizePct);
+    },
+    [setLeafSize],
+  );
 
   return {
     ...shell,
+    setGroupSizes,
+    setLeafSize,
+    setPaneSize,
     resetLayout,
     dispatchEngine,
     addPane,
@@ -314,6 +416,20 @@ export function useCockpitV3Layout(opts: UseCockpitV3LayoutOptions) {
     reorderWithinGroup,
     swapLeaves,
     closeTab,
+    closeLeaf,
+    isFocused,
+    focusedLeafId,
+    ratio,
+    mode,
+    focusPrior,
+    enterSplit,
+    showPaneHere,
+    enterFocus,
+    enterPrimary,
+    enterPeek,
+    exitFocus,
+    toggleFocus,
+    discardFocusSession,
   };
 }
 

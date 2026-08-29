@@ -1,8 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
 import { todayLocalIso } from "@/lib/dates";
 import { useAppointmentsQuery } from "@/hooks/queries/useAppointmentsQuery";
 import { useRxSentTodayQuery } from "@/hooks/queries/useRxSentTodayQuery";
@@ -21,15 +20,18 @@ function KpiCard({ label, value, isLoading }: KpiCardProps) {
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
           {label}
         </p>
-        <div className="mt-1.5 h-8 flex items-center">
-          {isLoading ? (
-            <Skeleton className="h-7 w-16" />
-          ) : (
-            <span className="text-2xl font-semibold font-tabular tabular-nums leading-none">
-              {value ?? "—"}
-            </span>
-          )}
-        </div>
+        {/* Always the same <span> tree. Loading uses a pulse shell — never swap
+            a Skeleton <div> for a value <span> (hydration mismatch). */}
+        <span
+          className={
+            isLoading
+              ? "mt-1.5 inline-block h-7 w-16 animate-pulse rounded-md bg-muted"
+              : "mt-1.5 flex h-8 items-center text-2xl font-semibold font-tabular tabular-nums leading-none"
+          }
+          aria-hidden={isLoading || undefined}
+        >
+          {isLoading ? "\u00a0" : (value ?? "—")}
+        </span>
       </CardContent>
     </Card>
   );
@@ -46,6 +48,14 @@ interface KpiStripProps {
  *   3. Rx sent today
  */
 export function KpiStrip({ token }: KpiStripProps) {
+  // Query cache can differ SSR vs first client paint (partial dehydrate /
+  // failed rx prefetch). Keep the loading shell until mount so text never
+  // mismatches (" " vs "0").
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   const appointmentsQuery = useAppointmentsQuery(token);
   const rxQuery = useRxSentTodayQuery(token);
   const { counts } = useDashboardCounts(token);
@@ -61,12 +71,15 @@ export function KpiStrip({ token }: KpiStripProps) {
       consultsDone: todayAppts.filter(
         (appt) => appt.consultation_session?.status === "ended",
       ).length,
-      rxSentToday: rxQuery.data ?? 0,
     };
-  }, [appointmentsQuery.data, rxQuery.data]);
+  }, [appointmentsQuery.data]);
 
-  const isLoading =
-    appointmentsQuery.isLoading || rxQuery.isLoading;
+  const consultsReady = mounted && kpi !== null && !appointmentsQuery.isLoading;
+  const pendingDmsReady = mounted && counts !== null;
+  const rxReady =
+    mounted &&
+    !rxQuery.isLoading &&
+    (rxQuery.isSuccess || rxQuery.isError);
 
   const consultsValue =
     kpi !== null ? `${kpi.consultsDone}/${kpi.consultsTotal}` : null;
@@ -74,7 +87,8 @@ export function KpiStrip({ token }: KpiStripProps) {
   const pendingDmsValue =
     counts !== null ? counts.bookingReviewsUnconfirmed : null;
 
-  const rxValue = kpi !== null ? kpi.rxSentToday : null;
+  // Broken list endpoint (needs patientId) → show em dash, not a fake 0.
+  const rxValue = rxQuery.isSuccess ? (rxQuery.data ?? 0) : null;
 
   return (
     <div
@@ -84,17 +98,17 @@ export function KpiStrip({ token }: KpiStripProps) {
       <KpiCard
         label="Today's consults"
         value={consultsValue}
-        isLoading={isLoading}
+        isLoading={!consultsReady}
       />
       <KpiCard
         label="Pending DMs"
         value={pendingDmsValue}
-        isLoading={counts === null}
+        isLoading={!pendingDmsReady}
       />
       <KpiCard
         label="Rx sent today"
         value={rxValue}
-        isLoading={isLoading}
+        isLoading={!rxReady}
       />
     </div>
   );

@@ -1,5 +1,7 @@
 "use client";
 
+import CallControlTooltip from "./CallControlTooltip";
+
 /**
  * Sub-batch B · task-video-B6 — three-way layout switcher for the
  * video controls bar. Speaker (default) / Gallery / Sidebar.
@@ -14,13 +16,10 @@
  * Why a button-group instead of a dropdown:
  *   - Three options total — a 3-button row is more discoverable
  *     than a popover and matches the existing controls-bar
- *     density (Mute / Camera / Hold / Mirror are all individual
- *     buttons too).
- *   - No external icon library (Lucide / Radix / shadcn aren't
- *     in deps yet — same constraint flagged in B8 + B3 + B4
- *     comments). We ship inline SVG glyphs so the picker is
- *     icon-first (compact in the controls bar) with text-only
- *     accessible names.
+ *     density (Mute / Camera / Hold are individual buttons too).
+ *   - Inline SVG glyphs keep the picker icon-first. Cockpit tone
+ *     is icon-only (sr-only labels); join-page tone keeps visible
+ *     text next to the glyph.
  *   - The Sidebar option is hidden on small screens via a
  *     responsive `hidden md:inline-flex` wrapper — Sidebar isn't
  *     useful below `md` (decision §5; the spec calls it out as
@@ -58,6 +57,8 @@
 
 export type VideoLayout = "gallery" | "speaker" | "sidebar";
 
+export type VideoLayoutSwitcherTone = "default" | "cockpit";
+
 export interface VideoLayoutSwitcherProps {
   value: VideoLayout;
   onChange: (next: VideoLayout) => void;
@@ -68,6 +69,13 @@ export interface VideoLayoutSwitcherProps {
    * action cluster collapses to Resume + Leave).
    */
   hidden?: boolean;
+  /**
+   * `cockpit` — quiet tokens to match Objective / other panes.
+   * `default` — join-page telephony look (blue active segment).
+   */
+  tone?: VideoLayoutSwitcherTone;
+  /** Narrow consult pane — stack the segments on the stage rail. */
+  orientation?: "horizontal" | "vertical";
 }
 
 export function isVideoLayout(value: unknown): value is VideoLayout {
@@ -91,7 +99,7 @@ const OPTIONS: ReadonlyArray<LayoutOption> = [
   {
     value: "gallery",
     label: "Gallery",
-    description: "Equal tiles side-by-side",
+    description: "Equal tiles — swap sides from the tile toolbar",
     visibilityClass: "inline-flex",
   },
   {
@@ -109,7 +117,7 @@ const OPTIONS: ReadonlyArray<LayoutOption> = [
     // the viewport is in landscape orientation, regardless of
     // breakpoint; desktop continues to surface it via `md:`.
     description:
-      "Counterparty main + self-view in a side column (desktop or landscape)",
+      "Counterparty main + self-view side column — swap sides from the tile toolbar",
     visibilityClass: "hidden md:inline-flex landscape:inline-flex",
   },
 ];
@@ -118,50 +126,101 @@ export default function VideoLayoutSwitcher({
   value,
   onChange,
   hidden = false,
+  tone = "default",
+  orientation = "horizontal",
 }: VideoLayoutSwitcherProps) {
   if (hidden) return null;
+
+  const cockpit = tone === "cockpit";
+  const vertical = cockpit && orientation === "vertical";
 
   return (
     <div
       role="group"
       aria-label="Video layout"
-      className="inline-flex h-9 items-center overflow-hidden rounded-md border border-gray-300 bg-white text-sm"
+      data-tone={tone}
+      data-orientation={orientation}
+      className={
+        cockpit
+          ? vertical
+            ? "relative z-0 inline-flex w-8 flex-col items-center gap-0.5 overflow-hidden rounded-full border border-border bg-muted/60 p-0.5 text-sm shadow-sm"
+            : // Inset track: segment buttons stay smaller than the dock so the
+              // active pill cannot overflow above the bar / over the video.
+              "relative z-0 inline-flex h-8 items-center gap-0.5 overflow-hidden rounded-full border border-border bg-muted/60 p-0.5 text-sm"
+          : "inline-flex h-9 items-center overflow-hidden rounded-md border border-gray-300 bg-white text-sm"
+      }
     >
       {OPTIONS.map((option, index) => {
         const isActive = option.value === value;
         const isFirst = index === 0;
         const isLast = index === OPTIONS.length - 1;
-        const borderClass = isFirst ? "" : "border-l border-gray-300";
-        const radiusClass = [
-          isFirst ? "rounded-l-md" : "",
-          isLast ? "rounded-r-md" : "",
-        ]
-          .filter(Boolean)
-          .join(" ");
-        const stateClass = isActive
-          ? "bg-blue-50 text-blue-900"
-          : "bg-white text-gray-700 hover:bg-gray-50";
-        return (
+        const borderClass =
+          isFirst || cockpit
+            ? ""
+            : "border-l border-gray-300";
+        const radiusClass = cockpit
+          ? "rounded-full"
+          : [
+              isFirst ? "rounded-l-md" : "",
+              isLast ? "rounded-r-md" : "",
+            ]
+              .filter(Boolean)
+              .join(" ");
+        const stateClass = cockpit
+          ? isActive
+            ? "bg-background text-foreground shadow-sm"
+            : "bg-transparent text-muted-foreground hover:bg-background/70 hover:text-foreground"
+          : isActive
+            ? "bg-blue-50 text-blue-900"
+            : "bg-white text-gray-700 hover:bg-gray-50";
+        const focusClass = cockpit
+          ? "focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+          : "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1";
+        const sizeClass = cockpit
+          ? "h-7 w-7 shrink-0 items-center justify-center p-0"
+          : "items-center gap-1.5 px-2.5 py-1.5 font-medium";
+        const button = (
           <button
-            key={option.value}
             type="button"
             onClick={() => onChange(option.value)}
             aria-pressed={isActive}
             aria-label={`Switch to ${option.label} layout — ${option.description}`}
-            title={option.description}
+            title={cockpit ? undefined : `${option.label} — ${option.description}`}
             className={
               option.visibilityClass +
               " " +
               borderClass +
               " " +
               radiusClass +
-              " items-center gap-1.5 px-3 py-2 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 " +
+              " " +
+              sizeClass +
+              " " +
+              focusClass +
+              " " +
               stateClass
             }
           >
-            <LayoutGlyph layout={option.value} />
-            <span>{option.label}</span>
+            <LayoutGlyph layout={option.value} size={cockpit ? 14 : 12} />
+            {cockpit ? (
+              <span className="sr-only">{option.label}</span>
+            ) : (
+              <span>{option.label}</span>
+            )}
           </button>
+        );
+
+        return cockpit ? (
+          <CallControlTooltip
+            key={option.value}
+            label={`${option.label} — ${option.description}`}
+            side={vertical ? "left" : "top"}
+          >
+            {button}
+          </CallControlTooltip>
+        ) : (
+          <span key={option.value} className="contents">
+            {button}
+          </span>
         );
       })}
     </div>
@@ -174,13 +233,19 @@ export default function VideoLayoutSwitcher({
  * `Columns`) when the library lands; component contract stays
  * the same.
  */
-function LayoutGlyph({ layout }: { layout: VideoLayout }) {
+function LayoutGlyph({
+  layout,
+  size = 12,
+}: {
+  layout: VideoLayout;
+  size?: number;
+}) {
   if (layout === "gallery") {
     return (
       <svg
         viewBox="0 0 12 12"
-        width={12}
-        height={12}
+        width={size}
+        height={size}
         aria-hidden
         focusable="false"
       >
@@ -193,8 +258,8 @@ function LayoutGlyph({ layout }: { layout: VideoLayout }) {
     return (
       <svg
         viewBox="0 0 12 12"
-        width={12}
-        height={12}
+        width={size}
+        height={size}
         aria-hidden
         focusable="false"
       >
@@ -207,8 +272,8 @@ function LayoutGlyph({ layout }: { layout: VideoLayout }) {
   return (
     <svg
       viewBox="0 0 12 12"
-      width={12}
-      height={12}
+      width={size}
+      height={size}
       aria-hidden
       focusable="false"
     >

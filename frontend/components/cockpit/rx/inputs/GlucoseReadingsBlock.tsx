@@ -230,7 +230,7 @@ function GlucoseReadingContextFields({
   sections?: "all" | "device" | "visit";
 }) {
   const { state, setField } = useRxForm();
-  const blockDevice =
+  const blockDevice: VitalsGlucoseDevice =
     blockContext.device ?? DEFAULT_GLUCOSE_CONTEXT.device ?? "glucometer";
   const deviceDefaultLabel = glucoseDeviceLabel(blockDevice) ?? blockDevice;
   const visit = hydrateMeasurementContextFromPrescription({

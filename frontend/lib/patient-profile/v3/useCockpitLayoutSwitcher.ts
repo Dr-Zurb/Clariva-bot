@@ -12,6 +12,8 @@ import {
   type DefaultLayoutEntry,
   type DefaultLayoutId,
 } from "@/lib/patient-profile/v3/default-layouts";
+import { COCKPIT_TAB_ORDER } from "@/lib/patient-profile/v3/cockpit-tabs";
+import { prunePaneTreeToKnownLeaves } from "@/lib/patient-profile/v3/prune-layout-leaves";
 import type { CockpitV3Layout } from "@/lib/patient-profile/v3/useCockpitV3Layout";
 
 function findMatchingLayoutId(tree: PaneTreeNode): DefaultLayoutId | null {
@@ -78,6 +80,8 @@ export function useCockpitLayoutSwitcher(
     (id: DefaultLayoutId) => {
       const entry = DEFAULT_LAYOUTS.find((e) => e.id === id);
       if (!entry) return;
+      // Preset while Focused: drop Focus session, keep the preset tree (ctf-02).
+      layout.discardFocusSession();
       layout.applyLayout({ version: LAYOUT_VERSION, paneTree: entry.tree });
       setLastAppliedId(id);
       setLastAppliedSavedId(null);
@@ -87,9 +91,15 @@ export function useCockpitLayoutSwitcher(
 
   const applySavedLayout = useCallback(
     (paneTree: PaneTreeNode, presetId: string) => {
+      const cloned = deserialiseTree(serialiseTree(paneTree));
+      // Ribbon-expand Phase 2B: strip retired Snapshot/History (and any other
+      // unknown ids) so custom presets still apply against the current registry.
+      const pruned =
+        prunePaneTreeToKnownLeaves(cloned, COCKPIT_TAB_ORDER) ?? cloned;
+      layout.discardFocusSession();
       layout.applyLayout({
         version: LAYOUT_VERSION,
-        paneTree: deserialiseTree(serialiseTree(paneTree)),
+        paneTree: pruned,
       });
       setLastAppliedSavedId(presetId);
       setLastAppliedId(null);

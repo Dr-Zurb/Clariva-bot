@@ -119,8 +119,9 @@ export interface UseCallMediaSessionOpts {
   /** Drives modality-specific copy in the notification + metadata
    *  title ("Voice consult" vs "Video consult"). */
   modality: CallModality;
-  /** Mute state — informs MediaSession `playbackState` (paused
-   *  when muted) and the notification `mute` action label. */
+  /** Mute state — drives notification copy / mute action label.
+   *  Does NOT drive MediaSession `playbackState` (that follows hold
+   *  only — see playbackState sync comment). */
   isMuted: boolean;
   /** Hold state (B3). When true, MediaSession `playbackState =
    *  'paused'` and the notification body switches to "Call paused".
@@ -355,8 +356,8 @@ export function useCallMediaSession(
       modality === "video" ? "Video consult" : "Voice consult";
     const meta = buildMetadata({
       title,
-      artist: callerName || "Clariva",
-      album: "Clariva",
+      artist: callerName || "Halo Aid",
+      album: "Halo Aid",
       artwork: [
         { src: "/brand/logomark.svg", sizes: "any", type: "image/svg+xml" },
       ],
@@ -477,20 +478,63 @@ export function useCallMediaSession(
   // playbackState sync
   //
   // `playbackState` is the OS hint that drives lock-screen widget
-  // copy ("Playing" / "Paused"). We map:
-  //   - paused if muted OR on hold
-  //   - playing otherwise
+  // copy ("Playing" / "Paused").
   //
-  // The OS uses this to render the right play/pause icon in
-  // hardware media controls.
+  // IMPORTANT — do NOT map mic-mute → `paused`. Remote call audio keeps
+  // playing through a live `<audio>` element while the mic is muted.
+  // Chrome/WebKit then synthesize a MediaSession `play` action to
+  // "correct" the paused state, which used to call `onPlay` → unmute
+  // immediately after the user hit Mute (mute looked broken).
+  //
+  // Lock-screen Pause still mutes via the registered `pause` handler;
+  // in-app Mute / Unmute owns mic state. Hold is the only reason we
+  // mark the session paused here.
   // ------------------------------------------------------------------------
   useEffect(() => {
     if (!enabled) return;
     const ms = getMediaSession();
     if (!ms) return;
     if (typeof ms.playbackState !== "string") return;
-    ms.playbackState = isMuted || isOnHold ? "paused" : "playing";
-  }, [enabled, isMuted, isOnHold]);
+
+    const nextState = isOnHold ? "paused" : "playing";
+    if (ms.playbackState === nextState) return;
+
+    try {
+      ms.setActionHandler("pause", null);
+      ms.setActionHandler("play", null);
+    } catch {
+      /* best-effort */
+    }
+
+    ms.playbackState = nextState;
+
+    const handlePause = () => {
+      try {
+        onPauseRef.current();
+      } catch {
+        /* swallow */
+      }
+    };
+    const handlePlay = () => {
+      try {
+        onPlayRef.current();
+      } catch {
+        /* swallow */
+      }
+    };
+
+    const raf = requestAnimationFrame(() => {
+      try {
+        ms.setActionHandler("pause", handlePause);
+        ms.setActionHandler("play", handlePlay);
+      } catch {
+        /* best-effort */
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+    // isMuted intentionally omitted — see comment above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mute must not drive playbackState
+  }, [enabled, isOnHold]);
 
   // ------------------------------------------------------------------------
   // Screen wake lock (voice C10 background keep-alive)

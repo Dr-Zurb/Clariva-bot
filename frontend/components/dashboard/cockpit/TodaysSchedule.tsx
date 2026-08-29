@@ -34,6 +34,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { patchAppointment } from "@/lib/api";
+import { formatTime } from "@/lib/format-date";
 import { invalidateAppointments } from "@/lib/query/invalidate";
 import { cn } from "@/lib/utils";
 import {
@@ -96,35 +97,35 @@ function groupByHour(appointments: Appointment[]): HourGroup[] {
 }
 
 // ---------------------------------------------------------------------------
-// Formatting helpers
+// Formatting helpers — pinned locale (SSR/CSR byte-identical)
 // ---------------------------------------------------------------------------
-
-const timeFormatter = new Intl.DateTimeFormat(undefined, {
-  hour: "numeric",
-  minute: "2-digit",
-});
 
 function formatHourLabel(hour: number): string {
   const d = new Date();
   d.setHours(hour, 0, 0, 0);
-  return timeFormatter.format(d);
+  return formatTime(d, { hour: "numeric", minute: "2-digit" });
 }
 
 function formatApptTime(iso: string): string {
-  return timeFormatter.format(new Date(iso));
+  return formatTime(iso, { hour: "numeric", minute: "2-digit" });
 }
 
 // ---------------------------------------------------------------------------
-// Clock — ticks every 60 s so rows don't re-render every second
+// Clock — ticks every 60 s so rows don't re-render every second.
+// Until mount, use a far-future sentinel so late/amber pulse spans match
+// SSR HTML (new Date() on server vs client would toggle those nodes).
 // ---------------------------------------------------------------------------
 
+const HYDRATION_SAFE_NOW = new Date("9999-12-31T23:59:59.999Z");
+
 function useNowMinute(): Date {
-  const [now, setNow] = useState(() => new Date());
+  const [now, setNow] = useState<Date | null>(null);
   useEffect(() => {
+    setNow(new Date());
     const id = setInterval(() => setNow(new Date()), 60_000);
     return () => clearInterval(id);
   }, []);
-  return now;
+  return now ?? HYDRATION_SAFE_NOW;
 }
 
 // ---------------------------------------------------------------------------

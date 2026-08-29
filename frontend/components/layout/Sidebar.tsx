@@ -7,6 +7,7 @@ import {
   Bell,
   Inbox,
   LayoutDashboard,
+  ListChecks,
   PanelLeftClose,
   PanelLeftOpen,
   User,
@@ -31,7 +32,16 @@ interface NavItem {
   badgeKey?: keyof DashboardCounts;
 }
 
-const navItems: NavItem[] = [
+/** Setup — pinned above the main ops nav (verify lives inside Getting started). */
+const setupNavItems: NavItem[] = [
+  {
+    href: "/dashboard/getting-started",
+    label: "Getting started",
+    icon: ListChecks,
+  },
+];
+
+const mainNavItems: NavItem[] = [
   { href: "/dashboard", label: "Today", icon: LayoutDashboard, exact: true },
   {
     href: "/dashboard/opd-today",
@@ -46,12 +56,17 @@ const navItems: NavItem[] = [
     icon: BarChart3,
   },
   {
-    href: "/dashboard/booking-review",
-    label: "Booking review",
+    href: "/dashboard/inbox",
+    label: "Inbox",
     icon: Inbox,
     badgeKey: "bookingReviewsUnconfirmed",
   },
-  { href: "/dashboard/alerts", label: "Alerts", icon: Bell },
+  {
+    href: "/dashboard/alerts",
+    label: "Alerts",
+    icon: Bell,
+    badgeKey: "dashboardEventsUnread",
+  },
 ];
 
 interface SidebarProps {
@@ -62,13 +77,15 @@ interface SidebarProps {
   /** Desktop collapse-to-icons state. Ignored on mobile. */
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  /** Hide after setup complete + verified (GS-D5). */
+  hideGettingStarted?: boolean;
 }
 
 /**
- * Dashboard sidebar — flat nav (6 items), lucide icons.
+ * Dashboard sidebar — flat nav, lucide icons.
  *
- * Settings + Integrations live in the profile dropdown (not in the sidebar) per DL-7.
- * The legacy appointments list was removed; OPD today is the operational hub.
+ * Getting started sits at the top (verify is step 1 inside it), separated from
+ * the main ops nav. Settings + Integrations live in the profile dropdown (DL-7).
  *
  * Desktop expanded: collapse control floats top-right (clears nav labels).
  * Desktop collapsed: expand control is the first nav row — same py-2 / h-4 icon
@@ -81,13 +98,79 @@ export function Sidebar({
   counts,
   collapsed = false,
   onToggleCollapse,
+  hideGettingStarted = false,
 }: SidebarProps) {
   const pathname = usePathname();
+
+  const visibleSetupItems = setupNavItems.filter((item) => {
+    if (item.href === "/dashboard/getting-started" && hideGettingStarted) {
+      return false;
+    }
+    return true;
+  });
 
   const navLinkChrome = cn(
     "relative flex items-center rounded-md py-2 text-sm transition-colors",
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
   );
+
+  function renderNavItem({
+    href,
+    label,
+    icon: Icon,
+    exact,
+    badgeKey,
+  }: NavItem) {
+    const basePath = href.split("#")[0];
+    const isActive = exact
+      ? pathname === href || pathname === basePath
+      : pathname.startsWith(basePath);
+
+    const count = badgeKey != null && counts != null ? counts[badgeKey] : 0;
+
+    const linkEl = (
+      <Link
+        href={href}
+        onClick={onClose}
+        aria-current={isActive ? "page" : undefined}
+        className={cn(
+          navLinkChrome,
+          collapsed ? "justify-center px-2" : "px-3",
+          isActive
+            ? "bg-primary/10 text-primary font-medium"
+            : "text-foreground hover:bg-muted/50"
+        )}
+      >
+        <span className={cn("relative shrink-0", !collapsed && "mr-2")}>
+          <Icon className="h-4 w-4" strokeWidth={2} />
+          {collapsed && count > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary" />
+          )}
+        </span>
+
+        {!collapsed && label}
+
+        {!collapsed && count > 0 && (
+          <span className="ml-auto rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-medium leading-none text-primary-foreground">
+            {count > 99 ? "99+" : count}
+          </span>
+        )}
+      </Link>
+    );
+
+    if (collapsed) {
+      const tooltipLabel =
+        count > 0 ? `${label} (${count > 99 ? "99+" : count})` : label;
+      return (
+        <Tooltip key={href}>
+          <TooltipTrigger asChild>{linkEl}</TooltipTrigger>
+          <TooltipContent side="right">{tooltipLabel}</TooltipContent>
+        </Tooltip>
+      );
+    }
+
+    return <span key={href}>{linkEl}</span>;
+  }
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -157,60 +240,17 @@ export function Sidebar({
               </Tooltip>
             )}
 
-            {navItems.map(({ href, label, icon: Icon, exact, badgeKey }) => {
-              const basePath = href.split("#")[0];
-              const isActive = exact
-                ? pathname === href || pathname === basePath
-                : pathname.startsWith(basePath);
+            {visibleSetupItems.map(renderNavItem)}
 
-              const count =
-                badgeKey != null && counts != null ? counts[badgeKey] : 0;
+            {visibleSetupItems.length > 0 ? (
+              <div
+                role="separator"
+                aria-hidden
+                className="mx-1 my-2 border-t border-border"
+              />
+            ) : null}
 
-              const linkEl = (
-                <Link
-                  href={href}
-                  onClick={onClose}
-                  aria-current={isActive ? "page" : undefined}
-                  className={cn(
-                    navLinkChrome,
-                    collapsed ? "justify-center px-2" : "px-3",
-                    isActive
-                      ? "bg-primary/10 text-primary font-medium"
-                      : "text-foreground hover:bg-muted/50"
-                  )}
-                >
-                  <span className={cn("relative shrink-0", !collapsed && "mr-2")}>
-                    <Icon className="h-4 w-4" strokeWidth={2} />
-                    {collapsed && count > 0 && (
-                      <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary" />
-                    )}
-                  </span>
-
-                  {!collapsed && label}
-
-                  {!collapsed && count > 0 && (
-                    <span className="ml-auto rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-medium leading-none text-primary-foreground">
-                      {count > 99 ? "99+" : count}
-                    </span>
-                  )}
-                </Link>
-              );
-
-              if (collapsed) {
-                const tooltipLabel =
-                  count > 0
-                    ? `${label} (${count > 99 ? "99+" : count})`
-                    : label;
-                return (
-                  <Tooltip key={href}>
-                    <TooltipTrigger asChild>{linkEl}</TooltipTrigger>
-                    <TooltipContent side="right">{tooltipLabel}</TooltipContent>
-                  </Tooltip>
-                );
-              }
-
-              return <span key={href}>{linkEl}</span>;
-            })}
+            {mainNavItems.map(renderNavItem)}
           </nav>
         </aside>
       </>

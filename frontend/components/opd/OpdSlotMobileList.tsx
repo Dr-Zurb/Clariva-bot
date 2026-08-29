@@ -1,43 +1,87 @@
 "use client";
 
-import React, { useMemo } from "react";
-import { formatTimeShort } from "@/lib/format-date";
+import React, { useMemo, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 import type { SlotSessionCounts, SlotSessionRow } from "@/types/opd-doctor";
 import type { OpdStatusFilterValue } from "./OpdQueueStatusFilter";
 import { filterSlotSessionRows } from "./shared/opdSlotSessionListModel";
 import {
-  bucketSlotRowsForSections,
-  computeNowDividerPlacement,
-  showActiveSlotSection,
+  partitionSlotRowsForList,
+  rowsForChipSection,
+  sectionDefaultOpen,
+  shouldRenderChipSection,
+  SLOT_CHIP_SECTION_HINT,
+  SLOT_CHIP_SECTION_LABEL,
+  SLOT_CHIP_SECTION_ORDER,
+  type SlotChipSectionKey,
 } from "./opdSlotSectioning";
 import { deriveSlotEmptyState } from "./opdSlotEmptyState";
 import { SlotListEmptyStateView } from "./OpdSlotList";
 import { OpdSlotMobileCard } from "./OpdSlotMobileCard";
 import type { AddSlotDialogMode } from "./AddSlotDialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
-function GroupDivider({ label, count }: { label: string; count: number }) {
-  return (
-    <div className="flex items-center gap-1.5 border-b border-t border-border/60 bg-muted/20 px-3 py-1">
-      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        {label}
-      </span>
-      <span className="tabular-nums text-xs text-muted-foreground">
-        ({count})
-      </span>
-    </div>
-  );
-}
+function CollapsibleGroup({
+  label,
+  hint,
+  count,
+  defaultOpen,
+  children,
+}: {
+  label: string;
+  hint: string;
+  count: number;
+  defaultOpen: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
 
-function NowDividerMobile() {
-  const t = Date.now();
   return (
-    <div className="flex items-center gap-2 border-b border-border/40 bg-background px-3 py-2">
-      <div className="h-px flex-1 bg-primary/30" />
-      <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-primary">
-        Now · {formatTimeShort(t)}
-      </span>
-      <div className="h-px flex-1 bg-primary/30" />
+    <div>
+      <TooltipProvider delayDuration={400}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-expanded={open}
+              aria-description={hint}
+              onClick={() => setOpen((v) => !v)}
+              className="flex w-full cursor-pointer items-center gap-1.5 border-b border-t border-border/60 bg-muted/20 px-3 py-1 text-left hover:bg-muted/30"
+            >
+              <ChevronDown
+                className={cn(
+                  "h-3 w-3 shrink-0 text-muted-foreground transition-transform duration-150",
+                  open && "rotate-180"
+                )}
+              />
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {label}
+              </span>
+              <span className="tabular-nums text-xs text-muted-foreground">
+                ({count})
+              </span>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="max-w-xs text-left">
+            {hint}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+      <div
+        className={cn(
+          "grid transition-all duration-150 ease-in-out",
+          open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+        )}
+      >
+        <div className="overflow-hidden">{children}</div>
+      </div>
     </div>
   );
 }
@@ -98,61 +142,31 @@ export function OpdSlotMobileList({
     [entries, filtered.length, statusFilter, searchQuery]
   );
 
-  const { active, done, missed, overflow, cancelledOnly } = useMemo(
-    () => bucketSlotRowsForSections(filtered),
+  const partitions = useMemo(
+    () => partitionSlotRowsForList(filtered),
     [filtered]
   );
 
-  const activeNodes = useMemo(() => {
-    if (active.length === 0) return null;
-    const nowMs = Date.now();
-    const placement = computeNowDividerPlacement(active, nowMs);
-    const out: React.ReactNode[] = [];
-    const card = (row: SlotSessionRow) => (
-      <OpdSlotMobileCard
-        key={row.appointmentId}
-        entry={row}
-        token={token}
-        sessionDate={sessionDate}
-        allSessionEntries={entries}
-        keyboardFocused={focusedRowId === row.appointmentId}
-        onOpen={(entry) => {
-          onFocusChange?.(entry.appointmentId);
-          onRowClick(entry);
-        }}
-        onMutationSuccess={onMutationSuccess}
-        overflowOpen={overflowOpenId === row.appointmentId}
-        onOverflowOpenChange={(open) =>
-          setOverflowRowId?.(open ? row.appointmentId : null)
-        }
-        onOpenAddSlotDialog={onOpenAddSlotDialog}
-      />
-    );
-    if (placement.kind === "all_past") {
-      active.forEach((row) => out.push(card(row)));
-      out.push(<NowDividerMobile key="now-end" />);
-    } else if (placement.kind === "all_future") {
-      out.push(<NowDividerMobile key="now-start" />);
-      active.forEach((row) => out.push(card(row)));
-    } else {
-      const { beforeCount } = placement;
-      active.slice(0, beforeCount).forEach((row) => out.push(card(row)));
-      out.push(<NowDividerMobile key="now-mid" />);
-      active.slice(beforeCount).forEach((row) => out.push(card(row)));
-    }
-    return out;
-  }, [
-    active,
-    entries,
-    focusedRowId,
-    onFocusChange,
-    onMutationSuccess,
-    onOpenAddSlotDialog,
-    onRowClick,
-    overflowOpenId,
-    setOverflowRowId,
-    token,
-  ]);
+  const renderCard = (row: SlotSessionRow) => (
+    <OpdSlotMobileCard
+      key={row.appointmentId}
+      entry={row}
+      token={token}
+      sessionDate={sessionDate}
+      allSessionEntries={entries}
+      keyboardFocused={focusedRowId === row.appointmentId}
+      onOpen={(entry) => {
+        onFocusChange?.(entry.appointmentId);
+        onRowClick(entry);
+      }}
+      onMutationSuccess={onMutationSuccess}
+      overflowOpen={overflowOpenId === row.appointmentId}
+      onOverflowOpenChange={(openState) =>
+        setOverflowRowId?.(openState ? row.appointmentId : null)
+      }
+      onOpenAddSlotDialog={onOpenAddSlotDialog}
+    />
+  );
 
   if (isLoading && entries.length === 0) {
     return (
@@ -162,7 +176,10 @@ export function OpdSlotMobileList({
         aria-label="Loading slots"
       >
         {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="flex gap-2 border-b border-border px-3 py-3 last:border-b-0">
+          <div
+            key={i}
+            className="flex gap-2 border-b border-border px-3 py-3 last:border-b-0"
+          >
             <Skeleton className="h-10 w-1 shrink-0" />
             <div className="min-w-0 flex-1 space-y-2">
               <Skeleton className="h-4 w-40 max-w-[200px]" />
@@ -184,131 +201,40 @@ export function OpdSlotMobileList({
     );
   }
 
-
   return (
     <div className="flex flex-col overflow-hidden rounded-lg border border-border">
-      {statusFilter === "cancelled" && cancelledOnly.length > 0 && (
-        <>
-          <GroupDivider label="Cancelled" count={cancelledOnly.length} />
-          {cancelledOnly.map((row) => (
-            <OpdSlotMobileCard
-              key={row.appointmentId}
-              entry={row}
-              token={token}
-              sessionDate={sessionDate}
-              allSessionEntries={entries}
-              keyboardFocused={focusedRowId === row.appointmentId}
-              onOpen={(entry) => {
-                onFocusChange?.(entry.appointmentId);
-                onRowClick(entry);
-              }}
-              onMutationSuccess={onMutationSuccess}
-              overflowOpen={overflowOpenId === row.appointmentId}
-              onOverflowOpenChange={(open) =>
-                setOverflowRowId?.(open ? row.appointmentId : null)
-              }
-              dimmed
-              onOpenAddSlotDialog={onOpenAddSlotDialog}
-            />
-          ))}
-        </>
-      )}
+      {statusFilter !== "all"
+        ? SLOT_CHIP_SECTION_ORDER.flatMap((section: SlotChipSectionKey) => {
+            const rows = rowsForChipSection(partitions, section);
+            if (!shouldRenderChipSection(statusFilter, section, rows.length)) {
+              return [];
+            }
+            return rows.map((row) => renderCard(row));
+          })
+        : SLOT_CHIP_SECTION_ORDER.map((section: SlotChipSectionKey) => {
+            const rows = rowsForChipSection(partitions, section);
+            if (!shouldRenderChipSection(statusFilter, section, rows.length)) {
+              return null;
+            }
 
-      {statusFilter !== "cancelled" && (
-        <>
-          {showActiveSlotSection(statusFilter) && (
-            <>
-              {active.length === 0 ? (
-                <div className="px-4 py-4 text-center text-sm text-muted-foreground">
-                  No active slots.
-                </div>
-              ) : (
-                activeNodes
-              )}
-            </>
-          )}
-
-          {done.length > 0 && (
-            <>
-              <GroupDivider label="Completed" count={done.length} />
-              {done.map((row) => (
-                <OpdSlotMobileCard
-                  key={row.appointmentId}
-                  entry={row}
-                  token={token}
-                  sessionDate={sessionDate}
-                  allSessionEntries={entries}
-                  keyboardFocused={focusedRowId === row.appointmentId}
-                  onOpen={(entry) => {
-                    onFocusChange?.(entry.appointmentId);
-                    onRowClick(entry);
-                  }}
-                  onMutationSuccess={onMutationSuccess}
-                  overflowOpen={overflowOpenId === row.appointmentId}
-                  onOverflowOpenChange={(open) =>
-                    setOverflowRowId?.(open ? row.appointmentId : null)
-                  }
-                  dimmed
-                  onOpenAddSlotDialog={onOpenAddSlotDialog}
-                />
-              ))}
-            </>
-          )}
-
-          {missed.length > 0 && (
-            <>
-              <GroupDivider label="Missed" count={missed.length} />
-              {missed.map((row) => (
-                <OpdSlotMobileCard
-                  key={row.appointmentId}
-                  entry={row}
-                  token={token}
-                  sessionDate={sessionDate}
-                  allSessionEntries={entries}
-                  keyboardFocused={focusedRowId === row.appointmentId}
-                  onOpen={(entry) => {
-                    onFocusChange?.(entry.appointmentId);
-                    onRowClick(entry);
-                  }}
-                  onMutationSuccess={onMutationSuccess}
-                  overflowOpen={overflowOpenId === row.appointmentId}
-                  onOverflowOpenChange={(open) =>
-                    setOverflowRowId?.(open ? row.appointmentId : null)
-                  }
-                  dimmed
-                  onOpenAddSlotDialog={onOpenAddSlotDialog}
-                />
-              ))}
-            </>
-          )}
-
-          {overflow.length > 0 && (
-            <>
-              <GroupDivider label="Overflow" count={overflow.length} />
-              {overflow.map((row) => (
-                <OpdSlotMobileCard
-                  key={row.appointmentId}
-                  entry={row}
-                  token={token}
-                  sessionDate={sessionDate}
-                  allSessionEntries={entries}
-                  keyboardFocused={focusedRowId === row.appointmentId}
-                  onOpen={(entry) => {
-                    onFocusChange?.(entry.appointmentId);
-                    onRowClick(entry);
-                  }}
-                  onMutationSuccess={onMutationSuccess}
-                  overflowOpen={overflowOpenId === row.appointmentId}
-                  onOverflowOpenChange={(open) =>
-                    setOverflowRowId?.(open ? row.appointmentId : null)
-                  }
-                  onOpenAddSlotDialog={onOpenAddSlotDialog}
-                />
-              ))}
-            </>
-          )}
-        </>
-      )}
+            return (
+              <CollapsibleGroup
+                key={`${section}-${statusFilter}`}
+                label={SLOT_CHIP_SECTION_LABEL[section]}
+                hint={SLOT_CHIP_SECTION_HINT[section]}
+                count={rows.length}
+                defaultOpen={sectionDefaultOpen(statusFilter, section)}
+              >
+                {rows.length === 0 ? (
+                  <div className="px-4 py-3 text-sm text-muted-foreground">
+                    None
+                  </div>
+                ) : (
+                  rows.map((row) => renderCard(row))
+                )}
+              </CollapsibleGroup>
+            );
+          })}
     </div>
   );
 }

@@ -34,6 +34,17 @@
  */
 
 import * as React from "react";
+import { PatientRxIdentityBlock } from "@/components/ehr/PatientRxIdentityBlock";
+import {
+  letterheadHeading,
+  letterheadImageFitClass,
+  letterheadTypeScreenPx,
+  logoSizePx,
+  type LetterheadImageFit,
+  type LetterheadLogoSize,
+  type LetterheadTextSize,
+  type PatientIdentityPreset,
+} from "@/lib/letterhead-heading";
 import {
   formatDoseLabel,
   formatDurationLegacyLabel,
@@ -41,6 +52,7 @@ import {
   getFrequencyLegacyLabel,
   getRouteLegacyLabel,
 } from "@/lib/medicineCodes";
+import { RX_INSTRUCTION_MARKER } from "@/lib/cockpit/rx-instruction-marker";
 import type {
   DoseUnit,
   DurationUnit,
@@ -77,15 +89,73 @@ export interface PatientRxViewModel {
   /** Prefixed display name; e.g. "Dr. Jane Doe" */
   doctorName: string;
   doctorSpecialty?: string | null;
+  qualifications?: string | null;
+  registrationNumber?: string | null;
   clinicName?: string | null;
   clinicAddress?: string | null;
+  logoUrl?: string | null;
+  headerUrl?: string | null;
+  footerUrl?: string | null;
+  headerHeightMm?: number;
+  footerHeightMm?: number;
+  letterheadPreset?: "classic" | "centred" | "preprinted" | "banner" | null;
+  accentColor?: string | null;
+  chromeColor?: string | null;
+  patientColor?: string | null;
+  logoSize?: LetterheadLogoSize;
+  patientIdentityPreset?: PatientIdentityPreset;
+  showPatientPhone?: boolean;
+  showPatientGuardian?: boolean;
+  showPatientMrn?: boolean;
+  showPatientAddress?: boolean;
+  footerLine?: string | null;
+  hideHaloCredit?: boolean;
+  backgroundUrl?: string | null;
+  backgroundPreset?: "none" | "paper" | "cross" | "upload" | null;
+  backgroundOpacity?: number | null;
+  headerFit?: LetterheadImageFit | null;
+  footerFit?: LetterheadImageFit | null;
+  backgroundFit?: LetterheadImageFit | null;
+  headerTextSize?: LetterheadTextSize | null;
+  patientTextSize?: LetterheadTextSize | null;
+  bodyTextSize?: LetterheadTextSize | null;
+  pageSize?: "a4" | "a5" | null;
+  preprintMarginTopMm?: number;
+  preprintMarginBottomMm?: number;
+  pageMarginTopMm?: number;
+  pageMarginRightMm?: number;
+  pageMarginBottomMm?: number;
+  pageMarginLeftMm?: number;
 
   patientName: string;
-  /** Pre-formatted "5 May 2026" or "5 May 2026, 4:30 PM". May be empty. */
+  /** Pre-formatted "25 Aug 2026". May be empty. */
   visitDateLabel?: string | null;
+  patientAge?: string | null;
+  patientGender?: string | null;
+  patientPhone?: string | null;
+  guardianName?: string | null;
+  guardianRelation?: string | null;
+  address?: string | null;
+  medicalRecordNumber?: string | null;
 
   cc: string | null;
   hopi: string | null;
+  socialHistory?: string | null;
+  customSubsections?: Array<{
+    title: string;
+    body: string | null;
+    children: Array<{ title: string; body: string | null }>;
+  }>;
+  assessmentCustomSections?: Array<{
+    title: string;
+    body: string | null;
+    children: Array<{ title: string; body: string | null }>;
+  }>;
+  planCustomSections?: Array<{
+    title: string;
+    body: string | null;
+    children: Array<{ title: string; body: string | null }>;
+  }>;
   provisionalDiagnosis: string | null;
   investigations: string | null;
   /** plan-p1 — patient-facing lifestyle / advice (education folded in). */
@@ -171,34 +241,62 @@ function projectMedicineDisplay(med: PatientRxMedicineVM): {
 // Sub-components
 // ============================================================================
 
+const DEFAULT_RX_ACCENT = "#000000";
+
 function Section({
   label,
   body,
+  accentColor,
+  textSize,
 }: {
   label: string;
   body: string | null | undefined;
+  accentColor: string;
+  textSize?: LetterheadTextSize | null;
 }) {
   if (!body || !body.trim()) return null;
   return (
     <section className="mb-4">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-blue-700">
+      <h3
+        className="font-semibold uppercase tracking-wide"
+        style={{
+          color: accentColor,
+          fontSize: letterheadTypeScreenPx("bodyLabel", textSize),
+        }}
+      >
         {label}
       </h3>
-      <p className="mt-1 whitespace-pre-wrap break-words text-sm text-gray-800">
+      <p
+        className="mt-1 whitespace-pre-wrap break-words text-gray-800"
+        style={{ fontSize: letterheadTypeScreenPx("bodyText", textSize) }}
+      >
         {body.trim()}
       </p>
     </section>
   );
 }
 
-function MedicineTable({ meds }: { meds: PatientRxMedicineVM[] }) {
+function MedicineTable({
+  meds,
+  accentColor,
+  textSize,
+}: {
+  meds: PatientRxMedicineVM[];
+  accentColor: string;
+  textSize?: LetterheadTextSize | null;
+}) {
+  const labelPx = letterheadTypeScreenPx("bodyLabel", textSize);
+  const bodyPx = letterheadTypeScreenPx("bodyText", textSize);
   if (!meds || meds.length === 0) {
     return (
       <section className="mb-4">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-blue-700">
+        <h3
+          className="font-semibold uppercase tracking-wide"
+          style={{ color: accentColor, fontSize: labelPx }}
+        >
           Rx
         </h3>
-        <p className="mt-1 text-sm italic text-gray-500">
+        <p className="mt-1 italic text-gray-500" style={{ fontSize: bodyPx }}>
           No medicines prescribed.
         </p>
       </section>
@@ -207,15 +305,24 @@ function MedicineTable({ meds }: { meds: PatientRxMedicineVM[] }) {
 
   return (
     <section className="mb-4">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-blue-700">
+      <h3
+        className="font-semibold uppercase tracking-wide"
+        style={{ color: accentColor, fontSize: labelPx }}
+      >
         Rx
       </h3>
 
       {/* Desktop: table layout. Mobile: stacked cards (sm:hidden table-row pair) */}
       <div className="mt-2 hidden sm:block">
-        <table className="w-full table-auto border-collapse text-sm">
+        <table
+          className="w-full table-auto border-collapse"
+          style={{ fontSize: bodyPx }}
+        >
           <thead>
-            <tr className="bg-gray-50 text-left text-[11px] uppercase tracking-wide text-gray-500">
+            <tr
+              className="bg-gray-50 text-left uppercase tracking-wide text-gray-500"
+              style={{ fontSize: labelPx }}
+            >
               <th className="border-b border-gray-200 px-2 py-2 font-semibold">
                 #
               </th>
@@ -242,7 +349,10 @@ function MedicineTable({ meds }: { meds: PatientRxMedicineVM[] }) {
               return (
                 <React.Fragment key={`${i}-${d.name}`}>
                   <tr className="align-top">
-                    <td className="border-b border-gray-100 px-2 py-2 text-xs text-gray-500">
+                    <td
+                      className="border-b border-gray-100 px-2 py-2 text-gray-500"
+                      style={{ fontSize: labelPx }}
+                    >
                       {i + 1}
                     </td>
                     <td className="border-b border-gray-100 px-2 py-2 font-medium text-gray-900">
@@ -266,9 +376,10 @@ function MedicineTable({ meds }: { meds: PatientRxMedicineVM[] }) {
                       <td />
                       <td
                         colSpan={5}
-                        className="border-b border-gray-100 px-2 pb-2 text-xs italic text-gray-500"
+                        className="border-b border-gray-100 px-2 pb-2 italic text-gray-500"
+                        style={{ fontSize: labelPx }}
                       >
-                        ↳ {d.instructions}
+                        {RX_INSTRUCTION_MARKER} {d.instructions}
                       </td>
                     </tr>
                   ) : null}
@@ -289,12 +400,20 @@ function MedicineTable({ meds }: { meds: PatientRxMedicineVM[] }) {
               className="rounded-md border border-gray-200 bg-white p-3"
             >
               <div className="flex items-baseline justify-between gap-2">
-                <span className="text-xs text-gray-500">{i + 1}.</span>
-                <span className="ml-auto text-sm font-semibold text-gray-900">
+                <span className="text-gray-500" style={{ fontSize: labelPx }}>
+                  {i + 1}.
+                </span>
+                <span
+                  className="ml-auto font-semibold text-gray-900"
+                  style={{ fontSize: bodyPx }}
+                >
                   {d.name || "—"}
                 </span>
               </div>
-              <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-700">
+              <dl
+                className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-gray-700"
+                style={{ fontSize: labelPx }}
+              >
                 {d.dosage ? (
                   <div className="contents">
                     <dt className="text-gray-500">Dose</dt>
@@ -321,8 +440,11 @@ function MedicineTable({ meds }: { meds: PatientRxMedicineVM[] }) {
                 ) : null}
               </dl>
               {d.instructions ? (
-                <p className="mt-2 text-xs italic text-gray-600">
-                  ↳ {d.instructions}
+                <p
+                  className="mt-2 italic text-gray-600"
+                  style={{ fontSize: labelPx }}
+                >
+                  {RX_INSTRUCTION_MARKER} {d.instructions}
                 </p>
               ) : null}
             </li>
@@ -359,6 +481,48 @@ export interface PatientRxViewProps {
    * compose the view in a non-share context).
    */
   hideDownloadButton?: boolean;
+  /**
+   * Drop the letter card chrome so a parent modal can own the frame.
+   */
+  embedded?: boolean;
+}
+
+function LetterheadIdentity({
+  viewModel,
+  align,
+  color,
+}: {
+  viewModel: PatientRxViewModel;
+  align: "center" | "right";
+  color: string;
+}) {
+  const title = letterheadHeading(viewModel.doctorName, viewModel.clinicName);
+  const alignClass = align === "center" ? "text-center" : "text-right";
+  const titlePx = letterheadTypeScreenPx("headerTitle", viewModel.headerTextSize);
+  const metaPx = letterheadTypeScreenPx("headerMeta", viewModel.headerTextSize);
+  return (
+    <div className={alignClass} style={{ color }}>
+      <h1 className="font-bold" style={{ fontSize: titlePx }}>
+        {title}
+      </h1>
+      {viewModel.qualifications ? (
+        <p style={{ fontSize: metaPx }}>{viewModel.qualifications}</p>
+      ) : null}
+      {viewModel.doctorSpecialty ? (
+        <p style={{ fontSize: metaPx }}>{viewModel.doctorSpecialty}</p>
+      ) : null}
+      {viewModel.registrationNumber ? (
+        <p style={{ fontSize: metaPx }}>
+          Reg. No.: {viewModel.registrationNumber}
+        </p>
+      ) : null}
+      {viewModel.clinicAddress ? (
+        <div className="mt-1 whitespace-pre-wrap" style={{ fontSize: metaPx }}>
+          {viewModel.clinicAddress}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 const PatientRxView: React.FC<PatientRxViewProps> = ({
@@ -366,6 +530,7 @@ const PatientRxView: React.FC<PatientRxViewProps> = ({
   signedPdfUrl,
   onRefreshSignedPdfUrl,
   hideDownloadButton,
+  embedded = false,
 }) => {
   const [downloading, setDownloading] = React.useState(false);
 
@@ -386,77 +551,183 @@ const PatientRxView: React.FC<PatientRxViewProps> = ({
     }
   }, [signedPdfUrl, onRefreshSignedPdfUrl]);
 
-  const downloadDisabled =
-    !signedPdfUrl && !onRefreshSignedPdfUrl;
+  const downloadDisabled = !signedPdfUrl && !onRefreshSignedPdfUrl;
+  const showLogo =
+    Boolean(viewModel.logoUrl) && viewModel.letterheadPreset !== "preprinted";
+  const showBannerHeader =
+    viewModel.letterheadPreset === "banner" && Boolean(viewModel.headerUrl);
+  const showBannerFooter =
+    viewModel.letterheadPreset === "banner" && Boolean(viewModel.footerUrl);
+  const accentColor =
+    viewModel.accentColor && /^#[0-9A-Fa-f]{6}$/.test(viewModel.accentColor)
+      ? viewModel.accentColor
+      : DEFAULT_RX_ACCENT;
+  const chromeColor =
+    viewModel.chromeColor && /^#[0-9A-Fa-f]{6}$/.test(viewModel.chromeColor)
+      ? viewModel.chromeColor
+      : accentColor;
+  const patientColor =
+    viewModel.patientColor && /^#[0-9A-Fa-f]{6}$/.test(viewModel.patientColor)
+      ? viewModel.patientColor
+      : accentColor;
+
+  const showPageBackground =
+    viewModel.letterheadPreset !== "preprinted" && Boolean(viewModel.backgroundUrl);
+  const backgroundOpacity =
+    Math.min(40, Math.max(0, viewModel.backgroundOpacity ?? 15)) / 100;
 
   return (
-    <article className="mx-auto w-full max-w-2xl rounded-lg border border-gray-200 bg-white p-5 shadow-sm sm:p-7">
+    <article
+      className={
+        embedded
+          ? "relative w-full overflow-hidden bg-transparent"
+          : "relative mx-auto w-full max-w-2xl overflow-hidden rounded-lg border border-gray-200 bg-white p-5 shadow-sm sm:p-7"
+      }
+    >
+      {showPageBackground ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={viewModel.backgroundUrl ?? undefined}
+          alt=""
+          className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+          style={{ opacity: backgroundOpacity }}
+        />
+      ) : null}
+      <div className="relative">
       {/* Letterhead */}
-      <header className="border-b border-gray-200 pb-4">
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h1 className="text-lg font-bold text-gray-900 sm:text-xl">
-              {viewModel.doctorName}
-            </h1>
-            {viewModel.doctorSpecialty ? (
-              <p className="text-sm text-gray-500">
-                {viewModel.doctorSpecialty}
-              </p>
+      {showBannerHeader ? (
+        <div className="-mx-5 -mt-5 mb-4 sm:-mx-7 sm:-mt-7">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={viewModel.headerUrl ?? undefined}
+            alt=""
+            className={`w-full ${letterheadImageFitClass(viewModel.headerFit ?? "stretch")}`}
+            style={{ height: `${viewModel.headerHeightMm ?? 35}mm` }}
+          />
+        </div>
+      ) : viewModel.letterheadPreset === "preprinted" ? null : (
+      <header className="border-b border-black pb-4">
+        {viewModel.letterheadPreset === "centred" ? (
+          <div className="flex flex-col items-center gap-2 text-center">
+            {showLogo ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={viewModel.logoUrl ?? undefined}
+                alt=""
+                className="object-contain"
+                style={{
+                  width: logoSizePx(viewModel.logoSize),
+                  height: logoSizePx(viewModel.logoSize),
+                }}
+              />
             ) : null}
+            <LetterheadIdentity viewModel={viewModel} align="center" color={chromeColor} />
           </div>
-          {(viewModel.clinicName || viewModel.clinicAddress) && (
-            <div className="text-sm sm:text-right">
-              {viewModel.clinicName ? (
-                <div className="font-semibold text-gray-900">
-                  {viewModel.clinicName}
-                </div>
-              ) : null}
-              {viewModel.clinicAddress ? (
-                <div className="whitespace-pre-wrap text-gray-500">
-                  {viewModel.clinicAddress}
-                </div>
-              ) : null}
-            </div>
-          )}
-        </div>
+        ) : (
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            {showLogo ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={viewModel.logoUrl ?? undefined}
+                alt=""
+                className="shrink-0 object-contain"
+                style={{
+                  width: logoSizePx(viewModel.logoSize),
+                  height: logoSizePx(viewModel.logoSize),
+                }}
+              />
+            ) : (
+              <span />
+            )}
+            <LetterheadIdentity viewModel={viewModel} align="right" color={chromeColor} />
+          </div>
+        )}
       </header>
+      )}
 
-      {/* Patient strip */}
-      <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 rounded-md bg-gray-50 px-3 py-2 text-sm">
-        <div>
-          <span className="text-gray-500">Patient: </span>
-          <span className="font-semibold text-gray-900">
-            {viewModel.patientName}
-          </span>
-        </div>
-        {viewModel.visitDateLabel ? (
-          <div>
-            <span className="text-gray-500">Visit: </span>
-            <span className="font-semibold text-gray-900">
-              {viewModel.visitDateLabel}
-            </span>
-          </div>
-        ) : null}
-      </div>
+      <PatientRxIdentityBlock
+        preset={viewModel.patientIdentityPreset ?? "open_letter"}
+        showPhone={viewModel.showPatientPhone !== false}
+        showGuardian={viewModel.showPatientGuardian !== false}
+        showMrn={viewModel.showPatientMrn !== false}
+        showAddress={viewModel.showPatientAddress !== false}
+        textColor={patientColor}
+        textSize={viewModel.patientTextSize ?? undefined}
+        fields={{
+          patientName: viewModel.patientName,
+          patientAge: viewModel.patientAge,
+          patientGender: viewModel.patientGender,
+          visitDateLabel: viewModel.visitDateLabel,
+          patientPhone: viewModel.patientPhone,
+          guardianName: viewModel.guardianName,
+          guardianRelation: viewModel.guardianRelation,
+          address: viewModel.address,
+          medicalRecordNumber: viewModel.medicalRecordNumber,
+        }}
+      />
 
       {/* Sections */}
       <div className="mt-5">
-        <Section label="Chief complaint" body={viewModel.cc} />
-        <Section label="History of present illness" body={viewModel.hopi} />
+        <Section
+          label="Chief complaint"
+          body={viewModel.cc}
+          accentColor={accentColor}
+          textSize={viewModel.bodyTextSize}
+        />
+        <Section
+          label="History of present illness"
+          body={viewModel.hopi}
+          accentColor={accentColor}
+          textSize={viewModel.bodyTextSize}
+        />
         <Section
           label="Provisional diagnosis"
           body={viewModel.provisionalDiagnosis}
+          accentColor={accentColor}
+          textSize={viewModel.bodyTextSize}
         />
-        <Section label="Investigations" body={viewModel.investigations} />
+        <Section
+          label="Investigations"
+          body={viewModel.investigations}
+          accentColor={accentColor}
+          textSize={viewModel.bodyTextSize}
+        />
 
-        <MedicineTable meds={viewModel.medicines} />
+        <MedicineTable
+          meds={viewModel.medicines}
+          accentColor={accentColor}
+          textSize={viewModel.bodyTextSize}
+        />
 
-        <Section label="Advice" body={viewModel.advice} />
-        <Section label="Follow-up" body={viewModel.followUp} />
-        <Section label="Referral" body={viewModel.referral} />
+        <Section
+          label="Advice"
+          body={viewModel.advice}
+          accentColor={accentColor}
+          textSize={viewModel.bodyTextSize}
+        />
+        <Section
+          label="Follow-up"
+          body={viewModel.followUp}
+          accentColor={accentColor}
+          textSize={viewModel.bodyTextSize}
+        />
+        <Section
+          label="Referral"
+          body={viewModel.referral}
+          accentColor={accentColor}
+          textSize={viewModel.bodyTextSize}
+        />
         {(viewModel.adviceHandouts?.length ?? 0) > 0 ? (
           <section className="mb-4" aria-label="Handouts">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <h3
+              className="mb-2 font-semibold uppercase tracking-wide text-gray-500"
+              style={{
+                fontSize: letterheadTypeScreenPx(
+                  "bodyLabel",
+                  viewModel.bodyTextSize,
+                ),
+              }}
+            >
               Handouts
             </h3>
             <ul className="space-y-2">
@@ -466,7 +737,13 @@ const PatientRxView: React.FC<PatientRxViewProps> = ({
                     href={h.downloadUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-sm font-medium text-blue-600 hover:underline"
+                    className="font-medium text-blue-600 hover:underline"
+                    style={{
+                      fontSize: letterheadTypeScreenPx(
+                        "bodyText",
+                        viewModel.bodyTextSize,
+                      ),
+                    }}
                   >
                     {h.label}
                   </a>
@@ -478,12 +755,33 @@ const PatientRxView: React.FC<PatientRxViewProps> = ({
       </div>
 
       {/* Footer + Download */}
+      {showBannerFooter ? (
+        <div className="-mx-5 mt-6 sm:-mx-7">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={viewModel.footerUrl ?? undefined}
+            alt=""
+            className={`w-full ${letterheadImageFitClass(viewModel.footerFit ?? "stretch")}`}
+            style={{ height: `${viewModel.footerHeightMm ?? 20}mm` }}
+          />
+        </div>
+      ) : null}
       {!hideDownloadButton && (
-        <footer className="mt-6 flex flex-col items-stretch gap-3 border-t border-gray-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs text-gray-500">
-            Generated by Clariva. For questions about this prescription,
-            contact your doctor&apos;s clinic.
-          </p>
+        <footer
+          className="mt-6 flex flex-col items-stretch gap-3 border-t border-black pt-4 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="text-xs text-gray-500">
+            {viewModel.footerLine?.trim() ? (
+              <p className="mb-1" style={{ color: chromeColor }}>
+                {viewModel.footerLine.trim()}
+              </p>
+            ) : null}
+            <p>
+              {viewModel.hideHaloCredit
+                ? "For questions about this prescription, contact your doctor's clinic."
+                : "Generated by Halo Aid. For questions about this prescription, contact your doctor's clinic."}
+            </p>
+          </div>
           <button
             type="button"
             onClick={handleDownload}
@@ -499,6 +797,7 @@ const PatientRxView: React.FC<PatientRxViewProps> = ({
           </button>
         </footer>
       )}
+      </div>
     </article>
   );
 };

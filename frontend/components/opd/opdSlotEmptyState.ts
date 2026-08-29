@@ -15,11 +15,11 @@ const FILTER_LABELS: Partial<Record<OpdStatusFilterValue | SlotStatus, string>> 
   {
     all: "All",
     upcoming: "Upcoming",
-    grace: "Grace",
-    running_late: "Late",
-    in_consultation: "In consult",
+    grace: "Upcoming",
+    running_late: "Overdue",
+    in_consultation: "Incomplete",
     completed: "Done",
-    missed: "Missed",
+    missed: "No show",
     cancelled: "Cancelled",
     overflow: "Overflow",
   };
@@ -38,7 +38,11 @@ export function deriveSlotEmptyState(args: {
   searchQuery: string;
 }): SlotEmptyState {
   if (args.entries.length === 0) return { kind: "no-data" };
-  if (args.entries.every((r) => r.slotStatus === "completed")) {
+  if (
+    args.entries.every(
+      (r) => r.lifecycle === "completed" || r.slotStatus === "completed"
+    )
+  ) {
     return { kind: "all-completed" };
   }
   if (args.filteredCount === 0) {

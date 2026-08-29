@@ -2,8 +2,12 @@
  * default-layouts.ts — v3-native intent-based workflow layouts (cv3l-01 / P6-DL-4).
  *
  * Four complete PaneTreeNode presets: Consult (seed + reset), Read, Document,
- * Review. Every tree contains all seven pane ids (visible in structure, hidden
- * as root leaves) so the palette can toggle any pane back on.
+ * Review. Every tree contains all `COCKPIT_TAB_ORDER` pane ids (visible in
+ * structure, or hidden as root leaves) so the palette can toggle any pane back on.
+ *
+ * Phase 2 (ribbon-expand): Snapshot / History retired from the registry — chart
+ * + visit history live on the patient ribbon. Defaults are mid+right SOAP/Rx
+ * layouts with no left chart column.
  */
 
 import { COCKPIT_TAB_ORDER } from "@/lib/patient-profile/v3/cockpit-tabs";
@@ -58,7 +62,7 @@ function split(
   return { id, sizePct, hidden: false, direction, children };
 }
 
-/** v2 7-pane telemed-video: 3 columns, no hidden panes. */
+/** Live visit — Consult/Assessment/Plan + Subjective/Objective (no chart rail). */
 function buildConsultTree(): PaneTreeNode {
   return {
     id: "__root__",
@@ -66,16 +70,12 @@ function buildConsultTree(): PaneTreeNode {
     hidden: false,
     direction: "horizontal",
     children: [
-      split("col-left", 22, "vertical", [
-        visibleLeaf("snapshot", 40),
-        visibleLeaf("history", 60),
-      ]),
-      split("col-mid", 56, "vertical", [
+      split("col-mid", 68, "vertical", [
         visibleLeaf("body", 42),
         visibleLeaf("assessment", 8),
         visibleLeaf("plan", 50),
       ]),
-      split("col-right", 22, "vertical", [
+      split("col-right", 32, "vertical", [
         visibleLeaf("subjective", 50),
         visibleLeaf("objective", 50),
       ]),
@@ -83,7 +83,7 @@ function buildConsultTree(): PaneTreeNode {
   };
 }
 
-/** Case-history focus: wide History; body / plan hidden at root. */
+/** Notes focus — Assessment + Subjective/Objective; body / plan hidden. */
 function buildReadTree(): PaneTreeNode {
   return {
     id: "__root__",
@@ -91,12 +91,8 @@ function buildReadTree(): PaneTreeNode {
     hidden: false,
     direction: "horizontal",
     children: [
-      split("read-left", 18, "vertical", [
-        visibleLeaf("snapshot", 35),
-        visibleLeaf("assessment", 65),
-      ]),
-      split("read-center", 52, "vertical", [visibleLeaf("history", 100)]),
-      split("read-right", 30, "vertical", [
+      split("read-left", 28, "vertical", [visibleLeaf("assessment", 100)]),
+      split("read-right", 72, "vertical", [
         visibleLeaf("subjective", 50),
         visibleLeaf("objective", 50),
       ]),
@@ -106,7 +102,7 @@ function buildReadTree(): PaneTreeNode {
   };
 }
 
-/** SOAP + Rx: Plan dominant on the right; body / history hidden at root. */
+/** SOAP + Rx — Plan dominant; body hidden. */
 function buildDocumentTree(): PaneTreeNode {
   return {
     id: "__root__",
@@ -114,24 +110,18 @@ function buildDocumentTree(): PaneTreeNode {
     hidden: false,
     direction: "horizontal",
     children: [
-      split("doc-left", 12, "vertical", [
-        visibleLeaf("snapshot", 40),
-        visibleLeaf("assessment", 60),
-      ]),
-      split("doc-mid", 28, "vertical", [
+      split("doc-left", 14, "vertical", [visibleLeaf("assessment", 100)]),
+      split("doc-mid", 30, "vertical", [
         visibleLeaf("subjective", 50),
         visibleLeaf("objective", 50),
       ]),
-      split("doc-right", 60, "vertical", [
-        visibleLeaf("plan", 100),
-      ]),
+      split("doc-right", 56, "vertical", [visibleLeaf("plan", 100)]),
       hiddenLeaf("body"),
-      hiddenLeaf("history"),
     ],
   };
 }
 
-/** Post-visit calm reading: all seven visible, Consult-like columns. */
+/** Post-visit calm reading — body + notes + plan. */
 function buildReviewTree(): PaneTreeNode {
   return {
     id: "__root__",
@@ -139,19 +129,13 @@ function buildReviewTree(): PaneTreeNode {
     hidden: false,
     direction: "horizontal",
     children: [
-      split("review-left", 24, "vertical", [
-        visibleLeaf("snapshot", 38),
-        visibleLeaf("history", 62),
-      ]),
-      split("review-mid", 50, "vertical", [
+      split("review-mid", 55, "vertical", [
         visibleLeaf("body", 28),
-        visibleLeaf("assessment", 10),
-        visibleLeaf("subjective", 31),
-        visibleLeaf("objective", 31),
+        visibleLeaf("assessment", 12),
+        visibleLeaf("subjective", 30),
+        visibleLeaf("objective", 30),
       ]),
-      split("review-right", 26, "vertical", [
-        visibleLeaf("plan", 100),
-      ]),
+      split("review-right", 45, "vertical", [visibleLeaf("plan", 100)]),
     ],
   };
 }
@@ -165,14 +149,14 @@ export const DEFAULT_LAYOUTS: readonly DefaultLayoutEntry[] = [
   {
     id: "consult",
     label: "Consult",
-    description: "Live visit — the familiar 8-pane cockpit.",
+    description: "Live visit — Consult, SOAP notes, and Plan.",
     hotkey: "mod+shift+1",
     tree: CONSULT_TREE,
   },
   {
     id: "read",
     label: "Read",
-    description: "Case history — wide chart rail and notes.",
+    description: "Case review — Assessment and Subjective/Objective.",
     hotkey: "mod+shift+2",
     tree: READ_TREE,
   },
@@ -186,7 +170,7 @@ export const DEFAULT_LAYOUTS: readonly DefaultLayoutEntry[] = [
   {
     id: "review",
     label: "Review",
-    description: "Post-visit read-only — calm full-chart scan.",
+    description: "Post-visit read — calm full-note scan.",
     hotkey: "mod+shift+4",
     tree: REVIEW_TREE,
   },
@@ -205,8 +189,8 @@ export function getDefaultLayoutTree(id: DefaultLayoutId): PaneTreeNode {
 
 /**
  * True when the registry is the full cockpit (all `COCKPIT_TAB_ORDER` panes),
- * not the walk-in subset. Name is historical (was eight tabs; now seven after
- * Investigations folded into Plan) — the count tracks `COCKPIT_TAB_ORDER`.
+ * not the walk-in subset. Name is historical (was eight / seven tabs) — the
+ * count tracks `COCKPIT_TAB_ORDER` (five after Snapshot/History retirement).
  */
 export function isFullEightPaneRegistry(panes: PaneDefinition[]): boolean {
   if (panes.length !== ALL_PANE_IDS.length) return false;

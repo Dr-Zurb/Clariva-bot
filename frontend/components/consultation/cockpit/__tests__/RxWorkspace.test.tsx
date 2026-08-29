@@ -109,6 +109,16 @@ describe("RxWorkspace cockpitMode prop", () => {
     renderWithProvider({});
     expect(screen.getByText("Symptoms")).toBeInTheDocument();
   });
+
+  it("does not nest a scrollport when cockpitMode=true", () => {
+    const { container } = renderWithProvider({ cockpitMode: true });
+    expect(container.querySelector(".overflow-y-auto")).toBeNull();
+  });
+
+  it("keeps its own scrollport when cockpitMode is off", () => {
+    const { container } = renderWithProvider({ cockpitMode: false });
+    expect(container.querySelector(".overflow-y-auto")).toBeTruthy();
+  });
 });
 
 describe("RxWorkspace nav-clarity telemetry (cnc-05)", () => {

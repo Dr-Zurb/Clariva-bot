@@ -1,29 +1,22 @@
 "use client";
 
 /**
- * PatientRibbon (cockpit-ribbon batch · crb-02 + ribbon-expand Phase 1)
+ * PatientRibbon (cockpit-ribbon · ribbon rethink 2026-07-17)
  *
- * 52px full-width strip rendered between <PatientProfileHeader> and
- * <PatientProfileShell> inside <PatientProfilePage>. Surfaces always-visible
- * patient context across all panes:
+ * 52px full-width safety glance between <PatientProfileHeader> and the shell:
  *
  *   ┌────────────────────────────────────────────────────────────────────────┐
- *   │ 42 y · M · 68 kg │ ⚠️ Penicillin · … │ 🩺 HTN · … │ 💊 4 │ Safety │ ⧉ 🕐 │ 🎯 URI │
+ *   │ ⚠️ Penicillin · … │ 🩺 HTN · … │ 💊 4 │ Safety │ ⧉ Chart 🕐 History │ 🎯 URI │
  *   └────────────────────────────────────────────────────────────────────────┘
  *
- * Phase 1 (ribbon-expand): click-to-expand overlays — allergies/meds popovers
- * mount the real EHR section components; Chart / History open SnapshotPane /
- * HistoryPane in the shell SideSheetHost (no inline growth; tabs untouched).
+ * Demographics live in the header beside the name (not here). 💊 counts active
+ * chart medications (`patient_medications` status=active), not last-visit Rx.
+ * Allergies popover mounts AllergiesSection; Chart / History open side sheets.
  *
- * Subscribes to <RxFormProvider> (lifted by csf-01) for the Dx live-mirror via
- * useRxForm(). The 🎯 click handler focuses #diagnosis (the Dx input id from
- * cv2-06's <AssessmentSection>).
+ * Walk-in (appointment.patient_id == null) → null.
+ * Mobile (<lg) → parent does not mount us.
  *
- * Walk-in (appointment.patient_id == null) → component returns null.
- * Mobile (<lg) → handled by parent (<PatientProfilePage> doesn't mount us).
- *
- * @see frontend/hooks/usePatientRibbonData.ts  (data hook — crb-01)
- * @see docs/Work/Daily-plans/July 2026/16-07-2026/ribbon-expand-snapshot-history/plan-ribbon-expand-snapshot-history-batch.md
+ * @see frontend/hooks/usePatientRibbonData.ts
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -34,7 +27,7 @@ import {
   usePatientRibbonData,
   type RibbonAllergyChip,
   type RibbonChronicChip,
-  type RibbonIdentity,
+  type RibbonMedChip,
 } from "@/hooks/usePatientRibbonData";
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import { useOptionalRxSafety } from "@/components/cockpit/rx/RxSafetyContext";
@@ -42,7 +35,6 @@ import { useSideSheet } from "@/components/patient-profile/SideSheetHost";
 import SnapshotPane from "@/components/patient-profile/panes/SnapshotPane";
 import HistoryPane from "@/components/patient-profile/panes/HistoryPane";
 import AllergiesSection from "@/components/ehr/sections/AllergiesSection";
-import PreviousRxSection from "@/components/ehr/sections/PreviousRxSection";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tooltip,
@@ -136,8 +128,6 @@ function PatientRibbonInner({
         className="flex h-[52px] w-full items-center border-b bg-card px-4"
         data-testid="patient-ribbon"
       >
-        <IdentitySlot identity={data.identity} isLoading={data.isLoading} />
-        <Sep />
         <AllergiesSlot
           chips={data.allergies}
           isLoading={data.isLoading}
@@ -148,10 +138,9 @@ function PatientRibbonInner({
         <ChronicSlot chips={data.chronicConditions} isLoading={data.isLoading} />
         <Sep />
         <ActiveMedsSlot
+          meds={data.activeMeds}
           count={data.activeMedsCount}
           isLoading={data.isLoading}
-          patientId={patientId}
-          token={token}
         />
         <Sep />
         <SafetySlot />
@@ -244,39 +233,6 @@ function RibbonSheetActions({
         <TooltipContent side="bottom">Visit history</TooltipContent>
       </Tooltip>
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Slot: Identity — "42 y · M · 68 kg"
-// ---------------------------------------------------------------------------
-
-function IdentitySlot({
-  identity,
-  isLoading,
-}: {
-  identity: RibbonIdentity;
-  isLoading: boolean;
-}) {
-  if (isLoading) {
-    return <Skeleton className="h-4 w-[100px]" />;
-  }
-
-  const parts: string[] = [];
-  if (identity.ageYears !== null) parts.push(`${identity.ageYears} y`);
-  if (identity.sex !== null) parts.push(identity.sex);
-  if (identity.weightKg !== null) parts.push(`${identity.weightKg} kg`);
-
-  if (parts.length === 0) {
-    return (
-      <span className="text-xs text-muted-foreground">No demographics</span>
-    );
-  }
-
-  return (
-    <span className="whitespace-nowrap text-xs font-medium text-foreground">
-      {parts.join(" · ")}
-    </span>
   );
 }
 
@@ -476,19 +432,17 @@ function ChronicChip({ chip }: { chip: RibbonChronicChip }) {
 }
 
 // ---------------------------------------------------------------------------
-// Slot: Active meds — count glance + click popover (RX-02)
+// Slot: Active chart meds — count + name list popover
 // ---------------------------------------------------------------------------
 
 function ActiveMedsSlot({
+  meds,
   count,
   isLoading,
-  patientId,
-  token,
 }: {
+  meds: RibbonMedChip[];
   count: number;
   isLoading: boolean;
-  patientId: string;
-  token: string;
 }) {
   const [popoverOpen, setPopoverOpen] = useState(false);
 
@@ -520,8 +474,8 @@ function ActiveMedsSlot({
         </TooltipTrigger>
         <TooltipContent side="bottom">
           {count === 0
-            ? "No active medications on the most recent prescription. Click to review."
-            : `${count} active medication${count === 1 ? "" : "s"} on the most recent prescription. Click to review.`}
+            ? "No active chart medications. Click to review."
+            : `${count} active medication${count === 1 ? "" : "s"} on the chart (PMH). Click to review.`}
         </TooltipContent>
       </Tooltip>
       <PopoverContent
@@ -531,16 +485,25 @@ function ActiveMedsSlot({
         data-testid="ribbon-meds-popover"
       >
         <p className="mb-2 text-xs font-semibold text-foreground">
-          Current medications
+          Active medications
         </p>
-        <PreviousRxSection
-          patientId={patientId}
-          token={token}
-          layout={RIBBON_SECTION_LAYOUT}
-          mode={RIBBON_SECTION_MODE}
-          limit={10}
-          filter="most-recent-visit"
-        />
+        {meds.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            No active medications on the patient chart. Add them under
+            Subjective → Past medical history.
+          </p>
+        ) : (
+          <ul className="space-y-1.5" data-testid="ribbon-meds-list">
+            {meds.map((med) => (
+              <li key={med.id} className="text-xs">
+                <span className="font-medium text-foreground">{med.name}</span>
+                {med.detail ? (
+                  <span className="ml-1 text-muted-foreground">{med.detail}</span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
       </PopoverContent>
     </Popover>
   );

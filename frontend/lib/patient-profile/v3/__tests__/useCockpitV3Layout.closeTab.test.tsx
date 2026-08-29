@@ -62,4 +62,50 @@ describe("useCockpitV3Layout closeTab", () => {
     expect(hasVisibleLeaves(result.current.paneTree)).toBe(false);
     expect(result.current.paneState["visit-summary"]?.hidden).toBe(true);
   });
+
+  it("closeLeaf hides every pane in a multi-tab leaf", () => {
+    const storageKey = `test:close-leaf-multi:${crypto.randomUUID()}`;
+    const panes = makePanes(["chart", "body", "rx"]);
+    const opts = hookOptsFor(storageKey, panes);
+
+    const { result } = renderHook(() => useCockpitV3Layout(opts));
+
+    act(() => {
+      result.current.applyLayout({
+        version: 5,
+        paneTree: {
+          id: "__root__",
+          sizePct: 100,
+          hidden: false,
+          direction: "horizontal",
+          children: [
+            {
+              id: "__tabs_0",
+              sizePct: 50,
+              hidden: false,
+              paneIds: ["chart", "body"],
+              activeTabId: "chart",
+            },
+            {
+              id: "rx",
+              sizePct: 50,
+              hidden: false,
+              paneIds: ["rx"],
+              activeTabId: "rx",
+            },
+          ],
+        },
+      });
+    });
+
+    let closeResult: { ok: boolean; reason?: string } = { ok: false };
+    act(() => {
+      closeResult = result.current.closeLeaf("__tabs_0");
+    });
+
+    expect(closeResult).toEqual({ ok: true });
+    expect(result.current.paneState["chart"]?.hidden).toBe(true);
+    expect(result.current.paneState["body"]?.hidden).toBe(true);
+    expect(result.current.paneState["rx"]?.hidden).toBe(false);
+  });
 });

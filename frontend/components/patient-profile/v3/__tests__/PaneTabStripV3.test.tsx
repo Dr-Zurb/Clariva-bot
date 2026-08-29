@@ -67,6 +67,7 @@ function renderStrip(
     activeTabId?: string;
     onActivateTab?: (paneId: string) => void;
     onCloseTab?: (paneId: string) => void;
+    onCloseLeaf?: () => void;
     groupId?: string;
   } = {},
 ) {
@@ -84,6 +85,7 @@ function renderStrip(
           paneById={paneById}
           onActivateTab={onActivateTab}
           onCloseTab={options.onCloseTab}
+          onCloseLeaf={options.onCloseLeaf}
         />
         <div id={`pane-body-${activeTabId}`} data-testid="active-pane-body">
           active body
@@ -109,6 +111,25 @@ describe("<PaneTabStripV3>", () => {
     expect(screen.getByTestId("active-pane-body")).toBeInTheDocument();
   });
 
+  it("renders trailingActions when provided", () => {
+    render(
+      <DndContext>
+        <SortableContext items={["chart"]} strategy={horizontalListSortingStrategy}>
+          <PaneTabStripV3
+            groupId="__tabs_0"
+            paneIds={["chart"]}
+            activeTabId="chart"
+            paneById={makePaneById(["chart"])}
+            onActivateTab={vi.fn()}
+            trailingActions={<button type="button">Focus Chart</button>}
+          />
+        </SortableContext>
+      </DndContext>,
+    );
+    expect(screen.getByTestId("pane-tab-strip-trailing-actions")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Focus Chart" })).toBeInTheDocument();
+  });
+
   it("renders trailing end-zone droppable after tabs", () => {
     renderStrip(["chart", "body"], { groupId: "leaf-1" });
     const end = screen.getByTestId("pane-tab-strip-end-drop");
@@ -126,15 +147,36 @@ describe("<PaneTabStripV3>", () => {
     expect(onActivateTab).toHaveBeenCalledWith("body");
   });
 
-  it("close calls onCloseTab when clicking ×", () => {
+  it("multi-tab: per-tab × calls onCloseTab; leaf close calls onCloseLeaf", () => {
     const onCloseTab = vi.fn();
+    const onCloseLeaf = vi.fn();
     renderStrip(["chart", "body"], {
       activeTabId: "chart",
       onCloseTab,
+      onCloseLeaf,
     });
 
     fireEvent.click(screen.getByLabelText("Close chart tab"));
     expect(onCloseTab).toHaveBeenCalledWith("chart");
+
+    fireEvent.click(screen.getByTestId("pane-leaf-close-button"));
+    expect(onCloseLeaf).toHaveBeenCalledTimes(1);
+  });
+
+  it("single-tab: no per-tab ×; trailing leaf close is the only close", () => {
+    const onCloseTab = vi.fn();
+    const onCloseLeaf = vi.fn();
+    renderStrip(["chart"], {
+      onCloseTab,
+      onCloseLeaf,
+    });
+
+    expect(screen.queryByLabelText("Close chart tab")).not.toBeInTheDocument();
+    const leafClose = screen.getByTestId("pane-leaf-close-button");
+    expect(leafClose).toHaveAccessibleName("Close Patient chart");
+    fireEvent.click(leafClose);
+    expect(onCloseLeaf).toHaveBeenCalledTimes(1);
+    expect(onCloseTab).not.toHaveBeenCalled();
   });
 
   it("overflow popover tabs remain activatable and closable", () => {

@@ -15,7 +15,21 @@ import {
   type Room,
 } from "twilio-video";
 
-import { useCameraDevices, type MediaDeviceInfoLite } from "./useCameraDevices";
+import {
+  annotateFacings,
+  canFlipCameras,
+  facingFromFacingMode,
+  facingModeFor,
+  isAlreadyOnRequestedDevice,
+  nextFacingMode,
+  oppositeFacing,
+  resolveLiveCameraIdentity,
+  videoConstraintsForCameraSwitch,
+  type CameraFacing,
+} from "@/lib/video/camera-facing";
+import { useCameraDevices } from "./useCameraDevices";
+
+export type { CameraFacing };
 
 /**
  * Sub-batch F · task-video-F1 — in-call camera switch (front ↔ back).
@@ -51,15 +65,12 @@ import { useCameraDevices, type MediaDeviceInfoLite } from "./useCameraDevices";
  * enumeration. Documented in the F.1 task log and EXECUTION-ORDER
  * Sub-batch F log.
  *
- * **iOS Safari quirk:** before the user grants camera permission,
- * `enumerateDevices()` returns `videoinput` entries with empty
- * `label` strings — the spec calls this out as a "facing fallback by
- * device order" requirement (index 0 = front, index 1 = back). The
- * pre-call screen (A7) has already triggered a permission grant by
- * the time we're in the call so labels are populated 99% of the
- * time, but the fallback keeps us functional in the 1% where the
- * patient revoked permission, then re-granted, then enumerated
- * before labels caught up.
+ * **iOS Safari quirk:** `enumerateDevices()` often returns a single
+ * `videoinput` even when the phone has front + back cameras. DeviceId
+ * switching is then a no-op; `flip()` falls back to
+ * `facingMode: 'user' | 'environment'`, which is the WebKit-correct
+ * path. Empty labels still use the index fallback (0 = front, 1 = back)
+ * when two devices *do* enumerate before labels populate.
  */
 
 // localStorage key for the LAST in-call camera the user picked.
@@ -73,9 +84,7 @@ export const CAMERA_DEVICE_STORAGE_KEY = "video-camera-device-id";
 // negotiation can take ~500ms; 800ms is an empirically safe lower
 // bound that prevents double-tap thrash on slow Android hardware
 // without feeling laggy on fast desktop.
-const FLIP_DEBOUNCE_MS = 800;
-
-export type CameraFacing = "front" | "back" | "unknown";
+const FLIP_DEBOUNCE_MS = 520;
 
 export interface CameraDeviceInfo {
   deviceId: string;
@@ -156,80 +165,84 @@ export interface UseCameraSwitchReturn {
   /** True between `switchTo` invocation and the
    *  `FLIP_DEBOUNCE_MS` cooldown. Drives the button's disabled state. */
   isFlipping: boolean;
-  /** True iff there are 2+ cameras available (i.e. the button
-   *  should be visible at all). */
+  /** True iff there are 2+ cameras available (deviceId switch). */
   hasMultipleCameras: boolean;
+  /**
+   * True iff a flip control should render. Broader than
+   * `hasMultipleCameras`: iOS often enumerates one camera but still
+   * supports `facingMode` user ↔ environment.
+   */
+  canFlip: boolean;
+  /** Best-effort facing of the live track. */
+  currentFacing: CameraFacing;
+  /**
+   * Mutable ref mirroring `currentFacing` so republish paths can
+   * keep iOS facingMode when deviceId is missing.
+   */
+  currentFacingRef: MutableRefObject<CameraFacing>;
 }
 
-// ---------------------------------------------------------------------------
-// Facing heuristic
-// ---------------------------------------------------------------------------
-
-/**
- * Best-effort facing detection. Empty labels → `'unknown'`; the
- * caller (or the post-enumeration index fallback) decides what to
- * do with that.
- */
-function deriveFacingFromLabel(label: string): CameraFacing {
-  const lower = label.toLowerCase();
-  if (
-    lower.includes("front") ||
-    lower.includes("user") ||
-    lower.includes("selfie") ||
-    lower.includes("facetime")
-  ) {
-    return "front";
+function readLiveFacing(track: LocalVideoTrack | undefined): CameraFacing {
+  if (!track) return "unknown";
+  try {
+    const mode = track.mediaStreamTrack.getSettings().facingMode;
+    return facingFromFacingMode(typeof mode === "string" ? mode : undefined);
+  } catch {
+    return "unknown";
   }
-  if (
-    lower.includes("back") ||
-    lower.includes("rear") ||
-    lower.includes("environment") ||
-    lower.includes("world")
-  ) {
-    return "back";
-  }
-  return "unknown";
 }
 
-/**
- * After the per-label pass, if all facings are 'unknown' (iOS
- * pre-permission case, or Android phones with cryptic camera
- * labels), fall back to device order: index 0 → front, index 1 →
- * back, anything else stays 'unknown'.
- */
-function annotateFacings(
-  cameras: MediaDeviceInfoLite[],
-): Array<MediaDeviceInfoLite & { facing: CameraFacing }> {
-  const labelled = cameras.map((cam) => ({
-    ...cam,
-    facing: deriveFacingFromLabel(cam.label),
-  }));
+type RestartableLocalVideo = LocalVideoTrack & {
+  restart: (constraints?: MediaTrackConstraints) => Promise<unknown>;
+};
 
-  const allUnknown = labelled.every((cam) => cam.facing === "unknown");
-  if (!allUnknown) return labelled;
+function canRestartTrack(
+  track: LocalVideoTrack | undefined,
+): track is RestartableLocalVideo {
+  return Boolean(track && typeof (track as RestartableLocalVideo).restart === "function");
+}
 
-  // Order-based fallback. Conservative: only promote the first
-  // two devices; deeper indices stay 'unknown' (we'd be guessing
-  // and the dropdown will still let the user pick by label).
-  return labelled.map((cam, idx) => {
-    if (idx === 0) return { ...cam, facing: "front" as CameraFacing };
-    if (idx === 1) return { ...cam, facing: "back" as CameraFacing };
-    return cam;
-  });
+function readLiveDeviceId(track: LocalVideoTrack | undefined): string | null {
+  if (!track) return null;
+  try {
+    const settings = track.mediaStreamTrack.getSettings();
+    return typeof settings.deviceId === "string" ? settings.deviceId : null;
+  } catch {
+    return null;
+  }
+}
+
+const TOUCH_LIKE_VIEWPORT = "(max-width: 1023px), (pointer: coarse)";
+
+function readTouchLikeViewport(): boolean {
+  if (typeof window === "undefined" || !window.matchMedia) return false;
+  return window.matchMedia(TOUCH_LIKE_VIEWPORT).matches;
+}
+
+function useIsNarrowViewport(): boolean {
+  const [narrow, setNarrow] = useState(readTouchLikeViewport);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const query = window.matchMedia(TOUCH_LIKE_VIEWPORT);
+    const apply = (e: MediaQueryListEvent | MediaQueryList) => {
+      setNarrow(e.matches);
+    };
+    apply(query);
+    if (typeof query.addEventListener === "function") {
+      query.addEventListener("change", apply);
+      return () => query.removeEventListener("change", apply);
+    }
+    query.addListener(apply);
+    return () => {
+      query.removeListener(apply);
+    };
+  }, []);
+  return narrow;
 }
 
 // ---------------------------------------------------------------------------
 // localStorage helpers (SSR-safe; quota-error tolerant)
 // ---------------------------------------------------------------------------
-
-function readStoredDeviceId(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.localStorage.getItem(CAMERA_DEVICE_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
 
 function writeStoredDeviceId(deviceId: string): void {
   if (typeof window === "undefined") return;
@@ -259,22 +272,28 @@ export function useCameraSwitch(
   } = opts;
 
   const { cameras } = useCameraDevices();
+  const isNarrowViewport = useIsNarrowViewport();
 
   // ------------------------------------------------------------------------
   // Current device tracking
   //
-  // Resolution priority (first non-empty wins):
-  //   1. localStorage `video-camera-device-id` (last in-call switch).
-  //   2. Whatever the published LocalVideoTrack reports
-  //      (`mediaStreamTrack.getSettings().deviceId`).
-  //   3. `initialDeviceId` (pre-call's chosen).
-  //   4. `null` (Twilio picked default; we don't know what).
+  // The live published track is the source of truth. localStorage is
+  // written after a successful switch (next-session preference) but
+  // must not describe "what camera am I on now" — that mismatch made
+  // Flip a silent no-op after the first successful switch + reload.
+  //
+  // Resolution priority:
+  //   1. Live LocalVideoTrack deviceId / facingMode.
+  //   2. `initialDeviceId` (pre-call's chosen) when the track has none.
+  //   3. `null` (Twilio picked default; flip still works via facingMode).
   //
   // Resolves once on mount + room transition; subsequent updates
-  // come exclusively from `switchTo`.
+  // come exclusively from `switchTo` / facingMode flip.
   // ------------------------------------------------------------------------
   const [currentDeviceId, setCurrentDeviceId] = useState<string | null>(null);
   const currentDeviceIdRef = useRef<string | null>(null);
+  const [currentFacing, setCurrentFacing] = useState<CameraFacing>("unknown");
+  const currentFacingRef = useRef<CameraFacing>("unknown");
   const hasResolvedCurrentRef = useRef(false);
 
   // Keep ref + state in lockstep so the host's republish paths can
@@ -283,6 +302,9 @@ export function useCameraSwitch(
   useEffect(() => {
     currentDeviceIdRef.current = currentDeviceId;
   }, [currentDeviceId]);
+  useEffect(() => {
+    currentFacingRef.current = currentFacing;
+  }, [currentFacing]);
 
   // Resolve `current` from the published track once the room is
   // connected. Re-runs if the room reference changes (rejoin).
@@ -290,45 +312,20 @@ export function useCameraSwitch(
     if (hasResolvedCurrentRef.current) return;
     if (!room || room.state !== "connected") return;
 
-    // Priority 1 — localStorage.
-    const stored = readStoredDeviceId();
-    if (stored) {
-      setCurrentDeviceId(stored);
-      hasResolvedCurrentRef.current = true;
-      return;
-    }
-
-    // Priority 2 — inspect the published LocalVideoTrack.
     const liveVideo = localTracksRef.current.find(
       (t) => t.kind === "video",
     ) as LocalVideoTrack | undefined;
-    const liveDeviceId = liveVideo
-      ? (() => {
-          try {
-            const settings = liveVideo.mediaStreamTrack.getSettings();
-            return typeof settings.deviceId === "string"
-              ? settings.deviceId
-              : null;
-          } catch {
-            return null;
-          }
-        })()
-      : null;
-    if (liveDeviceId) {
-      setCurrentDeviceId(liveDeviceId);
-      hasResolvedCurrentRef.current = true;
-      return;
+    const resolved = resolveLiveCameraIdentity({
+      liveDeviceId: readLiveDeviceId(liveVideo),
+      liveFacing: readLiveFacing(liveVideo),
+      initialDeviceId,
+    });
+    if (resolved.facing !== "unknown") {
+      setCurrentFacing(resolved.facing);
     }
-
-    // Priority 3 — pre-call's chosen ID.
-    if (initialDeviceId) {
-      setCurrentDeviceId(initialDeviceId);
-      hasResolvedCurrentRef.current = true;
-      return;
+    if (resolved.deviceId) {
+      setCurrentDeviceId(resolved.deviceId);
     }
-
-    // Priority 4 — give up; current stays null. The button still
-    // works (flip just picks the first 'back' device).
     hasResolvedCurrentRef.current = true;
   }, [room, room?.state, localTracksRef, initialDeviceId]);
 
@@ -354,51 +351,46 @@ export function useCameraSwitch(
   }, [cameras, currentDeviceId]);
 
   const hasMultipleCameras = devices.length >= 2;
+  const hasLiveVideo = Boolean(
+    localTracksRef.current.find((t) => t.kind === "video"),
+  );
+  const canFlip = canFlipCameras({
+    cameraCount: devices.length,
+    hasLiveVideo: hasLiveVideo || Boolean(room && room.state === "connected"),
+    liveFacing: currentFacing,
+    isNarrowViewport,
+  });
 
   // ------------------------------------------------------------------------
-  // switchTo — the core dance
-  //
-  // Mirrors the pattern in `<VideoRoom>`'s `handleQualityChange`
-  // (line ~2746) so a shared maintenance burden later (extracting
-  // a `republishLocalVideoTrack` util) is straightforward. Steps:
-  //
-  //   1. Pre-flight: room connected + a different deviceId
-  //      requested + no other switch in flight.
-  //   2. Create the new `LocalVideoTrack` with the deviceId
-  //      constraint. Bail (and stop the new track) if the room
-  //      tore down during the await.
-  //   3. Unpublish + stop the old track; remove from
-  //      `localTracksRef`.
-  //   4. Publish new track; push into `localTracksRef`.
-  //   5. Fire `onAttachLocal` so the self-tile rebinds.
-  //   6. Re-apply `cameraOff` if the user had toggled it before
-  //      the switch (`.disable()`).
-  //   7. Fire `onApplyBackground` for C2 re-application.
-  //   8. Persist the new deviceId to localStorage.
-  //   9. Fire `onDeviceChanged` so the host can patch E.4 rejoin
-  //      cache + (eventually) emit telemetry.
+  // Republish helper — shared by deviceId switch and facingMode flip.
   // ------------------------------------------------------------------------
   const isFlippingRef = useRef(false);
   const [isFlipping, setIsFlipping] = useState(false);
 
-  const switchTo = useCallback(
-    async (deviceId: string): Promise<void> => {
-      // Pre-flight 1: room must be live.
+  const republishVideo = useCallback(
+    async (opts: {
+      deviceId?: string;
+      facingMode?: "user" | "environment";
+    }): Promise<void> => {
       if (!room || room.state !== "connected") {
         onSwitchUnavailable?.("not-connected");
         return;
       }
-      // Pre-flight 2: noop if we're already on this device.
-      if (currentDeviceIdRef.current === deviceId) return;
-      // Pre-flight 3: don't reentrant-switch.
+
+      const oldVideoTrack = localTracksRef.current.find(
+        (t) => t.kind === "video",
+      ) as LocalVideoTrack | undefined;
+      const liveDeviceId = readLiveDeviceId(oldVideoTrack);
+      // Skip only when the *live* track is already the requested
+      // device. A stale stored id must not suppress the flip.
+      if (isAlreadyOnRequestedDevice(opts.deviceId, liveDeviceId)) {
+        return;
+      }
       if (isFlippingRef.current) return;
 
       isFlippingRef.current = true;
       setIsFlipping(true);
 
-      // Schedule the cooldown clear regardless of success/failure
-      // so a permission-denied error doesn't leave the button
-      // disabled forever.
       const clearCooldown = () => {
         window.setTimeout(() => {
           isFlippingRef.current = false;
@@ -406,39 +398,86 @@ export function useCameraSwitch(
         }, FLIP_DEBOUNCE_MS);
       };
 
-      let newVideoTrack: LocalVideoTrack | null = null;
-      try {
-        newVideoTrack = await createLocalVideoTrack({
-          deviceId: { ideal: deviceId },
-        });
-      } catch (err) {
-        // Permission-denied / device-removed / hardware-busy.
-        // Surface to the host (toast) and bail without touching
-        // the existing track.
-        if (process.env.NODE_ENV !== "production") {
-          console.warn("Camera switch: createLocalVideoTrack failed:", err);
-        }
-        onSwitchUnavailable?.("permission-denied");
-        clearCooldown();
-        return;
-      }
+      // Prefer exact deviceId on a user-initiated switch. Do not
+      // combine it with facingMode on the first attempt — some
+      // browsers OverconstrainedError when both are exact.
+      const switchConstraints = videoConstraintsForCameraSwitch({
+        deviceId: opts.deviceId,
+        facingMode: opts.deviceId ? undefined : opts.facingMode,
+        facingModeExact: Boolean(opts.facingMode) && !opts.deviceId,
+        deviceIdExact: Boolean(opts.deviceId),
+      });
+      const facingFallbackConstraints = opts.facingMode
+        ? videoConstraintsForCameraSwitch({
+            facingMode: opts.facingMode,
+            facingModeExact: false,
+          })
+        : null;
+      const liveFacingNow = readLiveFacing(oldVideoTrack);
+      const previousConstraints = videoConstraintsForCameraSwitch({
+        deviceId: liveDeviceId ?? currentDeviceIdRef.current ?? undefined,
+        facingMode:
+          facingModeFor(
+            liveFacingNow !== "unknown"
+              ? liveFacingNow
+              : currentFacingRef.current,
+          ) ?? undefined,
+      });
 
-      // Bail if room tore down mid-await.
-      if (room.state !== "connected") {
+      const finishSwitch = async (track: LocalVideoTrack): Promise<void> => {
+        if (cameraOffRef.current) {
+          try {
+            (track as { disable?: () => void }).disable?.();
+          } catch {
+            // Test environments may not expose .disable().
+          }
+        }
+        if (onApplyBackground) {
+          try {
+            await onApplyBackground(track);
+          } catch (err) {
+            if (process.env.NODE_ENV !== "production") {
+              console.warn("Camera switch: onApplyBackground failed:", err);
+            }
+          }
+        }
+        const resolvedId = readLiveDeviceId(track) ?? opts.deviceId ?? null;
+        const fromTrack = readLiveFacing(track);
+        const resolvedFacing: CameraFacing =
+          fromTrack !== "unknown"
+            ? fromTrack
+            : opts.facingMode
+              ? facingFromFacingMode(opts.facingMode)
+              : (annotateFacings(cameras).find((c) => c.deviceId === resolvedId)
+                  ?.facing ?? "unknown");
+        if (resolvedId) {
+          writeStoredDeviceId(resolvedId);
+          currentDeviceIdRef.current = resolvedId;
+          setCurrentDeviceId(resolvedId);
+        }
+        currentFacingRef.current = resolvedFacing;
+        setCurrentFacing(resolvedFacing);
         try {
-          newVideoTrack.stop();
-        } catch {
-          // Best-effort cleanup.
+          onDeviceChanged?.(resolvedId ?? "", resolvedFacing);
+        } catch (err) {
+          if (process.env.NODE_ENV !== "production") {
+            console.warn("Camera switch: onDeviceChanged threw:", err);
+          }
         }
-        clearCooldown();
-        return;
-      }
+      };
 
-      const oldVideoTrack = localTracksRef.current.find(
-        (t) => t.kind === "video",
-      ) as LocalVideoTrack | undefined;
+      const tryCreate = async (
+        constraints: ReturnType<typeof videoConstraintsForCameraSwitch>,
+      ): Promise<LocalVideoTrack | null> => {
+        try {
+          return await createLocalVideoTrack(constraints);
+        } catch {
+          return null;
+        }
+      };
 
-      if (oldVideoTrack) {
+      const releaseOldVideo = (): void => {
+        if (!oldVideoTrack) return;
         try {
           room.localParticipant.unpublishTrack(oldVideoTrack);
         } catch {
@@ -452,34 +491,89 @@ export function useCameraSwitch(
         localTracksRef.current = localTracksRef.current.filter(
           (t) => t !== oldVideoTrack,
         );
-      }
+      };
 
-      try {
-        await room.localParticipant.publishTrack(newVideoTrack);
-      } catch (err) {
-        // Publish failed (rare — usually a Twilio SDK bug or a
-        // transport disconnect during the await). Old track is
-        // already gone; we stop the new one and bail. The user
-        // sees a black self-tile until they refresh / rejoin —
-        // not great but consistent with the existing
-        // handleQualityChange failure mode.
-        if (process.env.NODE_ENV !== "production") {
-          console.warn("Camera switch: publishTrack failed:", err);
+      const restorePreviousCamera = async (): Promise<void> => {
+        const restored = await tryCreate(previousConstraints);
+        if (!restored || room.state !== "connected") {
+          try {
+            restored?.stop();
+          } catch {
+            // Best-effort.
+          }
+          return;
         }
         try {
-          newVideoTrack.stop();
+          onAttachLocal?.(restored);
         } catch {
-          // Best-effort.
+          // Best-effort attach.
+        }
+        try {
+          await room.localParticipant.publishTrack(restored);
+          localTracksRef.current = [...localTracksRef.current, restored];
+        } catch {
+          try {
+            restored.stop();
+          } catch {
+            // Best-effort.
+          }
+        }
+      };
+
+      // Prefer restart() — same published track and <video> node, so the
+      // self-view does not go black while the other camera comes up.
+      if (canRestartTrack(oldVideoTrack) && room.state === "connected") {
+        try {
+          await oldVideoTrack.restart(switchConstraints);
+          const afterId = readLiveDeviceId(oldVideoTrack);
+          const restartMissedTarget = Boolean(
+            opts.deviceId && afterId && afterId !== opts.deviceId,
+          );
+          if (!restartMissedTarget) {
+            await finishSwitch(oldVideoTrack);
+            clearCooldown();
+            return;
+          }
+        } catch {
+          // Safari / Firefox can reject restart; fall through to republish.
+        }
+      }
+
+      let newVideoTrack = await tryCreate(switchConstraints);
+      let releasedOld = false;
+      if (!newVideoTrack) {
+        // Android often refuses to open a second camera while the
+        // first is still live. Free it, then retry.
+        releaseOldVideo();
+        releasedOld = true;
+        newVideoTrack = await tryCreate(switchConstraints);
+      }
+      if (!newVideoTrack && facingFallbackConstraints) {
+        newVideoTrack = await tryCreate(facingFallbackConstraints);
+      }
+      if (!newVideoTrack) {
+        onSwitchUnavailable?.(
+          opts.facingMode || opts.deviceId
+            ? "no-other-camera"
+            : "permission-denied",
+        );
+        if (releasedOld) {
+          await restorePreviousCamera();
         }
         clearCooldown();
         return;
       }
 
-      localTracksRef.current = [...localTracksRef.current, newVideoTrack];
+      if (room.state !== "connected") {
+        try {
+          newVideoTrack.stop();
+        } catch {
+          // Best-effort cleanup.
+        }
+        clearCooldown();
+        return;
+      }
 
-      // Step 5 — host re-attaches to the local <video> element.
-      // We fire even if `onAttachLocal` is undefined (no-op);
-      // the host owns the policy.
       try {
         onAttachLocal?.(newVideoTrack);
       } catch (err) {
@@ -488,48 +582,29 @@ export function useCameraSwitch(
         }
       }
 
-      // Step 6 — preserve A2 cameraOff state. New tracks default
-      // to enabled; if the user had toggled off, we re-disable.
-      if (cameraOffRef.current) {
-        try {
-          (newVideoTrack as { disable?: () => void }).disable?.();
-        } catch {
-          // Test environments may not expose .disable().
-        }
+      if (!releasedOld && oldVideoTrack) {
+        releaseOldVideo();
       }
 
-      // Step 7 — re-apply C2 virtual background. Fire-and-forget;
-      // host logs failures.
-      if (onApplyBackground) {
-        try {
-          await onApplyBackground(newVideoTrack);
-        } catch (err) {
-          if (process.env.NODE_ENV !== "production") {
-            console.warn("Camera switch: onApplyBackground failed:", err);
-          }
-        }
-      }
-
-      // Step 8 — persist for next session restore + commit to local
-      // state.
-      writeStoredDeviceId(deviceId);
-      currentDeviceIdRef.current = deviceId;
-      setCurrentDeviceId(deviceId);
-
-      // Step 9 — host hook (rejoin cache, telemetry). We compute
-      // the facing from the freshly-annotated device list so the
-      // host doesn't need its own heuristic.
-      const facing =
-        annotateFacings(cameras).find((c) => c.deviceId === deviceId)
-          ?.facing ?? "unknown";
       try {
-        onDeviceChanged?.(deviceId, facing);
+        await room.localParticipant.publishTrack(newVideoTrack);
       } catch (err) {
         if (process.env.NODE_ENV !== "production") {
-          console.warn("Camera switch: onDeviceChanged threw:", err);
+          console.warn("Camera switch: publishTrack failed:", err);
         }
+        try {
+          newVideoTrack.stop();
+        } catch {
+          // Best-effort.
+        }
+        onSwitchUnavailable?.("no-other-camera");
+        await restorePreviousCamera();
+        clearCooldown();
+        return;
       }
 
+      localTracksRef.current = [...localTracksRef.current, newVideoTrack];
+      await finishSwitch(newVideoTrack);
       clearCooldown();
     },
     [
@@ -544,39 +619,64 @@ export function useCameraSwitch(
     ],
   );
 
+  const switchTo = useCallback(
+    async (deviceId: string): Promise<void> => {
+      const targetFacing = annotateFacings(cameras).find(
+        (c) => c.deviceId === deviceId,
+      )?.facing;
+      await republishVideo({
+        deviceId,
+        facingMode: targetFacing
+          ? (facingModeFor(targetFacing) ?? undefined)
+          : undefined,
+      });
+    },
+    [cameras, republishVideo],
+  );
+
   // ------------------------------------------------------------------------
-  // flip — pick the OTHER facing's first matching device
+  // flip — deviceId when 2+ cameras, otherwise facingMode (iOS).
+  // Always pass a facingMode fallback so a failed deviceId open can
+  // retry via user/environment (Android busy-camera + iOS).
   // ------------------------------------------------------------------------
   const flip = useCallback(async (): Promise<void> => {
     const annotated = annotateFacings(cameras);
-    if (annotated.length < 2) {
-      onSwitchUnavailable?.("no-other-camera");
-      return;
+    const liveVideo = localTracksRef.current.find(
+      (t) => t.kind === "video",
+    ) as LocalVideoTrack | undefined;
+    const liveId = readLiveDeviceId(liveVideo);
+    const liveFacing = readLiveFacing(liveVideo);
+    const fromDevices: CameraFacing =
+      annotated.find((c) => c.deviceId === (liveId ?? currentDeviceIdRef.current))
+        ?.facing ?? "unknown";
+    const facing: CameraFacing =
+      liveFacing !== "unknown"
+        ? liveFacing
+        : currentFacingRef.current !== "unknown"
+          ? currentFacingRef.current
+          : fromDevices !== "unknown"
+            ? fromDevices
+            : "front";
+
+    if (annotated.length >= 2) {
+      const targetFacing = oppositeFacing(facing);
+      const target =
+        annotated.find((c) => c.facing === targetFacing) ??
+        annotated.find(
+          (c) => c.deviceId !== (liveId ?? currentDeviceIdRef.current),
+        );
+      if (target) {
+        await republishVideo({
+          deviceId: target.deviceId,
+          facingMode:
+            facingModeFor(target.facing) ?? nextFacingMode(facing),
+        });
+        return;
+      }
     }
 
-    // Determine current facing. Prefer the live currentDeviceId
-    // mapping; fall back to "front" so the first flip lands on
-    // back (common case).
-    const currentFacing: CameraFacing =
-      annotated.find((c) => c.deviceId === currentDeviceIdRef.current)
-        ?.facing ?? "front";
-
-    const targetFacing: CameraFacing =
-      currentFacing === "back" ? "front" : "back";
-
-    // Find the FIRST device with the target facing. If none, fall
-    // back to "any device that isn't the current one" — safer
-    // than refusing the flip on phones with weird heuristics.
-    const target =
-      annotated.find((c) => c.facing === targetFacing) ??
-      annotated.find((c) => c.deviceId !== currentDeviceIdRef.current);
-    if (!target) {
-      onSwitchUnavailable?.("no-other-camera");
-      return;
-    }
-
-    await switchTo(target.deviceId);
-  }, [cameras, switchTo, onSwitchUnavailable]);
+    await republishVideo({ facingMode: nextFacingMode(facing) });
+  }, [cameras, localTracksRef, republishVideo]);
 
   return {
     devices,
@@ -586,5 +686,8 @@ export function useCameraSwitch(
     flip,
     isFlipping,
     hasMultipleCameras,
+    canFlip,
+    currentFacing,
+    currentFacingRef,
   };
 }

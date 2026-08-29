@@ -1,18 +1,18 @@
 /**
  * Shared slot-session filtering + flat ordering for desktop/mobile lists and
- * J/K hotkey navigation (sl-05). Keept in sync with OpdSlotList / OpdSlotMobileList.
+ * J/K hotkey navigation. Kept in sync with OpdSlotList / OpdSlotMobileList.
  */
 
 import type { SlotSessionRow } from "@/types/opd-doctor";
 import type { OpdStatusFilterValue } from "../OpdQueueStatusFilter";
+import {
+  partitionSlotRowsForList,
+  sortSlotRowsByScheduledAsc,
+} from "../opdSlotSectioning";
 import { matchesOpdSearch } from "./opdSearchMatcher";
+import { matchesSlotStatusFilter, resolveLifecycle } from "./slotAxes";
 
-const ACTIVE_SLOT = new Set([
-  "upcoming",
-  "grace",
-  "running_late",
-  "in_consultation",
-]);
+export { sortSlotRowsByScheduledAsc };
 
 const QUEUE_ONLY_STATUS = new Set<OpdStatusFilterValue>([
   "waiting",
@@ -21,12 +21,9 @@ const QUEUE_ONLY_STATUS = new Set<OpdStatusFilterValue>([
   "skipped",
 ]);
 
-export function sortSlotRowsByScheduledAsc(
-  a: SlotSessionRow,
-  b: SlotSessionRow
-): number {
+function isCancelledRow(r: SlotSessionRow): boolean {
   return (
-    new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()
+    resolveLifecycle(r) === "cancelled" || r.slotStatus === "cancelled"
   );
 }
 
@@ -38,20 +35,16 @@ export function filterSlotSessionRows(
   let rows = entries;
 
   if (statusFilter === "cancelled") {
-    rows = rows.filter((r) => r.slotStatus === "cancelled");
-  } else {
-    rows = rows.filter((r) => r.slotStatus !== "cancelled");
+    rows = rows.filter((r) => isCancelledRow(r));
+  } else if (statusFilter !== "all") {
+    // Single-status chips (except cancelled) hide cancelled rows.
+    rows = rows.filter((r) => !isCancelledRow(r));
   }
+  // All keeps cancelled so the Cancelled section can render them.
 
   if (!QUEUE_ONLY_STATUS.has(statusFilter) && statusFilter !== "all") {
-    if (statusFilter === "cancelled") {
-      // narrowed above
-    } else if (statusFilter === "upcoming") {
-      rows = rows.filter(
-        (r) => r.slotStatus === "upcoming" || r.slotStatus === "grace"
-      );
-    } else {
-      rows = rows.filter((r) => r.slotStatus === statusFilter);
+    if (statusFilter !== "cancelled") {
+      rows = rows.filter((r) => matchesSlotStatusFilter(r, statusFilter));
     }
   }
 
@@ -63,50 +56,27 @@ export function filterSlotSessionRows(
   return rows;
 }
 
-function showActiveSection(statusFilter: OpdStatusFilterValue): boolean {
-  return (
-    statusFilter === "all" ||
-    statusFilter === "upcoming" ||
-    statusFilter === "grace" ||
-    statusFilter === "running_late" ||
-    statusFilter === "in_consultation"
-  );
-}
-
-/**
- * Flat row order matching on-screen J/K traversal (active → done → missed → overflow;
- * cancelled-only view when that filter is active).
- */
+/** Flat row order matching on-screen J/K traversal (chip section order). */
 export function flatSlotRowsForHotkeys(
   filtered: SlotSessionRow[],
-  statusFilter: OpdStatusFilterValue
+  _statusFilter: OpdStatusFilterValue
 ): SlotSessionRow[] {
-  const cancelledOnlyRows = filtered
-    .filter((r) => r.slotStatus === "cancelled")
-    .sort(sortSlotRowsByScheduledAsc);
-  const nonCancelled = filtered.filter((r) => r.slotStatus !== "cancelled");
-
-  const activeRows = nonCancelled
-    .filter((r) => ACTIVE_SLOT.has(r.slotStatus))
-    .sort(sortSlotRowsByScheduledAsc);
-  const doneRows = nonCancelled
-    .filter((r) => r.slotStatus === "completed")
-    .sort(sortSlotRowsByScheduledAsc);
-  const missedRows = nonCancelled
-    .filter((r) => r.slotStatus === "missed")
-    .sort(sortSlotRowsByScheduledAsc);
-  const overflowRows = nonCancelled
-    .filter((r) => r.slotStatus === "overflow")
-    .sort(sortSlotRowsByScheduledAsc);
-
-  if (statusFilter === "cancelled") {
-    return cancelledOnlyRows;
-  }
-
-  const out: SlotSessionRow[] = [];
-  if (showActiveSection(statusFilter)) {
-    out.push(...activeRows);
-  }
-  out.push(...doneRows, ...missedRows, ...overflowRows);
-  return out;
+  const {
+    incomplete,
+    late,
+    upcoming,
+    done,
+    missed,
+    overflow,
+    cancelled,
+  } = partitionSlotRowsForList(filtered);
+  return [
+    ...incomplete,
+    ...late,
+    ...upcoming,
+    ...done,
+    ...missed,
+    ...overflow,
+    ...cancelled,
+  ];
 }

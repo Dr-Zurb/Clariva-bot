@@ -66,7 +66,6 @@ export interface PatientV2ShellProps {
 }
 
 export function PatientV2Shell({ patient, token, userId }: PatientV2ShellProps) {
-  void userId;
 
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -146,6 +145,7 @@ export function PatientV2Shell({ patient, token, userId }: PatientV2ShellProps) 
         patient={patient}
         overview={overview}
         token={token}
+        viewerId={userId}
         onAction={handleIdentityAction}
         onVisitClick={handleVisitClick}
       />

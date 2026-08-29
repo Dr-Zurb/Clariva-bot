@@ -11,6 +11,7 @@ import { ServiceReviewsInbox } from "@/components/service-reviews/ServiceReviews
 import type { ServiceStaffReviewListItem } from "@/types/service-staff-review";
 import type { DoctorSettings } from "@/types/doctor-settings";
 import {
+  getInteractionMessages,
   getServiceStaffReviews,
   postCancelServiceStaffReview,
   postConfirmServiceStaffReview,
@@ -29,6 +30,10 @@ vi.mock("next/link", () => ({
 
 vi.mock("@/lib/api", () => ({
   getServiceStaffReviews: vi.fn(),
+  getInteractionMessages: vi.fn(async () => ({
+    success: true,
+    data: { messages: [] },
+  })),
   postConfirmServiceStaffReview: vi.fn(),
   postReassignServiceStaffReview: vi.fn(),
   postCancelServiceStaffReview: vi.fn(),
@@ -48,6 +53,7 @@ vi.mock("@/lib/service-reviews/useReviewsPolling", () => ({
 const FIXED_NOW = Date.parse("2026-05-31T12:00:00.000Z");
 
 const mockGet = vi.mocked(getServiceStaffReviews);
+const mockGetMessages = vi.mocked(getInteractionMessages);
 const mockConfirm = vi.mocked(postConfirmServiceStaffReview);
 const mockReassign = vi.mocked(postReassignServiceStaffReview);
 const mockCancel = vi.mocked(postCancelServiceStaffReview);
@@ -548,9 +554,27 @@ describe("ServiceReviewsInbox — detail drawer (brr-10)", () => {
     expect(audit).toHaveTextContent("Patient wanted follow-up instead.");
   });
 
-  it("shows conversation placeholder without extra network calls", () => {
+  it("loads read-only conversation thread when detail opens (ibi-04)", async () => {
+    mockGetMessages.mockResolvedValueOnce({
+      success: true,
+      data: {
+        messages: [
+          {
+            id: "m1",
+            conversation_id: "conv-1",
+            sender_type: "patient",
+            content: "Need a slot",
+            intent: null,
+            created_at: "2026-05-31T10:00:00.000Z",
+          },
+        ],
+      },
+      meta: { requestId: "t", timestamp: new Date().toISOString() },
+    });
+
     renderInbox([
       makeReview({
+        conversation_id: "conv-1",
         patient_display_name: "Convo Patient",
         reason_for_visit_preview: "Skin rash",
       }),
@@ -561,8 +585,12 @@ describe("ServiceReviewsInbox — detail drawer (brr-10)", () => {
     const conversation = within(screen.getByTestId("review-detail-sheet")).getByTestId(
       "review-detail-conversation"
     );
-    expect(conversation).toHaveTextContent(/conversation view coming soon/i);
-    expect(mockGet).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(conversation).toHaveTextContent("Need a slot");
+    });
+    expect(mockGetMessages).toHaveBeenCalledWith("test-token", "conv-1", {
+      limit: 50,
+    });
   });
 
   it("does not open drawer when clicking Confirm", () => {

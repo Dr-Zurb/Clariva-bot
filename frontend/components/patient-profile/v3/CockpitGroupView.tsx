@@ -6,7 +6,11 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import type { PaneDefinition, PaneTreeNode } from "@/lib/patient-profile/v3/foundation";
+import {
+  cockpitPanelDomId,
+  type PaneDefinition,
+  type PaneTreeNode,
+} from "@/lib/patient-profile/v3/foundation";
 import { MIN_COMFORTABLE_ROW_PX } from "@/lib/patient-profile/v3/column-cap";
 import { cn } from "@/lib/utils";
 import type { CockpitV3Layout } from "@/lib/patient-profile/v3/useCockpitV3Layout";
@@ -119,17 +123,55 @@ function CockpitSplitGroup({
   const groupRef = useRef<GroupImperativeHandle | null>(null);
   const isRebalancingRef = useRef(false);
   const orientation = node.direction ?? "horizontal";
-  const visibleChildren = useMemo(
-    () => (node.children ?? []).filter((child) => !child.hidden),
-    [node.children],
-  );
+  const visibleChildren = useMemo(() => {
+    // Last-resort guard: react-resizable-panels hard-throws if two panels in a
+    // group share an id. A corrupted tree (duplicate ids) must degrade to a
+    // dropped panel, never crash the whole cockpit. `sanitizePaneTree` should
+    // heal this upstream; this keeps render defensive regardless.
+    const seen = new Set<string>();
+    const out: PaneTreeNode[] = [];
+    for (const child of node.children ?? []) {
+      // Deduplicate by ResizablePanel DOM id (`panelKey ?? id`), not node id —
+      // a leftover swap `panelKey` can match a sibling's `id` ("plan") and
+      // crash with "Panel ids must be unique" even when node ids differ.
+      const panelDomId = cockpitPanelDomId(child);
+      if (child.hidden || seen.has(panelDomId)) continue;
+      seen.add(panelDomId);
+      out.push(child);
+    }
+    return out;
+  }, [node.children]);
   const visibleKey = visibleChildren.map((child) => child.id).join(",");
-
-  const normalizedSizes = useMemo(
-    () => normalizeChildSizes(visibleChildren),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [visibleKey, layout.layoutVersion],
+  // Slot-stable panel DOM ids — unchanged across Show-here content swaps.
+  const panelKeyFingerprint = visibleChildren
+    .map((child) => cockpitPanelDomId(child))
+    .join(",");
+  // When a pane's `minSizePx` rises (e.g. in-call chat floor on Consult),
+  // re-apply layout so react-resizable-panels reclamps against the new mins
+  // instead of keeping a Subjective-heavy drag that crushed the chat column.
+  const minSizeKey = useMemo(
+    () =>
+      visibleChildren
+        .map(
+          (child) =>
+            `${cockpitPanelDomId(child)}:${subtreeMinWidthPx(child, paneById)}`,
+        )
+        .join("|"),
+    [visibleChildren, paneById],
   );
+
+  /** Sizes keyed by slot-stable panel DOM id (for react-resizable-panels). */
+  const normalizedSizes = useMemo(() => {
+    const byNodeId = normalizeChildSizes(visibleChildren);
+    const byPanelId: Record<string, number> = {};
+    for (const child of visibleChildren) {
+      const pct = byNodeId[child.id];
+      if (pct === undefined) continue;
+      byPanelId[cockpitPanelDomId(child)] = pct;
+    }
+    return byPanelId;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleKey, panelKeyFingerprint, layout.layoutVersion, minSizeKey]);
 
   useEffect(() => {
     if (visibleChildren.length === 0) return;
@@ -160,14 +202,21 @@ function CockpitSplitGroup({
       if (rafRelease2 !== null) cancelAnimationFrame(rafRelease2);
       isRebalancingRef.current = false;
     };
-  }, [normalizedSizes, visibleChildren.length, visibleKey, layout.layoutVersion]);
+  }, [
+    normalizedSizes,
+    visibleChildren.length,
+    visibleKey,
+    panelKeyFingerprint,
+    layout.layoutVersion,
+    minSizeKey,
+  ]);
 
   const handleLayoutChanged = useCallback(
     (sizes: Record<string, number>) => {
       if (isRebalancingRef.current) return;
       const mapped: Record<string, number> = {};
       for (const child of visibleChildren) {
-        const pct = sizes[child.id];
+        const pct = sizes[cockpitPanelDomId(child)];
         if (pct === undefined || !Number.isFinite(pct)) continue;
         mapped[child.id] = roundPct(pct);
       }
@@ -185,14 +234,15 @@ function CockpitSplitGroup({
       id={node.id}
       groupRef={groupRef}
       orientation={orientation}
-      className={orientation === "horizontal" ? "h-full" : "w-full"}
+      className="h-full w-full min-h-0"
       data-cockpit-group={node.id}
       data-cockpit-orientation={orientation}
       onLayoutChanged={handleLayoutChanged}
     >
       {visibleChildren.map((child, index) => {
+        const panelDomId = cockpitPanelDomId(child);
         const sizePct =
-          normalizedSizes[child.id] ??
+          normalizedSizes[panelDomId] ??
           roundPct(100 / Math.max(visibleChildren.length, 1));
         // Honor real minimums (v4 `minSize` accepts px): per-pane `minSizePx`
         // gates a column's width; a uniform comfortable floor gates a stacked
@@ -203,7 +253,7 @@ function CockpitSplitGroup({
             ? `${subtreeMinWidthPx(child, paneById)}px`
             : `${MIN_COMFORTABLE_ROW_PX}px`;
         return (
-          <Fragment key={child.id}>
+          <Fragment key={panelDomId}>
             {/* Orientation-aware handle: full-line grab on BOTH axes. The grip
                 (withHandle) is the discoverable affordance; the orientation prop
                 fixes horizontal separators that previously collapsed to a 1px
@@ -220,19 +270,17 @@ function CockpitSplitGroup({
               />
             ) : null}
             <ResizablePanel
-              id={child.id}
+              id={panelDomId}
               defaultSize={`${sizePct}%`}
               minSize={minSize}
-              // Cross-axis fill per orientation (h-full for columns, w-full for
-              // rows) + min-h-0/min-w-0 so a panel can shrink below its
-              // content's intrinsic size on the main axis (matches the legacy
-              // shell's `flex h-full min-h-0 min-w-0` panel wrapper).
-              // Gutter only on leaf panels — nested split wrappers skip p-1 so
-              // horizontal column gaps do not double-stack with inner row gaps.
+              // Cross-axis fill + min-h-0/min-w-0 so a panel can shrink below
+              // content intrinsic size. Avoid overflow-hidden here — the
+              // library's inner wrapper already uses overflow:auto; hiding
+              // overflow on stacked rows clipped leaf bodies with no scroll.
+              // Gutter padding only on leaf panels — nested split wrappers skip
+              // p-1 so column gaps do not double-stack with inner row gaps.
               className={cn(
-                orientation === "horizontal"
-                  ? "h-full min-h-0 min-w-0 overflow-hidden"
-                  : "w-full min-h-0 min-w-0 overflow-hidden",
+                "h-full w-full min-h-0 min-w-0",
                 isLeafNode(child) && "p-1",
               )}
             >

@@ -1,14 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getPatientOverview } from "@/lib/api/patients";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import {
-  getCachedOverview,
-  setCachedOverview,
+  getCachedQuickPeek,
+  loadPatientQuickPeek,
 } from "@/components/patients-v2/list/patientQuickPeekCache";
-import type { PatientOverviewData } from "@/types/patient";
+import type { PatientQuickPeekData } from "@/types/patient";
 
 interface PatientQuickPeekProps {
   patientId: string;
@@ -16,15 +15,15 @@ interface PatientQuickPeekProps {
 }
 
 export function PatientQuickPeek({ patientId, token }: PatientQuickPeekProps) {
-  const [data, setData] = useState<PatientOverviewData | null>(() =>
-    getCachedOverview(patientId),
+  const [data, setData] = useState<PatientQuickPeekData | null>(() =>
+    getCachedQuickPeek(patientId),
   );
   const [loading, setLoading] = useState(!data);
   const [error, setError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    const cached = getCachedOverview(patientId);
+    const cached = getCachedQuickPeek(patientId);
     if (cached) {
       setData(cached);
       setLoading(false);
@@ -34,11 +33,10 @@ export function PatientQuickPeek({ patientId, token }: PatientQuickPeekProps) {
 
     setLoading(true);
     setError(false);
-    getPatientOverview(token, patientId)
-      .then((overview) => {
+    loadPatientQuickPeek(token, patientId)
+      .then((peek) => {
         if (cancelled) return;
-        setCachedOverview(patientId, overview);
-        setData(overview);
+        setData(peek);
       })
       .catch(() => {
         if (!cancelled) setError(true);

@@ -28,6 +28,19 @@ vi.mock("@/hooks/useMediaQuery", () => ({
   useMediaQuery: vi.fn(() => true),
 }));
 
+vi.mock("@/lib/patient-profile/v3/useCockpitLayoutPresets", () => ({
+  MAX_SAVED_LAYOUTS: 5,
+  useCockpitLayoutPresets: () => ({
+    presets: [],
+    isLoading: false,
+    canSaveMore: true,
+    savePreset: vi.fn(),
+    deletePresetById: vi.fn(),
+    renamePresetById: vi.fn(),
+    refetch: vi.fn(),
+  }),
+}));
+
 vi.mock("@/lib/patient-profile/useShellLayout", async (importOriginal) => {
   const actual = await importOriginal<
     typeof import("@/lib/patient-profile/useShellLayout")
@@ -108,15 +121,14 @@ const v4TreePayload = {
     hidden: false,
     direction: "horizontal" as const,
     children: [
-      { id: "snapshot", sizePct: 25, hidden: false },
       { id: "body", sizePct: 50, hidden: false },
       {
         id: "middle-bottom",
-        sizePct: 25,
+        sizePct: 50,
         hidden: false,
         direction: "vertical" as const,
         children: [
-          { id: "investigations", sizePct: 40, hidden: false },
+          { id: "assessment", sizePct: 40, hidden: false },
           { id: "plan", sizePct: 60, hidden: false },
         ],
       },
@@ -136,8 +148,8 @@ const v5NestedMultiTabHidden = {
         id: "left-tabs",
         sizePct: 30,
         hidden: false,
-        paneIds: ["snapshot", "history"],
-        activeTabId: "snapshot",
+        paneIds: ["subjective", "objective"],
+        activeTabId: "subjective",
       },
       {
         id: "middle-split",
@@ -156,7 +168,7 @@ const v5NestedMultiTabHidden = {
             id: "bottom-tabs",
             sizePct: 45,
             hidden: false,
-            paneIds: ["investigations", "plan"],
+            paneIds: ["assessment", "plan"],
             activeTabId: "plan",
           },
         ],
@@ -208,13 +220,12 @@ describe("CockpitPlatform migration parity (cv3p-04)", () => {
 
   it("renders a migrated v4 nested split tree in the mounted shell", () => {
     const storageKey = `platform-migrate-v4-${crypto.randomUUID()}`;
-    const panes = makePanes(["snapshot", "body", "investigations", "plan"]);
+    const panes = makePanes(["body", "assessment", "plan"]);
 
     mountMigratedShell(v4TreePayload, panes, storageKey);
 
-    expect(screen.getByTestId("pane-body-snapshot")).toBeInTheDocument();
     expect(screen.getByTestId("pane-body-body")).toBeInTheDocument();
-    expect(screen.getByTestId("pane-body-investigations")).toBeInTheDocument();
+    expect(screen.getByTestId("pane-body-assessment")).toBeInTheDocument();
     expect(screen.getByTestId("pane-body-plan")).toBeInTheDocument();
     expect(document.querySelectorAll("[data-panel-group]").length).toBeGreaterThan(
       0,
@@ -224,17 +235,17 @@ describe("CockpitPlatform migration parity (cv3p-04)", () => {
   it("renders a migrated v5 multi-tab + hidden tree in the mounted shell", () => {
     const storageKey = `platform-migrate-v5-${crypto.randomUUID()}`;
     const panes = makePanes([
-      "snapshot",
-      "history",
+      "subjective",
+      "objective",
       "body",
-      "investigations",
+      "assessment",
       "plan",
       "notes",
     ]);
 
     mountMigratedShell(v5NestedMultiTabHidden, panes, storageKey);
 
-    expect(screen.getByTestId("pane-body-snapshot")).toBeInTheDocument();
+    expect(screen.getByTestId("pane-body-subjective")).toBeInTheDocument();
     expect(screen.getByTestId("pane-body-body")).toBeInTheDocument();
     expect(screen.getByTestId("pane-body-plan")).toBeInTheDocument();
     expect(screen.queryByTestId("pane-body-notes")).not.toBeInTheDocument();

@@ -206,8 +206,9 @@ export interface VitalFieldProps {
   ctx?: RangeContext;
   /** Patient age/sex for advisory categorization. */
   rangeCtx?: RangeContext;
-  /** Previous-visit canonical value (read-only ghost). */
+  /** Previous-visit or desk canonical value (read-only ghost). */
   ghost?: number | null;
+  ghostSourceLabel?: string;
   /** Inline recent-trend sparkline (obj-26); read-only. */
   sparkline?: React.ReactNode;
   /** Extra computed badges (e.g. BMI/BSA) rendered after the flag. */
@@ -222,6 +223,7 @@ export function VitalField({
   ctx,
   rangeCtx,
   ghost,
+  ghostSourceLabel = "prev",
   sparkline,
   trailing,
   gridSpan,
@@ -337,13 +339,14 @@ export function VitalField({
           displayText={`${ghostDisplay} ${activeUnit.unit}`}
           onApply={() => setField(vitalKey, ghost as RxFormFields[typeof vitalKey])}
           testId={`vital-last-visit-${vitalKey}`}
+          sourceLabel={ghostSourceLabel}
         />
       ) : ghostDisplay != null ? (
         <span
           className="block text-[10px] text-muted-foreground/70"
-          aria-label={`Last visit ${label}: ${ghostDisplay} ${activeUnit.unit}`}
+          aria-label={`${ghostSourceLabel} ${label}: ${ghostDisplay} ${activeUnit.unit}`}
         >
-          prev {ghostDisplay} {activeUnit.unit}
+          {ghostSourceLabel} {ghostDisplay} {activeUnit.unit}
         </span>
       ) : null}
       </div>
@@ -360,6 +363,7 @@ export interface VitalsExtendedProps {
   /** Patient demographics for advisory categorization on inline fields. */
   rangeCtx?: RangeContext;
   ghost?: GhostVitals | null;
+  ghostSourceOf?: (key: VitalKey) => string;
   /** Render a read-only sparkline per numeric vital (obj-26). */
   sparklineFor?: (vitalKey: VitalKey, label: string) => React.ReactNode;
   /** When set, only these numeric vitals are rendered (vit-08). */
@@ -407,6 +411,7 @@ function VitalGroupGrid({
   ctx,
   rangeCtx,
   ghost,
+  ghostSourceOf,
   sparklineFor,
   visibleKeys,
   visibleCategoricalKeys,
@@ -425,6 +430,7 @@ function VitalGroupGrid({
   ctx?: RangeContext;
   rangeCtx?: RangeContext;
   ghost?: GhostVitals | null;
+  ghostSourceOf?: (key: VitalKey) => string;
   sparklineFor?: (vitalKey: VitalKey, label: string) => React.ReactNode;
   visibleKeys?: ReadonlySet<VitalKey>;
   visibleCategoricalKeys?: ReadonlySet<CategoricalVitalKey>;
@@ -439,6 +445,7 @@ function VitalGroupGrid({
             ctx={ctx}
             rangeCtx={rangeCtx}
             ghost={ghost?.[vitalKey]}
+            ghostSourceLabel={ghostSourceOf?.(vitalKey)}
             sparkline={sparklineFor?.(vitalKey, vitalSparklineLabel(vitalKey))}
             gridSpan={vitalGridSpan(vitalKey)}
           />
@@ -478,6 +485,7 @@ export function VitalsExtended({
   ctx,
   rangeCtx,
   ghost,
+  ghostSourceOf,
   sparklineFor,
   visibleKeys,
   visibleCategoricalKeys,
@@ -539,6 +547,7 @@ export function VitalsExtended({
           ctx={ctx}
           rangeCtx={rangeCtx}
           ghost={ghost}
+          ghostSourceOf={ghostSourceOf}
           sparklineFor={sparklineFor}
           visibleKeys={visibleKeys}
           visibleCategoricalKeys={visibleCategoricalKeys}
@@ -558,6 +567,7 @@ export function VitalsExtended({
                 label={vitalFieldShortLabel(vitalKey)}
                 rangeCtx={rangeCtx}
                 ghost={ghost?.[vitalKey]}
+                ghostSourceLabel={ghostSourceOf?.(vitalKey)}
                 sparkline={sparklineFor?.(vitalKey, vitalSparklineLabel(vitalKey))}
                 gridSpan={vitalGridSpan(vitalKey)}
               />

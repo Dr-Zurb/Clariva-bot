@@ -18,6 +18,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useNowMs } from "@/hooks/useNowMs";
 import { cn } from "@/lib/utils";
 import { todayLocalIso } from "@/lib/dates";
 import type { DoctorQueueSessionRow } from "@/types/opd-doctor";
@@ -378,15 +379,15 @@ function LoadingSkeleton() {
         >
           <Skeleton className="h-full w-1 self-stretch" />
           <Skeleton className="h-4 w-8" />
-          <Skeleton className="h-4 w-20" />
-          <Skeleton className="h-4 w-32" />
-          <Skeleton className="h-4 w-16" />
-          <Skeleton className="h-4 w-24" />
-          <Skeleton className="h-4 w-12" />
-          <Skeleton className="h-4 w-20" />
-          <Skeleton className="h-4 w-5" />
-          <Skeleton className="h-4 w-40" />
           <Skeleton className="h-4 w-10" />
+          <Skeleton className="h-4 w-20" />
+          <Skeleton className="h-4 w-16" />
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-4 w-12" />
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-4 w-5" />
+          <Skeleton className="h-4 w-20" />
+          <Skeleton className="h-4 w-40" />
           <Skeleton className="h-4 w-10" />
           <Skeleton className="h-4 w-10" />
         </div>
@@ -447,8 +448,7 @@ export function OpdQueueTable({
     [entries, filter, q, grouping]
   );
 
-  // When filter is active, force sections open
-  const forceOpen = filter !== "all";
+  const nowMs = useNowMs(30_000);
 
   // ── Loading — initial fetch, no entries ──
   if (isLoading && entries.length === 0) {
@@ -562,21 +562,28 @@ export function OpdQueueTable({
 
       {/* Scrollable body */}
       <div
-        className="overflow-y-auto"
-        style={{ maxHeight: "calc(100vh - 280px)" }}
+        className="overflow-y-auto pb-3"
+        style={{ maxHeight: "calc(100vh - 340px)" }}
         role="rowgroup"
       >
-        {flat ? (
+        {flat || filter !== "all" ? (
           /*
-           * Token-order view — single flat list.  Status pill / color bar still
-           * convey state; rows are NOT dimmed by group, because that hierarchy
-           * is the entire reason a doctor would switch to this mode.
+           * Flat list when:
+           *   - token-order grouping, or
+           *   - a status chip is already selected (header would just repeat the chip).
            */
-          flat.map((entry) => (
+          (flat ?? [...active, ...done, ...missed]).map((entry) => (
             <React.Fragment key={entry.entryId}>
               <OpdQueueDenseRow
                 entry={entry}
+                nowMs={nowMs}
                 isNextUp={entry.entryId === nextUpId}
+                dimmed={
+                  filter === "all"
+                    ? false
+                    : DONE_STATUSES.has(entry.queueStatus) ||
+                      MISSED_STATUSES.has(entry.queueStatus)
+                }
                 expanded={expandedEntryId === entry.entryId}
                 focused={focusedEntryId === entry.entryId}
                 onToggleExpand={
@@ -611,6 +618,7 @@ export function OpdQueueTable({
                 <React.Fragment key={entry.entryId}>
                   <OpdQueueDenseRow
                     entry={entry}
+                    nowMs={nowMs}
                     isNextUp={entry.entryId === nextUpId}
                     expanded={expandedEntryId === entry.entryId}
                     focused={focusedEntryId === entry.entryId}
@@ -632,74 +640,62 @@ export function OpdQueueTable({
         )}
 
         {/* ── Done today section (collapsible) ── */}
-        {(done.length > 0 || filter === "completed") && (
+        {done.length > 0 && (
           <Disclosure
             label="Done today"
             count={done.length}
-            defaultOpen={forceOpen || done.length <= 10}
+            defaultOpen={done.length <= 10}
           >
-            {done.length === 0 ? (
-              <div className="px-4 py-4 text-center text-sm text-muted-foreground">
-                No completed patients.
-              </div>
-            ) : (
-              done.map((entry) => (
-                <React.Fragment key={entry.entryId}>
-                  <OpdQueueDenseRow
-                    entry={entry}
-                    dimmed
-                    onOpen={() => onOpenRow?.(entry)}
-                    expanded={expandedEntryId === entry.entryId}
-                    focused={focusedEntryId === entry.entryId}
-                    onToggleExpand={
-                      onToggleExpand
-                        ? () => onToggleExpand(entry.entryId)
-                        : undefined
-                    }
-                    actions={renderActions?.(entry)}
-                  />
-                  {expandedEntryId === entry.entryId && (
-                    <OpdQueueRowExpanded entry={entry} token={token} />
-                  )}
-                </React.Fragment>
-              ))
-            )}
+            {done.map((entry) => (
+              <React.Fragment key={entry.entryId}>
+                <OpdQueueDenseRow
+                  entry={entry}
+                  dimmed
+                  onOpen={() => onOpenRow?.(entry)}
+                  expanded={expandedEntryId === entry.entryId}
+                  focused={focusedEntryId === entry.entryId}
+                  onToggleExpand={
+                    onToggleExpand
+                      ? () => onToggleExpand(entry.entryId)
+                      : undefined
+                  }
+                  actions={renderActions?.(entry)}
+                />
+                {expandedEntryId === entry.entryId && (
+                  <OpdQueueRowExpanded entry={entry} token={token} />
+                )}
+              </React.Fragment>
+            ))}
           </Disclosure>
         )}
 
         {/* ── No-show / skipped section (collapsible) ── */}
-        {(missed.length > 0 || filter === "no_show" || filter === "skipped") && (
+        {missed.length > 0 && (
           <Disclosure
             label="No-show / skipped"
             count={missed.length}
-            defaultOpen={forceOpen || missed.length <= 5}
+            defaultOpen={missed.length <= 5}
           >
-            {missed.length === 0 ? (
-              <div className="px-4 py-4 text-center text-sm text-muted-foreground">
-                No missed or skipped patients.
-              </div>
-            ) : (
-              missed.map((entry) => (
-                <React.Fragment key={entry.entryId}>
-                  <OpdQueueDenseRow
-                    entry={entry}
-                    dimmed
-                    onOpen={() => onOpenRow?.(entry)}
-                    expanded={expandedEntryId === entry.entryId}
-                    focused={focusedEntryId === entry.entryId}
-                    onToggleExpand={
-                      onToggleExpand
-                        ? () => onToggleExpand(entry.entryId)
-                        : undefined
-                    }
-                    actions={renderActions?.(entry)}
-                  />
-                  {expandedEntryId === entry.entryId && (
-                    <OpdQueueRowExpanded entry={entry} token={token} />
-                  )}
-                </React.Fragment>
-              ))
-            )}
+            {missed.map((entry) => (
+              <React.Fragment key={entry.entryId}>
+                <OpdQueueDenseRow
+                  entry={entry}
+                  dimmed
+                  onOpen={() => onOpenRow?.(entry)}
+                  expanded={expandedEntryId === entry.entryId}
+                  focused={focusedEntryId === entry.entryId}
+                  onToggleExpand={
+                    onToggleExpand
+                      ? () => onToggleExpand(entry.entryId)
+                      : undefined
+                  }
+                  actions={renderActions?.(entry)}
+                />
+                {expandedEntryId === entry.entryId && (
+                  <OpdQueueRowExpanded entry={entry} token={token} />
+                )}
+              </React.Fragment>
+            ))}
           </Disclosure>
         )}
           </>

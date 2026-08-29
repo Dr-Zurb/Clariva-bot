@@ -309,3 +309,46 @@ export function customSubsectionsStructureKey(sections: CustomSubsection[]): str
     })),
   );
 }
+
+/** A child sanitised for letterhead / PDF — title is guaranteed non-empty. */
+export interface OutputCustomSubsectionChild {
+  title: string;
+  body: string | null;
+}
+
+/** A section sanitised for letterhead / PDF — empty trees omitted. */
+export interface OutputCustomSubsection {
+  title: string;
+  body: string | null;
+  children: OutputCustomSubsectionChild[];
+}
+
+function trimOrNull(value: string | null | undefined): string | null {
+  const trimmed = (value ?? "").trim();
+  return trimmed ? trimmed : null;
+}
+
+/**
+ * Same empty-omit rules as `backend/src/utils/custom-subsections.ts`
+ * so the preview matches the printed PDF.
+ */
+export function sanitizeCustomSubsectionsForOutput(
+  sections: CustomSubsection[] | null | undefined,
+): OutputCustomSubsection[] {
+  if (!Array.isArray(sections)) return [];
+  return sections
+    .map((section) => {
+      const title = (section.title ?? "").trim();
+      const body = trimOrNull(section.body);
+      const children = (section.children ?? [])
+        .map((child) => {
+          const childTitle = (child.title ?? "").trim();
+          if (!childTitle) return null;
+          return { title: childTitle, body: trimOrNull(child.body) };
+        })
+        .filter((c): c is OutputCustomSubsectionChild => c !== null);
+      if (!title && !body && children.length === 0) return null;
+      return { title, body, children };
+    })
+    .filter((s): s is OutputCustomSubsection => s !== null);
+}

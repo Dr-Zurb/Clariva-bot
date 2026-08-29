@@ -22,6 +22,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { getOpdStatusMeta } from "@/lib/consultation/opd-status-meta";
+import { useConsultSteppedAway } from "@/hooks/useConsultSteppedAway";
 import { cn } from "@/lib/utils";
 import type { DoctorQueueSessionRow } from "@/types/opd-doctor";
 
@@ -96,7 +97,12 @@ interface DetailSheetProps {
 }
 
 function DetailSheet({ open, onClose, entry, onOpen }: DetailSheetProps) {
+  const steppedAway = useConsultSteppedAway(entry.appointmentId);
   const meta = getOpdStatusMeta(entry.queueStatus);
+  const statusLabel =
+    entry.queueStatus === "in_consultation" && steppedAway
+      ? "Incomplete"
+      : meta.label;
 
   const rows: { label: string; value: string | null }[] = [
     { label: "Phone",     value: entry.patientPhone },
@@ -119,10 +125,12 @@ function DetailSheet({ open, onClose, entry, onOpen }: DetailSheetProps) {
             <span
               className={cn(
                 "ml-auto rounded-full px-2 py-0.5 text-xs font-medium",
-                meta.badgeClassName
+                entry.queueStatus === "in_consultation" && steppedAway
+                  ? "bg-amber-100 text-amber-950 dark:bg-amber-950/40 dark:text-amber-100"
+                  : meta.badgeClassName
               )}
             >
-              {meta.label}
+              {statusLabel}
             </span>
           </SheetTitle>
         </SheetHeader>
@@ -168,8 +176,13 @@ export function OpdQueueMobileCard({
 }: OpdQueueMobileCardProps): JSX.Element {
   const [sheetOpen, setSheetOpen] = useState(false);
 
+  const steppedAway = useConsultSteppedAway(entry.appointmentId);
   const meta = getOpdStatusMeta(entry.queueStatus);
   const isInConsult = entry.queueStatus === "in_consultation";
+  const isActiveConsult = isInConsult && !steppedAway;
+  const statusLabel = isInConsult && steppedAway ? "Incomplete" : meta.label;
+  const statusAriaLabel =
+    isInConsult && steppedAway ? "Incomplete consult" : meta.label;
   const showNextUp = isNextUp && entry.queueStatus === "waiting";
 
   const waitedMinutes = Math.floor(
@@ -179,12 +192,15 @@ export function OpdQueueMobileCard({
     entry.queueStatus === "waiting" || entry.queueStatus === "called";
   const isLongWait = showWaited && waitedMinutes > 30;
 
-  const dotBg = STATUS_DOT_BG[entry.queueStatus] ?? "bg-muted-foreground/40";
+  const dotBg =
+    isInConsult && steppedAway
+      ? "bg-amber-500"
+      : (STATUS_DOT_BG[entry.queueStatus] ?? "bg-muted-foreground/40");
   const barBg = showNextUp
     ? "bg-primary"
     : (STATUS_BAR_BG[entry.queueStatus] ?? "bg-muted");
 
-  const ariaLabel = `Token #${entry.tokenNumber}, ${entry.patientName}, ${meta.label}${showWaited ? `, waited ${waitedMinutes} minutes` : ""}`;
+  const ariaLabel = `Token #${entry.tokenNumber}, ${entry.patientName}, ${statusAriaLabel}${showWaited ? `, waited ${waitedMinutes} minutes` : ""}`;
 
   const handleCardClick = () => onOpen(entry);
 
@@ -217,7 +233,8 @@ export function OpdQueueMobileCard({
           "flex cursor-pointer items-stretch gap-0",
           "border-b border-border last:border-0",
           "hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-          isInConsult && "bg-green-50/60 dark:bg-green-900/20",
+          isActiveConsult && "bg-green-50/60 dark:bg-green-900/20",
+          isInConsult && steppedAway && "bg-amber-50/70 dark:bg-amber-950/20",
           dimmed && "opacity-60"
         )}
       >
@@ -237,11 +254,11 @@ export function OpdQueueMobileCard({
               className={cn(
                 "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
                 dotBg,
-                isInConsult && "animate-pulse"
+                isActiveConsult && "animate-pulse"
               )}
             />
 
-            <span className="font-medium text-foreground">{meta.label}</span>
+            <span className="font-medium text-foreground">{statusLabel}</span>
 
             {showWaited && (
               <>

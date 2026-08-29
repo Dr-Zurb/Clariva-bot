@@ -237,18 +237,17 @@ describe("SubjectiveSection collapse persistence (subj-31)", () => {
     });
   });
 
-  it("hydrates from shell-provided collapse map on fresh mount (patient reopen simulation)", async () => {
+  it("hydrates from shell-provided collapse map on fresh mount (patient reopen simulation)", () => {
     renderWithShell(<SubjectiveSection heading={null} />, {
       subjectiveSectionCollapsed: { chief_complaints: false, social_history: true },
     });
 
-    await waitFor(() => {
-      expect(getCollapseToggle("Toggle chief complaints")).toHaveAttribute("aria-expanded", "false");
-      expect(getCollapseToggle("Toggle Social / personal history")).toHaveAttribute(
-        "aria-expanded",
-        "true",
-      );
-    });
+    // Sync first paint — tab switch remount must not flash canonical default-open.
+    expect(getCollapseToggle("Toggle chief complaints")).toHaveAttribute("aria-expanded", "false");
+    expect(getCollapseToggle("Toggle Social / personal history")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
     expect(mockGetDoctorSettings).not.toHaveBeenCalled();
   });
 

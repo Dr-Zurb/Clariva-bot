@@ -8,16 +8,25 @@ import {
   type RxFormFields,
 } from "@/components/cockpit/rx/RxFormContext";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { getLastPrescriptionInEpisode, getPatientById } from "@/lib/api";
+import {
+  getAppointmentDeskVitals,
+  getDoctorSettings,
+  getLastPrescriptionInEpisode,
+  getPatientById,
+} from "@/lib/api";
 import type { PrescriptionWithRelations } from "@/types/prescription";
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual,
+    getDoctorSettings: vi
+      .fn()
+      .mockResolvedValue({ data: { settings: { vitals_hidden: [], vitals_custom: [] } } }),
     getLastPrescriptionInEpisode: vi
       .fn()
       .mockResolvedValue({ data: { prescription: null } }),
+    getAppointmentDeskVitals: vi.fn().mockResolvedValue({ data: { vitals: null } }),
     getPatientById: vi.fn().mockResolvedValue({
       data: {
         patient: {
@@ -76,13 +85,12 @@ vi.mock("@/lib/cockpit/vitals-visibility", async (importOriginal) => {
   };
 });
 
-import { fetchVitalsHidden } from "@/lib/cockpit/vitals-visibility";
-
 const mockedGetLast = vi.mocked(getLastPrescriptionInEpisode);
-const mockedFetchVitalsHidden = vi.mocked(fetchVitalsHidden);
+const mockedGetDesk = vi.mocked(getAppointmentDeskVitals);
+const mockedGetDoctorSettings = vi.mocked(getDoctorSettings);
 
 async function waitForVitalsSettingsLoaded() {
-  await waitFor(() => expect(mockedFetchVitalsHidden).toHaveBeenCalled());
+  await waitFor(() => expect(mockedGetDoctorSettings).toHaveBeenCalled());
 }
 
 async function revealVital(menuLabel: string) {
@@ -135,6 +143,7 @@ describe("VitalsGrid", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedGetLast.mockResolvedValue({ data: { prescription: null } });
+    mockedGetDesk.mockResolvedValue({ data: { vitals: null } });
     mockedGetPatient.mockResolvedValue({
       data: {
         patient: {
@@ -620,6 +629,45 @@ describe("VitalsGrid", () => {
 
       const glucoseInput = screen.getByLabelText(/^Blood glucose value$/i) as HTMLInputElement;
       expect(glucoseInput.value).toBe("108");
+    });
+
+    it("prefers same-visit desk vitals over last-visit ghosts", async () => {
+      mockedGetLast.mockResolvedValue({
+        data: {
+          prescription: {
+            id: "rx-prev",
+            vitals_hr: 60,
+          } as unknown as PrescriptionWithRelations,
+        },
+      });
+      mockedGetDesk.mockResolvedValue({
+        data: {
+          vitals: {
+            id: "v1",
+            doctor_id: "doc",
+            patient_id: "pat-1",
+            appointment_id: "appt-1",
+            bp_systolic: null,
+            bp_diastolic: null,
+            heart_rate: 88,
+            temperature_c: null,
+            spo2: null,
+            weight_kg: null,
+            height_cm: null,
+            bmi: null,
+            note: null,
+            recorded_at: "2026-08-24T04:00:00.000Z",
+            archived_at: null,
+            created_at: "2026-08-24T04:00:00.000Z",
+          },
+        },
+      });
+      renderWithProvider();
+
+      expect(await screen.findByText(/desk 88 bpm/i)).toBeInTheDocument();
+      expect(screen.queryByText(/prev 60 bpm/i)).not.toBeInTheDocument();
+      const hrInput = screen.getByLabelText(/Pulse Rate \(PR\) in bpm/i) as HTMLInputElement;
+      expect(hrInput.value).toBe("");
     });
 
     it("copies previous BP from the ghost chip", async () => {

@@ -33,10 +33,12 @@ import {
   dropPaneIntoZone,
   moveSiblingIntoGutter,
   hidePaneToRoot,
+  hideLeafToRoot,
+  swapPaneTreeNodes,
 } from "../layout-tree-mutations";
 import type { LayoutNode, LegacyFlatLayout } from "../types";
 import type { PaneTreeNode } from "../layout-tree";
-import { paneTreeToFlat, updateNodeHidden } from "../layout-tree";
+import { cockpitPanelDomId, paneTreeToFlat, updateNodeHidden } from "../layout-tree";
 
 // ── Fixture helpers ─────────────────────────────────────────────────────────
 
@@ -1262,6 +1264,70 @@ describe("dropPaneIntoZone — edges, same-axis parent (cpfd-01)", () => {
     expect(remaining!.id.startsWith("__tabs_")).toBe(true);
     expect(remaining!.paneIds).toEqual(["objective", "assessment", "plan"]);
   });
+
+  it("extracts Plan from a Plan+Consult tab strip onto insert-right without duplicating panel ids", () => {
+    // User layout: Plan and Consult (body) share a tab strip; drag Plan onto
+    // that leaf's east edge ("Insert right"). Remaining Consult must not keep
+    // a swap-pinned panelKey "plan" beside the new plan leaf.
+    const tree = ptRoot([
+      {
+        id: "body",
+        sizePct: 40,
+        hidden: false,
+        panelKey: "plan",
+        paneIds: ["plan", "body"],
+        activeTabId: "body",
+      },
+      ptLeaf("assessment", 30),
+      ptLeaf("objective", 30),
+    ]);
+    const result = dropPaneIntoZone(tree, "plan", "body", "east");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const ids = nodeIds(result.tree);
+    expect(new Set(ids).size).toBe(ids.length);
+    const panelDomIds = collectPanelDomIds(result.tree);
+    expect(new Set(panelDomIds).size).toBe(panelDomIds.length);
+
+    const extracted = ptFindNode(result.tree, "plan")!;
+    expect(extracted.paneIds).toEqual(["plan"]);
+    expect(extracted.children).toBeUndefined();
+    expect(cockpitPanelDomId(extracted)).toBe("plan");
+
+    const consult = result.tree.children?.find((c) =>
+      (c.paneIds ?? []).includes("body"),
+    );
+    expect(consult).toBeTruthy();
+    expect(consult!.id).not.toBe("plan");
+    expect(cockpitPanelDomId(consult!)).not.toBe("plan");
+  });
+
+  it("extracts Plan after swap-then-tab without duplicating panel ids", () => {
+    const tree = ptRoot([
+      ptLeaf("body", 40),
+      ptLeaf("assessment", 30),
+      ptLeaf("plan", 30),
+    ]);
+    const swapped = swapPaneTreeNodes(tree, "body", "plan");
+    expect(swapped.ok).toBe(true);
+    if (!swapped.ok) return;
+    const tabbed = addToTabsNode(swapped.tree, "plan", "body", "end");
+    expect(tabbed.ok).toBe(true);
+    if (!tabbed.ok) return;
+
+    const result = dropPaneIntoZone(tabbed.tree, "plan", "body", "east");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const panelDomIds = collectPanelDomIds(result.tree);
+    expect(new Set(panelDomIds).size).toBe(panelDomIds.length);
+    expect(collectAllPaneIds(result.tree).sort()).toEqual([
+      "assessment",
+      "body",
+      "plan",
+    ]);
+  });
 });
 
 describe("dropPaneIntoZone — edges, cross-axis parent (cpfd-01)", () => {
@@ -1571,6 +1637,19 @@ function nodeIds(tree: PaneTreeNode): string[] {
   return ids;
 }
 
+function collectPanelDomIds(tree: PaneTreeNode): string[] {
+  const ids: string[] = [];
+  function walk(n: PaneTreeNode) {
+    if (n.children?.length) {
+      n.children.forEach(walk);
+      return;
+    }
+    ids.push(cockpitPanelDomId(n));
+  }
+  walk(tree);
+  return ids;
+}
+
 function hiddenPaneIds(tree: PaneTreeNode): string[] {
   const flat = paneTreeToFlat(tree);
   return flat.paneOrder.filter((id) => flat.paneState[id]?.hidden);
@@ -1637,6 +1716,25 @@ describe("hidePaneToRoot (empty-column-wrapper fix)", () => {
     expect(allTabsNodesValid(result.tree)).toBe(true);
   });
 
+  it("hides the last pane in a synthetic __tabs_* root column (tab × after siblings closed)", () => {
+    // normalizeLeafAfterPaneRemoval keeps `__tabs_*` when a multi-tab leaf
+    // shrinks to one pane — hide-in-place must key by container.id, not paneId.
+    const tree = ptRoot([
+      ptLeaf("chart", 40),
+      ptLeaf("__tabs_0", 60, false, ["objective"], "objective"),
+    ]);
+    const result = withPaneTreeImmutability(tree, (t) =>
+      hidePaneToRoot(t, "objective"),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(visiblePaneIds(result.tree)).toEqual(["chart"]);
+    expect(hiddenPaneIds(result.tree)).toEqual(["objective"]);
+    const tabsLeaf = result.tree.children?.find((c) => c.id === "__tabs_0");
+    expect(tabsLeaf?.hidden).toBe(true);
+    expect(tabsLeaf?.paneIds).toEqual(["objective"]);
+  });
+
   it("hiding a tab from a pane-named multi-tab leaf does not duplicate structural node ids (palette toggle)", () => {
     const tree = ptRoot([
       ptLeaf("chart", 25),
@@ -1674,6 +1772,50 @@ describe("hidePaneToRoot (empty-column-wrapper fix)", () => {
 
   it("returns not-found for an unknown pane id", () => {
     expect(hidePaneToRoot(PT_THREE_SINGLE, "ghost")).toEqual({
+      ok: false,
+      reason: "not-found",
+    });
+  });
+});
+
+describe("hideLeafToRoot (close whole pane slot)", () => {
+  it("delegates single-pane leaves to hidePaneToRoot semantics", () => {
+    const result = withPaneTreeImmutability(PT_THREE_SINGLE, (t) =>
+      hideLeafToRoot(t, "body"),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(visiblePaneIds(result.tree)).toEqual(["chart", "rx"]);
+    expect(hiddenPaneIds(result.tree)).toEqual(["body"]);
+  });
+
+  it("hides every tab in a multi-tab leaf and removes the leaf", () => {
+    const result = withPaneTreeImmutability(PT_TABS_TARGET, (t) =>
+      hideLeafToRoot(t, "__tabs_0"),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(visiblePaneIds(result.tree).sort()).toEqual(["chart", "plan"]);
+    expect(hiddenPaneIds(result.tree).sort()).toEqual(["body", "rx"]);
+    expect(nodeIds(result.tree)).not.toContain("__tabs_0");
+    expect(hasDuplicatePaneIds(result.tree)).toBe(false);
+  });
+
+  it("allows emptying the cockpit when the leaf is the sole visible column", () => {
+    const tree = ptRoot([
+      ptLeaf("__tabs_0", 100, false, ["assessment", "plan"], "assessment"),
+    ]);
+    const result = withPaneTreeImmutability(tree, (t) =>
+      hideLeafToRoot(t, "__tabs_0"),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(visiblePaneIds(result.tree)).toEqual([]);
+    expect(hiddenPaneIds(result.tree).sort()).toEqual(["assessment", "plan"]);
+  });
+
+  it("returns not-found for an unknown leaf id", () => {
+    expect(hideLeafToRoot(PT_THREE_SINGLE, "ghost")).toEqual({
       ok: false,
       reason: "not-found",
     });

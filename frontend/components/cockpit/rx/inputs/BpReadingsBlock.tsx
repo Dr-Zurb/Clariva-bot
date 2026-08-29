@@ -72,6 +72,7 @@ import type {
 
 export interface BpReadingsBlockProps {
   ghost: GhostVitals | null;
+  ghostSourceLabel?: string;
   sparklineFor: (metric: VitalTrendMetricKey, label: string) => React.ReactNode;
   rangeCtx?: RangeContext;
 }
@@ -428,6 +429,7 @@ function BpReadingRow({
   index,
   blockContext,
   ghost,
+  ghostSourceLabel = "prev",
   rangeCtx,
   canRemove,
   showSequenceLabel,
@@ -438,6 +440,7 @@ function BpReadingRow({
   index: number;
   blockContext: BpContext;
   ghost: GhostVitals | null;
+  ghostSourceLabel?: string;
   rangeCtx?: RangeContext;
   canRemove: boolean;
   showSequenceLabel: boolean;
@@ -538,6 +541,7 @@ function BpReadingRow({
             })
           }
           testId="bp-primary-last-visit"
+          sourceLabel={ghostSourceLabel}
         />
       ) : null}
 
@@ -627,7 +631,12 @@ function BpReadingRow({
   );
 }
 
-export function BpReadingsBlock({ ghost, sparklineFor, rangeCtx }: BpReadingsBlockProps): JSX.Element {
+export function BpReadingsBlock({
+  ghost,
+  ghostSourceLabel = "prev",
+  sparklineFor,
+  rangeCtx,
+}: BpReadingsBlockProps): JSX.Element {
   const { state, setField } = useRxForm();
   const readings = state.fields.vitalsBpReadings;
   const bpContext = state.fields.vitalsBpContext;
@@ -737,6 +746,7 @@ export function BpReadingsBlock({ ghost, sparklineFor, rangeCtx }: BpReadingsBlo
             index={index}
             blockContext={effectiveBlockContext}
             ghost={ghost}
+            ghostSourceLabel={ghostSourceLabel}
             rangeCtx={rangeCtx}
             canRemove={readings.length > 1}
             showSequenceLabel={

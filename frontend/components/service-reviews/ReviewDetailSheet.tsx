@@ -16,6 +16,7 @@ import {
   parseCandidateLabels,
   parseMatchReasonCodes,
 } from "@/lib/staff-review-match-explain";
+import { ReviewConversationThread } from "@/components/service-reviews/ReviewConversationThread";
 
 function labelForServiceKey(
   catalog: ServiceCatalogV1 | null | undefined,
@@ -52,6 +53,8 @@ function rowStatusLabel(status: ServiceStaffReviewListItem["status"]): string {
 export interface ReviewDetailSheetProps {
   review: ServiceStaffReviewListItem;
   catalog: ServiceCatalogV1 | null | undefined;
+  /** Auth token for loading the read-only DM thread (ibi-04). */
+  token: string;
   onClose: () => void;
 }
 
@@ -59,7 +62,12 @@ export interface ReviewDetailSheetProps {
  * Right-side detail drawer for one service-match review (brr-10).
  * PHI renders in-session only; avoid console logging patient or reason text.
  */
-export function ReviewDetailSheet({ review, catalog, onClose }: ReviewDetailSheetProps) {
+export function ReviewDetailSheet({
+  review,
+  catalog,
+  token,
+  onClose,
+}: ReviewDetailSheetProps) {
   const reasonCodes = parseMatchReasonCodes(review.match_reason_codes);
   const candidates = parseCandidateLabels(review.candidate_labels);
   const isResolved = review.status !== "pending";
@@ -205,9 +213,16 @@ export function ReviewDetailSheet({ review, catalog, onClose }: ReviewDetailShee
 
           <section aria-label="Conversation" data-testid="review-detail-conversation">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Instagram conversation
+              Conversation
             </h3>
-            <p className="mt-2 text-sm text-muted-foreground">Conversation view coming soon.</p>
+            {review.conversation_id ? (
+              <ReviewConversationThread
+                token={token}
+                conversationId={review.conversation_id}
+              />
+            ) : (
+              <p className="mt-2 text-sm text-muted-foreground">No conversation linked.</p>
+            )}
           </section>
         </div>
       </SheetContent>

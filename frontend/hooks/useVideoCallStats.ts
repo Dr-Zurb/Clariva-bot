@@ -4,13 +4,20 @@ import { useEffect, useRef, useState } from "react";
 import type { Room } from "twilio-video";
 import {
   computeKbps,
+  computeWindowedLossPct,
   pickFirst,
   readFps,
   readJitter,
-  readPacketLossPct,
+  readPacketLossCounters,
+  readQualityLimitationReason,
+  readRemoteFps,
+  readRemoteFreezeCount,
+  readRemoteResolution,
   readResolution,
   readRtt,
+  smoothMetric,
   type LooseStatsReport,
+  type PacketLossCounters,
 } from "@/lib/video/twilio-stats-parse";
 
 /**
@@ -65,6 +72,18 @@ export interface VideoCallStats {
    * `null` until first sample with counters populated.
    */
   packetLossPct: number | null;
+  /** Incoming video dimensions (what the peer is actually sending us). */
+  remoteResolution: { width: number; height: number } | null;
+  /** Incoming video frame rate. */
+  remoteFps: number | null;
+  /** Cumulative decode freezes on the incoming video track. */
+  remoteFreezeCount: number | null;
+  /**
+   * Why our encoder is capping quality: `'cpu'`, `'bandwidth'`, `'none'`.
+   * The single most useful field when someone reports "it's laggy" — it
+   * says whether to blame the device or the link.
+   */
+  qualityLimitationReason: string | null;
 }
 
 const EMPTY_STATS: VideoCallStats = {
@@ -75,6 +94,10 @@ const EMPTY_STATS: VideoCallStats = {
   kbpsSend: null,
   kbpsReceive: null,
   packetLossPct: null,
+  remoteResolution: null,
+  remoteFps: null,
+  remoteFreezeCount: null,
+  qualityLimitationReason: null,
 };
 
 export interface UseVideoCallStatsOptions {
@@ -92,6 +115,9 @@ interface PreviousSample {
   bytesSent: number | null;
   bytesReceived: number | null;
   timestampMs: number;
+  loss: PacketLossCounters | null;
+  rttMs: number | null;
+  jitterMs: number | null;
 }
 
 /**
@@ -109,6 +135,9 @@ export function useVideoCallStats(
     bytesSent: null,
     bytesReceived: null,
     timestampMs: 0,
+    loss: null,
+    rttMs: null,
+    jitterMs: null,
   });
 
   useEffect(() => {
@@ -118,6 +147,9 @@ export function useVideoCallStats(
         bytesSent: null,
         bytesReceived: null,
         timestampMs: 0,
+        loss: null,
+        rttMs: null,
+        jitterMs: null,
       };
       return;
     }
@@ -164,21 +196,31 @@ export function useVideoCallStats(
           prev.bytesReceived,
           deltaMs,
         );
+        const lossCounters = readPacketLossCounters(report);
+        const rttMs = smoothMetric(prev.rttMs, readRtt(report));
+        const jitterMs = smoothMetric(prev.jitterMs, readJitter(report));
 
         prevSendRef.current = {
           bytesSent: currentBytesSent,
           bytesReceived: currentBytesReceived,
           timestampMs: nowMs,
+          loss: lossCounters,
+          rttMs,
+          jitterMs,
         };
 
         setStats({
-          rttMs: readRtt(report),
-          jitterMs: readJitter(report),
+          rttMs,
+          jitterMs,
           resolution: readResolution(report),
           fps: readFps(report),
           kbpsSend,
           kbpsReceive,
-          packetLossPct: readPacketLossPct(report),
+          packetLossPct: computeWindowedLossPct(lossCounters, prev.loss),
+          remoteResolution: readRemoteResolution(report),
+          remoteFps: readRemoteFps(report),
+          remoteFreezeCount: readRemoteFreezeCount(report),
+          qualityLimitationReason: readQualityLimitationReason(report),
         });
       } catch {
         // Stats reads can throw transiently mid-disconnect; swallow

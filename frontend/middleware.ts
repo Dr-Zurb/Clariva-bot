@@ -1,10 +1,13 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { resolveAuthGate } from "@/lib/auth/middleware-gates";
 
 /**
- * Next.js middleware: refreshes Supabase session and redirects unauthenticated
- * users from /dashboard (and nested) to /login. Reduces flash of protected content.
- * Uses request/response cookies per @supabase/ssr (Edge runtime).
+ * Next.js middleware: refreshes Supabase session and routes by auth +
+ * `profile_completed` (routing-only; auth-v2 · av2-04).
+ * Admin / desk role checks are server-side in `requireAdminAuth` /
+ * `requireDeskAuth` (layouts), not here. Receptionists are bounced off
+ * `/dashboard` by `resolveAuthGate`.
  * @see e-task-2 optional 4.2; Supabase Next.js SSR
  */
 export async function middleware(request: NextRequest) {
@@ -50,13 +53,36 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (request.nextUrl.pathname.startsWith("/dashboard") && !user) {
-    return NextResponse.redirect(new URL("/login", request.url));
+  const gate = resolveAuthGate({ pathname, user });
+  if (gate !== "allow") {
+    const redirectUrl = new URL(gate.redirect, request.url);
+    // Preserve return path so Instagram OAuth (and other bounces) can resume
+    // after re-auth. Only for login; avoid loops on complete-profile.
+    if (gate.redirect === "/login") {
+      const next = `${pathname}${request.nextUrl.search}`;
+      redirectUrl.searchParams.set("next", next);
+    }
+    const redirectResponse = NextResponse.redirect(redirectUrl);
+    // Keep any session cookies refreshed on `response` (discarded if we
+    // returned a bare redirect).
+    response.cookies.getAll().forEach((cookie) => {
+      redirectResponse.cookies.set(cookie.name, cookie.value);
+    });
+    return redirectResponse;
   }
 
   return response;
 }
 
 export const config = {
-  matcher: ["/dashboard", "/dashboard/:path*"],
+  matcher: [
+    "/dashboard",
+    "/dashboard/:path*",
+    "/admin",
+    "/admin/:path*",
+    "/complete-profile",
+    "/complete-profile/:path*",
+    "/desk",
+    "/desk/:path*",
+  ],
 };

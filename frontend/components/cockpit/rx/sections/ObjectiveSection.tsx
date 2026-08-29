@@ -135,6 +135,44 @@ function buildCollapseDefaults(
   return result;
 }
 
+/** First-paint collapse seed — avoids default-open → stored-closed flicker on remount. */
+function seedObjectiveCollapseOpen(
+  args: {
+    sectionCollapsed: ObjectiveSectionCollapseMap | null | undefined;
+    sectionOrder: ObjectiveSectionId[] | null | undefined;
+    objectiveSeed: DefaultLayout | null | undefined;
+  },
+  customBlockIds: readonly string[],
+): {
+  openById: Record<string, boolean>;
+  ready: boolean;
+  persistedKey: string | null;
+} {
+  const { sectionCollapsed: stored, sectionOrder: storedOrder, objectiveSeed } = args;
+  if (stored == null || storedOrder == null) {
+    return { openById: {}, ready: false, persistedKey: null };
+  }
+  const seed = objectiveSeed ?? REGISTRY_DEFAULT_LAYOUT;
+  const { baseOrder } = resolveEffectiveLayout({
+    seed,
+    storedOrder,
+    storedHidden: [],
+  });
+  const order = resolveInitialSectionOrder(baseOrder, customBlockIds);
+  const defaults = buildCollapseDefaults(order);
+  if (Object.keys(defaults).length === 0) {
+    return { openById: {}, ready: false, persistedKey: null };
+  }
+  const resolved = resolveSectionOpenState(stored, defaults);
+  return {
+    openById: resolved,
+    ready: true,
+    persistedKey: serializeCollapseOverrides(
+      collapseOverridesToPersist(resolved, defaults),
+    ),
+  };
+}
+
 export function ObjectiveSection({
   heading = "Objective",
   disabled = false,
@@ -151,10 +189,23 @@ export function ObjectiveSection({
   const [collapseSaveStatus, setCollapseSaveStatus] = useState<SaveStatus>("idle");
   const [visibilitySaveStatus, setVisibilitySaveStatus] = useState<SaveStatus>("idle");
   const [sectionManagerOpen, setSectionManagerOpen] = useState(false);
+  const collapseSeedRef = useRef<ReturnType<typeof seedObjectiveCollapseOpen> | null>(null);
+  if (collapseSeedRef.current === null) {
+    collapseSeedRef.current = seedObjectiveCollapseOpen(
+      {
+        sectionCollapsed: shell?.objectiveDefaults?.sectionCollapsed,
+        sectionOrder: shell?.objectiveDefaults?.sectionOrder,
+        objectiveSeed: shell?.objectiveSeed,
+      },
+      objectiveCustomSections.map((s) => s.id),
+    );
+  }
+  const collapseSeed = collapseSeedRef.current;
+
   const lastPersistedSectionOrderRef = useRef<string | null>(null);
-  const lastPersistedCollapseRef = useRef<string | null>(null);
+  const lastPersistedCollapseRef = useRef<string | null>(collapseSeed.persistedKey);
   const lastPersistedHiddenRef = useRef<string | null>(null);
-  const hasHydratedCollapseRef = useRef(false);
+  const hasHydratedCollapseRef = useRef(collapseSeed.ready);
   // When shell already has objective defaults, seed-aware hidden is applied in
   // useState below — skip the one-shot effect so we don't flash empty → seeded.
   const hasHydratedHiddenRef = useRef(shell?.objectiveDefaults != null);
@@ -168,7 +219,11 @@ export function ObjectiveSection({
     );
   const [storedSectionHidden, setStoredSectionHidden] =
     useState<ObjectiveSectionHiddenSet | null>(shell?.objectiveDefaults?.sectionHidden ?? null);
-  const [openById, setOpenById] = useState<Record<string, boolean>>({});
+  const [openById, setOpenById] = useState<Record<string, boolean>>(
+    () => collapseSeed.openById,
+  );
+  /** True once stored collapse has been applied to openById (seed or effect). */
+  const [collapseReady, setCollapseReady] = useState(() => collapseSeed.ready);
   const [hiddenIds, setHiddenIds] = useState<ObjectiveSectionHiddenSet>(() => {
     if (shell?.objectiveDefaults == null) return [];
     const seed = shell.objectiveSeed ?? REGISTRY_DEFAULT_LAYOUT;
@@ -237,7 +292,9 @@ export function ObjectiveSection({
 
   const displayOpenById = useMemo((): Record<string, boolean> => {
     if (!collapseControlled) return {};
-    if (!collapseHydrated) {
+    // Hold closed until stored map is applied — never paint canonical defaults
+    // for one frame (tab switch / remount flicker: open → stored-closed).
+    if (!collapseHydrated || !collapseReady) {
       const collapsed: Record<string, boolean> = {};
       for (const id of Object.keys(defaultsById)) {
         collapsed[id] = false;
@@ -245,7 +302,13 @@ export function ObjectiveSection({
       return collapsed;
     }
     return effectiveOpenById;
-  }, [collapseControlled, collapseHydrated, defaultsById, effectiveOpenById]);
+  }, [
+    collapseControlled,
+    collapseHydrated,
+    collapseReady,
+    defaultsById,
+    effectiveOpenById,
+  ]);
 
   const handleSectionOpenChange = useCallback(
     (sectionId: ObjectiveSectionId, open: boolean) => {
@@ -466,6 +529,7 @@ export function ObjectiveSection({
 
     const resolved = resolveSectionOpenState(storedSectionCollapsed, defaultsById);
     setOpenById(resolved);
+    setCollapseReady(true);
     lastPersistedCollapseRef.current = serializeCollapseOverrides(
       collapseOverridesToPersist(resolved, defaultsById),
     );

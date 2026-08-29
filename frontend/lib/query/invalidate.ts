@@ -35,6 +35,7 @@ export function invalidatePatientChart(
     queryClient.invalidateQueries({ queryKey: patient.overview() }),
     queryClient.invalidateQueries({ queryKey: patient.vitals() }),
     queryClient.invalidateQueries({ queryKey: patient.prescriptions() }),
+    queryClient.invalidateQueries({ queryKey: patient.allergies() }),
     queryClient.invalidateQueries({ queryKey: queryKeys.patients.all }),
   ]);
 }

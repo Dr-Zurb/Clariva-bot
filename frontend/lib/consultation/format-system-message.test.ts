@@ -32,6 +32,20 @@ describe("formatSystemMessageBody", () => {
     expect(text).toBe("Patient unmuted their microphone");
   });
 
+  it("summarizes collapsed mute streaks", () => {
+    const text = formatSystemMessageBody({
+      body: "You unmuted your microphone",
+      systemEvent: "mute_changed",
+      metadata: {
+        actor_id: "user-1",
+        muted: false,
+        mute_collapse_count: 8,
+      },
+      currentUserId: "user-1",
+    });
+    expect(text).toBe("Microphone toggled 8 times");
+  });
+
   it("rewrites hold_changed to self copy when actor_id matches", () => {
     const text = formatSystemMessageBody({
       body: "Dr. Sharma put the call on hold",

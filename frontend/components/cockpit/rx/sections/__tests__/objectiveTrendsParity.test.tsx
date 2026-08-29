@@ -48,6 +48,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual,
+    getDoctorSettings: vi
+      .fn()
+      .mockResolvedValue({ data: { settings: {} } }),
+    getAppointmentDeskVitals: vi.fn().mockResolvedValue({ data: { vitals: null } }),
     getLastPrescriptionInEpisode: vi
       .fn()
       .mockResolvedValue({ data: { prescription: null } }),

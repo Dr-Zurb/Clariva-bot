@@ -2,14 +2,139 @@ import { describe, it, expect } from "vitest";
 import {
   isValidTreeNode,
   upgradeV4LeavesToV5,
+  sanitizePaneTree,
   paneTreeToFlat,
   flatToPaneTree,
   listTabsContainers,
   describeLayoutShape,
   isLayoutCramped,
   CRAMPED_ROOT_SIBLINGS,
+  cockpitPanelDomId,
   type PaneTreeNode,
 } from "../layout-tree";
+
+/** Collect every structural node id (for uniqueness assertions). */
+function nodeIds(root: PaneTreeNode): string[] {
+  const out: string[] = [];
+  const walk = (n: PaneTreeNode) => {
+    out.push(n.id);
+    for (const c of n.children ?? []) walk(c);
+  };
+  walk(root);
+  return out;
+}
+
+describe("sanitizePaneTree — heals corrupted persisted trees", () => {
+  it("re-mints duplicate node ids so panels never collide", () => {
+    // Two root children both id "objective" (the crash from a buggy swap +
+    // later insert). Renderer would throw "Panel ids must be unique".
+    const corrupt: PaneTreeNode = {
+      id: "__root__",
+      sizePct: 100,
+      hidden: false,
+      direction: "horizontal",
+      children: [
+        { id: "objective", sizePct: 50, hidden: false, paneIds: ["objective"], activeTabId: "objective" },
+        { id: "objective", sizePct: 50, hidden: false, paneIds: ["body"], activeTabId: "body" },
+      ],
+    };
+    const fixed = sanitizePaneTree(corrupt);
+    const ids = nodeIds(fixed);
+    expect(new Set(ids).size).toBe(ids.length);
+    // Both panes survive (objective + body), each hosted exactly once.
+    expect(paneTreeToFlat(fixed).paneOrder.sort()).toEqual(["body", "objective"]);
+  });
+
+  it("strips a leftover panelKey that collides with another node's id", () => {
+    // Swap pins panelKey on the slot; extracting Plan then mints id "plan"
+    // while Consult's vacated slot still has panelKey "plan".
+    const corrupt: PaneTreeNode = {
+      id: "__root__",
+      sizePct: 100,
+      hidden: false,
+      direction: "horizontal",
+      children: [
+        {
+          id: "body",
+          sizePct: 50,
+          hidden: false,
+          panelKey: "plan",
+          paneIds: ["body"],
+          activeTabId: "body",
+        },
+        { id: "plan", sizePct: 50, hidden: false, paneIds: ["plan"], activeTabId: "plan" },
+      ],
+    };
+    const fixed = sanitizePaneTree(corrupt);
+    const leafDomIds = [
+      cockpitPanelDomId(fixed.children![0]!),
+      cockpitPanelDomId(fixed.children![1]!),
+    ];
+    expect(new Set(leafDomIds).size).toBe(2);
+    expect(leafDomIds).toContain("plan");
+    expect(paneTreeToFlat(fixed).paneOrder.sort()).toEqual(["body", "plan"]);
+  });
+
+  it("drops a pane duplicated across two leaves (keeps first host)", () => {
+    const corrupt: PaneTreeNode = {
+      id: "__root__",
+      sizePct: 100,
+      hidden: false,
+      direction: "horizontal",
+      children: [
+        { id: "a", sizePct: 40, hidden: false, paneIds: ["objective", "plan"], activeTabId: "objective" },
+        { id: "objective", sizePct: 60, hidden: false, paneIds: ["objective"], activeTabId: "objective" },
+      ],
+    };
+    const fixed = sanitizePaneTree(corrupt);
+    const flat = paneTreeToFlat(fixed);
+    // "objective" appears once total; the emptied second leaf is pruned.
+    expect(flat.paneOrder.filter((p) => p === "objective")).toHaveLength(1);
+    expect(nodeIds(fixed).length).toBe(new Set(nodeIds(fixed)).size);
+  });
+
+  it("keeps the outer __root__ id when a descendant also uses it", () => {
+    const nested: PaneTreeNode = {
+      id: "__root__",
+      sizePct: 100,
+      hidden: false,
+      direction: "vertical",
+      children: [
+        {
+          id: "__root__",
+          sizePct: 50,
+          hidden: false,
+          direction: "horizontal",
+          children: [
+            { id: "a", sizePct: 50, hidden: false, paneIds: ["a"], activeTabId: "a" },
+            { id: "b", sizePct: 50, hidden: false, paneIds: ["b"], activeTabId: "b" },
+          ],
+        },
+        { id: "plan", sizePct: 50, hidden: false, paneIds: ["plan"], activeTabId: "plan" },
+      ],
+    };
+    const fixed = sanitizePaneTree(nested);
+    expect(fixed.id).toBe("__root__");
+    const ids = nodeIds(fixed);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("is idempotent on a well-formed tree", () => {
+    const clean: PaneTreeNode = {
+      id: "__root__",
+      sizePct: 100,
+      hidden: false,
+      direction: "horizontal",
+      children: [
+        { id: "a", sizePct: 50, hidden: false, paneIds: ["a"], activeTabId: "a" },
+        { id: "__tabs_1", sizePct: 50, hidden: false, paneIds: ["b", "c"], activeTabId: "b" },
+      ],
+    };
+    const once = sanitizePaneTree(clean);
+    const twice = sanitizePaneTree(once);
+    expect(JSON.stringify(twice)).toBe(JSON.stringify(clean));
+  });
+});
 
 describe("PaneTreeNode v5 shape (cpf-01)", () => {
   it("isValidTreeNode accepts a v5 leaf with paneIds + activeTabId", () => {

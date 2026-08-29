@@ -7,9 +7,11 @@
  *
  * Flow (post voice-0B):
  *   1. Read `?token=` (HMAC) from the URL.
- *   2. Exchange the HMAC for a Twilio Video access token via
- *      `GET /api/v1/consultation/token?token=...`. The response also
- *      carries `sessionId` (the `consultation_sessions.id`).
+ *   2. If the doctor has not started, show the **lobby** (crc-04 / crc-10):
+ *      device check + heartbeat + poll. Completing the check does not
+ *      create a Twilio room. When the doctor starts, a patient who was
+ *      already in the lobby auto-connects (skips a second Continue).
+ *      Late openers still get the post-Start pre-call gate.
  *   3. In parallel with Step 2 settling, exchange the same HMAC for a
  *      Supabase JWT for the **companion chat** via
  *      `POST /api/v1/consultation/:sessionId/text-token`. Failure here
@@ -31,15 +33,27 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
   getConsultationTokenForPatient,
+  getOpdSessionSnapshot,
+  postLobbyHeartbeat,
   requestTextSessionToken,
   type GetConsultationTokenData,
   type TextConsultTokenExchangeData,
 } from "@/lib/api";
+import type { PatientOpdSnapshot } from "@/types/opd-session";
 import VideoRoom from "@/components/consultation/VideoRoom";
 import VideoConsultPreCall from "@/components/consultation/VideoConsultPreCall";
 import VideoConsultLobbyHeader from "@/components/consultation/VideoConsultLobbyHeader";
 import VideoConsultLobbyCountdown from "@/components/consultation/VideoConsultLobbyCountdown";
 import CellularDataWarning from "@/components/consultation/CellularDataWarning";
+import PatientVideoWaitingRoom from "@/components/consultation/PatientVideoWaitingRoom";
+import { shouldSkipVideoPrecallGate } from "@/lib/consultation/video-lobby-precall";
+import { requestPatientPhoneFullscreen } from "@/lib/call/patient-mobile-chrome";
+import { lobbyPresenceChannelEnabled } from "@/lib/consultation/lobby-reconnect";
+import { useLobbyPresenceChannel } from "@/hooks/useLobbyPresenceChannel";
+import {
+  LobbyReconnectNotice,
+  useLobbyReconnect,
+} from "@/hooks/useLobbyReconnect";
 import {
   findLatestRejoinCandidate,
   decodeJwtExp,
@@ -88,10 +102,16 @@ function ConsultJoinContent() {
   // without keeping it in the URL bar. Mirrors the voice page hygiene.
   const urlTokenRef = useRef<string>(initialUrlToken);
 
-  const [status, setStatus] = useState<"loading" | "ready" | "error" | "ended">("loading");
+  const [status, setStatus] = useState<
+    "loading" | "lobby" | "ready" | "error" | "ended"
+  >("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [videoData, setVideoData] = useState<VideoData | null>(null);
   const [companion, setCompanion] = useState<CompanionState | null>(null);
+  const [lobbyScheduledAt, setLobbyScheduledAt] = useState<string | null>(null);
+  const [lobbySnapshot, setLobbySnapshot] = useState<PatientOpdSnapshot | null>(
+    null
+  );
 
   // task-video-A7 — pre-call gate. The patient sees the camera + mic
   // check screen first; on Continue / Skip mic the page transitions
@@ -102,6 +122,11 @@ function ConsultJoinContent() {
   const [chosenCameraId, setChosenCameraId] = useState<string | null>(null);
   const [chosenMicId, setChosenMicId] = useState<string | null>(null);
   const [skipAudio, setSkipAudio] = useState(false);
+  /** crc-10 — patient completed the device check while still in lobby. */
+  const [lobbyCheckDone, setLobbyCheckDone] = useState(false);
+  const arrivedViaLobbyRef = useRef(false);
+  const statusRef = useRef(status);
+  statusRef.current = status;
 
   // ------------------------------------------------------------------------
   // Sub-batch E · task-video-E4 — crash-recovery rejoin.
@@ -147,13 +172,20 @@ function ConsultJoinContent() {
   // user's chosen camera + mic; transitions to the live `<VideoRoom>`
   // mount which threads them into Twilio's `createLocalTracks`.
   const handlePreCallContinue = useCallback(
-    ({ cameraId, micId }: { cameraId: string | null; micId: string | null }) => {
+    ({
+      cameraId,
+      micId,
+    }: {
+      cameraId: string | null;
+      micId: string | null;
+    }) => {
+      requestPatientPhoneFullscreen();
       setChosenCameraId(cameraId);
       setChosenMicId(micId);
       setSkipAudio(false);
       setStep("live");
     },
-    [],
+    []
   );
 
   // task-video-A7 — Skip mic check (used when the user denied mic
@@ -161,12 +193,43 @@ function ConsultJoinContent() {
   // regardless of the mic dropdown selection.
   const handlePreCallSkipMic = useCallback(
     ({ cameraId }: { cameraId: string | null }) => {
+      requestPatientPhoneFullscreen();
       setChosenCameraId(cameraId);
       setChosenMicId(null);
       setSkipAudio(true);
       setStep("live");
     },
-    [],
+    []
+  );
+
+  // crc-10 — same device cache as the post-Start gate, but stay in
+  // the lobby (no Twilio room yet). Skip-mic is a completed check.
+  const handleLobbyPreCallContinue = useCallback(
+    ({
+      cameraId,
+      micId,
+    }: {
+      cameraId: string | null;
+      micId: string | null;
+    }) => {
+      requestPatientPhoneFullscreen();
+      setChosenCameraId(cameraId);
+      setChosenMicId(micId);
+      setSkipAudio(false);
+      setLobbyCheckDone(true);
+    },
+    []
+  );
+
+  const handleLobbyPreCallSkipMic = useCallback(
+    ({ cameraId }: { cameraId: string | null }) => {
+      requestPatientPhoneFullscreen();
+      setChosenCameraId(cameraId);
+      setChosenMicId(null);
+      setSkipAudio(true);
+      setLobbyCheckDone(true);
+    },
+    []
   );
 
   // voice-0C — companion text-token exchange.
@@ -198,8 +261,62 @@ function ConsultJoinContent() {
         return { status: "unavailable", error: { message, statusCode } };
       }
     },
-    [],
+    []
   );
+
+  // crc-17 — heartbeat + snapshot + token poll. Throws on heartbeat or
+  // token failure so the reconnect hook can back off. Does not touch
+  // lobbyCheckDone (p3 device check must survive a drop).
+  const lobbyTick = useCallback(async () => {
+    const token = urlTokenRef.current || initialUrlToken;
+    if (!token) throw new Error("missing_token");
+    await postLobbyHeartbeat(token);
+    try {
+      const snap = await getOpdSessionSnapshot(token);
+      setLobbySnapshot(snap.data.snapshot);
+    } catch {
+      /* snapshot is advisory — last known wait copy stays */
+    }
+    const res = await getConsultationTokenForPatient(token);
+    if (statusRef.current !== "lobby") return;
+    if (res.data.status !== "lobby" && "token" in res.data) {
+      const live = res.data;
+      const companionResult = live.sessionId
+        ? await exchangeCompanion(live.sessionId)
+        : null;
+      if (statusRef.current !== "lobby") return;
+      setVideoData({
+        accessToken: live.token,
+        roomName: live.roomName,
+        sessionId: live.sessionId,
+      });
+      setCompanion(companionResult);
+      if (
+        shouldSkipVideoPrecallGate({
+          arrivedViaLobby: arrivedViaLobbyRef.current,
+        })
+      ) {
+        setStep("live");
+      }
+      setStatus("ready");
+      try {
+        router.replace("/consult/join");
+      } catch {
+        /* best-effort */
+      }
+    }
+  }, [initialUrlToken, exchangeCompanion, router]);
+
+  const inLobby = status === "lobby";
+  const { reconnecting, isOnline } = useLobbyReconnect({
+    enabled: inLobby,
+    onTick: lobbyTick,
+  });
+
+  useLobbyPresenceChannel({
+    consultationToken: urlTokenRef.current || initialUrlToken,
+    enabled: lobbyPresenceChannelEnabled(inLobby, isOnline),
+  });
 
   // Patient-side companion-token refresh hook. `<VideoRoom>` calls this
   // when its in-room Supabase JWT is about to expire (or after a 401
@@ -253,7 +370,11 @@ function ConsultJoinContent() {
     //                     `rejoined` banner.
     // ----------------------------------------------------------------
     const candidate = findLatestRejoinCandidate();
-    if (candidate && candidate.role === "patient" && candidate.modality === "video") {
+    if (
+      candidate &&
+      candidate.role === "patient" &&
+      candidate.modality === "video"
+    ) {
       // Hard requirements for a video rejoin: Twilio access token + room
       // name. Without them we can't connect; treat as a stale entry.
       if (candidate.twilioAccessToken && candidate.roomName) {
@@ -261,7 +382,9 @@ function ConsultJoinContent() {
         // If this tab was kicked, fall through to URL flow.
         const wasKicked =
           typeof window !== "undefined" &&
-          window.sessionStorage.getItem(`tab-was-kicked-${candidate.sessionId}`) === "1";
+          window.sessionStorage.getItem(
+            `tab-was-kicked-${candidate.sessionId}`
+          ) === "1";
 
         if (!wasKicked) {
           setVideoData({
@@ -328,41 +451,15 @@ function ConsultJoinContent() {
 
     if (!initialUrlToken || initialUrlToken.length < 10) {
       setStatus("error");
-      setErrorMessage("Invalid or missing link. Please use the link shared by your doctor.");
+      setErrorMessage(
+        "Invalid or missing link. Please use the link shared by your doctor."
+      );
       return;
     }
 
-    void (async () => {
-      // Step 1: video token. We need the sessionId from this response
-      // before we can call the companion exchange — they cannot run
-      // strictly in parallel because of the data dependency. The voice
-      // page can do `Promise.all` because it has the sessionId in the
-      // URL already; the legacy video patient URL doesn't (post-merge
-      // the URL stays `?token=`-only for backwards compatibility with
-      // every link that's already been sent over IG / SMS / email).
-      let video: GetConsultationTokenData;
-      try {
-        const res = await getConsultationTokenForPatient(initialUrlToken);
-        video = res.data;
-      } catch (err) {
-        if (cancelled) return;
-        const msg = err instanceof Error ? err.message : "Request failed";
-        setStatus("error");
-        if (msg.toLowerCase().includes("expired")) {
-          setErrorMessage("This link has expired. Please ask your doctor for a new link.");
-        } else {
-          setErrorMessage("Link expired or invalid. Please use the link shared by your doctor.");
-        }
-        return;
-      }
-      if (cancelled) return;
-
-      // Step 2: best-effort companion exchange (depends on sessionId
-      // from Step 1). If the backend deploy hasn't shipped sessionId
-      // yet (deploy-window defensive typing), we silently skip the
-      // companion exchange; the video call still works without any
-      // chat surface (no inline tile either, since we don't even
-      // know the channel UUID to retry with).
+    const enterLiveFromToken = async (
+      video: Extract<GetConsultationTokenData, { token: string }>
+    ) => {
       const companionResult = video.sessionId
         ? await exchangeCompanion(video.sessionId)
         : null;
@@ -376,38 +473,14 @@ function ConsultJoinContent() {
       setCompanion(companionResult);
       setStatus("ready");
 
-      // ------------------------------------------------------------
-      // Sub-batch E · task-video-E4 — write the rejoin cache.
-      //
-      // This is the only write site (mint success). On a future crash
-      // + reopen of THIS tab, `findLatestRejoinCandidate()` discovers
-      // the snapshot and the cache-restore branch above takes over.
-      //
-      // Cache TTL = strictest expiry across the three tokens we hold:
-      //   - HMAC (long-lived, typically 24h+).
-      //   - Twilio access token (short-lived, typically 1h).
-      //   - Supabase JWT for companion chat (typically 1h+).
-      // We decode each token's `exp` claim locally (no signature
-      // verification needed — we trust we just minted them).
-      //
-      // Best-effort: if `video.sessionId` is missing (deploy-window
-      // defensive typing) OR all token decodings fail, skip the
-      // write rather than poison sessionStorage with a guaranteed-
-      // stale entry.
-      // ------------------------------------------------------------
       if (video.sessionId) {
         const twilioExp = decodeJwtExp(video.token);
         const supabaseExp =
           companionResult?.status === "ok"
             ? decodeJwtExp(companionResult.data.token ?? undefined)
             : undefined;
-        // HMAC is opaque base64url, not a JWT — we don't have a public
-        // expiry. Use a conservative 24h window from cache time so the
-        // snapshot doesn't outlive the typical patient consult-link
-        // window. Backend HMAC verification will reject expired ones
-        // anyway on fresh re-exchange.
         const hmacExpFallbackSeconds = Math.floor(
-          (Date.now() + 24 * 60 * 60 * 1000) / 1000,
+          (Date.now() + 24 * 60 * 60 * 1000) / 1000
         );
         const expiresAt = computeMinExpiryEpochMs({
           hmacExp: hmacExpFallbackSeconds,
@@ -424,7 +497,7 @@ function ConsultJoinContent() {
             roomName: video.roomName,
             supabaseJwt:
               companionResult?.status === "ok"
-                ? companionResult.data.token ?? undefined
+                ? (companionResult.data.token ?? undefined)
                 : undefined,
             companionCurrentUserId:
               companionResult?.status === "ok"
@@ -435,28 +508,56 @@ function ConsultJoinContent() {
             cachedAt: Date.now(),
             expiresAt,
           };
-          // Write directly via the module helper instead of the bound
-          // hook because `rejoinCache` was bound to `videoData?.sessionId`
-          // BEFORE this state update — the bound write would refuse
-          // (sessionId mismatch guard). The module helper accepts any
-          // sessionId; that's the right primitive for the mint path.
           try {
             window.sessionStorage.setItem(
               `call-rejoin-${snapshot.sessionId}`,
-              JSON.stringify(snapshot),
+              JSON.stringify(snapshot)
             );
           } catch {
-            // Best-effort.
+            /* best-effort */
           }
         }
       }
 
-      // URL hygiene — strip `?token=` so a screenshot / shared URL
-      // doesn't leak the HMAC. Mirrors the voice page.
       try {
         router.replace("/consult/join");
       } catch {
         /* best-effort */
+      }
+    };
+
+    void (async () => {
+      try {
+        const res = await getConsultationTokenForPatient(initialUrlToken);
+        const data = res.data;
+        if (cancelled) return;
+
+        if (data.status === "lobby") {
+          arrivedViaLobbyRef.current = true;
+          setLobbyScheduledAt(data.scheduledStartAt);
+          setStatus("lobby");
+          void postLobbyHeartbeat(initialUrlToken).catch(() => undefined);
+          return;
+        }
+
+        await enterLiveFromToken(data);
+      } catch (err) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : "Request failed";
+        setStatus("error");
+        if (msg.toLowerCase().includes("expired")) {
+          setErrorMessage(
+            "This link has expired. Please ask your doctor for a new link."
+          );
+        } else if (msg.toLowerCase().includes("join window")) {
+          setErrorMessage(msg);
+        } else if (msg && msg !== "Request failed") {
+          setErrorMessage(msg);
+        } else {
+          setErrorMessage(
+            "Link expired or invalid. Please use the link shared by your doctor."
+          );
+        }
       }
     })();
 
@@ -471,6 +572,21 @@ function ConsultJoinContent() {
       <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 p-4">
         <p className="text-gray-600">Connecting to your video consultation…</p>
       </div>
+    );
+  }
+
+  if (status === "lobby") {
+    return (
+      <>
+        <LobbyReconnectNotice show={reconnecting} />
+        <PatientVideoWaitingRoom
+          scheduledStartAt={lobbyScheduledAt}
+          deviceCheckDone={lobbyCheckDone}
+          snapshot={lobbySnapshot}
+          onContinue={handleLobbyPreCallContinue}
+          onSkipMic={handleLobbyPreCallSkipMic}
+        />
+      </>
     );
   }
 
@@ -517,13 +633,12 @@ function ConsultJoinContent() {
   // fallback ("Your clinic" + waiting state) rather than dropping
   // the lobby entirely — the patient still gets reassuring copy.
   if (step === "precall") {
-    const lobbyData =
-      companion?.status === "ok" ? companion.data : null;
+    const lobbyData = companion?.status === "ok" ? companion.data : null;
     const branding = resolveClinicBranding({
       practiceName: lobbyData?.practiceName,
     });
     const appointmentTime = formatAppointmentTimeEnGB(
-      lobbyData?.scheduledStartAt,
+      lobbyData?.scheduledStartAt
     );
     // Patient-side counterparty copy. The backend doesn't yet
     // surface the doctor's display name to the patient (no
@@ -599,12 +714,16 @@ function ConsultJoinContent() {
       ? companion.data.token
       : undefined;
 
+  // Bounded `100dvh` flex column (not `min-h-screen`): the room's Speaker
+  // stage anchors both tiles `absolute inset-0`, so it needs a real height
+  // to fill or it collapses to a sliver. `dvh` over `vh` so the mobile
+  // browser's collapsing URL bar doesn't push the control strip off-screen.
+  // Phone: edge-to-edge, no page chrome — the doctor's face IS the page and
+  // the patient already knows why they're here. Tablet / desktop (`md:`)
+  // uses the same card + stage chrome as the doctor Consult column.
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="mx-auto max-w-2xl">
-        <h1 className="mb-4 text-center text-xl font-semibold text-gray-900">
-          Video Consultation
-        </h1>
+    <div className="flex h-[100dvh] flex-col bg-background p-0 md:bg-muted md:p-3">
+      <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col overflow-hidden md:rounded-xl md:border md:bg-card md:shadow-sm">
         <VideoRoom
           accessToken={videoData.accessToken}
           roomName={videoData.roomName}
@@ -619,7 +738,9 @@ function ConsultJoinContent() {
            * Supabase session). Skipped silently when companion failed.
            */
           recordingSessionId={
-            recordingToken && videoData.sessionId ? videoData.sessionId : undefined
+            recordingToken && videoData.sessionId
+              ? videoData.sessionId
+              : undefined
           }
           recordingToken={recordingToken}
           /*

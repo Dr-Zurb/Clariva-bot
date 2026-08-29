@@ -10,6 +10,7 @@ import {
   updateNodeSize,
   isValidTreeNode,
   upgradeV4LeavesToV5,
+  sanitizePaneTree,
   deserialiseTree,
   serialiseTree,
   type PaneTreeNode,
@@ -20,6 +21,7 @@ import type {
   PaneRuntimeState,
   PatientProfileLayout,
 } from "./types";
+import { pruneLayoutToKnownLeaves } from "@/lib/patient-profile/v3/prune-layout-leaves";
 
 // ---------------------------------------------------------------------------
 // Storage keys
@@ -45,6 +47,12 @@ function clonePaneTree(tree: PaneTreeNode): PaneTreeNode {
 export interface ApplyLayoutOptions {
   /** When false, does not push onto the undo stack (blank seed, hydration helpers). */
   recordHistory?: boolean;
+  /**
+   * When false, updates the tree without bumping `layoutVersion` (no
+   * CockpitGroupView `setLayout` rebalance). Used for Show-here / pane
+   * swaps where slot `panelKey` keeps ResizablePanel ids stable.
+   */
+  rebalance?: boolean;
 }
 
 /** Read persisted layout: v4 key first, then legacy v3 (migrated on success). */
@@ -88,17 +96,20 @@ export function validateLayout(raw: unknown): PatientProfileLayout | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
 
-  // v5 — current
+  // v5 — current. Sanitize repairs any duplicate pane/node ids a corrupted
+  // persisted tree may carry (prevents the "Panel ids must be unique" crash).
   if (r.version === 5 && isValidTreeNode(r.paneTree)) {
     return {
       version: 5,
-      paneTree: upgradeV4LeavesToV5(r.paneTree as PaneTreeNode),
+      paneTree: sanitizePaneTree(upgradeV4LeavesToV5(r.paneTree as PaneTreeNode)),
     };
   }
 
   // v4 — migrate leaves to v5 shape.
   if (r.version === 4 && isValidTreeNode(r.paneTree)) {
-    const upgraded = upgradeV4LeavesToV5(r.paneTree as PaneTreeNode);
+    const upgraded = sanitizePaneTree(
+      upgradeV4LeavesToV5(r.paneTree as PaneTreeNode),
+    );
     if (typeof console !== "undefined") {
       console.info(
         "[useShellLayout] migrated v4 layout to v5 (paneIds + activeTabId on leaves)",
@@ -328,6 +339,11 @@ export interface UseShellLayoutResult {
   setActiveTab: (groupId: string, paneId: string) => void;
   /** Read-only access to the persisted tree (for tree-aware consumers). */
   paneTree: PaneTreeNode;
+  /**
+   * Suspend durable localStorage writes (Focus session — CTF-D3 Option A).
+   * Clearing suspension flushes the current live layout immediately.
+   */
+  setPersistSuspended: (suspended: boolean) => void;
 }
 
 export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResult {
@@ -374,6 +390,10 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
   const futureRef = useRef<PaneTreeNode[]>([]);
   const lastCommitKindRef = useRef<HistoryCommitKind | null>(null);
   const [historyTick, setHistoryTick] = useState(0);
+  /** When true, the debounce writer skips localStorage (Focus session — CTF-D3 Option A). */
+  const persistSuspendedRef = useRef(false);
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
 
   const canUndo = useMemo(
     () => pastRef.current.length > 0,
@@ -400,9 +420,10 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
     (
       nextTree: PaneTreeNode,
       kind: HistoryCommitKind,
-      options?: { recordHistory?: boolean },
+      options?: { recordHistory?: boolean; rebalance?: boolean },
     ) => {
       const record = options?.recordHistory !== false;
+      const rebalance = options?.rebalance !== false;
       setLayout((prev) => {
         const current = prev.paneTree;
         if (serialiseTree(current) === serialiseTree(nextTree)) {
@@ -417,7 +438,7 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
         prevLayoutRef.current = null;
         return { version: LAYOUT_VERSION, paneTree: nextTree };
       });
-      setLayoutVersion((v) => v + 1);
+      if (rebalance) setLayoutVersion((v) => v + 1);
     },
     [pushHistory],
   );
@@ -466,6 +487,11 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
       clearTimeout(writeTimerRef.current);
     }
     writeTimerRef.current = setTimeout(() => {
+      // Focus session (CTF-D3 Option A): skip durable writes while suspended.
+      if (persistSuspendedRef.current) {
+        writeTimerRef.current = null;
+        return;
+      }
       try {
         window.localStorage.setItem(v4Key, JSON.stringify(layout));
       } catch {
@@ -480,6 +506,33 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
       }
     };
   }, [v4Key, layout, hydrated]);
+
+  /**
+   * Suspend / resume durable layout persistence. Clearing suspension flushes
+   * the current live layout immediately so drag-exit / Restore survive reload.
+   */
+  const setPersistSuspended = useCallback(
+    (suspended: boolean) => {
+      const wasSuspended = persistSuspendedRef.current;
+      persistSuspendedRef.current = suspended;
+      if (typeof window === "undefined" || !hydrated) return;
+      if (wasSuspended && !suspended) {
+        if (writeTimerRef.current !== null) {
+          clearTimeout(writeTimerRef.current);
+          writeTimerRef.current = null;
+        }
+        try {
+          window.localStorage.setItem(
+            v4Key,
+            JSON.stringify(layoutRef.current),
+          );
+        } catch {
+          // quota exceeded or private-browsing restriction
+        }
+      }
+    },
+    [hydrated, v4Key],
+  );
 
   useLayoutEffect(() => {
     if (typeof window === "undefined") {
@@ -499,37 +552,46 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
         }
         if (validated) break;
       }
-      // csl-03 (2026-05-26): treat a schema-valid layout as stale when its
-      // leaf ids no longer match the current template and discard it (also
-      // nukes the localStorage entry so the next write seeds a clean default).
-      // Two stale cases:
-      //   - MISSING a current-template leaf — legacy v1 ids (`chart`/`body`/
-      //     `rx`) landing on the v2/v3 registry; toggles would update dead ids.
-      //   - UNKNOWN leaf the registry no longer defines — e.g. the removed
-      //     `investigations-orders` pane, which would otherwise linger in a
-      //     saved layout as an empty "ghost" column with no pane body.
+      // csl-03 + ribbon-expand Phase 2B: when leaf ids drift from the registry,
+      // try pruning unknown/missing panes first (keeps doctor layouts that only
+      // still reference retired tabs like snapshot/history). Discard + reseed
+      // only when prune cannot produce an aligned tree.
       if (
         validated &&
         knownLeafIdsSet.size > 0 &&
         (!isLayoutAlignedWith(validated, knownLeafIdsSet) ||
           layoutHasUnknownLeaf(validated, knownLeafIdsSet))
       ) {
-        try {
-          window.localStorage.removeItem(v4Key);
-          for (const key of storageKeysToRead) {
-            window.localStorage.removeItem(v4TreeLayoutStorageKey(key));
-            window.localStorage.removeItem(key);
+        const pruned = pruneLayoutToKnownLeaves(validated, knownLeafIdsSet);
+        if (
+          pruned &&
+          isLayoutAlignedWith(pruned, knownLeafIdsSet) &&
+          !layoutHasUnknownLeaf(pruned, knownLeafIdsSet)
+        ) {
+          validated = pruned;
+          if (typeof console !== "undefined") {
+            console.info(
+              "[useShellLayout] pruned persisted layout — removed unknown / restored missing leaf ids",
+            );
           }
-        } catch {
-          // ignore quota / access errors
+        } else {
+          try {
+            window.localStorage.removeItem(v4Key);
+            for (const key of storageKeysToRead) {
+              window.localStorage.removeItem(v4TreeLayoutStorageKey(key));
+              window.localStorage.removeItem(key);
+            }
+          } catch {
+            // ignore quota / access errors
+          }
+          if (typeof console !== "undefined") {
+            console.info(
+              "[useShellLayout] discarded stale persisted layout — leaf ids no longer match the current template (missing or unknown leaf)",
+            );
+          }
+          validated = null;
+          discardedStaleLayout = true;
         }
-        if (typeof console !== "undefined") {
-          console.info(
-            "[useShellLayout] discarded stale persisted layout — leaf ids no longer match the current template (missing or unknown leaf)",
-          );
-        }
-        validated = null;
-        discardedStaleLayout = true;
       }
       if (validated) {
         try {
@@ -737,13 +799,14 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
     (next: PatientProfileLayout, options?: ApplyLayoutOptions) => {
       const validated = validateLayout(next);
       if (!validated) return;
+      const rebalance = options?.rebalance !== false;
       if (options?.recordHistory === false) {
         setLayout(validated);
         prevLayoutRef.current = null;
-        setLayoutVersion((v) => v + 1);
+        if (rebalance) setLayoutVersion((v) => v + 1);
         return;
       }
-      commitPaneTree(validated.paneTree, "structural");
+      commitPaneTree(validated.paneTree, "structural", { rebalance });
     },
     [commitPaneTree],
   );
@@ -767,5 +830,6 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
     setLeafSize,
     setGroupSizes,
     setActiveTab,
+    setPersistSuspended,
   };
 }
