@@ -874,10 +874,10 @@ export function setFamilyHistoryRelativeDetail(
 }
 
 export function toggleFamilyHistoryRelativeDetailChip<
-  T extends string,
-  K extends "sex" | "order" | "side",
->(current: Record<K, T | undefined> | undefined, key: K, value: T): Record<K, T | undefined> {
-  const next = { ...(current ?? {}) } as Record<K, T | undefined>;
+  D extends Partial<Record<"sex" | "order" | "side", string>>,
+  K extends keyof D & ("sex" | "order" | "side"),
+>(current: D | undefined, key: K, value: NonNullable<D[K]>): D {
+  const next = { ...(current ?? {}) } as D;
   if (next[key] === value) delete next[key];
   else next[key] = value;
   return next;
