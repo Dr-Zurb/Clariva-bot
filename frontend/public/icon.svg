@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" role="img" aria-label="Halo Aid">
+  <defs>
+    <linearGradient id="haloIcon" x1="4" y1="44" x2="44" y2="4" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1E56E0" />
+      <stop offset="1" stop-color="#2E9BFF" />
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" rx="11" fill="url(#haloIcon)" />
+  <ellipse cx="24" cy="29" rx="15" ry="4.4" transform="rotate(-8 24 29)" stroke="#ffffff" stroke-width="1.4" opacity="0.9" />
+  <path d="M24 12 L14 37" stroke="#ffffff" stroke-width="4" stroke-linecap="round" />
+  <path d="M24 12 L34 37" stroke="#ffffff" stroke-width="4" stroke-linecap="round" />
+  <path d="M24 5 C24.3 6.7 24.9 7.3 26.6 7.6 C24.9 7.9 24.3 8.5 24 10.2 C23.7 8.5 23.1 7.9 21.4 7.6 C23.1 7.3 23.7 6.7 24 5 Z" fill="#ffffff" />
+</svg>

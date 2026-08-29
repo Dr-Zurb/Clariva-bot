@@ -29,7 +29,9 @@ export const metadata: Metadata = {
   applicationName: "Halo Aid",
   manifest: "/manifest.json",
   icons: {
-    icon: "/icon.svg",
+    icon: [{ url: "/icon-halo.svg", type: "image/svg+xml" }],
+    shortcut: "/icon-halo.svg",
+    apple: "/icon-halo.svg",
   },
   openGraph: {
     title: "Halo Aid",
