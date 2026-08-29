@@ -112,6 +112,7 @@ import {
   type SocialHistoryDurationUnit,
   type SocialHistoryStructured,
   type SmokingStatus,
+  type TobaccoUseSectionInput,
 } from "@/lib/cockpit/social-history";
 import {
   SICK_CONTACT_CONTEXT_OPTIONS,
@@ -672,9 +673,7 @@ function alcoholDrinksForDisplay(
   return ensureAlcoholDrinkIds(normalized?.drinks ?? []);
 }
 
-function tobaccoProductsForDisplay(
-  section: { status: SmokingStatus; products?: TobaccoProductRow[]; quitYearsAgo?: number; quitYearsUnit?: SocialHistoryDurationUnit },
-): TobaccoProductRow[] {
+function tobaccoProductsForDisplay(section: TobaccoUseSectionInput): TobaccoProductRow[] {
   const products = section.products ?? [];
   const migrated =
     section.status === "ex"
