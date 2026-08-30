@@ -55,6 +55,18 @@ describe("POST /data-deletion-callback", () => {
     );
   });
 
+  it("does not leak Render's internal origin into the status URL", async () => {
+    const req = new NextRequest("http://localhost:10000/data-deletion-callback", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ signed_request: "not-valid" }),
+    });
+    const res = await POST(req);
+    const body = (await res.json()) as { url: string };
+    expect(res.status).toBe(200);
+    expect(body.url).toMatch(/^https:\/\/haloaid\.com\/data-deletion\?code=/);
+  });
+
   it("does not require a user_id match for a bad signature, but still returns the shape", async () => {
     vi.stubEnv("META_APP_SECRET", APP_SECRET);
     const signed = makeSignedRequest({ user_id: "fb-user-9" }, "wrong-secret");

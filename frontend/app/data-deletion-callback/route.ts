@@ -17,8 +17,20 @@ export const runtime = "nodejs";
 
 const signedRequestSchema = z.string().min(1).max(8000);
 
+const PUBLIC_ORIGIN = "https://haloaid.com";
+
+/** Render's `nextUrl.origin` is the internal listen address (localhost:10000). */
+function publicOrigin(req: NextRequest): string {
+  const forwarded = req.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const host = (forwarded || req.nextUrl.host).split(":")[0].toLowerCase();
+  if (host === "haloaid.com" || host === "www.haloaid.com") {
+    return `https://${host}`;
+  }
+  return PUBLIC_ORIGIN;
+}
+
 function statusPageUrl(req: NextRequest, code: string): string {
-  return `${req.nextUrl.origin}/data-deletion?code=${encodeURIComponent(code)}`;
+  return `${publicOrigin(req)}/data-deletion?code=${encodeURIComponent(code)}`;
 }
 
 function metaOk(req: NextRequest, code: string): NextResponse {
