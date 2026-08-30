@@ -27,7 +27,7 @@ const getDataDeletionBaseUrl = (): string => {
       // fallback
     }
   }
-  return 'https://clariva-bot.vercel.app';
+  return 'https://haloaid.com';
 };
 
 function base64UrlDecode(input: string): Buffer {

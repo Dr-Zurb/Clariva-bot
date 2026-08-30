@@ -1,5 +1,6 @@
 import { LegalShell } from "@/components/legal/LegalShell";
 import { DataDeletionClient } from "./DataDeletionClient";
+import { MetaCallbackStatus } from "./MetaCallbackStatus";
 
 export const metadata = {
   title: "Data Deletion Request | Halo Aid",
@@ -14,7 +15,13 @@ export const metadata = {
  * `<DataDeletionClient>`. Legal copy stays intact for Meta app-review.
  * Visual chrome updated by halo-aid-legal (`LegalShell`).
  */
-export default function DataDeletionPage() {
+export default function DataDeletionPage({
+  searchParams,
+}: {
+  searchParams?: { code?: string };
+}) {
+  const confirmationCode = searchParams?.code?.trim() ?? "";
+
   return (
     <LegalShell activeHref="/data-deletion">
       <h1 className="text-3xl font-bold tracking-tight text-foreground">
@@ -23,6 +30,12 @@ export default function DataDeletionPage() {
       <p className="mt-2 text-sm text-muted-foreground">
         How to request deletion of your personal data
       </p>
+
+      {confirmationCode ? (
+        <div className="mt-8">
+          <MetaCallbackStatus code={confirmationCode} />
+        </div>
+      ) : null}
 
       <div className="mt-8">
         <DataDeletionClient />
