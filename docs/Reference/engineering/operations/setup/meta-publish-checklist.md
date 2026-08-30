@@ -49,17 +49,17 @@ A page that explains how users can request deletion:
 
 | URL |
 |-----|
-| `https://clariva-bot.vercel.app/data-deletion` |
+| `https://haloaid.com/data-deletion` |
 
 ### Option B: Data Deletion Callback URL (recommended)
 
-Meta POSTs to this URL when a user removes your app. Our backend implements this:
+Meta POSTs to this URL when a user removes your app. Live on the public frontend:
 
 | URL |
 |-----|
-| `https://clariva-bot.onrender.com/data-deletion-callback` |
+| `https://haloaid.com/data-deletion-callback` |
 
-Use **Option B** if you want Meta to notify you automatically when users request deletion.
+Use **Option B**. After deploy, paste that URL in Settings → Basic → User Data Deletion and click Test. Add `META_APP_SECRET` (server-only) on the Render frontend service so the signature check works.
 
 ---
 
@@ -110,10 +110,10 @@ Terms of Service URL:
 https://clariva-bot.vercel.app/terms
 
 Data Deletion Instructions URL (Option A):
-https://clariva-bot.vercel.app/data-deletion
+https://haloaid.com/data-deletion
 
 Data Deletion Callback URL (Option B):
-https://clariva-bot.onrender.com/data-deletion-callback
+https://haloaid.com/data-deletion-callback
 ```
 
 ---
