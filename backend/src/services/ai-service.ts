@@ -6,7 +6,14 @@
  * Framework-agnostic: no Express; controllers call this service and use asyncHandler.
  */
 
-import { getOpenAIClient, getOpenAIConfig } from '../config/openai';
+import {
+  cachedSystemTextPart,
+  getOpenAIClient,
+  getOpenAIConfig,
+  getOpenAIIntentClassifyConfig,
+  isGpt56Family,
+  replyPromptCacheParams,
+} from '../config/openai';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
 import type {
@@ -16,7 +23,11 @@ import type {
   CommentIntentDetectionResult,
 } from '../types/ai';
 import { toIntent, toCommentIntent, isIntentTopic, isPricingSignalKind } from '../types/ai';
-import { isRecentMedicalDeflectionWindow, type ConversationState } from '../types/conversation';
+import {
+  isOpenEmergencyCrisis,
+  isRecentMedicalDeflectionWindow,
+  type ConversationState,
+} from '../types/conversation';
 import type { Message } from '../types';
 import type { AIResponseWithActions, ToolCallFromAI } from '../types/system-actions';
 import { logAIClassification, logAIResponseGeneration, logAuditEvent } from '../utils/audit-logger';
@@ -45,8 +56,14 @@ import {
   MEDICAL_QUERY_RESPONSE_EN,
   messageHasHypertensiveCrisisBloodPressureReading,
   recentThreadHasAssistantEmergencyEscalation,
+  userMessageSignalsPostEmergencyStability,
 } from '../utils/safety-messages';
 import { POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN } from '../utils/post-medical-ack-copy';
+import {
+  buildLanguageReplyDirective,
+  type ConversationLanguage,
+} from '../utils/conversation-language';
+import { buildLlmEmptyFallbackMessage } from '../utils/dm-copy';
 import {
   isOptionalExtrasConsentPrompt,
   isSkipExtrasReply,
@@ -370,8 +387,14 @@ Respond with a single JSON object (required keys):
   - "none": not about fees/payment/pricing **unless** other keys already set pricing (then prefer the more specific signal).
 - "fee_thread_continuation": boolean — true only if conversation context shows the assistant was discussing fees/pricing and the current message is a **short follow-up** in that thread (e.g. clarifying visit type, "what about video", anaphoric "how much is it"); false otherwise.
 - "reason_first_done_adding": boolean — true only when the assistant asked whether **anything else** should be addressed at the visit (or similar) **before sharing the fee**, and the user is **only** signaling they are finished listing concerns — no new symptoms, no amount-seeking fee question. Natural paraphrases: "that's it", "thats it thanks", "nothing else", "I'm good", "nahi aur", "bas", "all set". false when they add symptoms, ask how much the fee is, or ask a new pricing question. **If true, set "fee_thread_continuation" to false** (wrap-up overrides fee-thread continuation).
+- "language": exactly one of: "en", "hi", "hi-Latn", "pa", "pa-Latn", "other", "unknown"
+  - Report the language **the patient is writing in** on the current message.
+  - "hi-Latn" = Hindi / Hinglish in Latin script (e.g. "mujhe dard hai", "papa behosh ho gye"). Transliteration is **not** English.
+  - "pa-Latn" = Punjabi in Latin script. "hi" / "pa" = native Devanagari / Gurmukhi.
+  - "other" = other Indic / Arabic scripts. "en" = clearly English with no Indic evidence.
+  - "unknown" when the message is too short or ambiguous to tell ("hi", "ok", "1", emoji-only). **Do not guess.**
 
-Example: {"intent":"ask_question","confidence":0.92,"topics":["pricing"],"is_fee_question":true,"pricing_signal":"amount_seeking","fee_thread_continuation":false,"reason_first_done_adding":false}
+Example: {"intent":"ask_question","confidence":0.92,"topics":["pricing"],"is_fee_question":true,"pricing_signal":"amount_seeking","fee_thread_continuation":false,"reason_first_done_adding":false,"language":"en"}
 
 Use "unknown" for intent only when the message does not clearly match any other intent.`;
 
@@ -404,11 +427,11 @@ When uncertain, prefer "other" over falsely classifying as high-intent. Err on t
 Respond with a single JSON object: { "intent": "<one of the valid intents>", "confidence": <number 0.0 to 1.0> }.`;
 
 /** Base receptionist system prompt (e-task-3). Practice name injected dynamically (e-task-4). e-task-2: Acknowledge, relation, conversational tone. */
-const RESPONSE_SYSTEM_PROMPT_BASE = `You are a warm, friendly medical practice receptionist. You help with scheduling and general questions. You do NOT diagnose or give medical advice.
+export const RESPONSE_SYSTEM_PROMPT_BASE = `You are a warm, friendly medical practice receptionist. You help with scheduling and general questions. You do NOT diagnose or give medical advice.
 
-HOW YOU WORK (architecture): You are the conversational layer — understand any human language or mix (English, Hindi, Hinglish, transliteration, casual spelling). No rigid keyword rules are needed for language choice: mirror the user's style. For FACTS about this practice (fees, hours, location, cancellation rules, consultation types), use ONLY the "Practice info" and "SYSTEM FACTS — FEES" blocks injected into this prompt from our live database. Those blocks are the source of truth. Never contradict them. Never tell the patient that fee or pricing information is "not in the system", "not visible", or "missing" when those blocks list an amount or note. If a block is empty for a detail, say the clinic can confirm — do not invent rupee amounts.
+NON-INTERPRETATION (hard rule): NEVER characterize a patient's reading, symptom, or vital as concerning, normal, mild, serious, high, low, safe, or unsafe. Do not interpret BP/vitals clinically. Acknowledge what they shared and help with booking or practice logistics only — the doctor interprets. NEVER invent first-aid, red-flag lists, or emergency numbers other than those already in system safety copy.
 
-LANGUAGE: Respond in the SAME language the user writes in. If they write in Hindi, Hinglish, or Hindi written in English (e.g. "kya aap available ho", "yar kitne paise", "goli bata do"), respond in that same Roman Hindi / Hinglish style—not formal English—unless their message is clearly English-only. If they use Devanagari Hindi, reply in Devanagari. Match their tone and script. STABILITY: If the conversation has been in clear English so far, stay in English—do not switch to Hinglish for flair, for the practice name, or because of fee keywords. Only mirror Hinglish when the user's actual messages use it.
+HOW YOU WORK (architecture): You are the conversational layer — understand any human language or mix (English, Hindi, Hinglish, transliteration, casual spelling). For FACTS about this practice (fees, hours, location, cancellation rules, consultation types), use ONLY the "Practice info" and "SYSTEM FACTS — FEES" blocks injected into this prompt from our live database. Those blocks are the source of truth. Never contradict them. Never tell the patient that fee or pricing information is "not in the system", "not visible", or "missing" when those blocks list an amount or note. If a block is empty for a detail, say the clinic can confirm — do not invent rupee amounts.
 
 GREETING: When currentIntent is greeting, greet back warmly, introduce yourself as the practice's assistant, and ask how you can help (e.g. book appointment, check availability, ask a question). Do NOT start collecting name, phone, or other booking details on greeting alone.
 
@@ -430,9 +453,10 @@ RELATION - When Context says "Booking for user's [relation]" (e.g. sister, mothe
 
 TONE - Be warm and natural. Match the user's energy. Avoid robotic repetition. When step is collecting_all, ALWAYS ask for ALL required fields at once - never one by one. Do not repeat the same prompt verbatim when the user has already responded. If the user asks something outside your role, politely suggest they speak with the practice.`;
 
-/** Safe fallback when response generation fails (no PHI, no medical advice). */
-const FALLBACK_RESPONSE =
-  "I didn't quite get that. Could you rephrase? Or say 'book appointment', 'check availability', 'cancel appointment', or 'reschedule appointment' if that's what you need.";
+/** Safe fallback when response generation fails (no PHI, no medical advice). lang-24 → dm-copy. */
+function llmEmptyFallback(turnLanguage: ConversationLanguage): string {
+  return buildLlmEmptyFallbackMessage({ language: turnLanguage });
+}
 
 /** e-task-5: Max message pairs (user+assistant) for AI context. Trade-off: more context vs token cost. */
 const MAX_HISTORY_PAIRS = env.AI_MAX_HISTORY_PAIRS;
@@ -800,7 +824,11 @@ export interface ClassifyIntentContext {
   /** assistant | user turns, oldest first */
   recentTurns?: { role: 'user' | 'assistant'; content: string }[];
   /** Active sub-flow from conversation metadata */
-  conversationGoal?: 'fee_quote' | 'post_medical_deflection' | 'reason_first_triage';
+  conversationGoal?:
+    | 'fee_quote'
+    | 'post_medical_deflection'
+    | 'reason_first_triage'
+    | 'active_emergency';
 }
 
 const CLASSIFY_INTENT_MAX_PRIOR_TURNS = 6;
@@ -815,17 +843,21 @@ export function buildClassifyIntentContext(
   options?: { maxTurns?: number }
 ): ClassifyIntentContext | undefined {
   const maxTurns = options?.maxTurns ?? CLASSIFY_INTENT_MAX_PRIOR_TURNS;
+  const crisisOpen = isOpenEmergencyCrisis(state);
   const reasonFirst = state.triage?.reasonFirstTriagePhase !== undefined;
   const feeThread =
     state.triage?.activeFlow === 'fee_quote' || state.lastPromptKind === 'fee_quote';
   const postMedical = !feeThread && !reasonFirst && isRecentMedicalDeflectionWindow(state);
-  const conversationGoal = reasonFirst
-    ? ('reason_first_triage' as const)
-    : feeThread
-      ? ('fee_quote' as const)
-      : postMedical
-        ? ('post_medical_deflection' as const)
-        : undefined;
+  // Active crisis outranks fee/triage goals so short follow-ups stay safety-routed.
+  const conversationGoal = crisisOpen
+    ? ('active_emergency' as const)
+    : reasonFirst
+      ? ('reason_first_triage' as const)
+      : feeThread
+        ? ('fee_quote' as const)
+        : postMedical
+          ? ('post_medical_deflection' as const)
+          : undefined;
   const turns = recentMessages
     .slice(-maxTurns)
     .map((m) => ({
@@ -851,11 +883,17 @@ function buildIntentClassificationUserContent(
     (!ctx.recentTurns?.length &&
       ctx.conversationGoal !== 'fee_quote' &&
       ctx.conversationGoal !== 'post_medical_deflection' &&
-      ctx.conversationGoal !== 'reason_first_triage')
+      ctx.conversationGoal !== 'reason_first_triage' &&
+      ctx.conversationGoal !== 'active_emergency')
   ) {
     return redactedCurrent;
   }
   const blocks: string[] = [];
+  if (ctx.conversationGoal === 'active_emergency') {
+    blocks.push(
+      '[Conversation context: An emergency (112/108) escalation is **active** in this thread. Short or vague follow-ups ("kuch batao", "help", "what do I do", "please") are **crisis follow-ups** — classify **emergency**, not medical_query / book_appointment / greeting. Only classify **medical_query** when the patient clearly signals **stability** (feeling better, stable/non-crisis vitals) or wants booking after the crisis has resolved. Never invent first-aid or medical advice.]'
+    );
+  }
   if (ctx.conversationGoal === 'reason_first_triage') {
     blocks.push(
       '[Conversation context: The assistant is asking whether anything else should be addressed at the visit and/or confirming a short summary of concerns before quoting fees. Set "reason_first_done_adding" true when the user only signals they are done (any natural wording). Set "fee_thread_continuation" false when they are done. Replies like "nothing else", "that\'s it thanks", "yes", small corrections, or brief add-ons fit this flow; pure pricing clarification may be ask_question unless the user explicitly starts booking.]'
@@ -868,7 +906,7 @@ function buildIntentClassificationUserContent(
   }
   if (ctx.conversationGoal === 'post_medical_deflection') {
     blocks.push(
-      '[Conversation context: The user recently received a brief safety message that specific health questions cannot be diagnosed in chat. Follow-ups about booking, fees, hours, or general practice logistics are appropriate; do not give diagnoses, treatment advice, or triage as if you were a clinician.]'
+      '[Conversation context: The user recently received a brief safety message that specific health questions cannot be diagnosed in chat. Follow-ups about booking, fees, hours, or general practice logistics are appropriate; do not give diagnoses, treatment advice, or triage as if you were a clinician. Never characterize vitals/symptoms as concerning/normal/mild/serious.]'
     );
   }
   if (ctx.recentTurns?.length) {
@@ -894,6 +932,7 @@ function classifyIntentUsesContext(ctx: ClassifyIntentContext | undefined): bool
     ctx.conversationGoal === 'fee_quote' ||
     ctx.conversationGoal === 'post_medical_deflection' ||
     ctx.conversationGoal === 'reason_first_triage' ||
+    ctx.conversationGoal === 'active_emergency' ||
     (ctx.recentTurns !== undefined && ctx.recentTurns.length > 0)
   );
 }
@@ -936,23 +975,24 @@ export function applyIntentPostClassificationPolicy(
 
 /**
  * e-task-dm-08: After the assistant sent canonical emergency escalation, do not repeat the same
- * emergency branch when the model wrongly keeps returning emergency on **stability** follow-ups.
- * **Primary** disambiguation is the classifier + thread context (LLM). The BP helper below is only a
- * narrow guard so we do not downgrade when **crisis-level vitals** are still present in the message.
+ * emergency branch when the patient gives **positive stability** evidence (keywords or non-crisis BP).
+ * Absence of an acute regex match is not treated as stability — LLM-only new crises stay `emergency`.
+ * Acute-phrase / crisis-BP messages always keep `emergency` even if stability wording also appears.
  */
 export function applyEmergencyIntentPostPolicy(
   result: IntentDetectionResult,
   messageText: string,
-  recentMessages: { sender_type: string; content: string }[]
+  recentMessages: { sender_type: string; content: string }[],
+  state?: Pick<ConversationState, 'safety'>
 ): IntentDetectionResult {
   if (result.intent !== 'emergency') return result;
-  if (!recentThreadHasAssistantEmergencyEscalation(recentMessages)) return result;
-  if (
-    isEmergencyUserMessage(messageText) ||
-    messageHasHypertensiveCrisisBloodPressureReading(messageText)
-  ) {
-    return result;
-  }
+  const crisisOpen =
+    (state !== undefined && isOpenEmergencyCrisis(state)) ||
+    recentThreadHasAssistantEmergencyEscalation(recentMessages);
+  if (!crisisOpen) return result;
+  if (isEmergencyUserMessage(messageText)) return result;
+  if (messageHasHypertensiveCrisisBloodPressureReading(messageText)) return result;
+  if (!userMessageSignalsPostEmergencyStability(messageText)) return result;
   return {
     ...result,
     intent: 'medical_query',
@@ -964,7 +1004,7 @@ const POST_MED_ACK_LOCALIZE_MAX_COMPLETION_TOKENS = 400;
 
 const POST_MED_ACK_LOCALIZE_SYSTEM = `You localize fixed patient-facing chat copy for a medical practice.
 
-Adapt SOURCE into the language and register that best match USER_MESSAGE_REDACTED (any language or mixed register, e.g. English, Hindi, Hinglish, Punjabi in Latin script).
+Adapt SOURCE into the language specified by the LANGUAGE directive in this system message.
 
 Output ONLY the localized message. No preamble, labels, or surrounding quotes.
 
@@ -973,7 +1013,7 @@ Rules:
 - NEVER add currency symbols, ₹, dollar signs, or digits used as prices or fees. NEVER invent amounts.
 - NEVER add medical advice, diagnoses, guarantees, or policies not stated in SOURCE.
 - Keep the same paragraph structure as SOURCE: same number of blocks separated by one blank line (two newlines).
-- If USER_MESSAGE_REDACTED is empty or clearly English-only, output natural English faithful to SOURCE (light polish ok).`;
+- Follow the LANGUAGE directive exactly.`;
 
 function stripPostMedAckLocalizeWrapper(text: string): string {
   let t = text.trim();
@@ -994,13 +1034,15 @@ function stripPostMedAckLocalizeWrapper(text: string): string {
 
 /**
  * Returns the post–medical-deflection payment-existence ack: canonical English, or AI-localized
- * when POST_MEDICAL_ACK_AI_LOCALIZE is enabled and OpenAI is available. Redacts PHI from the
- * user text before using it as a language hint only.
+ * when POST_MEDICAL_ACK_AI_LOCALIZE is enabled and OpenAI is available. Language comes from the
+ * turn resolver (`turnLanguage`), not from re-detecting the user message.
  */
 export async function resolvePostMedicalPaymentExistenceAck(
   messageText: string,
-  correlationId: string
+  correlationId: string,
+  turnLanguage: ConversationLanguage
 ): Promise<string> {
+  void messageText; // retained for call-site compatibility; language is turnLanguage (lang-04)
   const fallback = POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN;
   if (!env.POST_MEDICAL_ACK_AI_LOCALIZE) {
     return fallback;
@@ -1015,10 +1057,9 @@ export async function resolvePostMedicalPaymentExistenceAck(
     return fallback;
   }
 
-  const redactedHint = redactPhiForAI(messageText).trim().slice(0, 280);
-  const userPayload =
-    `SOURCE:\n"""\n${fallback}\n"""\n\n` +
-    `USER_MESSAGE_REDACTED (language/register hint only):\n"""\n${redactedHint || '(none)'}\n"""`;
+  const userPayload = `SOURCE:\n"""\n${fallback}\n"""`;
+  const systemContent =
+    `${POST_MED_ACK_LOCALIZE_SYSTEM}\n\n${buildLanguageReplyDirective(turnLanguage)}`;
 
   try {
     const completion = await client.chat.completions.create({
@@ -1026,7 +1067,7 @@ export async function resolvePostMedicalPaymentExistenceAck(
       max_completion_tokens: POST_MED_ACK_LOCALIZE_MAX_COMPLETION_TOKENS,
       temperature: 0.25,
       messages: [
-        { role: 'system', content: POST_MED_ACK_LOCALIZE_SYSTEM },
+        { role: 'system', content: systemContent },
         { role: 'user', content: userPayload },
       ],
     });
@@ -1047,8 +1088,9 @@ export async function resolvePostMedicalPaymentExistenceAck(
         errorMessage: 'empty_or_short_completion',
         metadata: {
           model: config.model,
-          redactionApplied: true,
+          redactionApplied: false,
           tokens: usage?.total_tokens,
+          turnLanguage,
         },
       });
       return fallback;
@@ -1061,8 +1103,9 @@ export async function resolvePostMedicalPaymentExistenceAck(
       status: 'success',
       metadata: {
         model: config.model,
-        redactionApplied: true,
+        redactionApplied: false,
         tokens: usage?.total_tokens,
+        turnLanguage,
       },
     });
     return content;
@@ -1077,7 +1120,7 @@ export async function resolvePostMedicalPaymentExistenceAck(
       resourceType: 'ai',
       status: 'failure',
       errorMessage: err instanceof Error ? err.message : 'request_failed',
-      metadata: { model: config.model, redactionApplied: true },
+      metadata: { model: config.model, redactionApplied: false, turnLanguage },
     });
     return fallback;
   }
@@ -1263,7 +1306,8 @@ export async function classifyIntent(
   correlationId: string,
   options?: ClassifyIntentOptions
 ): Promise<IntentDetectionResult> {
-  const config = getOpenAIConfig();
+  // lat-02: bounded JSON → mini tier (never flagship OPENAI_MODEL).
+  const config = getOpenAIIntentClassifyConfig();
   const client = getOpenAIClient();
 
   if (!client) {
@@ -1357,7 +1401,27 @@ export async function classifyIntent(
         typeof parsed.confidence === 'number' ? parsed.confidence : 0
       );
       const aux = normalizeIntentAuxFields(parsed);
-      const result: IntentDetectionResult = { intent, confidence, ...aux };
+      // lang-17: optional language label. Omit when absent (ratchet coerces to
+      // unknown). Malformed / out-of-set → explicit "unknown" (never throw).
+      const languageRaw = parsed.language;
+      const language: IntentDetectionResult['language'] | undefined =
+        languageRaw === undefined || languageRaw === null
+          ? undefined
+          : languageRaw === 'en' ||
+              languageRaw === 'hi' ||
+              languageRaw === 'hi-Latn' ||
+              languageRaw === 'pa' ||
+              languageRaw === 'pa-Latn' ||
+              languageRaw === 'other' ||
+              languageRaw === 'unknown'
+            ? languageRaw
+            : 'unknown';
+      const result: IntentDetectionResult = {
+        intent,
+        confidence,
+        ...(language !== undefined ? { language } : {}),
+        ...aux,
+      };
       mergeClassifierPricingSubsignals(parsed, result);
 
       await logAIClassification({
@@ -1441,7 +1505,8 @@ async function callBookingTurnClassifier(
   userContent: string,
   correlationId: string
 ): Promise<Record<string, unknown> | null> {
-  const config = getOpenAIConfig();
+  // lat-02: same bounded-JSON shape as classifyIntent → same mini tier.
+  const config = getOpenAIIntentClassifyConfig();
   const client = getOpenAIClient();
   if (!client) {
     logger.warn({ correlationId }, 'Booking turn classification skipped: OPENAI_API_KEY not set');
@@ -1872,6 +1937,8 @@ export interface GenerateResponseInput {
   recentMessages: Message[];
   currentUserMessage: string;
   correlationId: string;
+  /** Sticky reply language for this turn (lang-04). Required — model must not choose language. */
+  turnLanguage: ConversationLanguage;
   doctorContext?: DoctorContext;
   /** e-task-1: Richer context for context-aware replies */
   context?: GenerateResponseContext;
@@ -1897,7 +1964,8 @@ export type BuildResponseSystemPromptOptions = {
 };
 
 function buildResponseSystemPrompt(
-  doctorContext?: DoctorContext,
+  doctorContext: DoctorContext | undefined,
+  turnLanguage: ConversationLanguage,
   promptOpts?: BuildResponseSystemPromptOptions
 ): string {
   const suppressAllConsultationFees = promptOpts?.suppressConsultationFeeFacts === true;
@@ -1910,6 +1978,7 @@ function buildResponseSystemPrompt(
     /practice's assistant/g,
     `${practiceName}'s assistant`
   );
+  prompt += `\n\n${buildLanguageReplyDirective(turnLanguage)}`;
   const parts: string[] = [];
   if (doctorContext?.business_hours_summary?.trim()) {
     parts.push(`We're open: ${doctorContext.business_hours_summary.trim()}.`);
@@ -1989,6 +2058,72 @@ ${pricingGuardrails}`;
   return prompt;
 }
 
+type ReplyMessage = {
+  role: 'system' | 'user' | 'assistant';
+  content:
+    | string
+    | Array<{
+        type: 'text';
+        text: string;
+        prompt_cache_breakpoint?: { mode: 'explicit' };
+      }>;
+};
+
+function replyCacheKey(
+  practiceName: string,
+  turnLanguage: string,
+  promptOpts?: BuildResponseSystemPromptOptions,
+): string {
+  const feeMode = promptOpts?.suppressConsultationFeeFacts
+    ? 'nofee'
+    : promptOpts?.competingVisitTypeBuckets || promptOpts?.silentAssignmentStrict
+      ? 'notier'
+      : 'full';
+  return `dm-reply:v1:${practiceName}:${turnLanguage}:${feeMode}`;
+}
+
+function buildReplyMessages(input: {
+  model: string;
+  cacheKey: string;
+  stableSystem: string;
+  volatileSystem: string;
+  history: Array<{ role: 'user' | 'assistant'; content: string }>;
+  userContent: string;
+}): {
+  messages: ReplyMessage[];
+  cacheParams: ReturnType<typeof replyPromptCacheParams> | Record<string, never>;
+} {
+  const { model, cacheKey, stableSystem, volatileSystem, history, userContent } = input;
+  const historyMsgs = history.map((m) => ({
+    role: m.role as 'user' | 'assistant',
+    content: m.content,
+  }));
+  if (isGpt56Family(model)) {
+    return {
+      cacheParams: replyPromptCacheParams(cacheKey),
+      messages: [
+        {
+          role: 'system',
+          content: [
+            cachedSystemTextPart(stableSystem),
+            { type: 'text', text: volatileSystem },
+          ],
+        },
+        ...historyMsgs,
+        { role: 'user', content: userContent },
+      ],
+    };
+  }
+  return {
+    cacheParams: {},
+    messages: [
+      { role: 'system', content: stableSystem + volatileSystem },
+      ...historyMsgs,
+      { role: 'user', content: userContent },
+    ],
+  };
+}
+
 export async function generateResponse(input: GenerateResponseInput): Promise<string> {
   const {
     conversationId,
@@ -1997,6 +2132,7 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
     recentMessages,
     currentUserMessage,
     correlationId,
+    turnLanguage,
     doctorContext,
     context: aiContext,
     classifierSignalsFeeQuestion,
@@ -2018,7 +2154,7 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
       resourceId: conversationId,
       errorMessage: 'openai_client_not_available',
     });
-    return FALLBACK_RESPONSE;
+    return llmEmptyFallback(turnLanguage);
   }
 
   const redactedCurrent = redactPhiForAI(currentUserMessage);
@@ -2085,11 +2221,12 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
     state?.step === 'consent'
       ? ' The user has provided their details. Use a combined consent message: thank them by name, say we\'ll use their phone number to confirm the appointment by call or text, and ask "Ready to pick a time?" (e.g. "Thanks, [Name]. We\'ll use [phone] to confirm your appointment. Ready to pick a time?"). Do NOT ask "Do I have your permission to use this number?" - providing the number implies consent. CRITICAL: NEVER output placeholder text like "[Slot selection link]" or "[link]" - the system injects the real URL. If the user says yes to consent, the system handles the link; you do not have access to it. Do not invent or fake a link.'
       : '';
-  const systemPrompt = buildResponseSystemPrompt(doctorContext, {
+  const promptOpts: BuildResponseSystemPromptOptions = {
     competingVisitTypeBuckets: aiContext?.competingVisitTypeBuckets === true,
     silentAssignmentStrict: aiContext?.silentAssignmentStrict === true,
     suppressConsultationFeeFacts: aiContext?.suppressConsultationFeeFacts === true,
-  });
+  };
+  const systemPrompt = buildResponseSystemPrompt(doctorContext, turnLanguage, promptOpts);
   const suppressFeeMenu =
     aiContext?.suppressConsultationFeeFacts === true ||
     aiContext?.competingVisitTypeBuckets === true ||
@@ -2098,18 +2235,20 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
     (classifierSignalsFeeQuestion === true || isPricingInquiryMessage(redactedCurrent)) &&
     !userExplicitlyWantsToBookNow(redactedCurrent)
       ? suppressFeeMenu
-        ? ' PRIORITY: Latest turn may be about fees — **server flag: no multi-tier fee menu**. Do NOT quote or compare amounts for different visit types. Say the **practice will confirm visit type** and exact fee after; you may continue collecting any missing booking fields in the same reply, in the user’s language.'
-        : ' PRIORITY: The latest user message is about pricing/fees (including paise/kitne/rupees). Lead with SYSTEM FACTS - FEES if any amount is listed; state the exact fee clearly. Never claim fees are missing from the system when that block includes an amount. If you are mid-booking flow, combine the fee answer with asking for any still-missing fields in one reply, in the user language.'
+        ? ' PRIORITY: Latest turn may be about fees — **server flag: no multi-tier fee menu**. Do NOT quote or compare amounts for different visit types. Say the **practice will confirm visit type** and exact fee after; you may continue collecting any missing booking fields in the same reply, in the language from the LANGUAGE directive.'
+        : ' PRIORITY: The latest user message is about pricing/fees (including paise/kitne/rupees). Lead with SYSTEM FACTS - FEES if any amount is listed; state the exact fee clearly. Never claim fees are missing from the system when that block includes an amount. If you are mid-booking flow, combine the fee answer with asking for any still-missing fields in one reply, in the language from the LANGUAGE directive.'
       : '';
-  const systemContent =
-    systemPrompt +
+  const volatileSystem =
     `\n\nCurrent detected intent for the latest user message: ${currentIntent}.${stepContext}${collectedContext}${aiContextBlock}${collectingAllHint}${collectionHint}${confirmDetailsHint}${consentHint}${pricingFocusHint}`;
-
-  const messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [
-    { role: 'system', content: systemContent },
-    ...historyMessages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-    { role: 'user', content: redactedCurrent },
-  ];
+  const practiceName = doctorContext?.practice_name?.trim() || 'Halo Aid';
+  const { messages, cacheParams } = buildReplyMessages({
+    model: config.model,
+    cacheKey: replyCacheKey(practiceName, turnLanguage, promptOpts),
+    stableSystem: systemPrompt,
+    volatileSystem,
+    history: historyMessages,
+    userContent: redactedCurrent,
+  });
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
@@ -2117,6 +2256,7 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
         model: config.model,
         max_completion_tokens: config.maxTokens,
         messages,
+        ...cacheParams,
       });
 
       const content = completion.choices[0]?.message?.content?.trim();
@@ -2132,9 +2272,19 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
           tokens: usage?.total_tokens,
           errorMessage: 'empty_completion',
         });
-        return FALLBACK_RESPONSE;
+        return llmEmptyFallback(turnLanguage);
       }
 
+      logger.info(
+        {
+          correlationId,
+          conversationId,
+          model: config.model,
+          cachedTokens: usage?.prompt_tokens_details?.cached_tokens ?? 0,
+          promptTokens: usage?.prompt_tokens,
+        },
+        'Response generation: prompt cache',
+      );
       await logAIResponseGeneration({
         correlationId,
         model: config.model,
@@ -2167,7 +2317,7 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
           resourceId: conversationId,
           errorMessage: 'response_generation_failed_after_retries',
         });
-        return FALLBACK_RESPONSE;
+        return llmEmptyFallback(turnLanguage);
       }
 
       const delayMs = RETRY_DELAYS_MS[attempt] ?? 4000;
@@ -2175,7 +2325,7 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
     }
   }
 
-  return FALLBACK_RESPONSE;
+  return llmEmptyFallback(turnLanguage);
 }
 
 // ============================================================================
@@ -2243,6 +2393,7 @@ export async function generateResponseWithActions(
     recentMessages,
     currentUserMessage,
     correlationId,
+    turnLanguage,
     doctorContext,
     availableTools,
   } = input;
@@ -2255,7 +2406,7 @@ export async function generateResponseWithActions(
       { correlationId, conversationId },
       'generateResponseWithActions skipped: OPENAI_API_KEY not set'
     );
-    return { reply: FALLBACK_RESPONSE };
+    return { reply: llmEmptyFallback(turnLanguage) };
   }
 
   const redactedCurrent = redactPhiForAI(currentUserMessage);
@@ -2283,22 +2434,25 @@ export async function generateResponseWithActions(
       ? ' User is picking which appointment. Use pick_appointment tool.'
       : '';
 
-  const systemPrompt = buildResponseSystemPrompt(doctorContext);
-  const systemContent =
-    systemPrompt +
+  const systemPrompt = buildResponseSystemPrompt(doctorContext, turnLanguage);
+  const volatileSystem =
     `\n\nIntent: ${currentIntent}.${stepContext}${cancelContext}${pickContext} If the user clearly confirms or picks, call the appropriate tool. Otherwise reply with a short clarification.`;
-
-  const messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [
-    { role: 'system', content: systemContent },
-    ...historyMessages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-    { role: 'user', content: redactedCurrent },
-  ];
+  const practiceName = doctorContext?.practice_name?.trim() || 'Halo Aid';
+  const { messages, cacheParams } = buildReplyMessages({
+    model: config.model,
+    cacheKey: replyCacheKey(practiceName, turnLanguage),
+    stableSystem: systemPrompt,
+    volatileSystem,
+    history: historyMessages,
+    userContent: redactedCurrent,
+  });
 
   const baseParams = {
     model: config.model,
     max_completion_tokens: config.maxTokens,
     messages,
     stream: false as const,
+    ...cacheParams,
   };
 
   // Force tool call when only confirm_cancel - API guarantees a tool call, no text-only reply
@@ -2339,7 +2493,7 @@ export async function generateResponseWithActions(
       }
 
       const content = msg?.content?.trim();
-      const reply = content || (toolCalls.length > 0 ? '' : FALLBACK_RESPONSE);
+      const reply = content || (toolCalls.length > 0 ? '' : llmEmptyFallback(turnLanguage));
 
       await logAIResponseGeneration({
         correlationId,
@@ -2374,14 +2528,14 @@ export async function generateResponseWithActions(
           resourceId: conversationId,
           errorMessage: 'response_with_actions_failed_after_retries',
         });
-        return { reply: FALLBACK_RESPONSE };
+        return { reply: llmEmptyFallback(turnLanguage) };
       }
       const delayMs = RETRY_DELAYS_MS[attempt] ?? 4000;
       await sleep(delayMs);
     }
   }
 
-  return { reply: FALLBACK_RESPONSE };
+  return { reply: llmEmptyFallback(turnLanguage) };
 }
 
 // ============================================================================
@@ -2393,12 +2547,12 @@ const DM_REPLY_BRIDGE_MAX_COMPLETION_TOKENS = 120;
 const DM_REPLY_BRIDGE_SYSTEM = `You write a very short follow-up for a clinic assistant on Instagram DM.
 The patient already sees another block with exact consultation fees and booking steps (rupee amounts are there only — not in your text).
 
-Write 1–2 short sentences that acknowledge their message in a natural, warm tone. Match the user's language style (e.g. Hinglish when they use Hinglish).
+Write 1–2 short sentences that acknowledge their message in a natural, warm tone.
 
 STRICT RULES:
 - Do NOT state prices, fees, rupees, INR, amounts, or any digits that could be read as a price.
 - Do NOT invent or repeat URLs, booking links, or phone numbers.
-- If costs matter, refer only to "the details above" / "jo upar diya hai" — never quote numbers.
+- If costs matter, refer only to "the details above" — never quote numbers.
 - Plain text only (no markdown headings, no bullet lists).`;
 
 /**
@@ -2409,8 +2563,9 @@ export async function appendOptionalDmReplyBridge(params: {
   correlationId: string;
   userText: string;
   baseReply: string;
+  turnLanguage: ConversationLanguage;
 }): Promise<string> {
-  const { correlationId, userText, baseReply } = params;
+  const { correlationId, userText, baseReply, turnLanguage } = params;
   if (!env.AI_DM_REPLY_BRIDGE_ENABLED) {
     return baseReply;
   }
@@ -2424,12 +2579,15 @@ export async function appendOptionalDmReplyBridge(params: {
     return baseReply;
   }
 
+  const systemContent =
+    `${DM_REPLY_BRIDGE_SYSTEM}\n\n${buildLanguageReplyDirective(turnLanguage)}`;
+
   try {
     const completion = await client.chat.completions.create({
       model: config.model,
       max_completion_tokens: DM_REPLY_BRIDGE_MAX_COMPLETION_TOKENS,
       messages: [
-        { role: 'system', content: DM_REPLY_BRIDGE_SYSTEM },
+        { role: 'system', content: systemContent },
         {
           role: 'user',
           content: `Patient's latest message (redacted):\n${redacted.slice(0, 500)}\n\nWrite only the brief acknowledgment (1–2 sentences).`,

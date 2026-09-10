@@ -9,10 +9,12 @@ import type { PatientListSortId, PatientSegmentId } from './patient-list-types';
 export const PATIENT_SEGMENT_IDS = [
   'active-90d',
   'new-30d',
+  'revisit-30d',
   'at-risk-followup',
   'no-show-prone',
   'has-allergies',
   'has-open-episodes',
+  'incomplete-consult',
   'untagged',
 ] as const satisfies readonly PatientSegmentId[];
 
@@ -35,7 +37,11 @@ export function segmentWherePredicate(
     case 'active-90d':
       return `AND last_appointment_date >= now() - INTERVAL '90 days'`;
     case 'new-30d':
-      return `AND created_at >= now() - INTERVAL '30 days'`;
+      // PKD-D3: first completed visit in 30d — runtime in patient-service (visit-segment).
+      return `AND /* visit-based new-30d */ TRUE`;
+    case 'revisit-30d':
+      // PKD-D4: completed in 30d + prior completed — runtime in patient-service.
+      return `AND /* visit-based revisit-30d */ TRUE`;
     case 'at-risk-followup':
       return `AND id IN (SELECT p.patient_id FROM prescriptions p WHERE p.doctor_id = ${doctorIdParam} AND p.follow_up_value IS NOT NULL AND (p.created_at + (p.follow_up_value || ' ' || COALESCE(p.follow_up_unit, 'days'))::INTERVAL) < now() AND NOT EXISTS (SELECT 1 FROM appointments a WHERE a.patient_id = p.patient_id AND a.doctor_id = ${doctorIdParam} AND a.appointment_date > (p.created_at + (p.follow_up_value || ' ' || COALESCE(p.follow_up_unit, 'days'))::INTERVAL) AND a.status IN ('completed', 'confirmed')))`;
     case 'no-show-prone':
@@ -44,8 +50,11 @@ export function segmentWherePredicate(
       return `AND EXISTS (SELECT 1 FROM patient_allergies WHERE patient_id = patients.id AND doctor_id = ${doctorIdParam} AND archived_at IS NULL)`;
     case 'has-open-episodes':
       return `AND EXISTS (SELECT 1 FROM patient_problem_list_v WHERE patient_id = patients.id AND doctor_id = ${doctorIdParam} AND source = 'episode' AND episode_status IS DISTINCT FROM 'closed')`;
+    case 'incomplete-consult':
+      // PKD-D2: started session + appointment not completed — runtime in patient-service.
+      return `AND /* incomplete-consult */ TRUE`;
     case 'untagged':
-      return `AND (patient_tag IS NULL OR patient_tag = '')`;
+      return `AND (patient_tags = '{}' OR patient_tags IS NULL) AND (patient_tag IS NULL OR patient_tag = '')`;
     default: {
       const _exhaustive: never = segment;
       return _exhaustive;

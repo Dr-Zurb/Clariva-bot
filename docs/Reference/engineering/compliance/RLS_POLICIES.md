@@ -487,6 +487,34 @@ auth.jwt() ->> 'role' = 'admin'
 
 ---
 
+### `visit_payments` Table (migration 223, reversal columns 225)
+
+**RLS Enabled:** ✅ Yes
+
+**Policies:** None. Deny-all for `anon` / `authenticated`.
+
+**Access:** Service-role backend only (`collectVisitPayment`, `recordTillReversal`, `getDeskHisab`). Staff and doctors reach it through `allowStaff` + `resolveActingDoctor`. No `auth.uid()` policies.
+
+**Writes:** INSERT only. UPDATE/DELETE are blocked by trigger (`reject_visit_payments_mutation`). Reversal is a new row (`method = reversal`), never an update of the collect.
+
+---
+
+### `visit_narrative_provenance` Table (migration 224)
+
+**RLS Enabled:** ✅ Yes
+
+**Policies:** None. Deny-all for `anon` / `authenticated`.
+
+**Access:** Service-role backend only. Doctor scoping is at the endpoint (`vnt-03` / `vnt-04` writers). No `auth.uid()` policies.
+
+**Writes:** INSERT only from the application. UPDATE always raises. Direct DELETE raises. `ON DELETE CASCADE` from `consultation_transcripts` (and session / appointment) is the sole erase path.
+
+---
+
+## Storage — `clinic-branding` (migration 212)
+
+Private bucket. Path `{doctor_id}/logo.{png|jpg}`. Doctors get SELECT-own on the first folder segment (`auth.uid()`). No INSERT/UPDATE/DELETE policies — writes go through the service-role backend (signed upload URL + register). Public patients read via the HMAC-gated `/api/v1/public/prescriptions/:id/logo` route, never `getPublicUrl`.
+
 ## 🚫 Never Do These
 
 **AI Agents MUST NEVER:**

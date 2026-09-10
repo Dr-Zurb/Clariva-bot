@@ -128,11 +128,15 @@ export function useCockpitV3Layout(opts: UseCockpitV3LayoutOptions) {
       fn: (
         tree: PaneTreeNode,
       ) => { ok: boolean; tree?: PaneTreeNode; reason?: string },
+      applyOptions?: ApplyLayoutOptions,
     ): CockpitMutationResult => {
       const res = fn(shell.paneTree);
       if (res.ok && res.tree) {
         discardFocusSession();
-        shell.applyLayout({ version: LAYOUT_VERSION, paneTree: res.tree });
+        shell.applyLayout(
+          { version: LAYOUT_VERSION, paneTree: res.tree },
+          applyOptions,
+        );
         return { ok: true };
       }
       return { ok: false, reason: res.reason };
@@ -308,8 +312,10 @@ export function useCockpitV3Layout(opts: UseCockpitV3LayoutOptions) {
       sourceGroupId: string,
       targetGroupId: string,
     ): CockpitMutationResult =>
-      dispatchEngine((tree) =>
-        swapPaneTreeNodes(tree, sourceGroupId, targetGroupId),
+      // panelKey keeps ResizablePanel DOM ids stable — skip splitter rebalance.
+      dispatchEngine(
+        (tree) => swapPaneTreeNodes(tree, sourceGroupId, targetGroupId),
+        { rebalance: false },
       ),
     [dispatchEngine],
   );

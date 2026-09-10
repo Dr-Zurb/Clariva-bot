@@ -6,19 +6,21 @@ import { describe, expect, it } from "vitest";
 import { deriveMessageDeliveryStatus } from "../MessageStatus";
 
 describe("deriveMessageDeliveryStatus", () => {
-  it("returns none while pending", () => {
-    expect(deriveMessageDeliveryStatus({ pending: true })).toBe("none");
+  it("returns sent (single tick) while pending", () => {
+    expect(deriveMessageDeliveryStatus({ pending: true })).toBe("sent");
   });
 
   it("returns none when failed", () => {
     expect(deriveMessageDeliveryStatus({ failed: true })).toBe("none");
   });
 
-  it("returns delivered when acked but not seen", () => {
-    expect(deriveMessageDeliveryStatus({ pending: false, seen: false })).toBe("delivered");
+  it("returns delivered (double tick) when acked but not read", () => {
+    expect(deriveMessageDeliveryStatus({ pending: false, seen: false })).toBe(
+      "delivered"
+    );
   });
 
-  it("returns seen when seen flag is set", () => {
-    expect(deriveMessageDeliveryStatus({ seen: true })).toBe("seen");
+  it("returns read (blue double tick) when seen", () => {
+    expect(deriveMessageDeliveryStatus({ seen: true })).toBe("read");
   });
 });

@@ -1,13 +1,12 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useRef } from "react";
 import {
   deriveMessageDeliveryStatus,
-  MessageStatus,
+  MessageBubbleMeta,
 } from "@/components/consultation/MessageStatus";
 import { QuotedParentPreview } from "@/components/consultation/QuotedParentPreview";
 import { formatSystemMessageBody } from "@/lib/consultation/format-system-message";
-import { formatTime } from "@/lib/format-date";
 import { useLongPress } from "@/lib/gestures/use-long-press";
 import { useSwipeToReply } from "@/lib/gestures/use-swipe-to-reply";
 import {
@@ -18,6 +17,12 @@ import {
 import { EditableMessageBubble } from "@/components/consultation/EditableMessageBubble";
 import { MessageBubbleMenu } from "@/components/consultation/MessageBubbleMenu";
 import { renderMarkdownLite } from "@/lib/text/markdown-lite";
+import {
+  MESSAGE_BUBBLE_FAINT,
+  MESSAGE_BUBBLE_LINK,
+  MESSAGE_BUBBLE_MUTED,
+  messageBubbleClass,
+} from "@/lib/text/message-bubble-theme";
 import type { ConsultationMessage } from "@/lib/text/types";
 
 export interface ReactionPickerAnchorCoords {
@@ -47,8 +52,9 @@ export interface MessageBubbleProps {
   onOpenReactionPicker?: (
     messageId: string,
     anchor: HTMLElement,
-    coords?: ReactionPickerAnchorCoords,
-  ) => void;  userNameById?: (userId: string) => string;
+    coords?: ReactionPickerAnchorCoords
+  ) => void;
+  userNameById?: (userId: string) => string;
   /** Header counterparty name — used for soft-delete tombstone copy. */
   counterpartyName?: string;
   /** text-B6 — inline edit for this bubble. */
@@ -68,7 +74,7 @@ export interface MessageBubbleProps {
 function formatDeletedByLabel(
   message: ConsultationMessage,
   counterpartyName: string | undefined,
-  currentUserId: string,
+  currentUserId: string
 ): string {
   if (message.senderRole === "patient") return "Patient";
   if (message.senderId !== currentUserId) {
@@ -89,8 +95,17 @@ function formatBytesShort(n: number | null | undefined): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * Cap belongs on the row wrapper, not the bubble: a percentage
+ * max-width inside a shrink-to-fit parent resolves cyclically and
+ * collapses the bubble to min-content ("hell / o").
+ */
 function bubbleMaxWidthForLayout(layout: MessageBubbleProps["layout"]): string {
-  return layout === "panel" ? "max-w-[90%]" : layout === "canvas" ? "max-w-[75%]" : "max-w-[80%]";
+  return layout === "panel"
+    ? "max-w-[88%]"
+    : layout === "canvas"
+      ? "max-w-[75%]"
+      : "max-w-[80%]";
 }
 
 /**
@@ -103,7 +118,7 @@ export function MessageBubble({
   currentUserRole: _currentUserRole,
   layout,
   mode,
-  showTimestamp: showTs,
+  showTimestamp: _showTs,
   signedAttachmentUrl,
   lookupMessageById,
   getSenderDisplayName,
@@ -134,7 +149,7 @@ export function MessageBubble({
       if (!onOpenReactionPicker || !bubbleBodyRef.current) return;
       onOpenReactionPicker(m.id, bubbleBodyRef.current, coords);
     },
-    [m.id, onOpenReactionPicker],
+    [m.id, onOpenReactionPicker]
   );
 
   const longPressHandlers = useLongPress({
@@ -144,13 +159,13 @@ export function MessageBubble({
     },
   });
 
-  const showMenu =
-    mode === "live" &&
-    !!onStartReply &&
-    !m.failed &&
-    !m.pending;
+  const showMenu = mode === "live" && !!onStartReply && !m.failed && !m.pending;
 
-  const { handlers: swipeHandlers, dragOffset, dragging } = useSwipeToReply({
+  const {
+    handlers: swipeHandlers,
+    dragOffset,
+    dragging,
+  } = useSwipeToReply({
     onTrigger: () => onStartReply?.(m),
     enabled: showMenu,
   });
@@ -161,7 +176,7 @@ export function MessageBubble({
       e.preventDefault();
       openPickerFromAnchor();
     },
-    [onOpenReactionPicker, openPickerFromAnchor],
+    [onOpenReactionPicker, openPickerFromAnchor]
   );
 
   const handlePointerDown = useCallback(
@@ -170,7 +185,7 @@ export function MessageBubble({
       longPressCoordsRef.current = { x: e.clientX, y: e.clientY };
       longPressHandlers.onPointerDown(e);
     },
-    [longPressHandlers, onOpenReactionPicker],
+    [longPressHandlers, onOpenReactionPicker]
   );
 
   const handlePointerUp = useCallback(
@@ -178,7 +193,7 @@ export function MessageBubble({
       longPressHandlers.onPointerUp(e);
       longPressCoordsRef.current = null;
     },
-    [longPressHandlers],
+    [longPressHandlers]
   );
 
   const handlePointerCancel = useCallback(
@@ -186,30 +201,36 @@ export function MessageBubble({
       longPressHandlers.onPointerCancel(e);
       longPressCoordsRef.current = null;
     },
-    [longPressHandlers],
-  );  // Plan 06 · Task 38 — system rows render as a full-width italic banner.
+    [longPressHandlers]
+  ); // Plan 06 · Task 38 — system rows render as a full-width italic banner.
   if (m.kind === "system") {
     return (
       <li className="flex items-center justify-center">
         <p
-          className="inline-flex items-center gap-1.5 text-center text-xs italic text-gray-500"
+          className={
+            layout === "panel"
+              ? "inline-flex max-w-full items-center gap-1 px-1 text-center text-[11px] leading-snug text-muted-foreground"
+              : "inline-flex items-center gap-1.5 text-center text-xs italic text-gray-500"
+          }
           data-system-event={m.systemEvent ?? undefined}
         >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden
-          >
-            <circle cx="12" cy="12" r="10" />
-            <polyline points="12 6 12 12 16 14" />
-          </svg>
+          {layout === "panel" ? null : (
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <circle cx="12" cy="12" r="10" />
+              <polyline points="12 6 12 12 16 14" />
+            </svg>
+          )}
           <span>
             {formatSystemMessageBody({
               body: m.body,
@@ -225,12 +246,9 @@ export function MessageBubble({
 
   const isSelf = m.senderId === currentUserId;
   const align = isSelf ? "items-end" : "items-start";
-  const bubble = isSelf
-    ? "bg-blue-600 text-white"
-    : "bg-white text-gray-900 border border-gray-200";
+  const bubble = messageBubbleClass(isSelf);
   const showFailedActions = mode !== "readonly" && m.failed;
-  const deliveryStatus =
-    isSelf && mode !== "readonly" ? deriveMessageDeliveryStatus(m) : "none";
+  const deliveryStatus = isSelf ? deriveMessageDeliveryStatus(m) : "none";
   const bubbleMaxWidth = bubbleMaxWidthForLayout(layout);
 
   const replyParentId = m.reply_to_id ?? null;
@@ -238,15 +256,15 @@ export function MessageBubble({
   const isDeleted = !!m.deleted_at;
   const aggregatedReactions = aggregateReactions(reactions);
   const reactionEntries = Object.entries(aggregatedReactions).filter(
-    ([, users]) => users.length > 0,
+    ([, users]) => users.length > 0
   );
   const resolveUserName =
     userNameById ??
     ((userId: string) => (userId === currentUserId ? "You" : "Participant"));
 
+  const showMeta = !isEditing;
   const bubbleClassName =
-    bubbleMaxWidth +
-    " message-body whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm shadow-sm " +
+    "message-body w-max max-w-full whitespace-pre-wrap break-words px-2.5 pb-1 pt-1.5 text-[14.5px] leading-[1.35] shadow-sm " +
     bubble +
     (m.pending ? " opacity-70" : "");
 
@@ -255,7 +273,9 @@ export function MessageBubble({
       ref={bubbleBodyRef}
       onContextMenu={onOpenReactionPicker ? handleContextMenu : undefined}
       onPointerDown={onOpenReactionPicker ? handlePointerDown : undefined}
-      onPointerMove={onOpenReactionPicker ? longPressHandlers.onPointerMove : undefined}
+      onPointerMove={
+        onOpenReactionPicker ? longPressHandlers.onPointerMove : undefined
+      }
       onPointerUp={onOpenReactionPicker ? handlePointerUp : undefined}
       onPointerCancel={onOpenReactionPicker ? handlePointerCancel : undefined}
       onPointerLeave={onOpenReactionPicker ? handlePointerCancel : undefined}
@@ -263,9 +283,7 @@ export function MessageBubble({
     >
       {m.pinned_at && !isDeleted ? (
         <p
-          className={
-            "mb-1 text-[10px] " + (isSelf ? "text-white/70" : "text-gray-400")
-          }
+          className={"mb-1 text-[10px] " + MESSAGE_BUBBLE_FAINT}
           aria-label="Pinned message"
         >
           📌 pinned
@@ -284,117 +302,123 @@ export function MessageBubble({
         />
       ) : null}
       {isDeleted ? (
-        <div className="italic text-sm text-gray-400">
-          (deleted by {formatDeletedByLabel(m, counterpartyName, currentUserId)})
-        </div>
+        <>
+          <div className="italic text-sm text-gray-400">
+            (deleted by{" "}
+            {formatDeletedByLabel(m, counterpartyName, currentUserId)})
+          </div>
+          <MessageBubbleMeta createdAt={m.createdAt} status="none" />
+        </>
       ) : isEditing && onSaveEdit && onCancelEdit ? (
         <EditableMessageBubble
           initialBody={m.body}
-          isSelf={isSelf}
           saving={editSaving}
           onSave={(body) => onSaveEdit(m.id, body)}
           onCancel={onCancelEdit}
         />
       ) : (
-        <span className="inline-flex w-full flex-wrap items-end gap-x-1">
-          <span className="min-w-0 flex-1">
-            {m.kind === "attachment" && m.attachmentUrl ? (
-              (() => {
-                const signedUrl = signedAttachmentUrl ?? null;
-                const sizeLabel = formatBytesShort(m.attachmentByteSize);
-                const captionLine =
-                  sizeLabel && m.body
-                    ? `${m.body} · ${sizeLabel}`
-                    : m.body ||
-                      (sizeLabel ? `Attachment · ${sizeLabel}` : "Attachment");
-                if (isImageMime(m.attachmentMimeType)) {
-                  return (
-                    <div className="flex flex-col gap-1.5">
-                      {signedUrl ? (
-                        onOpenLightbox ? (
-                          <button
-                            type="button"
-                            onClick={() => onOpenLightbox(m.id)}
-                            className="block overflow-hidden rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
-                            aria-label={`View ${m.body || "image"}`}
-                          >
-                            {/* eslint-disable-next-line @next/next/no-img-element -- direct <img> renders fastest for chat thumbs and dodges next/image's domain config */}
-                            <img
-                              src={signedUrl}
-                              alt={m.body || "Image attachment"}
-                              loading="lazy"
-                              className="block max-h-60 w-auto max-w-full rounded-lg bg-gray-100 object-contain"
-                            />
-                          </button>
+        <>
+          <span>
+            {m.kind === "attachment" && m.attachmentUrl
+              ? (() => {
+                  const signedUrl = signedAttachmentUrl ?? null;
+                  const sizeLabel = formatBytesShort(m.attachmentByteSize);
+                  const captionLine =
+                    sizeLabel && m.body
+                      ? `${m.body} · ${sizeLabel}`
+                      : m.body ||
+                        (sizeLabel
+                          ? `Attachment · ${sizeLabel}`
+                          : "Attachment");
+                  if (isImageMime(m.attachmentMimeType)) {
+                    return (
+                      <div className="flex flex-col gap-1.5">
+                        {signedUrl ? (
+                          onOpenLightbox ? (
+                            <button
+                              type="button"
+                              onClick={() => onOpenLightbox(m.id)}
+                              className="block overflow-hidden rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                              aria-label={`View ${m.body || "image"}`}
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element -- direct <img> renders fastest for chat thumbs and dodges next/image's domain config */}
+                              <img
+                                src={signedUrl}
+                                alt={m.body || "Image attachment"}
+                                loading="lazy"
+                                className="block max-h-60 w-auto max-w-full rounded-lg bg-gray-100 object-contain"
+                              />
+                            </button>
+                          ) : (
+                            <a
+                              href={signedUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block overflow-hidden rounded-lg"
+                              aria-label={`Open ${m.body || "image"} in a new tab`}
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element -- direct <img> renders fastest for chat thumbs and dodges next/image's domain config */}
+                              <img
+                                src={signedUrl}
+                                alt={m.body || "Image attachment"}
+                                loading="lazy"
+                                className="block max-h-60 w-auto max-w-full rounded-lg bg-gray-100 object-contain"
+                              />
+                            </a>
+                          )
                         ) : (
-                          <a
-                            href={signedUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="block overflow-hidden rounded-lg"
-                            aria-label={`Open ${m.body || "image"} in a new tab`}
+                          <div
+                            className="flex h-32 w-40 items-center justify-center rounded-lg bg-gray-100 text-xs text-gray-500"
+                            aria-label="Loading image preview"
                           >
-                            {/* eslint-disable-next-line @next/next/no-img-element -- direct <img> renders fastest for chat thumbs and dodges next/image's domain config */}
-                            <img
-                              src={signedUrl}
-                              alt={m.body || "Image attachment"}
-                              loading="lazy"
-                              className="block max-h-60 w-auto max-w-full rounded-lg bg-gray-100 object-contain"
-                            />
-                          </a>
-                        )
-                      ) : (
-                        <div
-                          className="flex h-32 w-40 items-center justify-center rounded-lg bg-gray-100 text-xs text-gray-500"
-                          aria-label="Loading image preview"
+                            {m.pending ? "Uploading…" : "Loading…"}
+                          </div>
+                        )}
+                        <span
+                          className={"text-[11px] " + MESSAGE_BUBBLE_MUTED}
                         >
-                          {m.pending ? "Uploading…" : "Loading…"}
-                        </div>
-                      )}
-                      <span
-                        className={
-                          "text-[11px] " +
-                          (isSelf ? "text-white/85" : "text-gray-500")
-                        }
-                      >
-                        {captionLine}
+                          {captionLine}
+                        </span>
+                      </div>
+                    );
+                  }
+                  return signedUrl ? (
+                    <a
+                      href={signedUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={
+                        "inline-flex items-center gap-1.5 underline " +
+                        MESSAGE_BUBBLE_LINK
+                      }
+                    >
+                      <span aria-hidden>📎</span>
+                      <span>{captionLine}</span>
+                    </a>
+                  ) : (
+                    <span
+                      className={
+                        "inline-flex items-center gap-1.5 " +
+                        MESSAGE_BUBBLE_MUTED
+                      }
+                    >
+                      <span aria-hidden>📎</span>
+                      <span>
+                        {m.pending ? "Uploading…" : "Loading…"} {captionLine}
                       </span>
-                    </div>
-                  );
-                }
-                return signedUrl ? (
-                  <a
-                    href={signedUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={
-                      "inline-flex items-center gap-1.5 underline " +
-                      (isSelf ? "text-white" : "text-blue-700")
-                    }
-                  >
-                    <span aria-hidden>📎</span>
-                    <span>{captionLine}</span>
-                  </a>
-                ) : (
-                  <span
-                    className={
-                      "inline-flex items-center gap-1.5 " +
-                      (isSelf ? "text-white/85" : "text-gray-600")
-                    }
-                  >
-                    <span aria-hidden>📎</span>
-                    <span>
-                      {m.pending ? "Uploading…" : "Loading…"} {captionLine}
                     </span>
-                  </span>
-                );
-              })()
-            ) : (
-              renderMarkdownLite(m.body)
-            )}
+                  );
+                })()
+              : renderMarkdownLite(m.body)}
           </span>
-          {isSelf ? <MessageStatus status={deliveryStatus} /> : null}
-        </span>
+          {showMeta ? (
+            <MessageBubbleMeta
+              createdAt={m.createdAt}
+              edited={!!m.edited_at && !isDeleted}
+              status={deliveryStatus}
+            />
+          ) : null}
+        </>
       )}
     </div>
   );
@@ -406,7 +430,8 @@ export function MessageBubble({
       style={
         showMenu
           ? {
-              transform: dragOffset > 0 ? `translateX(${dragOffset}px)` : undefined,
+              transform:
+                dragOffset > 0 ? `translateX(${dragOffset}px)` : undefined,
               transition: dragging ? "none" : "transform 200ms ease-out",
             }
           : undefined
@@ -419,42 +444,36 @@ export function MessageBubble({
       data-message-id={m.id}
       data-failed={m.failed ? "true" : undefined}
     >
-      {showTs ? (
-        <p className="mb-0.5 flex items-center gap-1 px-1 text-[11px] text-gray-500">
-          <span>{formatTime(m.createdAt)}</span>
-          {m.edited_at && !isDeleted ? (
-            <span
-              className="text-gray-400"
-              title={`Original sent at ${formatTime(m.createdAt)}`}
-            >
-              · edited
-            </span>
-          ) : null}
-        </p>
-      ) : null}
-      {showMenu ? (
-        <div
-          className={
-            "absolute top-0 z-10 " + (isSelf ? "right-0" : "left-0")
-          }
-        >
-          <MessageBubbleMenu
-            message={m}
-            isOwn={isSelf}
-            mode={mode}
-            currentUserRole={_currentUserRole}
-            reactionAnchorRef={bubbleBodyRef}
-            onStartReply={() => onStartReply?.(m)}
-            onAddReaction={(anchor) => onOpenReactionPicker?.(m.id, anchor)}
-            onStartEdit={() => onStartEdit?.(m)}
-            onSoftDelete={() => onSoftDelete?.(m)}
-            onTogglePin={onTogglePin ? () => onTogglePin(m.id) : undefined}
-            pinCapReached={pinCapReached}
-          />
-        </div>
-      ) : null}
-      {showMenu ? (
-        <div className={"relative " + (isSelf ? "self-end" : "self-start")}>
+      <div
+        className={
+          bubbleMaxWidth +
+          " relative flex w-full " +
+          (isSelf ? "justify-end self-end" : "justify-start self-start")
+        }
+      >
+        {showMenu ? (
+          <div
+            className={
+              "absolute z-10 " + (isSelf ? "-left-1 top-1" : "-right-1 top-1")
+            }
+          >
+            <MessageBubbleMenu
+              message={m}
+              isOwn={isSelf}
+              mode={mode}
+              currentUserRole={_currentUserRole}
+              reactionAnchorRef={bubbleBodyRef}
+              hoverOnly={layout === "panel"}
+              onStartReply={() => onStartReply?.(m)}
+              onAddReaction={(anchor) => onOpenReactionPicker?.(m.id, anchor)}
+              onStartEdit={() => onStartEdit?.(m)}
+              onSoftDelete={() => onSoftDelete?.(m)}
+              onTogglePin={onTogglePin ? () => onTogglePin(m.id) : undefined}
+              pinCapReached={pinCapReached}
+            />
+          </div>
+        ) : null}
+        {showMenu ? (
           <div
             className="pointer-events-none absolute right-full top-1/2 mr-2 -translate-y-1/2 select-none text-lg text-gray-400"
             style={{ opacity: Math.min(1, dragOffset / 60) }}
@@ -463,11 +482,9 @@ export function MessageBubble({
           >
             ↩
           </div>
-          {messageBubble}
-        </div>
-      ) : (
-        messageBubble
-      )}
+        ) : null}
+        {messageBubble}
+      </div>
       {!isDeleted && reactionEntries.length > 0 ? (
         <div className="mt-1 flex flex-wrap gap-1 animate-in fade-in duration-200">
           {reactionEntries.map(([emoji, users]) => {
@@ -550,7 +567,7 @@ export function MessageBubble({
 /** Group bubble timestamps — show time on first message of a minute-bucket. */
 export function shouldShowMessageTimestamp(
   prev: ConsultationMessage | undefined,
-  current: ConsultationMessage,
+  current: ConsultationMessage
 ): boolean {
   if (!prev) return true;
   const a = new Date(prev.createdAt).getTime();

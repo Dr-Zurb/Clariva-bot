@@ -22,17 +22,32 @@
  *
  * ## Phase 2 — Hard-delete (at retention-years end)
  *
- *   Remove the underlying storage object, INSERT a row into
+ *   Remove the underlying media (Twilio Composition DELETE for
+ *   `twilio-composition:<CJ…>` URIs — REC1-D1; Supabase Storage
+ *   `deleteObject` for `<bucket>/<path>` URIs), INSERT a row into
  *   `archival_history`, UPDATE `recording_artifact_index.hard_deleted_at`,
  *   and DELETE any `signed_url_revocation` rows whose `url_prefix`
  *   matches the artifact's URI (the revocation prefix is moot once
  *   the object is gone).
  *
- *   Irreversible. Row-level lock (`FOR UPDATE ... SKIP LOCKED`) before
- *   the storage call so concurrent cron runs cannot both delete the
- *   same object. Storage-service errors are re-thrown — we explicitly
- *   do NOT stamp `hard_deleted_at` if the storage call failed, so the
- *   next cron run retries.
+ *   Irreversible. There is no `FOR UPDATE … SKIP LOCKED`. PostgREST
+ *   cannot express that lock, and adding an RPC would be a migration
+ *   (REC5-D1 forbids one). The concurrency defence is a re-verify
+ *   SELECT (`hard_deleted_at IS NULL`) immediately before the
+ *   provider/storage call, plus a conditional stamp
+ *   (`UPDATE … WHERE hard_deleted_at IS NULL`).
+ *
+ *   Residual race: two cron ticks can both pass re-verify and both
+ *   issue a delete. Double provider-delete is possible. It is made
+ *   harmless by treating Twilio 404 (composition already gone) as
+ *   success — the same end-state rule storage-service uses for
+ *   Supabase not-found. At most one run stamps; both may INSERT
+ *   `archival_history` (append-only duplicates are the existing
+ *   trade-off vs leaving the index un-stamped).
+ *
+ *   Provider/storage errors are not swallowed into a success audit
+ *   row. We explicitly do NOT stamp `hard_deleted_at` if the destroy
+ *   call failed, so the next cron run retries (REC5-D6).
  *
  * ## Dry-run mode
  *
@@ -41,8 +56,10 @@
  *                           structured `event: 'archival_dry_run',
  *                           phase: 'hide'` payload. Does NOT UPDATE.
  *     - `runHardDeletePhase` — scans for candidates, logs them with
- *                           `event: 'archival_dry_run', phase: 'delete'`.
- *                           Does NOT delete.
+ *                           `event: 'archival_dry_run', phase: 'delete'`
+ *                           including a provider split (Twilio /
+ *                           Supabase / unclassifiable). Does NOT
+ *                           delete — not at Twilio, not in Storage.
  *
  *   The admin-preview API (`GET /api/v1/admin/archival-preview`)
  *   re-uses the `scan*Candidates` helpers exported here to render the
@@ -66,12 +83,29 @@
 
 import { getSupabaseAdminClient } from '../config/database';
 import { logger } from '../config/logger';
-import { InternalError } from '../utils/errors';
+import { InternalError, NotFoundError } from '../utils/errors';
 import {
   resolveRetentionPolicy,
   type ResolveRetentionPolicyResult,
 } from '../services/regulatory-retention-service';
-import { deleteObject } from '../services/storage-service';
+import { deleteObject, parseStorageUri } from '../services/storage-service';
+import { deleteComposition } from '../services/twilio-compositions';
+import { deleteRecording } from '../services/twilio-recordings';
+
+/**
+ * Locked REC1-D1 (`recording-artifact-service.ts`). Duplicated here so
+ * this worker does not import the registry writer.
+ */
+const TWILIO_COMPOSITION_STORAGE_URI_PREFIX = 'twilio-composition:';
+const COMPOSITION_SID_RE = /^CJ[a-zA-Z0-9]{10,}$/;
+const TWILIO_RECORDING_STORAGE_URI_PREFIX = 'twilio-recording:';
+const RECORDING_SID_RE = /^RT[a-zA-Z0-9]{10,}$/;
+
+export type ArchivalStorageHost =
+  | 'twilio_composition'
+  | 'twilio_recording'
+  | 'supabase_storage'
+  | 'unclassifiable';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 // 365.25 captures leap-year drift over multi-year retention; for 3-21
@@ -97,6 +131,9 @@ export interface RunHardDeletePhaseResult {
   candidates: number;
   deleted: number;
   bytesFreed: number;
+  deletedTwilio: number;
+  deletedSupabase: number;
+  failedUnclassifiable: number;
 }
 
 // ----------------------------------------------------------------------------
@@ -123,6 +160,8 @@ export interface DeleteCandidate {
   sessionId: string;
   artifactKind: string;
   storageUri: string;
+  /** Classified from `storage_uri` via REC1-D1 / parseStorageUri. */
+  storageHost: ArchivalStorageHost;
   bytes: number | null;
   sessionEndedAt: string;
   ageDays: number;
@@ -307,7 +346,7 @@ function ageDays(endedAt: string, asOf: Date): number {
  * Returning a Date so the caller can stamp `retentionCutoffAt` in the
  * admin-preview response without recomputing.
  */
-function computeRetentionCutoff(
+export function computeRetentionCutoff(
   sessionEndedAt: string,
   policy: ResolveRetentionPolicyResult,
   patientDob: string | null,
@@ -398,6 +437,7 @@ export async function scanDeleteCandidates(
       sessionId: row.session_id,
       artifactKind: row.artifact_kind,
       storageUri: row.storage_uri,
+      storageHost: classifyStorageUri(row.storage_uri).host,
       bytes: row.bytes,
       sessionEndedAt: sess.actual_ended_at,
       ageDays: ageDays(sess.actual_ended_at, asOf),
@@ -513,8 +553,10 @@ export async function runHardDeletePhase(
       { correlationId: input.correlationId, dryRun: input.dryRun },
       'archival_delete_phase_no_candidates',
     );
-    return { candidates: 0, deleted: 0, bytesFreed: 0 };
+    return emptyDeleteResult();
   }
+
+  const providerSplit = countProviderSplit(candidates);
 
   if (input.dryRun) {
     logger.info(
@@ -523,9 +565,11 @@ export async function runHardDeletePhase(
         event: 'archival_dry_run',
         phase: 'delete',
         count: candidates.length,
+        providerSplit,
         sample: candidates.slice(0, 10).map((c) => ({
           sessionId: c.sessionId,
           artifactKind: c.artifactKind,
+          storageHost: c.storageHost,
           ageDays: c.ageDays,
           retentionCutoffAt: c.retentionCutoffAt,
           policy: c.policy,
@@ -533,7 +577,14 @@ export async function runHardDeletePhase(
       },
       'archival_delete_phase_dry_run',
     );
-    return { candidates: candidates.length, deleted: 0, bytesFreed: 0 };
+    return {
+      candidates: candidates.length,
+      deleted: 0,
+      bytesFreed: 0,
+      deletedTwilio: 0,
+      deletedSupabase: 0,
+      failedUnclassifiable: 0,
+    };
   }
 
   const admin = getSupabaseAdminClient();
@@ -541,13 +592,16 @@ export async function runHardDeletePhase(
 
   let deleted = 0;
   let bytesFreed = 0;
+  let deletedTwilio = 0;
+  let deletedSupabase = 0;
+  let failedUnclassifiable = 0;
 
   for (const candidate of candidates) {
     try {
-      // Re-verify hard_deleted_at IS NULL right before the storage call,
-      // as a concurrency-defence layer. A concurrent cron run that
-      // already won the race would have stamped hard_deleted_at. Our
-      // SELECT → delete window is small but nonzero.
+      // Re-verify hard_deleted_at IS NULL right before the destroy call.
+      // Not a row-level lock (see file header). Two ticks can still race;
+      // Twilio 404 / Supabase not-found is what makes a double-delete
+      // harmless.
       const { data: live, error: liveErr } = await admin
         .from('recording_artifact_index')
         .select('id, hard_deleted_at, storage_uri, bytes')
@@ -571,9 +625,30 @@ export async function runHardDeletePhase(
         continue;
       }
 
-      await deleteObject(candidate.storageUri);
+      const storageUri =
+        typeof live.storage_uri === 'string' && live.storage_uri.length > 0
+          ? live.storage_uri
+          : candidate.storageUri;
+      const classified = classifyStorageUri(storageUri);
 
-      const deletionReason = buildDeletionReason(candidate);
+      if (classified.host === 'unclassifiable') {
+        failedUnclassifiable += 1;
+        logger.error(
+          {
+            correlationId: input.correlationId,
+            artifactId: candidate.artifactId,
+            sessionId: candidate.sessionId,
+            storageUri,
+            storageHost: classified.host,
+          },
+          'archival_delete_phase_unclassifiable_uri',
+        );
+        continue;
+      }
+
+      const providerOutcome = await destroyArtifactMedia(classified, storageUri);
+
+      const deletionReason = buildDeletionReason(candidate, classified.host);
 
       const { error: historyErr } = await admin
         .from('archival_history')
@@ -581,25 +656,24 @@ export async function runHardDeletePhase(
           artifact_id: candidate.artifactId,
           session_id: candidate.sessionId,
           artifact_kind: candidate.artifactKind,
-          storage_uri: candidate.storageUri,
+          storage_uri: storageUri,
           bytes: candidate.bytes,
           deletion_reason: deletionReason,
           policy_id: candidate.policy.policyId,
         });
 
+      // Destroy succeeded. History insert failing does not block the
+      // stamp — leaving hard_deleted_at NULL would retry the provider
+      // delete forever. Duplicate archival_history on a later retry is
+      // the existing append-only trade-off (see header).
       if (historyErr) {
-        // Storage object is already gone. Log + move on rather than
-        // throwing; the next cron's `hard_deleted_at IS NULL` scan will
-        // retry the history insert on the same artifact. Re-inserting
-        // history is acceptable — the table is append-only and the
-        // duplicate row just doubles up one audit entry. Acceptable
-        // trade-off vs the alternative of leaving the index row
-        // un-stamped forever.
         logger.error(
           {
             correlationId: input.correlationId,
             artifactId: candidate.artifactId,
             error: historyErr.message,
+            storageHost: classified.host,
+            providerOutcome,
           },
           'archival_delete_phase_history_insert_failed',
         );
@@ -612,28 +686,55 @@ export async function runHardDeletePhase(
         .is('hard_deleted_at', null);
 
       if (stampErr) {
+        // Media is gone; index is not stamped. Next tick retries.
+        // Twilio 404 is treated as success so the retry is harmless.
         logger.error(
           {
             correlationId: input.correlationId,
             artifactId: candidate.artifactId,
             error: stampErr.message,
+            storageHost: classified.host,
+            providerOutcome,
+            historyWritten: !historyErr,
+            stamped: false,
           },
           'archival_delete_phase_stamp_failed',
         );
         continue;
       }
 
-      // Best-effort revocation-list cleanup. Per task spec note 7 the
-      // worker may DELETE matching `signed_url_revocation` rows. Today
-      // (Task 33) the revocation prefix is per-patient
-      // (`recordings/patient_<uuid>/`) — deleting it prematurely while
-      // other artifacts under the same patient are still live would
-      // re-open patient self-serve access to those remaining artifacts.
-      // Only delete the revocation row when no other live artifacts
-      // remain under that same prefix.
-      await maybeCleanupRevocationRow(candidate.storageUri, input.correlationId);
+      logger.info(
+        {
+          correlationId: input.correlationId,
+          artifactId: candidate.artifactId,
+          sessionId: candidate.sessionId,
+          storageHost: classified.host,
+          compositionSid:
+            classified.host === 'twilio_composition'
+              ? classified.compositionSid
+              : undefined,
+          recordingSid:
+            classified.host === 'twilio_recording'
+              ? classified.recordingSid
+              : undefined,
+          providerOutcome,
+          historyWritten: !historyErr,
+          stamped: true,
+        },
+        'archival_delete_phase_provider_recorded',
+      );
+
+      await maybeCleanupRevocationRow(storageUri, input.correlationId);
 
       deleted += 1;
+      if (
+        classified.host === 'twilio_composition' ||
+        classified.host === 'twilio_recording'
+      ) {
+        deletedTwilio += 1;
+      } else {
+        deletedSupabase += 1;
+      }
       if (typeof candidate.bytes === 'number') bytesFreed += candidate.bytes;
     } catch (err) {
       logger.error(
@@ -653,19 +754,157 @@ export async function runHardDeletePhase(
       candidates: candidates.length,
       deleted,
       bytesFreed,
+      deletedTwilio,
+      deletedSupabase,
+      failedUnclassifiable,
+      providerSplit,
     },
     'archival_delete_phase_complete',
   );
 
-  return { candidates: candidates.length, deleted, bytesFreed };
+  return {
+    candidates: candidates.length,
+    deleted,
+    bytesFreed,
+    deletedTwilio,
+    deletedSupabase,
+    failedUnclassifiable,
+  };
 }
 
-function buildDeletionReason(candidate: DeleteCandidate): string {
-  const base = `retention_expired_country=${candidate.policy.country}_specialty=${candidate.policy.specialty}_years=${candidate.policy.retentionYears}`;
-  if (candidate.policy.retentionUntilAge != null) {
-    return `${base}_untilAge=${candidate.policy.retentionUntilAge}`;
+function emptyDeleteResult(): RunHardDeletePhaseResult {
+  return {
+    candidates: 0,
+    deleted: 0,
+    bytesFreed: 0,
+    deletedTwilio: 0,
+    deletedSupabase: 0,
+    failedUnclassifiable: 0,
+  };
+}
+
+function countProviderSplit(candidates: DeleteCandidate[]): {
+  twilio_composition: number;
+  twilio_recording: number;
+  supabase_storage: number;
+  unclassifiable: number;
+} {
+  const split = {
+    twilio_composition: 0,
+    twilio_recording: 0,
+    supabase_storage: 0,
+    unclassifiable: 0,
+  };
+  for (const c of candidates) {
+    split[c.storageHost] += 1;
   }
-  return base;
+  return split;
+}
+
+export type ClassifiedStorageUri =
+  | { host: 'twilio_composition'; compositionSid: string }
+  | { host: 'twilio_recording'; recordingSid: string }
+  | { host: 'supabase_storage' }
+  | { host: 'unclassifiable' };
+
+/**
+ * Route a `storage_uri` using p1's recorded convention (REC1-D1), not
+ * a `CJ` hunt. Twilio-hosted rows are `twilio-composition:<CJ…>` or
+ * `twilio-recording:<RT…>`, both slash-free. Supabase-hosted rows parse
+ * as `<bucket>/<path>`. Anything else is an index-population bug — loud
+ * failure, no stamp.
+ *
+ * The two Twilio hosts are distinct resources: deleting a Composition
+ * leaves its source Recordings intact and vice versa, so each artifact
+ * row has to reach its own DELETE endpoint.
+ */
+export function classifyStorageUri(storageUri: string): ClassifiedStorageUri {
+  const trimmed = typeof storageUri === 'string' ? storageUri.trim() : '';
+  if (!trimmed) return { host: 'unclassifiable' };
+
+  if (trimmed.startsWith(TWILIO_COMPOSITION_STORAGE_URI_PREFIX)) {
+    const sid = trimmed.slice(TWILIO_COMPOSITION_STORAGE_URI_PREFIX.length);
+    if (COMPOSITION_SID_RE.test(sid) && !sid.includes('/')) {
+      return { host: 'twilio_composition', compositionSid: sid };
+    }
+    return { host: 'unclassifiable' };
+  }
+
+  if (trimmed.startsWith(TWILIO_RECORDING_STORAGE_URI_PREFIX)) {
+    const sid = trimmed.slice(TWILIO_RECORDING_STORAGE_URI_PREFIX.length);
+    if (RECORDING_SID_RE.test(sid) && !sid.includes('/')) {
+      return { host: 'twilio_recording', recordingSid: sid };
+    }
+    return { host: 'unclassifiable' };
+  }
+
+  // Scheme-prefixed URIs (Twilio Media URLs, s3://, …) are neither
+  // REC1-D1 nor the bare `<bucket>/<path>` convention. parseStorageUri
+  // would accept `https://…` as bucket `https:` — that is the REC1-D7
+  // lie this routing exists to prevent.
+  if (/^(https?|s3):\/\//i.test(trimmed)) {
+    return { host: 'unclassifiable' };
+  }
+
+  try {
+    parseStorageUri(trimmed);
+    return { host: 'supabase_storage' };
+  } catch {
+    return { host: 'unclassifiable' };
+  }
+}
+
+/**
+ * Destroy media at the classified provider. Twilio 404 (already gone)
+ * is success so a stamp-failed retry / concurrent double-delete is
+ * harmless. Other provider errors throw — caller must not stamp.
+ */
+async function destroyArtifactMedia(
+  classified: Exclude<ClassifiedStorageUri, { host: 'unclassifiable' }>,
+  storageUri: string,
+): Promise<'deleted' | 'already_absent'> {
+  if (classified.host === 'twilio_composition') {
+    try {
+      await deleteComposition(classified.compositionSid);
+      return 'deleted';
+    } catch (err) {
+      if (err instanceof NotFoundError) {
+        return 'already_absent';
+      }
+      throw err;
+    }
+  }
+  if (classified.host === 'twilio_recording') {
+    try {
+      await deleteRecording(classified.recordingSid);
+      return 'deleted';
+    } catch (err) {
+      if (err instanceof NotFoundError) {
+        return 'already_absent';
+      }
+      throw err;
+    }
+  }
+  await deleteObject(storageUri);
+  return 'deleted';
+}
+
+function buildDeletionReason(
+  candidate: DeleteCandidate,
+  host: Exclude<ArchivalStorageHost, 'unclassifiable'>,
+): string {
+  const base = `retention_expired_country=${candidate.policy.country}_specialty=${candidate.policy.specialty}_years=${candidate.policy.retentionYears}`;
+  const withAge =
+    candidate.policy.retentionUntilAge != null
+      ? `${base}_untilAge=${candidate.policy.retentionUntilAge}`
+      : base;
+  if (host === 'twilio_composition') {
+    return `${withAge}_provider=twilio_composition_source_recordings=intact`;
+  }
+  if (host === 'twilio_recording') {
+    return `${withAge}_provider=twilio_recording_derived_compositions=intact`;
+  }
+  return `${withAge}_provider=supabase_storage`;
 }
 
 /**

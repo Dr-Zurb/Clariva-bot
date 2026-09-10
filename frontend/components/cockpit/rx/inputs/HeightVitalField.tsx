@@ -12,10 +12,19 @@ import {
 } from "@/components/cockpit/rx/sections/field-styles";
 import { cn } from "@/lib/utils";
 import { cmToFtIn, evaluateRange, ftInToCm } from "@/lib/cockpit/vitals-derive";
-import { vitalGridSpanClass, VITAL_CELL_CLASS } from "@/lib/cockpit/vitals-group-layout";
+import {
+  vitalGridSpanClass,
+  VITAL_CELL_CLASS,
+} from "@/lib/cockpit/vitals-group-layout";
 import { resolveVital } from "@/lib/cockpit/vitals-schema";
 import { VitalContextFields } from "@/components/cockpit/rx/inputs/VitalContextFields";
+import {
+  useVitalExtrasOpen,
+  VitalExtrasPanel,
+  VitalExtrasToggle,
+} from "@/components/cockpit/rx/inputs/VitalExtrasCollapse";
 import { LastVisitVitalGhost } from "@/components/cockpit/rx/inputs/LastVisitVitalGhost";
+import { numericVitalExtrasHaveData } from "@/lib/cockpit/vital-extras";
 
 const HEIGHT_UNITS = ["cm", "ft/in"] as const;
 type HeightUnit = (typeof HEIGHT_UNITS)[number];
@@ -78,6 +87,7 @@ export function HeightVitalField({
   ctx,
   rangeCtx,
   ghost,
+  ghostSourceLabel = "prev",
   sparkline,
   trailing,
   gridSpan = 1,
@@ -109,12 +119,15 @@ export function HeightVitalField({
 
   const maxFeet = Math.floor(cmToFtIn(def.hardMax).feet);
   const maxInches = 11;
+  const extras = useVitalExtrasOpen(
+    numericVitalExtrasHaveData(state.fields, "vitalsHtCm")
+  );
 
   const setCanonicalCm = useCallback(
     (cm: number | null) => {
       setField("vitalsHtCm", cm == null ? null : clampHeightCm(cm));
     },
-    [setField],
+    [setField]
   );
 
   const commitCmDraft = useCallback(
@@ -134,7 +147,7 @@ export function HeightVitalField({
       setCmDraft(String(rounded));
       setField("vitalsHtCm", clamped);
     },
-    [setField, displayCmText, cmUnit.precision],
+    [setField, displayCmText, cmUnit.precision]
   );
 
   const onFtInChange = (feetRaw: string, inchesRaw: string) => {
@@ -151,110 +164,141 @@ export function HeightVitalField({
 
   return (
     <div className={vitalGridSpanClass(gridSpan)}>
-    <div className={VITAL_CELL_CLASS}>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className={RX_FIELD_LABEL_CLASS}>{label}</span>
-        <UnitToggle activeUnit={unitSymbol} onSelect={setUnitSymbol} />
-        {sparkline}
-      </div>
+      <div className={VITAL_CELL_CLASS}>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className={RX_FIELD_LABEL_CLASS}>{label}</span>
+          <UnitToggle activeUnit={unitSymbol} onSelect={setUnitSymbol} />
+          {sparkline}
+        </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        {unitSymbol === "cm" ? (
-          <div className="flex min-w-[5.5rem] flex-1 items-center gap-1.5">
-            <input
-              ref={cmInputRef}
-              type="text"
-              inputMode="decimal"
-              value={cmDraft}
-              onChange={(e) => setCmDraft(e.target.value)}
-              onBlur={() => commitCmDraft(cmDraft)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  commitCmDraft(cmDraft);
-                  cmInputRef.current?.blur();
+        <div className="flex flex-wrap items-center gap-2">
+          {unitSymbol === "cm" ? (
+            <div className="flex min-w-[5.5rem] flex-1 items-center gap-1.5">
+              <input
+                ref={cmInputRef}
+                type="text"
+                inputMode="decimal"
+                value={cmDraft}
+                onChange={(e) => setCmDraft(e.target.value)}
+                onBlur={() => commitCmDraft(cmDraft)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    commitCmDraft(cmDraft);
+                    cmInputRef.current?.blur();
+                  }
+                }}
+                placeholder={ghostCm != null ? String(ghostCm) : "—"}
+                className={cn(
+                  RX_FIELD_INPUT_CLASS,
+                  "mt-0 w-full max-w-[8rem] tabular-nums"
+                )}
+                aria-label="Height in cm"
+                data-testid="height-cm-input"
+              />
+              <span className="whitespace-nowrap text-xs text-muted-foreground">
+                cm
+              </span>
+            </div>
+          ) : (
+            <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-1.5">
+              <input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={maxFeet}
+                step={1}
+                value={ftIn?.feet ?? ""}
+                onChange={(e) =>
+                  onFtInChange(
+                    e.target.value,
+                    ftIn?.inches != null ? String(ftIn.inches) : ""
+                  )
                 }
-              }}
-              placeholder={ghostCm != null ? String(ghostCm) : "—"}
-              className={cn(RX_FIELD_INPUT_CLASS, "mt-0 w-full max-w-[8rem] tabular-nums")}
-              aria-label="Height in cm"
-              data-testid="height-cm-input"
-            />
-            <span className="whitespace-nowrap text-xs text-muted-foreground">cm</span>
-          </div>
-        ) : (
-          <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-1.5">
-            <input
-              type="number"
-              inputMode="numeric"
-              min={0}
-              max={maxFeet}
-              step={1}
-              value={ftIn?.feet ?? ""}
-              onChange={(e) =>
-                onFtInChange(e.target.value, ftIn?.inches != null ? String(ftIn.inches) : "")
-              }
-              placeholder={ghostFtIn != null ? String(ghostFtIn.feet) : "—"}
-              className={cn(RX_FIELD_INPUT_CLASS, "mt-0 w-14 shrink-0 sm:w-16")}
-              aria-label="Height feet"
-              data-testid="height-feet-input"
-            />
-            <span className="text-xs text-muted-foreground">ft</span>
-            <input
-              type="number"
-              inputMode="numeric"
-              min={0}
-              max={maxInches}
-              step={1}
-              value={ftIn?.inches ?? ""}
-              onChange={(e) =>
-                onFtInChange(ftIn?.feet != null ? String(ftIn.feet) : "", e.target.value)
-              }
-              placeholder={ghostFtIn != null ? String(ghostFtIn.inches) : "—"}
-              className={cn(RX_FIELD_INPUT_CLASS, "mt-0 w-14 shrink-0 sm:w-16")}
-              aria-label="Height inches"
-              data-testid="height-inches-input"
-            />
-            <span className="text-xs text-muted-foreground">in</span>
-          </div>
-        )}
-        <RangeFlagIcon label={label} flag={flag} />
-        {trailing}
+                placeholder={ghostFtIn != null ? String(ghostFtIn.feet) : "—"}
+                className={cn(
+                  RX_FIELD_INPUT_CLASS,
+                  "mt-0 w-14 shrink-0 sm:w-16"
+                )}
+                aria-label="Height feet"
+                data-testid="height-feet-input"
+              />
+              <span className="text-xs text-muted-foreground">ft</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={maxInches}
+                step={1}
+                value={ftIn?.inches ?? ""}
+                onChange={(e) =>
+                  onFtInChange(
+                    ftIn?.feet != null ? String(ftIn.feet) : "",
+                    e.target.value
+                  )
+                }
+                placeholder={ghostFtIn != null ? String(ghostFtIn.inches) : "—"}
+                className={cn(
+                  RX_FIELD_INPUT_CLASS,
+                  "mt-0 w-14 shrink-0 sm:w-16"
+                )}
+                aria-label="Height inches"
+                data-testid="height-inches-input"
+              />
+              <span className="text-xs text-muted-foreground">in</span>
+            </div>
+          )}
+          <RangeFlagIcon label={label} flag={flag} />
+          {trailing}
+          <VitalExtrasToggle
+            open={extras.open}
+            onToggle={extras.toggle}
+            label={label}
+            testId="vital-extras-toggle-vitalsHtCm"
+          />
+        </div>
+
+        <VitalExtrasPanel open={extras.open}>
+          <VitalContextFields
+            parentKey="vitalsHtCm"
+            noteKey="vitalsHtCm"
+            noteLabel={label}
+          />
+        </VitalExtrasPanel>
+
+        {unitSymbol === "cm" && ghostCm != null && canonical == null ? (
+          <LastVisitVitalGhost
+            label={label}
+            displayText={`${ghostCm} cm`}
+            onApply={() => setField("vitalsHtCm", ghostCm)}
+            testId="vital-last-visit-vitalsHtCm"
+            sourceLabel={ghostSourceLabel}
+          />
+        ) : unitSymbol === "cm" && ghostCm != null ? (
+          <span
+            className="block text-[10px] text-muted-foreground/70"
+            aria-label={`${ghostSourceLabel} ${label}: ${ghostCm} cm`}
+          >
+            {ghostSourceLabel} {ghostCm} cm
+          </span>
+        ) : null}
+        {unitSymbol === "ft/in" && ghostFtIn != null && canonical == null ? (
+          <LastVisitVitalGhost
+            label={label}
+            displayText={`${ghostFtIn.feet} ft ${ghostFtIn.inches} in`}
+            onApply={() => setField("vitalsHtCm", ghostCm!)}
+            testId="vital-last-visit-vitalsHtCm-ftin"
+            sourceLabel={ghostSourceLabel}
+          />
+        ) : unitSymbol === "ft/in" && ghostFtIn != null ? (
+          <span
+            className="block text-[10px] text-muted-foreground/70"
+            aria-label={`${ghostSourceLabel} ${label}: ${ghostFtIn.feet} ft ${ghostFtIn.inches} in`}
+          >
+            {ghostSourceLabel} {ghostFtIn.feet} ft {ghostFtIn.inches} in
+          </span>
+        ) : null}
       </div>
-
-      <VitalContextFields parentKey="vitalsHtCm" noteKey="vitalsHtCm" noteLabel={label} />
-
-      {unitSymbol === "cm" && ghostCm != null && canonical == null ? (
-        <LastVisitVitalGhost
-          label={label}
-          displayText={`${ghostCm} cm`}
-          onApply={() => setField("vitalsHtCm", ghostCm)}
-          testId="vital-last-visit-vitalsHtCm"
-        />
-      ) : unitSymbol === "cm" && ghostCm != null ? (
-        <span
-          className="block text-[10px] text-muted-foreground/70"
-          aria-label={`Last visit ${label}: ${ghostCm} cm`}
-        >
-          prev {ghostCm} cm
-        </span>
-      ) : null}
-      {unitSymbol === "ft/in" && ghostFtIn != null && canonical == null ? (
-        <LastVisitVitalGhost
-          label={label}
-          displayText={`${ghostFtIn.feet} ft ${ghostFtIn.inches} in`}
-          onApply={() => setField("vitalsHtCm", ghostCm!)}
-          testId="vital-last-visit-vitalsHtCm-ftin"
-        />
-      ) : unitSymbol === "ft/in" && ghostFtIn != null ? (
-        <span
-          className="block text-[10px] text-muted-foreground/70"
-          aria-label={`Last visit ${label}: ${ghostFtIn.feet} ft ${ghostFtIn.inches} in`}
-        >
-          prev {ghostFtIn.feet} ft {ghostFtIn.inches} in
-        </span>
-      ) : null}
-    </div>
     </div>
   );
 }

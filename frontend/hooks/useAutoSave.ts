@@ -29,10 +29,13 @@
  *      state='error', error set, retry() callable.
  *
  * Race / cancellation:
- *   - If `value` changes while a save is in-flight, the result of the
- *     in-flight save is discarded; another save is scheduled for the
- *     newer value. We tag each save with a monotonically-increasing
- *     `pendingIdRef` and only commit state from the most-recent save.
+ *   - Saves are single-flight. A flush (Print / Send) that lands while
+ *     autosave is in-flight waits, then writes the latest snapshot.
+ *     Overlapping delete-then-insert PATCHes were doubling medicines
+ *     on the printed parchi.
+ *   - If `value` changes while a save is in-flight, UI state from the
+ *     older save is discarded. We tag each save with a monotonically-
+ *     increasing `saveIdRef` and only commit state from the latest.
  *
  * "Force final save before send" path:
  *   - Callers can call `flush()` to bypass the debounce and persist
@@ -81,8 +84,12 @@ export interface UseAutoSaveResult {
   error: Error | null;
   /** True when there is a debounced save pending (timer active). */
   isPending: boolean;
-  /** Force an immediate save (cancels pending debounce). */
-  flush: () => Promise<void>;
+  /**
+   * Force an immediate save (cancels pending debounce).
+   * `force` writes even when the hook is disabled (e.g. Send before
+   * the dirty flag is set, or after a seed/RESET).
+   */
+  flush: (options?: { force?: boolean }) => Promise<void>;
   /** Re-run save against the latest value after a failure. */
   retry: () => Promise<void>;
 }
@@ -102,9 +109,13 @@ export function useAutoSave<T>({
   const [isPending, setIsPending] = useState<boolean>(false);
 
   const isFirstRunRef = useRef(true);
+  /** Skip the first *enabled* snapshot only if we mounted already enabled (load). */
+  const skipInitialEnabledSnapshotRef = useRef(enabled);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Monotonic "save id" — only the latest one commits state.
   const saveIdRef = useRef(0);
+  /** In-flight save chain — flush waits instead of starting a parallel PATCH. */
+  const inFlightRef = useRef<Promise<void> | null>(null);
   // Always-fresh references so flush() / retry() see the latest value
   // and save fn without re-binding (and without forcing the consumer
   // to memoize their save callback).
@@ -129,30 +140,42 @@ export function useAutoSave<T>({
    * overwrite a newer state.
    */
   const performSave = useCallback(async (): Promise<void> => {
-    const myId = ++saveIdRef.current;
-    setState("saving");
-    setIsPending(false);
-    try {
-      await saveRef.current(valueRef.current);
-      // Only commit if this is still the latest save.
-      if (myId === saveIdRef.current) {
-        setState("saved");
-        setSavedAt(new Date());
-        setError(null);
-      }
-    } catch (err) {
-      if (myId === saveIdRef.current) {
-        const e = err instanceof Error ? err : new Error(String(err));
-        setError(e);
-        setState("error");
-        try {
-          onErrorRef.current?.(err);
-        } catch {
-          /* swallow telemetry errors */
+    const run = async (): Promise<void> => {
+      const myId = ++saveIdRef.current;
+      setState("saving");
+      setIsPending(false);
+      try {
+        await saveRef.current(valueRef.current);
+        // Only commit if this is still the latest save.
+        if (myId === saveIdRef.current) {
+          setState("saved");
+          setSavedAt(new Date());
+          setError(null);
         }
+      } catch (err) {
+        if (myId === saveIdRef.current) {
+          const e = err instanceof Error ? err : new Error(String(err));
+          setError(e);
+          setState("error");
+          try {
+            onErrorRef.current?.(err);
+          } catch {
+            /* swallow telemetry errors */
+          }
+        }
+        // Re-throw so flush() callers can `await` and react.
+        throw err;
       }
-      // Re-throw so flush() callers can `await` and react.
-      throw err;
+    };
+
+    const pending = inFlightRef.current?.then(run, run) ?? run();
+    inFlightRef.current = pending;
+    try {
+      await pending;
+    } finally {
+      if (inFlightRef.current === pending) {
+        inFlightRef.current = null;
+      }
     }
   }, []);
 
@@ -160,15 +183,18 @@ export function useAutoSave<T>({
    * Public: cancel pending debounce and save immediately.
    * Returns the save promise (so callers can await before "Send").
    */
-  const flush = useCallback(async (): Promise<void> => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-    setIsPending(false);
-    if (!enabled) return;
-    await performSave();
-  }, [enabled, performSave]);
+  const flush = useCallback(
+    async (options?: { force?: boolean }): Promise<void> => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      setIsPending(false);
+      if (!enabled && !options?.force) return;
+      await performSave();
+    },
+    [enabled, performSave]
+  );
 
   /** Public: retry the last failure. */
   const retry = useCallback(async (): Promise<void> => {
@@ -176,14 +202,24 @@ export function useAutoSave<T>({
     await performSave();
   }, [enabled, performSave]);
 
-  // The actual debounce: when value changes, (re)schedule a trailing
-  // save `debounceMs` after the last change. We DO NOT save on first
-  // mount — initial render is a load, not an edit.
+  // Debounce on value change. First enabled snapshot is skipped only when
+  // we mounted already enabled (load). Mounting disabled, then enabling
+  // on the first user edit, must schedule a save (rxl-03).
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      setIsPending(false);
+      return;
+    }
     if (isFirstRunRef.current) {
       isFirstRunRef.current = false;
-      return;
+      if (skipInitialEnabledSnapshotRef.current) {
+        skipInitialEnabledSnapshotRef.current = false;
+        return;
+      }
     }
     if (timerRef.current) {
       clearTimeout(timerRef.current);
@@ -203,12 +239,10 @@ export function useAutoSave<T>({
         timerRef.current = null;
       }
     };
-    // We intentionally key only on `value` and `debounceMs`. `enabled`
-    // toggling is rare and re-running the effect on save callback
-    // identity would create unwanted PATCH storms when callers don't
-    // memoize.
+    // `enabled` is required so a seed (dirty=false) cannot leave a
+    // pending timer, and the first user edit (dirty=true) does save.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value, debounceMs]);
+  }, [value, debounceMs, enabled]);
 
   return { state, savedAt, error, isPending, flush, retry };
 }

@@ -27,7 +27,10 @@ function row(name: string, dosage = "10mg"): MedicineRowValue {
   };
 }
 
-function dbMed(name: string, dosage: string | null = "10mg"): PrescriptionMedicine {
+function dbMed(
+  name: string,
+  dosage: string | null = "10mg"
+): PrescriptionMedicine {
   return {
     id: "med-1",
     prescription_id: "rx-1",
@@ -54,7 +57,19 @@ function dbMed(name: string, dosage: string | null = "10mg"): PrescriptionMedici
 describe("medicineToRowValue", () => {
   it("maps prescription medicine fields to row value", () => {
     expect(medicineToRowValue(dbMed("Amlodipine", "5mg"))).toEqual(
-      expect.objectContaining({ medicineName: "Amlodipine", dosage: "5mg" }),
+      expect.objectContaining({ medicineName: "Amlodipine", dosage: "5mg" })
+    );
+  });
+
+  it("hydrates a stored 1-0-1 frequency as doseSchedule", () => {
+    expect(
+      medicineToRowValue({
+        ...dbMed("Amlodipine", "5mg"),
+        frequency: "1-0-1",
+        frequency_code: "BID",
+      })
+    ).toEqual(
+      expect.objectContaining({ frequencyCode: "BID", doseSchedule: "1-0-1" })
     );
   });
 });
@@ -79,7 +94,11 @@ describe("applyMode", () => {
   it("append keeps current order and appends new prior rows", () => {
     const current = [row("A"), row("B")];
     const prior = [row("C")];
-    expect(applyMode(current, prior, "append")).toEqual([row("A"), row("B"), row("C")]);
+    expect(applyMode(current, prior, "append")).toEqual([
+      row("A"),
+      row("B"),
+      row("C"),
+    ]);
   });
 });
 

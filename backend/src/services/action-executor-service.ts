@@ -14,6 +14,14 @@ import {
 import { sendAppointmentCancelledToDoctor } from './notification-service';
 import { buildReschedulePageUrl } from './slot-selection-service';
 import { logger } from '../config/logger';
+import { formatRescheduleChoiceLinkDm } from '../utils/booking-link-copy';
+import {
+  buildAppointmentCancelledMessage,
+  buildAppointmentNotFoundShortMessage,
+  buildAppointmentPickNotFoundMessage,
+  buildCancelConfirmPromptMessage,
+  buildCancelDeclinedMessage,
+} from '../utils/dm-copy';
 import type {
   ActionContext,
   ActionResult,
@@ -70,7 +78,7 @@ export async function executeAction(
   action: SystemAction,
   ctx: ActionContext
 ): Promise<ActionResult> {
-  const { conversationId, doctorId, state, correlationId } = ctx;
+  const { conversationId, doctorId, state, correlationId, language } = ctx;
   const tz = ctx.timezone ?? 'Asia/Kolkata';
 
   if (action.type === 'confirm_cancel') {
@@ -92,7 +100,7 @@ export async function executeAction(
       if (!appointment || appointment.doctor_id !== doctorId || !appointment.patient_id) {
         return {
           success: true,
-          replyOverride: "That appointment wasn't found.",
+          replyOverride: buildAppointmentNotFoundShortMessage({ language }),
           stateUpdate: {
             step: 'responded',
             cancel: undefined,
@@ -125,7 +133,10 @@ export async function executeAction(
       );
       return {
         success: true,
-        replyOverride: `Your appointment on ${dateStr} has been cancelled.`,
+        replyOverride: buildAppointmentCancelledMessage({
+          language,
+          dateDisplay: dateStr,
+        }),
         stateUpdate: {
           step: 'responded',
           cancel: undefined,
@@ -136,7 +147,7 @@ export async function executeAction(
 
     return {
       success: true,
-      replyOverride: "No problem. Your appointment is still scheduled.",
+      replyOverride: buildCancelDeclinedMessage({ language }),
       stateUpdate: {
         step: 'responded',
         cancel: undefined,
@@ -160,10 +171,11 @@ export async function executeAction(
     if (!appointment || appointment.doctor_id !== doctorId) {
       return {
         success: true,
-        replyOverride:
-          state.step === 'awaiting_cancel_choice'
-            ? "That appointment wasn't found. Please try again or say 'cancel appointment' to start over."
-            : "That appointment wasn't found. Please try again or say 'reschedule appointment' to start over.",
+        replyOverride: buildAppointmentPickNotFoundMessage({
+          language,
+          flow:
+            state.step === 'awaiting_cancel_choice' ? 'cancel' : 'reschedule',
+        }),
         stateUpdate: { step: 'responded', updatedAt: new Date().toISOString() },
       };
     }
@@ -177,7 +189,10 @@ export async function executeAction(
     if (state.step === 'awaiting_cancel_choice') {
       return {
         success: true,
-        replyOverride: `Cancel appointment on ${dateStr}? Reply **Yes** or **No**.`,
+        replyOverride: buildCancelConfirmPromptMessage({
+          language,
+          dateDisplay: dateStr,
+        }),
         stateUpdate: {
           step: 'awaiting_cancel_confirmation',
           cancel: { appointmentId: chosenId },
@@ -188,9 +203,10 @@ export async function executeAction(
 
     if (state.step === 'awaiting_reschedule_choice') {
       const url = buildReschedulePageUrl(conversationId, doctorId, chosenId);
+      // lang-20 §3.4: honour queue-mode variants (was hardcoded slot copy).
       return {
         success: true,
-        replyOverride: `Pick a new date and time: [Choose new slot](${url})`,
+        replyOverride: formatRescheduleChoiceLinkDm({ language: ctx.language, url, doctorSettings: ctx.doctorSettings }),
         stateUpdate: {
           step: 'awaiting_reschedule_slot',
           reschedule: { appointmentId: chosenId },

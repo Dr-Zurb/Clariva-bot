@@ -6,6 +6,7 @@ describe('formatStaffReviewResolvedContinueBookingDm (learn-05)', () => {
   it('learning_policy_autobook uses preference copy', () => {
     const settings = { practice_name: 'Demo Clinic' } as DoctorSettingsRow;
     const text = formatStaffReviewResolvedContinueBookingDm(
+      'en',
       settings,
       'Teleconsult',
       'https://book.example/c',

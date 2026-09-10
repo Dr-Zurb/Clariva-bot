@@ -3,6 +3,7 @@ import {
   buildComplaintAssociatedSuffix,
   buildComplaintSummary,
   complaintHasNotes,
+  complaintNotePrefersInline,
   formatComplaintSeverityLabel,
   isScoreInSeverityBand,
   listAssociatedComplaintNames,
@@ -37,7 +38,9 @@ describe("buildComplaintAssociatedSuffix", () => {
         { ...createEmptyComplaint(), name: "Sweating" },
       ],
     };
-    expect(buildComplaintAssociatedSuffix(parent)).toBe("Breathlessness, Sweating");
+    expect(buildComplaintAssociatedSuffix(parent)).toBe(
+      "Breathlessness, Sweating"
+    );
   });
 
   it("joins all associated names for tooltips (width-based UI truncates)", () => {
@@ -51,7 +54,7 @@ describe("buildComplaintAssociatedSuffix", () => {
       ],
     };
     expect(buildComplaintAssociatedSuffix(parent)).toBe(
-      "Breathlessness, Sweating, Palpitations, Nausea",
+      "Breathlessness, Sweating, Palpitations, Nausea"
     );
     expect(listAssociatedComplaintNames(parent)).toEqual([
       "Breathlessness",
@@ -68,7 +71,9 @@ describe("buildComplaintSummary", () => {
   });
 
   it("shows severity alone on row 2 when no other details exist", () => {
-    expect(buildComplaintSummary({ ...base, severity: "severe" })).toBe("Severe");
+    expect(buildComplaintSummary({ ...base, severity: "severe" })).toBe(
+      "Severe"
+    );
   });
 
   it("leads with severity and excludes duration from row 2", () => {
@@ -78,7 +83,7 @@ describe("buildComplaintSummary", () => {
         duration: "4 days",
         severity: "mild",
         character: "sharp",
-      }),
+      })
     ).toBe("Mild · sharp");
   });
 
@@ -92,7 +97,7 @@ describe("buildComplaintSummary", () => {
         onset: "sudden",
         radiation: "left arm",
         timing: "constant",
-      }),
+      })
     ).toBe("Moderate · central · sudden · sharp · → left arm · constant");
   });
 
@@ -101,7 +106,7 @@ describe("buildComplaintSummary", () => {
       buildComplaintSummary({
         ...base,
         radiation: "radiating to left arm",
-      }),
+      })
     ).toBe("radiating to left arm");
   });
 
@@ -112,24 +117,31 @@ describe("buildComplaintSummary", () => {
         character: "sharp",
         aggravating: "bending",
         relieving: "standing",
-      }),
+      })
     ).toBe("sharp · ↑ bending · ↓ standing");
   });
 
-  it("excludes notes from the inline summary (shown as icon instead)", () => {
+  it("excludes notes from the inline summary (shown beside it)", () => {
     expect(
       buildComplaintSummary({
         ...base,
         notes: "its chronically present",
         character: "sharp",
-      }),
+      })
     ).toBe("sharp");
     expect(
       complaintHasNotes({
         ...base,
         notes: "its chronically present",
-      }),
+      })
     ).toBe(true);
+    expect(complaintNotePrefersInline("Worsening")).toBe(true);
+    expect(complaintNotePrefersInline("its chronically present")).toBe(true);
+    expect(
+      complaintNotePrefersInline(
+        "Patient reports this has been going on for several weeks with night worsening and poor sleep."
+      )
+    ).toBe(false);
   });
 });
 

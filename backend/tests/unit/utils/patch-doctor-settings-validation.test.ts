@@ -232,4 +232,56 @@ describe('validatePatchDoctorSettings (e-task-6)', () => {
       })
     ).toThrow(ValidationError);
   });
+
+  it('accepts clinic-branding-v1 letterhead tokens', () => {
+    const result = validatePatchDoctorSettings({
+      qualifications: 'MBBS, MD',
+      letterhead_preset: 'preprinted',
+      letterhead_accent_color: '#112233',
+      page_size: 'a5',
+      preprint_margin_top_mm: 45,
+      preprint_margin_bottom_mm: 20,
+    });
+    expect(result.letterhead_preset).toBe('preprinted');
+    expect(result.page_size).toBe('a5');
+    expect(result.letterhead_accent_color).toBe('#112233');
+  });
+
+  it('rejects invalid letterhead accent colour', () => {
+    expect(() =>
+      validatePatchDoctorSettings({ letterhead_accent_color: 'blue' }),
+    ).toThrow(ValidationError);
+  });
+
+  it('rejects logo_path on generic settings PATCH', () => {
+    expect(() =>
+      validatePatchDoctorSettings({ logo_path: 'doc/logo.png' }),
+    ).toThrow(ValidationError);
+  });
+
+  it('accepts banner preset and band heights', () => {
+    const result = validatePatchDoctorSettings({
+      letterhead_preset: 'banner',
+      header_height_mm: 40,
+      footer_height_mm: 20,
+    });
+    expect(result.letterhead_preset).toBe('banner');
+    expect(result.header_height_mm).toBe(40);
+    expect(result.footer_height_mm).toBe(20);
+  });
+
+  it('rejects header plus footer heights over 100 mm', () => {
+    expect(() =>
+      validatePatchDoctorSettings({
+        header_height_mm: 80,
+        footer_height_mm: 30,
+      }),
+    ).toThrow(ValidationError);
+  });
+
+  it('rejects header_path on generic settings PATCH', () => {
+    expect(() =>
+      validatePatchDoctorSettings({ header_path: 'doc/header.png' }),
+    ).toThrow(ValidationError);
+  });
 });

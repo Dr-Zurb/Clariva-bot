@@ -2,22 +2,17 @@
 
 import React, { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
-import { ChevronDown } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useNowMs } from "@/hooks/useNowMs";
 import { cn } from "@/lib/utils";
-import { formatTimeShort } from "@/lib/format-date";
 import type { SlotSessionCounts, SlotSessionRow } from "@/types/opd-doctor";
 import type { OpdStatusFilterValue } from "./OpdQueueStatusFilter";
 import {
-  OPD_QUEUE_GRID_TEMPLATE,
-  OPD_QUEUE_HEADER_COLS,
+  OPD_SLOT_GRID_TEMPLATE,
+  OPD_SLOT_HEADER_COLS,
 } from "./OpdQueueGrid";
 import { filterSlotSessionRows } from "./shared/opdSlotSessionListModel";
-import {
-  bucketSlotRowsForSections,
-  computeNowDividerPlacement,
-  showActiveSlotSection,
-} from "./opdSlotSectioning";
+import { orderSlotRowsByTokenDesc } from "./opdSlotSectioning";
 import {
   deriveSlotEmptyState,
   slotFilterEmptyLabel,
@@ -109,105 +104,15 @@ export function SlotListEmptyStateView(props: {
   }
 }
 
-interface DisclosureProps {
-  label: string;
-  count: number;
-  defaultOpen: boolean;
-  locked?: boolean;
-  children: React.ReactNode;
-}
-
-function Disclosure({
-  label,
-  count,
-  defaultOpen,
-  locked = false,
-  children,
-}: DisclosureProps) {
-  const [open, setOpen] = useState(defaultOpen);
-  const isOpen = locked || open;
-
-  return (
-    <div>
-      <div
-        className={cn(
-          "grid items-center border-b border-border/30 bg-muted/15 px-2 py-1",
-          !locked && "cursor-pointer transition-colors hover:bg-muted/30"
-        )}
-        style={{ gridTemplateColumns: OPD_QUEUE_GRID_TEMPLATE }}
-        role={locked ? undefined : "button"}
-        tabIndex={locked ? undefined : 0}
-        aria-expanded={locked ? undefined : isOpen}
-        onClick={() => !locked && setOpen((v) => !v)}
-        onKeyDown={(e) => {
-          if (!locked && (e.key === "Enter" || e.key === " ")) {
-            e.preventDefault();
-            setOpen((v) => !v);
-          }
-        }}
-      >
-        <div
-          className="col-span-full flex items-center gap-1.5"
-          style={{ gridColumn: "1 / -1" }}
-        >
-          {!locked && (
-            <ChevronDown
-              className={cn(
-                "h-3 w-3 shrink-0 text-muted-foreground transition-transform duration-150",
-                isOpen && "rotate-180"
-              )}
-            />
-          )}
-          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            {label}
-          </span>
-          <span className="tabular-nums text-xs text-muted-foreground">
-            ({count})
-          </span>
-        </div>
-      </div>
-
-      <div
-        className={cn(
-          "grid transition-all duration-150 ease-in-out",
-          isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
-        )}
-      >
-        <div className="overflow-hidden">{children}</div>
-      </div>
-    </div>
-  );
-}
-
-function NowDivider() {
-  const t = Date.now();
-  return (
-    <div
-      className="grid"
-      style={{ gridTemplateColumns: OPD_QUEUE_GRID_TEMPLATE }}
-      aria-hidden="true"
-    >
-      <div />
-      <div className="col-span-12 flex items-center gap-2">
-        <div className="h-px flex-1 bg-primary/30" />
-        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-primary">
-          Now · {formatTimeShort(t)}
-        </span>
-        <div className="h-px flex-1 bg-primary/30" />
-      </div>
-    </div>
-  );
-}
-
 function SlotTableHeader() {
   return (
     <div
       className="sticky top-0 z-10 grid border-b border-border/50 bg-muted/60 backdrop-blur"
-      style={{ gridTemplateColumns: OPD_QUEUE_GRID_TEMPLATE }}
+      style={{ gridTemplateColumns: OPD_SLOT_GRID_TEMPLATE }}
       role="row"
       aria-label="Slot column headers"
     >
-      {OPD_QUEUE_HEADER_COLS.map((col) => (
+      {OPD_SLOT_HEADER_COLS.map((col) => (
         <div
           key={col.key}
           role="columnheader"
@@ -233,20 +138,19 @@ function LoadingSkeleton() {
         <div
           key={i}
           className="grid items-center gap-2 px-2 py-2"
-          style={{ gridTemplateColumns: OPD_QUEUE_GRID_TEMPLATE }}
+          style={{ gridTemplateColumns: OPD_SLOT_GRID_TEMPLATE }}
         >
           <Skeleton className="h-full w-1 self-stretch" />
           <Skeleton className="h-4 w-8" />
+          <Skeleton className="h-4 w-10" />
           <Skeleton className="h-4 w-20" />
-          <Skeleton className="h-4 w-32" />
           <Skeleton className="h-4 w-16" />
-          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-4 w-32" />
           <Skeleton className="h-4 w-12" />
-          <Skeleton className="h-4 w-20" />
+          <Skeleton className="h-4 w-24" />
           <Skeleton className="h-4 w-5" />
+          <Skeleton className="h-4 w-20" />
           <Skeleton className="h-4 w-40" />
-          <Skeleton className="h-4 w-10" />
-          <Skeleton className="h-4 w-10" />
           <Skeleton className="h-4 w-10" />
         </div>
       ))}
@@ -299,6 +203,8 @@ export function OpdSlotList({
     string | null
   >(null);
 
+  const nowMs = useNowMs(30_000);
+
   const filtered = useMemo(
     () => filterSlotSessionRows(entries, statusFilter, searchQuery),
     [entries, statusFilter, searchQuery]
@@ -315,8 +221,8 @@ export function OpdSlotList({
     [entries, filtered.length, statusFilter, searchQuery]
   );
 
-  const { active, done, missed, overflow, cancelledOnly } = useMemo(
-    () => bucketSlotRowsForSections(filtered),
+  const ordered = useMemo(
+    () => orderSlotRowsByTokenDesc(filtered),
     [filtered]
   );
 
@@ -325,6 +231,7 @@ export function OpdSlotList({
       <React.Fragment key={row.appointmentId}>
         <OpdSlotDenseRow
           entry={row}
+          nowMs={nowMs}
           expanded={expandedAppointmentId === row.appointmentId}
           keyboardFocused={focusedRowId === row.appointmentId}
           onToggleExpand={() =>
@@ -344,8 +251,8 @@ export function OpdSlotList({
               allSessionEntries={entries}
               onMutationSuccess={onMutationSuccess}
               overflowOpen={overflowOpenId === row.appointmentId}
-              onOverflowOpenChange={(open) =>
-                onOverflowOpenChange?.(open ? row.appointmentId : null)
+              onOverflowOpenChange={(openState) =>
+                onOverflowOpenChange?.(openState ? row.appointmentId : null)
               }
               onOpenAddSlotDialog={onOpenAddSlotDialog}
             />
@@ -360,6 +267,7 @@ export function OpdSlotList({
       entries,
       expandedAppointmentId,
       focusedRowId,
+      nowMs,
       onFocusChange,
       onMutationSuccess,
       onOpenAddSlotDialog,
@@ -370,36 +278,6 @@ export function OpdSlotList({
       token,
     ]
   );
-
-  const activeBody = useMemo(() => {
-    if (active.length === 0) return null;
-    const nowMs = Date.now();
-    const placement = computeNowDividerPlacement(active, nowMs);
-    const out: React.ReactNode[] = [];
-    if (placement.kind === "all_past") {
-      active.forEach((row) => {
-        out.push(renderRow(row));
-      });
-      out.push(<NowDivider key="now-end" />);
-    } else if (placement.kind === "all_future") {
-      out.push(<NowDivider key="now-start" />);
-      active.forEach((row) => {
-        out.push(renderRow(row));
-      });
-    } else {
-      const { beforeCount } = placement;
-      active.slice(0, beforeCount).forEach((row) => {
-        out.push(renderRow(row));
-      });
-      out.push(<NowDivider key="now-mid" />);
-      active.slice(beforeCount).forEach((row) => {
-        out.push(renderRow(row));
-      });
-    }
-    return out;
-  }, [active, renderRow]);
-
-  const forceOpen = statusFilter !== "all";
 
   if (isLoading && entries.length === 0) {
     return (
@@ -429,66 +307,11 @@ export function OpdSlotList({
       <SlotTableHeader />
 
       <div
-        className="overflow-y-auto"
-        style={{ maxHeight: "calc(100vh - 280px)" }}
+        className="overflow-y-auto pb-3"
+        style={{ maxHeight: "calc(100vh - 340px)" }}
         role="rowgroup"
       >
-        {statusFilter === "cancelled" && cancelledOnly.length > 0 && (
-          <Disclosure
-            label="Cancelled"
-            count={cancelledOnly.length}
-            defaultOpen
-            locked
-          >
-            {cancelledOnly.map((row) => renderRow(row))}
-          </Disclosure>
-        )}
-
-        {statusFilter !== "cancelled" && (
-          <>
-            {showActiveSlotSection(statusFilter) && (
-              <>
-                {active.length === 0 ? (
-                  <div className="px-4 py-4 text-center text-sm text-muted-foreground">
-                    No active slots.
-                  </div>
-                ) : (
-                  activeBody
-                )}
-              </>
-            )}
-
-            {done.length > 0 && (
-              <Disclosure
-                label="Completed"
-                count={done.length}
-                defaultOpen={forceOpen || done.length <= 10}
-              >
-                {done.map((row) => renderRow(row))}
-              </Disclosure>
-            )}
-
-            {missed.length > 0 && (
-              <Disclosure
-                label="Missed"
-                count={missed.length}
-                defaultOpen={forceOpen || missed.length <= 5}
-              >
-                {missed.map((row) => renderRow(row))}
-              </Disclosure>
-            )}
-
-            {overflow.length > 0 && (
-              <Disclosure
-                label="Overflow"
-                count={overflow.length}
-                defaultOpen={forceOpen || overflow.length <= 5}
-              >
-                {overflow.map((row) => renderRow(row))}
-              </Disclosure>
-            )}
-          </>
-        )}
+        {ordered.map((row) => renderRow(row))}
       </div>
     </div>
   );

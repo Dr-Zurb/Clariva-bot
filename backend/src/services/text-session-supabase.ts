@@ -57,6 +57,7 @@ import {
   mintScopedConsultationJwt,
 } from './supabase-jwt-mint';
 import { emitPartyJoined } from './consultation-message-service';
+import { recordAsyncReplyForSession } from './billing/usage-ledger-service';
 import type {
   AdapterCreateResult,
   AdapterGetJoinTokenInput,
@@ -125,14 +126,17 @@ function buildPatientJoinUrl(
 
 /**
  * Compute the JWT expiry — `expected_end_at` + the env-configurable
- * post-end buffer. The buffer covers slot overrun + a brief read-only
- * window for the patient to glance at the final transcript before the
- * token dies. Capped to 240 min in env.ts so misconfig can't issue
- * multi-hour bearer tokens.
+ * post-end buffer, floored to `now + buffer` so a call that overruns
+ * its slot (or a demo seed whose slot already ended) can still mint.
+ * Without the floor, `mintScopedConsultationJwt` throws InternalError
+ * and companion chat 500s for the rest of the session. Capped to 240
+ * min in env.ts so misconfig can't issue multi-hour bearer tokens.
  */
 function computeJwtExpiresAt(expectedEndAt: Date): Date {
   const bufferMs = env.TEXT_CONSULT_JWT_TTL_MINUTES_AFTER_END * 60 * 1000;
-  return new Date(expectedEndAt.getTime() + bufferMs);
+  const fromSlot = expectedEndAt.getTime() + bufferMs;
+  const fromNow = Date.now() + bufferMs;
+  return new Date(Math.max(fromSlot, fromNow));
 }
 
 /**
@@ -912,6 +916,10 @@ export async function sendMessage(
     },
     'sendMessage: consultation_messages row inserted',
   );
+
+  if (input.senderRole === 'doctor') {
+    void recordAsyncReplyForSession(sessionId, input.correlationId);
+  }
 
   return {
     id: data.id as string,

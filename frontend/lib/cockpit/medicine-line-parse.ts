@@ -92,10 +92,13 @@ export interface ParsedMedicineLine {
 
 const FORM_ALIASES: Record<string, string> = {
   tab: "tablet", tabs: "tablet", tablet: "tablet", tablets: "tablet",
+  tb: "tablet", tbl: "tablet", tblt: "tablet",
   cap: "capsule", caps: "capsule", capsule: "capsule", capsules: "capsule",
+  cp: "capsule", cps: "capsule",
   syp: "syrup", syr: "syrup", syrup: "syrup",
+  sy: "syrup", syrp: "syrup",
   susp: "suspension", suspension: "suspension",
-  oint: "ointment", ointment: "ointment",
+  oint: "ointment", ointment: "ointment", ung: "ointment",
   cream: "cream", gel: "gel", lotion: "lotion",
   drop: "drops", drops: "drops",
   inj: "injection", injection: "injection",
@@ -150,6 +153,8 @@ const FORM_ROUTE: Record<string, RouteCode> = {
   patch: "topical",
   inhaler: "inhaled",
   nebuliser: "inhaled",
+  spray: "inhaled",
+  solution: "oral",
   suppository: "rectal",
   // Injection defaults to IM unless a site cue implies SC (abdomen / flank).
   injection: "IM",
@@ -536,13 +541,24 @@ interface Token {
   consumed: boolean;
 }
 
+/**
+ * Clinic dotted abbreviations ("b.d", "i.m") compact to the alias key.
+ * Decimals ("0.05", "5.5mg") are left intact.
+ */
+function compactAbbrevKey(key: string): string {
+  return /^[a-z]+(?:\.[a-z]+)+$/.test(key) ? key.replace(/\./g, "") : key;
+}
+
 function tokenize(line: string): Token[] {
   return line
     .trim()
     .split(/\s+/)
     .map((t) => t.replace(/^[,;]+|[,;.]+$/g, ""))
     .filter((t) => t.length > 0)
-    .map((raw) => ({ raw, key: raw.toLowerCase(), consumed: false }));
+    .map((raw) => {
+      const lower = raw.toLowerCase();
+      return { raw, key: compactAbbrevKey(lower), consumed: false };
+    });
 }
 
 function parseNumeric(key: string): number | null {
@@ -550,6 +566,25 @@ function parseNumeric(key: string): number | null {
   if (key === "1\u00bd") return 1.5;
   if (/^\d+(\.\d+)?$/.test(key)) return Number(key);
   return null;
+}
+
+/**
+ * Clinic shorthand glues a small dose count onto the frequency ("1od", "2bd").
+ * A bare 5+ is almost always a strength ("amlodipine 5od"), not five tablets.
+ */
+const GLUED_DOSE_QTY_MAX = 4;
+
+/** "1od" / "2bd" / "½hs" → frequency + the leading number (caller decides dose vs strength). */
+function parseGluedDoseFrequency(
+  key: string,
+): { qty: number; code: FrequencyCode } | null {
+  const m = key.match(/^(\d+(?:\.\d+)?|\u00bd)([a-z]+(?:\.[a-z]+)*\d*[a-z]*)$/);
+  if (!m) return null;
+  const qty = m[1] === "\u00bd" ? 0.5 : Number(m[1]);
+  if (!Number.isFinite(qty) || qty <= 0) return null;
+  const code = FREQUENCY_ALIASES[compactAbbrevKey(m[2])];
+  if (!code) return null;
+  return { qty, code };
 }
 
 /** "1-0-1" → { slots: 2, qty: 1 } (non-zero slot count + per-dose qty). */
@@ -714,6 +749,18 @@ export function parseMedicineLine(line: string): ParsedMedicineLine | null {
     for (let i = 0; i < tokens.length; i++) {
       const t = tokens[i];
       if (t.consumed) continue;
+      const glued = parseGluedDoseFrequency(t.key);
+      if (glued) {
+        frequencyCode = glued.code;
+        frequencyAnchorIdx = i;
+        t.consumed = true;
+        if (glued.qty <= GLUED_DOSE_QTY_MAX) {
+          doseQty = glued.qty;
+        } else if (!dosage) {
+          dosage = String(glued.qty);
+        }
+        break;
+      }
       const code = FREQUENCY_ALIASES[t.key];
       if (code) {
         frequencyCode = code;
@@ -888,18 +935,20 @@ export function parseMedicineLine(line: string): ParsedMedicineLine | null {
       break;
     }
 
-    // Combined token: "5d", "30days", "2w", "3mo"
-    const combined = t.key.match(/^(\d+)(d|days?|w|wks?|weeks?|mo|months?)$/);
+    // Combined token: "5d", "30days", "2w", "3mo", "x5d"
+    const combined = t.key.match(/^(x|\u00d7)?(\d+)(d|days?|w|wks?|weeks?|mo|months?)$/);
     if (combined) {
-      const unit = DURATION_UNIT_ALIASES[combined[2]];
+      const unit = DURATION_UNIT_ALIASES[combined[3]];
       if (unit) {
-        durationValue = Number(combined[1]);
+        durationValue = Number(combined[2]);
         durationUnit = unit;
         t.consumed = true;
-        // Consume a preceding "for"/"x" connector.
-        const prev = tokens[i - 1];
-        if (prev && !prev.consumed && (prev.key === "for" || prev.key === "x" || prev.key === "\u00d7")) {
-          prev.consumed = true;
+        // Consume a preceding "for"/"x" connector (already in-token for "x5d").
+        if (!combined[1]) {
+          const prev = tokens[i - 1];
+          if (prev && !prev.consumed && (prev.key === "for" || prev.key === "x" || prev.key === "\u00d7")) {
+            prev.consumed = true;
+          }
         }
         break;
       }
@@ -964,6 +1013,25 @@ export function parseMedicineLine(line: string): ParsedMedicineLine | null {
     const t = tokens[i];
     if (t.consumed) continue;
 
+    const conc = t.key.match(
+      /^(\d+(?:\.\d+)?)(mg|mcg|ug|\u00b5g|g|gm)\/(\d+(?:\.\d+)?)?(ml)$/,
+    );
+    if (conc) {
+      const vol = conc[3] ? `${conc[3]}${conc[4]}` : conc[4];
+      dosage = `${conc[1]} ${conc[2]}/${vol}`;
+      t.consumed = true;
+      break;
+    }
+
+    const plusGlued = t.key.match(
+      /^(\d+(?:\.\d+)?(?:\+\d+(?:\.\d+)?)+)(mg|mcg|ug|\u00b5g|g|gm|iu)?$/,
+    );
+    if (plusGlued) {
+      dosage = plusGlued[2] ? `${plusGlued[1]} ${plusGlued[2]}` : plusGlued[1];
+      t.consumed = true;
+      break;
+    }
+
     const combined = t.key.match(/^(\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?)(mg|mcg|ug|µg|g|gm|iu|%)$/);
     if (combined) {
       dosage = `${combined[1]}${combined[2] === "%" ? "%" : ` ${combined[2]}`}`;
@@ -979,16 +1047,53 @@ export function parseMedicineLine(line: string): ParsedMedicineLine | null {
       next.consumed = true;
       break;
     }
+
+    // Spaced combo: "500 + 125 mg" / "500 + 125"
+    const plusTok = next;
+    const third = tokens[i + 2];
+    if (
+      isNumberLike &&
+      plusTok &&
+      !plusTok.consumed &&
+      plusTok.key === "+" &&
+      third &&
+      !third.consumed
+    ) {
+      const thirdGlued = third.key.match(
+        /^(\d+(?:\.\d+)?)(mg|mcg|ug|\u00b5g|g|gm|iu)?$/,
+      );
+      if (thirdGlued) {
+        const fourth = tokens[i + 3];
+        const unitFromThird = thirdGlued[2];
+        const unitFromNext =
+          !unitFromThird &&
+          fourth &&
+          !fourth.consumed &&
+          STRENGTH_UNITS.has(fourth.key) &&
+          fourth.key !== "%"
+            ? fourth.key
+            : null;
+        const right = thirdGlued[1];
+        const unit = unitFromThird ?? unitFromNext;
+        dosage = unit ? `${t.key}+${right} ${unit}` : `${t.key}+${right}`;
+        t.consumed = true;
+        plusTok.consumed = true;
+        third.consumed = true;
+        if (unitFromNext) fourth!.consumed = true;
+        break;
+      }
+    }
   }
 
   // -- Pass E2: bare dose qty immediately before frequency ("… 5mg 1 od") ----
-  // Doctors often omit the unit. Only claim when strength or form is already
-  // known so "amlodipine 5 od" keeps 5 as strength, not dose.
+  // Doctors often omit the unit. A small number (1–4, half) is a dose count
+  // even without a known strength/form ("multivitamin 1 od"). 5+ still needs
+  // strength or form so "amlodipine 5 od" keeps 5 as strength, not dose.
   if (doseQty == null && frequencyAnchorIdx != null && frequencyAnchorIdx > 0) {
     const before = tokens[frequencyAnchorIdx - 1];
     if (before && !before.consumed) {
       const n = parseNumeric(before.key);
-      if (n != null && n > 0 && (dosage || form)) {
+      if (n != null && n > 0 && (n <= GLUED_DOSE_QTY_MAX || dosage || form)) {
         doseQty = n;
         before.consumed = true;
       }
@@ -1196,4 +1301,13 @@ export function lineHasSigDetails(line: string): boolean {
       parsed.status === "past" ||
       parsed.stoppedAgoValue != null,
   );
+}
+
+/**
+ * Tokens the rules did not classify: leftover instructions, plus any
+ * digit-leading fragment still sitting in the drug name ("1od").
+ */
+export function unrecognisedMedicineResidue(parsed: ParsedMedicineLine): string {
+  const nameDigits = parsed.medicineName.split(/\s+/).filter((w) => /^\d/.test(w));
+  return [...nameDigits, parsed.instructions.trim()].filter(Boolean).join(" ").trim();
 }

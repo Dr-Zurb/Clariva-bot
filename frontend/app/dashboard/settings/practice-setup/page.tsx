@@ -3,6 +3,7 @@ import {
   Clock,
   Home,
   MessageSquare,
+  Stamp,
   Users,
   Workflow,
 } from "lucide-react";
@@ -16,8 +17,14 @@ const cards = [
   {
     href: `${practiceSetupBase}/practice-info`,
     label: "Practice info",
-    description: "Practice name, timezone, specialty, and address",
+    description: "Practice name, timezone, specialty, qualifications, and address",
     icon: <Home className="h-6 w-6" aria-hidden />,
+  },
+  {
+    href: `${practiceSetupBase}/branding`,
+    label: "Letterhead & branding",
+    description: "Clinic logo and prescription layout",
+    icon: <Stamp className="h-6 w-6" aria-hidden />,
   },
   {
     href: `${practiceSetupBase}/booking-rules`,

@@ -24,7 +24,7 @@
  *   - warningKindsForTelemetry de-dupes + preserves order
  */
 
-import { describe, it, expect } from "@jest/globals";
+import { describe, it, expect } from "vitest";
 import {
   computePreSendWarnings,
   focusTargetFor,
@@ -47,7 +47,7 @@ import type {
 function makeAllergyMatch(
   medicineIndex: number,
   allergyId: string,
-  overrides: Partial<AllergyMatch> = {},
+  overrides: Partial<AllergyMatch> = {}
 ): AllergyMatch {
   return {
     medicineIndex,
@@ -64,7 +64,7 @@ function makeAllergyMatch(
 let ddiCounter = 0;
 function makeDdi(
   severity: InteractionSeverity,
-  overrides: Partial<InteractionRow> = {},
+  overrides: Partial<InteractionRow> = {}
 ): InteractionRow {
   ddiCounter += 1;
   return {
@@ -119,7 +119,7 @@ describe("computePreSendWarnings — happy path", () => {
         hasDiagnosis: true,
         allergyMatches: [],
         ddiInteractions: [],
-      }),
+      })
     );
     expect(warnings).toHaveLength(0);
   });
@@ -130,7 +130,7 @@ describe("computePreSendWarnings — happy path", () => {
 // ---------------------------------------------------------------------------
 
 describe("computePreSendWarnings — empty-rx", () => {
-  it("flags empty-rx when no medicines, no investigations, no education, no attachments", () => {
+  it("does not flag empty-rx — completeness is not a send gate", () => {
     const warnings = computePreSendWarnings(
       makeInputs({
         filledMedicineCount: 0,
@@ -138,40 +138,9 @@ describe("computePreSendWarnings — empty-rx", () => {
         hasPatientEducation: false,
         hasAttachments: false,
         hasDiagnosis: true,
-      }),
+      })
     );
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toMatchObject<Partial<PreSendWarning>>({
-      kind: "empty-rx",
-      targetId: "medicines-section",
-    });
-  });
-
-  it("does NOT flag empty-rx when any of medicines / investigations / education / attachments is present", () => {
-    expect(
-      computePreSendWarnings(makeInputs({ filledMedicineCount: 1 })),
-    ).toHaveLength(0);
-    expect(
-      computePreSendWarnings(
-        makeInputs({ filledMedicineCount: 0, hasInvestigations: true }),
-      ),
-    ).toHaveLength(0);
-    expect(
-      computePreSendWarnings(
-        makeInputs({ filledMedicineCount: 0, hasPatientEducation: true }),
-      ),
-    ).toHaveLength(0);
-    // Photo-only Rx — attachments alone satisfy the empty-rx check.
-    expect(
-      computePreSendWarnings(
-        makeInputs({
-          filledMedicineCount: 0,
-          hasInvestigations: false,
-          hasPatientEducation: false,
-          hasAttachments: true,
-        }),
-      ),
-    ).toHaveLength(0);
+    expect(warnings.find((w) => w.kind === "empty-rx")).toBeUndefined();
   });
 });
 
@@ -180,18 +149,9 @@ describe("computePreSendWarnings — empty-rx", () => {
 // ---------------------------------------------------------------------------
 
 describe("computePreSendWarnings — no-diagnosis", () => {
-  it("flags no-diagnosis when hasDiagnosis is false", () => {
+  it("does not flag no-diagnosis — completeness is not a send gate", () => {
     const warnings = computePreSendWarnings(
-      makeInputs({ hasDiagnosis: false }),
-    );
-    const dx = warnings.find((w) => w.kind === "no-diagnosis");
-    expect(dx).toBeDefined();
-    expect(dx?.targetId).toBe("diagnosis");
-  });
-
-  it("does NOT flag no-diagnosis when hasDiagnosis is true", () => {
-    const warnings = computePreSendWarnings(
-      makeInputs({ hasDiagnosis: true }),
+      makeInputs({ hasDiagnosis: false })
     );
     expect(warnings.find((w) => w.kind === "no-diagnosis")).toBeUndefined();
   });
@@ -208,7 +168,7 @@ describe("computePreSendWarnings — unacked-allergy", () => {
       makeInputs({
         allergyMatches: [match],
         medicineInstanceIds: ["m-1"],
-      }),
+      })
     );
     const allergyW = warnings.find((w) => w.kind === "unacked-allergy");
     expect(allergyW).toBeDefined();
@@ -226,11 +186,9 @@ describe("computePreSendWarnings — unacked-allergy", () => {
         allergyMatches: [match],
         medicineInstanceIds: ["m-1"],
         isAcked: ackedSet(ackKey),
-      }),
+      })
     );
-    expect(
-      warnings.find((w) => w.kind === "unacked-allergy"),
-    ).toBeUndefined();
+    expect(warnings.find((w) => w.kind === "unacked-allergy")).toBeUndefined();
   });
 
   it("counts multiple unacked matches separately", () => {
@@ -240,7 +198,7 @@ describe("computePreSendWarnings — unacked-allergy", () => {
       makeInputs({
         allergyMatches: [m1, m2],
         medicineInstanceIds: ["m-1", "m-2"],
-      }),
+      })
     );
     const allergyW = warnings.find((w) => w.kind === "unacked-allergy");
     if (allergyW?.kind !== "unacked-allergy") {
@@ -255,11 +213,9 @@ describe("computePreSendWarnings — unacked-allergy", () => {
       makeInputs({
         allergyMatches: [match],
         medicineInstanceIds: ["m-1"], // length 1 → index 5 undefined
-      }),
+      })
     );
-    expect(
-      warnings.find((w) => w.kind === "unacked-allergy"),
-    ).toBeDefined();
+    expect(warnings.find((w) => w.kind === "unacked-allergy")).toBeDefined();
   });
 });
 
@@ -271,7 +227,7 @@ describe("computePreSendWarnings — unacked-ddi", () => {
   it("flags unacked-ddi when there are interactions and none are acknowledged", () => {
     const ddi = makeDdi("major");
     const warnings = computePreSendWarnings(
-      makeInputs({ ddiInteractions: [ddi] }),
+      makeInputs({ ddiInteractions: [ddi] })
     );
     const ddiW = warnings.find((w) => w.kind === "unacked-ddi");
     if (ddiW?.kind !== "unacked-ddi") {
@@ -287,7 +243,7 @@ describe("computePreSendWarnings — unacked-ddi", () => {
       makeInputs({
         ddiInteractions: [ddi],
         isAcked: ackedSet(ackKeyForDdi(ddi.id)),
-      }),
+      })
     );
     expect(warnings.find((w) => w.kind === "unacked-ddi")).toBeUndefined();
   });
@@ -297,7 +253,7 @@ describe("computePreSendWarnings — unacked-ddi", () => {
     const major = makeDdi("major");
     const moderate = makeDdi("moderate");
     const warnings = computePreSendWarnings(
-      makeInputs({ ddiInteractions: [minor, major, moderate] }),
+      makeInputs({ ddiInteractions: [minor, major, moderate] })
     );
     const ddiW = warnings.find((w) => w.kind === "unacked-ddi");
     if (ddiW?.kind !== "unacked-ddi") {
@@ -311,7 +267,7 @@ describe("computePreSendWarnings — unacked-ddi", () => {
     const major = makeDdi("major");
     const contra = makeDdi("contraindicated");
     const warnings = computePreSendWarnings(
-      makeInputs({ ddiInteractions: [major, contra] }),
+      makeInputs({ ddiInteractions: [major, contra] })
     );
     const ddiW = warnings.find((w) => w.kind === "unacked-ddi");
     if (ddiW?.kind !== "unacked-ddi") {
@@ -326,7 +282,7 @@ describe("computePreSendWarnings — unacked-ddi", () => {
 // ---------------------------------------------------------------------------
 
 describe("computePreSendWarnings — ordering", () => {
-  it("emits warnings in clinical-severity order: allergy → ddi → no-dx → empty-rx", () => {
+  it("emits warnings in clinical-severity order: allergy → ddi", () => {
     const warnings = computePreSendWarnings(
       makeInputs({
         filledMedicineCount: 0,
@@ -336,13 +292,11 @@ describe("computePreSendWarnings — ordering", () => {
         allergyMatches: [makeAllergyMatch(0, "a-1")],
         medicineInstanceIds: ["m-1"],
         ddiInteractions: [makeDdi("major")],
-      }),
+      })
     );
     expect(warnings.map((w) => w.kind)).toEqual([
       "unacked-allergy",
       "unacked-ddi",
-      "no-diagnosis",
-      "empty-rx",
     ]);
   });
 });

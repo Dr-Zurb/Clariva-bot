@@ -5,7 +5,7 @@
 
 import type { WebhookProvider } from '../../types/webhook';
 
-export type ChannelId = 'instagram' | 'whatsapp';
+export type ChannelId = 'instagram' | 'whatsapp' | 'facebook';
 
 export type Surface = 'dm' | 'comment';
 

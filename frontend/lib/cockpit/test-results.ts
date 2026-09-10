@@ -53,7 +53,7 @@ function trimToNull(value: unknown): string | null {
  * is preserved. A missing `id` is regenerated so the row stays UI-addressable.
  */
 export function normalizeTestResults(
-  json: TestResultRow[] | null | undefined,
+  json: TestResultRow[] | null | undefined
 ): TestResultRow[] {
   if (!Array.isArray(json)) return [];
   const out: TestResultRow[] = [];
@@ -67,19 +67,24 @@ export function normalizeTestResults(
         ? row.id.trim()
         : crypto.randomUUID();
     const interpretation =
-      row.interpretation && TEST_RESULT_INTERPRETATIONS.includes(row.interpretation)
+      row.interpretation &&
+      TEST_RESULT_INTERPRETATIONS.includes(row.interpretation)
         ? row.interpretation
         : null;
     // rpt-02/03 — grouping + reference-range fields. Malformed reportId collapses
     // to null (ungrouped); non-finite bounds collapse to null. These never leak
     // into the derived `test_results` TEXT (OBJ-D2 byte-identical).
     const reportId = trimToNull(
-      typeof row.reportId === "string" ? row.reportId : null,
+      typeof row.reportId === "string" ? row.reportId : null
     );
     const refLow =
-      typeof row.refLow === "number" && Number.isFinite(row.refLow) ? row.refLow : null;
+      typeof row.refLow === "number" && Number.isFinite(row.refLow)
+        ? row.refLow
+        : null;
     const refHigh =
-      typeof row.refHigh === "number" && Number.isFinite(row.refHigh) ? row.refHigh : null;
+      typeof row.refHigh === "number" && Number.isFinite(row.refHigh)
+        ? row.refHigh
+        : null;
     out.push({
       id,
       source: row.source,
@@ -93,6 +98,7 @@ export function normalizeTestResults(
       refLow,
       refHigh,
       refText: trimToNull(row.refText),
+      method: trimToNull(row.method),
     });
   }
   return out;
@@ -109,7 +115,7 @@ const LAB_REPORT_ENTRY_METHODS: readonly LabReportEntryMethod[] = [
  * drop; empty optional strings collapse to null. Order preserved.
  */
 export function normalizeLabReports(
-  json: LabReport[] | null | undefined,
+  json: LabReport[] | null | undefined
 ): LabReport[] {
   if (!Array.isArray(json)) return [];
   const out: LabReport[] = [];
@@ -123,12 +129,15 @@ export function normalizeLabReports(
         ? header.id.trim()
         : crypto.randomUUID();
     const entryMethod =
-      header.entryMethod && LAB_REPORT_ENTRY_METHODS.includes(header.entryMethod)
+      header.entryMethod &&
+      LAB_REPORT_ENTRY_METHODS.includes(header.entryMethod)
         ? header.entryMethod
         : "manual";
     const attachmentIds = Array.isArray(header.attachmentIds)
       ? header.attachmentIds
-          .filter((a): a is string => typeof a === "string" && a.trim().length > 0)
+          .filter(
+            (a): a is string => typeof a === "string" && a.trim().length > 0
+          )
           .map((a) => a.trim())
       : [];
     out.push({
@@ -178,4 +187,46 @@ export function formatTestResultRow(row: TestResultRow): string {
   const [normalized] = normalizeTestResults([row]);
   if (!normalized) return "";
   return renderTestResultLine(normalized);
+}
+
+/** Display string for the Range cell (printed text wins over numeric bounds). */
+export function formatTestResultRefRange(
+  row: Pick<TestResultRow, "refLow" | "refHigh" | "refText">
+): string {
+  const text = row.refText?.trim();
+  if (text) return text;
+  const hasLow = row.refLow != null;
+  const hasHigh = row.refHigh != null;
+  if (hasLow && hasHigh) return `${row.refLow}–${row.refHigh}`;
+  if (hasLow) return `≥ ${row.refLow}`;
+  if (hasHigh) return `≤ ${row.refHigh}`;
+  return "";
+}
+
+/**
+ * Parse a Range-cell edit into numeric bounds or printed text.
+ * `12-17` / `≥ 12` / `≤ 17` become bounds; anything else is `refText`.
+ */
+export function parseTestResultRefRange(
+  raw: string
+): Pick<TestResultRow, "refLow" | "refHigh" | "refText"> {
+  const trimmed = raw.trim();
+  if (!trimmed) return { refLow: null, refHigh: null, refText: null };
+
+  const span = trimmed.match(/^(-?\d+(?:\.\d+)?)\s*[-–—]\s*(-?\d+(?:\.\d+)?)$/);
+  if (span) {
+    return {
+      refLow: Number(span[1]),
+      refHigh: Number(span[2]),
+      refText: null,
+    };
+  }
+
+  const ge = trimmed.match(/^(?:≥|>=)\s*(-?\d+(?:\.\d+)?)$/);
+  if (ge) return { refLow: Number(ge[1]), refHigh: null, refText: null };
+
+  const le = trimmed.match(/^(?:≤|<=)\s*(-?\d+(?:\.\d+)?)$/);
+  if (le) return { refLow: null, refHigh: Number(le[1]), refText: null };
+
+  return { refLow: null, refHigh: null, refText: trimmed };
 }

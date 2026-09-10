@@ -17,8 +17,21 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { formatTimeShort } from "@/lib/format-date";
-import type { SlotSessionRow, SlotStatus } from "@/types/opd-doctor";
-import { OPD_QUEUE_GRID_TEMPLATE } from "./OpdQueueGrid";
+import { useConsultSteppedAway } from "@/hooks/useConsultSteppedAway";
+import type { SlotSessionRow } from "@/types/opd-doctor";
+import { OPD_SLOT_GRID_TEMPLATE } from "./OpdQueueGrid";
+import { showArrivedChip } from "./shared/opdArrival";
+import {
+  hasSlotTag,
+  isOverflowRow,
+  lifecycleBadgeLabel,
+  lifecycleTone,
+  resolveLifecycle,
+} from "./shared/slotAxes";
+import {
+  formatSlotDelta,
+  SLOT_DELTA_TONE_CLASS,
+} from "./shared/slotTimeDelta";
 
 export interface OpdSlotDenseRowProps {
   entry: SlotSessionRow;
@@ -28,6 +41,8 @@ export interface OpdSlotDenseRowProps {
   actions?: React.ReactNode;
   /** Keyboard focus ring (J/K hotkeys) — sl-05 */
   keyboardFocused?: boolean;
+  /** Ticking wall-clock from the list, so every row's delta advances together. */
+  nowMs?: number;
 }
 
 function modalityIcon(
@@ -47,114 +62,6 @@ function modalityIcon(
   }
 }
 
-function slotStatusMeta(s: SlotStatus): {
-  label: string;
-  dotClass: string;
-  pillClass: string;
-} {
-  switch (s) {
-    case "upcoming":
-      return {
-        label: "Upcoming",
-        dotClass: "bg-muted-foreground/50",
-        pillClass: "bg-muted text-muted-foreground",
-      };
-    case "grace":
-      return {
-        label: "Grace",
-        dotClass: "bg-muted-foreground/50",
-        pillClass: "bg-muted text-muted-foreground",
-      };
-    case "running_late":
-      return {
-        label: "Late",
-        dotClass: "bg-amber-500",
-        pillClass:
-          "bg-amber-100 text-amber-950 dark:bg-amber-950/40 dark:text-amber-100",
-      };
-    case "in_consultation":
-      return {
-        label: "In consult",
-        dotClass: "bg-primary",
-        pillClass: "bg-primary/15 text-primary",
-      };
-    case "completed":
-      return {
-        label: "Done",
-        dotClass: "bg-green-600",
-        pillClass:
-          "bg-green-100 text-green-900 dark:bg-green-900/40 dark:text-green-100",
-      };
-    case "missed":
-      return {
-        label: "Missed",
-        dotClass: "bg-destructive",
-        pillClass: "bg-destructive/15 text-destructive",
-      };
-    case "cancelled":
-      return {
-        label: "Cancelled",
-        dotClass: "bg-muted-foreground/40",
-        pillClass: "bg-muted text-muted-foreground",
-      };
-    case "overflow":
-      return {
-        label: "Overflow",
-        dotClass: "bg-indigo-500",
-        pillClass:
-          "bg-indigo-100 text-indigo-950 dark:bg-indigo-950/40 dark:text-indigo-100",
-      };
-    default:
-      return {
-        label: s,
-        dotClass: "bg-muted-foreground/40",
-        pillClass: "bg-muted text-muted-foreground",
-      };
-  }
-}
-
-function rowToneClass(s: SlotStatus): string {
-  switch (s) {
-    case "running_late":
-      return "border-l-4 border-l-amber-500";
-    case "in_consultation":
-      return cn(
-        "border-l-4 border-l-primary",
-        "bg-primary/5 ring-1 ring-inset ring-primary/20"
-      );
-    case "completed":
-      return "border-l-4 border-l-green-600/70 bg-green-50/40 dark:bg-green-950/20";
-    case "missed":
-      return "border-l-4 border-l-destructive";
-    case "overflow":
-      return "border-l-4 border-l-indigo-500";
-    case "cancelled":
-      return "border-l-4 border-l-muted-foreground/40 opacity-70";
-    default:
-      return "border-l-4 border-l-transparent";
-  }
-}
-
-function waitCell(entry: SlotSessionRow): React.ReactNode {
-  if (entry.slotStatus === "running_late") {
-    const m = entry.delayMinutes;
-    if (m != null && m > 0) {
-      return (
-        <span className="font-semibold text-amber-800 dark:text-amber-200">
-          +{m}m
-        </span>
-      );
-    }
-    return <span className="text-amber-800 dark:text-amber-200">Late</span>;
-  }
-  if (entry.slotStatus === "in_consultation") {
-    return (
-      <span className="font-medium text-primary">live</span>
-    );
-  }
-  return <span className="text-muted-foreground">—</span>;
-}
-
 export function OpdSlotDenseRow({
   entry,
   expanded = false,
@@ -162,11 +69,25 @@ export function OpdSlotDenseRow({
   onOpen,
   actions,
   keyboardFocused = false,
+  nowMs,
 }: OpdSlotDenseRowProps): JSX.Element {
-  const meta = slotStatusMeta(entry.slotStatus);
-  const isInConsult = entry.slotStatus === "in_consultation";
+  const steppedAway = useConsultSteppedAway(entry.appointmentId);
+  const lifecycle = resolveLifecycle(entry) ?? "scheduled";
+  const tone = lifecycleTone(lifecycle);
+  const badgeLabel = lifecycleBadgeLabel(lifecycle);
+  const isInConsult = lifecycle === "in_consult";
+  const isIncomplete = lifecycle === "incomplete";
+  const isActiveConsult = isInConsult && !steppedAway;
+  const showAwayChip = steppedAway && (isInConsult || isIncomplete);
+  const overflowTagged = isOverflowRow(entry);
+  const lateBand =
+    entry.timing?.band === "late" || entry.slotStatus === "running_late";
   const modality = modalityIcon(entry.consultationType);
   const rowRef = useRef<HTMLDivElement>(null);
+  const ariaStatus =
+    isIncomplete || (isInConsult && steppedAway)
+      ? "Incomplete consult"
+      : badgeLabel;
 
   useEffect(() => {
     if (!keyboardFocused) return;
@@ -217,24 +138,33 @@ export function OpdSlotDenseRow({
     entry.earlyInviteExpiresAt != null &&
     new Date(entry.earlyInviteExpiresAt).getTime() > Date.now();
 
+  // Delta only helps while the visit is still ahead of the doctor; on a
+  // finished / missed / cancelled row it's noise.
+  const delta =
+    lifecycle === "scheduled"
+      ? formatSlotDelta(entry.scheduledAt, nowMs ?? Date.now())
+      : null;
+
   return (
     <TooltipProvider delayDuration={400}>
       <div
         ref={rowRef}
         role="row"
         tabIndex={0}
-        aria-label={`Slot ${entry.position}, ${entry.patientName}, ${meta.label}`}
+        aria-label={`Slot ${entry.position}, ${entry.patientName}, ${ariaStatus}`}
         onClick={onOpen}
         onKeyDown={handleRowKeyDown}
         className={cn(
           "group grid cursor-pointer items-stretch",
           "border-b border-border/30 last:border-b-0",
           textBase,
-          rowToneClass(entry.slotStatus),
+          tone.rowClass,
+          lateBand && lifecycle === "scheduled" && "border-l-amber-500",
+          overflowTagged && lifecycle === "scheduled" && "border-l-indigo-500",
           "hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           keyboardFocused && "ring-2 ring-inset ring-primary"
         )}
-        style={{ gridTemplateColumns: OPD_QUEUE_GRID_TEMPLATE }}
+        style={{ gridTemplateColumns: OPD_SLOT_GRID_TEMPLATE }}
       >
         {onToggleExpand ? (
           <button
@@ -271,32 +201,98 @@ export function OpdSlotDenseRow({
         </div>
 
         <div
-          className={cn(cellPx, rowPy, "flex flex-wrap items-center gap-1 overflow-hidden")}
+          className={cn(
+            cellPx,
+            rowPy,
+            "flex min-w-0 flex-col justify-center whitespace-nowrap"
+          )}
+        >
+          <span className="text-[13px] font-semibold tabular-nums tracking-tight text-foreground">
+            {formatTimeShort(entry.scheduledAt)}
+          </span>
+          {delta && (
+            <span
+              className={cn(
+                "text-[10px] font-medium tabular-nums",
+                SLOT_DELTA_TONE_CLASS[delta.tone]
+              )}
+            >
+              {delta.label}
+            </span>
+          )}
+        </div>
+
+        <div
+          className={cn(
+            cellPx,
+            rowPy,
+            "flex min-w-0 flex-nowrap items-center gap-1.5 overflow-hidden",
+          )}
         >
           <span
             aria-hidden
             className={cn(
               "inline-block h-2 w-2 shrink-0 rounded-full",
-              meta.dotClass,
-              isInConsult && "animate-pulse"
+              tone.dotClass,
+              lateBand && lifecycle === "scheduled" && "bg-amber-500",
+              overflowTagged && lifecycle === "scheduled" && "bg-indigo-500",
+              isActiveConsult && "animate-pulse"
             )}
           />
           <span
+            title={isIncomplete ? "Incomplete consult" : badgeLabel}
             className={cn(
-              "inline-flex max-w-[72px] shrink-0 items-center truncate rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-              meta.pillClass
+              "inline-flex min-w-0 max-w-full items-center truncate rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+              tone.pillClass,
+              lateBand &&
+                lifecycle === "scheduled" &&
+                "bg-amber-100 text-amber-950 dark:bg-amber-950/40 dark:text-amber-100"
             )}
           >
-            {meta.label}
+            {lifecycle === "scheduled" && lateBand ? "Overdue" : badgeLabel}
           </span>
-          {entry.slotStatus === "overflow" && (
+          {overflowTagged && (
             <span className="inline-flex shrink-0 rounded border border-orange-500/50 bg-orange-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-orange-900 dark:text-orange-200">
               Overflow
             </span>
           )}
-          {earlyInviteActive && (
+          {showAwayChip && (
+            <span className="inline-flex shrink-0 rounded border border-amber-500/40 bg-amber-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-200">
+              Away
+            </span>
+          )}
+          {hasSlotTag(entry, "return_visit") && (
+            <span className="inline-flex shrink-0 rounded border border-sky-500/40 bg-sky-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-900 dark:text-sky-200">
+              Return
+            </span>
+          )}
+          {(earlyInviteActive || hasSlotTag(entry, "early_invited")) && (
             <span className="shrink-0 rounded-full bg-primary/15 px-1.5 py-0.5 text-[9px] font-medium text-primary">
               Early invite
+            </span>
+          )}
+          {showArrivedChip(entry) && (
+            <span
+              title="Arrived at the clinic."
+              className="inline-flex shrink-0 rounded border border-emerald-500/50 bg-emerald-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-900 dark:text-emerald-200"
+            >
+              Arrived
+            </span>
+          )}
+          {hasSlotTag(entry, "patient_waiting") && (
+            <span
+              title="Patient is in the consult lobby right now."
+              className="inline-flex shrink-0 rounded border border-emerald-500/50 bg-emerald-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-900 dark:text-emerald-200"
+            >
+              Waiting
+            </span>
+          )}
+          {hasSlotTag(entry, "patient_stepped_away") && (
+            <span
+              title="Patient checked in earlier but lobby went idle."
+              className="inline-flex shrink-0 rounded border border-stone-400/50 bg-stone-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-stone-700 dark:text-stone-300"
+            >
+              Stepped away
             </span>
           )}
         </div>
@@ -318,7 +314,7 @@ export function OpdSlotDenseRow({
                 className={cn(
                   "block truncate font-medium",
                   textBase,
-                  entry.slotStatus === "cancelled" && "line-through"
+                  lifecycle === "cancelled" && "line-through"
                 )}
               >
                 {entry.patientName}
@@ -408,26 +404,6 @@ export function OpdSlotDenseRow({
           ) : (
             <span className="text-xs text-muted-foreground">—</span>
           )}
-        </div>
-
-        <div
-          className={cn(
-            cellPx,
-            rowPy,
-            "flex items-center whitespace-nowrap tabular-nums text-xs text-muted-foreground"
-          )}
-        >
-          {formatTimeShort(entry.scheduledAt)}
-        </div>
-
-        <div
-          className={cn(
-            cellPx,
-            rowPy,
-            "flex items-center whitespace-nowrap tabular-nums text-xs"
-          )}
-        >
-          {waitCell(entry)}
         </div>
 
         <div className={cn(cellPx, rowPy, "flex items-center justify-end")}>

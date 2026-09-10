@@ -62,6 +62,14 @@ import {
   type MediaDeviceInfoLite,
 } from "@/hooks/useCameraDevices";
 import { createMicMeter, type MicMeter } from "@/lib/audio/mic-meter";
+import {
+  annotateFacings,
+  facingFromFacingMode,
+  nextFacingMode,
+  videoConstraintsForCameraSwitch,
+  type CameraFacing,
+} from "@/lib/video/camera-facing";
+import { FlipCameraGlyph } from "./CameraSwitchButton";
 
 const CAMERA_STORAGE_KEY = "video-precall-camera-id";
 const MIC_STORAGE_KEY = "video-precall-mic-id";
@@ -114,6 +122,8 @@ export default function VideoConsultPreCall({
     useCameraDevices();
   const [chosenCameraId, setChosenCameraId] = useState<string | null>(null);
   const [chosenMicId, setChosenMicId] = useState<string | null>(null);
+  const [currentFacing, setCurrentFacing] = useState<CameraFacing>("unknown");
+  const [isFlipping, setIsFlipping] = useState(false);
 
   // Restore chosen IDs from localStorage on first mount. The mount
   // effect fires once; later effects only update from dropdown
@@ -234,6 +244,17 @@ export default function VideoConsultPreCall({
     setMicPermission(micGranted ? "granted" : "denied");
     setStream(nextStream);
     setAcquiring(false);
+
+    const videoTrack = nextStream?.getVideoTracks()[0];
+    if (videoTrack) {
+      const settings = videoTrack.getSettings();
+      const fromMode = facingFromFacingMode(
+        typeof settings.facingMode === "string" ? settings.facingMode : undefined,
+      );
+      if (fromMode !== "unknown") {
+        setCurrentFacing(fromMode);
+      }
+    }
 
     // iOS Safari label-refresh quirk: enumerateDevices returns empty
     // labels until at least one getUserMedia grant resolves. Refresh
@@ -359,6 +380,80 @@ export default function VideoConsultPreCall({
     }
   }, []);
 
+  const flipCamera = useCallback(async () => {
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices ||
+      isFlipping ||
+      cameraPermission !== "granted"
+    ) {
+      return;
+    }
+    setIsFlipping(true);
+    const nextMode = nextFacingMode(currentFacing);
+    try {
+      const nextStream = await navigator.mediaDevices.getUserMedia({
+        video: videoConstraintsForCameraSwitch({
+          facingMode: nextMode,
+          facingModeExact: true,
+        }),
+        audio: chosenMicId
+          ? { deviceId: { ideal: chosenMicId } }
+          : true,
+      });
+      if (videoRef.current) {
+        videoRef.current.srcObject = nextStream;
+      }
+      stream?.getTracks().forEach((t) => t.stop());
+      setStream(nextStream);
+      const videoTrack = nextStream.getVideoTracks()[0];
+      const settings = videoTrack?.getSettings();
+      const fromMode = facingFromFacingMode(
+        typeof settings?.facingMode === "string" ? settings.facingMode : undefined,
+      );
+      setCurrentFacing(fromMode !== "unknown" ? fromMode : nextMode === "environment" ? "back" : "front");
+      const newId =
+        typeof settings?.deviceId === "string" ? settings.deviceId : null;
+      if (newId) {
+        previouslyChosenCameraRef.current = newId;
+        persistAndChooseCamera(newId);
+      }
+      void refreshDevices();
+    } catch {
+      try {
+        const fallback = await navigator.mediaDevices.getUserMedia({
+          video: videoConstraintsForCameraSwitch({
+            facingMode: nextMode,
+            facingModeExact: false,
+          }),
+          audio: false,
+        });
+        const oldVideo = stream?.getVideoTracks() ?? [];
+        oldVideo.forEach((t) => t.stop());
+        if (stream) {
+          oldVideo.forEach((t) => stream.removeTrack(t));
+          fallback.getVideoTracks().forEach((t) => stream.addTrack(t));
+          setStream(stream);
+        } else {
+          setStream(fallback);
+        }
+        setCurrentFacing(nextMode === "environment" ? "back" : "front");
+      } catch {
+        // No other camera — leave the current preview alone.
+      }
+    } finally {
+      setIsFlipping(false);
+    }
+  }, [
+    cameraPermission,
+    chosenMicId,
+    currentFacing,
+    isFlipping,
+    persistAndChooseCamera,
+    refreshDevices,
+    stream,
+  ]);
+
   // ------------------------------------------------------------------
   // Continue / Skip — both stop the local stream BEFORE handing
   // control to the parent so the camera light goes off cleanly. The
@@ -397,6 +492,19 @@ export default function VideoConsultPreCall({
   // explicitly chosen "Skip mic check". Patient can join camera-only
   // (mic denied + camera granted) — Decision §4.
   const continueEnabled = !acquiring && cameraPermission === "granted";
+  const labelledCameras = annotateFacings(cameras);
+  const fromList = labelledCameras.find((c) => c.deviceId === chosenCameraId)
+    ?.facing;
+  const facingForFlip: CameraFacing =
+    currentFacing !== "unknown" ? currentFacing : (fromList ?? "unknown");
+  const showFlip = cameraPermission === "granted";
+  const nextFacingLabel =
+    facingForFlip === "front"
+      ? "Switch to back camera"
+      : facingForFlip === "back"
+        ? "Switch to front camera"
+        : "Switch camera";
+  const previewMirrored = facingForFlip !== "back";
 
   // 10-bar visualizer — each bar's "lit" threshold is i/10 of the
   // amplitude; bars below the threshold render grey; bars at-or-below
@@ -434,7 +542,13 @@ export default function VideoConsultPreCall({
       </p>
 
       {/* Live preview — black canvas with camera-off / denied placeholders. */}
-      <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-gray-900">
+      <div
+        className={
+          "relative aspect-video w-full overflow-hidden rounded-lg bg-gray-900" +
+          (isFlipping ? " video-camera-flip" : "")
+        }
+        data-camera-flipping={isFlipping ? "true" : "false"}
+      >
         <video
           ref={videoRef}
           autoPlay
@@ -445,9 +559,27 @@ export default function VideoConsultPreCall({
           // shouldn't visually flip.
           className={
             "h-full w-full object-cover " +
-            (cameraPermission === "granted" ? "scale-x-[-1]" : "opacity-0")
+            (cameraPermission === "granted"
+              ? previewMirrored
+                ? "scale-x-[-1]"
+                : ""
+              : "opacity-0")
           }
         />
+        {showFlip && cameraPermission === "granted" ? (
+          <button
+            type="button"
+            onClick={() => void flipCamera()}
+            disabled={isFlipping || acquiring}
+            aria-label={nextFacingLabel}
+            title={nextFacingLabel}
+            data-testid="precall-camera-flip"
+            className="absolute bottom-3 right-3 flex h-11 items-center gap-1.5 rounded-full bg-black/60 px-3 text-sm font-medium text-white hover:bg-black/75 focus:outline-none focus:ring-2 focus:ring-white disabled:opacity-50"
+          >
+            <FlipCameraGlyph />
+            <span>Flip</span>
+          </button>
+        ) : null}
         {acquiring && cameraPermission === "pending" ? (
           <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-300">
             Requesting camera and microphone access…

@@ -13,7 +13,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     getDoctorSettings: vi.fn().mockResolvedValue({
-      data: { settings: { subjective_section_order: [] } },
+      data: {
+        settings: {
+          subjective_section_order: [],
+          subjective_section_hidden: ["__show_all__"],
+        },
+      },
     }),
     updatePrescription: vi.fn().mockResolvedValue({ data: {} }),
     createPrescription: vi.fn(),
@@ -55,6 +60,13 @@ function readRenderedSectionOrder(container: HTMLElement): SubjectiveSectionId[]
   );
 }
 
+async function waitForSectionsReady() {
+  await waitFor(() => {
+    expect(screen.queryByTestId("subjective-layout-skeleton")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Reorder Chief complaints/i })).toBeInTheDocument();
+  });
+}
+
 function getSectionReorderGrip(label: string) {
   return screen.getByRole("button", {
     name: new RegExp(`Reorder ${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i"),
@@ -69,8 +81,9 @@ function renameSectionViaPencil(displayName: string, newTitle: string) {
 }
 
 describe("SubjectiveSection reorder (subj-25)", () => {
-  it("renders a reorder grip for each top-level section when enabled", () => {
+  it("renders a reorder grip for each top-level section when enabled", async () => {
     renderWithRxForm(<SubjectiveSection heading={null} />);
+    await waitForSectionsReady();
 
     expect(getSectionReorderGrip("Chief complaints")).toBeInTheDocument();
     expect(getSectionReorderGrip("Past surgical history")).toBeInTheDocument();
@@ -81,6 +94,7 @@ describe("SubjectiveSection reorder (subj-25)", () => {
 
   it("renders one grip per custom block that reorders among subjective peers", async () => {
     const { container } = renderWithRxForm(<SubjectiveSection heading={null} />);
+    await waitForSectionsReady();
 
     fireEvent.click(screen.getByTestId("custom-subsections-add-first"));
     await waitFor(() => {
@@ -107,8 +121,9 @@ describe("SubjectiveSection reorder (subj-25)", () => {
     expect(after.indexOf(before[menstrualIdx]!)).toBeLessThan(menstrualIdx);
   });
 
-  it("keyboard ArrowDown on a grip moves the section one slot down", () => {
+  it("keyboard ArrowDown on a grip moves the section one slot down", async () => {
     const { container } = renderWithRxForm(<SubjectiveSection heading={null} />);
+    await waitForSectionsReady();
 
     const before = readRenderedSectionOrder(container);
     expect(before.indexOf("family_history")).toBe(2);
@@ -122,8 +137,9 @@ describe("SubjectiveSection reorder (subj-25)", () => {
     expect(after.indexOf("social_history")).toBe(2);
   });
 
-  it("keyboard ArrowUp on a grip moves the section one slot up", () => {
+  it("keyboard ArrowUp on a grip moves the section one slot up", async () => {
     const { container } = renderWithRxForm(<SubjectiveSection heading={null} />);
+    await waitForSectionsReady();
 
     const socialGrip = getSectionReorderGrip("Social / personal history");
     socialGrip.focus();
@@ -134,8 +150,12 @@ describe("SubjectiveSection reorder (subj-25)", () => {
     expect(after.indexOf("family_history")).toBe(3);
   });
 
-  it("hides reorder grips and blocks reorder when disabled", () => {
+  it("hides reorder grips and blocks reorder when disabled", async () => {
     const { container } = renderWithRxForm(<SubjectiveSection heading={null} disabled />);
+    await waitFor(() => {
+      expect(screen.queryByTestId("subjective-layout-skeleton")).not.toBeInTheDocument();
+      expect(within(container.querySelector("#rx-symptoms")!).getByLabelText("Chief complaints")).toBeInTheDocument();
+    });
 
     expect(screen.queryByTestId("subjective-section-drag-handle")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Reorder/i })).not.toBeInTheDocument();

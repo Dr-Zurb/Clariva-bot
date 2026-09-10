@@ -17,7 +17,7 @@ export default async function AlertsPage() {
   const { token } = await requireDashboardAuth();
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-3">
       <h1 className="text-2xl font-semibold text-foreground">Alerts</h1>
       <DoctorDashboardEventFeed token={token} />
     </div>

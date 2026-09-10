@@ -23,7 +23,10 @@ export const OBJECTIVE_MEDIA_ALLOWED_MIME = [
   "application/pdf",
 ] as const;
 
+/** Per-complaint / other objective strips. Reports uses {@link REPORT_SCAN_MAX_FILES}. */
 export const OBJECTIVE_MEDIA_MAX_FILES = 8;
+/** Lab / imaging report pages on the Reports strip only. */
+export const REPORT_SCAN_MAX_FILES = 24;
 export const OBJECTIVE_MEDIA_MAX_FILE_SIZE_MB = 10;
 
 /**

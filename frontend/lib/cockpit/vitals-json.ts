@@ -60,6 +60,7 @@ import {
 import {
   formatVitalLineWithNote,
   normalizeVitalNotes,
+  normalizeVitalsSectionNote,
   serializeVitalNotesForVitalsJson,
   type VitalNotesMap,
 } from "./vital-notes";
@@ -151,6 +152,7 @@ export function assembleVitalsJsonPayload(
   glucoseReadings?: readonly GlucoseReading[],
   glucoseContext?: GlucoseContext | null,
   vitalNotes?: VitalNotesMap | null,
+  sectionNote?: string | null,
 ): VitalsJson {
   const base = serializeVitalsJsonFromFields(jsonFields);
   const visit = serializeMeasurementContextForVitalsJson(measurementContext);
@@ -166,6 +168,7 @@ export function assembleVitalsJsonPayload(
   const provenance = serializeVitalProvenanceForVitalsJson(measurementContext, vitalProvenance);
   const custom = normalizeVitalsCustomEntries(customEntries);
   const notes = serializeVitalNotesForVitalsJson(vitalNotes);
+  const visitSectionNote = normalizeVitalsSectionNote(sectionNote);
   if (
     !readings &&
     !context &&
@@ -174,7 +177,8 @@ export function assembleVitalsJsonPayload(
     !glucoseRows &&
     !glucoseCtx &&
     custom.length === 0 &&
-    !notes
+    !notes &&
+    !visitSectionNote
   ) {
     return base;
   }
@@ -188,6 +192,7 @@ export function assembleVitalsJsonPayload(
     ...(provenance ? { vitalProvenance: provenance } : {}),
     ...(custom.length > 0 ? { vitalsCustom: custom } : {}),
     ...(notes ? { vitalNotes: notes } : {}),
+    ...(visitSectionNote ? { sectionNote: visitSectionNote } : {}),
   });
 }
 
@@ -295,6 +300,11 @@ export function normalizeVitalsJson(json: VitalsJson | null | undefined): Vitals
     out.vitalNotes = vitalNotes;
   }
 
+  const sectionNote = normalizeVitalsSectionNote(source.sectionNote);
+  if (sectionNote) {
+    out.sectionNote = sectionNote;
+  }
+
   return out as VitalsJson;
 }
 
@@ -370,6 +380,9 @@ export function deriveVitalsText(json: VitalsJson | null | undefined): string {
   for (const line of provenanceLines) {
     lines.push(line);
   }
+
+  const sectionNote = normalizeVitalsSectionNote(clean.sectionNote);
+  if (sectionNote) lines.push(sectionNote);
 
   return lines.join("\n");
 }

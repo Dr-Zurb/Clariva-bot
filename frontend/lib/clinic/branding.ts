@@ -38,12 +38,9 @@
  *
  * What this file does NOT own (deferrals + voice B2 wire-up notes):
  *
- *   - `logoUrl` fetch + `<img>` lifecycle. The `doctor_settings` table
- *     has no `logo_url` column today (verified against
- *     `docs/Reference/engineering/architecture/DB_SCHEMA.md` §doctor_settings). When voice B2
- *     introduces the schema column + backend pipe, just add `logoUrl`
- *     to the `BrandingInput` shape; `resolveClinicBranding()` already
- *     plumbs it through.
+ *   - `logoUrl` fetch + `<img>` lifecycle. clinic-branding-v1 stores
+ *     `logo_path` on `doctor_settings` and mints `logo_preview_url` on
+ *     GET settings. `resolveClinicBranding()` already plumbs `logoUrl`.
  *   - `primaryColor` theming. Same story — no `primary_color` column.
  *     Field is exposed in the type so the lobby header can paint
  *     accent borders / ring colours when the data arrives without a
@@ -158,15 +155,11 @@ export function getClinicBranding(
 
   const promise = getDoctorSettings(authToken)
     .then((res) => {
-      const row = res.data as ClinicBrandingSource & {
-        practice_name?: string | null;
-        logo_url?: string | null;
-        primary_color?: string | null;
-      };
+      const row = res.data.settings;
       return resolveClinicBranding({
-        practiceName: row.practice_name ?? row.practiceName,
-        logoUrl: row.logo_url ?? row.logoUrl,
-        primaryColor: row.primary_color ?? row.primaryColor,
+        practiceName: row.practice_name,
+        logoUrl: row.logo_preview_url ?? null,
+        primaryColor: null,
       });
     })
     .catch(() => resolveClinicBranding(null));

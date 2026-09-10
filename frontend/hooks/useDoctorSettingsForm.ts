@@ -77,7 +77,7 @@ export function useDoctorSettingsForm<TForm>(
         setFormState(next);
         setLastSaved(JSON.stringify(next));
         setSaveSuccess(true);
-        await queryClient.invalidateQueries({
+        void queryClient.invalidateQueries({
           queryKey: queryKeys.opd.doctorSettings(),
         });
       } catch {

@@ -15,6 +15,7 @@
  * reorders the visible sections. Richer system/template emphasis is P4/P5.
  */
 import type { ConsultationModality } from "@/types/appointment";
+import { resolveDefaultObjectiveLayout } from "@/lib/cockpit/objective-section-visibility";
 import {
   DEFAULT_OBJECTIVE_SECTION_ORDER,
   isStaticObjectiveSectionId,
@@ -47,9 +48,12 @@ export interface DefaultLayout {
   defaultHidden: StaticObjectiveSectionId[];
 }
 
-/** obj-09 canonical default (the never-blank fallback). */
+/** obj-09 canonical default (the never-blank fallback) + lean Reports hide. */
 function registryDefaultLayout(): DefaultLayout {
-  return { defaultOrder: [...DEFAULT_OBJECTIVE_SECTION_ORDER], defaultHidden: [] };
+  return {
+    defaultOrder: [...DEFAULT_OBJECTIVE_SECTION_ORDER],
+    defaultHidden: resolveDefaultObjectiveLayout().defaultHidden,
+  };
 }
 
 /**
@@ -78,8 +82,8 @@ export function normalizeSpecialty(specialty: string | null | undefined): Specia
 
 /**
  * Modality → section default (§G / OBJ-D6).
- *   - in_clinic → full exam: every section visible (registry default).
- *   - video → observed + uploads: structured exam + Reports (incl. media strip).
+ *   - in_clinic → full registry (every section visible).
+ *   - video → same full set (observed exam + Reports).
  *   - voice / text (async) → patient-reported + uploads: `test_results` (Reports)
  *     leads; structured `exam` hidden.
  *
@@ -89,12 +93,8 @@ export function normalizeSpecialty(specialty: string | null | undefined): Specia
 function resolveModalityLayout(modality: ConsultModality | null | undefined): DefaultLayout {
   switch (modality) {
     case "in_clinic":
-      return { defaultOrder: [...DEFAULT_OBJECTIVE_SECTION_ORDER], defaultHidden: [] };
     case "video":
-      return {
-        defaultOrder: [...DEFAULT_OBJECTIVE_SECTION_ORDER],
-        defaultHidden: [],
-      };
+      return registryDefaultLayout();
     case "voice":
     case "text":
       return {

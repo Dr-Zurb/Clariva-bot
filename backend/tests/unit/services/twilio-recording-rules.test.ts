@@ -12,17 +12,23 @@ import { describe, expect, it, jest, beforeEach } from '@jest/globals';
 jest.mock('../../../src/config/env', () => ({
   env: {
     TWILIO_ACCOUNT_SID: 'AC_test',
-    TWILIO_AUTH_TOKEN:  'tok_test',
+    TWILIO_AUTH_TOKEN: 'tok_test',
   },
 }));
 
 jest.mock('../../../src/config/logger', () => ({
   logger: {
     error: jest.fn(),
-    warn:  jest.fn(),
-    info:  jest.fn(),
+    warn: jest.fn(),
+    info: jest.fn(),
     debug: jest.fn(),
   },
+}));
+
+const isRoomRecordingPausedMock = jest.fn<(roomSid: string) => Promise<boolean>>();
+
+jest.mock('../../../src/services/recording-pause-service', () => ({
+  isRoomRecordingPaused: (roomSid: string) => isRoomRecordingPausedMock(roomSid),
 }));
 
 type UpdateCall = { rules: unknown[] };
@@ -41,7 +47,7 @@ const twilioClient = {
     v1: {
       rooms: (_sid: string) => ({
         recordingRules: {
-          fetch:  fetchMock,
+          fetch: fetchMock,
           update: updateMock,
         },
       }),
@@ -57,6 +63,7 @@ jest.mock('twilio', () => {
 import {
   excludeAllParticipantsFromRecording,
   getCurrentRecordingMode,
+  getIncludedRecordingKinds,
   includeAllParticipantsInRecording,
   mergeAllParticipantsRule,
   setRecordingRulesToAudioAndVideo,
@@ -68,6 +75,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   fetchMock.mockResolvedValue({ rules: [] });
   updateMock.mockResolvedValue({});
+  isRoomRecordingPausedMock.mockResolvedValue(false);
 });
 
 function setCurrentRules(rules: unknown[] | Error): void {
@@ -94,7 +102,7 @@ describe('mergeAllParticipantsRule', () => {
     const merged = await mergeAllParticipantsRule(
       twilioClient as unknown as Parameters<typeof mergeAllParticipantsRule>[0],
       'RM1',
-      { type: 'exclude', all: true, kind: 'audio' },
+      { type: 'exclude', all: true, kind: 'audio' }
     );
     expect(merged).toEqual([{ type: 'exclude', all: true, kind: 'audio' }]);
   });
@@ -104,7 +112,7 @@ describe('mergeAllParticipantsRule', () => {
     const merged = await mergeAllParticipantsRule(
       twilioClient as unknown as Parameters<typeof mergeAllParticipantsRule>[0],
       'RM1',
-      { type: 'exclude', all: true, kind: 'audio' },
+      { type: 'exclude', all: true, kind: 'audio' }
     );
     expect(merged).toEqual([{ type: 'exclude', all: true, kind: 'audio' }]);
   });
@@ -114,7 +122,7 @@ describe('mergeAllParticipantsRule', () => {
     const merged = await mergeAllParticipantsRule(
       twilioClient as unknown as Parameters<typeof mergeAllParticipantsRule>[0],
       'RM1',
-      { type: 'exclude', all: true, kind: 'audio' },
+      { type: 'exclude', all: true, kind: 'audio' }
     );
     expect(merged).toEqual([
       { type: 'include', all: true, kind: 'video' },
@@ -130,7 +138,7 @@ describe('mergeAllParticipantsRule', () => {
     const merged = await mergeAllParticipantsRule(
       twilioClient as unknown as Parameters<typeof mergeAllParticipantsRule>[0],
       'RM1',
-      { type: 'exclude', all: true, kind: 'audio' },
+      { type: 'exclude', all: true, kind: 'audio' }
     );
     expect(merged).toEqual([
       { type: 'include', publisher: 'doctor-1', kind: 'audio' },
@@ -144,7 +152,7 @@ describe('mergeAllParticipantsRule', () => {
     const merged = await mergeAllParticipantsRule(
       twilioClient as unknown as Parameters<typeof mergeAllParticipantsRule>[0],
       'RM1',
-      { type: 'exclude', all: true, kind: 'audio' },
+      { type: 'exclude', all: true, kind: 'audio' }
     );
     expect(merged).toEqual([{ type: 'exclude', all: true, kind: 'audio' }]);
   });
@@ -166,18 +174,18 @@ describe('excludeAllParticipantsFromRecording', () => {
   });
 
   it('throws InternalError when roomSid is empty', async () => {
-    await expect(
-      excludeAllParticipantsFromRecording('', 'audio', 'corr-1'),
-    ).rejects.toThrow('roomSid is required');
+    await expect(excludeAllParticipantsFromRecording('', 'audio', 'corr-1')).rejects.toThrow(
+      'roomSid is required'
+    );
     expect(updateMock).not.toHaveBeenCalled();
   });
 
   it('wraps a Twilio update() failure as InternalError with a useful message', async () => {
     setCurrentRules([]);
     updateMock.mockRejectedValueOnce(new Error('twilio_timeout'));
-    await expect(
-      excludeAllParticipantsFromRecording('RM1', 'audio', 'corr-1'),
-    ).rejects.toThrow(/Failed to exclude audio on room RM1/);
+    await expect(excludeAllParticipantsFromRecording('RM1', 'audio', 'corr-1')).rejects.toThrow(
+      /Failed to exclude audio on room RM1/
+    );
   });
 });
 
@@ -237,7 +245,7 @@ describe('getCurrentRecordingMode', () => {
     const err = Object.assign(new Error('twilio 404'), { status: 404 });
     fetchMock.mockRejectedValueOnce(err);
     await expect(getCurrentRecordingMode('RM_gone')).rejects.toBeInstanceOf(
-      TwilioRoomNotFoundError,
+      TwilioRoomNotFoundError
     );
   });
 
@@ -245,7 +253,7 @@ describe('getCurrentRecordingMode', () => {
     const err = Object.assign(new Error('twilio 503'), { status: 503 });
     fetchMock.mockRejectedValueOnce(err);
     await expect(getCurrentRecordingMode('RM_boom')).rejects.toThrow(
-      /fetch failed for room RM_boom/,
+      /fetch failed for room RM_boom/
     );
   });
 });
@@ -292,19 +300,19 @@ describe('setRecordingRulesToAudioOnly', () => {
     const secondCall = updateMock.mock.calls[1]?.[0] as UpdateCall;
     // Order: audio include first, then video exclude.
     expect(firstCall.rules).toEqual(
-      expect.arrayContaining([{ type: 'include', all: true, kind: 'audio' }]),
+      expect.arrayContaining([{ type: 'include', all: true, kind: 'audio' }])
     );
     expect(secondCall.rules).toEqual(
-      expect.arrayContaining([{ type: 'exclude', all: true, kind: 'video' }]),
+      expect.arrayContaining([{ type: 'exclude', all: true, kind: 'video' }])
     );
   });
 
   it('propagates TwilioRoomNotFoundError from the mode read', async () => {
     const err = Object.assign(new Error('twilio 404'), { status: 404 });
     fetchMock.mockRejectedValueOnce(err);
-    await expect(
-      setRecordingRulesToAudioOnly('RM_gone', 'corr-mode-3'),
-    ).rejects.toBeInstanceOf(TwilioRoomNotFoundError);
+    await expect(setRecordingRulesToAudioOnly('RM_gone', 'corr-mode-3')).rejects.toBeInstanceOf(
+      TwilioRoomNotFoundError
+    );
     expect(updateMock).not.toHaveBeenCalled();
   });
 });
@@ -347,7 +355,41 @@ describe('setRecordingRulesToAudioAndVideo', () => {
     expect(updateMock).toHaveBeenCalledTimes(2);
     const secondCall = updateMock.mock.calls[1]?.[0] as UpdateCall;
     expect(secondCall.rules).toEqual(
-      expect.arrayContaining([{ type: 'include', all: true, kind: 'video' }]),
+      expect.arrayContaining([{ type: 'include', all: true, kind: 'video' }])
     );
+  });
+});
+
+describe('getIncludedRecordingKinds', () => {
+  it('returns only included kinds (audio-only room omits video)', async () => {
+    setCurrentRules([
+      { type: 'include', all: true, kind: 'audio' },
+      { type: 'exclude', all: true, kind: 'video' },
+    ]);
+    await expect(getIncludedRecordingKinds('RM_kinds_1')).resolves.toEqual(['audio']);
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it('returns audio and video when both are included', async () => {
+    setCurrentRules([
+      { type: 'include', all: true, kind: 'audio' },
+      { type: 'include', all: true, kind: 'video' },
+    ]);
+    await expect(getIncludedRecordingKinds('RM_kinds_2')).resolves.toEqual(['audio', 'video']);
+  });
+});
+
+describe('setRecordingRulesToAudioOnly · paused session (rec-14 §2.3.3)', () => {
+  it('does not re-include audio when the session is paused', async () => {
+    isRoomRecordingPausedMock.mockResolvedValue(true);
+    setCurrentRules([
+      { type: 'exclude', all: true, kind: 'audio' },
+      { type: 'exclude', all: true, kind: 'video' },
+    ]);
+
+    await setRecordingRulesToAudioOnly('RM_paused', 'corr-paused-revert');
+
+    expect(isRoomRecordingPausedMock).toHaveBeenCalledWith('RM_paused');
+    expect(updateMock).not.toHaveBeenCalled();
   });
 });

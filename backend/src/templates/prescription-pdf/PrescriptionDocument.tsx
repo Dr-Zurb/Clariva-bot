@@ -25,14 +25,32 @@
  */
 
 import * as React from 'react';
-import { Document, Page, View, Text } from '@react-pdf/renderer';
-import { styles } from './styles';
+import { Document, Page, View, Text, Image } from '@react-pdf/renderer';
+import { letterheadImageFitCss, letterheadTypePt, type LetterheadTextSize } from '../../types/letterhead';
+import { mmToPt, resolvePdfAccent, styles } from './styles';
 import { Header } from './Header';
 import { Footer } from './Footer';
+import { PatientBlock } from './PatientBlock';
 import { MedicineTable } from './MedicineTable';
 import { SectionBlock } from './SectionBlock';
-import type { PrescriptionPdfData } from './types';
+import { InvestigationsBlock } from './InvestigationsBlock';
+import type { PrescriptionPdfData, PrescriptionPdfHeaderData } from './types';
 import type { OutputCustomSubsection } from '../../utils/custom-subsections';
+
+/** One-line issuer for the preprinted preset (Header is hidden). */
+export function formatPreprintedIssuerLine(
+  header: PrescriptionPdfHeaderData,
+): string | null {
+  const bits: string[] = [];
+  const name = header.doctorName?.trim() ?? '';
+  if (name && name !== 'Doctor') bits.push(name);
+  if (header.qualifications?.trim()) bits.push(header.qualifications.trim());
+  if (header.specialty?.trim()) bits.push(header.specialty.trim());
+  if (header.registrationNumber?.trim()) {
+    bits.push(`Reg. No.: ${header.registrationNumber.trim()}`);
+  }
+  return bits.length > 0 ? bits.join(' · ') : null;
+}
 
 interface PrescriptionDocumentProps {
   data: PrescriptionPdfData;
@@ -50,24 +68,26 @@ interface PrescriptionDocumentProps {
  */
 export function renderCustomSubsections(
   sections: OutputCustomSubsection[] | undefined,
+  accentColor?: string | null,
+  textSize?: LetterheadTextSize
 ): React.ReactNode {
   if (!sections || sections.length === 0) return null;
+  const labelSize = letterheadTypePt('bodyLabel', textSize);
+  const bodySize = letterheadTypePt('bodyText', textSize);
+  const labelStyle = accentColor
+    ? [styles.sectionLabel, { color: accentColor, fontSize: labelSize }]
+    : [styles.sectionLabel, { fontSize: labelSize }];
   return sections.map((section, i) => (
     <View key={`custom-subsection-${i}`} style={styles.section} wrap={false}>
-      {section.title ? (
-        <Text style={styles.sectionLabel}>{section.title}</Text>
-      ) : null}
+      {section.title ? <Text style={labelStyle}>{section.title}</Text> : null}
       {section.body ? (
-        <Text style={styles.sectionBody}>{section.body}</Text>
+        <Text style={[styles.sectionBody, { fontSize: bodySize }]}>{section.body}</Text>
       ) : null}
       {section.children.map((child, j) => (
-        <View
-          key={`custom-subsection-${i}-child-${j}`}
-          style={{ marginLeft: 12, marginTop: 4 }}
-        >
-          <Text style={styles.sectionLabel}>{child.title}</Text>
+        <View key={`custom-subsection-${i}-child-${j}`} style={{ marginLeft: 12, marginTop: 4 }}>
+          <Text style={labelStyle}>{child.title}</Text>
           {child.body ? (
-            <Text style={styles.sectionBody}>{child.body}</Text>
+            <Text style={[styles.sectionBody, { fontSize: bodySize }]}>{child.body}</Text>
           ) : null}
         </View>
       ))}
@@ -75,74 +95,172 @@ export function renderCustomSubsections(
   ));
 }
 
-export const PrescriptionDocument: React.FC<PrescriptionDocumentProps> = ({
-  data,
-}) => {
-  const { header, footer, patient, body } = data;
+export const PrescriptionDocument: React.FC<PrescriptionDocumentProps> = ({ data }) => {
+  const { header, footer, patient, body, layout } = data;
+  const pageSize = layout?.pageSize === 'a5' ? 'A5' : 'A4';
+  const isPreprinted = layout?.preset === 'preprinted';
+  const accentColor = resolvePdfAccent(layout?.accentColor);
+  const bodyTextSize = layout?.bodyTextSize;
+  const hasBannerFooter = layout?.preset === 'banner' && Boolean(footer.bannerSrc);
+  const mt = mmToPt(layout?.pageMarginTopMm ?? 12);
+  const mr = mmToPt(layout?.pageMarginRightMm ?? 12);
+  const mb = mmToPt(layout?.pageMarginBottomMm ?? 12);
+  const ml = mmToPt(layout?.pageMarginLeftMm ?? 12);
+  const pageStyle =
+    isPreprinted && layout
+      ? {
+          ...styles.page,
+          paddingTop: mmToPt(layout.preprintMarginTopMm),
+          paddingBottom: mmToPt(layout.preprintMarginBottomMm),
+        }
+      : hasBannerFooter && layout
+        ? {
+            ...styles.page,
+            paddingTop: mt,
+            paddingRight: mr,
+            paddingLeft: ml,
+            paddingBottom: 24 + mmToPt(layout.footerHeightMm ?? 20) + 40,
+          }
+        : layout
+          ? {
+              ...styles.page,
+              paddingTop: mt,
+              paddingRight: mr,
+              paddingBottom: Math.max(mb, 56),
+              paddingLeft: ml,
+            }
+          : styles.page;
+
+  const showBackground =
+    !isPreprinted && Boolean(layout?.backgroundSrc) && layout?.backgroundPreset !== 'none';
+  const backgroundOpacity = Math.min(40, Math.max(0, layout?.backgroundOpacity ?? 15)) / 100;
 
   return (
-    <Document
-      author={header.doctorName}
-      title={`Prescription · ${patient.patientName}`}
-    >
-      <Page size="A4" style={styles.page}>
+    <Document author={header.doctorName} title={`Prescription · ${patient.patientName}`}>
+      <Page size={pageSize} style={pageStyle}>
+        {showBackground && layout?.backgroundSrc ? (
+          <Image
+            src={layout.backgroundSrc}
+            fixed
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              objectFit: letterheadImageFitCss(layout.backgroundFit ?? 'fill'),
+              opacity: backgroundOpacity,
+            }}
+          />
+        ) : null}
         {/* Header — page 1 only (NOT marked `fixed`). */}
-        <Header data={header} />
+        <Header data={header} layout={layout} />
 
-        {/* Patient strip — page 1 only. */}
-        <View style={styles.patientStrip}>
-          <View style={styles.patientField}>
-            <Text style={styles.patientLabel}>Patient</Text>
-            <Text style={styles.patientValue}>{patient.patientName}</Text>
-          </View>
-          {patient.patientAge ? (
-            <View style={styles.patientField}>
-              <Text style={styles.patientLabel}>Age</Text>
-              <Text style={styles.patientValue}>{patient.patientAge}</Text>
-            </View>
-          ) : null}
-          {patient.patientGender ? (
-            <View style={styles.patientField}>
-              <Text style={styles.patientLabel}>Gender</Text>
-              <Text style={styles.patientValue}>{patient.patientGender}</Text>
-            </View>
-          ) : null}
-          <View style={styles.patientField}>
-            <Text style={styles.patientLabel}>Visit</Text>
-            <Text style={styles.patientValue}>{patient.visitDateLabel}</Text>
-          </View>
-        </View>
+        {/* Patient card — page 1 only. */}
+        <PatientBlock data={patient} layout={layout} />
+
+        {/* Preprinted hides the letterhead Header. Digital preview still
+            needs doctor + registration on the sheet. */}
+        {isPreprinted ? (
+          <SectionBlock
+            label="Doctor"
+            body={formatPreprintedIssuerLine(header)}
+            accentColor={accentColor}
+            textSize={bodyTextSize}
+          />
+        ) : null}
 
         {/* SOAP sections (skipped sections render nothing — see SectionBlock). */}
-        <SectionBlock label="Chief complaint" body={body.cc} />
-        <SectionBlock label="History of present illness" body={body.hopi} />
-        <SectionBlock label="Social history" body={body.socialHistory} />
+        <SectionBlock
+          label="Allergies"
+          body={body.allergies}
+          accentColor={accentColor}
+          textSize={bodyTextSize}
+        />
+        <SectionBlock
+          label="Chief complaint"
+          body={body.cc}
+          accentColor={accentColor}
+          textSize={bodyTextSize}
+        />
+        <SectionBlock
+          label="History of present illness"
+          body={body.hopi}
+          accentColor={accentColor}
+          textSize={bodyTextSize}
+        />
+        <SectionBlock
+          label="Vitals"
+          body={body.vitals}
+          accentColor={accentColor}
+          textSize={bodyTextSize}
+        />
+        <SectionBlock
+          label="Examination"
+          body={body.examinationFindings}
+          accentColor={accentColor}
+          textSize={bodyTextSize}
+        />
+        <SectionBlock
+          label="Social history"
+          body={body.socialHistory}
+          accentColor={accentColor}
+          textSize={bodyTextSize}
+        />
 
         {/* Doctor-defined custom subsections (subj-22) — subjective block,
             rendered after social history and before the plan-side sections. */}
-        {renderCustomSubsections(body.customSubsections)}
+        {renderCustomSubsections(body.customSubsections, accentColor, bodyTextSize)}
 
-        <SectionBlock label="Provisional diagnosis" body={body.provisionalDiagnosis} />
+        <SectionBlock
+          label="Provisional diagnosis"
+          body={body.provisionalDiagnosis}
+          accentColor={accentColor}
+          textSize={bodyTextSize}
+        />
 
         {/* assessment-plan-custom-sections — custom Assessment sections, rendered
             after the diagnosis and before investigations (assessment-side block). */}
-        {renderCustomSubsections(body.assessmentCustomSections)}
+        {renderCustomSubsections(body.assessmentCustomSections, accentColor, bodyTextSize)}
 
-        <SectionBlock label="Investigations" body={body.investigations} />
+        <InvestigationsBlock
+          body={body.investigations}
+          accentColor={accentColor}
+          textSize={bodyTextSize}
+        />
 
         {/* Rx — medicine table. Flows to next page if needed. */}
-        <MedicineTable medicines={body.medicines} />
+        <MedicineTable
+          medicines={body.medicines}
+          accentColor={accentColor}
+          textSize={bodyTextSize}
+        />
 
         {/* Plan-side patient-facing sections (plan-p1). Clinical notes omitted. */}
-        <SectionBlock label="Advice" body={body.advice} />
-        <SectionBlock label="Follow-up" body={body.followUp} />
-        <SectionBlock label="Referral" body={body.referral} />
+        <SectionBlock
+          label="Advice"
+          body={body.advice}
+          accentColor={accentColor}
+          textSize={bodyTextSize}
+        />
+        <SectionBlock
+          label="Follow-up"
+          body={body.followUp}
+          accentColor={accentColor}
+          textSize={bodyTextSize}
+        />
+        <SectionBlock
+          label="Referral"
+          body={body.referral}
+          accentColor={accentColor}
+          textSize={bodyTextSize}
+        />
 
         {/* assessment-plan-custom-sections — custom Plan sections (plan-side block). */}
-        {renderCustomSubsections(body.planCustomSections)}
+        {renderCustomSubsections(body.planCustomSections, accentColor, bodyTextSize)}
 
         {/* Footer — repeats per page (see Footer.tsx `fixed`). */}
-        <Footer data={footer} />
+        <Footer data={footer} layout={layout} />
       </Page>
     </Document>
   );

@@ -7,18 +7,19 @@
  * consult), 05 (voice consult), 07 (post-session worker).
  *
  * Naming: "fan-out" refers to the parallel-not-cascade dispatch pattern
- * (`Promise.allSettled` across SMS + email + IG DM). Existing helpers in
- * `notification-service.ts` use a cascade pattern (try SMS, fall back to
- * email, fall back to IG, return on first success) — that pattern returns
- * `boolean` and is intentionally kept distinct. See task-16 for the rationale.
+ * (`Promise.allSettled` across SMS + email + IG DM + Facebook Messenger).
+ * Existing helpers in `notification-service.ts` use a cascade pattern (try
+ * SMS, fall back to email, fall back to IG, return on first success) — that
+ * pattern returns `boolean` and is intentionally kept distinct. See task-16
+ * for the rationale.
  */
 
 /**
- * Channels the v1 fan-out can attempt. WhatsApp + push are deliberately
- * absent (master plan deferral). New channels must be added here AND wired
- * into both fan-out helpers' channel-resolution + dispatch sections.
+ * Channels the v1 fan-out can attempt. WhatsApp + push remain deferred.
+ * New channels must be added here AND wired into channel-resolution +
+ * `dispatchFanOut`. Facebook Messenger is crc-16 / CRC4-D5.
  */
-export type FanOutChannel = 'sms' | 'email' | 'instagram_dm';
+export type FanOutChannel = 'sms' | 'email' | 'instagram_dm' | 'facebook_dm';
 
 /**
  * Per-channel outcome shape. Discriminated on `status` so consumers can

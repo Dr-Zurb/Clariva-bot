@@ -28,6 +28,10 @@ import type { FanOutResult } from '../../../src/types/notification';
 jest.mock('../../../src/config/database', () => ({
   getSupabaseAdminClient: jest.fn(),
 }));
+// notification-service imports prescription-pdf-service → @react-pdf/renderer (ESM).
+jest.mock('../../../src/services/prescription-pdf-service', () => ({
+  renderPrescriptionPdf: jest.fn(),
+}));
 jest.mock('../../../src/config/email', () => ({
   sendEmail: jest.fn(),
 }));
@@ -40,6 +44,9 @@ jest.mock('../../../src/services/instagram-service', () => ({
 }));
 jest.mock('../../../src/services/instagram-connect-service', () => ({
   getInstagramAccessTokenForDoctor: jest.fn().mockResolvedValue('doctor-ig-token' as never),
+}));
+jest.mock('../../../src/services/facebook-connect-service', () => ({
+  getFacebookPageAccessTokenForDoctor: jest.fn().mockResolvedValue('doctor-fb-token' as never),
 }));
 jest.mock('../../../src/services/doctor-settings-service', () => ({
   getDoctorSettings: jest.fn().mockResolvedValue({
@@ -70,6 +77,7 @@ jest.mock('../../../src/utils/dm-copy', () => {
 
 // Lock the env BEFORE the service is imported.
 process.env.CONSULTATION_JOIN_BASE_URL = 'https://app.clariva.test/consult/join';
+process.env.CONSULTATION_TOKEN_SECRET = 'test-consultation-secret-key';
 process.env.CONSULTATION_READY_NOTIFY_DEDUP_SECONDS = '60';
 process.env.PRESCRIPTION_VIEW_BASE_URL = 'https://app.clariva.test/rx';
 
@@ -167,7 +175,7 @@ function buildSupabaseMock(opts: BuildSupabaseOpts) {
   const patientRow = opts.patient ?? null;
   const conversationRow = opts.conversation ?? null;
   const prescriptionRow = opts.prescription?.found
-    ? { id: prescriptionId, appointment_id: appointmentId }
+    ? { id: prescriptionId, appointment_id: appointmentId, doctor_id: doctorId, attested_at: null }
     : null;
 
   const updateCaptures = opts.captureLastReadyUpdate ?? [];
@@ -227,6 +235,12 @@ function buildSupabaseMock(opts: BuildSupabaseOpts) {
         }
         return chain;
       }),
+      is: jest.fn(() => chain),
+      select: jest.fn(() => chain),
+      maybeSingle: jest.fn().mockResolvedValue({
+        data: { attested_at: '2026-08-31T12:00:00.000Z' },
+        error: null,
+      } as never),
       then: (cb: (r: { data: null; error: null }) => unknown) =>
         Promise.resolve(cb({ data: null, error: null })),
     };
@@ -325,12 +339,13 @@ describe('Notification fan-out helpers (Plan 01 · Task 16)', () => {
 
       expect(result.anySent).toBe(true);
       expect(result.sessionOrPrescriptionId).toBe(sessionId);
-      expect(result.channels).toHaveLength(3);
+      expect(result.channels).toHaveLength(4);
 
       const channelMap = Object.fromEntries(result.channels.map((c) => [c.channel, c]));
       expect(channelMap.sms.status).toBe('sent');
       expect(channelMap.email.status).toBe('sent');
       expect(channelMap.instagram_dm.status).toBe('sent');
+      expect(channelMap.facebook_dm.status).toBe('skipped');
 
       // All three providers were called with the same body.
       expect(smsService.sendSms).toHaveBeenCalledWith(
@@ -340,7 +355,7 @@ describe('Notification fan-out helpers (Plan 01 · Task 16)', () => {
       );
       expect(emailConfig.sendEmail).toHaveBeenCalledWith(
         'patient@example.com',
-        'Your consult is starting',
+        'Join your video consult — Halo Aid',
         'CONSULT_READY_BODY',
         correlationId
       );
@@ -374,9 +389,16 @@ describe('Notification fan-out helpers (Plan 01 · Task 16)', () => {
         expect.objectContaining({
           modality:     'video',
           practiceName: 'Acme Clinic',
-          joinUrl:      expect.stringMatching(/\?token=join-token-xyz$/),
+          // HMAC consultation token is `payload.sig` (exactly one `.`),
+          // never a Twilio JWT (`header.payload.sig`).
+          joinUrl: expect.stringMatching(
+            /^https:\/\/app\.clariva\.test\/consult\/join\?token=[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/
+          ),
         })
       );
+      // Video fan-out must NOT use getJoinTokenForAppointment's Twilio JWT
+      // as the patient URL token (that caused "Invalid consultation token format").
+      expect(sessionService.getJoinTokenForAppointment).not.toHaveBeenCalled();
     });
 
     it('IG-only patient: SMS + email skipped with no_recipient, IG sent', async () => {
@@ -395,6 +417,7 @@ describe('Notification fan-out helpers (Plan 01 · Task 16)', () => {
       expect(map.email.status).toBe('skipped');
       expect((map.email as { reason: string }).reason).toBe('no_recipient');
       expect(map.instagram_dm.status).toBe('sent');
+      expect(map.facebook_dm.status).toBe('skipped');
 
       expect(result.anySent).toBe(true);
       expect(smsService.sendSms).not.toHaveBeenCalled();
@@ -417,6 +440,7 @@ describe('Notification fan-out helpers (Plan 01 · Task 16)', () => {
       expect((map.sms as { error: string }).error).toContain('twilio 21408');
       expect(map.email.status).toBe('sent');
       expect(map.instagram_dm.status).toBe('sent');
+      expect(map.facebook_dm.status).toBe('skipped');
       expect(result.anySent).toBe(true);
     });
 
@@ -480,6 +504,118 @@ describe('Notification fan-out helpers (Plan 01 · Task 16)', () => {
     });
   });
 
+  describe('crc-16 Facebook Messenger fan-out', () => {
+    it('Facebook-only patient: SMS + email + IG skipped, Facebook sent', async () => {
+      const supa = buildSupabaseMock({
+        session:     { found: true, modality: 'video' },
+        appointment: { found: true, phone: null },
+        patient:     defaultPatient({
+          phone:                null,
+          email:                null,
+          platform:             'facebook',
+          platform_external_id: 'fb-psid-999',
+        }),
+      });
+      database.getSupabaseAdminClient.mockReturnValue(supa);
+
+      const result = await sendConsultationReadyToPatient({ sessionId, correlationId });
+
+      const map = Object.fromEntries(result.channels.map((c) => [c.channel, c]));
+      expect(map.sms.status).toBe('skipped');
+      expect(map.email.status).toBe('skipped');
+      expect(map.instagram_dm.status).toBe('skipped');
+      expect(map.facebook_dm.status).toBe('sent');
+      expect(result.anySent).toBe(true);
+      expect(instagramService.sendInstagramMessage).toHaveBeenCalledWith(
+        'fb-psid-999',
+        'CONSULT_READY_BODY',
+        correlationId,
+        'doctor-fb-token'
+      );
+    });
+
+    it('Facebook send throws: facebook_dm failed, other channels still ship', async () => {
+      const supa = buildSupabaseMock({
+        session:     { found: true, modality: 'video' },
+        appointment: { found: true, phone: '+919876500001' },
+        patient:     defaultPatient({
+          platform:             'facebook',
+          platform_external_id: 'fb-psid-999',
+        }),
+      });
+      database.getSupabaseAdminClient.mockReturnValue(supa);
+      instagramService.sendInstagramMessage.mockImplementation(
+        (recipientId: string) => {
+          if (String(recipientId).startsWith('fb-')) {
+            return Promise.reject(new Error('meta 10'));
+          }
+          return Promise.resolve({
+            message_id:   'ig-mid-abc',
+            recipient_id: recipientId,
+          });
+        }
+      );
+
+      const result = await sendConsultationReadyToPatient({ sessionId, correlationId });
+
+      const map = Object.fromEntries(result.channels.map((c) => [c.channel, c]));
+      expect(map.sms.status).toBe('sent');
+      expect(map.email.status).toBe('sent');
+      expect(map.instagram_dm.status).toBe('skipped');
+      expect(map.facebook_dm.status).toBe('failed');
+      expect((map.facebook_dm as { error: string }).error).toContain('meta 10');
+      expect(result.anySent).toBe(true);
+    });
+
+    it('no Facebook identity: facebook_dm skipped with no_recipient', async () => {
+      const supa = buildSupabaseMock({
+        session:     { found: true, modality: 'video' },
+        appointment: { found: true, phone: '+919876500001' },
+        patient:     defaultPatient(),
+      });
+      database.getSupabaseAdminClient.mockReturnValue(supa);
+
+      const result = await sendConsultationReadyToPatient({ sessionId, correlationId });
+
+      const map = Object.fromEntries(result.channels.map((c) => [c.channel, c]));
+      expect(map.facebook_dm.status).toBe('skipped');
+      expect((map.facebook_dm as { reason: string }).reason).toBe('no_recipient');
+    });
+
+    it('all four channels are attempted in parallel', async () => {
+      const supa = buildSupabaseMock({
+        session:      { found: true, modality: 'video' },
+        appointment:  { found: true, phone: '+919876500001' },
+        patient:      defaultPatient(),
+        conversation: { platform_conversation_id: 'fb-psid-from-conv' },
+      });
+      database.getSupabaseAdminClient.mockReturnValue(supa);
+
+      const result = await sendConsultationReadyToPatient({ sessionId, correlationId });
+
+      expect(result.channels).toHaveLength(4);
+      const map = Object.fromEntries(result.channels.map((c) => [c.channel, c]));
+      expect(map.sms.status).toBe('sent');
+      expect(map.email.status).toBe('sent');
+      expect(map.instagram_dm.status).toBe('sent');
+      expect(map.facebook_dm.status).toBe('sent');
+      expect(smsService.sendSms).toHaveBeenCalled();
+      expect(emailConfig.sendEmail).toHaveBeenCalled();
+      expect(instagramService.sendInstagramMessage).toHaveBeenCalledWith(
+        'ig-psid-12345',
+        'CONSULT_READY_BODY',
+        correlationId,
+        'doctor-ig-token'
+      );
+      expect(instagramService.sendInstagramMessage).toHaveBeenCalledWith(
+        'fb-psid-from-conv',
+        'CONSULT_READY_BODY',
+        correlationId,
+        'doctor-fb-token'
+      );
+    });
+  });
+
   // --------------------------------------------------------------------------
   // sendPrescriptionReadyToPatient
   // --------------------------------------------------------------------------
@@ -500,11 +636,12 @@ describe('Notification fan-out helpers (Plan 01 · Task 16)', () => {
 
       expect(result.anySent).toBe(true);
       expect(result.sessionOrPrescriptionId).toBe(prescriptionId);
-      expect(result.channels).toHaveLength(3);
+      expect(result.channels).toHaveLength(4);
       const map = Object.fromEntries(result.channels.map((c) => [c.channel, c]));
       expect(map.sms.status).toBe('sent');
       expect(map.email.status).toBe('sent');
       expect(map.instagram_dm.status).toBe('sent');
+      expect(map.facebook_dm.status).toBe('skipped');
 
       expect(dmCopy.buildPrescriptionReadyPingDm).toHaveBeenCalledWith(
         expect.objectContaining({

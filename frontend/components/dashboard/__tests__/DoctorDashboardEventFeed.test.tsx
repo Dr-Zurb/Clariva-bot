@@ -149,8 +149,10 @@ describe("describeEvent", () => {
 });
 
 describe("eventDeepLink / eventSeverity", () => {
-  it("deep-links SLA → booking-review and no-show → appointment", () => {
-    expect(eventDeepLink(SAMPLE_SLA_BREACH)).toBe("/dashboard/booking-review");
+  it("deep-links SLA → inbox needs_review and no-show → appointment", () => {
+    expect(eventDeepLink(SAMPLE_SLA_BREACH)).toBe(
+      "/dashboard/inbox?filter=needs_review"
+    );
     expect(eventDeepLink(SAMPLE_NO_SHOW)).toBe(
       "/dashboard/appointments/appt-99"
     );
@@ -177,7 +179,7 @@ describe("DoctorDashboardEventFeed", () => {
 
     render(<DoctorDashboardEventFeed token="test-token" />);
 
-    expect(screen.getByText("Loading notifications…")).toBeInTheDocument();
+    expect(screen.getByLabelText("Loading notifications")).toBeInTheDocument();
 
     await waitFor(() => {
       expect(
@@ -205,7 +207,7 @@ describe("DoctorDashboardEventFeed", () => {
     });
 
     expect(screen.getByRole("button", { name: "Mark as read" })).toBeInTheDocument();
-    expect(screen.getByText("Notifications")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Notifications" })).toBeInTheDocument();
   });
 
   it("Load more appends the next page and advances the cursor", async () => {
@@ -302,7 +304,10 @@ describe("DoctorDashboardEventFeed", () => {
     const slaLink = screen.getByRole("link", {
       name: /A booking request for Meera is past its review deadline/,
     });
-    expect(slaLink).toHaveAttribute("href", "/dashboard/booking-review");
+    expect(slaLink).toHaveAttribute(
+      "href",
+      "/dashboard/inbox?filter=needs_review"
+    );
 
     const noShowLink = screen.getByRole("link", {
       name: /Ravi didn't show for their appointment/,

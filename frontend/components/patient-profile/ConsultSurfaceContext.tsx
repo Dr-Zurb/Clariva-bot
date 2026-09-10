@@ -19,6 +19,7 @@ import {
   useCallback,
   useContext,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -35,8 +36,22 @@ const ConsultSurfaceContext = createContext<ConsultSurfaceContextValue | null>(
 
 export function ConsultSurfaceProvider({ children }: { children: ReactNode }) {
   const [slotEl, setSlotElState] = useState<HTMLElement | null>(null);
+  /** Bumps when a live slot mounts so a deferred clear from an unmount can no-op. */
+  const slotGenerationRef = useRef(0);
   const setSlotEl = useCallback((el: HTMLElement | null) => {
-    setSlotElState((prev) => (prev === el ? prev : el));
+    if (el) {
+      slotGenerationRef.current += 1;
+      setSlotElState((prev) => (prev === el ? prev : el));
+      return;
+    }
+    // Show-here / leaf content swap unmounts the old slot and mounts the new
+    // one in the same commit. Defer clear so we don't park the host offscreen
+    // for a frame (visible Consult flicker).
+    const gen = slotGenerationRef.current;
+    queueMicrotask(() => {
+      if (slotGenerationRef.current !== gen) return;
+      setSlotElState((prev) => (prev === null ? prev : null));
+    });
   }, []);
   const value = useMemo(
     () => ({ slotEl, setSlotEl }),

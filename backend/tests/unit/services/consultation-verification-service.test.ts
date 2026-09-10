@@ -43,10 +43,6 @@ jest.mock('../../../src/utils/audit-logger', () => ({
   logDataModification: jest.fn().mockResolvedValue(undefined),
 }));
 
-jest.mock('../../../src/services/payout-service', () => ({
-  processPayoutForPayment: jest.fn().mockResolvedValue({ success: false }),
-}));
-
 jest.mock('../../../src/services/care-episode-service', () => ({
   syncCareEpisodeLifecycleOnAppointmentCompleted: jest.fn().mockResolvedValue(undefined),
 }));
@@ -79,6 +75,22 @@ jest.mock('../../../src/services/voice-remote-join-push-service', () => ({
     sendPatientJoinedCallPushToDoctor(...args),
 }));
 
+const recordBillableConsult = jest.fn().mockResolvedValue({
+  recorded: true,
+  duplicate: false,
+  status: 'billable',
+  voidReason: null,
+});
+
+jest.mock('../../../src/services/billing/usage-ledger-service', () => ({
+  recordBillableConsult: (...args: unknown[]) => recordBillableConsult(...args),
+  mapConsultationTypeToModality: (type: string | null | undefined, fallback: string) => {
+    if (type === 'video' || type === 'voice' || type === 'text') return type;
+    if (type === 'in_clinic' || type === 'in_person') return 'in_person';
+    return fallback;
+  },
+}));
+
 const correlationId = 'corr-123';
 
 /**
@@ -105,8 +117,6 @@ function appointmentsLookupChain(apt: Record<string, unknown> | null) {
  * Routes by table name:
  *   - `appointments`   → participant-connected/disconnected chain OR tryMarkVerified chain (depending on method: `.single()` / `.limit()`).
  *   - `consultation_sessions` → returns the pre-set `actual_ended_at` for `tryMarkVerified`'s post-fetch.
- *   - `payments`       → `null` so the per-appointment payout skips.
- *   - `doctor_settings`→ `null` so payout schedule is the default ('weekly').
  */
 function buildRouter(opts: {
   apt: Record<string, unknown> | null;
@@ -194,6 +204,7 @@ describe('Consultation Verification Service', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     sendPatientJoinedCallPushToDoctor.mockClear();
+    recordBillableConsult.mockClear();
     findSessionByProviderSessionId.mockResolvedValue({
       id: 'sess-1',
       appointmentId: 'apt-1',
@@ -633,6 +644,94 @@ describe('Consultation Verification Service', () => {
       await tryMarkVerified('apt-1', correlationId);
 
       expect(chain.update).not.toHaveBeenCalled();
+    });
+
+    it('does not record a billable consult on patient no-show (B2)', async () => {
+      const apt = {
+        id: 'apt-1',
+        doctor_id: 'doc-1',
+        doctor_joined_at: '2026-03-21T12:00:00.000Z',
+        patient_joined_at: null,
+        doctor_left_at: null,
+        patient_left_at: null,
+        consultation_duration_seconds: 2100,
+        verified_at: null,
+        status: 'confirmed',
+        consultation_type: 'video',
+      };
+      buildRouter({ apt, actualEndedAt: '2026-03-21T12:35:00.000Z' });
+
+      await tryMarkVerified('apt-1', correlationId);
+
+      expect(recordBillableConsult).not.toHaveBeenCalled();
+    });
+
+    it('records exactly one billable consult when patient left first', async () => {
+      const apt = {
+        id: 'apt-1',
+        doctor_id: 'doc-1',
+        doctor_joined_at: '2026-03-21T12:00:00.000Z',
+        patient_joined_at: '2026-03-21T12:01:00.000Z',
+        doctor_left_at: '2026-03-21T12:35:00.000Z',
+        patient_left_at: '2026-03-21T12:30:00.000Z',
+        consultation_duration_seconds: 2040,
+        verified_at: null,
+        status: 'confirmed',
+        consultation_type: 'video',
+      };
+      buildRouter({ apt, actualEndedAt: '2026-03-21T12:35:00.000Z' });
+
+      await tryMarkVerified('apt-1', correlationId);
+
+      expect(recordBillableConsult).toHaveBeenCalledTimes(1);
+      expect(recordBillableConsult).toHaveBeenCalledWith(
+        expect.objectContaining({
+          appointmentId: 'apt-1',
+          doctorId: 'doc-1',
+          source: 'verified_overlap',
+        }),
+        correlationId
+      );
+    });
+
+    it('records a billable consult when doctor left first with overlap >= 60s', async () => {
+      const apt = {
+        id: 'apt-1',
+        doctor_id: 'doc-1',
+        doctor_joined_at: '2026-03-21T12:00:00.000Z',
+        patient_joined_at: '2026-03-21T12:01:00.000Z',
+        doctor_left_at: '2026-03-21T12:02:00.000Z',
+        patient_left_at: '2026-03-21T12:35:00.000Z',
+        consultation_duration_seconds: 2040,
+        verified_at: null,
+        status: 'confirmed',
+        consultation_type: 'video',
+      };
+      buildRouter({ apt, actualEndedAt: '2026-03-21T12:35:00.000Z' });
+
+      await tryMarkVerified('apt-1', correlationId);
+
+      expect(recordBillableConsult).toHaveBeenCalledTimes(1);
+    });
+
+    it('records a billable consult on duration fallback when both joined', async () => {
+      const apt = {
+        id: 'apt-1',
+        doctor_id: 'doc-1',
+        doctor_joined_at: '2026-03-21T12:00:00.000Z',
+        patient_joined_at: '2026-03-21T12:01:00.000Z',
+        doctor_left_at: null,
+        patient_left_at: null,
+        consultation_duration_seconds: 2040,
+        verified_at: null,
+        status: 'confirmed',
+        consultation_type: 'voice',
+      };
+      buildRouter({ apt, actualEndedAt: '2026-03-21T12:35:00.000Z' });
+
+      await tryMarkVerified('apt-1', correlationId);
+
+      expect(recordBillableConsult).toHaveBeenCalledTimes(1);
     });
   });
 

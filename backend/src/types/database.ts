@@ -21,6 +21,8 @@
  * - Update types make all fields optional except id
  */
 
+import type { ConversationLanguage } from '../utils/conversation-language';
+
 // ============================================================================
 // Enum Types (Union Types)
 // ============================================================================
@@ -29,12 +31,18 @@
  * Appointment status values
  * no_show: slot missed / no-show after policy (migration 031, OPD-08)
  */
-export type AppointmentStatus =
-  | 'pending'
-  | 'confirmed'
-  | 'cancelled'
-  | 'completed'
-  | 'no_show';
+export type AppointmentStatus = 'pending' | 'confirmed' | 'cancelled' | 'completed' | 'no_show';
+
+/**
+ * How an appointment entered the doctor's day (osm-01 / migration 192).
+ * Operational label on `appointments.booking_origin` — not PHI.
+ */
+export type AppointmentBookingOrigin =
+  | 'booked'
+  | 'walk_in'
+  | 'overflow'
+  | 'return_after_completed'
+  | 'rebooked';
 
 /**
  * Patient sex (CP-D6 — cockpit appointment-detail surface).
@@ -67,6 +75,19 @@ export type WebhookStatus = 'pending' | 'processed' | 'failed';
  * Audit log operation status
  */
 export type AuditLogStatus = 'success' | 'failure';
+
+/**
+ * Chart section an accepted transcript-derived item landed in.
+ * Mirrors VisitDescribeKind. Not clinical text.
+ * @see backend/migrations/224_visit_narrative_provenance.sql
+ */
+export type VisitNarrativeProvenanceTargetKind =
+  | 'subjective'
+  | 'vitals'
+  | 'assessment'
+  | 'investigations'
+  | 'plan'
+  | 'prose';
 
 /**
  * Conversation platform
@@ -121,10 +142,10 @@ export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 export interface Appointment {
   id: string;
   doctor_id: string;
-  patient_id?: string | null;  // Optional; links to patients.id for payment confirmation DM (e-task-5)
-  conversation_id?: string | null;  // Optional; for payment confirmation DM when booking for someone else
-  patient_name: string;  // PHI
-  patient_phone: string;  // PHI
+  patient_id?: string | null; // Optional; links to patients.id for payment confirmation DM (e-task-5)
+  conversation_id?: string | null; // Optional; for payment confirmation DM when booking for someone else
+  patient_name: string; // PHI
+  patient_phone: string; // PHI
   /**
    * CP-D6: server-computed integer years from `patients.date_of_birth` at
    * fetch time (UTC; not stored on `appointments`). `null` when the
@@ -140,14 +161,18 @@ export interface Appointment {
    * row has no gender / a value outside the `male|female|other` bucket.
    */
   patient_sex: Sex | null;
+  /** Desk / identity — from the joined patient row. */
+  patient_guardian_name?: string | null;
+  patient_guardian_relation?: string | null;
+  patient_mrn?: string | null;
   appointment_date: Date;
   status: AppointmentStatus;
-  reason_for_visit?: string | null;  // Patient main complaint (migration 016)
-  notes?: string | null;  // Optional patient extras + doctor default_notes (migration 016)
-  consultation_type?: string | null;  // e.g. 'text', 'voice', 'video', 'in_clinic' (e-task-2, SFU-07)
-  doctor_joined_at?: Date | string | null;  // When doctor connected (migration 021; still written by Twilio webhook for payout verification)
-  patient_joined_at?: Date | string | null;  // When patient connected (migration 021; still written by Twilio webhook for payout verification)
-  consultation_duration_seconds?: number | null;  // Call duration in seconds (migration 021; set by Twilio webhook for payout eligibility)
+  reason_for_visit?: string | null; // Patient main complaint (migration 016)
+  notes?: string | null; // Optional patient extras + doctor default_notes (migration 016)
+  consultation_type?: string | null; // e.g. 'text', 'voice', 'video', 'in_clinic' (e-task-2, SFU-07)
+  doctor_joined_at?: Date | string | null; // When doctor connected (migration 021; still written by Twilio webhook for payout verification)
+  patient_joined_at?: Date | string | null; // When patient connected (migration 021; still written by Twilio webhook for payout verification)
+  consultation_duration_seconds?: number | null; // Call duration in seconds (migration 021; set by Twilio webhook for payout eligibility)
   /**
    * Compact consultation_sessions summary for the latest session row on
    * this appointment. Populated by appointment-service.ts enrichment layer
@@ -164,10 +189,10 @@ export interface Appointment {
     actual_started_at: string | null;
     actual_ended_at: string | null;
   } | null;
-  doctor_left_at?: Date | string | null;  // When doctor disconnected; for "who left first" (migration 023)
-  patient_left_at?: Date | string | null;  // When patient disconnected; for "who left first" (migration 023)
-  verified_at?: Date | string | null;  // When consultation was verified (migration 021)
-  clinical_notes?: string | null;  // Doctor notes (migration 021)
+  doctor_left_at?: Date | string | null; // When doctor disconnected; for "who left first" (migration 023)
+  patient_left_at?: Date | string | null; // When patient disconnected; for "who left first" (migration 023)
+  verified_at?: Date | string | null; // When consultation was verified (migration 021)
+  clinical_notes?: string | null; // Doctor notes (migration 021)
   /** Early join offer expiry (slot mode; migration 029, e-task-opd-04) */
   opd_early_invite_expires_at?: Date | string | null;
   /** Patient response to early join (migration 029) */
@@ -178,6 +203,31 @@ export interface Appointment {
   related_appointment_id?: string | null;
   /** standard vs return_after_completed (migration 031, OPD-08) — appointments table column */
   opd_event_type?: 'standard' | 'return_after_completed';
+  /**
+   * Provenance for the day board (migration 192, osm-01). Stored at write time;
+   * never inferred from created_at ordering. Default `'booked'`.
+   */
+  booking_origin?: AppointmentBookingOrigin;
+  /**
+   * First lobby open (migration 193, crc-01). Operational; not PHI.
+   */
+  patient_checked_in_at?: Date | string | null;
+  /**
+   * Last lobby heartbeat (migration 193, crc-01). Fresh within ~2 min → Waiting tag.
+   */
+  patient_lobby_last_seen_at?: Date | string | null;
+  /**
+   * Pre-visit check-in notification dedupe stamp (migration 193, crc-01).
+   */
+  patient_checkin_notified_at?: Date | string | null;
+  /** T−24h soft reminder stamp (migration 194). */
+  patient_reminder_24h_notified_at?: Date | string | null;
+  /** T−15 check-in nudge stamp (migration 194). */
+  patient_checkin_nudge_15_notified_at?: Date | string | null;
+  /** T−5 check-in nudge stamp (migration 194). */
+  patient_checkin_nudge_5_notified_at?: Date | string | null;
+  /** T=0 starting-now stamp (migration 195). */
+  patient_start_notified_at?: Date | string | null;
   /**
    * CS-03: projected from the *presence* of an `opd_queue_entries` row joined
    * by `appointment_id`. Today the schema only supports token-style queue
@@ -296,7 +346,7 @@ export interface DeadLetterQueue {
   provider: WebhookProvider;
   received_at: Date;
   correlation_id: string;
-  payload_encrypted: string;  // PHI/PII - encrypted
+  payload_encrypted: string; // PHI/PII - encrypted
   error_message: string;
   retry_count: number;
   failed_at: Date;
@@ -311,7 +361,35 @@ export interface DeadLetterQueue {
  * @property payload - Decrypted webhook payload (contains PHI/PII)
  */
 export interface DeadLetterQueueWithDecrypted extends Omit<DeadLetterQueue, 'payload_encrypted'> {
-  payload: unknown;  // Decrypted payload (contains PHI/PII)
+  payload: unknown; // Decrypted payload (contains PHI/PII)
+}
+
+/**
+ * Append-only provenance for an accepted transcript-derived chart item
+ * (migration 224, VN-Q5 = b).
+ *
+ * Stores spans, not text. The quote is re-derived by slicing
+ * `consultation_transcripts.transcript_text` at `[span_start, span_end)`.
+ * No clinical free-text column.
+ *
+ * @property transcript_id - Erasure anchor. CASCADE from consultation_transcripts.
+ * @property span_start - Inclusive index into transcript_text. Never log the slice.
+ * @property span_end - Exclusive index into transcript_text. Never log the slice.
+ * @property created_row_id - Optional polymorphic chart-row UUID. Not a FK.
+ */
+export interface VisitNarrativeProvenance {
+  id: string;
+  doctor_id: string;
+  patient_id?: string;
+  appointment_id: string;
+  consultation_session_id: string;
+  transcript_id: string;
+  span_start: number;
+  span_end: number;
+  target_kind: VisitNarrativeProvenanceTargetKind;
+  created_row_id?: string;
+  accepted_by: string;
+  accepted_at: Date;
 }
 
 // ============================================================================
@@ -343,22 +421,44 @@ export interface DeadLetterQueueWithDecrypted extends Omit<DeadLetterQueue, 'pay
  */
 export interface Patient {
   id: string;
-  name: string;  // PHI
-  phone: string;  // PHI
-  date_of_birth?: Date;  // PHI (optional)
-  age?: number | null;  // 1-120 (optional; migration 015)
+  name: string; // PHI
+  phone: string; // PHI
+  date_of_birth?: Date; // PHI (optional)
+  age?: number | null; // Whole years (optional; migration 015). 0 when derived from an infant DOB.
   gender?: string;
-  email?: string | null;  // PHI (optional; for receipts; migration 014)
+  email?: string | null; // PHI (optional; for receipts; migration 014)
+  /** Father / spouse / other related name (migration 208). PHI. */
+  guardian_name?: string | null;
+  /** Who guardian_name is to the patient (migration 208). */
+  guardian_relation?: 'father' | 'spouse' | 'mother' | 'son' | 'daughter' | null;
+  /** Second contact, last-10 when set (migration 208). PHI. */
+  alt_phone?: string | null;
+  /** Optional free-text address / locality (migration 208). PHI. */
+  address?: string | null;
   /** Owning doctor for platform-linked patients (migration 113; required after rcp-29 backfill). */
   doctor_id?: string | null;
   platform?: string | null;
   platform_external_id?: string | null;
+  /** Public IG/FB handle for Inbox before real name exists (migration 189). */
+  platform_username?: string | null;
   consent_status?: 'pending' | 'granted' | 'revoked';
   consent_granted_at?: Date | null;
   consent_revoked_at?: Date | null;
   consent_method?: string | null;
-  medical_record_number: string | null;  // Human-readable Patient ID (migration 018); NULL until first payment (migration 046)
-  patient_tag?: string | null;  // Doctor-set label (migration 104); not PHI
+  medical_record_number: string | null; // Human-readable Patient ID (migration 018); NULL until first payment (migration 046)
+  /** How the row was created (migrations 201 / 206). Not PHI. */
+  registered_via?: 'bot' | 'front_desk' | 'booking_for_other' | 'import' | 'doctor' | null;
+  /** Auth user who created the row (migration 206). Not PHI. */
+  created_by?: string | null;
+  /** Read-time label for created_by. Never log. Not a DB column. */
+  created_by_label?: string | null;
+  /** Desk hide stamp (migration 209). Not PHI. */
+  archived_at?: string | Date | null;
+  /** Auth user who archived the row (migration 209). Not PHI. */
+  archived_by?: string | null;
+  patient_tag?: string | null; // Legacy single label (migration 104); mirrors patient_tags[0]
+  /** Multi-tag labels (migration 191); not PHI. */
+  patient_tags?: string[];
   created_at: Date;
   updated_at: Date;
 }
@@ -376,6 +476,7 @@ export interface Patient {
  * @property platform_conversation_id - Platform-specific conversation ID
  * @property status - Current conversation status
  * @property metadata - Conversation state JSON (e.g. last intent, step; no PHI)
+ * @property language - Resolved reply language (migration 190 / lang-02). NULL = undecided → English. Locale code, not PHI.
  * @property created_at - Timestamp when conversation was created
  * @property updated_at - Timestamp when conversation was last updated
  */
@@ -387,6 +488,8 @@ export interface Conversation {
   platform_conversation_id: string;
   status: ConversationStatus;
   metadata?: Record<string, unknown> | null;
+  /** Migration 190. NULL until first resolution; locale code, not PHI. */
+  language: ConversationLanguage | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -410,7 +513,7 @@ export interface Message {
   conversation_id: string;
   platform_message_id: string;
   sender_type: MessageSenderType;
-  content: string;  // PHI
+  content: string; // PHI
   intent?: string;
   created_at: Date;
 }
@@ -434,8 +537,8 @@ export interface Availability {
   id: string;
   doctor_id: string;
   day_of_week: DayOfWeek;
-  start_time: string;  // TIME type stored as string (HH:MM:SS format)
-  end_time: string;  // TIME type stored as string (HH:MM:SS format)
+  start_time: string; // TIME type stored as string (HH:MM:SS format)
+  end_time: string; // TIME type stored as string (HH:MM:SS format)
   is_available: boolean;
   created_at: Date;
   updated_at: Date;
@@ -485,12 +588,31 @@ export interface DoctorInstagram {
   instagram_username: string | null;
   /** ilr-02: Facebook app-scoped user id of the authorizing doctor; reverse-maps the Meta data-deletion callback. NULL for pre-ilr-02 connections. */
   facebook_user_id?: string | null;
-  /** RBH-10: last debug_token refresh */
+  /** RBH-10: last Instagram Graph /me health probe */
   instagram_health_checked_at?: Date | string | null;
   instagram_health_level?: string | null;
   instagram_health_error_code?: string | null;
   instagram_token_expires_at?: Date | string | null;
   instagram_last_dm_success_at?: Date | string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+/**
+ * Per-doctor Facebook Page connection (migration 187 · fbm-02).
+ * Separate from DoctorInstagram (Instagram Login). Never log page_access_token.
+ */
+export interface DoctorFacebook {
+  doctor_id: string;
+  facebook_page_id: string;
+  page_access_token: string;
+  page_name: string | null;
+  facebook_user_id?: string | null;
+  page_token_expires_at?: Date | string | null;
+  facebook_health_checked_at?: Date | string | null;
+  facebook_health_level?: string | null;
+  facebook_health_error_code?: string | null;
+  facebook_last_dm_success_at?: Date | string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -650,8 +772,8 @@ export type InsertAppointment = Omit<
   | 'updated_at'
   | 'patient_age'
   | 'patient_sex'
-  | 'opd_queue_event_type'  // CS-03: JOIN-derived, not a real column
-  | 'opd_token_number'      // CS-03: JOIN-derived, not a real column
+  | 'opd_queue_event_type' // CS-03: JOIN-derived, not a real column
+  | 'opd_token_number' // CS-03: JOIN-derived, not a real column
 >;
 
 /**
@@ -673,19 +795,36 @@ export type InsertDeadLetterQueue = Omit<DeadLetterQueue, 'id' | 'received_at' |
 export type InsertAuditLog = Omit<AuditLog, 'id' | 'created_at'>;
 
 /**
+ * Insert shape for visit_narrative_provenance.
+ * Append-only — there is no UpdateVisitNarrativeProvenance.
+ */
+export type InsertVisitNarrativeProvenance = Omit<VisitNarrativeProvenance, 'id' | 'accepted_at'> & {
+  accepted_at?: Date;
+};
+
+/**
  * Data required to create a new patient
  * (Omits auto-generated fields: id, created_at, updated_at)
  * medical_record_number is optional; NULL for new patients until first payment (migration 046).
  */
-export type InsertPatient = Omit<Patient, 'id' | 'created_at' | 'updated_at' | 'medical_record_number'> & {
+export type InsertPatient = Omit<
+  Patient,
+  'id' | 'created_at' | 'updated_at' | 'medical_record_number' | 'created_by_label'
+> & {
   medical_record_number?: string | null;
 };
 
 /**
  * Data required to create a new conversation
  * (Omits auto-generated fields: id, created_at, updated_at)
+ * language is optional on insert — NULL until first resolution (lang-02).
  */
-export type InsertConversation = Omit<Conversation, 'id' | 'created_at' | 'updated_at'>;
+export type InsertConversation = Omit<
+  Conversation,
+  'id' | 'created_at' | 'updated_at' | 'language'
+> & {
+  language?: ConversationLanguage | null;
+};
 
 /**
  * Data required to create a new message
@@ -709,10 +848,10 @@ export type InsertBlockedTime = Omit<BlockedTime, 'id' | 'created_at'>;
  * Data required to create a doctor Instagram link
  * (Omits auto-generated fields: created_at, updated_at)
  */
-export type InsertDoctorInstagram = Omit<
-  DoctorInstagram,
-  'created_at' | 'updated_at'
->;
+export type InsertDoctorInstagram = Omit<DoctorInstagram, 'created_at' | 'updated_at'>;
+
+/** Data required to create a doctor Facebook Page link (fbm-02). */
+export type InsertDoctorFacebook = Omit<DoctorFacebook, 'created_at' | 'updated_at'>;
 
 /**
  * Data required to record a Meta data-deletion request (ilr-02).
@@ -752,7 +891,13 @@ export type InsertDoctorOpdSessionMode = Omit<
  */
 export type InsertDoctorOpdSessionModeChange = Omit<
   DoctorOpdSessionModeChange,
-  'id' | 'created_at' | 'affected_apt_count' | 'overflow_count' | 'notification_dispatched' | 'correlation_id' | 'notes'
+  | 'id'
+  | 'created_at'
+  | 'affected_apt_count'
+  | 'overflow_count'
+  | 'notification_dispatched'
+  | 'correlation_id'
+  | 'notes'
 > & {
   affected_apt_count?: number;
   overflow_count?: number;
@@ -777,7 +922,9 @@ export type UpdateAppointment = Partial<Omit<Appointment, 'id' | 'created_at' | 
  * Data for updating an existing webhook idempotency record
  * (All fields optional except event_id)
  */
-export type UpdateWebhookIdempotency = Partial<Omit<WebhookIdempotency, 'event_id' | 'received_at'>> & {
+export type UpdateWebhookIdempotency = Partial<
+  Omit<WebhookIdempotency, 'event_id' | 'received_at'>
+> & {
   event_id: string;
 };
 
@@ -835,7 +982,16 @@ export type UpdateDoctorInstagram = Partial<
   doctor_id: string;
 };
 
-export type UpdateOpdQueueEntry = Partial<Omit<OpdQueueEntry, 'id' | 'created_at' | 'updated_at'>> & {
+/** Partial update for doctor Facebook Page link (fbm-02 / fbm-07). */
+export type UpdateDoctorFacebook = Partial<
+  Omit<DoctorFacebook, 'doctor_id' | 'created_at' | 'updated_at'>
+> & {
+  doctor_id: string;
+};
+
+export type UpdateOpdQueueEntry = Partial<
+  Omit<OpdQueueEntry, 'id' | 'created_at' | 'updated_at'>
+> & {
   id: string;
 };
 

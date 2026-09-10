@@ -29,13 +29,14 @@ import {
   startVoiceConsultationHandler,
   exchangeVoiceConsultTokenHandler,
   resendConsultationLinkHandler,
-  getRecordingConsentForSessionHandler,
   pauseRecordingHandler,
   resumeRecordingHandler,
+  extendRecordingPauseHandler,
   getRecordingStateHandler,
   exchangeReplayTokenHandler,
   mintReplayUrlHandler,
   getReplayStatusHandler,
+  getRecordingGapsHandler,
   getVideoReplayOtpStateHandler,
   sendVideoReplayOtpHandler,
   verifyVideoReplayOtpHandler,
@@ -46,6 +47,10 @@ import {
   respondVideoEscalationHandler,
   getVideoEscalationStateHandler,
   patientRevokeVideoHandler,
+  offerVideoRecordingHandler,
+  pauseVideoGrantHandler,
+  resumeVideoGrantHandler,
+  extendVideoGrantHandler,
   getPostCallSummaryHandler,
   listSnapshotsHandler,
   attachSnapshotToSectionHandler,
@@ -176,31 +181,17 @@ router.post('/:sessionId/voice-token', exchangeVoiceConsultTokenHandler);
 // (voice-first; works for video too).
 router.post('/:sessionId/resend-link', authenticateToken, resendConsultationLinkHandler);
 
-// Plan 02 · Task 27 — doctor-side recording-consent lookup for the
-// <SessionStartBanner>.
-router.get(
-  '/:sessionId/recording-consent',
-  authenticateToken,
-  getRecordingConsentForSessionHandler
-);
-
-// Plan 07 · Task 28 — doctor-driven mid-consult recording pause/resume
-// + state inspector (both-parties). Decision 4 LOCKED.
+// Plan 07 · Task 28 + rec-17 — pause / resume / state accept a dual
+// bearer (doctor Supabase JWT or patient scoped consult JWT). Auth is
+// inside the handler, same as attachments/sign. Extend stays doctor-only.
+router.post('/:sessionId/recording/pause', pauseRecordingHandler);
+router.post('/:sessionId/recording/resume', resumeRecordingHandler);
 router.post(
-  '/:sessionId/recording/pause',
+  '/:sessionId/recording/pause/extend',
   authenticateToken,
-  pauseRecordingHandler,
+  extendRecordingPauseHandler,
 );
-router.post(
-  '/:sessionId/recording/resume',
-  authenticateToken,
-  resumeRecordingHandler,
-);
-router.get(
-  '/:sessionId/recording/state',
-  authenticateToken,
-  getRecordingStateHandler,
-);
+router.get('/:sessionId/recording/state', getRecordingStateHandler);
 
 // Plan 07 · Task 29 — patient self-serve replay (audio-baseline).
 // Decision 4 + Decision 10 LOCKED.
@@ -223,6 +214,7 @@ router.post(
   mintReplayUrlHandler,
 );
 router.get('/:sessionId/replay/status', getReplayStatusHandler);
+router.get('/:sessionId/replay/gaps', getRecordingGapsHandler);
 
 // Plan 08 · Task 44 — patient video-replay SMS-OTP friction gate
 // (Decision 10 LOCKED). All three routes require the Task-29 patient
@@ -283,26 +275,36 @@ router.post(
 );
 router.post(
   '/video-escalation-requests/:requestId/respond',
-  authenticateToken,
   respondVideoEscalationHandler,
 );
 router.get(
   '/:sessionId/video-escalation-state',
-  authenticateToken,
   getVideoEscalationStateHandler,
 );
 
-// Plan 08 · Task 42 — patient-initiated revoke of an in-flight video
-// recording (Decision 10 LOCKED safety valve). Patient-only: the
-// service re-asserts the caller matches `session.patient_id` even
-// though `authenticateToken` already validated the JWT. Returns 200
-// with `{ status: 'revoked' | 'already_audio_only', correlationId }`
-// — the idempotent shape covers the double-tap case without a
-// second round-trip.
+// Patient video-escalation controls — dual-bearer (rec-17). No
+// `authenticateToken`: a scoped consult JWT has no `iss` and cannot
+// pass Supabase getUser. Service re-asserts the session-patient actor.
 router.post(
   '/:sessionId/video-escalation/revoke',
-  authenticateToken,
   patientRevokeVideoHandler,
+);
+router.post(
+  '/:sessionId/video-escalation/offer',
+  offerVideoRecordingHandler,
+);
+router.post(
+  '/:sessionId/video-escalation/pause',
+  pauseVideoGrantHandler,
+);
+router.post(
+  '/:sessionId/video-escalation/resume',
+  resumeVideoGrantHandler,
+);
+router.post(
+  '/:sessionId/video-escalation/extend',
+  authenticateToken,
+  extendVideoGrantHandler,
 );
 
 // Plan 09 · Task 47 — mid-consult modality-change state machine

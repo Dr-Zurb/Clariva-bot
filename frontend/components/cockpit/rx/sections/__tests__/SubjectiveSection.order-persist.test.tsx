@@ -70,7 +70,13 @@ describe("SubjectiveSection order persistence (subj-26)", () => {
     mockPatchDoctorSettings.mockReset();
     mockUpdatePrescription.mockReset();
     mockGetDoctorSettings.mockResolvedValue({
-      data: { settings: { subjective_section_order: [], subjective_section_collapsed: {} } },
+      data: {
+        settings: {
+          subjective_section_order: [],
+          subjective_section_collapsed: {},
+          subjective_section_hidden: ["__show_all__"],
+        },
+      },
     });
   });
 
@@ -86,6 +92,7 @@ describe("SubjectiveSection order persistence (subj-26)", () => {
             "custom_subsections",
             "past_surgical",
           ],
+          subjective_section_hidden: ["__show_all__"],
         },
       },
     });
@@ -123,6 +130,7 @@ describe("SubjectiveSection order persistence (subj-26)", () => {
             "family_history",
             "free_text_notes",
           ],
+          subjective_section_hidden: ["__show_all__"],
         },
       },
     });
@@ -132,6 +140,7 @@ describe("SubjectiveSection order persistence (subj-26)", () => {
     );
 
     await waitFor(() => {
+      expect(screen.queryByTestId("subjective-layout-skeleton")).not.toBeInTheDocument();
       expect(readRenderedSectionOrder(container)).toEqual(
         resolveInitialSectionOrder(
           [
@@ -159,6 +168,7 @@ describe("SubjectiveSection order persistence (subj-26)", () => {
       data: {
         settings: {
           subjective_section_order: ["custom_subsections", "chief_complaints"],
+          subjective_section_hidden: ["__show_all__"],
         },
       },
     });
@@ -187,6 +197,7 @@ describe("SubjectiveSection order persistence (subj-26)", () => {
             "free_text_notes",
           ],
           subjective_section_collapsed: {},
+          subjective_section_hidden: ["__show_all__"],
         },
       },
     });

@@ -23,7 +23,10 @@ import {
   RX_FIELD_INPUT_CLASS,
 } from "@/components/cockpit/rx/sections/field-styles";
 import { resolveSoapNestedStatusDotClass } from "@/components/cockpit/rx/sections/section-chrome";
-import { createEmptyDiagnosisRow, normalizeConditionKey } from "@/lib/cockpit/diagnoses";
+import {
+  createEmptyDiagnosisRow,
+  normalizeConditionKey,
+} from "@/lib/cockpit/diagnoses";
 import { findMatchingCondition } from "@/lib/chart/pmh-icd-shortcuts";
 import { usePatientConditionsQuery } from "@/hooks/queries/usePatientConditionsQuery";
 import { hasEntryCardSurface } from "@/lib/cockpit/entry-card-ui-state";
@@ -57,7 +60,10 @@ const CERTAINTY_OPTIONS: ReadonlyArray<{
   { value: "provisional", label: "Provisional" },
 ];
 
-const ACUITY_OPTIONS: ReadonlyArray<{ value: AssessmentAcuity; label: string }> = [
+const ACUITY_OPTIONS: ReadonlyArray<{
+  value: AssessmentAcuity;
+  label: string;
+}> = [
   { value: "improving", label: "Improving" },
   { value: "stable", label: "Stable" },
   { value: "worsening", label: "Worsening" },
@@ -84,12 +90,9 @@ const ACUITY_LABEL: Record<AssessmentAcuity, string> = {
 };
 
 const ROLE_BADGE_CLASS: Record<DiagnosisKind, string> = {
-  primary:
-    "border-primary/50 bg-primary/10 text-foreground",
-  secondary:
-    "border-border/70 bg-muted/40 text-muted-foreground",
-  differential:
-    "border-dashed border-border text-muted-foreground",
+  primary: "border-primary/50 bg-primary/10 text-foreground",
+  secondary: "border-border/70 bg-muted/40 text-muted-foreground",
+  differential: "border-dashed border-border text-muted-foreground",
 };
 
 function buildDiagnosisPreview(row: DiagnosisRow): string {
@@ -128,7 +131,7 @@ function DiagnosisFieldRow({
       <span
         className={cn(
           RX_EXAM_FIELD_LABEL_CLASS,
-          "shrink-0 text-muted-foreground @[22rem]/entry:w-[4.75rem] @[22rem]/entry:pt-2",
+          "shrink-0 text-muted-foreground @[22rem]/entry:w-[4.75rem] @[22rem]/entry:pt-2"
         )}
       >
         {label}
@@ -157,13 +160,16 @@ export function DiagnosisRowsList({
 
   // Shared known-conditions cache — used only to soft-link visit Dx cards
   // (conditionId). Never writes the chart from here (ASMT-D6).
-  const conditionsQuery = usePatientConditionsQuery(token ?? "", patientId ?? "");
+  const conditionsQuery = usePatientConditionsQuery(
+    token ?? "",
+    patientId ?? ""
+  );
   const activeKnownConditions = useMemo(
     () =>
       (conditionsQuery.data ?? []).filter(
-        (c) => !c.archived_at && c.status === "active",
+        (c) => !c.archived_at && c.status === "active"
       ),
-    [conditionsQuery.data],
+    [conditionsQuery.data]
   );
 
   // Soft-reconcile visit Dx ↔ active known conditions (read chart only; ASMT-D6).
@@ -186,7 +192,7 @@ export function DiagnosisRowsList({
       const matched = findMatchingCondition(
         activeKnownConditions,
         row.label,
-        row.code,
+        row.code
       );
       if (matched) {
         dispatch({
@@ -201,19 +207,25 @@ export function DiagnosisRowsList({
   // asmt-07: gated AI ICD-11 resolver — fires only on the free-text (no catalog
   // match) path. Suggestion-only; the typed text is kept if declined (ASMT-D3).
   const [aiStatus, setAiStatus] = useState<DiagnosisAiStatus | "idle">("idle");
-  const [aiSuggestions, setAiSuggestions] = useState<DiagnosisResolveSuggestion[]>([]);
+  const [aiSuggestions, setAiSuggestions] = useState<
+    DiagnosisResolveSuggestion[]
+  >([]);
   const [aiTypedText, setAiTypedText] = useState("");
   const aiAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => () => aiAbortRef.current?.abort(), []);
 
-  // Open the primary (or first) card once when diagnoses first appear — but
-  // never override a session-persisted open/closed choice.
+  // Hydrate-only: open the primary card when diagnoses were already on the
+  // note. An empty start (including last-visit Ongoing/Resolved) stays collapsed.
   useEffect(() => {
     if (seededOpenRef.current) return;
-    if (diagnoses.length === 0) return;
+    if (diagnoses.length === 0) {
+      seededOpenRef.current = true;
+      return;
+    }
     seededOpenRef.current = true;
-    if (appointmentId && hasEntryCardSurface(appointmentId, "diagnoses")) return;
+    if (appointmentId && hasEntryCardSurface(appointmentId, "diagnoses"))
+      return;
     const primary = diagnoses.find((d) => d.kind === "primary") ?? diagnoses[0];
     setOpenId(primary.id);
   }, [appointmentId, diagnoses, setOpenId]);
@@ -231,7 +243,7 @@ export function DiagnosisRowsList({
 
   function commitDiagnosis(
     rawLabel: string,
-    coding?: { code: string | null; codeTitle: string | null },
+    coding?: { code: string | null; codeTitle: string | null }
   ) {
     const label = rawLabel.trim();
     if (!label) return;
@@ -241,7 +253,7 @@ export function DiagnosisRowsList({
       return;
     }
     const hasCommitted = diagnoses.some(
-      (d) => d.kind === "primary" || d.kind === "secondary",
+      (d) => d.kind === "primary" || d.kind === "secondary"
     );
     const kind: DiagnosisKind = hasCommitted ? "secondary" : "primary";
     const code = coding?.code ?? null;
@@ -364,8 +376,7 @@ export function DiagnosisRowsList({
   /** True when selecting Secondary on `id` would leave ≥1 other committed Dx. */
   function canSelectSecondary(id: string): boolean {
     const otherCommitted = diagnoses.filter(
-      (d) =>
-        d.id !== id && (d.kind === "primary" || d.kind === "secondary"),
+      (d) => d.id !== id && (d.kind === "primary" || d.kind === "secondary")
     ).length;
     return otherCommitted >= 1;
   }
@@ -445,7 +456,7 @@ export function DiagnosisRowsList({
                         className={resolveSoapNestedStatusDotClass(
                           "assessment",
                           Boolean(row.label.trim()) && !isExcluded,
-                          isDifferential ? "leaf" : "cluster",
+                          isDifferential ? "leaf" : "cluster"
                         )}
                         aria-hidden
                       />
@@ -454,7 +465,7 @@ export function DiagnosisRowsList({
                           // Prefer the diagnosis name — chips wrap under it when narrow.
                           // min-w-0 + break-words so long labels don't paint under trash/chevron.
                           "min-w-0 break-words font-medium text-foreground",
-                          isExcluded && "text-muted-foreground line-through",
+                          isExcluded && "text-muted-foreground line-through"
                         )}
                       >
                         {row.label.trim() || "Untitled diagnosis"}
@@ -471,7 +482,7 @@ export function DiagnosisRowsList({
                       <span
                         className={cn(
                           "shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-                          ROLE_BADGE_CLASS[row.kind],
+                          ROLE_BADGE_CLASS[row.kind]
                         )}
                       >
                         {ROLE_LABEL[row.kind]}
@@ -497,7 +508,7 @@ export function DiagnosisRowsList({
                   className={cn(
                     isPrimary && "border-primary/40",
                     isDifferential && "border-dashed",
-                    isExcluded && "opacity-70",
+                    isExcluded && "opacity-70"
                   )}
                 >
                   <div
@@ -572,7 +583,10 @@ export function DiagnosisRowsList({
                                 note: e.target.value || null,
                               })
                             }
-                            className={cn(RX_FIELD_INPUT_CLASS, "mt-0 h-9 py-1.5")}
+                            className={cn(
+                              RX_FIELD_INPUT_CLASS,
+                              "mt-0 h-9 py-1.5"
+                            )}
                             placeholder="Optional note"
                             maxLength={2000}
                             disabled={disabled}
@@ -621,7 +635,10 @@ export function DiagnosisRowsList({
                                 note: e.target.value || null,
                               })
                             }
-                            className={cn(RX_FIELD_INPUT_CLASS, "mt-0 h-9 py-1.5")}
+                            className={cn(
+                              RX_FIELD_INPUT_CLASS,
+                              "mt-0 h-9 py-1.5"
+                            )}
                             placeholder="Optional note"
                             maxLength={2000}
                             disabled={disabled}

@@ -9,13 +9,17 @@ const SEGMENTS: Record<string, string> = {
   account: "Account",
   "practice-setup": "Practice setup",
   "practice-info": "Practice info",
+  branding: "Letterhead & branding",
   "services-catalog": "Pricing",
   "booking-rules": "Booking rules",
   "bot-messages": "Messaging",
   availability: "Availability",
   "opd-mode": "OPD mode",
   "patient-flow": "Patient flow",
+  "front-desk": "Front desk",
   integrations: "Integrations",
+  billing: "Billing",
+  payments: "Payments",
 };
 
 /**

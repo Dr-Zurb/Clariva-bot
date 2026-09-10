@@ -9,7 +9,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { ChevronDown, ChevronUp, GripVertical, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, GripVertical, Sparkles, Trash2 } from "lucide-react";
 import DrugAutocomplete from "@/components/ehr/DrugAutocomplete";
 import { ChartCardOptionToggle } from "@/components/ehr/chart/ChartCardOptionToggle";
 import { ChartMedChipSelect } from "@/components/ehr/chart/ChartMedChipSelect";
@@ -42,9 +42,12 @@ import {
   STRENGTH_UNIT_OPTIONS,
   chartMedPatchFromFormInput,
   customStrengthUnitFromLegacy,
+  doseScheduleForFrequencyChange,
+  doseScheduleOptionsForFrequency,
   formatChartMedFormLabel,
   formatStrengthComponents,
   formatStrengthLabel,
+  frequencySupportsDoseSchedule,
   frequencyUiModeFromCode,
   getChartFrequencyLabel,
   isFrequencyMoreOrCustom,
@@ -105,6 +108,11 @@ export interface MedicineRowValue {
   doseUnit: DoseUnit | null;
   form: string | null;
   foodTiming: FoodTiming | null;
+  /**
+   * Indian meal-slot pattern (`1-0-1`). Persisted in `frequency` TEXT
+   * alongside `frequency_code` — `prescription_medicines` has no column.
+   */
+  doseSchedule?: string | null;
 }
 
 interface MedicineRowProps {
@@ -152,6 +160,8 @@ interface MedicineRowProps {
   isReadOnly?: boolean;
   /** Passed through to the summary drag handle (DL-7). */
   dragHandleProps?: HTMLAttributes<HTMLDivElement>;
+  /** Opt-in AI refine for an already-added card — never auto-runs. */
+  onRefine?: (index: number) => void;
 }
 
 interface MedicineRowSummaryProps {
@@ -161,6 +171,7 @@ interface MedicineRowSummaryProps {
   onRequestEdit?: (index: number) => void;
   onRemove?: (index: number) => void;
   dragHandleProps?: HTMLAttributes<HTMLDivElement>;
+  onRefine?: (index: number) => void;
 }
 
 function MedicineRowSummary({
@@ -170,6 +181,7 @@ function MedicineRowSummary({
   onRequestEdit,
   onRemove,
   dragHandleProps,
+  onRefine,
 }: MedicineRowSummaryProps) {
   const sigLine = formatMedicineSigLine(value);
   const labelName = value.medicineName.trim() || `Medicine ${index + 1}`;
@@ -190,7 +202,7 @@ function MedicineRowSummary({
       onKeyDown={readOnly ? undefined : handleKeyDown}
       className={cn(
         "group flex cursor-pointer items-center gap-2 rounded-md border border-border/60 bg-background px-2 py-1.5 hover:bg-muted/30 focus:outline-none focus:ring-2 focus:ring-ring",
-        readOnly && "cursor-default hover:bg-background",
+        readOnly && "cursor-default hover:bg-background"
       )}
       aria-label={
         readOnly
@@ -214,9 +226,13 @@ function MedicineRowSummary({
 
       <div className="min-w-0 flex-1 text-xs">
         {value.form ? (
-          <span className="mr-1 capitalize text-muted-foreground">{value.form}</span>
+          <span className="mr-1 capitalize text-muted-foreground">
+            {value.form}
+          </span>
         ) : null}
-        <span className="font-medium text-foreground">{value.medicineName}</span>
+        <span className="font-medium text-foreground">
+          {value.medicineName}
+        </span>
         {sigLine ? (
           <span className="text-muted-foreground"> · {sigLine}</span>
         ) : null}
@@ -230,17 +246,33 @@ function MedicineRowSummary({
       ) : null}
 
       {!readOnly && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove?.(index);
-          }}
-          className="shrink-0 text-muted-foreground hover:text-destructive"
-          aria-label="Delete medicine row"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
+        <>
+          {onRefine && value.medicineName.trim() ? (
+            <button
+              type="button"
+              title="Refine with AI"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRefine(index);
+              }}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+              aria-label={`Refine medicine ${index + 1} with AI`}
+            >
+              <Sparkles className="h-3.5 w-3.5" aria-hidden />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove?.(index);
+            }}
+            className="shrink-0 text-muted-foreground hover:text-destructive"
+            aria-label="Delete medicine row"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </>
       )}
     </div>
   );
@@ -295,7 +327,8 @@ const FREQ_MODE_OPTIONS = [
 function formComboboxDisplay(form: string | null): string {
   if (!form?.trim()) return "";
   const resolved = resolveFormInput(form);
-  if (resolved && resolved !== "custom") return formatChartMedFormLabel(resolved);
+  if (resolved && resolved !== "custom")
+    return formatChartMedFormLabel(resolved);
   return form.trim();
 }
 
@@ -326,19 +359,19 @@ export default function MedicineRow({
   onRequestCollapse,
   isReadOnly = false,
   dragHandleProps,
+  onRefine,
 }: MedicineRowProps) {
   const rowDisabled = disabled || isReadOnly;
   const hasName = value.medicineName.trim().length > 0;
   // PMH parity: any named card can sit collapsed; completeness only gates blur-collapse.
-  const shouldShowSummary =
-    hasName && (isReadOnly || isEditing === false);
+  const shouldShowSummary = hasName && (isReadOnly || isEditing === false);
 
   const cardRef = useRef<HTMLDivElement>(null);
   const prevEditingRef = useRef(isEditing);
   const [strengthDraft, setStrengthDraft] = useState<string | null>(null);
   const [foodMoreCustom, setFoodMoreCustom] = useState<string | null>(null);
   const [freqUiMode, setFreqUiMode] = useState<ChartMedFrequencyUiMode>(() =>
-    frequencyUiModeFromCode(value.frequencyCode),
+    frequencyUiModeFromCode(value.frequencyCode)
   );
 
   useEffect(() => {
@@ -350,7 +383,9 @@ export default function MedicineRow({
   useEffect(() => {
     if (
       value.foodTiming &&
-      (CHART_MED_FOOD_TIMING_PRIMARY as readonly string[]).includes(value.foodTiming)
+      (CHART_MED_FOOD_TIMING_PRIMARY as readonly string[]).includes(
+        value.foodTiming
+      )
     ) {
       setFoodMoreCustom(null);
     }
@@ -386,6 +421,7 @@ export default function MedicineRow({
           readOnly={isReadOnly}
           onRequestEdit={onRequestEdit}
           onRemove={onRemove}
+          onRefine={onRefine}
           dragHandleProps={dragHandleProps}
         />
       </div>
@@ -408,21 +444,21 @@ export default function MedicineRow({
     strengthParsed.strengthComponents &&
     strengthParsed.strengthComponents.length >= 2 &&
     strengthParsed.strengthComponents.every(
-      (c) => c.unit === strengthParsed.strengthComponents![0]!.unit,
+      (c) => c.unit === strengthParsed.strengthComponents![0]!.unit
     )
       ? (strengthParsed.strengthComponents[0]!.unit ?? null)
       : (strengthParsed.strengthUnit ?? null);
   const strengthMoreText =
     effectiveStrengthUnit &&
     !CHART_MED_STRENGTH_UNIT_PRIMARY.includes(
-      effectiveStrengthUnit as (typeof CHART_MED_STRENGTH_UNIT_PRIMARY)[number],
+      effectiveStrengthUnit as (typeof CHART_MED_STRENGTH_UNIT_PRIMARY)[number]
     )
-      ? STRENGTH_CHIP_OPTIONS.find((o) => o.value === effectiveStrengthUnit)?.label ??
-        effectiveStrengthUnit
+      ? (STRENGTH_CHIP_OPTIONS.find((o) => o.value === effectiveStrengthUnit)
+          ?.label ?? effectiveStrengthUnit)
       : customStrengthUnitFromLegacy(
           value.dosage,
           strengthParsed.strengthValue,
-          strengthParsed.strengthUnit,
+          strengthParsed.strengthUnit
         );
 
   const doseCustomActive =
@@ -432,9 +468,9 @@ export default function MedicineRow({
     ? value.doseUnit
     : value.doseUnit &&
         !CHART_MED_DOSE_UNIT_PRIMARY.includes(
-          value.doseUnit as (typeof CHART_MED_DOSE_UNIT_PRIMARY)[number],
+          value.doseUnit as (typeof CHART_MED_DOSE_UNIT_PRIMARY)[number]
         )
-      ? DOSE_CHIP_OPTIONS.find((o) => o.value === value.doseUnit)?.label ?? ""
+      ? (DOSE_CHIP_OPTIONS.find((o) => o.value === value.doseUnit)?.label ?? "")
       : null;
 
   const durationCustomActive =
@@ -443,10 +479,10 @@ export default function MedicineRow({
     ? value.duration.trim()
     : value.durationUnit &&
         !CHART_MED_DURATION_PRIMARY.includes(
-          value.durationUnit as (typeof CHART_MED_DURATION_PRIMARY)[number],
+          value.durationUnit as (typeof CHART_MED_DURATION_PRIMARY)[number]
         )
-      ? DURATION_CHIP_OPTIONS.find((o) => o.value === value.durationUnit)?.label ??
-        value.durationUnit
+      ? (DURATION_CHIP_OPTIONS.find((o) => o.value === value.durationUnit)
+          ?.label ?? value.durationUnit)
       : null;
 
   const routeCustomActive = value.routeCode === "other";
@@ -454,10 +490,10 @@ export default function MedicineRow({
     ? value.route.trim()
     : value.routeCode &&
         !CHART_MED_ROUTE_PRIMARY.includes(
-          value.routeCode as (typeof CHART_MED_ROUTE_PRIMARY)[number],
+          value.routeCode as (typeof CHART_MED_ROUTE_PRIMARY)[number]
         )
-      ? ROUTE_CHIP_OPTIONS.find((o) => o.value === value.routeCode)?.label ??
-        value.routeCode
+      ? (ROUTE_CHIP_OPTIONS.find((o) => o.value === value.routeCode)?.label ??
+        value.routeCode)
       : null;
 
   const routeSiteCatalog =
@@ -466,21 +502,24 @@ export default function MedicineRow({
       : null;
   const routeSite = extractRouteSite(value.routeCode, value.route);
   const routeSiteKnown = routeSite
-    ? routeSiteCatalog?.options.find(
-        (o) => o.value === routeSite || o.label === routeSite,
-      )?.value ?? null
+    ? (routeSiteCatalog?.options.find(
+        (o) => o.value === routeSite || o.label === routeSite
+      )?.value ?? null)
     : null;
   const routeSiteMoreText =
     routeSite && !routeSiteKnown
       ? routeSite
       : routeSiteKnown &&
           routeSiteCatalog &&
-          !(routeSiteCatalog.primary as readonly string[]).includes(routeSiteKnown)
+          !(routeSiteCatalog.primary as readonly string[]).includes(
+            routeSiteKnown
+          )
         ? routeSiteKnown
         : null;
 
   const freqMoreActive =
-    value.frequencyCode === "CUSTOM" || isFrequencyMoreOrCustom(value.frequencyCode);
+    value.frequencyCode === "CUSTOM" ||
+    isFrequencyMoreOrCustom(value.frequencyCode);
   const slotOptions =
     freqUiMode === "meals"
       ? CHART_MED_FREQUENCY_MEAL_SLOTS
@@ -517,7 +556,9 @@ export default function MedicineRow({
     if (unit == null) {
       onPatch(index, {
         dosage:
-          fields.strengthValue != null ? String(fields.strengthValue) : value.dosage,
+          fields.strengthValue != null
+            ? String(fields.strengthValue)
+            : value.dosage,
       });
       return;
     }
@@ -548,7 +589,9 @@ export default function MedicineRow({
       onPatch(index, { dosage: `${fields.strengthValue} ${unitText}` });
       return;
     }
-    const stripped = value.dosage.replace(/\s*(mg|g|mcg|iu|%|pct)\s*$/i, "").trim();
+    const stripped = value.dosage
+      .replace(/\s*(mg|g|mcg|iu|%|pct)\s*$/i, "")
+      .trim();
     const numMatch = stripped.match(/^(\d+(?:\.\d+)?)\b/);
     if (numMatch) {
       onPatch(index, { dosage: `${numMatch[1]} ${unitText}` });
@@ -583,9 +626,14 @@ export default function MedicineRow({
 
   const handleFrequency = (code: FrequencyCode) => {
     const next = value.frequencyCode === code ? null : code;
+    const doseSchedule = doseScheduleForFrequencyChange(
+      next,
+      value.doseSchedule
+    );
     onPatch(index, {
       frequencyCode: next,
-      frequency: next ? getChartFrequencyLabel(next) : "",
+      frequency: doseSchedule ?? (next ? getChartFrequencyLabel(next) : ""),
+      doseSchedule,
     });
   };
 
@@ -593,29 +641,61 @@ export default function MedicineRow({
     if (mode === freqUiMode) return;
     setFreqUiMode(mode);
     const code = value.frequencyCode;
-    if (!code || code === "CUSTOM" || code === "QHS" || code === "PRN" || code === "STAT") {
+    if (
+      !code ||
+      code === "CUSTOM" ||
+      code === "QHS" ||
+      code === "PRN" ||
+      code === "STAT"
+    ) {
       return;
     }
     if (isFrequencyMoreOrCustom(code)) return;
     if (isIntervalFrequency(code) && mode === "meals") {
       const mapped = HOUR_TO_MEAL_SLOT_MAP[code];
       if (mapped) handleFrequency(mapped);
-      else onPatch(index, { frequencyCode: null, frequency: "" });
+      else
+        onPatch(index, {
+          frequencyCode: null,
+          frequency: "",
+          doseSchedule: null,
+        });
       return;
     }
     if (!isIntervalFrequency(code) && mode === "hours") {
       const mapped = MEAL_TO_HOUR_SLOT_MAP[code];
       if (mapped) handleFrequency(mapped);
-      else onPatch(index, { frequencyCode: null, frequency: "" });
+      else
+        onPatch(index, {
+          frequencyCode: null,
+          frequency: "",
+          doseSchedule: null,
+        });
     }
   };
 
   const commitFrequencyMore = (raw: string) => {
     const resolved = resolveFrequencyMoreInput(raw);
     if (!resolved) return;
+    const doseSchedule = isIntervalFrequency(resolved.code)
+      ? null
+      : doseScheduleForFrequencyChange(resolved.code, value.doseSchedule);
     onPatch(index, {
       frequencyCode: resolved.code,
-      frequency: resolved.frequency,
+      frequency: doseSchedule ?? resolved.frequency,
+      doseSchedule,
+    });
+  };
+
+  const handleSchedule = (pattern: string) => {
+    const next = value.doseSchedule === pattern ? null : pattern;
+    onPatch(index, {
+      doseSchedule: next,
+      frequency:
+        next ??
+        (value.frequencyCode
+          ? getChartFrequencyLabel(value.frequencyCode)
+          : ""),
     });
   };
 
@@ -776,6 +856,18 @@ export default function MedicineRow({
             >
               <ChevronUp className="h-4 w-4" aria-hidden />
             </button>
+            {onRefine && value.medicineName.trim() ? (
+              <button
+                type="button"
+                title="Refine with AI"
+                onClick={() => onRefine(index)}
+                disabled={rowDisabled}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground disabled:opacity-50"
+                aria-label={`Refine medicine ${index + 1} with AI`}
+              >
+                <Sparkles className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => onRemove(index)}
@@ -800,7 +892,9 @@ export default function MedicineRow({
                 allowCustom
                 resolveMatch={(q) => {
                   const resolved = resolveFormInput(q);
-                  return resolved && resolved !== "custom" ? resolved : undefined;
+                  return resolved && resolved !== "custom"
+                    ? resolved
+                    : undefined;
                 }}
                 onCommit={(raw) => {
                   const patch = chartMedPatchFromFormInput(raw);
@@ -841,15 +935,29 @@ export default function MedicineRow({
               />
             </div>
             {!canCollapse ? (
-              <button
-                type="button"
-                onClick={() => onRemove(index)}
-                disabled={rowDisabled}
-                className="h-8 w-8 rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus:outline-none focus:ring-2 focus:ring-destructive disabled:opacity-50"
-                aria-label={`Remove medicine ${index + 1}`}
-              >
-                <Trash2 className="mx-auto h-4 w-4" aria-hidden />
-              </button>
+              <>
+                {onRefine && value.medicineName.trim() ? (
+                  <button
+                    type="button"
+                    title="Refine with AI"
+                    onClick={() => onRefine(index)}
+                    disabled={rowDisabled}
+                    className="h-8 w-8 rounded p-1 text-muted-foreground hover:bg-muted/60 hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+                    aria-label={`Refine medicine ${index + 1} with AI`}
+                  >
+                    <Sparkles className="mx-auto h-3.5 w-3.5" aria-hidden />
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => onRemove(index)}
+                  disabled={rowDisabled}
+                  className="h-8 w-8 rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus:outline-none focus:ring-2 focus:ring-destructive disabled:opacity-50"
+                  aria-label={`Remove medicine ${index + 1}`}
+                >
+                  <Trash2 className="mx-auto h-4 w-4" aria-hidden />
+                </button>
+              </>
             ) : null}
           </div>
         </div>
@@ -890,7 +998,7 @@ export default function MedicineRow({
               const custom = customStrengthUnitFromLegacy(
                 value.dosage,
                 strengthParsed.strengthValue,
-                strengthParsed.strengthUnit,
+                strengthParsed.strengthUnit
               );
               if (custom) {
                 onPatch(index, {
@@ -904,7 +1012,7 @@ export default function MedicineRow({
               if (
                 effectiveStrengthUnit &&
                 !CHART_MED_STRENGTH_UNIT_PRIMARY.includes(
-                  effectiveStrengthUnit as (typeof CHART_MED_STRENGTH_UNIT_PRIMARY)[number],
+                  effectiveStrengthUnit as (typeof CHART_MED_STRENGTH_UNIT_PRIMARY)[number]
                 )
               ) {
                 handleStrengthUnitSelect(null);
@@ -965,7 +1073,7 @@ export default function MedicineRow({
               aria-pressed={!freqMoreActive && value.frequencyCode === opt.code}
               title={opt.tooltip}
               className={chartOptionChipClass(
-                !freqMoreActive && value.frequencyCode === opt.code,
+                !freqMoreActive && value.frequencyCode === opt.code
               )}
               onClick={() => handleFrequency(opt.code)}
             >
@@ -980,7 +1088,7 @@ export default function MedicineRow({
               aria-pressed={!freqMoreActive && value.frequencyCode === opt.code}
               title={opt.tooltip}
               className={chartOptionChipClass(
-                !freqMoreActive && value.frequencyCode === opt.code,
+                !freqMoreActive && value.frequencyCode === opt.code
               )}
               onClick={() => handleFrequency(opt.code)}
             >
@@ -1000,11 +1108,60 @@ export default function MedicineRow({
             onCommit={commitFrequencyMore}
             onClear={() => {
               if (freqMoreActive) {
-                onPatch(index, { frequencyCode: null, frequency: "" });
+                onPatch(index, {
+                  frequencyCode: null,
+                  frequency: "",
+                  doseSchedule: null,
+                });
               }
             }}
           />
         </EditorFieldRow>
+
+        {frequencySupportsDoseSchedule(value.frequencyCode) ? (
+          <EditorFieldRow label="Schedule">
+            <div
+              role="group"
+              aria-label="Dose schedule"
+              className="flex flex-wrap gap-1"
+            >
+              {value.frequencyCode === "OD" && (
+                <button
+                  type="button"
+                  disabled={rowDisabled}
+                  aria-pressed={!value.doseSchedule}
+                  className={chartOptionChipClass(!value.doseSchedule)}
+                  onClick={() =>
+                    onPatch(index, {
+                      doseSchedule: null,
+                      frequency: value.frequencyCode
+                        ? getChartFrequencyLabel(value.frequencyCode)
+                        : "",
+                    })
+                  }
+                >
+                  Any
+                </button>
+              )}
+              {doseScheduleOptionsForFrequency(value.frequencyCode).map(
+                (pattern) => (
+                  <button
+                    key={pattern}
+                    type="button"
+                    disabled={rowDisabled}
+                    aria-pressed={value.doseSchedule === pattern}
+                    className={chartOptionChipClass(
+                      value.doseSchedule === pattern
+                    )}
+                    onClick={() => handleSchedule(pattern)}
+                  >
+                    {pattern}
+                  </button>
+                )
+              )}
+            </div>
+          </EditorFieldRow>
+        ) : null}
 
         <EditorFieldRow label="Duration">
           <label htmlFor={`med-duration-value-${index}`} className="sr-only">
@@ -1059,7 +1216,9 @@ export default function MedicineRow({
           />
         </EditorFieldRow>
 
-        {routeSiteCatalog && value.routeCode && routeCodeSupportsSite(value.routeCode) ? (
+        {routeSiteCatalog &&
+        value.routeCode &&
+        routeCodeSupportsSite(value.routeCode) ? (
           <EditorFieldRow label="Site">
             <ChartMedChipSelect
               primaryValues={routeSiteCatalog.primary}

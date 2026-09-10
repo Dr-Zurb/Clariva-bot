@@ -19,6 +19,14 @@ import {
   validateUpdatePatientMedicationBody,
   validateUpdateMedicalBackgroundNotesBody,
   validateUpdateAllergySectionNotesBody,
+  validateBulkTagPatientsBody,
+  validateCreateFrontDeskPatientBody,
+  validateUpdateFrontDeskPatientBody,
+  ageYearsFromIsoDate,
+  subtractCalendarDays,
+  subtractCalendarMonths,
+  validateDeskCancelBody,
+  validateUpdatePrescriptionBody,
 } from '../../../src/utils/validation';
 import { ValidationError } from '../../../src/utils/errors';
 
@@ -377,5 +385,153 @@ describe('patient chart allergy section notes validation', () => {
   it('accepts null notes to clear the field', () => {
     const result = validateUpdateAllergySectionNotesBody({ notes: null });
     expect(result.notes).toBeNull();
+  });
+
+  it('accepts the nil-known flag on its own and leaves notes absent', () => {
+    const result = validateUpdateAllergySectionNotesBody({ noKnownAllergies: true });
+    expect(result.noKnownAllergies).toBe(true);
+    expect('notes' in result).toBe(false);
+  });
+
+  it('rejects a non-boolean nil-known flag', () => {
+    expect(() => validateUpdateAllergySectionNotesBody({ noKnownAllergies: 'yes' })).toThrow();
+  });
+});
+
+describe('validateBulkTagPatientsBody', () => {
+  const id = '11111111-1111-4111-8111-111111111111';
+
+  it('normalizes tags and rejects whitespace-only add', () => {
+    expect(() =>
+      validateBulkTagPatientsBody({
+        ids: [id],
+        op: 'add',
+        tags: ['   '],
+      }),
+    ).toThrow(ValidationError);
+
+    const ok = validateBulkTagPatientsBody({
+      ids: [id],
+      op: 'add',
+      tags: [' VIP ', 'vip'],
+    });
+    expect(ok).toEqual({ ids: [id], op: 'add', tags: ['VIP'] });
+  });
+
+  it('allows clear with empty tags', () => {
+    expect(
+      validateBulkTagPatientsBody({ ids: [id], op: 'clear', tags: [] }),
+    ).toEqual({ ids: [id], op: 'clear', tags: [] });
+  });
+});
+
+describe('ageYearsFromIsoDate', () => {
+  const now = new Date('2026-08-23T12:00:00+05:30');
+
+  it('returns whole years and 0 for infants', () => {
+    expect(ageYearsFromIsoDate('1995-08-23', now)).toBe(31);
+    expect(ageYearsFromIsoDate('1995-08-24', now)).toBe(30);
+    expect(ageYearsFromIsoDate('2026-05-23', now)).toBe(0);
+  });
+
+  it('rejects a future date', () => {
+    expect(ageYearsFromIsoDate('2026-08-24', now)).toBeNull();
+  });
+});
+
+describe('validateCreateFrontDeskPatientBody', () => {
+  const base = {
+    name: 'Ria Sharma',
+    phone: '9814861579',
+    gender: 'female',
+    guardianName: 'Ram Prakash',
+    guardianRelation: 'father',
+  };
+
+  it('accepts years without a date of birth', () => {
+    const body = validateCreateFrontDeskPatientBody({ ...base, age: 31 });
+    expect(body.age).toBe(31);
+    expect(body.dateOfBirth).toBeUndefined();
+  });
+
+  it('accepts a date of birth without years', () => {
+    const body = validateCreateFrontDeskPatientBody({ ...base, dateOfBirth: '2018-01-15' });
+    expect(body.dateOfBirth).toBe('2018-01-15');
+    expect(body.age).toBeUndefined();
+  });
+
+  it('rejects a body with neither age nor date of birth', () => {
+    expect(() => validateCreateFrontDeskPatientBody(base)).toThrow(ValidationError);
+  });
+
+  it('accepts months and days within range', () => {
+    expect(validateCreateFrontDeskPatientBody({ ...base, age: 3, ageUnit: 'months' }).ageUnit).toBe(
+      'months'
+    );
+    expect(validateCreateFrontDeskPatientBody({ ...base, age: 10, ageUnit: 'days' }).ageUnit).toBe(
+      'days'
+    );
+  });
+
+  it('rejects months or days outside the pediatric range', () => {
+    expect(() =>
+      validateCreateFrontDeskPatientBody({ ...base, age: 40, ageUnit: 'months' })
+    ).toThrow(ValidationError);
+    expect(() =>
+      validateCreateFrontDeskPatientBody({ ...base, age: 100, ageUnit: 'days' })
+    ).toThrow(ValidationError);
+  });
+});
+
+describe('validateUpdateFrontDeskPatientBody', () => {
+  it('uses the same full-card rules as create', () => {
+    expect(
+      validateUpdateFrontDeskPatientBody({
+        name: 'Ria Sharma',
+        phone: '9814861579',
+        gender: 'female',
+        guardianName: 'Ram Prakash',
+        guardianRelation: 'father',
+        age: 31,
+      }).age
+    ).toBe(31);
+    expect(() =>
+      validateUpdateFrontDeskPatientBody({
+        name: 'Ria Sharma',
+        phone: '9814861579',
+        gender: 'female',
+        guardianName: 'Ram Prakash',
+        guardianRelation: 'father',
+      })
+    ).toThrow(ValidationError);
+  });
+});
+
+describe('subtractCalendarMonths', () => {
+  it('clamps the day when the target month is shorter', () => {
+    expect(subtractCalendarMonths('2026-03-31', 1)).toBe('2026-02-28');
+    expect(subtractCalendarDays('2026-08-23', 10)).toBe('2026-08-13');
+  });
+});
+
+describe('validateDeskCancelBody', () => {
+  it('accepts an empty body and a short reason', () => {
+    expect(validateDeskCancelBody({})).toEqual({});
+    expect(validateDeskCancelBody({ reason: 'cannot come' })).toEqual({ reason: 'cannot come' });
+  });
+});
+
+describe('validateUpdatePrescriptionBody frequencyCode', () => {
+  it('maps labels and interval codes instead of rejecting them', () => {
+    const body = validateUpdatePrescriptionBody({
+      medicines: [
+        { medicineName: 'Calcium', frequencyCode: 'Once daily' },
+        { medicineName: 'Aspirin', frequencyCode: 'At bedtime' },
+        { medicineName: 'Interval', frequencyCode: 'Q6H' },
+      ],
+    });
+    expect(body.medicines?.[0]?.frequencyCode).toBe('OD');
+    expect(body.medicines?.[1]?.frequencyCode).toBe('QHS');
+    expect(body.medicines?.[2]?.frequencyCode).toBe('CUSTOM');
   });
 });

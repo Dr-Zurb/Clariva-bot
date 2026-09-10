@@ -8,7 +8,13 @@ import {
   STAGE_ROUTER,
   type DmTurnContext,
 } from '../../../src/workers/dm/stage-router';
-import { CONTROL_GATES } from '../../../src/workers/dm/control-gates';
+import {
+  CONTROL_GATES,
+  emergencyGate,
+  openCrisisGate,
+  receptionistPausedGate,
+  revokeConsentGate,
+} from '../../../src/workers/dm/control-gates';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import {
@@ -33,6 +39,7 @@ function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
     doctorId: 'doctor-1',
     correlationId: 'corr-1',
     text: 'hello',
+    turnLanguage: 'en',
     recentMessages: [],
     intentResult: { intent: 'greeting', confidence: 1 },
     doctorSettings: { timezone: 'Asia/Kolkata', instagram_receptionist_paused: false } as never,
@@ -43,6 +50,7 @@ function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
       intentResult: { intent: 'greeting', confidence: 1 },
       doctorSettings: null,
       text: 'hello',
+      turnLanguage: 'en',
       inCollection: false,
       conversationId: 'conv-1',
       patientId: 'patient-1',
@@ -53,8 +61,8 @@ function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
     justStartingCollection: false,
     signalsFeePricing: false,
     feeIdleRoutedByAnaphora: false,
-    feeComposerOpts: {},
-    bookingFeeComposerOpts: {},
+    feeComposerOpts: { language: 'en' },
+    bookingFeeComposerOpts: { language: 'en' },
     teleconsultCatalogRowCount: 1,
     channelReplyPick: null,
     lastBotAskedForDetails: false,
@@ -82,8 +90,6 @@ const BOOKING_FUNNEL_BRANCHES = new Set([
   'confirm_details_complaint_clarify',
   'consent_flow',
   'consent_correction_back',
-  'recording_consent_flow',
-  'recording_consent_injected',
   'slot_selection',
   'learning_policy_autobook',
 ]);
@@ -103,10 +109,17 @@ const BOOKING_ENTRY_BRANCHES = new Set([
   'fee_ambiguous_visit_type_staff',
 ]);
 
+const SERVICE_MATCH_BRANCHES = new Set([
+  'returning_followup_confirm_accept',
+  'returning_followup_confirm_decline',
+  'returning_followup_confirm_offer',
+]);
+
 function expectedStageForFixtureBranch(branch: string): string {
   if (IDLE_FEE_TRIAGE_BRANCHES.has(branch)) return 'idle_fee_triage';
   if (BOOKING_FUNNEL_BRANCHES.has(branch)) return 'booking_funnel';
   if (BOOKING_ENTRY_BRANCHES.has(branch)) return 'booking_entry';
+  if (SERVICE_MATCH_BRANCHES.has(branch)) return 'service_match';
   return 'ai_open_response';
 }
 
@@ -137,17 +150,38 @@ describe('STAGE_ROUTER scaffold (rcp-03 / rcp-08)', () => {
           fixture.when.signals_fee_pricing ??
           (fixture.when.book_misclassified_pricing_only ? true : false),
         isBookIntent: fixture.when.intent === 'book_appointment',
-        justStartingCollection: fixture.when.book_misclassified_pricing_only ?? false,
+        justStartingCollection:
+          fixture.when.just_starting_collection ??
+          fixture.when.book_misclassified_pricing_only ??
+          false,
+        ...(fixture.when.returning_followup_reply ?
+          {
+            state: {
+              step: 'awaiting_followup_service_confirmation' as const,
+              collectedFields: [],
+              updatedAt: new Date().toISOString(),
+            },
+          }
+        : {}),
       });
       expect(resolveStage(ctx)).toBe(expectedStageForFixtureBranch(fixture.expectedBranch));
     }
   });
 
-  it('CONTROL_GATES order remains revoke → paused → emergency (rcp-02 intact)', () => {
+  it('CONTROL_GATES order remains revoke → emergency → open-crisis → paused (SAFETY-01)', () => {
+    // Compared by identity: the acute and open-crisis gates share the
+    // `emergency_safety` name, so names alone cannot pin the order.
+    expect(CONTROL_GATES).toEqual([
+      revokeConsentGate,
+      emergencyGate,
+      openCrisisGate,
+      receptionistPausedGate,
+    ]);
     expect(CONTROL_GATES.map((g) => g.name)).toEqual([
       'revoke_consent',
-      'receptionist_paused',
       'emergency_safety',
+      'emergency_safety',
+      'receptionist_paused',
     ]);
   });
 

@@ -14,7 +14,6 @@ export const PATIENT_LIST_COLUMN_DEFS = [
   { id: "phone", label: "Phone", defaultVisible: true },
   { id: "last-visit", label: "Last visit", defaultVisible: true },
   { id: "next-visit", label: "Next visit", defaultVisible: false },
-  { id: "open-episodes", label: "Open episodes (count)", defaultVisible: false },
   { id: "source-channel", label: "Source channel", defaultVisible: false },
 ] as const;
 
@@ -28,15 +27,17 @@ function columnsStorageKey(userId: string): string {
   return `patients-v2/list-columns:${userId}`;
 }
 
+/** Always compact on Patients list (density toggle removed 2026-08-06). */
+export const DEFAULT_LIST_DENSITY: PatientsListDensity = "compact";
+
+/** @deprecated Density is fixed to compact; kept for older tests/callers. */
 export function readDensityFromStorage(): PatientsListDensity {
-  if (typeof window === "undefined") return "comfortable";
-  const raw = window.localStorage.getItem(PATIENTS_LIST_DENSITY_KEY);
-  return raw === "compact" ? "compact" : "comfortable";
+  return DEFAULT_LIST_DENSITY;
 }
 
-export function writeDensityToStorage(density: PatientsListDensity): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(PATIENTS_LIST_DENSITY_KEY, density);
+/** @deprecated No-op — density toggle removed. */
+export function writeDensityToStorage(_density: PatientsListDensity): void {
+  // intentionally empty
 }
 
 export function readColumnsFromStorage(userId: string): PatientListColumnId[] {

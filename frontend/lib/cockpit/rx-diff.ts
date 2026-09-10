@@ -1,4 +1,5 @@
 import type { MedicineRowValue } from "@/components/consultation/MedicineRow";
+import { hydrateDoseScheduleFromStored } from "@/lib/chart/chart-medication";
 import type { PrescriptionMedicine } from "@/types/prescription";
 
 export interface MedicineDiffRow {
@@ -28,6 +29,7 @@ export function medicineToRowValue(m: PrescriptionMedicine): MedicineRowValue {
     doseUnit: m.dose_unit ?? null,
     form: m.form ?? null,
     foodTiming: m.food_timing ?? null,
+    doseSchedule: hydrateDoseScheduleFromStored(m.frequency, m.frequency_code),
   };
 }
 
@@ -39,7 +41,7 @@ export function medicineToRowValue(m: PrescriptionMedicine): MedicineRowValue {
 export function applyMode(
   currentMeds: MedicineRowValue[],
   priorMeds: MedicineRowValue[],
-  mode: "append" | "replace",
+  mode: "append" | "replace"
 ): MedicineRowValue[] {
   if (mode === "replace") return priorMeds.slice();
   const seenKey = (m: MedicineRowValue) =>
@@ -52,10 +54,14 @@ export function applyMode(
 /** Per-row diff for the preview UI. */
 export function diffMedicines(
   currentMeds: MedicineRowValue[],
-  finalMeds: MedicineRowValue[],
+  finalMeds: MedicineRowValue[]
 ): MedicineDiffRow[] {
-  const finalKeys = new Set(finalMeds.map((m) => `${m.medicineName}|${m.dosage}`));
-  const currentKeys = new Set(currentMeds.map((m) => `${m.medicineName}|${m.dosage}`));
+  const finalKeys = new Set(
+    finalMeds.map((m) => `${m.medicineName}|${m.dosage}`)
+  );
+  const currentKeys = new Set(
+    currentMeds.map((m) => `${m.medicineName}|${m.dosage}`)
+  );
 
   const rows: MedicineDiffRow[] = [];
   for (const m of finalMeds) {
@@ -68,7 +74,8 @@ export function diffMedicines(
   }
   for (const m of currentMeds) {
     const k = `${m.medicineName}|${m.dosage}`;
-    if (!finalKeys.has(k)) rows.push({ status: "removed", value: m, source: "current" });
+    if (!finalKeys.has(k))
+      rows.push({ status: "removed", value: m, source: "current" });
   }
   return rows;
 }

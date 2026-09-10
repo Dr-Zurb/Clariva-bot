@@ -47,6 +47,12 @@ function clonePaneTree(tree: PaneTreeNode): PaneTreeNode {
 export interface ApplyLayoutOptions {
   /** When false, does not push onto the undo stack (blank seed, hydration helpers). */
   recordHistory?: boolean;
+  /**
+   * When false, updates the tree without bumping `layoutVersion` (no
+   * CockpitGroupView `setLayout` rebalance). Used for Show-here / pane
+   * swaps where slot `panelKey` keeps ResizablePanel ids stable.
+   */
+  rebalance?: boolean;
 }
 
 /** Read persisted layout: v4 key first, then legacy v3 (migrated on success). */
@@ -414,9 +420,10 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
     (
       nextTree: PaneTreeNode,
       kind: HistoryCommitKind,
-      options?: { recordHistory?: boolean },
+      options?: { recordHistory?: boolean; rebalance?: boolean },
     ) => {
       const record = options?.recordHistory !== false;
+      const rebalance = options?.rebalance !== false;
       setLayout((prev) => {
         const current = prev.paneTree;
         if (serialiseTree(current) === serialiseTree(nextTree)) {
@@ -431,7 +438,7 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
         prevLayoutRef.current = null;
         return { version: LAYOUT_VERSION, paneTree: nextTree };
       });
-      setLayoutVersion((v) => v + 1);
+      if (rebalance) setLayoutVersion((v) => v + 1);
     },
     [pushHistory],
   );
@@ -792,13 +799,14 @@ export function useShellLayout(opts: UseShellLayoutOptions): UseShellLayoutResul
     (next: PatientProfileLayout, options?: ApplyLayoutOptions) => {
       const validated = validateLayout(next);
       if (!validated) return;
+      const rebalance = options?.rebalance !== false;
       if (options?.recordHistory === false) {
         setLayout(validated);
         prevLayoutRef.current = null;
-        setLayoutVersion((v) => v + 1);
+        if (rebalance) setLayoutVersion((v) => v + 1);
         return;
       }
-      commitPaneTree(validated.paneTree, "structural");
+      commitPaneTree(validated.paneTree, "structural", { rebalance });
     },
     [commitPaneTree],
   );

@@ -9,6 +9,7 @@ import {
   disconnectInstagram,
   type InstagramStatusData,
 } from "@/lib/api";
+import { createClient } from "@/lib/supabase/client";
 import { useVerificationStatusQuery } from "@/hooks/queries/useVerificationStatusQuery";
 
 interface InstagramConnectProps {
@@ -99,6 +100,8 @@ export default function InstagramConnect({ token }: InstagramConnectProps) {
     setError(null);
     setMessage(null);
     try {
+      // Refresh before Meta so a stale refresh token is not discovered only on return.
+      await createClient().auth.refreshSession();
       await redirectToInstagramConnect(token);
       // Redirect initiated; do not set error — navigation may complete shortly.
     } catch (err) {

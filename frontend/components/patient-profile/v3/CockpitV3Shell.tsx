@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import {
+  useRxFocusDeepLink,
+  type RxFocusLayoutApi,
+} from "@/lib/cockpit/rx-focus";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import {
   flattenPaneDefinitions,
@@ -20,6 +24,11 @@ import { useCockpitLayoutPresets } from "@/lib/patient-profile/v3/useCockpitLayo
 import { useCockpitLayoutHotkeys } from "@/lib/patient-profile/v3/useCockpitLayoutHotkeys";
 import { toastOnCapRejection } from "@/lib/patient-profile/v3/cockpit-cap-toast";
 import { trackCockpitV3DragDrop } from "@/lib/patient-profile/telemetry";
+import { CallStageChromeProvider } from "@/components/consultation/CallStageChromeContext";
+import {
+  consultAlreadyRoomyForChat,
+  withConsultChatMinSize,
+} from "@/lib/call/consult-chat-layout";
 import CockpitCanvas from "./CockpitCanvas";
 import CockpitDndContext, {
   type CockpitDropMovePayload,
@@ -39,12 +48,25 @@ export interface CockpitV3ShellProps {
   consultActive?: boolean;
   /** Anchored clinical-safety chrome (v3-DL-6 / P0-DL-3). */
   safetyDock?: ReactNode;
+  /** Describe-visit bar — palette row on desktop, safety dock on mobile. */
+  describeSlot?: ReactNode;
   /** Anchored "Send Rx & finish" footer (v3-DL-6 / P0-DL-3). */
   actionDock?: ReactNode;
   /** Doctor auth token — enables saved custom layouts in the palette (cv3l-05). */
   token?: string;
+  /**
+   * Stable Consult host (`<ConsultSurfaceHost>`). Must render as a React child
+   * of `CallStageChromeProvider` so the portaled VideoRoom sees chrome context
+   * (in-call chat min-width / Focus widen). DOM still portals into the body slot.
+   */
+  consultSurfaceHost?: ReactNode;
   /** Other PatientProfileShell props are accepted but ignored in Phase 1. */
   [key: string]: unknown;
+}
+
+function RxFocusDeepLinkHost({ layout }: { layout: RxFocusLayoutApi }) {
+  useRxFocusDeepLink(layout);
+  return null;
 }
 
 /**
@@ -61,24 +83,33 @@ export default function CockpitV3Shell({
   storageKey = "cockpit-v3-default",
   consultActive: _consultActive = false,
   safetyDock,
+  describeSlot,
   actionDock,
   token,
+  consultSurfaceHost = null,
 }: CockpitV3ShellProps) {
   void _consultActive;
   const isLg = useMediaQuery("(min-width: 1024px)", true);
 
+  /**
+   * In-call chat raises Consult's splitter floor so Subjective cannot
+   * drag below video+chat mins. Reported from `<VideoRoom>` via chrome.
+   */
+  const [consultChatOpen, setConsultChatOpen] = useState(false);
+  const canvasPanes = useMemo(
+    () => withConsultChatMinSize(panes, consultChatOpen),
+    [panes, consultChatOpen]
+  );
+
   const { paneById: paneByIdRecord } = useMemo(
-    () => flattenPaneDefinitions(panes),
-    [panes],
+    () => flattenPaneDefinitions(canvasPanes),
+    [canvasPanes]
   );
-  const { paneOrder } = useMemo(
-    () => flattenPaneDefinitions(panes),
-    [panes],
-  );
+  const { paneOrder } = useMemo(() => flattenPaneDefinitions(panes), [panes]);
   const seedLayout = useMemo(() => resolveSeedLayout(panes), [panes]);
   const defaultFlat = useMemo(
     () => paneTreeToFlat(seedLayout.paneTree),
-    [seedLayout],
+    [seedLayout]
   );
 
   const canvasMeasureRef = useRef<HTMLDivElement>(null);
@@ -118,16 +149,66 @@ export default function CockpitV3Shell({
   const layoutPresets = useCockpitLayoutPresets(token, showFullLayoutRegistry);
   const layoutSwitcher = useCockpitLayoutSwitcher(
     layout,
-    layoutPresets.presets,
+    layoutPresets.presets
   );
   useCockpitLayoutHotkeys(
     showFullLayoutRegistry,
-    layoutSwitcher.applyDefaultLayout,
+    layoutSwitcher.applyDefaultLayout
   );
 
   // All panes (including Consult / `body` during live teleconsult) are
   // rearrangeable — the old live-consult drag lock was inconvenient in practice.
   const canDragPane = useCallback((_paneId: string) => true, []);
+
+  const fillTabActive =
+    layout.isFocused &&
+    layout.ratio === "full" &&
+    (layout.focusedLeafId === "body" ||
+      Boolean(layout.focusedLeafId?.includes("body")));
+
+  const enterFillTab = useCallback(() => {
+    layout.enterSplit("body", "full");
+  }, [layout]);
+
+  const exitFillTab = useCallback(() => {
+    layout.exitFocus();
+  }, [layout]);
+
+  /** True when in-call chat opened Focus so we must Restore on close. */
+  const chatFocusOwnedRef = useRef(false);
+
+  const prepareConsultForChat = useCallback(() => {
+    if (
+      consultAlreadyRoomyForChat({
+        isFocused: layout.isFocused,
+        focusedLeafId: layout.focusedLeafId,
+        ratio: layout.ratio,
+      })
+    ) {
+      // Don't steal ownership — closing chat must not undo user's Full/Wide.
+      return;
+    }
+    const ok = layout.enterSplit("body", "wide");
+    if (ok) chatFocusOwnedRef.current = true;
+  }, [layout]);
+
+  const releaseConsultAfterChat = useCallback(() => {
+    if (!chatFocusOwnedRef.current) return;
+    chatFocusOwnedRef.current = false;
+    const stillOnBody =
+      layout.isFocused &&
+      (layout.focusedLeafId === "body" ||
+        Boolean(layout.focusedLeafId?.includes("body")));
+    if (stillOnBody) {
+      layout.exitFocus();
+    }
+  }, [layout]);
+
+  /** Wide still too tight for video+chat — take Full and own restore. */
+  const escalateConsultForChat = useCallback(() => {
+    const ok = layout.enterSplit("body", "full");
+    if (ok) chatFocusOwnedRef.current = true;
+  }, [layout]);
 
   const handleDrop = useCallback(
     (route: CockpitDropMovePayload) => {
@@ -138,7 +219,7 @@ export default function CockpitV3Shell({
             route.gutter.leftChildId,
             route.gutter.rightChildId,
             route.targetGroupId,
-            route.zone,
+            route.zone
           )
         : layout.movePane(route.sourcePaneId, route.targetGroupId, route.zone);
       toastOnCapRejection(res);
@@ -150,7 +231,7 @@ export default function CockpitV3Shell({
         });
       }
     },
-    [layout],
+    [layout]
   );
 
   const handleReorder = useCallback(
@@ -160,11 +241,11 @@ export default function CockpitV3Shell({
           route.groupId,
           route.sourcePaneId,
           route.overPaneId,
-          route.place,
-        ),
+          route.place
+        )
       );
     },
-    [layout],
+    [layout]
   );
 
   const handleSwap = useCallback(
@@ -179,61 +260,87 @@ export default function CockpitV3Shell({
         });
       }
     },
-    [layout],
+    [layout]
   );
 
-  if (!isLg) {
-    return (
-      <div
-        data-testid="p1-cockpit-v3-shell-mobile"
-        className="flex h-full min-h-0 w-full flex-col"
-      >
-        <CockpitMobileFallback
-          panes={panes}
-          layout={layout}
-          safetyDock={safetyDock}
-          actionDock={actionDock}
-        />
-      </div>
-    );
-  }
-
-  return (
-    <div
-      data-testid="p1-cockpit-v3-shell-desktop"
-      className="flex h-full min-h-0 w-full flex-col"
+  const chrome = (
+    <CallStageChromeProvider
+      fillTabActive={Boolean(fillTabActive)}
+      onEnterFillTab={enterFillTab}
+      onExitFillTab={exitFillTab}
+      onPrepareConsultForChat={prepareConsultForChat}
+      onReleaseConsultAfterChat={releaseConsultAfterChat}
+      onEscalateConsultForChat={escalateConsultForChat}
+      onConsultChatOpenChange={setConsultChatOpen}
     >
-      {safetyDock ? (
-        <div data-testid="cockpit-v3-safety-dock" className="shrink-0">
-          {safetyDock}
-        </div>
-      ) : null}
-      <CockpitPalette
-        panes={panes}
-        layout={layout}
-        layoutSwitcher={layoutSwitcher}
-        token={token}
-        className="shrink-0"
-      />
-      <CockpitDndContext
-        paneById={paneByIdRecord}
-        onDrop={handleDrop}
-        onReorder={handleReorder}
-        onSwap={handleSwap}
-      >
-        <div ref={canvasMeasureRef} className="min-h-0 flex-1">
-          <CockpitCanvas
+      {isLg ? (
+        <div
+          data-testid="p1-cockpit-v3-shell-desktop"
+          className="flex h-full min-h-0 w-full flex-col"
+        >
+          {safetyDock ? (
+            <div data-testid="cockpit-v3-safety-dock" className="shrink-0">
+              {safetyDock}
+            </div>
+          ) : null}
+          <CockpitPalette
             panes={panes}
             layout={layout}
-            canDragPane={canDragPane}
+            layoutSwitcher={layoutSwitcher}
+            token={token}
+            describeSlot={describeSlot}
+            className="shrink-0"
+          />
+          <CockpitDndContext
+            paneById={paneByIdRecord}
+            onDrop={handleDrop}
+            onReorder={handleReorder}
+            onSwap={handleSwap}
+          >
+            <div ref={canvasMeasureRef} className="min-h-0 flex-1">
+              <CockpitCanvas
+                panes={canvasPanes}
+                layout={layout}
+                canDragPane={canDragPane}
+              />
+            </div>
+          </CockpitDndContext>
+          {actionDock ? (
+            <div data-testid="cockpit-v3-action-dock" className="shrink-0">
+              {actionDock}
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div
+          data-testid="p1-cockpit-v3-shell-mobile"
+          className="flex h-full min-h-0 w-full flex-col"
+        >
+          <CockpitMobileFallback
+            panes={panes}
+            layout={layout}
+            safetyDock={
+              describeSlot || safetyDock ? (
+                <>
+                  {describeSlot ? (
+                    <div className="px-2 py-1">{describeSlot}</div>
+                  ) : null}
+                  {safetyDock}
+                </>
+              ) : undefined
+            }
+            actionDock={actionDock}
           />
         </div>
-      </CockpitDndContext>
-      {actionDock ? (
-        <div data-testid="cockpit-v3-action-dock" className="shrink-0">
-          {actionDock}
-        </div>
-      ) : null}
-    </div>
+      )}
+      {/* Portaled Consult must stay under this provider (context, not DOM). */}
+      {consultSurfaceHost}
+      {/* Child is skipped in Vitest so existing v3 suites need no App Router mock. */}
+      {process.env.NODE_ENV === "test" ? null : (
+        <RxFocusDeepLinkHost layout={layout} />
+      )}
+    </CallStageChromeProvider>
   );
+
+  return chrome;
 }

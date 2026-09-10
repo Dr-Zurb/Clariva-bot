@@ -14,7 +14,7 @@ export type OnboardingStepId =
   | "pricing"
   | "availability";
 
-export type ChecklistStepId = "verify" | OnboardingStepId;
+export type ChecklistStepId = "verify" | "recording_attestation" | OnboardingStepId;
 
 export interface OnboardingStepDef {
   id: OnboardingStepId;
@@ -46,11 +46,11 @@ export interface ChecklistStepView {
 export const ONBOARDING_STEPS: readonly OnboardingStepDef[] = [
   {
     id: "instagram",
-    title: "Connect Instagram",
+    title: "Connect socials",
     description:
-      "Link your professional Instagram so patient DMs and comments can become bookings.",
+      "Link Instagram or Facebook so patient DMs and comments can become bookings.",
     href: "/dashboard/settings/integrations",
-    cta: "Connect",
+    cta: "Connect socials",
     doneKey: "instagramConnected",
   },
   {
@@ -92,7 +92,7 @@ function verifyStepView(
     return {
       ...base,
       description:
-        "Medical registration confirmed — you can connect Instagram and go patient-facing.",
+        "Medical registration confirmed — you can connect socials and go patient-facing.",
       cta: "Get verified",
       done: true,
     };
@@ -139,12 +139,26 @@ function verifyStepView(
   };
 }
 
-/** Full go-live checklist: verify first, then the four setup steps (GS-D*). */
+function recordingAttestationStepView(accepted: boolean | undefined): ChecklistStepView {
+  return {
+    id: "recording_attestation",
+    title: "Accept recording terms",
+    description:
+      "Audio is recorded on every voice and video consult. Review the six clauses before you start seeing patients.",
+    href: "/dashboard/recording-attestation",
+    cta: accepted ? "View attestation" : "Review & accept",
+    done: accepted === true,
+  };
+}
+
+/** Full go-live checklist: verify first, then attestation (skippable), then setup. */
 export function buildGoLiveChecklist(
   onboarding: OnboardingStatus,
   verificationStatus: VerificationStatus | undefined,
+  recordingAttested?: boolean,
 ): ChecklistStepView[] {
   const verify = verifyStepView(verificationStatus);
+  const attestation = recordingAttestationStepView(recordingAttested);
   const setup = ONBOARDING_STEPS.map((step) => ({
     id: step.id,
     title: step.title,
@@ -153,14 +167,15 @@ export function buildGoLiveChecklist(
     cta: step.cta,
     done: onboarding[step.doneKey],
   }));
-  return [verify, ...setup];
+  return [verify, attestation, ...setup];
 }
 
 export function remainingGoLiveSteps(
   onboarding: OnboardingStatus,
   verificationStatus: VerificationStatus | undefined,
+  recordingAttested?: boolean,
 ): ChecklistStepView[] {
-  return buildGoLiveChecklist(onboarding, verificationStatus).filter(
+  return buildGoLiveChecklist(onboarding, verificationStatus, recordingAttested).filter(
     (step) => !step.done,
   );
 }

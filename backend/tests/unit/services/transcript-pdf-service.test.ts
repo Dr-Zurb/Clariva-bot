@@ -14,8 +14,9 @@
  *      `consultation-transcripts` bucket with upsert=true.
  *   5. Notification routing — doctor → notifyPatientOfDoctorReplay with
  *      artifactType='transcript' + actionKind='downloaded';
- *      patient / support_staff → notifyDoctorOfPatientReplay with the
- *      same.
+ *      patient → notifyDoctorOfPatientReplay with the same.
+ *      support_staff → both helpers; patient copy uses accessedByRole
+ *      'support_staff' and does not receive escalationReason.
  *
  * We mock the thin edges (`runReplayPolicyChecks`,
  * `isSessionOrCompositionRevoked`, `notification-service`,
@@ -73,11 +74,16 @@ jest.mock('../../../src/services/transcript-pdf-composer', () => ({
   }),
 }));
 
+jest.mock('../../../src/services/recording-gap-service', () => ({
+  listRecordingGaps: jest.fn(async () => ({ schemaVersion: 1, gaps: [] })),
+}));
+
 import * as database from '../../../src/config/database';
 import * as recAccess from '../../../src/services/recording-access-service';
 import * as notif from '../../../src/services/notification-service';
 import * as doctorSettings from '../../../src/services/doctor-settings-service';
 import * as composer from '../../../src/services/transcript-pdf-composer';
+import * as gapService from '../../../src/services/recording-gap-service';
 import {
   renderConsultTranscriptPdf,
   TranscriptExportError,
@@ -88,6 +94,7 @@ const mockedRecAccess = recAccess as jest.Mocked<typeof recAccess>;
 const mockedNotif = notif as jest.Mocked<typeof notif>;
 const mockedDoctorSettings = doctorSettings as jest.Mocked<typeof doctorSettings>;
 const mockedComposer = composer as jest.Mocked<typeof composer>;
+const mockedGaps = gapService as jest.Mocked<typeof gapService>;
 
 // ---------------------------------------------------------------------------
 // Admin client mock: covers the 4 tables this service touches directly:
@@ -356,6 +363,43 @@ describe('renderConsultTranscriptPdf — cache miss', () => {
     );
     expect(mockedNotif.notifyPatientOfDoctorReplay).not.toHaveBeenCalled();
   });
+
+  it('routes support-staff download to doctor AND patient, without leaking escalationReason to the patient', async () => {
+    setPolicyPass();
+    const adm = buildAdminMock({ storageListRows: [] });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(adm.client as never);
+
+    await renderConsultTranscriptPdf({
+      sessionId:        SESSION_ID,
+      requestingUserId: 'support_1',
+      requestingRole:   'support_staff',
+      escalationReason: 'Customer ticket #4521 — recording lost',
+      correlationId:    'req_3',
+    });
+
+    await new Promise((r) => setImmediate(r));
+    expect(mockedNotif.notifyDoctorOfPatientReplay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        artifactType:     'transcript',
+        actionKind:       'downloaded',
+        accessedByRole:   'support_staff',
+        accessedByUserId: 'support_1',
+        escalationReason: expect.stringContaining('Customer ticket'),
+      }),
+    );
+    expect(mockedNotif.notifyPatientOfDoctorReplay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        artifactType:     'transcript',
+        actionKind:       'downloaded',
+        accessedByRole:   'support_staff',
+      }),
+    );
+    const patientCall = mockedNotif.notifyPatientOfDoctorReplay.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    expect(patientCall.escalationReason).toBeUndefined();
+  });
 });
 
 describe('renderConsultTranscriptPdf — cache hit', () => {
@@ -548,6 +592,121 @@ describe('renderConsultTranscriptPdf — input validation', () => {
     expect(
       adm.inserts.filter((i) => i.table === 'recording_access_audit'),
     ).toHaveLength(0);
+  });
+});
+
+describe('renderConsultTranscriptPdf — rec-19 gaps', () => {
+  it('omits pause/resume system rows and passes ledger gaps without media offsets', async () => {
+    setPolicyPass();
+    mockedGaps.listRecordingGaps.mockResolvedValueOnce({
+      schemaVersion: 1,
+      gaps: [
+        {
+          wallStartedAt: '2026-04-19T09:10:00.000Z',
+          wallEndedAt:   '2026-04-19T09:14:00.000Z',
+          durationMs:    240_000,
+          actorRole:     'doctor',
+          reasonCode:    'administrative',
+          closedAs:      'manual_resume',
+          mediaOffsetMs: { audio: 12_000, video: null },
+        },
+      ],
+    });
+    const adm = buildAdminMock({
+      storageListRows: [],
+      chatRows: [
+        {
+          kind:                 'text',
+          sender_role:          'patient',
+          body:                 'Hello doctor',
+          attachment_url:       null,
+          attachment_mime_type: null,
+          system_event:         null,
+          created_at:           '2026-04-19T09:00:00.000Z',
+        },
+        {
+          kind:                 'system',
+          sender_role:          'system',
+          body:                 'Recording paused: patient disclosed HIV status',
+          attachment_url:       null,
+          attachment_mime_type: null,
+          system_event:         'recording_paused',
+          created_at:           '2026-04-19T09:10:00.000Z',
+        },
+        {
+          kind:                 'system',
+          sender_role:          'system',
+          body:                 'Recording resumed',
+          attachment_url:       null,
+          attachment_mime_type: null,
+          system_event:         'recording_resumed',
+          created_at:           '2026-04-19T09:14:00.000Z',
+        },
+        {
+          kind:                 'system',
+          sender_role:          'system',
+          body:                 'Voice call started',
+          attachment_url:       null,
+          attachment_mime_type: null,
+          system_event:         'voice_call_started',
+          created_at:           '2026-04-19T09:00:30.000Z',
+        },
+      ],
+    });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(adm.client as never);
+
+    await renderConsultTranscriptPdf({
+      sessionId:        SESSION_ID,
+      requestingUserId: 'doc_1',
+      requestingRole:   'doctor',
+      correlationId:    'req_g1',
+    });
+
+    expect(mockedComposer.composeTranscriptPdfStream).toHaveBeenCalledTimes(1);
+    const arg = mockedComposer.composeTranscriptPdfStream.mock.calls[0][0] as unknown as {
+      messages: Array<{ kind: string; body?: string; systemEvent?: string }>;
+      gaps: Array<Record<string, unknown>>;
+      context: { gapsLoadFailed?: boolean };
+    };
+    expect(arg.messages.map((m) => m.body)).toEqual([
+      'Hello doctor',
+      'Voice call started',
+    ]);
+    expect(arg.messages.some((m) => m.systemEvent === 'recording_paused')).toBe(false);
+    expect(arg.messages.some((m) => m.systemEvent === 'recording_resumed')).toBe(false);
+    expect(arg.gaps).toEqual([
+      {
+        wallStartedAt: '2026-04-19T09:10:00.000Z',
+        durationMs:    240_000,
+        actorRole:     'doctor',
+        reasonCode:    'administrative',
+        closedAs:      'manual_resume',
+      },
+    ]);
+    expect(arg.gaps[0]).not.toHaveProperty('mediaOffsetMs');
+    expect(arg.context.gapsLoadFailed).toBe(false);
+  });
+
+  it('still composes and flags gapsLoadFailed when the gap ledger cannot be read', async () => {
+    setPolicyPass();
+    mockedGaps.listRecordingGaps.mockRejectedValueOnce(new Error('ledger down'));
+    const adm = buildAdminMock({ storageListRows: [] });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(adm.client as never);
+
+    await renderConsultTranscriptPdf({
+      sessionId:        SESSION_ID,
+      requestingUserId: 'doc_1',
+      requestingRole:   'doctor',
+      correlationId:    'req_g2',
+    });
+
+    expect(mockedComposer.composeTranscriptPdfStream).toHaveBeenCalledTimes(1);
+    const arg = mockedComposer.composeTranscriptPdfStream.mock.calls[0][0] as unknown as {
+      gaps: unknown[];
+      context: { gapsLoadFailed?: boolean };
+    };
+    expect(arg.gaps).toEqual([]);
+    expect(arg.context.gapsLoadFailed).toBe(true);
   });
 });
 

@@ -3,8 +3,6 @@
 /**
  * Expand-to-edit named basket for a panel or viewable imaging order (INV-D6/D11).
  * Title is editable; members can be catalog/custom entries (tests or views).
- * Soft rename nudge when the basket leaves the catalog template but still uses
- * the template name.
  */
 import { useEffect, useId, useState } from "react";
 import { Check } from "lucide-react";
@@ -12,10 +10,7 @@ import {
   ChartCatalogCombobox,
   type ChartCatalogOption,
 } from "@/components/ehr/chart/ChartCatalogCombobox";
-import {
-  isBasketCustomized,
-  isBasketMembershipCustomized,
-} from "@/lib/cockpit/investigation-order-catalog";
+import { isBasketCustomized } from "@/lib/cockpit/investigation-order-catalog";
 import type {
   InvestigationImagingContrast,
   InvestigationImagingUrgency,
@@ -27,8 +22,6 @@ import { cn } from "@/lib/utils";
 
 export interface InvestigationPanelChecklistProps {
   order: InvestigationOrder;
-  /** Catalog template display name (panel / imaging study). */
-  catalogName?: string | null;
   /** Seed checklist rows (analytes or views). */
   templateMembers?: readonly { id: string; label: string }[];
   /** Kind written when toggling a template row on. */
@@ -60,7 +53,6 @@ export interface InvestigationPanelChecklistProps {
 
 export function InvestigationPanelChecklist({
   order,
-  catalogName = null,
   templateMembers = [],
   templateMemberKind = "analyte",
   memberNoun = "test",
@@ -99,7 +91,6 @@ export function InvestigationPanelChecklist({
         : "test";
 
   const [titleDraft, setTitleDraft] = useState(order.label);
-  const [nudgeDismissed, setNudgeDismissed] = useState(false);
   const [indicationDraft, setIndicationDraft] = useState(
     order.requisition?.indication ?? "",
   );
@@ -110,21 +101,11 @@ export function InvestigationPanelChecklist({
   }, [order.id, order.label]);
 
   useEffect(() => {
-    setNudgeDismissed(false);
-  }, [order.id]);
-
-  useEffect(() => {
     setIndicationDraft(order.requisition?.indication ?? "");
     setSiteDraft(order.requisition?.site ?? "");
   }, [order.id, order.requisition?.indication, order.requisition?.site]);
 
-  const membershipCustomized = isBasketMembershipCustomized(order);
   const customized = isBasketCustomized(order);
-  const showRenameNudge =
-    membershipCustomized &&
-    !nudgeDismissed &&
-    catalogName != null &&
-    order.label.trim().toLowerCase() === catalogName.trim().toLowerCase();
 
   const commitTitle = (raw: string) => {
     const next = raw.trim();
@@ -217,21 +198,25 @@ export function InvestigationPanelChecklist({
             }}
             className="h-7 w-full min-w-0 rounded-md border border-border/70 bg-background px-2 text-sm font-medium text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
           />
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground ring-1 ring-border/60">
-              {members.length}
-              {templateMembers.length > 0
-                ? " selected"
-                : members.length === 1
-                  ? ` ${memberLabel}`
-                  : ` ${memberLabel}s`}
-            </span>
-            {customized ? (
-              <span className="text-[10px] font-medium text-amber-700 dark:text-amber-400">
-                Custom {packageLabel}
-              </span>
-            ) : null}
-          </div>
+          {members.length > 0 || customized ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {members.length > 0 ? (
+                <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground ring-1 ring-border/60">
+                  {members.length}
+                  {templateMembers.length > 0
+                    ? " selected"
+                    : members.length === 1
+                      ? ` ${memberLabel}`
+                      : ` ${memberLabel}s`}
+                </span>
+              ) : null}
+              {customized ? (
+                <span className="text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                  Custom {packageLabel}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2 pt-1">
           {templateMembers.length > 0 ? (
@@ -280,39 +265,6 @@ export function InvestigationPanelChecklist({
           </button>
         </div>
       </div>
-
-      {showRenameNudge ? (
-        <div
-          className="flex flex-wrap items-center gap-2 rounded-md bg-amber-500/10 px-2 py-1.5 text-xs text-amber-900 dark:text-amber-200"
-          data-testid="investigation-panel-rename-nudge"
-        >
-          <span className="min-w-0 flex-1">
-            {memberNoun === "view"
-              ? "Views changed — rename so the Rx stays clear?"
-              : memberNoun === "related"
-                ? "Regions changed — rename so the Rx stays clear?"
-                : "Package changed — rename it so the Rx stays clear?"}
-          </span>
-          <button
-            type="button"
-            className="font-medium underline-offset-2 hover:underline"
-            onClick={() => {
-              const input = document.getElementById(titleId) as HTMLInputElement | null;
-              input?.focus();
-              input?.select();
-            }}
-          >
-            Rename
-          </button>
-          <button
-            type="button"
-            className="text-muted-foreground hover:text-foreground"
-            onClick={() => setNudgeDismissed(true)}
-          >
-            Keep name
-          </button>
-        </div>
-      ) : null}
 
       {showRequisition ? (
         <div

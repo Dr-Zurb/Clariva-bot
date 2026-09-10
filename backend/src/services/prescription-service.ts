@@ -16,15 +16,230 @@ import {
   PrescriptionWithRelations,
   CreatePrescriptionInput,
   UpdatePrescriptionInput,
+  MedicineInput,
   PrescriptionComplaint,
   LastSubjectiveForPatient,
+  LastVisitMedicine,
+  LastVisitSummary,
   SocialHistoryStructured,
   FamilyHistoryStructured,
   PastSurgicalHistoryStructured,
 } from '../types/prescription';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataModification, logDataAccess } from '../utils/audit-logger';
-import { ForbiddenError, InternalError, NotFoundError, ValidationError } from '../utils/errors';
+import {
+  ConflictError,
+  ForbiddenError,
+  InternalError,
+  NotFoundError,
+  ValidationError,
+} from '../utils/errors';
+import { getDoctorTimezone } from './doctor-settings-service';
+import { invalidatePrescriptionPdfCache } from './prescription-pdf-cache';
+import { evaluatePrescriptionWriteGuard } from './prescription-write-guard';
+
+/**
+ * Per-prescription mutex so overlapping PATCH delete+insert cannot
+ * leave two copies of the same medicines on the printed parchi.
+ * Mirrors `doctorAvailabilityLocks` in availability-service.
+ */
+const prescriptionMedicineReplaceLocks = new Map<string, Promise<unknown>>();
+
+export interface AttestPrescriptionResult {
+  attestedAt: string;
+  alreadyAttested: boolean;
+}
+
+/**
+ * Set `attested_at` once. The single owner for finish / send / print (RXL-Q1).
+ * Idempotent: a second call does not move the stamp. Does not go through
+ * `updatePrescription`, so attesting never trips the content-write guard.
+ */
+export async function attestPrescriptionIfUnset(
+  prescriptionId: string,
+  userId: string,
+  correlationId: string
+): Promise<AttestPrescriptionResult> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const { data: existing, error: fetchError } = await admin
+    .from('prescriptions')
+    .select('id, doctor_id, attested_at')
+    .eq('id', prescriptionId)
+    .single();
+
+  if (fetchError || !existing) {
+    throw new NotFoundError('Prescription not found');
+  }
+  if (existing.doctor_id !== userId) {
+    throw new NotFoundError('Prescription not found');
+  }
+
+  if (typeof existing.attested_at === 'string' && existing.attested_at.length > 0) {
+    return { attestedAt: existing.attested_at, alreadyAttested: true };
+  }
+
+  const now = new Date().toISOString();
+  const { data: updated, error: updateError } = await admin
+    .from('prescriptions')
+    .update({ attested_at: now })
+    .eq('id', prescriptionId)
+    .is('attested_at', null)
+    .select('attested_at')
+    .maybeSingle();
+
+  if (updateError) {
+    handleSupabaseError(updateError, correlationId);
+  }
+
+  const stamped =
+    updated && typeof updated.attested_at === 'string' && updated.attested_at.length > 0
+      ? updated.attested_at
+      : null;
+
+  if (stamped) {
+    await logDataModification(correlationId, userId, 'update', 'prescription', prescriptionId, [
+      'attested_at',
+    ]);
+    return { attestedAt: stamped, alreadyAttested: false };
+  }
+
+  const { data: raced, error: raceError } = await admin
+    .from('prescriptions')
+    .select('attested_at')
+    .eq('id', prescriptionId)
+    .single();
+
+  if (
+    raceError ||
+    !raced ||
+    typeof raced.attested_at !== 'string' ||
+    raced.attested_at.length === 0
+  ) {
+    throw new ConflictError('This prescription cannot be attested', { reason: 'undetermined' });
+  }
+
+  return { attestedAt: raced.attested_at, alreadyAttested: true };
+}
+
+/**
+ * Stamp the latest note on an appointment (finish / wrap-up). No row → no-op
+ * (RXL-DL-4: finish without a typed note must not create one).
+ */
+export async function attestLatestPrescriptionForAppointment(
+  appointmentId: string,
+  userId: string,
+  correlationId: string
+): Promise<void> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const { data: rows, error } = await admin
+    .from('prescriptions')
+    .select('id')
+    .eq('appointment_id', appointmentId)
+    .eq('doctor_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (error) {
+    handleSupabaseError(error, correlationId);
+  }
+
+  const latestId = rows?.[0]?.id;
+  if (typeof latestId !== 'string') {
+    return;
+  }
+
+  await attestPrescriptionIfUnset(latestId, userId, correlationId);
+}
+
+/**
+ * Refuse content writes unless the note is not superseded and is either
+ * still a draft or was issued on the current clinic-local day (rxl-23).
+ * Cancelled / no_show stay locked. Fail closed when stamps or status
+ * cannot be determined. Never trusts the client clock.
+ */
+export async function assertPrescriptionContentWritable(
+  prescriptionId: string,
+  userId: string,
+  _correlationId: string
+): Promise<void> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const { data: existing, error: fetchError } = await admin
+    .from('prescriptions')
+    .select('id, doctor_id, appointment_id, attested_at, issued_at, superseded_by_id')
+    .eq('id', prescriptionId)
+    .single();
+
+  if (fetchError || !existing) {
+    throw new NotFoundError('Prescription not found');
+  }
+  if (existing.doctor_id !== userId) {
+    throw new NotFoundError('Prescription not found');
+  }
+
+  if (existing.attested_at != null && typeof existing.attested_at !== 'string') {
+    throw new ConflictError('This prescription cannot be edited', { reason: 'undetermined' });
+  }
+
+  if (typeof existing.appointment_id !== 'string') {
+    throw new ConflictError('This prescription cannot be edited', { reason: 'undetermined' });
+  }
+
+  const { data: appointment, error: appointmentError } = await admin
+    .from('appointments')
+    .select('id, status')
+    .eq('id', existing.appointment_id)
+    .single();
+
+  if (appointmentError || !appointment) {
+    throw new NotFoundError('Appointment not found');
+  }
+
+  const hasIssueStamp =
+    (typeof existing.issued_at === 'string' && existing.issued_at.length > 0) ||
+    (typeof existing.attested_at === 'string' && existing.attested_at.length > 0);
+  const timezone = hasIssueStamp
+    ? await getDoctorTimezone(existing.doctor_id)
+    : 'Asia/Kolkata';
+  const decision = evaluatePrescriptionWriteGuard({
+    supersededById: existing.superseded_by_id,
+    issuedAt: existing.issued_at,
+    attestedAt: existing.attested_at,
+    appointmentStatus: appointment.status,
+    now: new Date(),
+    timezone,
+  });
+
+  if (decision.ok) {
+    return;
+  }
+
+  if (decision.reason === 'superseded') {
+    throw new ConflictError('This prescription has been superseded and cannot be edited', {
+      reason: 'superseded',
+    });
+  }
+  if (decision.reason === 'attested') {
+    throw new ConflictError('This prescription is attested and cannot be edited', {
+      reason: 'attested',
+    });
+  }
+  if (decision.reason === 'appointment_locked') {
+    throw new ConflictError('This prescription is locked', { reason: 'appointment_locked' });
+  }
+  throw new ConflictError('This prescription cannot be edited', { reason: 'undetermined' });
+}
 
 // ============================================================================
 // Create
@@ -123,6 +338,7 @@ export async function createPrescription(
     referral: data.referral ?? null,
     test_results: data.testResults ?? null,
     test_results_json: data.testResultsJson ?? [],
+    lab_reports_json: data.labReportsJson ?? [],
     complaints: data.complaints ?? [],
     family_history: data.familyHistory ?? null,
     family_history_structured: data.familyHistoryStructured ?? null,
@@ -285,7 +501,11 @@ export async function listPrescriptionsByAppointment(
   const result: PrescriptionWithRelations[] = [];
   for (const rx of prescriptions || []) {
     const [medResult, attResult] = await Promise.all([
-      admin.from('prescription_medicines').select('*').eq('prescription_id', rx.id).order('sort_order'),
+      admin
+        .from('prescription_medicines')
+        .select('*')
+        .eq('prescription_id', rx.id)
+        .order('sort_order'),
       admin.from('prescription_attachments').select('*').eq('prescription_id', rx.id),
     ]);
     if (medResult.error) handleSupabaseError(medResult.error, correlationId);
@@ -463,11 +683,11 @@ export async function listRecentPrescriptionsByPatient(
 // ============================================================================
 
 /**
- * Return the most recent prescription in the same care episode as
- * `beforeAppointmentId`, EXCLUDING the appointment itself. Used by the
- * "Copy from last visit" CTA on the doctor-side Rx form to one-tap
- * pull diagnosis / medicines from the previous visit on the same
- * episode.
+ * Return the most recent non-superseded prescription in the same care
+ * episode as `beforeAppointmentId`. Used by the "Copy from last visit"
+ * CTA. Excludes `excludePrescriptionId` when the form already has a
+ * note (rxl-08) so a continuation can see its sibling and a revision
+ * does not seed from itself. A null exclude widens the search.
  *
  * Returns `null` (not 404) when there is no prior Rx — the FE hides
  * the CTA in that case.
@@ -481,6 +701,7 @@ export async function getLastPrescriptionInEpisode(
   beforeAppointmentId: string,
   correlationId: string,
   userId: string,
+  excludePrescriptionId?: string | null
 ): Promise<PrescriptionWithRelations | null> {
   const admin = getSupabaseAdminClient();
   if (!admin) {
@@ -512,14 +733,17 @@ export async function getLastPrescriptionInEpisode(
   // hides the CTA.
   if (!apt.episode_id) return null;
 
-  // 2. Pull the latest Rx by direct episode link (T5.24). Exclude the
-  // current appointment's own Rx so the caller gets "last visit".
-  const { data: rxRow, error: rxErr } = await admin
+  // 2. Latest current (non-superseded) Rx in the episode (T5.24 / rxl-08).
+  let rxQuery = admin
     .from('prescriptions')
     .select('*')
     .eq('episode_id', apt.episode_id)
     .eq('doctor_id', userId)
-    .neq('appointment_id', apt.id)
+    .is('superseded_by_id', null);
+  if (typeof excludePrescriptionId === 'string' && excludePrescriptionId.length > 0) {
+    rxQuery = rxQuery.neq('id', excludePrescriptionId);
+  }
+  const { data: rxRow, error: rxErr } = await rxQuery
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -532,7 +756,11 @@ export async function getLastPrescriptionInEpisode(
   // Pull medicines + attachments to match the shape of getPrescriptionById
   // — the FE Apply path expects the same shape regardless of source.
   const [medResult, attResult] = await Promise.all([
-    admin.from('prescription_medicines').select('*').eq('prescription_id', rx.id).order('sort_order'),
+    admin
+      .from('prescription_medicines')
+      .select('*')
+      .eq('prescription_id', rx.id)
+      .order('sort_order'),
     admin.from('prescription_attachments').select('*').eq('prescription_id', rx.id),
   ]);
 
@@ -552,9 +780,7 @@ export async function getLastPrescriptionInEpisode(
 // Last subjective for patient (subjective-tab · subj-07)
 // ============================================================================
 
-function socialHistoryStructuredHasContent(
-  structured?: SocialHistoryStructured | null,
-): boolean {
+function socialHistoryStructuredHasContent(structured?: SocialHistoryStructured | null): boolean {
   if (!structured || typeof structured !== 'object') return false;
   if (structured.notes?.trim()) return true;
   if (structured.smoking) return true;
@@ -570,10 +796,7 @@ function socialHistoryStructuredHasContent(
   ) {
     return true;
   }
-  if (
-    structured.diet?.type ||
-    structured.diet?.notes?.trim()
-  ) {
+  if (structured.diet?.type || structured.diet?.notes?.trim()) {
     return true;
   }
   if (
@@ -583,8 +806,7 @@ function socialHistoryStructuredHasContent(
     structured.caffeine?.amount != null ||
     structured.caffeine?.source ||
     structured.caffeine?.strength ||
-    (structured.caffeine?.frequencyUnit &&
-      structured.caffeine.frequencyUnit !== 'day') ||
+    (structured.caffeine?.frequencyUnit && structured.caffeine.frequencyUnit !== 'day') ||
     structured.diet?.caffeineAmount != null ||
     structured.diet?.caffeineCupsPerDay != null
   ) {
@@ -598,10 +820,7 @@ function socialHistoryStructuredHasContent(
   if (structured.activity?.limitedByHealth) return true;
   if (structured.activity?.barriers?.trim()) return true;
   if (structured.activity?.notes?.trim()) return true;
-  if (
-    structured.occupation?.text?.trim() ||
-    (structured.occupation?.exposures?.length ?? 0) > 0
-  ) {
+  if (structured.occupation?.text?.trim() || (structured.occupation?.exposures?.length ?? 0) > 0) {
     return true;
   }
   if (structured.living?.situation || structured.living?.notes?.trim()) return true;
@@ -651,7 +870,7 @@ function socialHistoryStructuredHasContent(
 }
 
 function familyHistoryStructuredHasContent(
-  structured: FamilyHistoryStructured | null | undefined,
+  structured: FamilyHistoryStructured | null | undefined
 ): boolean {
   if (!structured) return false;
   if (structured.none) return true;
@@ -669,7 +888,7 @@ function familyHistoryStructuredHasContent(
 }
 
 function pastSurgicalHistoryStructuredHasContent(
-  structured: PastSurgicalHistoryStructured | null | undefined,
+  structured: PastSurgicalHistoryStructured | null | undefined
 ): boolean {
   if (!structured) return false;
   if (structured.none) return true;
@@ -701,14 +920,18 @@ function prescriptionHasStructuredSubjective(row: {
 
 /**
  * Return structured subjective from the patient's most recent prior
- * prescription (any visit — ST-Q2 default). Excludes `beforeAppointmentId`.
- * Returns `null` when no prior structured subjective exists.
+ * prescription (any visit — ST-Q2 default). Excludes `excludePrescriptionId`
+ * when set (rxl-08) so a same-appointment sibling is visible and the
+ * working note never seeds itself. A null exclude widens the search.
+ * Skips superseded rows. Returns `null` when no prior structured
+ * subjective exists.
  */
 export async function getLastSubjectiveForPatient(
   patientId: string,
   beforeAppointmentId: string,
   correlationId: string,
   userId: string,
+  excludePrescriptionId?: string | null
 ): Promise<LastSubjectiveForPatient | null> {
   const admin = getSupabaseAdminClient();
   if (!admin) {
@@ -754,14 +977,18 @@ export async function getLastSubjectiveForPatient(
     throw new ValidationError('patientId does not match appointment');
   }
 
-  const { data: rows, error } = await admin
+  let listQuery = admin
     .from('prescriptions')
     .select(
-      'id, created_at, complaints, family_history, family_history_structured, social_history, social_history_structured, past_surgical_history, past_surgical_history_structured, appointment_id',
+      'id, created_at, complaints, family_history, family_history_structured, social_history, social_history_structured, past_surgical_history, past_surgical_history_structured, appointment_id'
     )
     .eq('patient_id', patientId)
     .eq('doctor_id', userId)
-    .neq('appointment_id', beforeAppointmentId)
+    .is('superseded_by_id', null);
+  if (typeof excludePrescriptionId === 'string' && excludePrescriptionId.length > 0) {
+    listQuery = listQuery.neq('id', excludePrescriptionId);
+  }
+  const { data: rows, error } = await listQuery
     .order('created_at', { ascending: false })
     .limit(10);
 
@@ -777,8 +1004,8 @@ export async function getLastSubjectiveForPatient(
         social_history_structured?: SocialHistoryStructured | null;
         past_surgical_history?: string | null;
         past_surgical_history_structured?: PastSurgicalHistoryStructured | null;
-      },
-    ),
+      }
+    )
   );
 
   if (!match) return null;
@@ -811,6 +1038,233 @@ export async function getLastSubjectiveForPatient(
 }
 
 // ============================================================================
+// Last visit summary (last-visit-context · lvc-01)
+// ============================================================================
+
+function mapLastVisitMedicine(row: PrescriptionMedicine): LastVisitMedicine | null {
+  const medicineName = typeof row.medicine_name === 'string' ? row.medicine_name.trim() : '';
+  if (!medicineName) return null;
+  return {
+    medicineName,
+    dosage: row.dosage ?? '',
+    route: row.route ?? '',
+    frequency: row.frequency ?? '',
+    duration: row.duration ?? '',
+    instructions: row.instructions ?? '',
+    drugMasterId: row.drug_master_id ?? null,
+    frequencyCode: row.frequency_code ?? null,
+    durationValue: row.duration_value ?? null,
+    durationUnit: row.duration_unit ?? null,
+    routeCode: row.route_code ?? null,
+    doseQty: row.dose_qty != null ? Number(row.dose_qty) : null,
+    doseUnit: row.dose_unit ?? null,
+    form: row.form ?? null,
+    foodTiming: row.food_timing ?? null,
+  };
+}
+
+/**
+ * Patient-scoped last visit for the cockpit strip (LVC-DL-2).
+ * Excludes `beforeAppointmentId`. Returns `null` when there is no prior Rx.
+ */
+export async function getLastVisitSummary(
+  patientId: string,
+  beforeAppointmentId: string,
+  correlationId: string,
+  userId: string
+): Promise<LastVisitSummary | null> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const { data: appointmentCheck } = await admin
+    .from('appointments')
+    .select('id')
+    .eq('doctor_id', userId)
+    .eq('patient_id', patientId)
+    .limit(1)
+    .maybeSingle();
+
+  const { data: convCheck } = await admin
+    .from('conversations')
+    .select('id')
+    .eq('doctor_id', userId)
+    .eq('patient_id', patientId)
+    .limit(1)
+    .maybeSingle();
+
+  if (!appointmentCheck && !convCheck) {
+    throw new ForbiddenError('No access to this patient');
+  }
+
+  const { data: currentApt, error: aptErr } = await admin
+    .from('appointments')
+    .select('id, doctor_id, patient_id')
+    .eq('id', beforeAppointmentId)
+    .maybeSingle();
+
+  if (aptErr) handleSupabaseError(aptErr, correlationId);
+  if (!currentApt) {
+    throw new NotFoundError('Appointment not found');
+  }
+
+  const apt = currentApt as { id: string; doctor_id: string; patient_id: string | null };
+  if (apt.doctor_id !== userId) {
+    throw new ForbiddenError('Appointment not found');
+  }
+  if (apt.patient_id && apt.patient_id !== patientId) {
+    throw new ValidationError('patientId does not match appointment');
+  }
+
+  const { data: row, error } = await admin
+    .from('prescriptions')
+    .select(
+      'id, created_at, complaints, diagnoses_json, provisional_diagnosis, investigations_orders, advice, follow_up, follow_up_value, follow_up_unit, hopi, family_history, family_history_structured, social_history, social_history_structured, past_surgical_history, past_surgical_history_structured, examination_findings, examination_json, assessment_note, clinical_notes, referral, custom_subsections, assessment_custom_sections, plan_custom_sections, prescription_medicines(*)'
+    )
+    .eq('patient_id', patientId)
+    .eq('doctor_id', userId)
+    .neq('appointment_id', beforeAppointmentId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) handleSupabaseError(error, correlationId);
+  if (!row) return null;
+
+  const rx = row as {
+    id: string;
+    created_at: string;
+    complaints: LastVisitSummary['complaints'] | null;
+    diagnoses_json: LastVisitSummary['diagnoses'] | null;
+    provisional_diagnosis: string | null;
+    investigations_orders: string | null;
+    advice: string | null;
+    follow_up: string | null;
+    follow_up_value: number | null;
+    follow_up_unit: LastVisitSummary['followUpUnit'];
+    hopi: string | null;
+    family_history: string | null;
+    family_history_structured: LastVisitSummary['familyHistoryStructured'];
+    social_history: string | null;
+    social_history_structured: LastVisitSummary['socialHistoryStructured'];
+    past_surgical_history: string | null;
+    past_surgical_history_structured: LastVisitSummary['pastSurgicalHistoryStructured'];
+    examination_findings: string | null;
+    examination_json: LastVisitSummary['examinationJson'] | null;
+    assessment_note: string | null;
+    clinical_notes: string | null;
+    referral: string | null;
+    custom_subsections: LastVisitSummary['customSubsections'] | null;
+    assessment_custom_sections: LastVisitSummary['assessmentCustomSections'] | null;
+    plan_custom_sections: LastVisitSummary['planCustomSections'] | null;
+    prescription_medicines: PrescriptionMedicine[] | null;
+  };
+
+  const namedComplaints = (rx.complaints ?? []).filter(
+    (c) => typeof c.name === 'string' && c.name.trim()
+  );
+  const medicines = [...(rx.prescription_medicines ?? [])]
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    .map(mapLastVisitMedicine)
+    .filter((m): m is LastVisitMedicine => m !== null);
+
+  await logDataAccess(correlationId, userId, 'prescription', rx.id);
+
+  return {
+    sourcePrescriptionId: rx.id,
+    sourceCreatedAt: rx.created_at,
+    complaints: namedComplaints,
+    diagnoses: rx.diagnoses_json ?? [],
+    provisionalDiagnosis: rx.provisional_diagnosis,
+    medicines,
+    investigationsOrders: rx.investigations_orders,
+    advice: rx.advice,
+    followUp: rx.follow_up,
+    followUpValue: rx.follow_up_value,
+    followUpUnit: rx.follow_up_unit,
+    hopi: rx.hopi,
+    familyHistory: rx.family_history,
+    familyHistoryStructured: rx.family_history_structured,
+    socialHistory: rx.social_history,
+    socialHistoryStructured: rx.social_history_structured,
+    pastSurgicalHistory: rx.past_surgical_history,
+    pastSurgicalHistoryStructured: rx.past_surgical_history_structured,
+    examinationFindings: rx.examination_findings,
+    examinationJson: rx.examination_json ?? [],
+    assessmentNote: rx.assessment_note,
+    clinicalNotes: rx.clinical_notes,
+    referral: rx.referral,
+    customSubsections: rx.custom_subsections ?? [],
+    assessmentCustomSections: rx.assessment_custom_sections ?? [],
+    planCustomSections: rx.plan_custom_sections ?? [],
+  };
+}
+
+async function replacePrescriptionMedicinesExclusive(
+  id: string,
+  medicines: MedicineInput[],
+  correlationId: string
+): Promise<void> {
+  const prev = prescriptionMedicineReplaceLocks.get(id) ?? Promise.resolve();
+  const work = prev
+    .then(() => replacePrescriptionMedicines(id, medicines, correlationId))
+    .finally(() => {
+      if (prescriptionMedicineReplaceLocks.get(id) === work) {
+        prescriptionMedicineReplaceLocks.delete(id);
+      }
+    });
+  prescriptionMedicineReplaceLocks.set(id, work);
+  await work;
+}
+
+async function replacePrescriptionMedicines(
+  id: string,
+  medicines: MedicineInput[],
+  correlationId: string
+): Promise<void> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  await admin.from('prescription_medicines').delete().eq('prescription_id', id);
+
+  if (medicines.length === 0) return;
+
+  const medicineRows = medicines.map((m, i) => ({
+    prescription_id: id,
+    medicine_name: m.medicineName,
+    dosage: m.dosage ?? null,
+    route: m.route ?? null,
+    frequency: m.frequency ?? null,
+    duration: m.duration ?? null,
+    instructions: m.instructions ?? null,
+    sort_order: m.sortOrder ?? i,
+    // EHR Sub-batch B1 / T2.9 — structured columns mirrored on
+    // update. The PATCH path replaces the whole medicines array
+    // (delete-then-insert above), so each row gets re-written
+    // with current structured values.
+    drug_master_id: m.drugMasterId ?? null,
+    frequency_code: m.frequencyCode ?? null,
+    duration_value: m.durationValue ?? null,
+    duration_unit: m.durationUnit ?? null,
+    route_code: m.routeCode ?? null,
+    // Migration 133 — dose details.
+    dose_qty: m.doseQty ?? null,
+    dose_unit: m.doseUnit ?? null,
+    form: m.form ?? null,
+    food_timing: m.foodTiming ?? null,
+  }));
+
+  const { error: medError } = await admin.from('prescription_medicines').insert(medicineRows);
+
+  if (medError) {
+    handleSupabaseError(medError, correlationId);
+  }
+}
+
+// ============================================================================
 // Update
 // ============================================================================
 
@@ -828,6 +1282,8 @@ export async function updatePrescription(
   if (!admin) {
     throw new InternalError('Service role client not available');
   }
+
+  await assertPrescriptionContentWritable(id, userId, correlationId);
 
   const { data: existing, error: fetchError } = await admin
     .from('prescriptions')
@@ -857,10 +1313,12 @@ export async function updatePrescription(
   updateData.episode_id = appointment.episode_id ?? null;
   if (updates.cc !== undefined) updateData.cc = updates.cc;
   if (updates.hopi !== undefined) updateData.hopi = updates.hopi;
-  if (updates.provisionalDiagnosis !== undefined) updateData.provisional_diagnosis = updates.provisionalDiagnosis;
+  if (updates.provisionalDiagnosis !== undefined)
+    updateData.provisional_diagnosis = updates.provisionalDiagnosis;
   // assessment-tab / migration 160 — clinical-impression note + visit acuity.
   if (updates.assessmentNote !== undefined) updateData.assessment_note = updates.assessmentNote;
-  if (updates.assessmentAcuity !== undefined) updateData.assessment_acuity = updates.assessmentAcuity;
+  if (updates.assessmentAcuity !== undefined)
+    updateData.assessment_acuity = updates.assessmentAcuity;
   // assessment-tab / migration 161 — structured diagnoses.
   if (updates.diagnosesJson !== undefined) updateData.diagnoses_json = updates.diagnosesJson;
   // plan-investigations-library / migration 167 — structured investigation orders.
@@ -869,13 +1327,17 @@ export async function updatePrescription(
   // cockpit-v2 / migration 103: column renamed to `investigations_orders`.
   // Public API field stays as `investigations` for the deprecation window.
   // TODO(cv2-07): rename UpdatePrescriptionInput.investigations → investigationsOrders.
-  if (updates.investigations !== undefined) updateData.investigations_orders = updates.investigations;
+  if (updates.investigations !== undefined)
+    updateData.investigations_orders = updates.investigations;
   if (updates.followUp !== undefined) updateData.follow_up = updates.followUp;
-  if (updates.patientEducation !== undefined) updateData.patient_education = updates.patientEducation;
+  if (updates.patientEducation !== undefined)
+    updateData.patient_education = updates.patientEducation;
   if (updates.clinicalNotes !== undefined) updateData.clinical_notes = updates.clinicalNotes;
   // cockpit-v2 / migration 103 / DL-28 — structured SOAP fields.
-  if (updates.vitalsBpSystolic !== undefined) updateData.vitals_bp_systolic = updates.vitalsBpSystolic;
-  if (updates.vitalsBpDiastolic !== undefined) updateData.vitals_bp_diastolic = updates.vitalsBpDiastolic;
+  if (updates.vitalsBpSystolic !== undefined)
+    updateData.vitals_bp_systolic = updates.vitalsBpSystolic;
+  if (updates.vitalsBpDiastolic !== undefined)
+    updateData.vitals_bp_diastolic = updates.vitalsBpDiastolic;
   if (updates.vitalsHr !== undefined) updateData.vitals_hr = updates.vitalsHr;
   if (updates.vitalsTempC !== undefined) updateData.vitals_temp_c = updates.vitalsTempC;
   if (updates.vitalsSpo2 !== undefined) updateData.vitals_spo2 = updates.vitalsSpo2;
@@ -884,24 +1346,29 @@ export async function updatePrescription(
   // objective-tab / migration 151 — Vitals 2.0 extended vitals (canonical units).
   if (updates.vitalsRr !== undefined) updateData.vitals_rr = updates.vitalsRr;
   if (updates.vitalsPainScore !== undefined) updateData.vitals_pain_score = updates.vitalsPainScore;
-  if (updates.vitalsGlucoseMgDl !== undefined) updateData.vitals_glucose_mg_dl = updates.vitalsGlucoseMgDl;
+  if (updates.vitalsGlucoseMgDl !== undefined)
+    updateData.vitals_glucose_mg_dl = updates.vitalsGlucoseMgDl;
   if (updates.vitalsGcsTotal !== undefined) updateData.vitals_gcs_total = updates.vitalsGcsTotal;
   if (updates.vitalsBpPosture !== undefined) updateData.vitals_bp_posture = updates.vitalsBpPosture;
   if (updates.vitalsBpLimb !== undefined) updateData.vitals_bp_limb = updates.vitalsBpLimb;
-  if (updates.vitalsHeadCircumferenceCm !== undefined) updateData.vitals_head_circumference_cm = updates.vitalsHeadCircumferenceCm;
+  if (updates.vitalsHeadCircumferenceCm !== undefined)
+    updateData.vitals_head_circumference_cm = updates.vitalsHeadCircumferenceCm;
   if (updates.vitalsMuacCm !== undefined) updateData.vitals_muac_cm = updates.vitalsMuacCm;
   if (updates.vitalsWaistCm !== undefined) updateData.vitals_waist_cm = updates.vitalsWaistCm;
   // vitals-section / migration 156 — json-backed extended vitals (additive).
   if (updates.vitalsJson !== undefined) updateData.vitals_json = updates.vitalsJson;
-  if (updates.examinationFindings !== undefined) updateData.examination_findings = updates.examinationFindings;
+  if (updates.examinationFindings !== undefined)
+    updateData.examination_findings = updates.examinationFindings;
   if (updates.examinationJson !== undefined) updateData.examination_json = updates.examinationJson;
-  if (updates.differentialDiagnosis !== undefined) updateData.differential_diagnosis = updates.differentialDiagnosis;
+  if (updates.differentialDiagnosis !== undefined)
+    updateData.differential_diagnosis = updates.differentialDiagnosis;
   if (updates.advice !== undefined) updateData.advice = updates.advice;
   if (updates.followUpValue !== undefined) updateData.follow_up_value = updates.followUpValue;
   if (updates.followUpUnit !== undefined) updateData.follow_up_unit = updates.followUpUnit;
   if (updates.referral !== undefined) updateData.referral = updates.referral;
   if (updates.testResults !== undefined) updateData.test_results = updates.testResults;
   if (updates.testResultsJson !== undefined) updateData.test_results_json = updates.testResultsJson;
+  if (updates.labReportsJson !== undefined) updateData.lab_reports_json = updates.labReportsJson;
   if (updates.complaints !== undefined) updateData.complaints = updates.complaints;
   if (updates.familyHistory !== undefined) updateData.family_history = updates.familyHistory;
   if (updates.familyHistoryStructured !== undefined) {
@@ -928,7 +1395,10 @@ export async function updatePrescription(
   }
 
   if (Object.keys(updateData).length > 0) {
-    const { error: updateError } = await admin.from('prescriptions').update(updateData).eq('id', id);
+    const { error: updateError } = await admin
+      .from('prescriptions')
+      .update(updateData)
+      .eq('id', id);
 
     if (updateError) {
       handleSupabaseError(updateError, correlationId);
@@ -936,43 +1406,15 @@ export async function updatePrescription(
   }
 
   if (updates.medicines !== undefined) {
-    await admin.from('prescription_medicines').delete().eq('prescription_id', id);
-
-    if (updates.medicines.length > 0) {
-      const medicineRows = updates.medicines.map((m, i) => ({
-        prescription_id: id,
-        medicine_name: m.medicineName,
-        dosage: m.dosage ?? null,
-        route: m.route ?? null,
-        frequency: m.frequency ?? null,
-        duration: m.duration ?? null,
-        instructions: m.instructions ?? null,
-        sort_order: m.sortOrder ?? i,
-        // EHR Sub-batch B1 / T2.9 — structured columns mirrored on
-        // update. The PATCH path replaces the whole medicines array
-        // (delete-then-insert above), so each row gets re-written
-        // with current structured values.
-        drug_master_id: m.drugMasterId ?? null,
-        frequency_code: m.frequencyCode ?? null,
-        duration_value: m.durationValue ?? null,
-        duration_unit: m.durationUnit ?? null,
-        route_code: m.routeCode ?? null,
-        // Migration 133 — dose details.
-        dose_qty: m.doseQty ?? null,
-        dose_unit: m.doseUnit ?? null,
-        form: m.form ?? null,
-        food_timing: m.foodTiming ?? null,
-      }));
-
-      const { error: medError } = await admin.from('prescription_medicines').insert(medicineRows);
-
-      if (medError) {
-        handleSupabaseError(medError, correlationId);
-      }
-    }
+    await replacePrescriptionMedicinesExclusive(id, updates.medicines, correlationId);
   }
 
-  await logDataModification(correlationId, userId, 'update', 'prescription', id);
+  const changedFields = Object.keys(updateData).filter((key) => key !== 'episode_id');
+  if (updates.medicines !== undefined) {
+    changedFields.push('prescription_medicines');
+  }
+  await logDataModification(correlationId, userId, 'update', 'prescription', id, changedFields);
+  invalidatePrescriptionPdfCache(id);
 
   return getPrescriptionById(id, correlationId, userId);
 }

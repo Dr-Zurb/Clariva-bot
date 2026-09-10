@@ -11,18 +11,19 @@
  *
  * Demographics live in the header beside the name (not here). 💊 counts active
  * chart medications (`patient_medications` status=active), not last-visit Rx.
- * Allergies popover mounts AllergiesSection; Chart / History open side sheets.
+ * Allergies popover mounts AllergiesSection; History opens the past-visit side sheet.
  *
  * Walk-in (appointment.patient_id == null) → null.
- * Mobile (<lg) → parent does not mount us.
  *
  * @see frontend/hooks/usePatientRibbonData.ts
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { Clock, PanelRightOpen, Shield } from "lucide-react";
+import { Clock, Shield } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { Appointment } from "@/types/appointment";
 import { trackCockpitV2RRibbonLanded } from "@/lib/patient-profile/telemetry";
+import { patientPrescriptionsQueryOptions } from "@/lib/query/options";
 import {
   usePatientRibbonData,
   type RibbonAllergyChip,
@@ -32,7 +33,6 @@ import {
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import { useOptionalRxSafety } from "@/components/cockpit/rx/RxSafetyContext";
 import { useSideSheet } from "@/components/patient-profile/SideSheetHost";
-import SnapshotPane from "@/components/patient-profile/panes/SnapshotPane";
 import HistoryPane from "@/components/patient-profile/panes/HistoryPane";
 import AllergiesSection from "@/components/ehr/sections/AllergiesSection";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -48,6 +48,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { TreatingDiagnosisControl } from "@/components/patient-profile/TreatingDiagnosisControl";
 
 const RIBBON_SECTION_LAYOUT = "in-call" as const;
 const RIBBON_SECTION_MODE = "default" as const;
@@ -65,9 +66,11 @@ function Sep() {
 export interface PatientRibbonProps {
   appointment: Appointment;
   token: string;
+  /** Glance strip without Treating (ckd-08 / ckd-10). */
+  compact?: boolean;
 }
 
-export function PatientRibbon({ appointment, token }: PatientRibbonProps) {
+export function PatientRibbon({ appointment, token, compact = false }: PatientRibbonProps) {
   // Walk-in fallback per DL-6: no patient row → render nothing.
   if (!appointment.patient_id) return null;
 
@@ -76,6 +79,7 @@ export function PatientRibbon({ appointment, token }: PatientRibbonProps) {
       appointment={appointment}
       patientId={appointment.patient_id}
       token={token}
+      compact={compact}
     />
   );
 }
@@ -89,12 +93,15 @@ function PatientRibbonInner({
   appointment,
   patientId,
   token,
+  compact,
 }: {
   appointment: Appointment;
   patientId: string;
   token: string;
+  compact: boolean;
 }) {
   const data = usePatientRibbonData(patientId, token);
+  const queryClient = useQueryClient();
   const { state } = useRxForm();
   const dxValue = state.fields.provisionalDiagnosis;
 
@@ -111,6 +118,15 @@ function PatientRibbonInner({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentional one-shot: data + dxValue purposefully excluded
 
+  // Visit history is a common next action during a consultation. Start the
+  // lightweight clinical read alongside the ribbon's own data, rather than
+  // making the doctor wait for a new request after pressing History.
+  useEffect(() => {
+    void queryClient.prefetchQuery(
+      patientPrescriptionsQueryOptions(token, patientId),
+    );
+  }, [patientId, queryClient, token]);
+
   // Dev-only perf mark so the Dx mirror latency is visible in the
   // Performance tab. Measures from when provisionalDiagnosis changes to
   // when React commits this effect. Well below the 200ms ceiling.
@@ -125,7 +141,11 @@ function PatientRibbonInner({
       <div
         role="region"
         aria-label="Patient context ribbon"
-        className="flex h-[52px] w-full items-center border-b bg-card px-4"
+        className={
+          compact
+            ? "flex min-h-8 w-full items-center"
+            : "flex h-[52px] w-full items-center border-b bg-card px-4"
+        }
         data-testid="patient-ribbon"
       >
         <AllergiesSlot
@@ -145,16 +165,19 @@ function PatientRibbonInner({
         <Sep />
         <SafetySlot />
         <RibbonSheetActions appointment={appointment} token={token} />
-        {/* Spacer pushes 🎯 Treating to the right */}
-        <div className="flex-1" aria-hidden />
-        <TreatingSlot dxValue={dxValue} />
+        {compact ? null : (
+          <>
+            <div className="flex-1" aria-hidden />
+            <TreatingDiagnosisControl dxValue={dxValue} />
+          </>
+        )}
       </div>
     </TooltipProvider>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Chart + History side-sheet triggers (RX-01 / RX-04)
+// Visit-history side-sheet trigger (RX-04)
 // ---------------------------------------------------------------------------
 
 function RibbonSheetActions({
@@ -166,26 +189,14 @@ function RibbonSheetActions({
 }) {
   const { open, isOpen } = useSideSheet();
 
-  const openChart = useCallback(() => {
-    open({
-      id: "patient-chart",
-      title: "Patient chart",
-      content: (
-        <SnapshotPane appointment={appointment} token={token} hideHeader />
-      ),
-      defaultWidth: 520,
-      canDock: false,
-    });
-  }, [appointment, open, token]);
-
   const openHistory = useCallback(() => {
     open({
       id: "visit-history",
-      title: "Visit history",
+      title: "Past visits",
       content: (
         <HistoryPane appointment={appointment} token={token} hideHeader />
       ),
-      defaultWidth: 480,
+      defaultWidth: 440,
       canDock: false,
     });
   }, [appointment, open, token]);
@@ -196,41 +207,22 @@ function RibbonSheetActions({
         <TooltipTrigger asChild>
           <button
             type="button"
-            data-testid="ribbon-open-chart"
-            aria-haspopup="dialog"
-            aria-expanded={isOpen("patient-chart")}
-            aria-label="Open patient chart"
-            onClick={openChart}
-            className={cn(
-              "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground",
-              "transition-colors hover:bg-accent hover:text-foreground",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            )}
-          >
-            <PanelRightOpen className="h-4 w-4" aria-hidden />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">Patient chart</TooltipContent>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
             data-testid="ribbon-open-history"
             aria-haspopup="dialog"
             aria-expanded={isOpen("visit-history")}
             aria-label="Open visit history"
             onClick={openHistory}
             className={cn(
-              "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground",
+              "inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground",
               "transition-colors hover:bg-accent hover:text-foreground",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             )}
           >
             <Clock className="h-4 w-4" aria-hidden />
+            <span>Past visits</span>
           </button>
         </TooltipTrigger>
-        <TooltipContent side="bottom">Visit history</TooltipContent>
+        <TooltipContent side="bottom">Past visits</TooltipContent>
       </Tooltip>
     </div>
   );
@@ -282,7 +274,7 @@ function AllergiesSlot({
               : `Allergies: ${chips.length}. Open to review or add.`
           }
           className={cn(
-            "inline-flex max-w-[min(100%,28rem)] items-center gap-1.5 rounded-md px-1 py-0.5",
+            "inline-flex min-w-[8rem] max-w-[min(100%,28rem)] items-center gap-1.5 rounded-md px-1 py-0.5",
             "text-left transition-colors hover:bg-accent/60",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           )}
@@ -561,69 +553,6 @@ function SafetySlot(): JSX.Element {
 // ---------------------------------------------------------------------------
 // Slot: Treating Dx (right-aligned, live mirror of useRxForm) — cnc-04 / DL-7
 // ---------------------------------------------------------------------------
-
-const MAX_DX_CHARS = 40;
-
-function formatTreatingDxDisplay(dxValue: string): string {
-  const trimmed = dxValue.trim();
-  if (!trimmed) return "not assigned";
-  return trimmed.length > MAX_DX_CHARS
-    ? `${trimmed.slice(0, MAX_DX_CHARS)}…`
-    : trimmed;
-}
-
-function TreatingSlot({ dxValue }: { dxValue: string }): JSX.Element {
-  function focusDiagnosisInput(): void {
-    const el = document.getElementById("diagnosis");
-    if (el instanceof HTMLElement) {
-      el.focus();
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
-    }
-  }
-
-  const isEmpty = !dxValue.trim();
-  const displayText = formatTreatingDxDisplay(dxValue);
-  const treatingLabel = `Treating: ${displayText}`;
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          onClick={focusDiagnosisInput}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              focusDiagnosisInput();
-            }
-          }}
-          className={cn(
-            "flex cursor-pointer items-center gap-1 rounded px-2 py-1 text-xs font-medium",
-            "transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            isEmpty ? "text-muted-foreground" : "text-foreground",
-          )}
-          aria-label={
-            isEmpty
-              ? "Treating diagnosis not assigned. Click to edit."
-              : `Treating: ${dxValue}. Click to edit.`
-          }
-        >
-          <span aria-hidden>🎯</span>
-          <span className={isEmpty ? "italic" : undefined}>{treatingLabel}</span>
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="bottom" className="max-w-[240px]">
-        <p>
-          {isEmpty
-            ? "Set the provisional treating diagnosis in the Plan pane. Click to jump to the diagnosis field."
-            : dxValue.length > MAX_DX_CHARS
-              ? `${dxValue} Click to edit in the Plan pane.`
-              : "Provisional treating diagnosis for this visit. Click to edit in the Plan pane."}
-        </p>
-      </TooltipContent>
-    </Tooltip>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Shared: "+N more" overflow pill → opens a popover listing all chips

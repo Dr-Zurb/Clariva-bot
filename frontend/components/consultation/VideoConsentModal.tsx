@@ -82,6 +82,12 @@ import {
   type PatientEscalationOutcome,
   type PendingConsentRequest,
 } from "@/lib/realtime-video-escalation";
+import {
+  CONSENT_ALREADY_VISIBLE,
+  CONSENT_DECLINE,
+  CONSENT_GRANT_BOUNDS,
+  CONSENT_PAUSE_OR_STOP,
+} from "./video-consent-copy";
 
 export interface VideoConsentModalProps {
   /** `consultation_sessions.id`. When null, the modal never renders. */
@@ -361,10 +367,10 @@ function ConsentDialog({
               &ldquo;{pending.reason}&rdquo;
             </span>
           </p>
-          <p className="text-xs text-gray-500">
-            Recording starts immediately if you allow. You can stop it at
-            any time from the recording controls.
-          </p>
+          <p>{CONSENT_ALREADY_VISIBLE}</p>
+          <p>{CONSENT_GRANT_BOUNDS}</p>
+          <p>{CONSENT_PAUSE_OR_STOP}</p>
+          <p>{CONSENT_DECLINE}</p>
         </div>
 
         {/* --- Stage-specific frames --- */}

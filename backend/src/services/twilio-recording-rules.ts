@@ -107,7 +107,7 @@ function getTwilioClient(): Twilio.Twilio | null {
 export async function mergeAllParticipantsRule(
   client: Twilio.Twilio,
   roomSid: string,
-  next: AllParticipantsRule,
+  next: AllParticipantsRule
 ): Promise<unknown[]> {
   // Twilio's SDK returns `{ rules: RecordingRule[] }` on fetch; shape
   // varies slightly by SDK version so we widen to `unknown[]` for
@@ -126,7 +126,7 @@ export async function mergeAllParticipantsRule(
     const message = err instanceof Error ? err.message : String(err);
     logger.warn(
       { roomSid, error: message },
-      'twilio-recording-rules: fetch failed; proceeding with merge from empty',
+      'twilio-recording-rules: fetch failed; proceeding with merge from empty'
     );
   }
 
@@ -157,7 +157,7 @@ export async function mergeAllParticipantsRule(
 export async function excludeAllParticipantsFromRecording(
   roomSid: string,
   kind: RecordingRuleKind,
-  correlationId: string,
+  correlationId: string
 ): Promise<void> {
   await applyAllParticipantsRule(roomSid, { type: 'exclude', all: true, kind }, correlationId);
 }
@@ -172,7 +172,7 @@ export async function excludeAllParticipantsFromRecording(
 export async function includeAllParticipantsInRecording(
   roomSid: string,
   kind: RecordingRuleKind,
-  correlationId: string,
+  correlationId: string
 ): Promise<void> {
   await applyAllParticipantsRule(roomSid, { type: 'include', all: true, kind }, correlationId);
 }
@@ -180,7 +180,7 @@ export async function includeAllParticipantsInRecording(
 async function applyAllParticipantsRule(
   roomSid: string,
   rule: AllParticipantsRule,
-  correlationId: string,
+  correlationId: string
 ): Promise<void> {
   const trimmed = roomSid?.trim();
   if (!trimmed) {
@@ -190,7 +190,7 @@ async function applyAllParticipantsRule(
   const client = getTwilioClient();
   if (!client) {
     throw new InternalError(
-      'twilio-recording-rules: Twilio not configured (TWILIO_ACCOUNT_SID/AUTH_TOKEN missing)',
+      'twilio-recording-rules: Twilio not configured (TWILIO_ACCOUNT_SID/AUTH_TOKEN missing)'
     );
   }
 
@@ -210,7 +210,7 @@ async function applyAllParticipantsRule(
         kind: rule.kind,
         ruleCount: merged.length,
       },
-      'twilio-recording-rules: applied',
+      'twilio-recording-rules: applied'
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -222,11 +222,9 @@ async function applyAllParticipantsRule(
         kind: rule.kind,
         error: message,
       },
-      'twilio-recording-rules: update failed',
+      'twilio-recording-rules: update failed'
     );
-    throw new InternalError(
-      `Failed to ${rule.type} ${rule.kind} on room ${trimmed}: ${message}`,
-    );
+    throw new InternalError(`Failed to ${rule.type} ${rule.kind} on room ${trimmed}: ${message}`);
   }
 }
 
@@ -250,9 +248,7 @@ export class TwilioRoomNotFoundError extends Error {
 
   constructor(roomSid: string, cause?: string) {
     super(
-      cause
-        ? `Twilio room ${roomSid} not found: ${cause}`
-        : `Twilio room ${roomSid} not found`,
+      cause ? `Twilio room ${roomSid} not found: ${cause}` : `Twilio room ${roomSid} not found`
     );
     this.name = 'TwilioRoomNotFoundError';
     this.roomSid = roomSid;
@@ -292,13 +288,10 @@ export type RecordingMode = 'audio_only' | 'audio_and_video' | 'other';
 interface InterpretedRules {
   audioState: 'include' | 'exclude' | 'absent';
   videoState: 'include' | 'exclude' | 'absent';
-  rawRules:   unknown[];
+  rawRules: unknown[];
 }
 
-async function fetchCurrentRules(
-  client: Twilio.Twilio,
-  roomSid: string,
-): Promise<unknown[]> {
+async function fetchCurrentRules(client: Twilio.Twilio, roomSid: string): Promise<unknown[]> {
   try {
     const current = await client.video.v1.rooms(roomSid).recordingRules.fetch();
     const rulesUnknown = (current as { rules?: unknown }).rules;
@@ -347,6 +340,32 @@ function modeFrom(interp: InterpretedRules): RecordingMode {
  *         Twilio fetch failure.
  */
 export async function getCurrentRecordingMode(roomSid: string): Promise<RecordingMode> {
+  const interp = await fetchInterpretedRules(roomSid);
+  return modeFrom(interp);
+}
+
+/**
+ * Kinds Twilio is currently capturing (`include` + `all=true`).
+ * Pause uses this instead of assuming audio. Video that is excluded
+ * or absent is omitted — do not invent a video exclusion on an
+ * audio-only room (that would flip p4's mode reader from
+ * `audio_only` to `other`).
+ *
+ * One rules fetch — the same read `getCurrentRecordingMode` uses.
+ *
+ * @throws TwilioRoomNotFoundError when Twilio returns 404.
+ * @throws InternalError when Twilio is not configured, or on any other
+ *         Twilio fetch failure.
+ */
+export async function getIncludedRecordingKinds(roomSid: string): Promise<RecordingRuleKind[]> {
+  const interp = await fetchInterpretedRules(roomSid);
+  const kinds: RecordingRuleKind[] = [];
+  if (interp.audioState === 'include') kinds.push('audio');
+  if (interp.videoState === 'include') kinds.push('video');
+  return kinds;
+}
+
+async function fetchInterpretedRules(roomSid: string): Promise<InterpretedRules> {
   const trimmed = roomSid?.trim();
   if (!trimmed) {
     throw new InternalError('twilio-recording-rules: roomSid is required');
@@ -354,20 +373,29 @@ export async function getCurrentRecordingMode(roomSid: string): Promise<Recordin
   const client = getTwilioClient();
   if (!client) {
     throw new InternalError(
-      'twilio-recording-rules: Twilio not configured (TWILIO_ACCOUNT_SID/AUTH_TOKEN missing)',
+      'twilio-recording-rules: Twilio not configured (TWILIO_ACCOUNT_SID/AUTH_TOKEN missing)'
     );
   }
 
   try {
     const rawRules = await fetchCurrentRules(client, trimmed);
-    return modeFrom(interpretRules(rawRules));
+    return interpretRules(rawRules);
   } catch (err) {
     if (err instanceof TwilioRoomNotFoundError) throw err;
     const message = err instanceof Error ? err.message : String(err);
-    throw new InternalError(
-      `twilio-recording-rules: fetch failed for room ${trimmed}: ${message}`,
-    );
+    throw new InternalError(`twilio-recording-rules: fetch failed for room ${trimmed}: ${message}`);
   }
+}
+
+/**
+ * rec-14 (REC3-D6): a paused room classifies as `'other'`, so the
+ * audio_only short-circuit does not fire. Consult pause-state before
+ * any mode flip. Dynamic import avoids a cycle
+ * (pause-service → this module).
+ */
+async function isRoomPausedForModeFlip(roomSid: string): Promise<boolean> {
+  const { isRoomRecordingPaused } = await import('./recording-pause-service');
+  return isRoomRecordingPaused(roomSid);
 }
 
 /**
@@ -387,18 +415,26 @@ export async function getCurrentRecordingMode(roomSid: string): Promise<Recordin
  */
 export async function setRecordingRulesToAudioOnly(
   roomSid: string,
-  correlationId: string,
+  correlationId: string
 ): Promise<void> {
   const trimmed = roomSid?.trim();
   if (!trimmed) {
     throw new InternalError('twilio-recording-rules: roomSid is required');
   }
 
+  if (await isRoomPausedForModeFlip(trimmed)) {
+    logger.info(
+      { correlationId, roomSid: trimmed },
+      'twilio-recording-rules: setRecordingRulesToAudioOnly short-circuit (session is paused)'
+    );
+    return;
+  }
+
   const currentMode = await getCurrentRecordingMode(trimmed);
   if (currentMode === 'audio_only') {
     logger.info(
       { correlationId, roomSid: trimmed, currentMode },
-      'twilio-recording-rules: setRecordingRulesToAudioOnly short-circuit (already audio_only)',
+      'twilio-recording-rules: setRecordingRulesToAudioOnly short-circuit (already audio_only)'
     );
     return;
   }
@@ -408,7 +444,7 @@ export async function setRecordingRulesToAudioOnly(
 
   logger.info(
     { correlationId, roomSid: trimmed, from: currentMode, to: 'audio_only' },
-    'twilio-recording-rules: mode flipped to audio_only',
+    'twilio-recording-rules: mode flipped to audio_only'
   );
 }
 
@@ -428,18 +464,26 @@ export async function setRecordingRulesToAudioOnly(
  */
 export async function setRecordingRulesToAudioAndVideo(
   roomSid: string,
-  correlationId: string,
+  correlationId: string
 ): Promise<void> {
   const trimmed = roomSid?.trim();
   if (!trimmed) {
     throw new InternalError('twilio-recording-rules: roomSid is required');
   }
 
+  if (await isRoomPausedForModeFlip(trimmed)) {
+    logger.info(
+      { correlationId, roomSid: trimmed },
+      'twilio-recording-rules: setRecordingRulesToAudioAndVideo short-circuit (session is paused)'
+    );
+    return;
+  }
+
   const currentMode = await getCurrentRecordingMode(trimmed);
   if (currentMode === 'audio_and_video') {
     logger.info(
       { correlationId, roomSid: trimmed, currentMode },
-      'twilio-recording-rules: setRecordingRulesToAudioAndVideo short-circuit (already audio_and_video)',
+      'twilio-recording-rules: setRecordingRulesToAudioAndVideo short-circuit (already audio_and_video)'
     );
     return;
   }
@@ -449,6 +493,6 @@ export async function setRecordingRulesToAudioAndVideo(
 
   logger.info(
     { correlationId, roomSid: trimmed, from: currentMode, to: 'audio_and_video' },
-    'twilio-recording-rules: mode flipped to audio_and_video',
+    'twilio-recording-rules: mode flipped to audio_and_video'
   );
 }

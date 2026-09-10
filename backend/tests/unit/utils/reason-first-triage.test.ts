@@ -336,7 +336,7 @@ describe('reason-first-triage', () => {
 
   it('fee patience bridge embeds reason snippet and short head after post-med ack', () => {
     const snippet = 'hello doc , so i check my blood sugar today it came out to be 199 , how do i fix it';
-    const out = formatReasonFirstFeePatienceBridgeWhileAskMore('so what is it then ? the fee ?', {
+    const out = formatReasonFirstFeePatienceBridgeWhileAskMore('en', {
       reasonSnippet: snippet,
       recentPostMedicalFeeAck: true,
     });
@@ -348,12 +348,21 @@ describe('reason-first-triage', () => {
   });
 
   it('fee patience bridge uses longer preamble when no post-med ack flag', () => {
-    const out = formatReasonFirstFeePatienceBridgeWhileAskMore('how much is consult', {
+    const out = formatReasonFirstFeePatienceBridgeWhileAskMore('en', {
       reasonSnippet: 'knee pain',
       recentPostMedicalFeeAck: false,
     });
     expect(out).toContain('**Absolutely**');
     expect(out).toContain('**knee pain**');
+  });
+
+  it('lang-27: Roman hi head used for hi and hi-Latn (LANG6-D7 parked native split)', () => {
+    const opts = { reasonSnippet: 'knee pain', recentPostMedicalFeeAck: false as const };
+    const hiLatn = formatReasonFirstFeePatienceBridgeWhileAskMore('hi-Latn', opts);
+    const hi = formatReasonFirstFeePatienceBridgeWhileAskMore('hi', opts);
+    expect(hi).toBe(hiLatn);
+    expect(hi).toContain('**Bilkul**');
+    expect(hi).not.toContain('**Absolutely**');
   });
 
   it('fallback: single bubble stays one line (LLM splits multi-clause text when enabled)', () => {

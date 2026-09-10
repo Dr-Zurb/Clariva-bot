@@ -17,7 +17,7 @@ export default async function GettingStartedPage() {
       <div>
         <h1 className="text-2xl font-semibold text-foreground">Getting started</h1>
         <p className="mt-1 text-muted-foreground">
-          Five steps to go live — verify your license, connect Instagram, then
+          Five steps to go live — verify your license, connect socials, then
           practice basics so patients can book.
         </p>
       </div>

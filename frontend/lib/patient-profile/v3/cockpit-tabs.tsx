@@ -41,7 +41,6 @@ import type React from 'react';
 import type { PaneDefinition } from '@/lib/patient-profile/v3/foundation';
 import {
   mapStateToTemplate,
-  canEditPrescriptionDraft,
   type CockpitTemplate,
 } from '@/lib/patient-profile/state';
 import { AssessmentSection } from '@/components/cockpit/rx/sections/AssessmentSection';
@@ -227,10 +226,7 @@ export function buildCockpitTabs(
         {/* Match SubjectivePane / ObjectivePane horizontal inset (px-4). */}
         <div className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] px-4 pb-3 pt-0">
           <div className="h-3" aria-hidden />
-          <AssessmentSection
-            heading={null}
-            disabled={!canEditPrescriptionDraft(ctx.state)}
-          />
+          <AssessmentSection heading={null} />
         </div>
       </div>
     ),

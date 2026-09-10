@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -28,12 +28,11 @@ import type {
   PrescriptionType,
   PrescriptionAttachment,
 } from "@/types/prescription";
-import type {
-  DoctorRxTemplate,
-  RxTemplateMedicine,
-} from "@/types/rx-template";
+import type { DoctorRxTemplate, RxTemplateMedicine } from "@/types/rx-template";
 import { type MedicineRowValue } from "./MedicineRow";
 import { PrescriptionFormCompositionRoot } from "@/components/cockpit/rx/PrescriptionFormCompositionRoot";
+import { RxLockProvider } from "@/components/cockpit/rx/useRxLock";
+import { LastVisitSummaryProvider } from "@/hooks/useLastVisitSummary";
 import { SendRxFinishButton } from "@/components/cockpit/rx/SendRxFinishButton";
 import SaveStatus from "./SaveStatus";
 import TemplatePicker from "@/components/ehr/TemplatePicker";
@@ -65,7 +64,12 @@ import {
 } from "@/lib/patient-profile/state";
 import { Skeleton } from "@/components/ui/skeleton";
 
-const ALLOWED_MIME = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+const ALLOWED_MIME = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "application/pdf",
+];
 const MAX_ATTACHMENTS = 5;
 const MAX_FILE_SIZE_MB = 10;
 
@@ -208,13 +212,46 @@ export default function PrescriptionForm(props: PrescriptionFormProps) {
     clinicName: string | null;
     clinicAddress: string | null;
     timezone: string;
+    qualifications: string | null;
+    logoUrl: string | null;
+    headerUrl: string | null;
+    footerUrl: string | null;
+    headerHeightMm: number;
+    footerHeightMm: number;
+    letterheadPreset: "classic" | "centred" | "preprinted" | "banner" | null;
+    accentColor: string | null;
+    chromeColor: string | null;
+    patientColor: string | null;
+    logoSize: "small" | "medium" | "large";
+    patientIdentityPreset: "open_letter" | "compact" | "grid";
+    showPatientPhone: boolean;
+    showPatientGuardian: boolean;
+    showPatientMrn: boolean;
+    showPatientAddress: boolean;
+    footerLine: string | null;
+    hideHaloCredit: boolean;
+    backgroundUrl: string | null;
+    backgroundPreset: "none" | "paper" | "cross" | "upload";
+    backgroundOpacity: number;
+    headerFit: "fit" | "fill" | "stretch";
+    footerFit: "fit" | "fill" | "stretch";
+    backgroundFit: "fit" | "fill" | "stretch";
+    headerTextSize: "small" | "medium" | "large";
+    patientTextSize: "small" | "medium" | "large";
+    bodyTextSize: "small" | "medium" | "large";
+    pageSize: "a4" | "a5";
+    preprintMarginTopMm: number;
+    preprintMarginBottomMm: number;
+    pageMarginTopMm: number;
+    pageMarginRightMm: number;
+    pageMarginBottomMm: number;
+    pageMarginLeftMm: number;
   } | null>(null);
   const [lastEpisodeRx, setLastEpisodeRx] =
     useState<PrescriptionWithRelations | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [preSendWarnings, setPreSendWarnings] = useState<
-    ReadonlyArray<PreSendWarning> | null
-  >(null);
+  const [preSendWarnings, setPreSendWarnings] =
+    useState<ReadonlyArray<PreSendWarning> | null>(null);
   const finishAfterSendRef = useRef(false);
 
   const {
@@ -288,9 +325,11 @@ export default function PrescriptionForm(props: PrescriptionFormProps) {
   const { key: providerKey, ...rxProviderProps } = providerProps;
   return (
     <RxFormProvider key={providerKey} {...rxProviderProps}>
-      <RxSafetyProvider token={token} patientId={patientId}>
-        {formBody}
-      </RxSafetyProvider>
+      <LastVisitSummaryProvider>
+        <RxSafetyProvider token={token} patientId={patientId}>
+          {formBody}
+        </RxSafetyProvider>
+      </LastVisitSummaryProvider>
     </RxFormProvider>
   );
 }
@@ -304,7 +343,9 @@ type PrescriptionFormBodyProps = PrescriptionFormProps & {
   >;
   prescriptionIdRef: React.MutableRefObject<string | null>;
   attachments: PrescriptionAttachment[];
-  setAttachments: React.Dispatch<React.SetStateAction<PrescriptionAttachment[]>>;
+  setAttachments: React.Dispatch<
+    React.SetStateAction<PrescriptionAttachment[]>
+  >;
   setInitialFields: React.Dispatch<React.SetStateAction<RxFormFields | null>>;
   generateInstanceIds: (count: number) => string[];
   instanceIdSeqRef: React.MutableRefObject<number>;
@@ -324,6 +365,40 @@ type PrescriptionFormBodyProps = PrescriptionFormProps & {
     clinicName: string | null;
     clinicAddress: string | null;
     timezone: string;
+    qualifications: string | null;
+    logoUrl: string | null;
+    headerUrl: string | null;
+    footerUrl: string | null;
+    headerHeightMm: number;
+    footerHeightMm: number;
+    letterheadPreset: "classic" | "centred" | "preprinted" | "banner" | null;
+    accentColor: string | null;
+    chromeColor: string | null;
+    patientColor: string | null;
+    logoSize: "small" | "medium" | "large";
+    patientIdentityPreset: "open_letter" | "compact" | "grid";
+    showPatientPhone: boolean;
+    showPatientGuardian: boolean;
+    showPatientMrn: boolean;
+    showPatientAddress: boolean;
+    footerLine: string | null;
+    hideHaloCredit: boolean;
+    backgroundUrl: string | null;
+    backgroundPreset: "none" | "paper" | "cross" | "upload";
+    backgroundOpacity: number;
+    headerFit: "fit" | "fill" | "stretch";
+    footerFit: "fit" | "fill" | "stretch";
+    backgroundFit: "fit" | "fill" | "stretch";
+    headerTextSize: "small" | "medium" | "large";
+    patientTextSize: "small" | "medium" | "large";
+    bodyTextSize: "small" | "medium" | "large";
+    pageSize: "a4" | "a5";
+    preprintMarginTopMm: number;
+    preprintMarginBottomMm: number;
+    pageMarginTopMm: number;
+    pageMarginRightMm: number;
+    pageMarginBottomMm: number;
+    pageMarginLeftMm: number;
   } | null>;
   lastEpisodeRx: PrescriptionWithRelations | null;
   setLastEpisodeRx: React.Dispatch<
@@ -462,9 +537,7 @@ function PrescriptionFormBody({
       if (edu) {
         setField(
           "advice",
-          fields.advice.trim()
-            ? `${fields.advice.trim()}\n${edu}`
-            : edu,
+          fields.advice.trim() ? `${fields.advice.trim()}\n${edu}` : edu
         );
       }
     }
@@ -476,7 +549,7 @@ function PrescriptionFormBody({
       .sort(
         (a, b) =>
           (a.sortOrder ?? Number.MAX_SAFE_INTEGER) -
-          (b.sortOrder ?? Number.MAX_SAFE_INTEGER),
+          (b.sortOrder ?? Number.MAX_SAFE_INTEGER)
       )
       .map(templateMedicineToEntry);
 
@@ -484,7 +557,10 @@ function PrescriptionFormBody({
       dispatch({ type: "SET_MEDICINES", medicines: meds });
       setMedicineInstanceIds(generateInstanceIds(meds.length));
     } else {
-      dispatch({ type: "SET_MEDICINES", medicines: [{ ...EMPTY_RX_MEDICINE }] });
+      dispatch({
+        type: "SET_MEDICINES",
+        medicines: [{ ...EMPTY_RX_MEDICINE }],
+      });
       setMedicineInstanceIds(generateInstanceIds(1));
     }
 
@@ -500,7 +576,7 @@ function PrescriptionFormBody({
   const handleSaveAsTemplate = async () => {
     const name = window.prompt(
       "Save current Rx as template â€” enter a short name:",
-      fields.provisionalDiagnosis.trim() || "",
+      fields.provisionalDiagnosis.trim() || ""
     );
     if (!name || !name.trim()) return;
 
@@ -565,8 +641,42 @@ function PrescriptionFormBody({
     return {
       doctorName: meta?.doctorName ?? "Doctor",
       doctorSpecialty: meta?.doctorSpecialty ?? null,
+      qualifications: meta?.qualifications ?? null,
       clinicName: meta?.clinicName ?? null,
       clinicAddress: meta?.clinicAddress ?? null,
+      logoUrl: meta?.logoUrl ?? null,
+      headerUrl: meta?.headerUrl ?? null,
+      footerUrl: meta?.footerUrl ?? null,
+      headerHeightMm: meta?.headerHeightMm ?? 35,
+      footerHeightMm: meta?.footerHeightMm ?? 20,
+      letterheadPreset: meta?.letterheadPreset ?? null,
+      accentColor: meta?.accentColor ?? null,
+      chromeColor: meta?.chromeColor ?? null,
+      patientColor: meta?.patientColor ?? null,
+      logoSize: meta?.logoSize ?? "medium",
+      patientIdentityPreset: meta?.patientIdentityPreset ?? "open_letter",
+      showPatientPhone: meta?.showPatientPhone !== false,
+      showPatientGuardian: meta?.showPatientGuardian !== false,
+      showPatientMrn: meta?.showPatientMrn !== false,
+      showPatientAddress: meta?.showPatientAddress !== false,
+      footerLine: meta?.footerLine ?? null,
+      hideHaloCredit: meta?.hideHaloCredit === true,
+      backgroundUrl: meta?.backgroundUrl ?? null,
+      backgroundPreset: meta?.backgroundPreset ?? "none",
+      backgroundOpacity: meta?.backgroundOpacity ?? 15,
+      headerFit: meta?.headerFit ?? "stretch",
+      footerFit: meta?.footerFit ?? "stretch",
+      backgroundFit: meta?.backgroundFit ?? "fill",
+      headerTextSize: meta?.headerTextSize ?? "medium",
+      patientTextSize: meta?.patientTextSize ?? "medium",
+      bodyTextSize: meta?.bodyTextSize ?? "medium",
+      pageSize: meta?.pageSize ?? "a4",
+      preprintMarginTopMm: meta?.preprintMarginTopMm ?? 40,
+      preprintMarginBottomMm: meta?.preprintMarginBottomMm ?? 30,
+      pageMarginTopMm: meta?.pageMarginTopMm ?? 12,
+      pageMarginRightMm: meta?.pageMarginRightMm ?? 12,
+      pageMarginBottomMm: meta?.pageMarginBottomMm ?? 12,
+      pageMarginLeftMm: meta?.pageMarginLeftMm ?? 12,
       patientName: "Patient",
       // Preview deliberately omits a visit-date label â€” the form
       // doesn't carry the appointment timestamp in client state and
@@ -581,7 +691,7 @@ function PrescriptionFormBody({
       followUp: resolveFollowUpForOutput(
         fields.followUp,
         fields.followUpValue,
-        fields.followUpUnit,
+        fields.followUpUnit
       ),
       patientEducation: null,
       referral: resolveReferralForOutput(referralPartsFromFields(fields)),
@@ -624,15 +734,11 @@ function PrescriptionFormBody({
         ]);
         const meta =
           (userResp.user?.user_metadata as
-            | { full_name?: string; name?: string }
-            | null
-            | undefined) ?? {};
+            { full_name?: string; name?: string } | null | undefined) ?? {};
         const rawName =
           (typeof meta.full_name === "string" && meta.full_name.trim()) ||
           (typeof meta.name === "string" && meta.name.trim()) ||
-          (userResp.user?.email
-            ? userResp.user.email.split("@")[0]
-            : "") ||
+          (userResp.user?.email ? userResp.user.email.split("@")[0] : "") ||
           "";
         const doctorName = rawName
           ? rawName.toLowerCase().startsWith("dr")
@@ -646,6 +752,48 @@ function PrescriptionFormBody({
           clinicName: settings?.practice_name?.trim() || null,
           clinicAddress: settings?.address_summary?.trim() || null,
           timezone: settings?.timezone || "Asia/Kolkata",
+          qualifications: settings?.qualifications?.trim() || null,
+          logoUrl: settings?.logo_preview_url ?? null,
+          headerUrl: settings?.header_preview_url ?? null,
+          footerUrl: settings?.footer_preview_url ?? null,
+          headerHeightMm: settings?.header_height_mm ?? 35,
+          footerHeightMm: settings?.footer_height_mm ?? 20,
+          letterheadPreset: settings?.letterhead_preset ?? null,
+          accentColor: settings?.letterhead_accent_color ?? null,
+          chromeColor: settings?.letterhead_chrome_color ?? null,
+          patientColor: settings?.letterhead_patient_color ?? null,
+          logoSize: settings?.logo_size ?? "medium",
+          patientIdentityPreset:
+            settings?.patient_identity_preset ?? "open_letter",
+          showPatientPhone: settings?.show_patient_phone !== false,
+          showPatientGuardian: settings?.show_patient_guardian !== false,
+          showPatientMrn: settings?.show_patient_mrn !== false,
+          showPatientAddress: settings?.show_patient_address !== false,
+          footerLine: settings?.letterhead_footer_line ?? null,
+          hideHaloCredit: settings?.hide_halo_credit === true,
+          backgroundPreset: settings?.letterhead_background_preset ?? "none",
+          backgroundOpacity: settings?.letterhead_background_opacity ?? 15,
+          headerFit: settings?.letterhead_header_fit ?? "stretch",
+          footerFit: settings?.letterhead_footer_fit ?? "stretch",
+          backgroundFit: settings?.letterhead_background_fit ?? "fill",
+          headerTextSize: settings?.letterhead_header_text_size ?? "medium",
+          patientTextSize: settings?.letterhead_patient_text_size ?? "medium",
+          bodyTextSize: settings?.letterhead_body_text_size ?? "medium",
+          pageSize: settings?.page_size === "a5" ? "a5" : "a4",
+          preprintMarginTopMm: settings?.preprint_margin_top_mm ?? 40,
+          preprintMarginBottomMm: settings?.preprint_margin_bottom_mm ?? 30,
+          pageMarginTopMm: settings?.page_margin_top_mm ?? 12,
+          pageMarginRightMm: settings?.page_margin_right_mm ?? 12,
+          pageMarginBottomMm: settings?.page_margin_bottom_mm ?? 12,
+          pageMarginLeftMm: settings?.page_margin_left_mm ?? 12,
+          backgroundUrl:
+            settings?.letterhead_background_preset === "paper"
+              ? "/letterhead/bg-paper.png"
+              : settings?.letterhead_background_preset === "cross"
+                ? "/letterhead/bg-cross.png"
+                : settings?.letterhead_background_preset === "upload"
+                  ? (settings?.background_preview_url ?? null)
+                  : null,
         };
       } catch {
         // Soft-fail. The preview opens with the literal "Doctor"
@@ -656,6 +804,40 @@ function PrescriptionFormBody({
           clinicName: null,
           clinicAddress: null,
           timezone: "Asia/Kolkata",
+          qualifications: null,
+          logoUrl: null,
+          headerUrl: null,
+          footerUrl: null,
+          headerHeightMm: 35,
+          footerHeightMm: 20,
+          letterheadPreset: null,
+          accentColor: null,
+          chromeColor: null,
+          patientColor: null,
+          logoSize: "medium",
+          patientIdentityPreset: "open_letter",
+          showPatientPhone: true,
+          showPatientGuardian: true,
+          showPatientMrn: true,
+          showPatientAddress: true,
+          footerLine: null,
+          hideHaloCredit: false,
+          backgroundUrl: null,
+          backgroundPreset: "none",
+          backgroundOpacity: 15,
+          headerFit: "stretch",
+          footerFit: "stretch",
+          backgroundFit: "fill",
+          headerTextSize: "medium",
+          patientTextSize: "medium",
+          bodyTextSize: "medium",
+          pageSize: "a4",
+          preprintMarginTopMm: 40,
+          preprintMarginBottomMm: 30,
+          pageMarginTopMm: 12,
+          pageMarginRightMm: 12,
+          pageMarginBottomMm: 12,
+          pageMarginLeftMm: 12,
         };
       } finally {
         setPreviewLoading(false);
@@ -688,7 +870,9 @@ function PrescriptionFormBody({
   // cs-11: notify the parent (RxWorkspace) when the filled medicine count changes
   // so the section nav chip can show "Medicines (N)" without accessing internal state.
   useEffect(() => {
-    onMedicineCountChange?.(medicines.filter((m) => m.medicineName.trim()).length);
+    onMedicineCountChange?.(
+      medicines.filter((m) => m.medicineName.trim()).length
+    );
   }, [medicines, onMedicineCountChange]);
 
   // Fetch the prior Rx in the same care episode (if any) on mount /
@@ -696,7 +880,7 @@ function PrescriptionFormBody({
   // there's no prior visit â€” the CTA hides itself in that case.
   useEffect(() => {
     let cancelled = false;
-    getLastPrescriptionInEpisode(token, appointmentId)
+    getLastPrescriptionInEpisode(token, appointmentId, prescriptionIdRef.current)
       .then((res) => {
         if (cancelled) return;
         setLastEpisodeRx(res.data.prescription);
@@ -728,17 +912,21 @@ function PrescriptionFormBody({
       ? formatDate(lastEpisodeRx.created_at)
       : "your previous visit";
     const ok = window.confirm(
-      `Copy diagnosis, plan, and medicines from your last visit on ${dateStr}?`,
+      `Copy diagnosis, plan, and medicines from your last visit on ${dateStr}?`
     );
     if (!ok) return;
 
     if (lastEpisodeRx.cc !== null) setField("cc", lastEpisodeRx.cc ?? "");
     if (lastEpisodeRx.hopi !== null) setField("hopi", lastEpisodeRx.hopi ?? "");
     if (lastEpisodeRx.provisional_diagnosis !== null)
-      setField("provisionalDiagnosis", lastEpisodeRx.provisional_diagnosis ?? "");
+      setField(
+        "provisionalDiagnosis",
+        lastEpisodeRx.provisional_diagnosis ?? ""
+      );
     const inv = investigationsFromPrescription(lastEpisodeRx);
     if (inv) setField("investigationsOrders", inv);
-    if (lastEpisodeRx.follow_up !== null) setField("followUp", lastEpisodeRx.follow_up ?? "");
+    if (lastEpisodeRx.follow_up !== null)
+      setField("followUp", lastEpisodeRx.follow_up ?? "");
     {
       const mergedAdvice = [
         lastEpisodeRx.advice?.trim() || "",
@@ -756,7 +944,10 @@ function PrescriptionFormBody({
       dispatch({ type: "SET_MEDICINES", medicines: meds });
       setMedicineInstanceIds(generateInstanceIds(meds.length));
     } else {
-      dispatch({ type: "SET_MEDICINES", medicines: [{ ...EMPTY_RX_MEDICINE }] });
+      dispatch({
+        type: "SET_MEDICINES",
+        medicines: [{ ...EMPTY_RX_MEDICINE }],
+      });
       setMedicineInstanceIds(generateInstanceIds(1));
     }
 
@@ -779,7 +970,7 @@ function PrescriptionFormBody({
       // throws â€” in the throw case we surface the error and bail out
       // BEFORE attempting to send.
       try {
-        await autoSaveFlush();
+        await autoSaveFlush({ force: true });
       } catch (saveErr) {
         setError(
           saveErr instanceof Error
@@ -853,7 +1044,7 @@ function PrescriptionFormBody({
   const emitPreSendTelemetryFor = useCallback(
     (
       warnings: ReadonlyArray<PreSendWarning>,
-      outcome: "cancelled" | "edited" | "sent-anyway",
+      outcome: "cancelled" | "edited" | "sent-anyway"
     ): void => {
       const counts: Partial<Record<PreSendWarningKind, number>> = {};
       let ddiSeverity: InteractionRow["severity"] | undefined;
@@ -882,7 +1073,7 @@ function PrescriptionFormBody({
         occurredAt: new Date().toISOString(),
       });
     },
-    [appointmentId],
+    [appointmentId]
   );
 
   // EHR Sub-batch C / T4.21 (C.4) â€” focus / scroll target for "Edit Rx".
@@ -897,13 +1088,15 @@ function PrescriptionFormBody({
     // typing. Diagnosis is an `<input id="diagnosis">` so it focuses
     // directly; the medicines section is a wrapper div, so we look for
     // the first focusable input inside.
-    if (typeof (el as HTMLElement).focus === "function" &&
-        (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) {
+    if (
+      typeof (el as HTMLElement).focus === "function" &&
+      (el.tagName === "INPUT" || el.tagName === "TEXTAREA")
+    ) {
       (el as HTMLInputElement | HTMLTextAreaElement).focus();
       return;
     }
     const inner = el.querySelector<HTMLElement>(
-      "input, textarea, button, [tabindex]:not([tabindex='-1'])",
+      "input, textarea, button, [tabindex]:not([tabindex='-1'])"
     );
     inner?.focus();
   }, []);
@@ -958,13 +1151,16 @@ function PrescriptionFormBody({
 
     const warnings = computePreSendWarnings({
       filledMedicineCount,
-      hasInvestigations: isStructured && fields.investigationsOrders.trim().length > 0,
+      hasInvestigations:
+        isStructured && fields.investigationsOrders.trim().length > 0,
       hasPatientEducation:
         isStructured &&
         (fields.advice.trim().length > 0 ||
           fields.patientEducation.trim().length > 0),
       // Photo-only mode: no diagnosis input rendered â†’ not applicable.
-      hasDiagnosis: isStructured ? fields.provisionalDiagnosis.trim().length > 0 : true,
+      hasDiagnosis: isStructured
+        ? fields.provisionalDiagnosis.trim().length > 0
+        : true,
       hasAttachments: attachments.length > 0,
       allergyMatches: formAllergyMatches,
       medicineInstanceIds,
@@ -1020,7 +1216,7 @@ function PrescriptionFormBody({
       if (process.env.NODE_ENV === "development") {
         // eslint-disable-next-line no-console
         console.warn(
-          "[ppd-03] ensurePrescriptionForPhoto called while photoLifted=true; no-op.",
+          "[ppd-03] ensurePrescriptionForPhoto called while photoLifted=true; no-op."
         );
       }
       throw new Error("Photo upload is disabled in the cockpit Plan pane.");
@@ -1052,22 +1248,33 @@ function PrescriptionFormBody({
     try {
       const prescriptionId = await ensurePrescriptionForPhoto();
       const currentCount = attachments.length;
-      for (let i = 0; i < Math.min(files.length, MAX_ATTACHMENTS - currentCount); i++) {
+      for (
+        let i = 0;
+        i < Math.min(files.length, MAX_ATTACHMENTS - currentCount);
+        i++
+      ) {
         const file = files[i];
         const contentType = file.type;
         if (!ALLOWED_MIME.includes(contentType)) {
-          setError(`Invalid file type: ${contentType}. Allowed: JPEG, PNG, WebP, PDF.`);
+          setError(
+            `Invalid file type: ${contentType}. Allowed: JPEG, PNG, WebP, PDF.`
+          );
           break;
         }
         if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
           setError(`File too large: ${file.name}. Max ${MAX_FILE_SIZE_MB}MB.`);
           break;
         }
-        const filename = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 100) || "file";
-        const uploadRes = await getPrescriptionUploadUrl(token, prescriptionId, {
-          filename,
-          contentType,
-        });
+        const filename =
+          file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 100) || "file";
+        const uploadRes = await getPrescriptionUploadUrl(
+          token,
+          prescriptionId,
+          {
+            filename,
+            contentType,
+          }
+        );
         const { path, token: uploadToken } = uploadRes.data;
         const { error: uploadErr } = await supabase.storage
           .from("prescription-attachments")
@@ -1076,10 +1283,14 @@ function PrescriptionFormBody({
           setError(uploadErr.message || "Upload failed");
           break;
         }
-        const regRes = await registerPrescriptionAttachment(token, prescriptionId, {
-          filePath: path,
-          fileType: contentType,
-        });
+        const regRes = await registerPrescriptionAttachment(
+          token,
+          prescriptionId,
+          {
+            filePath: path,
+            fileType: contentType,
+          }
+        );
         setAttachments((prev) => [...prev, regRes.data.attachment]);
       }
       onSuccess?.();
@@ -1135,7 +1346,9 @@ function PrescriptionFormBody({
       {!entryModeLifted && (
         <div>
           <fieldset>
-            <legend className="text-sm font-medium text-gray-700">Prescription type</legend>
+            <legend className="text-sm font-medium text-gray-700">
+              Prescription type
+            </legend>
             <div className="mt-2 flex gap-4">
               {(["structured", "photo", "both"] as const).map((mode) => (
                 <label key={mode} className="flex items-center gap-2">
@@ -1161,45 +1374,52 @@ function PrescriptionFormBody({
       )}
 
       {(entryMode === "structured" || entryMode === "both") && (
-        <PrescriptionFormCompositionRoot
-          variant="flat"
-          disabled={saving}
-          dxLifted={dxLifted}
-          safetyLifted={safetyLifted}
-          subjectiveLifted={subjectiveLifted}
-          objectiveLifted={objectiveLifted}
-          token={token}
-          medicineInstanceIds={medicineInstanceIds}
-          setMedicineInstanceIds={setMedicineInstanceIds}
-          generateInstanceIds={generateInstanceIds}
-          drugMasterIndex={drugMasterIndex}
-          setDrugMasterIndex={setDrugMasterIndex}
-          allergies={allergies}
-          ddiInteractions={ddiInteractions}
-          isAcked={isAcked}
-          onAcknowledge={onAcknowledge}
-          onAckDdi={onAckDdi}
-          onSendAndFinish={
-            !actionsInFooter && onFinish
-              ? () => void handleSendAndFinish()
-              : undefined
-          }
-          onOpenTemplates={() => setTemplatePickerOpen(true)}
-          onOpenPreview={
-            actionsInFooter ? undefined : () => void handleOpenPreview()
-          }
-          canSend={canSendRx}
-          showPreviousRxTrigger={cockpitState != null}
-        />
+        <RxLockProvider
+          cockpitState={cockpitState}
+          standalone={cockpitState == null}
+          saving={saving}
+        >
+          <PrescriptionFormCompositionRoot
+            variant="flat"
+            dxLifted={dxLifted}
+            safetyLifted={safetyLifted}
+            subjectiveLifted={subjectiveLifted}
+            objectiveLifted={objectiveLifted}
+            token={token}
+            medicineInstanceIds={medicineInstanceIds}
+            setMedicineInstanceIds={setMedicineInstanceIds}
+            generateInstanceIds={generateInstanceIds}
+            drugMasterIndex={drugMasterIndex}
+            setDrugMasterIndex={setDrugMasterIndex}
+            allergies={allergies}
+            ddiInteractions={ddiInteractions}
+            isAcked={isAcked}
+            onAcknowledge={onAcknowledge}
+            onAckDdi={onAckDdi}
+            onSendAndFinish={
+              !actionsInFooter && onFinish
+                ? () => void handleSendAndFinish()
+                : undefined
+            }
+            onOpenTemplates={() => setTemplatePickerOpen(true)}
+            onOpenPreview={
+              actionsInFooter ? undefined : () => void handleOpenPreview()
+            }
+            canSend={canSendRx}
+            showPreviousRxTrigger={cockpitState != null}
+          />
+        </RxLockProvider>
       )}
-
 
       {/* Photo section */}
       {!photoLifted && (entryMode === "photo" || entryMode === "both") && (
         <div>
-          <label className="block text-sm font-medium text-gray-700">Attachments</label>
+          <label className="block text-sm font-medium text-gray-700">
+            Attachments
+          </label>
           <p className="mt-0.5 text-xs text-gray-500">
-            JPEG, PNG, WebP, PDF. Max {MAX_FILE_SIZE_MB}MB each. Up to {MAX_ATTACHMENTS} files.
+            JPEG, PNG, WebP, PDF. Max {MAX_FILE_SIZE_MB}MB each. Up to{" "}
+            {MAX_ATTACHMENTS} files.
           </p>
           <input
             ref={fileInputRef}
@@ -1211,7 +1431,10 @@ function PrescriptionFormBody({
             className="mt-2 block w-full text-sm text-gray-500 file:mr-4 file:rounded file:border-0 file:bg-blue-50 file:px-4 file:py-2 file:text-sm file:font-medium file:text-blue-700 hover:file:bg-blue-100"
           />
           {attachments.length > 0 && (
-            <ul className="mt-2 flex flex-wrap gap-2" aria-label="Uploaded attachments">
+            <ul
+              className="mt-2 flex flex-wrap gap-2"
+              aria-label="Uploaded attachments"
+            >
               {attachments.map((att) => (
                 <li
                   key={att.id}
@@ -1271,35 +1494,35 @@ function PrescriptionFormBody({
 
         {!actionsInFooter && (
           <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={handleSaveAndSend}
-            disabled={saving || uploading}
-            data-rx-send-btn
-            className="rounded-md border border-blue-600 bg-white px-3 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-          >
-            {saving && !finishAfterSendRef.current ? "Sending…" : "Send Rx"}
-          </button>
-
-          {onFinish && (
-            <SendRxFinishButton
-              onClick={() => void handleSendAndFinish()}
-              disabled={saving || uploading}
-              sending={saving && finishAfterSendRef.current}
-            />
-          )}
-
-          {onFinish && (
             <button
               type="button"
-              onClick={onFinish}
+              onClick={handleSaveAndSend}
               disabled={saving || uploading}
+              data-rx-send-btn
               className="rounded-md border border-blue-600 bg-white px-3 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-              title="Close this visit without sending a prescription"
             >
-              Finish visit
+              {saving && !finishAfterSendRef.current ? "Sending…" : "Send Rx"}
             </button>
-          )}
+
+            {onFinish && (
+              <SendRxFinishButton
+                onClick={() => void handleSendAndFinish()}
+                disabled={saving || uploading}
+                sending={saving && finishAfterSendRef.current}
+              />
+            )}
+
+            {onFinish && (
+              <button
+                type="button"
+                onClick={onFinish}
+                disabled={saving || uploading}
+                className="rounded-md border border-blue-600 bg-white px-3 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                title="Close this visit without sending a prescription"
+              >
+                Finish visit
+              </button>
+            )}
           </div>
         )}
       </div>

@@ -1,7 +1,7 @@
 /**
  * Instagram token health sweep (ilr-04).
  *
- * Proactively re-checks Meta `debug_token` for connected doctors so expiry /
+ * Proactively re-checks Instagram Graph `/me` (+ IG refresh) for connected doctors so expiry /
  * invalid tokens surface without waiting for a doctor to open Settings.
  * When reconnect is newly recommended, emails the doctor (transition-only
  * dedupe — no daily spam while stuck in warning/error).

@@ -6,6 +6,7 @@ import {
   formatMidCollectionAfterFeeBlock,
   formatWelcomeBackSegment,
 } from '../../../src/utils/dm-reply-composer';
+import { formatFeeBookingCtaForDm } from '../../../src/utils/consultation-fees';
 import type { DoctorSettingsRow } from '../../../src/types/doctor-settings';
 import { deterministicServiceIdForLegacyOffering } from '../../../src/utils/service-catalog-schema';
 
@@ -57,11 +58,11 @@ const feeFixture = {
   cockpit_template_override: null,
   created_at: '',
   updated_at: '',
-} satisfies DoctorSettingsRow;
+} as unknown as DoctorSettingsRow;
 
 describe('dm-reply-composer (RBH-19)', () => {
   it('composeIdleFeeQuoteDm joins fee body and booking CTA with exact ₹ from settings', () => {
-    const out = composeIdleFeeQuoteDm(feeFixture, 'how much is consultation');
+    const out = composeIdleFeeQuoteDm(feeFixture, 'how much is consultation', { language: 'en' });
     expect(out).toContain('**In-person**');
     expect(out).toContain('₹500');
     expect(out).toContain('₹400');
@@ -71,6 +72,7 @@ describe('dm-reply-composer (RBH-19)', () => {
 
   it('composeMidCollectionFeeQuoteDm adds localized continue block after fees (English)', () => {
     const out = composeMidCollectionFeeQuoteDm(feeFixture, 'what is the fee', {
+      language: 'en',
       collectedFields: ['name'],
     });
     expect(out).toContain('₹500');
@@ -79,8 +81,9 @@ describe('dm-reply-composer (RBH-19)', () => {
     expect(out).toMatch(/Still needed:.*mobile number/i);
   });
 
-  it('composeMidCollectionFeeQuoteDm uses Roman Hindi footer for Hinglish pricing during intake', () => {
+  it('composeMidCollectionFeeQuoteDm uses Roman Hindi footer for hi-Latn during intake', () => {
     const out = composeMidCollectionFeeQuoteDm(feeFixture, 'kitna charge hai', {
+      language: 'hi-Latn',
       collectedFields: [],
     });
     expect(out).toContain('₹500');
@@ -90,7 +93,7 @@ describe('dm-reply-composer (RBH-19)', () => {
 
   it('composeIdleFeeQuoteDm uses catalog when service_offerings_json set (SFU-08)', () => {
     const withCat = { ...feeFixture, service_offerings_json: catalogFixture, consultation_types: 'ignored' };
-    const out = composeIdleFeeQuoteDm(withCat, 'fees please');
+    const out = composeIdleFeeQuoteDm(withCat, 'fees please', { language: 'en' });
     expect(out).toContain('Solo Service');
     expect(out).toContain('₹123.45');
     expect(out).not.toContain('₹500');
@@ -98,25 +101,48 @@ describe('dm-reply-composer (RBH-19)', () => {
   });
 
   it('formatMidCollectionAfterFeeBlock omits missing line when all required fields present', () => {
-    const block = formatMidCollectionAfterFeeBlock('ok', []);
+    const block = formatMidCollectionAfterFeeBlock('en', []);
     expect(block).toContain('---');
     expect(block).not.toMatch(/Still needed/i);
     expect(block).not.toMatch(/mobile number/i);
   });
 
+  it('lang-06 / task 7.3: stored hi-Latn wins over English userText for fee CTA', () => {
+    const cta = formatFeeBookingCtaForDm('hi-Latn');
+    expect(cta).toMatch(/appointment book/i);
+    expect(cta).toMatch(/Jab aap|karna chahein/i);
+    expect(cta.toLowerCase()).not.toContain("when you're ready");
+
+    const out = composeIdleFeeQuoteDm(feeFixture, 'how much is the fee', { language: 'hi-Latn' });
+    expect(out).not.toContain('Booking complete karne ke liye');
+    expect(out).toMatch(/Jab aap|appointment book/i);
+    expect(out).not.toContain("When you're ready");
+  });
+
   it('formatWelcomeBackSegment uses first name and coarse recency (rcp-21)', () => {
     expect(
-      formatWelcomeBackSegment({ firstName: 'Priya', recencyBucket: 'within_3_months' })
+      formatWelcomeBackSegment({
+        language: 'en',
+        firstName: 'Priya',
+        recencyBucket: 'within_3_months',
+      })
     ).toBe("Welcome back, **Priya**! It's good to hear from you again.");
-    expect(formatWelcomeBackSegment({ recencyBucket: 'over_1_year' })).toBe(
+    expect(formatWelcomeBackSegment({ language: 'en', recencyBucket: 'over_1_year' })).toBe(
       "Welcome back! It's been quite a while — glad you're in touch."
     );
-    expect(formatWelcomeBackSegment({ firstName: 'Priya' })).toBe('Welcome back, **Priya**!');
+    expect(formatWelcomeBackSegment({ language: 'en', firstName: 'Priya' })).toBe(
+      'Welcome back, **Priya**!'
+    );
   });
 
   it('composeDmReplySegments prepends welcome_back before AI markdown (rcp-21)', () => {
     const out = composeDmReplySegments([
-      { kind: 'welcome_back', firstName: 'Priya', recencyBucket: 'within_1_month' },
+      {
+        kind: 'welcome_back',
+        language: 'en',
+        firstName: 'Priya',
+        recencyBucket: 'within_1_month',
+      },
       { kind: 'markdown', content: 'How can I help you today?' },
     ]);
     expect(out.startsWith('Welcome back, **Priya**! Great to hear from you again.')).toBe(true);

@@ -4,7 +4,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import SideSheetHost, { useSideSheet } from "@/components/patient-profile/SideSheetHost";
 
@@ -52,7 +52,7 @@ describe("SideSheetHost", () => {
     );
   });
 
-  it("opens sheet, dismisses via backdrop and Esc", () => {
+  it("opens sheet, dismisses via backdrop and Esc", async () => {
     render(
       <SideSheetHost>
         <Opener />
@@ -65,11 +65,15 @@ describe("SideSheetHost", () => {
     expect(screen.getByText("Body A")).toBeInTheDocument();
 
     fireEvent.click(screen.getByLabelText("Close side sheet"));
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "Open A" }));
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
   });
 
   it("replaces the active sheet on second open", () => {

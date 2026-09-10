@@ -235,8 +235,11 @@ function VolumeByModality({
 
 function PracticeHealthOverviewBody({
   token,
+  embedded = false,
 }: {
   token: string;
+  /** When true, skip page title + range control (parent InsightsClient owns them). */
+  embedded?: boolean;
 }): JSX.Element {
   const { range } = useInsightsRange();
   const query = usePracticeHealthQuery(token, {
@@ -274,15 +277,17 @@ function PracticeHealthOverviewBody({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold text-foreground">Insights</h1>
-          <p className="text-sm text-muted-foreground">
-            Practice health over the last {range.days} days
-          </p>
+      {!embedded && (
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-1">
+            <h1 className="text-2xl font-semibold text-foreground">Insights</h1>
+            <p className="text-sm text-muted-foreground">
+              Practice health over the last {range.days} days
+            </p>
+          </div>
+          <InsightsRangeControl />
         </div>
-        <InsightsRangeControl />
-      </div>
+      )}
 
       {isEmpty ? (
         <p
@@ -340,14 +345,18 @@ function PracticeHealthOverviewBody({
 
 export interface PracticeHealthOverviewProps {
   token: string;
+  /**
+   * When true, assume an ancestor already provides InsightsRangeProvider
+   * and page chrome (InsightsClient tabs).
+   */
+  embedded?: boolean;
 }
 
 export function PracticeHealthOverview({
   token,
+  embedded = false,
 }: PracticeHealthOverviewProps): JSX.Element {
-  return (
-    <InsightsRangeProvider>
-      <PracticeHealthOverviewBody token={token} />
-    </InsightsRangeProvider>
-  );
+  const body = <PracticeHealthOverviewBody token={token} embedded={embedded} />;
+  if (embedded) return body;
+  return <InsightsRangeProvider>{body}</InsightsRangeProvider>;
 }

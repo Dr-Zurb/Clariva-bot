@@ -51,14 +51,8 @@ export interface RequestVideoEscalationInput {
   sessionId:         string;
   /** Doctor Supabase auth UID. Server cross-checks against the Bearer JWT. */
   doctorId:          string;
-  /** Modal radio selection. */
+  /** Modal radio selection. Server writes a canonical reason string. */
   presetReasonCode:  VideoEscalationPresetReason;
-  /**
-   * Free-text clinical reason. Task 40 validates `5..200` chars client-side;
-   * the server CHECK (Migration 070) enforces the same range at the DB level.
-   * Trimmed by the server before write.
-   */
-  reason:            string;
 }
 
 export interface RequestVideoEscalationData {
@@ -72,30 +66,33 @@ export interface RequestVideoEscalationData {
   expiresAt:      string;
   /** Same value the server stored on the audit row. Threads through logs. */
   correlationId:  string;
+  /** Chargeable attempts after this insert (rec-23). Optional on older envelopes. */
+  attemptsUsed?:  1 | 2;
 }
 
 /**
- * Derived state returned by `GET /video-escalation-state`. Task 41 computes
- * this by reading the last two `video_escalation_audit` rows for the session
- * and applying the Task 40 acceptance-criteria state machine:
+ * Derived state returned by `GET /video-escalation-state`. rec-23 / REC-D9:
+ * `attemptsUsed` counts *chargeable* rows, not row count. The server is
+ * the source of truth for counts; the hook may derive `kind` locally.
  *
- *   - 0 rows                                → `idle`
- *   - 1 row, response=`allow`               → `locked:already_recording_video`
- *   - 1 row, response=`decline`|`timeout`,
- *     requested_at > now - 5min             → `cooldown (attemptsUsed=1)`
- *   - 1 row, response=`decline`|`timeout`,
- *     requested_at <= now - 5min            → `idle` (with attemptsUsed=1)
- *   - 2 rows                                → `locked:max_attempts`
- *   - 1 row still pending (response=null)   → `requesting`
+ *   - 0 rows                                → `idle` used 0
+ *   - pending                               → `requesting` (used = chargeable)
+ *   - active allow                          → `locked:already_recording_video`
+ *   - decline|timeout, <5min of requested_at → `cooldown` (used = chargeable)
+ *   - decline|timeout, ≥5min                → `idle` (used = chargeable)
+ *     unless chargeable ≥ 2                 → `locked:max_attempts`
+ *   - stop|grant_expired, <30s of revoked_at → `cooldown` used 0+, last `stopped`
+ *   - stop|grant_expired, ≥30s              → `idle` (stop does not count)
+ *   - patient offer                         → never chargeable
  */
 export type VideoEscalationStateData =
   | { kind: "idle";       attemptsUsed: 0 | 1 }
-  | { kind: "requesting"; requestId: string; expiresAt: string; attemptsUsed: 1 | 2 }
+  | { kind: "requesting"; requestId: string; expiresAt: string; attemptsUsed: 0 | 1 | 2 }
   | {
       kind:           "cooldown";
       availableAt:    string;
-      attemptsUsed:   1 | 2;
-      lastOutcome:    "decline" | "timeout";
+      attemptsUsed:   0 | 1 | 2;
+      lastOutcome:    "decline" | "timeout" | "stopped";
       /** Patient's free-text reason if one was captured. v1 has no
        *  free-text patient-decline field, so this is always `null` in
        *  Task 40/41's v1 — forward-compat for a v1.1 additive field. */
@@ -110,6 +107,12 @@ export type VideoEscalationStateData =
        * otherwise.
        */
       requestId: string | null;
+      /** rec-22. Server-assigned grant end. Null on max_attempts / legacy. */
+      grantExpiresAt?: string | null;
+      /** rec-22. True when the one doctor extension has been spent. */
+      extensionSpent?: boolean;
+      /** rec-24. True when the grant is paused. Still locked. */
+      videoPaused?: boolean;
     };
 
 // ---------------------------------------------------------------------------
@@ -128,7 +131,7 @@ export type VideoEscalationStateData =
  *   - `NOT_A_PARTICIPANT`      — 403. Only fires if a doctor mounted in a
  *     session they don't own.
  *   - `BAD_INPUT`              — 400. Usually a stale client — the modal
- *     already validates the 5..200 char range.
+ *     already validates the preset.
  *   - `NETWORK_ERROR`          — fetch() threw (offline, DNS, CORS).
  *   - `UNKNOWN`                — everything else.
  */
@@ -241,7 +244,6 @@ export async function requestVideoEscalation(
       body: JSON.stringify({
         doctorId:         input.doctorId,
         presetReasonCode: input.presetReasonCode,
-        reason:           input.reason,
       }),
       cache: "no-store",
     });
@@ -289,7 +291,14 @@ export async function requestVideoEscalation(
       res.status,
     );
   }
-  return data;
+  if (data.attemptsUsed === 1 || data.attemptsUsed === 2) {
+    return data;
+  }
+  return {
+    requestId:     data.requestId,
+    expiresAt:     data.expiresAt,
+    correlationId: data.correlationId,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -519,6 +528,261 @@ export async function revokeVideoRecording(
     !data ||
     typeof (data as { status?: unknown }).status !== "string" ||
     typeof (data as { correlationId?: unknown }).correlationId !== "string"
+  ) {
+    throw new VideoEscalationError(
+      "Received an unexpected response shape from the server.",
+      "UNKNOWN",
+      res.status,
+    );
+  }
+  return data;
+}
+
+export interface PauseVideoRecordingResult {
+  correlationId: string;
+  status: "paused" | "already_paused" | "already_audio_only";
+}
+
+export interface ResumeVideoRecordingResult {
+  correlationId: string;
+  status: "resumed" | "already_recording";
+}
+
+export async function pauseVideoRecording(
+  token: string,
+  sessionId: string,
+): Promise<PauseVideoRecordingResult> {
+  const base = requireApiBaseUrl();
+  const url  = `${base}/api/v1/consultation/${encodeURIComponent(sessionId)}/video-escalation/pause`;
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type":  "application/json",
+        Authorization:   `Bearer ${token}`,
+      },
+      body: JSON.stringify({}),
+      cache: "no-store",
+    });
+  } catch (networkErr) {
+    const message = networkErr instanceof Error
+      ? networkErr.message
+      : "Network error";
+    throw new VideoEscalationError(
+      `Couldn't reach the server. ${message}`,
+      "NETWORK_ERROR",
+      null,
+    );
+  }
+
+  const text = await res.text();
+  const body = parseBody(text);
+
+  if (!res.ok) {
+    const serverCode    = body?.error?.code;
+    const serverMessage = body?.error?.message;
+    const code          = mapStatusToCode(res.status, serverCode);
+    const message       = serverMessage ?? "Couldn't pause video recording. Please try again.";
+    throw new VideoEscalationError(message, code, res.status);
+  }
+
+  const parsed = body as unknown as { data?: unknown } | null;
+  const data   = parsed?.data as PauseVideoRecordingResult | undefined;
+  if (
+    !data ||
+    typeof (data as { status?: unknown }).status !== "string" ||
+    typeof (data as { correlationId?: unknown }).correlationId !== "string"
+  ) {
+    throw new VideoEscalationError(
+      "Received an unexpected response shape from the server.",
+      "UNKNOWN",
+      res.status,
+    );
+  }
+  return data;
+}
+
+export async function resumeVideoRecording(
+  token: string,
+  sessionId: string,
+): Promise<ResumeVideoRecordingResult> {
+  const base = requireApiBaseUrl();
+  const url  = `${base}/api/v1/consultation/${encodeURIComponent(sessionId)}/video-escalation/resume`;
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type":  "application/json",
+        Authorization:   `Bearer ${token}`,
+      },
+      body: JSON.stringify({}),
+      cache: "no-store",
+    });
+  } catch (networkErr) {
+    const message = networkErr instanceof Error
+      ? networkErr.message
+      : "Network error";
+    throw new VideoEscalationError(
+      `Couldn't reach the server. ${message}`,
+      "NETWORK_ERROR",
+      null,
+    );
+  }
+
+  const text = await res.text();
+  const body = parseBody(text);
+
+  if (!res.ok) {
+    const serverCode    = body?.error?.code;
+    const serverMessage = body?.error?.message;
+    const code          = mapStatusToCode(res.status, serverCode);
+    const message       = serverMessage ?? "Couldn't resume video recording. Please try again.";
+    throw new VideoEscalationError(message, code, res.status);
+  }
+
+  const parsed = body as unknown as { data?: unknown } | null;
+  const data   = parsed?.data as ResumeVideoRecordingResult | undefined;
+  if (
+    !data ||
+    typeof (data as { status?: unknown }).status !== "string" ||
+    typeof (data as { correlationId?: unknown }).correlationId !== "string"
+  ) {
+    throw new VideoEscalationError(
+      "Received an unexpected response shape from the server.",
+      "UNKNOWN",
+      res.status,
+    );
+  }
+  return data;
+}
+
+export interface OfferVideoRecordingResult {
+  correlationId: string;
+  /**
+   *  · `started`            — offer row written; recording start attempted.
+   *  · `already_recording`  — video already rolling; idempotent no-op.
+   */
+  status: "started" | "already_recording";
+  requestId?: string;
+  grantExpiresAt?: string | null;
+}
+
+/**
+ * Patient offers video without being asked (rec-25 / REC-D12).
+ * Self-consenting — no modal. Empty body.
+ */
+export async function offerVideoRecording(
+  token: string,
+  sessionId: string,
+): Promise<OfferVideoRecordingResult> {
+  const base = requireApiBaseUrl();
+  const url  = `${base}/api/v1/consultation/${encodeURIComponent(sessionId)}/video-escalation/offer`;
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type":  "application/json",
+        Authorization:   `Bearer ${token}`,
+      },
+      body: JSON.stringify({}),
+      cache: "no-store",
+    });
+  } catch (networkErr) {
+    const message = networkErr instanceof Error
+      ? networkErr.message
+      : "Network error";
+    throw new VideoEscalationError(
+      `Couldn't reach the server. ${message}`,
+      "NETWORK_ERROR",
+      null,
+    );
+  }
+
+  const text = await res.text();
+  const body = parseBody(text);
+
+  if (!res.ok) {
+    const serverCode    = body?.error?.code;
+    const serverMessage = body?.error?.message;
+    const code          = mapStatusToCode(res.status, serverCode);
+    const message       = serverMessage ?? "Couldn't start video recording. Please try again.";
+    throw new VideoEscalationError(message, code, res.status);
+  }
+
+  const parsed = body as unknown as { data?: unknown } | null;
+  const data   = parsed?.data as OfferVideoRecordingResult | undefined;
+  if (
+    !data ||
+    typeof (data as { status?: unknown }).status !== "string" ||
+    typeof (data as { correlationId?: unknown }).correlationId !== "string"
+  ) {
+    throw new VideoEscalationError(
+      "Received an unexpected response shape from the server.",
+      "UNKNOWN",
+      res.status,
+    );
+  }
+  return data;
+}
+
+export interface ExtendVideoGrantResult {
+  grantExpiresAt:  string;
+  grantExtendedAt: string;
+}
+
+/** Doctor spends the single 120s grant extension (rec-22). */
+export async function extendVideoGrant(
+  token: string,
+  sessionId: string,
+): Promise<ExtendVideoGrantResult> {
+  const base = requireApiBaseUrl();
+  const url  = `${base}/api/v1/consultation/${encodeURIComponent(sessionId)}/video-escalation/extend`;
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization:  `Bearer ${token}`,
+      },
+      body: JSON.stringify({}),
+      cache: "no-store",
+    });
+  } catch (networkErr) {
+    const message = networkErr instanceof Error
+      ? networkErr.message
+      : "Network error";
+    throw new VideoEscalationError(
+      `Couldn't reach the server. ${message}`,
+      "NETWORK_ERROR",
+      null,
+    );
+  }
+
+  const text = await res.text();
+  const body = parseBody(text);
+
+  if (!res.ok) {
+    const serverCode    = body?.error?.code;
+    const serverMessage = body?.error?.message;
+    const code          = mapStatusToCode(res.status, serverCode);
+    const message       = serverMessage ?? "Couldn't extend video recording.";
+    throw new VideoEscalationError(message, code, res.status);
+  }
+
+  const parsed = body as unknown as { data?: unknown } | null;
+  const data   = parsed?.data as ExtendVideoGrantResult | undefined;
+  if (
+    !data ||
+    typeof data.grantExpiresAt !== "string" ||
+    typeof data.grantExtendedAt !== "string"
   ) {
     throw new VideoEscalationError(
       "Received an unexpected response shape from the server.",

@@ -208,7 +208,7 @@ describe('voiceSessionTwilioAdapter', () => {
   });
 
   describe('endSession', () => {
-    it('defers to video adapter then enqueues transcription', async () => {
+    it('defers to video adapter then enqueues transcription (rec-03 voice no-regression)', async () => {
       await voiceSessionTwilioAdapter.endSession('RM_voice_abc', correlationId);
 
       expect(mockVideoEndSession).toHaveBeenCalledTimes(1);

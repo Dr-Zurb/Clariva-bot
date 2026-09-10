@@ -9,6 +9,7 @@ import {
   describeLayoutShape,
   isLayoutCramped,
   CRAMPED_ROOT_SIBLINGS,
+  cockpitPanelDomId,
   type PaneTreeNode,
 } from "../layout-tree";
 
@@ -42,6 +43,36 @@ describe("sanitizePaneTree — heals corrupted persisted trees", () => {
     expect(new Set(ids).size).toBe(ids.length);
     // Both panes survive (objective + body), each hosted exactly once.
     expect(paneTreeToFlat(fixed).paneOrder.sort()).toEqual(["body", "objective"]);
+  });
+
+  it("strips a leftover panelKey that collides with another node's id", () => {
+    // Swap pins panelKey on the slot; extracting Plan then mints id "plan"
+    // while Consult's vacated slot still has panelKey "plan".
+    const corrupt: PaneTreeNode = {
+      id: "__root__",
+      sizePct: 100,
+      hidden: false,
+      direction: "horizontal",
+      children: [
+        {
+          id: "body",
+          sizePct: 50,
+          hidden: false,
+          panelKey: "plan",
+          paneIds: ["body"],
+          activeTabId: "body",
+        },
+        { id: "plan", sizePct: 50, hidden: false, paneIds: ["plan"], activeTabId: "plan" },
+      ],
+    };
+    const fixed = sanitizePaneTree(corrupt);
+    const leafDomIds = [
+      cockpitPanelDomId(fixed.children![0]!),
+      cockpitPanelDomId(fixed.children![1]!),
+    ];
+    expect(new Set(leafDomIds).size).toBe(2);
+    expect(leafDomIds).toContain("plan");
+    expect(paneTreeToFlat(fixed).paneOrder.sort()).toEqual(["body", "plan"]);
   });
 
   it("drops a pane duplicated across two leaves (keeps first host)", () => {

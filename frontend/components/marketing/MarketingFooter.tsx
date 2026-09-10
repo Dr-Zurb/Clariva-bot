@@ -2,6 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 
 const LEGAL_LINKS = [
+  { href: "/pricing", label: "Pricing" },
   { href: "/privacy", label: "Privacy" },
   { href: "/terms", label: "Terms" },
   { href: "/data-deletion", label: "Data Deletion" },

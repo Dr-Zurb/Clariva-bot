@@ -98,6 +98,7 @@ function baseApt(overrides: Record<string, unknown> = {}) {
     opd_session_delay_minutes: null,
     opd_early_invite_expires_at: null,
     opd_early_invite_response: null,
+    booking_origin: 'booked',
     created_at: '2026-05-01T00:00:00.000Z',
     ...overrides,
   };
@@ -136,6 +137,7 @@ describe('listDoctorSlotSession (sl-01)', () => {
       upcoming: 0,
       running_late: 0,
       in_consultation: 0,
+      incomplete: 0,
       completed: 0,
       missed: 0,
       cancelled: 0,
@@ -173,8 +175,8 @@ describe('listDoctorSlotSession (sl-01)', () => {
     expect(entries.map((e) => e.position)).toEqual([1, 2]);
   });
 
-  it('counts.upcoming includes grace rows (DL-4)', async () => {
-    const graceApt = baseApt({
+  it('counts.upcoming includes near-slot rows formerly labeled grace (DL-4)', async () => {
+    const nearSlotApt = baseApt({
       id: 'g1',
       appointment_date: '2026-05-08T05:10:00.000Z',
       status: 'confirmed',
@@ -187,7 +189,7 @@ describe('listDoctorSlotSession (sl-01)', () => {
       patient_id: null,
     });
     const { from } = createSlotMockAdmin({
-      appointments: [{ data: [graceApt, upcomingApt], error: null }],
+      appointments: [{ data: [nearSlotApt, upcomingApt], error: null }],
       patients: [],
       consultation_sessions: [{ data: [], error: null }],
     });
@@ -196,7 +198,7 @@ describe('listDoctorSlotSession (sl-01)', () => {
     const { counts, entries } = await listDoctorSlotSession(doctorId, sessionDate, correlationId);
     const g = entries.find((e) => e.appointmentId === 'g1');
     const u = entries.find((e) => e.appointmentId === 'u1');
-    expect(g?.slotStatus).toBe('grace');
+    expect(g?.slotStatus).toBe('upcoming');
     expect(u?.slotStatus).toBe('upcoming');
     expect(counts.upcoming).toBe(2);
     expect(counts.all).toBe(2);
@@ -224,21 +226,86 @@ describe('listDoctorSlotSession (sl-01)', () => {
     expect(entries[0]!.medicalRecordNumber).toBe('MRN-1');
   });
 
-  it('marks in_consultation when a live consultation_session exists', async () => {
+  it('marks in_consult when a live consultation_session exists', async () => {
     const apt = baseApt({ id: 'live1', patient_id: null });
     const { from } = createSlotMockAdmin({
       appointments: [{ data: [apt], error: null }],
       patients: [],
       consultation_sessions: [
-        { data: [{ appointment_id: 'live1' }], error: null },
+        {
+          data: [
+            {
+              appointment_id: 'live1',
+              status: 'live',
+              actual_started_at: '2026-05-08T04:55:00.000Z',
+              doctor_joined_at: null,
+              patient_joined_at: null,
+            },
+          ],
+          error: null,
+        },
       ],
     });
     mockedDb.getSupabaseAdminClient.mockReturnValue({ from } as never);
 
     const { entries, counts } = await listDoctorSlotSession(doctorId, sessionDate, correlationId);
+    expect(entries[0]!.lifecycle).toBe('in_consult');
     expect(entries[0]!.slotStatus).toBe('in_consultation');
     expect(counts.in_consultation).toBe(1);
+    expect(counts.incomplete).toBe(0);
     expect(counts.upcoming).toBe(0);
+  });
+
+  it('marks incomplete when a started session is no longer live', async () => {
+    const apt = baseApt({ id: 'inc1', patient_id: null, status: 'confirmed' });
+    const { from } = createSlotMockAdmin({
+      appointments: [{ data: [apt], error: null }],
+      patients: [],
+      consultation_sessions: [
+        {
+          data: [
+            {
+              appointment_id: 'inc1',
+              status: 'ended',
+              actual_started_at: '2026-05-08T04:40:00.000Z',
+              doctor_joined_at: '2026-05-08T04:40:00.000Z',
+              patient_joined_at: null,
+            },
+          ],
+          error: null,
+        },
+      ],
+    });
+    mockedDb.getSupabaseAdminClient.mockReturnValue({ from } as never);
+
+    const { entries, counts } = await listDoctorSlotSession(doctorId, sessionDate, correlationId);
+    expect(entries[0]!.lifecycle).toBe('incomplete');
+    expect(entries[0]!.slotStatus).toBe('in_consultation');
+    expect(counts.incomplete).toBe(1);
+    expect(counts.in_consultation).toBe(1);
+  });
+
+  it('tags overflow from booking_origin without suppressing late timing', async () => {
+    const apt = baseApt({
+      id: 'ov1',
+      patient_id: null,
+      booking_origin: 'overflow',
+      // 40 minutes before "now" (05:00Z) with default grace → late
+      appointment_date: '2026-05-08T04:20:00.000Z',
+    });
+    const { from } = createSlotMockAdmin({
+      appointments: [{ data: [apt], error: null }],
+      patients: [],
+      consultation_sessions: [{ data: [], error: null }],
+    });
+    mockedDb.getSupabaseAdminClient.mockReturnValue({ from } as never);
+
+    const { entries, counts } = await listDoctorSlotSession(doctorId, sessionDate, correlationId);
+    expect(entries[0]!.lifecycle).toBe('scheduled');
+    expect(entries[0]!.timing?.band).toBe('late');
+    expect(entries[0]!.tags).toContain('overflow');
+    expect(counts.overflow).toBe(1);
+    expect(counts.running_late).toBe(1);
   });
 
   it('skips patients query when no appointment has patient_id', async () => {

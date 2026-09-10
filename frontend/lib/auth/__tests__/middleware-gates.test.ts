@@ -49,4 +49,49 @@ describe("resolveAuthGate", () => {
       resolveAuthGate({ pathname: "/complete-profile", user: complete })
     ).toEqual({ redirect: "/dashboard" });
   });
+
+  it("unauth on desk → /login", () => {
+    expect(resolveAuthGate({ pathname: "/desk", user: null })).toEqual({
+      redirect: "/login",
+    });
+    expect(resolveAuthGate({ pathname: "/desk/today", user: null })).toEqual({
+      redirect: "/login",
+    });
+  });
+
+  it("incomplete on desk → allow (staff skip profile_completed)", () => {
+    expect(
+      resolveAuthGate({ pathname: "/desk", user: incomplete })
+    ).toBe("allow");
+  });
+
+  it("receptionist on desk → allow without profile_completed", () => {
+    expect(
+      resolveAuthGate({
+        pathname: "/desk/today",
+        user: { app_metadata: { role: "receptionist" } },
+      })
+    ).toBe("allow");
+  });
+
+  it("receptionist on dashboard → /desk", () => {
+    expect(
+      resolveAuthGate({
+        pathname: "/dashboard/patients-v2",
+        user: {
+          user_metadata: { profile_completed: true },
+          app_metadata: { role: "receptionist" },
+        },
+      })
+    ).toEqual({ redirect: "/desk" });
+  });
+
+  it("receptionist on complete-profile → /desk", () => {
+    expect(
+      resolveAuthGate({
+        pathname: "/complete-profile",
+        user: { app_metadata: { role: "receptionist" } },
+      })
+    ).toEqual({ redirect: "/desk" });
+  });
 });

@@ -14,6 +14,16 @@ import { cn } from "@/lib/utils";
 import type { SlotSessionCounts } from "@/types/opd-doctor";
 import type { OpdStatusFilterValue } from "./OpdQueueStatusFilter";
 import { trackOpdSlotEvent } from "./opdQueueTelemetry";
+import {
+  SLOT_CHIP_ALL_HINT,
+  SLOT_CHIP_SECTION_HINT,
+} from "./opdSlotSectioning";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -29,24 +39,49 @@ export interface OpdSlotStatusFilterProps {
 interface ChipDef {
   value: Exclude<
     OpdStatusFilterValue,
-    | "waiting"
-    | "called"
-    | "no_show"
-    | "skipped"
-    | "cancelled"
-    | "grace"
-    | "overflow"
+    "waiting" | "called" | "no_show" | "skipped" | "grace"
   >;
   label: string;
+  hint: string;
 }
 
 const CHIPS: ChipDef[] = [
-  { value: "all", label: "All" },
-  { value: "upcoming", label: "Upcoming" },
-  { value: "running_late", label: "Late" },
-  { value: "in_consultation", label: "In consult" },
-  { value: "completed", label: "Done" },
-  { value: "missed", label: "Missed" },
+  { value: "all", label: "All", hint: SLOT_CHIP_ALL_HINT },
+  {
+    value: "upcoming",
+    label: "Upcoming",
+    hint: SLOT_CHIP_SECTION_HINT.upcoming,
+  },
+  {
+    value: "running_late",
+    label: "Overdue",
+    hint: SLOT_CHIP_SECTION_HINT.late,
+  },
+  {
+    value: "in_consultation",
+    label: "Incomplete",
+    hint: SLOT_CHIP_SECTION_HINT.incomplete,
+  },
+  {
+    value: "completed",
+    label: "Done",
+    hint: SLOT_CHIP_SECTION_HINT.done,
+  },
+  {
+    value: "missed",
+    label: "No show",
+    hint: SLOT_CHIP_SECTION_HINT.missed,
+  },
+  {
+    value: "overflow",
+    label: "Overflow",
+    hint: SLOT_CHIP_SECTION_HINT.overflow,
+  },
+  {
+    value: "cancelled",
+    label: "Cancelled",
+    hint: SLOT_CHIP_SECTION_HINT.cancelled,
+  },
 ];
 
 const CHIP_VALUE_SET = new Set<string>(CHIPS.map((c) => c.value));
@@ -63,7 +98,7 @@ export function OpdSlotStatusFilter({
 }: OpdSlotStatusFilterProps): JSX.Element {
   const listRef = useRef<HTMLDivElement>(null);
 
-  /** URL may hold slot-only non-chip values (e.g. cancelled) or queue-mode values. */
+  /** URL may hold queue-mode values; fall back to All. */
   const resolvedValue: ChipDef["value"] = CHIP_VALUE_SET.has(value)
     ? (value as ChipDef["value"])
     : "all";
@@ -92,55 +127,66 @@ export function OpdSlotStatusFilter({
     in_consultation: counts.in_consultation,
     completed: counts.completed,
     missed: counts.missed,
+    overflow: counts.overflow,
+    cancelled: counts.cancelled,
   };
 
   return (
-    <div
-      ref={listRef}
-      role="tablist"
-      aria-label="Filter slots by status"
-      className={cn(
-        "flex items-center gap-1.5 overflow-x-auto py-1 scrollbar-none sm:flex-wrap",
-        className
-      )}
-    >
-      {CHIPS.map((chip, idx) => {
-        const isActive = resolvedValue === chip.value;
-        const count = chipCounts[chip.value] ?? 0;
-        const isMuted = count === 0 && chip.value !== "all";
+    <TooltipProvider delayDuration={400}>
+      <div
+        ref={listRef}
+        role="tablist"
+        aria-label="Filter slots by status"
+        className={cn(
+          "flex items-center gap-1.5 overflow-x-auto py-1 scrollbar-none sm:flex-wrap",
+          className
+        )}
+      >
+        {CHIPS.map((chip, idx) => {
+          const isActive = resolvedValue === chip.value;
+          const count = chipCounts[chip.value] ?? 0;
+          const isMuted = count === 0 && chip.value !== "all";
 
-        return (
-          <button
-            key={chip.value}
-            type="button"
-            role="tab"
-            aria-selected={isActive}
-            tabIndex={isActive ? 0 : -1}
-            onClick={() => {
-              trackOpdSlotEvent({
-                event: "opd_slot.filter_changed",
-                kind: "status",
-                statusValue: chip.value,
-                queryLength: null,
-              });
-              onChange(chip.value);
-            }}
-            onKeyDown={(e) => handleKeyDown(e, idx)}
-            className={cn(
-              "inline-flex shrink-0 cursor-pointer select-none items-center gap-1 rounded-full px-3 py-1 text-xs font-medium transition-colors",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
-              isActive
-                ? "bg-primary text-primary-foreground shadow"
-                : isMuted
-                  ? "border border-input bg-background text-muted-foreground/50 hover:bg-accent hover:text-accent-foreground"
-                  : "border border-input bg-background text-foreground hover:bg-accent hover:text-accent-foreground"
-            )}
-          >
-            <span>{chip.label}</span>
-            <span className="tabular-nums opacity-80">{count}</span>
-          </button>
-        );
-      })}
-    </div>
+          return (
+            <Tooltip key={chip.value}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  aria-description={chip.hint}
+                  tabIndex={isActive ? 0 : -1}
+                  onClick={() => {
+                    trackOpdSlotEvent({
+                      event: "opd_slot.filter_changed",
+                      kind: "status",
+                      statusValue: chip.value,
+                      queryLength: null,
+                    });
+                    onChange(chip.value);
+                  }}
+                  onKeyDown={(e) => handleKeyDown(e, idx)}
+                  className={cn(
+                    "inline-flex shrink-0 cursor-pointer select-none items-center gap-1 rounded-full px-3 py-1 text-xs font-medium transition-colors",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+                    isActive
+                      ? "bg-primary text-primary-foreground shadow"
+                      : isMuted
+                        ? "border border-input bg-background text-muted-foreground/50 hover:bg-accent hover:text-accent-foreground"
+                        : "border border-input bg-background text-foreground hover:bg-accent hover:text-accent-foreground"
+                  )}
+                >
+                  <span>{chip.label}</span>
+                  <span className="tabular-nums opacity-80">{count}</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-xs text-left">
+                {chip.hint}
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
+      </div>
+    </TooltipProvider>
   );
 }

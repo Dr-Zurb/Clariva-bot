@@ -28,6 +28,7 @@ describe("buildGoLiveChecklist", () => {
     const steps = buildGoLiveChecklist(incompleteSetup, "unverified");
     expect(steps.map((s) => s.id)).toEqual([
       "verify",
+      "recording_attestation",
       "instagram",
       "practice",
       "pricing",
@@ -64,14 +65,17 @@ describe("buildGoLiveChecklist", () => {
       (s) => s.id === "instagram"
     );
     expect(ig?.href).toBe("/dashboard/settings/integrations");
-    expect(ig?.cta).toBe("Connect");
+    expect(ig?.cta).toBe("Connect socials");
   });
 });
 
 describe("remainingGoLiveSteps / isGoLiveComplete", () => {
   it("counts verify among remaining when unverified", () => {
     const remaining = remainingGoLiveSteps(completeSetup, "unverified");
-    expect(remaining.map((s) => s.id)).toEqual(["verify"]);
+    expect(remaining.map((s) => s.id)).toEqual([
+      "verify",
+      "recording_attestation",
+    ]);
   });
 
   it("is complete only when setup complete AND verified", () => {

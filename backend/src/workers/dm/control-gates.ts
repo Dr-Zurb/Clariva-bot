@@ -4,11 +4,23 @@
  */
 
 import { handleRevocation } from '../../services/consent-service';
-import { isEmergencyUserMessage, resolveSafetyMessage } from '../../utils/safety-messages';
+import { buildReceptionistPauseDefaultMessage } from '../../utils/dm-copy';
+import {
+  isEmergencyUserMessage,
+  recentThreadHasAssistantEmergencyEscalation,
+  resolveSafetyMessage,
+  userMessageSignalsPostEmergencyStability,
+} from '../../utils/safety-messages';
 import type { IntentDetectionResult } from '../../types/ai';
-import { mergeTriage, type ConversationState } from '../../types/conversation';
+import {
+  isOpenEmergencyCrisis,
+  mergeSafety,
+  mergeTriage,
+  type ConversationState,
+} from '../../types/conversation';
 import type { DoctorSettingsRow } from '../../types/doctor-settings';
 import type { DmHandlerBranch } from '../../types/dm-instrumentation';
+import type { ConversationLanguage } from '../../utils/conversation-language';
 
 /** Minimal recent-turn shape gates read (no channel coupling). */
 export interface DmGateRecentMessage {
@@ -22,7 +34,9 @@ export interface DmGateContext {
   intentResult: IntentDetectionResult;
   doctorSettings: DoctorSettingsRow | null;
   text: string;
-  /** Precomputed by handler — emergency gate suppression during PHI collection. */
+  /** Turn-resolved reply language (lang-06) — emergency copy must not re-detect from text. */
+  turnLanguage: ConversationLanguage;
+  /** Precomputed by handler (stages still read this; emergency gate no longer suppresses on it). */
   inCollection: boolean;
   conversationId: string;
   patientId: string | null;
@@ -43,14 +57,62 @@ export interface DmControlGate {
   handle(ctx: DmGateContext): Promise<DmGateResult> | DmGateResult;
 }
 
-/** RBH-09: Default when receptionist automation is paused (channel-agnostic copy). */
+/** RBH-09 / lang-21: English default pause copy (re-export for callers that only need `en`). */
 export const DEFAULT_RECEPTIONIST_PAUSE_MESSAGE =
-  'Thanks for your message. Our team will reply from this inbox personally when they can. Automated scheduling is paused right now - we appreciate your patience.';
+  buildReceptionistPauseDefaultMessage({ language: 'en' });
 
-export function resolveReceptionistPauseMessage(settings: DoctorSettingsRow | null): string {
+/**
+ * Pause handoff copy. Custom doctor message is returned **verbatim** (LANG5-D4) —
+ * doctor-authored text is not ours to localize. Only the default arm uses `language`.
+ */
+export function resolveReceptionistPauseMessage(
+  settings: DoctorSettingsRow | null,
+  language: ConversationLanguage
+): string {
   const custom = settings?.instagram_receptionist_pause_message?.trim();
-  if (custom) return custom;
-  return DEFAULT_RECEPTIONIST_PAUSE_MESSAGE;
+  if (custom) {
+    // LANG5-D4: do not translate or locale-dispatch doctor-authored pause copy.
+    return custom;
+  }
+  return buildReceptionistPauseDefaultMessage({ language });
+}
+
+function threadHasPriorEmergencyEscalation(ctx: DmGateContext): boolean {
+  if (isOpenEmergencyCrisis(ctx.state)) return true;
+  return recentThreadHasAssistantEmergencyEscalation(
+    ctx.recentMessages.map((m) => ({
+      sender_type: m.sender_type,
+      content: m.content ?? '',
+    }))
+  );
+}
+
+/** Mark open crisis window (also used by outbound emergency-number floor). */
+export function markEmergencyCrisisOpen(
+  state: ConversationState,
+  opts?: { preserveEscalatedAt?: boolean }
+): ConversationState {
+  const now = new Date().toISOString();
+  const escalatedAt =
+    opts?.preserveEscalatedAt === true && state.safety?.escalatedAt
+      ? state.safety.escalatedAt
+      : now;
+  return mergeSafety(
+    mergeTriage(
+      {
+        ...state,
+        lastIntent: 'emergency',
+        step: 'responded',
+        updatedAt: now,
+      },
+      {
+        reasonFirstTriagePhase: undefined,
+        postMedicalConsultFeeAckSent: undefined,
+        lastMedicalDeflectionAt: undefined,
+      }
+    ),
+    { escalatedAt, clearedAt: undefined }
+  );
 }
 
 export const revokeConsentGate: DmControlGate = {
@@ -64,7 +126,8 @@ export const revokeConsentGate: DmControlGate = {
     const reply = await handleRevocation(
       ctx.conversationId,
       ctx.patientId as string,
-      ctx.correlationId
+      ctx.correlationId,
+      ctx.turnLanguage
     );
     return {
       branch: 'revoke_consent',
@@ -82,17 +145,67 @@ export const revokeConsentGate: DmControlGate = {
   },
 };
 
+/**
+ * SAFETY ratchet (invariant):
+ * - Acute regex hit always escalates and cannot be vetoed by collection/pause (revoke still wins).
+ * - Classifier may escalate (`intent === emergency`) but never blocks a regex hit.
+ * - Conversation funnel state (`inCollection`, step) must not affect eligibility.
+ */
+export const emergencyGate: DmControlGate = {
+  name: 'emergency_safety',
+  rationale:
+    'DL-2 Safety ratchet: acute regex OR classified emergency outranks pause, booking, and stage logic; funnel state never suppresses eligibility (revoke still wins the head chain).',
+  fires(ctx) {
+    // Ratchet: do not read ctx.inCollection — funnel state must not suppress eligibility.
+    return isEmergencyUserMessage(ctx.text) || ctx.intentResult.intent === 'emergency';
+  },
+  handle(ctx) {
+    const priorEscalation = threadHasPriorEmergencyEscalation(ctx);
+    return {
+      branch: 'emergency_safety',
+      reply: resolveSafetyMessage('emergency', ctx.turnLanguage, {
+        emergencyVariant: priorEscalation ? 'reaffirm' : 'first',
+      }),
+      nextState: markEmergencyCrisisOpen(ctx.state),
+    };
+  },
+};
+
+/**
+ * While a crisis window is open, reaffirm by default.
+ * Allowlist: positive stability evidence (stages resume booking). Revoke wins earlier in the chain.
+ */
+export const openCrisisGate: DmControlGate = {
+  name: 'emergency_safety',
+  rationale:
+    'Open crisis inversion: after escalatedAt, ordinary branches must not speak — reaffirm 112 unless the patient signals stability (booking resume) or revoke.',
+  fires(ctx) {
+    if (!isOpenEmergencyCrisis(ctx.state)) return false;
+    if (userMessageSignalsPostEmergencyStability(ctx.text)) return false;
+    return true;
+  },
+  handle(ctx) {
+    return {
+      branch: 'emergency_safety',
+      reply: resolveSafetyMessage('emergency', ctx.turnLanguage, {
+        emergencyVariant: 'reaffirm',
+      }),
+      nextState: markEmergencyCrisisOpen(ctx.state, { preserveEscalatedAt: true }),
+    };
+  },
+};
+
 export const receptionistPausedGate: DmControlGate = {
   name: 'receptionist_paused',
   rationale:
-    'DL-9 / DL-2: Doctor pause switch outranks conversion and stage logic; handoff copy only (revoke handled first).',
+    'DL-9 / DL-2: Doctor pause switch outranks conversion and stage logic; handoff copy only (revoke + emergency handled first — SAFETY-01).',
   fires(ctx) {
     return ctx.doctorSettings?.instagram_receptionist_paused === true;
   },
   handle(ctx) {
     return {
       branch: 'receptionist_paused',
-      reply: resolveReceptionistPauseMessage(ctx.doctorSettings),
+      reply: resolveReceptionistPauseMessage(ctx.doctorSettings, ctx.turnLanguage),
       nextState: {
         ...ctx.state,
         lastIntent: ctx.intentResult.intent,
@@ -103,62 +216,24 @@ export const receptionistPausedGate: DmControlGate = {
   },
 };
 
-export const emergencyGate: DmControlGate = {
-  name: 'emergency_safety',
-  rationale:
-    'DL-2 Safety: Acute emergency patterns and classified emergency intent outrank booking/fee/helpfulness; collection-only LLM emergency is suppressed unless the message is acute.',
-  fires(ctx) {
-    return (
-      (isEmergencyUserMessage(ctx.text) || ctx.intentResult.intent === 'emergency') &&
-      !(
-        ctx.inCollection &&
-        ctx.intentResult.intent === 'emergency' &&
-        !isEmergencyUserMessage(ctx.text)
-      )
-    );
-  },
-  handle(ctx) {
-    return {
-      branch: 'emergency_safety',
-      reply: resolveSafetyMessage('emergency', ctx.text),
-      nextState: mergeTriage(
-        {
-          ...ctx.state,
-          lastIntent: 'emergency',
-          step: 'responded',
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          reasonFirstTriagePhase: undefined,
-          postMedicalConsultFeeAckSent: undefined,
-          lastMedicalDeflectionAt: undefined,
-        }
-      ),
-    };
-  },
-};
-
-/** DL-2 priority order (documentation + tests): revoke → paused → emergency, all before stage routing. */
+/**
+ * DL-2 priority order (SAFETY-01): revoke → acute emergency → open-crisis reaffirm → paused.
+ * Open-crisis gate runs before pause so a paused doctor still gets crisis reaffirm.
+ */
 export const CONTROL_GATES: DmControlGate[] = [
   revokeConsentGate,
-  receptionistPausedGate,
   emergencyGate,
+  openCrisisGate,
+  receptionistPausedGate,
 ];
 
-/** Revoke + paused — evaluated at turn entry, before everything. */
-export const HEAD_CONTROL_GATES: DmControlGate[] = CONTROL_GATES.slice(0, 2);
+/** Full head chain — evaluated at turn entry before `resolveStage`. */
+export const HEAD_CONTROL_GATES: DmControlGate[] = CONTROL_GATES;
 
 /**
- * Emergency — evaluated in `executeDmTurn` AFTER head gates but BEFORE `resolveStage` (rcp-08).
- *
- * rcp-08 promoted emergency to a true head gate. Previously (rcp-02..07) it ran inside the
- * legacy decide-chain, i.e. AFTER stage dispatch, so the cancel/reschedule step gates and other
- * flow-step stages claimed an emergency turn before emergency could fire. Hoisting it here makes
- * DL-2 (Safety first) literal: an emergency message wins over any in-flight flow step. The
- * in-collection suppression in `emergencyGate.fires` is unchanged, so non-acute "emergency"
- * intent mid-collection is still suppressed; acute messages always escalate.
+ * Emergency-only slice (unit tests / composition). Acute + open-crisis before pause.
  */
-export const EMERGENCY_CONTROL_GATES: DmControlGate[] = [emergencyGate];
+export const EMERGENCY_CONTROL_GATES: DmControlGate[] = [emergencyGate, openCrisisGate];
 
 export async function evaluateControlGates(
   gates: readonly DmControlGate[],

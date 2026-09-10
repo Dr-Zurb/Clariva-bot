@@ -16,6 +16,7 @@ export default async function DashboardLayout({
     data: { user },
   } = await getServerUser();
   if (!user) redirect("/login");
+  if (user.app_metadata?.role === "receptionist") redirect("/desk");
 
   const userEmail = user.email ?? null;
   // admin-console-v2 · acon2-01: visibility-only flag for the profile-menu

@@ -3,9 +3,11 @@
 /**
  * Sub-batch E · task-video-E2 — Auto audio-only fallback banner.
  *
- * Sticky banner that mounts at the top of the video canvas when the
+ * Banner that overlays the top of the video canvas when the
  * adaptive controller (E.3 / E.1) has decided bandwidth can't
  * sustain even 480p video and has torn down the local video track.
+ * Parent mounts it as an absolute top slot so cockpit
+ * `overflow-hidden` stages do not clip it under the tile grid.
  * The user sees a clear explanation + a "Try video again" CTA
  * that's disabled during the 60s post-restore cooldown
  * (Decision §25 — flapping prevention).

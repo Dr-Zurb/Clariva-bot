@@ -8,13 +8,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Card,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -149,6 +142,11 @@ export interface ServiceReviewsInboxProps {
   initialReviews: ServiceStaffReviewListItem[];
   settings: DoctorSettings | null;
   token: string;
+  /**
+   * Inbox-embedded mode: drop the standalone page title / heavy chrome and
+   * match the quieter Interactions list shell (rail already says Needs review).
+   */
+  embedded?: boolean;
 }
 
 type DialogState =
@@ -164,6 +162,7 @@ export function ServiceReviewsInbox({
   initialReviews,
   settings,
   token,
+  embedded = false,
 }: ServiceReviewsInboxProps) {
   const catalog = settings?.service_offerings_json ?? null;
   const [activeTab, setActiveTab] = useState<ServiceStaffReviewListQueryStatus>("pending");
@@ -655,110 +654,193 @@ export function ServiceReviewsInbox({
     [catalog, runImmediateReassign, onConfirm]
   );
 
-  return (
-    <div className="space-y-4">
-      {toastPortal}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="space-y-3">
-          <div>
-            <h1 className="text-xl font-semibold text-foreground">Service match reviews</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Confirm AI-suggested visit types from Instagram bookings; once confirmed, patients get a
-              booking link in the same chat.
-            </p>
+  const shortcutsPopover = (
+    <Popover open={keyboardHelpOpen} onOpenChange={setKeyboardHelpOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className={cn("h-8 gap-1.5", embedded && "px-2")}
+          aria-label="Keyboard shortcuts"
+        >
+          <HelpCircle aria-hidden="true" className="h-3.5 w-3.5" />
+          {!embedded && "Shortcuts"}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-72" data-testid="review-keyboard-help">
+        <p className="text-sm font-semibold text-foreground">Keyboard shortcuts</p>
+        <dl className="mt-3 space-y-1.5 text-sm text-muted-foreground">
+          <div className="flex justify-between gap-4">
+            <dt>Move focus</dt>
+            <dd className="font-mono text-foreground">j / k</dd>
           </div>
-          <dl className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
-            <div className="flex items-baseline gap-2">
-              <dt className="text-muted-foreground">Pending</dt>
-              <dd className="font-medium tabular-nums text-foreground">
-                {dataTab === "pending" ? pendingCount : "—"}
-              </dd>
-            </div>
-            <div className="flex items-baseline gap-2">
-              <dt className="text-muted-foreground">Due &lt; 1h</dt>
-              <dd
-                id="booking-review-due-within-1h-count"
-                className="font-medium tabular-nums text-foreground"
-              >
-                {dueWithin1hCount ?? "—"}
-              </dd>
-            </div>
-          </dl>
+          <div className="flex justify-between gap-4">
+            <dt>Confirm</dt>
+            <dd className="font-mono text-foreground">c</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt>Reassign / Cancel</dt>
+            <dd className="font-mono text-foreground">r / x</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt>Open detail</dt>
+            <dd className="font-mono text-foreground">Enter</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt>Focus search</dt>
+            <dd className="font-mono text-foreground">/</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt>Toggle this help</dt>
+            <dd className="font-mono text-foreground">?</dd>
+          </div>
+        </dl>
+      </PopoverContent>
+    </Popover>
+  );
+
+  const refreshButton = (
+    <Button
+      type="button"
+      variant={embedded ? "ghost" : "outline"}
+      size="sm"
+      className={cn(embedded && "h-8 gap-1.5 px-2")}
+      onClick={() => void refresh()}
+      disabled={refreshing || polling.isFetching}
+    >
+      <RefreshCw
+        className={cn(
+          "h-3.5 w-3.5",
+          (refreshing || polling.isFetching) && "animate-spin"
+        )}
+      />
+      {!embedded && (refreshing || polling.isFetching ? "Refreshing…" : "Refresh")}
+      {embedded && (
+        <span className="sr-only">
+          {refreshing || polling.isFetching ? "Refreshing…" : "Refresh"}
+        </span>
+      )}
+    </Button>
+  );
+
+  const statusTabs = embedded ? (
+    <div className="flex flex-wrap gap-1" role="tablist" aria-label="Review status">
+      {INBOX_TABS.map((t) => {
+        const selected = activeTab === t.id;
+        return (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            onClick={() => selectTab(t.id)}
+            className={cn(
+              "rounded-md px-2.5 py-1 text-xs transition-colors",
+              selected
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {t.label}
+            {t.id === "pending" && pendingCount > 0 ? (
+              <span className="ml-1.5 tabular-nums opacity-80">{pendingCount}</span>
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  ) : (
+    <Tabs
+      value={activeTab}
+      onValueChange={(v) => selectTab(v as ServiceStaffReviewListQueryStatus)}
+    >
+      <TabsList aria-label="Review status">
+        {INBOX_TABS.map((t) => (
+          <TabsTrigger key={t.id} value={t.id}>
+            {t.label}
+            {t.id === "pending" && pendingCount > 0 && (
+              <Badge variant="secondary" className="ml-2 tabular-nums">
+                {pendingCount}
+              </Badge>
+            )}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+    </Tabs>
+  );
+
+  return (
+    <div
+      className={cn(
+        embedded ? "flex min-h-0 flex-1 flex-col" : "space-y-4"
+      )}
+    >
+      {toastPortal}
+      {embedded ? (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/50 px-3 py-2">
+          {statusTabs}
+          <span
+            className="text-xs tabular-nums text-muted-foreground"
+            id="booking-review-due-within-1h-count"
+          >
+            {dataTab === "pending" ? `${pendingCount} pending` : null}
+            {dueWithin1hCount != null && dueWithin1hCount > 0
+              ? `${dataTab === "pending" ? " · " : ""}${dueWithin1hCount} due soon`
+              : null}
+          </span>
+          <div className="ml-auto flex items-center gap-0.5">
+            {shortcutsPopover}
+            {refreshButton}
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Popover open={keyboardHelpOpen} onOpenChange={setKeyboardHelpOpen}>
-            <PopoverTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-9 gap-1.5"
-                aria-label="Keyboard shortcuts"
-              >
-                <HelpCircle aria-hidden="true" />
-                Shortcuts
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-72" data-testid="review-keyboard-help">
-              <p className="text-sm font-semibold text-foreground">Keyboard shortcuts</p>
-              <dl className="mt-3 space-y-1.5 text-sm text-muted-foreground">
-                <div className="flex justify-between gap-4">
-                  <dt>Move focus</dt>
-                  <dd className="font-mono text-foreground">j / k</dd>
+      ) : (
+        <>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="space-y-3">
+              <div>
+                <h1 className="text-xl font-semibold text-foreground">
+                  Service match reviews
+                </h1>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Confirm AI-suggested visit types from Instagram bookings; once
+                  confirmed, patients get a booking link in the same chat.
+                </p>
+              </div>
+              <dl className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+                <div className="flex items-baseline gap-2">
+                  <dt className="text-muted-foreground">Pending</dt>
+                  <dd className="font-medium tabular-nums text-foreground">
+                    {dataTab === "pending" ? pendingCount : "—"}
+                  </dd>
                 </div>
-                <div className="flex justify-between gap-4">
-                  <dt>Confirm</dt>
-                  <dd className="font-mono text-foreground">c</dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt>Reassign / Cancel</dt>
-                  <dd className="font-mono text-foreground">r / x</dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt>Open detail</dt>
-                  <dd className="font-mono text-foreground">Enter</dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt>Focus search</dt>
-                  <dd className="font-mono text-foreground">/</dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt>Toggle this help</dt>
-                  <dd className="font-mono text-foreground">?</dd>
+                <div className="flex items-baseline gap-2">
+                  <dt className="text-muted-foreground">Due &lt; 1h</dt>
+                  <dd
+                    id="booking-review-due-within-1h-count"
+                    className="font-medium tabular-nums text-foreground"
+                  >
+                    {dueWithin1hCount ?? "—"}
+                  </dd>
                 </div>
               </dl>
-            </PopoverContent>
-          </Popover>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void refresh()}
-            disabled={refreshing || polling.isFetching}
-          >
-            <RefreshCw className={refreshing || polling.isFetching ? "animate-spin" : undefined} />
-            {refreshing || polling.isFetching ? "Refreshing…" : "Refresh"}
-          </Button>
-        </div>
-      </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {shortcutsPopover}
+              {refreshButton}
+            </div>
+          </div>
+          {statusTabs}
+        </>
+      )}
 
-      <Tabs
-        value={activeTab}
-        onValueChange={(v) => selectTab(v as ServiceStaffReviewListQueryStatus)}
+      <div
+        className={cn(
+          embedded
+            ? "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3"
+            : "space-y-4"
+        )}
       >
-        <TabsList aria-label="Review status">
-          {INBOX_TABS.map((t) => (
-            <TabsTrigger key={t.id} value={t.id}>
-              {t.label}
-              {t.id === "pending" && pendingCount > 0 && (
-                <Badge variant="secondary" className="ml-2 tabular-nums">
-                  {pendingCount}
-                </Badge>
-              )}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
-
       {banner && (
         <Alert variant={banner.kind === "ok" ? "default" : "destructive"} role="status">
           {banner.kind === "ok" ? <CheckCircle2 /> : <AlertTriangle />}
@@ -792,7 +874,7 @@ export function ServiceReviewsInbox({
 
       {isPendingTab && selectedIds.size > 0 && (
         <div
-          className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/40 px-3 py-2"
+          className="flex flex-wrap items-center gap-3 rounded-xl border border-border/60 bg-muted/30 px-3 py-2"
           data-testid="review-bulk-bar"
         >
           <span className="text-sm font-medium text-foreground">
@@ -809,7 +891,10 @@ export function ServiceReviewsInbox({
 
       {dataStale ? (
         <div
-          className="overflow-hidden rounded-lg border shadow-sm"
+          className={cn(
+            "overflow-hidden border border-border/60",
+            embedded ? "rounded-xl bg-muted/20" : "rounded-lg shadow-sm"
+          )}
           role="status"
           aria-live="polite"
           aria-busy="true"
@@ -828,44 +913,51 @@ export function ServiceReviewsInbox({
           </div>
         </div>
       ) : reviews.length === 0 ? (
-        <Card>
-          <CardHeader className="text-center">
-            <CardTitle>
-              {activeTab === "pending"
-                ? "No pending reviews"
-                : `No ${INBOX_TABS.find((x) => x.id === activeTab)?.label.toLowerCase() ?? "matching"} reviews`}
-            </CardTitle>
-            <CardDescription>
-              {activeTab === "pending"
-                ? "When the bot is unsure about a visit type, requests appear here. Tune matcher hints in your catalog to reduce low-confidence matches."
-                : "Resolved requests stay here for your records. Switch tabs to see other outcomes."}
-            </CardDescription>
-          </CardHeader>
-          {activeTab === "pending" && (
-            <CardFooter className="justify-center">
-              <Button asChild variant="link">
-                <Link href="/dashboard/settings/practice-setup/services-catalog">
-                  Open services catalog
-                </Link>
-              </Button>
-            </CardFooter>
+        <div
+          className={cn(
+            "flex flex-col items-center justify-center px-4 py-12 text-center",
+            embedded
+              ? "rounded-xl bg-muted/20 ring-1 ring-border/40"
+              : "rounded-lg border shadow-sm"
           )}
-        </Card>
+        >
+          <p className="text-sm font-medium text-foreground">
+            {activeTab === "pending"
+              ? "No pending reviews"
+              : `No ${INBOX_TABS.find((x) => x.id === activeTab)?.label.toLowerCase() ?? "matching"} reviews`}
+          </p>
+          <p className="mt-1.5 max-w-md text-sm text-muted-foreground">
+            {activeTab === "pending"
+              ? "When the bot is unsure about a visit type, requests appear here. Tune matcher hints in your catalog to reduce low-confidence matches."
+              : "Resolved requests stay here for your records. Switch tabs to see other outcomes."}
+          </p>
+          {activeTab === "pending" && (
+            <Link
+              href="/dashboard/settings/practice-setup/services-catalog"
+              className="mt-3 text-sm font-medium text-primary hover:underline"
+            >
+              Open services catalog
+            </Link>
+          )}
+        </div>
       ) : noFilterMatches ? (
-        <Card>
-          <CardHeader className="text-center">
-            <CardTitle>No reviews match your filters</CardTitle>
-            <CardDescription>
-              Try a different search term or confidence level. Your queue still has{" "}
-              {reviews.length} review{reviews.length === 1 ? "" : "s"} in this tab.
-            </CardDescription>
-          </CardHeader>
-          <CardFooter className="justify-center">
-            <Button type="button" variant="outline" onClick={clearFilters}>
-              Clear filters
-            </Button>
-          </CardFooter>
-        </Card>
+        <div
+          className={cn(
+            "flex flex-col items-center justify-center px-4 py-12 text-center",
+            embedded
+              ? "rounded-xl bg-muted/20 ring-1 ring-border/40"
+              : "rounded-lg border shadow-sm"
+          )}
+        >
+          <p className="text-sm font-medium text-foreground">No reviews match your filters</p>
+          <p className="mt-1.5 max-w-md text-sm text-muted-foreground">
+            Try a different search term or confidence level. Your queue still has{" "}
+            {reviews.length} review{reviews.length === 1 ? "" : "s"} in this tab.
+          </p>
+          <Button type="button" variant="outline" size="sm" className="mt-3" onClick={clearFilters}>
+            Clear filters
+          </Button>
+        </div>
       ) : (
         <>
           <div
@@ -896,7 +988,10 @@ export function ServiceReviewsInbox({
           </div>
           <div
             className={cn(
-              "hidden overflow-x-auto rounded-lg border shadow-sm transition-opacity duration-150 lg:block",
+              "hidden overflow-x-auto transition-opacity duration-150 lg:block",
+              embedded
+                ? "rounded-xl border border-border/60 bg-card"
+                : "rounded-lg border shadow-sm",
               refreshing && !dataStale && "opacity-75"
             )}
             data-testid="review-desktop-table"
@@ -1164,11 +1259,13 @@ export function ServiceReviewsInbox({
           </div>
         </>
       )}
+      </div>
 
       {detailReview && (
         <ReviewDetailSheet
           review={detailReview}
           catalog={catalog}
+          token={token}
           onClose={() => setDetailReview(null)}
         />
       )}

@@ -12,8 +12,9 @@ import {
   findConversationByPlatformId,
   getConversationState,
 } from '../services/conversation-service';
+import { resolveChannelAdapter } from './channels';
 import { instagramChannelAdapter } from './channels/instagram';
-import type { ParseInboundSkip } from './channels/types';
+import type { ChannelAdapter, ParseInboundSkip } from './channels/types';
 import { tryAcquireConversationLock, releaseConversationLock, tryAcquireThrottleAck } from '../config/queue';
 import { DEFAULT_RECEPTIONIST_PAUSE_MESSAGE } from './dm/control-gates';
 import {
@@ -27,7 +28,11 @@ import {
   logWebhookInstagramDmPipelineTiming,
 } from '../services/webhook-metrics';
 import type { InstagramWebhookPayload, WebhookProvider } from '../types/webhook';
-import { buildNonTextAckMessage } from '../utils/dm-copy';
+import { buildNonTextAckMessage, buildThrottleAckMessage } from '../utils/dm-copy';
+import {
+  resolveTurnLanguage,
+  type ConversationLanguage,
+} from '../utils/conversation-language';
 
 /** @deprecated Import from `./dm/control-gates` — kept for existing test imports. */
 export const DEFAULT_INSTAGRAM_RECEPTIONIST_PAUSE_MESSAGE = DEFAULT_RECEPTIONIST_PAUSE_MESSAGE;
@@ -220,7 +225,10 @@ export async function processInstagramDmWebhook(params: {
     'Instagram webhook payload structure (for debugging message vs message_edit)'
   );
 
-  const parseResult = await instagramChannelAdapter.parseInbound(instagramPayload, {
+  const channelAdapter: ChannelAdapter =
+    resolveChannelAdapter(provider, payload) ?? instagramChannelAdapter;
+
+  const parseResult = await channelAdapter.parseInbound(instagramPayload, {
     eventId,
     correlationId,
   });
@@ -236,10 +244,24 @@ export async function processInstagramDmWebhook(params: {
     const { senderId } = inbound;
     const doctorId = inbound.tenant?.doctorId ?? null;
 
+    const platform =
+      inbound.channel === 'facebook'
+        ? 'facebook'
+        : inbound.channel === 'whatsapp'
+          ? 'whatsapp'
+          : 'instagram';
+
     let suppressAck = false;
+    let storedLanguage: ConversationLanguage | null = null;
     if (doctorId) {
-      const existing = await findConversationByPlatformId(doctorId, 'instagram', senderId, correlationId);
+      const existing = await findConversationByPlatformId(
+        doctorId,
+        platform,
+        senderId,
+        correlationId
+      );
       if (existing) {
+        storedLanguage = existing.language ?? null;
         const cs = await getConversationState(existing.id, correlationId);
         const activeStep = cs?.step;
         if (activeStep && activeStep !== 'responded') {
@@ -257,11 +279,12 @@ export async function processInstagramDmWebhook(params: {
         { eventId, provider, correlationId, senderId },
         'Non-text message received (attachment/sticker/reaction); sending text-only acknowledgement'
       );
-      const doctorToken = inbound.tenant?.doctorToken;
-      if (doctorId && doctorToken) {
-        const nonTextAck = buildNonTextAckMessage();
+      if (doctorId && inbound.tenant) {
+        // Non-text → no signal; preserve sticky stored language (lang-01 §3.4 / lang-10).
+        const { language } = resolveTurnLanguage(storedLanguage, '');
+        const nonTextAck = buildNonTextAckMessage({ language });
         try {
-          await sendInstagramMessage(senderId, nonTextAck, correlationId, doctorToken);
+          await channelAdapter.send({ text: nonTextAck }, inbound, { context: 'default' });
         } catch (e) {
           logger.warn({ err: e, correlationId }, 'Failed to send non-text ack DM');
         }
@@ -293,9 +316,15 @@ export async function processInstagramDmWebhook(params: {
         (error instanceof Error && /Resource already exists|23505|duplicate/i.test(error.message));
 
       if (isConflict) {
+        const platform =
+          inbound.channel === 'facebook'
+            ? 'facebook'
+            : inbound.channel === 'whatsapp'
+              ? 'whatsapp'
+              : 'instagram';
         let conversation = await findConversationByPlatformId(
           doctorId,
-          'instagram',
+          platform,
           senderId,
           correlationId
         );
@@ -303,7 +332,7 @@ export async function processInstagramDmWebhook(params: {
           await new Promise((resolve) => setTimeout(resolve, [500, 1000, 2000, 4000, 6000][r]));
           conversation = await findConversationByPlatformId(
             doctorId,
-            'instagram',
+            platform,
             senderId,
             correlationId
           );
@@ -317,7 +346,7 @@ export async function processInstagramDmWebhook(params: {
             if ('skip' in turnOut) {
               return;
             }
-            const dmSendRecovery = await instagramChannelAdapter.send(
+            const dmSendRecovery = await channelAdapter.send(
               turnOut.reply,
               inbound,
               { context: 'conflict_recovery' }
@@ -375,7 +404,7 @@ export async function processInstagramDmWebhook(params: {
     const handlerPreSendMs = Date.now() - turnOut.meta.handlerStartedAt;
     const igSendStartedAt = Date.now();
     try {
-      const dmSend = await instagramChannelAdapter.send(turnOut.reply, inbound, { context: 'default' });
+      const dmSend = await channelAdapter.send(turnOut.reply, inbound, { context: 'default' });
       const igSendMs = Date.now() - igSendStartedAt;
       logWebhookInstagramDmPipelineTiming({
         correlationId,
@@ -394,7 +423,12 @@ export async function processInstagramDmWebhook(params: {
           const shouldAck = await tryAcquireThrottleAck(pageIdForDm, senderId);
           if (shouldAck) {
             try {
-              await sendInstagramMessage(senderId, "I see your messages — give me a moment to respond.", correlationId, doctorToken);
+              await sendInstagramMessage(
+                senderId,
+                buildThrottleAckMessage({ language: turnOut.meta.turnLanguage }),
+                correlationId,
+                doctorToken
+              );
             } catch (ackErr) {
               logger.warn({ err: ackErr, correlationId }, 'Failed to send throttle ack DM');
             }

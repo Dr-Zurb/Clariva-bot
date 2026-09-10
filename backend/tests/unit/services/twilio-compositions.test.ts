@@ -20,6 +20,7 @@ jest.mock('../../../src/config/logger', () => ({
 }));
 
 const compositionsFetchMock = jest.fn<() => Promise<unknown>>();
+const compositionsRemoveMock = jest.fn<() => Promise<unknown>>();
 
 jest.mock('twilio', () => {
   const factory = jest.fn(() => ({
@@ -27,6 +28,7 @@ jest.mock('twilio', () => {
       v1: {
         compositions: (sid: string) => ({
           fetch: () => compositionsFetchMock(),
+          remove: () => compositionsRemoveMock(),
           sid,
         }),
       },
@@ -39,6 +41,7 @@ import {
   fetchCompositionMetadata,
   mintCompositionSignedUrl,
   getComputedTwilioMediaUrl,
+  deleteComposition,
   __setOverridesForTests,
 } from '../../../src/services/twilio-compositions';
 import { NotFoundError, InternalError } from '../../../src/utils/errors';
@@ -47,7 +50,12 @@ const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
   compositionsFetchMock.mockReset();
-  __setOverridesForTests({ fetchMetadata: null, mintSignedUrl: null });
+  compositionsRemoveMock.mockReset();
+  __setOverridesForTests({
+    fetchMetadata: null,
+    mintSignedUrl: null,
+    deleteComposition: null,
+  });
   globalThis.fetch = originalFetch;
 });
 
@@ -166,5 +174,33 @@ describe('mintCompositionSignedUrl', () => {
     const out = await mintCompositionSignedUrl({ compositionSid: 'CJ_fff' });
     expect(out.signedUrl).toBe('https://stub');
     expect(out.expiresAt).toBe(expiresAt);
+  });
+});
+
+describe('deleteComposition', () => {
+  it('calls Twilio remove and logs the SID + outcome', async () => {
+    compositionsRemoveMock.mockResolvedValueOnce(true);
+    await deleteComposition('CJabc');
+    expect(compositionsRemoveMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('maps Twilio 404 to NotFoundError', async () => {
+    compositionsRemoveMock.mockRejectedValueOnce(
+      Object.assign(new Error('not found'), { status: 404 }),
+    );
+    await expect(deleteComposition('CJabc')).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it('wraps other failures as InternalError', async () => {
+    compositionsRemoveMock.mockRejectedValueOnce(new Error('socket hang up'));
+    await expect(deleteComposition('CJabc')).rejects.toBeInstanceOf(InternalError);
+  });
+
+  it('honors the test override and never hits Twilio', async () => {
+    const override = jest.fn(async () => undefined);
+    __setOverridesForTests({ deleteComposition: override });
+    await deleteComposition('CJabc');
+    expect(override).toHaveBeenCalledWith('CJabc');
+    expect(compositionsRemoveMock).not.toHaveBeenCalled();
   });
 });

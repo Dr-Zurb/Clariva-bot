@@ -19,6 +19,15 @@ import {
   type ConversationState,
 } from '../../types/conversation';
 import { resolvePatientForChannelSender } from '../../services/patient-identity-service';
+import { maybeLinkCommentLeadAfterDm } from '../../services/comment-lead-service';
+import {
+  findPatientByIdWithAdmin,
+  setPatientPlatformUsernameIfEmpty,
+} from '../../services/patient-service';
+import { fetchMessengerUserProfile } from '../../services/instagram-service';
+import { setCachedPlatformAvatar } from '../../services/platform-avatar-cache';
+import { getInstagramAccessTokenForDoctor } from '../../services/instagram-connect-service';
+import { getFacebookPageAccessTokenForDoctor } from '../../services/facebook-connect-service';
 import {
   buildReturningPatientSummary,
   loadReturningPatientProfile,
@@ -34,6 +43,11 @@ import {
   normalizeLegacySlotConversationSteps,
 } from '../../services/conversation-service';
 import { createMessage, getRecentMessages } from '../../services/message-service';
+import {
+  logDmEmergencyIntentDowngraded,
+  logDmEmergencyNumberFloorApplied,
+  logDmLanguageDecision,
+} from '../../services/webhook-metrics';
 import {
   applyEmergencyIntentPostPolicy,
   applyIntentPostClassificationPolicy,
@@ -73,11 +87,33 @@ import {
 import { logInstagramDmRouting } from '../../utils/log-instagram-dm-routing';
 import { upsertPendingStaffServiceReviewRequest } from '../../services/service-staff-review-service';
 import type { InboundMessage, OutboundReply } from '../channels/types';
-import { DEFAULT_RECEPTIONIST_PAUSE_MESSAGE, type DmGateContext } from './control-gates';
+import {
+  applyClassifierLanguageRatchet,
+  coerceClassifierLanguage,
+  countLatinLanguageMarkers,
+  detectLanguageSignal,
+  LANGUAGE_ACCUMULATION_WINDOW,
+  resolveTurnLanguage,
+  type ConversationLanguage,
+} from '../../utils/conversation-language';
+import {
+  buildFallbackReplyMessage,
+  FALLBACK_REPLY_EN,
+} from '../../utils/dm-copy';
+import {
+  applyEmergencyNumberFloor,
+  isEmergencyUserMessage,
+} from '../../utils/safety-messages';
+import {
+  DEFAULT_RECEPTIONIST_PAUSE_MESSAGE,
+  markEmergencyCrisisOpen,
+  type DmGateContext,
+} from './control-gates';
 import { executeDmTurn } from './handle-turn';
 import type { DmTurnContext, DmTurnResult } from './stage-router';
 
-export const FALLBACK_REPLY = "Thanks for your message. We'll get back to you soon.";
+/** English exception constant for no-doctor path (lang-23 §1.4). */
+export const FALLBACK_REPLY = FALLBACK_REPLY_EN;
 
 export interface ConversationTurnDeps {
   /** Conflict recovery: skip routing; always AI open response with conflict branch label. */
@@ -98,6 +134,8 @@ export interface ConversationTurnMeta {
   stateStepBefore: string | null;
   stateStepAfter: string | null;
   handlerStartedAt: number;
+  /** Sticky turn language — reused by throttle ack (no extra DB read). */
+  turnLanguage: ConversationLanguage;
 }
 
 export type RunConversationTurnResult =
@@ -273,16 +311,23 @@ export async function runConversationTurn(
   const timing: { dmGenerateMs: number } = { dmGenerateMs: 0 };
   const greetingFastPath = false;
 
+  // lat-04: doctorId-only read — start early; awaited with the post-conversation batch.
+  const doctorSettingsPromise = getDoctorSettings(doctorId);
+
   let conversation = deps.existingConversation;
   if (!conflictRecovery) {
-    const patient = await resolvePatientForChannelSender({
-      doctorId,
-      channel: inbound.channel,
-      senderId,
-      correlationId,
-    });
+    // Patient resolve and conversation lookup are independent; create needs patient.id.
+    const [patient, existingConv] = await Promise.all([
+      resolvePatientForChannelSender({
+        doctorId,
+        channel: inbound.channel,
+        senderId,
+        correlationId,
+      }),
+      findConversationByPlatformId(doctorId, inbound.channel, senderId, correlationId),
+    ]);
     conversation =
-      (await findConversationByPlatformId(doctorId, inbound.channel, senderId, correlationId)) ??
+      existingConv ??
       (await createConversation(
         {
           doctor_id: doctorId,
@@ -299,34 +344,108 @@ export async function runConversationTurn(
     return { skip: true, reason: 'no_conversation' };
   }
 
-  const returningProfile = conversation.patient_id
-    ? await loadReturningPatientProfile({
-        doctorId,
-        patientId: conversation.patient_id,
-        correlationId,
-      })
-    : undefined;
+  // Inbox identity: @username + avatar (Meta profile_pic) — never block the DM reply path.
+  if (
+    conversation.patient_id &&
+    (inbound.channel === 'instagram' || inbound.channel === 'facebook')
+  ) {
+    const patientIdForUsername = conversation.patient_id;
+    const channelForUsername = inbound.channel;
+    void (async () => {
+      try {
+        const p = await findPatientByIdWithAdmin(patientIdForUsername, correlationId);
+        if (!p) return;
+        const needsUsername = !p.platform_username?.trim();
+        const token =
+          channelForUsername === 'instagram'
+            ? await getInstagramAccessTokenForDoctor(doctorId, correlationId)
+            : await getFacebookPageAccessTokenForDoctor(doctorId, correlationId);
+        if (!token) return;
+        const profile = await fetchMessengerUserProfile(
+          senderId,
+          token,
+          correlationId
+        );
+        if (needsUsername && profile.username) {
+          await setPatientPlatformUsernameIfEmpty(
+            patientIdForUsername,
+            profile.username,
+            correlationId
+          );
+        }
+        if (profile.profilePic) {
+          await setCachedPlatformAvatar(
+            channelForUsername,
+            senderId,
+            profile.profilePic
+          );
+        }
+      } catch (err) {
+        logger.debug(
+          {
+            correlationId,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          'DM profile enrichment skipped'
+        );
+      }
+    })();
+  }
+
+  const conversationId = conversation.id;
+  const patientIdForReturning = conversation.patient_id;
+
+  // lat-04: independent post-conversation reads (+ comment-lead link side effect).
+  // Returning-profile load is optional — failure must not fail the turn.
+  const [, returningProfile, stateRaw, recentMessages, doctorSettings] = await Promise.all([
+    maybeLinkCommentLeadAfterDm({
+      doctorId,
+      channel: inbound.channel,
+      senderId,
+      conversationId,
+      correlationId,
+    }),
+    patientIdForReturning
+      ? loadReturningPatientProfile({
+          doctorId,
+          patientId: patientIdForReturning,
+          correlationId,
+        }).catch((err: unknown) => {
+          logger.debug(
+            {
+              correlationId,
+              error: err instanceof Error ? err.message : String(err),
+            },
+            'returning patient profile load skipped'
+          );
+          return undefined;
+        })
+      : Promise.resolve(undefined),
+    getConversationState(conversationId, correlationId),
+    getRecentMessages(conversationId, AI_RECENT_MESSAGES_LIMIT, correlationId),
+    doctorSettingsPromise,
+  ]);
 
   if (
     returningProfile &&
-    conversation.patient_id &&
+    patientIdForReturning &&
     shouldUseReturningPatientMemory(returningProfile)
   ) {
     await auditReturningPatientRecognized(
       correlationId,
       doctorId,
-      conversation.patient_id,
+      patientIdForReturning,
       returningProfile
     );
   }
 
-  let state = await getConversationState(conversation.id, correlationId);
+  let state = stateRaw;
   const normalizedState = normalizeLegacySlotConversationSteps(state);
   if (normalizedState !== state) {
     state = normalizedState;
-    await updateConversationState(conversation.id, state, correlationId);
+    // Language not resolved yet (needs classifier for lang-17 ratchet) — state only.
+    await updateConversationState(conversationId, state, correlationId);
   }
-  const recentMessages = await getRecentMessages(conversation.id, AI_RECENT_MESSAGES_LIMIT, correlationId);
 
   const intentStartedAt = Date.now();
   const classifyCtx = buildClassifyIntentContext(state, recentMessages);
@@ -336,14 +455,72 @@ export async function runConversationTurn(
     classifyCtx ? { classifyContext: classifyCtx } : undefined
   );
   intentResult = applyIntentPostClassificationPolicy(intentResult, text, state);
-  intentResult = applyEmergencyIntentPostPolicy(intentResult, text, recentMessages);
+  const intentBeforeEmergencyPolicy = intentResult.intent;
+  intentResult = applyEmergencyIntentPostPolicy(intentResult, text, recentMessages, state);
+  if (intentBeforeEmergencyPolicy === 'emergency' && intentResult.intent === 'medical_query') {
+    logDmEmergencyIntentDowngraded({
+      correlationId,
+      reason: 'post_escalation_stability',
+    });
+  }
   const intentMs = Date.now() - intentStartedAt;
+
+  // lang-03 / lang-16 / lang-17: resolve sticky reply language once before gates.
+  // After classifyIntent so the LANG4-D4 ratchet can consume classifier.language.
+  // recentMessages already loaded — no second DB round-trip. Patient-only, last N,
+  // oldest-first — assistant copy must not feed detection.
+  const priorPatientTexts = recentMessages
+    .filter((m) => m.sender_type === 'patient')
+    .map((m) => m.content ?? '')
+    .slice(-LANGUAGE_ACCUMULATION_WINDOW);
+  const storedLanguage = conversation.language ?? null;
+  const markerResolution = resolveTurnLanguage(
+    storedLanguage,
+    text,
+    priorPatientTexts,
+    { acuteEmergency: isEmergencyUserMessage(text) }
+  );
+  const classifierLanguage = coerceClassifierLanguage(intentResult.language);
+  const languageResolution = applyClassifierLanguageRatchet(
+    markerResolution,
+    storedLanguage,
+    classifierLanguage,
+    {
+      markerConfidence: detectLanguageSignal(text).confidence,
+      messageText: text,
+    }
+  );
+  const turnLanguage = languageResolution.language;
+  const languagePersist = languageResolution.changed
+    ? { language: turnLanguage }
+    : undefined;
+  const markerCounts = countLatinLanguageMarkers(text);
+  const classifierAgreed =
+    classifierLanguage === 'unknown'
+      ? null
+      : classifierLanguage === turnLanguage;
+  logDmLanguageDecision({
+    correlationId,
+    storedBefore: storedLanguage,
+    resolved: turnLanguage,
+    changed: languageResolution.changed,
+    reason: languageResolution.reason,
+    hiMarkerCount: markerCounts.hiMarkerCount,
+    paMarkerCount: markerCounts.paMarkerCount,
+    paExclusiveCount: markerCounts.paExclusiveCount,
+    accumulationWindowSize: priorPatientTexts.length,
+    classifierLanguage:
+      classifierLanguage === 'unknown' ? null : classifierLanguage,
+    classifierAgreed,
+  });
+  // In-memory only: gates/stages always see a concrete language (never null).
+  conversation = { ...conversation, language: turnLanguage };
 
   if (!conflictRecovery) {
     const platformMessageId = mid ?? `evt-${eventId}`;
     await createMessage(
       {
-        conversation_id: conversation.id,
+        conversation_id: conversationId,
         platform_message_id: platformMessageId,
         sender_type: 'patient',
         content: text,
@@ -353,7 +530,6 @@ export async function runConversationTurn(
     );
   }
 
-  const doctorSettings = await getDoctorSettings(doctorId);
   const doctorContext = getDoctorContextFromSettings(doctorSettings);
   const recentDmForClinical = recentMessages.map((m) => ({
     sender_type: m.sender_type,
@@ -390,15 +566,17 @@ export async function runConversationTurn(
         }
       : {};
   const feeComposerOpts = conflictRecovery
-    ? {}
+    ? { language: turnLanguage }
     : {
+        language: turnLanguage,
         ...feeComposerClinicalOpts,
         showModalityBreakdown: true as const,
         ...feeComposerLlmNarrow,
       };
   const bookingFeeComposerOpts = conflictRecovery
-    ? {}
+    ? { language: turnLanguage }
     : {
+        language: turnLanguage,
         ...feeComposerClinicalOpts,
         showModalityBreakdown: false as const,
         ...feeComposerLlmNarrow,
@@ -441,29 +619,33 @@ export async function runConversationTurn(
     : !classifierSignalsFeePricing &&
       (feeFollowUpAnaphora(text, lastAssistantRawForFee) || classifierFeeThreadCont);
 
-  const runGenerateResponse = async (input: Parameters<typeof generateResponse>[0]) => {
+  const runGenerateResponse = async (
+    input: Omit<Parameters<typeof generateResponse>[0], 'turnLanguage'>
+  ) => {
     const t = Date.now();
     try {
       const reply = await generateResponse({
         ...input,
+        turnLanguage,
         classifierSignalsFeeQuestion:
           input.classifierSignalsFeeQuestion ?? signalsFeePricing,
       });
-      return conflictRecovery ? reply || FALLBACK_REPLY : reply;
+      return conflictRecovery ? reply || buildFallbackReplyMessage({ language: turnLanguage }) : reply;
     } finally {
       timing.dmGenerateMs += Date.now() - t;
     }
   };
   const runGenerateResponseWithActions = async (
-    input: Parameters<typeof generateResponseWithActions>[0]
+    input: Omit<Parameters<typeof generateResponseWithActions>[0], 'turnLanguage'>
   ) => {
     if (conflictRecovery) {
-      return { reply: FALLBACK_REPLY };
+      return { reply: buildFallbackReplyMessage({ language: turnLanguage }) };
     }
     const t = Date.now();
     try {
       return await generateResponseWithActions({
         ...input,
+        turnLanguage,
         classifierSignalsFeeQuestion:
           input.classifierSignalsFeeQuestion ?? signalsFeePricing,
       });
@@ -478,6 +660,7 @@ export async function runConversationTurn(
     intentResult,
     doctorSettings,
     text,
+    turnLanguage,
     inCollection,
     conversationId: conversation.id,
     patientId: conversation.patient_id ?? null,
@@ -490,6 +673,7 @@ export async function runConversationTurn(
     doctorId,
     correlationId,
     text,
+    turnLanguage,
     recentMessages,
     intentResult,
     doctorSettings,
@@ -527,7 +711,7 @@ export async function runConversationTurn(
         turnTeleconsultCatalogRowCount ?? undefined,
         returningProfile
       ),
-    fallbackReply: FALLBACK_REPLY,
+    fallbackReply: buildFallbackReplyMessage({ language: turnLanguage }),
   };
 
   const stageResult = await executeDmTurn(turnCtx, conflictRecovery ? { conflictRecovery: true } : undefined);
@@ -543,6 +727,18 @@ export async function runConversationTurn(
     : stageResult.branch;
   let replyText = stageResult.reply;
   state = stageResult.nextState;
+
+  // Output floor: LLM may improvise emergency guidance without 112/108 when the gate
+  // never fired. Append localized escalation + open crisis window so follow-ups reaffirm.
+  const emergencyFloor = applyEmergencyNumberFloor(replyText, turnLanguage);
+  if (emergencyFloor.applied) {
+    replyText = emergencyFloor.reply;
+    state = markEmergencyCrisisOpen(state);
+    logDmEmergencyNumberFloorApplied({
+      correlationId,
+      branch: dmRoutingBranch,
+    });
+  }
 
   await createMessage(
     {
@@ -564,7 +760,6 @@ export async function runConversationTurn(
       state.step === 'confirm_details' ||
       state.step === 'awaiting_match_confirmation' ||
       state.step === 'consent' ||
-      state.step === 'recording_consent' ||
       state.step === 'awaiting_cancel_choice' ||
       state.step === 'awaiting_cancel_confirmation' ||
       state.step === 'awaiting_reschedule_choice' ||
@@ -645,7 +840,12 @@ export async function runConversationTurn(
     }
 
     stateStepAfter = stateToPersist.step ?? null;
-    await updateConversationState(conversation.id, stateToPersist, correlationId);
+    await updateConversationState(
+      conversation.id,
+      stateToPersist,
+      correlationId,
+      languagePersist
+    );
   }
 
   logInstagramDmRouting({
@@ -677,6 +877,7 @@ export async function runConversationTurn(
       stateStepBefore,
       stateStepAfter,
       handlerStartedAt,
+      turnLanguage,
     },
   };
 }

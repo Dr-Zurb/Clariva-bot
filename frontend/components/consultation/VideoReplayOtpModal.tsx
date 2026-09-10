@@ -169,7 +169,7 @@ export default function VideoReplayOtpModal(
           kind: "wrong_code",
           otpId: phase.otpId,
           expiresAt: phase.expiresAt,
-          message: "Enter the 6-digit code from the SMS.",
+          message: "Enter the 6-digit code we sent to your phone.",
         });
         return;
       }
@@ -259,7 +259,7 @@ export default function VideoReplayOtpModal(
           id="video-replay-otp-title"
           className="text-base font-semibold text-gray-900"
         >
-          Enter the SMS code
+          Enter the 6-digit code
         </h2>
 
         <div id="video-replay-otp-body" className="mt-2 text-sm text-gray-700">

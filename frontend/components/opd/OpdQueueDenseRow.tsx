@@ -31,9 +31,15 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { getOpdStatusMeta } from "@/lib/consultation/opd-status-meta";
+import { useConsultSteppedAway } from "@/hooks/useConsultSteppedAway";
 import { cn } from "@/lib/utils";
 import type { DoctorQueueSessionRow } from "@/types/opd-doctor";
+import { showArrivedChip } from "./shared/opdArrival";
 import { OPD_QUEUE_GRID_TEMPLATE } from "./OpdQueueGrid";
+import {
+  formatSlotDelta,
+  SLOT_DELTA_TONE_CLASS,
+} from "./shared/slotTimeDelta";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -63,6 +69,8 @@ export interface OpdQueueDenseRowProps {
    * Does NOT conflict with `isNextUp` — both states can co-occur.
    */
   focused?: boolean;
+  /** Ticking wall-clock from the table, so every row's delta advances together. */
+  nowMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,9 +149,15 @@ export function OpdQueueDenseRow({
   onOpen,
   actions,
   focused = false,
+  nowMs,
 }: OpdQueueDenseRowProps): JSX.Element {
+  const steppedAway = useConsultSteppedAway(entry.appointmentId);
   const meta = getOpdStatusMeta(entry.queueStatus);
   const isInConsult = entry.queueStatus === "in_consultation";
+  const isActiveConsult = isInConsult && !steppedAway;
+  const statusLabel = isInConsult && steppedAway ? "Incomplete" : meta.label;
+  const statusAriaLabel =
+    isInConsult && steppedAway ? "Incomplete consult" : meta.label;
 
   // ── Next-up only fires when the row is genuinely waiting ──
   const showNextUp = isNextUp && entry.queueStatus === "waiting";
@@ -158,6 +172,11 @@ export function OpdQueueDenseRow({
 
   // ── Modality ──
   const modality = modalityIcon(entry.consultationType);
+
+  // ── Scheduled-time delta — only while the patient is still ahead ──
+  const delta = showWaited
+    ? formatSlotDelta(entry.scheduledAt, nowMs ?? Date.now())
+    : null;
 
   // ── Phone copy ──
   const [copied, setCopied] = useState(false);
@@ -208,7 +227,7 @@ export function OpdQueueDenseRow({
   const dotBg = STATUS_DOT_BG[entry.queueStatus] ?? "bg-muted-foreground/40";
 
   // ── Accessibility label ──
-  const ariaLabel = `Token #${entry.tokenNumber}, ${entry.patientName}, ${meta.label}, waited ${waitedMinutes} minutes`;
+  const ariaLabel = `Token #${entry.tokenNumber}, ${entry.patientName}, ${statusAriaLabel}, waited ${waitedMinutes} minutes`;
 
   return (
     <TooltipProvider delayDuration={400}>
@@ -227,8 +246,11 @@ export function OpdQueueDenseRow({
           textBase,
           // In-consult row background — visibly tinted so the active patient
           // is the first thing the eye catches in the Active group.
-          isInConsult &&
+          isActiveConsult &&
             "bg-green-100/70 dark:bg-green-900/30 ring-1 ring-inset ring-green-500/30",
+          isInConsult &&
+            steppedAway &&
+            "bg-amber-50/80 dark:bg-amber-950/25 ring-1 ring-inset ring-amber-500/25",
           // Dimmed style for done / missed rows
           dimmed && "opacity-60",
           // Keyboard-focused row (J/K navigation) — left-edge 2 px ring-primary
@@ -274,7 +296,30 @@ export function OpdQueueDenseRow({
           #{String(entry.tokenNumber).padStart(2, "0")}
         </div>
 
-        {/* ── Col 3 — Status dot + label ── */}
+        {/* ── Col 3 — Scheduled time + relative delta ── */}
+        <div
+          className={cn(
+            cellPx,
+            rowPy,
+            "flex min-w-0 flex-col justify-center whitespace-nowrap"
+          )}
+        >
+          <span className="text-[13px] font-semibold tabular-nums tracking-tight text-foreground">
+            {formatScheduledTime(entry.scheduledAt)}
+          </span>
+          {delta && (
+            <span
+              className={cn(
+                "text-[10px] font-medium tabular-nums",
+                SLOT_DELTA_TONE_CLASS[delta.tone]
+              )}
+            >
+              {delta.label}
+            </span>
+          )}
+        </div>
+
+        {/* ── Col 4 — Status dot + label ── */}
         <div
           className={cn(cellPx, rowPy, "flex items-center gap-1.5 overflow-hidden")}
         >
@@ -283,22 +328,49 @@ export function OpdQueueDenseRow({
             aria-hidden
             className={cn(
               "inline-block h-2 w-2 shrink-0 rounded-full",
-              dotBg,
-              isInConsult && "animate-pulse"
+              isInConsult && steppedAway ? "bg-amber-500" : dotBg,
+              isActiveConsult && "animate-pulse"
             )}
           />
           <span
             className={cn(
               "truncate text-xs",
+              isActiveConsult &&
+                "font-semibold text-green-700 dark:text-green-300",
               isInConsult &&
-                "font-semibold text-green-700 dark:text-green-300"
+                steppedAway &&
+                "font-semibold text-amber-800 dark:text-amber-200"
             )}
           >
-            {meta.label}
+            {statusLabel}
           </span>
+          {showArrivedChip(entry) && (
+            <span
+              title="Arrived at the clinic."
+              className="inline-flex shrink-0 rounded border border-emerald-500/50 bg-emerald-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-900 dark:text-emerald-200"
+            >
+              Arrived
+            </span>
+          )}
+          {entry.tags?.includes("patient_waiting") && (
+            <span
+              title="Patient is in the consult lobby right now."
+              className="inline-flex shrink-0 rounded border border-emerald-500/50 bg-emerald-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-900 dark:text-emerald-200"
+            >
+              Waiting
+            </span>
+          )}
+          {entry.tags?.includes("patient_stepped_away") && (
+            <span
+              title="Patient checked in earlier but lobby went idle."
+              className="inline-flex shrink-0 rounded border border-stone-400/50 bg-stone-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-stone-700 dark:text-stone-300"
+            >
+              Stepped away
+            </span>
+          )}
         </div>
 
-        {/* ── Col 4 — MRN ── */}
+        {/* ── Col 5 — MRN ── */}
         <div
           className={cn(
             cellPx,
@@ -309,7 +381,7 @@ export function OpdQueueDenseRow({
           <span className="truncate">{entry.medicalRecordNumber ?? "—"}</span>
         </div>
 
-        {/* ── Col 5 — Patient name ── */}
+        {/* ── Col 6 — Patient name ── */}
         <div className={cn(cellPx, rowPy, "min-w-0 overflow-hidden")}>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -328,7 +400,7 @@ export function OpdQueueDenseRow({
           </Tooltip>
         </div>
 
-        {/* ── Col 6 — Age / Sex ── */}
+        {/* ── Col 7 — Age / Sex ── */}
         <div
           className={cn(
             cellPx,
@@ -339,7 +411,7 @@ export function OpdQueueDenseRow({
           {entry.age ?? "—"} · {entry.gender ?? "—"}
         </div>
 
-        {/* ── Col 7 — Phone (click-to-copy) ── */}
+        {/* ── Col 8 — Phone (click-to-copy) ── */}
         <div className={cn(cellPx, rowPy, "flex items-center overflow-hidden")}>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -368,7 +440,7 @@ export function OpdQueueDenseRow({
           </Tooltip>
         </div>
 
-        {/* ── Col 8 — Consultation type icon (modality) ── */}
+        {/* ── Col 9 — Consultation type icon (modality) ── */}
         <div className={cn(cellPx, rowPy, "flex items-center justify-center")}>
           {modality ? (
             <modality.icon
@@ -385,7 +457,7 @@ export function OpdQueueDenseRow({
           )}
         </div>
 
-        {/* ── Col 9 — Service ── */}
+        {/* ── Col 10 — Service ── */}
         <div className={cn(cellPx, rowPy, "flex min-w-0 items-center overflow-hidden")}>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -399,7 +471,7 @@ export function OpdQueueDenseRow({
           </Tooltip>
         </div>
 
-        {/* ── Col 10 — Reason for visit ── */}
+        {/* ── Col 11 — Reason for visit ── */}
         {/*
          * Truncation is purely CSS-driven: `truncate` (overflow-hidden +
          * text-ellipsis + whitespace-nowrap) clips based on the actual rendered
@@ -420,17 +492,6 @@ export function OpdQueueDenseRow({
           ) : (
             <span className="text-xs text-muted-foreground">—</span>
           )}
-        </div>
-
-        {/* ── Col 11 — Scheduled time ── */}
-        <div
-          className={cn(
-            cellPx,
-            rowPy,
-            "flex items-center whitespace-nowrap tabular-nums text-xs text-muted-foreground"
-          )}
-        >
-          {formatScheduledTime(entry.scheduledAt)}
         </div>
 
         {/* ── Col 12 — Waited time ── */}

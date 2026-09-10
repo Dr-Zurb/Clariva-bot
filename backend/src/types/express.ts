@@ -31,6 +31,34 @@ declare global {
       adminActor?: string;
 
       /**
+       * Tenant — whose data this request operates on (receptionist-portal P1).
+       * Set by `resolveActingDoctor`.
+       */
+      actingDoctorId?: string;
+
+      /**
+       * Real `auth.users` id of whoever is clicking (receptionist-portal P1).
+       * Set by `resolveActingDoctor`.
+       */
+      actorId?: string;
+
+      /**
+       * Whether the actor is the doctor themselves or staff acting for them.
+       */
+      actorKind?: 'doctor' | 'staff';
+
+      /**
+       * `clinic_staff.role` when `actorKind === 'staff'`.
+       */
+      staffRole?: string;
+
+      /**
+       * Set by `allowStaff` before `authenticateToken` so staff JWTs are not
+       * denied on opted-in routes (DL-2 / DL-3).
+       */
+      staffAllowed?: boolean;
+
+      /**
        * Request start time (set by request-timing middleware)
        * Used for calculating request duration
        */

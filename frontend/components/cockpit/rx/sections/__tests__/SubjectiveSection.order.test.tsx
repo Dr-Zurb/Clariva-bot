@@ -24,7 +24,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
         settings: {
           subjective_section_order: [],
           subjective_section_collapsed: {},
-          subjective_section_hidden: [],
+          subjective_section_hidden: ["__show_all__"],
         },
       },
     }),
@@ -102,6 +102,7 @@ describe("SubjectiveSection section order (subj-23)", () => {
     const available = resolveAvailableSectionIds(true);
 
     await waitFor(() => {
+      expect(screen.queryByTestId("subjective-layout-skeleton")).not.toBeInTheDocument();
       expect(readRenderedSectionOrder(container)).toEqual(
         normalizeSectionOrder(DEFAULT_SECTION_ORDER, available),
       );

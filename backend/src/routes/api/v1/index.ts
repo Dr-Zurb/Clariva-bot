@@ -6,6 +6,7 @@ import consultationRoutes from './consultation';
 import paymentRoutes from './payments';
 import patientRoutes from './patients';
 import instagramSettingsRoutes from './settings/instagram';
+import facebookSettingsRoutes from './settings/facebook';
 import doctorSettingsRoutes from './settings/doctor';
 import availabilityRoutes from './availability';
 import blockedTimesRoutes from './blocked-times';
@@ -17,6 +18,7 @@ import drugInteractionsRoutes from './drug-interactions-routes';
 import rxTemplateRoutes from './rx-templates';
 import opdRoutes from './opd';
 import serviceStaffReviewRoutes from './service-staff-reviews';
+import interactionRoutes from './interactions';
 import serviceMatchLearningRoutes from './service-match-learning';
 import catalogRoutes from './catalog';
 import meRoutes from './me';
@@ -25,17 +27,24 @@ import dashboardEventsRoutes from './dashboard-events';
 import dashboardInsightsRoutes from './dashboard-insights';
 import dashboardOnboardingRoutes from './dashboard-onboarding';
 import verificationRoutes from './verification';
+import recordingAttestationRoutes from './recording-attestation';
 import adminVerificationRoutes from './admin-verifications';
 import adminDoctorsRoutes from './admin-doctors';
+import billingRoutes from './billing';
+import doctorBillingRoutes from './doctor-billing';
 import diagnosesRoutes from './diagnoses';
 import investigationsRoutes from './investigations';
 import doctorDrugFavoritesRoutes from './doctor-drug-favorites';
 import doctorDrugUsageRoutes from './doctor-drug-usage';
+import doctorMedicineComboRoutes from './doctor-medicine-combo';
 import complaintMasterRoutes from './complaint-master';
 import medicinesRoutes from './medicines';
 import noteFavoritesRoutes from './note-favorites';
 import pushRoutes from './push';
 import authRoutes from './auth';
+import clinicStaffRoutes from './clinic-staff';
+import adminClinicStaffRoutes from './admin-clinic-staff';
+import visitNarrativeRoutes from './visit-narrative';
 
 const router = Router();
 
@@ -72,8 +81,12 @@ router.use('/payments', paymentRoutes);
 // GET /api/v1/patients/:id
 router.use('/patients', patientRoutes);
 
+// Front-desk staff context (receptionist-portal P4)
+router.use('/clinic-staff', clinicStaffRoutes);
+
 // Instagram connect (e-task-3): GET /connect (auth), GET /callback
 router.use('/settings/instagram', instagramSettingsRoutes);
+router.use('/settings/facebook', facebookSettingsRoutes);
 
 // Doctor settings (e-task-2): GET/PATCH /settings/doctor (auth required)
 router.use('/settings/doctor', doctorSettingsRoutes);
@@ -110,6 +123,9 @@ router.use('/opd', opdRoutes);
 // ARM-06: Pending service catalog staff reviews (inbox / resolve)
 router.use('/service-staff-reviews', serviceStaffReviewRoutes);
 
+// interactions-inbox · ibi-03: doctor-scoped conversation thread reads
+router.use('/interactions', interactionRoutes);
+
 // learn-04: Policy suggestions + autobook policies (doctor opt-in)
 router.use('/service-match-learning', serviceMatchLearningRoutes);
 
@@ -140,6 +156,7 @@ router.use('/dashboard/onboarding', dashboardOnboardingRoutes);
 // doctor-verification-v1 · ver-03: doctor-facing verification submit/status
 // (POST /verification/upload-url, /submit; GET /verification/status).
 router.use('/verification', verificationRoutes);
+router.use('/recording-attestation', recordingAttestationRoutes);
 
 // doctor-verification-v1 · ver-04: ops/admin review endpoints, gated by
 // CRON_SECRET (GET/POST /admin/verifications...). The generic /admin router
@@ -150,6 +167,15 @@ router.use('/admin/verifications', adminVerificationRoutes);
 // admin-console-v3 · acon3-01: doctors directory (GET /admin/doctors).
 // Invite path retired in auth-v2 (self-serve Google + Email OTP).
 router.use('/admin/doctors', adminDoctorsRoutes);
+
+// receptionist-portal RQ1 — admin clinic-staff directory
+router.use('/admin/clinic-staff', adminClinicStaffRoutes);
+
+// billing P1.7 / P2a: founder rollup + issue + PDF (GET/POST /admin/billing/...)
+router.use('/admin/billing', billingRoutes);
+
+// billing P2a: doctor snapshot (GET /billing/me)
+router.use('/billing', doctorBillingRoutes);
 
 // Patient seeing flow · pf-02: doctor-scoped diagnosis-tag autocomplete
 // for the wrap-up dialog (powers GET /diagnoses/recent).
@@ -166,6 +192,9 @@ router.use('/doctors/me/drug-favorites', doctorDrugFavoritesRoutes);
 // rx-polish-favorites · rxf-05: per-doctor drug usage scores for autocomplete ranking
 router.use('/doctors/me/drug-usage', doctorDrugUsageRoutes);
 
+// Per-doctor attested medicine+sig habits for Plan capture-bar combos
+router.use('/doctors/me/medicine-combos', doctorMedicineComboRoutes);
+
 // subjective-tab · subj-06: complaint lookup + per-doctor note favourites
 router.use('/complaints', complaintMasterRoutes);
 router.use('/doctors/me/note-favorites', noteFavoritesRoutes);
@@ -174,5 +203,8 @@ router.use('/medicines', medicinesRoutes);
 
 // task-text-D6b: Web Push subscribe / unsubscribe / list
 router.use('/push', pushRoutes);
+
+// visit-narrative · vnt-02: transcript → span-anchored draft (doctor only)
+router.use('/visit-narrative', visitNarrativeRoutes);
 
 export default router;

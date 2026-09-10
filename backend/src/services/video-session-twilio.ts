@@ -115,7 +115,13 @@ export async function createTwilioRoom(
   try {
     const room = await client.video.v1.rooms.create({
       uniqueName: trimmed,
+      // Group only — `group-small` / go / P2P are legacy (Twilio 53126)
+      // on accounts that started Video after 2024-10-21.
       type: 'group',
+      // Group Rooms relay ALL media through this region's SFU. Twilio's
+      // account default is us1 (Virginia), which puts ~250 ms of transit
+      // on each leg of an India↔India consult. Pin it (default in1).
+      mediaRegion: env.TWILIO_VIDEO_MEDIA_REGION,
       ...(statusCallback && {
         statusCallback,
         statusCallbackMethod: 'POST' as const,
@@ -123,7 +129,14 @@ export async function createTwilioRoom(
     });
 
     logger.info(
-      { correlationId, roomSid: room.sid, roomName: trimmed },
+      {
+        correlationId,
+        roomSid: room.sid,
+        roomName: trimmed,
+        // Echo what Twilio actually assigned so a misrouted region is
+        // visible in logs without a Console trip.
+        mediaRegion: room.mediaRegion,
+      },
       'Twilio Video room created'
     );
 

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  CORE_SUBJECTIVE_DEFAULT_VISIBLE_IDS,
   hiddenOverridesToPersist,
   isSectionHidden,
+  resolveDefaultSubjectiveLayout,
+  resolveEffectiveSubjectiveHidden,
   resolveVisibleSections,
   serializeHiddenIds,
 } from "@/lib/cockpit/subjective-section-visibility";
@@ -167,6 +170,44 @@ describe("subjective-section-visibility (subj-33 / subj-38)", () => {
 
       const visibleFallback = resolveVisibleSections(linkedOrder, persisted, fallbackMountable);
       expect(visibleFallback).toEqual(linkedOrder);
+    });
+  });
+
+  describe("factory lean default", () => {
+    const DEFAULT_LAYOUT = resolveDefaultSubjectiveLayout();
+
+    it("hides surgical / family / social and keeps complaints, background, allergies, notes", () => {
+      expect(DEFAULT_LAYOUT.defaultHidden).toEqual([
+        "past_surgical",
+        "family_history",
+        "social_history",
+      ]);
+      expect(CORE_SUBJECTIVE_DEFAULT_VISIBLE_IDS).toEqual([
+        "chief_complaints",
+        "patient_background",
+        "allergies",
+        "free_text_notes",
+      ]);
+    });
+
+    it("uses factory default when stored set is empty", () => {
+      expect(resolveEffectiveSubjectiveHidden({ storedHidden: [] })).toEqual({
+        hidden: [...DEFAULT_LAYOUT.defaultHidden],
+      });
+    });
+
+    it("doctor stored set wins wholesale when present", () => {
+      expect(
+        resolveEffectiveSubjectiveHidden({ storedHidden: ["chief_complaints"] }),
+      ).toEqual({ hidden: ["chief_complaints"] });
+    });
+
+    it("drops unknown keys and keeps custom_block ids", () => {
+      expect(
+        resolveEffectiveSubjectiveHidden({
+          storedHidden: ["bogus_section", blockId, "family_history", "family_history"],
+        }),
+      ).toEqual({ hidden: [blockId, "family_history"] });
     });
   });
 

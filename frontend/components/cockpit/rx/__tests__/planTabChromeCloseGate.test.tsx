@@ -185,7 +185,7 @@ describe("plan-c-04 · a11y — not colour-only", () => {
 
     const l1 = screen.getByTestId("plan-advice-zone");
 
-    expect(l1.className).toContain("bg-muted/30");
+    expect(l1.className).toContain("bg-card");
     expect(l1.className).not.toMatch(/bg-(primary|accent|emerald|violet)/);
   });
 });

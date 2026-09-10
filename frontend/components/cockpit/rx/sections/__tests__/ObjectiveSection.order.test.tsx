@@ -48,7 +48,7 @@ beforeEach(() => {
       settings: {
         objective_section_order: [],
         objective_section_collapsed: {},
-        objective_section_hidden: [],
+        objective_section_hidden: ["__show_all__"],
         specialty: null,
       },
     },

@@ -23,7 +23,10 @@ import {
   isPricingInquiryMessage,
   normalizePatientPricingText,
 } from './consultation-fees';
-import { detectSafetyMessageLocale } from './safety-messages';
+import {
+  toStaticLocale,
+  type ConversationLanguage,
+} from './conversation-language';
 import { POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN } from './post-medical-ack-copy';
 
 /** Roman + common message cues that the user is describing a health concern (not pure pricing). */
@@ -229,8 +232,8 @@ export function parseReasonFirstAskMoreAmbiguousYes(text: string): boolean {
   return /^(yes|yeah|yep|yup|haan|haan\s*ji)\s*[!.]*\s*$/i.test(t);
 }
 
-export function formatReasonFirstAskWhatElseToAdd(userText: string): string {
-  const loc = detectSafetyMessageLocale(userText || '');
+export function formatReasonFirstAskWhatElseToAdd(language: ConversationLanguage): string {
+  const loc = toStaticLocale(language);
   if (loc === 'hi') {
     return 'Theek — **aur kya** add karna chahte ho jo doctor is visit mein cover karein? Ek short line mein likh dein. Agar **kuch aur nahi**, to **nothing else** likhein.';
   }
@@ -401,22 +404,24 @@ function askMoreEnglish(): string {
   );
 }
 
+/** LANG6-D8: translated (lang-26). */
 function askMoreHi(): string {
   return (
-    'Thanks for sharing. **Kya aur kuch** hai jise aap doctor se is visit mein discuss karna chahte hain, ' +
-    'ya mainly jo aapne bataya wohi hai? Agar bas wahi hai to **nothing else** likh sakte hain.'
+    'Share karne ke liye shukriya. **Kya aur kuch** hai jo aap doctor se is visit par discuss karna chahte hain, ' +
+    'ya bas jo aapne bataya wahi hai? Agar bas wahi hai to **nothing else** likh sakte hain.'
   );
 }
 
+/** LANG6-D8: translated (lang-26). */
 function askMorePa(): string {
   return (
-    'Thanks for sharing. **Hor kuj** hai jo tu doctor naal is visit te discuss karna chahe, ' +
-    'ja sirf jo dasyaa ohi? Agar bas ohi hai ta **nothing else** likh sakde o.'
+    'Share karn layi shukriya. **Hor kuj** hai je tu doctor naal is visit te discuss karna chahe, ' +
+    'ya bas jo dasyaa ohi hai? Je bas ohi hai ta **nothing else** likh sakde ho.'
   );
 }
 
-export function formatReasonFirstAskMoreQuestion(userText: string): string {
-  const loc = detectSafetyMessageLocale(userText || '');
+export function formatReasonFirstAskMoreQuestion(language: ConversationLanguage): string {
+  const loc = toStaticLocale(language);
   if (loc === 'hi') return askMoreHi();
   if (loc === 'pa') return askMorePa();
   return askMoreEnglish();
@@ -491,8 +496,11 @@ function clinicalDeflectionAskMorePa(snippet: string): string {
 /**
  * After idle medical-safety deflection: replay distilled reasons (if any) and enter reason-first ask_more.
  */
-export function formatClinicalReasonAskMoreAfterDeflection(userText: string, snippet: string): string {
-  const loc = detectSafetyMessageLocale(userText || '');
+export function formatClinicalReasonAskMoreAfterDeflection(
+  language: ConversationLanguage,
+  snippet: string
+): string {
+  const loc = toStaticLocale(language);
   if (loc === 'hi') return clinicalDeflectionAskMoreHi(snippet);
   if (loc === 'pa') return clinicalDeflectionAskMorePa(snippet);
   return clinicalDeflectionAskMoreEnglish(snippet);
@@ -519,8 +527,11 @@ function gateBeforeIntakePa(snippet: string): string {
 /**
  * User asked to book (or picked a channel) while the thread has clinical content but `reasonForVisit` is not finalized yet.
  */
-export function formatReasonFirstGateBeforeIntake(userText: string, snippet: string): string {
-  const loc = detectSafetyMessageLocale(userText || '');
+export function formatReasonFirstGateBeforeIntake(
+  language: ConversationLanguage,
+  snippet: string
+): string {
+  const loc = toStaticLocale(language);
   if (loc === 'hi') return gateBeforeIntakeHi(snippet);
   if (loc === 'pa') return gateBeforeIntakePa(snippet);
   return gateBeforeIntakeEnglish(snippet);
@@ -607,16 +618,14 @@ function bridgeClosingPa(snippet?: string): string {
 
 /** User asked pricing during ask_more (or defer-to-triage); keep fee table until confirm — natural, thread-aware copy. */
 export function formatReasonFirstFeePatienceBridgeWhileAskMore(
-  userText: string,
+  language: ConversationLanguage,
   options?: FeePatienceBridgeOptions
 ): string {
-  const loc = detectSafetyMessageLocale(userText || '');
-  const hasDe = /[\u0900-\u097F]/.test(userText || '');
-  const hasPa = /[\u0A00-\u0A7F]/.test(userText || '');
+  const loc = toStaticLocale(language);
   const snippet = usableReasonSnippetForBridge(options?.reasonSnippet);
   const postAck = options?.recentPostMedicalFeeAck === true;
 
-  if (loc === 'hi' && !hasDe) {
+  if (loc === 'hi') {
     const head = snippet
       ? postAck
         ? '**Theek hai** — **exact fee** tab batayenge jab **saari baatein** clear hon.\n\n'
@@ -626,7 +635,7 @@ export function formatReasonFirstFeePatienceBridgeWhileAskMore(
         : '**Bilkul** — **exact fee** tabhi batate hain jab **visit ka reason** aur **aur kuch** clear ho. Yeh visit **paid** hai.\n\n';
     return head + bridgeClosingHi(snippet);
   }
-  if (loc === 'pa' && !hasPa) {
+  if (loc === 'pa') {
     const head = snippet
       ? postAck
         ? '**Theek aa** — **exact fee** tab dasange jad **saari gallan** clear hon.\n\n'
@@ -668,15 +677,18 @@ function confirmTemplatePa(snippet: string): string {
   return `Is visit te discuss karan layi: **${snippet}** — **theek hai?** Agge layi **yes** likho, ya daso ki badalna hai.`;
 }
 
-export function formatReasonFirstConfirmQuestion(userText: string, snippet: string): string {
-  const loc = detectSafetyMessageLocale(userText || '');
+export function formatReasonFirstConfirmQuestion(
+  language: ConversationLanguage,
+  snippet: string
+): string {
+  const loc = toStaticLocale(language);
   if (loc === 'hi') return confirmTemplateHi(snippet);
   if (loc === 'pa') return confirmTemplatePa(snippet);
   return confirmTemplateEnglish(snippet);
 }
 
-export function formatReasonFirstConfirmClarify(userText: string): string {
-  const loc = detectSafetyMessageLocale(userText || '');
+export function formatReasonFirstConfirmClarify(language: ConversationLanguage): string {
+  const loc = toStaticLocale(language);
   if (loc === 'hi') {
     return 'Samajh gaya. **Sahi reason** ek line mein likh dein — phir main dobara confirm karunga. Aap **yes** bol sakte hain agar pehli summary theek thi.';
   }

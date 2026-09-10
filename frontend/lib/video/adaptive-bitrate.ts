@@ -23,8 +23,8 @@
  * set-once at connect time per Twilio Video JS 2.x (no runtime API).
  *
  * Decision §23 — simulcast OFF in v1 (two-party calls don't benefit;
- * revisit when C8 three-way ships). Not handled here; this is a
- * connect-time option in Twilio.
+ * revisit when C8 three-way ships). Wired at connect in `<VideoRoom>`
+ * via `preferredVideoCodecs: ['H264', { codec: 'VP8', simulcast: false }]`.
  *
  * Coupling with B8 (`<VideoQualityPicker>`):
  *   - When picker is `'auto'`, this controller is in charge.
@@ -58,9 +58,7 @@ import { type QualityOption } from "@/components/consultation/VideoQualityPicker
  * vocabulary. The mapping (`adaptiveLevelToQuality`) lives below.
  *
  *   high       → no explicit video constraints (camera + Twilio
- *                negotiate; today's connect-path default ~640x480,
- *                modern cameras typically deliver 720p/1080p when
- *                bandwidth allows)
+ *                negotiate; connect-path default is 720p30)
  *   medium     → 720p / 24fps
  *   low        → 480p / 20fps  ← v1 floor
  *   audio-only → no video track at all  ← reserved for E.4 (E2)

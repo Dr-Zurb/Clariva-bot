@@ -48,8 +48,10 @@ import {
 } from '../../../utils/safety-messages';
 import {
   applyMatcherProposalToConversationState,
+  isOpenEmergencyCrisis,
   isRecentMedicalDeflectionWindow,
   mergeBooking,
+  mergeSafety,
   mergeTriage,
   type ConversationState,
   type ReasonFirstTriagePhase,
@@ -277,7 +279,11 @@ export const idleFeeTriageStage: DmStageHandler = {
       )
     ) {
       dmRoutingBranch = 'post_medical_payment_existence_ack';
-      replyText = await resolvePostMedicalPaymentExistenceAck(text, correlationId);
+      replyText = await resolvePostMedicalPaymentExistenceAck(
+        text,
+        correlationId,
+        ctx.turnLanguage
+      );
       state = mergeTriage(
         {
           ...state,
@@ -310,7 +316,7 @@ export const idleFeeTriageStage: DmStageHandler = {
           !userMessageSuggestsClinicalReason(text)
         ) {
           dmRoutingBranch = 'reason_first_triage_ask_more_ambiguous_yes';
-          replyText = formatReasonFirstAskWhatElseToAdd(text);
+          replyText = formatReasonFirstAskWhatElseToAdd(ctx.turnLanguage);
           state = {
             ...state,
             lastIntent: intentResult.intent,
@@ -326,7 +332,7 @@ export const idleFeeTriageStage: DmStageHandler = {
           const bridgeSnippet = (
             await resolveVisitReasonSnippetForTriage(recentForTriage, text, correlationId)
           ).trim();
-          replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(text, {
+          replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(ctx.turnLanguage, {
             reasonSnippet: bridgeSnippet,
             recentPostMedicalFeeAck: state.triage?.postMedicalConsultFeeAckSent === true,
           });
@@ -348,7 +354,7 @@ export const idleFeeTriageStage: DmStageHandler = {
             parseNothingElseOrSameOnly(text) ? '' : text,
             correlationId
           );
-          replyText = formatReasonFirstConfirmQuestion(text, snippet);
+          replyText = formatReasonFirstConfirmQuestion(ctx.turnLanguage, snippet);
           state = mergeTriage(
             {
               ...state,
@@ -372,7 +378,7 @@ export const idleFeeTriageStage: DmStageHandler = {
           state = narrowed.nextState;
         } else if (parseReasonTriageNegationForClarify(text)) {
           dmRoutingBranch = 'reason_first_triage_confirm';
-          replyText = formatReasonFirstConfirmClarify(text);
+          replyText = formatReasonFirstConfirmClarify(ctx.turnLanguage);
           state = {
             ...state,
             lastIntent: intentResult.intent,
@@ -386,7 +392,7 @@ export const idleFeeTriageStage: DmStageHandler = {
             text,
             correlationId
           );
-          replyText = formatReasonFirstConfirmQuestion(text, snippetReplay);
+          replyText = formatReasonFirstConfirmQuestion(ctx.turnLanguage, snippetReplay);
           state = {
             ...state,
             lastIntent: intentResult.intent,
@@ -398,18 +404,22 @@ export const idleFeeTriageStage: DmStageHandler = {
     } else if (
       intentResult.intent === 'medical_query' &&
       !inCollection &&
-      recentThreadHasAssistantEmergencyEscalation(recentDmForClinical) &&
+      (isOpenEmergencyCrisis(state) ||
+        recentThreadHasAssistantEmergencyEscalation(recentDmForClinical)) &&
       userMessageSignalsPostEmergencyStability(text)
     ) {
       dmRoutingBranch = 'booking_resume_after_emergency';
-      state = mergeTriage(
-        {
-          ...state,
-          lastIntent: intentResult.intent,
-          step: 'collecting_all',
-          updatedAt: new Date().toISOString(),
-        },
-        { reasonFirstTriagePhase: undefined, postMedicalConsultFeeAckSent: undefined }
+      state = mergeSafety(
+        mergeTriage(
+          {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'collecting_all',
+            updatedAt: new Date().toISOString(),
+          },
+          { reasonFirstTriagePhase: undefined, postMedicalConsultFeeAckSent: undefined }
+        ),
+        { clearedAt: new Date().toISOString() }
       );
       const baseCtx = await buildAiContextForResponse(
         conversation.id,
@@ -420,7 +430,7 @@ export const idleFeeTriageStage: DmStageHandler = {
         teleconsultCatalogRowCount
       );
       const resumeHint =
-        'Thread note: The patient previously received emergency (112/108) escalation. They now describe stable or non-crisis vitals. Briefly acknowledge—do NOT repeat emergency instructions unless they report new crisis symptoms or crisis-level readings. Invite them to book a teleconsult: ask for full name, age, gender, mobile, and reason for visit (include current BP if relevant) in one message when details are still missing.';
+        'Thread note: The patient previously received emergency (112/108) escalation. They now describe stable or non-crisis vitals. Briefly acknowledge—do NOT repeat emergency instructions unless they report new crisis symptoms or crisis-level readings. Do NOT characterize the reading/symptom as concerning, normal, mild, serious, high, or low — no clinical interpretation. Invite them to book a teleconsult: ask for full name, age, gender, mobile, and reason for visit (include current BP if relevant) in one message when details are still missing. Do not invent red-flag lists or alternate emergency numbers.';
       const aiContext: GenerateResponseContext = {
         ...baseCtx,
         idleDialogueHint: [baseCtx.idleDialogueHint, resumeHint].filter(Boolean).join('\n'),
@@ -437,7 +447,7 @@ export const idleFeeTriageStage: DmStageHandler = {
       });
     } else if (intentResult.intent === 'medical_query' && !inCollection) {
       dmRoutingBranch = 'medical_safety';
-      replyText = resolveSafetyMessage('medical_query', text);
+      replyText = resolveSafetyMessage('medical_query', ctx.turnLanguage);
       const recentMed = recentMessages.map((m) => ({
         sender_type: m.sender_type,
         content: m.content ?? '',
@@ -445,7 +455,7 @@ export const idleFeeTriageStage: DmStageHandler = {
       let phase: ReasonFirstTriagePhase | undefined = undefined;
       if (userMessageSuggestsClinicalReason(text)) {
         const snippetMed = await resolveVisitReasonSnippetForTriage(recentMed, text, correlationId);
-        replyText = `${replyText}\n\n${formatClinicalReasonAskMoreAfterDeflection(text, snippetMed)}`;
+        replyText = `${replyText}\n\n${formatClinicalReasonAskMoreAfterDeflection(ctx.turnLanguage, snippetMed)}`;
         phase = 'ask_more';
       }
       state = mergeTriage(
@@ -487,6 +497,7 @@ export const idleFeeTriageStage: DmStageHandler = {
           correlationId,
           userText: text,
           baseReply: midFeeOut.reply,
+          turnLanguage: ctx.turnLanguage,
         });
         state = {
           ...state,
@@ -517,7 +528,7 @@ export const idleFeeTriageStage: DmStageHandler = {
         const bridgeSnippetDefer = (
           await resolveVisitReasonSnippetForTriage(recentForDefer, text, correlationId)
         ).trim();
-        replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(text, {
+        replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(ctx.turnLanguage, {
           reasonSnippet: bridgeSnippetDefer,
           recentPostMedicalFeeAck: state.triage?.postMedicalConsultFeeAckSent === true,
         });
@@ -577,7 +588,12 @@ export const idleFeeTriageStage: DmStageHandler = {
       };
 
       let welcomeBackSegment:
-        | { kind: 'welcome_back'; firstName?: string; recencyBucket?: ReturningRecencyBucket }
+        | {
+            kind: 'welcome_back';
+            language: typeof ctx.turnLanguage;
+            firstName?: string;
+            recencyBucket?: ReturningRecencyBucket;
+          }
         | undefined;
       if (shouldUseReturningPatientMemory(ctx.returningProfile)) {
         let firstName: string | undefined;
@@ -587,6 +603,7 @@ export const idleFeeTriageStage: DmStageHandler = {
         }
         welcomeBackSegment = {
           kind: 'welcome_back',
+          language: ctx.turnLanguage,
           firstName,
           recencyBucket: ctx.returningProfile.priorVisits.recencyBucket,
         };
@@ -634,7 +651,7 @@ export const idleFeeTriageStage: DmStageHandler = {
       if (deferBookMis) {
         dmRoutingBranch = 'reason_first_triage_ask_more';
         const snippetBookMis = await resolveVisitReasonSnippetForTriage(recentBookMis, text, correlationId);
-        replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(text, {
+        replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(ctx.turnLanguage, {
           reasonSnippet: snippetBookMis.trim(),
           recentPostMedicalFeeAck: state.triage?.postMedicalConsultFeeAckSent === true,
         });

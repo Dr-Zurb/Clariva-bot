@@ -1,5 +1,5 @@
-import { PlaceholderPageSkeleton } from "@/components/skeletons/primitives";
+import { AlertsSkeleton } from "@/components/skeletons/alerts";
 
 export default function AlertsLoading() {
-  return <PlaceholderPageSkeleton />;
+  return <AlertsSkeleton />;
 }

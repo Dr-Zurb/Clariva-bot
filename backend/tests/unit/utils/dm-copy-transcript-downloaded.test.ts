@@ -18,7 +18,7 @@ import { buildTranscriptDownloadedNotificationDm } from '../../../src/utils/dm-c
 
 describe('buildTranscriptDownloadedNotificationDm', () => {
   it('renders all load-bearing pieces with practice + date + framing', () => {
-    const dm = buildTranscriptDownloadedNotificationDm({
+    const dm = buildTranscriptDownloadedNotificationDm({ language: 'en',
       practiceName:     "Dr. Sharma's Clinic",
       consultDateLabel: '19 Apr 2026',
     });
@@ -31,7 +31,7 @@ describe('buildTranscriptDownloadedNotificationDm', () => {
   });
 
   it("falls back to 'your doctor's clinic' when practice name is blank", () => {
-    const dm = buildTranscriptDownloadedNotificationDm({
+    const dm = buildTranscriptDownloadedNotificationDm({ language: 'en',
       practiceName:     '   ',
       consultDateLabel: '19 Apr 2026',
     });
@@ -39,7 +39,7 @@ describe('buildTranscriptDownloadedNotificationDm', () => {
   });
 
   it("falls back to 'your doctor's clinic' when practice name is omitted", () => {
-    const dm = buildTranscriptDownloadedNotificationDm({
+    const dm = buildTranscriptDownloadedNotificationDm({ language: 'en',
       consultDateLabel: '19 Apr 2026',
     });
     expect(dm).toContain("your doctor's clinic");
@@ -47,7 +47,7 @@ describe('buildTranscriptDownloadedNotificationDm', () => {
 
   it('throws when consultDateLabel is empty (caller-bug surface)', () => {
     expect(() =>
-      buildTranscriptDownloadedNotificationDm({
+      buildTranscriptDownloadedNotificationDm({ language: 'en',
         practiceName:     "Dr. Sharma's Clinic",
         consultDateLabel: '   ',
       }),
@@ -55,7 +55,7 @@ describe('buildTranscriptDownloadedNotificationDm', () => {
   });
 
   it('produces a stable golden string (drift guard)', () => {
-    const dm = buildTranscriptDownloadedNotificationDm({
+    const dm = buildTranscriptDownloadedNotificationDm({ language: 'en',
       practiceName:     "Dr. Sharma's Clinic",
       consultDateLabel: '19 Apr 2026',
     });
@@ -71,11 +71,11 @@ describe('buildTranscriptDownloadedNotificationDm', () => {
     const { buildRecordingReplayedNotificationDm } = await import(
       '../../../src/utils/dm-copy'
     );
-    const downloaded = buildTranscriptDownloadedNotificationDm({
+    const downloaded = buildTranscriptDownloadedNotificationDm({ language: 'en',
       practiceName:     "Dr. Sharma's Clinic",
       consultDateLabel: '19 Apr 2026',
     });
-    const reviewed = buildRecordingReplayedNotificationDm({
+    const reviewed = buildRecordingReplayedNotificationDm({ language: 'en',
       practiceName:     "Dr. Sharma's Clinic",
       consultDateLabel: '19 Apr 2026',
       artifactType:     'transcript',

@@ -33,6 +33,7 @@ PatientProfilePage
                 └── SideSheetHost
                     └── CockpitV3Shell  ← editor-group canvas (live)
                         ├── safetyDock  → SafetyStickyStrip (anchored)
+                        ├── describeSlot → VisitDescribeFormBar (palette on lg+)
                         ├── actionDock  → PlanActionFooter (anchored)
                         └── panes       → flat tab registry (buildCockpitTabs)
 ```
@@ -94,23 +95,29 @@ fires `sendAndFinish` regardless of where the `plan` tab is dragged.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ CockpitHeader — patient identity, consult CTA, back link                  │
-├──────────────────────────────────────────────────────────────────────────┤
-│ PatientRibbon (lg+, known patient) — allergies · chronic · 💊 · 🎯 Dx    │
-├──────────────────────────────────────────────────────────────────────────┤
-│ Pane palette: [Snapshot][History][Consult][Assessment][Inv][Plan][S][O]  │
+│ (app Header hidden on /dashboard/appointments/:id — CKD-DL-4)             │
+│ CockpitContextSurface (one border, one bg)                                │
+│   CockpitHeader — ← All N/M · prev · #token Name age/sex · next · kebab   │
+│   Context row (lg+): vitals · brief  — collapses when empty (CKD-DL-1)    │
 ├──────────────────────────────────────────────────────────────────────────┤
 │ SafetyStickyStrip (anchored — never in the tree)                          │
+├──────────────────────────────────────────────────────────────────────────┤
+│ Palette: [describe…] [S][O][A][P] [Layouts] [undo][redo] [fullscreen]     │
 ├───────────────────────────┬──────────────────────────────────────────────┤
-│ ┌ Snapshot │ History │     │ ┌ Consult │ Subjective │  ← tab bars always   │
-│ │  (tabs)  │         │     │ │  (tabs) │            │    visible; always  │
-│ ├──────────┴─────────┤     │ ├─────────┴────────────┤    draggable         │
-│ │  active pane body  │     │ │  active pane body    │                      │
-│ └────────────────────┘     │ └──────────────────────┘                      │
+│ ┌ Snapshot │ History │     │ ┌ Consult │ Subjective │ [SOAP chrome] │     │
+│ │  (tabs)  │         │     │ │  (tabs) │            │ expand/clear… │     │
+│ ├──────────┴─────────┤     │ ├─────────┴────────────┴───────────────┤     │
+│ │  active pane body  │     │ │  active pane body (no in-pane toolbar)│     │
+│ └────────────────────┘     │ └──────────────────────────────────────┘     │
 ├───────────────────────────┴──────────────────────────────────────────────┤
-│ PlanActionFooter (anchored): Saved · 12:04              [Send Rx & finish] │
+│ PlanActionFooter (anchored): Saved · Treating · 12:04   [Send Rx & finish] │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
+
+SOAP S/O/A/P tab chrome (expand / collapse / clear / templates / manage
+sections) portals into the leaf tab strip (`SoapPaneChromePortal` →
+`SoapPaneChromeSlot` in `CockpitLeafView` trailing actions). Isolated section
+tests have no host and keep the toolbar in-flow.
 
 ### Mobile (`<lg`, v3-DL-8)
 
@@ -204,7 +211,10 @@ Favorite chips + `doctor_drug_usage` ranking (migrations 108–109).
 
 ### Patient ribbon (desktop, known patient)
 
-52px strip between header and shell — allergies, chronic, active med count, treating Dx mirror. Hidden for walk-in and mobile `<lg`.
+Compact chips on the collapsing context row (`CockpitContextRow`, CKD-DL-1):
+allergies (leftmost, reserved min-width — CKD-DL-2), chronic, active med
+count. Treating Dx lives in `PlanActionFooter`. Hidden for walk-in, live
+consult, and mobile `<lg`.
 
 ### Right column — Subjective / Objective
 

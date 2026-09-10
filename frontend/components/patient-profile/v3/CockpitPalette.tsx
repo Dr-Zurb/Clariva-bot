@@ -1,16 +1,22 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   Check,
   LayoutGrid,
   LayoutTemplate,
+  Maximize2,
+  Minimize2,
   Pencil,
   Redo2,
   Save,
   Trash2,
   Undo2,
 } from "lucide-react";
+import {
+  isCockpitDocumentFullscreen,
+  toggleCockpitDocumentFullscreen,
+} from "@/lib/dashboard/cockpit-fullscreen";
 import type { PaneDefinition } from "@/lib/patient-profile/v3/foundation";
 import { assertFlatLeafRegistry } from "@/lib/patient-profile/v3/blankLayout";
 import { isFullEightPaneRegistry } from "@/lib/patient-profile/v3/default-layouts";
@@ -60,6 +66,8 @@ export interface CockpitPaletteProps {
   layoutSwitcher?: CockpitLayoutSwitcher;
   /** Doctor auth token — enables save/load custom layouts (cv3l-05). */
   token?: string;
+  /** Describe-visit input on this row (ckd-01). */
+  describeSlot?: ReactNode;
   className?: string;
 }
 
@@ -68,6 +76,7 @@ export default function CockpitPalette({
   layout,
   layoutSwitcher,
   token,
+  describeSlot,
   className,
 }: CockpitPaletteProps) {
   const showLayoutSwitcher =
@@ -82,6 +91,14 @@ export default function CockpitPalette({
   const [renameName, setRenameName] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [documentFullscreen, setDocumentFullscreen] = useState(false);
+
+  useEffect(() => {
+    const sync = () => setDocumentFullscreen(isCockpitDocumentFullscreen());
+    sync();
+    document.addEventListener("fullscreenchange", sync);
+    return () => document.removeEventListener("fullscreenchange", sync);
+  }, []);
 
   const handleToggle = useCallback(
     (paneId: string) => {
@@ -167,10 +184,17 @@ export default function CockpitPalette({
         aria-label="Pane palette"
         data-testid="cockpit-v3-palette"
         className={cn(
-          "flex shrink-0 flex-wrap items-center gap-0.5 border-b border-border/60 bg-muted/30 px-2 py-1",
+          "flex shrink-0 items-center gap-0.5 border-b border-border/60 bg-muted/30 px-2 py-1",
+          describeSlot ? "flex-nowrap" : "flex-wrap",
           className,
         )}
       >
+        {describeSlot ? (
+          <>
+            <div className="min-w-0 flex-1">{describeSlot}</div>
+            <div className="mx-1 h-4 w-px shrink-0 bg-border/60" aria-hidden />
+          </>
+        ) : null}
         {panes.map((pane) => {
           const hidden = layout.paneState[pane.id]?.hidden ?? true;
           const Icon = getPalettePaneIcon(pane.id, pane.icon ?? LayoutGrid);
@@ -406,6 +430,34 @@ export default function CockpitPalette({
           </TooltipTrigger>
           <TooltipContent side="bottom" sideOffset={6}>
             Redo layout
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              data-testid="cockpit-v3-fullscreen"
+              onClick={() => toggleCockpitDocumentFullscreen()}
+              aria-label={
+                documentFullscreen ? "Exit fullscreen" : "Enter fullscreen"
+              }
+              aria-pressed={documentFullscreen}
+              className={cn(
+                "inline-flex h-7 w-7 items-center justify-center rounded transition-colors",
+                "bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+                documentFullscreen && "bg-primary/15 text-primary",
+              )}
+            >
+              {documentFullscreen ? (
+                <Minimize2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              ) : (
+                <Maximize2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              )}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" sideOffset={6}>
+            {documentFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
           </TooltipContent>
         </Tooltip>
       </div>

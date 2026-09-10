@@ -29,13 +29,36 @@ import {
   exchangeForLongLivedToken,
   getInstagramUserInfo,
   saveDoctorInstagram,
+  subscribeInstagramAccountApps,
   disconnectInstagram,
   getInstagramDashboardStatus,
 } from '../services/instagram-connect-service';
+
 import { isDoctorVerified } from '../services/doctor-verification-service';
+import { rewriteOAuthFrontendPathToBridge } from '../utils/oauth-frontend-redirect';
 
 const DOCTOR_VERIFY_FIRST_MESSAGE =
   'Verify your medical registration before connecting Instagram. Open Get verified in the dashboard.';
+
+/**
+ * Build the browser redirect after Meta OAuth. Prefer INSTAGRAM_FRONTEND_REDIRECT_URI
+ * (usually `/auth/instagram-return`). Legacy `/dashboard/*` targets are rewritten to
+ * the public bridge so SameSite=Lax cookies survive the Meta return.
+ */
+function buildFrontendConnectRedirect(opts: {
+  connected: '0' | '1';
+  error?: string;
+}): string | null {
+  const configured = env.INSTAGRAM_FRONTEND_REDIRECT_URI;
+  if (!configured) return null;
+  const url = new URL(configured);
+  rewriteOAuthFrontendPathToBridge(url, '/auth/instagram-return');
+  url.searchParams.set('connected', opts.connected);
+  if (opts.error) {
+    url.searchParams.set('error', opts.error);
+  }
+  return url.toString();
+}
 
 /**
  * GET /api/v1/settings/instagram/status
@@ -88,12 +111,12 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
   const stateParam = typeof req.query.state === 'string' ? req.query.state : undefined;
 
   if (!code || !stateParam) {
-    const redirectUri = env.INSTAGRAM_FRONTEND_REDIRECT_URI;
-    if (redirectUri) {
-      const errUrl = new URL(redirectUri);
-      errUrl.searchParams.set('connected', '0');
-      errUrl.searchParams.set('error', 'missing_code_or_state');
-      res.redirect(302, errUrl.toString());
+    const errUrl = buildFrontendConnectRedirect({
+      connected: '0',
+      error: 'missing_code_or_state',
+    });
+    if (errUrl) {
+      res.redirect(302, errUrl);
       return;
     }
     res.status(400).json({
@@ -110,12 +133,12 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
   // (e.g. stale OAuth state minted before the gate).
   const verified = await isDoctorVerified(doctorId, correlationId);
   if (!verified) {
-    const redirectUri = env.INSTAGRAM_FRONTEND_REDIRECT_URI;
-    if (redirectUri) {
-      const errUrl = new URL(redirectUri);
-      errUrl.searchParams.set('connected', '0');
-      errUrl.searchParams.set('error', 'doctor_not_verified');
-      res.redirect(302, errUrl.toString());
+    const errUrl = buildFrontendConnectRedirect({
+      connected: '0',
+      error: 'doctor_not_verified',
+    });
+    if (errUrl) {
+      res.redirect(302, errUrl);
       return;
     }
     throw new DoctorNotVerifiedError(DOCTOR_VERIFY_FIRST_MESSAGE);
@@ -151,17 +174,19 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
     );
   } catch (err) {
     if (err instanceof ConflictError) {
-      const redirectUri = env.INSTAGRAM_FRONTEND_REDIRECT_URI;
-      if (redirectUri) {
-        const errUrl = new URL(redirectUri);
-        errUrl.searchParams.set('connected', '0');
-        errUrl.searchParams.set('error', 'page_already_linked');
-        res.redirect(302, errUrl.toString());
+      const errUrl = buildFrontendConnectRedirect({
+        connected: '0',
+        error: 'page_already_linked',
+      });
+      if (errUrl) {
+        res.redirect(302, errUrl);
         return;
       }
     }
     throw err;
   }
+
+  await subscribeInstagramAccountApps(instagramAccountId, longLivedToken, correlationId);
 
   await logAuditEvent({
     correlationId,
@@ -172,11 +197,9 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
     status: 'success',
   });
 
-  const redirectUri = env.INSTAGRAM_FRONTEND_REDIRECT_URI;
-  if (redirectUri) {
-    const successUrl = new URL(redirectUri);
-    successUrl.searchParams.set('connected', '1');
-    res.redirect(302, successUrl.toString());
+  const successUrl = buildFrontendConnectRedirect({ connected: '1' });
+  if (successUrl) {
+    res.redirect(302, successUrl);
     return;
   }
   res.status(200).json(successResponse({ connected: true }, req));

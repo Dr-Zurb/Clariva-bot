@@ -1,10 +1,9 @@
 /**
- * rcp-08: executeDmTurn pipeline tests.
+ * rcp-08 / SAFETY-01: executeDmTurn pipeline tests.
  *
- * Pins the rcp-08 emergency-gate promotion: emergency is a true head gate evaluated
- * BEFORE resolveStage, so an emergency turn parked at a flow-step gate (cancel choice,
- * mid-collection) routes to `emergency_safety` and never dispatches the stage. The
- * in-collection suppression of non-acute emergency intent is preserved.
+ * Emergency is in HEAD_CONTROL_GATES before pause and before resolveStage, so an
+ * emergency turn parked at a flow-step gate (or while the doctor is paused) routes
+ * to `emergency_safety`. Classified emergency intent escalates mid-collection too.
  */
 
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
@@ -16,9 +15,14 @@ jest.mock('../../../../src/services/slot-selection-service', () => ({
 import { executeDmTurn } from '../../../../src/workers/dm/handle-turn';
 import type { DmTurnContext } from '../../../../src/workers/dm/stage-router';
 import type { Conversation } from '../../../../src/types/database';
+import type { ConversationState } from '../../../../src/types/conversation';
 
 function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
-  const state = { step: 'responded', collectedFields: [], updatedAt: new Date().toISOString() };
+  const state: ConversationState = {
+    step: 'responded',
+    collectedFields: [],
+    updatedAt: new Date().toISOString(),
+  };
   return {
     state,
     conversation: {
@@ -34,6 +38,7 @@ function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
     doctorId: 'doctor-1',
     correlationId: 'corr-1',
     text: 'hello',
+    turnLanguage: 'en',
     recentMessages: [],
     intentResult: { intent: 'book_appointment', confidence: 1 },
     doctorSettings: { timezone: 'Asia/Kolkata', instagram_receptionist_paused: false } as never,
@@ -44,6 +49,7 @@ function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
       intentResult: { intent: 'book_appointment', confidence: 1 },
       doctorSettings: null,
       text: 'hello',
+      turnLanguage: 'en',
       inCollection: false,
       conversationId: 'conv-1',
       patientId: 'patient-1',
@@ -54,8 +60,8 @@ function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
     justStartingCollection: false,
     signalsFeePricing: false,
     feeIdleRoutedByAnaphora: false,
-    feeComposerOpts: {},
-    bookingFeeComposerOpts: {},
+    feeComposerOpts: { language: 'en' },
+    bookingFeeComposerOpts: { language: 'en' },
     teleconsultCatalogRowCount: 1,
     channelReplyPick: null,
     lastBotAskedForDetails: false,
@@ -75,7 +81,7 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
   });
 
   it('emergency intent preempts the cancel/reschedule step gate (awaiting_cancel_choice)', async () => {
-    const state = {
+    const state: ConversationState = {
       step: 'awaiting_cancel_choice',
       collectedFields: [],
       updatedAt: new Date().toISOString(),
@@ -90,6 +96,7 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
         intentResult: { intent: 'emergency', confidence: 1 },
         doctorSettings: null,
         text: '2',
+        turnLanguage: 'en',
         inCollection: false,
         conversationId: 'conv-1',
         patientId: 'patient-1',
@@ -106,7 +113,7 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
   });
 
   it('acute emergency message preempts the funnel mid-collection (collecting_all)', async () => {
-    const state = {
+    const state: ConversationState = {
       step: 'collecting_all',
       collectedFields: [],
       updatedAt: new Date().toISOString(),
@@ -122,6 +129,7 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
         intentResult: { intent: 'book_appointment', confidence: 1 },
         doctorSettings: null,
         text: 'i have chest pain',
+        turnLanguage: 'en',
         inCollection: true,
         conversationId: 'conv-1',
         patientId: 'patient-1',
@@ -135,8 +143,45 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });
 
-  it('non-acute emergency intent during collection stays suppressed (no emergency_safety)', async () => {
-    const state = { step: 'responded', collectedFields: [], updatedAt: new Date().toISOString() };
+  it('open crisis: vague medical_query follow-up reaffirms instead of medical deflection', async () => {
+    const state: ConversationState = {
+      step: 'responded',
+      collectedFields: [],
+      safety: { escalatedAt: new Date().toISOString() },
+      updatedAt: new Date().toISOString(),
+    };
+    const ctx = minimalTurnCtx({
+      state,
+      text: 'kuch batao',
+      intentResult: { intent: 'medical_query', confidence: 0.88 },
+      gateCtx: {
+        state,
+        recentMessages: [],
+        intentResult: { intent: 'medical_query', confidence: 0.88 },
+        doctorSettings: null,
+        text: 'kuch batao',
+        turnLanguage: 'en',
+        inCollection: false,
+        conversationId: 'conv-1',
+        patientId: 'patient-1',
+        correlationId: 'corr-1',
+      },
+    });
+
+    const result = await executeDmTurn(ctx);
+
+    expect(result.branch).toBe('emergency_safety');
+    expect(result.reply.toLowerCase()).toContain('112');
+    expect(result.reply.toLowerCase()).not.toContain('scheduling assistant');
+    expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
+  });
+
+  it('LLM emergency intent during collection escalates to emergency_safety', async () => {
+    const state: ConversationState = {
+      step: 'collecting_all',
+      collectedFields: [],
+      updatedAt: new Date().toISOString(),
+    };
     const ctx = minimalTurnCtx({
       state,
       inCollection: true,
@@ -148,6 +193,7 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
         intentResult: { intent: 'emergency', confidence: 1 },
         doctorSettings: null,
         text: 'i feel a bit unwell today',
+        turnLanguage: 'en',
         inCollection: true,
         conversationId: 'conv-1',
         patientId: 'patient-1',
@@ -157,9 +203,9 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
 
     const result = await executeDmTurn(ctx);
 
-    expect(result.branch).not.toBe('emergency_safety');
-    expect(result.branch).toBe('ai_open_response');
-    expect(ctx.runGenerateResponse).toHaveBeenCalledTimes(1);
+    expect(result.branch).toBe('emergency_safety');
+    expect(result.nextState.lastIntent).toBe('emergency');
+    expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });
 
   it('conflictRecovery forces ai_open_response body with conflict_recovery_ai branch', async () => {
@@ -169,5 +215,76 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
 
     expect(result.branch).toBe('conflict_recovery_ai');
     expect(ctx.runGenerateResponse).toHaveBeenCalledTimes(1);
+  });
+
+  it('SAFETY-01: acute emergency preempts receptionist pause', async () => {
+    const state: ConversationState = {
+      step: 'responded',
+      collectedFields: [],
+      updatedAt: new Date().toISOString(),
+    };
+    const paused = {
+      timezone: 'Asia/Kolkata',
+      instagram_receptionist_paused: true,
+    } as never;
+    const ctx = minimalTurnCtx({
+      state,
+      doctorSettings: paused,
+      text: 'chest pain and cant breathe',
+      intentResult: { intent: 'book_appointment', confidence: 1 },
+      gateCtx: {
+        state,
+        recentMessages: [],
+        intentResult: { intent: 'book_appointment', confidence: 1 },
+        doctorSettings: paused,
+        text: 'chest pain and cant breathe',
+        turnLanguage: 'en',
+        inCollection: false,
+        conversationId: 'conv-1',
+        patientId: 'patient-1',
+        correlationId: 'corr-1',
+      },
+    });
+
+    const result = await executeDmTurn(ctx);
+
+    expect(result.branch).toBe('emergency_safety');
+    expect(result.nextState.lastIntent).toBe('emergency');
+    expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
+  });
+
+  it('SAFETY-01: paused non-emergency still receptionist_paused', async () => {
+    const state: ConversationState = {
+      step: 'responded',
+      collectedFields: [],
+      updatedAt: new Date().toISOString(),
+    };
+    const paused = {
+      timezone: 'Asia/Kolkata',
+      instagram_receptionist_paused: true,
+    } as never;
+    const ctx = minimalTurnCtx({
+      state,
+      doctorSettings: paused,
+      text: 'book me for tomorrow',
+      intentResult: { intent: 'book_appointment', confidence: 1 },
+      gateCtx: {
+        state,
+        recentMessages: [],
+        intentResult: { intent: 'book_appointment', confidence: 1 },
+        doctorSettings: paused,
+        text: 'book me for tomorrow',
+        turnLanguage: 'en',
+        inCollection: false,
+        conversationId: 'conv-1',
+        patientId: 'patient-1',
+        correlationId: 'corr-1',
+      },
+    });
+
+    const result = await executeDmTurn(ctx);
+
+    expect(result.branch).toBe('receptionist_paused');
+    expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });
 });

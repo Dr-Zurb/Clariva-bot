@@ -14,6 +14,7 @@ import { runBookingReviewSlaAlertJob } from '../services/booking-review-sla-aler
 import { runStablePatternDetectionJob } from '../services/service-match-learning-policy-service';
 import { runAbandonedBookingReminderJob } from '../services/abandoned-booking-reminder';
 import { runConsultationPrePingJob } from '../services/consultation-pre-ping-job';
+import { runConsultationCheckinJob } from '../services/consultation-checkin-job';
 import { runAccountDeletionFinalizeJob } from '../workers/account-deletion-cron';
 import { runRecordingArchivalJob } from '../workers/recording-archival-cron';
 import { runDashboardEventsRetentionJob } from '../workers/dashboard-events-retention-cron';
@@ -21,6 +22,9 @@ import { runInstagramTokenHealthJob } from '../workers/instagram-token-health-cr
 import { runGhostAccountSweepJob } from '../workers/ghost-account-sweep-cron';
 import { runVoiceTranscriptionJob } from '../workers/voice-transcription-worker';
 import { runVideoEscalationTimeoutJob } from '../workers/video-escalation-timeout-worker';
+import { runVideoGrantExpiryJob } from '../workers/video-grant-expiry-worker';
+import { runRecordingAutoResumeJob } from '../workers/recording-auto-resume-worker';
+import { runRecordingOrphanReconcileJob } from '../workers/recording-orphan-reconciliation-worker';
 import { runModalityPendingTimeoutJob } from '../workers/modality-pending-timeout-worker';
 import { runModalityRefundRetryJob } from '../workers/modality-refund-retry-worker';
 import { logger } from '../config/logger';
@@ -42,8 +46,8 @@ function verifyCronAuth(req: Request): boolean {
 /**
  * POST /cron/payouts/schedule/:schedule
  *
- * Run a specific schedule (for manual/testing). Same auth as above.
- * Registered first so it matches before the generic /payouts.
+ * Deprecated no-op (billing P0). Service returns skipped: deprecated.
+ * Route stays mounted so external cron does not 404.
  */
 router.post('/payouts/schedule/:schedule', async (req: Request, res: Response) => {
   if (!verifyCronAuth(req)) {
@@ -82,11 +86,7 @@ router.post('/payouts/schedule/:schedule', async (req: Request, res: Response) =
 /**
  * POST /cron/payouts
  *
- * Runs scheduled batch payouts. Call daily at 02:00 IST.
- * Processes:
- * - daily: always
- * - weekly: only on Mondays
- * - monthly: only on 1st
+ * Deprecated no-op (billing P0). Still auth-gated; service does not transfer.
  */
 router.post('/payouts', async (req: Request, res: Response) => {
   if (!verifyCronAuth(req)) {
@@ -234,7 +234,7 @@ router.post('/dashboard-events-retention', async (req: Request, res: Response) =
 /**
  * POST /cron/instagram-token-health
  *
- * ilr-04: Proactive Meta debug_token sweep for connected doctors + email
+ * ilr-04: Proactive Instagram token health sweep for connected doctors + email
  * reconnect nudge on transition into reconnectRecommended.
  * Schedule externally **once per day** with the same CRON_SECRET.
  */
@@ -363,6 +363,39 @@ router.post('/consultation-pre-ping', async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: { code: 'InternalError', message: 'Consultation pre-ping job failed' },
+    });
+  }
+});
+
+/**
+ * POST /cron/consultation-checkin
+ *
+ * Pre-visit ladder (crc-03 + reminders):
+ *   T−24h soft reminder (no link), T−30 check-in, T−15 / T−5 nudges,
+ *   T=0 starting-now (link; skip if patient already Waiting).
+ * Also driven in-process by `startPrevisitNotifyWorker` (prod default on;
+ * `PREVISIT_NOTIFY_WORKER_ENABLED=true` locally). This HTTP route remains
+ * for Render Cron / manual ops. Does not create Twilio rooms.
+ */
+router.post('/consultation-checkin', async (req: Request, res: Response) => {
+  if (!verifyCronAuth(req)) {
+    return res.status(401).json({
+      success: false,
+      error: { code: 'Unauthorized', message: 'Invalid or missing cron secret' },
+    });
+  }
+
+  const correlationId = `cron-consult-checkin-${Date.now()}`;
+
+  try {
+    const data = await runConsultationCheckinJob(correlationId);
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ correlationId, error: msg }, 'Cron consultation check-in failed');
+    return res.status(500).json({
+      success: false,
+      error: { code: 'InternalError', message: 'Consultation check-in job failed' },
     });
   }
 });
@@ -541,6 +574,106 @@ router.post('/video-escalation-timeout', async (req: Request, res: Response) => 
     return res.status(500).json({
       success: false,
       error: { code: 'InternalError', message: 'Video escalation timeout job failed' },
+    });
+  }
+});
+
+/**
+ * POST /cron/video-grant-expiry
+ *
+ * rec-22 — auto-revert elapsed video grants to audio-only. Tick every
+ * 5s next to the consent-timeout job. Concurrent ticks are safe
+ * (atomic stamp on `revoked_at IS NULL` + `grant_expires_at <= cutoff`).
+ * Same CRON_SECRET gate.
+ */
+router.post('/video-grant-expiry', async (req: Request, res: Response) => {
+  if (!verifyCronAuth(req)) {
+    return res.status(401).json({
+      success: false,
+      error: { code: 'Unauthorized', message: 'Invalid or missing cron secret' },
+    });
+  }
+
+  const correlationId = `cron-video-grant-expiry-${Date.now()}`;
+
+  try {
+    const data = await runVideoGrantExpiryJob(correlationId);
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ correlationId, error: msg }, 'Cron video grant expiry failed');
+    return res.status(500).json({
+      success: false,
+      error: { code: 'InternalError', message: 'Video grant expiry job failed' },
+    });
+  }
+});
+
+/**
+ * POST /cron/recording-auto-resume
+ *
+ * rec-16 — resume open pauses whose `auto_resume_at` has passed.
+ * Tick every 15s (`RECORDING_AUTO_RESUME_TICK_SECONDS`). The policy
+ * bound is 5 minutes, so worst-case overshoot is one tick (5:00–5:15).
+ * Coarser than the 5s escalation worker because a late resume is
+ * recoverable and a 5s poll of a growing governance table is not
+ * justified. Same CRON_SECRET gate. Concurrent ticks are safe
+ * (atomic claim; loser counts as `raced`).
+ */
+router.post('/recording-auto-resume', async (req: Request, res: Response) => {
+  if (!verifyCronAuth(req)) {
+    return res.status(401).json({
+      success: false,
+      error: { code: 'Unauthorized', message: 'Invalid or missing cron secret' },
+    });
+  }
+
+  const correlationId = `cron-recording-auto-resume-${Date.now()}`;
+
+  try {
+    const data = await runRecordingAutoResumeJob(correlationId);
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ correlationId, error: msg }, 'Cron recording auto-resume failed');
+    return res.status(500).json({
+      success: false,
+      error: { code: 'InternalError', message: 'Recording auto-resume job failed' },
+    });
+  }
+});
+
+/**
+ * POST /cron/recording-orphan-reconcile
+ *
+ * rec-20 — close orphan `attempted` ledger rows older than the
+ * 5-minute SLA (`RECORDING_AUDIT_ORPHAN_SLA_MS`). Tick every 60s
+ * (`RECORDING_ORPHAN_RECONCILE_TICK_SECONDS`). Worst-case lag after
+ * the SLA is one tick (5:00–6:00). Far coarser than the 5s
+ * escalation worker: this job reads Twilio once per orphan and
+ * sweeps a growing governance table. Same CRON_SECRET gate.
+ * Concurrent ticks are safe (atomic claim; loser counts as `raced`).
+ * Observe-only — no Recording Rules writes.
+ */
+router.post('/recording-orphan-reconcile', async (req: Request, res: Response) => {
+  if (!verifyCronAuth(req)) {
+    return res.status(401).json({
+      success: false,
+      error: { code: 'Unauthorized', message: 'Invalid or missing cron secret' },
+    });
+  }
+
+  const correlationId = `cron-recording-orphan-reconcile-${Date.now()}`;
+
+  try {
+    const data = await runRecordingOrphanReconcileJob(correlationId);
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ correlationId, error: msg }, 'Cron recording orphan reconcile failed');
+    return res.status(500).json({
+      success: false,
+      error: { code: 'InternalError', message: 'Recording orphan reconcile job failed' },
     });
   }
 });

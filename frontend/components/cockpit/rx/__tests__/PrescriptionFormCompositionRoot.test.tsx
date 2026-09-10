@@ -29,6 +29,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     getDoctorSettings: vi.fn().mockResolvedValue({ data: { settings: {} } }),
+    getAppointmentDeskVitals: vi.fn().mockResolvedValue({ data: { vitals: null } }),
     getLastPrescriptionInEpisode: vi
       .fn()
       .mockResolvedValue({ data: { prescription: null } }),
@@ -178,6 +179,21 @@ describe("PrescriptionFormCompositionRoot", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Assessment" })).toBeInTheDocument();
     expect(screen.getByTestId("rx-section-plan")).toBeInTheDocument();
+  });
+
+  it("flat host mounts one describe box; cockpit lift hides it", () => {
+    const { unmount } = renderCompositionRoot();
+    expect(screen.getAllByLabelText("Describe this visit")).toHaveLength(1);
+    expect(
+      screen.queryByRole("region", { name: "Subjective" }),
+    ).toBeInTheDocument();
+    unmount();
+
+    renderCompositionRoot({
+      subjectiveLifted: true,
+      objectiveLifted: true,
+    });
+    expect(screen.queryByLabelText("Describe this visit")).not.toBeInTheDocument();
   });
 
   it("defaults preserved — omitting lift props matches explicit false", () => {

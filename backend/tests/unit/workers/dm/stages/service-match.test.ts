@@ -79,6 +79,7 @@ function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
     doctorId: 'doctor-1',
     correlationId: 'corr-1',
     text: 'hello',
+    turnLanguage: 'en',
     recentMessages: [],
     intentResult: { intent: 'unknown', confidence: 1 },
     doctorSettings: { timezone: 'Asia/Kolkata', instagram_receptionist_paused: false } as never,
@@ -89,6 +90,7 @@ function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
       intentResult: { intent: 'unknown', confidence: 1 },
       doctorSettings: null,
       text: 'hello',
+      turnLanguage: 'en',
       inCollection: false,
       conversationId: 'conv-1',
       patientId: 'patient-1',
@@ -99,8 +101,8 @@ function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
     justStartingCollection: false,
     signalsFeePricing: false,
     feeIdleRoutedByAnaphora: false,
-    feeComposerOpts: {},
-    bookingFeeComposerOpts: {},
+    feeComposerOpts: { language: 'en' },
+    bookingFeeComposerOpts: { language: 'en' },
     teleconsultCatalogRowCount: 1,
     channelReplyPick: null,
     lastBotAskedForDetails: false,
@@ -181,6 +183,7 @@ describe('serviceMatchStage', () => {
       resolveStage(
         minimalTurnCtx({
           text: 'yes',
+          turnLanguage: 'en',
           recentMessages: [
             {
               sender_type: 'system',

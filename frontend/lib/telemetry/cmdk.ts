@@ -7,9 +7,9 @@
  *   - `cmdk.opened`            once per palette open (keyboard or trigger).
  *   - `cmdk.searched(querylen)` once per debounce cycle. **Length only**, never
  *                                the query string itself.
- *   - `cmdk.selected(source)`  once per selection. Source key (`"patients"`)
- *                                is non-PHI; the selected item id, name,
- *                                phone, etc. are NOT emitted.
+ *   - `cmdk.selected(source)`  once per selection. Source key (`"patients"`
+ *                                / `"fields"`) is non-PHI; the selected item
+ *                                id, name, phone, etc. are NOT emitted.
  *
  * PHI hygiene
  * -----------
@@ -30,7 +30,12 @@
 const PREFIX = "[ehr:cmdk]";
 
 /** Source key — non-PHI enum string. Mirrors `Source.key` in the palette. */
-export type CmdkSourceKey = "patients" | "appointments" | "drugs" | "settings";
+export type CmdkSourceKey =
+  | "patients"
+  | "appointments"
+  | "drugs"
+  | "settings"
+  | "fields";
 
 function emit(event: string, payload?: Record<string, unknown>): void {
   if (typeof console === "undefined") return;

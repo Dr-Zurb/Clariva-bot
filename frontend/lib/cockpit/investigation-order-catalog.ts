@@ -571,21 +571,18 @@ export function doctorCustomOrdersToCatalogEntries(
 
 /**
  * Seed a named basket from a catalog panel (INV-D11).
+ * Label only — catalog members are available in the expand checklist,
+ * not pre-selected. The doctor adds tests if they want them on the Rx.
  */
 export function createPanelBasket(panelId: string): InvestigationOrder | null {
   const panel = getLabPanelById(panelId);
   if (!panel) return null;
-  const members = panelMemberOptions(panel).map((m) => ({
-    id: m.id,
-    label: m.label,
-    kind: "analyte" as const,
-  }));
   return {
     id: panel.id,
     label: panel.name,
     kind: "panel",
     sourcePanelId: panel.id,
-    members,
+    members: [],
   };
 }
 
@@ -651,7 +648,7 @@ export function isBasketCustomized(order: InvestigationOrder): boolean {
 
 /**
  * Membership / title drift only — ignores requisition fields.
- * Drives the "Custom package" badge, chip "· custom", and rename nudge.
+ * Drives the "Custom package" badge and chip "· custom".
  */
 export function isBasketMembershipCustomized(
   order: InvestigationOrder,
@@ -665,6 +662,9 @@ export function isBasketMembershipCustomized(
     if (!panel) return true;
     if (normalizeKey(order.label) !== normalizeKey(panel.name)) return true;
     const members = order.members ?? [];
+    // Label-only (the default seed) and full catalog membership both print
+    // as the package name. Partial / extra members are a custom basket.
+    if (members.length === 0) return false;
     if (members.length !== panel.analyteIds.length) return true;
     const memberIds = new Set(members.map((m) => m.id));
     return panel.analyteIds.some((id) => !memberIds.has(id));

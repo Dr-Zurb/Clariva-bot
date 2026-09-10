@@ -56,8 +56,8 @@ const mainNavItems: NavItem[] = [
     icon: BarChart3,
   },
   {
-    href: "/dashboard/booking-review",
-    label: "Booking review",
+    href: "/dashboard/inbox",
+    label: "Inbox",
     icon: Inbox,
     badgeKey: "bookingReviewsUnconfirmed",
   },

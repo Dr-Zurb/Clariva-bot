@@ -6,7 +6,6 @@ import {
   getSlotPageInfo,
   getDaySlots,
   selectSlotAndPay,
-  postRecordingConsent,
   type BookingPageCatalogApi,
   type ConsultationModalityApi,
   type DaySlotWithStatus,
@@ -18,11 +17,7 @@ import {
   formatTime,
 } from "@/lib/format-date";
 import { formatLocalIsoDate } from "@/lib/dates";
-import {
-  RecordingConsentCheckbox,
-  RECORDING_CONSENT_VERSION_DISPLAY,
-} from "@/components/booking/RecordingConsentCheckbox";
-import { RecordingConsentRePitchModal } from "@/components/booking/RecordingConsentRePitchModal";
+import { BOOKING_AUDIO_RECORDING_DISCLOSURE } from "@/lib/recording-audio-disclosure";
 
 const DAYS_AHEAD = 14;
 
@@ -109,13 +104,6 @@ function BookPageContent() {
     useState<ConsultationModalityApi | null>(null);
   /** ARM-09: visit type fixed in chat — disable switching to another catalog row. */
   const [servicePickerLocked, setServicePickerLocked] = useState(false);
-
-  // Plan 02 · Task 27 — recording consent. Default ON (Decision 4:
-  // recording-on-by-default). Re-pitch modal fires only on the first
-  // uncheck; subsequent uncheck toggles skip the modal.
-  const [recordingConsent, setRecordingConsent] = useState<boolean>(true);
-  const [hasRePitched, setHasRePitched] = useState<boolean>(false);
-  const [rePitchOpen, setRePitchOpen] = useState<boolean>(false);
 
   const dateOptions = useMemo(() => {
     const options: string[] = [];
@@ -308,26 +296,8 @@ function BookPageContent() {
         selectedSlot.start,
         catalogPayload
       );
-      const { paymentUrl, redirectUrl, tokenNumber, opdMode: resMode, appointmentId } =
+      const { paymentUrl, redirectUrl, tokenNumber, opdMode: resMode } =
         res.data;
-
-      // Plan 02 · Task 27 — persist recording consent before redirecting.
-      // Fail-open: any error here is logged but does NOT block the payment
-      // flow. The appointment is already created; a missed write leaves
-      // consent NULL which is handled as "no explicit opt-out" downstream.
-      if (appointmentId) {
-        try {
-          await postRecordingConsent(
-            token,
-            appointmentId,
-            recordingConsent,
-            RECORDING_CONSENT_VERSION_DISPLAY
-          );
-        } catch (err) {
-          // eslint-disable-next-line no-console
-          console.warn("[book] failed to record consent", err);
-        }
-      }
 
       if (paymentUrl) {
         window.location.href = paymentUrl;
@@ -369,32 +339,7 @@ function BookPageContent() {
     selectedServiceKey,
     selectedServiceId,
     selectedModality,
-    recordingConsent,
   ]);
-
-  const handleConsentChange = useCallback(
-    (next: boolean) => {
-      setRecordingConsent(next);
-    },
-    []
-  );
-
-  const handleFirstDecline = useCallback(() => {
-    if (!hasRePitched) {
-      setHasRePitched(true);
-      setRePitchOpen(true);
-    }
-  }, [hasRePitched]);
-
-  const handleKeepRecordingOn = useCallback(() => {
-    setRecordingConsent(true);
-    setRePitchOpen(false);
-  }, []);
-
-  const handleContinueWithoutRecording = useCallback(() => {
-    setRecordingConsent(false);
-    setRePitchOpen(false);
-  }, []);
 
   const availableCount = slots.filter((s) => s.status === "available").length;
   const isQueueBook = opdMode === "queue" && mode === "book";
@@ -628,19 +573,17 @@ function BookPageContent() {
           )}
         </section>
 
-        {/* Plan 02 · Task 27 — recording consent. Rendered only for fresh
-            bookings, not reschedules (the consent on the original booking
-            carries forward; re-asking on reschedule is out of scope per
-            Plan 02 open question #1). */}
         {mode === "book" ? (
-          <section className="mt-6">
-            <RecordingConsentCheckbox
-              checked={recordingConsent}
-              onChange={handleConsentChange}
-              onFirstDecline={handleFirstDecline}
-              disabled={saving}
-              practiceName={practiceName || undefined}
-            />
+          <section className="mt-6 space-y-4">
+            <p className="text-xs text-gray-500">
+              If you pay online, the money goes to this clinic — not Halo Aid.
+              You can cancel or reschedule from the confirmation message.
+              Doctor cancellations, emergencies, and platform failures are
+              refunded in full. A missed visit is not refunded.
+            </p>
+            <p className="text-xs text-gray-500">
+              {BOOKING_AUDIO_RECORDING_DISCLOSURE}
+            </p>
           </section>
         ) : null}
 
@@ -672,13 +615,6 @@ function BookPageContent() {
           )}
         </div>
       </div>
-
-      <RecordingConsentRePitchModal
-        open={rePitchOpen}
-        onKeepOn={handleKeepRecordingOn}
-        onContinueWithout={handleContinueWithoutRecording}
-        onDismiss={handleContinueWithoutRecording}
-      />
     </main>
   );
 }

@@ -8,7 +8,6 @@ const EDIT_COUNTER_DISPLAY_THRESHOLD = 500;
 
 export interface EditableMessageBubbleProps {
   initialBody: string;
-  isSelf: boolean;
   saving?: boolean;
   onSave: (body: string) => void;
   onCancel: () => void;
@@ -19,7 +18,6 @@ export interface EditableMessageBubbleProps {
  */
 export function EditableMessageBubble({
   initialBody,
-  isSelf,
   saving = false,
   onSave,
   onCancel,
@@ -51,19 +49,13 @@ export function EditableMessageBubble({
         onChange={(e) => setDraft(e.target.value)}
         rows={3}
         disabled={saving}
-        className={
-          "w-full resize-none rounded-lg border px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 " +
-          (isSelf
-            ? "border-white/40 bg-blue-700 text-white placeholder:text-white/60"
-            : "border-gray-300 bg-white text-gray-900")
-        }
+        className="w-full resize-none rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
         aria-label="Edit message"
       />
       {showCounter ? (
         <p
           className={
-            "text-[11px] " +
-            (overCap ? "text-red-300" : isSelf ? "text-white/80" : "text-gray-500")
+            "text-[11px] " + (overCap ? "text-red-500" : "text-gray-500")
           }
         >
           {draft.length} / {EDIT_BODY_HARD_CAP}
@@ -74,10 +66,7 @@ export function EditableMessageBubble({
           type="button"
           onClick={handleSave}
           disabled={saving || overCap || !draft.trim()}
-          className={
-            "rounded px-2 py-1 text-xs font-medium disabled:opacity-50 " +
-            (isSelf ? "bg-white text-blue-700" : "bg-blue-600 text-white")
-          }
+          className="rounded bg-blue-600 px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
         >
           {saving ? "Saving…" : "Save"}
         </button>
@@ -85,10 +74,7 @@ export function EditableMessageBubble({
           type="button"
           onClick={onCancel}
           disabled={saving}
-          className={
-            "rounded px-2 py-1 text-xs underline disabled:opacity-50 " +
-            (isSelf ? "text-white/90" : "text-gray-600")
-          }
+          className="rounded px-2 py-1 text-xs text-gray-600 underline disabled:opacity-50"
         >
           Cancel
         </button>

@@ -63,6 +63,16 @@ describe('AI Service', () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
+    // lat-02 routed classifyIntent onto the mini tier; individual tests still
+    // stub getOpenAIConfig, so give the classify config a default here.
+    mockedOpenai.getOpenAIIntentClassifyConfig.mockReturnValue({
+      model: 'gpt-4o-mini',
+      maxTokens: 256,
+    });
+    const actualOpenai = jest.requireActual('../../../src/config/openai') as typeof openaiConfig;
+    mockedOpenai.isGpt56Family.mockImplementation(actualOpenai.isGpt56Family);
+    mockedOpenai.replyPromptCacheParams.mockImplementation(actualOpenai.replyPromptCacheParams);
+    mockedOpenai.cachedSystemTextPart.mockImplementation(actualOpenai.cachedSystemTextPart);
     env.POST_MEDICAL_ACK_AI_LOCALIZE = savedPostMedAckLocalize;
     env.VISIT_REASON_SNIPPET_AI_ENABLED = savedVisitReasonSnippetAi;
     mockedAudit.logAIClassification.mockReset();
@@ -226,18 +236,66 @@ describe('AI Service', () => {
           max_completion_tokens: number;
           messages: { content: string }[];
         };
-        expect(callArg.model).toBe('gpt-5.2');
+        // lat-02: intent classification runs on the mini tier, not OPENAI_MODEL.
+        expect(callArg.model).toBe('gpt-4o-mini');
         expect(callArg.max_completion_tokens).toBe(140);
         expect(callArg.messages[1].content).not.toContain('@');
         expect(mockedAudit.logAIClassification).toHaveBeenCalledWith(
           expect.objectContaining({
             correlationId,
-            model: 'gpt-5.2',
+            model: 'gpt-4o-mini',
             redactionApplied: true,
             status: 'success',
             tokens: 50,
           })
         );
+      });
+
+      it('lang-17: parses language and coerces garbage to unknown', async () => {
+        const makeClient = (content: string) => {
+          const mockCreate = jest
+            .fn<() => Promise<MockCompletion>>()
+            .mockResolvedValue({
+              choices: [{ message: { content } }],
+              usage: { total_tokens: 40 },
+            });
+          mockedOpenai.getOpenAIClient.mockReturnValue({
+            chat: { completions: { create: mockCreate } },
+          } as any);
+          mockedOpenai.getOpenAIConfig.mockReturnValue({
+            model: 'gpt-5.2',
+            maxTokens: 256,
+          });
+        };
+
+        makeClient(
+          JSON.stringify({
+            intent: 'ask_question',
+            confidence: 0.9,
+            language: 'hi-Latn',
+          })
+        );
+        expect(
+          (await classifyIntent('mujhe dard hai', `${correlationId}-lang-ok`)).language
+        ).toBe('hi-Latn');
+
+        makeClient(
+          JSON.stringify({
+            intent: 'ask_question',
+            confidence: 0.9,
+            language: 'french',
+          })
+        );
+        expect(
+          (await classifyIntent('bonjour', `${correlationId}-lang-bad`)).language
+        ).toBe('unknown');
+
+        makeClient(
+          JSON.stringify({ intent: 'ask_question', confidence: 0.9 })
+        );
+        expect(
+          (await classifyIntent('hello', `${correlationId}-lang-omit`)).language
+        ).toBeUndefined();
       });
 
       it('merges reason_first_done_adding and clears fee_thread_continuation', async () => {
@@ -483,7 +541,7 @@ describe('AI Service', () => {
         expect(mockedAudit.logAIClassification).toHaveBeenCalledWith(
           expect.objectContaining({
             correlationId,
-            model: 'gpt-5.2',
+            model: 'gpt-4o-mini',
             redactionApplied: true,
             status: 'failure',
             errorMessage: 'classification_failed_after_retries',
@@ -626,7 +684,18 @@ describe('AI Service', () => {
       recentMessages: [] as { id: string; conversation_id: string; platform_message_id: string; sender_type: 'patient' | 'doctor' | 'system'; content: string; intent?: string; created_at: Date }[],
       currentUserMessage: 'Hi there',
       correlationId,
+      turnLanguage: 'en' as const,
     };
+
+    function flattenSystemContent(content: unknown): string {
+      if (typeof content === 'string') return content;
+      if (Array.isArray(content)) {
+        return content
+          .map((part) => (typeof part === 'object' && part && 'text' in part ? String(part.text) : ''))
+          .join('');
+      }
+      return '';
+    }
 
     it('returns fallback when OPENAI_API_KEY is not set and audits failure', async () => {
       mockedOpenai.getOpenAIClient.mockReturnValue(null);
@@ -669,8 +738,10 @@ describe('AI Service', () => {
       });
 
       const firstCall = (mockCreate.mock.calls as unknown as unknown[][])[0];
-      const systemContent = (firstCall?.[0] as { messages: { role: string; content: string }[] }).messages[0]
-        .content;
+      const systemContent = flattenSystemContent(
+        (firstCall?.[0] as { messages: { role: string; content: unknown }[] }).messages[0]
+          .content,
+      );
       expect(systemContent).toContain('Thread note: user was in fee discussion.');
     });
 
@@ -696,14 +767,61 @@ describe('AI Service', () => {
       });
 
       const firstCall = (mockCreate.mock.calls as unknown as unknown[][])[0];
-      const systemContent = (firstCall?.[0] as { messages: { role: string; content: string }[] }).messages[0]
-        .content;
+      const systemContent = flattenSystemContent(
+        (firstCall?.[0] as { messages: { role: string; content: unknown }[] }).messages[0]
+          .content,
+      );
       expect(systemContent).toContain(
         'returning patient: prior_visits=2, last_service=[follow_up], recency=[within_3_months]'
       );
       expect(systemContent).toContain('tone only');
       expect(systemContent).not.toContain('Priya');
       expect(systemContent).not.toContain('+91');
+    });
+
+    it('sends explicit prompt cache on gpt-5.6 and not on gpt-5.2', async () => {
+      const mockCreate = jest
+        .fn<() => Promise<{ choices: { message: { content: string } }[] }>>()
+        .mockResolvedValue({
+          choices: [{ message: { content: 'ok' } }],
+        });
+      mockedOpenai.getOpenAIClient.mockReturnValue({
+        chat: { completions: { create: mockCreate } },
+      } as any);
+
+      mockedOpenai.getOpenAIConfig.mockReturnValue({
+        model: 'gpt-5.6-luna',
+        maxTokens: 256,
+      });
+      await generateResponse({
+        ...defaultInput,
+        doctorContext: { practice_name: 'Test Clinic' },
+      });
+      const lunaArg = (mockCreate.mock.calls as unknown as unknown[][])[0]?.[0] as {
+        prompt_cache_key?: string;
+        prompt_cache_options?: { mode: string; ttl: string };
+        messages: { content: unknown }[];
+      };
+      expect(lunaArg.prompt_cache_key).toBe('dm-reply:v1:Test Clinic:en:full');
+      expect(lunaArg.prompt_cache_options).toEqual({ mode: 'explicit', ttl: '30m' });
+      const lunaParts = lunaArg.messages[0].content as Array<{
+        prompt_cache_breakpoint?: { mode: string };
+      }>;
+      expect(lunaParts[0].prompt_cache_breakpoint).toEqual({ mode: 'explicit' });
+      expect(lunaParts[1].prompt_cache_breakpoint).toBeUndefined();
+
+      mockCreate.mockClear();
+      mockedOpenai.getOpenAIConfig.mockReturnValue({
+        model: 'gpt-5.2',
+        maxTokens: 256,
+      });
+      await generateResponse(defaultInput);
+      const legacyArg = (mockCreate.mock.calls as unknown as unknown[][])[0]?.[0] as {
+        prompt_cache_key?: string;
+        messages: { content: unknown }[];
+      };
+      expect(legacyArg.prompt_cache_key).toBeUndefined();
+      expect(typeof legacyArg.messages[0].content).toBe('string');
     });
 
     it('returns generated text and audits success when OpenAI returns content', async () => {
@@ -791,7 +909,8 @@ describe('AI Service', () => {
 
       const out = await resolvePostMedicalPaymentExistenceAck(
         'kya consultation free hai',
-        correlationId
+        correlationId,
+        'hi-Latn'
       );
 
       expect(out).toBe(POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN);
@@ -807,7 +926,7 @@ describe('AI Service', () => {
         maxTokens: 256,
       });
 
-      const out = await resolvePostMedicalPaymentExistenceAck('hello', correlationId);
+      const out = await resolvePostMedicalPaymentExistenceAck('hello', correlationId, 'en');
 
       expect(out).toBe(POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN);
       expect(mockedAudit.logAuditEvent).not.toHaveBeenCalled();
@@ -833,11 +952,19 @@ describe('AI Service', () => {
 
       const out = await resolvePostMedicalPaymentExistenceAck(
         'kya ye free consultation hai',
-        correlationId
+        correlationId,
+        'hi'
       );
 
       expect(out).toBe(localized);
       expect(mockCreate).toHaveBeenCalledTimes(1);
+      const firstCall = (mockCreate.mock.calls as unknown as unknown[][])[0];
+      const createArgs = firstCall?.[0] as {
+        messages: Array<{ role: string; content: string }>;
+      };
+      const systemMsg = createArgs.messages.find((m) => m.role === 'system')?.content ?? '';
+      expect(systemMsg).toContain('LANGUAGE: Reply in Hindi, in Devanagari script.');
+      expect(systemMsg).not.toContain('USER_MESSAGE_REDACTED');
       expect(mockedAudit.logAuditEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           correlationId,
@@ -845,8 +972,9 @@ describe('AI Service', () => {
           status: 'success',
           metadata: expect.objectContaining({
             model: 'gpt-5.2',
-            redactionApplied: true,
+            redactionApplied: false,
             tokens: 42,
+            turnLanguage: 'hi',
           }),
         })
       );
@@ -866,7 +994,7 @@ describe('AI Service', () => {
         maxTokens: 256,
       });
 
-      const out = await resolvePostMedicalPaymentExistenceAck('hi', correlationId);
+      const out = await resolvePostMedicalPaymentExistenceAck('hi', correlationId, 'en');
 
       expect(out).toBe(POST_MEDICAL_PAYMENT_EXISTENCE_ACK_CANONICAL_EN);
       expect(mockedAudit.logAuditEvent).toHaveBeenCalledWith(

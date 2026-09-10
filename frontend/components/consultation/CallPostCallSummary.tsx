@@ -129,10 +129,10 @@ function recordingListenTooltip(
 
 function recordingLabel(
   status: PostCallSummary["recording"]["status"],
-  hasVideo: boolean | undefined,
+  includesVideo: boolean | undefined,
 ): string {
   if (status === "available") {
-    return hasVideo ? "Recording (audio + video)" : "Recording (audio)";
+    return includesVideo ? "Recording (audio + video)" : "Recording (audio)";
   }
   if (status === "processing") return "Recording — processing";
   if (status === "not-recorded") return "Not recorded";

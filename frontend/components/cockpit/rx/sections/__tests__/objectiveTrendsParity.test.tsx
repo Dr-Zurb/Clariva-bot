@@ -51,6 +51,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     getDoctorSettings: vi
       .fn()
       .mockResolvedValue({ data: { settings: {} } }),
+    getAppointmentDeskVitals: vi.fn().mockResolvedValue({ data: { vitals: null } }),
     getLastPrescriptionInEpisode: vi
       .fn()
       .mockResolvedValue({ data: { prescription: null } }),

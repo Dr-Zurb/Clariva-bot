@@ -4,13 +4,13 @@
  *
  * Two builders covered here:
  *
- *   1. `buildConsultationReadyDm({ modality: 'voice', … })` — newly lit-up
+ *   1. `buildConsultationReadyDm({ language: 'en', modality: 'voice', … })` — newly lit-up
  *      branch. Mirrors the text variant's test file structure. Load-bearing
  *      substring assertions pin `"audio only"` and `"NOT a phone call"` —
  *      the Principle 8 keywords. A future copy-tweak that drops either
  *      fails these assertions loudly (separate from the snapshot).
  *
- *   2. `buildPaymentConfirmationMessage({ modality: 'voice', … })` — newly
+ *   2. `buildPaymentConfirmationMessage({ language: 'en', modality: 'voice', … })` — newly
  *      gated disambiguation paragraph. The paragraph is inserted BEFORE the
  *      existing closing reminder line; positional assertions pin the
  *      placement. Non-voice modalities (including `undefined`) render
@@ -37,7 +37,7 @@ import {
 
 describe('buildConsultationReadyDm — voice modality (Task 26 / Principle 8)', () => {
   it('renders the voice-modality body with the audio-only disambiguation paragraph', () => {
-    const out = buildConsultationReadyDm({
+    const out = buildConsultationReadyDm({ language: 'en',
       modality:     'voice',
       practiceName: 'Acme Clinic',
       joinUrl:      'https://app.clariva.test/c/voice/abc?token=xyz',
@@ -55,7 +55,7 @@ describe('buildConsultationReadyDm — voice modality (Task 26 / Principle 8)', 
   });
 
   it('falls back to "your doctor" when practiceName is whitespace-only', () => {
-    const out = buildConsultationReadyDm({
+    const out = buildConsultationReadyDm({ language: 'en',
       modality:     'voice',
       practiceName: '   ',
       joinUrl:      'https://x.test/?token=z',
@@ -64,7 +64,7 @@ describe('buildConsultationReadyDm — voice modality (Task 26 / Principle 8)', 
   });
 
   it('falls back to "your doctor" when practiceName is undefined', () => {
-    const out = buildConsultationReadyDm({
+    const out = buildConsultationReadyDm({ language: 'en',
       modality: 'voice',
       joinUrl:  'https://x.test/?token=z',
     });
@@ -73,13 +73,13 @@ describe('buildConsultationReadyDm — voice modality (Task 26 / Principle 8)', 
 
   it('throws on empty joinUrl (parity with video + text branches)', () => {
     expect(() =>
-      buildConsultationReadyDm({ modality: 'voice', joinUrl: '   ' })
+      buildConsultationReadyDm({ language: 'en', modality: 'voice', joinUrl: '   ' })
     ).toThrow(/joinUrl is required/);
   });
 
   // --- Load-bearing substrings (survive copy nits that don't touch keywords)
   it('contains the load-bearing "audio only" substring', () => {
-    const out = buildConsultationReadyDm({
+    const out = buildConsultationReadyDm({ language: 'en',
       modality:     'voice',
       practiceName: 'X',
       joinUrl:      'https://x.test/?t=1',
@@ -91,7 +91,7 @@ describe('buildConsultationReadyDm — voice modality (Task 26 / Principle 8)', 
     // CAPS on the three-word noun phrase is deliberate — banking SMS /
     // government-alert pattern that reads as emphasis, not shouting.
     // Pinning the exact casing catches any "helpful" lowercasing.
-    const out = buildConsultationReadyDm({
+    const out = buildConsultationReadyDm({ language: 'en',
       modality:     'voice',
       practiceName: 'X',
       joinUrl:      'https://x.test/?t=1',
@@ -102,7 +102,7 @@ describe('buildConsultationReadyDm — voice modality (Task 26 / Principle 8)', 
 
   it('renders the join URL on its own line (bare, no markdown wrapping)', () => {
     const url = 'https://app.clariva.test/c/voice/abc?token=xyz';
-    const out = buildConsultationReadyDm({
+    const out = buildConsultationReadyDm({ language: 'en',
       modality:     'voice',
       practiceName: 'X',
       joinUrl:      url,
@@ -117,7 +117,7 @@ describe('buildConsultationReadyDm — voice modality (Task 26 / Principle 8)', 
 
 describe('buildPaymentConfirmationMessage — voice modality (Task 26 / Principle 8)', () => {
   it('renders the happy-path voice body with disambiguation paragraph', () => {
-    const out = buildPaymentConfirmationMessage({
+    const out = buildPaymentConfirmationMessage({ language: 'en',
       appointmentDateDisplay: 'Tue, Apr 29, 2026, 4:30 PM',
       patientMrn: 'CLR-00123',
       modality: 'voice',
@@ -133,12 +133,14 @@ describe('buildPaymentConfirmationMessage — voice modality (Task 26 / Principl
 
       Note: voice consults happen via a web link from your browser — audio only, no phone call. We'll text + IG-DM the join link 5 min before.
 
+      If your symptoms get worse or feel like an emergency before your visit, don't wait — call **112** or **108**, or go to the nearest hospital right away.
+
       We'll send a reminder before your visit. Reply here anytime if you need to reschedule or have questions."
     `);
   });
 
   it('contains the load-bearing "audio only" substring', () => {
-    const out = buildPaymentConfirmationMessage({
+    const out = buildPaymentConfirmationMessage({ language: 'en',
       appointmentDateDisplay: 'Tue, Apr 29, 2026, 4:30 PM',
       modality: 'voice',
     });
@@ -146,15 +148,15 @@ describe('buildPaymentConfirmationMessage — voice modality (Task 26 / Principl
   });
 
   it('contains the load-bearing "no phone call" substring', () => {
-    const out = buildPaymentConfirmationMessage({
+    const out = buildPaymentConfirmationMessage({ language: 'en',
       appointmentDateDisplay: 'Tue, Apr 29, 2026, 4:30 PM',
       modality: 'voice',
     });
     expect(out).toContain('no phone call');
   });
 
-  it('inserts the disambiguation paragraph BEFORE the closing reminder line (no MRN)', () => {
-    const out = buildPaymentConfirmationMessage({
+  it('inserts the disambiguation paragraph BEFORE the safety-net + closing lines (no MRN)', () => {
+    const out = buildPaymentConfirmationMessage({ language: 'en',
       appointmentDateDisplay: 'Tue, Apr 29, 2026, 4:30 PM',
       modality: 'voice',
     });
@@ -164,17 +166,19 @@ describe('buildPaymentConfirmationMessage — voice modality (Task 26 / Principl
     //   [0] ✅ Payment received.
     //   [1] Your appointment is confirmed …
     //   [2] Note: voice consults … (disambiguation)
-    //   [3] We'll send a reminder … (closing)
-    expect(paragraphs).toHaveLength(4);
+    //   [3] If your symptoms get worse … (safety-net)
+    //   [4] We'll send a reminder … (closing)
+    expect(paragraphs).toHaveLength(5);
     expect(paragraphs[2]).toContain('audio only');
     expect(paragraphs[2]).toContain('no phone call');
-    expect(paragraphs[3]).toBe(
+    expect(paragraphs[3]).toContain('call **112** or **108**');
+    expect(paragraphs[4]).toBe(
       "We'll send a reminder before your visit. Reply here anytime if you need to reschedule or have questions.",
     );
   });
 
-  it('inserts the disambiguation paragraph BETWEEN the MRN block and the closing line', () => {
-    const out = buildPaymentConfirmationMessage({
+  it('inserts the disambiguation paragraph BETWEEN the MRN block and the safety-net + closing lines', () => {
+    const out = buildPaymentConfirmationMessage({ language: 'en',
       appointmentDateDisplay: 'Tue, Apr 29, 2026, 4:30 PM',
       patientMrn: 'CLR-00123',
       modality: 'voice',
@@ -186,11 +190,13 @@ describe('buildPaymentConfirmationMessage — voice modality (Task 26 / Principl
     //   [1] Your appointment is confirmed …
     //   [2] 🆔 Patient ID + _Save …_  (multi-line)
     //   [3] Note: voice consults …    (disambiguation)
-    //   [4] We'll send a reminder …   (closing)
-    expect(paragraphs).toHaveLength(5);
+    //   [4] If your symptoms get worse … (safety-net)
+    //   [5] We'll send a reminder …   (closing)
+    expect(paragraphs).toHaveLength(6);
     expect(paragraphs[2]).toContain('🆔 **Patient ID:** CLR-00123');
     expect(paragraphs[3]).toContain('audio only');
-    expect(paragraphs[4]).toBe(
+    expect(paragraphs[4]).toContain('call **112** or **108**');
+    expect(paragraphs[5]).toBe(
       "We'll send a reminder before your visit. Reply here anytime if you need to reschedule or have questions.",
     );
   });
@@ -202,11 +208,11 @@ describe('buildPaymentConfirmationMessage — voice modality (Task 26 / Principl
 
 describe('buildPaymentConfirmationMessage — non-voice modalities are byte-identical to the pre-Plan-05 output', () => {
   // Reference = no `modality` passed (i.e. pre-Plan-05 call shape).
-  const referenceWithMrn = buildPaymentConfirmationMessage({
+  const referenceWithMrn = buildPaymentConfirmationMessage({ language: 'en',
     appointmentDateDisplay: 'Tue, Apr 29, 2026, 4:30 PM',
     patientMrn: 'CLR-00123',
   });
-  const referenceWithoutMrn = buildPaymentConfirmationMessage({
+  const referenceWithoutMrn = buildPaymentConfirmationMessage({ language: 'en',
     appointmentDateDisplay: 'Tue, Apr 29, 2026, 4:30 PM',
   });
 
@@ -218,7 +224,7 @@ describe('buildPaymentConfirmationMessage — non-voice modalities are byte-iden
 
   for (const modality of nonVoiceModalities) {
     it(`modality=${modality} with MRN renders byte-identical to no-modality baseline`, () => {
-      const out = buildPaymentConfirmationMessage({
+      const out = buildPaymentConfirmationMessage({ language: 'en',
         appointmentDateDisplay: 'Tue, Apr 29, 2026, 4:30 PM',
         patientMrn: 'CLR-00123',
         modality,
@@ -229,7 +235,7 @@ describe('buildPaymentConfirmationMessage — non-voice modalities are byte-iden
     });
 
     it(`modality=${modality} without MRN renders byte-identical to no-modality baseline`, () => {
-      const out = buildPaymentConfirmationMessage({
+      const out = buildPaymentConfirmationMessage({ language: 'en',
         appointmentDateDisplay: 'Tue, Apr 29, 2026, 4:30 PM',
         modality,
       });
@@ -238,7 +244,7 @@ describe('buildPaymentConfirmationMessage — non-voice modalities are byte-iden
   }
 
   it('explicitly passing `modality: undefined` matches the no-modality baseline', () => {
-    const out = buildPaymentConfirmationMessage({
+    const out = buildPaymentConfirmationMessage({ language: 'en',
       appointmentDateDisplay: 'Tue, Apr 29, 2026, 4:30 PM',
       patientMrn: 'CLR-00123',
       modality: undefined,

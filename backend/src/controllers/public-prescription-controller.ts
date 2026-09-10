@@ -27,14 +27,19 @@
  * itself (which is a UUID, not PHI on its own).
  */
 
-import { Request, Response } from 'express';
+import { Request, RequestHandler, Response } from 'express';
 import { resolveAdviceForOutput } from '../utils/advice-format';
 import { resolveFollowUpForOutput } from '../utils/follow-up-format';
 import { asyncHandler } from '../utils/async-handler';
 import { successResponse } from '../utils/response';
 import { AppError, NotFoundError, ValidationError } from '../utils/errors';
 import { getSupabaseAdminClient } from '../config/database';
-import { getDoctorSettings } from '../services/doctor-settings-service';
+import {
+  getBrandingAssetForPublic,
+  resolveLetterhead,
+} from '../services/letterhead-service';
+import type { BrandingAssetSlot } from '../types/letterhead';
+import { computeAgeLabel } from '../templates/prescription-pdf/patient-identity';
 import {
   generatePrescriptionPdf,
   getFreshSignedUrlForExistingPdf,
@@ -43,10 +48,7 @@ import { listAdviceHandoutsForPublicShare } from '../services/prescription-attac
 import { verifyRxToken } from '../services/prescription-token-service';
 import { logger } from '../config/logger';
 import { logDataAccess } from '../utils/audit-logger';
-import type {
-  Prescription,
-  PrescriptionMedicine,
-} from '../types/prescription';
+import type { Prescription, PrescriptionMedicine } from '../types/prescription';
 
 // 410 Gone — patient-facing "this link has expired" surface. Mirrors
 // the existing AppError ergonomics; we only need a distinct status
@@ -78,8 +80,7 @@ class ServiceUnavailableError extends AppError {
 
 // Loose UUID guard — we don't import zod here to keep the public surface
 // fast and dependency-free. 36-char canonical UUID with dashes.
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * GET /api/v1/public/prescriptions/:id?t=<token>
@@ -89,8 +90,320 @@ const UUID_RE =
  * the patient revisits the link the next morning), and returns a
  * minimal projection — only what `<PatientRxView>` needs.
  */
-export const getPublicPrescriptionHandler = asyncHandler(
-  async (req: Request, res: Response) => {
+export const getPublicPrescriptionHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const { id } = req.params;
+  const token = typeof req.query.t === 'string' ? req.query.t : '';
+
+  if (!id || !UUID_RE.test(id)) {
+    throw new ValidationError('Invalid prescription id');
+  }
+
+  // ---- Token verify ------------------------------------------------------
+  const verifyResult = verifyRxToken(token, id);
+  if (!verifyResult.ok) {
+    // Distinguish expired (410) from invalid (401). Both are
+    // friendlier than a generic 403 — the patient page renders
+    // different copy per status.
+    if (verifyResult.reason === 'expired') {
+      throw new GoneError('Link expired');
+    }
+    // Group the rest under a single 401 surface so we don't leak
+    // verifier internals (signature vs missing vs wrong-rx-id).
+    logger.info(
+      {
+        correlationId,
+        prescriptionId: id,
+        tokenReason: verifyResult.reason,
+      },
+      'public-prescription: token verify failed'
+    );
+    throw new InvalidLinkError('Invalid link');
+  }
+
+  // ---- Load prescription + medicines -------------------------------------
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new ServiceUnavailableError('Service unavailable');
+  }
+
+  const [{ data: rxData, error: rxErr }, { data: medsData }] = await Promise.all([
+    admin
+      .from('prescriptions')
+      .select(
+        // cockpit-v2 / migration 103: `investigations` column was renamed
+        // to `investigations_orders`. The public response field name
+        // stays as `investigations` for the deprecation window (see
+        // mapping below).
+        // TODO(cv2-07): rename the public response field once the
+        // patient-facing client migrates.
+        'id, doctor_id, appointment_id, type, cc, hopi, provisional_diagnosis, investigations_orders, follow_up, follow_up_value, follow_up_unit, patient_education, advice, referral, sent_to_patient_at, created_at, updated_at, patient_id'
+      )
+      .eq('id', id)
+      .single(),
+    admin
+      .from('prescription_medicines')
+      .select('*')
+      .eq('prescription_id', id)
+      .order('sort_order', { ascending: true, nullsFirst: false }),
+  ]);
+
+  if (rxErr || !rxData) {
+    throw new NotFoundError('Prescription not found');
+  }
+  const rx = rxData as Pick<
+    Prescription,
+    | 'id'
+    | 'doctor_id'
+    | 'appointment_id'
+    | 'type'
+    | 'cc'
+    | 'hopi'
+    | 'provisional_diagnosis'
+    | 'investigations_orders'
+    | 'follow_up'
+    | 'follow_up_value'
+    | 'follow_up_unit'
+    | 'patient_education'
+    | 'advice'
+    | 'referral'
+    | 'sent_to_patient_at'
+    | 'created_at'
+    | 'updated_at'
+    | 'patient_id'
+  >;
+  const medicines = (medsData ?? []) as PrescriptionMedicine[];
+
+  // ---- Doctor + appointment context for the letterhead strip -------------
+  const [{ data: aptData }, letterhead] = await Promise.all([
+    admin
+      .from('appointments')
+      .select('id, patient_name, patient_phone, patient_id, appointment_date')
+      .eq('id', rx.appointment_id)
+      .single(),
+    resolveLetterhead(rx.doctor_id, correlationId),
+  ]);
+  const apt = (aptData ?? null) as {
+    id: string;
+    patient_name: string | null;
+    patient_phone: string | null;
+    patient_id: string | null;
+    appointment_date: string | null;
+  } | null;
+
+  // Prefer the patients-table row when available (apt.patient_name
+  // can be a free-text capture from the bot flow).
+  let patientName = apt?.patient_name?.trim() || 'Patient';
+  let patientAge: string | null = null;
+  let patientGender: string | null = null;
+  let patientPhone = apt?.patient_phone?.trim() || null;
+  let guardianName: string | null = null;
+  let guardianRelation: string | null = null;
+  let patientAddress: string | null = null;
+  let medicalRecordNumber: string | null = null;
+  if (apt?.patient_id) {
+    const { data: pData } = await admin
+      .from('patients')
+      .select(
+        'name, date_of_birth, gender, phone, guardian_name, guardian_relation, address, medical_record_number'
+      )
+      .eq('id', apt.patient_id)
+      .single();
+    const row = pData as {
+      name?: string | null;
+      date_of_birth?: string | null;
+      gender?: string | null;
+      phone?: string | null;
+      guardian_name?: string | null;
+      guardian_relation?: string | null;
+      address?: string | null;
+      medical_record_number?: string | null;
+    } | null;
+    const candidate = row?.name?.trim();
+    if (candidate) patientName = candidate;
+    if (row) {
+      patientAge = computeAgeLabel(row.date_of_birth ?? null);
+      patientGender = row.gender?.trim() || null;
+      patientPhone = row.phone?.trim() || patientPhone;
+      guardianName = row.guardian_name?.trim() || null;
+      guardianRelation = row.guardian_relation?.trim() || null;
+      patientAddress = row.address?.trim() || null;
+      medicalRecordNumber = row.medical_record_number?.trim() || null;
+    }
+  }
+
+  // Doctor display name — same pattern as PDF service. We don't
+  // bring the helper across because (a) avoids a service-layer
+  // import cycle and (b) keeps this controller focused on the
+  // public projection.
+  let doctorName = letterhead.clinicName || 'Doctor';
+  try {
+    const { data: userResp } = await admin.auth.admin.getUserById(rx.doctor_id);
+    const meta =
+      (userResp?.user?.user_metadata as { full_name?: string; name?: string } | null | undefined) ??
+      {};
+    const raw =
+      (typeof meta.full_name === 'string' && meta.full_name.trim()) ||
+      (typeof meta.name === 'string' && meta.name.trim()) ||
+      '';
+    if (raw) {
+      doctorName = raw.toLowerCase().startsWith('dr')
+        ? raw.replace(/^dr\.?\s*/i, 'Dr. ')
+        : `Dr. ${raw}`;
+    }
+  } catch {
+    // soft-fail; we already set the practice_name fallback.
+  }
+
+  // ---- Signed PDF URL ----------------------------------------------------
+  // Try the fast path first: an existing PDF in storage. If it's
+  // not there yet (first patient visit before the send pipeline
+  // generated one — rare but possible), fall back to generating
+  // it on demand. Both paths return a fresh ~24h signed URL.
+  let signedPdfUrl: string | null = await getFreshSignedUrlForExistingPdf(rx.id, rx.doctor_id);
+  if (!signedPdfUrl) {
+    try {
+      const pdfResult = await generatePrescriptionPdf(rx.id, correlationId);
+      signedPdfUrl = pdfResult.signedUrl;
+    } catch (err) {
+      // Non-fatal: the patient still gets the on-screen view.
+      // The download button will surface a "PDF not available"
+      // tooltip via its own state.
+      logger.warn(
+        {
+          correlationId,
+          prescriptionId: rx.id,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        'public-prescription: on-demand PDF generation failed; serving page only'
+      );
+    }
+  }
+
+  // Advice handouts (patient-shareable attachments only — advice/ path tag).
+  let adviceHandouts: Awaited<ReturnType<typeof listAdviceHandoutsForPublicShare>> = [];
+  try {
+    adviceHandouts = await listAdviceHandoutsForPublicShare(rx.id, correlationId);
+  } catch (err) {
+    logger.warn(
+      {
+        correlationId,
+        prescriptionId: rx.id,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      'public-prescription: advice handouts soft-failed'
+    );
+  }
+
+  // ---- Audit (informational; no PHI in metadata) -------------------------
+  // The patient is unauthenticated so we use the doctor_id as the
+  // subject — the row attests that a patient-facing read happened
+  // for THIS rx, not who the patient is.
+  try {
+    await logDataAccess(correlationId, rx.doctor_id, 'prescription', rx.id);
+  } catch (err) {
+    logger.debug(
+      {
+        correlationId,
+        prescriptionId: rx.id,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      'public-prescription: audit write soft-failed'
+    );
+  }
+
+  res.status(200).json(
+    successResponse(
+      {
+        prescription: {
+          id: rx.id,
+          type: rx.type,
+          cc: rx.cc,
+          hopi: rx.hopi,
+          provisional_diagnosis: rx.provisional_diagnosis,
+          // cockpit-v2 / migration 103: DB column renamed to
+          // `investigations_orders`. Public response field stays as
+          // `investigations` for the deprecation window so the
+          // patient-facing client keeps rendering without churn.
+          // TODO(cv2-07): rename response field once the patient client migrates.
+          investigations: rx.investigations_orders,
+          advice: resolveAdviceForOutput(rx.advice, rx.patient_education),
+          follow_up: resolveFollowUpForOutput(rx.follow_up, rx.follow_up_value, rx.follow_up_unit),
+          // Folded into advice — kept null for client compat.
+          patient_education: null,
+          referral: rx.referral,
+          sent_to_patient_at: rx.sent_to_patient_at,
+          created_at: rx.created_at,
+          prescription_medicines: medicines,
+        },
+        doctor: {
+          display_name: doctorName,
+          specialty: letterhead.specialty,
+          clinic_name: letterhead.clinicName,
+          clinic_address: letterhead.clinicAddress,
+          qualifications: letterhead.qualifications,
+          registration_number: letterhead.registrationNumber,
+          letterhead_preset: letterhead.preset,
+          letterhead_accent_color: letterhead.accentColor,
+          letterhead_chrome_color: letterhead.chromeColor,
+          letterhead_patient_color: letterhead.patientColor,
+          has_logo: letterhead.logo !== null,
+          has_header: letterhead.header !== null,
+          has_footer: letterhead.footer !== null,
+          header_height_mm: letterhead.headerHeightMm,
+          footer_height_mm: letterhead.footerHeightMm,
+          page_margin_top_mm: letterhead.pageMarginTopMm,
+          page_margin_right_mm: letterhead.pageMarginRightMm,
+          page_margin_bottom_mm: letterhead.pageMarginBottomMm,
+          page_margin_left_mm: letterhead.pageMarginLeftMm,
+          logo_size: letterhead.logoSize,
+          patient_identity_preset: letterhead.patientIdentityPreset,
+          show_patient_phone: letterhead.showPatientPhone,
+          show_patient_guardian: letterhead.showPatientGuardian,
+          show_patient_mrn: letterhead.showPatientMrn,
+          show_patient_address: letterhead.showPatientAddress,
+          letterhead_footer_line: letterhead.footerLine,
+          hide_halo_credit: letterhead.hideHaloCredit,
+          letterhead_background_preset: letterhead.backgroundPreset,
+          letterhead_background_opacity: letterhead.backgroundOpacity,
+          has_background: letterhead.background !== null,
+          letterhead_header_fit: letterhead.headerFit,
+          letterhead_footer_fit: letterhead.footerFit,
+          letterhead_background_fit: letterhead.backgroundFit,
+          letterhead_header_text_size: letterhead.headerTextSize,
+          letterhead_patient_text_size: letterhead.patientTextSize,
+          letterhead_body_text_size: letterhead.bodyTextSize,
+        },
+        patient: {
+          display_name: patientName,
+          age: patientAge,
+          gender: patientGender,
+          phone: patientPhone,
+          guardian_name: guardianName,
+          guardian_relation: guardianRelation,
+          address: patientAddress,
+          medical_record_number: medicalRecordNumber,
+        },
+        appointment: {
+          id: apt?.id ?? null,
+          appointment_date: apt?.appointment_date ?? null,
+        },
+        signed_pdf_url: signedPdfUrl,
+        advice_handouts: adviceHandouts,
+        token_expires_at:
+          verifyResult.exp !== undefined ? new Date(verifyResult.exp * 1000).toISOString() : null,
+      },
+      req
+    )
+  );
+});
+
+/**
+ * HMAC-gated binary branding asset. Same token as the JSON share route
+ * so the unauthenticated /r/[id] page can render <img> without a public bucket.
+ */
+function publicBrandingAssetHandler(slot: BrandingAssetSlot): RequestHandler {
+  return asyncHandler(async (req: Request, res: Response) => {
     const correlationId = req.correlationId || 'unknown';
     const { id } = req.params;
     const token = typeof req.query.t === 'string' ? req.query.t : '';
@@ -99,248 +412,40 @@ export const getPublicPrescriptionHandler = asyncHandler(
       throw new ValidationError('Invalid prescription id');
     }
 
-    // ---- Token verify ------------------------------------------------------
     const verifyResult = verifyRxToken(token, id);
     if (!verifyResult.ok) {
-      // Distinguish expired (410) from invalid (401). Both are
-      // friendlier than a generic 403 — the patient page renders
-      // different copy per status.
       if (verifyResult.reason === 'expired') {
         throw new GoneError('Link expired');
       }
-      // Group the rest under a single 401 surface so we don't leak
-      // verifier internals (signature vs missing vs wrong-rx-id).
-      logger.info(
-        {
-          correlationId,
-          prescriptionId: id,
-          tokenReason: verifyResult.reason,
-        },
-        'public-prescription: token verify failed',
-      );
       throw new InvalidLinkError('Invalid link');
     }
 
-    // ---- Load prescription + medicines -------------------------------------
     const admin = getSupabaseAdminClient();
     if (!admin) {
       throw new ServiceUnavailableError('Service unavailable');
     }
 
-    const [{ data: rxData, error: rxErr }, { data: medsData }] =
-      await Promise.all([
-        admin
-          .from('prescriptions')
-          .select(
-            // cockpit-v2 / migration 103: `investigations` column was renamed
-            // to `investigations_orders`. The public response field name
-            // stays as `investigations` for the deprecation window (see
-            // mapping below).
-            // TODO(cv2-07): rename the public response field once the
-            // patient-facing client migrates.
-            'id, doctor_id, appointment_id, type, cc, hopi, provisional_diagnosis, investigations_orders, follow_up, follow_up_value, follow_up_unit, patient_education, advice, referral, sent_to_patient_at, created_at, updated_at, patient_id',
-          )
-          .eq('id', id)
-          .single(),
-        admin
-          .from('prescription_medicines')
-          .select('*')
-          .eq('prescription_id', id)
-          .order('sort_order', { ascending: true, nullsFirst: false }),
-      ]);
-
-    if (rxErr || !rxData) {
+    const { data: rx, error } = await admin
+      .from('prescriptions')
+      .select('doctor_id')
+      .eq('id', id)
+      .single();
+    if (error || !rx) {
       throw new NotFoundError('Prescription not found');
     }
-    const rx = rxData as Pick<
-      Prescription,
-      | 'id'
-      | 'doctor_id'
-      | 'appointment_id'
-      | 'type'
-      | 'cc'
-      | 'hopi'
-      | 'provisional_diagnosis'
-      | 'investigations_orders'
-      | 'follow_up'
-      | 'follow_up_value'
-      | 'follow_up_unit'
-      | 'patient_education'
-      | 'advice'
-      | 'referral'
-      | 'sent_to_patient_at'
-      | 'created_at'
-      | 'updated_at'
-      | 'patient_id'
-    >;
-    const medicines = (medsData ?? []) as PrescriptionMedicine[];
 
-    // ---- Doctor + appointment context for the letterhead strip -------------
-    const [{ data: aptData }, doctorSettings] = await Promise.all([
-      admin
-        .from('appointments')
-        .select('id, patient_name, patient_id, appointment_date')
-        .eq('id', rx.appointment_id)
-        .single(),
-      getDoctorSettings(rx.doctor_id),
-    ]);
-    const apt = (aptData ?? null) as {
-      id: string;
-      patient_name: string | null;
-      patient_id: string | null;
-      appointment_date: string | null;
-    } | null;
-
-    // Prefer the patients-table name when available (apt.patient_name
-    // can be a free-text capture from the bot flow).
-    let patientName = apt?.patient_name?.trim() || 'Patient';
-    if (apt?.patient_id) {
-      const { data: pData } = await admin
-        .from('patients')
-        .select('name')
-        .eq('id', apt.patient_id)
-        .single();
-      const candidate = (pData as { name?: string | null } | null)?.name?.trim();
-      if (candidate) patientName = candidate;
-    }
-
-    // Doctor display name — same pattern as PDF service. We don't
-    // bring the helper across because (a) avoids a service-layer
-    // import cycle and (b) keeps this controller focused on the
-    // public projection.
-    let doctorName = doctorSettings?.practice_name?.trim() || 'Doctor';
-    try {
-      const { data: userResp } = await admin.auth.admin.getUserById(rx.doctor_id);
-      const meta =
-        (userResp?.user?.user_metadata as
-          | { full_name?: string; name?: string }
-          | null
-          | undefined) ?? {};
-      const raw =
-        (typeof meta.full_name === 'string' && meta.full_name.trim()) ||
-        (typeof meta.name === 'string' && meta.name.trim()) ||
-        '';
-      if (raw) {
-        doctorName = raw.toLowerCase().startsWith('dr')
-          ? raw.replace(/^dr\.?\s*/i, 'Dr. ')
-          : `Dr. ${raw}`;
-      }
-    } catch {
-      // soft-fail; we already set the practice_name fallback.
-    }
-
-    // ---- Signed PDF URL ----------------------------------------------------
-    // Try the fast path first: an existing PDF in storage. If it's
-    // not there yet (first patient visit before the send pipeline
-    // generated one — rare but possible), fall back to generating
-    // it on demand. Both paths return a fresh ~24h signed URL.
-    let signedPdfUrl: string | null = await getFreshSignedUrlForExistingPdf(
-      rx.id,
-      rx.doctor_id,
+    const asset = await getBrandingAssetForPublic(
+      (rx as { doctor_id: string }).doctor_id,
+      slot,
+      correlationId
     );
-    if (!signedPdfUrl) {
-      try {
-        const pdfResult = await generatePrescriptionPdf(rx.id, correlationId);
-        signedPdfUrl = pdfResult.signedUrl;
-      } catch (err) {
-        // Non-fatal: the patient still gets the on-screen view.
-        // The download button will surface a "PDF not available"
-        // tooltip via its own state.
-        logger.warn(
-          {
-            correlationId,
-            prescriptionId: rx.id,
-            error: err instanceof Error ? err.message : String(err),
-          },
-          'public-prescription: on-demand PDF generation failed; serving page only',
-        );
-      }
-    }
+    res.setHeader('Content-Type', asset.contentType);
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.status(200).send(asset.bytes);
+  });
+}
 
-    // Advice handouts (patient-shareable attachments only — advice/ path tag).
-    let adviceHandouts: Awaited<
-      ReturnType<typeof listAdviceHandoutsForPublicShare>
-    > = [];
-    try {
-      adviceHandouts = await listAdviceHandoutsForPublicShare(rx.id, correlationId);
-    } catch (err) {
-      logger.warn(
-        {
-          correlationId,
-          prescriptionId: rx.id,
-          error: err instanceof Error ? err.message : String(err),
-        },
-        'public-prescription: advice handouts soft-failed',
-      );
-    }
-
-    // ---- Audit (informational; no PHI in metadata) -------------------------
-    // The patient is unauthenticated so we use the doctor_id as the
-    // subject — the row attests that a patient-facing read happened
-    // for THIS rx, not who the patient is.
-    try {
-      await logDataAccess(correlationId, rx.doctor_id, 'prescription', rx.id);
-    } catch (err) {
-      logger.debug(
-        {
-          correlationId,
-          prescriptionId: rx.id,
-          error: err instanceof Error ? err.message : String(err),
-        },
-        'public-prescription: audit write soft-failed',
-      );
-    }
-
-    res.status(200).json(
-      successResponse(
-        {
-          prescription: {
-            id: rx.id,
-            type: rx.type,
-            cc: rx.cc,
-            hopi: rx.hopi,
-            provisional_diagnosis: rx.provisional_diagnosis,
-            // cockpit-v2 / migration 103: DB column renamed to
-            // `investigations_orders`. Public response field stays as
-            // `investigations` for the deprecation window so the
-            // patient-facing client keeps rendering without churn.
-            // TODO(cv2-07): rename response field once the patient client migrates.
-            investigations: rx.investigations_orders,
-            advice: resolveAdviceForOutput(rx.advice, rx.patient_education),
-            follow_up: resolveFollowUpForOutput(
-              rx.follow_up,
-              rx.follow_up_value,
-              rx.follow_up_unit,
-            ),
-            // Folded into advice — kept null for client compat.
-            patient_education: null,
-            referral: rx.referral,
-            sent_to_patient_at: rx.sent_to_patient_at,
-            created_at: rx.created_at,
-            prescription_medicines: medicines,
-          },
-          doctor: {
-            display_name: doctorName,
-            specialty: doctorSettings?.specialty?.trim() || null,
-            clinic_name: doctorSettings?.practice_name?.trim() || null,
-            clinic_address: doctorSettings?.address_summary?.trim() || null,
-          },
-          patient: {
-            display_name: patientName,
-          },
-          appointment: {
-            id: apt?.id ?? null,
-            appointment_date: apt?.appointment_date ?? null,
-          },
-          signed_pdf_url: signedPdfUrl,
-          advice_handouts: adviceHandouts,
-          token_expires_at:
-            verifyResult.exp !== undefined
-              ? new Date(verifyResult.exp * 1000).toISOString()
-              : null,
-        },
-        req,
-      ),
-    );
-  },
-);
+export const getPublicPrescriptionLogoHandler = publicBrandingAssetHandler('logo');
+export const getPublicPrescriptionHeaderHandler = publicBrandingAssetHandler('header');
+export const getPublicPrescriptionFooterHandler = publicBrandingAssetHandler('footer');
+export const getPublicPrescriptionBackgroundHandler = publicBrandingAssetHandler('background');

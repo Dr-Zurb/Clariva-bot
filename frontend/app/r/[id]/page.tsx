@@ -33,10 +33,8 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import {
-  getPublicPrescription,
-  type PublicPrescriptionData,
-} from "@/lib/api";
+import { getPublicPrescription, type PublicPrescriptionData } from "@/lib/api";
+import { requireApiBaseUrl } from "@/lib/api-base";
 import { formatDateTime } from "@/lib/format-date";
 import PatientRxView, {
   type PatientRxMedicineVM,
@@ -65,7 +63,11 @@ function formatVisitDate(iso: string | null): string | null {
   });
 }
 
-function buildViewModel(data: PublicPrescriptionData): PatientRxViewModel {
+function buildViewModel(
+  data: PublicPrescriptionData,
+  prescriptionId: string,
+  shareToken: string
+): PatientRxViewModel {
   const meds: PatientRxMedicineVM[] = data.prescription.prescription_medicines
     .map((m) => ({
       medicineName: m.medicine_name,
@@ -85,24 +87,75 @@ function buildViewModel(data: PublicPrescriptionData): PatientRxViewModel {
     // Defensive sort — backend already orders by sort_order ASC, but
     // a stale cache or partial fetch could surface unsorted rows.
     .sort((a, b) => {
-      const ai =
-        data.prescription.prescription_medicines.findIndex(
-          (x) => x.medicine_name === a.medicineName,
-        );
-      const bi =
-        data.prescription.prescription_medicines.findIndex(
-          (x) => x.medicine_name === b.medicineName,
-        );
+      const ai = data.prescription.prescription_medicines.findIndex(
+        (x) => x.medicine_name === a.medicineName
+      );
+      const bi = data.prescription.prescription_medicines.findIndex(
+        (x) => x.medicine_name === b.medicineName
+      );
       return ai - bi;
     });
 
   return {
     doctorName: data.doctor.display_name,
     doctorSpecialty: data.doctor.specialty,
+    qualifications: data.doctor.qualifications,
+    registrationNumber: data.doctor.registration_number,
     clinicName: data.doctor.clinic_name,
     clinicAddress: data.doctor.clinic_address,
+    letterheadPreset: data.doctor.letterhead_preset,
+    accentColor: data.doctor.letterhead_accent_color,
+    chromeColor: data.doctor.letterhead_chrome_color,
+    patientColor: data.doctor.letterhead_patient_color,
+    logoUrl:
+      data.doctor.has_logo && prescriptionId && shareToken
+        ? `${requireApiBaseUrl()}/api/v1/public/prescriptions/${encodeURIComponent(prescriptionId)}/logo?t=${encodeURIComponent(shareToken)}`
+        : null,
+    headerUrl:
+      data.doctor.has_header && prescriptionId && shareToken
+        ? `${requireApiBaseUrl()}/api/v1/public/prescriptions/${encodeURIComponent(prescriptionId)}/header?t=${encodeURIComponent(shareToken)}`
+        : null,
+    footerUrl:
+      data.doctor.has_footer && prescriptionId && shareToken
+        ? `${requireApiBaseUrl()}/api/v1/public/prescriptions/${encodeURIComponent(prescriptionId)}/footer?t=${encodeURIComponent(shareToken)}`
+        : null,
+    headerHeightMm: data.doctor.header_height_mm ?? 35,
+    footerHeightMm: data.doctor.footer_height_mm ?? 20,
+    logoSize: data.doctor.logo_size ?? "medium",
+    patientIdentityPreset: data.doctor.patient_identity_preset ?? "open_letter",
+    showPatientPhone: data.doctor.show_patient_phone !== false,
+    showPatientGuardian: data.doctor.show_patient_guardian !== false,
+    showPatientMrn: data.doctor.show_patient_mrn !== false,
+    showPatientAddress: data.doctor.show_patient_address !== false,
+    footerLine: data.doctor.letterhead_footer_line ?? null,
+    hideHaloCredit: data.doctor.hide_halo_credit === true,
+    backgroundPreset: data.doctor.letterhead_background_preset ?? "none",
+    backgroundOpacity: data.doctor.letterhead_background_opacity ?? 15,
+    headerFit: data.doctor.letterhead_header_fit ?? "stretch",
+    footerFit: data.doctor.letterhead_footer_fit ?? "stretch",
+    backgroundFit: data.doctor.letterhead_background_fit ?? "fill",
+    headerTextSize: data.doctor.letterhead_header_text_size ?? "medium",
+    patientTextSize: data.doctor.letterhead_patient_text_size ?? "medium",
+    bodyTextSize: data.doctor.letterhead_body_text_size ?? "medium",
+    backgroundUrl:
+      data.doctor.letterhead_preset === "preprinted"
+        ? null
+        : data.doctor.letterhead_background_preset === "paper"
+          ? "/letterhead/bg-paper.png"
+          : data.doctor.letterhead_background_preset === "cross"
+            ? "/letterhead/bg-cross.png"
+            : data.doctor.has_background && prescriptionId && shareToken
+              ? `${requireApiBaseUrl()}/api/v1/public/prescriptions/${encodeURIComponent(prescriptionId)}/background?t=${encodeURIComponent(shareToken)}`
+              : null,
     patientName: data.patient.display_name,
     visitDateLabel: formatVisitDate(data.appointment.appointment_date),
+    patientAge: data.patient.age,
+    patientGender: data.patient.gender,
+    patientPhone: data.patient.phone,
+    guardianName: data.patient.guardian_name,
+    guardianRelation: data.patient.guardian_relation,
+    address: data.patient.address,
+    medicalRecordNumber: data.patient.medical_record_number,
     cc: data.prescription.cc,
     hopi: data.prescription.hopi,
     provisionalDiagnosis: data.prescription.provisional_diagnosis,
@@ -184,14 +237,11 @@ export default function PatientRxSharePage() {
     return (
       <main className="min-h-screen bg-gray-50 px-4 py-12">
         <div className="mx-auto max-w-md rounded-lg border border-gray-200 bg-white p-6 text-center shadow-sm">
-          <h1 className="text-lg font-semibold text-gray-900">
-            Link expired
-          </h1>
+          <h1 className="text-lg font-semibold text-gray-900">Link expired</h1>
           <p className="mt-2 text-sm text-gray-600">
-            This prescription link is no longer active. To request a
-            fresh link, reply to your email or Instagram DM thread with
-            your doctor — they can resend it from their dashboard in
-            one tap.
+            This prescription link is no longer active. To request a fresh link,
+            reply to your email or Instagram DM thread with your doctor — they
+            can resend it from their dashboard in one tap.
           </p>
         </div>
       </main>
@@ -202,13 +252,11 @@ export default function PatientRxSharePage() {
     return (
       <main className="min-h-screen bg-gray-50 px-4 py-12">
         <div className="mx-auto max-w-md rounded-lg border border-gray-200 bg-white p-6 text-center shadow-sm">
-          <h1 className="text-lg font-semibold text-gray-900">
-            Invalid link
-          </h1>
+          <h1 className="text-lg font-semibold text-gray-900">Invalid link</h1>
           <p className="mt-2 text-sm text-gray-600">
-            We couldn&apos;t open this prescription. The link may be
-            mistyped or no longer valid. Please check the link in your
-            email or DM and try again.
+            We couldn&apos;t open this prescription. The link may be mistyped or
+            no longer valid. Please check the link in your email or DM and try
+            again.
           </p>
         </div>
       </main>
@@ -231,7 +279,7 @@ export default function PatientRxSharePage() {
     );
   }
 
-  const vm = buildViewModel(state.data);
+  const vm = buildViewModel(state.data, id, token);
 
   return (
     <main className="min-h-screen bg-gray-50 px-2 py-6 sm:py-10">

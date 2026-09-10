@@ -39,14 +39,22 @@ export interface FrequencyOption {
 }
 
 export const FREQUENCY_OPTIONS: readonly FrequencyOption[] = [
-  { code: "OD",     label: "Once daily (OD)",         legacyLabel: "Once daily" },
-  { code: "BID",    label: "Twice daily (BID)",       legacyLabel: "Twice daily" },
-  { code: "TID",    label: "Three times daily (TID)", legacyLabel: "Three times daily" },
-  { code: "QID",    label: "Four times daily (QID)",  legacyLabel: "Four times daily" },
-  { code: "QHS",    label: "At bedtime (QHS)",        legacyLabel: "At bedtime" },
-  { code: "PRN",    label: "As needed (PRN)",         legacyLabel: "As needed" },
-  { code: "STAT",   label: "Once (STAT)",             legacyLabel: "Once (immediately)" },
-  { code: "CUSTOM", label: "Custom\u2026",            legacyLabel: "" },
+  { code: "OD", label: "Once daily (OD)", legacyLabel: "Once daily" },
+  { code: "BID", label: "Twice daily (BID)", legacyLabel: "Twice daily" },
+  {
+    code: "TID",
+    label: "Three times daily (TID)",
+    legacyLabel: "Three times daily",
+  },
+  {
+    code: "QID",
+    label: "Four times daily (QID)",
+    legacyLabel: "Four times daily",
+  },
+  { code: "QHS", label: "At bedtime (QHS)", legacyLabel: "At bedtime" },
+  { code: "PRN", label: "As needed (PRN)", legacyLabel: "As needed" },
+  { code: "STAT", label: "Once (STAT)", legacyLabel: "Once (immediately)" },
+  { code: "CUSTOM", label: "Custom\u2026", legacyLabel: "" },
 ];
 
 const FREQUENCY_INDEX: Partial<Record<FrequencyCode, FrequencyOption>> =
@@ -55,12 +63,55 @@ const FREQUENCY_INDEX: Partial<Record<FrequencyCode, FrequencyOption>> =
       acc[opt.code] = opt;
       return acc;
     },
-    {} as Partial<Record<FrequencyCode, FrequencyOption>>,
+    {} as Partial<Record<FrequencyCode, FrequencyOption>>
   );
 
-export function getFrequencyLegacyLabel(code: FrequencyCode | null | undefined): string {
+export function getFrequencyLegacyLabel(
+  code: FrequencyCode | null | undefined
+): string {
   if (!code) return "";
   return FREQUENCY_INDEX[code]?.legacyLabel ?? "";
+}
+
+/** Rx / template / favorite codes — migration 090 CHECK (no interval Q4H…QW). */
+export const RX_FREQUENCY_CODES = [
+  "OD",
+  "BID",
+  "TID",
+  "QID",
+  "QHS",
+  "PRN",
+  "STAT",
+  "CUSTOM",
+] as const;
+
+export type RxFrequencyCode = (typeof RX_FREQUENCY_CODES)[number];
+
+const RX_FREQUENCY_CODE_SET = new Set<string>(RX_FREQUENCY_CODES);
+
+const RX_FREQUENCY_ALIASES: Record<string, RxFrequencyCode> = {
+  sos: "PRN",
+  hs: "QHS",
+  bedtime: "QHS",
+};
+
+/** Map cockpit labels / interval codes onto a value the Rx API will accept. */
+export function toRxFrequencyCode(
+  code: string | null | undefined
+): RxFrequencyCode | null {
+  if (code == null) return null;
+  const trimmed = code.trim();
+  if (!trimmed) return null;
+  const upper = trimmed.toUpperCase();
+  if (RX_FREQUENCY_CODE_SET.has(upper)) return upper as RxFrequencyCode;
+  const lower = trimmed.toLowerCase();
+  const fromOption = FREQUENCY_OPTIONS.find(
+    (opt) =>
+      opt.legacyLabel.toLowerCase() === lower ||
+      opt.label.toLowerCase() === lower
+  );
+  if (fromOption) return fromOption.code as RxFrequencyCode;
+  return RX_FREQUENCY_ALIASES[lower] ?? "CUSTOM";
 }
 
 // ---------------------------------------------------------------------------
@@ -75,11 +126,11 @@ export interface DurationUnitOption {
 }
 
 export const DURATION_UNIT_OPTIONS: readonly DurationUnitOption[] = [
-  { unit: "days",            label: "days",            takesValue: true },
-  { unit: "weeks",           label: "weeks",           takesValue: true },
-  { unit: "months",          label: "months",          takesValue: true },
-  { unit: "until-finished",  label: "until finished",  takesValue: false },
-  { unit: "continue",        label: "continue",        takesValue: false },
+  { unit: "days", label: "days", takesValue: true },
+  { unit: "weeks", label: "weeks", takesValue: true },
+  { unit: "months", label: "months", takesValue: true },
+  { unit: "until-finished", label: "until finished", takesValue: false },
+  { unit: "continue", label: "continue", takesValue: false },
 ];
 
 /** Primary duration chips — remainder + free text live in More. */
@@ -95,16 +146,20 @@ const DURATION_UNIT_INDEX: Record<DurationUnit, DurationUnitOption> =
       acc[opt.unit] = opt;
       return acc;
     },
-    {} as Record<DurationUnit, DurationUnitOption>,
+    {} as Record<DurationUnit, DurationUnitOption>
   );
 
-export function durationUnitTakesValue(unit: DurationUnit | null | undefined): boolean {
+export function durationUnitTakesValue(
+  unit: DurationUnit | null | undefined
+): boolean {
   if (!unit) return false;
   return DURATION_UNIT_INDEX[unit]?.takesValue ?? false;
 }
 
 /** Match typed duration-unit text to a canonical enum, or `"custom"`. */
-export function resolveDurationUnitInput(raw: string): DurationUnit | "custom" | null {
+export function resolveDurationUnitInput(
+  raw: string
+): DurationUnit | "custom" | null {
   const text = raw.trim();
   if (!text) return null;
   const lower = text.toLowerCase();
@@ -123,7 +178,7 @@ export function resolveDurationUnitInput(raw: string): DurationUnit | "custom" |
   };
   if (aliases[lower]) return aliases[lower];
   const hit = DURATION_UNIT_OPTIONS.find(
-    (o) => o.unit === lower || o.label.toLowerCase() === lower,
+    (o) => o.unit === lower || o.label.toLowerCase() === lower
   );
   if (hit) return hit.unit;
   return "custom";
@@ -139,7 +194,7 @@ export function resolveDurationUnitInput(raw: string): DurationUnit | "custom" |
  */
 export function formatDurationLegacyLabel(
   value: number | null | undefined,
-  unit: DurationUnit | null | undefined,
+  unit: DurationUnit | null | undefined
 ): string {
   if (!unit) return "";
   const meta = DURATION_UNIT_INDEX[unit];
@@ -169,16 +224,16 @@ export interface RouteOption {
 }
 
 export const ROUTE_OPTIONS: readonly RouteOption[] = [
-  { code: "oral",        label: "Oral",        legacyLabel: "Oral" },
-  { code: "IV",          label: "Intravenous (IV)",   legacyLabel: "IV" },
-  { code: "IM",          label: "Intramuscular (IM)", legacyLabel: "IM" },
-  { code: "SC",          label: "Subcutaneous (SC)",  legacyLabel: "SC" },
-  { code: "topical",     label: "Topical",     legacyLabel: "Topical" },
-  { code: "inhaled",     label: "Inhaled",     legacyLabel: "Inhaled" },
-  { code: "rectal",      label: "Rectal",      legacyLabel: "Rectal" },
-  { code: "nasal",       label: "Nasal",       legacyLabel: "Nasal" },
-  { code: "sublingual",  label: "Sublingual",  legacyLabel: "Sublingual" },
-  { code: "other",       label: "Other\u2026", legacyLabel: "" },
+  { code: "oral", label: "Oral", legacyLabel: "Oral" },
+  { code: "IV", label: "Intravenous (IV)", legacyLabel: "IV" },
+  { code: "IM", label: "Intramuscular (IM)", legacyLabel: "IM" },
+  { code: "SC", label: "Subcutaneous (SC)", legacyLabel: "SC" },
+  { code: "topical", label: "Topical", legacyLabel: "Topical" },
+  { code: "inhaled", label: "Inhaled", legacyLabel: "Inhaled" },
+  { code: "rectal", label: "Rectal", legacyLabel: "Rectal" },
+  { code: "nasal", label: "Nasal", legacyLabel: "Nasal" },
+  { code: "sublingual", label: "Sublingual", legacyLabel: "Sublingual" },
+  { code: "other", label: "Other\u2026", legacyLabel: "" },
 ];
 
 /** Primary route chips — remainder + free text live in More. */
@@ -190,7 +245,10 @@ export const CHART_MED_ROUTE_PRIMARY = [
 ] as const satisfies readonly RouteCode[];
 
 /** Short chip labels (dropdown keeps the longer ROUTE_OPTIONS labels). */
-export const ROUTE_CHIP_OPTIONS: ReadonlyArray<{ value: RouteCode; label: string }> = [
+export const ROUTE_CHIP_OPTIONS: ReadonlyArray<{
+  value: RouteCode;
+  label: string;
+}> = [
   { value: "oral", label: "Oral" },
   { value: "IV", label: "IV" },
   { value: "IM", label: "IM" },
@@ -207,10 +265,12 @@ const ROUTE_INDEX: Record<RouteCode, RouteOption> = ROUTE_OPTIONS.reduce(
     acc[opt.code] = opt;
     return acc;
   },
-  {} as Record<RouteCode, RouteOption>,
+  {} as Record<RouteCode, RouteOption>
 );
 
-export function getRouteLegacyLabel(code: RouteCode | null | undefined): string {
+export function getRouteLegacyLabel(
+  code: RouteCode | null | undefined
+): string {
   if (!code) return "";
   return ROUTE_INDEX[code]?.legacyLabel ?? "";
 }
@@ -228,7 +288,9 @@ export function getRouteLegacyLabel(code: RouteCode | null | undefined): string 
  *   - "Copy from last visit" (B1.8) when the legacy free-text route
  *     happens to match a known enum.
  */
-export function coerceRouteCode(input: string | null | undefined): RouteCode | null {
+export function coerceRouteCode(
+  input: string | null | undefined
+): RouteCode | null {
   if (!input) return null;
   const trimmed = input.trim();
   if (!trimmed) return null;
@@ -245,7 +307,9 @@ export function coerceRouteCode(input: string | null | undefined): RouteCode | n
 }
 
 /** Match typed route text to a canonical code, or `"custom"` for free text. */
-export function resolveRouteCodeInput(raw: string): RouteCode | "custom" | null {
+export function resolveRouteCodeInput(
+  raw: string
+): RouteCode | "custom" | null {
   const text = raw.trim();
   if (!text) return null;
   const lower = text.toLowerCase();
@@ -271,14 +335,14 @@ export function resolveRouteCodeInput(raw: string): RouteCode | "custom" | null 
   };
   if (aliases[lower]) return aliases[lower];
   const chipHit = ROUTE_CHIP_OPTIONS.find(
-    (o) => o.value.toLowerCase() === lower || o.label.toLowerCase() === lower,
+    (o) => o.value.toLowerCase() === lower || o.label.toLowerCase() === lower
   );
   if (chipHit) return chipHit.value;
   const optHit = ROUTE_OPTIONS.find(
     (o) =>
       o.code.toLowerCase() === lower ||
       o.label.toLowerCase() === lower ||
-      o.legacyLabel.toLowerCase() === lower,
+      o.legacyLabel.toLowerCase() === lower
   );
   if (optHit) return optHit.code;
   return "custom";
@@ -293,7 +357,9 @@ export const ROUTE_CODES_WITH_SITE = [
   "nasal",
 ] as const satisfies readonly RouteCode[];
 
-export function routeCodeSupportsSite(code: RouteCode | null | undefined): boolean {
+export function routeCodeSupportsSite(
+  code: RouteCode | null | undefined
+): boolean {
   if (!code) return false;
   return (ROUTE_CODES_WITH_SITE as readonly string[]).includes(code);
 }
@@ -384,7 +450,7 @@ export function getRouteSiteCatalog(code: RouteCode): {
 /** Persist as `IM · Deltoid` in the legacy `route` text column (no migration). */
 export function composeRouteWithSite(
   code: RouteCode,
-  site: string | null | undefined,
+  site: string | null | undefined
 ): string {
   const legacy = getRouteLegacyLabel(code);
   const trimmed = site?.trim();
@@ -395,7 +461,7 @@ export function composeRouteWithSite(
 /** Parse site back from `route` when `routeCode` supports sites. */
 export function extractRouteSite(
   code: RouteCode | null | undefined,
-  route: string | null | undefined,
+  route: string | null | undefined
 ): string | null {
   if (!code || !routeCodeSupportsSite(code)) return null;
   const legacy = getRouteLegacyLabel(code);
@@ -411,7 +477,7 @@ export function extractRouteSite(
 /** Match typed site text to a catalog label, else keep as free text. */
 export function resolveRouteSiteInput(
   code: RouteCode,
-  raw: string,
+  raw: string
 ): string | null {
   const text = raw.trim();
   if (!text) return null;
@@ -450,7 +516,7 @@ export function resolveRouteSiteInput(
   };
   if (aliases[lower]) return aliases[lower];
   const hit = getRouteSiteCatalog(code).options.find(
-    (o) => o.value.toLowerCase() === lower || o.label.toLowerCase() === lower,
+    (o) => o.value.toLowerCase() === lower || o.label.toLowerCase() === lower
   );
   return hit?.label ?? text;
 }
@@ -468,14 +534,14 @@ export interface DoseUnitOption {
 }
 
 export const DOSE_UNIT_OPTIONS: readonly DoseUnitOption[] = [
-  { unit: "tab",         label: "tab",         plural: "tabs" },
-  { unit: "cap",         label: "cap",         plural: "caps" },
-  { unit: "ml",          label: "ml",          plural: "ml" },
-  { unit: "spoon",       label: "spoon",       plural: "spoons" },
-  { unit: "drops",       label: "drop",        plural: "drops" },
-  { unit: "puff",        label: "puff",        plural: "puffs" },
-  { unit: "sachet",      label: "sachet",      plural: "sachets" },
-  { unit: "unit",        label: "unit",        plural: "units" },
+  { unit: "tab", label: "tab", plural: "tabs" },
+  { unit: "cap", label: "cap", plural: "caps" },
+  { unit: "ml", label: "ml", plural: "ml" },
+  { unit: "spoon", label: "spoon", plural: "spoons" },
+  { unit: "drops", label: "drop", plural: "drops" },
+  { unit: "puff", label: "puff", plural: "puffs" },
+  { unit: "sachet", label: "sachet", plural: "sachets" },
+  { unit: "unit", label: "unit", plural: "units" },
   { unit: "application", label: "application", plural: "applications" },
 ];
 
@@ -485,13 +551,13 @@ const DOSE_UNIT_INDEX: Record<DoseUnit, DoseUnitOption> =
       acc[opt.unit] = opt;
       return acc;
     },
-    {} as Record<DoseUnit, DoseUnitOption>,
+    {} as Record<DoseUnit, DoseUnitOption>
   );
 
 /** "2 tabs", "1 spoon", "10 ml" — empty string when either piece missing. */
 export function formatDoseLabel(
   qty: number | null | undefined,
-  unit: DoseUnit | string | null | undefined,
+  unit: DoseUnit | string | null | undefined
 ): string {
   if (qty == null || qty <= 0 || !unit) return "";
   if (unit === "application") return "";
@@ -508,7 +574,7 @@ export function isTopicalForm(form: string | null | undefined): boolean {
 
 /** Typical per-dose unit for a pharmaceutical form ("syrup" → spoon). */
 export function defaultDoseUnitForForm(
-  form: string | null | undefined,
+  form: string | null | undefined
 ): DoseUnit | null {
   if (!form) return null;
   const f = form.trim().toLowerCase();
@@ -535,11 +601,11 @@ export interface FoodTimingOption {
 }
 
 export const FOOD_TIMING_OPTIONS: readonly FoodTimingOption[] = [
-  { code: "before_food",   label: "Before food" },
-  { code: "after_food",    label: "After food" },
-  { code: "with_food",     label: "With food" },
+  { code: "before_food", label: "Before food" },
+  { code: "after_food", label: "After food" },
+  { code: "with_food", label: "With food" },
   { code: "empty_stomach", label: "Empty stomach" },
-  { code: "bedtime",       label: "At bedtime" },
+  { code: "bedtime", label: "At bedtime" },
 ];
 
 const FOOD_TIMING_INDEX: Record<FoodTiming, FoodTimingOption> =
@@ -548,10 +614,12 @@ const FOOD_TIMING_INDEX: Record<FoodTiming, FoodTimingOption> =
       acc[opt.code] = opt;
       return acc;
     },
-    {} as Record<FoodTiming, FoodTimingOption>,
+    {} as Record<FoodTiming, FoodTimingOption>
   );
 
-export function getFoodTimingLabel(code: FoodTiming | null | undefined): string {
+export function getFoodTimingLabel(
+  code: FoodTiming | null | undefined
+): string {
   if (!code) return "";
   return FOOD_TIMING_INDEX[code]?.label ?? "";
 }
@@ -566,6 +634,8 @@ export interface MedicineSigParts {
   doseUnit?: DoseUnit | null;
   frequency?: string | null;
   frequencyCode?: FrequencyCode | null;
+  /** Indian meal-slot pattern (`1-0-1`) — shown after OD/BID when set. */
+  doseSchedule?: string | null;
   duration?: string | null;
   durationValue?: number | null;
   durationUnit?: DurationUnit | null;
@@ -573,6 +643,15 @@ export interface MedicineSigParts {
   /** Legacy route text — may include site as `IM · Deltoid`. */
   route?: string | null;
   instructions?: string | null;
+}
+
+const DOSE_SCHEDULE_SIG_RE = /^[0-9]+(-[0-9]+)+$/;
+
+function doseScheduleForSig(parts: MedicineSigParts): string {
+  const fromField = parts.doseSchedule?.trim() ?? "";
+  if (DOSE_SCHEDULE_SIG_RE.test(fromField)) return fromField;
+  const fromFrequency = parts.frequency?.trim() ?? "";
+  return DOSE_SCHEDULE_SIG_RE.test(fromFrequency) ? fromFrequency : "";
 }
 
 /**
@@ -588,11 +667,13 @@ export function formatMedicineSigLine(parts: MedicineSigParts): string {
   if (dose) segments.push(dose);
   else if (parts.dosage?.trim()) segments.push(parts.dosage.trim());
 
+  const schedule = doseScheduleForSig(parts);
   if (parts.frequencyCode && parts.frequencyCode !== "CUSTOM") {
     segments.push(parts.frequencyCode);
-  } else if (parts.frequency?.trim()) {
+  } else if (parts.frequency?.trim() && parts.frequency.trim() !== schedule) {
     segments.push(parts.frequency.trim());
   }
+  if (schedule) segments.push(schedule);
 
   const duration =
     parts.durationUnit != null

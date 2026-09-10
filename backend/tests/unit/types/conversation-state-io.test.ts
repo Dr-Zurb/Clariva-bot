@@ -132,22 +132,36 @@ describe('conversation-state-io (rcp-14 identity seam)', () => {
     expectStableReadWriteRead(fixture);
   });
 
-  it('rcp-17: recording consent namespace nests on disk', () => {
+  it('rec-09 / REC2-D6: recording_consent step folds to awaiting_slot_selection, not responded', () => {
+    const raw = readFileSync(join(legacyFixtureDir, 'recording-consent.json'), 'utf-8');
+    const fixture = JSON.parse(raw) as Record<string, unknown>;
+    const state = readConversationState(fixture);
+    expect(state.step).toBe('awaiting_slot_selection');
+    expect(state.step).not.toBe('responded');
+    expect(state).not.toHaveProperty('recordingConsent');
+    expect(state).not.toHaveProperty('recordingConsentDecision');
+    expect(state).not.toHaveProperty('recordingConsentRePitched');
+    const disk = writeConversationState(state);
+    expect(disk.step).toBe('awaiting_slot_selection');
+    expect(disk).not.toHaveProperty('recordingConsent');
+    expect(disk).not.toHaveProperty('recordingConsentDecision');
+    expectStableReadWriteRead(fixture);
+  });
+
+  it('rec-09: leftover recordingConsent blob does not break hydration', () => {
     const fixture = {
+      step: 'recording_consent',
+      recordingConsent: {
+        recordingConsentDecision: true,
+        recordingConsentVersion: 'v1.1',
+        recordingConsentRePitched: false,
+      },
       recordingConsentDecision: true,
-      recordingConsentVersion: 'v1.1',
-      recordingConsentRePitched: false,
     };
     const state = readConversationState(fixture);
-    expect(state.recordingConsent?.recordingConsentDecision).toBe(true);
-    expect(state.recordingConsent?.recordingConsentVersion).toBe('v1.1');
+    expect(state.step).toBe('awaiting_slot_selection');
+    expect(state).not.toHaveProperty('recordingConsent');
     expect(state).not.toHaveProperty('recordingConsentDecision');
-    const disk = writeConversationState(state);
-    expect(disk.recordingConsent).toEqual({
-      recordingConsentDecision: true,
-      recordingConsentVersion: 'v1.1',
-      recordingConsentRePitched: false,
-    });
     expectStableReadWriteRead(fixture);
   });
 
@@ -159,6 +173,19 @@ describe('conversation-state-io (rcp-14 identity seam)', () => {
     expect(state.triage?.reasonFirstTriagePhase).toBe('ask_more');
     expect(state.triage?.postMedicalConsultFeeAckSent).toBe(true);
     expect(state).not.toHaveProperty('activeFlow');
+    expectStableReadWriteRead(fixture);
+  });
+
+  it('nests safety crisis timestamps on read and write', () => {
+    const escalatedAt = '2026-08-02T12:00:00.000Z';
+    const fixture = {
+      step: 'responded',
+      safety: { escalatedAt },
+      updatedAt: escalatedAt,
+    };
+    const state = readConversationState(fixture);
+    expect(state.safety?.escalatedAt).toBe(escalatedAt);
+    expect(state).not.toHaveProperty('escalatedAt');
     expectStableReadWriteRead(fixture);
   });
 

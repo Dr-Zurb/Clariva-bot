@@ -43,10 +43,12 @@ export interface PipelineEntry {
     | "no_show";
   /** 1-indexed position within the day's pipeline */
   position: number;
-  /** Token number — queue mode only, null in schedule mode */
+  /** Queue token when the visit has one; null for pure slot visits */
   tokenNumber?: number | null;
   /** Deep-link to the appointment detail page */
   href: string;
+  /** Linked patient row, when the visit has one. Used to warm the next cockpit. */
+  patientId?: string | null;
   /** True when this entry matches `opts.currentAppointmentId` */
   isCurrent: boolean;
   /**
@@ -103,6 +105,7 @@ function mapQueueEntry(
     position,
     tokenNumber: row.tokenNumber,
     href: `/dashboard/appointments/${row.appointmentId}`,
+    patientId: row.patientId,
     isCurrent: row.appointmentId === currentAppointmentId,
     appointmentDate: row.sessionDate ?? null,
     consultationType: "in_clinic",
@@ -119,8 +122,9 @@ function mapAppointment(
     label: appt.patient_name,
     status: appt.status as PipelineEntry["status"],
     position,
-    tokenNumber: null,
+    tokenNumber: appt.opd_token_number ?? null,
     href: `/dashboard/appointments/${appt.id}`,
+    patientId: appt.patient_id ?? null,
     isCurrent: appt.id === currentAppointmentId,
     appointmentDate: appt.appointment_date ?? null,
     consultationType: appt.consultation_type ?? null,
@@ -156,8 +160,11 @@ export function useDoctorDayPipeline(
   const queueEntries = useMemo<PipelineEntry[]>(() => {
     if (!isQueueMode) return [];
 
+    // `activeAll`, not `active` — the latter is truncated to STRIP_MAX (5) for
+    // the dashboard strip. On a busy day that slice hid most of the queue from
+    // the rail and made "next patient" resolution return null.
     const allRows = [
-      ...opdSnap.active,
+      ...opdSnap.activeAll,
       ...opdSnap.done,
       ...opdSnap.missed,
     ].sort((a, b) => {
@@ -170,7 +177,7 @@ export function useDoctorDayPipeline(
     );
   }, [
     isQueueMode,
-    opdSnap.active,
+    opdSnap.activeAll,
     opdSnap.done,
     opdSnap.missed,
     currentAppointmentId,

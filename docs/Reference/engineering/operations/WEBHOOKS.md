@@ -98,7 +98,11 @@ logger.info('Webhook received', {
 - **`message_edit`-only in `messaging[]`:** If the first messaging item has **`message_edit` but no `message`**, the payload type is classified as `message_edit`. The controller **returns 200 and does not enqueue** the job. **Reason:** Meta often sends **both** `message` and `message_edit` for the same user action. Queueing both races the worker (duplicate create / ConflictError / “edit first” ordering) and can yield **zero** outbound replies. The **`message`** event is the single source of truth for that turn.
 - **Signature verification:** For Instagram, `message_edit` may verify differently; on failure the controller may still return **200** as **non-critical** so Meta stops retrying (original content is carried by the `message` event when present). See [WEBHOOK_SECURITY.md](../compliance/WEBHOOK_SECURITY.md) (RBH-08).
 
-**Implication:** A webhook that is **only** `message_edit` in `messaging[]` **never reaches** the worker fallback chain below. If production logs show only `message_edit` and no queued `message` for the same conversation turn, treat that as a **Meta subscription / payload-shape** issue ([Meta Developer Support](https://developers.facebook.com/support/)), not as “delete the fallback.”
+**Product policy (deliberate — do not “fix” without sign-off):** We **do not re-process patient message edits**. Instagram’s edit window is short; the booking funnel already has a correction path via a **new** message (confirm read-back → patch one field). Re-running a turn against mutated history can re-quote fees or double-book. The drop is therefore both a race fix **and** a product decision. Patients who meant something else should send a new DM.
+
+**Observability:** Each drop emits `webhook_message_edit_dropped_total` (`alertMarker: rbh11_message_edit_dropped`) with booleans `hasText` / `hasSender` / `hasMid` and optional `numEdit` — never message text or mid values. See [OBSERVABILITY.md](./OBSERVABILITY.md) (Receptionist metrics) for the aggregate alert.
+
+**Implication:** A webhook that is **only** `message_edit` in `messaging[]` **never reaches** the worker fallback chain below. If production logs show a high rate of `webhook_message_edit_dropped_total` with **near-zero** queued `message` / DM delivery for the same provider, treat that as a **Meta subscription / payload-shape** issue ([Meta Developer Support](https://developers.facebook.com/support/)), not as “delete the fallback” or “start processing edits.”
 
 ### Worker: when the fallback chain runs
 

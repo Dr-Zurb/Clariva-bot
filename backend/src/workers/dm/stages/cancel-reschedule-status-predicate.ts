@@ -4,7 +4,11 @@
  */
 
 import { classifierSignalsPaymentExistence } from '../../../services/ai-service';
-import { isRecentMedicalDeflectionWindow, stageOf } from '../../../types/conversation';
+import {
+  isOpenEmergencyCrisis,
+  isRecentMedicalDeflectionWindow,
+  stageOf,
+} from '../../../types/conversation';
 import { userExplicitlyWantsToBookNow } from '../../../utils/consultation-fees';
 import { isPostBookingAcknowledgment } from '../../../utils/dm-appointment-status';
 import {
@@ -75,7 +79,8 @@ export function matchesIdleFeeTriageMainBlock(ctx: DmTurnContext): boolean {
   if (
     intentResult.intent === 'medical_query' &&
     !inCollection &&
-    recentThreadHasAssistantEmergencyEscalation(recentDmForClinical) &&
+    (isOpenEmergencyCrisis(state) ||
+      recentThreadHasAssistantEmergencyEscalation(recentDmForClinical)) &&
     userMessageSignalsPostEmergencyStability(text)
   ) {
     return true;
@@ -102,11 +107,8 @@ export function matchesIdleFeeTriageMainBlock(ctx: DmTurnContext): boolean {
 
 /** Branches in legacy else-block before check/cancel/reschedule intent handlers. */
 export function legacyClaimsBeforeStatusIntents(ctx: DmTurnContext): boolean {
-  const { state } = ctx;
-
   if (legacyClaimsBeforeIdleFeeMainBlock(ctx)) return true;
   if (matchesIdleFeeTriageMainBlock(ctx)) return true;
-  if (stageOf(state) === 'recording_consent') return true;
   return false;
 }
 

@@ -1,50 +1,23 @@
 "use client";
 
 /**
- * usePatientRibbonData (cockpit-ribbon crb-01 · ribbon rethink 2026-07-17)
+ * usePatientRibbonData — cockpit strip chips for allergies, PMH, and chart meds.
  *
- * Composes chart endpoints into the data shape `<PatientRibbon>` needs:
- * allergies, chronic conditions, and **active chart medications**
- * (`patient_medications` where status=active and not archived).
- *
- * Demographics (age / sex / weight) live in the cockpit header beside the
- * patient name — not fetched here.
- *
- * Meds are NOT derived from the most recent prescription. "Still taking from
- * last Rx" belongs on the chart via explicit `continue` → chart promotion
- * (separate follow-up); the ribbon only counts the chart source of truth.
- *
- * # Fetch pattern
- *
- * Matches the dominant pattern in this codebase (`useSessionOverrun`,
- * `useChartPrefetch`, etc.): `useState` + `useEffect` with a manual
- * cancellation flag. A short module-level memory cache seeds state so
- * remounts / Strict Mode do not flash the ribbon skeleton twice.
- *
- * # Edge cases
- *
- * - `patientId == null` (walk-in) → empty shape, `isLoading: false`.
- * - `token == null` → same.
- * - Per-endpoint failure → first error wins on `error`; other slots still render.
- *
- * @see frontend/components/patient-profile/PatientRibbon.tsx
+ * Reads the same TanStack Query keys as Subjective (allergies + PMH) and
+ * Assessment (flat conditions), so a write in a tab or the allergies popover
+ * updates the strip immediately (and the other way around).
  */
 
-import { useEffect, useState } from "react";
-import {
-  listPatientAllergies,
-  listPatientConditions,
-  listPatientMedications,
-} from "@/lib/api";
+import { useMemo } from "react";
+import { usePatientAllergiesQuery } from "@/hooks/queries/usePatientAllergiesQuery";
+import { usePatientConditionsQuery } from "@/hooks/queries/usePatientConditionsQuery";
+import { usePatientMedicalBackgroundQuery } from "@/hooks/queries/usePatientMedicalBackgroundQuery";
 import type {
+  MedicalBackgroundGrouped,
   PatientAllergy,
   PatientChronicCondition,
   PatientMedication,
 } from "@/types/patient-chart";
-
-// ---------------------------------------------------------------------------
-// Public surface
-// ---------------------------------------------------------------------------
 
 export interface RibbonAllergyChip {
   id: string;
@@ -87,60 +60,8 @@ const EMPTY_RIBBON: RibbonData = {
   error: null,
 };
 
-/** Session memory so remounts / Strict Mode don't flash ribbon skeletons again. */
-const RIBBON_CACHE_TTL_MS = 60_000;
-const ribbonCache = new Map<
-  string,
-  { data: Omit<RibbonData, "isLoading">; at: number }
->();
-
-function ribbonCacheKey(patientId: string, token: string): string {
-  return `${patientId}::${token.slice(0, 12)}`;
-}
-
-function readRibbonCache(
-  patientId: string,
-  token: string,
-): RibbonData | null {
-  const hit = ribbonCache.get(ribbonCacheKey(patientId, token));
-  if (!hit) return null;
-  if (Date.now() - hit.at > RIBBON_CACHE_TTL_MS) {
-    ribbonCache.delete(ribbonCacheKey(patientId, token));
-    return null;
-  }
-  // Guard against stale cache shapes from before the ribbon rethink.
-  if (!Array.isArray(hit.data.activeMeds)) {
-    ribbonCache.delete(ribbonCacheKey(patientId, token));
-    return null;
-  }
-  return { ...hit.data, isLoading: false };
-}
-
-function writeRibbonCache(
-  patientId: string,
-  token: string,
-  data: RibbonData,
-): void {
-  ribbonCache.set(ribbonCacheKey(patientId, token), {
-    data: {
-      allergies: data.allergies,
-      chronicConditions: data.chronicConditions,
-      activeMeds: data.activeMeds,
-      activeMedsCount: data.activeMedsCount,
-      error: data.error,
-    },
-    at: Date.now(),
-  });
-}
-
-/** Test helper — drop ribbon memory cache. */
-export function clearPatientRibbonDataCache(): void {
-  ribbonCache.clear();
-}
-
-// ---------------------------------------------------------------------------
-// Mappers
-// ---------------------------------------------------------------------------
+/** No-op kept for tests that reset the old module cache. */
+export function clearPatientRibbonDataCache(): void {}
 
 function toRibbonAllergy(row: PatientAllergy): RibbonAllergyChip {
   return {
@@ -187,85 +108,73 @@ export function selectActiveChartMeds(
   return rows.filter(isActiveChartMed).map(toRibbonMed);
 }
 
-// ---------------------------------------------------------------------------
-// Hook
-// ---------------------------------------------------------------------------
+/** Deduped chart meds from grouped PMH (condition-linked + additional). */
+export function collectBackgroundMeds(
+  bg: MedicalBackgroundGrouped,
+): PatientMedication[] {
+  const byId = new Map<string, PatientMedication>();
+  for (const condition of bg.conditions) {
+    for (const med of condition.medications) byId.set(med.id, med);
+  }
+  for (const med of bg.unlinkedMedications) byId.set(med.id, med);
+  return [...byId.values()];
+}
+
+function firstQueryError(
+  ...errors: Array<unknown>
+): Error | null {
+  const found = errors.find((e) => e != null);
+  if (found == null) return null;
+  return found instanceof Error ? found : new Error(String(found));
+}
 
 export function usePatientRibbonData(
   patientId: string | null,
   token: string | null,
 ): RibbonData {
-  const [data, setData] = useState<RibbonData>(() => {
+  const pid = patientId ?? "";
+  const tok = token ?? "";
+  const allergiesQuery = usePatientAllergiesQuery(tok, pid);
+  const conditionsQuery = usePatientConditionsQuery(tok, pid);
+  const backgroundQuery = usePatientMedicalBackgroundQuery(tok, pid);
+
+  return useMemo(() => {
     if (!patientId || !token) return EMPTY_RIBBON;
-    return readRibbonCache(patientId, token) ?? {
-      ...EMPTY_RIBBON,
-      isLoading: true,
+
+    const allergies = (allergiesQuery.data?.allergies ?? []).map(toRibbonAllergy);
+    const background = backgroundQuery.data;
+    const chronicSource = background?.conditions ?? conditionsQuery.data ?? [];
+    const activeMeds = selectActiveChartMeds(
+      background ? collectBackgroundMeds(background) : [],
+    );
+    const waitingAllergies = allergiesQuery.isLoading && !allergiesQuery.data;
+    const waitingPmh =
+      backgroundQuery.isLoading &&
+      !backgroundQuery.data &&
+      !conditionsQuery.data;
+
+    return {
+      allergies,
+      chronicConditions: chronicSource.map(toRibbonChronic),
+      activeMeds,
+      activeMedsCount: activeMeds.length,
+      isLoading: waitingAllergies || waitingPmh,
+      error: firstQueryError(
+        allergiesQuery.error,
+        backgroundQuery.error,
+        conditionsQuery.error,
+      ),
     };
-  });
-
-  useEffect(() => {
-    if (!patientId || !token) {
-      setData(EMPTY_RIBBON);
-      return;
-    }
-
-    let cancelled = false;
-    const cached = readRibbonCache(patientId, token);
-    if (cached) {
-      setData(cached);
-    } else {
-      setData((prev) => ({ ...prev, isLoading: true, error: null }));
-    }
-
-    void Promise.allSettled([
-      listPatientAllergies(token, patientId),
-      listPatientConditions(token, patientId),
-      listPatientMedications(token, patientId),
-    ]).then((results) => {
-      if (cancelled) return;
-
-      const [allergiesRes, conditionsRes, medsRes] = results;
-
-      const allergyRows: PatientAllergy[] =
-        allergiesRes.status === "fulfilled"
-          ? allergiesRes.value.data.allergies ?? []
-          : [];
-      const conditionRows: PatientChronicCondition[] =
-        conditionsRes.status === "fulfilled"
-          ? conditionsRes.value.data.conditions ?? []
-          : [];
-      const medicationRows: PatientMedication[] =
-        medsRes.status === "fulfilled"
-          ? medsRes.value.data.medications ?? []
-          : [];
-
-      const firstError = results
-        .map((r) => (r.status === "rejected" ? (r.reason as unknown) : null))
-        .find((e): e is unknown => e !== null);
-      const error: Error | null =
-        firstError instanceof Error
-          ? firstError
-          : firstError != null
-            ? new Error(String(firstError))
-            : null;
-
-      const activeMeds = selectActiveChartMeds(medicationRows);
-      const next: RibbonData = {
-        allergies: allergyRows.map(toRibbonAllergy),
-        chronicConditions: conditionRows.map(toRibbonChronic),
-        activeMeds,
-        activeMedsCount: activeMeds.length,
-        isLoading: false,
-        error,
-      };
-      writeRibbonCache(patientId, token, next);
-      setData(next);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [patientId, token]);
-
-  return data;
+  }, [
+    allergiesQuery.data,
+    allergiesQuery.error,
+    allergiesQuery.isLoading,
+    backgroundQuery.data,
+    backgroundQuery.error,
+    backgroundQuery.isLoading,
+    conditionsQuery.data,
+    conditionsQuery.error,
+    patientId,
+    token,
+  ]);
 }

@@ -29,7 +29,12 @@ import {
   isTeleconsultCatalogAuthoritative,
   userExplicitlyWantsToBookNow,
 } from '../../../utils/consultation-fees';
-import { buildIntakeRequestMessage } from '../../../utils/dm-copy';
+import {
+  buildIntakeRequestMessage,
+  buildTeleconsultChannelPickMessage,
+  buildBookForOtherDualIntroMessage,
+  buildBookForThemIntroMessage,
+} from '../../../utils/dm-copy';
 import { composeIdleFeeQuoteDmWithMetaAsync } from '../../../utils/dm-reply-composer';
 import { buildFeeCatalogMatchText } from '../../../utils/dm-turn-context';
 import {
@@ -154,7 +159,7 @@ export const bookingEntryStage = {
       });
       if (teleOnly && pick === 'in_clinic') {
         replyText =
-          "Right now we offer **teleconsult** only (text, voice, or video) — which works best for you?";
+          buildTeleconsultChannelPickMessage({ language: ctx.turnLanguage });
         state = {
           ...state,
           lastIntent: intentResult.intent,
@@ -178,7 +183,7 @@ export const bookingEntryStage = {
         if (deferIntakeForReasonFirst) {
           dmRoutingBranch = 'consultation_channel_pick_reason_first';
           const snippet = await resolveVisitReasonSnippetForTriage(recentChannel, text, correlationId);
-          replyText = formatReasonFirstGateBeforeIntake(text, snippet);
+          replyText = formatReasonFirstGateBeforeIntake(ctx.turnLanguage, snippet);
           state = mergeBooking(
             mergeTriage(
               mergeServiceMatch(
@@ -267,10 +272,11 @@ export const bookingEntryStage = {
           }
         );
         replyText = buildIntakeRequestMessage({
+          language: ctx.turnLanguage,
           variant: 'initial',
           forRelation: relation,
           missing: ['name', 'age', 'phone', 'reason_for_visit'],
-          intro: `I'll help you book for you and your **${relation}**. Let's take them one at a time — your **${relation}** first, then you. Please share their details:`,
+          intro: buildBookForOtherDualIntroMessage({ language: ctx.turnLanguage, relation }),
         });
       } else {
         await clearCollectedData(conversation.id);
@@ -311,12 +317,13 @@ export const bookingEntryStage = {
           }
         );
         replyText = buildIntakeRequestMessage({
+          language: ctx.turnLanguage,
           variant: 'initial',
           forRelation: relation === 'them' ? undefined : relation,
           missing: ['name', 'age', 'phone', 'reason_for_visit'],
           intro:
             relation === 'them'
-              ? "I'll help you book for **them**. Please share their details:"
+              ? buildBookForThemIntroMessage({ language: ctx.turnLanguage })
               : undefined,
         });
       }
@@ -336,7 +343,7 @@ export const bookingEntryStage = {
         ) {
           dmRoutingBranch = 'booking_start_reason_first';
           const snippetStart = await resolveVisitReasonSnippetForTriage(recentStart, text, correlationId);
-          replyText = formatReasonFirstGateBeforeIntake(text, snippetStart);
+          replyText = formatReasonFirstGateBeforeIntake(ctx.turnLanguage, snippetStart);
           state = mergeTriage(
             {
               ...state,
@@ -397,6 +404,7 @@ export const bookingEntryStage = {
                 doctorId,
                 doctorSettings,
                 patient,
+                language: ctx.turnLanguage,
               });
               state = ready.state;
               replyText = ready.replyText;
@@ -418,6 +426,7 @@ export const bookingEntryStage = {
               );
               const practiceName = doctorContext?.practice_name?.trim() || 'the clinic';
               replyText = buildIntakeRequestMessage({
+                language: ctx.turnLanguage,
                 variant: 'initial',
                 practiceName,
                 alreadyHaveReason: false,
@@ -507,7 +516,7 @@ export const bookingEntryStage = {
             text,
             correlationId
           );
-          replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(text, {
+          replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(ctx.turnLanguage, {
             reasonSnippet: snippetBookIdle.trim(),
             recentPostMedicalFeeAck: state.triage?.postMedicalConsultFeeAckSent === true,
           });
@@ -561,6 +570,7 @@ export const bookingEntryStage = {
           doctorId,
           doctorSettings,
           patient,
+          language: ctx.turnLanguage,
         });
         state = ready.state;
         replyText = ready.replyText;
@@ -582,7 +592,7 @@ export const bookingEntryStage = {
             text,
             correlationId
           );
-          replyText = formatReasonFirstGateBeforeIntake(text, snippetBook);
+          replyText = formatReasonFirstGateBeforeIntake(ctx.turnLanguage, snippetBook);
           state = mergeTriage(
             {
               ...state,
@@ -614,6 +624,7 @@ export const bookingEntryStage = {
           );
           const practiceName = doctorContext?.practice_name?.trim() || 'the clinic';
           replyText = buildIntakeRequestMessage({
+            language: ctx.turnLanguage,
             variant: 'initial',
             practiceName,
             alreadyHaveReason: reasonSeedBook.length > 0,

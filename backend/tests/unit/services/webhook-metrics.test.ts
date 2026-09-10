@@ -11,7 +11,11 @@ jest.mock('../../../src/config/logger', () => ({
 
 import {
   classifyInstagramDmFailureReason,
+  logDmEmergencyIntentDowngraded,
+  logDmEmergencySafetyDecision,
+  logDmLanguageDecision,
   logWebhookInstagramDmPipelineTiming,
+  logWebhookMessageEditDropped,
 } from '../../../src/services/webhook-metrics';
 import { logger } from '../../../src/config/logger';
 import {
@@ -67,5 +71,132 @@ describe('logWebhookInstagramDmPipelineTiming (RBH-12)', () => {
     expect(payload.intentMs).toBe(12);
     expect(payload.generateMs).toBe(0);
     expect(payload.greetingFastPath).toBe(true);
+  });
+});
+
+describe('logWebhookMessageEditDropped (RBH-11)', () => {
+  beforeEach(() => {
+    jest.mocked(logger.info).mockClear();
+  });
+
+  it('logs aggregate-safe fields and stable alert marker without text or mid', () => {
+    logWebhookMessageEditDropped({
+      correlationId: 'c-edit',
+      provider: 'instagram',
+      hasText: true,
+      hasSender: false,
+      hasMid: true,
+      numEdit: 1,
+    });
+    expect(logger.info).toHaveBeenCalledTimes(1);
+    const [payload, msg] = jest.mocked(logger.info).mock.calls[0]!;
+    expect(msg).toBe('webhook_metric_webhook_message_edit_dropped_total');
+    const p = payload as Record<string, unknown>;
+    expect(p.metric).toBe('webhook_message_edit_dropped_total');
+    expect(p.alertMarker).toBe('rbh11_message_edit_dropped');
+    expect(p.hasText).toBe(true);
+    expect(p.hasSender).toBe(false);
+    expect(p.hasMid).toBe(true);
+    expect(p.numEdit).toBe(1);
+    expect(p).not.toHaveProperty('text');
+    expect(p).not.toHaveProperty('mid');
+  });
+});
+
+describe('logDmEmergencyIntentDowngraded', () => {
+  beforeEach(() => {
+    jest.mocked(logger.info).mockClear();
+  });
+
+  it('logs reason and alert marker without message text', () => {
+    logDmEmergencyIntentDowngraded({
+      correlationId: 'c-emg',
+      reason: 'post_escalation_stability',
+    });
+    expect(logger.info).toHaveBeenCalledTimes(1);
+    const [payload, msg] = jest.mocked(logger.info).mock.calls[0]!;
+    expect(msg).toBe('webhook_metric_dm_emergency_intent_downgraded_total');
+    const p = payload as Record<string, unknown>;
+    expect(p.metric).toBe('dm_emergency_intent_downgraded_total');
+    expect(p.alertMarker).toBe('dm_emergency_intent_downgraded');
+    expect(p.reason).toBe('post_escalation_stability');
+    expect(p.correlationId).toBe('c-emg');
+    expect(p).not.toHaveProperty('text');
+    expect(p).not.toHaveProperty('messageText');
+  });
+});
+
+describe('logDmEmergencySafetyDecision', () => {
+  beforeEach(() => {
+    jest.mocked(logger.info).mockClear();
+  });
+
+  it('logs decision booleans without message text', () => {
+    logDmEmergencySafetyDecision({
+      correlationId: 'c-safe',
+      regexHit: true,
+      classifierIntent: 'greeting',
+      emergencyGateEligible: true,
+      emergencyGateFired: true,
+      inCollection: false,
+      priorEscalationInWindow: false,
+      crisisOpen: false,
+      headBranch: 'emergency_safety',
+    });
+    expect(logger.info).toHaveBeenCalledTimes(1);
+    const [payload, msg] = jest.mocked(logger.info).mock.calls[0]!;
+    expect(msg).toBe('webhook_metric_dm_emergency_safety_decision_total');
+    const p = payload as Record<string, unknown>;
+    expect(p.metric).toBe('dm_emergency_safety_decision_total');
+    expect(p.alertMarker).toBe('dm_emergency_safety_decision');
+    expect(p.regexHit).toBe(true);
+    expect(p.classifierIntent).toBe('greeting');
+    expect(p.emergencyGateEligible).toBe(true);
+    expect(p.emergencyGateFired).toBe(true);
+    expect(p.crisisOpen).toBe(false);
+    expect(p.headBranch).toBe('emergency_safety');
+    expect(p).not.toHaveProperty('text');
+    expect(p).not.toHaveProperty('messageText');
+  });
+});
+
+describe('logDmLanguageDecision', () => {
+  beforeEach(() => {
+    jest.mocked(logger.info).mockClear();
+  });
+
+  it('logs counts and codes without message text or marker identities', () => {
+    logDmLanguageDecision({
+      correlationId: 'c-lang',
+      storedBefore: null,
+      resolved: 'hi-Latn',
+      changed: true,
+      reason: 'markers',
+      hiMarkerCount: 3,
+      paMarkerCount: 1,
+      paExclusiveCount: 0,
+      accumulationWindowSize: 2,
+      classifierLanguage: null,
+      classifierAgreed: null,
+    });
+    expect(logger.info).toHaveBeenCalledTimes(1);
+    const [payload, msg] = jest.mocked(logger.info).mock.calls[0]!;
+    expect(msg).toBe('webhook_metric_dm_language_decision_total');
+    const p = payload as Record<string, unknown>;
+    expect(p.metric).toBe('dm_language_decision_total');
+    expect(p.alertMarker).toBe('dm_language_decision');
+    expect(p.resolved).toBe('hi-Latn');
+    expect(p.changed).toBe(true);
+    expect(p.reason).toBe('markers');
+    expect(p.hiMarkerCount).toBe(3);
+    expect(p.paMarkerCount).toBe(1);
+    expect(p.paExclusiveCount).toBe(0);
+    expect(p.accumulationWindowSize).toBe(2);
+    expect(p.classifierLanguage).toBeNull();
+    expect(p.classifierAgreed).toBeNull();
+    expect(p).not.toHaveProperty('text');
+    expect(p).not.toHaveProperty('messageText');
+    expect(p).not.toHaveProperty('markers');
+    expect(p).not.toHaveProperty('markerList');
   });
 });

@@ -30,6 +30,10 @@ import {
 } from "@/components/cockpit/rx/sections/field-styles";
 import { RemoveIconButton } from "@/components/cockpit/rx/subjective/RemoveIconButton";
 import { cn } from "@/lib/utils";
+import {
+  LastVisitCustomSectionStrip,
+  type LastVisitCustomScope,
+} from "@/components/cockpit/rx/last-visit/LastVisitCustomSectionStrip";
 
 const CUSTOM_SUBSECTION_TITLE_MAX = 200;
 const CUSTOM_SUBSECTION_BODY_MAX = 2000;
@@ -230,6 +234,8 @@ export interface CustomSubsectionBlockProps {
   leadingActions?: ReactNode;
   /** Scroll-to selector on collapse. Defaults to the subjective tab top. */
   scrollSelector?: string;
+  /** When set, shows last-visit body for this custom block (LVC-DL-11). */
+  lastVisitScope?: LastVisitCustomScope;
   onUpdate: (patch: Partial<CustomSubsection>) => void;
   onRemove: () => void;
   onAddChild: () => void;
@@ -248,6 +254,7 @@ export function CustomSubsectionBlock({
   templateActions,
   leadingActions,
   scrollSelector,
+  lastVisitScope,
   onUpdate,
   onRemove,
   onAddChild,
@@ -363,6 +370,13 @@ export function CustomSubsectionBlock({
       depthTone
       bodyClassName="space-y-3"
     >
+      {lastVisitScope ? (
+        <LastVisitCustomSectionStrip
+          scope={lastVisitScope}
+          sectionId={section.id}
+          disabled={disabled}
+        />
+      ) : null}
       <div className="space-y-2">
         {disabled ? (
           <span className={RX_FIELD_LABEL_CLASS}>Section notes</span>

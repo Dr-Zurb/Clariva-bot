@@ -23,7 +23,7 @@
 
 import type { LayoutNode, LegacyFlatLayout } from "./types";
 import type { PaneTreeNode } from "./layout-tree";
-import { paneTreeToFlat } from "./layout-tree";
+import { paneTreeToFlat, stripPanelKeysCollidingWithId } from "./layout-tree";
 
 type SplitNode = Extract<LayoutNode, { kind: "split" }>;
 type PaneNode = Extract<LayoutNode, { kind: "pane" }>;
@@ -494,9 +494,19 @@ function makeSinglePaneLeaf(
   };
 }
 
+function dropStalePanelKey(
+  node: PaneTreeNode,
+  removedPaneId: string,
+): PaneTreeNode {
+  if (node.panelKey !== removedPaneId) return node;
+  const { panelKey: _omit, ...rest } = node;
+  return rest;
+}
+
 function normalizeLeafAfterPaneRemoval(
   container: PaneTreeNode,
   remainingPaneIds: string[],
+  removedPaneId: string,
 ): PaneTreeNode | null {
   if (remainingPaneIds.length === 0) return null;
   const activeTabId =
@@ -517,11 +527,14 @@ function normalizeLeafAfterPaneRemoval(
       container.id === "__root__" ||
       remainingPaneIds.includes(container.id)
     ) {
-      return {
-        ...container,
-        paneIds: remainingPaneIds,
-        activeTabId,
-      };
+      return dropStalePanelKey(
+        {
+          ...container,
+          paneIds: remainingPaneIds,
+          activeTabId,
+        },
+        removedPaneId,
+      );
     }
     return makeSinglePaneLeaf(sole, container.sizePct, container.hidden);
   }
@@ -535,19 +548,25 @@ function normalizeLeafAfterPaneRemoval(
     container.id !== "__root__" &&
     !remainingPaneIds.includes(container.id)
   ) {
-    return {
-      ...container,
-      id: nextPaneTreeTabsId(),
-      paneIds: remainingPaneIds,
-      activeTabId,
-    };
+    return dropStalePanelKey(
+      {
+        ...container,
+        id: nextPaneTreeTabsId(),
+        paneIds: remainingPaneIds,
+        activeTabId,
+      },
+      removedPaneId,
+    );
   }
 
-  return {
-    ...container,
-    paneIds: remainingPaneIds,
-    activeTabId,
-  };
+  return dropStalePanelKey(
+    {
+      ...container,
+      paneIds: remainingPaneIds,
+      activeTabId,
+    },
+    removedPaneId,
+  );
 }
 
 function removePaneFromCurrentContainer(
@@ -573,7 +592,11 @@ function removePaneFromCurrentContainer(
     newTree = without;
     remainingContainerId = null;
   } else {
-    const updated = normalizeLeafAfterPaneRemoval(container, nextPaneIds)!;
+    const updated = normalizeLeafAfterPaneRemoval(
+      container,
+      nextPaneIds,
+      paneId,
+    )!;
     newTree = updatePaneTreeNodeById(tree, container.id, () => updated);
     remainingContainerId = updated.id;
   }
@@ -884,7 +907,13 @@ export function extractFromTabsNode(
     return { ...p, children };
   });
 
-  return { ok: true, tree: compactSingleChildSplits(resultTree) };
+  return {
+    ok: true,
+    tree: stripPanelKeysCollidingWithId(
+      compactSingleChildSplits(resultTree),
+      paneId,
+    ),
+  };
 }
 
 /**
@@ -898,6 +927,10 @@ export function extractFromTabsNode(
  * host that pane). Divorcing them — parking pane "b" in a slot still called "a"
  * — lets a later `makeSinglePaneLeaf(paneId)` mint a colliding node id and trip
  * react-resizable-panels' "Panel ids must be unique" guard.
+ *
+ * `panelKey` stays in the geometric slot (pinned on first swap from the prior
+ * `id` when unset) so react-resizable-panels DOM ids do not churn — Show-here
+ * updates leaf content in place instead of remounting both panels.
  *
  * Failure modes:
  *   - "not-found" — either id is absent from the tree.
@@ -922,15 +955,18 @@ export function swapPaneTreeNodes(
   // Move each node to the other's slot, inheriting that slot's geometry. Keeping
   // `hidden` per-position also avoids importing `hidden: true` into a visible
   // slot on a Show-here swap with a hidden host (which would collapse it).
+  // Pin panelKey to the slot so ResizablePanel ids stay put across the swap.
   const aReplacement: PaneTreeNode = {
     ...nodeB,
     sizePct: nodeA.sizePct,
     hidden: nodeA.hidden,
+    panelKey: nodeA.panelKey ?? nodeA.id,
   };
   const bReplacement: PaneTreeNode = {
     ...nodeA,
     sizePct: nodeB.sizePct,
     hidden: nodeB.hidden,
+    panelKey: nodeB.panelKey ?? nodeB.id,
   };
 
   // Single pass — return the replacement WITHOUT recursing into it so the
@@ -1085,7 +1121,13 @@ export function dropPaneIntoZone(
     }
   }
 
-  return { ok: true, tree: compactSingleChildSplits(resultTree) };
+  return {
+    ok: true,
+    tree: stripPanelKeysCollidingWithId(
+      compactSingleChildSplits(resultTree),
+      sourcePaneId,
+    ),
+  };
 }
 
 /**

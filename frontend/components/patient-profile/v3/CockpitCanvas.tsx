@@ -51,7 +51,7 @@ export default function CockpitCanvas({
     return (
       <div
         data-testid="cockpit-v3-canvas"
-        className="h-full min-h-0 bg-muted/20"
+        className="h-full min-h-0 bg-cockpit-canvas"
       >
         <CockpitEmptyState />
       </div>
@@ -61,7 +61,7 @@ export default function CockpitCanvas({
   return (
     <div
       data-testid="cockpit-v3-canvas"
-      className="h-full min-h-0 bg-muted/20 p-1"
+      className="h-full min-h-0 bg-cockpit-canvas p-2"
     >
       <CockpitGroupView
         node={layout.paneTree}

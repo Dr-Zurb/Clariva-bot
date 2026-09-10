@@ -67,6 +67,12 @@ describe("CarryForwardButton", () => {
     renderWithRxForm(<CarryForwardButton />);
 
     await waitFor(() => {
+      expect(getLastSubjectiveForPatient).toHaveBeenCalledWith(
+        "test-token",
+        "pat-1",
+        "appt-current",
+        null,
+      );
       expect(screen.getByTestId("carry-forward-trigger")).toBeInTheDocument();
     });
 

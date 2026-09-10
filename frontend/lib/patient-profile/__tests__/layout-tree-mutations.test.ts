@@ -34,10 +34,11 @@ import {
   moveSiblingIntoGutter,
   hidePaneToRoot,
   hideLeafToRoot,
+  swapPaneTreeNodes,
 } from "../layout-tree-mutations";
 import type { LayoutNode, LegacyFlatLayout } from "../types";
 import type { PaneTreeNode } from "../layout-tree";
-import { paneTreeToFlat, updateNodeHidden } from "../layout-tree";
+import { cockpitPanelDomId, paneTreeToFlat, updateNodeHidden } from "../layout-tree";
 
 // ── Fixture helpers ─────────────────────────────────────────────────────────
 
@@ -1263,6 +1264,70 @@ describe("dropPaneIntoZone — edges, same-axis parent (cpfd-01)", () => {
     expect(remaining!.id.startsWith("__tabs_")).toBe(true);
     expect(remaining!.paneIds).toEqual(["objective", "assessment", "plan"]);
   });
+
+  it("extracts Plan from a Plan+Consult tab strip onto insert-right without duplicating panel ids", () => {
+    // User layout: Plan and Consult (body) share a tab strip; drag Plan onto
+    // that leaf's east edge ("Insert right"). Remaining Consult must not keep
+    // a swap-pinned panelKey "plan" beside the new plan leaf.
+    const tree = ptRoot([
+      {
+        id: "body",
+        sizePct: 40,
+        hidden: false,
+        panelKey: "plan",
+        paneIds: ["plan", "body"],
+        activeTabId: "body",
+      },
+      ptLeaf("assessment", 30),
+      ptLeaf("objective", 30),
+    ]);
+    const result = dropPaneIntoZone(tree, "plan", "body", "east");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const ids = nodeIds(result.tree);
+    expect(new Set(ids).size).toBe(ids.length);
+    const panelDomIds = collectPanelDomIds(result.tree);
+    expect(new Set(panelDomIds).size).toBe(panelDomIds.length);
+
+    const extracted = ptFindNode(result.tree, "plan")!;
+    expect(extracted.paneIds).toEqual(["plan"]);
+    expect(extracted.children).toBeUndefined();
+    expect(cockpitPanelDomId(extracted)).toBe("plan");
+
+    const consult = result.tree.children?.find((c) =>
+      (c.paneIds ?? []).includes("body"),
+    );
+    expect(consult).toBeTruthy();
+    expect(consult!.id).not.toBe("plan");
+    expect(cockpitPanelDomId(consult!)).not.toBe("plan");
+  });
+
+  it("extracts Plan after swap-then-tab without duplicating panel ids", () => {
+    const tree = ptRoot([
+      ptLeaf("body", 40),
+      ptLeaf("assessment", 30),
+      ptLeaf("plan", 30),
+    ]);
+    const swapped = swapPaneTreeNodes(tree, "body", "plan");
+    expect(swapped.ok).toBe(true);
+    if (!swapped.ok) return;
+    const tabbed = addToTabsNode(swapped.tree, "plan", "body", "end");
+    expect(tabbed.ok).toBe(true);
+    if (!tabbed.ok) return;
+
+    const result = dropPaneIntoZone(tabbed.tree, "plan", "body", "east");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const panelDomIds = collectPanelDomIds(result.tree);
+    expect(new Set(panelDomIds).size).toBe(panelDomIds.length);
+    expect(collectAllPaneIds(result.tree).sort()).toEqual([
+      "assessment",
+      "body",
+      "plan",
+    ]);
+  });
 });
 
 describe("dropPaneIntoZone — edges, cross-axis parent (cpfd-01)", () => {
@@ -1567,6 +1632,19 @@ function nodeIds(tree: PaneTreeNode): string[] {
   function walk(n: PaneTreeNode) {
     ids.push(n.id);
     n.children?.forEach(walk);
+  }
+  walk(tree);
+  return ids;
+}
+
+function collectPanelDomIds(tree: PaneTreeNode): string[] {
+  const ids: string[] = [];
+  function walk(n: PaneTreeNode) {
+    if (n.children?.length) {
+      n.children.forEach(walk);
+      return;
+    }
+    ids.push(cockpitPanelDomId(n));
   }
   walk(tree);
   return ids;

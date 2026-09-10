@@ -67,16 +67,31 @@ export default function EndedCard({
 
   // pf-18: resolve whether there is a next patient before rendering any
   // content, so the EndOfDayCard swap happens on first paint (no flicker).
-  const { next: nextRoute, isLoading: routeLoading } = useNextAppointmentRoute(
-    { currentAppointmentId: appointment.id, token },
-  );
+  const { next: nextRoute, isLoading: routeLoading } = useNextAppointmentRoute({
+    currentAppointmentId: appointment.id,
+    token,
+  });
+
+  const countdown = !countdownDismissed ? (
+    <NextPatientCountdown
+      currentAppointmentId={appointment.id}
+      triggeredAt={triggeredAt}
+      token={token}
+      onCancel={() => setCountdownDismissed(true)}
+      onDone={() => setCountdownDismissed(true)}
+    />
+  ) : null;
 
   if (!sessionId) {
+    if (!routeLoading && nextRoute === null) {
+      return <EndOfDayCard token={token} />;
+    }
     return (
-      <div className="rounded-lg border border-dashed border-border bg-card p-6 text-center">
+      <div className="relative rounded-lg border border-dashed border-border bg-card p-6 text-center">
         <p className="text-sm text-muted-foreground">
           This appointment was completed with no recorded session.
         </p>
+        {countdown}
       </div>
     );
   }
@@ -165,15 +180,7 @@ export default function EndedCard({
        *   - useNextAppointmentRoute().next === null (EndOfDayCard branch — pf-18)
        *   - doctor cancelled (manages its own state + sessionStorage flag)
        */}
-      {!countdownDismissed && (
-        <NextPatientCountdown
-          currentAppointmentId={appointment.id}
-          triggeredAt={triggeredAt}
-          token={token}
-          onCancel={() => setCountdownDismissed(true)}
-          onDone={() => setCountdownDismissed(true)}
-        />
-      )}
+      {countdown}
     </div>
   );
 }

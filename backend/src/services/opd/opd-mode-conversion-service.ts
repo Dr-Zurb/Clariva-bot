@@ -561,6 +561,11 @@ async function executeQueueToSlot(
       .update({
         appointment_date: assignment.newAppointmentDate,
         opd_event_type: assignment.opdEventType,
+        // osm-04: surplus / return rows stamp stored provenance (migration 192).
+        booking_origin:
+          assignment.opdEventType === 'return_after_completed'
+            ? 'return_after_completed'
+            : 'booked',
       })
       .eq('id', assignment.appointmentId);
     if (updateErr) {

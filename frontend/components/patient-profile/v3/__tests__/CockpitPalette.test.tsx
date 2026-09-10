@@ -175,6 +175,32 @@ describe("CockpitPalette", () => {
     expect(screen.getByTestId("cockpit-v3-undo")).toBeDisabled();
     expect(screen.getByTestId("cockpit-v3-redo")).toBeDisabled();
   });
+
+  it("renders describeSlot inside the palette row", () => {
+    render(
+      <CockpitPalette
+        panes={[makePane("a")]}
+        layout={makeLayout({ a: { sizePct: 100, hidden: false } })}
+        describeSlot={<input aria-label="Describe this visit" />}
+      />,
+    );
+    expect(screen.getByTestId("cockpit-v3-palette")).toContainElement(
+      screen.getByLabelText("Describe this visit"),
+    );
+  });
+
+  it("exposes a fullscreen toggle", () => {
+    render(
+      <CockpitPalette
+        panes={[makePane("a")]}
+        layout={makeLayout({ a: { sizePct: 100, hidden: false } })}
+      />,
+    );
+    expect(screen.getByTestId("cockpit-v3-fullscreen")).toHaveAttribute(
+      "aria-label",
+      "Enter fullscreen",
+    );
+  });
 });
 
 function makeEightPanes(): PaneDefinition[] {

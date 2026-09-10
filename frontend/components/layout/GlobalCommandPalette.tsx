@@ -5,10 +5,11 @@
  * header search trigger (B1, wired by lifting `open` state up to the
  * shell). One source in V1: patients.
  *
- * V1.1 sources to add (registry-ready — drop one entry into
- * `sourceRegistry` and it slots into the palette):
- *   - drugs: GET /api/v1/drugs/search (existing — used by DrugAutocomplete)
- *   - settings: client-side static index of /dashboard/settings/* paths
+ * Sources: patients (V1) + fields (rfeq-01 — route-aware, silent off an
+ * open visit). V1.1 still pending: drugs, settings, appointments.
+ *
+ * `fields` is navigation-only (`rxFocus` query). Unhide / set-value live
+ * on the in-cockpit command bar (Phase 2), not here.
  *
  * Architecture
  * ------------
@@ -41,8 +42,8 @@
 "use client";
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { Clock, User } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { Clock, Stethoscope, User } from "lucide-react";
 
 import {
   CommandDialog,
@@ -58,6 +59,7 @@ import {
   searchPatients,
   type PatientSearchHit,
 } from "@/lib/search/patients";
+import { appointmentIdFromPath, searchRxFields } from "@/lib/search/rx-fields";
 import {
   cmdkOpened,
   cmdkSearched,
@@ -120,8 +122,16 @@ function toPatientItem(hit: PatientSearchHit): SourceItem {
   };
 }
 
-/** V1: only patients. V1.1: append `appointments`, `drugs`, `settings`. */
-const sourceRegistry: SearchSource[] = [PATIENTS_SOURCE];
+function makeFieldsSource(pathname: string): SearchSource {
+  return {
+    key: "fields",
+    label: "Fields",
+    Icon: Stethoscope,
+    async search(_token, query) {
+      return searchRxFields(query, pathname);
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Cache — LRU-ish; TTL 30s; cap 10. Per-tab module scope so it survives
@@ -140,21 +150,27 @@ type SourceResults = Record<string, SourceItem[]>;
 
 const queryCache: Map<string, CacheEntry> = new Map();
 
-function readCache(query: string): SourceResults | null {
-  const entry = queryCache.get(query);
+function cacheKey(pathname: string, query: string): string {
+  return `${pathname}\0${query}`;
+}
+
+function readCache(pathname: string, query: string): SourceResults | null {
+  const key = cacheKey(pathname, query);
+  const entry = queryCache.get(key);
   if (!entry) return null;
   if (Date.now() - entry.ts >= CACHE_TTL_MS) {
-    queryCache.delete(query);
+    queryCache.delete(key);
     return null;
   }
   // Promote on hit — delete + re-insert moves to end (most-recent).
-  queryCache.delete(query);
-  queryCache.set(query, entry);
+  queryCache.delete(key);
+  queryCache.set(key, entry);
   return entry.results;
 }
 
-function writeCache(query: string, results: SourceResults): void {
-  queryCache.set(query, { results, ts: Date.now() });
+function writeCache(pathname: string, query: string, results: SourceResults): void {
+  const key = cacheKey(pathname, query);
+  queryCache.set(key, { results, ts: Date.now() });
   while (queryCache.size > CACHE_CAP) {
     const oldest = queryCache.keys().next().value;
     if (oldest === undefined) break;
@@ -180,6 +196,11 @@ export function GlobalCommandPalette({
   token,
 }: GlobalCommandPaletteProps) {
   const router = useRouter();
+  const pathname = usePathname() ?? "";
+  const sourceRegistry = useMemo(
+    () => [PATIENTS_SOURCE, makeFieldsSource(pathname)],
+    [pathname],
+  );
   const { recents, push: pushRecent } = useRecentSearches();
 
   const [query, setQuery] = useState("");
@@ -235,7 +256,7 @@ export function GlobalCommandPalette({
     cmdkSearched(trimmed.length);
 
     // Cache hit → resolve synchronously, no fetch.
-    const cached = readCache(trimmed);
+    const cached = readCache(pathname, trimmed);
     if (cached) {
       setResults(cached);
       setLoading(false);
@@ -296,7 +317,7 @@ export function GlobalCommandPalette({
         for (const [key, items] of settled) {
           next[key] = items;
         }
-        writeCache(trimmed, next);
+        writeCache(pathname, trimmed, next);
         setResults(next);
       } finally {
         if (!cancelled && inflightRef.current === controller) {
@@ -310,19 +331,24 @@ export function GlobalCommandPalette({
       cancelled = true;
       controller.abort();
     };
-  }, [deferredQuery, open, token]);
+  }, [deferredQuery, open, token, pathname, sourceRegistry]);
 
   const handleSelect = useCallback(
     (sourceKey: CmdkSourceKey, item: SourceItem) => {
       cmdkSelected(sourceKey);
-      const recentEntry: RecentSearchItem = {
-        source: sourceKey,
-        id: item.id,
-        label: item.label,
-        subtitle: item.subtitle ?? null,
-        routedTo: item.routedTo,
-      };
-      pushRecent(recentEntry);
+      // Field hits encode a visit path in `routedTo`. Replaying one from
+      // recents onto a different appointment would be wrong — skip recents
+      // for this source (allowed by rfeq-01).
+      if (sourceKey !== "fields") {
+        const recentEntry: RecentSearchItem = {
+          source: sourceKey,
+          id: item.id,
+          label: item.label,
+          subtitle: item.subtitle ?? null,
+          routedTo: item.routedTo,
+        };
+        pushRecent(recentEntry);
+      }
       onOpenChange(false);
       router.push(item.routedTo);
     },
@@ -336,7 +362,7 @@ export function GlobalCommandPalette({
         (sum, source) => sum + (results[source.key]?.length ?? 0),
         0,
       ),
-    [results],
+    [results, sourceRegistry],
   );
   const showSkeleton = loading && totalResults === 0;
   const showEmptyMessage =
@@ -353,7 +379,11 @@ export function GlobalCommandPalette({
       shouldFilter={false}
     >
       <CommandInput
-        placeholder="Search patients by name or phone…"
+        placeholder={
+          appointmentIdFromPath(pathname)
+            ? "Search patients or fields…"
+            : "Search patients by name or phone…"
+        }
         value={query}
         onValueChange={setQuery}
       />

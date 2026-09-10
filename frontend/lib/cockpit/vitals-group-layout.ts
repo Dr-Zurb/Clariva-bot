@@ -198,7 +198,7 @@ const GLUCOSE_BLOCK_CATEGORICAL_KEYS = new Set<CategoricalVitalKey>([
 
 const PAIRED_CONTEXT_CATEGORICAL_SET = new Set<CategoricalVitalKey>([
   ...Object.values(VITAL_CONTEXT_MAP).flatMap((keys) => keys ?? []),
-  ...GLUCOSE_BLOCK_CATEGORICAL_KEYS,
+  ...Array.from(GLUCOSE_BLOCK_CATEGORICAL_KEYS),
 ]);
 
 export function contextKeysForNumericVital(vitalKey: VitalKey): readonly CategoricalVitalKey[] {

@@ -19,6 +19,7 @@ import { RX_FIELD_INPUT_CLASS } from "@/components/cockpit/rx/sections/field-sty
 import { AllergyCard, type AllergyCardPatch } from "@/components/ehr/chart/AllergyCard";
 import { ChartCatalogCombobox } from "@/components/ehr/chart/ChartCatalogCombobox";
 import { ChartQuickAddChips } from "@/components/ehr/chart/ChartQuickAddChips";
+import { chartSelectChipClass } from "@/components/ehr/chart/chart-chip-styles";
 import {
   archivePatientAllergy,
   createPatientAllergy,
@@ -102,6 +103,7 @@ export default function AllergiesSection({
   const allergiesQuery = usePatientAllergiesQuery(token, patientId);
   const rows = allergiesQuery.data?.allergies ?? null;
   const sectionNotes = allergiesQuery.data?.sectionNotes ?? null;
+  const noKnownAllergies = allergiesQuery.data?.noKnownAllergies ?? false;
   const loadError =
     allergiesQuery.isError && !allergiesQuery.data
       ? allergiesQuery.error instanceof Error
@@ -151,6 +153,7 @@ export default function AllergiesSection({
         return {
           allergies: nextRows,
           sectionNotes: prev?.sectionNotes ?? null,
+          noKnownAllergies: prev?.noKnownAllergies ?? false,
         };
       });
     },
@@ -202,6 +205,7 @@ export default function AllergiesSection({
       setAllergiesData((prev) => ({
         allergies: prev?.allergies ?? [],
         sectionNotes: normalized,
+        noKnownAllergies: prev?.noKnownAllergies ?? false,
       }));
       reportSectionNotes(normalized);
       pendingSectionNotesRef.current = notes;
@@ -212,6 +216,27 @@ export default function AllergiesSection({
       }, FIELD_SAVE_DEBOUNCE_MS);
     },
     [flushSectionNotesSave, readonly, reportSectionNotes, setAllergiesData],
+  );
+
+  const toggleNoKnownAllergies = useCallback(
+    async (next: boolean) => {
+      if (readonly) return;
+      setActionError(null);
+      setAllergiesData((prev) => ({
+        allergies: prev?.allergies ?? [],
+        sectionNotes: prev?.sectionNotes ?? null,
+        noKnownAllergies: next,
+      }));
+      try {
+        await updatePatientAllergySectionNotes(token, patientId, { noKnownAllergies: next });
+      } catch (err) {
+        void reloadAllergies();
+        setActionError(
+          err instanceof Error ? err.message : "Failed to save allergy status",
+        );
+      }
+    },
+    [patientId, readonly, reloadAllergies, setAllergiesData, token],
   );
 
   const catalogOptions = useMemo(() => {
@@ -259,6 +284,11 @@ export default function AllergiesSection({
         onCountChange?.(next.length);
         return next;
       });
+      // The server retires the nil-known assertion on create; mirror it here so
+      // the Rx preview reading this cache agrees.
+      setAllergiesData((prev) =>
+        prev?.noKnownAllergies ? { ...prev, noKnownAllergies: false } : prev,
+      );
 
       try {
         const res = await createPatientAllergy(token, patientId, {
@@ -316,7 +346,17 @@ export default function AllergiesSection({
         return "error";
       }
     },
-    [linkRealId, onAddOpenChange, onCountChange, patientId, readonly, rows, setRows, token],
+    [
+      linkRealId,
+      onAddOpenChange,
+      onCountChange,
+      patientId,
+      readonly,
+      rows,
+      setAllergiesData,
+      setRows,
+      token,
+    ],
   );
 
   const applyTemplate = useAllergyTemplateApply({
@@ -425,30 +465,48 @@ export default function AllergiesSection({
 
       {!readonly && (
         <div id={ALLERGIES_CAPTURE_SECTION_ID} className="scroll-mt-2 space-y-3">
-          <ChartCatalogCombobox
-            inputId={inputId}
-            testId="allergies-combobox"
-            placeholder="Search or enter allergen…"
-            catalogOptions={catalogOptions}
-            filterCatalog={filterCommonAllergenCatalog}
-            resolveCatalog={resolveCommonAllergen}
-            customLabel={(text) => `Add "${text}" as allergen`}
-            focusRequest={focusCombobox}
-            onFocusRequestHandled={() => {
-              setFocusCombobox(false);
-              onAddOpenChange?.(false);
-            }}
-            onCommit={(payload) => {
-              const allergen = payload.kind === "catalog" ? payload.label : payload.text;
-              void commitAllergen(allergen);
-            }}
-          />
-          <ChartQuickAddChips
-            labels={quickAddLabels}
-            groupLabel="Common allergens"
-            testId="allergies-quick-add"
-            onAdd={(label) => void commitAllergen(label)}
-          />
+          {rows.length === 0 ? (
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Allergy status">
+              <button
+                type="button"
+                aria-pressed={noKnownAllergies}
+                aria-label="No known allergies"
+                data-testid="allergies-none-known"
+                onClick={() => void toggleNoKnownAllergies(!noKnownAllergies)}
+                className={chartSelectChipClass(noKnownAllergies)}
+              >
+                No known allergies
+              </button>
+            </div>
+          ) : null}
+          {!noKnownAllergies ? (
+            <>
+              <ChartCatalogCombobox
+                inputId={inputId}
+                testId="allergies-combobox"
+                placeholder="Search or enter allergen…"
+                catalogOptions={catalogOptions}
+                filterCatalog={filterCommonAllergenCatalog}
+                resolveCatalog={resolveCommonAllergen}
+                customLabel={(text) => `Add "${text}" as allergen`}
+                focusRequest={focusCombobox}
+                onFocusRequestHandled={() => {
+                  setFocusCombobox(false);
+                  onAddOpenChange?.(false);
+                }}
+                onCommit={(payload) => {
+                  const allergen = payload.kind === "catalog" ? payload.label : payload.text;
+                  void commitAllergen(allergen);
+                }}
+              />
+              <ChartQuickAddChips
+                labels={quickAddLabels}
+                groupLabel="Common allergens"
+                testId="allergies-quick-add"
+                onAdd={(label) => void commitAllergen(label)}
+              />
+            </>
+          ) : null}
         </div>
       )}
 
@@ -467,7 +525,11 @@ export default function AllergiesSection({
         </div>
       )}
 
-      {rows.length === 0 && readonly && !sectionNotes?.trim() && (
+      {rows.length === 0 && readonly && noKnownAllergies && (
+        <p className="px-1 py-1 text-xs text-muted-foreground">No known allergies.</p>
+      )}
+
+      {rows.length === 0 && readonly && !noKnownAllergies && !sectionNotes?.trim() && (
         <p className="px-1 py-1 text-xs text-muted-foreground">No allergies recorded.</p>
       )}
 

@@ -18,7 +18,11 @@
  * can enforce the routing map at the call site of `selectProvider`. Add new
  * values in lockstep with a migration that widens the CHECK constraint.
  */
-export type TranscriptProvider = 'openai_whisper' | 'deepgram_nova_2';
+export type TranscriptProvider =
+  | 'openai_whisper'
+  | 'deepgram_nova_2'
+  | 'deepgram_nova_3'
+  | 'groq_whisper';
 
 /**
  * Job state machine. Worker owns all transitions:
@@ -81,6 +85,26 @@ export interface ConsultationTranscriptRow {
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
+}
+
+// ============================================================================
+// Audio input to a provider client
+// ============================================================================
+
+/**
+ * Already-resolved audio bytes, as an alternative to a signed URL.
+ *
+ * Cost-cut step 7: raw Twilio tracks are Matroska, so they are mixed and
+ * transcoded locally by `audio-transcode-service`. The result never gets
+ * a public URL, so provider clients need a way to accept bytes directly.
+ *
+ * Every client takes exactly one of `audioUrl` or `audioBytes`.
+ */
+export interface TranscriptionAudioBytes {
+  bytes:       Buffer;
+  contentType: string;
+  /** Some vendors infer the codec from the multipart filename. */
+  filename:    string;
 }
 
 // ============================================================================

@@ -5,6 +5,8 @@
 > **Master plan reference:** [plan-multi-modality-consultations.md](./plan-multi-modality-consultations.md) — Decision 4 (recording-on-by-default, no global doctor opt-out, per-session pause/resume, patient consent at booking with soft re-pitch on decline, 90-day patient self-serve TTL with mutual access notifications, indefinite for regulatory retention + doctor dashboard) **LOCKED**. Decision 12 (voice recording) inherits this doctrine — no fork.
 >
 > **Sequencing index:** [plan-00-multi-modality-implementation-index.md](./plan-00-multi-modality-implementation-index.md). Depends only on Plan 01's `consultation_sessions.id` as FK source.
+>
+> **Superseded in part (REC-D1):** the consent checkbox and re-pitch on decline are replaced by a disclosed audio mandate. See [recording-governance-v2 charter §Reversals](../../../August%202026/17-08-2026/recording-governance-v2/plan-recording-governance-v2-charter.md#reversals--what-this-charter-overturns).
 
 ---
 

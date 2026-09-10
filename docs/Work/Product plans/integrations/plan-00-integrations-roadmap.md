@@ -90,7 +90,8 @@ These are sequencing / scoping decisions. Per-phase deep dives MUST respect them
 
 | ID | Decision | Implication |
 |----|----------|-------------|
-| **I1** | **WhatsApp is the next intake channel — not Messenger, not Telegram, not Google Business Messages.** | Next channel deep-dive is WhatsApp only. Messenger is opportunistic later (same Graph API, low India value). Google Business Messages is dead (shutdown). |
+| **I1** | **REOPENED 2026-07-26 → see I1′.** ~~WhatsApp is the next intake channel — not Messenger…~~ | Founder chose **full Facebook Messenger + Page comments** as the next channel after Instagram Login. WhatsApp remains post-sales (I8). |
+| **I1′** | **Facebook Messenger (+ Page comments) is the next intake channel after Instagram.** WhatsApp stays post-sales. Telegram / Google Business Messages still out. | Deep-dive: [`facebook-messenger-channel`](../../Daily-plans/July%202026/26-07-2026/facebook-messenger-channel/). Same Graph family as IG; separate Facebook app / Page OAuth from Halo Aid-IG Instagram Login. |
 | **I2** | **Channel engine stays adapter-shaped.** New channels implement `ChannelAdapter`; they do not fork `run-conversation-turn`. | WhatsApp deep-dive owns parse/send/templates/connect UI — not a second AI funnel. |
 | **I3** | **Hardening Instagram infra before (or as Wave 0 of) WhatsApp.** | Token lifecycle + data deletion are Phase 0. Do not scale a second Meta channel on rotting token infra. |
 | **I4** | **Clinical ecosystem (pharmacy/labs) is a moat play, not a channel play.** | Separate phases from WhatsApp. Do not block WhatsApp on pharmacy partnerships. |
@@ -107,7 +108,8 @@ These are sequencing / scoping decisions. Per-phase deep dives MUST respect them
 |-------|-------|------|----------------|--------|---------------|
 | **P0 — Meta infra hardening** | Token refresh, data deletion, webhook sig, comment→conversation link | A (foundation) | ~3–5 days | **In flight** → [`instagram-launch-readiness`](../../Daily-plans/July%202026/25-07-2026/instagram-launch-readiness/) | **Pre-launch** (now) |
 | **IG polish — bot reliability + copy** | Throttle/non-text/staff-review/funnel dead-ends + copy | A | ~1–2 weeks | **In flight** → same program (p2/p3) | **Pre-launch** (after P0) |
-| **IG direct Login** | Connect without Facebook Page; IG token refresh | A (onboarding) | ~2–4 days code + App Review lead time | **Scaffolded** → [`p4-direct-instagram-login`](../../Daily-plans/July%202026/25-07-2026/instagram-launch-readiness/p4-direct-instagram-login/) | **Pre-launch** (ops-parallel; unlocks real-doctor self-serve) |
+| **IG direct Login** | Connect without Facebook Page; IG token refresh | A (onboarding) | ~2–4 days code + App Review lead time | **Code mostly done** → [`p4-direct-instagram-login`](../../Daily-plans/July%202026/25-07-2026/instagram-launch-readiness/p4-direct-instagram-login/) | **Pre-launch** (ops-parallel; unlocks real-doctor self-serve) |
+| **FB Messenger + Page comments** | Connect Facebook Page → Messenger DMs + Page comments (same AI funnel) | A | Medium–large + App Review | **Scaffolded** → [`facebook-messenger-channel`](../../Daily-plans/July%202026/26-07-2026/facebook-messenger-channel/) | **Next after IG Login path is stable** (founder 2026-07-26) |
 | **P1a — WhatsApp outbound fan-out** | WA connect + templates; fan out payment/consult-ready/reminders/Rx | A | Large + KYC lead time | **Post-sales** | Trigger: ~10 paying doctors with steady weekly consults |
 | **P1b — WhatsApp inbound intake** | AI booking funnel over WhatsApp | A | Medium on top of P1a | **Post-sales** | After P1a |
 | **P2 — Calendar sync** | Google Calendar (+ Outlook later) | B | Medium | `Drafted` | Post-launch fast-follow |
@@ -116,29 +118,32 @@ These are sequencing / scoping decisions. Per-phase deep dives MUST respect them
 | **P5 — Diagnostic labs** | Order investigations → results into chart | C | Large | **Post-traction** | After Investigations solid + traction |
 | **P6 — ABDM / ABHA** | India health-ID | C | Large | `Parked` | Deliberate |
 | **P7 — Gulf payments** | Regional gateway | D | Medium | `Parked` | GTM Phase 1 Gulf |
-| **P8 — Meta Conversions API** | Ad attribution | E | Small–medium | `Parked` | If doctors run paid ads |
+| **Post conversion Insights** | Organic post → appointment funnel (by `media_id`) | E | Medium | **Drafted** → [`plan-03-post-conversion-analytics.md`](./plan-03-post-conversion-analytics.md) | After Inbox (attribution chain honest); P1 uses existing tables |
+| **P8 — Meta Conversions API** | Paid ad attribution | E | Small–medium | `Parked` | If doctors run paid IG/FB ads |
 
 ---
 
 ## Sequencing recommendation
 
 ```
-PRE-LAUNCH (now)                    POST-SALES                         TRACTION / GTM
- │                                    │                                      │
- ▼                                    ▼                                      ▼
-Instagram launch-readiness     →  P1a WA outbound  →  P1b WA inbound    P4 Pharmacy
-  (P0 harden + bot polish         (trigger: ~10 paying doctors)         P5 Labs
-   + direct IG Login p4)           P2 Calendar / P3 Web widget          P7 Gulf pay
-  + Meta App Review ops                                                 P8 CAPI
+PRE-LAUNCH (now)                         POST-SALES                         TRACTION / GTM
+ │                                         │                                      │
+ ▼                                         ▼                                      ▼
+Instagram launch-readiness          →  P1a WA outbound  →  P1b WA inbound    P4 Pharmacy
+  (P0 + bot polish + IG Login)         (trigger: ~10 paying doctors)         P5 Labs
+  → Facebook Messenger channel           P2 Calendar / P3 Web widget          P7 Gulf pay
+    → Interactions Inbox                 Post conversion Insights (organic)    P8 CAPI
+    (Page connect + DMs + comments)
 ```
 
-**Rationale (locked 2026-07-25; p4 added 2026-07-26):**
+**Rationale (locked 2026-07-25; p4 added 2026-07-26; I1′ Facebook 2026-07-26):**
 
-1. **MVP = one channel that works.** Discovery is on Instagram. WhatsApp is convenience/reach, not a launch requirement — defer until sales prove demand.
-2. **Pre-launch = harden + polish Instagram** — P0 Meta infra + bot reliability/polish + **direct Instagram Login** (no Facebook Page) so Instagram-only doctors can connect (see `instagram-launch-readiness` program). Shared engine polish also benefits future WhatsApp for free.
-3. **WhatsApp after sales** — P1a outbound first (notifications land where patients read), then P1b inbound. Design notes below stay; no task files until the trigger. Facebook + WhatsApp as separate Integrations cards come with that later work.
-4. **Pharmacy/labs post-traction** — partner BD; not MVP.
-5. **P6–P8** — credibility / market / ads triggers only.
+1. **MVP = Instagram that works** — still the primary acquisition channel.
+2. **Pre-launch = harden + polish Instagram** + **direct Instagram Login** (Halo Aid-IG).
+3. **Next channel = Facebook Messenger + Page comments** (I1′) — Connect Facebook Page card; reuse `run-conversation-turn`; separate Facebook app from Halo Aid-IG.
+4. **WhatsApp after sales** (I8) — unchanged. Not blocked by Facebook, but not started until ~10 paying doctors.
+5. **Pharmacy/labs post-traction** — partner BD; not MVP.
+6. **P6–P8** — credibility / market / ads triggers only.
 
 ---
 
@@ -256,6 +261,16 @@ Instagram launch-readiness     →  P1a WA outbound  →  P1b WA inbound    P4 P
 
 ---
 
+### Post conversion Insights (drafted — Axis E organic)
+
+**Outcome:** Doctor sees which social posts convert comments → DMs → appointments (and a Direct DM bucket). Deep-dive: [`plan-03-post-conversion-analytics.md`](./plan-03-post-conversion-analytics.md).
+
+**Trigger / sequence:** After Interactions Inbox makes comment→DM linking honest. **P1** aggregates existing `comment_leads.media_id` (no Graph required); **P2** enriches post cards; **P3** detail + export.
+
+**Relation to P8:** Organic content proof (this) vs paid-ad ROAS (CAPI). Both are Axis E; do not block each other.
+
+---
+
 ### P8 — Meta Conversions API (parked)
 
 **Outcome:** Server-side events (lead, booking paid) → Meta for ad attribution.
@@ -271,7 +286,7 @@ Instagram launch-readiness     →  P1a WA outbound  →  P1b WA inbound    P4 P
 | Google Business Messages | Product shut down |
 | Apple Messages for Business | High bar, low India relevance near-term |
 | Telegram as intake | Low doctor/patient expectation in India clinical context |
-| Facebook Messenger as a *priority* | Same Graph API → cheap later; not a GTM unlock |
+| ~~Facebook Messenger as a *priority*~~ | **Superseded by I1′** — now scaffolded as `facebook-messenger-channel` |
 | US EHR/insurance rails (Surescripts, claims, Epic) | GTM Phase 2; wrong product shape today (Decision I5) |
 | Building our own pharmacy/lab | Partner; don't become a logistics company |
 
@@ -304,4 +319,4 @@ These sharpen sequence; update this table when answered.
 **Created:** 2026-07-25  
 **Owner:** Founder (product)  
 **Status:** `Drafted` — strategic index; deep dives TBD  
-**One-liner:** Pre-launch = harden + polish Instagram. Post-sales = WhatsApp (outbound then inbound). Post-traction = pharmacy/labs. GTM-triggered = ABDM / Gulf pay / CAPI.
+**One-liner:** Pre-launch = harden + polish Instagram, then Facebook Messenger + Page comments. Post-sales = WhatsApp (outbound then inbound). Post-traction = pharmacy/labs. GTM-triggered = ABDM / Gulf pay / CAPI.

@@ -107,15 +107,30 @@ export type CockpitTemplate =
 export type CockpitTemplateOverride = CockpitTemplate | null;
 
 /**
- * Inputs for {@link deriveCockpitState}. Intentionally narrow: only the
- * `appointment.status` field plus the (optional) enriched
- * `consultation_session` summary attached by the appointment-service
- * enrichment layer (Task 35).
+ * Inputs for {@link deriveCockpitState}. Intentionally narrow: appointment
+ * status, optional tele session, plus in-clinic arrival (`consultationType`
+ * + `patientCheckedInAt`) so a physical visit can leave `ready` without
+ * a Twilio row.
  */
 export interface CockpitStateInput {
   appointmentStatus: CockpitAppointmentStatus;
   session: CockpitSessionSummary | null | undefined;
+  /**
+   * Booked visit modality. Optional so existing callers stay valid.
+   * `in_clinic` + a desk/doctor check-in stamp is enough to leave `ready`
+   * without a Twilio session row.
+   */
+  consultationType?: CockpitConsultationModality | null;
+  /** ISO stamp from `appointments.patient_checked_in_at`. */
+  patientCheckedInAt?: string | null;
 }
+
+/**
+ * ReadyCard check-in (no prop drill through the template tree) → page
+ * `setAppt`. Detail is the updated `Appointment`.
+ */
+export const IN_CLINIC_APPOINTMENT_UPDATED_EVENT =
+  "clariva:in-clinic-appointment-updated";
 
 /**
  * Discriminator for the primary cockpit CTA. Consumers (cockpit header,
@@ -184,8 +199,21 @@ export interface CockpitPrimaryCta {
  *   rendering an editable Rx form for a cancelled appointment is a
  *   footgun. `terminal` makes the gate explicit.
  */
+function hasBlockingTeleSession(
+  session: CockpitSessionSummary | null | undefined,
+): boolean {
+  if (!session) return false;
+  return (
+    session.status === "live" ||
+    session.status === "ended" ||
+    session.status === "cancelled" ||
+    session.status === "no_show"
+  );
+}
+
 export function deriveCockpitState(input: CockpitStateInput): CockpitState {
-  const { appointmentStatus, session } = input;
+  const { appointmentStatus, session, consultationType, patientCheckedInAt } =
+    input;
 
   // 1. Hard terminals — the appointment status trumps any session signal.
   //    Rationale: a cancelled visit should never offer a "Resume" /
@@ -207,6 +235,16 @@ export function deriveCockpitState(input: CockpitStateInput): CockpitState {
   }
 
   // 3. Active branch — pending / confirmed appointment.
+  // In-clinic: arrival (desk or doctor "Start visit") is the start signal.
+  // A real tele session still wins so a mistaken video start stays recoverable.
+  if (
+    !hasBlockingTeleSession(session) &&
+    consultationType === "in_clinic" &&
+    Boolean(patientCheckedInAt)
+  ) {
+    return "live";
+  }
+
   if (!session) return "ready";
 
   switch (session.status) {
@@ -285,20 +323,56 @@ export function shouldShowChartRail(
  * Resolve the primary call-to-action button shown in the cockpit
  * header for a given state.
  *
- * The label is state-driven; the `modality` parameter is passed in so
- * downstream consumers can vary the click handler (start-text vs
- * start-voice vs start-video) without re-deriving it. The label set
- * is intentionally identical across modalities — design lock from the
- * cockpit-1 review.
+ * Tele labels stay identical across text / voice / video (cockpit-1 lock).
+ * Finish lives on the footer Done button — header wrap-up CTAs are gone.
  */
+/**
+ * In-clinic charts dated today or earlier start themselves on open.
+ * Future-dated visits keep a manual Start visit.
+ */
+export function shouldAutoStartInClinicVisit(
+  input: {
+    consultationType?: CockpitConsultationModality | null;
+    appointmentStatus: CockpitAppointmentStatus;
+    patientCheckedInAt?: string | null;
+    appointmentDate?: string | null;
+  },
+  now: Date = new Date(),
+): boolean {
+  if (input.consultationType !== "in_clinic") return false;
+  if (
+    input.appointmentStatus !== "pending" &&
+    input.appointmentStatus !== "confirmed"
+  ) {
+    return false;
+  }
+  if (input.patientCheckedInAt) return false;
+  if (!input.appointmentDate) return true;
+  const appt = new Date(input.appointmentDate);
+  if (Number.isNaN(appt.getTime())) return true;
+  const apptDay = appt.toLocaleDateString("en-CA");
+  const today = now.toLocaleDateString("en-CA");
+  return apptDay <= today;
+}
+
 export function primaryCtaFor(
   state: CockpitState,
   modality: CockpitConsultationModality | null | undefined,
 ): CockpitPrimaryCta | null {
-  // `modality` is reserved for the call handler — the visible label
-  // is identical across text / voice / video. Reference it so unused-
-  // parameter lints stay quiet.
-  void modality;
+  if (modality === "in_clinic") {
+    switch (state) {
+      case "ready":
+        return { label: "Start visit", action: "start" };
+      case "live":
+      case "wrap_up":
+      case "ended":
+        return null;
+      case "lobby":
+        return { label: "Resend join link", action: "resend" };
+      case "terminal":
+        return { label: "Reschedule", action: "reschedule" };
+    }
+  }
 
   switch (state) {
     case "ready":
@@ -308,7 +382,7 @@ export function primaryCtaFor(
     case "live":
       return { label: "End consult", action: "end" };
     case "wrap_up":
-      return { label: "Done with patient", action: "wrap-up" };
+      return null;
     case "ended":
       // CP-D4: no primary CTA in the ended state. Auto-advance flow
       // (NextPatientCountdown / EndOfDayCard) drives the next action.

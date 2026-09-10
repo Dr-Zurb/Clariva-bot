@@ -13,7 +13,7 @@
 
 import React, { createRef } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 import ReadyCard from "../ReadyCard";
@@ -26,13 +26,48 @@ import type { Appointment } from "@/types/appointment";
 // ConsultationLauncher is a heavyweight component (Twilio, Supabase, router).
 // Stub it out — ReadyCard's CTA calls the forwarded ref, not the launcher's UI.
 vi.mock("@/components/consultation/ConsultationLauncher", () => ({
-  default: React.forwardRef(function MockLauncher(_props: unknown, _ref: unknown) {
-    return <div data-testid="consultation-launcher" />;
+  default: React.forwardRef(function MockLauncher(
+    props: {
+      onLiveChange?: (live: boolean) => void;
+      onStartError?: (message: string | null) => void;
+    },
+    _ref: unknown,
+  ) {
+    return (
+      <div data-testid="consultation-launcher">
+        <button
+          type="button"
+          data-testid="simulate-live"
+          onClick={() => props.onLiveChange?.(true)}
+        >
+          simulate live
+        </button>
+        <button
+          type="button"
+          data-testid="simulate-start-error"
+          onClick={() => props.onStartError?.("Failed to create video room")}
+        >
+          simulate error
+        </button>
+      </div>
+    );
+  }),
+}));
+
+const { postAppointmentCheckIn } = vi.hoisted(() => ({
+  postAppointmentCheckIn: vi.fn().mockResolvedValue({
+    data: {
+      appointment: {
+        id: "appt-1",
+        patient_checked_in_at: "2026-08-24T03:00:00Z",
+      },
+    },
   }),
 }));
 
 vi.mock("@/lib/api", () => ({
   resendConsultationLink: vi.fn().mockResolvedValue({ data: { sent: true } }),
+  postAppointmentCheckIn,
 }));
 
 vi.mock("@/lib/format-date", () => ({
@@ -83,11 +118,26 @@ function renderReadyCard(
   );
 }
 
+/** Radix DropdownMenu opens on pointerDown + click (jsdom). */
+function openDropdown(trigger: Element) {
+  fireEvent.pointerDown(trigger, {
+    button: 0,
+    ctrlKey: false,
+    bubbles: true,
+    cancelable: true,
+  });
+  fireEvent.click(trigger);
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 describe("ReadyCard — cs-10 primary CTA", () => {
+  beforeEach(() => {
+    postAppointmentCheckIn.mockClear();
+  });
+
   it("renders 'Start video consult' for a video appointment", () => {
     renderReadyCard({ consultation_type: "video" });
     expect(
@@ -109,11 +159,20 @@ describe("ReadyCard — cs-10 primary CTA", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders 'Mark patient called' for an in_clinic appointment", () => {
+  it("renders 'Start visit' for an in_clinic appointment", () => {
     renderReadyCard({ consultation_type: "in_clinic" });
     expect(
-      screen.getByRole("button", { name: /mark patient called/i }),
+      screen.getByRole("button", { name: /start visit/i }),
     ).toBeInTheDocument();
+  });
+
+  it("in_clinic Start visit checks in and does not start a tele session", async () => {
+    renderReadyCard({ consultation_type: "in_clinic" });
+    expect(screen.queryByTestId("consultation-launcher")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /start visit/i }));
+    await waitFor(() => {
+      expect(postAppointmentCheckIn).toHaveBeenCalledWith("test-token", "appt-1");
+    });
   });
 
   it("calls launcherRef.current.start with 'video' when primary button is clicked", () => {
@@ -134,7 +193,23 @@ describe("ReadyCard — cs-10 primary CTA", () => {
     expect(startFn).toHaveBeenCalledWith("video");
   });
 
-  it("calls launcherRef.current.start with 'video' for in_clinic (maps to video internally)", () => {
+  it("unlocks the CTA and shows the error when start fails", () => {
+    renderReadyCard({ consultation_type: "video" });
+
+    fireEvent.click(screen.getByRole("button", { name: /start video consult/i }));
+    expect(screen.getByRole("button", { name: /starting/i })).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId("simulate-start-error"));
+
+    expect(
+      screen.getByRole("button", { name: /start video consult/i }),
+    ).toBeEnabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Failed to create video room",
+    );
+  });
+
+  it("does not call the tele launcher for in_clinic", async () => {
     const startFn = vi.fn();
     const fakeRef = { current: { start: startFn, isLive: false } };
 
@@ -144,8 +219,11 @@ describe("ReadyCard — cs-10 primary CTA", () => {
       { launcherRef: fakeRef },
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /mark patient called/i }));
-    expect(startFn).toHaveBeenCalledWith("video");
+    fireEvent.click(screen.getByRole("button", { name: /start visit/i }));
+    await waitFor(() => {
+      expect(postAppointmentCheckIn).toHaveBeenCalled();
+    });
+    expect(startFn).not.toHaveBeenCalled();
   });
 });
 
@@ -158,8 +236,7 @@ describe("ReadyCard — cs-10 Switch modality dropdown", () => {
   it("video appointment: dropdown offers voice + chat but NOT video", () => {
     renderReadyCard({ consultation_type: "video" });
 
-    // Open the dropdown
-    fireEvent.click(screen.getByText(/switch modality/i));
+    openDropdown(screen.getByRole("button", { name: /switch modality/i }));
 
     expect(screen.queryByRole("menuitem", { name: /switch to video/i })).not.toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /switch to voice/i })).toBeInTheDocument();
@@ -169,7 +246,7 @@ describe("ReadyCard — cs-10 Switch modality dropdown", () => {
   it("voice appointment: dropdown offers video + chat but NOT voice", () => {
     renderReadyCard({ consultation_type: "voice" });
 
-    fireEvent.click(screen.getByText(/switch modality/i));
+    openDropdown(screen.getByRole("button", { name: /switch modality/i }));
 
     expect(screen.getByRole("menuitem", { name: /switch to video/i })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: /switch to voice/i })).not.toBeInTheDocument();
@@ -179,7 +256,7 @@ describe("ReadyCard — cs-10 Switch modality dropdown", () => {
   it("text appointment: dropdown offers video + voice but NOT chat", () => {
     renderReadyCard({ consultation_type: "text" });
 
-    fireEvent.click(screen.getByText(/switch modality/i));
+    openDropdown(screen.getByRole("button", { name: /switch modality/i }));
 
     expect(screen.getByRole("menuitem", { name: /switch to video/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /switch to voice/i })).toBeInTheDocument();
@@ -201,7 +278,7 @@ describe("ReadyCard — cs-10 Switch modality dropdown", () => {
       { launcherRef: fakeRef },
     );
 
-    fireEvent.click(screen.getByText(/switch modality/i));
+    openDropdown(screen.getByRole("button", { name: /switch modality/i }));
     fireEvent.click(screen.getByRole("menuitem", { name: /switch to voice/i }));
     expect(startFn).toHaveBeenCalledWith("voice");
   });
@@ -229,6 +306,24 @@ describe("ReadyCard — cs-10 Mark no-show is absent", () => {
     expect(
       screen.queryByRole("button", { name: /mark no.show/i }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("ReadyCard — live handoff", () => {
+  it("hides Ready stage chrome when the launcher reports live", () => {
+    renderReadyCard({ consultation_type: "video" });
+    expect(screen.getByText(/ready to start/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /start video consult/i }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("simulate-live"));
+
+    expect(screen.queryByText(/ready to start/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /start video consult/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("consultation-launcher")).toBeInTheDocument();
   });
 });
 

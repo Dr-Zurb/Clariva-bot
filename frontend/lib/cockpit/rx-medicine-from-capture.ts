@@ -4,16 +4,22 @@
  * (condition link, active/past, started/stopped ago, source, intake).
  */
 
-import { EMPTY_RX_MEDICINE, type RxMedicine } from "@/components/cockpit/rx/RxFormContext";
+import {
+  EMPTY_RX_MEDICINE,
+  type RxMedicine,
+} from "@/components/cockpit/rx/RxFormContext";
 import type { AiParsedMedicine } from "@/lib/api/medicine-parse";
 import {
   formatStrengthComponents,
   formatStrengthLabel,
+  hydrateDoseScheduleFromStored,
   inferFormFromDoseUnit,
   nameWorthCatalogLookup,
   pickUnambiguousCatalogDrug,
+  singleDoseScheduleForFrequency,
   syncStrengthLegacy,
 } from "@/lib/chart/chart-medication";
+import type { DoctorMedicineCombo } from "@/lib/api/doctor-medicine-combos";
 import type { ParsedMedicineLine } from "@/lib/cockpit/medicine-line-parse";
 import {
   coerceRouteCode,
@@ -49,7 +55,48 @@ export function rxMedicineFromDrugMaster(drug: DrugMasterRow): RxMedicine {
   };
 }
 
+export function rxMedicineFromCombo(combo: DoctorMedicineCombo): RxMedicine {
+  const frequencyCode = (combo.frequencyCode as FrequencyCode | null) ?? null;
+  const doseSchedule = hydrateDoseScheduleFromStored(
+    combo.frequency,
+    frequencyCode
+  );
+  const frequency =
+    combo.frequency.trim() ||
+    doseSchedule ||
+    (frequencyCode ? getFrequencyLegacyLabel(frequencyCode) : "");
+  const duration =
+    combo.duration.trim() ||
+    (combo.durationUnit
+      ? formatDurationLegacyLabel(
+          combo.durationValue,
+          combo.durationUnit as DurationUnit
+        )
+      : "");
+
+  return {
+    ...EMPTY_RX_MEDICINE,
+    medicineName: combo.medicineName,
+    dosage: combo.dosage,
+    route: combo.route,
+    frequency,
+    duration,
+    drugMasterId: combo.drugMasterId,
+    frequencyCode,
+    durationValue: combo.durationValue,
+    durationUnit: (combo.durationUnit as DurationUnit | null) ?? null,
+    routeCode: combo.routeCode ? coerceRouteCode(combo.routeCode) : null,
+    doseQty: combo.doseQty,
+    doseUnit: (combo.doseUnit as DoseUnit | null) ?? null,
+    form: combo.form,
+    foodTiming: (combo.foodTiming as FoodTiming | null) ?? null,
+    doseSchedule,
+  };
+}
+
 export function rxMedicineFromParsed(parsed: ParsedMedicineLine): RxMedicine {
+  const doseSchedule =
+    parsed.doseSchedule ?? singleDoseScheduleForFrequency(parsed.frequencyCode);
   return {
     ...EMPTY_RX_MEDICINE,
     medicineName: parsed.medicineName,
@@ -58,7 +105,8 @@ export function rxMedicineFromParsed(parsed: ParsedMedicineLine): RxMedicine {
     doseQty: parsed.doseQty,
     doseUnit: parsed.doseUnit,
     frequencyCode: parsed.frequencyCode,
-    frequency: parsed.frequency,
+    frequency: doseSchedule ?? parsed.frequency,
+    doseSchedule,
     durationValue: parsed.durationValue,
     durationUnit: parsed.durationUnit,
     duration: parsed.duration,
@@ -88,6 +136,8 @@ export function rxMedicineFromAiMedicine(aiMed: AiParsedMedicine): RxMedicine {
       "";
 
   const frequencyCode = (aiMed.frequencyCode as FrequencyCode | null) ?? null;
+  const doseSchedule =
+    aiMed.doseSchedule ?? singleDoseScheduleForFrequency(frequencyCode);
   const doseUnit = (aiMed.doseUnit as DoseUnit | null) ?? null;
   let form = aiMed.form ?? null;
   if (!form && doseUnit) {
@@ -100,7 +150,7 @@ export function rxMedicineFromAiMedicine(aiMed: AiParsedMedicine): RxMedicine {
   const rawSite = aiMed.routeSite?.trim() || null;
   const routeSite =
     routeCode && rawSite && routeCodeSupportsSite(routeCode)
-      ? resolveRouteSiteInput(routeCode, rawSite) ?? rawSite
+      ? (resolveRouteSiteInput(routeCode, rawSite) ?? rawSite)
       : null;
   const route = routeCode
     ? routeCodeSupportsSite(routeCode)
@@ -110,7 +160,8 @@ export function rxMedicineFromAiMedicine(aiMed: AiParsedMedicine): RxMedicine {
 
   const durationUnit = (aiMed.durationUnit as DurationUnit | null) ?? null;
   const durationValue =
-    durationUnit && (durationUnit === "until-finished" || durationUnit === "continue")
+    durationUnit &&
+    (durationUnit === "until-finished" || durationUnit === "continue")
       ? null
       : (aiMed.durationValue ?? null);
   const duration =
@@ -126,7 +177,10 @@ export function rxMedicineFromAiMedicine(aiMed: AiParsedMedicine): RxMedicine {
     doseQty: aiMed.doseQty ?? null,
     doseUnit,
     frequencyCode,
-    frequency: frequencyCode ? getFrequencyLegacyLabel(frequencyCode) : "",
+    frequency:
+      doseSchedule ??
+      (frequencyCode ? getFrequencyLegacyLabel(frequencyCode) : ""),
+    doseSchedule,
     durationValue,
     durationUnit,
     duration,
@@ -137,13 +191,62 @@ export function rxMedicineFromAiMedicine(aiMed: AiParsedMedicine): RxMedicine {
   };
 }
 
+const MEDICINE_MERGE_KEYS = [
+  "dosage",
+  "route",
+  "frequency",
+  "duration",
+  "instructions",
+  "frequencyCode",
+  "durationValue",
+  "durationUnit",
+  "routeCode",
+  "doseQty",
+  "doseUnit",
+  "form",
+  "foodTiming",
+  "doseSchedule",
+] as const satisfies ReadonlyArray<keyof RxMedicine>;
+
+function isEmptyMedicineValue(value: RxMedicine[keyof RxMedicine]): boolean {
+  if (value === null || value === undefined) return true;
+  if (typeof value === "string") return value.trim().length === 0;
+  return false;
+}
+
+/**
+ * Merge an AI parse onto a Plan row the doctor already added.
+ * Empty fields only. `suggestedName` is the AI title when it differs;
+ * Apply / Apply all write it onto the card.
+ */
+export function mergeAiParsedIntoMedicine(
+  existing: RxMedicine,
+  parsed: AiParsedMedicine
+): { fieldPatch: Partial<RxMedicine>; suggestedName: string | null } {
+  const candidate = rxMedicineFromAiMedicine(parsed);
+  const fieldPatch: Partial<RxMedicine> = {};
+  for (const key of MEDICINE_MERGE_KEYS) {
+    const incoming = candidate[key];
+    if (isEmptyMedicineValue(incoming)) continue;
+    if (!isEmptyMedicineValue(existing[key])) continue;
+    (fieldPatch as Record<string, unknown>)[key] = incoming;
+  }
+  const suggested = candidate.medicineName.trim();
+  const current = existing.medicineName.trim();
+  const suggestedName =
+    suggested && suggested.toLowerCase() !== current.toLowerCase()
+      ? suggested
+      : null;
+  return { fieldPatch, suggestedName };
+}
+
 /**
  * Overlay a catalog drug onto a parse-derived Rx row: canonical name +
  * drugMasterId always win; strength/form/dose defaults only fill blanks.
  */
 export function mergeCatalogDrugIntoRxMedicine(
   base: RxMedicine,
-  drug: DrugMasterRow,
+  drug: DrugMasterRow
 ): RxMedicine {
   const fromCatalog = rxMedicineFromDrugMaster(drug);
   const hasDosage = base.dosage.trim().length > 0;

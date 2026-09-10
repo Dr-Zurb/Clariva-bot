@@ -14,12 +14,15 @@
 
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
-import { razorpayConfig, isRazorpayConfigured } from '../config/payment';
+import { razorpayConfig } from '../config/payment';
 import { verifyRazorpaySignature } from '../utils/razorpay-verification';
 import type {
   IPaymentGateway,
   AdapterCreatePaymentLinkInput,
   AdapterCreatePaymentLinkResult,
+  AdapterRefundInput,
+  AdapterRefundResult,
+  GatewayCredentials,
   ParsedPaymentSuccess,
 } from './payment-gateway.interface';
 import type { RazorpayWebhookPayload } from '../types/payment';
@@ -30,25 +33,31 @@ import type { RazorpayWebhookPayload } from '../types/payment';
 
 export class RazorpayAdapter implements IPaymentGateway {
   readonly gateway = 'razorpay' as const;
-  private instance: Razorpay | null = null;
 
-  private getClient(): Razorpay {
-    if (!isRazorpayConfigured()) {
-      throw new Error('Razorpay is not configured (RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET)');
-    }
-    if (!this.instance) {
-      this.instance = new Razorpay({
-        key_id: razorpayConfig.keyId!,
-        key_secret: razorpayConfig.keySecret!,
-      });
-    }
-    return this.instance;
+  private clientFor(credentials: GatewayCredentials): Razorpay {
+    return new Razorpay({
+      key_id: credentials.keyId,
+      key_secret: credentials.keySecret,
+    });
+  }
+
+  /**
+   * Cheap authenticated GET. Used only on connect — never logs the secret.
+   */
+  async verifyCredentials(credentials: GatewayCredentials): Promise<boolean> {
+    const auth = Buffer.from(`${credentials.keyId}:${credentials.keySecret}`).toString('base64');
+    const res = await fetch(`${razorpayConfig.baseUrl}/payments?count=1`, {
+      method: 'GET',
+      headers: { Authorization: `Basic ${auth}` },
+    });
+    return res.ok;
   }
 
   async createPaymentLink(
-    input: AdapterCreatePaymentLinkInput
+    input: AdapterCreatePaymentLinkInput,
+    credentials: GatewayCredentials
   ): Promise<AdapterCreatePaymentLinkResult> {
-    const client = this.getClient();
+    const client = this.clientFor(credentials);
 
     const params: Record<string, unknown> = {
       amount: input.amountMinor,
@@ -95,6 +104,23 @@ export class RazorpayAdapter implements IPaymentGateway {
         ? new Date((response as { expire_by: number }).expire_by * 1000)
         : undefined,
     };
+  }
+
+  async refund(
+    input: AdapterRefundInput,
+    credentials: GatewayCredentials
+  ): Promise<AdapterRefundResult> {
+    const client = this.clientFor(credentials);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const refund = (await (client.payments as any).refund(input.gatewayPaymentId, {
+      amount: input.amountMinor,
+      speed: 'normal',
+      notes: input.notes ?? {},
+    })) as { id?: string };
+    if (!refund?.id) {
+      throw new Error('Razorpay refund returned no id');
+    }
+    return { gatewayRefundId: refund.id };
   }
 
   verifyWebhook(signature: string | undefined, rawBody: Buffer): boolean {

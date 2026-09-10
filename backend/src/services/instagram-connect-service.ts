@@ -37,7 +37,6 @@ import type { InsertDoctorInstagram } from '../types/database';
 const INSTAGRAM_OAUTH_AUTHORIZE = 'https://www.instagram.com/oauth/authorize';
 const INSTAGRAM_OAUTH_ACCESS_TOKEN = 'https://api.instagram.com/oauth/access_token';
 const INSTAGRAM_GRAPH_BASE = 'https://graph.instagram.com';
-const FACEBOOK_GRAPH_BASE = 'https://graph.facebook.com/v18.0'; // debug_token still uses FB Graph
 /** Business Login for Instagram scopes (messages + comments; no content_publish for MVP). */
 const INSTAGRAM_BUSINESS_SCOPES = [
   'instagram_business_basic',
@@ -203,7 +202,8 @@ export async function getConnectionStatus(
 }
 
 // ============================================================================
-// Connection health (RBH-10) — Meta debug_token, 5-minute cache, no PHI in API
+// Connection health (RBH-10) — Instagram Graph /me probe, 5-minute cache, no PHI in API
+// Instagram Login user tokens are not valid for Facebook Graph debug_token.
 // ============================================================================
 
 const HEALTH_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -219,6 +219,14 @@ export interface InstagramHealthSummary {
   message: string;
   reconnectRecommended: boolean;
 }
+
+type InstagramHealthProbeSummary = {
+  level: 'ok' | 'warning' | 'error' | 'unknown';
+  errorCode: string | null;
+  tokenExpiresAt: string | null;
+  message: string;
+  reconnectRecommended: boolean;
+};
 
 function notConnectedHealth(): InstagramHealthSummary {
   return {
@@ -240,117 +248,111 @@ interface DoctorInstagramHealthRow {
   instagram_last_dm_success_at: string | null;
 }
 
-interface MetaDebugTokenData {
-  app_id?: string;
-  is_valid?: boolean;
-  expires_at?: number;
-  data_access_expires_at?: number;
-  error?: { code?: number; subcode?: number; message?: string };
-}
+type InstagramTokenProbe = {
+  ok: boolean;
+  /** Transient / network / 5xx — show unknown, do not nudge reconnect */
+  requestFailed: boolean;
+  /** Token rejected by Instagram Graph — reconnect */
+  invalidToken: boolean;
+  errorCode: string | null;
+};
 
-async function fetchMetaDebugToken(
-  inputToken: string,
+/**
+ * Probe an Instagram Login user token via graph.instagram.com/me.
+ * (Facebook debug_token returns 400 for these tokens.)
+ */
+async function probeInstagramUserToken(
+  accessToken: string,
   correlationId: string
-): Promise<{ data: MetaDebugTokenData | null; requestFailed: boolean }> {
-  const appId = env.INSTAGRAM_APP_ID;
-  const appSecret = env.INSTAGRAM_APP_SECRET;
-  if (!appId || !appSecret) {
-    logger.warn({ correlationId }, 'Instagram health: app id/secret not configured');
-    return { data: null, requestFailed: false };
-  }
-  const appAccessToken = `${appId}|${appSecret}`;
-  const url = `${FACEBOOK_GRAPH_BASE}/debug_token`;
+): Promise<InstagramTokenProbe> {
   try {
-    const res = await axios.get<{ data?: MetaDebugTokenData }>(url, {
+    const res = await axios.get<{
+      user_id?: string | number;
+      id?: string | number;
+      data?: Array<{ user_id?: string | number; id?: string | number }>;
+    }>(`${INSTAGRAM_GRAPH_BASE}/v18.0/me`, {
       params: {
-        input_token: inputToken,
-        access_token: appAccessToken,
+        fields: 'user_id,username',
+        access_token: accessToken,
       },
       timeout: META_HTTP_TIMEOUT_MS,
     });
-    return { data: res.data?.data ?? null, requestFailed: false };
+    const row = res.data?.data?.[0] ?? res.data;
+    const rawId = row?.user_id ?? row?.id;
+    if (rawId == null || String(rawId).length === 0) {
+      logger.warn({ correlationId }, 'Instagram health: /me missing user_id');
+      return { ok: false, requestFailed: true, invalidToken: false, errorCode: null };
+    }
+    return { ok: true, requestFailed: false, invalidToken: false, errorCode: null };
   } catch (err: unknown) {
     const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+    const graphCode = axios.isAxiosError(err)
+      ? (err.response?.data as { error?: { code?: number } } | undefined)?.error?.code
+      : undefined;
+    const invalidToken =
+      status === 401 ||
+      status === 403 ||
+      status === 400 ||
+      graphCode === 190 ||
+      graphCode === 102;
     logger.warn(
-      { correlationId, status, message: axios.isAxiosError(err) ? err.message : 'debug_token failed' },
-      'Instagram health: Meta debug_token request failed'
+      {
+        correlationId,
+        status,
+        graphCode: graphCode ?? null,
+        message: axios.isAxiosError(err) ? err.message : '/me probe failed',
+      },
+      'Instagram health: Instagram Graph /me probe failed'
     );
-    return { data: null, requestFailed: true };
+    return {
+      ok: false,
+      requestFailed: !invalidToken,
+      invalidToken,
+      errorCode: graphCode != null ? String(graphCode) : status != null ? String(status) : null,
+    };
   }
 }
 
-function summarizeHealthFromMetaAndRow(
-  debug: MetaDebugTokenData | null,
+function summarizeHealthFromProbe(
+  probe: InstagramTokenProbe,
   lastDmSuccessAt: string | null,
-  requestFailed: boolean
-): {
-  level: 'ok' | 'warning' | 'error' | 'unknown';
-  errorCode: string | null;
-  tokenExpiresAt: string | null;
-  message: string;
-  reconnectRecommended: boolean;
-} {
-  if (requestFailed) {
+  storedExpiresAt: string | null
+): InstagramHealthProbeSummary {
+  if (probe.requestFailed) {
     return {
       level: 'unknown',
-      errorCode: null,
-      tokenExpiresAt: null,
+      errorCode: probe.errorCode,
+      tokenExpiresAt: storedExpiresAt,
       message:
         "We couldn't verify your Instagram token with Meta right now. If patients can't reach the bot, try reconnecting.",
       reconnectRecommended: false,
     };
   }
-  if (!debug) {
-    return {
-      level: 'unknown',
-      errorCode: null,
-      tokenExpiresAt: null,
-      message:
-        'Could not read token details from Meta. Check server configuration or try reconnecting.',
-      reconnectRecommended: false,
-    };
-  }
-  if (debug.error?.code != null) {
+  if (probe.invalidToken || !probe.ok) {
     return {
       level: 'error',
-      errorCode: String(debug.error.code),
-      tokenExpiresAt: null,
-      message: 'Instagram reported a problem with your access token. Reconnect your account.',
-      reconnectRecommended: true,
-    };
-  }
-  if (debug.is_valid === false) {
-    return {
-      level: 'error',
-      errorCode: null,
-      tokenExpiresAt: null,
+      errorCode: probe.errorCode,
+      tokenExpiresAt: storedExpiresAt,
       message: 'Your Instagram access token is no longer valid. Reconnect your account.',
       reconnectRecommended: true,
     };
   }
-  if (debug.is_valid !== true) {
-    return {
-      level: 'unknown',
-      errorCode: null,
-      tokenExpiresAt: null,
-      message: 'Meta returned an unexpected token status. Try reconnecting if problems continue.',
-      reconnectRecommended: false,
-    };
-  }
 
-  let tokenExpiresAt: string | null = null;
-  let expMs: number | null = null;
-  if (typeof debug.expires_at === 'number' && debug.expires_at > 0) {
-    expMs = debug.expires_at * 1000;
-    tokenExpiresAt = new Date(expMs).toISOString();
-  }
   const now = Date.now();
+  let expMs: number | null = null;
+  if (storedExpiresAt) {
+    const parsed = new Date(storedExpiresAt).getTime();
+    if (!Number.isNaN(parsed)) expMs = parsed;
+  }
   if (expMs != null && expMs < now + TOKEN_EXPIRY_WARN_MS) {
     return {
       level: 'warning',
       errorCode: null,
-      tokenExpiresAt,
-      message: 'Your Instagram access token expires soon. Reconnect to avoid interruptions.',
+      tokenExpiresAt: storedExpiresAt,
+      message:
+        expMs < now
+          ? 'Your Instagram access token has expired. Reconnect your account.'
+          : 'Your Instagram access token expires soon. Reconnect to avoid interruptions.',
       reconnectRecommended: true,
     };
   }
@@ -361,7 +363,7 @@ function summarizeHealthFromMetaAndRow(
       return {
         level: 'warning',
         errorCode: null,
-        tokenExpiresAt,
+        tokenExpiresAt: storedExpiresAt,
         message:
           'No automated DM reply has been recorded recently. If something seems off, reconnect or check Meta / inbox.',
         reconnectRecommended: false,
@@ -372,7 +374,7 @@ function summarizeHealthFromMetaAndRow(
   return {
     level: 'ok',
     errorCode: null,
-    tokenExpiresAt,
+    tokenExpiresAt: storedExpiresAt,
     message: 'Instagram connection looks healthy.',
     reconnectRecommended: false,
   };
@@ -380,7 +382,7 @@ function summarizeHealthFromMetaAndRow(
 
 async function persistInstagramHealth(
   doctorId: string,
-  summary: ReturnType<typeof summarizeHealthFromMetaAndRow>,
+  summary: InstagramHealthProbeSummary,
   tokenExpiresAtIso: string | null,
   correlationId: string
 ): Promise<void> {
@@ -433,7 +435,7 @@ function summaryFromCachedRow(row: DoctorInstagramHealthRow): InstagramHealthSum
 }
 
 /**
- * Connection + health for dashboard (Meta debug_token, cached 5 minutes).
+ * Connection + health for dashboard (Instagram Graph /me, cached 5 minutes).
  */
 export async function getInstagramDashboardStatus(
   doctorId: string,
@@ -484,27 +486,24 @@ export async function getInstagramDashboardStatus(
   const checkedMs = row.instagram_health_checked_at
     ? new Date(row.instagram_health_checked_at).getTime()
     : 0;
+  // Do not serve cached `unknown` — re-probe so a transient Meta blip can clear.
   const cacheFresh =
-    checkedMs > 0 && Date.now() - checkedMs < HEALTH_CACHE_TTL_MS && !!row.instagram_health_level;
+    checkedMs > 0 &&
+    Date.now() - checkedMs < HEALTH_CACHE_TTL_MS &&
+    !!row.instagram_health_level &&
+    row.instagram_health_level !== 'unknown';
 
   if (cacheFresh) {
     return { ...basic, health: summaryFromCachedRow(row) };
   }
 
-  const { data: debugData, requestFailed } = await fetchMetaDebugToken(
-    row.instagram_access_token,
-    correlationId
-  );
-  const summary = summarizeHealthFromMetaAndRow(
-    debugData,
+  const probe = await probeInstagramUserToken(row.instagram_access_token, correlationId);
+  const summary = summarizeHealthFromProbe(
+    probe,
     row.instagram_last_dm_success_at,
-    requestFailed
+    row.instagram_token_expires_at
   );
-  const tokenExpiresIso =
-    summary.tokenExpiresAt ??
-    (typeof debugData?.expires_at === 'number' && debugData.expires_at > 0
-      ? new Date(debugData.expires_at * 1000).toISOString()
-      : null);
+  const tokenExpiresIso = summary.tokenExpiresAt ?? row.instagram_token_expires_at;
 
   await persistInstagramHealth(doctorId, summary, tokenExpiresIso, correlationId);
 
@@ -525,7 +524,7 @@ export async function getInstagramDashboardStatus(
  * Force-refresh Instagram token health (ilr-04 + ilr-19).
  * 1) If stored expiry is within the warn window (or missing/past), attempt
  *    `ig_refresh_token` and persist the new token.
- * 2) Re-check via Meta debug_token (bypasses 5-min cache).
+ * 2) Re-check via Instagram Graph /me (bypasses 5-min cache).
  * Returns null if not connected / no token.
  */
 export async function forceRefreshInstagramHealth(
@@ -556,9 +555,8 @@ export async function forceRefreshInstagramHealth(
   }
 
   let accessToken = row.instagram_access_token;
-  const expiresMs = row.instagram_token_expires_at
-    ? new Date(row.instagram_token_expires_at).getTime()
-    : null;
+  let storedExpiresAt = row.instagram_token_expires_at;
+  const expiresMs = storedExpiresAt ? new Date(storedExpiresAt).getTime() : null;
   const needsRefresh =
     expiresMs == null ||
     Number.isNaN(expiresMs) ||
@@ -572,6 +570,7 @@ export async function forceRefreshInstagramHealth(
         refreshed.expiresIn != null
           ? new Date(Date.now() + refreshed.expiresIn * 1000).toISOString()
           : null;
+      if (newExpiresIso) storedExpiresAt = newExpiresIso;
       const { error: updateErr } = await supabase
         .from('doctor_instagram')
         .update({
@@ -587,20 +586,13 @@ export async function forceRefreshInstagramHealth(
     }
   }
 
-  const { data: debugData, requestFailed } = await fetchMetaDebugToken(
-    accessToken,
-    correlationId
-  );
-  const summary = summarizeHealthFromMetaAndRow(
-    debugData,
+  const probe = await probeInstagramUserToken(accessToken, correlationId);
+  const summary = summarizeHealthFromProbe(
+    probe,
     row.instagram_last_dm_success_at,
-    requestFailed
+    storedExpiresAt
   );
-  const tokenExpiresIso =
-    summary.tokenExpiresAt ??
-    (typeof debugData?.expires_at === 'number' && debugData.expires_at > 0
-      ? new Date(debugData.expires_at * 1000).toISOString()
-      : null);
+  const tokenExpiresIso = summary.tokenExpiresAt ?? storedExpiresAt;
 
   await persistInstagramHealth(doctorId, summary, tokenExpiresIso, correlationId);
 
@@ -985,6 +977,46 @@ export async function getInstagramAccessTokenForDoctor(
   if (typeof raw !== 'string') return null;
   const token = raw.trim();
   return token.length > 0 ? token : null;
+}
+
+/**
+ * Enable webhook delivery for an Instagram professional account (Instagram Login).
+ * Best-effort: logs warning on failure (doctor still connected).
+ *
+ * @see https://developers.facebook.com/docs/instagram-platform/webhooks/
+ */
+export async function subscribeInstagramAccountApps(
+  instagramAccountId: string,
+  accessToken: string,
+  correlationId: string
+): Promise<void> {
+  try {
+    await axios.post(
+      `${INSTAGRAM_GRAPH_BASE}/v18.0/${encodeURIComponent(instagramAccountId)}/subscribed_apps`,
+      null,
+      {
+        params: {
+          subscribed_fields: 'messages,comments,messaging_postbacks,message_reactions',
+          access_token: accessToken,
+        },
+        timeout: META_HTTP_TIMEOUT_MS,
+      }
+    );
+    logger.info(
+      { correlationId, pageId: instagramAccountId },
+      'Instagram account subscribed_apps ok'
+    );
+  } catch (err: unknown) {
+    logger.warn(
+      {
+        correlationId,
+        pageId: instagramAccountId,
+        message: axios.isAxiosError(err) ? err.message : 'subscribed_apps failed',
+        status: axios.isAxiosError(err) ? err.response?.status : undefined,
+      },
+      'Instagram account subscribed_apps failed'
+    );
+  }
 }
 
 // ============================================================================

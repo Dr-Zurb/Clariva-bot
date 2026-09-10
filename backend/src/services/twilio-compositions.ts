@@ -26,11 +26,13 @@
  * Save-As is best-effort. The real defense is the audit log written by
  * the calling service.
  *
- * **Testability:** every external call goes through one of three
+ * **Testability:** every external call goes through one of four
  * functions — `fetchCompositionMetadata`, `mintCompositionSignedUrl`,
- * or `getComputedTwilioMediaUrl`. The first two are mockable at the
- * module level via the `__setOverridesForTests` hook; the third is
- * pure (URL construction).
+ * `listCompositionsForRoom`, or `deleteComposition`. The first three
+ * plus DELETE are mockable via `__setOverridesForTests`;
+ * `getComputedTwilioMediaUrl` is pure (URL construction). A test that
+ * issues a real Composition DELETE is unrecoverable — the suite must
+ * never hit the live path.
  *
  * @see backend/src/services/twilio-recording-rules.ts (sibling adapter — Recording Rules surface)
  * @see backend/src/workers/voice-transcription-worker.ts (Composition polling pattern)
@@ -126,23 +128,31 @@ export function getComputedTwilioMediaUrl(compositionSid: string): string {
 type FetchOverride = (compositionSid: string) => Promise<CompositionMetadata>;
 type MintOverride = (input: MintCompositionSignedUrlInput) => Promise<MintCompositionSignedUrlResult>;
 type ListByRoomOverride = (roomSid: string) => Promise<RoomCompositionSummary[]>;
+type DeleteOverride = (compositionSid: string) => Promise<void>;
+type CreateOverride = (input: CreateCompositionInput) => Promise<CreateCompositionResult>;
 
 let fetchMetadataOverride: FetchOverride | null = null;
 let mintSignedUrlOverride: MintOverride | null = null;
 let listByRoomOverride: ListByRoomOverride | null = null;
+let deleteCompositionOverride: DeleteOverride | null = null;
+let createCompositionOverride: CreateOverride | null = null;
 
 /**
  * Test hook. Pass `null` to clear an override and restore the default
  * (Twilio-backed) implementation.
  */
 export function __setOverridesForTests(overrides: {
-  fetchMetadata?:  FetchOverride | null;
-  mintSignedUrl?:  MintOverride | null;
-  listByRoom?:     ListByRoomOverride | null;
+  fetchMetadata?:      FetchOverride | null;
+  mintSignedUrl?:      MintOverride | null;
+  listByRoom?:         ListByRoomOverride | null;
+  deleteComposition?:  DeleteOverride | null;
+  createComposition?:  CreateOverride | null;
 }): void {
-  if (overrides.fetchMetadata !== undefined) fetchMetadataOverride = overrides.fetchMetadata;
-  if (overrides.mintSignedUrl !== undefined) mintSignedUrlOverride = overrides.mintSignedUrl;
-  if (overrides.listByRoom !== undefined)    listByRoomOverride    = overrides.listByRoom;
+  if (overrides.fetchMetadata !== undefined)     fetchMetadataOverride     = overrides.fetchMetadata;
+  if (overrides.mintSignedUrl !== undefined)     mintSignedUrlOverride     = overrides.mintSignedUrl;
+  if (overrides.listByRoom !== undefined)        listByRoomOverride        = overrides.listByRoom;
+  if (overrides.deleteComposition !== undefined) deleteCompositionOverride = overrides.deleteComposition;
+  if (overrides.createComposition !== undefined) createCompositionOverride = overrides.createComposition;
 }
 
 // ============================================================================
@@ -175,6 +185,108 @@ export interface RoomCompositionSummary {
   endedAt:          Date | null;
   durationSeconds:  number | null;
   status:           TwilioCompositionStatus;
+}
+
+// ============================================================================
+// Public: createCompositionForRoom (cost-cut step 7)
+// ============================================================================
+
+export interface CreateCompositionInput {
+  roomSid:      string;
+  /** Audio-only mirrors the hook; video adds the grid layout. */
+  includeVideo: boolean;
+  /**
+   * Where Twilio posts `composition-available`. Pass the same endpoint
+   * the hook uses so the resulting `CJ…` is registered by the existing
+   * handler rather than a second code path.
+   */
+  statusCallbackUrl?: string;
+}
+
+export interface CreateCompositionResult {
+  compositionSid: string;
+  status:         TwilioCompositionStatus;
+}
+
+/**
+ * Create a Composition for a room on demand.
+ *
+ * ## Why this exists at all
+ *
+ * rec-01 deliberately chose an account-level Composition Hook over
+ * `compositions.create`, because every consult needed composing and a
+ * hook needs no code. Cost-cut step 7 inverts that premise: the raw
+ * tracks are Matroska, which no browser will play, so a composition is
+ * still the only way to serve replay — but only the ~10% of consults
+ * someone actually replays need one. At that point the decision of
+ * *which* consults to compose is a product decision, and a hook cannot
+ * express it. Hence code-created compositions.
+ *
+ * Parameters mirror the hook (`haloaid-consult-audio`) exactly — format
+ * `mp4`, audio sources `*` — so an on-demand composition is
+ * indistinguishable downstream from one the hook produced.
+ *
+ * **Billable.** Every call starts the `$0.01`/composed-minute meter.
+ * Callers must check `listCompositionsForRoom` first; the caller that
+ * exists today is `recording-compose-on-demand-service`.
+ */
+export async function createCompositionForRoom(
+  input: CreateCompositionInput,
+): Promise<CreateCompositionResult> {
+  if (createCompositionOverride) {
+    return createCompositionOverride(input);
+  }
+
+  const roomSid = input.roomSid?.trim();
+  if (!roomSid) {
+    throw new InternalError('twilio-compositions: roomSid is required');
+  }
+
+  const client = getTwilioClient();
+  if (!client) {
+    throw new InternalError(
+      'twilio-compositions: Twilio not configured (TWILIO_ACCOUNT_SID/AUTH_TOKEN missing)',
+    );
+  }
+
+  let created: Record<string, unknown>;
+  try {
+    created = (await client.video.v1.compositions.create({
+      roomSid,
+      audioSources: ['*'],
+      format: 'mp4',
+      trim: true,
+      ...(input.includeVideo
+        ? { videoLayout: { grid: { video_sources: ['*'] } } }
+        : {}),
+      ...(input.statusCallbackUrl
+        ? { statusCallback: input.statusCallbackUrl, statusCallbackMethod: 'POST' }
+        : {}),
+    } as never)) as unknown as Record<string, unknown>;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new InternalError(
+      `twilio-compositions: create failed for ${roomSid}: ${message}`,
+    );
+  }
+
+  const sid = String((created as { sid?: unknown }).sid ?? '').trim();
+  if (!sid) {
+    throw new InternalError(
+      `twilio-compositions: create returned no SID for ${roomSid}`,
+    );
+  }
+
+  const status =
+    ((created as { status?: unknown }).status as TwilioCompositionStatus | undefined) ??
+    'enqueued';
+
+  logger.info(
+    { roomSid, compositionSid: sid, status, includeVideo: input.includeVideo },
+    'twilio-compositions: composition created on demand (billable)',
+  );
+
+  return { compositionSid: sid, status };
 }
 
 // ============================================================================
@@ -427,4 +539,63 @@ export async function mintCompositionSignedUrl(
     'twilio-compositions: signed URL minted',
   );
   return { signedUrl, expiresAt };
+}
+
+// ============================================================================
+// Public: deleteComposition (recording-governance-v2 · rec-31 · REC-D22)
+// ============================================================================
+
+/**
+ * Delete a Composition's media at Twilio (`DELETE /v1/Compositions/{sid}`).
+ *
+ * Irreversible for the composed media file. Twilio keeps the REST
+ * metadata with `status=deleted` for 30 days; source Recordings are a
+ * separate resource and are **not** removed by this call.
+ *
+ * @throws NotFoundError when Twilio returns a 404 (already gone or
+ *         never existed). Callers that need idempotent retry (the
+ *         archival worker) map 404 to success at *their* layer.
+ * @throws InternalError on any other Twilio failure or missing credentials.
+ */
+export async function deleteComposition(compositionSid: string): Promise<void> {
+  if (deleteCompositionOverride) {
+    return deleteCompositionOverride(compositionSid);
+  }
+
+  const trimmed = compositionSid?.trim();
+  if (!trimmed) {
+    throw new InternalError('twilio-compositions: compositionSid is required');
+  }
+
+  const client = getTwilioClient();
+  if (!client) {
+    throw new InternalError(
+      'twilio-compositions: Twilio not configured (TWILIO_ACCOUNT_SID/AUTH_TOKEN missing)',
+    );
+  }
+
+  try {
+    await client.video.v1.compositions(trimmed).remove();
+    logger.info(
+      { compositionSid: trimmed, outcome: 'deleted' },
+      'twilio-compositions: composition deleted',
+    );
+  } catch (err) {
+    const status = (err as { status?: number }).status;
+    if (status === 404) {
+      logger.info(
+        { compositionSid: trimmed, outcome: 'not_found' },
+        'twilio-compositions: composition delete not found',
+      );
+      throw new NotFoundError(`Composition ${trimmed} not found`);
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error(
+      { compositionSid: trimmed, outcome: 'failed', error: message },
+      'twilio-compositions: composition delete failed',
+    );
+    throw new InternalError(
+      `twilio-compositions: delete failed for ${trimmed}: ${message}`,
+    );
+  }
 }

@@ -17,6 +17,8 @@ import type {
 } from '../../services/ai-service';
 import type { AIResponseWithActions } from '../../types/system-actions';
 import type { ReturningPatientProfile } from '../../types/returning-patient';
+import type { ConversationLanguage } from '../../utils/conversation-language';
+import type { FeeComposeLanguageOpts } from '../../utils/dm-reply-composer';
 import type { DmGateContext } from './control-gates';
 import { isBookingEntryTurn } from './stages/booking-entry-predicate';
 import { isBookingFunnelTurn } from './stages/booking-funnel-predicate';
@@ -42,6 +44,11 @@ export interface DmTurnContext {
   doctorId: string;
   correlationId: string;
   text: string;
+  /**
+   * Resolved sticky reply language for this turn (lang-03).
+   * Required — emitters must not re-detect from text (p2).
+   */
+  turnLanguage: ConversationLanguage;
   recentMessages: Message[];
   intentResult: IntentDetectionResult;
   doctorSettings: DoctorSettingsRow | null;
@@ -52,8 +59,22 @@ export interface DmTurnContext {
   justStartingCollection: boolean;
   signalsFeePricing: boolean;
   feeIdleRoutedByAnaphora: boolean;
-  feeComposerOpts: Record<string, unknown>;
-  bookingFeeComposerOpts: Record<string, unknown>;
+  feeComposerOpts: FeeComposeLanguageOpts & {
+    showModalityBreakdown?: boolean;
+    llmCatalogNarrow?: {
+      correlationId: string;
+      recentUserMessages?: string[];
+      doctorProfile?: import('../../services/service-catalog-matcher').MatchServiceCatalogDoctorProfile | null;
+    };
+  };
+  bookingFeeComposerOpts: FeeComposeLanguageOpts & {
+    showModalityBreakdown?: boolean;
+    llmCatalogNarrow?: {
+      correlationId: string;
+      recentUserMessages?: string[];
+      doctorProfile?: import('../../services/service-catalog-matcher').MatchServiceCatalogDoctorProfile | null;
+    };
+  };
   teleconsultCatalogRowCount: number;
   channelReplyPick: ReturnType<typeof import('../../utils/dm-consultation-channel').parseConsultationChannelUserReply>;
   lastBotAskedForDetails: boolean;
@@ -61,8 +82,11 @@ export interface DmTurnContext {
   timing: DmTurnTiming;
   /** rcp-20: PHI-safe returning-patient profile (dormant until rcp-21..24 consume it). */
   returningProfile?: ReturningPatientProfile;
-  runGenerateResponse: (input: GenerateResponseInput) => Promise<string>;
-  runGenerateResponseWithActions: (input: GenerateResponseWithActionsInput) => Promise<AIResponseWithActions>;
+  /** turnLanguage is injected by run-conversation-turn (lang-04); stages must not omit/override it. */
+  runGenerateResponse: (input: Omit<GenerateResponseInput, 'turnLanguage'>) => Promise<string>;
+  runGenerateResponseWithActions: (
+    input: Omit<GenerateResponseWithActionsInput, 'turnLanguage'>
+  ) => Promise<AIResponseWithActions>;
   buildAiContextForResponse: (
     conversationId: string,
     state: ConversationState,

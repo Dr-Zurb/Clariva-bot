@@ -1,67 +1,153 @@
 /**
- * Letterhead block for the prescription PDF (T3.15).
+ * Letterhead block for the prescription PDF (T3.15 + clinic-branding-v1).
  *
- * Renders ONCE at the top of page 1 (and is included in the
- * `<Document>`'s top-of-page slot via PrescriptionDocument; the
- * footer repeats per page, the header does NOT — Decision: keep
- * page 2+ uncluttered to maximise content area).
- *
- * Letterhead fallbacks per Decision T3-D4 + master-batch decision 16:
- *   - missing logo_url            → text-only header (no broken-image marker)
- *   - missing clinic_name         → fall back to doctor display name only
- *   - missing clinic_address      → omit the address line
- *   - missing registration_number → omit the reg-no line
+ * Renders ONCE at the top of page 1. `preprinted` preset returns null
+ * (the page padding reserves the clinic's own printed letterhead).
  */
 
 import * as React from 'react';
 import { View, Text, Image } from '@react-pdf/renderer';
-import { styles } from './styles';
-import type { PrescriptionPdfHeaderData } from './types';
+import { letterheadImageFitCss, letterheadTypePt, logoSizePx } from '../../types/letterhead';
+import { letterheadHeading } from './letterhead-heading';
+import { mmToPt, resolvePdfAccent, styles } from './styles';
+import type { PrescriptionPdfHeaderData, PrescriptionPdfLayout } from './types';
 
 interface HeaderProps {
   data: PrescriptionPdfHeaderData;
+  layout?: PrescriptionPdfLayout;
 }
 
-export const Header: React.FC<HeaderProps> = ({ data }) => {
-  const {
-    doctorName,
-    qualifications,
-    specialty,
-    registrationNumber,
-    clinicName,
-    clinicAddress,
-    logoUrl,
-  } = data;
+function logoSource(
+  data: PrescriptionPdfHeaderData
+): PrescriptionPdfHeaderData['logoSrc'] | string | null {
+  if (data.logoSrc) return data.logoSrc;
+  if (data.logoUrl) return data.logoUrl;
+  return null;
+}
+
+function IdentityBlock({
+  data,
+  align = 'left',
+  chrome,
+  textSize,
+}: {
+  data: PrescriptionPdfHeaderData;
+  align?: 'left' | 'center' | 'right';
+  chrome: string;
+  textSize?: import('../../types/letterhead').LetterheadTextSize;
+}): React.ReactElement {
+  const { qualifications, specialty, registrationNumber, clinicAddress } = data;
+  const title = letterheadHeading(data.doctorName, data.clinicName);
+  const textAlign = align === 'center' ? 'center' : align === 'right' ? 'right' : 'left';
+  const titleSize = letterheadTypePt('headerTitle', textSize);
+  const metaSize = letterheadTypePt('headerMeta', textSize);
+  return (
+    <View
+      style={{
+        ...styles.doctorBlock,
+        alignItems: align === 'center' ? 'center' : align === 'right' ? 'flex-end' : 'flex-start',
+      }}
+    >
+      <Text style={{ ...styles.doctorName, fontSize: titleSize, textAlign, color: chrome }}>
+        {title}
+      </Text>
+      {qualifications ? (
+        <Text style={{ ...styles.doctorMeta, fontSize: metaSize, textAlign, color: chrome }}>
+          {qualifications}
+        </Text>
+      ) : null}
+      {specialty ? (
+        <Text style={{ ...styles.doctorMeta, fontSize: metaSize, textAlign, color: chrome }}>
+          {specialty}
+        </Text>
+      ) : null}
+      {registrationNumber ? (
+        <Text style={{ ...styles.doctorMeta, fontSize: metaSize, textAlign, color: chrome }}>
+          Reg. No.: {registrationNumber}
+        </Text>
+      ) : null}
+      {clinicAddress ? (
+        <Text
+          style={{
+            ...styles.clinicAddress,
+            fontSize: metaSize,
+            textAlign,
+            marginTop: 4,
+            color: chrome,
+          }}
+        >
+          {clinicAddress}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+function headerBandSource(
+  data: PrescriptionPdfHeaderData
+): PrescriptionPdfHeaderData['headerSrc'] | null {
+  return data.headerSrc ?? null;
+}
+
+/** In-flow box. Negative inset bled the band into the printer clip zone. */
+export function bannerBandBoxStyle(): { marginBottom: number } {
+  return { marginBottom: 10 };
+}
+
+export const Header: React.FC<HeaderProps> = ({ data, layout }) => {
+  if (layout?.preset === 'preprinted') return null;
+
+  if (layout?.preset === 'banner') {
+    const band = headerBandSource(data);
+    if (band) {
+      const heightMm = layout.headerHeightMm ?? 35;
+      return (
+        <View style={bannerBandBoxStyle()} wrap={false}>
+          <Image
+            src={band}
+            style={{
+              width: '100%',
+              height: mmToPt(heightMm),
+              objectFit: letterheadImageFitCss(layout.headerFit ?? 'stretch'),
+            }}
+          />
+        </View>
+      );
+    }
+  }
+
+  const src = logoSource(data);
+  const chrome = resolvePdfAccent(layout?.chromeColor ?? layout?.accentColor);
+  const logoPx = logoSizePx(layout?.logoSize ?? 'medium');
+  const logoStyle = { ...styles.logo, width: logoPx, height: logoPx };
+
+  if (layout?.preset === 'centred') {
+    return (
+      <View style={{ ...styles.header, flexDirection: 'column', alignItems: 'center' }}>
+        {src ? (
+          <Image src={src} style={{ ...logoStyle, marginRight: 0, marginBottom: 8 }} />
+        ) : null}
+        <IdentityBlock
+          data={data}
+          align="center"
+          chrome={chrome}
+          textSize={layout?.headerTextSize}
+        />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.header}>
       <View style={styles.headerLeft}>
-        {logoUrl ? (
-          // The Image renderer in @react-pdf/renderer fetches by URL
-          // server-side. If the fetch fails (404, network), it throws
-          // at render time. We wrap in a try/catch upstream by
-          // setting logoUrl=null in the service when the URL is
-          // unreachable — the Image element itself can't gracefully
-          // degrade.
-          <Image src={logoUrl} style={styles.logo} />
-        ) : null}
-        <View style={styles.doctorBlock}>
-          <Text style={styles.doctorName}>{doctorName}</Text>
-          {qualifications ? (
-            <Text style={styles.doctorMeta}>{qualifications}</Text>
-          ) : null}
-          {specialty ? <Text style={styles.doctorMeta}>{specialty}</Text> : null}
-          {registrationNumber ? (
-            <Text style={styles.doctorMeta}>Reg. No.: {registrationNumber}</Text>
-          ) : null}
-        </View>
+        {src ? <Image src={src} style={logoStyle} /> : null}
       </View>
-      <View style={styles.clinicBlock}>
-        {clinicName ? <Text style={styles.clinicName}>{clinicName}</Text> : null}
-        {clinicAddress ? (
-          <Text style={styles.clinicAddress}>{clinicAddress}</Text>
-        ) : null}
-      </View>
+      <IdentityBlock
+        data={data}
+        align="right"
+        chrome={chrome}
+        textSize={layout?.headerTextSize}
+      />
     </View>
   );
 };

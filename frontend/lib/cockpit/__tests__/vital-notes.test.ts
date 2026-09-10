@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   formatVitalLineWithNote,
   hydrateVitalNotesFromPrescription,
+  hydrateVitalsSectionNoteFromPrescription,
   normalizeVitalNotes,
+  normalizeVitalsSectionNote,
   serializeVitalNotesForVitalsJson,
   VITAL_NOTE_MAX_LEN,
 } from "@/lib/cockpit/vital-notes";
@@ -57,5 +59,26 @@ describe("vital-notes", () => {
   it("formats lines with an em dash separator", () => {
     expect(formatVitalLineWithNote("HR: 72 bpm", "after walk")).toBe("HR: 72 bpm — after walk");
     expect(formatVitalLineWithNote("HR: 72 bpm", null)).toBe("HR: 72 bpm");
+  });
+
+  it("round-trips the visit-level vitals section note", () => {
+    expect(normalizeVitalsSectionNote("  sitting, post-walk  ")).toBe("sitting, post-walk");
+    expect(hydrateVitalsSectionNoteFromPrescription({ sectionNote: "desk note" })).toBe(
+      "desk note"
+    );
+    const json = assembleVitalsJsonPayload(
+      createEmptyJsonVitalFields(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "sitting, post-walk",
+    );
+    expect(json.sectionNote).toBe("sitting, post-walk");
+    expect(deriveVitalsText(json)).toBe("sitting, post-walk");
   });
 });

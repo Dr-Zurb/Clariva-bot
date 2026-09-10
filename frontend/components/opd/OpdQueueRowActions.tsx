@@ -18,6 +18,7 @@ import { useCallback, useState } from "react";
 import {
   BellRing,
   ChevronsRight,
+  LogIn,
   MoreHorizontal,
   Undo2,
   X,
@@ -37,6 +38,7 @@ import {
 } from "@/components/ui/tooltip";
 import {
   patchDoctorQueueEntry,
+  postAppointmentCheckIn,
   postDoctorRequeueQueueEntry,
   postDoctorMarkNoShow,
 } from "@/lib/api";
@@ -46,6 +48,7 @@ import {
   trackOpdQueueEvent,
   type OpdQueueEvent,
 } from "./opdQueueTelemetry";
+import { canMarkArrived } from "./shared/opdArrival";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -120,8 +123,10 @@ export function OpdQueueRowActions({
     (entry.appointmentStatus === "pending" ||
       entry.appointmentStatus === "confirmed") &&
     entry.queueStatus !== "completed";
+  const showArrive = canMarkArrived(entry) && entry.queueStatus !== "completed";
 
-  const hasAnyOverflowItem = canMarkCalled || canRequeue || canMarkNoShow;
+  const hasAnyOverflowItem =
+    canMarkCalled || canRequeue || canMarkNoShow || showArrive;
 
   // ── Toast helper ───────────────────────────────────────────────────────────
   // No toast library — an inline error banner is not worth the complexity for
@@ -163,6 +168,17 @@ export function OpdQueueRowActions({
   );
 
   // ── Action handlers ────────────────────────────────────────────────────────
+  const handleMarkArrived = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      void runMutation(
+        () => postAppointmentCheckIn(token, entry.appointmentId),
+        "mark_arrived"
+      );
+    },
+    [token, entry.appointmentId, runMutation]
+  );
+
   const handleMarkCalled = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
@@ -245,6 +261,19 @@ export function OpdQueueRowActions({
           </Tooltip>
 
           <DropdownMenuContent align="end" className="w-52">
+            {showArrive && (
+              <DropdownMenuItem
+                aria-label="Mark patient as arrived"
+                onClick={handleMarkArrived}
+              >
+                <LogIn className="mr-2 h-4 w-4" />
+                Arrive
+              </DropdownMenuItem>
+            )}
+            {showArrive && (canMarkCalled || canRequeue || canMarkNoShow) ? (
+              <DropdownMenuSeparator />
+            ) : null}
+
             {/* Mark called silently */}
             {canMarkCalled && (
               <DropdownMenuItem

@@ -30,6 +30,9 @@ jest.mock('../../../src/services/doctor-settings-service', () => ({
 jest.mock('../../../src/services/prescription-pdf-service', () => ({
   generatePrescriptionPdf: jest.fn().mockRejectedValue(new Error('pdf skipped in test') as never),
 }));
+jest.mock('../../../src/services/prescription-pdf-cache', () => ({
+  invalidatePrescriptionPdfCache: jest.fn(),
+}));
 jest.mock('../../../src/services/prescription-attachment-service', () => ({
   createAttachmentSignedUrlForDelivery: jest.fn(),
 }));
@@ -45,6 +48,7 @@ import { updatePrescription } from '../../../src/services/prescription-service';
 import * as database from '../../../src/config/database';
 import * as emailConfig from '../../../src/config/email';
 import * as usageService from '../../../src/services/doctor-drug-usage-service';
+import * as pdfCache from '../../../src/services/prescription-pdf-cache';
 
 const mockedDb = database as jest.Mocked<typeof database>;
 const mockedEmail = emailConfig as jest.Mocked<typeof emailConfig>;
@@ -82,8 +86,18 @@ interface SendSupabaseOpts {
 }
 
 function buildSendSupabaseMock(opts: SendSupabaseOpts) {
-  const updateEq = jest.fn().mockResolvedValue({ error: null } as never);
-  const update = jest.fn().mockReturnValue({ eq: updateEq });
+  const updateChain = {
+    eq: jest.fn(() => updateChain),
+    is: jest.fn(() => updateChain),
+    select: jest.fn(() => updateChain),
+    maybeSingle: jest.fn().mockResolvedValue({
+      data: { attested_at: '2026-08-31T12:00:00.000Z' },
+      error: null,
+    } as never),
+    then: (resolve: (v: { error: null }) => unknown) =>
+      Promise.resolve({ error: null }).then(resolve),
+  };
+  const update = jest.fn().mockReturnValue(updateChain);
 
   const from = jest.fn((table: string) => {
     if (table === 'prescriptions') {
@@ -96,6 +110,7 @@ function buildSendSupabaseMock(opts: SendSupabaseOpts) {
             appointment_id: appointmentId,
             doctor_id: doctorId,
             type: 'structured',
+            attested_at: null,
           },
           error: null,
         } as never),
@@ -157,7 +172,7 @@ function buildSendSupabaseMock(opts: SendSupabaseOpts) {
     return {};
   });
 
-  return { from, update, updateEq };
+  return { from, update };
 }
 
 describe('incrementDoctorDrugUsageOnSend', () => {
@@ -301,6 +316,7 @@ describe('updatePrescription · draft save does NOT increment usage', () => {
       id: prescriptionId,
       doctor_id: doctorId,
       appointment_id: appointmentId,
+      attested_at: null,
     };
 
     const from = jest.fn((table: string) => {
@@ -319,7 +335,7 @@ describe('updatePrescription · draft save does NOT increment usage', () => {
           select: jest.fn().mockReturnThis(),
           eq: jest.fn().mockReturnThis(),
           single: jest.fn().mockResolvedValue({
-            data: { id: appointmentId, episode_id: null },
+            data: { id: appointmentId, episode_id: null, status: 'confirmed' },
             error: null,
           } as never),
         };
@@ -359,6 +375,7 @@ describe('updatePrescription · draft save does NOT increment usage', () => {
     );
 
     expect(incrementSpy).not.toHaveBeenCalled();
+    expect(pdfCache.invalidatePrescriptionPdfCache).toHaveBeenCalledWith(prescriptionId);
     incrementSpy.mockRestore();
   });
 });

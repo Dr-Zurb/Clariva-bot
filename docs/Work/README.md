@@ -4,7 +4,8 @@ Plans, tasks, capture, and process guides. **Not** canonical product/engineering
 
 ```
 Work/
-├── Daily-plans/          ← dated batches + Tasks/ (primary execution backlog)
+├── Business/             ← run the company: tracks, months, weeks, days
+├── Daily-plans/          ← dated engineering batches + Tasks/
 ├── Product plans/        ← multi-phase product plans (+ archive/)
 ├── process/              ← how to plan and run tasks (templates, agent guides)
 └── capture/              ← inbox + features/ parking lots (triage → Daily-plans)
@@ -12,6 +13,8 @@ Work/
     ├── features/         ← per-program deferred / future / debt (+ deep dives)
     └── MIGRATION-deferred.md  ← old deferred/ path map (2026-06-18)
 ```
+
+> **Where am I?** [`Business/`](./Business/README.md) is where the company is run — legal, banking, GST, trademark, Meta review, customers, and the week/day ritual. [`Daily-plans/`](./Daily-plans/) is where **agents** execute engineering batches. Start the week in `Business/`, and let it feed `Daily-plans/`.
 
 **Retired (2026-06-18):** `deferred/` — content moved to [`capture/features/`](./capture/features/). See [`capture/MIGRATION-deferred.md`](./capture/MIGRATION-deferred.md).
 
@@ -31,6 +34,7 @@ Work/
 
 ## Conventions
 
+- **Business cadence:** `Business/<YYYY>/<Month>/W<NN>-<YYYY-MM-DD>/` — `0-week.md` (Sunday preplan + review) plus `1-mon.md`…`7-sun.md`. Month plan lives in `<Month>/month.md`. Standing threads: [`Business/tracks.md`](./Business/tracks.md). Weekday defaults: [`Business/rhythm.md`](./Business/rhythm.md). Full rules: [`Business/README.md`](./Business/README.md).
 - **Big plans are phased.** One program = one folder; each phase is a `p{N}-<slug>/` subfolder. The program folder lives under the date its **first** phase was planned, and **later phases stay in that same folder** even when planned on a different day. Full rules: [`process/PHASED-PLANS-GUIDE.md`](./process/PHASED-PLANS-GUIDE.md).
 - **Daily plans:** `Daily-plans/<Month YYYY>/<DD-MM-YYYY>/<program>/p{N}-<slug>/Tasks/task-<prefix>-NN-*.md` (a small single-batch program skips the `p{N}-` level and puts `Tasks/` directly under `<program>/`).
 - **Product plans:** `Product plans/plan-*.md` own the phase table → promote each phase to a `p{N}-` subfolder when committed.
@@ -43,7 +47,11 @@ Work/
 |-------|------|
 | Raw idea | `capture/inbox.md` |
 | Parked with context | `capture/features/<program>/backlog.md` (+ optional deep-dive `.md`) |
+| Open business thread (legal, money, Meta, GTM) | `Business/tracks.md` |
 | Committed roadmap | `Product plans/` |
+| Committed to *this month* | `Business/<YYYY>/<Month>/month.md` |
+| Committed to *this week* | `Business/<YYYY>/<Month>/W<NN>-*/0-week.md` |
+| Committed to *today* | `Business/<YYYY>/<Month>/W<NN>-*/<n>-<dow>.md` |
 | Scheduled execution | `Daily-plans/` |
 | Done / archived | `capture/archive/`, `Product plans/archive/`, or `docs/Archive/` |
 

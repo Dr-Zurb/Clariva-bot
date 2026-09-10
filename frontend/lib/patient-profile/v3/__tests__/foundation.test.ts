@@ -211,6 +211,29 @@ describe("cv3d-swap: swapPaneTreeNodes", () => {
     expect(new Set(nodeIds).size).toBe(nodeIds.length);
   });
 
+  it("pins panelKey to the geometric slot so DOM panel ids stay put", () => {
+    const tree = root([leaf("a", 30), leaf("b", 20), leaf("c", 50)]);
+    const r = swapPaneTreeNodes(tree, "a", "c");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const kids = r.tree.children!;
+    // Content moved; swapped slots pin panelKey from the prior id there.
+    // Untouched sibling "b" has no panelKey yet (DOM id falls back to node id).
+    expect(kids.map((n) => n.id)).toEqual(["c", "b", "a"]);
+    expect(kids.map((n) => n.panelKey)).toEqual(["a", undefined, "c"]);
+    expect(kids.map((n) => n.panelKey ?? n.id)).toEqual(["a", "b", "c"]);
+    // Second swap keeps the same slot keys (no remount churn).
+    const r2 = swapPaneTreeNodes(r.tree, "c", "a");
+    expect(r2.ok).toBe(true);
+    if (!r2.ok) return;
+    expect(r2.tree.children!.map((n) => n.panelKey ?? n.id)).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+    expect(r2.tree.children!.map((n) => n.id)).toEqual(["a", "b", "c"]);
+  });
+
   it("same id → no-op", () => {
     const tree = root([leaf("a"), leaf("b")]);
     const r = swapPaneTreeNodes(tree, "a", "a");

@@ -13,11 +13,15 @@
  * @see docs/Work/Daily-plans/May 2026/09-05-2026/Tasks/task-cp-02-prev-now-next-strip.md
  */
 
+import { useEffect, type ReactNode } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { ChevronRight } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
+import { prefetchNextConsult } from "@/lib/query/prefetch/next-consult";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { buildCockpitAppointmentPathFromCurrentOrigin } from "@/lib/cockpit/back-target";
 import { todayLocalIso } from "@/lib/dates";
+import { formatTime as formatClockTime } from "@/lib/format-date";
 import {
   Tooltip,
   TooltipContent,
@@ -74,17 +78,12 @@ function truncate(s: string, max = 12): string {
 
 function formatTime(iso: string | null | undefined): string {
   if (!iso) return "";
-  return new Date(iso).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatClockTime(iso);
 }
 
 function formatWaited(iso: string | null | undefined): string {
   if (!iso) return "";
-  const diffMin = Math.round(
-    (Date.now() - new Date(iso).getTime()) / 60_000,
-  );
+  const diffMin = Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
   if (diffMin <= 0) return "On time";
   if (diffMin < 60) return `Waited ${diffMin}m`;
   const h = Math.floor(diffMin / 60);
@@ -92,27 +91,38 @@ function formatWaited(iso: string | null | undefined): string {
   return m > 0 ? `Waited ${h}h ${m}m` : `Waited ${h}h`;
 }
 
+/** Same #N the neighbor chips use — queue token when present, else 1-based position. */
+export function pipelineTokenLabel(
+  entry: PipelineEntry,
+  _source: "queue" | "schedule",
+): string {
+  if (entry.tokenNumber != null) {
+    return `#${entry.tokenNumber}`;
+  }
+  return `#${entry.position}`;
+}
+
 function tokenLabel(
   entry: PipelineEntry,
   source: "queue" | "schedule",
 ): string {
-  if (source === "queue" && entry.tokenNumber != null) {
-    return `#${entry.tokenNumber}`;
-  }
-  return `#${entry.position}`;
+  return pipelineTokenLabel(entry, source);
 }
 
 // ---------------------------------------------------------------------------
 // Empty placeholder chip
 // ---------------------------------------------------------------------------
 
-function EmptyPlaceholder() {
+function EmptyPlaceholder({ quiet = false }: { quiet?: boolean }) {
+  if (quiet) {
+    return <span aria-hidden className="inline-block min-w-[4rem]" />;
+  }
   return (
     <span
       aria-hidden
       className={cn(
         "inline-flex items-center rounded border border-dashed px-2 py-1",
-        "border-muted text-muted-foreground/60 text-xs select-none",
+        "border-muted text-muted-foreground/60 text-xs select-none"
       )}
     >
       —
@@ -128,19 +138,23 @@ interface SlotChipProps {
   entry: PipelineEntry;
   slot: "prev" | "now" | "next";
   source: "queue" | "schedule";
+  /** Borderless neighbor chip so the current title stays the focus. */
+  quiet?: boolean;
 }
 
-function SlotChip({ entry, slot, source }: SlotChipProps) {
+function SlotChip({ entry, slot, source, quiet = false }: SlotChipProps) {
   const searchParams = useSearchParams();
   const isNow = slot === "now";
   const token = tokenLabel(entry, source);
   const firstName = truncate(firstNameOf(entry.label), 12);
 
   const innerClass = cn(
-    "inline-flex items-center gap-1.5 rounded border text-xs",
-    isNow
-      ? "cursor-default border-primary bg-primary/5 px-3 py-1.5 font-semibold"
-      : "border-border bg-transparent px-2 py-1 font-normal text-muted-foreground hover:opacity-80 transition-opacity",
+    "inline-flex items-center gap-1.5 rounded text-xs",
+    quiet
+      ? "border-0 bg-transparent px-1 py-0.5 font-normal text-muted-foreground/70 hover:text-foreground"
+      : isNow
+        ? "cursor-default border border-primary bg-primary/5 px-3 py-1.5 font-semibold"
+        : "border border-border bg-transparent px-2 py-1 font-normal text-muted-foreground hover:opacity-80 transition-opacity",
   );
 
   const tooltipBody = (
@@ -159,7 +173,18 @@ function SlotChip({ entry, slot, source }: SlotChipProps) {
     </div>
   );
 
-  const chipInner = (
+  const chipInner = quiet ? (
+    <>
+      {slot === "prev" ? (
+        <ChevronLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      ) : null}
+      <span className="tabular-nums">{token}</span>
+      <span>{firstName}</span>
+      {slot === "next" ? (
+        <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      ) : null}
+    </>
+  ) : (
     <>
       <StatusDot status={entry.status} />
       <span className="tabular-nums">{token}</span>
@@ -182,7 +207,7 @@ function SlotChip({ entry, slot, source }: SlotChipProps) {
           <Link
             href={buildCockpitAppointmentPathFromCurrentOrigin(
               entry.id,
-              searchParams,
+              searchParams
             )}
             aria-label={`${slot === "prev" ? "Previous" : "Next"} patient: ${entry.label}`}
             className={innerClass}
@@ -223,6 +248,15 @@ export interface CockpitQueueRailProps {
   state: CockpitState;
   /** Auth token forwarded to useDoctorDayPipeline. */
   token: string;
+  /** `inline` is the identity-row trio. `rail` is the legacy band. */
+  variant?: "rail" | "inline";
+  /** Current-patient title rendered in the trio center (inline only). */
+  nowSlot?:
+    | ReactNode
+    | ((ctx: {
+        now: PipelineEntry | null;
+        source: "queue" | "schedule";
+      }) => ReactNode);
 }
 
 // ---------------------------------------------------------------------------
@@ -233,13 +267,37 @@ export function CockpitQueueRail({
   currentAppointmentId,
   state,
   token,
+  variant = "rail",
+  nowSlot,
 }: CockpitQueueRailProps): JSX.Element | null {
+  const queryClient = useQueryClient();
+  const router = useRouter();
   const { entries, currentIndex, totalCount, source, isLoading } =
     useDoctorDayPipeline({ token, currentAppointmentId });
 
-  // Visibility gates
+  const nextForPrefetch =
+    currentIndex !== null ? (entries[currentIndex + 1] ?? null) : null;
+  useEffect(() => {
+    if (!nextForPrefetch) return;
+    router.prefetch(nextForPrefetch.href);
+    prefetchNextConsult(queryClient, token, {
+      appointmentId: nextForPrefetch.id,
+      patientId: nextForPrefetch.patientId,
+    });
+    // Depend on stable fields — the entry object is new each pipeline memo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    queryClient,
+    router,
+    token,
+    nextForPrefetch?.id,
+    nextForPrefetch?.href,
+    nextForPrefetch?.patientId,
+  ]);
+
+  // Visibility gates — inline still mounts so the identity title can center.
   if (state === "terminal") return null;
-  if (!isLoading && entries.length === 0) return null;
+  if (variant !== "inline" && !isLoading && entries.length === 0) return null;
 
   // Three-slot derivation
   const prev =
@@ -254,23 +312,96 @@ export function CockpitQueueRail({
   const todayIso = todayLocalIso();
   const viewAllHref = `/dashboard/opd-today?date=${todayIso}`;
 
+  const positionLabel =
+    currentIndex !== null
+      ? `${currentIndex + 1} of ${totalCount}`
+      : `${totalCount}`;
+
+  if (variant === "inline") {
+    const showAll = !isLoading && totalCount > 0;
+    return (
+      <TooltipProvider delayDuration={300}>
+        <nav
+          aria-label="Today's queue"
+          data-testid="cockpit-queue-inline"
+          className="flex min-w-0 flex-1 items-center gap-2"
+        >
+          <div className="flex shrink-0 items-center gap-1.5">
+            {showAll ? (
+              <Link
+                href={viewAllHref}
+                className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
+                aria-label={`All, ${positionLabel}`}
+              >
+                All
+                <span
+                  className="tabular-nums"
+                  data-testid="cockpit-queue-position"
+                >
+                  {positionLabel}
+                </span>
+              </Link>
+            ) : null}
+          </div>
+          <div className="grid min-w-0 flex-1 grid-cols-[1fr_auto_1fr] items-center gap-x-10">
+            {isLoading ? (
+              <span className="col-start-2 text-xs text-muted-foreground">
+                …
+              </span>
+            ) : (
+              <>
+                <div className="hidden justify-end sm:flex">
+                  {prev ? (
+                    <SlotChip
+                      entry={prev}
+                      slot="prev"
+                      source={source}
+                      quiet
+                    />
+                  ) : (
+                    <EmptyPlaceholder quiet />
+                  )}
+                </div>
+                <div className="justify-self-center px-1">
+                  {typeof nowSlot === "function"
+                    ? nowSlot({ now, source })
+                    : (nowSlot ??
+                      (now ? (
+                        <SlotChip entry={now} slot="now" source={source} />
+                      ) : (
+                        <EmptyPlaceholder quiet />
+                      )))}
+                </div>
+                <div className="hidden justify-start sm:flex">
+                  {next ? (
+                    <SlotChip
+                      entry={next}
+                      slot="next"
+                      source={source}
+                      quiet
+                    />
+                  ) : (
+                    <EmptyPlaceholder quiet />
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </nav>
+      </TooltipProvider>
+    );
+  }
+
   return (
     <TooltipProvider delayDuration={300}>
-      {/* cs-07: Sticky on `<lg` (page-scroll layout) so the rail tracks the
-          cockpit header. On `lg+` the cockpit shell is a fixed-height flex
-          container whose columns scroll independently, so the page itself
-          doesn't scroll — the rail drops back into normal flow via
-          `lg:static`. The inline `top` (var-driven sticky offset) is harmless
-          on `lg:static` because `top` is ignored when position isn't
-          sticky/absolute/fixed/relative. */}
       <div
         className={cn(
           "flex items-center gap-2",
           "sticky lg:static z-20",
           "h-10 shrink-0 border-b border-border bg-background/95 backdrop-blur",
-          "px-4 lg:px-6",
+          "px-4 lg:px-6"
         )}
-        style={{ top: 'var(--cockpit-header-h)' }}
+        style={{ top: "var(--cockpit-header-h)" }}
       >
         {/* Loading state */}
         {isLoading && (
@@ -309,13 +440,13 @@ export function CockpitQueueRail({
           </div>
         )}
 
-        {/* View all — ghost link at the trailing edge */}
-        {!isLoading && totalCount > 0 && (
+        {/* View all — ghost link at the trailing edge (hidden mid-call). */}
+        {!isLoading && totalCount > 0 && state !== "live" && (
           <Link
             href={viewAllHref}
             className={cn(
               "ml-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground",
-              "hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded",
+              "hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
             )}
           >
             View all ({totalCount})

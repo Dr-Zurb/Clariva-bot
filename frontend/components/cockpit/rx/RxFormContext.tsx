@@ -135,16 +135,18 @@ import {
   seedPrimaryDiagnosisFromLegacy,
   sortDiagnosesPrimaryFirst,
 } from "@/lib/cockpit/diagnoses";
-import {
-  hydrateFollowUpNotes,
-} from "@/lib/cockpit/follow-up-format";
+import { hydrateFollowUpNotes } from "@/lib/cockpit/follow-up-format";
 import {
   hydrateReferralFields,
   resolveReferralForOutput,
   referralPartsFromFields,
 } from "@/lib/cockpit/plan-quick-picks";
 import { hydrateAdviceField } from "@/lib/cockpit/advice-format";
-import { DOSE_UNIT_OPTIONS } from "@/lib/medicineCodes";
+import {
+  hydrateDoseScheduleFromStored,
+  parseDoseSchedulePattern,
+} from "@/lib/chart/chart-medication";
+import { DOSE_UNIT_OPTIONS, toRxFrequencyCode } from "@/lib/medicineCodes";
 import {
   hydrateMeasurementContextFromPrescription,
   hydrateVitalProvenanceFromPrescription,
@@ -182,6 +184,7 @@ import {
 } from "@/lib/cockpit/vitals-custom";
 import {
   hydrateVitalNotesFromPrescription,
+  hydrateVitalsSectionNoteFromPrescription,
   type VitalNotesMap,
 } from "@/lib/cockpit/vital-notes";
 import type {
@@ -211,7 +214,13 @@ import type {
   VitalsBpLimb,
   VitalsBpPosture,
 } from "@/types/prescription";
-import type { BpContext, BpReading, GlucoseContext, GlucoseReading, MeasurementContext } from "@/types/prescription";
+import type {
+  BpContext,
+  BpReading,
+  GlucoseContext,
+  GlucoseReading,
+  MeasurementContext,
+} from "@/types/prescription";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -221,7 +230,11 @@ export type FollowUpUnit = "days" | "weeks" | "months" | "as_needed";
 
 /** Re-export for consumers that import from RxFormContext. */
 export type { Complaint } from "@/types/prescription";
-export type { ExamFindingEntry, ExamSystemFinding, ExamSystemStatus } from "@/types/prescription";
+export type {
+  ExamFindingEntry,
+  ExamSystemFinding,
+  ExamSystemStatus,
+} from "@/types/prescription";
 export type {
   LabReport,
   TestResultRow,
@@ -234,12 +247,26 @@ export type {
   DiagnosisCertainty,
   DiagnosisStatus,
 } from "@/types/prescription";
-export type { VitalsBpLimb, VitalsBpPosture, BpContext, BpReading, GlucoseContext, GlucoseReading, MeasurementContext } from "@/types/prescription";
+export type {
+  VitalsBpLimb,
+  VitalsBpPosture,
+  BpContext,
+  BpReading,
+  GlucoseContext,
+  GlucoseReading,
+  MeasurementContext,
+} from "@/types/prescription";
 export type { SocialHistoryStructured } from "@/lib/cockpit/social-history";
 export type { FamilyHistoryStructured } from "@/lib/cockpit/family-history";
 export type { PastSurgicalHistoryStructured } from "@/lib/cockpit/past-surgical-history";
-export type { CustomSubsection, CustomSubsectionChild } from "@/lib/cockpit/custom-subsections";
-export { createCustomSubsectionId, createEmptyCustomSubsection } from "@/lib/cockpit/custom-subsections";
+export type {
+  CustomSubsection,
+  CustomSubsectionChild,
+} from "@/lib/cockpit/custom-subsections";
+export {
+  createCustomSubsectionId,
+  createEmptyCustomSubsection,
+} from "@/lib/cockpit/custom-subsections";
 
 /** Mirrors MedicineRowValue — hand rows straight to <MedicineRow>. */
 export type RxMedicine = MedicineRowValue;
@@ -296,6 +323,8 @@ export interface RxFormFields {
   vitalsProvenanceOverrides: VitalProvenanceMap;
   /** Per-vital optional notes (vitals_json.vitalNotes). */
   vitalsNotes: Record<string, string | null>;
+  /** Visit-level vitals note — desk check-in + printed Rx. */
+  vitalsSectionNote: string;
   vitalsHeadCircumferenceCm: number | null;
   vitalsMuacCm: number | null;
   vitalsWaistCm: number | null;
@@ -408,8 +437,8 @@ export interface RxFormFields {
    */
   testResultsStructured: TestResultRow[];
   /**
-   * Lab/imaging report headers grouping structured rows (rpt-02/03). Client form
-   * state only until the save-path wires `lab_reports_json` through the API.
+   * Lab/imaging report headers grouping structured rows (rpt-02/03).
+   * Persisted as `lab_reports_json`; does not leak into derived `testResults`.
    */
   labReports: LabReport[];
 
@@ -434,33 +463,68 @@ export interface RxFormState {
 type RxFormReducerState = Omit<RxFormState, "consultationType">;
 
 export type RxFormAction =
-  | { type: "SET_FIELD"; key: keyof RxFormFields; value: RxFormFields[keyof RxFormFields] }
+  | {
+      type: "SET_FIELD";
+      key: keyof RxFormFields;
+      value: RxFormFields[keyof RxFormFields];
+    }
   | { type: "SET_MEDICINES"; medicines: RxMedicine[] }
   | { type: "ADD_MEDICINE"; medicine: RxMedicine }
   | { type: "REMOVE_MEDICINE"; index: number }
   | { type: "UPDATE_MEDICINE"; index: number; patch: Partial<RxMedicine> }
   | { type: "ADD_COMPLAINT"; complaint: Complaint; parentId?: string }
-  | { type: "UPDATE_COMPLAINT"; index: number; patch: Partial<Complaint>; parentId?: string }
+  | {
+      type: "UPDATE_COMPLAINT";
+      index: number;
+      patch: Partial<Complaint>;
+      parentId?: string;
+    }
   | { type: "REMOVE_COMPLAINT"; index: number; parentId?: string }
-  | { type: "REORDER_COMPLAINTS"; fromIndex: number; toIndex: number; parentId?: string }
+  | {
+      type: "REORDER_COMPLAINTS";
+      fromIndex: number;
+      toIndex: number;
+      parentId?: string;
+    }
   | { type: "PROMOTE_COMPLAINT"; parentId: string; childIndex: number }
   | { type: "DEMOTE_COMPLAINT"; sourceIndex: number; targetParentId: string }
   | { type: "SET_COMPLAINTS"; complaints: Complaint[] }
-  | { type: "SET_FAMILY_HISTORY_STRUCTURED"; structured: FamilyHistoryStructured }
-  | { type: "SET_SOCIAL_HISTORY_STRUCTURED"; structured: SocialHistoryStructured }
-  | { type: "SET_PAST_SURGICAL_HISTORY_STRUCTURED"; structured: PastSurgicalHistoryStructured }
+  | {
+      type: "SET_FAMILY_HISTORY_STRUCTURED";
+      structured: FamilyHistoryStructured;
+    }
+  | {
+      type: "SET_SOCIAL_HISTORY_STRUCTURED";
+      structured: SocialHistoryStructured;
+    }
+  | {
+      type: "SET_PAST_SURGICAL_HISTORY_STRUCTURED";
+      structured: PastSurgicalHistoryStructured;
+    }
   | { type: "ADD_CUSTOM_SUBSECTION"; section: CustomSubsection }
-  | { type: "UPDATE_CUSTOM_SUBSECTION"; index: number; patch: Partial<CustomSubsection> }
+  | {
+      type: "UPDATE_CUSTOM_SUBSECTION";
+      index: number;
+      patch: Partial<CustomSubsection>;
+    }
   | { type: "REMOVE_CUSTOM_SUBSECTION"; index: number }
   | { type: "REORDER_CUSTOM_SUBSECTIONS"; fromIndex: number; toIndex: number }
-  | { type: "ADD_CUSTOM_SUBSECTION_CHILD"; sectionId: string; child: CustomSubsectionChild }
+  | {
+      type: "ADD_CUSTOM_SUBSECTION_CHILD";
+      sectionId: string;
+      child: CustomSubsectionChild;
+    }
   | {
       type: "UPDATE_CUSTOM_SUBSECTION_CHILD";
       sectionId: string;
       childIndex: number;
       patch: Partial<CustomSubsectionChild>;
     }
-  | { type: "REMOVE_CUSTOM_SUBSECTION_CHILD"; sectionId: string; childIndex: number }
+  | {
+      type: "REMOVE_CUSTOM_SUBSECTION_CHILD";
+      sectionId: string;
+      childIndex: number;
+    }
   | {
       type: "REORDER_CUSTOM_SUBSECTION_CHILDREN";
       sectionId: string;
@@ -469,23 +533,47 @@ export type RxFormAction =
     }
   | { type: "SET_CUSTOM_SUBSECTIONS"; sections: CustomSubsection[] }
   | { type: "ADD_OBJECTIVE_CUSTOM_SECTION"; section: CustomSubsection }
-  | { type: "UPDATE_OBJECTIVE_CUSTOM_SECTION"; index: number; patch: Partial<CustomSubsection> }
+  | {
+      type: "UPDATE_OBJECTIVE_CUSTOM_SECTION";
+      index: number;
+      patch: Partial<CustomSubsection>;
+    }
   | { type: "REMOVE_OBJECTIVE_CUSTOM_SECTION"; index: number }
-  | { type: "REORDER_OBJECTIVE_CUSTOM_SECTIONS"; fromIndex: number; toIndex: number }
+  | {
+      type: "REORDER_OBJECTIVE_CUSTOM_SECTIONS";
+      fromIndex: number;
+      toIndex: number;
+    }
   | { type: "SET_OBJECTIVE_CUSTOM_SECTIONS"; sections: CustomSubsection[] }
   // assessment-plan-custom-sections — Assessment custom sections (depth-2, mirrors subjective).
   | { type: "ADD_ASSESSMENT_CUSTOM_SECTION"; section: CustomSubsection }
-  | { type: "UPDATE_ASSESSMENT_CUSTOM_SECTION"; index: number; patch: Partial<CustomSubsection> }
+  | {
+      type: "UPDATE_ASSESSMENT_CUSTOM_SECTION";
+      index: number;
+      patch: Partial<CustomSubsection>;
+    }
   | { type: "REMOVE_ASSESSMENT_CUSTOM_SECTION"; index: number }
-  | { type: "REORDER_ASSESSMENT_CUSTOM_SECTIONS"; fromIndex: number; toIndex: number }
-  | { type: "ADD_ASSESSMENT_CUSTOM_SECTION_CHILD"; sectionId: string; child: CustomSubsectionChild }
+  | {
+      type: "REORDER_ASSESSMENT_CUSTOM_SECTIONS";
+      fromIndex: number;
+      toIndex: number;
+    }
+  | {
+      type: "ADD_ASSESSMENT_CUSTOM_SECTION_CHILD";
+      sectionId: string;
+      child: CustomSubsectionChild;
+    }
   | {
       type: "UPDATE_ASSESSMENT_CUSTOM_SECTION_CHILD";
       sectionId: string;
       childIndex: number;
       patch: Partial<CustomSubsectionChild>;
     }
-  | { type: "REMOVE_ASSESSMENT_CUSTOM_SECTION_CHILD"; sectionId: string; childIndex: number }
+  | {
+      type: "REMOVE_ASSESSMENT_CUSTOM_SECTION_CHILD";
+      sectionId: string;
+      childIndex: number;
+    }
   | {
       type: "REORDER_ASSESSMENT_CUSTOM_SECTION_CHILDREN";
       sectionId: string;
@@ -495,17 +583,29 @@ export type RxFormAction =
   | { type: "SET_ASSESSMENT_CUSTOM_SECTIONS"; sections: CustomSubsection[] }
   // assessment-plan-custom-sections — Plan custom sections (depth-2, mirrors subjective).
   | { type: "ADD_PLAN_CUSTOM_SECTION"; section: CustomSubsection }
-  | { type: "UPDATE_PLAN_CUSTOM_SECTION"; index: number; patch: Partial<CustomSubsection> }
+  | {
+      type: "UPDATE_PLAN_CUSTOM_SECTION";
+      index: number;
+      patch: Partial<CustomSubsection>;
+    }
   | { type: "REMOVE_PLAN_CUSTOM_SECTION"; index: number }
   | { type: "REORDER_PLAN_CUSTOM_SECTIONS"; fromIndex: number; toIndex: number }
-  | { type: "ADD_PLAN_CUSTOM_SECTION_CHILD"; sectionId: string; child: CustomSubsectionChild }
+  | {
+      type: "ADD_PLAN_CUSTOM_SECTION_CHILD";
+      sectionId: string;
+      child: CustomSubsectionChild;
+    }
   | {
       type: "UPDATE_PLAN_CUSTOM_SECTION_CHILD";
       sectionId: string;
       childIndex: number;
       patch: Partial<CustomSubsectionChild>;
     }
-  | { type: "REMOVE_PLAN_CUSTOM_SECTION_CHILD"; sectionId: string; childIndex: number }
+  | {
+      type: "REMOVE_PLAN_CUSTOM_SECTION_CHILD";
+      sectionId: string;
+      childIndex: number;
+    }
   | {
       type: "REORDER_PLAN_CUSTOM_SECTION_CHILDREN";
       sectionId: string;
@@ -543,7 +643,15 @@ export type RxFormAction =
   | { type: "SUBMIT_START" }
   | { type: "SUBMIT_SUCCESS" }
   | { type: "SUBMIT_ERROR"; error: string }
-  | { type: "RESET"; initialFields: RxFormFields };
+  | { type: "RESET"; initialFields: RxFormFields }
+  /**
+   * Programmatic seed (rxl-03). Writes fields without marking dirty.
+   * Edits are SET_FIELD and the other field actions — those schedule autosave.
+   * Seeds: RESET (hydrate, including desk-vitals merge) and SEED_FIELDS
+   * (late desk-vitals). Doctor-initiated template / parse / carry-forward
+   * stay edits.
+   */
+  | { type: "SEED_FIELDS"; patch: Partial<RxFormFields> };
 
 export const EMPTY_RX_MEDICINE: RxMedicine = {
   medicineName: "",
@@ -561,6 +669,7 @@ export const EMPTY_RX_MEDICINE: RxMedicine = {
   doseUnit: null,
   form: null,
   foodTiming: null,
+  doseSchedule: null,
 };
 
 export function createEmptyComplaint(id?: string): Complaint {
@@ -577,10 +686,10 @@ export type RxFormSeedOptions = {
 
 export function createEmptyRxFormFields(
   seedMedicines: RxMedicine[] = [{ ...EMPTY_RX_MEDICINE }],
-  seedOptions?: RxFormSeedOptions,
+  seedOptions?: RxFormSeedOptions
 ): RxFormFields {
   const visitMeasurementContext = resolveDefaultMeasurementContext(
-    seedOptions?.consultationType,
+    seedOptions?.consultationType
   );
   return {
     cc: "",
@@ -592,7 +701,9 @@ export function createEmptyRxFormFields(
     socialHistory: "",
     socialHistoryStructured: { ...EMPTY_SOCIAL_HISTORY_STRUCTURED },
     pastSurgicalHistory: "",
-    pastSurgicalHistoryStructured: { ...EMPTY_PAST_SURGICAL_HISTORY_STRUCTURED },
+    pastSurgicalHistoryStructured: {
+      ...EMPTY_PAST_SURGICAL_HISTORY_STRUCTURED,
+    },
     customSubsections: [],
     customSubsectionsText: "",
     vitalsText: "",
@@ -616,6 +727,7 @@ export function createEmptyRxFormFields(
     vitalsMeasurementContext: { ...visitMeasurementContext },
     vitalsProvenanceOverrides: {},
     vitalsNotes: {},
+    vitalsSectionNote: "",
     vitalsHeadCircumferenceCm: null,
     vitalsMuacCm: null,
     vitalsWaistCm: null,
@@ -653,13 +765,16 @@ export function createEmptyRxFormFields(
 
 /** Read investigations from API row (column rename compat). */
 export function investigationsFromPrescription(
-  rx: Pick<PrescriptionWithRelations, "investigations" | "investigations_orders">,
+  rx: Pick<
+    PrescriptionWithRelations,
+    "investigations" | "investigations_orders"
+  >
 ): string {
   return rx.investigations_orders ?? rx.investigations ?? "";
 }
 
 export function medicinesFromPrescription(
-  rx: PrescriptionWithRelations,
+  rx: PrescriptionWithRelations
 ): RxMedicine[] {
   const meds = rx.prescription_medicines ?? [];
   if (meds.length === 0) return [{ ...EMPTY_RX_MEDICINE }];
@@ -679,11 +794,12 @@ export function medicinesFromPrescription(
     doseUnit: m.dose_unit ?? null,
     form: m.form ?? null,
     foodTiming: m.food_timing ?? null,
+    doseSchedule: hydrateDoseScheduleFromStored(m.frequency, m.frequency_code),
   }));
 }
 
 function hydrateComplaintFromApi(
-  c: NonNullable<PrescriptionWithRelations["complaints"]>[number],
+  c: NonNullable<PrescriptionWithRelations["complaints"]>[number]
 ): Complaint {
   const children = (c.associatedComplaints ?? []).map((child) => {
     const leaf = hydrateComplaintFromApi(child);
@@ -726,7 +842,7 @@ function hydrateComplaintFromApi(
 }
 
 export function complaintsFromPrescription(
-  rx: Pick<PrescriptionWithRelations, "complaints">,
+  rx: Pick<PrescriptionWithRelations, "complaints">
 ): Complaint[] {
   return (rx.complaints ?? []).map(hydrateComplaintFromApi);
 }
@@ -762,7 +878,7 @@ function formatComplaintHopiDetail(complaint: Complaint): string {
         complaint.temperatureUnit ?? "F",
         complaint.feverGrade,
         complaint.measuredBy,
-        complaint.reportedBy,
+        complaint.reportedBy
       );
       if (summary) parts.push(`${field.label}: ${summary}`);
       continue;
@@ -776,7 +892,10 @@ function formatComplaintHopiDetail(complaint: Complaint): string {
   }
 
   if (complaint.associated && complaint.associated.length > 0) {
-    const joined = complaint.associated.map((s) => s.trim()).filter(Boolean).join(", ");
+    const joined = complaint.associated
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .join(", ");
     if (joined) parts.push(`Associated: ${joined}`);
   }
 
@@ -786,7 +905,9 @@ function formatComplaintHopiDetail(complaint: Complaint): string {
 /** Format one complaint card into an OLDCARTS prose line. */
 export function formatComplaintHopiLine(complaint: Complaint): string {
   const detail = formatComplaintHopiDetail(complaint);
-  return detail ? `${complaint.name.trim()} — ${detail}` : complaint.name.trim();
+  return detail
+    ? `${complaint.name.trim()} — ${detail}`
+    : complaint.name.trim();
 }
 
 /** Parent block including indented associated-complaint sub-lines (subj-12). */
@@ -826,16 +947,19 @@ export { EXAM_CORE_SYSTEM_ORDER };
 
 /** Hydrate `examination_json` from a loaded prescription, dropping bad rows. */
 export function normalizeExamFindings(
-  json: ExamSystemFinding[] | null | undefined,
+  json: ExamSystemFinding[] | null | undefined
 ): ExamSystemFinding[] {
   if (!Array.isArray(json)) return [];
   const out: ExamSystemFinding[] = [];
   for (const row of json) {
     if (!row || typeof row !== "object") continue;
-    const systemId = typeof row.systemId === "string" ? row.systemId.trim() : "";
+    const systemId =
+      typeof row.systemId === "string" ? row.systemId.trim() : "";
     if (!systemId) continue;
     if (row.status !== "normal" && row.status !== "abnormal") continue;
-    const findingsRaw = normalizeExamFindingEntries(row.findings as unknown[] | null | undefined);
+    const findingsRaw = normalizeExamFindingEntries(
+      row.findings as unknown[] | null | undefined
+    );
     const findings =
       systemId === "cvs"
         ? normalizeCvsFindingEntries(findingsRaw)
@@ -875,7 +999,7 @@ function hydrateRxFormFields(fields: RxFormFields): RxFormFields {
 
 /** Pull a legacy `pulse.notes` attribute from raw CVS exam findings, if present. */
 function extractLegacyCvsPulseNote(
-  examFindings: ExamSystemFinding[] | null | undefined,
+  examFindings: ExamSystemFinding[] | null | undefined
 ): string | null {
   if (!Array.isArray(examFindings)) return null;
   const cvs = examFindings.find((f) => f?.systemId === "cvs");
@@ -885,7 +1009,10 @@ function extractLegacyCvsPulseNote(
 }
 
 /** Deterministic order: core registry index first, then exam/objective notes, then alpha. */
-function compareExamSystems(a: ExamSystemFinding, b: ExamSystemFinding): number {
+function compareExamSystems(
+  a: ExamSystemFinding,
+  b: ExamSystemFinding
+): number {
   const order = [
     ...EXAM_CORE_SYSTEM_ORDER,
     "additional_notes",
@@ -907,10 +1034,16 @@ function compareExamSystems(a: ExamSystemFinding, b: ExamSystemFinding): number 
 export const TELECONSULT_EXAM_CAVEAT =
   "Assessment via teleconsultation; physical examination limited to inspection and patient-reported data.";
 
-function renderExamSystemLine(finding: ExamSystemFinding, teleconsult: boolean): string {
+function renderExamSystemLine(
+  finding: ExamSystemFinding,
+  teleconsult: boolean
+): string {
   const label = resolveExamSystem(finding.systemId).label;
   // Free-text sibling / L1 notes: emit notes only (no Normal / chip body).
-  if (finding.systemId === "additional_notes" || finding.systemId === "objective_notes") {
+  if (
+    finding.systemId === "additional_notes" ||
+    finding.systemId === "objective_notes"
+  ) {
     const notes = finding.notes?.trim();
     return notes ? `${label}: ${notes}` : "";
   }
@@ -947,12 +1080,13 @@ export interface DeriveExaminationOptions {
  */
 export function deriveExaminationFindingsFromExam(
   examFindings: ExamSystemFinding[],
-  options?: DeriveExaminationOptions,
+  options?: DeriveExaminationOptions
 ): string {
   const normalized = normalizeExamFindings(examFindings);
   if (normalized.length === 0) return "";
   const teleconsult =
-    options?.consultationType !== undefined && isTeleconsult(options.consultationType);
+    options?.consultationType !== undefined &&
+    isTeleconsult(options.consultationType);
   const body = [...normalized]
     .sort(compareExamSystems)
     .map((finding) => renderExamSystemLine(finding, teleconsult))
@@ -965,7 +1099,7 @@ export function deriveExaminationFindingsFromExam(
 /** Upsert a single system's structured finding (reducer helper). */
 function upsertExamSystem(
   examFindings: ExamSystemFinding[],
-  next: ExamSystemFinding,
+  next: ExamSystemFinding
 ): ExamSystemFinding[] {
   const idx = examFindings.findIndex((f) => f.systemId === next.systemId);
   if (idx === -1) return [...examFindings, next];
@@ -978,14 +1112,19 @@ function hydratePastSurgicalHistoryFromPrescription(
   rx: Pick<
     PrescriptionWithRelations,
     "past_surgical_history" | "past_surgical_history_structured"
-  >,
+  >
 ): { structured: PastSurgicalHistoryStructured; displayText: string } {
   const jsonb = rx.past_surgical_history_structured;
-  if (jsonb && typeof jsonb === "object" && hasPastSurgicalHistoryStructuredContent(jsonb)) {
+  if (
+    jsonb &&
+    typeof jsonb === "object" &&
+    hasPastSurgicalHistoryStructuredContent(jsonb)
+  ) {
     const structured = normalizePastSurgicalHistoryStructured(jsonb);
     return {
       structured,
-      displayText: rx.past_surgical_history ?? serializePastSurgicalHistory(structured),
+      displayText:
+        rx.past_surgical_history ?? serializePastSurgicalHistory(structured),
     };
   }
 
@@ -998,10 +1137,17 @@ function hydratePastSurgicalHistoryFromPrescription(
 }
 
 function hydrateFamilyHistoryFromPrescription(
-  rx: Pick<PrescriptionWithRelations, "family_history" | "family_history_structured">,
+  rx: Pick<
+    PrescriptionWithRelations,
+    "family_history" | "family_history_structured"
+  >
 ): { structured: FamilyHistoryStructured; displayText: string } {
   const jsonb = rx.family_history_structured;
-  if (jsonb && typeof jsonb === "object" && hasFamilyHistoryStructuredContent(jsonb)) {
+  if (
+    jsonb &&
+    typeof jsonb === "object" &&
+    hasFamilyHistoryStructuredContent(jsonb)
+  ) {
     const structured = normalizeFamilyHistoryStructured(jsonb);
     return {
       structured,
@@ -1018,10 +1164,17 @@ function hydrateFamilyHistoryFromPrescription(
 }
 
 function hydrateSocialHistoryFromPrescription(
-  rx: Pick<PrescriptionWithRelations, "social_history" | "social_history_structured">,
+  rx: Pick<
+    PrescriptionWithRelations,
+    "social_history" | "social_history_structured"
+  >
 ): { structured: SocialHistoryStructured; displayText: string } {
   const jsonb = rx.social_history_structured;
-  if (jsonb && typeof jsonb === "object" && hasSocialHistoryStructuredContent(jsonb)) {
+  if (
+    jsonb &&
+    typeof jsonb === "object" &&
+    hasSocialHistoryStructuredContent(jsonb)
+  ) {
     const structured = normalizeSocialHistoryStructured(jsonb);
     return {
       structured,
@@ -1040,7 +1193,7 @@ function hydrateSocialHistoryFromPrescription(
 export function rxFormFieldsFromPrescription(
   rx: PrescriptionWithRelations,
   medicines: RxMedicine[] = medicinesFromPrescription(rx),
-  seedOptions?: RxFormSeedOptions,
+  seedOptions?: RxFormSeedOptions
 ): RxFormFields {
   const complaints = complaintsFromPrescription(rx);
   const hasStructuredComplaints = namedComplaints(complaints).length > 0;
@@ -1099,17 +1252,22 @@ export function rxFormFieldsFromPrescription(
         DEFAULT_GLUCOSE_CONTEXT.device,
     },
     vitalsBpContext: {
-      method: hydrateBpContextFromPrescription(rx.vitals_json).method ?? DEFAULT_BP_CONTEXT.method,
+      method:
+        hydrateBpContextFromPrescription(rx.vitals_json).method ??
+        DEFAULT_BP_CONTEXT.method,
     },
     vitalsMeasurementContext: hydrateMeasurementContextFromPrescription(
       rx.vitals_json,
-      seedOptions?.consultationType,
+      seedOptions?.consultationType
     ),
-    vitalsProvenanceOverrides: hydrateVitalProvenanceFromPrescription(rx.vitals_json),
+    vitalsProvenanceOverrides: hydrateVitalProvenanceFromPrescription(
+      rx.vitals_json
+    ),
     vitalsNotes: {
       ...hydrateVitalNotesFromPrescription(rx.vitals_json),
       ...hydrateCustomVitalNotesFromEntries(rx.vitals_json?.vitalsCustom),
     },
+    vitalsSectionNote: hydrateVitalsSectionNoteFromPrescription(rx.vitals_json),
     vitalsHeadCircumferenceCm: rx.vitals_head_circumference_cm ?? null,
     vitalsMuacCm: rx.vitals_muac_cm ?? null,
     vitalsWaistCm: rx.vitals_waist_cm ?? null,
@@ -1125,7 +1283,9 @@ export function rxFormFieldsFromPrescription(
     objectiveCustomSections: [],
     // assessment-plan-custom-sections: dedicated columns (mirror subjective customs).
     // Hydrate from the row; fresh visits seed from doctor defaults in provider setup.
-    assessmentCustomSections: normalizeCustomSubsections(rx.assessment_custom_sections),
+    assessmentCustomSections: normalizeCustomSubsections(
+      rx.assessment_custom_sections
+    ),
     planCustomSections: normalizeCustomSubsections(rx.plan_custom_sections),
     // asmt-03 / asmt-05: prefer structured diagnoses_json; else seed one
     // primary from legacy free-text. Also seed differential cards from any
@@ -1141,11 +1301,11 @@ export function rxFormFieldsFromPrescription(
           : seedPrimaryDiagnosisFromLegacy(rx.provisional_diagnosis);
       const seededDdx = seedDifferentialsFromLegacy(
         rx.differential_diagnosis,
-        diagnoses,
+        diagnoses
       );
       if (seededDdx.length > 0) {
         diagnoses = sortDiagnosesPrimaryFirst(
-          enforceSinglePrimary([...diagnoses, ...seededDdx]),
+          enforceSinglePrimary([...diagnoses, ...seededDdx])
         );
       }
       diagnoses = seedAcuityFromLegacyVisit(diagnoses, rx.assessment_acuity);
@@ -1153,10 +1313,11 @@ export function rxFormFieldsFromPrescription(
         diagnoses.length > 0
           ? derivePrimaryDiagnosis(diagnoses)
           : (rx.provisional_diagnosis ?? "");
-      const differentialDiagnosis =
-        diagnoses.some((d) => d.kind === "differential")
-          ? deriveDifferentialDiagnosis(diagnoses)
-          : (rx.differential_diagnosis ?? []);
+      const differentialDiagnosis = diagnoses.some(
+        (d) => d.kind === "differential"
+      )
+        ? deriveDifferentialDiagnosis(diagnoses)
+        : (rx.differential_diagnosis ?? []);
       return { diagnoses, provisionalDiagnosis, differentialDiagnosis };
     })(),
     // Visit-level note/acuity are dormant — keep hydrate for display of old
@@ -1170,7 +1331,7 @@ export function rxFormFieldsFromPrescription(
     followUp: hydrateFollowUpNotes(
       rx.follow_up,
       rx.follow_up_value,
-      rx.follow_up_unit,
+      rx.follow_up_unit
     ),
     followUpValue: rx.follow_up_value ?? null,
     followUpUnit: rx.follow_up_unit ?? null,
@@ -1187,7 +1348,7 @@ export function rxFormFieldsFromPrescription(
 }
 
 function serializeComplaintLeaf(
-  c: Complaint,
+  c: Complaint
 ): NonNullable<UpdatePrescriptionPayload["complaints"]>[number] {
   return {
     id: c.id,
@@ -1220,12 +1381,14 @@ function serializeComplaintLeaf(
 }
 
 function serializeComplaintForPayload(
-  c: Complaint,
+  c: Complaint
 ): NonNullable<UpdatePrescriptionPayload["complaints"]>[number] {
   const stored = sanitizeComplaintForStorage(c, 0);
   const children = (stored.associatedComplaints ?? [])
     .filter((child) => child.name.trim())
-    .map((child) => serializeComplaintLeaf(sanitizeComplaintForStorage(child, 1)));
+    .map((child) =>
+      serializeComplaintLeaf(sanitizeComplaintForStorage(child, 1))
+    );
   return {
     ...serializeComplaintLeaf(stored),
     associatedComplaints: children.length > 0 ? children : undefined,
@@ -1234,14 +1397,17 @@ function serializeComplaintForPayload(
 
 export function buildRxPayload(
   fields: RxFormFields,
-  options?: DeriveExaminationOptions,
+  options?: DeriveExaminationOptions
 ): UpdatePrescriptionPayload {
   const structured = namedComplaints(fields.complaints);
-  const derivedCc = structured.length > 0 ? deriveCcFromComplaints(fields.complaints) : null;
+  const derivedCc =
+    structured.length > 0 ? deriveCcFromComplaints(fields.complaints) : null;
   const derivedHopi =
     structured.length > 0 ? deriveHopiFromComplaints(fields.complaints) : null;
   const hopiFallback = fields.hopi.trim();
-  let socialStructured = normalizeSocialHistoryStructured(fields.socialHistoryStructured);
+  let socialStructured = normalizeSocialHistoryStructured(
+    fields.socialHistoryStructured
+  );
   let hasSocialStructured = hasSocialHistoryStructuredContent(socialStructured);
   if (!hasSocialStructured && fields.socialHistory.trim()) {
     const hydrated = parseSocialHistoryAsStructured(fields.socialHistory);
@@ -1254,7 +1420,9 @@ export function buildRxPayload(
     ? serializeSocialHistory(socialStructured)
     : fields.socialHistory.trim() || null;
 
-  let familyStructured = normalizeFamilyHistoryStructured(fields.familyHistoryStructured);
+  let familyStructured = normalizeFamilyHistoryStructured(
+    fields.familyHistoryStructured
+  );
   let hasFamilyStructured = hasFamilyHistoryStructuredContent(familyStructured);
   if (!hasFamilyStructured && fields.familyHistory.trim()) {
     const hydrated = parseFamilyHistoryAsStructured(fields.familyHistory);
@@ -1268,11 +1436,15 @@ export function buildRxPayload(
     : fields.familyHistory.trim() || null;
 
   let pastSurgicalStructured = normalizePastSurgicalHistoryStructured(
-    fields.pastSurgicalHistoryStructured,
+    fields.pastSurgicalHistoryStructured
   );
-  let hasPastSurgicalStructured = hasPastSurgicalHistoryStructuredContent(pastSurgicalStructured);
+  let hasPastSurgicalStructured = hasPastSurgicalHistoryStructuredContent(
+    pastSurgicalStructured
+  );
   if (!hasPastSurgicalStructured && fields.pastSurgicalHistory.trim()) {
-    const hydrated = parsePastSurgicalHistoryAsStructured(fields.pastSurgicalHistory);
+    const hydrated = parsePastSurgicalHistoryAsStructured(
+      fields.pastSurgicalHistory
+    );
     if (hasPastSurgicalHistoryStructuredContent(hydrated)) {
       pastSurgicalStructured = hydrated;
       hasPastSurgicalStructured = true;
@@ -1282,7 +1454,9 @@ export function buildRxPayload(
     ? serializePastSurgicalHistory(pastSurgicalStructured)
     : fields.pastSurgicalHistory.trim() || null;
 
-  const storedCustomSubsections = serializeCustomSubsectionsForPayload(fields.customSubsections);
+  const storedCustomSubsections = serializeCustomSubsectionsForPayload(
+    fields.customSubsections
+  );
   const derivedCustomSubsectionsText =
     storedCustomSubsections.length > 0
       ? serializeCustomSubsections(storedCustomSubsections)
@@ -1290,10 +1464,10 @@ export function buildRxPayload(
 
   // assessment-plan-custom-sections: dedicated columns (mirror subjective).
   const storedAssessmentCustomSections = serializeCustomSubsectionsForPayload(
-    fields.assessmentCustomSections,
+    fields.assessmentCustomSections
   );
   const storedPlanCustomSections = serializeCustomSubsectionsForPayload(
-    fields.planCustomSections,
+    fields.planCustomSections
   );
 
   // objective-tab / OBJ-D2 — derive examination_findings from the structured
@@ -1306,7 +1480,9 @@ export function buildRxPayload(
     storedExamFindings.length > 0
       ? deriveExaminationFindingsFromExam(storedExamFindings, options)
       : fields.examinationFindings.trim();
-  const objectiveCustomText = serializeCustomSubsections(fields.objectiveCustomSections);
+  const objectiveCustomText = serializeCustomSubsections(
+    fields.objectiveCustomSections
+  );
   const derivedExaminationFindings =
     [baseExaminationFindings, objectiveCustomText]
       .filter((block) => Boolean(block && block.trim()))
@@ -1347,11 +1523,12 @@ export function buildRxPayload(
     assembleVitalsCustomEntries(
       fields.vitalsCustomDefs,
       fields.vitalsCustomValues,
-      fields.vitalsNotes,
+      fields.vitalsNotes
     ),
     fields.vitalsGlucoseReadings,
     fields.vitalsGlucoseContext,
     fields.vitalsNotes,
+    fields.vitalsSectionNote
   );
 
   let hopi: string | null;
@@ -1374,7 +1551,9 @@ export function buildRxPayload(
     socialHistory: derivedSocialHistory,
     socialHistoryStructured: hasSocialStructured ? socialStructured : null,
     pastSurgicalHistory: derivedPastSurgicalHistory,
-    pastSurgicalHistoryStructured: hasPastSurgicalStructured ? pastSurgicalStructured : null,
+    pastSurgicalHistoryStructured: hasPastSurgicalStructured
+      ? pastSurgicalStructured
+      : null,
     customSubsections: storedCustomSubsections,
     customSubsectionsText: derivedCustomSubsectionsText,
     assessmentCustomSections: storedAssessmentCustomSections,
@@ -1394,7 +1573,9 @@ export function buildRxPayload(
     // plan-investigations-library / migration 167 — structured orders derived
     // from the chip labels (INV-D8); the flat `investigations` string above
     // stays authoritative for output so readers are byte-identical.
-    investigationsOrdersJson: deriveInvestigationOrdersJson(fields.investigationsOrders),
+    investigationsOrdersJson: deriveInvestigationOrdersJson(
+      fields.investigationsOrders
+    ),
     // Notes only in `follow_up` TEXT; PDF/SMS merge with structured at read time.
     followUp: fields.followUp.trim() || null,
     // Single Advice bucket — legacy patient_education cleared on write.
@@ -1443,19 +1624,24 @@ export function buildRxPayload(
     referral: resolveReferralForOutput(referralPartsFromFields(fields)),
     testResults: derivedTestResults,
     testResultsJson: storedTestResults,
-    ...(hasVitalsJsonContent(storedVitalsJson) ? { vitalsJson: storedVitalsJson } : {}),
+    labReportsJson: normalizeLabReports(fields.labReports),
+    ...(hasVitalsJsonContent(storedVitalsJson)
+      ? { vitalsJson: storedVitalsJson }
+      : {}),
     medicines: fields.medicines
       .filter((m) => m.medicineName.trim())
       .map((m, i) => ({
         medicineName: m.medicineName.trim(),
         dosage: m.dosage.trim() || null,
         route: m.route.trim() || null,
-        frequency: m.frequency.trim() || null,
+        frequency:
+          parseDoseSchedulePattern(m.doseSchedule) ??
+          (m.frequency.trim() || null),
         duration: m.duration.trim() || null,
         instructions: m.instructions.trim() || null,
         sortOrder: i,
         drugMasterId: m.drugMasterId,
-        frequencyCode: m.frequencyCode,
+        frequencyCode: toRxFrequencyCode(m.frequencyCode),
         durationValue: m.durationValue,
         durationUnit: m.durationUnit,
         routeCode: m.routeCode,
@@ -1474,7 +1660,10 @@ export function buildRxPayload(
 // Reducer
 // ---------------------------------------------------------------------------
 
-export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): RxFormReducerState {
+export function rxFormReducer(
+  state: RxFormReducerState,
+  action: RxFormAction
+): RxFormReducerState {
   switch (action.type) {
     case "SET_FIELD": {
       const nextFields = { ...state.fields, [action.key]: action.value };
@@ -1483,7 +1672,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       }
       if (action.key === "socialHistory") {
         nextFields.socialHistoryStructured = parseSocialHistoryAsStructured(
-          String(action.value ?? ""),
+          String(action.value ?? "")
         );
       }
       // asmt-03 / asmt-05: strip glance edits `provisionalDiagnosis` — keep the
@@ -1497,7 +1686,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
             nextFields.diagnoses.find((d) => d.kind === "secondary")?.id;
           if (primaryId) {
             nextFields.diagnoses = nextFields.diagnoses.map((row) =>
-              row.id === primaryId ? { ...row, label } : row,
+              row.id === primaryId ? { ...row, label } : row
             );
           } else if (label.trim()) {
             // Only differentials present — seed a primary alongside them.
@@ -1505,7 +1694,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
               enforceSinglePrimary([
                 ...seedPrimaryDiagnosisFromLegacy(label),
                 ...nextFields.diagnoses,
-              ]),
+              ])
             );
           }
         } else if (label.trim()) {
@@ -1571,7 +1760,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
           complaints: addComplaintToTree(
             state.fields.complaints,
             action.complaint,
-            action.parentId,
+            action.parentId
           ),
         },
         isDirty: true,
@@ -1585,7 +1774,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
           complaints: removeComplaintFromTree(
             state.fields.complaints,
             action.index,
-            action.parentId,
+            action.parentId
           ),
         },
         isDirty: true,
@@ -1600,7 +1789,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
             state.fields.complaints,
             action.index,
             action.patch,
-            action.parentId,
+            action.parentId
           ),
         },
         isDirty: true,
@@ -1615,7 +1804,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
             state.fields.complaints,
             action.fromIndex,
             action.toIndex,
-            action.parentId,
+            action.parentId
           ),
         },
         isDirty: true,
@@ -1629,7 +1818,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
           complaints: promoteAssociatedComplaint(
             state.fields.complaints,
             action.parentId,
-            action.childIndex,
+            action.childIndex
           ),
         },
         isDirty: true,
@@ -1643,7 +1832,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
           complaints: demoteComplaintUnderParent(
             state.fields.complaints,
             action.sourceIndex,
-            action.targetParentId,
+            action.targetParentId
           ),
         },
         isDirty: true,
@@ -1690,9 +1879,12 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       };
     }
     case "SET_PAST_SURGICAL_HISTORY_STRUCTURED": {
-      const structured = normalizePastSurgicalHistoryStructured(action.structured, {
-        keepEmptyProcedureRows: true,
-      });
+      const structured = normalizePastSurgicalHistoryStructured(
+        action.structured,
+        {
+          keepEmptyProcedureRows: true,
+        }
+      );
       return {
         ...state,
         fields: {
@@ -1707,7 +1899,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
     case "ADD_CUSTOM_SUBSECTION": {
       const customSubsections = addCustomSubsection(
         state.fields.customSubsections,
-        action.section,
+        action.section
       );
       return {
         ...state,
@@ -1724,7 +1916,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       const customSubsections = updateCustomSubsection(
         state.fields.customSubsections,
         action.index,
-        action.patch,
+        action.patch
       );
       return {
         ...state,
@@ -1740,7 +1932,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
     case "REMOVE_CUSTOM_SUBSECTION": {
       const customSubsections = removeCustomSubsection(
         state.fields.customSubsections,
-        action.index,
+        action.index
       );
       return {
         ...state,
@@ -1757,7 +1949,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       const customSubsections = reorderCustomSubsections(
         state.fields.customSubsections,
         action.fromIndex,
-        action.toIndex,
+        action.toIndex
       );
       return {
         ...state,
@@ -1774,7 +1966,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       const customSubsections = addCustomSubsectionChild(
         state.fields.customSubsections,
         action.sectionId,
-        action.child,
+        action.child
       );
       return {
         ...state,
@@ -1792,7 +1984,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
         state.fields.customSubsections,
         action.sectionId,
         action.childIndex,
-        action.patch,
+        action.patch
       );
       return {
         ...state,
@@ -1809,7 +2001,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       const customSubsections = removeCustomSubsectionChild(
         state.fields.customSubsections,
         action.sectionId,
-        action.childIndex,
+        action.childIndex
       );
       return {
         ...state,
@@ -1827,7 +2019,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
         state.fields.customSubsections,
         action.sectionId,
         action.fromIndex,
-        action.toIndex,
+        action.toIndex
       );
       return {
         ...state,
@@ -1856,7 +2048,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
     case "ADD_OBJECTIVE_CUSTOM_SECTION": {
       const objectiveCustomSections = addCustomSubsection(
         state.fields.objectiveCustomSections,
-        action.section,
+        action.section
       );
       return {
         ...state,
@@ -1869,7 +2061,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       const objectiveCustomSections = updateCustomSubsection(
         state.fields.objectiveCustomSections,
         action.index,
-        action.patch,
+        action.patch
       );
       return {
         ...state,
@@ -1881,7 +2073,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
     case "REMOVE_OBJECTIVE_CUSTOM_SECTION": {
       const objectiveCustomSections = removeCustomSubsection(
         state.fields.objectiveCustomSections,
-        action.index,
+        action.index
       );
       return {
         ...state,
@@ -1894,7 +2086,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       const objectiveCustomSections = reorderCustomSubsections(
         state.fields.objectiveCustomSections,
         action.fromIndex,
-        action.toIndex,
+        action.toIndex
       );
       return {
         ...state,
@@ -1904,7 +2096,9 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       };
     }
     case "SET_OBJECTIVE_CUSTOM_SECTIONS": {
-      const objectiveCustomSections = normalizeCustomSubsections(action.sections);
+      const objectiveCustomSections = normalizeCustomSubsections(
+        action.sections
+      );
       return {
         ...state,
         fields: { ...state.fields, objectiveCustomSections },
@@ -1916,7 +2110,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
     case "ADD_ASSESSMENT_CUSTOM_SECTION": {
       const assessmentCustomSections = addCustomSubsection(
         state.fields.assessmentCustomSections,
-        action.section,
+        action.section
       );
       return {
         ...state,
@@ -1929,7 +2123,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       const assessmentCustomSections = updateCustomSubsection(
         state.fields.assessmentCustomSections,
         action.index,
-        action.patch,
+        action.patch
       );
       return {
         ...state,
@@ -1941,7 +2135,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
     case "REMOVE_ASSESSMENT_CUSTOM_SECTION": {
       const assessmentCustomSections = removeCustomSubsection(
         state.fields.assessmentCustomSections,
-        action.index,
+        action.index
       );
       return {
         ...state,
@@ -1954,7 +2148,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       const assessmentCustomSections = reorderCustomSubsections(
         state.fields.assessmentCustomSections,
         action.fromIndex,
-        action.toIndex,
+        action.toIndex
       );
       return {
         ...state,
@@ -1967,7 +2161,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       const assessmentCustomSections = addCustomSubsectionChild(
         state.fields.assessmentCustomSections,
         action.sectionId,
-        action.child,
+        action.child
       );
       return {
         ...state,
@@ -1981,7 +2175,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
         state.fields.assessmentCustomSections,
         action.sectionId,
         action.childIndex,
-        action.patch,
+        action.patch
       );
       return {
         ...state,
@@ -1994,7 +2188,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       const assessmentCustomSections = removeCustomSubsectionChild(
         state.fields.assessmentCustomSections,
         action.sectionId,
-        action.childIndex,
+        action.childIndex
       );
       return {
         ...state,
@@ -2008,7 +2202,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
         state.fields.assessmentCustomSections,
         action.sectionId,
         action.fromIndex,
-        action.toIndex,
+        action.toIndex
       );
       return {
         ...state,
@@ -2018,7 +2212,9 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       };
     }
     case "SET_ASSESSMENT_CUSTOM_SECTIONS": {
-      const assessmentCustomSections = normalizeCustomSubsections(action.sections);
+      const assessmentCustomSections = normalizeCustomSubsections(
+        action.sections
+      );
       return {
         ...state,
         fields: { ...state.fields, assessmentCustomSections },
@@ -2030,7 +2226,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
     case "ADD_PLAN_CUSTOM_SECTION": {
       const planCustomSections = addCustomSubsection(
         state.fields.planCustomSections,
-        action.section,
+        action.section
       );
       return {
         ...state,
@@ -2043,7 +2239,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       const planCustomSections = updateCustomSubsection(
         state.fields.planCustomSections,
         action.index,
-        action.patch,
+        action.patch
       );
       return {
         ...state,
@@ -2055,7 +2251,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
     case "REMOVE_PLAN_CUSTOM_SECTION": {
       const planCustomSections = removeCustomSubsection(
         state.fields.planCustomSections,
-        action.index,
+        action.index
       );
       return {
         ...state,
@@ -2068,7 +2264,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       const planCustomSections = reorderCustomSubsections(
         state.fields.planCustomSections,
         action.fromIndex,
-        action.toIndex,
+        action.toIndex
       );
       return {
         ...state,
@@ -2081,7 +2277,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       const planCustomSections = addCustomSubsectionChild(
         state.fields.planCustomSections,
         action.sectionId,
-        action.child,
+        action.child
       );
       return {
         ...state,
@@ -2095,7 +2291,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
         state.fields.planCustomSections,
         action.sectionId,
         action.childIndex,
-        action.patch,
+        action.patch
       );
       return {
         ...state,
@@ -2108,7 +2304,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       const planCustomSections = removeCustomSubsectionChild(
         state.fields.planCustomSections,
         action.sectionId,
-        action.childIndex,
+        action.childIndex
       );
       return {
         ...state,
@@ -2122,7 +2318,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
         state.fields.planCustomSections,
         action.sectionId,
         action.fromIndex,
-        action.toIndex,
+        action.toIndex
       );
       return {
         ...state,
@@ -2161,7 +2357,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
         fields: {
           ...state.fields,
           examFindings: state.fields.examFindings.filter(
-            (f) => f.systemId !== action.systemId,
+            (f) => f.systemId !== action.systemId
           ),
         },
         isDirty: true,
@@ -2209,7 +2405,10 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
         ...state,
         fields: {
           ...state.fields,
-          testResultsStructured: [action.row, ...state.fields.testResultsStructured],
+          testResultsStructured: [
+            action.row,
+            ...state.fields.testResultsStructured,
+          ],
         },
         isDirty: true,
         submitError: null,
@@ -2219,8 +2418,11 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
         ...state,
         fields: {
           ...state.fields,
-          testResultsStructured: state.fields.testResultsStructured.map((row) =>
-            row.id === action.id ? { ...row, ...action.patch, id: row.id } : row,
+          testResultsStructured: state.fields.testResultsStructured.map(
+            (row) =>
+              row.id === action.id
+                ? { ...row, ...action.patch, id: row.id }
+                : row
           ),
         },
         isDirty: true,
@@ -2232,7 +2434,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
         fields: {
           ...state.fields,
           testResultsStructured: state.fields.testResultsStructured.filter(
-            (row) => row.id !== action.id,
+            (row) => row.id !== action.id
           ),
         },
         isDirty: true,
@@ -2264,7 +2466,9 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
         fields: {
           ...state.fields,
           labReports: state.fields.labReports.map((report) =>
-            report.id === action.id ? { ...report, ...action.patch, id: report.id } : report,
+            report.id === action.id
+              ? { ...report, ...action.patch, id: report.id }
+              : report
           ),
         },
         isDirty: true,
@@ -2275,10 +2479,13 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
         ...state,
         fields: {
           ...state.fields,
-          labReports: state.fields.labReports.filter((report) => report.id !== action.id),
+          labReports: state.fields.labReports.filter(
+            (report) => report.id !== action.id
+          ),
           // Collapse linked rows to ungrouped (unknown reportId → Other results).
-          testResultsStructured: state.fields.testResultsStructured.map((row) =>
-            row.reportId === action.id ? { ...row, reportId: null } : row,
+          testResultsStructured: state.fields.testResultsStructured.map(
+            (row) =>
+              row.reportId === action.id ? { ...row, reportId: null } : row
           ),
         },
         isDirty: true,
@@ -2300,7 +2507,7 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       };
     case "SET_DIAGNOSES": {
       const diagnoses = sortDiagnosesPrimaryFirst(
-        enforceSinglePrimary(normalizeDiagnoses(action.diagnoses)),
+        enforceSinglePrimary(normalizeDiagnoses(action.diagnoses))
       );
       return {
         ...state,
@@ -2332,12 +2539,11 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
     }
     case "UPDATE_DIAGNOSIS": {
       const patched = state.fields.diagnoses.map((row) =>
-        row.id === action.id ? { ...row, ...action.patch, id: row.id } : row,
+        row.id === action.id ? { ...row, ...action.patch, id: row.id } : row
       );
-      const promoteId =
-        action.patch.kind === "primary" ? action.id : undefined;
+      const promoteId = action.patch.kind === "primary" ? action.id : undefined;
       const diagnoses = sortDiagnosesPrimaryFirst(
-        enforceSinglePrimary(patched, promoteId),
+        enforceSinglePrimary(patched, promoteId)
       );
       return {
         ...state,
@@ -2352,8 +2558,12 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
       };
     }
     case "REMOVE_DIAGNOSIS": {
-      const remaining = state.fields.diagnoses.filter((row) => row.id !== action.id);
-      const diagnoses = sortDiagnosesPrimaryFirst(enforceSinglePrimary(remaining));
+      const remaining = state.fields.diagnoses.filter(
+        (row) => row.id !== action.id
+      );
+      const diagnoses = sortDiagnosesPrimaryFirst(
+        enforceSinglePrimary(remaining)
+      );
       return {
         ...state,
         fields: {
@@ -2392,6 +2602,14 @@ export function rxFormReducer(state: RxFormReducerState, action: RxFormAction): 
         lastSavedAt: null,
         submitError: null,
       };
+    case "SEED_FIELDS": {
+      const keys = Object.keys(action.patch) as (keyof RxFormFields)[];
+      if (keys.length === 0) return state;
+      return {
+        ...state,
+        fields: { ...state.fields, ...action.patch },
+      };
+    }
     default:
       return state;
   }
@@ -2407,10 +2625,17 @@ export interface RxFormContextValue {
   token: string;
   state: RxFormState;
   dispatch: React.Dispatch<RxFormAction>;
-  setField: <K extends keyof RxFormFields>(key: K, value: RxFormFields[K]) => void;
+  setField: <K extends keyof RxFormFields>(
+    key: K,
+    value: RxFormFields[K]
+  ) => void;
+  /** Seed values without dirtying or scheduling a save (rxl-03). */
+  seedFields: (patch: Partial<RxFormFields>) => void;
   setFamilyHistoryStructured: (structured: FamilyHistoryStructured) => void;
   setSocialHistoryStructured: (structured: SocialHistoryStructured) => void;
-  setPastSurgicalHistoryStructured: (structured: PastSurgicalHistoryStructured) => void;
+  setPastSurgicalHistoryStructured: (
+    structured: PastSurgicalHistoryStructured
+  ) => void;
   /** Latest request to open + scroll a structured exam system card (e.g. from Vitals). */
   focusExamSystemRequest: { systemId: string; token: number } | null;
   requestFocusExamSystem: (systemId: string) => void;
@@ -2459,7 +2684,7 @@ export function RxFormProvider({
 
   const state: RxFormState = useMemo(
     () => ({ ...reducerState, consultationType }),
-    [reducerState, consultationType],
+    [reducerState, consultationType]
   );
 
   const initialFieldsRef = useRef(initialFields);
@@ -2469,25 +2694,42 @@ export function RxFormProvider({
     dispatch({ type: "RESET", initialFields });
   }, [initialFields]);
 
-  const setField = useCallback(<K extends keyof RxFormFields>(key: K, value: RxFormFields[K]) => {
-    dispatch({ type: "SET_FIELD", key, value });
+  const setField = useCallback(
+    <K extends keyof RxFormFields>(key: K, value: RxFormFields[K]) => {
+      dispatch({ type: "SET_FIELD", key, value });
+    },
+    []
+  );
+
+  const seedFields = useCallback((patch: Partial<RxFormFields>) => {
+    dispatch({ type: "SEED_FIELDS", patch });
   }, []);
 
-  const setFamilyHistoryStructured = useCallback((structured: FamilyHistoryStructured) => {
-    dispatch({ type: "SET_FAMILY_HISTORY_STRUCTURED", structured });
-  }, []);
+  const setFamilyHistoryStructured = useCallback(
+    (structured: FamilyHistoryStructured) => {
+      dispatch({ type: "SET_FAMILY_HISTORY_STRUCTURED", structured });
+    },
+    []
+  );
 
-  const setSocialHistoryStructured = useCallback((structured: SocialHistoryStructured) => {
-    dispatch({ type: "SET_SOCIAL_HISTORY_STRUCTURED", structured });
-  }, []);
+  const setSocialHistoryStructured = useCallback(
+    (structured: SocialHistoryStructured) => {
+      dispatch({ type: "SET_SOCIAL_HISTORY_STRUCTURED", structured });
+    },
+    []
+  );
 
-  const setPastSurgicalHistoryStructured = useCallback((structured: PastSurgicalHistoryStructured) => {
-    dispatch({ type: "SET_PAST_SURGICAL_HISTORY_STRUCTURED", structured });
-  }, []);
+  const setPastSurgicalHistoryStructured = useCallback(
+    (structured: PastSurgicalHistoryStructured) => {
+      dispatch({ type: "SET_PAST_SURGICAL_HISTORY_STRUCTURED", structured });
+    },
+    []
+  );
 
-  const [focusExamSystemRequest, setFocusExamSystemRequest] = useState<
-    { systemId: string; token: number } | null
-  >(null);
+  const [focusExamSystemRequest, setFocusExamSystemRequest] = useState<{
+    systemId: string;
+    token: number;
+  } | null>(null);
   const requestFocusExamSystem = useCallback((systemId: string) => {
     setFocusExamSystemRequest({ systemId, token: Date.now() });
   }, []);
@@ -2501,8 +2743,11 @@ export function RxFormProvider({
   consultationTypeRef.current = consultationType;
 
   const buildPayload = useCallback(
-    () => buildRxPayload(fieldsRef.current, { consultationType: consultationTypeRef.current }),
-    [],
+    () =>
+      buildRxPayload(fieldsRef.current, {
+        consultationType: consultationTypeRef.current,
+      }),
+    []
   );
 
   const formSnapshot = useMemo(
@@ -2511,7 +2756,7 @@ export function RxFormProvider({
         fields: state.fields,
         entryMode,
       }),
-    [state.fields, entryMode],
+    [state.fields, entryMode]
   );
 
   const persistSnapshot = useCallback(async () => {
@@ -2552,11 +2797,12 @@ export function RxFormProvider({
     value: formSnapshot,
     save: persistSnapshot,
     debounceMs: 1500,
-    enabled: autosaveEnabled,
+    // rxl-03: persist only user edits. Seeds change fields without isDirty.
+    enabled: autosaveEnabled && reducerState.isDirty,
   });
 
   const filledMedicineCount = state.fields.medicines.filter((m) =>
-    m.medicineName.trim(),
+    m.medicineName.trim()
   ).length;
   const submitDisabled =
     state.isSubmitting ||
@@ -2572,6 +2818,7 @@ export function RxFormProvider({
       state,
       dispatch,
       setField,
+      seedFields,
       setFamilyHistoryStructured,
       setSocialHistoryStructured,
       setPastSurgicalHistoryStructured,
@@ -2582,10 +2829,27 @@ export function RxFormProvider({
       buildPayload,
       autoSave,
     }),
-    [appointmentId, patientId, token, autoSave, buildPayload, setField, setFamilyHistoryStructured, setSocialHistoryStructured, setPastSurgicalHistoryStructured, focusExamSystemRequest, requestFocusExamSystem, state, submitDisabled],
+    [
+      appointmentId,
+      patientId,
+      token,
+      autoSave,
+      buildPayload,
+      setField,
+      seedFields,
+      setFamilyHistoryStructured,
+      setSocialHistoryStructured,
+      setPastSurgicalHistoryStructured,
+      focusExamSystemRequest,
+      requestFocusExamSystem,
+      state,
+      submitDisabled,
+    ]
   );
 
-  return <RxFormContext.Provider value={value}>{children}</RxFormContext.Provider>;
+  return (
+    <RxFormContext.Provider value={value}>{children}</RxFormContext.Provider>
+  );
 }
 
 /** Returns form context when a parent `<RxFormProvider>` exists; otherwise `null`. */

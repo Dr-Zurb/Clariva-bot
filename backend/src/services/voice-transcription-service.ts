@@ -22,17 +22,14 @@
  *
  * Routing table (pinned in `voice-transcription-service.test.ts`):
  *
- *   'hi' | 'hi-IN'                                       → deepgram_nova_2
- *   'en' | 'en-IN' | 'en-US' | 'en-GB' | any 'en-*'      → openai_whisper
- *   anything else (incl. 'fr', 'es', 'zh', 'unknown')    → openai_whisper
+ *   'hi' | 'hi-IN'                                       → deepgram_nova_3
+ *   'en' | 'en-IN' | 'en-US' | 'en-GB' | any 'en-*'      → groq_whisper
+ *   anything else (incl. 'fr', 'es', 'zh', 'unknown')    → groq_whisper
  *                                                          (broader coverage)
+ *   Enqueue falls back to openai_whisper when GROQ_API_KEY is unset.
  *
- * Consent gate: `enqueueVoiceTranscription` reads
- * `appointments.recording_consent_decision` (via Plan 02 Task 27's
- * `getConsentForSession`). Decision 4 locks `recording-on-by-default`;
- * the gate only fires when the patient explicitly declined
- * (`decision === false`). `null` (patient never answered) falls back to
- * the default-on posture.
+ * rec-10: audio is a disclosed mandate. Enqueue is not gated on a
+ * patient consent decision.
  *
  * Composition SID fallback: on enqueue, Twilio's Composition-finalized
  * webhook may not have fired yet. We insert with `composition_sid = the
@@ -61,10 +58,14 @@ import { getSupabaseAdminClient } from '../config/database';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { findSessionByProviderSessionId } from './consultation-session-service';
-import { getConsentForSession } from './recording-consent-service';
 import { transcribeWithWhisper } from './voice-transcription-openai';
 import { transcribeWithDeepgram } from './voice-transcription-deepgram';
+import {
+  isGroqTranscriptionConfigured,
+  transcribeWithGroq,
+} from './voice-transcription-groq';
 import type {
+  TranscriptionAudioBytes,
   TranscriptProvider,
   TranscriptResult,
 } from '../types/consultation-transcript';
@@ -80,10 +81,23 @@ import type {
 export function selectProvider(languageCode: string): TranscriptProvider {
   const lower = (languageCode ?? '').trim().toLowerCase();
   if (lower === 'hi' || lower.startsWith('hi-')) {
-    return 'deepgram_nova_2';
+    return 'deepgram_nova_3';
   }
-  // Everything else → Whisper (explicit English codes and unknown/other).
-  return 'openai_whisper';
+  // Everything else → Groq Whisper (English + unknown/other).
+  return 'groq_whisper';
+}
+
+/**
+ * Provider written on enqueue. Same map as `selectProvider`, except
+ * English/other falls back to OpenAI Whisper when Groq is not configured
+ * so existing deploys keep transcribing.
+ */
+export function resolveEnqueueProvider(languageCode: string): TranscriptProvider {
+  const chosen = selectProvider(languageCode);
+  if (chosen === 'groq_whisper' && !isGroqTranscriptionConfigured()) {
+    return 'openai_whisper';
+  }
+  return chosen;
 }
 
 // ============================================================================
@@ -175,35 +189,11 @@ export async function enqueueVoiceTranscription(input: {
     return;
   }
 
-  // 2. Consent gate. Decision 4 LOCKED — only skip when explicit `false`.
-  try {
-    const consent = await getConsentForSession({ sessionId: session.id });
-    if (consent.decision === false) {
-      logger.info(
-        { consultationSessionId: session.id },
-        'voice-transcription: recording consent declined — skipping enqueue',
-      );
-      return;
-    }
-  } catch (err) {
-    // Missing-consent-column (pre-Plan-02 envs) surfaces here; default-on
-    // per Decision 4 — log and continue. NotFoundError on the session
-    // itself is vanishingly unlikely given we just resolved it, but we
-    // still don't throw.
-    logger.warn(
-      {
-        consultationSessionId: session.id,
-        error: err instanceof Error ? err.message : String(err),
-      },
-      'voice-transcription: consent lookup failed — defaulting to on (Decision 4)',
-    );
-  }
-
-  // 3. Resolve language + provider.
+  // 2. Resolve language + provider.
   const languageCode = resolveLanguageCodeForSession(session.doctorId);
-  const provider = selectProvider(languageCode);
+  const provider = resolveEnqueueProvider(languageCode);
 
-  // 4. Insert the queued row. composition_sid starts as the room SID; the
+  // 3. Insert the queued row. composition_sid starts as the room SID; the
   //    worker resolves the real Composition SID on first poll.
   const { error } = await admin
     .from('consultation_transcripts')
@@ -263,8 +253,16 @@ export interface ProcessVoiceTranscriptionInput {
    * S3 URL returned by `compositions(sid).fetch().media_url` (or
    * equivalent). The worker resolves this BEFORE calling — this function
    * is HTTP-only and doesn't touch Twilio or the DB.
+   *
+   * Supply exactly one of `audioUrl` or `audioBytes`.
    */
-  audioUrl: string;
+  audioUrl?: string;
+  /**
+   * Audio the worker already has in memory. Cost-cut step 7's raw-track
+   * route mixes Twilio's Matroska tracks locally, so there is no URL to
+   * hand a vendor.
+   */
+  audioBytes?: TranscriptionAudioBytes;
   languageCode: string;
   /** Optional override; defaults to `selectProvider(languageCode)`. */
   provider?: TranscriptProvider;
@@ -293,16 +291,30 @@ export async function processVoiceTranscription(
     'voice-transcription: process starting',
   );
 
-  if (provider === 'deepgram_nova_2') {
+  const audio = {
+    ...(input.audioBytes ? { audioBytes: input.audioBytes } : {}),
+    ...(input.audioUrl ? { audioUrl: input.audioUrl } : {}),
+  };
+
+  if (provider === 'deepgram_nova_3' || provider === 'deepgram_nova_2') {
     return transcribeWithDeepgram({
-      audioUrl: input.audioUrl,
+      ...audio,
+      languageCode: input.languageCode,
+      correlationId: input.correlationId,
+      model: provider === 'deepgram_nova_2' ? 'nova-2' : 'nova-3',
+    });
+  }
+
+  if (provider === 'groq_whisper') {
+    return transcribeWithGroq({
+      ...audio,
       languageCode: input.languageCode,
       correlationId: input.correlationId,
     });
   }
 
   return transcribeWithWhisper({
-    audioUrl: input.audioUrl,
+    ...audio,
     languageCode: input.languageCode,
     correlationId: input.correlationId,
   });

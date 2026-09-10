@@ -70,7 +70,7 @@ describe('consultation-fees (RBH-13)', () => {
       practice_name: 'Test Clinic',
       consultation_types: 'In-person ₹500, Video ₹400',
       business_hours_summary: 'Mon–Fri 9–5',
-    });
+    }, 'en');
     expect(out).toContain('Test Clinic');
     expect(out).toContain('**In-person**');
     expect(out).toContain('₹500');
@@ -82,7 +82,7 @@ describe('consultation-fees (RBH-13)', () => {
     const out = formatConsultationFeesForDm({
       practice_name: 'Clinic',
       consultation_types: '[{"l":"General","r":500},{"label":"Video","fee_inr":400}]',
-    });
+    }, 'en');
     expect(out).toContain('**General**');
     expect(out).toContain('₹500');
     expect(out).toContain('₹400');
@@ -92,12 +92,12 @@ describe('consultation-fees (RBH-13)', () => {
     const out = formatConsultationFeesForDm({
       practice_name: 'Clinic',
       consultation_types: null,
-    });
+    }, 'en');
     expect(out.toLowerCase()).toContain("don't have");
     expect(out).not.toMatch(/₹\d+/);
   });
 
-  it('formatConsultationFeesForDm Roman Hindi when user writes Hinglish (fee question)', () => {
+  it('formatConsultationFeesForDm Roman Hindi when turn language is hi-Latn', () => {
     const out = formatConsultationFeesForDm(
       {
         practice_name: 'Dr Zurb Clinic',
@@ -105,6 +105,7 @@ describe('consultation-fees (RBH-13)', () => {
         appointment_fee_minor: 50000,
         appointment_fee_currency: 'INR',
       },
+      'hi-Latn',
       'acha kitni fees hai?'
     );
     expect(out).toContain('consultation types / fees');
@@ -120,16 +121,23 @@ describe('consultation-fees (RBH-13)', () => {
         appointment_fee_minor: 75000,
         appointment_fee_currency: 'INR',
       },
+      'en',
       ''
     );
     expect(out).toContain('₹750');
     expect(out).toContain('Video');
   });
 
-  it('formatFeeBookingCtaForDm follows Hinglish locale', () => {
-    const cta = formatFeeBookingCtaForDm('kitni fee hai bhai');
+  it('formatFeeBookingCtaForDm follows hi-Latn locale from turn language', () => {
+    const cta = formatFeeBookingCtaForDm('hi-Latn');
     expect(cta).toMatch(/appointment book/i);
     expect(cta.toLowerCase()).not.toContain("when you're ready");
+  });
+
+  it('lang-06 / task 7.3: hi-Latn CTA is Roman Hindi even when userText would look English', () => {
+    const cta = formatFeeBookingCtaForDm('hi-Latn');
+    expect(cta).toMatch(/Jab aap|karna chahein/i);
+    expect(cta).not.toContain("When you're ready");
   });
 
   it('isMetaBookingOrFeeReasonText blocks meta strings for reason', () => {
@@ -207,7 +215,7 @@ describe('consultation-fees (RBH-13)', () => {
       appointment_fee_minor: 300_00,
       appointment_fee_currency: 'INR',
       business_hours_summary: 'Mon–Fri',
-    });
+    }, 'en');
     expect(out).toContain('Dermatology');
     expect(out).not.toContain('`skin`');
     expect(out).toContain('₹50');
@@ -229,7 +237,7 @@ describe('consultation-fees (RBH-13)', () => {
       practice_name: 'Test Clinic',
       consultation_types: 'Video ₹400',
       service_offerings_json: null,
-    });
+    }, 'en');
     expect(out).toContain('₹400');
   });
 
@@ -401,7 +409,7 @@ describe('consultation-fees (RBH-13)', () => {
       business_hours_summary: null,
       appointment_fee_minor: null,
       appointment_fee_currency: 'INR',
-    }, 'price for gp visit');
+    }, 'en', 'price for gp visit');
     expect(body).toContain('General');
     expect(body).not.toContain('`gp`');
     expect(body).not.toContain('Dermatology');
@@ -436,6 +444,7 @@ describe('consultation-fees (RBH-13)', () => {
         appointment_fee_minor: null,
         appointment_fee_currency: 'INR',
       },
+      'en',
       'how much does it cost',
       'my blood sugar readings have been high'
     );
@@ -455,6 +464,7 @@ describe('consultation-fees (RBH-13)', () => {
         appointment_fee_minor: null,
         appointment_fee_currency: 'INR',
       },
+      'en',
       'what is the fee',
       'skin rash getting worse'
     );
@@ -473,6 +483,7 @@ describe('consultation-fees (RBH-13)', () => {
         appointment_fee_minor: null,
         appointment_fee_currency: 'INR',
       },
+      'en',
       'how much for a consult'
     );
     expect(meta.markdown).toContain('General checkup');
@@ -526,6 +537,7 @@ describe('consultation-fees (RBH-13)', () => {
         appointment_fee_minor: null,
         appointment_fee_currency: 'INR',
       },
+      'en',
       'so i have to pay ?',
       thread
     );
@@ -553,6 +565,7 @@ describe('consultation-fees (RBH-13)', () => {
         appointment_fee_minor: null,
         appointment_fee_currency: 'INR',
       },
+      'en',
       'how much',
       thread,
       { clinicalLedFeeThread: true }
@@ -580,6 +593,7 @@ describe('consultation-fees (RBH-13)', () => {
         appointment_fee_minor: null,
         appointment_fee_currency: 'INR',
       },
+      'en',
       'how much is video consult',
       thread
     );
@@ -607,6 +621,7 @@ describe('consultation-fees (RBH-13)', () => {
         appointment_fee_minor: null,
         appointment_fee_currency: 'INR',
       },
+      'en',
       'what is the fee?',
       thread
     );
@@ -670,7 +685,7 @@ describe('consultation-fees (RBH-13)', () => {
       consultation_types: null,
       service_offerings_json: emptyCatalog,
       appointment_fee_minor: null,
-    });
+    }, 'en');
     expect(out.toLowerCase()).toContain('services catalog');
     expect(out.toLowerCase()).toContain('empty');
     expect(out).not.toMatch(/₹\d+/);
@@ -682,7 +697,7 @@ describe('consultation-fees (RBH-13)', () => {
       consultation_types: null,
       appointment_fee_minor: 150_00,
       appointment_fee_currency: 'USD',
-    });
+    }, 'en');
     expect(out).toContain('150.00 USD');
   });
 });

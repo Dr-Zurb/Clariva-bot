@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Clock, Plus, RefreshCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import type { SlotSessionRow } from "@/types/opd-doctor";
 import { BroadcastDelayPopover } from "./shared/BroadcastDelayPopover";
 import { OfferEarlyJoinPopover } from "./shared/OfferEarlyJoinPopover";
+import { OpdSessionDatePicker } from "./shared/OpdSessionDatePicker";
 import {
   resolveSlotDelayTarget,
   resolveSlotEarlyJoinTarget,
@@ -65,20 +66,6 @@ export function OpdSlotSessionToolbar({
 
   const [refreshPending, setRefreshPending] = useState(false);
 
-  const dateInputRef = useRef<HTMLInputElement>(null);
-  const handleDateClick = () => {
-    const el = dateInputRef.current;
-    if (!el) return;
-    try {
-      const withPicker = el as HTMLInputElement & {
-        showPicker?: () => void;
-      };
-      withPicker.showPicker?.();
-    } catch {
-      /* SecurityError in cross-origin frames */
-    }
-  };
-
   const handleRefresh = () => {
     setRefreshPending(true);
     onRefresh();
@@ -103,17 +90,9 @@ export function OpdSlotSessionToolbar({
       )}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <input
-          ref={dateInputRef}
-          type="date"
+        <OpdSessionDatePicker
           value={sessionDate}
-          onChange={(e) => onChangeSessionDate(e.target.value)}
-          onClick={handleDateClick}
-          aria-label="Session date"
-          className={cn(
-            "h-7 cursor-pointer rounded-md border border-input bg-background px-2 text-xs font-medium text-foreground",
-            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          )}
+          onChange={onChangeSessionDate}
         />
         <OpdSessionModePillDropdown
           token={token}
@@ -173,7 +152,7 @@ export function OpdSlotSessionToolbar({
       <div className="flex flex-wrap items-center gap-2">
         <span className="flex items-center gap-1 text-xs text-muted-foreground">
           <Clock className="h-3 w-3 shrink-0" />
-          Last updated {timeAgo(lastUpdatedAt)}
+          Updated {timeAgo(lastUpdatedAt)}
         </span>
 
         <TooltipProvider>

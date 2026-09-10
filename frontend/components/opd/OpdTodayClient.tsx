@@ -17,14 +17,28 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
+import { prefetchAppointmentDeskVitals } from "@/lib/cockpit/desk-vitals-query";
 import { cn } from "@/lib/utils";
-import { buildCockpitAppointmentPath, COCKPIT_DATE_PARAM } from "@/lib/cockpit/back-target";
-import { isPastDate, parseOpdSessionDateParam, todayLocalIso } from "@/lib/dates";
+import {
+  buildCockpitAppointmentPath,
+  COCKPIT_DATE_PARAM,
+} from "@/lib/cockpit/back-target";
+import {
+  isPastDate,
+  parseOpdSessionDateParam,
+  todayLocalIso,
+} from "@/lib/dates";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { patchDoctorQueueEntry } from "@/lib/api";
 import { useOpdSessionQuery } from "@/hooks/queries/useOpdSessionQuery";
+import { useLobbyPresenceBoard } from "@/hooks/useLobbyPresenceBoard";
+import {
+  applyLobbyPresenceOverlay,
+  pickLobbyPresenceSubscriptionIds,
+} from "@/lib/consultation/lobby-presence-board";
 import type {
   DoctorQueueSessionRow,
   SlotSessionCounts,
@@ -41,6 +55,7 @@ import { OpdQueueSearchBox } from "./OpdQueueSearchBox";
 import { OpdQueueRowActions } from "./OpdQueueRowActions";
 import { OpdQueueSessionToolbar } from "./OpdQueueSessionToolbar";
 import { OpdSlotSessionToolbar } from "./OpdSlotSessionToolbar";
+import { OpdNowClock } from "./OpdNowClock";
 import { OpdSlotStatusFilter } from "./OpdSlotStatusFilter";
 import { OpdSlotList } from "./OpdSlotList";
 import { OpdSlotMobileList } from "./OpdSlotMobileList";
@@ -58,6 +73,7 @@ import {
   filterSlotSessionRows,
   flatSlotRowsForHotkeys,
 } from "./shared/opdSlotSessionListModel";
+import { isOpdSessionPayloadForDate } from "./shared/opdSessionApply";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -78,6 +94,7 @@ const EMPTY_SLOT_COUNTS: SlotSessionCounts = {
   upcoming: 0,
   running_late: 0,
   in_consultation: 0,
+  incomplete: 0,
   completed: 0,
   missed: 0,
   cancelled: 0,
@@ -98,15 +115,18 @@ interface OpdTodayClientProps {
 
 export default function OpdTodayClient({ token }: OpdTodayClientProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [sessionDate, setSessionDate] = useState(() =>
-    parseOpdSessionDateParam(searchParams.get(COCKPIT_DATE_PARAM)),
+    parseOpdSessionDateParam(searchParams.get(COCKPIT_DATE_PARAM))
   );
 
   // Rehydrate when ?date= changes (browser back from cockpit).
   useEffect(() => {
-    setSessionDate(parseOpdSessionDateParam(searchParams.get(COCKPIT_DATE_PARAM)));
+    setSessionDate(
+      parseOpdSessionDateParam(searchParams.get(COCKPIT_DATE_PARAM))
+    );
   }, [searchParams]);
 
   const handleChangeSessionDate = useCallback(
@@ -121,11 +141,10 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
       const qs = params.toString();
       router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     },
-    [pathname, router, searchParams],
+    [pathname, router, searchParams]
   );
-  const [sessionPayload, setSessionPayload] = useState<OpdSessionPayload | null>(
-    null
-  );
+  const [sessionPayload, setSessionPayload] =
+    useState<OpdSessionPayload | null>(null);
   const mode = sessionPayload?.mode ?? null;
   const modeLoading = mode === null;
   const modeChangeCount = sessionPayload?.modeChangeCount ?? 0;
@@ -145,7 +164,9 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
   const [slotCounts, setSlotCounts] = useState<SlotSessionCounts | null>(null);
   const [slotIsLoading, setSlotIsLoading] = useState(false);
   const [slotError, setSlotError] = useState<Error | null>(null);
-  const [slotLastUpdatedAt, setSlotLastUpdatedAt] = useState<number | null>(null);
+  const [slotLastUpdatedAt, setSlotLastUpdatedAt] = useState<number | null>(
+    null
+  );
   const slotIsMountedRef = useRef(true);
 
   // Inline expand — single row at a time.
@@ -156,7 +177,9 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
 
   // Overflow open for the focused row — tracks which entry's ⋯ menu is open
   // via the S hotkey (task-oq-13).
-  const [overflowOpenEntryId, setOverflowOpenEntryId] = useState<string | null>(null);
+  const [overflowOpenEntryId, setOverflowOpenEntryId] = useState<string | null>(
+    null
+  );
 
   // Search box ref — / hotkey focuses this input (task-oq-13).
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -166,7 +189,9 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
 
   // Keyboard-focused slot row + overflow (J/K/S hotkeys) — sl-05.
   const [slotFocusedRowId, setSlotFocusedRowId] = useState<string | null>(null);
-  const [slotOverflowOpenId, setSlotOverflowOpenId] = useState<string | null>(null);
+  const [slotOverflowOpenId, setSlotOverflowOpenId] = useState<string | null>(
+    null
+  );
 
   const [addSlotDialog, setAddSlotDialog] = useState<{
     open: boolean;
@@ -232,29 +257,69 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
 
   useEffect(() => {
     slotIsMountedRef.current = true;
-    setSessionPayload(null);
     return () => {
       slotIsMountedRef.current = false;
     };
   }, [token, sessionDate]);
 
+  // Auth identity change — drop chrome so we never paint another doctor's mode.
   useEffect(() => {
-    if (sessionQuery.data) {
-      applySessionPayload(sessionQuery.data.data);
-      setQueueLoading(false);
-      setSlotIsLoading(false);
+    setSessionPayload(null);
+    setEntries([]);
+    setSlotEntries([]);
+    setSlotCounts(null);
+    setQueueError(null);
+    setSlotError(null);
+    setQueueLoading(true);
+    setSlotIsLoading(true);
+    setExpandedEntryId(null);
+    setFocusedEntryId(null);
+  }, [token]);
+
+  // Date change — keep mode/toolbar mounted (avoids full-page skeleton flash).
+  // Clear list rows and show list-level loading until the matching date arrives.
+  useEffect(() => {
+    if (modeRef.current === "queue") {
+      setEntries([]);
+      setQueueLoading(true);
+      setQueueError(null);
+    } else if (modeRef.current === "slot") {
+      setSlotEntries([]);
+      setSlotCounts(null);
+      setSlotIsLoading(true);
+      setSlotError(null);
+    } else {
+      setQueueLoading(true);
+      setSlotIsLoading(true);
     }
-  }, [sessionQuery.data, applySessionPayload]);
+    setExpandedEntryId(null);
+    setFocusedEntryId(null);
+  }, [sessionDate]);
+
+  useEffect(() => {
+    const payload = sessionQuery.data?.data;
+    // keepPreviousData can surface the prior day's payload while fetching —
+    // only apply when the snapshot matches the selected session date.
+    if (!isOpdSessionPayloadForDate(payload, sessionDate)) return;
+    applySessionPayload(payload);
+    setQueueLoading(false);
+    setSlotIsLoading(false);
+  }, [sessionQuery.data, sessionDate, applySessionPayload]);
 
   useEffect(() => {
     if (!sessionQuery.isError || !sessionQuery.error) return;
-    console.error("[OpdTodayClient] /opd/session fetch failed:", sessionQuery.error);
+    console.error(
+      "[OpdTodayClient] /opd/session fetch failed:",
+      sessionQuery.error
+    );
     const err = sessionQuery.error;
     const msg = err instanceof Error ? err.message : "Failed to load session";
     if (modeRef.current === "queue") {
       setQueueError(msg);
     } else if (modeRef.current === "slot") {
-      setSlotError(err instanceof Error ? err : new Error("Snapshot fetch failed"));
+      setSlotError(
+        err instanceof Error ? err : new Error("Snapshot fetch failed")
+      );
     } else {
       setSessionPayload({
         mode: "slot",
@@ -265,7 +330,9 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
         entries: [],
         counts: EMPTY_SLOT_COUNTS,
       });
-      setSlotError(err instanceof Error ? err : new Error("Snapshot fetch failed"));
+      setSlotError(
+        err instanceof Error ? err : new Error("Snapshot fetch failed")
+      );
     }
     setQueueLoading(false);
     setSlotIsLoading(false);
@@ -283,7 +350,7 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
       }
       await sessionQuery.refetch();
     },
-    [sessionQuery],
+    [sessionQuery]
   );
 
   const slotViewedFiredRef = useRef<string | null>(null);
@@ -308,9 +375,30 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
     setSlotFocusedRowId(null);
     setSlotOverflowOpenId(null);
   }, [sessionDate]);
-  // Counts — computed once, passed to filter chips AND (indirectly) the table
+  // -------------------------------------------------------------------------
+  // crc-15 — optimistic lobby Waiting overlay (poll tags stay authoritative)
   // -------------------------------------------------------------------------
 
+  const presenceSourceRows = mode === "slot" ? slotEntries : entries;
+  const presenceIds = useMemo(
+    () => pickLobbyPresenceSubscriptionIds(presenceSourceRows),
+    [presenceSourceRows]
+  );
+  const overlayWaitingIds = useLobbyPresenceBoard({
+    appointmentIds: presenceIds,
+    pollGeneration: sessionQuery.dataUpdatedAt ?? null,
+    enabled: !sessionDateIsPast,
+  });
+  const displayEntries = useMemo(
+    () => applyLobbyPresenceOverlay(entries, overlayWaitingIds),
+    [entries, overlayWaitingIds]
+  );
+  const displaySlotEntries = useMemo(
+    () => applyLobbyPresenceOverlay(slotEntries, overlayWaitingIds),
+    [slotEntries, overlayWaitingIds]
+  );
+
+  // Counts — computed once, passed to the filter chips AND (indirectly) the table
   const counts = useMemo(() => computeFilterCounts(entries), [entries]);
 
   // Fire opd_queue.viewed once after the first successful queue load (PHI-free counts only).
@@ -423,13 +511,14 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
           () => undefined
         );
       }
+      prefetchAppointmentDeskVitals(queryClient, token, entry.appointmentId);
       router.push(
         buildCockpitAppointmentPath(entry.appointmentId, "opd-today", {
           opdDate: sessionDate,
-        }),
+        })
       );
     },
-    [router, token, q, sessionDate]
+    [router, queryClient, token, q, sessionDate]
   );
 
   const handleSlotRowNavigate = useCallback(
@@ -441,13 +530,14 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
         entryId: row.appointmentId,
         slotStatus: row.slotStatus,
       });
+      prefetchAppointmentDeskVitals(queryClient, token, row.appointmentId);
       router.push(
         buildCockpitAppointmentPath(row.appointmentId, "opd-today", {
           opdDate: sessionDate,
-        }),
+        })
       );
     },
-    [router, sessionDate]
+    [router, queryClient, token, sessionDate]
   );
 
   const handleRetry = useCallback(() => {
@@ -529,8 +619,11 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
       : "OPD Slots · Today";
 
   return (
-    <div>
-      <h1 className="text-2xl font-semibold text-foreground">{title}</h1>
+    <div className="pb-6">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h1 className="text-2xl font-semibold text-foreground">{title}</h1>
+        <OpdNowClock />
+      </div>
 
       {overrunError && (
         <Alert variant="destructive" className="mb-3 mt-4">
@@ -567,7 +660,11 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
            * page layout.  Mirrors the queue toolbar + filter shape because
            * "queue" is the more common doctor mode (slot is the legacy fallback).
            */
-          <div className="flex flex-col gap-3" aria-busy="true" aria-live="polite">
+          <div
+            className="flex flex-col gap-3"
+            aria-busy="true"
+            aria-live="polite"
+          >
             <Skeleton className="h-10 w-full rounded-md" />
             <div className="flex items-center justify-between gap-2">
               <Skeleton className="h-7 w-72 rounded-full" />
@@ -576,7 +673,10 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
             <div className="flex flex-col overflow-hidden rounded-lg border border-border">
               <Skeleton className="h-9 w-full" />
               {Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-10 w-full border-t border-border" />
+                <Skeleton
+                  key={i}
+                  className="h-10 w-full border-t border-border"
+                />
               ))}
             </div>
           </div>
@@ -613,7 +713,11 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
              */}
             <div className="sticky top-14 z-20 -mx-1 bg-background/80 px-1 pb-1 pt-0.5 backdrop-blur">
               <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                <OpdQueueSearchBox value={q} onChange={setQ} inputRef={searchInputRef} />
+                <OpdQueueSearchBox
+                  value={q}
+                  onChange={setQ}
+                  inputRef={searchInputRef}
+                />
                 <div className="flex flex-wrap items-center gap-2">
                   {status === "all" && (
                     <OpdQueueGroupingToggle
@@ -633,7 +737,7 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
             {/* Queue table / mobile card list — layout determined by viewport */}
             {isCompactViewport ? (
               <OpdQueueMobileList
-                entries={entries}
+                entries={displayEntries}
                 filter={status}
                 q={q}
                 onOpen={handleOpenRow}
@@ -643,7 +747,7 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
               />
             ) : (
               <OpdQueueTable
-                entries={entries}
+                entries={displayEntries}
                 filter={status}
                 q={q}
                 grouping={grouping}
@@ -726,7 +830,7 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
 
             <div className="hidden lg:block">
               <OpdSlotList
-                entries={slotEntries}
+                entries={displaySlotEntries}
                 counts={slotCounts ?? EMPTY_SLOT_COUNTS}
                 statusFilter={status}
                 searchQuery={q}
@@ -747,7 +851,7 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
 
             <div className="lg:hidden">
               <OpdSlotMobileList
-                entries={slotEntries}
+                entries={displaySlotEntries}
                 counts={slotCounts ?? EMPTY_SLOT_COUNTS}
                 statusFilter={status}
                 searchQuery={q}

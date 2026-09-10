@@ -11,6 +11,7 @@ export interface Patient {
   name: string;
   phone: string;
   date_of_birth?: string | null;
+  age?: number | null;
   gender?: string | null;
   platform?: string | null;
   platform_external_id?: string | null;
@@ -20,6 +21,28 @@ export interface Patient {
   consent_method?: string | null;
   created_at: string;
   updated_at: string;
+  /** How the row was created. Not PHI. */
+  registered_via?:
+    | "bot"
+    | "front_desk"
+    | "booking_for_other"
+    | "import"
+    | "doctor"
+    | null;
+  /** Auth user who created the row. Not PHI. */
+  created_by?: string | null;
+  /** Read-time label for created_by. Never log. */
+  created_by_label?: string | null;
+  /** Father / spouse / other related name. PHI. */
+  guardian_name?: string | null;
+  guardian_relation?: "father" | "spouse" | "mother" | "son" | "daughter" | null;
+  /** Second contact. PHI. */
+  alt_phone?: string | null;
+  address?: string | null;
+  /** Desk hide stamp. Not PHI. */
+  archived_at?: string | null;
+  /** Auth user who archived. Not PHI. */
+  archived_by?: string | null;
 }
 
 export interface PatientDetailData {
@@ -36,6 +59,9 @@ export interface PatientSummary {
   medical_record_number?: string | null;
   last_appointment_date?: string | null;
   created_at: string;
+  /** Multi-tag labels (migration 191). */
+  patient_tags?: string[];
+  /** Legacy single label — mirrors patient_tags[0]. */
   patient_tag?: string | null;
   platform_external_id?: string | null;
   has_allergies?: boolean;
@@ -46,6 +72,12 @@ export interface PatientSummary {
   next_appointment_status?: string | null;
   next_appointment_modality?: string | null;
   platform?: string | null;
+  guardian_name?: string | null;
+  guardian_relation?: string | null;
+  alt_phone?: string | null;
+  address?: string | null;
+  date_of_birth?: string | null;
+  archived_at?: string | null;
 }
 
 export interface PatientsListData {
@@ -72,11 +104,13 @@ export interface PossibleDuplicatesData {
  */
 export type PatientSegmentId =
   | "active-90d" // last_appointment_date >= now() - 90d
-  | "new-30d" // created_at >= now() - 30d
+  | "new-30d" // first completed visit in rolling 30d (PKD-D3)
+  | "revisit-30d" // completed visit in 30d + prior completed (PKD-D4)
   | "at-risk-followup" // any prescription with follow_up_value indicating a date in the past AND no subsequent visit
   | "no-show-prone" // appointments where status = 'no_show' >= 2 of last 4
   | "has-allergies" // patient_allergies row exists with archived_at IS NULL
   | "has-open-episodes" // patient_problem_list_v row exists with source = 'episode' AND episode_status IS NOT 'closed'
+  | "incomplete-consult" // session started; appointment never completed (PKD-D2)
   | "untagged"; // patient_tag IS NULL OR ''
 
 export type PatientListSortId =
@@ -90,9 +124,13 @@ export type PatientListSortId =
 export interface PatientListFilters {
   q?: string; // free-text; matches name / phone / MRN / IG handle (case-insensitive substring)
   segment?: PatientSegmentId;
+  /** Case-insensitive membership on patient_tags (ANY). */
+  tag?: string;
   sort?: PatientListSortId;
   page?: number; // 1-indexed
   pageSize?: number; // default 50, max 200
+  includeArchived?: boolean;
+  lean?: boolean;
 }
 
 /** Response shape from `GET /api/v1/patients`. Extends the v1 shape with pagination metadata. */
@@ -200,13 +238,25 @@ export interface PatientOverviewData {
   six_visit_strip: PatientSixVisitStripEntry[];
 }
 
-/** DL-6 — `GET /api/v1/patients/kpis` response payload. */
+/** List hover-card — `GET /api/v1/patients/:id/overview?view=peek`. */
+export interface PatientQuickPeekData {
+  patient: { id: string; name: string };
+  snapshot: {
+    blood_group: string | null;
+    height_cm: number | null;
+    weight_kg: number | null;
+  };
+  active_problems: import("./patient-chart").ProblemListItem[];
+  allergies: import("./patient-chart").PatientAllergy[];
+  chronic_conditions: import("./patient-chart").PatientChronicCondition[];
+}
+
+/** Doctor worklist KPIs — `GET /api/v1/patients/kpis` (PKD). */
 export interface PatientsKpis {
-  active_90d: { count: number; delta_7d: number };
+  incomplete_consults: { count: number; delta_7d: number };
   new_30d: { count: number; delta_7d: number };
   followup_overdue: { count: number; delta_7d: number };
-  open_episodes: { count: number; delta_7d: number };
-  possible_duplicates: { count: number; delta_7d: number };
+  revisits_30d: { count: number; delta_7d: number };
   /** Server-computed cache window in seconds (DL-6 = 60). */
   cache_ttl_seconds: number;
 }

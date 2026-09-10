@@ -343,7 +343,7 @@ export function tobaccoFrequencyUnitChangePatch(
     patch.frequency = 1;
   } else if (nextUnit === "fortnight" && product.frequency == null) {
     patch.frequency = 1;
-  } else if (product.frequency === 1 && freqUnit === "day" && nextUnit !== "day") {
+  } else if (product.frequency === 1 && freqUnit === "day") {
     patch.frequency = undefined;
   }
   return patch;

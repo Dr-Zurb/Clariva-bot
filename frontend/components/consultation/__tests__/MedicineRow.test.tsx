@@ -50,7 +50,9 @@ function emptyRow(overrides: Partial<MedicineRowValue> = {}): MedicineRowValue {
   };
 }
 
-function completeRow(overrides: Partial<MedicineRowValue> = {}): MedicineRowValue {
+function completeRow(
+  overrides: Partial<MedicineRowValue> = {}
+): MedicineRowValue {
   return emptyRow({
     medicineName: "Paracetamol",
     dosage: "500mg",
@@ -67,7 +69,7 @@ type RowProps = Partial<ComponentProps<typeof MedicineRow>>;
 
 function renderRow(
   valueOverrides: Partial<MedicineRowValue> = {},
-  propOverrides: RowProps = {},
+  propOverrides: RowProps = {}
 ) {
   const value =
     propOverrides.value ??
@@ -96,7 +98,7 @@ function renderRow(
       onRequestEdit={onRequestEdit}
       onRequestCollapse={onRequestCollapse}
       {...propOverrides}
-    />,
+    />
   );
 
   return {
@@ -115,11 +117,20 @@ describe("MedicineRow summary mode", () => {
     renderRow({}, { isEditing: false });
 
     expect(
-      screen.getByRole("button", { name: "Paracetamol — expand medication" }),
+      screen.getByRole("button", { name: "Paracetamol — expand medication" })
     ).toBeInTheDocument();
     expect(screen.getByText("Paracetamol")).toBeInTheDocument();
     expect(screen.getByText(/500mg · TID · 5 days/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Dosage")).not.toBeInTheDocument();
+  });
+
+  it("calls onRefine from the summary sparkles button without expanding", () => {
+    const onRefine = vi.fn();
+    const { onRequestEdit } = renderRow({}, { isEditing: false, onRefine });
+
+    fireEvent.click(screen.getByRole("button", { name: /Refine medicine 3 with AI/i }));
+    expect(onRefine).toHaveBeenCalledWith(2);
+    expect(onRequestEdit).not.toHaveBeenCalled();
   });
 });
 
@@ -129,7 +140,7 @@ describe("MedicineRow editor mode", () => {
 
     expect(screen.getByLabelText("Dosage")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /expand medication/i }),
+      screen.queryByRole("button", { name: /expand medication/i })
     ).not.toBeInTheDocument();
   });
 
@@ -137,7 +148,7 @@ describe("MedicineRow editor mode", () => {
     renderRow({ medicineName: "Paracetamol" }, { isEditing: false });
 
     expect(
-      screen.getByRole("button", { name: "Paracetamol — expand medication" }),
+      screen.getByRole("button", { name: "Paracetamol — expand medication" })
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Dosage")).not.toBeInTheDocument();
   });
@@ -148,7 +159,7 @@ describe("MedicineRow tap to edit", () => {
     const { onRequestEdit } = renderRow({}, { isEditing: false });
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Paracetamol — expand medication" }),
+      screen.getByRole("button", { name: "Paracetamol — expand medication" })
     );
 
     expect(onRequestEdit).toHaveBeenCalledTimes(1);
@@ -160,7 +171,9 @@ describe("MedicineRow delete from summary", () => {
   it("fires onRemove and does not fire onRequestEdit when Delete is clicked", () => {
     const { onRemove, onRequestEdit } = renderRow({}, { isEditing: false });
 
-    fireEvent.click(screen.getByRole("button", { name: "Delete medicine row" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete medicine row" })
+    );
 
     expect(onRemove).toHaveBeenCalledTimes(1);
     expect(onRemove).toHaveBeenCalledWith(2);
@@ -174,11 +187,18 @@ describe("MedicineRow collapse scroll (subj/obj parity)", () => {
       .spyOn(HTMLElement.prototype, "scrollIntoView")
       .mockImplementation(() => {});
 
-    const { rerender, onRequestEdit, onRequestCollapse, onChange, onPatch, onRemove, value } =
-      renderRow({}, { isEditing: false });
+    const {
+      rerender,
+      onRequestEdit,
+      onRequestCollapse,
+      onChange,
+      onPatch,
+      onRemove,
+      value,
+    } = renderRow({}, { isEditing: false });
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Paracetamol — expand medication" }),
+      screen.getByRole("button", { name: "Paracetamol — expand medication" })
     );
     expect(onRequestEdit).toHaveBeenCalled();
 
@@ -193,7 +213,7 @@ describe("MedicineRow collapse scroll (subj/obj parity)", () => {
         isEditing
         onRequestEdit={onRequestEdit}
         onRequestCollapse={onRequestCollapse}
-      />,
+      />
     );
 
     expect(scrollSpy).toHaveBeenCalledWith({
@@ -212,8 +232,15 @@ describe("MedicineRow collapse scroll (subj/obj parity)", () => {
     section.id = "medicines-section";
     document.body.appendChild(section);
 
-    const { rerender, onRequestEdit, onRequestCollapse, onChange, onPatch, onRemove, value } =
-      renderRow({}, { isEditing: true });
+    const {
+      rerender,
+      onRequestEdit,
+      onRequestCollapse,
+      onChange,
+      onPatch,
+      onRemove,
+      value,
+    } = renderRow({}, { isEditing: true });
     const editor = screen.getByTestId("medicine-row-editor-2");
     section.appendChild(editor.parentElement ?? editor);
 
@@ -228,7 +255,7 @@ describe("MedicineRow collapse scroll (subj/obj parity)", () => {
         isEditing={false}
         onRequestEdit={onRequestEdit}
         onRequestCollapse={onRequestCollapse}
-      />,
+      />
     );
 
     expect(scrollSpy).toHaveBeenCalled();
@@ -250,7 +277,7 @@ describe("MedicineRow Esc in editor", () => {
   it("fires onRequestCollapse when Escape is pressed on an incomplete named row", () => {
     const { onRequestCollapse } = renderRow(
       { medicineName: "Paracetamol" },
-      { isEditing: true },
+      { isEditing: true }
     );
 
     fireEvent.keyDown(screen.getByLabelText("Dosage"), { key: "Escape" });
@@ -276,7 +303,7 @@ describe("MedicineRow blur to outside", () => {
           onRequestCollapse={onRequestCollapse}
         />
         <button type="button">Outside focus</button>
-      </>,
+      </>
     );
 
     const dosageInput = screen.getByLabelText("Dosage");
@@ -296,13 +323,13 @@ describe("MedicineRow read-only summary", () => {
 
     expect(screen.getByLabelText("Medicine row 3")).toHaveAttribute(
       "data-readonly",
-      "true",
+      "true"
     );
     expect(
-      screen.queryByRole("button", { name: /expand medication/i }),
+      screen.queryByRole("button", { name: /expand medication/i })
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Delete medicine row" }),
+      screen.queryByRole("button", { name: "Delete medicine row" })
     ).not.toBeInTheDocument();
     expect(screen.getByText("Paracetamol")).toBeInTheDocument();
   });
@@ -319,12 +346,72 @@ describe("MedicineRow default behavior", () => {
         onPatch={vi.fn()}
         onRemove={vi.fn()}
         token="test-token"
-      />,
+      />
     );
 
     expect(screen.getByLabelText("Dosage")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /expand medication/i }),
+      screen.queryByRole("button", { name: /expand medication/i })
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("MedicineRow dose schedule", () => {
+  it("shows 1-0-0 / 0-1-0 / 0-0-1 chips when frequency is OD", () => {
+    renderRow(
+      { frequencyCode: "OD", frequency: "Once daily" },
+      { isEditing: true }
+    );
+
+    expect(
+      screen.getByRole("group", { name: "Dose schedule" })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "1-0-0" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "0-1-0" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "0-0-1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Any" })).toBeInTheDocument();
+  });
+
+  it("shows BID meal-slot patterns and patches the selected schedule", () => {
+    const { onPatch } = renderRow(
+      { frequencyCode: "BID", frequency: "Twice daily" },
+      { isEditing: true }
+    );
+
+    expect(screen.getByRole("button", { name: "1-0-1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "1-1-0" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "0-1-1" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "1-0-1" }));
+    expect(onPatch).toHaveBeenCalledWith(
+      2,
+      expect.objectContaining({ doseSchedule: "1-0-1", frequency: "1-0-1" })
+    );
+  });
+
+  it("auto-selects 1-1-1 when TID is tapped", () => {
+    const { onPatch } = renderRow(
+      { frequencyCode: "OD", frequency: "Once daily" },
+      { isEditing: true }
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "TID" }));
+    expect(onPatch).toHaveBeenCalledWith(
+      2,
+      expect.objectContaining({
+        frequencyCode: "TID",
+        doseSchedule: "1-1-1",
+        frequency: "1-1-1",
+      })
+    );
+  });
+
+  it("hides the schedule row for STAT / SOS", () => {
+    renderRow(
+      { frequencyCode: "STAT", frequency: "STAT" },
+      { isEditing: true }
+    );
+    expect(
+      screen.queryByRole("group", { name: "Dose schedule" })
     ).not.toBeInTheDocument();
   });
 });

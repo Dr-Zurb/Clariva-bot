@@ -5,6 +5,8 @@
 > **Master plan reference:** [plan-multi-modality-consultations.md](./plan-multi-modality-consultations.md) — Decision 10 (audio-only by default during video consults; full-video = doctor-initiated escalation flow with reason capture + just-in-time patient consent modal + 60s timeout + patient mid-call revoke + rate-limited doctor re-request; patient self-serve video replay = audio-only-default player + "Show video" toggle + warning + light SMS OTP friction on first video replay per 30-day rolling window; mutual notifications differentiate audio vs video copy with 🎥 indicator) **LOCKED**.
 >
 > **Sequencing index:** [plan-00-multi-modality-implementation-index.md](./plan-00-multi-modality-implementation-index.md). Hard depends on Plans 02 + 07. Ships after Plan 07 because it extends Plan 07's `<RecordingReplayPlayer>` and `recording_access_audit` table.
+>
+> **Decision 10 KEPT (REC-D6).** Task 42 revoke-shares-cooldown arithmetic is reversed by REC-D9. See [recording-governance-v2 charter §Reversals](../../../August%202026/17-08-2026/recording-governance-v2/plan-recording-governance-v2-charter.md#reversals--what-this-charter-overturns).
 
 ---
 

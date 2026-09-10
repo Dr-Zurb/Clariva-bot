@@ -49,6 +49,7 @@ import {
   SoapTabExpandCollapseClearButtons,
   SoapTabLayoutSaveStatus,
 } from "@/components/cockpit/rx/SoapTabChromeActions";
+import { SoapPaneChromePortal } from "@/components/patient-profile/v3/SoapPaneChrome";
 import { SoapTabCustomSectionsAddChrome } from "@/components/cockpit/rx/SoapTabCustomSectionsAddChrome";
 import { parseInvestigationsOrders } from "@/components/cockpit/rx/inputs/investigations-orders-format";
 import MedicineRow from "@/components/consultation/MedicineRow";
@@ -63,9 +64,10 @@ import {
   trackCockpitV2RRxPolishShortcutUsed,
 } from "@/lib/patient-profile/telemetry";
 import { MedicineCaptureBar } from "@/components/cockpit/rx/inputs/MedicineCaptureBar";
+import { ChartMedAiProposal } from "@/components/ehr/chart/ChartMedAiProposal";
+import { usePlanMedicineAiRefine } from "@/components/cockpit/rx/sections/use-plan-medicine-ai-refine";
 import { isMedicineRowComplete } from "@/lib/cockpit/medicine-row-state";
 import { usePersistedMedicineOpen } from "@/lib/cockpit/use-persisted-entry-open";
-import { rxMedicineFromDrugMaster } from "@/lib/cockpit/rx-medicine-from-capture";
 import {
   appendUniquePlanPhrase,
   applyFollowUpQuickPick,
@@ -96,6 +98,17 @@ import {
   resolveReferralSpecialtyCatalog,
 } from "@/lib/cockpit/referral-specialty-catalog";
 import { PreviousRxPlanTrigger } from "@/components/cockpit/rx/previous/PreviousRxPlanTrigger";
+import { LastVisitMedicinesStrip } from "@/components/cockpit/rx/last-visit/LastVisitMedicinesStrip";
+import {
+  LastVisitClinicalNotesStrip,
+  LastVisitReferralStrip,
+} from "@/components/cockpit/rx/last-visit/LastVisitParchiStrips";
+import { LastVisitUnmatchedCustomSectionsStrip } from "@/components/cockpit/rx/last-visit/LastVisitCustomSectionStrip";
+import {
+  LastVisitAdviceStrip,
+  LastVisitFollowUpStrip,
+  LastVisitInvestigationsStrip,
+} from "@/components/cockpit/rx/last-visit/LastVisitPlanFieldsStrip";
 import type { MatchableMedicine } from "@/lib/ehr/match-allergens";
 import type { PatientAllergy } from "@/types/patient-chart";
 import type { DrugMasterRow } from "@/types/drug-master";
@@ -189,7 +202,7 @@ type DropTargetState = {
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
 function buildCollapseDefaults(
-  order: readonly PlanSectionId[],
+  order: readonly PlanSectionId[]
 ): Record<string, boolean> {
   const result: Record<string, boolean> = {};
   for (const id of order) {
@@ -203,7 +216,7 @@ function buildCollapseDefaults(
 function seedPlanCollapseOpen(
   sectionCollapsed: PlanSectionCollapseMap | null | undefined,
   sectionOrder: PlanSectionId[] | null | undefined,
-  customBlockIds: readonly string[],
+  customBlockIds: readonly string[]
 ): {
   openById: Record<string, boolean>;
   ready: boolean;
@@ -222,7 +235,7 @@ function seedPlanCollapseOpen(
     openById: resolved,
     ready: true,
     persistedKey: serializeCollapseOverrides(
-      collapseOverridesToPersist(resolved, defaults),
+      collapseOverridesToPersist(resolved, defaults)
     ),
   };
 }
@@ -283,15 +296,13 @@ export function PlanSection({
   const medicines = fields.medicines;
   const isReadOnly = disabled;
   const registeredActions = useRxFormActions();
-  const [activeRowInstanceId, setActiveRowInstanceId] = usePersistedMedicineOpen(
-    appointmentId,
-    medicineInstanceIds,
-  );
+  const [activeRowInstanceId, setActiveRowInstanceId] =
+    usePersistedMedicineOpen(appointmentId, medicineInstanceIds);
 
   const customSections = fields.planCustomSections;
   const customBlockIds = useMemo(
     () => customSections.map((section) => section.id),
-    [customSections],
+    [customSections]
   );
   const focusBlockIdRef = useRef<string | null>(null);
   const focusChildIdRef = useRef<string | null>(null);
@@ -300,42 +311,50 @@ export function PlanSection({
   const dragSectionIdRef = useRef<PlanSectionId | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTargetState | null>(null);
   const [layoutSaveStatus, setLayoutSaveStatus] = useState<SaveStatus>("idle");
-  const [collapseSaveStatus, setCollapseSaveStatus] = useState<SaveStatus>("idle");
-  const [visibilitySaveStatus, setVisibilitySaveStatus] = useState<SaveStatus>("idle");
+  const [collapseSaveStatus, setCollapseSaveStatus] =
+    useState<SaveStatus>("idle");
+  const [visibilitySaveStatus, setVisibilitySaveStatus] =
+    useState<SaveStatus>("idle");
   const [sectionManagerOpen, setSectionManagerOpen] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [clearBusy, setClearBusy] = useState(false);
-  const collapseSeedRef = useRef<ReturnType<typeof seedPlanCollapseOpen> | null>(null);
+  const collapseSeedRef = useRef<ReturnType<
+    typeof seedPlanCollapseOpen
+  > | null>(null);
   if (collapseSeedRef.current === null) {
     collapseSeedRef.current = seedPlanCollapseOpen(
       shell?.planDefaults?.sectionCollapsed,
       shell?.planDefaults?.sectionOrder,
-      customBlockIds,
+      customBlockIds
     );
   }
   const collapseSeed = collapseSeedRef.current;
 
   const lastPersistedSectionOrderRef = useRef<string | null>(null);
-  const lastPersistedCollapseRef = useRef<string | null>(collapseSeed.persistedKey);
+  const lastPersistedCollapseRef = useRef<string | null>(
+    collapseSeed.persistedKey
+  );
   const lastPersistedHiddenRef = useRef<string | null>(null);
   const hasHydratedCollapseRef = useRef(collapseSeed.ready);
   const hasHydratedHiddenRef = useRef(false);
 
-  const [storedSectionOrder, setStoredSectionOrder] = useState<PlanSectionId[] | null>(
-    shell?.planDefaults?.sectionOrder ?? null,
-  );
+  const [storedSectionOrder, setStoredSectionOrder] = useState<
+    PlanSectionId[] | null
+  >(shell?.planDefaults?.sectionOrder ?? null);
   const [storedSectionCollapsed, setStoredSectionCollapsed] =
     useState<PlanSectionCollapseMap | null>(
-      shell?.planDefaults?.sectionCollapsed ?? null,
+      shell?.planDefaults?.sectionCollapsed ?? null
     );
   const [storedSectionHidden, setStoredSectionHidden] =
-    useState<PlanSectionHiddenSet | null>(shell?.planDefaults?.sectionHidden ?? null);
+    useState<PlanSectionHiddenSet | null>(
+      shell?.planDefaults?.sectionHidden ?? null
+    );
   const [openById, setOpenById] = useState<Record<string, boolean>>(
-    () => collapseSeed.openById,
+    () => collapseSeed.openById
   );
   const [collapseReady, setCollapseReady] = useState(() => collapseSeed.ready);
   const [hiddenIds, setHiddenIds] = useState<PlanSectionHiddenSet>(
-    () => shell?.planDefaults?.sectionHidden ?? [],
+    () => shell?.planDefaults?.sectionHidden ?? []
   );
 
   const [sectionOrder, setSectionOrder] = useState<PlanSectionId[]>(() => {
@@ -351,15 +370,18 @@ export function PlanSection({
 
   const mountableIds = useMemo(
     () => resolveAvailableSectionIds(customBlockIds),
-    [customBlockIds],
+    [customBlockIds]
   );
 
   const visibleSectionOrder = useMemo(
     () => resolveVisibleSections(sectionOrder, hiddenIds, mountableIds),
-    [hiddenIds, mountableIds, sectionOrder],
+    [hiddenIds, mountableIds, sectionOrder]
   );
 
-  const defaultsById = useMemo(() => buildCollapseDefaults(sectionOrder), [sectionOrder]);
+  const defaultsById = useMemo(
+    () => buildCollapseDefaults(sectionOrder),
+    [sectionOrder]
+  );
 
   const collapseHydrated = storedSectionCollapsed !== null;
   const collapseControlled = collapseHydrated || Boolean(token);
@@ -397,7 +419,7 @@ export function PlanSection({
     (sectionId: PlanSectionId, open: boolean) => {
       setOpenById((prev) => ({ ...prev, [sectionId]: open }));
     },
-    [],
+    []
   );
 
   const expandAllSections = useCallback(() => {
@@ -422,7 +444,7 @@ export function PlanSection({
 
   const hasClearablePlan = useMemo(
     () => rxFormHasClearablePlanContent(fields),
-    [fields],
+    [fields]
   );
 
   const clearAllPlan = useCallback(() => {
@@ -518,7 +540,10 @@ export function PlanSection({
 
   useEffect(() => {
     if (storedSectionOrder === null) return;
-    const resolved = resolveInitialSectionOrder(storedSectionOrder, customBlockIds);
+    const resolved = resolveInitialSectionOrder(
+      storedSectionOrder,
+      customBlockIds
+    );
     setSectionOrder(resolved);
     lastPersistedSectionOrderRef.current = JSON.stringify(resolved);
     // customBlockIds intentionally omitted — sync effect below merges new blocks.
@@ -556,7 +581,7 @@ export function PlanSection({
 
     setHiddenIds(storedSectionHidden);
     lastPersistedHiddenRef.current = serializeHiddenIds(
-      hiddenOverridesToPersist(storedSectionHidden, mountableIds),
+      hiddenOverridesToPersist(storedSectionHidden, mountableIds)
     );
     // Intentionally omit mountableIds — one-shot hydrate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -568,11 +593,14 @@ export function PlanSection({
     if (Object.keys(defaultsById).length === 0) return;
     hasHydratedCollapseRef.current = true;
 
-    const resolved = resolveSectionOpenState(storedSectionCollapsed, defaultsById);
+    const resolved = resolveSectionOpenState(
+      storedSectionCollapsed,
+      defaultsById
+    );
     setOpenById(resolved);
     setCollapseReady(true);
     lastPersistedCollapseRef.current = serializeCollapseOverrides(
-      collapseOverridesToPersist(resolved, defaultsById),
+      collapseOverridesToPersist(resolved, defaultsById)
     );
     // Intentionally omit further defaultsById changes — one-shot after first non-empty defaults.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- subsequent stored map writes must not clobber openById
@@ -595,7 +623,12 @@ export function PlanSection({
           shell?.setPlanDefaults((prev) =>
             prev
               ? { ...prev, sectionOrder: saved }
-              : { sectionOrder: saved, sectionCollapsed: {}, sectionHidden: [], customSections: [] },
+              : {
+                  sectionOrder: saved,
+                  sectionCollapsed: {},
+                  sectionHidden: [],
+                  customSections: [],
+                }
           );
           setLayoutSaveStatus("saved");
         } catch {
@@ -611,7 +644,10 @@ export function PlanSection({
   useEffect(() => {
     if (disabled || !token || storedSectionCollapsed === null) return;
 
-    const overrides = collapseOverridesToPersist(effectiveOpenById, defaultsById);
+    const overrides = collapseOverridesToPersist(
+      effectiveOpenById,
+      defaultsById
+    );
     const serialized = serializeCollapseOverrides(overrides);
     if (serialized === lastPersistedCollapseRef.current) return;
 
@@ -625,7 +661,12 @@ export function PlanSection({
           shell?.setPlanDefaults((prev) =>
             prev
               ? { ...prev, sectionCollapsed: saved }
-              : { sectionOrder: [], sectionCollapsed: saved, sectionHidden: [], customSections: [] },
+              : {
+                  sectionOrder: [],
+                  sectionCollapsed: saved,
+                  sectionHidden: [],
+                  customSections: [],
+                }
           );
           setCollapseSaveStatus("saved");
         } catch {
@@ -635,7 +676,14 @@ export function PlanSection({
     }, DOCTOR_LAYOUT_AUTOSAVE_MS);
 
     return () => window.clearTimeout(timer);
-  }, [defaultsById, disabled, effectiveOpenById, shell, storedSectionCollapsed, token]);
+  }, [
+    defaultsById,
+    disabled,
+    effectiveOpenById,
+    shell,
+    storedSectionCollapsed,
+    token,
+  ]);
 
   // ---- Debounced delta-autosave: hidden set -----------------------------------
   useEffect(() => {
@@ -655,7 +703,12 @@ export function PlanSection({
           shell?.setPlanDefaults((prev) =>
             prev
               ? { ...prev, sectionHidden: saved }
-              : { sectionOrder: [], sectionCollapsed: {}, sectionHidden: saved, customSections: [] },
+              : {
+                  sectionOrder: [],
+                  sectionCollapsed: {},
+                  sectionHidden: saved,
+                  customSections: [],
+                }
           );
           setVisibilitySaveStatus("saved");
         } catch {
@@ -669,7 +722,7 @@ export function PlanSection({
 
   // ---- Doctor-default autosave: custom section structure ----------------------
   const lastPersistedCustomStructureRef = useRef<string>(
-    planCustomSectionsStructureKey(fields.planCustomSections),
+    planCustomSectionsStructureKey(fields.planCustomSections)
   );
 
   useEffect(() => {
@@ -698,7 +751,7 @@ export function PlanSection({
                   sectionCollapsed: {},
                   sectionHidden: [],
                   customSections: template,
-                },
+                }
           );
         } catch {
           // Best-effort; visit content is unaffected by a default-save failure.
@@ -712,7 +765,10 @@ export function PlanSection({
   const handleAddCustomSection = useCallback(() => {
     if (disabled) return;
     if (customSections.length >= PLAN_CUSTOM_SECTIONS_MAX) return;
-    dispatch({ type: "ADD_PLAN_CUSTOM_SECTION", section: createEmptyCustomSubsection() });
+    dispatch({
+      type: "ADD_PLAN_CUSTOM_SECTION",
+      section: createEmptyCustomSubsection(),
+    });
     setSectionManagerOpen(false);
   }, [customSections.length, disabled, dispatch]);
 
@@ -720,11 +776,13 @@ export function PlanSection({
     (sectionId: PlanSectionId) => {
       if (disabled || !isCustomBlockSectionId(sectionId)) return;
       const blockId = customBlockIdFromSectionId(sectionId);
-      const index = customSections.findIndex((section) => section.id === blockId);
+      const index = customSections.findIndex(
+        (section) => section.id === blockId
+      );
       if (index === -1) return;
       dispatch({ type: "REMOVE_PLAN_CUSTOM_SECTION", index });
     },
-    [customSections, disabled, dispatch],
+    [customSections, disabled, dispatch]
   );
 
   const clearDragState = useCallback(() => {
@@ -737,7 +795,7 @@ export function PlanSection({
       if (disabled) return;
       setSectionOrder((prev) => moveSectionInOrder(prev, index, direction));
     },
-    [disabled],
+    [disabled]
   );
 
   const handleMoveSectionById = useCallback(
@@ -746,12 +804,14 @@ export function PlanSection({
       if (index === -1) return;
       handleMoveByDirection(index, direction);
     },
-    [handleMoveByDirection, sectionOrder],
+    [handleMoveByDirection, sectionOrder]
   );
 
   const handleToggleSectionHidden = useCallback((sectionId: PlanSectionId) => {
     setHiddenIds((prev) =>
-      prev.includes(sectionId) ? prev.filter((id) => id !== sectionId) : [...prev, sectionId],
+      prev.includes(sectionId)
+        ? prev.filter((id) => id !== sectionId)
+        : [...prev, sectionId]
     );
   }, []);
 
@@ -768,11 +828,15 @@ export function PlanSection({
         clearDragState();
       },
     }),
-    [clearDragState, disabled],
+    [clearDragState, disabled]
   );
 
   const handleSectionDragOver = useCallback(
-    (targetIndex: number, sectionId: PlanSectionId, e: DragEvent<HTMLDivElement>) => {
+    (
+      targetIndex: number,
+      sectionId: PlanSectionId,
+      e: DragEvent<HTMLDivElement>
+    ) => {
       const sourceId = dragSectionIdRef.current;
       if (disabled || !sourceId || sourceId === sectionId) return;
 
@@ -783,7 +847,7 @@ export function PlanSection({
       const intent = resolveSectionDropIntent(e.clientY, rect);
       setDropTarget({ index: targetIndex, intent });
     },
-    [disabled],
+    [disabled]
   );
 
   const handleDropOnTarget = useCallback(
@@ -800,7 +864,7 @@ export function PlanSection({
       });
       clearDragState();
     },
-    [clearDragState, disabled],
+    [clearDragState, disabled]
   );
 
   const canSend = canSendProp ?? registeredActions?.canSend ?? false;
@@ -848,10 +912,10 @@ export function PlanSection({
 
   const handleMedicineListKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const focusable = e.currentTarget.querySelectorAll<HTMLElement>(
-      "[role='button'][aria-label*='expand medication']",
+      "[role='button'][aria-label*='expand medication']"
     );
     const currentIndex = Array.from(focusable).indexOf(
-      document.activeElement as HTMLElement,
+      document.activeElement as HTMLElement
     );
     if (currentIndex === -1) return;
 
@@ -864,9 +928,15 @@ export function PlanSection({
     }
   };
 
-  const handleMedicineChange = (index: number, field: string, value: string) => {
+  const handleMedicineChange = (
+    index: number,
+    field: string,
+    value: string
+  ) => {
     const prevRow = medicines[index];
-    const patch: Partial<RxMedicine> = { [field]: value } as Partial<RxMedicine>;
+    const patch: Partial<RxMedicine> = {
+      [field]: value,
+    } as Partial<RxMedicine>;
     if (
       field === "medicineName" &&
       prevRow.drugMasterId &&
@@ -883,8 +953,12 @@ export function PlanSection({
 
   const handleMedicineSelect = (index: number, drug: DrugMasterRow) => {
     const prevRow = medicines[index];
-    const dosagePrefill = prevRow.dosage.trim() ? prevRow.dosage : (drug.strength ?? "");
-    const routeText = prevRow.route.trim() ? prevRow.route : (drug.route_default ?? "");
+    const dosagePrefill = prevRow.dosage.trim()
+      ? prevRow.dosage
+      : (drug.strength ?? "");
+    const routeText = prevRow.route.trim()
+      ? prevRow.route
+      : (drug.route_default ?? "");
     const seedRouteCode =
       !prevRow.routeCode && drug.route_default
         ? coerceRouteCode(drug.route_default)
@@ -918,58 +992,6 @@ export function PlanSection({
   }, [dispatch, generateInstanceIds, setMedicineInstanceIds]);
 
   /**
-   * Insert a prefilled medicine card (capture bar). Reuses a still-blank seed
-   * row when present, but always places the named card at the top of the list
-   * (newest-first — matches ADD_MEDICINE / catalog pick).
-   */
-  const insertMedicine = useCallback(
-    (medicine: RxMedicine, { keepEditorOpen }: { keepEditorOpen: boolean }) => {
-      const blankIndex = medicines.findIndex(
-        (m) => !m.medicineName.trim() && !m.dosage.trim(),
-      );
-      if (blankIndex >= 0) {
-        const nextList = medicines.map((m) => ({ ...m }));
-        const nextIds = [...medicineInstanceIds];
-        const [blankId] = nextIds.splice(blankIndex, 1);
-        nextList.splice(blankIndex, 1);
-        nextList.unshift(medicine);
-        nextIds.unshift(blankId ?? generateInstanceIds(1)[0]!);
-        dispatch({ type: "SET_MEDICINES", medicines: nextList });
-        setMedicineInstanceIds(nextIds);
-        setActiveRowInstanceId(keepEditorOpen ? (nextIds[0] ?? null) : null);
-        return;
-      }
-      const newInstanceIds = generateInstanceIds(1);
-      dispatch({ type: "ADD_MEDICINE", medicine });
-      setMedicineInstanceIds((prev) => [...newInstanceIds, ...prev]);
-      setActiveRowInstanceId(keepEditorOpen ? (newInstanceIds[0] ?? null) : null);
-    },
-    [
-      dispatch,
-      generateInstanceIds,
-      medicineInstanceIds,
-      medicines,
-      setMedicineInstanceIds,
-    ],
-  );
-
-  const handleCaptureDrug = useCallback(
-    (drug: DrugMasterRow) => {
-      insertMedicine(rxMedicineFromDrugMaster(drug), {
-        // PMH parity: capture commits a collapsed card; click to expand.
-        keepEditorOpen: false,
-      });
-      setDrugMasterIndex((prev) => {
-        if (prev.get(drug.id) === drug) return prev;
-        const next = new Map(prev);
-        next.set(drug.id, drug);
-        return next;
-      });
-    },
-    [insertMedicine, setDrugMasterIndex],
-  );
-
-  /**
    * Batch commit from the capture bar (deterministic parse or AI).
    * Mutates a local copy so multi-drug AI commits don't clobber the same
    * blank row. Newest named cards always land at the top (PMH / catalog parity).
@@ -986,7 +1008,7 @@ export function PlanSection({
 
       for (const medicine of incoming) {
         const blankIndex = nextList.findIndex(
-          (m) => !m.medicineName.trim() && !m.dosage.trim(),
+          (m) => !m.medicineName.trim() && !m.dosage.trim()
         );
         if (blankIndex >= 0) {
           const [blankId] = nextIds.splice(blankIndex, 1);
@@ -1012,8 +1034,17 @@ export function PlanSection({
       medicineInstanceIds,
       medicines,
       setMedicineInstanceIds,
-    ],
+    ]
   );
+
+  const medAi = usePlanMedicineAiRefine({
+    token,
+    disabled,
+    medicines,
+    instanceIds: medicineInstanceIds,
+    onPatch: handleMedicinePatch,
+    onAddMedicines: handleCaptureMedicines,
+  });
 
   const handleMedicinesTemplateApplied = useCallback(
     (nextMedicines: RxMedicine[]) => {
@@ -1021,7 +1052,7 @@ export function PlanSection({
       setMedicineInstanceIds(generateInstanceIds(nextMedicines.length));
       setActiveRowInstanceId(null);
     },
-    [dispatch, generateInstanceIds, setMedicineInstanceIds],
+    [dispatch, generateInstanceIds, setMedicineInstanceIds]
   );
 
   const shortcuts = useMemo(
@@ -1093,7 +1124,7 @@ export function PlanSection({
       handleAddMedicine,
       handleOpenTemplates,
       handleOpenPreview,
-    ],
+    ]
   );
 
   usePaneKeyboardShortcuts({
@@ -1111,7 +1142,7 @@ export function PlanSection({
       enabled: () => canSend,
       action: handleSend,
     }),
-    [canSend, handleSend],
+    [canSend, handleSend]
   );
   const addMedicineCommand = useMemo(
     () => ({
@@ -1121,7 +1152,7 @@ export function PlanSection({
       group: "Plan" as const,
       action: handleAddMedicine,
     }),
-    [handleAddMedicine],
+    [handleAddMedicine]
   );
   const openTemplatesCommand = useMemo(
     () => ({
@@ -1131,7 +1162,7 @@ export function PlanSection({
       group: "Plan" as const,
       action: handleOpenTemplates,
     }),
-    [handleOpenTemplates],
+    [handleOpenTemplates]
   );
   const openPreviewCommand = useMemo(
     () => ({
@@ -1141,7 +1172,7 @@ export function PlanSection({
       group: "Plan" as const,
       action: handleOpenPreview,
     }),
-    [handleOpenPreview],
+    [handleOpenPreview]
   );
 
   useRegisterCommand(isReadOnly ? null : sendCommand);
@@ -1151,6 +1182,7 @@ export function PlanSection({
 
   const handleRemoveMedicine = (index: number) => {
     const removedInstanceId = medicineInstanceIds[index];
+    if (removedInstanceId === medAi.refiningInstanceId) medAi.resetAi();
     const clearingLast = medicines.length <= 1;
     dispatch({ type: "REMOVE_MEDICINE", index });
     if (clearingLast) {
@@ -1161,7 +1193,7 @@ export function PlanSection({
     }
     setMedicineInstanceIds((prev) => prev.filter((_, i) => i !== index));
     setActiveRowInstanceId((activeId) =>
-      activeId === removedInstanceId ? null : activeId,
+      activeId === removedInstanceId ? null : activeId
     );
   };
 
@@ -1171,17 +1203,17 @@ export function PlanSection({
         medicine_name: m.medicineName,
         drug_master_id: m.drugMasterId,
       })),
-    [medicines],
+    [medicines]
   );
 
   const namedMedicineCount = useMemo(
     () => medicines.filter((m) => m.medicineName.trim().length > 0).length,
-    [medicines],
+    [medicines]
   );
 
   const investigationCount = useMemo(
     () => parseInvestigationsOrders(fields.investigationsOrders).length,
-    [fields.investigationsOrders],
+    [fields.investigationsOrders]
   );
 
   const followUpPreview = useMemo(
@@ -1189,46 +1221,53 @@ export function PlanSection({
       resolveFollowUpForOutput(
         fields.followUp,
         fields.followUpValue,
-        fields.followUpUnit,
+        fields.followUpUnit
       ),
-    [fields.followUp, fields.followUpValue, fields.followUpUnit],
+    [fields.followUp, fields.followUpValue, fields.followUpUnit]
   );
 
   const referralPreview = useMemo(
     () => resolveReferralForOutput(referralPartsFromFields(fields)),
-    [fields],
+    [fields]
   );
 
   const PlanTabIcon = SOAP_TAB_HEADING_ICON.plan;
-  const showAllHiddenEmptyState = layoutHydrated && visibleSectionOrder.length === 0;
+  const showAllHiddenEmptyState =
+    layoutHydrated && visibleSectionOrder.length === 0;
 
-  const safetyStrip =
-    !safetyLifted ? (
-      <>
-        <AllergyClashBanner
-          medicines={matchableMedicines}
-          medicineInstanceIds={medicineInstanceIds}
-          allergies={allergies}
-          drugMasterIndex={drugMasterIndex}
-          isAcked={isAcked}
-          onAcknowledge={(keys) => onAcknowledge([...keys])}
-        />
-        <InteractionChips
-          interactions={ddiInteractions}
-          drugMasterIndex={drugMasterIndex}
-          isAcked={isAcked}
-          onAck={onAckDdi}
-        />
-      </>
-    ) : null;
+  const safetyStrip = !safetyLifted ? (
+    <>
+      <AllergyClashBanner
+        medicines={matchableMedicines}
+        medicineInstanceIds={medicineInstanceIds}
+        allergies={allergies}
+        drugMasterIndex={drugMasterIndex}
+        isAcked={isAcked}
+        onAcknowledge={(keys) => onAcknowledge([...keys])}
+      />
+      <InteractionChips
+        interactions={ddiInteractions}
+        drugMasterIndex={drugMasterIndex}
+        isAcked={isAcked}
+        onAck={onAckDdi}
+      />
+    </>
+  ) : null;
 
   const medicationsBody = (
     <div id="medicines-section">
+      {/* LVC-Q1: strip above the capture bar so expanded items never sit
+          under the combo suggestion list. */}
+      <LastVisitMedicinesStrip
+        disabled={isReadOnly}
+        medicineInstanceIds={medicineInstanceIds}
+        setMedicineInstanceIds={setMedicineInstanceIds}
+        generateInstanceIds={generateInstanceIds}
+      />
       {!isReadOnly ? (
         <MedicineCaptureBar
           token={token}
           disabled={disabled}
-          onAddDrug={handleCaptureDrug}
           onAddMedicines={handleCaptureMedicines}
         />
       ) : null}
@@ -1238,29 +1277,53 @@ export function PlanSection({
           const isActive = !disabled && instanceId === activeRowInstanceId;
           if (!med.medicineName.trim() && !isActive) return null;
           return (
-            <MedicineRow
-              key={instanceId ?? i}
-              index={i}
-              value={med}
-              onChange={handleMedicineChange}
-              onPatch={handleMedicinePatch}
-              onRemove={handleRemoveMedicine}
-              onMedicineSelect={handleMedicineSelect}
-              token={token}
-              disabled={disabled}
-              isReadOnly={disabled}
-              isEditing={isActive}
-              onRequestEdit={(rowIndex) => {
-                if (disabled) return;
-                setActiveRowInstanceId(medicineInstanceIds[rowIndex] ?? null);
-              }}
-              onRequestCollapse={(rowIndex) => {
-                const rowInstanceId = medicineInstanceIds[rowIndex];
-                setActiveRowInstanceId((activeId) =>
-                  activeId === rowInstanceId ? null : activeId,
-                );
-              }}
-            />
+            <div key={instanceId ?? i}>
+              <MedicineRow
+                index={i}
+                value={med}
+                onChange={handleMedicineChange}
+                onPatch={handleMedicinePatch}
+                onRemove={handleRemoveMedicine}
+                onRefine={
+                  token && !disabled ? medAi.handleCardRefine : undefined
+                }
+                onMedicineSelect={handleMedicineSelect}
+                token={token}
+                disabled={disabled}
+                isReadOnly={disabled}
+                isEditing={isActive}
+                onRequestEdit={(rowIndex) => {
+                  if (disabled) return;
+                  setActiveRowInstanceId(medicineInstanceIds[rowIndex] ?? null);
+                }}
+                onRequestCollapse={(rowIndex) => {
+                  const rowInstanceId = medicineInstanceIds[rowIndex];
+                  setActiveRowInstanceId((activeId) =>
+                    activeId === rowInstanceId ? null : activeId
+                  );
+                }}
+              />
+              {medAi.refiningInstanceId === instanceId &&
+              medAi.aiStatus !== "idle" ? (
+                <div className="mt-1">
+                  <ChartMedAiProposal
+                    status={medAi.aiStatus}
+                    medicines={medAi.aiMeds}
+                    typedText={med.medicineName}
+                    onAdd={medAi.handleAdd}
+                    onAddAll={medAi.handleApplyAll}
+                    onDismiss={medAi.resetAi}
+                    onApply={medAi.cardApplied ? undefined : medAi.handleApply}
+                    renameTo={medAi.refineMerge?.suggestedName}
+                    onRename={
+                      medAi.refineMerge?.suggestedName
+                        ? medAi.handleRename
+                        : undefined
+                    }
+                  />
+                </div>
+              ) : null}
+            </div>
           );
         })}
       </div>
@@ -1271,35 +1334,43 @@ export function PlanSection({
     switch (sectionId) {
       case "investigations":
         return (
-          <InvestigationsChipRow
-            value={fields.investigationsOrders}
-            onChange={(next) => setField("investigationsOrders", next)}
-            disabled={disabled}
-            hideLabel
-            token={token}
-          />
+          <>
+            <LastVisitInvestigationsStrip disabled={disabled} />
+            <InvestigationsChipRow
+              value={fields.investigationsOrders}
+              onChange={(next) => setField("investigationsOrders", next)}
+              disabled={disabled}
+              hideLabel
+              token={token}
+            />
+          </>
         );
       case "medications":
         return medicationsBody;
       case "follow_up":
         return (
           <>
+            <LastVisitFollowUpStrip disabled={disabled} />
             {!disabled ? (
               <PlanQuickPickChips
                 labels={PLAN_FOLLOW_UP_QUICK_PICKS.map((p) => p.label)}
                 groupLabel="Quick follow-up"
                 testId="plan-follow-up-quick-picks"
                 isSelected={(label) => {
-                  const pick = PLAN_FOLLOW_UP_QUICK_PICKS.find((p) => p.label === label);
+                  const pick = PLAN_FOLLOW_UP_QUICK_PICKS.find(
+                    (p) => p.label === label
+                  );
                   if (!pick) return false;
                   return isFollowUpQuickPickSelected(
                     pick,
                     fields.followUpValue,
-                    fields.followUpUnit,
+                    fields.followUpUnit
                   );
                 }}
                 onPick={(label) => {
-                  const pick = PLAN_FOLLOW_UP_QUICK_PICKS.find((p) => p.label === label);
+                  const pick = PLAN_FOLLOW_UP_QUICK_PICKS.find(
+                    (p) => p.label === label
+                  );
                   if (!pick) return;
                   const next = applyFollowUpQuickPick(pick);
                   setField("followUpValue", next.followUpValue);
@@ -1309,27 +1380,52 @@ export function PlanSection({
               />
             ) : null}
             <FollowUpPicker hideLabel hideHint />
-            <FollowUpNotesField fields={fields} setField={setField} disabled={disabled} />
+            <FollowUpNotesField
+              fields={fields}
+              setField={setField}
+              disabled={disabled}
+            />
           </>
         );
       case "advice":
         return (
           <>
-            <AdviceField fields={fields} setField={setField} disabled={disabled} />
+            <LastVisitAdviceStrip disabled={disabled} />
+            <AdviceField
+              fields={fields}
+              setField={setField}
+              disabled={disabled}
+            />
             <AdviceHandoutsStrip disabled={disabled} />
           </>
         );
       case "referral":
-        return <ReferralField fields={fields} setField={setField} disabled={disabled} />;
+        return (
+          <>
+            <LastVisitReferralStrip disabled={disabled} />
+            <ReferralField
+              fields={fields}
+              setField={setField}
+              disabled={disabled}
+            />
+          </>
+        );
       case "clinical_notes":
         return (
-          <ClinicalNotesField fields={fields} setField={setField} disabled={disabled} />
+          <>
+            <LastVisitClinicalNotesStrip disabled={disabled} />
+            <ClinicalNotesField
+              fields={fields}
+              setField={setField}
+              disabled={disabled}
+            />
+          </>
         );
     }
   };
 
   const sectionMeta = (
-    sectionId: StaticPlanSectionId,
+    sectionId: StaticPlanSectionId
   ): {
     title: string;
     testId: string;
@@ -1373,7 +1469,9 @@ export function PlanSection({
           title: "Follow-up",
           testId: "plan-follow-up-zone",
           count: followUpPreview ? 1 : null,
-          preview: followUpPreview ? `— ${followUpPreview.slice(0, 72)}` : undefined,
+          preview: followUpPreview
+            ? `— ${followUpPreview.slice(0, 72)}`
+            : undefined,
           icon: CalendarClock,
           bodyClassName: "space-y-2",
           actions: !disabled ? (
@@ -1399,7 +1497,9 @@ export function PlanSection({
           title: "Referral",
           testId: "plan-referral-zone",
           count: referralPreview ? 1 : null,
-          preview: referralPreview ? `— ${referralPreview.slice(0, 72)}` : undefined,
+          preview: referralPreview
+            ? `— ${referralPreview.slice(0, 72)}`
+            : undefined,
           icon: Share2,
           bodyClassName: "space-y-2",
           actions: !disabled ? (
@@ -1413,7 +1513,10 @@ export function PlanSection({
           count: null,
           icon: NotebookPen,
           actions: !disabled ? (
-            <PlanSectionTemplateButton scope="clinical_notes" disabled={disabled} />
+            <PlanSectionTemplateButton
+              scope="clinical_notes"
+              disabled={disabled}
+            />
           ) : undefined,
         };
     }
@@ -1421,10 +1524,12 @@ export function PlanSection({
 
   const renderCustomBlockInner = (
     sectionId: PlanSectionId,
-    leadingActions: ReactNode,
+    leadingActions: ReactNode
   ): ReactNode => {
     const blockId = customBlockIdFromSectionId(sectionId);
-    const blockIndex = customSections.findIndex((section) => section.id === blockId);
+    const blockIndex = customSections.findIndex(
+      (section) => section.id === blockId
+    );
     const block = customSections[blockIndex];
     if (!block) return null;
 
@@ -1432,6 +1537,7 @@ export function PlanSection({
       <CustomSubsectionBlock
         section={block}
         sectionId={sectionId}
+        lastVisitScope="plan"
         disabled={disabled}
         scrollSelector={PLAN_SCROLL_TOP_SELECTOR}
         leadingActions={leadingActions}
@@ -1439,8 +1545,13 @@ export function PlanSection({
         pendingChildFocusId={focusChildIdRef.current}
         onUpdate={(patch) => {
           if (disabled) return;
-          if (focusBlockIdRef.current === block.id) focusBlockIdRef.current = null;
-          dispatch({ type: "UPDATE_PLAN_CUSTOM_SECTION", index: blockIndex, patch });
+          if (focusBlockIdRef.current === block.id)
+            focusBlockIdRef.current = null;
+          dispatch({
+            type: "UPDATE_PLAN_CUSTOM_SECTION",
+            index: blockIndex,
+            patch,
+          });
         }}
         onRemove={() => handleRemoveCustomSection(sectionId)}
         onAddChild={() => {
@@ -1539,7 +1650,9 @@ export function PlanSection({
               ? (open) => handleSectionOpenChange(sectionId, open)
               : undefined
           }
-          defaultOpen={collapseControlled ? undefined : PLAN_COLLAPSE_DEFAULTS[sectionId]}
+          defaultOpen={
+            collapseControlled ? undefined : PLAN_COLLAPSE_DEFAULTS[sectionId]
+          }
         >
           {sectionBody(sectionId)}
         </CollapsibleContainer>
@@ -1570,7 +1683,7 @@ export function PlanSection({
           dragSectionIdRef.current = sourceId;
           const intent = resolveSectionDropIntent(
             e.clientY,
-            e.currentTarget.getBoundingClientRect(),
+            e.currentTarget.getBoundingClientRect()
           );
           handleDropOnTarget(index, intent);
         }}
@@ -1590,7 +1703,12 @@ export function PlanSection({
         data-testid="plan-scroll-top"
       >
         {heading !== null ? (
-          <h3 className={soapTabHeadingClassName("plan", RX_SECTION_HEADING_CLASS)}>
+          <h3
+            className={soapTabHeadingClassName(
+              "plan",
+              RX_SECTION_HEADING_CLASS
+            )}
+          >
             <PlanTabIcon
               className="h-4 w-4 shrink-0 text-muted-foreground"
               aria-hidden
@@ -1600,49 +1718,54 @@ export function PlanSection({
         ) : null}
 
         {!disabled ? (
-          <div className="flex min-h-9 flex-nowrap items-center gap-0.5">
-            <div className="mr-auto flex min-w-0 items-center">
-              <SoapTabLayoutSaveStatus
-                saved={
-                  layoutSaveStatus === "saved" ||
-                  collapseSaveStatus === "saved" ||
-                  visibilitySaveStatus === "saved"
-                }
-                error={
-                  layoutSaveStatus === "error" ||
-                  collapseSaveStatus === "error" ||
-                  visibilitySaveStatus === "error"
-                }
+          <SoapPaneChromePortal>
+            <div
+              className="flex min-h-9 flex-nowrap items-center gap-0.5"
+              data-testid="soap-tab-chrome"
+            >
+              <div className="mr-auto flex min-w-0 items-center">
+                <SoapTabLayoutSaveStatus
+                  saved={
+                    layoutSaveStatus === "saved" ||
+                    collapseSaveStatus === "saved" ||
+                    visibilitySaveStatus === "saved"
+                  }
+                  error={
+                    layoutSaveStatus === "error" ||
+                    collapseSaveStatus === "error" ||
+                    visibilitySaveStatus === "error"
+                  }
+                />
+              </div>
+              <SoapTabExpandCollapseClearButtons
+                expandTestId="plan-expand-all"
+                collapseTestId="plan-collapse-all"
+                clearTestId="plan-clear-all"
+                onExpandAll={expandAllSections}
+                onCollapseAll={collapseAllSections}
+                onClearAll={() => setClearConfirmOpen(true)}
+                clearDisabled={!hasClearablePlan}
+              />
+              <PlanWholeTemplateButton
+                disabled={disabled}
+                onMedicinesApplied={handleMedicinesTemplateApplied}
+              />
+              <ManagePlanSectionsMenu
+                disabled={disabled}
+                open={sectionManagerOpen}
+                onOpenChange={setSectionManagerOpen}
+                sectionOrder={sectionOrder}
+                mountableIds={mountableIds}
+                hiddenIds={hiddenIds}
+                fields={fields}
+                customSections={customSections}
+                onToggleHidden={handleToggleSectionHidden}
+                onMoveSection={handleMoveSectionById}
+                onAddCustomSection={handleAddCustomSection}
+                onRemoveCustomSection={handleRemoveCustomSection}
               />
             </div>
-            <SoapTabExpandCollapseClearButtons
-              expandTestId="plan-expand-all"
-              collapseTestId="plan-collapse-all"
-              clearTestId="plan-clear-all"
-              onExpandAll={expandAllSections}
-              onCollapseAll={collapseAllSections}
-              onClearAll={() => setClearConfirmOpen(true)}
-              clearDisabled={!hasClearablePlan}
-            />
-            <PlanWholeTemplateButton
-              disabled={disabled}
-              onMedicinesApplied={handleMedicinesTemplateApplied}
-            />
-            <ManagePlanSectionsMenu
-              disabled={disabled}
-              open={sectionManagerOpen}
-              onOpenChange={setSectionManagerOpen}
-              sectionOrder={sectionOrder}
-              mountableIds={mountableIds}
-              hiddenIds={hiddenIds}
-              fields={fields}
-              customSections={customSections}
-              onToggleHidden={handleToggleSectionHidden}
-              onMoveSection={handleMoveSectionById}
-              onAddCustomSection={handleAddCustomSection}
-              onRemoveCustomSection={handleRemoveCustomSection}
-            />
-          </div>
+          </SoapPaneChromePortal>
         ) : null}
 
         {showAllHiddenEmptyState ? (
@@ -1664,6 +1787,10 @@ export function PlanSection({
         ) : (
           <>
             {visibleSectionOrder.map((sectionId) => renderSection(sectionId))}
+            <LastVisitUnmatchedCustomSectionsStrip
+              scope="plan"
+              disabled={disabled}
+            />
             {!disabled ? (
               <SoapTabCustomSectionsAddChrome
                 disabled={disabled}
@@ -1791,7 +1918,7 @@ function AdviceField({
 
 function filterReferralSpecialtyOptions(
   options: ChartCatalogOption[],
-  query: string,
+  query: string
 ): ChartCatalogOption[] {
   const available = new Set(options.map((o) => o.value));
   return filterReferralSpecialtyCatalog(REFERRAL_SPECIALTY_CATALOG, query)
@@ -1810,22 +1937,22 @@ function ReferralField({
 }) {
   const specialties = fields.referralSpecialties;
   const referralPreview = resolveReferralForOutput(
-    referralPartsFromFields(fields),
+    referralPartsFromFields(fields)
   );
   const hasReferral = Boolean(referralPreview);
 
   const specialtySelected = useCallback(
     (label: string) =>
       specialties.some((s) => s.toLowerCase() === label.toLowerCase()),
-    [specialties],
+    [specialties]
   );
 
   const specialtyCatalogOptions = useMemo(
     () =>
       referralSpecialtyOptionsForCombobox().filter(
-        (opt) => !specialtySelected(opt.label),
+        (opt) => !specialtySelected(opt.label)
       ),
-    [specialtySelected],
+    [specialtySelected]
   );
 
   const handleSpecialtyCommit = useCallback(
@@ -1837,10 +1964,10 @@ function ReferralField({
       if (!label) return;
       setField(
         "referralSpecialties",
-        addReferralSpecialty(fields.referralSpecialties, label),
+        addReferralSpecialty(fields.referralSpecialties, label)
       );
     },
-    [fields.referralSpecialties, setField],
+    [fields.referralSpecialties, setField]
   );
 
   const clearReferral = useCallback(() => {
@@ -1862,7 +1989,7 @@ function ReferralField({
             onPick={(label) =>
               setField(
                 "referralUrgency",
-                fields.referralUrgency === label ? null : label,
+                fields.referralUrgency === label ? null : label
               )
             }
           />
@@ -1875,7 +2002,7 @@ function ReferralField({
               onPick={(label) =>
                 setField(
                   "referralSpecialties",
-                  toggleReferralSpecialty(fields.referralSpecialties, label),
+                  toggleReferralSpecialty(fields.referralSpecialties, label)
                 )
               }
             />
@@ -1902,7 +2029,7 @@ function ReferralField({
                     className={cn(
                       "group flex min-w-0 items-center gap-1 rounded-md border px-1.5 py-1",
                       "border-border/70 bg-muted/25",
-                      "hover:border-border hover:bg-muted/45",
+                      "hover:border-border hover:bg-muted/45"
                     )}
                   >
                     <span className="min-w-0 flex-1 truncate pl-1 text-sm font-medium text-foreground">
@@ -1915,15 +2042,15 @@ function ReferralField({
                           "referralSpecialties",
                           toggleReferralSpecialty(
                             fields.referralSpecialties,
-                            label,
-                          ),
+                            label
+                          )
                         )
                       }
                       aria-label={`Remove ${label}`}
                       className={cn(
                         "shrink-0 rounded-md p-1 text-muted-foreground",
                         "opacity-70 hover:bg-background hover:text-foreground hover:opacity-100",
-                        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary",
+                        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
                       )}
                     >
                       <X size={13} />
@@ -1941,7 +2068,7 @@ function ReferralField({
             onPick={(label) =>
               setField(
                 "referralReason",
-                fields.referralReason === label ? null : label,
+                fields.referralReason === label ? null : label
               )
             }
           />
@@ -1968,7 +2095,7 @@ function ReferralField({
               type="button"
               className={cn(
                 "text-xs text-muted-foreground underline-offset-2 hover:underline",
-                !hasReferral && "invisible pointer-events-none",
+                !hasReferral && "invisible pointer-events-none"
               )}
               onClick={clearReferral}
               aria-label="Clear referral"

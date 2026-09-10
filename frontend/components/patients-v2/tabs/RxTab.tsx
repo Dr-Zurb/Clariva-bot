@@ -171,7 +171,7 @@ export function RxTab({ patientId, token }: RxTabProps) {
           role="status"
           aria-live="polite"
           className={
-            "fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-md px-4 py-2 text-sm font-medium shadow-lg " +
+            "fixed top-4 right-4 z-50 rounded-md px-4 py-2 text-sm font-medium shadow-lg " +
             (toast.kind === "success"
               ? "bg-green-600 text-white"
               : toast.kind === "error"

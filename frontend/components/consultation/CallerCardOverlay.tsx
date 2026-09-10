@@ -73,6 +73,8 @@ export interface CallerCardOverlayProps {
   remoteNetworkLevel: number | null;
   /** Stats popover body for the bars (parent owns; usually built from `useVideoCallStats`). */
   remoteStatsTooltip?: ReactNode;
+  /** When set, replaces the built-in remote `<NetworkBars>`. */
+  remoteNetworkBars?: ReactNode;
   /**
    * Lifecycle status. Drives the small status banner at the top of the
    * card. Today only `'live'` and `'connecting'` fire from `<VideoRoom>`;
@@ -105,6 +107,13 @@ export interface CallerCardOverlayProps {
   alwaysVisible?: boolean;
   /** Optional override of the default 5s hide delay. */
   hideDelayMs?: number;
+  /** Extra classes on the overlay root (e.g. patient-chrome fade). */
+  className?: string;
+  /**
+   * Single compact row for a short video header (patient chat open).
+   * Drops the gradient band height and the network-bars row.
+   */
+  compact?: boolean;
 }
 
 const DEFAULT_HIDE_DELAY_MS = 5000;
@@ -114,11 +123,14 @@ export default function CallerCardOverlay({
   connectedAt,
   remoteNetworkLevel,
   remoteStatsTooltip,
+  remoteNetworkBars,
   status,
   recordingStatus = "idle",
   recordingTooltip,
   alwaysVisible = false,
   hideDelayMs = DEFAULT_HIDE_DELAY_MS,
+  className,
+  compact = false,
 }: CallerCardOverlayProps) {
   const { formatted: durationLabel } = useCallDuration(connectedAt);
 
@@ -224,12 +236,16 @@ export default function CallerCardOverlay({
       data-testid="caller-card-overlay"
       data-visible={visible ? "true" : "false"}
       data-status={status}
+      data-compact={compact ? "true" : undefined}
       className={
         "absolute inset-x-2 top-2 z-[15] flex flex-col gap-1 rounded-lg " +
-        "bg-gradient-to-b from-black/70 via-black/55 to-transparent " +
-        "px-3 py-2 text-white shadow-lg backdrop-blur-sm " +
+        (compact
+          ? "bg-black/55 px-2 py-1.5 "
+          : "bg-gradient-to-b from-black/70 via-black/55 to-transparent px-3 py-2 ") +
+        "text-white shadow-lg backdrop-blur-sm " +
         "transition-opacity duration-300 " +
-        (visible ? "opacity-100" : "opacity-30 hover:opacity-100")
+        (visible ? "opacity-100" : "opacity-30 hover:opacity-100") +
+        (className ? " " + className : "")
       }
       // Prevent click-through on the card itself; the surrounding
       // (transparent) wrapper area still bubbles to the parent's
@@ -240,19 +256,23 @@ export default function CallerCardOverlay({
       {banner ? (
         <div className="flex justify-center">{banner}</div>
       ) : null}
-      <div className="flex items-center gap-3">
+      <div className={"flex items-center " + (compact ? "gap-2" : "gap-3")}>
         <div className="flex shrink-0">
           {counterparty.avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={counterparty.avatarUrl}
               alt=""
-              className="h-9 w-9 rounded-full object-cover ring-2 ring-white/30"
+              className={
+                (compact ? "h-7 w-7 " : "h-9 w-9 ") +
+                "rounded-full object-cover ring-2 ring-white/30"
+              }
             />
           ) : (
             <div
               className={
-                "flex h-9 w-9 items-center justify-center rounded-full text-sm font-semibold ring-2 ring-white/30 " +
+                "flex items-center justify-center rounded-full font-semibold ring-2 ring-white/30 " +
+                (compact ? "h-7 w-7 text-xs " : "h-9 w-9 text-sm ") +
                 colorClass
               }
               aria-hidden
@@ -262,9 +282,24 @@ export default function CallerCardOverlay({
           )}
         </div>
         <div className="flex min-w-0 flex-1 flex-col">
-          <p className="truncate text-sm font-semibold leading-tight">
+          <p
+            className={
+              "truncate font-semibold leading-tight " +
+              (compact ? "text-xs" : "text-sm")
+            }
+          >
             {counterparty.name}
+            {compact && durationLabel ? (
+              <span
+                className="font-mono font-normal text-white/80"
+                aria-label={`Call duration ${durationLabel}`}
+              >
+                {" · "}
+                {durationLabel}
+              </span>
+            ) : null}
           </p>
+          {compact ? null : (
           <div className="flex items-center gap-2 text-xs leading-tight text-white/80">
             {showRoleRow ? (
               <>
@@ -285,12 +320,15 @@ export default function CallerCardOverlay({
             {durationLabel ? (
               <span aria-hidden className="text-white/40">·</span>
             ) : null}
-            <NetworkBars
-              level={remoteNetworkLevel}
-              label={`${counterparty.role || counterparty.name} network`}
-              tooltip={remoteStatsTooltip}
-            />
+            {remoteNetworkBars ?? (
+              <NetworkBars
+                level={remoteNetworkLevel}
+                label={`${counterparty.role || counterparty.name} network`}
+                tooltip={remoteStatsTooltip}
+              />
+            )}
           </div>
+          )}
         </div>
         {recordingPill ? (
           <div className="flex shrink-0 items-center">{recordingPill}</div>

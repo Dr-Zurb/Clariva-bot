@@ -12,6 +12,17 @@
 
 import type { PrescriptionMedicine } from '../../types/prescription';
 import type { OutputCustomSubsection } from '../../utils/custom-subsections';
+import type {
+  LetterheadBackgroundPreset,
+  LetterheadImageFit,
+  LetterheadLogoSize,
+  LetterheadPageSize,
+  LetterheadTextSize,
+  LetterheadPreset,
+  PatientIdentityPreset,
+} from '../../types/letterhead';
+
+export type PrescriptionPdfLogoSrc = string | { data: Buffer; format: 'png' | 'jpg' };
 
 export interface PrescriptionPdfHeaderData {
   /** "Dr. Jane Doe" — already prefixed by the service. */
@@ -21,7 +32,14 @@ export interface PrescriptionPdfHeaderData {
   registrationNumber?: string | null;
   clinicName?: string | null;
   clinicAddress?: string | null;
-  /** Resolved logo URL (signed if from private storage; null when missing or unreachable). */
+  /**
+   * Buffer source preferred (BRD-D5). String URL kept for tests / fallback;
+   * the service never passes a signed URL.
+   */
+  logoSrc?: PrescriptionPdfLogoSrc | null;
+  /** Banner header photo (preset `banner`). Buffer preferred (BRD-D5). */
+  headerSrc?: PrescriptionPdfLogoSrc | null;
+  /** @deprecated Use logoSrc. Kept so existing fixtures type-check. */
   logoUrl?: string | null;
 }
 
@@ -31,6 +49,46 @@ export interface PrescriptionPdfFooterData {
   shortId: string;
   /** Pre-formatted "May 4, 2026 6:32 PM IST" — service does the timezone math. */
   generatedAtLabel: string;
+  /** Banner footer photo (preset `banner`). Buffer preferred (BRD-D5). */
+  bannerSrc?: PrescriptionPdfLogoSrc | null;
+  footerLine?: string | null;
+  hideHaloCredit?: boolean;
+  /**
+   * rxl-26 / RXL-DL-11 — system text. Null on Version 1.
+   * Must render even when hideHaloCredit or a custom footerLine is set.
+   */
+  replacesLine?: string | null;
+}
+
+export interface PrescriptionPdfLayout {
+  preset: LetterheadPreset;
+  pageSize: LetterheadPageSize;
+  accentColor: string;
+  chromeColor?: string;
+  patientColor?: string;
+  preprintMarginTopMm: number;
+  preprintMarginBottomMm: number;
+  headerHeightMm?: number;
+  footerHeightMm?: number;
+  pageMarginTopMm?: number;
+  pageMarginRightMm?: number;
+  pageMarginBottomMm?: number;
+  pageMarginLeftMm?: number;
+  logoSize?: LetterheadLogoSize;
+  headerTextSize?: LetterheadTextSize;
+  patientTextSize?: LetterheadTextSize;
+  bodyTextSize?: LetterheadTextSize;
+  patientIdentityPreset?: PatientIdentityPreset;
+  showPatientPhone?: boolean;
+  showPatientGuardian?: boolean;
+  showPatientMrn?: boolean;
+  showPatientAddress?: boolean;
+  backgroundSrc?: PrescriptionPdfLogoSrc | null;
+  backgroundPreset?: LetterheadBackgroundPreset;
+  backgroundOpacity?: number;
+  headerFit?: LetterheadImageFit;
+  footerFit?: LetterheadImageFit;
+  backgroundFit?: LetterheadImageFit;
 }
 
 export interface PrescriptionPdfPatientData {
@@ -39,11 +97,25 @@ export interface PrescriptionPdfPatientData {
   patientGender?: string | null;
   /** Visit date pre-formatted in clinic timezone. */
   visitDateLabel: string;
+  patientPhone?: string | null;
+  guardianName?: string | null;
+  guardianRelation?: string | null;
+  address?: string | null;
+  medicalRecordNumber?: string | null;
 }
 
 export interface PrescriptionPdfBodyData {
+  /**
+   * Recorded list or "No known allergies". Null when never asked —
+   * SectionBlock omits the line. NKDA is not inferred from an empty list.
+   */
+  allergies: string | null;
   cc: string | null;
   hopi: string | null;
+  /** Compact vitals line; null → section omitted. */
+  vitals: string | null;
+  /** Free-text exam findings; null → section omitted. */
+  examinationFindings: string | null;
   /** Derived plain-text social history (from `prescriptions.social_history`). */
   socialHistory: string | null;
   provisionalDiagnosis: string | null;
@@ -82,4 +154,5 @@ export interface PrescriptionPdfData {
   footer: PrescriptionPdfFooterData;
   patient: PrescriptionPdfPatientData;
   body: PrescriptionPdfBodyData;
+  layout?: PrescriptionPdfLayout;
 }

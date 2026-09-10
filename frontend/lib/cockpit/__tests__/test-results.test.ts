@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   deriveTestResults,
+  formatTestResultRefRange,
   normalizeTestResults,
+  parseTestResultRefRange,
 } from "@/lib/cockpit/test-results";
 import type { TestResultRow } from "@/types/prescription";
 
@@ -54,6 +56,7 @@ describe("normalizeTestResults (obj-20)", () => {
         refLow: null,
         refHigh: null,
         refText: null,
+        method: null,
       },
     ]);
   });
@@ -89,15 +92,21 @@ describe("normalizeTestResults (obj-20)", () => {
     const result = normalizeTestResults([RBS, HBA1C]);
     expect(result.map((r) => r.id)).toEqual(["r2", "r1"]);
   });
+
+  it("preserves method", () => {
+    const result = normalizeTestResults([
+      { id: "r1", source: "patient_report", name: "HbA1c", method: "  HPLC  " },
+    ]);
+    expect(result[0]?.method).toBe("HPLC");
+  });
 });
 
 describe("deriveTestResults (OBJ-D2)", () => {
   it("renders rows in array order with name/value/unit/interpretation/date/notes", () => {
     expect(deriveTestResults([HBA1C, RBS])).toBe(
-      [
-        "HbA1c: 7.8 % (High) [2026-06-10] — fasting",
-        "RBS: 180 mg/dL",
-      ].join("\n"),
+      ["HbA1c: 7.8 % (High) [2026-06-10] — fasting", "RBS: 180 mg/dL"].join(
+        "\n"
+      )
     );
   });
 
@@ -105,8 +114,14 @@ describe("deriveTestResults (OBJ-D2)", () => {
     expect(
       deriveTestResults([
         { id: "x", source: "in_clinic_poc", name: "Urine dipstick" },
-      ]),
+      ])
     ).toBe("Urine dipstick");
+  });
+
+  it("does not leak method into derived text", () => {
+    expect(deriveTestResults([{ ...HBA1C, method: "HPLC" }])).toBe(
+      "HbA1c: 7.8 % (High) [2026-06-10] — fasting"
+    );
   });
 
   it("returns an empty string for an empty / all-dropped list", () => {
@@ -114,7 +129,44 @@ describe("deriveTestResults (OBJ-D2)", () => {
     expect(
       deriveTestResults([
         { id: "x", source: "bogus", name: "X" } as unknown as TestResultRow,
-      ]),
+      ])
     ).toBe("");
+  });
+});
+
+describe("format / parse TestResultRefRange", () => {
+  it("formats numeric bounds and printed text", () => {
+    expect(
+      formatTestResultRefRange({ refLow: 12, refHigh: 17, refText: null })
+    ).toBe("12–17");
+    expect(
+      formatTestResultRefRange({ refLow: 12, refHigh: null, refText: null })
+    ).toBe("≥ 12");
+    expect(
+      formatTestResultRefRange({ refLow: 12, refHigh: 17, refText: "Negative" })
+    ).toBe("Negative");
+  });
+
+  it("parses spans, inequalities, and printed text", () => {
+    expect(parseTestResultRefRange("12-17")).toEqual({
+      refLow: 12,
+      refHigh: 17,
+      refText: null,
+    });
+    expect(parseTestResultRefRange("≥ 12")).toEqual({
+      refLow: 12,
+      refHigh: null,
+      refText: null,
+    });
+    expect(parseTestResultRefRange("Negative")).toEqual({
+      refLow: null,
+      refHigh: null,
+      refText: "Negative",
+    });
+    expect(parseTestResultRefRange("")).toEqual({
+      refLow: null,
+      refHigh: null,
+      refText: null,
+    });
   });
 });

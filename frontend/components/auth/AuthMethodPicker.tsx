@@ -77,6 +77,7 @@ export function AuthMethodPicker({ mode }: AuthMethodPickerProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resendIn, setResendIn] = useState(0);
+  const [nextPath, setNextPath] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -84,6 +85,8 @@ export function AuthMethodPicker({ mode }: AuthMethodPickerProps) {
     if (params.get("error") === "oauth") {
       setError("Google sign-in failed. Please try again.");
     }
+    const next = params.get("next");
+    if (next) setNextPath(next);
   }, []);
 
   useEffect(() => {
@@ -200,7 +203,7 @@ export function AuthMethodPicker({ mode }: AuthMethodPickerProps) {
         setError(result.message);
         return;
       }
-      routeAfterAuth(router, result.user ?? { user_metadata: {} });
+      routeAfterAuth(router, result.user ?? { user_metadata: {} }, nextPath);
     } finally {
       setLoading(false);
     }
@@ -259,7 +262,7 @@ export function AuthMethodPicker({ mode }: AuthMethodPickerProps) {
         setError(result.message);
         return;
       }
-      routeAfterAuth(router, result.user ?? { user_metadata: {} });
+      routeAfterAuth(router, result.user ?? { user_metadata: {} }, nextPath);
     } finally {
       setLoading(false);
     }

@@ -51,6 +51,11 @@ jest.mock('../../../src/config/database', () => ({
   getSupabaseAdminClient: jest.fn(),
 }));
 
+jest.mock('../../../src/services/billing/usage-ledger-service', () => ({
+  recordAsyncReplyForSession: jest.fn(async () => undefined),
+  recordBillableConsult: jest.fn(async () => undefined),
+}));
+
 // Plan 06 · Task 37: mock the system-emitter surface consumed by
 // `getJoinToken`. The re-export of `SYSTEM_SENDER_ID` still flows
 // through this mock so pre-Task-37 import sites keep working.
@@ -291,6 +296,35 @@ describe('getJoinToken', () => {
     expect(decodedSupabase.consult_role).toBe('patient');
     // Confirm the URL token is NOT the Supabase JWT.
     expect(urlToken).not.toBe(out.token);
+  });
+
+  it('floors JWT expiry to now+buffer when expected_end_at is already past', async () => {
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60_000).toISOString();
+    mockSessionLookup({
+      id:              'sess-x',
+      doctor_id:       'd-1',
+      appointment_id:  'appt-1',
+      patient_id:      null,
+      expected_end_at: twoHoursAgo,
+      status:          'scheduled',
+    });
+    const before = Date.now();
+    const out = await textSessionSupabaseAdapter.getJoinToken(
+      {
+        appointmentId: 'appt-1',
+        doctorId:      'd-1',
+        role:          'patient',
+        sessionId:     'sess-x',
+      },
+      correlationId,
+    );
+    const decoded = jwt.verify(out.token, TEST_JWT_SECRET) as { exp: number };
+    const bufferMs = 30 * 60_000;
+    expect(out.expiresAt.getTime()).toBeGreaterThan(before);
+    expect(decoded.exp).toBeGreaterThan(Math.floor(before / 1000));
+    expect(Math.abs(out.expiresAt.getTime() - (before + bufferMs))).toBeLessThan(
+      5_000,
+    );
   });
 
   // Plan 06 · Task 37 — emitPartyJoined wire-up.

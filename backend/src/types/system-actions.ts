@@ -11,6 +11,8 @@
  */
 
 import type { ConversationState } from './conversation';
+import type { ConversationLanguage } from '../utils/conversation-language';
+import type { DoctorSettingsRow } from './doctor-settings';
 
 /** Tool call from OpenAI (name + raw JSON string arguments) */
 export interface ToolCallFromAI {
@@ -33,6 +35,10 @@ export interface ActionContext {
   state: ConversationState;
   correlationId: string;
   timezone?: string;
+  /** Sticky turn language (lang-20) — threaded from the DM turn; do not re-read DB. */
+  language: ConversationLanguage;
+  /** For queue-mode reschedule link copy (lang-20 §3.4). */
+  doctorSettings?: DoctorSettingsRow | null;
 }
 
 /** Result of executing an action */

@@ -1,6 +1,7 @@
 "use client";
 
 import type { Ref } from "react";
+import { User } from "lucide-react";
 import ConsultationLauncher, {
   type ConsultationLauncherHandle,
 } from "@/components/consultation/ConsultationLauncher";
@@ -81,7 +82,36 @@ export default function CenterPane({
     return <TerminalCard />;
   }
 
+  const isInClinicPhysical =
+    appointment.consultation_type === "in_clinic" &&
+    !appointment.consultation_session;
+
   // Launcher-mounted states (ready / lobby / live).
+  if (state === "live" && isInClinicPhysical) {
+    return (
+      <div className="flex h-full min-h-0 flex-col items-center justify-center px-4 py-6">
+        <div className="w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+          <div className="flex flex-col items-center gap-3 bg-gradient-to-b from-muted/40 to-card px-6 pb-5 pt-6">
+            <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-900">
+              In clinic
+            </span>
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-muted text-foreground shadow-sm">
+              <User className="h-7 w-7" aria-hidden />
+            </div>
+            <div className="text-center">
+              <h2 className="text-lg font-semibold tracking-tight text-foreground">
+                Visit in progress
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Write notes and send the Rx, then tap Done.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (state === "live") {
     // The launcher owns its own session state. It renders <LiveConsultPanel>
     // + the appropriate room once liveSession / textSession is set. Mounting
@@ -92,14 +122,22 @@ export default function CenterPane({
     // <VideoRoom>/<VoiceConsultRoom> can mount the destructive Mark
     // no-show button next to "Leave call". CP-D5: TextConsultRoom now also
     // mounts the button above its composer bar for text-consult parity.
+    // h-full chain is required so VideoRoom's stage can flex-fill; without
+    // it absolute/flex children collapse and controls stack on the header.
     return (
-      <ConsultationLauncher
-        ref={launcherRef}
-        appointment={appointment}
-        token={token}
-        onRxSent={onRxSent}
-        onMarkNoShow={onMarkNoShow}
-      />
+      <div className="flex h-full min-h-0 flex-col">
+        <ConsultationLauncher
+          ref={launcherRef}
+          appointment={appointment}
+          token={token}
+          onRxSent={onRxSent}
+          onMarkNoShow={onMarkNoShow}
+          // Never flash the legacy 3-button grid while rehydrating a live
+          // session — ReadyCard owns Start; here we only wait for the room.
+          hidePrecallUI
+          showConnectingWhileHidden
+        />
+      </div>
     );
   }
 

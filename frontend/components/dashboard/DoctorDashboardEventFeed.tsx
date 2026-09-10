@@ -23,9 +23,8 @@
  * down via `token`. The component never reaches into Supabase directly —
  * the same pattern as `<ServiceReviewsInbox>`.
  *
- * Theme: surfaces use design tokens (`bg-card` / `text-foreground` /
- * `border-border` / destructive) so light + dark both render correctly
- * (alerts-v1 · ALR-D3).
+ * Theme: sticky filter band + `rounded-lg` list shell (alerts-ui-align),
+ * design tokens for light + dark (alerts-v1 · ALR-D3).
  */
 
 import Link from "next/link";
@@ -37,7 +36,14 @@ import {
   type DashboardEventSeverity,
 } from "@/lib/api";
 import { formatDate } from "@/lib/format-date";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
+
+const ALERTS_SHELL =
+  "overflow-hidden rounded-lg border border-border/50 bg-card shadow-sm";
 
 export interface DoctorDashboardEventFeedProps {
   token: string;
@@ -152,7 +158,7 @@ export function describeEvent(event: DashboardEvent): string {
 export function eventDeepLink(event: DashboardEvent): string | null {
   switch (event.eventKind) {
     case "booking_review_sla_breach":
-      return "/dashboard/booking-review";
+      return "/dashboard/inbox?filter=needs_review";
     case "appointment_no_show": {
       const id = event.payload.appointment_id?.trim();
       return id ? `/dashboard/appointments/${id}` : null;
@@ -409,74 +415,101 @@ export function DoctorDashboardEventFeed({
   }, [markingAll, unreadVisibleCount, visibleEvents, token]);
 
   return (
-    <Card aria-labelledby="doctor-dashboard-feed-heading">
-      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 border-b border-border px-4 py-3">
-        <CardTitle
-          id="doctor-dashboard-feed-heading"
-          className="text-base font-semibold text-foreground"
+    <div
+      className="flex flex-col gap-2"
+      aria-label="Alerts feed"
+      data-testid="doctor-dashboard-event-feed"
+    >
+      <div className="sticky top-14 z-20 -mx-1 shrink-0 bg-background/80 px-1 pb-1 pt-0.5 backdrop-blur">
+        <div
+          className="flex flex-wrap items-center justify-end gap-3 rounded-md border border-border px-3 py-1.5"
+          aria-label="Alert filters"
         >
-          Notifications
-        </CardTitle>
-        <div className="flex flex-wrap items-center gap-3">
           {unreadVisibleCount > 0 && (
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2 text-xs"
               onClick={() => void handleMarkAllRead()}
               disabled={markingAll}
-              className="text-sm font-medium text-foreground underline-offset-2 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
             >
               {markingAll ? "Marking…" : "Mark all as read"}
-            </button>
+            </Button>
           )}
-          <label className="flex items-center gap-2 text-sm text-muted-foreground">
-            <input
-              type="checkbox"
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-foreground">
+            <Checkbox
               checked={!unreadOnly}
-              onChange={(e) => setUnreadOnly(!e.target.checked)}
-              className="h-4 w-4 rounded border-border"
+              onCheckedChange={(checked) => setUnreadOnly(checked !== true)}
+              aria-label="Show acknowledged"
             />
             Show acknowledged
           </label>
         </div>
-      </CardHeader>
+      </div>
 
-      <CardContent className="p-0">
+      {markAllError && (
+        <Alert variant="destructive">
+          <AlertDescription>{markAllError}</AlertDescription>
+        </Alert>
+      )}
+
+      <section className={ALERTS_SHELL} aria-label="Notifications">
         {state.kind === "loading" && (
-          <div className="px-4 py-6 text-sm text-muted-foreground" aria-live="polite">
-            Loading notifications…
+          <div
+            className="space-y-0"
+            aria-busy="true"
+            aria-label="Loading notifications"
+            aria-live="polite"
+          >
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div
+                key={i}
+                className="flex items-start gap-3 border-t border-border px-4 py-3 first:border-t-0"
+              >
+                <Skeleton className="mt-1.5 h-2 w-2 rounded-full" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Skeleton className="h-4 w-3/4 max-w-md" />
+                  <Skeleton className="h-3 w-16" />
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
         {state.kind === "error" && (
-          <div
-            role="alert"
-            className="border-t border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive"
-          >
-            {state.message}
-            <button
-              type="button"
-              onClick={() => void loadFeed({ unreadOnly })}
-              className="ml-3 font-medium underline hover:text-destructive"
-            >
-              Retry
-            </button>
-          </div>
-        )}
-
-        {markAllError && (
-          <div
-            role="alert"
-            className="border-t border-destructive/20 bg-destructive/10 px-4 py-2 text-sm text-destructive"
-          >
-            {markAllError}
+          <div className="p-4">
+            <Alert variant="destructive">
+              <AlertDescription className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <span>{state.message}</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="self-start sm:self-center"
+                  onClick={() => void loadFeed({ unreadOnly })}
+                >
+                  Retry
+                </Button>
+              </AlertDescription>
+            </Alert>
           </div>
         )}
 
         {state.kind === "ready" && visibleEvents.length === 0 && (
-          <div className="px-4 py-6 text-sm text-muted-foreground">
-            {unreadOnly
-              ? "You're all caught up. No unread notifications."
-              : "No notifications yet."}
+          <div className="flex min-h-[12rem] flex-col items-center justify-center bg-muted/10 p-10 text-center">
+            <div className="w-full max-w-md rounded-lg border border-dashed border-border px-6 py-8">
+              <p className="text-sm font-medium text-foreground">
+                {unreadOnly
+                  ? "You're all caught up. No unread notifications."
+                  : "No notifications yet."}
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {unreadOnly
+                  ? "New alerts about reviews, no-shows, and consult activity will show here."
+                  : "When patients replay recordings or reviews need attention, they'll appear here."}
+              </p>
+            </div>
           </div>
         )}
 
@@ -501,13 +534,16 @@ export function DoctorDashboardEventFeed({
               return (
                 <li
                   key={row.event.id}
-                  className={`flex items-start gap-3 px-4 py-3 ${rowTint}`}
+                  className={cn("flex items-start gap-3 px-4 py-3", rowTint)}
                 >
                   <span
                     aria-hidden="true"
-                    className={`mt-1 h-2 w-2 flex-shrink-0 rounded-full ${dotTint}`}
+                    className={cn(
+                      "mt-1 h-2 w-2 flex-shrink-0 rounded-full",
+                      dotTint
+                    )}
                   />
-                  <div className="flex-1">
+                  <div className="min-w-0 flex-1">
                     {actionNeeded && (
                       <span className="mb-1 inline-block rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-destructive">
                         Action needed
@@ -536,14 +572,16 @@ export function DoctorDashboardEventFeed({
                     )}
                   </div>
                   {unread && (
-                    <button
+                    <Button
                       type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 shrink-0 px-2 text-xs"
                       onClick={() => void handleAcknowledge(row.event.id)}
                       disabled={row.acking || markingAll}
-                      className="rounded border border-border px-2 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {row.acking ? "Marking…" : "Mark as read"}
-                    </button>
+                    </Button>
                   )}
                 </li>
               );
@@ -558,18 +596,20 @@ export function DoctorDashboardEventFeed({
                 {loadMoreError}
               </p>
             )}
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2 text-xs"
               onClick={() => void handleLoadMore()}
               disabled={loadingMore}
-              className="text-sm font-medium text-foreground underline-offset-2 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loadingMore ? "Loading…" : "Load more"}
-            </button>
+            </Button>
           </div>
         )}
-      </CardContent>
-    </Card>
+      </section>
+    </div>
   );
 }
 

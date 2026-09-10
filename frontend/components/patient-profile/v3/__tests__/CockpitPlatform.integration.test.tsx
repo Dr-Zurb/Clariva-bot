@@ -380,7 +380,7 @@ describe("CockpitPlatform integration (cv3p-04 gate)", () => {
     expect(screen.getByTestId("cockpit-v3-safety-dock")).toBeInTheDocument();
     expect(screen.getByTestId("cockpit-v3-action-dock")).toBeInTheDocument();
     expect(screen.getByTestId("safety-sticky-strip")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /send rx & finish/i }));
+    fireEvent.click(screen.getByRole("button", { name: /review/i }));
     expect(mockSendAndFinish).toHaveBeenCalledOnce();
 
     const tabbed = reshape(base, "plan", "assessment", "center");

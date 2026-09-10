@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { DuplicateGroupPatient, PatientSummary } from "@/types/patient";
+import { useQueryClient } from "@tanstack/react-query";
+import type { PatientSummary } from "@/types/patient";
 import { useSearchParams } from "next/navigation";
+import { AddPatientDialog } from "@/components/patients-v2/AddPatientDialog";
 import { BulkActionsBar } from "@/components/patients-v2/list/BulkActionsBar";
-import { DuplicatesCollapsedChip } from "@/components/patients-v2/list/DuplicatesCollapsedChip";
 import { PatientsKpiStrip } from "@/components/patients-v2/list/PatientsKpiStrip";
 import { PatientsTable } from "@/components/patients-v2/list/PatientsTable";
 import { PatientsToolbar } from "@/components/patients-v2/list/PatientsToolbar";
@@ -12,25 +13,32 @@ import {
   hasListFilterParams,
   usePatientsListFilters,
 } from "@/hooks/usePatientsListFilters";
+import { usePrefetchPatientsListSegments } from "@/hooks/usePrefetchPatientsListSegments";
 import {
+  bulkTagPatients,
   deletePatientSavedView,
   getPatientSavedViews,
   getPatientsKpis,
-  getPossibleDuplicates,
   upsertPatientSavedView,
 } from "@/lib/api/patients";
 import {
+  applyTagOp,
+  coercePatientTags,
+  patientHasTag,
+  type PatientTagOp,
+} from "@/lib/patients-v2/patient-tags";
+import { patchPatientTagsInListCache } from "@/lib/patients-v2/patch-patient-tags-cache";
+import {
+  trackPatientsV2BulkAction,
   trackPatientsV2ListViewed,
   trackPatientsV2SavedViewApplied,
 } from "@/lib/patients-v2/telemetry";
 import {
   readColumnsFromStorage,
-  readDensityFromStorage,
   writeColumnsToStorage,
-  writeDensityToStorage,
   type PatientListColumnId,
-  type PatientsListDensity,
 } from "@/lib/patients-v2/list-preferences";
+import { queryKeys } from "@/lib/query/keys";
 import type { PatientSavedView, PatientsKpis } from "@/types/patient";
 
 const MAX_LIST_VIEWS = 5;
@@ -45,36 +53,158 @@ interface PatientsV2PageProps {
  */
 export default function PatientsV2Page({ token, userId }: PatientsV2PageProps) {
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
   const {
     filters,
     q,
     activeSegment,
+    activeTag,
     setQ,
     toggleSegment,
+    setTag,
+    toggleTag,
     applyFilters,
     setSort,
     setPage,
     clearListFilters,
   } = usePatientsListFilters();
 
+  const prefetchSegment = usePrefetchPatientsListSegments(token, filters);
+
   const [kpis, setKpis] = useState<PatientsKpis | null>(null);
   const [kpiError, setKpiError] = useState<string | null>(null);
   const [savedViews, setSavedViews] = useState<PatientSavedView[]>([]);
   const [activeViewId, setActiveViewId] = useState<string | null>(null);
-  const [density, setDensity] = useState<PatientsListDensity>("comfortable");
   const [columns, setColumns] = useState<PatientListColumnId[]>([]);
+  const [addPatientOpen, setAddPatientOpen] = useState(false);
   const [selectedPatientIds, setSelectedPatientIds] = useState<string[]>([]);
   const [loadedRows, setLoadedRows] = useState<PatientSummary[]>([]);
-  const [tableRefreshKey, setTableRefreshKey] = useState(0);
-  const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroupPatient[][]>(
-    [],
+  const [rosterPatients, setRosterPatients] = useState<PatientSummary[]>([]);
+  const [knownTags, setKnownTags] = useState<string[]>([]);
+
+  const mergeKnownTags = useCallback((tags: Array<string | null | undefined>) => {
+    setKnownTags((prev) => {
+      // Case-insensitive merge; keep first-seen casing.
+      const byKey = new Map<string, string>();
+      for (const t of prev) byKey.set(t.toLowerCase(), t);
+      for (const t of tags) {
+        const trimmed = t?.trim();
+        if (!trimmed) continue;
+        const key = trimmed.toLowerCase();
+        if (!byKey.has(key)) byKey.set(key, trimmed);
+      }
+      return Array.from(byKey.values()).sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: "base" }),
+      );
+    });
+  }, []);
+
+  const handleDataLoaded = useCallback((rows: PatientSummary[]) => {
+    setLoadedRows(rows);
+  }, []);
+
+  const handleRosterLoaded = useCallback(
+    (rows: PatientSummary[]) => {
+      setRosterPatients(rows);
+      mergeKnownTags(
+        rows.flatMap((r) => coercePatientTags(r.patient_tags, r.patient_tag)),
+      );
+    },
+    [mergeKnownTags],
   );
-  const [duplicatesPopoverOpen, setDuplicatesPopoverOpen] = useState(false);
+
+  /** Prefer page rows (fresher), fall back to roster for cross-page selection. */
+  const patientById = useMemo(() => {
+    const map = new Map<string, PatientSummary>();
+    for (const p of rosterPatients) map.set(p.id, p);
+    for (const p of loadedRows) map.set(p.id, p);
+    return map;
+  }, [rosterPatients, loadedRows]);
 
   const selectedPatients = useMemo(
-    () => loadedRows.filter((p) => selectedPatientIds.includes(p.id)),
-    [loadedRows, selectedPatientIds],
+    () =>
+      selectedPatientIds
+        .map((id) => patientById.get(id))
+        .filter((p): p is PatientSummary => p != null),
+    [patientById, selectedPatientIds],
   );
+
+  const applyLocalTagPatch = useCallback(
+    (op: PatientTagOp, tags: string[], patientIds: string[]) => {
+      patchPatientTagsInListCache(queryClient, patientIds, op, tags);
+      if (op === "add" || op === "set") mergeKnownTags(tags);
+      const idSet = new Set(patientIds);
+      const patchRow = (p: PatientSummary): PatientSummary => {
+        if (!idSet.has(p.id)) return p;
+        const next = applyTagOp(
+          coercePatientTags(p.patient_tags, p.patient_tag),
+          op,
+          tags,
+        );
+        return {
+          ...p,
+          patient_tags: next,
+          patient_tag: next[0] ?? null,
+        };
+      };
+      setLoadedRows((prev) => prev.map(patchRow));
+      setRosterPatients((prev) => prev.map(patchRow));
+    },
+    [mergeKnownTags, queryClient],
+  );
+
+  const handleRemoveTag = useCallback(
+    (patientId: string, tag: string) => {
+      // Optimistic — badge disappears immediately; refetch heals on failure.
+      applyLocalTagPatch("remove", [tag], [patientId]);
+      void bulkTagPatients(token, [patientId], {
+        op: "remove",
+        tags: [tag],
+      }).catch(() => {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.patients.all,
+        });
+      });
+    },
+    [applyLocalTagPatch, queryClient, token],
+  );
+
+  /** Delete a tag everywhere it appears (roster ∪ current page) + drop from known list. */
+  const handleDeleteKnownTag = useCallback(
+    (tag: string) => {
+      const key = tag.toLowerCase();
+      setKnownTags((prev) => prev.filter((t) => t.toLowerCase() !== key));
+
+      const ids = Array.from(patientById.values())
+        .filter((p) =>
+          patientHasTag(coercePatientTags(p.patient_tags, p.patient_tag), tag),
+        )
+        .map((p) => p.id);
+
+      if (ids.length === 0) return;
+
+      applyLocalTagPatch("remove", [tag], ids);
+
+      const CHUNK = 200;
+      void (async () => {
+        try {
+          for (let i = 0; i < ids.length; i += CHUNK) {
+            await bulkTagPatients(token, ids.slice(i, i + CHUNK), {
+              op: "remove",
+              tags: [tag],
+            });
+          }
+          trackPatientsV2BulkAction("tag", ids.length);
+        } catch {
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.patients.all,
+          });
+        }
+      })();
+    },
+    [applyLocalTagPatch, patientById, queryClient, token],
+  );
+
   const defaultViewAppliedRef = useRef(false);
   const listViewedSent = useRef(false);
 
@@ -87,20 +217,6 @@ export default function PatientsV2Page({ token, userId }: PatientsV2PageProps) {
         setKpiError(e instanceof Error ? e.message : "Failed to load KPIs"),
       );
   }, [token]);
-
-  const loadDuplicates = useCallback(() => {
-    return getPossibleDuplicates(token)
-      .then((groups) => setDuplicateGroups(groups))
-      .catch((e) => {
-        console.error("[PatientsV2Page] possible duplicates load failed:", e);
-      });
-  }, [token]);
-
-  const handleDuplicatesMerged = useCallback(() => {
-    void loadDuplicates();
-    void loadKpis();
-    setTableRefreshKey((k) => k + 1);
-  }, [loadDuplicates, loadKpis]);
 
   const refreshSavedViews = useCallback(() => {
     return getPatientSavedViews(token)
@@ -131,11 +247,6 @@ export default function PatientsV2Page({ token, userId }: PatientsV2PageProps) {
   }, [refreshSavedViews]);
 
   useEffect(() => {
-    void loadDuplicates();
-  }, [loadDuplicates]);
-
-  useEffect(() => {
-    setDensity(readDensityFromStorage());
     setColumns(readColumnsFromStorage(userId));
   }, [userId]);
 
@@ -169,11 +280,6 @@ export default function PatientsV2Page({ token, userId }: PatientsV2PageProps) {
       applySavedView(defaultView);
     }
   }, [applySavedView, savedViews, searchParams]);
-
-  const handleDensityChange = useCallback((next: PatientsListDensity) => {
-    setDensity(next);
-    writeDensityToStorage(next);
-  }, []);
 
   const handleColumnsChange = useCallback(
     (next: PatientListColumnId[]) => {
@@ -266,73 +372,96 @@ export default function PatientsV2Page({ token, userId }: PatientsV2PageProps) {
   );
 
   return (
-    <div className="space-y-4 p-6">
-      <h1 className="text-2xl font-semibold">Patients</h1>
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+      <div className="shrink-0 space-y-3">
+        <h1 className="text-2xl font-semibold text-foreground">Patients</h1>
 
-      <PatientsKpiStrip
-        kpis={kpis}
-        error={kpiError}
-        activeSegment={activeSegment}
-        onSegmentSelect={handleKpiSegmentSelect}
-        possibleDuplicatesCount={duplicateGroups.length}
-        onDuplicatesOpen={() => setDuplicatesPopoverOpen(true)}
-        onRetry={loadKpis}
-      />
+        <PatientsKpiStrip
+          kpis={kpis}
+          error={kpiError}
+          activeSegment={activeSegment}
+          onSegmentSelect={handleKpiSegmentSelect}
+          onSegmentPrefetch={prefetchSegment}
+          onRetry={loadKpis}
+        />
 
-      <PatientsToolbar
-        q={q}
-        onQChange={(next) => {
-          setActiveViewId(null);
-          setQ(next);
-        }}
-        activeSegment={activeSegment}
-        onSegmentToggle={handleToolbarSegmentToggle}
-        savedViews={savedViews}
-        activeViewId={activeViewId}
-        onViewSelect={(view) => applySavedView(view)}
-        onSaveView={handleSaveView}
-        onRenameView={handleRenameView}
-        onDeleteView={handleDeleteView}
-        onSetDefaultView={handleSetDefaultView}
-        nextEvictionTarget={nextEvictionTarget}
-        density={density}
-        onDensityChange={handleDensityChange}
-        columns={columns}
-        onColumnsChange={handleColumnsChange}
-        selectedCount={selectedPatientIds.length}
-        bulkActionsSlot={
-          selectedPatientIds.length > 0 ? (
-            <BulkActionsBar
-              selectedCount={selectedPatientIds.length}
-              selectedPatients={selectedPatients}
-              token={token}
-              onClear={() => setSelectedPatientIds([])}
-              onTagged={() => setTableRefreshKey((k) => k + 1)}
-            />
-          ) : null
-        }
-        duplicatesSlot={
-          <DuplicatesCollapsedChip
-            duplicateGroups={duplicateGroups}
-            onMerged={handleDuplicatesMerged}
-            open={duplicatesPopoverOpen}
-            onOpenChange={setDuplicatesPopoverOpen}
-          />
-        }
+        <PatientsToolbar
+          q={q}
+          onQChange={(next) => {
+            setActiveViewId(null);
+            setQ(next);
+          }}
+          activeSegment={activeSegment}
+          onSegmentToggle={handleToolbarSegmentToggle}
+          onSegmentPrefetch={prefetchSegment}
+          activeTag={activeTag}
+          onTagToggle={(tag) => {
+            setActiveViewId(null);
+            toggleTag(tag);
+          }}
+          onTagClear={() => {
+            setActiveViewId(null);
+            setTag(null);
+          }}
+          knownTags={knownTags}
+          savedViews={savedViews}
+          activeViewId={activeViewId}
+          onViewSelect={(view) => applySavedView(view)}
+          onSaveView={handleSaveView}
+          onRenameView={handleRenameView}
+          onDeleteView={handleDeleteView}
+          onSetDefaultView={handleSetDefaultView}
+          nextEvictionTarget={nextEvictionTarget}
+          columns={columns}
+          onColumnsChange={handleColumnsChange}
+          onAddPatient={() => setAddPatientOpen(true)}
+          selectedCount={selectedPatientIds.length}
+          bulkActionsSlot={
+            selectedPatientIds.length > 0 ? (
+              <BulkActionsBar
+                selectedCount={selectedPatientIds.length}
+                selectedPatientIds={selectedPatientIds}
+                selectedPatients={selectedPatients}
+                token={token}
+                knownTags={knownTags}
+                onClear={() => setSelectedPatientIds([])}
+                onTagged={applyLocalTagPatch}
+                onTagFailed={() => {
+                  void queryClient.invalidateQueries({
+                    queryKey: queryKeys.patients.all,
+                  });
+                }}
+                onDeleteKnownTag={handleDeleteKnownTag}
+              />
+            ) : null
+          }
+        />
+      </div>
+
+      <AddPatientDialog
+        token={token}
+        open={addPatientOpen}
+        onOpenChange={setAddPatientOpen}
       />
 
       <PatientsTable
         filters={filters}
         visibleColumns={columns}
-        density={density}
         selectedPatientIds={selectedPatientIds}
         onSelectionChange={setSelectedPatientIds}
         onSortChange={setSort}
         onPageChange={setPage}
         onClearFilters={clearListFilters}
         token={token}
-        refreshKey={tableRefreshKey}
-        onDataLoaded={setLoadedRows}
+        onDataLoaded={handleDataLoaded}
+        onRosterLoaded={handleRosterLoaded}
+        onFilterByTag={(tag) => {
+          setActiveViewId(null);
+          setTag(tag);
+        }}
+        onRemoveTag={(patientId, tag) => {
+          void handleRemoveTag(patientId, tag);
+        }}
       />
     </div>
   );

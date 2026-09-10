@@ -159,6 +159,7 @@ describe("ComplaintList", () => {
     expect(
       screen.queryByRole("button", { name: /\+ Add complaint/i }),
     ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Describe this visit")).not.toBeInTheDocument();
   });
 
   it("adds a collapsed complaint via Enter on the capture bar", async () => {
@@ -640,7 +641,7 @@ describe("ComplaintList", () => {
     );
 
     const section = getChiefComplaintsSection();
-    expect(section.className).toContain("bg-muted/30");
+    expect(section.className).toContain("bg-card");
 
     const card = document.querySelector("[data-complaint-instance]");
     expect(card?.className).toContain("bg-card");
@@ -650,10 +651,12 @@ describe("ComplaintList", () => {
 });
 
 describe("SubjectiveSection", () => {
-  it("renders complaint list and collapsed free-text fallback", () => {
+  it("renders complaint list and collapsed free-text fallback", async () => {
     renderWithRxForm(<SubjectiveSection heading={null} />);
 
-    expect(getChiefComplaintsSection()).toBeInTheDocument();
+    await waitFor(() => {
+      expect(getChiefComplaintsSection()).toBeInTheDocument();
+    });
     expect(screen.getByText("Additional Notes")).toBeInTheDocument();
 
     fireEvent.click(screen.getByText("Additional Notes"));

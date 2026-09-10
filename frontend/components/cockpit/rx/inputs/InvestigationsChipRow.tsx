@@ -34,7 +34,6 @@ import {
   isBasketCustomized,
   mapResolvedTermsToCatalog,
   occupiedKeysFromOrders,
-  panelMemberOptions,
   parseInvestigationOrdersFromFlat,
   resolveInvestigationOrderCatalog,
   serializeInvestigationOrdersToFlat,
@@ -55,7 +54,6 @@ import {
 import {
   getImagingOrderById,
   getImagingViewById,
-  getLabPanelById,
   imagingOrderHasViews,
   imagingOrderIsExpandable,
   imagingRelatedOptions,
@@ -128,24 +126,16 @@ export function InvestigationsChipRow({
 
   const editingOrder =
     orders.find((o) => o.id === editingOrderId && isExpandableOrder(o)) ?? null;
-  const editingPanel =
-    editingOrder?.kind === "panel"
-      ? getLabPanelById(editingOrder.sourcePanelId ?? editingOrder.id)
-      : null;
   const editingImaging =
     editingOrder?.kind === "imaging"
       ? getImagingOrderById(editingOrder.sourcePanelId ?? editingOrder.id)
       : null;
   const editingTemplateMembers =
-    editingOrder?.kind === "panel" && editingPanel
-      ? panelMemberOptions(editingPanel)
-      : editingOrder?.kind === "imaging" && editingImaging
-        ? imagingOrderHasViews(editingImaging)
-          ? imagingViewOptions(editingImaging)
-          : imagingRelatedOptions(editingImaging)
-        : [];
-  const editingCatalogName =
-    editingPanel?.name ?? editingImaging?.name ?? null;
+    editingOrder?.kind === "imaging" && editingImaging
+      ? imagingOrderHasViews(editingImaging)
+        ? imagingViewOptions(editingImaging)
+        : imagingRelatedOptions(editingImaging)
+      : [];
   const editingImagingMemberNoun =
     editingOrder?.kind === "imaging" && editingImaging
       ? imagingOrderHasViews(editingImaging)
@@ -744,15 +734,21 @@ export function InvestigationsChipRow({
                       <span className="min-w-0 truncate font-medium">
                         {order.label}
                       </span>
-                      <span
-                        className={cn(
-                          "shrink-0 rounded-full px-1.5 py-px text-[10px] font-medium tabular-nums",
-                          "bg-background/80 text-muted-foreground ring-1 ring-border/60",
-                        )}
-                      >
-                        {memberCount}
-                        {customized ? " · custom" : ""}
-                      </span>
+                      {memberCount > 0 || customized ? (
+                        <span
+                          className={cn(
+                            "shrink-0 rounded-full px-1.5 py-px text-[10px] font-medium tabular-nums",
+                            "bg-background/80 text-muted-foreground ring-1 ring-border/60",
+                          )}
+                        >
+                          {memberCount > 0 ? memberCount : null}
+                          {customized
+                            ? memberCount > 0
+                              ? " · custom"
+                              : "custom"
+                            : ""}
+                        </span>
+                      ) : null}
                     </button>
                   ) : (
                     <span className="min-w-0 flex-1 truncate pl-5 text-sm font-medium text-foreground">
@@ -782,7 +778,6 @@ export function InvestigationsChipRow({
         {editingOrder && !disabled ? (
           <InvestigationPanelChecklist
             order={editingOrder}
-            catalogName={editingCatalogName}
             templateMembers={editingTemplateMembers}
             templateMemberKind={
               editingOrder.kind === "imaging" ? "custom" : "analyte"

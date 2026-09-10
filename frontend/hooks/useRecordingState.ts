@@ -24,13 +24,13 @@ import { getRecordingState, type RecordingStateData } from "@/lib/api";
  * v1 to ONE live subscription per session (see Plan 07 open question #2
  * + task-28 Notes #4).
  *
- * ## Reason parsing
+ * ## Reason transport (rec-15)
  *
- * The emitter formats the pause banner as
- *   "Doctor paused recording at HH:MM. Reason: <free text>"
- * so parsing out `<free text>` is a one-line regex. If the banner copy
- * is ever changed, this regex must be updated in lockstep (captured in
- * the task-28 doc's Implementation log).
+ * The pause banner body no longer carries a reason. `meta` is not
+ * persisted, so Realtime cannot deliver the code. On
+ * `recording_paused`, the hook flips `paused` immediately and then
+ * refreshes `GET /recording/state`, which is the surviving transport
+ * for the preset code (or `not_recorded_in_preset_form`).
  */
 
 interface UseRecordingStateArgs {
@@ -50,8 +50,12 @@ export interface RecordingStateSnapshot {
   paused:       boolean;
   pausedAt?:    Date;
   pausedBy?:    string;
+  pausedByRole?: "doctor" | "patient";
   pauseReason?: string;
   resumedAt?:   Date;
+  autoResumeAt?: Date;
+  autoResumeExtensionsUsed?: 0 | 1;
+  autoResumeBoundMs?: number;
   /**
    * `true` during the initial state fetch. Children can show a skeleton
    * until this flips to `false`, or treat loading as "probably not
@@ -92,22 +96,17 @@ const INITIAL: RecordingStateSnapshot = {
   error:   null,
 };
 
-const PAUSE_BANNER_REASON_RE = /Reason:\s*([\s\S]*)$/;
-
-function parsePauseReasonFromBody(body: string | undefined | null): string | undefined {
-  if (!body) return undefined;
-  const match = body.match(PAUSE_BANNER_REASON_RE);
-  if (!match || !match[1]) return undefined;
-  return match[1].trim() || undefined;
-}
-
 function mapDataToSnapshot(data: RecordingStateData): RecordingStateSnapshot {
   return {
     paused:      data.paused,
     pausedAt:    data.pausedAt ? new Date(data.pausedAt) : undefined,
     pausedBy:    data.pausedBy,
+    pausedByRole: data.pausedByRole,
     pauseReason: data.pauseReason,
     resumedAt:   data.resumedAt ? new Date(data.resumedAt) : undefined,
+    autoResumeAt: data.autoResumeAt ? new Date(data.autoResumeAt) : undefined,
+    autoResumeExtensionsUsed: data.autoResumeExtensionsUsed,
+    autoResumeBoundMs: data.autoResumeBoundMs,
     loading:     false,
     error:       null,
   };
@@ -145,8 +144,12 @@ export function useRecordingState({
         paused:      prev.paused,
         pausedAt:    prev.pausedAt,
         pausedBy:    prev.pausedBy,
+        pausedByRole: prev.pausedByRole,
         pauseReason: prev.pauseReason,
         resumedAt:   prev.resumedAt,
+        autoResumeAt: prev.autoResumeAt,
+        autoResumeExtensionsUsed: prev.autoResumeExtensionsUsed,
+        autoResumeBoundMs: prev.autoResumeBoundMs,
         loading:     false,
         error:       message,
       }));
@@ -167,12 +170,13 @@ export function useRecordingState({
       const now = new Date();
       if (event === "recording_paused") {
         setState({
-          paused:      true,
-          pausedAt:    now,
-          pauseReason: parsePauseReasonFromBody(meta.body),
-          loading:     false,
-          error:       null,
+          paused: true,
+          pausedAt: now,
+          pauseReason: undefined,
+          loading: false,
+          error: null,
         });
+        void refresh();
         return;
       }
       setState({
@@ -182,7 +186,7 @@ export function useRecordingState({
         error:     null,
       });
     },
-    [enabled],
+    [enabled, refresh],
   );
 
   return { state, applyIncomingMessage, refresh };

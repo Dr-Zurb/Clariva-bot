@@ -4,7 +4,13 @@
 
 import type { ReactElement } from "react";
 import { useState } from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -18,12 +24,18 @@ import {
   resolveVitalHasDataHint,
 } from "@/components/cockpit/rx/inputs/ManageVitalsMenu";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { resolveEffectiveVitalsHidden, isVitalExcludedFromObjectiveUi } from "@/lib/cockpit/vitals-visibility";
+import {
+  resolveEffectiveVitalsHidden,
+  isVitalExcludedFromObjectiveUi,
+} from "@/lib/cockpit/vitals-visibility";
 import { isPairedContextCategorical } from "@/lib/cockpit/vitals-group-layout";
 import { isGcsComponentOnlyKey } from "@/lib/cockpit/gcs-subscore";
 import { isBpComponentOnlyKey } from "@/lib/cockpit/bp-cluster";
 import { isPupilComponentOnlyKey } from "@/lib/cockpit/pupil-cluster";
-import { CATEGORICAL_VITAL_ORDER, type CategoricalVitalKey } from "@/lib/cockpit/categorical-vitals-schema";
+import {
+  CATEGORICAL_VITAL_ORDER,
+  type CategoricalVitalKey,
+} from "@/lib/cockpit/categorical-vitals-schema";
 import type { VitalVisibilityKey } from "@/lib/cockpit/vitals-visibility";
 
 function isMenuCountableHiddenKey(id: VitalVisibilityKey): boolean {
@@ -49,7 +61,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     getDoctorSettings: (...args: unknown[]) => mockGetDoctorSettings(...args),
-    patchDoctorSettings: (...args: unknown[]) => mockPatchDoctorSettings(...args),
+    patchDoctorSettings: (...args: unknown[]) =>
+      mockPatchDoctorSettings(...args),
+    getAppointmentDeskVitals: vi
+      .fn()
+      .mockResolvedValue({ data: { vitals: null } }),
     getLastPrescriptionInEpisode: vi
       .fn()
       .mockResolvedValue({ data: { prescription: null } }),
@@ -58,12 +74,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 vi.mock("@/hooks/queries/useVitalsTrendsQuery", async () => {
-  const { buildVitalsTrendSeries, indexVitalsTrendSeries } = await import(
-    "@/lib/cockpit/vitals-trends"
-  );
-  const { buildCategoricalVitalTimelines } = await import(
-    "@/lib/cockpit/categorical-vitals-timeline"
-  );
+  const { buildVitalsTrendSeries, indexVitalsTrendSeries } =
+    await import("@/lib/cockpit/vitals-trends");
+  const { buildCategoricalVitalTimelines } =
+    await import("@/lib/cockpit/categorical-vitals-timeline");
   const {
     buildCustomVitalTextTimelines,
     buildCustomVitalTrendSeries,
@@ -86,9 +100,12 @@ vi.mock("@/hooks/queries/useVitalsTrendsQuery", async () => {
   };
 });
 
-vi.mock("@/components/cockpit/rx/objective/PediatricGrowthChartsSection", () => ({
-  PediatricGrowthChartsSection: () => null,
-}));
+vi.mock(
+  "@/components/cockpit/rx/objective/PediatricGrowthChartsSection",
+  () => ({
+    PediatricGrowthChartsSection: () => null,
+  })
+);
 
 const prescriptionIdRef = { current: null as string | null };
 
@@ -117,14 +134,11 @@ function renderWithProvider(initial?: Partial<RxFormFields>) {
           <VitalsGrid />
         </RxFormProvider>
       </TooltipProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
 }
 
-function renderMenu(
-  ui: ReactElement,
-  initial?: Partial<RxFormFields>,
-) {
+function renderMenu(ui: ReactElement, initial?: Partial<RxFormFields>) {
   const initialFields = { ...createEmptyRxFormFields(), ...initial };
   return render(
     <RxFormProvider
@@ -138,7 +152,7 @@ function renderMenu(
       onPrescriptionCreated={() => {}}
     >
       {ui}
-    </RxFormProvider>,
+    </RxFormProvider>
   );
 }
 
@@ -151,7 +165,9 @@ async function revealVital(menuLabel: string) {
   if (!screen.queryByRole("button", { name: `Show ${menuLabel}` })) {
     fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
   }
-  const showBtn = await screen.findByRole("button", { name: `Show ${menuLabel}` });
+  const showBtn = await screen.findByRole("button", {
+    name: `Show ${menuLabel}`,
+  });
   fireEvent.click(showBtn);
 }
 
@@ -160,7 +176,7 @@ function hiddenPatchCalls() {
     (call) =>
       call[1] &&
       typeof call[1] === "object" &&
-      "vitals_hidden" in (call[1] as Record<string, unknown>),
+      "vitals_hidden" in (call[1] as Record<string, unknown>)
   );
 }
 
@@ -192,7 +208,9 @@ describe("resolveVitalHasDataHint (vit-08 / P10-D5)", () => {
 });
 
 describe("ManageVitalsMenu (vit-08)", () => {
-  const { hidden: defaultHidden } = resolveEffectiveVitalsHidden({ storedHidden: [] });
+  const { hidden: defaultHidden } = resolveEffectiveVitalsHidden({
+    storedHidden: [],
+  });
 
   it("exposes accessible toggle state (aria-pressed)", async () => {
     function StatefulMenu() {
@@ -203,7 +221,9 @@ describe("ManageVitalsMenu (vit-08)", () => {
           fields={createEmptyRxFormFields()}
           onToggleHidden={(key) =>
             setHiddenIds((prev) =>
-              prev.includes(key) ? prev.filter((id) => id !== key) : [...prev, key],
+              prev.includes(key)
+                ? prev.filter((id) => id !== key)
+                : [...prev, key]
             )
           }
         />
@@ -213,14 +233,15 @@ describe("ManageVitalsMenu (vit-08)", () => {
     renderMenu(<StatefulMenu />);
 
     fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
-    const hideHr = await screen.findByRole("button", { name: "Hide Pulse Rate (PR)" });
+    const hideHr = await screen.findByRole("button", {
+      name: "Hide Pulse Rate (PR)",
+    });
     expect(hideHr).toHaveAttribute("aria-pressed", "false");
 
     fireEvent.click(hideHr);
-    expect(await screen.findByRole("button", { name: "Show Pulse Rate (PR)" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(
+      await screen.findByRole("button", { name: "Show Pulse Rate (PR)" })
+    ).toHaveAttribute("aria-pressed", "true");
   });
 
   it("shows has-data hint without rendering the value", () => {
@@ -232,7 +253,7 @@ describe("ManageVitalsMenu (vit-08)", () => {
         effectiveHiddenIds={defaultHidden}
         fields={fields}
         onToggleHidden={vi.fn()}
-      />,
+      />
     );
 
     fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
@@ -246,38 +267,66 @@ describe("ManageVitalsMenu (vit-08)", () => {
         effectiveHiddenIds={defaultHidden}
         fields={createEmptyRxFormFields()}
         onToggleHidden={vi.fn()}
-      />,
+      />
     );
 
     fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
 
     // Plain registry vitals appear as a single row.
-    expect(screen.getByTestId("vitals-manager-row-vitalsGlucoseMgDl")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("vitals-manager-row-vitalsGlucoseMgDl")
+    ).toBeInTheDocument();
 
     // BP collapses to one cluster row.
-    expect(screen.getByTestId("vitals-manager-row-vitalsBpSystolic")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("vitals-manager-row-vitalsBpSystolic")
+    ).toBeInTheDocument();
     expect(screen.getByText("Blood pressure (BP)")).toBeInTheDocument();
-    expect(screen.queryByTestId("vitals-manager-row-vitalsBpDiastolic")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("vitals-manager-row-vitalsBpDiastolic")
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("BP Systolic")).not.toBeInTheDocument();
     expect(screen.queryByText("BP Diastolic")).not.toBeInTheDocument();
 
     // Paired context categoricals never get their own row.
-    expect(screen.queryByTestId("vitals-manager-row-vitalsO2DeliveryMethod")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("vitals-manager-row-vitalsPulseRhythm")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("vitals-manager-row-vitalsTempSite")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("vitals-manager-row-vitalsO2DeliveryMethod")
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("vitals-manager-row-vitalsPulseRhythm")
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("vitals-manager-row-vitalsTempSite")
+    ).not.toBeInTheDocument();
 
     // GCS shows the total only — not the E/V/M components.
-    expect(screen.getByTestId("vitals-manager-row-vitalsGcsTotal")).toBeInTheDocument();
-    expect(screen.queryByTestId("vitals-manager-row-vitalsGcsE")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("vitals-manager-row-vitalsGcsV")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("vitals-manager-row-vitalsGcsM")).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("vitals-manager-row-vitalsGcsTotal")
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("vitals-manager-row-vitalsGcsE")
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("vitals-manager-row-vitalsGcsV")
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("vitals-manager-row-vitalsGcsM")
+    ).not.toBeInTheDocument();
 
     // Pupils collapse to one cluster row.
-    expect(screen.getByTestId("vitals-manager-row-vitalsPupilSizeLeftMm")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("vitals-manager-row-vitalsPupilSizeLeftMm")
+    ).toBeInTheDocument();
     expect(screen.getByText("Pupils")).toBeInTheDocument();
-    expect(screen.queryByTestId("vitals-manager-row-vitalsPupilSizeRightMm")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("vitals-manager-row-vitalsPupilReactivityLeft")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("vitals-manager-row-vitalsPupilReactivityRight")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("vitals-manager-row-vitalsPupilSizeRightMm")
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("vitals-manager-row-vitalsPupilReactivityLeft")
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("vitals-manager-row-vitalsPupilReactivityRight")
+    ).not.toBeInTheDocument();
   });
 
   it("filters rows by the search query and shows an empty state", () => {
@@ -286,15 +335,19 @@ describe("ManageVitalsMenu (vit-08)", () => {
         effectiveHiddenIds={defaultHidden}
         fields={createEmptyRxFormFields()}
         onToggleHidden={vi.fn()}
-      />,
+      />
     );
 
     fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
     const search = screen.getByTestId("vitals-manager-search");
 
     fireEvent.change(search, { target: { value: "glucose" } });
-    expect(screen.getByTestId("vitals-manager-row-vitalsGlucoseMgDl")).toBeInTheDocument();
-    expect(screen.queryByTestId("vitals-manager-row-vitalsHr")).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("vitals-manager-row-vitalsGlucoseMgDl")
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("vitals-manager-row-vitalsHr")
+    ).not.toBeInTheDocument();
 
     fireEvent.change(search, { target: { value: "zzzzz" } });
     expect(screen.getByTestId("vitals-manager-empty")).toBeInTheDocument();
@@ -306,9 +359,15 @@ describe("VitalsGrid · manage vitals menu (vit-08)", () => {
     renderWithProvider();
     await waitForVitalsSettingsLoaded();
 
-    expect(screen.getByLabelText(/Systolic blood pressure/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Pulse Rate \(PR\) in bpm/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Respiratory Rate \(RR\) in breaths\/min/i)).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/Systolic blood pressure/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/Pulse Rate \(PR\) in bpm/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/Respiratory Rate \(RR\) in breaths\/min/i)
+    ).toBeInTheDocument();
     expect(screen.getByLabelText(/^Blood glucose value$/i)).toBeInTheDocument();
   });
 
@@ -316,33 +375,41 @@ describe("VitalsGrid · manage vitals menu (vit-08)", () => {
     renderWithProvider();
     await waitForVitalsSettingsLoaded();
 
-    expect(screen.getByLabelText(/Systolic blood pressure/i)).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/Systolic blood pressure/i)
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
     fireEvent.click(
-      await screen.findByRole("button", { name: "Hide Blood pressure (BP)" }),
+      await screen.findByRole("button", { name: "Hide Blood pressure (BP)" })
     );
 
     await waitFor(() => {
-      expect(screen.queryByLabelText(/Systolic blood pressure/i)).not.toBeInTheDocument();
+      expect(
+        screen.queryByLabelText(/Systolic blood pressure/i)
+      ).not.toBeInTheDocument();
     });
 
     await waitFor(
       () => {
-        const last = hiddenPatchCalls().at(-1)?.[1] as { vitals_hidden: string[] };
+        const last = hiddenPatchCalls().at(-1)?.[1] as {
+          vitals_hidden: string[];
+        };
         expect(last.vitals_hidden).toContain("vitalsBpSystolic");
         expect(last.vitals_hidden).toContain("vitalsBpDiastolic");
       },
-      { timeout: 1500 },
+      { timeout: 1500 }
     );
 
     // Popover stays open after hide — do not click the trigger again (that closes it).
     fireEvent.click(
-      await screen.findByRole("button", { name: "Show Blood pressure (BP)" }),
+      await screen.findByRole("button", { name: "Show Blood pressure (BP)" })
     );
 
     await waitFor(() => {
-      expect(screen.getByLabelText(/Systolic blood pressure/i)).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/Systolic blood pressure/i)
+      ).toBeInTheDocument();
     });
   });
 
@@ -351,17 +418,23 @@ describe("VitalsGrid · manage vitals menu (vit-08)", () => {
     await waitForVitalsSettingsLoaded();
 
     fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
-    fireEvent.click(await screen.findByRole("button", { name: "Hide Pulse Rate (PR)" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Hide Pulse Rate (PR)" })
+    );
 
     await waitFor(() => {
-      expect(screen.queryByLabelText(/Pulse Rate \(PR\) in bpm/i)).not.toBeInTheDocument();
+      expect(
+        screen.queryByLabelText(/Pulse Rate \(PR\) in bpm/i)
+      ).not.toBeInTheDocument();
     });
   });
 
   it("unhiding a non-core vital shows it in the grid", async () => {
     renderWithProvider();
     await revealVital("Glasgow Coma Scale (GCS)");
-    expect(screen.getByLabelText(/Glasgow Coma Scale \(GCS\) in \/15/i)).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/Glasgow Coma Scale \(GCS\) in \/15/i)
+    ).toBeInTheDocument();
   });
 
   it("hide-with-data warns then hides while retaining the value", async () => {
@@ -369,9 +442,13 @@ describe("VitalsGrid · manage vitals menu (vit-08)", () => {
     await waitForVitalsSettingsLoaded();
 
     fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
-    fireEvent.click(await screen.findByRole("button", { name: "Hide Pulse Rate (PR)" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Hide Pulse Rate (PR)" })
+    );
 
-    expect(screen.getByTestId("hide-vital-with-data-dialog")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("hide-vital-with-data-dialog")
+    ).toBeInTheDocument();
     expect(screen.getByText("Value is kept, just hidden.")).toBeInTheDocument();
     expect(screen.queryByText("92")).not.toBeInTheDocument();
 
@@ -379,7 +456,9 @@ describe("VitalsGrid · manage vitals menu (vit-08)", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Hide" }));
 
     await waitFor(() => {
-      expect(screen.queryByLabelText(/Pulse Rate \(PR\) in bpm/i)).not.toBeInTheDocument();
+      expect(
+        screen.queryByLabelText(/Pulse Rate \(PR\) in bpm/i)
+      ).not.toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
@@ -391,15 +470,19 @@ describe("VitalsGrid · manage vitals menu (vit-08)", () => {
     await waitForVitalsSettingsLoaded();
 
     fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
-    fireEvent.click(await screen.findByRole("button", { name: "Hide Pulse Rate (PR)" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Hide Pulse Rate (PR)" })
+    );
 
     await waitFor(
       () => {
         expect(hiddenPatchCalls().length).toBeGreaterThan(0);
-        const last = hiddenPatchCalls().at(-1)?.[1] as { vitals_hidden: string[] };
+        const last = hiddenPatchCalls().at(-1)?.[1] as {
+          vitals_hidden: string[];
+        };
         expect(last.vitals_hidden).toContain("vitalsHr");
       },
-      { timeout: 1500 },
+      { timeout: 1500 }
     );
   });
 
@@ -408,7 +491,9 @@ describe("VitalsGrid · manage vitals menu (vit-08)", () => {
     await waitForVitalsSettingsLoaded();
 
     fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
-    fireEvent.click(await screen.findByTestId("vitals-manager-add-custom-trigger"));
+    fireEvent.click(
+      await screen.findByTestId("vitals-manager-add-custom-trigger")
+    );
 
     fireEvent.change(screen.getByTestId("vitals-manager-add-custom-label"), {
       target: { value: "abdominal girth" },
@@ -425,14 +510,23 @@ describe("VitalsGrid · manage vitals menu (vit-08)", () => {
     // And it autosaves as a per-doctor default.
     await waitFor(() => {
       const customCalls = mockPatchDoctorSettings.mock.calls.filter(
-        (call) => call[1] && "vitals_custom" in (call[1] as Record<string, unknown>),
+        (call) =>
+          call[1] && "vitals_custom" in (call[1] as Record<string, unknown>)
       );
       expect(customCalls.length).toBeGreaterThan(0);
       const last = customCalls.at(-1)?.[1] as {
-        vitals_custom: Array<{ label: string; unit: string | null; kind: string }>;
+        vitals_custom: Array<{
+          label: string;
+          unit: string | null;
+          kind: string;
+        }>;
       };
       expect(last.vitals_custom).toEqual([
-        expect.objectContaining({ label: "Abdominal girth", unit: "cm", kind: "numeric" }),
+        expect.objectContaining({
+          label: "Abdominal girth",
+          unit: "cm",
+          kind: "numeric",
+        }),
       ]);
     });
   });
@@ -442,7 +536,9 @@ describe("VitalsGrid · manage vitals menu (vit-08)", () => {
     await waitForVitalsSettingsLoaded();
 
     fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
-    fireEvent.click(await screen.findByTestId("vitals-manager-add-custom-trigger"));
+    fireEvent.click(
+      await screen.findByTestId("vitals-manager-add-custom-trigger")
+    );
     fireEvent.change(screen.getByTestId("vitals-manager-add-custom-label"), {
       target: { value: "abdominal girth" },
     });
@@ -451,7 +547,12 @@ describe("VitalsGrid · manage vitals menu (vit-08)", () => {
     const input = await screen.findByLabelText("Abdominal girth");
     const customId = input.getAttribute("id")?.replace("custom-vital-", "");
     expect(customId).toMatch(/^custom_/);
-    expect(screen.getByTestId(`vital-provenance-trigger-${customId}`)).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByTestId(`custom-vital-extras-toggle-${customId}`)
+    );
+    expect(
+      screen.getByTestId(`vital-provenance-trigger-${customId}`)
+    ).toBeInTheDocument();
   });
 
   it("edits a custom vital via the pencil action and autosaves", async () => {
@@ -459,7 +560,9 @@ describe("VitalsGrid · manage vitals menu (vit-08)", () => {
     await waitForVitalsSettingsLoaded();
 
     fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
-    fireEvent.click(await screen.findByTestId("vitals-manager-add-custom-trigger"));
+    fireEvent.click(
+      await screen.findByTestId("vitals-manager-add-custom-trigger")
+    );
     fireEvent.change(screen.getByTestId("vitals-manager-add-custom-label"), {
       target: { value: "abdominal girth" },
     });
@@ -470,9 +573,15 @@ describe("VitalsGrid · manage vitals menu (vit-08)", () => {
 
     expect(await screen.findByLabelText("Abdominal girth")).toBeInTheDocument();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Edit Abdominal girth" }));
-    expect(screen.getByTestId("vitals-manager-edit-custom-form")).toBeInTheDocument();
-    expect(screen.queryByTestId("vitals-manager-add-custom-form")).not.toBeInTheDocument();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Edit Abdominal girth" })
+    );
+    expect(
+      screen.getByTestId("vitals-manager-edit-custom-form")
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("vitals-manager-add-custom-form")
+    ).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByTestId("vitals-manager-edit-custom-label"), {
       target: { value: "Waist circumference" },
@@ -482,12 +591,15 @@ describe("VitalsGrid · manage vitals menu (vit-08)", () => {
     });
     fireEvent.click(screen.getByTestId("vitals-manager-edit-custom-save"));
 
-    expect(await screen.findByLabelText("Waist circumference")).toBeInTheDocument();
+    expect(
+      await screen.findByLabelText("Waist circumference")
+    ).toBeInTheDocument();
     expect(screen.queryByLabelText("Abdominal girth")).not.toBeInTheDocument();
 
     await waitFor(() => {
       const customCalls = mockPatchDoctorSettings.mock.calls.filter(
-        (call) => call[1] && "vitals_custom" in (call[1] as Record<string, unknown>),
+        (call) =>
+          call[1] && "vitals_custom" in (call[1] as Record<string, unknown>)
       );
       const last = customCalls.at(-1)?.[1] as {
         vitals_custom: Array<{ id: string; label: string; group: string }>;
@@ -507,23 +619,31 @@ describe("VitalsGrid · manage vitals menu (vit-08)", () => {
     await waitForVitalsSettingsLoaded();
 
     fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
-    fireEvent.click(await screen.findByTestId("vitals-manager-add-custom-trigger"));
+    fireEvent.click(
+      await screen.findByTestId("vitals-manager-add-custom-trigger")
+    );
     fireEvent.change(screen.getByTestId("vitals-manager-add-custom-label"), {
       target: { value: "Peak flow" },
     });
     fireEvent.click(screen.getByTestId("vitals-manager-add-custom-save"));
 
-    const input = (await screen.findByLabelText("Peak flow")) as HTMLInputElement;
+    const input = (await screen.findByLabelText(
+      "Peak flow"
+    )) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "420" } });
     expect(input.value).toBe("420");
 
-    fireEvent.click(await screen.findByRole("button", { name: "Edit Peak flow" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Edit Peak flow" })
+    );
     fireEvent.change(screen.getByTestId("vitals-manager-edit-custom-kind"), {
       target: { value: "text" },
     });
     fireEvent.click(screen.getByTestId("vitals-manager-edit-custom-save"));
 
-    const textInput = (await screen.findByLabelText("Peak flow")) as HTMLInputElement;
+    const textInput = (await screen.findByLabelText(
+      "Peak flow"
+    )) as HTMLInputElement;
     expect(textInput.value).toBe("");
   });
 
@@ -532,7 +652,9 @@ describe("VitalsGrid · manage vitals menu (vit-08)", () => {
     await waitForVitalsSettingsLoaded();
 
     fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
-    fireEvent.click(await screen.findByTestId("vitals-manager-add-custom-trigger"));
+    fireEvent.click(
+      await screen.findByTestId("vitals-manager-add-custom-trigger")
+    );
     fireEvent.change(screen.getByTestId("vitals-manager-add-custom-label"), {
       target: { value: "Gait" },
     });
@@ -544,7 +666,9 @@ describe("VitalsGrid · manage vitals menu (vit-08)", () => {
     expect(await screen.findByLabelText("Gait")).toBeInTheDocument();
 
     // The menu is still open after adding — remove the custom vital from its row.
-    const removeBtn = await screen.findByRole("button", { name: "Remove Gait" });
+    const removeBtn = await screen.findByRole("button", {
+      name: "Remove Gait",
+    });
     fireEvent.click(removeBtn);
 
     await waitFor(() => {
@@ -553,23 +677,29 @@ describe("VitalsGrid · manage vitals menu (vit-08)", () => {
   });
 
   it("updates the trigger hidden count", async () => {
-    const { hidden: defaultHidden } = resolveEffectiveVitalsHidden({ storedHidden: [] });
-    const menuHiddenCount = defaultHidden.filter(isMenuCountableHiddenKey).length;
+    const { hidden: defaultHidden } = resolveEffectiveVitalsHidden({
+      storedHidden: [],
+    });
+    const menuHiddenCount = defaultHidden.filter(
+      isMenuCountableHiddenKey
+    ).length;
     renderWithProvider();
     await waitForVitalsSettingsLoaded();
 
     expect(screen.getByTestId("vitals-manager-trigger")).toHaveAttribute(
       "aria-label",
-      `Manage vitals · ${menuHiddenCount} hidden`,
+      `Manage vitals · ${menuHiddenCount} hidden`
     );
 
     fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
-    fireEvent.click(await screen.findByRole("button", { name: "Hide Pulse Rate (PR)" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Hide Pulse Rate (PR)" })
+    );
 
     await waitFor(() => {
       expect(screen.getByTestId("vitals-manager-trigger")).toHaveAttribute(
         "aria-label",
-        `Manage vitals · ${menuHiddenCount + 1} hidden`,
+        `Manage vitals · ${menuHiddenCount + 1} hidden`
       );
     });
   });

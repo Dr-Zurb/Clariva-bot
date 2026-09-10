@@ -60,6 +60,11 @@ export function getQueueReinsertDefault(
 /**
  * Slot mode: block patient video join after scheduled start + grace (unless early-join accepted).
  * Queue mode: no fixed clock grace here (token/ETA flow).
+ *
+ * Once the doctor has started a consultation (any non-ended/cancelled
+ * `consultation_sessions` row), grace no longer applies — otherwise a
+ * late doctor start strands the patient with a valid link while the
+ * doctor sits in an empty room (slot-hub: `in_consultation` is joinable).
  */
 export async function assertSlotJoinAllowedForPatient(
   appointmentId: string,
@@ -73,7 +78,7 @@ export async function assertSlotJoinAllowedForPatient(
   const { data: apt, error } = await admin
     .from('appointments')
     .select(
-      'id, doctor_id, appointment_date, status, opd_early_invite_response'
+      'id, doctor_id, appointment_date, status, opd_early_invite_response, opd_session_delay_minutes'
     )
     .eq('id', appointmentId)
     .maybeSingle();
@@ -87,6 +92,21 @@ export async function assertSlotJoinAllowedForPatient(
 
   if (apt.status !== 'pending' && apt.status !== 'confirmed') {
     throw new ValidationError('This appointment is no longer active');
+  }
+
+  const { data: liveSession, error: liveSessionError } = await admin
+    .from('consultation_sessions')
+    .select('id')
+    .eq('appointment_id', appointmentId)
+    .not('status', 'in', '(ended,cancelled)')
+    .limit(1)
+    .maybeSingle();
+
+  if (liveSessionError) {
+    handleSupabaseError(liveSessionError, correlationId);
+  }
+  if (liveSession) {
+    return;
   }
 
   const sessionDayMode = await resolveSessionDayMode(
@@ -105,8 +125,14 @@ export async function assertSlotJoinAllowedForPatient(
   }
 
   const graceMin = getSlotJoinGraceMinutes(settings);
+  const delayMin =
+    typeof apt.opd_session_delay_minutes === 'number' &&
+    Number.isFinite(apt.opd_session_delay_minutes) &&
+    apt.opd_session_delay_minutes > 0
+      ? Math.floor(apt.opd_session_delay_minutes)
+      : 0;
   const slotStart = new Date(apt.appointment_date as string);
-  const graceEnd = new Date(slotStart.getTime() + graceMin * 60 * 1000);
+  const graceEnd = new Date(slotStart.getTime() + (graceMin + delayMin) * 60 * 1000);
   if (new Date() > graceEnd) {
     throw new ValidationError(
       'Your scheduled join window has passed. Please message the clinic to reschedule or discuss options.'

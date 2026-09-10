@@ -170,7 +170,7 @@ export default function PrescriptionPreSendCheck({
       role="dialog"
       aria-modal="true"
       aria-labelledby="pre-send-check-title"
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 sm:items-center"
+      className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/50 p-4 sm:items-center"
       onClick={() => {
         if (!sending) onCancel();
       }}

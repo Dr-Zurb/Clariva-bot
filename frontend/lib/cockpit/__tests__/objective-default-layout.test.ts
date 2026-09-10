@@ -70,7 +70,10 @@ describe("resolveDefaultLayout · modality maps (§G / rpt-01)", () => {
   });
 
   it("unknown / absent modality → registry default (never blank)", () => {
-    const fallback = { defaultOrder: [...DEFAULT_OBJECTIVE_SECTION_ORDER], defaultHidden: [] };
+    const fallback = {
+      defaultOrder: [...DEFAULT_OBJECTIVE_SECTION_ORDER],
+      defaultHidden: [],
+    };
     expect(resolveDefaultLayout({ modality: null })).toEqual(fallback);
     expect(resolveDefaultLayout({})).toEqual(fallback);
     expect(

@@ -4,6 +4,7 @@ import {
   customSubsectionsStructureKey,
   customSubsectionsToDefaultTemplate,
   normalizeCustomSubsectionInForm,
+  sanitizeCustomSubsectionsForOutput,
   seedCustomSubsectionsFromDefault,
   updateCustomSubsection,
 } from "@/lib/cockpit/custom-subsections";
@@ -123,5 +124,24 @@ describe("custom subsections default template (subj-21/36)", () => {
       { ...VISIT_SECTIONS[0], title: " Travel history " },
     ]);
     expect(template[0].title).toBe("Travel history");
+  });
+
+  it("sanitises custom sections the same way the PDF does", () => {
+    expect(
+      sanitizeCustomSubsectionsForOutput([
+        {
+          id: "s1",
+          title: "Travel",
+          body: null,
+          children: [
+            { id: "c1", title: "Region", body: "Kerala" },
+            { id: "c2", title: "   ", body: "orphan" },
+          ],
+        },
+        { id: "s2", title: "  ", body: "  ", children: [] },
+      ]),
+    ).toEqual([
+      { title: "Travel", body: null, children: [{ title: "Region", body: "Kerala" }] },
+    ]);
   });
 });

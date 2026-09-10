@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, History } from "lucide-react";
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
+import { usePrescriptionFormShell } from "@/components/cockpit/rx/PrescriptionFormShellContext";
 import { complaintsFromPrescription } from "@/components/cockpit/rx/RxFormContext";
 import {
   buildSubjectiveCarryForwardActions,
@@ -33,6 +34,9 @@ const DEFAULT_SELECTION: SubjectiveCarryForwardSelection = {
 
 export function CarryForwardButton({ disabled = false }: CarryForwardButtonProps) {
   const { appointmentId, patientId, token, dispatch } = useRxForm();
+  const shell = usePrescriptionFormShell();
+  const excludePrescriptionId =
+    shell?.prescription?.id ?? shell?.prescriptionIdRef.current ?? null;
   const [source, setSource] = useState<LastSubjectiveForPatient | null>(null);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -47,14 +51,19 @@ export function CarryForwardButton({ disabled = false }: CarryForwardButtonProps
     }
     setLoading(true);
     try {
-      const res = await getLastSubjectiveForPatient(token, patientId, appointmentId);
+      const res = await getLastSubjectiveForPatient(
+        token,
+        patientId,
+        appointmentId,
+        excludePrescriptionId,
+      );
       setSource(res.data.subjective);
     } catch {
       setSource(null);
     } finally {
       setLoading(false);
     }
-  }, [appointmentId, patientId, token]);
+  }, [appointmentId, excludePrescriptionId, patientId, token]);
 
   useEffect(() => {
     void load();

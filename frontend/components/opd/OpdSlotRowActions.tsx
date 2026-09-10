@@ -5,6 +5,7 @@ import {
   CalendarClock,
   Clock,
   ExternalLink,
+  LogIn,
   MoreHorizontal,
   UserRound,
   X,
@@ -23,12 +24,17 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { postDoctorMarkNoShow, postDoctorOfferEarlyJoin } from "@/lib/api";
+import {
+  postAppointmentCheckIn,
+  postDoctorMarkNoShow,
+  postDoctorOfferEarlyJoin,
+} from "@/lib/api";
 import { buildCockpitAppointmentPath } from "@/lib/cockpit/back-target";
 import { cn } from "@/lib/utils";
 import type { SlotSessionRow, SlotStatus } from "@/types/opd-doctor";
 import type { AddSlotDialogMode } from "./AddSlotDialog";
 import { trackOpdSlotEvent } from "./opdQueueTelemetry";
+import { canMarkArrived } from "./shared/opdArrival";
 import { resolveSlotEarlyJoinTarget } from "./shared/opdToolbarResolvers";
 
 export interface OpdSlotRowActionsProps {
@@ -63,6 +69,7 @@ function defaultConfirm(opts: {
 
 type SlotActionTelemetry =
   | "mark_no_show"
+  | "mark_arrived"
   | "offer_early_join_sent"
   | "open_appointment_nav"
   | "reschedule_nav"
@@ -160,6 +167,16 @@ export function OpdSlotRowActions({
       }, "offer_early_join_sent");
     },
     [confirmFn, entry.appointmentId, entry.patientName, runMutation, token]
+  );
+
+  const handleMarkArrived = useCallback(
+    async (e: React.MouseEvent) => {
+      e.stopPropagation();
+      void runMutation(async () => {
+        await postAppointmentCheckIn(token, entry.appointmentId);
+      }, "mark_arrived");
+    },
+    [entry.appointmentId, runMutation, token]
   );
 
   const handleMarkNoShow = useCallback(
@@ -293,6 +310,15 @@ export function OpdSlotRowActions({
             <ExternalLink className="mr-2 h-4 w-4" />
             Open
           </DropdownMenuItem>
+          {canMarkArrived(entry) && (
+            <DropdownMenuItem
+              disabled={pending}
+              onClick={(e) => void handleMarkArrived(e)}
+            >
+              <LogIn className="mr-2 h-4 w-4" />
+              Arrive
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem
             disabled={pending}
             onClick={(e) => void handleMarkNoShow(e)}
@@ -332,6 +358,15 @@ export function OpdSlotRowActions({
             <ExternalLink className="mr-2 h-4 w-4" />
             Open
           </DropdownMenuItem>
+          {canMarkArrived(entry) && (
+            <DropdownMenuItem
+              disabled={pending}
+              onClick={(e) => void handleMarkArrived(e)}
+            >
+              <LogIn className="mr-2 h-4 w-4" />
+              Arrive
+            </DropdownMenuItem>
+          )}
           {showEarlyJoin && !isWalkIn && (
             <DropdownMenuItem
               disabled={pending}

@@ -12,7 +12,9 @@ export default async function PatientsV2RoutePage() {
   return (
     <Suspense
       fallback={
-        <div className="p-6 text-muted-foreground">Loading patients…</div>
+        <div className="flex flex-1 items-center p-6 text-muted-foreground">
+          Loading patients…
+        </div>
       }
     >
       <PatientsV2Page token={token} userId={user.id} />

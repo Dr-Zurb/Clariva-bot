@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/tooltip";
 import { getPossibleDuplicates } from "@/lib/api/patients";
 import { trackPatientsV2SplitStartButtonUsed } from "@/lib/patients-v2/telemetry";
+import { formatPatientAddedBy } from "@/lib/patients-v2/added-by";
 import { maskPhoneDisplay } from "@/lib/patients-v2/list-utils";
 import { cn } from "@/lib/utils";
 import type { ConsultationModality } from "@/types/appointment";
@@ -50,6 +51,7 @@ export interface PatientIdentityStripProps {
   patient: Patient;
   overview: PatientOverviewData | null;
   token: string;
+  viewerId?: string;
   onAction: (action: PatientHeaderAction) => void;
   onVisitClick: (appointmentId: string) => void;
 }
@@ -145,6 +147,7 @@ export function PatientIdentityStrip({
   patient,
   overview,
   token,
+  viewerId,
   onAction,
   onVisitClick,
 }: PatientIdentityStripProps) {
@@ -165,6 +168,7 @@ export function PatientIdentityStrip({
   const age = ageFromDob(patient.date_of_birth);
   const demographics = formatDemographics(age, patient.gender);
   const maskedPhone = patient.phone ? maskPhoneDisplay(patient.phone) : null;
+  const addedBy = formatPatientAddedBy(patient, viewerId);
 
   const healthChips = useMemo(() => buildHealthChips(overview), [overview]);
   const visibleChips = healthChips.slice(0, MAX_VISIBLE_CHIPS);
@@ -341,6 +345,12 @@ export function PatientIdentityStrip({
                   <span>Phone: {maskedPhone}</span>
                 </>
               ) : null}
+              {addedBy ? (
+                <>
+                  <Dot />
+                  <span>{addedBy}</span>
+                </>
+              ) : null}
             </p>
             <SixVisitDotBreadcrumb
               visits={overview?.six_visit_strip ?? []}
@@ -353,7 +363,7 @@ export function PatientIdentityStrip({
       {toast ? (
         <div
           role="status"
-          className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-md bg-foreground px-4 py-2 text-sm text-background shadow-lg"
+          className="fixed top-4 right-4 z-50 rounded-md bg-foreground px-4 py-2 text-sm text-background shadow-lg"
         >
           {toast}
         </div>

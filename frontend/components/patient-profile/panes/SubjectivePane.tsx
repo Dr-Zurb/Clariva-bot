@@ -11,7 +11,7 @@
  */
 import PaneHeader from "@/components/patient-profile/PaneHeader";
 import { SubjectiveSection } from "@/components/cockpit/rx/sections/SubjectiveSection";
-import { canEditPrescriptionDraft } from "@/lib/patient-profile/state";
+import { useRxSectionLock } from "@/components/cockpit/rx/useRxLock";
 import type { CockpitState } from "@/lib/patient-profile/state";
 import type { PatientChartMode } from "@/types/patient-chart";
 
@@ -19,21 +19,10 @@ export interface SubjectivePaneProps {
   hideHeader?: boolean;
   patientId?: string | null;
   token?: string;
-  /** When omitted, derived from `cockpitState` when provided. */
+  /** Explicit override. When omitted, follows {@link useRxSectionLock}. */
   chartMode?: PatientChartMode;
-  /** Used to derive read-only chart mode when `chartMode` is omitted. */
+  /** Kept for call sites; lock comes from {@link useRxSectionLock}, not visit status. */
   cockpitState?: CockpitState;
-}
-
-function resolveChartMode(
-  chartMode: PatientChartMode | undefined,
-  cockpitState: CockpitState | undefined,
-): PatientChartMode {
-  if (chartMode) return chartMode;
-  if (cockpitState) {
-    return canEditPrescriptionDraft(cockpitState) ? "default" : "readonly";
-  }
-  return "default";
 }
 
 export default function SubjectivePane({
@@ -41,10 +30,11 @@ export default function SubjectivePane({
   patientId = null,
   token,
   chartMode,
-  cockpitState,
+  cockpitState: _cockpitState,
 }: SubjectivePaneProps): JSX.Element {
-  const resolvedChartMode = resolveChartMode(chartMode, cockpitState);
-  const disabled = resolvedChartMode === "readonly";
+  const { contentLocked } = useRxSectionLock();
+  const resolvedChartMode = chartMode ?? (contentLocked ? "readonly" : "default");
+  const disabled = contentLocked;
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="subjective-pane">

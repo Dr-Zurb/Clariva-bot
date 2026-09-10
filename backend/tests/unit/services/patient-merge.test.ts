@@ -29,6 +29,7 @@ function createMergeSupabase() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const chain: any = {
       select: jest.fn().mockReturnThis(),
+      in: jest.fn().mockReturnThis(),
       eq: jest.fn().mockImplementation((...args: unknown[]) => {
         const [col, val] = args as [string, string];
         filters[col] = val;
@@ -99,14 +100,16 @@ describe('mergePatients (rcp-28)', () => {
 
     expect(mock.appointmentUpdates).toEqual([{ patient_id: targetId }]);
     expect(mock.conversationUpdates).toEqual([{ patient_id: targetId }]);
-    expect(mock.patientUpdates).toEqual([
-      expect.objectContaining({
-        name: '[Merged]',
-        phone: `merged-${sourceId}`,
-        platform: null,
-        platform_external_id: null,
-      }),
-    ]);
+    expect(mock.patientUpdates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: '[Merged]',
+          phone: `merged-${sourceId}`,
+          platform: null,
+          platform_external_id: null,
+        }),
+      ])
+    );
 
     const aptMove = mock.updateEqFilters.filter((f) => f.table === 'appointments');
     const aptFilters = Object.assign({}, ...aptMove.map((f) => f.filters));
@@ -120,13 +123,15 @@ describe('mergePatients (rcp-28)', () => {
       doctor_id: doctorId,
       patient_id: sourceId,
     });
-    const sourceAnon = mock.updateEqFilters.find((f) => f.table === 'patients');
+    const sourceAnon = mock.updateEqFilters.find(
+      (f) => f.table === 'patients' && f.filters.id === sourceId
+    );
     expect(sourceAnon?.filters).toMatchObject({ id: sourceId });
   });
 
   it('rejects merging source and target when they are the same patient', async () => {
-    await expect(
-      mergePatients(doctorId, sourceId, sourceId, correlationId)
-    ).rejects.toThrow('Source and target patient must be different');
+    await expect(mergePatients(doctorId, sourceId, sourceId, correlationId)).rejects.toThrow(
+      'Source and target patient must be different'
+    );
   });
 });

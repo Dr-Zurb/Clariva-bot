@@ -263,6 +263,23 @@ export async function endSession(
   // the DM fan-out (IG-DM + SMS round-trips) happens on the next tick.
   // Mirrors the fire-and-forget pattern used by Task 30's
   // `notifyReplayWatcher` in `recording-access-service`.
+  // rec-16: stamp an open pause as ended-while-paused. Best-effort and
+  // last awaited step — status flip + adapter teardown + ended banner
+  // have already succeeded. Must never endanger them.
+  try {
+    const { stampDanglingPausesForEndedSession } = await import('./recording-pause-service');
+    await stampDanglingPausesForEndedSession(session.id, correlationId);
+  } catch (err) {
+    logger.warn(
+      {
+        correlationId,
+        sessionId: session.id,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      'endSession: dangling-pause stamp threw (non-fatal; session is still marked ended)',
+    );
+  }
+
   void Promise.resolve()
     .then(() =>
       sendPostConsultChatHistoryDm({
@@ -664,7 +681,6 @@ interface ConsultationSessionRow {
   actual_ended_at: string | null;
   doctor_joined_at: string | null;
   patient_joined_at: string | null;
-  recording_consent_at_book: boolean | null;
   recording_artifact_ref: string | null;
   created_at: string;
   updated_at: string;
@@ -732,7 +748,6 @@ async function persistSessionRow(
       provider_session_id: providerSessionId ?? null,
       scheduled_start_at: input.scheduledStartAt.toISOString(),
       expected_end_at: input.expectedEndAt.toISOString(),
-      recording_consent_at_book: input.recordingConsentAtBook ?? null,
       status: 'scheduled' satisfies SessionStatus,
     })
     .select('*')

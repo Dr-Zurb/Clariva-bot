@@ -14,10 +14,15 @@ type AuthRouter = {
 };
 
 /**
- * Push to `/complete-profile` or `/dashboard` by `profile_completed`, then refresh
- * so Server Components see the new session cookies.
+ * Push to `/desk`, `/complete-profile`, or `/dashboard` (or safe `?next=`)
+ * by role + `profile_completed`, then refresh so Server Components see the
+ * new session cookies.
  */
-export function routeAfterAuth(router: AuthRouter, user: AuthUserLike): void {
-  router.push(destinationAfterAuth(user));
+export function routeAfterAuth(
+  router: AuthRouter,
+  user: AuthUserLike,
+  next?: string | null
+): void {
+  router.push(destinationAfterAuth(user, next));
   router.refresh();
 }

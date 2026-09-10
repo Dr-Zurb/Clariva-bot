@@ -381,7 +381,7 @@ function applyPaneTree(paneTree: PaneTreeNode) {
 }
 
 function clickDockedSend() {
-  const sendBtn = screen.getByRole("button", { name: /send rx & finish/i });
+  const sendBtn = screen.getByRole("button", { name: /review/i });
   fireEvent.click(sendBtn);
 }
 
@@ -525,19 +525,19 @@ describe("cv3p-01: CockpitChrome re-parent (R-CHROME3)", () => {
     it("shows footer send in live and ended; hides in terminal", () => {
       renderChromeShell(telemedDefaultPaneTree(), { state: "live" });
       expect(
-        screen.getByRole("button", { name: /send rx & finish/i }),
+        screen.getByRole("button", { name: /review/i }),
       ).toBeInTheDocument();
 
       cleanup();
       renderChromeShell(telemedDefaultPaneTree(), { state: "ended" });
       expect(
-        screen.getByRole("button", { name: /send rx & finish/i }),
+        screen.getByRole("button", { name: /review/i }),
       ).toBeInTheDocument();
 
       cleanup();
       renderChromeShell(telemedDefaultPaneTree(), { state: "terminal" });
       expect(
-        screen.queryByRole("button", { name: /send rx & finish/i }),
+        screen.queryByRole("button", { name: /review/i }),
       ).not.toBeInTheDocument();
       expect(screen.getByTestId("cockpit-v3-action-dock")).toBeInTheDocument();
     });

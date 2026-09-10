@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { ExamSystemList } from "@/components/cockpit/rx/inputs/ExamSystemList";
+import { LastVisitObjectiveNotesStrip } from "@/components/cockpit/rx/last-visit/LastVisitParchiStrips";
 import { VitalsGrid } from "@/components/cockpit/rx/inputs/VitalsGrid";
 import { TestResultsList } from "@/components/cockpit/rx/objective/TestResultsList";
 import { ObjectiveMediaStrip } from "@/components/cockpit/rx/objective/ObjectiveMediaStrip";
@@ -54,6 +55,7 @@ import {
   SoapTabExpandCollapseClearButtons,
   SoapTabLayoutSaveStatus,
 } from "@/components/cockpit/rx/SoapTabChromeActions";
+import { SoapPaneChromePortal } from "@/components/patient-profile/v3/SoapPaneChrome";
 import { getAppointmentById, getDoctorSettings } from "@/lib/api";
 import {
   DEFAULT_OBJECTIVE_SECTION_ORDER,
@@ -125,7 +127,7 @@ type DropTargetState = {
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
 function buildCollapseDefaults(
-  order: readonly ObjectiveSectionId[],
+  order: readonly ObjectiveSectionId[]
 ): Record<string, boolean> {
   const result: Record<string, boolean> = {};
   for (const id of order) {
@@ -142,13 +144,17 @@ function seedObjectiveCollapseOpen(
     sectionOrder: ObjectiveSectionId[] | null | undefined;
     objectiveSeed: DefaultLayout | null | undefined;
   },
-  customBlockIds: readonly string[],
+  customBlockIds: readonly string[]
 ): {
   openById: Record<string, boolean>;
   ready: boolean;
   persistedKey: string | null;
 } {
-  const { sectionCollapsed: stored, sectionOrder: storedOrder, objectiveSeed } = args;
+  const {
+    sectionCollapsed: stored,
+    sectionOrder: storedOrder,
+    objectiveSeed,
+  } = args;
   if (stored == null || storedOrder == null) {
     return { openById: {}, ready: false, persistedKey: null };
   }
@@ -168,7 +174,7 @@ function seedObjectiveCollapseOpen(
     openById: resolved,
     ready: true,
     persistedKey: serializeCollapseOverrides(
-      collapseOverridesToPersist(resolved, defaults),
+      collapseOverridesToPersist(resolved, defaults)
     ),
   };
 }
@@ -186,10 +192,14 @@ export function ObjectiveSection({
   const dragSectionIdRef = useRef<ObjectiveSectionId | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTargetState | null>(null);
   const [layoutSaveStatus, setLayoutSaveStatus] = useState<SaveStatus>("idle");
-  const [collapseSaveStatus, setCollapseSaveStatus] = useState<SaveStatus>("idle");
-  const [visibilitySaveStatus, setVisibilitySaveStatus] = useState<SaveStatus>("idle");
+  const [collapseSaveStatus, setCollapseSaveStatus] =
+    useState<SaveStatus>("idle");
+  const [visibilitySaveStatus, setVisibilitySaveStatus] =
+    useState<SaveStatus>("idle");
   const [sectionManagerOpen, setSectionManagerOpen] = useState(false);
-  const collapseSeedRef = useRef<ReturnType<typeof seedObjectiveCollapseOpen> | null>(null);
+  const collapseSeedRef = useRef<ReturnType<
+    typeof seedObjectiveCollapseOpen
+  > | null>(null);
   if (collapseSeedRef.current === null) {
     collapseSeedRef.current = seedObjectiveCollapseOpen(
       {
@@ -197,30 +207,34 @@ export function ObjectiveSection({
         sectionOrder: shell?.objectiveDefaults?.sectionOrder,
         objectiveSeed: shell?.objectiveSeed,
       },
-      objectiveCustomSections.map((s) => s.id),
+      objectiveCustomSections.map((s) => s.id)
     );
   }
   const collapseSeed = collapseSeedRef.current;
 
   const lastPersistedSectionOrderRef = useRef<string | null>(null);
-  const lastPersistedCollapseRef = useRef<string | null>(collapseSeed.persistedKey);
+  const lastPersistedCollapseRef = useRef<string | null>(
+    collapseSeed.persistedKey
+  );
   const lastPersistedHiddenRef = useRef<string | null>(null);
   const hasHydratedCollapseRef = useRef(collapseSeed.ready);
   // When shell already has objective defaults, seed-aware hidden is applied in
   // useState below — skip the one-shot effect so we don't flash empty → seeded.
   const hasHydratedHiddenRef = useRef(shell?.objectiveDefaults != null);
 
-  const [storedSectionOrder, setStoredSectionOrder] = useState<ObjectiveSectionId[] | null>(
-    shell?.objectiveDefaults?.sectionOrder ?? null,
-  );
+  const [storedSectionOrder, setStoredSectionOrder] = useState<
+    ObjectiveSectionId[] | null
+  >(shell?.objectiveDefaults?.sectionOrder ?? null);
   const [storedSectionCollapsed, setStoredSectionCollapsed] =
     useState<ObjectiveSectionCollapseMap | null>(
-      shell?.objectiveDefaults?.sectionCollapsed ?? null,
+      shell?.objectiveDefaults?.sectionCollapsed ?? null
     );
   const [storedSectionHidden, setStoredSectionHidden] =
-    useState<ObjectiveSectionHiddenSet | null>(shell?.objectiveDefaults?.sectionHidden ?? null);
+    useState<ObjectiveSectionHiddenSet | null>(
+      shell?.objectiveDefaults?.sectionHidden ?? null
+    );
   const [openById, setOpenById] = useState<Record<string, boolean>>(
-    () => collapseSeed.openById,
+    () => collapseSeed.openById
   );
   /** True once stored collapse has been applied to openById (seed or effect). */
   const [collapseReady, setCollapseReady] = useState(() => collapseSeed.ready);
@@ -236,13 +250,15 @@ export function ObjectiveSection({
   // obj-14 (OBJ-D6): modality/specialty default seed. `undefined` = still
   // resolving (gates the one-shot hydration so the seed lands on first paint);
   // `null` = no seed available → registry default (never blank).
-  const [seedLayout, setSeedLayout] = useState<DefaultLayout | null | undefined>(() =>
-    shell?.objectiveDefaults != null ? (shell.objectiveSeed ?? null) : undefined,
+  const [seedLayout, setSeedLayout] = useState<
+    DefaultLayout | null | undefined
+  >(() =>
+    shell?.objectiveDefaults != null ? (shell.objectiveSeed ?? null) : undefined
   );
 
   const customBlockIds = useMemo(
     () => objectiveCustomSections.map((s) => s.id),
-    [objectiveCustomSections],
+    [objectiveCustomSections]
   );
   const customBlockIdsRef = useRef(customBlockIds);
   customBlockIdsRef.current = customBlockIds;
@@ -272,10 +288,13 @@ export function ObjectiveSection({
 
   const visibleSectionOrder = useMemo(
     () => resolveVisibleSections(sectionOrder, hiddenIds, mountableIds),
-    [hiddenIds, mountableIds, sectionOrder],
+    [hiddenIds, mountableIds, sectionOrder]
   );
 
-  const defaultsById = useMemo(() => buildCollapseDefaults(sectionOrder), [sectionOrder]);
+  const defaultsById = useMemo(
+    () => buildCollapseDefaults(sectionOrder),
+    [sectionOrder]
+  );
 
   const collapseHydrated = storedSectionCollapsed !== null;
   /** Controlled collapse whenever persistence is expected (avoids uncontrolled defaultOpen flash). */
@@ -314,7 +333,7 @@ export function ObjectiveSection({
     (sectionId: ObjectiveSectionId, open: boolean) => {
       setOpenById((prev) => ({ ...prev, [sectionId]: open }));
     },
-    [],
+    []
   );
 
   const expandAllSections = useCallback(() => {
@@ -342,7 +361,7 @@ export function ObjectiveSection({
 
   const hasClearableObjective = useMemo(
     () => rxFormHasClearableObjectiveContent(fields),
-    [fields],
+    [fields]
   );
 
   const clearAllObjective = useCallback(() => {
@@ -383,7 +402,7 @@ export function ObjectiveSection({
           resolveDefaultLayout({
             modality: apptRes.data.appointment.consultation_type ?? null,
             specialty: settingsRes.data.settings.specialty ?? null,
-          }),
+          })
         );
       } catch {
         if (!cancelled) setSeedLayout(null);
@@ -471,11 +490,14 @@ export function ObjectiveSection({
       storedOrder: storedSectionOrder,
       storedHidden: [],
     });
-    const resolved = resolveInitialSectionOrder(baseOrder, customBlockIdsRef.current);
+    const resolved = resolveInitialSectionOrder(
+      baseOrder,
+      customBlockIdsRef.current
+    );
     setSectionOrder(resolved);
     // Only the static projection is persisted (custom_block ids re-mint per visit, P10-D4 / §3.3).
     lastPersistedSectionOrderRef.current = JSON.stringify(
-      resolved.filter(isStaticObjectiveSectionId),
+      resolved.filter(isStaticObjectiveSectionId)
     );
     // customBlockIds intentionally omitted — the dedicated sync effect below re-applies them
     // without rebuilding from the stored default (which would drop unsaved per-visit reorders).
@@ -515,7 +537,7 @@ export function ObjectiveSection({
 
     setHiddenIds(initialHidden);
     lastPersistedHiddenRef.current = serializeHiddenIds(
-      hiddenOverridesToPersist(initialHidden, mountableIds),
+      hiddenOverridesToPersist(initialHidden, mountableIds)
     );
     // Intentionally omit mountableIds — one-shot hydrate; cross-context retention is in the serialiser.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- subsequent stored set writes must not clobber hiddenIds
@@ -527,11 +549,14 @@ export function ObjectiveSection({
     if (Object.keys(defaultsById).length === 0) return;
     hasHydratedCollapseRef.current = true;
 
-    const resolved = resolveSectionOpenState(storedSectionCollapsed, defaultsById);
+    const resolved = resolveSectionOpenState(
+      storedSectionCollapsed,
+      defaultsById
+    );
     setOpenById(resolved);
     setCollapseReady(true);
     lastPersistedCollapseRef.current = serializeCollapseOverrides(
-      collapseOverridesToPersist(resolved, defaultsById),
+      collapseOverridesToPersist(resolved, defaultsById)
     );
     // Intentionally omit further defaultsById changes — one-shot after first non-empty defaults.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- subsequent stored map writes must not clobber openById
@@ -556,7 +581,12 @@ export function ObjectiveSection({
           shell?.setObjectiveDefaults((prev) =>
             prev
               ? { ...prev, sectionOrder: saved }
-              : { sectionOrder: saved, sectionCollapsed: {}, sectionHidden: [], customSections: [] },
+              : {
+                  sectionOrder: saved,
+                  sectionCollapsed: {},
+                  sectionHidden: [],
+                  customSections: [],
+                }
           );
           setLayoutSaveStatus("saved");
         } catch {
@@ -572,7 +602,10 @@ export function ObjectiveSection({
   useEffect(() => {
     if (disabled || !token || storedSectionCollapsed === null) return;
 
-    const overrides = collapseOverridesToPersist(effectiveOpenById, defaultsById);
+    const overrides = collapseOverridesToPersist(
+      effectiveOpenById,
+      defaultsById
+    );
     const serialized = serializeCollapseOverrides(overrides);
     if (serialized === lastPersistedCollapseRef.current) return;
 
@@ -586,7 +619,12 @@ export function ObjectiveSection({
           shell?.setObjectiveDefaults((prev) =>
             prev
               ? { ...prev, sectionCollapsed: saved }
-              : { sectionOrder: [], sectionCollapsed: saved, sectionHidden: [], customSections: [] },
+              : {
+                  sectionOrder: [],
+                  sectionCollapsed: saved,
+                  sectionHidden: [],
+                  customSections: [],
+                }
           );
           setCollapseSaveStatus("saved");
         } catch {
@@ -596,7 +634,14 @@ export function ObjectiveSection({
     }, DOCTOR_LAYOUT_AUTOSAVE_MS);
 
     return () => window.clearTimeout(timer);
-  }, [defaultsById, disabled, effectiveOpenById, shell, storedSectionCollapsed, token]);
+  }, [
+    defaultsById,
+    disabled,
+    effectiveOpenById,
+    shell,
+    storedSectionCollapsed,
+    token,
+  ]);
 
   // ---- Debounced delta-autosave: hidden set -----------------------------------
   useEffect(() => {
@@ -616,7 +661,12 @@ export function ObjectiveSection({
           shell?.setObjectiveDefaults((prev) =>
             prev
               ? { ...prev, sectionHidden: saved }
-              : { sectionOrder: [], sectionCollapsed: {}, sectionHidden: saved, customSections: [] },
+              : {
+                  sectionOrder: [],
+                  sectionCollapsed: {},
+                  sectionHidden: saved,
+                  customSections: [],
+                }
           );
           setVisibilitySaveStatus("saved");
         } catch {
@@ -639,7 +689,7 @@ export function ObjectiveSection({
       if (disabled) return;
       setSectionOrder((prev) => moveSectionInOrder(prev, index, direction));
     },
-    [disabled],
+    [disabled]
   );
 
   const handleMoveSectionById = useCallback(
@@ -648,14 +698,19 @@ export function ObjectiveSection({
       if (index === -1) return;
       handleMoveByDirection(index, direction);
     },
-    [handleMoveByDirection, sectionOrder],
+    [handleMoveByDirection, sectionOrder]
   );
 
-  const handleToggleSectionHidden = useCallback((sectionId: ObjectiveSectionId) => {
-    setHiddenIds((prev) =>
-      prev.includes(sectionId) ? prev.filter((id) => id !== sectionId) : [...prev, sectionId],
-    );
-  }, []);
+  const handleToggleSectionHidden = useCallback(
+    (sectionId: ObjectiveSectionId) => {
+      setHiddenIds((prev) =>
+        prev.includes(sectionId)
+          ? prev.filter((id) => id !== sectionId)
+          : [...prev, sectionId]
+      );
+    },
+    []
+  );
 
   const handleAddCustomSection = useCallback(() => {
     if (disabled) return;
@@ -678,11 +733,15 @@ export function ObjectiveSection({
         clearDragState();
       },
     }),
-    [clearDragState, disabled],
+    [clearDragState, disabled]
   );
 
   const handleSectionDragOver = useCallback(
-    (targetIndex: number, sectionId: ObjectiveSectionId, e: DragEvent<HTMLDivElement>) => {
+    (
+      targetIndex: number,
+      sectionId: ObjectiveSectionId,
+      e: DragEvent<HTMLDivElement>
+    ) => {
       const sourceId = dragSectionIdRef.current;
       if (disabled || !sourceId || sourceId === sectionId) return;
 
@@ -693,7 +752,7 @@ export function ObjectiveSection({
       const intent = resolveSectionDropIntent(e.clientY, rect);
       setDropTarget({ index: targetIndex, intent });
     },
-    [disabled],
+    [disabled]
   );
 
   const handleDropOnTarget = useCallback(
@@ -710,19 +769,24 @@ export function ObjectiveSection({
       });
       clearDragState();
     },
-    [clearDragState, disabled],
+    [clearDragState, disabled]
   );
 
   // ---- Section content registry -----------------------------------------------
   const objectiveNotesText =
-    fields.examFindings.find((f) => f.systemId === "objective_notes")?.notes ?? "";
+    fields.examFindings.find((f) => f.systemId === "objective_notes")?.notes ??
+    "";
 
-  const sectionBody = useMemo((): Record<StaticObjectiveSectionId, ReactNode> => {
+  const sectionBody = useMemo((): Record<
+    StaticObjectiveSectionId,
+    ReactNode
+  > => {
     return {
       vitals: <VitalsGrid />,
       exam: <ExamSystemList disabled={disabled} />,
       notes: (
         <div className="space-y-2">
+          <LastVisitObjectiveNotesStrip disabled={disabled} />
           <label htmlFor="objective-notes" className={RX_FIELD_LABEL_CLASS}>
             Visit notes
           </label>
@@ -733,7 +797,10 @@ export function ObjectiveSection({
             onChange={(e) => {
               const trimmed = e.target.value.trim();
               if (!trimmed) {
-                dispatch({ type: "CLEAR_EXAM_SYSTEM", systemId: "objective_notes" });
+                dispatch({
+                  type: "CLEAR_EXAM_SYSTEM",
+                  systemId: "objective_notes",
+                });
                 return;
               }
               dispatch({
@@ -756,7 +823,7 @@ export function ObjectiveSection({
       // `media` is no longer a standalone section id; the attachment strip renders here.
       test_results: (
         <div className="space-y-4">
-          <TestResultsList disabled={disabled} showLegacyTextarea />
+          <TestResultsList disabled={disabled} />
           <ObjectiveMediaStrip disabled={disabled} />
         </div>
       ),
@@ -765,7 +832,9 @@ export function ObjectiveSection({
 
   const renderSection = (sectionId: ObjectiveSectionId) => {
     const isStatic = isStaticObjectiveSectionId(sectionId);
-    const customBlockId = isStatic ? null : customBlockIdFromSectionId(sectionId);
+    const customBlockId = isStatic
+      ? null
+      : customBlockIdFromSectionId(sectionId);
     const customIndex = customBlockId
       ? objectiveCustomSections.findIndex((s) => s.id === customBlockId)
       : -1;
@@ -800,23 +869,22 @@ export function ObjectiveSection({
     if (isStatic) {
       // obj-23 / rpt-01: Reports templates save/apply all structured rows; legacy
       // `point_of_care` templates remapped on read in the picker.
-      const sectionActions =
-        disabled
-          ? undefined
-          : sectionId === "vitals"
-            ? <ObjectiveSectionTemplateButton scope="vitals" />
-            : sectionId === "exam"
-              ? <ObjectiveSectionTemplateButton scope="exam_systemic" />
-            : sectionId === "notes"
-              ? <ObjectiveSectionTemplateButton scope="objective_notes" />
-            : sectionId === "test_results"
-              ? <ObjectiveSectionTemplateButton scope="test_results" />
-              : undefined;
+      const sectionActions = disabled ? undefined : sectionId === "vitals" ? (
+        <ObjectiveSectionTemplateButton scope="vitals" />
+      ) : sectionId === "exam" ? (
+        <ObjectiveSectionTemplateButton scope="exam_systemic" />
+      ) : sectionId === "notes" ? (
+        <ObjectiveSectionTemplateButton scope="objective_notes" />
+      ) : sectionId === "test_results" ? (
+        <ObjectiveSectionTemplateButton scope="test_results" />
+      ) : undefined;
       const sectionIconDef = resolveObjectiveSectionIcon(sectionId);
       inner = (
         <CollapsibleContainer
           title={title}
-          sectionIcon={sectionIconDef ? sectionHeaderIcon(sectionIconDef) : undefined}
+          sectionIcon={
+            sectionIconDef ? sectionHeaderIcon(sectionIconDef) : undefined
+          }
           toggleLabel={`Toggle ${title}`}
           testId={`objective-section-${sectionId}`}
           leadingActions={leadingActions}
@@ -826,9 +894,15 @@ export function ObjectiveSection({
           stickyHeader
           open={collapseControlled ? displayOpenById[sectionId] : undefined}
           onOpenChange={
-            collapseControlled ? (open) => handleSectionOpenChange(sectionId, open) : undefined
+            collapseControlled
+              ? (open) => handleSectionOpenChange(sectionId, open)
+              : undefined
           }
-          defaultOpen={collapseControlled ? undefined : OBJECTIVE_COLLAPSE_DEFAULTS[sectionId]}
+          defaultOpen={
+            collapseControlled
+              ? undefined
+              : OBJECTIVE_COLLAPSE_DEFAULTS[sectionId]
+          }
         >
           {sectionBody[sectionId]}
         </CollapsibleContainer>
@@ -860,7 +934,9 @@ export function ObjectiveSection({
         }}
         onDrop={(e) => {
           e.preventDefault();
-          const sourceId = dragSectionIdRef.current ?? readObjectiveSectionDragId(e.dataTransfer);
+          const sourceId =
+            dragSectionIdRef.current ??
+            readObjectiveSectionDragId(e.dataTransfer);
           if (!sourceId || sourceId === sectionId) {
             clearDragState();
             return;
@@ -868,7 +944,7 @@ export function ObjectiveSection({
           dragSectionIdRef.current = sourceId;
           const intent = resolveSectionDropIntent(
             e.clientY,
-            e.currentTarget.getBoundingClientRect(),
+            e.currentTarget.getBoundingClientRect()
           );
           handleDropOnTarget(index, intent);
         }}
@@ -878,105 +954,127 @@ export function ObjectiveSection({
     );
   };
 
-  const showAllHiddenEmptyState = layoutHydrated && visibleSectionOrder.length === 0;
+  const showAllHiddenEmptyState =
+    layoutHydrated && visibleSectionOrder.length === 0;
   const ObjectiveTabIcon = SOAP_TAB_HEADING_ICON.objective;
 
   // Depth tone is opt-in per field section (CollapsibleContainer depthTone), not at this tab wrapper.
 
   return (
     <SoapTabFamilyProvider family="objective">
-    <section
-      aria-label="Objective"
-      className="space-y-3"
-      data-testid="objective-scroll-top"
-    >
-      {heading !== null ? (
-        <h3 className={soapTabHeadingClassName("objective", RX_SECTION_HEADING_CLASS)}>
-          <ObjectiveTabIcon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-          {heading}
-        </h3>
-      ) : null}
-
-      {/* Icon-only chrome — one nowrap row at typical column widths. */}
-      <div className="flex min-h-9 flex-nowrap items-center gap-0.5">
-        <div className="mr-auto flex min-w-0 items-center">
-          <SoapTabLayoutSaveStatus
-            saved={
-              layoutSaveStatus === "saved" ||
-              collapseSaveStatus === "saved" ||
-              visibilitySaveStatus === "saved"
-            }
-            error={
-              layoutSaveStatus === "error" ||
-              collapseSaveStatus === "error" ||
-              visibilitySaveStatus === "error"
-            }
-          />
-        </div>
-        <SoapTabExpandCollapseClearButtons
-          expandTestId="objective-expand-all"
-          collapseTestId="objective-collapse-all"
-          clearTestId="objective-clear-all"
-          onExpandAll={expandAllSections}
-          onCollapseAll={collapseAllSections}
-          onClearAll={() => setClearConfirmOpen(true)}
-          clearDisabled={disabled || !hasClearableObjective}
-        />
-        {!disabled ? <ObjectiveWholeTemplateButton disabled={disabled} /> : null}
-        <ManageObjectiveSectionsMenu
-          disabled={disabled}
-          open={sectionManagerOpen}
-          onOpenChange={setSectionManagerOpen}
-          sectionOrder={sectionOrder}
-          mountableIds={mountableIds}
-          hiddenIds={hiddenIds}
-          fields={fields}
-          onToggleHidden={handleToggleSectionHidden}
-          onMoveSection={handleMoveSectionById}
-          onAddCustomSection={handleAddCustomSection}
-        />
-      </div>
-
-      {showAllHiddenEmptyState ? (
-        <div
-          className="rounded-md border border-dashed border-border bg-muted/10 px-3 py-4 text-center"
-          data-testid="objective-all-hidden-empty"
-        >
-          <p className="text-sm text-muted-foreground">All sections hidden</p>
-          <button
-            type="button"
-            className="mt-2 text-sm font-medium text-primary underline-offset-2 hover:underline"
-            onClick={() => setSectionManagerOpen(true)}
+      <section
+        aria-label="Objective"
+        className="space-y-4"
+        data-testid="objective-scroll-top"
+      >
+        {heading !== null ? (
+          <h3
+            className={soapTabHeadingClassName(
+              "objective",
+              RX_SECTION_HEADING_CLASS
+            )}
           >
-            Manage sections
-          </button>
-        </div>
-      ) : !layoutHydrated ? (
-        <SoapSectionListSkeleton testId="objective-layout-skeleton" rows={4} />
-      ) : (
-        <>
-          {visibleSectionOrder.map((sectionId) => renderSection(sectionId))}
-          <ObjectiveCustomSectionsChrome disabled={disabled} onAdd={handleAddCustomSection} />
-        </>
-      )}
-      <ClearAllConfirmDialog
-        open={clearConfirmOpen}
-        onOpenChange={(open) => {
-          if (!clearBusy) setClearConfirmOpen(open);
-        }}
-        title="Clear all objective content?"
-        descriptionLead="This cannot be undone from this screen."
-        bullets={[
-          "Vitals",
-          "Structured examination findings",
-          "Reports / test results",
-          "Custom section notes (titles kept)",
-        ]}
-        busy={clearBusy}
-        testId="objective-clear-all-dialog"
-        onConfirm={clearAllObjective}
-      />
-    </section>
+            <ObjectiveTabIcon
+              className="h-4 w-4 shrink-0 text-muted-foreground"
+              aria-hidden
+            />
+            {heading}
+          </h3>
+        ) : null}
+
+        {/* Icon-only chrome stays in the pane body (expand / collapse / templates / manage). */}
+        <SoapPaneChromePortal>
+          <div
+            className="flex min-h-9 flex-nowrap items-center gap-0.5"
+            data-testid="soap-tab-chrome"
+          >
+            <div className="mr-auto flex min-w-0 items-center">
+              <SoapTabLayoutSaveStatus
+                saved={
+                  layoutSaveStatus === "saved" ||
+                  collapseSaveStatus === "saved" ||
+                  visibilitySaveStatus === "saved"
+                }
+                error={
+                  layoutSaveStatus === "error" ||
+                  collapseSaveStatus === "error" ||
+                  visibilitySaveStatus === "error"
+                }
+              />
+            </div>
+            <SoapTabExpandCollapseClearButtons
+              expandTestId="objective-expand-all"
+              collapseTestId="objective-collapse-all"
+              clearTestId="objective-clear-all"
+              onExpandAll={expandAllSections}
+              onCollapseAll={collapseAllSections}
+              onClearAll={() => setClearConfirmOpen(true)}
+              clearDisabled={disabled || !hasClearableObjective}
+            />
+            {!disabled ? (
+              <ObjectiveWholeTemplateButton disabled={disabled} />
+            ) : null}
+            <ManageObjectiveSectionsMenu
+              disabled={disabled}
+              open={sectionManagerOpen}
+              onOpenChange={setSectionManagerOpen}
+              sectionOrder={sectionOrder}
+              mountableIds={mountableIds}
+              hiddenIds={hiddenIds}
+              fields={fields}
+              onToggleHidden={handleToggleSectionHidden}
+              onMoveSection={handleMoveSectionById}
+              onAddCustomSection={handleAddCustomSection}
+            />
+          </div>
+        </SoapPaneChromePortal>
+
+        {showAllHiddenEmptyState ? (
+          <div
+            className="rounded-md border border-dashed border-border bg-muted/10 px-3 py-4 text-center"
+            data-testid="objective-all-hidden-empty"
+          >
+            <p className="text-sm text-muted-foreground">All sections hidden</p>
+            <button
+              type="button"
+              className="mt-2 text-sm font-medium text-primary underline-offset-2 hover:underline"
+              onClick={() => setSectionManagerOpen(true)}
+            >
+              Manage sections
+            </button>
+          </div>
+        ) : !layoutHydrated ? (
+          <SoapSectionListSkeleton
+            testId="objective-layout-skeleton"
+            rows={4}
+          />
+        ) : (
+          <>
+            {visibleSectionOrder.map((sectionId) => renderSection(sectionId))}
+            <ObjectiveCustomSectionsChrome
+              disabled={disabled}
+              onAdd={handleAddCustomSection}
+            />
+          </>
+        )}
+        <ClearAllConfirmDialog
+          open={clearConfirmOpen}
+          onOpenChange={(open) => {
+            if (!clearBusy) setClearConfirmOpen(open);
+          }}
+          title="Clear all objective content?"
+          descriptionLead="This cannot be undone from this screen."
+          bullets={[
+            "Vitals",
+            "Structured examination findings",
+            "Reports / test results",
+            "Custom section notes (titles kept)",
+          ]}
+          busy={clearBusy}
+          testId="objective-clear-all-dialog"
+          onConfirm={clearAllObjective}
+        />
+      </section>
     </SoapTabFamilyProvider>
   );
 }

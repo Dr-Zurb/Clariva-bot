@@ -35,6 +35,7 @@ const HBA1C: TestResultRow = {
   refLow: null,
   refHigh: null,
   refText: null,
+  method: null,
 };
 
 const RBS: TestResultRow = {
@@ -50,6 +51,7 @@ const RBS: TestResultRow = {
   refLow: null,
   refHigh: null,
   refText: null,
+  method: null,
 };
 
 describe("buildRxPayload test-results derivation (OBJ-D2)", () => {
@@ -74,6 +76,31 @@ describe("buildRxPayload test-results derivation (OBJ-D2)", () => {
     const payload = buildRxPayload(fields);
     expect(payload.testResults).toBe(deriveTestResults([HBA1C, RBS]));
     expect(payload.testResultsJson).toEqual([HBA1C, RBS]);
+    expect(payload.labReportsJson).toEqual([]);
+  });
+
+  it("does not leak lab report headers into derived testResults TEXT", () => {
+    const fields = createEmptyRxFormFields();
+    fields.testResultsStructured = [HBA1C];
+    fields.labReports = [
+      {
+        id: "rep-1",
+        kind: "lab",
+        title: "Secret panel title",
+        reportDate: "2026-09-06",
+        labName: "Hidden Lab",
+        attachmentIds: ["att-1"],
+        findings: "PHI findings must not appear in TEXT",
+        entryMethod: "extracted",
+      },
+    ];
+    const payload = buildRxPayload(fields);
+    expect(payload.testResults).toBe(deriveTestResults([HBA1C]));
+    expect(payload.testResults).not.toContain("Secret panel title");
+    expect(payload.testResults).not.toContain("Hidden Lab");
+    expect(payload.testResults).not.toContain("PHI findings");
+    expect(payload.labReportsJson).toHaveLength(1);
+    expect(payload.labReportsJson?.[0]?.title).toBe("Secret panel title");
   });
 
   it("derives identically for hand-entry vs an equivalent structured row set (obj-24 parity seed)", () => {
@@ -162,6 +189,30 @@ describe("rxFormFieldsFromPrescription test-results hydration (obj-20)", () => {
     const payload = buildRxPayload(fields);
     expect(payload.testResultsJson).toEqual([HBA1C, RBS]);
     expect(payload.testResults).toBe(deriveTestResults([HBA1C, RBS]));
+  });
+
+  it("hydrates labReports from lab_reports_json and round-trips", () => {
+    const report = {
+      id: "rep-1",
+      kind: "lab" as const,
+      title: "CBC",
+      reportDate: "2026-09-06",
+      labName: null,
+      attachmentIds: ["att-1"],
+      findings: null,
+      entryMethod: "extracted" as const,
+    };
+    const rx = {
+      id: "p1",
+      appointment_id: "a1",
+      doctor_id: "d1",
+      type: "structured",
+      test_results_json: [{ ...HBA1C, reportId: "rep-1" }],
+      lab_reports_json: [report],
+    } as unknown as PrescriptionWithRelations;
+    const fields = rxFormFieldsFromPrescription(rx);
+    expect(fields.labReports).toEqual([report]);
+    expect(buildRxPayload(fields).labReportsJson).toEqual([report]);
   });
 
   it("defaults testResultsStructured to [] when test_results_json is absent", () => {

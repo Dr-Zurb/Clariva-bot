@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { selectActiveChartMeds } from "@/hooks/usePatientRibbonData";
-import type { PatientMedication } from "@/types/patient-chart";
+import {
+  collectBackgroundMeds,
+  selectActiveChartMeds,
+} from "@/hooks/usePatientRibbonData";
+import type {
+  MedicalBackgroundGrouped,
+  PatientMedication,
+} from "@/types/patient-chart";
 
 function med(
   overrides: Partial<PatientMedication> & Pick<PatientMedication, "id" | "drug_name">,
@@ -76,5 +82,45 @@ describe("selectActiveChartMeds", () => {
         med({ id: "m1", drug_name: "Old", status: "past" }),
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("collectBackgroundMeds", () => {
+  it("dedupes condition-linked and unlinked chart medications", () => {
+    const linked = med({ id: "m1", drug_name: "Metformin" });
+    const extra = med({ id: "m2", drug_name: "Aspirin" });
+    const bg: MedicalBackgroundGrouped = {
+      conditions: [
+        {
+          id: "c1",
+          doctor_id: "doc-1",
+          patient_id: "pat-1",
+          condition: "T2DM",
+          status: "active",
+          diagnosed_on: null,
+          diagnosed_ago_value: null,
+          diagnosed_ago_unit: null,
+          resolved_ago_value: null,
+          resolved_ago_unit: null,
+          on_treatment: true,
+          acuity: null,
+          code: null,
+          code_title: null,
+          note: null,
+          archived_at: null,
+          created_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-01T00:00:00.000Z",
+          medications: [linked],
+        },
+      ],
+      unlinkedMedications: [linked, extra],
+      links: [],
+      notes: null,
+    };
+
+    expect(collectBackgroundMeds(bg).map((row) => row.id).sort()).toEqual([
+      "m1",
+      "m2",
+    ]);
   });
 });

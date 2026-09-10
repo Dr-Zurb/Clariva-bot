@@ -1,108 +1,88 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  applyEmergencyNumberFloor,
   assistantMessageIsEmergencyEscalationCopy,
+  assistantMessageNeedsEmergencyNumberFloor,
+  EMERGENCY_REAFFIRM_RESPONSE_EN,
+  KNOWN_BOOKING_SAFETY_NET_LINES,
   MEDICAL_QUERY_RESPONSE_EN,
-  detectSafetyMessageLocale,
   isEmergencyUserMessage,
   messageHasHypertensiveCrisisBloodPressureReading,
+  messageSignalsSelfHarm,
   parsePlausibleBloodPressurePairs,
   recentThreadHasAssistantEmergencyEscalation,
   resolveSafetyMessage,
+  stripBookingSafetyNetLines,
   userMessageSignalsPostEmergencyStability,
 } from '../../../src/utils/safety-messages';
+import {
+  buildAppointmentReminder24hDm,
+  buildPaymentConfirmationMessage,
+} from '../../../src/utils/dm-copy';
 
 describe('safety-messages (RBH-15)', () => {
-  describe('detectSafetyMessageLocale', () => {
-    it('detects Gurmukhi as Punjabi', () => {
-      expect(detectSafetyMessageLocale('ਮੇਨੂੰ ਬੁਖ਼ਾਰ ਹੈ')).toBe('pa');
-    });
-
-    it('detects Devanagari as Hindi', () => {
-      expect(detectSafetyMessageLocale('मुझे बुखार है')).toBe('hi');
-    });
-
-    it('detects Latin Punjabi markers', () => {
-      expect(detectSafetyMessageLocale('Menu tin din to bukhar hai')).toBe('pa');
-    });
-
-    it('detects Hinglish as Hindi', () => {
-      expect(detectSafetyMessageLocale('Mujhe pet dard hai')).toBe('hi');
-    });
-
-    it('detects informal yar / goli as Hindi (Hinglish)', () => {
-      expect(detectSafetyMessageLocale('yar ek goli batado')).toBe('hi');
-    });
-
-    it('defaults to English', () => {
-      expect(detectSafetyMessageLocale('I have a headache')).toBe('en');
-    });
-
-    it('does not treat English “doc” (doctor) as Hinglish — regression (DM English message → Hindi deflection)', () => {
-      const msg =
-        'hello how are you doc , so i checked my blood sugar today on empty stomach , its high , 199 , how do i manage , please guide me';
-      expect(detectSafetyMessageLocale(msg)).toBe('en');
-    });
-
-    it('still treats sans nahi as Hinglish breath distress', () => {
-      expect(detectSafetyMessageLocale('sans nahi aa rahi')).toBe('hi');
-    });
-
-    it('does not treat typography “sans” alone as Hindi', () => {
-      expect(detectSafetyMessageLocale('Use Comic Sans for the poster')).toBe('en');
-    });
-  });
-
   describe('resolveSafetyMessage', () => {
-    it('returns Gurmukhi medical copy for Gurmukhi input', () => {
-      const msg = resolveSafetyMessage('medical_query', 'ਮੇਨੂੰ ਬੁਖਾਰ ਹੈ');
+    it('returns Gurmukhi medical copy for pa language', () => {
+      const msg = resolveSafetyMessage('medical_query', 'pa');
       expect(msg).toContain('ਸਹਾਇਕ');
       expect(msg).not.toContain('scheduling assistant');
     });
 
-    it('returns Roman Punjabi medical for Latin Punjabi', () => {
-      const msg = resolveSafetyMessage('medical_query', 'Menu bukhar hai');
+    it('returns Roman Punjabi medical for pa-Latn', () => {
+      const msg = resolveSafetyMessage('medical_query', 'pa-Latn');
       expect(msg.toLowerCase()).toContain('appointment');
       expect(msg.toLowerCase()).toContain('main');
     });
 
-    it('returns Hindi Devanagari medical when script is Devanagari', () => {
-      const msg = resolveSafetyMessage('medical_query', 'मुझे सिर दर्द है');
+    it('returns Hindi Devanagari medical when language is hi', () => {
+      const msg = resolveSafetyMessage('medical_query', 'hi');
       expect(msg).toMatch(/[\u0900-\u097F]/);
     });
 
-    it('returns emergency in Punjabi script for Gurmukhi chest pain', () => {
-      const msg = resolveSafetyMessage(
-        'emergency',
-        'ਮੇਰੀ ਛਾਤੀ ਵਿੱਚ ਦਰਦ ਤੇ ਸਾਸ ਨਹੀਂ ਆ ਰਹੀ'
-      );
+    it('returns emergency in Punjabi script for pa', () => {
+      const msg = resolveSafetyMessage('emergency', 'pa');
       expect(msg).toContain('112');
       expect(msg).toMatch(/[\u0A00-\u0A7F]/);
     });
 
-    it('returns Roman Hindi emergency for Latin Hindi emergency phrase', () => {
-      const msg = resolveSafetyMessage('emergency', 'Saans nahi aa rahi bahut');
+    it('returns Roman Hindi emergency for hi-Latn', () => {
+      const msg = resolveSafetyMessage('emergency', 'hi-Latn');
       expect(msg).toContain('112');
       expect(msg.toLowerCase()).toMatch(/bharat|call|hospital/);
     });
 
-    it('returns Roman Hindi medical_query for yar / goli (not English)', () => {
-      const msg = resolveSafetyMessage('medical_query', 'yar ek goli batado please');
+    it('returns Roman Hindi medical_query for hi-Latn (not English)', () => {
+      const msg = resolveSafetyMessage('medical_query', 'hi-Latn');
       expect(msg.toLowerCase()).toContain('main');
       expect(msg.toLowerCase()).toMatch(/appointment|doctor|book|teleconsult|visit/);
       expect(msg).not.toContain("I'm the scheduling assistant");
     });
 
-    it('returns English medical_query when user writes English including “doc”', () => {
-      const userText =
-        'hello how are you doc , so i checked my blood sugar today on empty stomach , its high , 199 , how do i manage , please guide me';
-      const msg = resolveSafetyMessage('medical_query', userText);
+    it('returns English medical_query for en', () => {
+      const msg = resolveSafetyMessage('medical_query', 'en');
       expect(msg).toBe(MEDICAL_QUERY_RESPONSE_EN);
+    });
+
+    it('returns English medical_query for other (LANG-D7)', () => {
+      const msg = resolveSafetyMessage('medical_query', 'other');
+      expect(msg).toBe(MEDICAL_QUERY_RESPONSE_EN);
+    });
+
+    it('returns English reaffirm emergency without nearest-hospital line', () => {
+      const msg = resolveSafetyMessage('emergency', 'en', { emergencyVariant: 'reaffirm' });
+      expect(msg).toBe(EMERGENCY_REAFFIRM_RESPONSE_EN);
+      expect(msg.toLowerCase()).not.toContain('nearest hospital');
+      expect(assistantMessageIsEmergencyEscalationCopy(msg)).toBe(true);
     });
   });
 
   describe('isEmergencyUserMessage', () => {
     it('matches English chest pain', () => {
       expect(isEmergencyUserMessage("Chest pain and can't breathe")).toBe(true);
+    });
+
+    it('matches family collapse phrasing from stress pack', () => {
+      expect(isEmergencyUserMessage("wife collapsed can't wake her")).toBe(true);
     });
 
     it('matches Punjabi Latin chest pain phrase from checklist', () => {
@@ -117,14 +97,78 @@ describe('safety-messages (RBH-15)', () => {
       expect(isEmergencyUserMessage('Kise ne zahar kha lia')).toBe(true);
     });
 
+    it('matches mild chest discomfort (A7.2 wordlist)', () => {
+      expect(isEmergencyUserMessage('mild chest discomfort after gym')).toBe(true);
+    });
+
+    it('matches chest tightness / pressure / heaviness / burning', () => {
+      expect(isEmergencyUserMessage('chest tightness since morning')).toBe(true);
+      expect(isEmergencyUserMessage('chest pressure after stairs')).toBe(true);
+      expect(isEmergencyUserMessage('chest heaviness')).toBe(true);
+      expect(isEmergencyUserMessage('burning in chest')).toBe(false); // not "chest burning" order
+      expect(isEmergencyUserMessage('chest burning')).toBe(true);
+    });
+
+    it('matches shortness of breath / breathless', () => {
+      expect(isEmergencyUserMessage('shortness of breath after walking')).toBe(true);
+      expect(isEmergencyUserMessage('feeling breathless')).toBe(true);
+    });
+
+    it('does not match blood pressure as chest pressure', () => {
+      expect(isEmergencyUserMessage('my blood pressure is high')).toBe(false);
+    });
+
+    it('SAFE-D1: bare emergency matches', () => {
+      expect(isEmergencyUserMessage('emergency')).toBe(true);
+      expect(isEmergencyUserMessage('this is an emergency')).toBe(true);
+    });
+
+    it('matches self-harm / suicidal ideation deterministically (A6.4–A6.6)', () => {
+      for (const phrase of [
+        'suicide karne ka soch raha',
+        'jaan de dunga koi sun nahi raha',
+        // live repro: patient dropped the leading j
+        'aan de dunga koi sun nahi raha',
+        'I want to kill myself',
+        'thinking of ending my life',
+        'I dont want to live anymore',
+        'overdose sleeping pills',
+        'marna chahta hu',
+        'khudkhushi kar lunga',
+        'मरना चाहता हूँ',
+      ]) {
+        expect(messageSignalsSelfHarm(phrase)).toBe(true);
+        expect(isEmergencyUserMessage(phrase)).toBe(true);
+      }
+    });
+
+    it('self-harm outranks booking-compound guards', () => {
+      expect(
+        isEmergencyUserMessage('emergency appointment, I want to kill myself')
+      ).toBe(true);
+    });
+
+    it('does not flag ordinary booking text as self-harm', () => {
+      expect(messageSignalsSelfHarm('I need an appointment tomorrow')).toBe(false);
+      expect(messageSignalsSelfHarm('mujhe kal appointment chahiye')).toBe(false);
+    });
+
     it('does not match emergency appointment booking phrase', () => {
       expect(isEmergencyUserMessage('I need an emergency appointment tomorrow')).toBe(
         false
       );
     });
 
+    it('does not match emergency slot / booking / visit / consult (B-row)', () => {
+      expect(isEmergencyUserMessage('can I get an emergency slot today?')).toBe(false);
+      expect(isEmergencyUserMessage('emergency booking for my father')).toBe(false);
+      expect(isEmergencyUserMessage('need emergency visit this evening')).toBe(false);
+      expect(isEmergencyUserMessage('emergency consultation please')).toBe(false);
+    });
+
     it('does not match urgent appointment', () => {
       expect(isEmergencyUserMessage('Need urgent appointment slot')).toBe(false);
+      expect(isEmergencyUserMessage('urgent booking please')).toBe(false);
     });
 
     it('matches getting worse as escalation cue', () => {
@@ -231,6 +275,134 @@ describe('safety-messages (RBH-15)', () => {
           "I'm the scheduling assistant. Book a teleconsult through this chat."
         )
       ).toBe(false);
+    });
+  });
+
+  describe('booking safety-net line vs escalation-copy detector', () => {
+    it('no safety-net variant reads as escalation copy on its own', () => {
+      for (const line of KNOWN_BOOKING_SAFETY_NET_LINES) {
+        expect(assistantMessageIsEmergencyEscalationCopy(line)).toBe(false);
+      }
+    });
+
+    it('rendered payment confirmation (all locales) does not read as escalation copy', () => {
+      for (const language of ['en', 'hi', 'pa', 'hi-Latn', 'pa-Latn', 'other'] as const) {
+        const dm = buildPaymentConfirmationMessage({
+          language,
+          appointmentDateDisplay: 'Tue, Apr 29, 2026, 4:30 PM',
+          patientMrn: 'CLR-00123',
+        });
+        expect(dm).toContain('112');
+        expect(assistantMessageIsEmergencyEscalationCopy(dm)).toBe(false);
+      }
+    });
+
+    it('rendered 24h reminder (all locales) does not read as escalation copy', () => {
+      for (const language of ['en', 'hi', 'pa', 'hi-Latn', 'pa-Latn', 'other'] as const) {
+        const dm = buildAppointmentReminder24hDm({
+          language,
+          practiceName: 'Test Clinic',
+          whenLabel: 'Wed, 13 Aug, 3:30 pm',
+          patientName: 'Neha Kapoor',
+        });
+        expect(dm).toContain('112');
+        expect(assistantMessageIsEmergencyEscalationCopy(dm)).toBe(false);
+      }
+    });
+
+    it('canonical escalation copy is still detected in every locale and variant', () => {
+      for (const language of ['en', 'hi', 'pa', 'hi-Latn', 'pa-Latn'] as const) {
+        for (const emergencyVariant of ['first', 'reaffirm'] as const) {
+          const msg = resolveSafetyMessage('emergency', language, { emergencyVariant });
+          expect(assistantMessageIsEmergencyEscalationCopy(msg)).toBe(true);
+        }
+      }
+    });
+
+    it('a message carrying both escalation copy and the safety-net line is still detected', () => {
+      const combined = `${resolveSafetyMessage('emergency', 'en')}\n\n${KNOWN_BOOKING_SAFETY_NET_LINES[0]}`;
+      expect(assistantMessageIsEmergencyEscalationCopy(combined)).toBe(true);
+    });
+
+    it('a thread whose assistant lines are only confirmation + reminder shows no prior escalation', () => {
+      const confirmation = buildPaymentConfirmationMessage({
+        language: 'en',
+        appointmentDateDisplay: 'Tue, Apr 29, 2026, 4:30 PM',
+        patientMrn: 'CLR-00123',
+      });
+      const reminder = buildAppointmentReminder24hDm({
+        language: 'en',
+        practiceName: 'Test Clinic',
+        whenLabel: 'Wed, 13 Aug, 3:30 pm',
+      });
+      expect(
+        recentThreadHasAssistantEmergencyEscalation([
+          { sender_type: 'patient', content: 'booked yesterday' },
+          { sender_type: 'system', content: confirmation },
+          { sender_type: 'system', content: reminder },
+        ])
+      ).toBe(false);
+    });
+
+    it('stripBookingSafetyNetLines removes every known variant and nothing else', () => {
+      for (const line of KNOWN_BOOKING_SAFETY_NET_LINES) {
+        expect(stripBookingSafetyNetLines(`before\n\n${line}\n\nafter`)).toBe(
+          'before\n\n\n\nafter'
+        );
+      }
+      const untouched = 'Please call **112** now.';
+      expect(stripBookingSafetyNetLines(untouched)).toBe(untouched);
+    });
+  });
+
+  describe('assistantMessageNeedsEmergencyNumberFloor / applyEmergencyNumberFloor', () => {
+    const improvisedCrisisNoNumbers =
+      "I'm really sorry you're dealing with an emergency. I can't help manage emergencies over chat. " +
+      'If this is **life-threatening or severe** (trouble breathing, chest pain, fainting, severe bleeding, ' +
+      'stroke signs like face droop/arm weakness/slurred speech), please **call your local emergency number ' +
+      'right now** or go to the **nearest emergency department**.';
+
+    it('detects improvised crisis guidance without 112/108', () => {
+      expect(assistantMessageNeedsEmergencyNumberFloor(improvisedCrisisNoNumbers)).toBe(true);
+    });
+
+    it('does not floor canonical escalation (already has numbers)', () => {
+      const canonical = resolveSafetyMessage('emergency', 'en');
+      expect(assistantMessageNeedsEmergencyNumberFloor(canonical)).toBe(false);
+      expect(applyEmergencyNumberFloor(canonical, 'en').applied).toBe(false);
+    });
+
+    it('does not floor medical deflection or fee-style copy', () => {
+      expect(assistantMessageNeedsEmergencyNumberFloor(MEDICAL_QUERY_RESPONSE_EN)).toBe(false);
+      expect(
+        assistantMessageNeedsEmergencyNumberFloor(
+          'Video consult is ₹500. Reply book to continue.'
+        )
+      ).toBe(false);
+      expect(
+        assistantMessageNeedsEmergencyNumberFloor(
+          'The clinic is near City Hospital on MG Road. Book a teleconsult if you like.'
+        )
+      ).toBe(false);
+    });
+
+    it('does not floor emergency-appointment booking phrasing', () => {
+      expect(
+        assistantMessageNeedsEmergencyNumberFloor(
+          'Got it — I can help with an emergency appointment slot tomorrow. Share your full name and phone.'
+        )
+      ).toBe(false);
+    });
+
+    it('appends localized 112/108 for all static locales', () => {
+      for (const lang of ['en', 'hi', 'pa', 'hi-Latn', 'pa-Latn'] as const) {
+        const out = applyEmergencyNumberFloor(improvisedCrisisNoNumbers, lang);
+        expect(out.applied).toBe(true);
+        expect(out.reply).toContain('112');
+        expect(out.reply).toContain('108');
+        expect(assistantMessageIsEmergencyEscalationCopy(out.reply)).toBe(true);
+        expect(out.reply.startsWith(improvisedCrisisNoNumbers.trim())).toBe(true);
+      }
     });
   });
 });

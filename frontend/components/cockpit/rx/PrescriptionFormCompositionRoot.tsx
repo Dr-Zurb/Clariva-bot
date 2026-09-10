@@ -3,10 +3,12 @@
 import type { DrugMasterRow } from "@/types/drug-master";
 import type { PatientAllergy } from "@/types/patient-chart";
 import type { InteractionRow } from "@/lib/api/drug-interactions";
+import { VisitDescribeFormBar } from "@/components/cockpit/rx/subjective/VisitDescribeBar";
 import { SubjectiveSection } from "@/components/cockpit/rx/sections/SubjectiveSection";
 import { ObjectiveSection } from "@/components/cockpit/rx/sections/ObjectiveSection";
 import { AssessmentSection } from "@/components/cockpit/rx/sections/AssessmentSection";
 import { PlanSection } from "@/components/cockpit/rx/sections/PlanSection";
+import { useRxSectionLock } from "@/components/cockpit/rx/useRxLock";
 
 export interface PrescriptionFormCompositionRootProps {
   /** Visual variant. 'flat' = legacy single-column mount (default). */
@@ -75,9 +77,10 @@ export function PrescriptionFormCompositionRoot({
   canSend,
   showPreviousRxTrigger = false,
 }: PrescriptionFormCompositionRootProps) {
+  const { contentLocked } = useRxSectionLock(disabled);
   const planProps = {
     heading: null,
-    disabled,
+    disabled: contentLocked,
     safetyLifted,
     token,
     medicineInstanceIds,
@@ -97,13 +100,24 @@ export function PrescriptionFormCompositionRoot({
     showPreviousRxTrigger,
   };
 
+  const describeLifted = subjectiveLifted && objectiveLifted;
+
   const sections = (
     <>
+      {!describeLifted && token ? (
+        <VisitDescribeFormBar token={token} disabled={contentLocked} />
+      ) : null}
       {!subjectiveLifted && (
-        <SubjectiveSection heading={null} disabled={disabled} />
+        <SubjectiveSection heading={null} disabled={contentLocked} />
       )}
-      {!objectiveLifted && <ObjectiveSection heading={null} />}
-      <AssessmentSection heading={null} disabled={disabled} dxLifted={dxLifted} />
+      {!objectiveLifted && (
+        <ObjectiveSection heading={null} disabled={contentLocked} />
+      )}
+      <AssessmentSection
+        heading={null}
+        disabled={contentLocked}
+        dxLifted={dxLifted}
+      />
       <PlanSection {...planProps} />
     </>
   );

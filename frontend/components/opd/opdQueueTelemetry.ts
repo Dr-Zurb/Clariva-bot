@@ -43,6 +43,7 @@ export type OpdQueueEvent =
         | "requeue_after_current"
         | "send_to_end"
         | "mark_no_show"
+        | "mark_arrived"
         | "broadcast_delay_set"
         | "broadcast_delay_cleared"
         | "offer_early_join_sent";

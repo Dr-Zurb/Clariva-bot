@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   type MutableRefObject,
 } from "react";
@@ -14,10 +15,14 @@ import {
 import { MessageBatch } from "@/components/consultation/MessageBatch";
 import {
   findMessageRowIndex,
+  formatUnreadDividerLabel,
   shouldVirtualizeMessageList,
   type MessageRow,
 } from "@/lib/text/build-message-rows";
-import type { ConsultationMessageReaction, ReactionEmoji } from "@/lib/text/aggregate-reactions";
+import type {
+  ConsultationMessageReaction,
+  ReactionEmoji,
+} from "@/lib/text/aggregate-reactions";
 import type { ConsultationMessage } from "@/lib/text/types";
 
 function isAtBottom(el: HTMLElement | null, slack = 80): boolean {
@@ -25,7 +30,16 @@ function isAtBottom(el: HTMLElement | null, slack = 80): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < slack;
 }
 
-function applyMessageHighlight(container: HTMLElement | null, messageId: string): void {
+export interface ScrollToMessageOpts {
+  highlight?: boolean;
+  behavior?: ScrollBehavior;
+  align?: "start" | "center" | "end";
+}
+
+function applyMessageHighlight(
+  container: HTMLElement | null,
+  messageId: string
+): void {
   const el = container?.querySelector(`[data-message-id="${messageId}"]`);
   if (!el || !(el instanceof HTMLElement)) return;
   el.classList.add("ring-2", "ring-blue-400", "rounded-lg");
@@ -51,9 +65,11 @@ export interface MessageListProps {
   getSenderDisplayName: (message: ConsultationMessage) => string;
   onScrollChange: (atBottom: boolean) => void;
   scrollToMessageRef: MutableRefObject<
-    ((id: string, opts?: { highlight?: boolean }) => void) | null
+    ((id: string, opts?: ScrollToMessageOpts) => void) | null
   >;
-  scrollToBottomRef: MutableRefObject<((behavior?: ScrollBehavior) => void) | null>;
+  scrollToBottomRef: MutableRefObject<
+    ((behavior?: ScrollBehavior) => void) | null
+  >;
   onStartReply?: (message: ConsultationMessage) => void;
   onRetryFailed?: (localId: string) => void;
   onDiscardFailed?: (localId: string) => void;
@@ -66,22 +82,78 @@ export interface MessageListProps {
   onOpenReactionPicker?: (
     messageId: string,
     anchor: HTMLElement,
-    coords?: ReactionPickerAnchorCoords,
+    coords?: ReactionPickerAnchorCoords
   ) => void;
   onOpenLightbox?: (messageId: string) => void;
+}
+
+function UnreadDivider({
+  count,
+  firstMessageId,
+  asListItem = false,
+  compact = false,
+}: {
+  count: number;
+  firstMessageId: string;
+  asListItem?: boolean;
+  compact?: boolean;
+}): JSX.Element {
+  const label = formatUnreadDividerLabel(count);
+  const className =
+    "flex items-center gap-2 select-none " + (compact ? "my-1.5" : "my-2.5");
+  const inner = (
+    <>
+      <span className="h-px min-w-4 flex-1 bg-border" aria-hidden />
+      <span
+        data-testid="chat-unread-divider"
+        data-message-id={firstMessageId}
+        className={
+          "rounded-full bg-primary/10 px-2.5 py-0.5 font-medium text-primary " +
+          (compact ? "text-[10px]" : "text-[11px]")
+        }
+      >
+        {label}
+      </span>
+      <span className="h-px min-w-4 flex-1 bg-border" aria-hidden />
+    </>
+  );
+  if (asListItem) {
+    return (
+      <li
+        className={`list-none ${className}`}
+        role="separator"
+        aria-label={label}
+      >
+        {inner}
+      </li>
+    );
+  }
+  return (
+    <div className={className} role="separator" aria-label={label}>
+      {inner}
+    </div>
+  );
 }
 
 function DaySeparator({
   label,
   asListItem = false,
+  compact = false,
 }: {
   label: string;
   asListItem?: boolean;
+  compact?: boolean;
 }): JSX.Element {
-  const className = "text-center text-xs text-gray-500 my-3 select-none";
+  const className =
+    "text-center text-xs text-gray-500 select-none " +
+    (compact ? "my-1.5" : "my-3");
   if (asListItem) {
     return (
-      <li className={`list-none ${className}`} role="separator" aria-label={label}>
+      <li
+        className={`list-none ${className}`}
+        role="separator"
+        aria-label={label}
+      >
         {label}
       </li>
     );
@@ -95,48 +167,50 @@ function DaySeparator({
 
 export function MessageList({
   rows,
-    layout,
-    mode,
-    currentUserId,
-    currentUserRole,
-    signedAttachmentUrls,
-    reactionsByMessageId,
-    userNameById,
-    counterpartyName,
-    editingMessageId,
-    editSaving,
-    pinCapReached,
-    lookupMessageById,
-    getSenderDisplayName,
-    onScrollChange,
-    scrollToMessageRef,
-    scrollToBottomRef,
-    onStartReply,
-    onRetryFailed,
-    onDiscardFailed,
-    onStartEdit,
-    onSaveEdit,
-    onCancelEdit,
-    onSoftDelete,
-    onTogglePin,
-    onToggleReaction,
-    onOpenReactionPicker,
-    onOpenLightbox,
+  layout,
+  mode,
+  currentUserId,
+  currentUserRole,
+  signedAttachmentUrls,
+  reactionsByMessageId,
+  userNameById,
+  counterpartyName,
+  editingMessageId,
+  editSaving,
+  pinCapReached,
+  lookupMessageById,
+  getSenderDisplayName,
+  onScrollChange,
+  scrollToMessageRef,
+  scrollToBottomRef,
+  onStartReply,
+  onRetryFailed,
+  onDiscardFailed,
+  onStartEdit,
+  onSaveEdit,
+  onCancelEdit,
+  onSoftDelete,
+  onTogglePin,
+  onToggleReaction,
+  onOpenReactionPicker,
+  onOpenLightbox,
 }: MessageListProps): JSX.Element {
   const listRef = useRef<HTMLDivElement | null>(null);
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
   const virtualize = shouldVirtualizeMessageList(rows);
 
   const scrollToMessage = useCallback(
-    (id: string, opts?: { highlight?: boolean }) => {
+    (id: string, opts?: ScrollToMessageOpts) => {
       const index = findMessageRowIndex(rows, id);
       if (index < 0) return;
+      const align = opts?.align ?? (opts?.highlight ? "center" : "start");
+      const behavior = opts?.behavior ?? "smooth";
 
       if (virtualize) {
         virtuosoRef.current?.scrollToIndex({
           index,
-          align: opts?.highlight ? "center" : "start",
-          behavior: "smooth",
+          align,
+          behavior: behavior === "smooth" ? "smooth" : "auto",
         });
         if (opts?.highlight) {
           window.setTimeout(() => {
@@ -148,12 +222,15 @@ export function MessageList({
 
       const el = listRef.current?.querySelector(`[data-message-id="${id}"]`);
       if (!el || !(el instanceof HTMLElement)) return;
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.scrollIntoView({
+        behavior,
+        block: align === "end" ? "end" : align === "start" ? "start" : "center",
+      });
       if (opts?.highlight) {
         applyMessageHighlight(listRef.current, id);
       }
     },
-    [rows, virtualize],
+    [rows, virtualize]
   );
 
   const scrollToBottom = useCallback(
@@ -171,22 +248,17 @@ export function MessageList({
       if (!el) return;
       el.scrollTo({ top: el.scrollHeight, behavior });
     },
-    [rows.length, virtualize],
+    [rows.length, virtualize]
   );
 
-  useEffect(() => {
-    scrollToMessageRef.current = scrollToMessage;
+  scrollToMessageRef.current = scrollToMessage;
+  scrollToBottomRef.current = scrollToBottom;
+  useLayoutEffect(() => {
     return () => {
       scrollToMessageRef.current = null;
-    };
-  }, [scrollToMessage, scrollToMessageRef]);
-
-  useEffect(() => {
-    scrollToBottomRef.current = scrollToBottom;
-    return () => {
       scrollToBottomRef.current = null;
     };
-  }, [scrollToBottom, scrollToBottomRef]);
+  }, [scrollToMessageRef, scrollToBottomRef]);
 
   useEffect(() => {
     if (virtualize) return;
@@ -204,7 +276,24 @@ export function MessageList({
     (row: MessageRow, opts?: { asListItemSeparator?: boolean }) => {
       if (row.__type === "separator") {
         return (
-          <DaySeparator key={row.key} label={row.label} asListItem={opts?.asListItemSeparator} />
+          <DaySeparator
+            key={row.key}
+            label={row.label}
+            asListItem={opts?.asListItemSeparator}
+            compact={layout === "panel"}
+          />
+        );
+      }
+
+      if (row.__type === "unread") {
+        return (
+          <UnreadDivider
+            key={row.key}
+            count={row.count}
+            firstMessageId={row.firstMessageId}
+            asListItem={opts?.asListItemSeparator}
+            compact={layout === "panel"}
+          />
         );
       }
 
@@ -289,15 +378,34 @@ export function MessageList({
       scrollToMessage,
       signedAttachmentUrls,
       userNameById,
-    ],
+    ]
   );
 
-  const listClassName = "min-h-0 flex-1 overflow-y-auto bg-gray-50 px-3 py-3";
+  const listClassName =
+    layout === "panel"
+      ? "flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto bg-background px-3 py-1.5"
+      : "flex min-h-0 flex-1 flex-col overflow-y-auto bg-gray-50 px-3 py-3";
+  const listShellClass =
+    layout === "panel"
+      ? "min-h-0 flex-1 bg-background"
+      : "min-h-0 flex-1 bg-gray-50";
 
   if (rows.length === 0) {
     return (
-      <div ref={listRef} className={listClassName} role="log" aria-live="polite" aria-relevant="additions">
-        <div className="flex h-full items-center justify-center text-center text-sm text-gray-500">
+      <div
+        ref={listRef}
+        className={listClassName}
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions"
+      >
+        <div
+          className={
+            layout === "panel"
+              ? "flex h-full items-center justify-center text-center text-sm text-muted-foreground"
+              : "flex h-full items-center justify-center text-center text-sm text-gray-500"
+          }
+        >
           Say hello to start the consult.
         </div>
       </div>
@@ -306,18 +414,27 @@ export function MessageList({
 
   if (virtualize) {
     return (
-      <div ref={listRef} className="min-h-0 flex-1 bg-gray-50" role="log" aria-live="polite" aria-relevant="additions">
+      <div
+        ref={listRef}
+        className={listShellClass}
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions"
+      >
         <Virtuoso
           ref={virtuosoRef}
           data={rows}
           className={listClassName}
           style={{ height: "100%" }}
-          initialTopMostItemIndex={rows.length - 1}
+          initialTopMostItemIndex={{
+            index: Math.max(0, rows.length - 1),
+            align: "end",
+          }}
           followOutput="smooth"
           atBottomStateChange={onScrollChange}
           // T4 future: wire archive "load more" to startReached here.
           itemContent={(_index, row) => (
-            <div className="pb-2">{renderRow(row)}</div>
+            <div className="pb-1">{renderRow(row)}</div>
           )}
           components={{
             Footer: () => <div style={{ height: 8 }} />,
@@ -335,7 +452,7 @@ export function MessageList({
       aria-live="polite"
       aria-relevant="additions"
     >
-      <ul className="space-y-2">
+      <ul className="mt-auto w-full space-y-1">
         {rows.map((row) => renderRow(row, { asListItemSeparator: true }))}
       </ul>
     </div>

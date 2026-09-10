@@ -261,6 +261,169 @@ export function logWebhookInstagramDmPipelineTiming(fields: {
   );
 }
 
+/**
+ * Controller dropped a message_edit-only webhook without queueing (RBH-11).
+ *
+ * Product policy: we deliberately do not re-process patient edits. Meta also
+ * echoes message_edit alongside message for the same send — queueing both races.
+ *
+ * Aggregate alert (ops): sustained high rate of this metric while
+ * `webhook_job_dequeued_total` / DM delivery for the same provider is near zero
+ * → Meta may be delivering real DMs as edit-only again (silent drop).
+ * `numEdit` present separates genuine patient edits from Meta echo noise.
+ */
+export function logWebhookMessageEditDropped(fields: {
+  correlationId: string;
+  provider: string;
+  /** True when message_edit.text is non-empty (never log the text). */
+  hasText: boolean;
+  /** True when messaging[].sender.id is present. */
+  hasSender: boolean;
+  /** True when message_edit.mid is present (never log the mid). */
+  hasMid: boolean;
+  /**
+   * Meta's edit counter when present. Absent/undefined is typical for
+   * Meta's same-send echo; a positive value suggests a genuine patient edit.
+   */
+  numEdit?: number;
+}): void {
+  logger.info(
+    {
+      context: CONTEXT,
+      metric: 'webhook_message_edit_dropped_total',
+      /** Stable marker for log alerts / dashboards. */
+      alertMarker: 'rbh11_message_edit_dropped',
+      correlationId: fields.correlationId,
+      provider: fields.provider,
+      hasText: fields.hasText,
+      hasSender: fields.hasSender,
+      hasMid: fields.hasMid,
+      numEdit: fields.numEdit,
+    },
+    'webhook_metric_webhook_message_edit_dropped_total'
+  );
+}
+
+/**
+ * Post-112 emergency intent was downgraded to medical_query because the patient
+ * message showed positive stability evidence (keywords / non-crisis BP).
+ * No message text. Aggregate to watch false-downgrade vs false-repeat rates.
+ */
+export function logDmEmergencyIntentDowngraded(fields: {
+  correlationId: string;
+  reason: 'post_escalation_stability';
+}): void {
+  logger.info(
+    {
+      context: CONTEXT,
+      metric: 'dm_emergency_intent_downgraded_total',
+      alertMarker: 'dm_emergency_intent_downgraded',
+      correlationId: fields.correlationId,
+      reason: fields.reason,
+    },
+    'webhook_metric_dm_emergency_intent_downgraded_total'
+  );
+}
+
+/**
+ * Per-turn emergency safety decision (no message text).
+ * Use to diagnose misses: regexHit vs classifierIntent vs whether the head gate actually fired.
+ */
+export function logDmEmergencySafetyDecision(fields: {
+  correlationId: string;
+  regexHit: boolean;
+  classifierIntent: string;
+  /** True when emergencyGate.fires(ctx) — eligible even if revoke won the head chain. */
+  emergencyGateEligible: boolean;
+  /** True when the head gate result was emergency_safety. */
+  emergencyGateFired: boolean;
+  inCollection: boolean;
+  priorEscalationInWindow: boolean;
+  /** Persisted open crisis window (`safety.escalatedAt` without newer clearedAt). */
+  crisisOpen: boolean;
+  /** Head-chain branch when a gate fired; null when none fired. */
+  headBranch: string | null;
+}): void {
+  logger.info(
+    {
+      context: CONTEXT,
+      metric: 'dm_emergency_safety_decision_total',
+      alertMarker: 'dm_emergency_safety_decision',
+      correlationId: fields.correlationId,
+      regexHit: fields.regexHit,
+      classifierIntent: fields.classifierIntent,
+      emergencyGateEligible: fields.emergencyGateEligible,
+      emergencyGateFired: fields.emergencyGateFired,
+      inCollection: fields.inCollection,
+      priorEscalationInWindow: fields.priorEscalationInWindow,
+      crisisOpen: fields.crisisOpen,
+      headBranch: fields.headBranch,
+    },
+    'webhook_metric_dm_emergency_safety_decision_total'
+  );
+}
+
+/**
+ * Outbound reply discussed emergency guidance without 112/108 — floor appended the
+ * localized escalation line and opened the crisis window. No message text.
+ */
+export function logDmEmergencyNumberFloorApplied(fields: {
+  correlationId: string;
+  /** Stage/gate branch before the floor ran. */
+  branch: string;
+}): void {
+  logger.info(
+    {
+      context: CONTEXT,
+      metric: 'dm_emergency_number_floor_applied_total',
+      alertMarker: 'dm_emergency_number_floor_applied',
+      correlationId: fields.correlationId,
+      branch: fields.branch,
+    },
+    'webhook_metric_dm_emergency_number_floor_applied_total'
+  );
+}
+
+/**
+ * Per-turn language decision (lang-18). Counts and locale codes only — never
+ * message text or marker identities (LANG-D9).
+ */
+export function logDmLanguageDecision(fields: {
+  correlationId: string;
+  storedBefore: string | null;
+  resolved: string;
+  changed: boolean;
+  reason: string;
+  hiMarkerCount: number;
+  paMarkerCount: number;
+  paExclusiveCount: number;
+  accumulationWindowSize: number;
+  /** Present after lang-17; null until the classifier language signal ships. */
+  classifierLanguage: string | null;
+  /** null when classifierLanguage is null. */
+  classifierAgreed: boolean | null;
+}): void {
+  logger.info(
+    {
+      context: CONTEXT,
+      metric: 'dm_language_decision_total',
+      alertMarker: 'dm_language_decision',
+      correlationId: fields.correlationId,
+      storedBefore: fields.storedBefore,
+      resolved: fields.resolved,
+      changed: fields.changed,
+      reason: fields.reason,
+      hiMarkerCount: fields.hiMarkerCount,
+      paMarkerCount: fields.paMarkerCount,
+      paExclusiveCount: fields.paExclusiveCount,
+      accumulationWindowSize: fields.accumulationWindowSize,
+      classifierLanguage: fields.classifierLanguage,
+      classifierAgreed: fields.classifierAgreed,
+    },
+    'webhook_metric_dm_language_decision_total'
+  );
+}
+
 /** Conflict recovery path after duplicate conversation / message. */
 export function logWebhookConflictRecovery(fields: {
   correlationId: string;

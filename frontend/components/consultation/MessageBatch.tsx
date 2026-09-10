@@ -3,15 +3,20 @@
 import { useCallback, useRef } from "react";
 import {
   deriveMessageDeliveryStatus,
-  MessageStatus,
+  MessageBubbleMeta,
 } from "@/components/consultation/MessageStatus";
-import { formatTime } from "@/lib/format-date";
 import { useLongPress } from "@/lib/gestures/use-long-press";
 import {
   aggregateReactions,
   type ConsultationMessageReaction,
   type ReactionEmoji,
 } from "@/lib/text/aggregate-reactions";
+import {
+  MESSAGE_BUBBLE_LINK,
+  MESSAGE_BUBBLE_MUTED,
+  messageAttachmentTileClass,
+  messageBubbleClass,
+} from "@/lib/text/message-bubble-theme";
 import type { ConsultationMessage } from "@/lib/text/types";
 import type { ReactionPickerAnchorCoords } from "@/components/consultation/MessageBubble";
 
@@ -29,7 +34,7 @@ export interface MessageBatchProps {
   onOpenReactionPicker?: (
     messageId: string,
     anchor: HTMLElement,
-    coords?: ReactionPickerAnchorCoords,
+    coords?: ReactionPickerAnchorCoords
   ) => void;
   userNameById?: (userId: string) => string;
   /** text-C2 — tap image thumbnail to open full-screen lightbox. */
@@ -41,10 +46,17 @@ function isImageMime(mime: string | null | undefined): boolean {
 }
 
 function bubbleMaxWidthForLayout(layout: MessageBatchProps["layout"]): string {
-  return layout === "panel" ? "max-w-[90%]" : layout === "canvas" ? "max-w-[75%]" : "max-w-[80%]";
+  return layout === "panel"
+    ? "max-w-[90%]"
+    : layout === "canvas"
+      ? "max-w-[75%]"
+      : "max-w-[80%]";
 }
 
-function gridColsClass(count: number, layout: MessageBatchProps["layout"]): string {
+function gridColsClass(
+  count: number,
+  layout: MessageBatchProps["layout"]
+): string {
   if (layout === "canvas" && count >= 2) return "grid-cols-1";
   if (count >= 5) return "grid-cols-3";
   return "grid-cols-2";
@@ -59,7 +71,7 @@ export function MessageBatch({
   currentUserId,
   layout,
   mode,
-  showTimestamp: showTs,
+  showTimestamp: _showTs,
   signedAttachmentUrls,
   onRetryFailed,
   onDiscardFailed,
@@ -78,7 +90,7 @@ export function MessageBatch({
       if (!onOpenReactionPicker || !bubbleBodyRef.current) return;
       onOpenReactionPicker(head.id, bubbleBodyRef.current, coords);
     },
-    [head.id, onOpenReactionPicker],
+    [head.id, onOpenReactionPicker]
   );
 
   const longPressHandlers = useLongPress({
@@ -94,7 +106,7 @@ export function MessageBatch({
       longPressCoordsRef.current = { x: e.clientX, y: e.clientY };
       longPressHandlers.onPointerDown(e);
     },
-    [longPressHandlers, onOpenReactionPicker],
+    [longPressHandlers, onOpenReactionPicker]
   );
 
   const handlePointerUp = useCallback(
@@ -102,7 +114,7 @@ export function MessageBatch({
       longPressHandlers.onPointerUp(e);
       longPressCoordsRef.current = null;
     },
-    [longPressHandlers],
+    [longPressHandlers]
   );
 
   const handlePointerCancel = useCallback(
@@ -110,23 +122,21 @@ export function MessageBatch({
       longPressHandlers.onPointerCancel(e);
       longPressCoordsRef.current = null;
     },
-    [longPressHandlers],
-  );  const isSelf = head.senderId === currentUserId;
+    [longPressHandlers]
+  );
+  const isSelf = head.senderId === currentUserId;
   const align = isSelf ? "items-end" : "items-start";
-  const bubble = isSelf
-    ? "bg-blue-600 text-white"
-    : "bg-white text-gray-900 border border-gray-200";
+  const bubble = messageBubbleClass(isSelf);
   const caption = head.body?.trim() ?? "";
   const anyFailed = messages.some((m) => m.failed);
   const anyPending = messages.some((m) => m.pending);
   const showFailedActions = mode !== "readonly" && anyFailed;
-  const deliveryStatus =
-    isSelf && mode !== "readonly" ? deriveMessageDeliveryStatus(head) : "none";
+  const deliveryStatus = isSelf ? deriveMessageDeliveryStatus(head) : "none";
   const bubbleMaxWidth = bubbleMaxWidthForLayout(layout);
   const gridClass = gridColsClass(messages.length, layout);
   const aggregatedReactions = aggregateReactions(reactions);
   const reactionEntries = Object.entries(aggregatedReactions).filter(
-    ([, users]) => users.length > 0,
+    ([, users]) => users.length > 0
   );
   const resolveUserName =
     userNameById ??
@@ -144,9 +154,6 @@ export function MessageBatch({
       data-message-id={head.id}
       data-failed={anyFailed ? "true" : undefined}
     >
-      {showTs ? (
-        <p className="mb-0.5 px-1 text-[11px] text-gray-500">{formatTime(head.createdAt)}</p>
-      ) : null}
       <div
         ref={bubbleBodyRef}
         onContextMenu={
@@ -158,12 +165,15 @@ export function MessageBatch({
             : undefined
         }
         onPointerDown={onOpenReactionPicker ? handlePointerDown : undefined}
-        onPointerMove={onOpenReactionPicker ? longPressHandlers.onPointerMove : undefined}
+        onPointerMove={
+          onOpenReactionPicker ? longPressHandlers.onPointerMove : undefined
+        }
         onPointerUp={onOpenReactionPicker ? handlePointerUp : undefined}
         onPointerCancel={onOpenReactionPicker ? handlePointerCancel : undefined}
-        onPointerLeave={onOpenReactionPicker ? handlePointerCancel : undefined}        className={
+        onPointerLeave={onOpenReactionPicker ? handlePointerCancel : undefined}
+        className={
           bubbleMaxWidth +
-          " message-body rounded-2xl px-3 py-2 text-sm shadow-sm " +
+          " message-body px-2.5 pb-1 pt-1.5 text-[14.5px] leading-[1.35] shadow-sm " +
           bubble +
           (anyPending ? " opacity-70" : "")
         }
@@ -230,7 +240,9 @@ export function MessageBatch({
                         rel="noopener noreferrer"
                         className={
                           "flex h-24 w-full flex-col items-center justify-center rounded-lg text-xs underline " +
-                          (isSelf ? "bg-white/10 text-white" : "bg-gray-100 text-blue-700")
+                          messageAttachmentTileClass(isSelf) +
+                          " " +
+                          MESSAGE_BUBBLE_LINK
                         }
                       >
                         <span aria-hidden className="text-lg">
@@ -242,7 +254,9 @@ export function MessageBatch({
                       <div
                         className={
                           "flex h-24 w-full items-center justify-center rounded-lg text-xs " +
-                          (isSelf ? "bg-white/10 text-white/85" : "bg-gray-100 text-gray-600")
+                          messageAttachmentTileClass(isSelf) +
+                          " " +
+                          MESSAGE_BUBBLE_MUTED
                         }
                       >
                         {m.pending ? "Uploading…" : "Loading…"}
@@ -253,11 +267,13 @@ export function MessageBatch({
               );
             })}
           </div>
-          {isSelf ? (
-            <div className="flex justify-end">
-              <MessageStatus status={deliveryStatus} />
-            </div>
-          ) : null}
+          <div className="flex justify-end">
+            <MessageBubbleMeta
+              createdAt={head.createdAt}
+              status={deliveryStatus}
+              floated={false}
+            />
+          </div>
         </div>
       </div>
       {reactionEntries.length > 0 ? (
@@ -281,7 +297,9 @@ export function MessageBatch({
                 <button
                   key={emoji}
                   type="button"
-                  onClick={() => onToggleReaction(head.id, emoji as ReactionEmoji)}
+                  onClick={() =>
+                    onToggleReaction(head.id, emoji as ReactionEmoji)
+                  }
                   className={className}
                   aria-label={label}
                   title={title}

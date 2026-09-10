@@ -143,6 +143,10 @@ name                TEXT NOT NULL  -- Encrypted at rest (platform-level)
 phone               TEXT NOT NULL  -- Encrypted at rest (platform-level)
 date_of_birth       DATE           -- Optional
 gender              TEXT           -- Optional
+guardian_name       TEXT           -- Optional PHI; father / spouse / other related name (migration 208)
+guardian_relation   TEXT           -- Optional; father | spouse | mother | son | daughter (migration 208)
+alt_phone           TEXT           -- Optional PHI; second contact, last-10 when set (migration 208)
+address             TEXT           -- Optional PHI; free-text address / locality (migration 208)
 platform            TEXT           -- Platform name for placeholder lookup (e.g. instagram) - migration 004
 platform_external_id TEXT          -- Platform user ID (e.g. Instagram PSID) - migration 004
 consent_status      TEXT DEFAULT 'pending' CHECK (consent_status IN ('pending', 'granted', 'revoked'))  -- migration 005
@@ -157,6 +161,7 @@ updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 - `idx_patients_platform` ON `platform` (migration 004)
 - `idx_patients_platform_external_id_col` ON `platform_external_id` (migration 007; single-column lookup)
 - `idx_patients_doctor_id` ON `doctor_id` (migration 113)
+- `idx_patients_alt_phone` ON `alt_phone` **WHERE** `alt_phone IS NOT NULL` (migration 208)
 - `idx_patients_doctor_platform_external_id` UNIQUE ON `(doctor_id, platform, platform_external_id)` **WHERE** `platform IS NOT NULL` (migration 113) — **the per-doctor platform identity constraint.** Book-for-other / manual rows (`platform = NULL`) are excluded, so multiple doctors can each have manual patients with the same phone without collision.
 
 **Identity history (do not re-add the dropped index):**
@@ -345,6 +350,14 @@ opd_mode                TEXT NOT NULL DEFAULT 'slot'  -- CHECK (slot | queue); m
 opd_policies            JSONB NULL   -- optional keys (OPD-08): `slot_join_grace_minutes` (int; patient join window after scheduled start, slot mode); `reschedule_payment_policy` (`forfeit` | `transfer_entitlement`); `queue_reinsert_default` (`end_of_queue` | `after_current`); plus earlier queue caps; no PHI
 instagram_receptionist_paused BOOLEAN NOT NULL DEFAULT false  -- migration 033; pause DM + comment automation
 instagram_receptionist_pause_message TEXT NULL  -- optional custom patient DM when paused (RBH-09)
+logo_path               TEXT NULL  -- clinic-branding-v1 / 211; Storage key in bucket `clinic-branding`, never a URL
+logo_version            INTEGER NOT NULL DEFAULT 0  -- 211; bumped on each logo register
+qualifications          TEXT NULL  -- 211; letterhead degrees line
+letterhead_preset       TEXT NOT NULL DEFAULT 'classic'  -- 211; classic | centred | preprinted
+letterhead_accent_color TEXT NULL  -- 211; #RRGGBB
+page_size               TEXT NOT NULL DEFAULT 'a4'  -- 211; a4 | a5
+preprint_margin_top_mm  INTEGER NOT NULL DEFAULT 40  -- 211
+preprint_margin_bottom_mm INTEGER NOT NULL DEFAULT 30  -- 211
 created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
@@ -419,6 +432,13 @@ follow_up               TEXT NULL   -- Plan: when to return
 patient_education       TEXT NULL   -- Plan: advice, lifestyle
 clinical_notes          TEXT NULL   -- Plan: additional notes
 sent_to_patient_at      TIMESTAMPTZ NULL  -- When sent via DM/email
+attested_at             TIMESTAMPTZ NULL  -- Finish stamp (migration 226). Print and send do not set this (RXL-Q1 reversed 2026-09-09). Null on drafts and historical rows — no backfill.
+version                 INTEGER NULL      -- Revision number (migration 231 / rxl-21). Advances on re-issue only. Null on drafts and historical rows — no backfill.
+supersedes_id           UUID NULL REFERENCES prescriptions(id) ON DELETE SET NULL
+superseded_by_id        UUID NULL REFERENCES prescriptions(id) ON DELETE SET NULL
+revision_reason         TEXT NULL         -- Required on a revision at write time (RXL-Q8). Null on Version 1 and historical rows.
+issued_at               TIMESTAMPTZ NULL  -- First issued hand-over of this row. Not attested_at, not printed_at.
+printed_at              TIMESTAMPTZ NULL  -- Delivery event; requisition print may set this without attesting.
 created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
@@ -428,11 +448,15 @@ updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 - `idx_prescriptions_patient_id` ON `patient_id`
 - `idx_prescriptions_doctor_id` ON `doctor_id`
 - `idx_prescriptions_created_at` ON `created_at` DESC
+- `idx_prescriptions_supersedes_id` ON `supersedes_id` WHERE NOT NULL (migration 231)
+- `idx_prescriptions_superseded_by_id` ON `superseded_by_id` WHERE NOT NULL (migration 231)
 
 **Relationships:**
 - `appointment_id` → `appointments(id)`
 - `patient_id` → `patients(id)` (denormalized)
 - `doctor_id` → `auth.users(id)`
+- `supersedes_id` → `prescriptions(id)` ON DELETE SET NULL
+- `superseded_by_id` → `prescriptions(id)` ON DELETE SET NULL
 
 **PHI:** Diagnosis, medications (via prescription_medicines), clinical notes. 7-year retention per COMPLIANCE.
 
@@ -529,6 +553,87 @@ created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 **Retention:** 7 years (compliance requirement)
 
 **See:** [COMPLIANCE.md](../compliance/COMPLIANCE.md) "Audit Logging" section
+
+---
+
+### `visit_payments` (migration 223, reversal columns 225)
+
+**Purpose:** Front-desk hisab ledger. Records cash / UPI / card / no charge against a visit after it was collected at the till or existing QR / POS. A later `reversal` row is a full till return (P5.3 Left), not a Razorpay refund. Not SaaS `billable_consults`.
+
+**Columns:**
+```sql
+id                   UUID PRIMARY KEY DEFAULT gen_random_uuid()
+doctor_id            UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE
+appointment_id       UUID NOT NULL REFERENCES appointments(id) ON DELETE CASCADE
+patient_id           UUID REFERENCES patients(id) ON DELETE SET NULL
+amount_minor         BIGINT NOT NULL
+currency             TEXT NOT NULL DEFAULT 'INR'
+method               TEXT NOT NULL CHECK (method IN ('cash', 'upi', 'card', 'no_charge', 'reversal'))
+collected_by         UUID NOT NULL REFERENCES auth.users(id) ON DELETE RESTRICT
+collected_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+note                 TEXT
+created_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+reverses_payment_id  UUID REFERENCES visit_payments(id)
+return_method        TEXT  -- cash | upi | card; set only on reversal
+```
+
+**Indexes:**
+- `idx_visit_payments_doctor_appointment` ON `(doctor_id, appointment_id)`
+- `idx_visit_payments_appointment` ON `appointment_id`
+- `idx_visit_payments_doctor_collected_at` ON `(doctor_id, collected_at)`
+- unique `idx_visit_payments_one_reversal_per_source` ON `reverses_payment_id` WHERE set
+- unique `idx_visit_payments_one_reversal_per_appointment` ON `appointment_id` WHERE method = reversal
+
+**Constraints:**
+- `no_charge` requires `amount_minor = 0`
+- cash / upi / card require `amount_minor > 0`
+- `reversal` requires `amount_minor > 0`, `reverses_payment_id`, and `return_method`
+- Append-only: UPDATE/DELETE raise via `reject_visit_payments_mutation()`
+
+**PHI:** No. Amounts and method only. Do not store names or clinical text in `note`.
+
+**RLS:** Enabled, no policies (service-role API only).
+
+---
+
+### `visit_narrative_provenance` (migration 224)
+
+**Purpose:** Append-only provenance for accepted transcript-derived chart items. VN-Q5 = (b): stores which transcript and which character span produced the accept, not the quote text. The quote is re-derived by slicing `consultation_transcripts.transcript_text` at `[span_start, span_end)`.
+
+**Columns:**
+```sql
+id                       UUID PRIMARY KEY DEFAULT gen_random_uuid()
+doctor_id                UUID NOT NULL REFERENCES auth.users(id) ON DELETE RESTRICT
+patient_id               UUID REFERENCES patients(id) ON DELETE SET NULL
+appointment_id           UUID NOT NULL REFERENCES appointments(id) ON DELETE CASCADE
+consultation_session_id  UUID NOT NULL REFERENCES consultation_sessions(id) ON DELETE CASCADE
+transcript_id            UUID NOT NULL REFERENCES consultation_transcripts(id) ON DELETE CASCADE
+span_start               INTEGER NOT NULL
+span_end                 INTEGER NOT NULL
+target_kind              TEXT NOT NULL CHECK (target_kind IN (
+                           'subjective', 'vitals', 'assessment',
+                           'investigations', 'plan', 'prose'))
+created_row_id           UUID
+accepted_by              UUID NOT NULL REFERENCES auth.users(id) ON DELETE RESTRICT
+accepted_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+```
+
+**Indexes:**
+- `idx_visit_narrative_provenance_session` ON `consultation_session_id` — provenance for this consult
+- `idx_visit_narrative_provenance_created_row` ON `created_row_id` WHERE NOT NULL — provenance for this chart row
+- `idx_visit_narrative_provenance_transcript` ON `transcript_id` — CASCADE support
+
+**Constraints:**
+- `span_start >= 0 AND span_end > span_start` (non-empty `[start, end)` into `transcript_text`)
+- Append-only: UPDATE always raises. Direct DELETE raises. CASCADE from `consultation_transcripts` / session / appointment is allowed (`pg_trigger_depth() > 1`).
+
+**PHI:** No clinical free-text column. Spans are integers. Do not store quotes, narratives, or notes.
+
+**Backfill:** None. Historical accepts have no row. Readers must render that as "no source recorded", never as "doctor-asserted".
+
+**Erasure:** Inherited via `ON DELETE CASCADE` from `consultation_transcripts`. No production path currently deletes a transcript row (archival / erasure / account-deletion workers do not reference this table); CASCADE is correct and may be inert. Same posture as migration 061.
+
+**RLS:** Enabled, no policies (service-role API only).
 
 ---
 

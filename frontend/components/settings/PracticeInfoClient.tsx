@@ -30,6 +30,7 @@ type PracticeInfoForm = {
   practice_name: string;
   timezone: string;
   specialty: string;
+  qualifications: string;
   address_summary: string;
 };
 
@@ -38,6 +39,7 @@ function toForm(s: DoctorSettings): PracticeInfoForm {
     practice_name: s.practice_name ?? "",
     timezone: s.timezone?.trim() || "UTC",
     specialty: s.specialty ?? "",
+    qualifications: s.qualifications ?? "",
     address_summary: s.address_summary ?? "",
   };
 }
@@ -70,6 +72,7 @@ export function PracticeInfoClient({ token }: PracticeInfoClientProps) {
       practice_name: form.practice_name.trim() || null,
       timezone: form.timezone.trim() || "UTC",
       specialty: form.specialty.trim() || null,
+      qualifications: form.qualifications.trim() || null,
       address_summary: form.address_summary.trim() || null,
     };
     await save(payload);
@@ -78,7 +81,7 @@ export function PracticeInfoClient({ token }: PracticeInfoClientProps) {
   return (
     <SettingsPageShell
       title="Practice info"
-      description="Practice name, timezone, specialty, and address. Prices and currency are under Pricing."
+      description="Practice name, timezone, specialty, qualifications, and address. Prices and currency are under Pricing."
       isLoading={isLoading || !form}
       loadError={loadError}
       onRetry={() => void refetch()}
@@ -140,6 +143,24 @@ export function PracticeInfoClient({ token }: PracticeInfoClientProps) {
               id="specialty"
               value={form.specialty}
               onChange={(next) => setForm((p) => ({ ...p, specialty: next }))}
+            />
+          </div>
+          <div>
+            <FieldLabel
+              htmlFor="qualifications"
+              tooltip="Degrees as they should appear on the prescription, e.g. MBBS, MD."
+            >
+              Qualifications
+            </FieldLabel>
+            <Input
+              id="qualifications"
+              type="text"
+              value={form.qualifications}
+              maxLength={200}
+              className="mt-1"
+              onChange={(e) =>
+                setForm((p) => ({ ...p, qualifications: e.target.value }))
+              }
             />
           </div>
           <div>

@@ -20,7 +20,7 @@ export default async function GetVerifiedPage() {
         <h1 className="text-2xl font-semibold text-foreground">Get verified</h1>
         <p className="mt-1 text-muted-foreground">
           Halo Aid is for licensed doctors only. Confirm your medical
-          registration to go patient-facing — connect Instagram and take
+          registration to go patient-facing — connect socials and take
           bookings.
         </p>
       </div>

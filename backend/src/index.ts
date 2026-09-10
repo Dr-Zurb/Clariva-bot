@@ -17,7 +17,13 @@ import { ZodError } from 'zod';
 import routes from './routes';
 import { initializeDatabase } from './config/database';
 import { closeQueue } from './config/queue';
-import { AppError, formatError, ValidationError, NotFoundError, TooManyRequestsError } from './utils/errors';
+import {
+  AppError,
+  formatError,
+  ValidationError,
+  NotFoundError,
+  TooManyRequestsError,
+} from './utils/errors';
 import { env } from './config/env';
 import { startWebhookWorker, stopWebhookWorker } from './workers/webhook-worker';
 import { startAutoNoShowWorker, type AutoNoShowWorkerHandle } from './workers/auto-no-show-worker';
@@ -25,14 +31,16 @@ import {
   startOpdModeNotificationsWorker,
   type OpdModeNotificationsWorkerHandle,
 } from './workers/opd-mode-notifications-cron';
+import { startOpdOverrunWorker, type OpdOverrunWorkerHandle } from './workers/opd-overrun-cron';
 import {
-  startOpdOverrunWorker,
-  type OpdOverrunWorkerHandle,
-} from './workers/opd-overrun-cron';
+  startPrevisitNotifyWorker,
+  type PrevisitNotifyWorkerHandle,
+} from './workers/previsit-notify-cron';
 import {
-  startChatPushListener,
-  stopChatPushListener,
-} from './services/chat-push-listener';
+  startVideoEscalationPollWorker,
+  type VideoEscalationPollHandle,
+} from './workers/video-escalation-poll-cron';
+import { startChatPushListener, stopChatPushListener } from './services/chat-push-listener';
 import { correlationId } from './middleware/correlation-id';
 import { requestTiming } from './middleware/request-timing';
 import { requestLogger } from './middleware/request-logger';
@@ -131,13 +139,20 @@ const apiLimiter = rateLimit({
   skip: (req: Request) =>
     req.path === '/health' || req.path === '/' || req.path.startsWith('/cron/'), // health, root, cron (e-task-5)
   handler: (req: Request, res: Response) => {
-    const error = new TooManyRequestsError('Too many requests from this IP, please try again later.');
+    const error = new TooManyRequestsError(
+      'Too many requests from this IP, please try again later.'
+    );
     // errorResponse returns object with canonical format: { success: false, error: {...}, meta: {...} }
-    return res.status(429).json(errorResponse({
-      code: 'TooManyRequestsError',
-      message: error.message,
-      statusCode: 429,
-    }, req));
+    return res.status(429).json(
+      errorResponse(
+        {
+          code: 'TooManyRequestsError',
+          message: error.message,
+          statusCode: 429,
+        },
+        req
+      )
+    );
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -150,13 +165,20 @@ export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 5, // Only 5 attempts per 15 minutes (prevents brute force)
   handler: (req: Request, res: Response) => {
-    const error = new TooManyRequestsError('Too many authentication attempts, please try again later.');
+    const error = new TooManyRequestsError(
+      'Too many authentication attempts, please try again later.'
+    );
     // errorResponse returns object with canonical format: { success: false, error: {...}, meta: {...} }
-    return res.status(429).json(errorResponse({
-      code: 'TooManyRequestsError',
-      message: error.message,
-      statusCode: 429,
-    }, req));
+    return res.status(429).json(
+      errorResponse(
+        {
+          code: 'TooManyRequestsError',
+          message: error.message,
+          statusCode: 429,
+        },
+        req
+      )
+    );
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -206,11 +228,16 @@ export const userLimiter = rateLimit({
 
     const error = new TooManyRequestsError('Too many requests, please try again later.');
     // errorResponse returns object with canonical format: { success: false, error: {...}, meta: {...} }
-    res.status(429).json(errorResponse({
-      code: 'TooManyRequestsError',
-      message: error.message,
-      statusCode: 429,
-    }, req));
+    res.status(429).json(
+      errorResponse(
+        {
+          code: 'TooManyRequestsError',
+          message: error.message,
+          statusCode: 429,
+        },
+        req
+      )
+    );
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -293,6 +320,11 @@ app.use(
     // Parse form data (max 10mb)
     extended: true,
     limit: BODY_SIZE_LIMIT,
+    // Twilio form-encoded webhooks sign the posted fields. Capture the
+    // exact bytes here — do not reconstruct from parsed req.body.
+    verify: (req: Request, _res: Response, buf: Buffer) => {
+      req.rawBody = buf;
+    },
   })
 );
 
@@ -369,11 +401,16 @@ app.use(
     // Handle payload too large errors (413)
     // MUST: Use errorResponse helper per CONTRACTS.md
     if ((err as any).type === 'entity.too.large') {
-      res.status(413).json(errorResponse({
-        code: 'PayloadTooLargeError',
-        message: `Request entity too large. Maximum size is ${BODY_SIZE_LIMIT}.`,
-        statusCode: 413,
-      }, req));
+      res.status(413).json(
+        errorResponse(
+          {
+            code: 'PayloadTooLargeError',
+            message: `Request entity too large. Maximum size is ${BODY_SIZE_LIMIT}.`,
+            statusCode: 413,
+          },
+          req
+        )
+      );
       return;
     }
 
@@ -400,11 +437,18 @@ app.use(
 
     // Send error response
     // MUST: Use errorResponse helper per CONTRACTS.md
-    res.status(formatted.statusCode || 500).json(errorResponse({
-      code: formatted.error,
-      message: formatted.message,
-      statusCode: formatted.statusCode || 500,
-    }, req, env.NODE_ENV === 'development' && formatted.stack ? { stack: formatted.stack } : undefined));
+    res.status(formatted.statusCode || 500).json(
+      errorResponse(
+        {
+          code: formatted.error,
+          message: formatted.message,
+          statusCode: formatted.statusCode || 500,
+          ...(formatted.details ? { details: formatted.details } : {}),
+        },
+        req,
+        env.NODE_ENV === 'development' && formatted.stack ? { stack: formatted.stack } : undefined
+      )
+    );
   }
 );
 
@@ -416,6 +460,10 @@ let autoNoShowWorker: AutoNoShowWorkerHandle | null = null;
 let opdModeNotificationsWorker: OpdModeNotificationsWorkerHandle | null = null;
 // pdm-09: session overrun flagging (5 min) + 24h fallback (hourly)
 let opdOverrunWorker: OpdOverrunWorkerHandle | null = null;
+// Previsit ladder (T−24h / T−30 / T−15 / T−5) — on in prod; opt-in locally
+let previsitNotifyWorker: PrevisitNotifyWorkerHandle | null = null;
+// rec-22 / rec-27 — 5s wake for consent timeout + grant expiry
+let videoEscalationPollWorker: VideoEscalationPollHandle | null = null;
 
 // Initialize database and start server
 // Database connection must succeed before server starts accepting requests
@@ -446,6 +494,12 @@ initializeDatabase()
       opdModeNotificationsWorker = startOpdModeNotificationsWorker();
       // pdm-09: flag session overruns + 24h auto-reschedule fallback.
       opdOverrunWorker = startOpdOverrunWorker();
+      // Previsit notify ladder — emails/DM/SMS at T−24h / T−30 / T−15 / T−5.
+      // Honours PREVISIT_NOTIFY_WORKER_ENABLED (prod default on; set true in .env for local).
+      previsitNotifyWorker = startPrevisitNotifyWorker();
+      // rec-22 / rec-27: wake consent-timeout + grant-expiry every 5s.
+      // Safe alongside POST /cron/video-* (atomic stamps). Off in test.
+      videoEscalationPollWorker = startVideoEscalationPollWorker();
       // task-text-D6b: Realtime INSERT → Web Push fan-out (no-op when VAPID unset).
       startChatPushListener();
     });
@@ -497,6 +551,14 @@ const gracefulShutdown = (signal: string) => {
       if (opdOverrunWorker) {
         opdOverrunWorker.stop();
         opdOverrunWorker = null;
+      }
+      if (previsitNotifyWorker) {
+        previsitNotifyWorker.stop();
+        previsitNotifyWorker = null;
+      }
+      if (videoEscalationPollWorker) {
+        videoEscalationPollWorker.stop();
+        videoEscalationPollWorker = null;
       }
       stopChatPushListener();
       await stopWebhookWorker();
@@ -566,5 +628,3 @@ process.on('uncaughtException', (error: Error) => {
 
 // Export app for testing (useful for integration tests)
 export default app;
-
-

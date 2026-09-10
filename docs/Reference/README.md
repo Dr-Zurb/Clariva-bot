@@ -18,6 +18,11 @@ Strategy and launch — not code rules.
 | [REGULATORY_AND_LAUNCH_STRATEGY.md](./business/REGULATORY_AND_LAUNCH_STRATEGY.md) | DPDP, telemedicine, ABDM, global expansion |
 | [LAUNCH_READINESS_CHECKLIST.md](./business/LAUNCH_READINESS_CHECKLIST.md) | P0/P1 gate before first paying customer |
 | [BRAND.md](./business/BRAND.md) | Palette, voice, do/don't |
+| [COST_TRACKER.md](./business/COST_TRACKER.md) | Vendor spend ledger (Cursor, Twilio, Resend, OpenAI) |
+| [PRICING_AND_UNIT_ECONOMICS.md](./business/PRICING_AND_UNIT_ECONOMICS.md) | Plan structure, cost to serve per doctor, gross margin |
+| [ICP_AND_FIRST_CUSTOMER.md](./business/ICP_AND_FIRST_CUSTOMER.md) | Who to sell to first, objections, sourcing |
+| [PILOT_AGREEMENT.md](./business/PILOT_AGREEMENT.md) | One-page founding-doctor paper |
+| [ONBOARDING_RUNBOOK.md](./business/ONBOARDING_RUNBOOK.md) | Signature → first completed consult |
 
 ---
 

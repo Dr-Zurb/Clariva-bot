@@ -36,6 +36,7 @@ import {
   getPracticeHealth,
   getTelehealthQuality,
 } from '../services/dashboard-insights-service';
+import { getPostFunnel } from '../services/post-conversion-analytics-service';
 
 const MAX_RANGE_DAYS = 366;
 const DEFAULT_RANGE_DAYS = 30;
@@ -70,6 +71,10 @@ const clinicalMixQuerySchema = rangeQuerySchema.extend({
       }
       return n;
     }),
+});
+
+const postFunnelQuerySchema = rangeQuerySchema.extend({
+  platform: z.enum(['instagram', 'facebook']).optional(),
 });
 
 /** Today as a UTC `YYYY-MM-DD` string. */
@@ -217,5 +222,33 @@ export const getInsightsTelehealthHandler = asyncHandler(
     });
 
     res.status(200).json(successResponse(telehealth, req));
+  }
+);
+
+/**
+ * GET /api/v1/dashboard/insights/post-funnel (pca-01)
+ *
+ * Same `from`/`to` as overview, plus optional `platform=instagram|facebook`.
+ * Aggregate-only post → appointment conversion (never comment_text).
+ */
+export const getInsightsPostFunnelHandler = asyncHandler(
+  async (req: Request, res: Response): Promise<void> => {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new UnauthorizedError('Authentication required');
+    }
+
+    const parsed = postFunnelQuerySchema.parse(req.query);
+    const { from, to } = parseInsightsRange(parsed);
+
+    const funnel = await getPostFunnel({
+      doctorId: userId,
+      from,
+      to,
+      platform: parsed.platform,
+      correlationId: req.correlationId ?? '',
+    });
+
+    res.status(200).json(successResponse(funnel, req));
   }
 );

@@ -12,6 +12,8 @@ import { getDoctorSettings } from './doctor-settings-service';
 import { requeueEntryAfterCurrentPatient, requeueEntryToEndOfSession } from './opd/opd-queue-service';
 import { getActiveServiceCatalog } from '../utils/service-catalog-helpers';
 import type { DoctorQueueSessionRow } from '../types/opd-doctor-queue';
+import type { SlotTag } from '../types/opd-slot-session';
+import { resolveLobbyPresence } from '../utils/lobby-presence';
 
 export type { DoctorQueueSessionRow } from '../types/opd-doctor-queue';
 
@@ -83,6 +85,8 @@ export async function listDoctorQueueSession(
     episode_id: string | null;
     opd_event_type: 'standard' | 'return_after_completed' | null;
     notes: string | null;
+    patient_checked_in_at: string | null;
+    patient_lobby_last_seen_at: string | null;
   };
 
   const { data: aptsRaw, error: aptErr } = await admin
@@ -90,7 +94,8 @@ export async function listDoctorQueueSession(
     .select(
       'id, patient_id, patient_name, patient_phone, appointment_date, status, ' +
         'reason_for_visit, consultation_type, catalog_service_key, ' +
-        'episode_id, opd_event_type, notes'
+        'episode_id, opd_event_type, notes, ' +
+        'patient_checked_in_at, patient_lobby_last_seen_at'
     )
     .in('id', aptIds);
 
@@ -165,6 +170,14 @@ export async function listDoctorQueueSession(
     const age =
       patient?.age != null ? patient.age : deriveAgeFromDob(patient?.date_of_birth ?? null);
 
+    const presence = resolveLobbyPresence({
+      checkedInAt: apt?.patient_checked_in_at,
+      lastSeenAt: apt?.patient_lobby_last_seen_at,
+    });
+    const tags: SlotTag[] = [];
+    if (presence === 'waiting') tags.push('patient_waiting');
+    else if (presence === 'stepped_away') tags.push('patient_stepped_away');
+
     return {
       entryId: e.id as string,
       appointmentId: e.appointment_id as string,
@@ -197,6 +210,10 @@ export async function listDoctorQueueSession(
 
       patientId: apt?.patient_id ?? null,
       patientNote: apt?.notes ?? null,
+      patientCheckedInAt: apt?.patient_checked_in_at
+        ? new Date(apt.patient_checked_in_at as string).toISOString()
+        : null,
+      tags,
     };
   });
 }

@@ -22,9 +22,9 @@ describe('prescription SOAP validation (cv2-07)', () => {
     });
 
     it('rejects vitalsBpSystolic above CHECK max with 400-class error', () => {
-      expect(() =>
-        validateUpdatePrescriptionBody({ vitalsBpSystolic: 500 })
-      ).toThrow(ValidationError);
+      expect(() => validateUpdatePrescriptionBody({ vitalsBpSystolic: 500 })).toThrow(
+        ValidationError
+      );
     });
 
     it('accepts differentialDiagnosis array', () => {
@@ -109,10 +109,7 @@ describe('prescription SOAP validation (cv2-07)', () => {
           { id: 'b', label: 'B', kind: 'primary' },
         ],
       });
-      expect(result.diagnosesJson!.map((r) => r.kind)).toEqual([
-        'primary',
-        'secondary',
-      ]);
+      expect(result.diagnosesJson!.map((r) => r.kind)).toEqual(['primary', 'secondary']);
     });
 
     it('accepts conditionId on a diagnosis row and collapses bad ids to null (asmt-04)', () => {
@@ -216,9 +213,7 @@ describe('prescription SOAP validation (cv2-07)', () => {
           { id: 'no-label', label: '   ' },
         ],
       });
-      expect(result.investigationsOrdersJson).toEqual([
-        { id: 'cbc', label: 'CBC', kind: 'panel' },
-      ]);
+      expect(result.investigationsOrdersJson).toEqual([{ id: 'cbc', label: 'CBC', kind: 'panel' }]);
     });
 
     it('dedupes investigationsOrdersJson by identity, first wins (inv-lib-05)', () => {
@@ -285,10 +280,7 @@ describe('prescription SOAP validation (cv2-07)', () => {
           { id: 'd', label: 'DDx', kind: 'differential' },
         ],
       });
-      expect(result.diagnosesJson!.map((r) => r.kind)).toEqual([
-        'primary',
-        'differential',
-      ]);
+      expect(result.diagnosesJson!.map((r) => r.kind)).toEqual(['primary', 'differential']);
     });
 
     it('accepts optional ICD-11 code/codeTitle and defaults them to null (asmt-06)', () => {
@@ -387,9 +379,7 @@ describe('prescription SOAP validation (cv2-07)', () => {
         investigationsOrders: 'CBC, LFT',
       });
       expect(result.investigations).toBe('CBC, LFT');
-      expect(
-        (result as { investigationsOrders?: string }).investigationsOrders
-      ).toBeUndefined();
+      expect((result as { investigationsOrders?: string }).investigationsOrders).toBeUndefined();
     });
   });
 
@@ -514,6 +504,7 @@ describe('prescription SOAP validation (cv2-07)', () => {
         refLow: null,
         refHigh: null,
         refText: null,
+        method: null,
       });
       expect(result.testResultsJson![1]).toEqual({
         id: 'r2',
@@ -528,6 +519,7 @@ describe('prescription SOAP validation (cv2-07)', () => {
         refLow: null,
         refHigh: null,
         refText: null,
+        method: null,
       });
     });
 
@@ -581,6 +573,20 @@ describe('prescription SOAP validation (cv2-07)', () => {
         refHigh: 16,
         refText: '12–16',
       });
+    });
+
+    it('preserves method on a result row', () => {
+      const result = validateUpdatePrescriptionBody({
+        testResultsJson: [
+          {
+            id: 'r1',
+            source: 'patient_report',
+            name: 'HbA1c',
+            method: '  HPLC  ',
+          },
+        ],
+      });
+      expect(result.testResultsJson![0]).toMatchObject({ method: 'HPLC' });
     });
 
     it('collapses a malformed reportId to null without dropping the row (rpt-02)', () => {
@@ -644,39 +650,35 @@ describe('prescription SOAP validation (cv2-07)', () => {
     });
 
     it('rejects respiratory rate above CHECK max', () => {
-      expect(() => validateUpdatePrescriptionBody({ vitalsRr: 200 })).toThrow(
-        ValidationError,
-      );
+      expect(() => validateUpdatePrescriptionBody({ vitalsRr: 200 })).toThrow(ValidationError);
     });
 
     it('rejects pain score above 10', () => {
       expect(() => validateUpdatePrescriptionBody({ vitalsPainScore: 11 })).toThrow(
-        ValidationError,
+        ValidationError
       );
     });
 
     it('rejects GCS total below the 3–15 range', () => {
-      expect(() => validateUpdatePrescriptionBody({ vitalsGcsTotal: 2 })).toThrow(
-        ValidationError,
-      );
+      expect(() => validateUpdatePrescriptionBody({ vitalsGcsTotal: 2 })).toThrow(ValidationError);
     });
 
     it('rejects glucose above the mg/dL CHECK max', () => {
-      expect(() =>
-        validateUpdatePrescriptionBody({ vitalsGlucoseMgDl: 2000 }),
-      ).toThrow(ValidationError);
+      expect(() => validateUpdatePrescriptionBody({ vitalsGlucoseMgDl: 2000 })).toThrow(
+        ValidationError
+      );
     });
 
     it('rejects an unknown BP posture value', () => {
-      expect(() =>
-        validateUpdatePrescriptionBody({ vitalsBpPosture: 'reclined' }),
-      ).toThrow(ValidationError);
+      expect(() => validateUpdatePrescriptionBody({ vitalsBpPosture: 'reclined' })).toThrow(
+        ValidationError
+      );
     });
 
     it('rejects an unknown BP limb value', () => {
-      expect(() =>
-        validateUpdatePrescriptionBody({ vitalsBpLimb: 'foot' }),
-      ).toThrow(ValidationError);
+      expect(() => validateUpdatePrescriptionBody({ vitalsBpLimb: 'foot' })).toThrow(
+        ValidationError
+      );
     });
 
     it('does not alter the existing 7 vitals when extended vitals are set', () => {
@@ -721,6 +723,13 @@ describe('prescription SOAP validation (cv2-07)', () => {
       expect(result.vitalsJson).toEqual({});
     });
 
+    it('accepts a visit-level vitals section note', () => {
+      const result = validateUpdatePrescriptionBody({
+        vitalsJson: { sectionNote: 'sitting, post-walk' },
+      });
+      expect(result.vitalsJson).toEqual({ sectionNote: 'sitting, post-walk' });
+    });
+
     it('strips unknown json keys rather than rejecting (degradable)', () => {
       const result = validateUpdatePrescriptionBody({
         vitalsJson: { vitalsO2FlowLMin: 2, vitalsUnknownKey: 99 } as never,
@@ -736,22 +745,22 @@ describe('prescription SOAP validation (cv2-07)', () => {
     });
 
     it('rejects a numeric json vital above its registry bound', () => {
-      expect(() =>
-        validateUpdatePrescriptionBody({ vitalsJson: { vitalsFio2Pct: 150 } }),
-      ).toThrow(ValidationError);
+      expect(() => validateUpdatePrescriptionBody({ vitalsJson: { vitalsFio2Pct: 150 } })).toThrow(
+        ValidationError
+      );
     });
 
     it('rejects a numeric json vital below its registry bound', () => {
-      expect(() =>
-        validateUpdatePrescriptionBody({ vitalsJson: { vitalsGcsE: 0 } }),
-      ).toThrow(ValidationError);
+      expect(() => validateUpdatePrescriptionBody({ vitalsJson: { vitalsGcsE: 0 } })).toThrow(
+        ValidationError
+      );
     });
 
     it('rejects an unknown categorical json value', () => {
       expect(() =>
         validateUpdatePrescriptionBody({
           vitalsJson: { vitalsO2DeliveryMethod: 'space_helmet' as never },
-        }),
+        })
       ).toThrow(ValidationError);
     });
 
@@ -784,7 +793,7 @@ describe('prescription SOAP validation (cv2-07)', () => {
           vitalsJson: {
             bpReadings: [{ systolic: 400, diastolic: 80 }],
           },
-        }),
+        })
       ).toThrow(ValidationError);
     });
 
@@ -815,13 +824,13 @@ describe('prescription SOAP validation (cv2-07)', () => {
       expect(Array.isArray(readings) && readings[1]?.setting).toBe('home');
     });
 
-    it("rejects invalid bpContext measuredBy", () => {
+    it('rejects invalid bpContext measuredBy', () => {
       expect(() =>
         validateUpdatePrescriptionBody({
           vitalsJson: {
             bpContext: { measuredBy: 'invalid' },
           },
-        }),
+        })
       ).toThrow(ValidationError);
     });
 
@@ -867,7 +876,7 @@ describe('prescription SOAP validation (cv2-07)', () => {
               vitalsWtKg: { measuredBy: 'invalid' },
             },
           },
-        }),
+        })
       ).toThrow(ValidationError);
     });
 
@@ -877,15 +886,13 @@ describe('prescription SOAP validation (cv2-07)', () => {
           bpReadings: [{ systolic: 120, diastolic: 80, note: 'Seated 5 minutes' }],
         },
       });
-      expect(result.vitalsJson?.bpReadings).toMatchObject([
-        { note: 'Seated 5 minutes' },
-      ]);
+      expect(result.vitalsJson?.bpReadings).toMatchObject([{ note: 'Seated 5 minutes' }]);
       expect(() =>
         validateUpdatePrescriptionBody({
           vitalsJson: {
             bpReadings: [{ systolic: 120, diastolic: 80, note: 'x'.repeat(201) }],
           },
-        }),
+        })
       ).toThrow(ValidationError);
     });
   });
@@ -1196,7 +1203,11 @@ describe('attachment upload-url category (obj-22)', () => {
 
   it('rejects an unknown category rather than silently widening the tag space', () => {
     expect(() =>
-      validateCreateUploadUrlBody({ filename: 'x.jpg', contentType: 'image/jpeg', category: 'bogus' })
+      validateCreateUploadUrlBody({
+        filename: 'x.jpg',
+        contentType: 'image/jpeg',
+        category: 'bogus',
+      })
     ).toThrow(ValidationError);
   });
 });
@@ -1293,5 +1304,32 @@ describe('labReportsJsonSchema validation (rpt-02 / migration 159)', () => {
 
   it('returns undefined for an absent field (passthrough)', () => {
     expect(labReportsJsonSchema.parse(undefined)).toBeUndefined();
+  });
+
+  it('accepts labReportsJson on the prescription update body', () => {
+    const result = validateUpdatePrescriptionBody({
+      labReportsJson: [
+        {
+          id: 'rep-1',
+          kind: 'lab',
+          title: 'CBC',
+          reportDate: '2026-09-06',
+          attachmentIds: ['att-1'],
+          entryMethod: 'extracted',
+        },
+      ],
+    });
+    expect(result.labReportsJson).toEqual([
+      {
+        id: 'rep-1',
+        kind: 'lab',
+        title: 'CBC',
+        reportDate: '2026-09-06',
+        labName: null,
+        attachmentIds: ['att-1'],
+        findings: null,
+        entryMethod: 'extracted',
+      },
+    ]);
   });
 });

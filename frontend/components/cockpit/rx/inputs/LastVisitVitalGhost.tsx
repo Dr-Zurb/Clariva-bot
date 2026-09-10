@@ -8,15 +8,17 @@ export interface LastVisitVitalGhostProps {
   onApply: () => void;
   testId?: string;
   className?: string;
+  sourceLabel?: string;
 }
 
-/** Clickable previous-visit value — applies ghost when the field is empty. */
+/** Clickable previous-visit or desk value — applies ghost when the field is empty. */
 export function LastVisitVitalGhost({
   label,
   displayText,
   onApply,
   testId,
   className,
+  sourceLabel = "prev",
 }: LastVisitVitalGhostProps): JSX.Element {
   return (
     <button
@@ -26,11 +28,11 @@ export function LastVisitVitalGhost({
         "hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary",
         className,
       )}
-      aria-label={`Copy last visit ${label}: ${displayText}`}
+      aria-label={`Copy ${sourceLabel} ${label}: ${displayText}`}
       data-testid={testId}
       onClick={onApply}
     >
-      prev {displayText}
+      {sourceLabel} {displayText}
     </button>
   );
 }

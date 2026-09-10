@@ -1,6 +1,7 @@
 "use client";
 
 import { renderMarkdownLite } from "@/lib/text/markdown-lite";
+import { messageQuoteClass } from "@/lib/text/message-bubble-theme";
 import type { ConsultationMessage } from "@/lib/text/types";
 
 export interface QuotedParentPreviewProps {
@@ -21,10 +22,7 @@ export function QuotedParentPreview({
   variant,
   onJumpToParent,
 }: QuotedParentPreviewProps): JSX.Element {
-  const chrome =
-    variant === "self"
-      ? "border-white/40 bg-white/10 text-white/90"
-      : "border-blue-500 bg-blue-50/80 text-gray-700";
+  const chrome = messageQuoteClass(variant);
 
   if (!parent) {
     return (

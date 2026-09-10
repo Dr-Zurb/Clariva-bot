@@ -1,0 +1,24 @@
+{
+  "_meta": {
+    "purpose": "lat-02 quality gate — routing-critical intent labels",
+    "note": "Entries with source=deterministic are covered by pre-LLM rules (no model call). Entries with source=llm_reference are expected labels for the mini-tier live check; regenerate via scripts if the intent prompt changes.",
+    "flagship_reference_model": "gpt-5.2",
+    "mini_model": "gpt-4o-mini",
+    "recorded": "2026-08-02"
+  },
+  "cases": [
+    { "id": "greeting-hi", "text": "hi", "intent": "greeting", "source": "deterministic", "safetyCritical": false },
+    { "id": "greeting-hello", "text": "hello", "intent": "greeting", "source": "deterministic", "safetyCritical": false },
+    { "id": "greeting-hey", "text": "hey", "intent": "greeting", "source": "deterministic", "safetyCritical": false },
+    { "id": "emergency-chest", "text": "chest pain cannot breathe", "intent": "emergency", "source": "deterministic", "safetyCritical": true },
+    { "id": "emergency-saans", "text": "saans nahi aa rahi behosh ho gayi", "intent": "emergency", "source": "deterministic", "safetyCritical": true },
+    { "id": "status-check", "text": "check my appointment", "intent": "check_appointment_status", "source": "deterministic", "safetyCritical": false },
+    { "id": "book-someone", "text": "I want to book for my mother", "intent": "book_for_someone_else", "source": "deterministic", "safetyCritical": false },
+    { "id": "llm-hey-hallo", "text": "hey hallo", "intent": "greeting", "source": "llm_reference", "safetyCritical": false },
+    { "id": "llm-fee-kitna", "text": "kitna is the fee?", "intent": "ask_question", "is_fee_question": true, "source": "llm_reference", "safetyCritical": false },
+    { "id": "llm-book-hinglish", "text": "mujhe kal appointment chahiye", "intent": "book_appointment", "source": "llm_reference", "safetyCritical": false },
+    { "id": "llm-cancel", "text": "I need to cancel my appointment", "intent": "cancel_appointment", "source": "llm_reference", "safetyCritical": false },
+    { "id": "llm-reschedule", "text": "can we reschedule to next week", "intent": "reschedule_appointment", "source": "llm_reference", "safetyCritical": false },
+    { "id": "llm-medical", "text": "I have been having fever for 3 days what medicine should I take", "intent": "medical_query", "source": "llm_reference", "safetyCritical": true }
+  ]
+}

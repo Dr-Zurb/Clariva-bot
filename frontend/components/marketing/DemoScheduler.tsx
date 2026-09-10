@@ -22,7 +22,7 @@ export function DemoScheduler() {
           light: { "cal-brand": "#1E56E0" },
           dark: { "cal-brand": "#2E9BFF" },
         },
-        hideEventTypeDetails: false,
+        hideEventTypeDetails: true,
       });
     })();
   }, []);

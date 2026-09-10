@@ -21,7 +21,14 @@
 
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import axios, { AxiosError } from 'axios';
-import { sendInstagramMessage, mapInstagramError } from '../../../src/services/instagram-service';
+import {
+  sendInstagramMessage,
+  mapInstagramError,
+  replyToInstagramComment,
+  fetchMessengerUserProfile,
+  fetchMessengerUserUsername,
+  clearGraphHostMemoForTests,
+} from '../../../src/services/instagram-service';
 import {
   UnauthorizedError,
   ForbiddenError,
@@ -54,9 +61,10 @@ jest.mock('../../../src/config/env', () => ({
   },
 }));
 
-// Spy on axios.post instead of fully mocking axios
+// Spy on axios.post/get instead of fully mocking axios
 // This allows axios.isAxiosError to work correctly
 const mockedAxiosPost = jest.spyOn(axios, 'post');
+const mockedAxiosGet = jest.spyOn(axios, 'get');
 const mockedAuditLogger = auditLogger as jest.Mocked<typeof auditLogger>;
 
 /**
@@ -122,6 +130,7 @@ describe('Instagram Service', () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
+    clearGraphHostMemoForTests();
     // Mock audit logger functions to return resolved promises
     (mockedAuditLogger.logAuditEvent as jest.Mock) = jest.fn().mockImplementation(() => Promise.resolve());
     (mockedAuditLogger.logSecurityEvent as jest.Mock) = jest.fn().mockImplementation(() => Promise.resolve());
@@ -153,8 +162,9 @@ describe('Instagram Service', () => {
         expect(result.recipient_id).toBe(validRecipientId);
         expect(result.message_id).toBeDefined();
         expect(mockedAxiosPost).toHaveBeenCalledTimes(1);
+        // lat-03: Instagram Login host is preferred first (not facebook.com).
         expect(mockedAxiosPost).toHaveBeenCalledWith(
-          'https://graph.facebook.com/v18.0/me/messages',
+          'https://graph.instagram.com/v18.0/me/messages',
           {
             recipient: { id: validRecipientId },
             messaging_type: 'RESPONSE',
@@ -225,7 +235,7 @@ describe('Instagram Service', () => {
           code: 190,
         });
 
-        // Code 190: try graph.facebook.com then graph.instagram.com fallback
+        // Code 190: preferred host then alternate; both fail → UnauthorizedError
         mockedAxiosPost.mockRejectedValueOnce(error).mockRejectedValueOnce(error);
 
         // Act & Assert
@@ -234,6 +244,18 @@ describe('Instagram Service', () => {
         ).rejects.toThrow(UnauthorizedError);
 
         expect(mockedAxiosPost).toHaveBeenCalledTimes(2);
+        expect(mockedAxiosPost).toHaveBeenNthCalledWith(
+          1,
+          'https://graph.instagram.com/v18.0/me/messages',
+          expect.anything(),
+          expect.anything()
+        );
+        expect(mockedAxiosPost).toHaveBeenNthCalledWith(
+          2,
+          'https://graph.facebook.com/v18.0/me/messages',
+          expect.anything(),
+          expect.anything()
+        );
         expect(mockedAuditLogger.logAuditEvent).toHaveBeenCalledWith(
           expect.objectContaining({
             correlationId,
@@ -245,6 +267,41 @@ describe('Instagram Service', () => {
               error_type: 'UnauthorizedError',
             }),
           })
+        );
+      });
+
+      it('lat-03: after 190 fallback to facebook, next send goes to facebook first', async () => {
+        const err190 = createAxiosError('Unauthorized', 401, {
+          message: 'Invalid OAuth access token',
+          type: 'OAuthException',
+          code: 190,
+        });
+        mockedAxiosPost
+          .mockRejectedValueOnce(err190)
+          .mockResolvedValueOnce({
+            data: validResponse,
+            status: 200,
+            statusText: 'OK',
+            headers: {},
+            config: {} as any,
+          })
+          .mockResolvedValueOnce({
+            data: validResponse,
+            status: 200,
+            statusText: 'OK',
+            headers: {},
+            config: {} as any,
+          });
+
+        await sendInstagramMessage(validRecipientId, validMessage, correlationId);
+        mockedAxiosPost.mockClear();
+        await sendInstagramMessage(validRecipientId, validMessage, correlationId);
+
+        expect(mockedAxiosPost).toHaveBeenCalledTimes(1);
+        expect(mockedAxiosPost).toHaveBeenCalledWith(
+          'https://graph.facebook.com/v18.0/me/messages',
+          expect.anything(),
+          expect.anything()
         );
       });
     });
@@ -621,6 +678,154 @@ describe('Instagram Service', () => {
           'Instagram API rate limit exceeded'
         );
       });
+    });
+  });
+
+  describe('replyToInstagramComment', () => {
+    const commentId = '18077690015688645';
+    const replyText = 'Check your DM for more information.';
+    const doctorToken = 'ig-user-token';
+
+    it('succeeds on graph.instagram.com by default (Instagram Login)', async () => {
+      mockedAxiosPost.mockResolvedValueOnce({ data: { id: 'reply-1' } } as never);
+
+      const result = await replyToInstagramComment(
+        commentId,
+        replyText,
+        doctorToken,
+        correlationId
+      );
+
+      expect(result).toEqual({ replyId: 'reply-1' });
+      expect(mockedAxiosPost).toHaveBeenCalledTimes(1);
+      expect(mockedAxiosPost).toHaveBeenCalledWith(
+        `https://graph.instagram.com/v18.0/${commentId}/replies`,
+        null,
+        expect.objectContaining({
+          params: { message: replyText, access_token: doctorToken },
+        })
+      );
+    });
+
+    it('falls back to graph.facebook.com when instagram.com returns 400 (Page token)', async () => {
+      const igError = createAxiosError('Bad Request', 400, {
+        message: 'Invalid OAuth access token',
+        type: 'OAuthException',
+        code: 190,
+      });
+      mockedAxiosPost
+        .mockRejectedValueOnce(igError)
+        .mockResolvedValueOnce({ data: { id: 'reply-fb' } } as never);
+
+      const result = await replyToInstagramComment(
+        commentId,
+        replyText,
+        doctorToken,
+        correlationId
+      );
+
+      expect(result).toEqual({ replyId: 'reply-fb' });
+      expect(mockedAxiosPost).toHaveBeenCalledTimes(2);
+      expect(mockedAxiosPost).toHaveBeenNthCalledWith(
+        1,
+        `https://graph.instagram.com/v18.0/${commentId}/replies`,
+        null,
+        expect.anything()
+      );
+      expect(mockedAxiosPost).toHaveBeenNthCalledWith(
+        2,
+        `https://graph.facebook.com/v18.0/${commentId}/replies`,
+        null,
+        expect.objectContaining({
+          params: { message: replyText, access_token: doctorToken },
+        })
+      );
+      expect(mockedAuditLogger.logAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'comment_reply',
+          status: 'success',
+          metadata: expect.objectContaining({ reply_id: 'reply-fb' }),
+        })
+      );
+    });
+
+    it('returns null when both hosts fail with non-retryable error', async () => {
+      const err = createAxiosError('Bad Request', 400, {
+        message: 'Unsupported post request',
+        type: 'GraphMethodException',
+        code: 100,
+      });
+      // First failure triggers IG fallback (status 400); second is metaCode 100 → null
+      mockedAxiosPost.mockRejectedValueOnce(err).mockRejectedValueOnce(err);
+
+      const result = await replyToInstagramComment(
+        commentId,
+        replyText,
+        doctorToken,
+        correlationId
+      );
+
+      expect(result).toBeNull();
+      expect(mockedAxiosPost).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('fetchMessengerUserProfile', () => {
+    const igsid = 'igsid-user-1';
+    const token = 'page-token';
+    const corr = 'corr-profile';
+
+    beforeEach(() => {
+      mockedAxiosGet.mockReset();
+    });
+
+    it('returns username and profile_pic from graph.facebook.com', async () => {
+      mockedAxiosGet.mockResolvedValueOnce({
+        data: {
+          username: 'halo.aid',
+          profile_pic: 'https://cdn.example/pic.jpg',
+        },
+      });
+
+      await expect(
+        fetchMessengerUserProfile(igsid, token, corr)
+      ).resolves.toEqual({
+        username: 'halo.aid',
+        profilePic: 'https://cdn.example/pic.jpg',
+      });
+
+      expect(mockedAxiosGet).toHaveBeenCalledWith(
+        `https://graph.facebook.com/v18.0/${igsid}`,
+        expect.objectContaining({
+          params: {
+            fields: 'username,name,profile_pic',
+            access_token: token,
+          },
+        })
+      );
+    });
+
+    it('falls back to name when username missing', async () => {
+      mockedAxiosGet.mockResolvedValueOnce({
+        data: { name: 'Jane Doe', profile_pic: null },
+      });
+
+      await expect(
+        fetchMessengerUserUsername(igsid, token, corr)
+      ).resolves.toBe('Jane Doe');
+    });
+
+    it('returns empty fields when Graph fails on both hosts', async () => {
+      const err = createAxiosError('Not Found', 404, {
+        message: 'Unsupported get request',
+        type: 'GraphMethodException',
+        code: 100,
+      });
+      mockedAxiosGet.mockRejectedValueOnce(err).mockRejectedValueOnce(err);
+
+      await expect(
+        fetchMessengerUserProfile(igsid, token, corr)
+      ).resolves.toEqual({ username: null, profilePic: null });
     });
   });
 });

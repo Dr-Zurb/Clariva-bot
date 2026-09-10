@@ -14,8 +14,13 @@ import {
 import { PrescriptionFormShellProvider } from "@/components/cockpit/rx/PrescriptionFormShellContext";
 import { SubjectiveSection } from "@/components/cockpit/rx/sections/SubjectiveSection";
 import type { RxFormProviderSetup } from "@/components/cockpit/rx/useRxFormProviderSetup";
-import type { SubjectiveSectionHiddenSet } from "@/lib/cockpit/subjective-section-visibility";
+import {
+  resolveDefaultSubjectiveLayout,
+  type SubjectiveSectionHiddenSet,
+} from "@/lib/cockpit/subjective-section-visibility";
 import { toCustomBlockSectionId } from "@/lib/cockpit/subjective-section-order";
+
+const FACTORY_HIDDEN = resolveDefaultSubjectiveLayout().defaultHidden;
 import type { SubjectiveSectionId } from "@/lib/cockpit/subjective-section-order";
 
 const mockGetDoctorSettings = vi.fn();
@@ -212,12 +217,25 @@ describe("SubjectiveSection visibility persistence (subj-35 / subj-38)", () => {
     }));
   });
 
+  it("applies the lean factory default when stored hidden is empty", async () => {
+    const { container } = renderWithRxForm(<SubjectiveSection heading={null} />);
+    await waitForSettingsLoaded();
+
+    // Unlinked chart: allergies / background are not mountable.
+    const order = readRenderedSectionOrder(container);
+    expect(order).toContain("chief_complaints");
+    expect(order).toContain("free_text_notes");
+    expect(order).not.toContain("family_history");
+    expect(order).not.toContain("social_history");
+    expect(order).not.toContain("past_surgical");
+    expect(hiddenPatchCalls()).toHaveLength(0);
+  });
+
   it("autosaves delta-only hidden ids after hiding sections via the menu", async () => {
     const { container } = renderWithRxForm(<SubjectiveSection heading={null} />);
     await waitForSettingsLoaded();
 
-    await hideSectionViaMenu("Family history");
-    await hideSectionViaMenu("Social / personal history");
+    await hideSectionViaMenu("Additional Notes");
     await hideSectionViaMenu("Chief complaints");
 
     await waitFor(
@@ -227,28 +245,29 @@ describe("SubjectiveSection visibility persistence (subj-35 / subj-38)", () => {
           subjective_section_hidden: string[];
         };
         expect(last.subjective_section_hidden).toEqual(
-          expect.arrayContaining(["family_history", "social_history", "chief_complaints"]),
+          expect.arrayContaining([
+            ...FACTORY_HIDDEN,
+            "free_text_notes",
+            "chief_complaints",
+          ]),
         );
-        expect(last.subjective_section_hidden).not.toContain("free_text_notes");
       },
       { timeout: 1500 },
     );
 
     const order = readRenderedSectionOrder(container);
-    expect(order).not.toContain("family_history");
-    expect(order).not.toContain("social_history");
+    expect(order).not.toContain("free_text_notes");
     expect(order).not.toContain("chief_complaints");
     expect(mockUpdatePrescription).not.toHaveBeenCalled();
   });
 
   it("restores hidden sections after unmount/remount (tab toggle simulation)", async () => {
-    const savedHidden = ["family_history", "social_history", "chief_complaints"];
+    const savedHidden = [...FACTORY_HIDDEN, "free_text_notes", "chief_complaints"];
 
     const first = renderWithRxForm(<SubjectiveSection heading={null} />);
     await waitForSettingsLoaded();
 
-    await hideSectionViaMenu("Family history");
-    await hideSectionViaMenu("Social / personal history");
+    await hideSectionViaMenu("Additional Notes");
     await hideSectionViaMenu("Chief complaints");
 
     await waitFor(() => expect(hiddenPatchCalls().length).toBeGreaterThan(0), {
@@ -269,10 +288,9 @@ describe("SubjectiveSection visibility persistence (subj-35 / subj-38)", () => {
     const second = renderWithRxForm(<SubjectiveSection heading={null} />);
     await waitFor(() => {
       const order = readRenderedSectionOrder(second.container);
-      expect(order).not.toContain("family_history");
-      expect(order).not.toContain("social_history");
+      expect(order).not.toContain("free_text_notes");
       expect(order).not.toContain("chief_complaints");
-      expect(order).toContain("past_surgical");
+      expect(order).not.toContain("past_surgical");
     });
   });
 
@@ -359,17 +377,17 @@ describe("SubjectiveSection visibility persistence (subj-35 / subj-38)", () => {
       expect(screen.getByTestId("section-manager-menu-trigger")).toBeInTheDocument();
     });
 
-    await hideSectionViaMenu("Family history");
+    await hideSectionViaMenu("Additional Notes");
 
     await waitFor(() => {
-      expect(readRenderedSectionOrder(container)).not.toContain("family_history");
+      expect(readRenderedSectionOrder(container)).not.toContain("free_text_notes");
     });
 
     fireEvent.click(screen.getByRole("button", { name: "stale-echo" }));
 
     await waitFor(
       () => {
-        expect(readRenderedSectionOrder(container)).not.toContain("family_history");
+        expect(readRenderedSectionOrder(container)).not.toContain("free_text_notes");
       },
       { timeout: 1500 },
     );
@@ -386,9 +404,12 @@ describe("SubjectiveSection visibility persistence (subj-35 / subj-38)", () => {
         const last = hiddenPatchCalls().at(-1)?.[1] as {
           subjective_section_hidden: string[];
         };
-        expect(last.subjective_section_hidden).toEqual([
-          toCustomBlockSectionId(CUSTOM_BLOCK_ID),
-        ]);
+        expect(last.subjective_section_hidden).toEqual(
+          expect.arrayContaining([
+            ...FACTORY_HIDDEN,
+            toCustomBlockSectionId(CUSTOM_BLOCK_ID),
+          ]),
+        );
       },
       { timeout: 1500 },
     );

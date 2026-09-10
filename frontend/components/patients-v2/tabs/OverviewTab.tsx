@@ -13,6 +13,7 @@ import { RecentActivityCard } from "./overview/RecentActivityCard";
 import { SnapshotCard } from "./overview/SnapshotCard";
 import { VitalsTrendsCard } from "./overview/VitalsTrendsCard";
 import { useTabOpenedTelemetry } from "./use-tab-opened-telemetry";
+import { ConsultTimelinePane } from "../ConsultTimelinePane";
 
 export interface OverviewTabProps {
   patientId: string;
@@ -68,6 +69,7 @@ export function OverviewTab({ patientId, token }: OverviewTabProps) {
 
   return (
     <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-2">
+      <ConsultTimelinePane patientId={patientId} token={token} />
       <SnapshotCard snapshot={data.snapshot} />
       <VitalsTrendsCard trends={data.vitals_trends} />
       <AllergiesCard allergies={data.allergies} />

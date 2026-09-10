@@ -62,6 +62,9 @@ jest.mock('../../../src/workers/voice-transcription-worker', () => ({
 jest.mock('../../../src/workers/video-escalation-timeout-worker', () => ({
   runVideoEscalationTimeoutJob: jest.fn(),
 }));
+jest.mock('../../../src/workers/video-grant-expiry-worker', () => ({
+  runVideoGrantExpiryJob: jest.fn(),
+}));
 jest.mock('../../../src/workers/modality-pending-timeout-worker', () => ({
   runModalityPendingTimeoutJob: jest.fn(),
 }));

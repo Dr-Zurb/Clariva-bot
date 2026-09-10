@@ -209,3 +209,140 @@ export const publicAuthEmailStatusLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: false,
 });
+
+/**
+ * Doctor-facing receptionist create (one seat). 5 / hour per doctor.
+ */
+export const clinicStaffProvisionLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  keyGenerator: (req: Request) => {
+    const userId = req.user?.id?.trim();
+    if (userId) {
+      return `clinic-staff:${userId}`;
+    }
+    return `clinic-staff:${ipKeyGenerator(req.ip || req.socket.remoteAddress || 'unknown', false)}`;
+  },
+  handler: async (req: Request, res: Response) => {
+    await logSecurityEvent(
+      req.correlationId || 'unknown',
+      req.user?.id,
+      'rate_limit_exceeded',
+      'medium',
+      req.ip,
+      'Clinic staff provision rate limit exceeded'
+    );
+    const error = new TooManyRequestsError(
+      'Too many receptionist invites. Wait a bit and try again.'
+    );
+    return res.status(429).json(
+      errorResponse(
+        {
+          code: 'TooManyRequestsError',
+          message: error.message,
+          statusCode: 429,
+        },
+        req
+      )
+    );
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+});
+
+/**
+ * Visit-narrative extraction (vnt-02). Paid mini-tier call over a long
+ * transcript — 8 / hour per doctor + session.
+ */
+export const visitNarrativeExtractLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 8,
+  keyGenerator: (req: Request) => {
+    const userId = req.user?.id?.trim();
+    const sessionId =
+      typeof req.body?.consultationSessionId === 'string'
+        ? req.body.consultationSessionId
+        : 'unknown';
+    if (userId) {
+      return `vn-extract:${userId}:${sessionId}`;
+    }
+    return `vn-extract:${ipKeyGenerator(req.ip || req.socket.remoteAddress || 'unknown', false)}:${sessionId}`;
+  },
+  handler: async (req: Request, res: Response) => {
+    await logSecurityEvent(
+      req.correlationId || 'unknown',
+      req.user?.id,
+      'rate_limit_exceeded',
+      'medium',
+      req.ip,
+      'Visit narrative extract rate limit exceeded'
+    );
+    const error = new TooManyRequestsError(
+      'Too many transcript reviews for this consult. Wait a bit and try again.'
+    );
+    return res.status(429).json(
+      errorResponse(
+        {
+          code: 'TooManyRequestsError',
+          message: error.message,
+          statusCode: 429,
+        },
+        req
+      )
+    );
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+});
+
+/**
+ * Lab report extraction (rpt-05.6) — 60 / hour per doctor + prescription.
+ *
+ * Covers both readers on `…/extract-lab`, because the route cannot know the
+ * attachment's MIME without a DB read. Sized for the PDF path it also gates:
+ * a Reports strip holds up to `REPORT_SCAN_MAX_FILES` (24) pages and
+ * "Extract all" fires one request each, so the cap has to clear a full batch
+ * plus retries. What it actually exists to stop is a runaway loop against the
+ * paid vision reader.
+ */
+export const labExtractLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 60,
+  keyGenerator: (req: Request) => {
+    const userId = req.user?.id?.trim();
+    const prescriptionId =
+      typeof req.params?.id === 'string' && req.params.id ? req.params.id : 'unknown';
+    if (userId) {
+      return `lab-extract:${userId}:${prescriptionId}`;
+    }
+    return `lab-extract:${ipKeyGenerator(req.ip || req.socket.remoteAddress || 'unknown', false)}:${prescriptionId}`;
+  },
+  handler: async (req: Request, res: Response) => {
+    await logSecurityEvent(
+      req.correlationId || 'unknown',
+      req.user?.id,
+      'rate_limit_exceeded',
+      'medium',
+      req.ip,
+      'Lab extract rate limit exceeded'
+    );
+    const error = new TooManyRequestsError(
+      'Too many report extractions for this visit. Wait a bit and try again.'
+    );
+    return res.status(429).json(
+      errorResponse(
+        {
+          code: 'TooManyRequestsError',
+          message: error.message,
+          statusCode: 429,
+        },
+        req
+      )
+    );
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+});

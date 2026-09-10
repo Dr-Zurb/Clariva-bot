@@ -79,6 +79,7 @@ const HBA1C: TestResultRow = {
   refLow: null,
   refHigh: null,
   refText: null,
+  method: null,
 };
 
 const RBS: TestResultRow = {
@@ -94,6 +95,7 @@ const RBS: TestResultRow = {
   refLow: null,
   refHigh: null,
   refText: null,
+  method: null,
 };
 
 const LEGACY_FREE_TEXT = "Outside lab Hb 12.5 g/dL — patient brought report";
@@ -172,6 +174,7 @@ function prescriptionFromPayload(
     id: "rx-1",
     test_results: payload.testResults ?? null,
     test_results_json: payload.testResultsJson ?? [],
+    lab_reports_json: payload.labReportsJson ?? [],
   } as unknown as PrescriptionWithRelations;
 }
 
@@ -238,7 +241,7 @@ function ObjectiveSectionHarness({
     objectiveDefaults: {
       sectionOrder: [],
       sectionCollapsed: {},
-      sectionHidden: [],
+      sectionHidden: ["__show_all__"],
       customSections: [],
     },
     setObjectiveDefaults: vi.fn(),
@@ -308,6 +311,7 @@ beforeEach(() => {
         specialty: "Cardiology",
         objective_section_order: [],
         objective_section_collapsed: {},
+        objective_section_hidden: ["__show_all__"],
       },
     },
   });
@@ -484,15 +488,14 @@ describe("obj-24 · §4 accessibility", () => {
 
     const card = screen.getByTestId(`test-result-row-${HBA1C.id}`);
     expect(within(card).getByLabelText("Test name")).toBeInTheDocument();
-    expect(within(card).getByLabelText("Result source")).toBeInTheDocument();
-    expect(within(card).getByLabelText("Result interpretation")).toBeInTheDocument();
-
-    const highChip = within(card).getByTestId(`test-result-interpretation-${HBA1C.id}-high`);
-    expect(highChip).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(within(card).getByTestId(`test-result-interpretation-${HBA1C.id}-normal`));
+    expect(within(card).getByLabelText("Reference range")).toBeInTheDocument();
+    expect(within(card).getByLabelText("Method")).toBeInTheDocument();
+    expect(within(card).getByLabelText("Notes")).toBeInTheDocument();
+    expect(within(card).queryByLabelText("Date")).not.toBeInTheDocument();
+    expect(within(card).queryByLabelText("Result source")).not.toBeInTheDocument();
     expect(
-      within(card).getByTestId(`test-result-interpretation-${HBA1C.id}-normal`),
-    ).toHaveAttribute("aria-pressed", "true");
+      within(card).queryByLabelText("Result interpretation"),
+    ).not.toBeInTheDocument();
   });
 
       it("4.2 result-scope template affordances are labelled", async () => {
@@ -523,7 +526,7 @@ describe("obj-24 · §4 accessibility", () => {
     );
 
     expect(screen.queryByTestId(`test-result-name-${HBA1C.id}`)).not.toBeInTheDocument();
-    expect(screen.queryByTestId("test-results-add")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("test-results-search")).not.toBeInTheDocument();
     expect(screen.queryByTestId("objective-media-add")).not.toBeInTheDocument();
     expect(screen.queryByTestId("objective-media-remove")).not.toBeInTheDocument();
     expect(screen.queryByTestId("objective-section-template-test_results")).not.toBeInTheDocument();

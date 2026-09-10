@@ -10,9 +10,10 @@
  *
  * Semantics (DL-4):
  *   - Single sheet: `open()` replaces the current sheet (no stacking).
- *   - Fixed width: `defaultWidth ?? 480` px, right-edge slide-in (~250ms).
+ *   - Fixed width: `defaultWidth ?? 480` px, right-edge slide-in (~280ms).
  *   - Dismiss: Esc, backdrop click, header close button.
- *   - z-index 40 — above pane chrome, below modals (z-50).
+ *   - z-index 60 — above the dashboard shell navigation (z-50) so the
+ *     backdrop makes the whole application inactive while the sheet is open.
  *
  * `canDock` is honored at the type level only in v1.
  */
@@ -35,7 +36,8 @@ import type {
 import { cn } from "@/lib/utils";
 
 const DEFAULT_WIDTH_PX = 480;
-const Z_INDEX = 40;
+const Z_INDEX = 60;
+const EXIT_DURATION_MS = 280;
 
 // ---------------------------------------------------------------------------
 // Context
@@ -93,20 +95,57 @@ function SideSheetOverlay({
 }) {
   const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(false);
+  // Keep the last sheet mounted briefly after close so both the backdrop and
+  // drawer can finish their exit transition instead of disappearing at once.
+  const [renderedSheet, setRenderedSheet] = useState<SideSheetDefinition | null>(null);
+  const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
   useEffect(() => {
-    if (!sheet) {
-      setVisible(false);
-      return;
+    if (exitTimerRef.current) {
+      clearTimeout(exitTimerRef.current);
+      exitTimerRef.current = null;
     }
+
+    if (sheet) {
+      setRenderedSheet(sheet);
+      setVisible(false);
+      // Two frames guarantee the initial offset is painted before moving to
+      // the resting position. A single rAF is often coalesced with mounting,
+      // which makes the drawer appear to snap open on fast machines.
+      let secondRaf: number | null = null;
+      const firstRaf = requestAnimationFrame(() => {
+        secondRaf = requestAnimationFrame(() => setVisible(true));
+      });
+      return () => {
+        cancelAnimationFrame(firstRaf);
+        if (secondRaf != null) cancelAnimationFrame(secondRaf);
+      };
+    }
+
     setVisible(false);
-    const raf = requestAnimationFrame(() => setVisible(true));
-    return () => cancelAnimationFrame(raf);
+    exitTimerRef.current = setTimeout(() => {
+      setRenderedSheet(null);
+      exitTimerRef.current = null;
+    }, EXIT_DURATION_MS);
+
+    return () => {
+      if (exitTimerRef.current) {
+        clearTimeout(exitTimerRef.current);
+        exitTimerRef.current = null;
+      }
+    };
   }, [sheet]);
+
+  useEffect(
+    () => () => {
+      if (exitTimerRef.current) clearTimeout(exitTimerRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!sheet) return;
@@ -129,11 +168,11 @@ function SideSheetOverlay({
     };
   }, [sheet]);
 
-  if (!mounted || !sheet || typeof document === "undefined") {
+  if (!mounted || !renderedSheet || typeof document === "undefined") {
     return null;
   }
 
-  const widthPx = sheet.defaultWidth ?? DEFAULT_WIDTH_PX;
+  const widthPx = renderedSheet.defaultWidth ?? DEFAULT_WIDTH_PX;
 
   return createPortal(
     <div
@@ -146,7 +185,7 @@ function SideSheetOverlay({
         type="button"
         aria-label="Close side sheet"
         className={cn(
-          "absolute inset-0 bg-black/40 transition-opacity duration-200",
+          "absolute inset-0 bg-slate-950/50 backdrop-blur-[1px] transition-opacity duration-[220ms] ease-out motion-reduce:transition-none",
           visible ? "opacity-100" : "opacity-0",
         )}
         onClick={onClose}
@@ -155,18 +194,18 @@ function SideSheetOverlay({
         role="dialog"
         aria-modal="true"
         aria-labelledby="side-sheet-title"
-        data-side-sheet-id={sheet.id}
+        data-side-sheet-id={renderedSheet.id}
         className={cn(
-          "absolute inset-y-0 right-0 flex flex-col border-l bg-background shadow-xl",
-          "transition-transform duration-200 ease-out",
-          visible ? "translate-x-0" : "translate-x-full",
+          "absolute inset-y-0 right-0 flex flex-col border-l bg-background shadow-2xl",
+          "transition-[transform,opacity] duration-[280ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+          visible ? "translate-x-0 opacity-100" : "translate-x-12 opacity-0",
         )}
-        style={{ width: widthPx }}
+        style={{ width: `min(100vw, ${widthPx}px)` }}
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3">
           <h2 id="side-sheet-title" className="truncate text-base font-semibold">
-            {sheet.title}
+            {renderedSheet.title}
           </h2>
           <button
             type="button"
@@ -178,7 +217,7 @@ function SideSheetOverlay({
           </button>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <SideSheetBody content={sheet.content} />
+          <SideSheetBody content={renderedSheet.content} />
         </div>
       </aside>
     </div>,

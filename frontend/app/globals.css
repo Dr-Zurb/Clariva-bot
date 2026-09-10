@@ -24,42 +24,54 @@
 @layer base {
   :root {
     /* Surfaces */
-    --background: 0 0% 100%;            /* white */
-    --foreground: 222 47% 11%;          /* slate-900 */
+    --background: 0 0% 100%; /* white */
+    --foreground: 222 47% 11%; /* slate-900 */
     --card: 0 0% 100%;
     --card-foreground: 222 47% 11%;
     --popover: 0 0% 100%;
     --popover-foreground: 222 47% 11%;
 
     /* Brand */
-    --primary: 223 79% 50%;             /* Halo Aid royal — #1E56E0 */
+    --primary: 223 79% 50%; /* Halo Aid royal — #1E56E0 */
     --primary-foreground: 0 0% 100%;
-    --accent: 38 92% 50%;               /* amber-500 — completion / "Sent" */
+    --accent: 38 92% 50%; /* amber-500 — completion / "Sent" */
     --accent-foreground: 24 10% 10%;
 
     /* Neutrals */
-    --secondary: 210 40% 96%;           /* slate-100 */
+    --secondary: 210 40% 96%; /* slate-100 */
     --secondary-foreground: 222 47% 11%;
     --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;    /* slate-500 ish */
+    --muted-foreground: 215 16% 47%; /* slate-500 ish */
 
     /* Lines & focus */
-    --border: 214 32% 91%;              /* slate-200 */
+    --border: 214 32% 91%; /* slate-200 */
     --input: 214 32% 91%;
-    --ring: 223 79% 50%;                /* match primary */
+    --ring: 223 79% 50%; /* match primary */
 
     /* Status (only used in chips / banners — never as page bg per UI-D3) */
-    --destructive: 0 72% 51%;           /* rose-600 ish */
+    --destructive: 0 72% 51%; /* rose-600 ish */
     --destructive-foreground: 0 0% 100%;
-    --success: 142 71% 38%;             /* emerald-600 */
+    --success: 142 71% 38%; /* emerald-600 */
     --success-foreground: 0 0% 100%;
-    --warning: 38 92% 50%;              /* amber-500 */
+    --warning: 38 92% 50%; /* amber-500 */
     --warning-foreground: 24 10% 10%;
-    --info: 199 89% 48%;                /* sky-500 */
+    --info: 199 89% 48%; /* sky-500 */
     --info-foreground: 0 0% 100%;
 
     /* Radius */
     --radius: 0.5rem;
+
+    /* Cockpit density (ckd-05) — header hidden on appointment-detail */
+    --app-header-h: 3.5rem;
+    --cockpit-header-h: 2.5rem;
+    /* Desk → pane well → card. Warm paper, not cool slate — large fields
+       at 90–94% L read as gray slabs. Keep saturation low so it stays paper. */
+    --cockpit-canvas: 36 10% 96%;
+    --cockpit-pane: 36 8% 98.5%;
+  }
+
+  [data-cockpit-focus="true"] {
+    --app-header-h: 0px;
   }
 
   .dark {
@@ -70,7 +82,7 @@
     --popover: 222 47% 9%;
     --popover-foreground: 210 40% 98%;
 
-    --primary: 223 70% 58%;             /* lighter Halo blue for dim surfaces */
+    --primary: 223 70% 58%; /* lighter Halo blue for dim surfaces */
     --primary-foreground: 222 47% 7%;
     --accent: 38 92% 55%;
     --accent-foreground: 24 10% 10%;
@@ -92,12 +104,34 @@
     --warning-foreground: 24 10% 10%;
     --info: 199 89% 55%;
     --info-foreground: 222 47% 7%;
+
+    --cockpit-canvas: 222 40% 5%;
+    --cockpit-pane: 222 40% 8%;
   }
 }
 
 @layer base {
   * {
     border-color: hsl(var(--border));
+    /* Dense 4-column cockpit: native overlay bars are ~15px and steal width. */
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.38);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.55);
   }
   body {
     background-color: hsl(var(--background));
@@ -111,7 +145,9 @@
 @layer utilities {
   /* Apply to numeric tables (vitals, dosage rows, queue wait times) so digits don't jitter. */
   .font-tabular {
-    font-feature-settings: "tnum" on, "lnum" on;
+    font-feature-settings:
+      "tnum" on,
+      "lnum" on;
   }
 }
 
@@ -137,4 +173,32 @@
     hsl(var(--halo-blue)),
     hsl(var(--halo-sky))
   );
+}
+
+/* In-call / pre-call front↔back camera flip — 3D card turn, not a hard cut. */
+@keyframes video-camera-flip {
+  0% {
+    transform: perspective(1100px) rotateY(0deg);
+  }
+  42% {
+    transform: perspective(1100px) rotateY(90deg);
+  }
+  58% {
+    transform: perspective(1100px) rotateY(90deg);
+  }
+  100% {
+    transform: perspective(1100px) rotateY(0deg);
+  }
+}
+
+.video-camera-flip {
+  animation: video-camera-flip 520ms cubic-bezier(0.4, 0, 0.2, 1);
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+}
+
+/* Patient-phone document fullscreen — no white flash behind the stage. */
+html:fullscreen,
+html:-webkit-full-screen {
+  background-color: #000;
 }

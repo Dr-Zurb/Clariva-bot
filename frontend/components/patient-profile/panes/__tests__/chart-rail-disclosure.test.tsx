@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   RxFormProvider,
@@ -16,8 +17,13 @@ vi.mock("@/lib/api/patient-chart", () => ({
   listPatientVitals: vi.fn(),
 }));
 
+const { listPrescriptionsByPatientMock } = vi.hoisted(() => ({
+  listPrescriptionsByPatientMock: vi.fn(),
+}));
+
 vi.mock("@/lib/api", () => ({
-  listPrescriptionsByPatient: vi.fn(),
+  listPrescriptionsByPatient: listPrescriptionsByPatientMock,
+  getPrescriptionsForPatient: listPrescriptionsByPatientMock,
 }));
 
 vi.mock("@/components/patient-profile/SideSheetHost", () => ({
@@ -53,6 +59,13 @@ const appointment: Appointment = {
 } as Appointment;
 
 const prescriptionIdRef = { current: null as string | null };
+
+function renderWithQuery(ui: React.ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+}
 
 function makeVitals(
   overrides: Partial<PatientVitalsReading> = {},
@@ -152,7 +165,7 @@ describe("Chart-rail disclosure (ccd-03)", () => {
       },
     } as Awaited<ReturnType<typeof listPrescriptionsByPatient>>);
 
-    render(<HistoryPane appointment={appointment} token="test-token" />);
+    renderWithQuery(<HistoryPane appointment={appointment} token="test-token" />);
 
     expect(await screen.findByText("Fever")).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("Collapse History"));

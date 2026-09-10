@@ -527,7 +527,7 @@ describe('post-call-summary-service · aggregation', () => {
     expect(mockedRecording.getReplayAvailability).not.toHaveBeenCalled();
   });
 
-  it('returns recording.status="not-recorded" when consent was false at booking', async () => {
+  it('does not short-circuit to not-recorded on a historical false consent column', async () => {
     mountAdminMock({
       sessionRow: {
         id: VALID_SESSION_ID,
@@ -538,17 +538,21 @@ describe('post-call-summary-service · aggregation', () => {
         status: 'ended',
         actual_started_at: '2026-05-01T10:00:00Z',
         actual_ended_at: '2026-05-01T10:24:00Z',
-        recording_artifact_ref: null,
+        recording_artifact_ref: 'artifact_ref_123',
         recording_consent_at_book: false,
       },
+    });
+    mockedRecording.getReplayAvailability.mockResolvedValueOnce({
+      available: true,
+      hasVideo: true,
     });
     const dto = await getPostCallSummary({
       sessionId: VALID_SESSION_ID,
       bearerJwt: buildDoctorJwt(),
       correlationId: 'cid',
     });
-    expect(dto.recording.status).toBe('not-recorded');
-    expect(mockedRecording.getReplayAvailability).not.toHaveBeenCalled();
+    expect(dto.recording.status).toBe('available');
+    expect(mockedRecording.getReplayAvailability).toHaveBeenCalled();
   });
 
   it('reports recording.status="processing" when artifact_not_ready', async () => {

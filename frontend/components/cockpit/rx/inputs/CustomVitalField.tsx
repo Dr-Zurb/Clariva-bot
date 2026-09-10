@@ -4,8 +4,15 @@ import {
   RX_FIELD_INPUT_CLASS,
   RX_FIELD_LABEL_CLASS,
 } from "@/components/cockpit/rx/sections/field-styles";
+import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import { VitalProvenanceOverride } from "@/components/cockpit/rx/inputs/VitalProvenanceOverride";
 import { VitalNoteField } from "@/components/cockpit/rx/inputs/VitalNoteField";
+import {
+  useVitalExtrasOpen,
+  VitalExtrasPanel,
+  VitalExtrasToggle,
+} from "@/components/cockpit/rx/inputs/VitalExtrasCollapse";
+import { customVitalExtrasHaveData } from "@/lib/cockpit/vital-extras";
 import {
   VITAL_CELL_CLASS,
   VITAL_GRID_UNIT_SPAN_CLASS,
@@ -36,15 +43,24 @@ export function CustomVitalField({
   trendSeries = null,
   trendsLoading = false,
 }: CustomVitalFieldProps) {
+  const { state } = useRxForm();
+  const extras = useVitalExtrasOpen(
+    customVitalExtrasHaveData(state.fields, def.id)
+  );
   const inputId = `custom-vital-${def.id}`;
   const stringValue = value == null ? "" : String(value);
 
   return (
-    <div className={VITAL_GRID_UNIT_SPAN_CLASS} data-testid={`custom-vital-field-${def.id}`}>
+    <div
+      className={VITAL_GRID_UNIT_SPAN_CLASS}
+      data-testid={`custom-vital-field-${def.id}`}
+    >
       <div className={VITAL_CELL_CLASS}>
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className={RX_FIELD_LABEL_CLASS}>{def.label}</span>
-          {def.kind === "numeric" && trendSeries && trendSeries.points.length > 0 ? (
+          {def.kind === "numeric" &&
+          trendSeries &&
+          trendSeries.points.length > 0 ? (
             <VitalTrendButton
               customSeries={trendSeries}
               label={def.label}
@@ -78,14 +94,24 @@ export function CustomVitalField({
               className={`${RX_FIELD_INPUT_CLASS} mt-0 w-full max-w-[8rem]`}
             />
             {def.kind === "numeric" && def.unit ? (
-              <span className="whitespace-nowrap text-xs text-muted-foreground">{def.unit}</span>
+              <span className="whitespace-nowrap text-xs text-muted-foreground">
+                {def.unit}
+              </span>
             ) : null}
           </div>
+          <VitalExtrasToggle
+            open={extras.open}
+            onToggle={extras.toggle}
+            label={def.label}
+            testId={`custom-vital-extras-toggle-${def.id}`}
+          />
         </div>
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-          <VitalNoteField noteKey={def.id} label={def.label} />
-          <VitalProvenanceOverride vitalKey={def.id} />
-        </div>
+        <VitalExtrasPanel open={extras.open}>
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <VitalNoteField noteKey={def.id} label={def.label} />
+            <VitalProvenanceOverride vitalKey={def.id} />
+          </div>
+        </VitalExtrasPanel>
       </div>
     </div>
   );

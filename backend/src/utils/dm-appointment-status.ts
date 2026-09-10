@@ -1,3 +1,23 @@
+import { toStaticLocale, type ConversationLanguage } from './conversation-language';
+import type { StaticMessageLocale } from './conversation-language';
+
+/**
+ * Empty upcoming-appointment status (lang-07). Sync locale table — no LLM translation.
+ * hi/pa arms intentionally English until human-reviewed copy lands
+ * (capture inbox: bot-language-policy · status-empty hi/pa).
+ */
+const NO_UPCOMING_APPOINTMENTS_BY_LOCALE: Record<StaticMessageLocale, string> = {
+  en: "You don't have any upcoming appointments. Say 'book appointment' to schedule one.",
+  hi: "Aapke koi upcoming appointments nahi hain. Schedule karne ke liye 'book appointment' likhein.",
+  pa: "Tuhade koi upcoming appointments nahi ne. Schedule karn layi 'book appointment' likho.",
+};
+
+export function resolveNoUpcomingAppointmentsMessage(
+  language: ConversationLanguage
+): string {
+  return NO_UPCOMING_APPOINTMENTS_BY_LOCALE[toStaticLocale(language)];
+}
+
 /** User sent acknowledgment after booking (ok, thanks, all set, etc.). */
 const ACKNOWLEDGMENT_REGEX =
   /^(ok|all\s+set|thanks|thank\s+you|confirmed|done|got\s+it|ok\s+thanks|thanks\s+ok|ok\s+thank\s+you)[\s!?.]*$/i;

@@ -23,6 +23,8 @@ import {
 import { PatientBackgroundZone } from "@/components/cockpit/rx/subjective/PatientBackgroundZone";
 import { PatientAllergiesZone } from "@/components/cockpit/rx/subjective/PatientAllergiesZone";
 import { PastSurgicalHistoryField } from "@/components/cockpit/rx/subjective/PastSurgicalHistoryField";
+import { LastVisitHopiStrip } from "@/components/cockpit/rx/last-visit/LastVisitParchiStrips";
+import { LastVisitUnmatchedCustomSectionsStrip } from "@/components/cockpit/rx/last-visit/LastVisitCustomSectionStrip";
 import { CustomSubsectionBlock } from "@/components/cockpit/rx/subjective/CustomSubsectionBlock";
 import { CustomSectionTemplateButton } from "@/components/cockpit/rx/subjective/CustomSectionTemplateButton";
 import { SubjectiveSectionTemplateButton } from "@/components/cockpit/rx/subjective/SubjectiveSectionTemplateButton";
@@ -108,6 +110,7 @@ import {
   SoapTabExpandCollapseClearButtons,
   SoapTabLayoutSaveStatus,
 } from "@/components/cockpit/rx/SoapTabChromeActions";
+import { SoapPaneChromePortal } from "@/components/patient-profile/v3/SoapPaneChrome";
 
 const DOCTOR_LAYOUT_AUTOSAVE_MS = 500;
 
@@ -854,6 +857,7 @@ export function SubjectiveSection({
             ) : undefined
           }
         >
+          <LastVisitHopiStrip disabled={disabled} />
           <label htmlFor="hopi-fallback" className={RX_FIELD_LABEL_CLASS}>
             Additional history notes
           </label>
@@ -998,7 +1002,7 @@ export function SubjectiveSection({
       <section
         id="rx-symptoms"
         aria-label="Subjective"
-        className="space-y-3"
+        className="space-y-4"
         data-testid="subjective-scroll-top"
       >
         {heading !== null ? (
@@ -1008,7 +1012,11 @@ export function SubjectiveSection({
           </h3>
         ) : null}
 
-        <div className="flex min-h-9 flex-nowrap items-center gap-0.5">
+          <SoapPaneChromePortal>
+          <div
+            className="flex min-h-9 flex-nowrap items-center gap-0.5"
+            data-testid="soap-tab-chrome"
+          >
           <div className="mr-auto flex min-w-0 items-center gap-1">
             <SoapTabLayoutSaveStatus
               saved={
@@ -1059,10 +1067,11 @@ export function SubjectiveSection({
             onMoveSection={handleMoveSectionById}
             onAddCustomSection={handleAddCustomSection}
             onRemoveCustomSection={requestRemoveCustomSection}
-          />
-        </div>
+            />
+          </div>
+          </SoapPaneChromePortal>
 
-        {showAllHiddenEmptyState ? (
+          {showAllHiddenEmptyState ? (
           <div
             className="rounded-md border border-dashed border-border bg-muted/10 px-3 py-4 text-center"
             data-testid="subjective-all-hidden-empty"
@@ -1099,6 +1108,7 @@ export function SubjectiveSection({
               <CustomSubsectionBlock
                 section={block}
                 sectionId={sectionId}
+                lastVisitScope="subjective"
                 disabled={disabled}
                 focusTitleOnMount={focusBlockIdRef.current === block.id}
                 pendingChildFocusId={focusChildIdRef.current}
@@ -1175,6 +1185,10 @@ export function SubjectiveSection({
         })
           : null}
 
+        <LastVisitUnmatchedCustomSectionsStrip
+          scope="subjective"
+          disabled={disabled}
+        />
         <CustomSubsectionsChrome disabled={disabled} variant="footer" />
       </section>
       </SoapTabFamilyProvider>

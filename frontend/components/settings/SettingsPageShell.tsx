@@ -64,11 +64,11 @@ export function SettingsPageShell({
 
   return (
     <div className={cn(className)}>
-      <h1 className="text-2xl font-semibold text-foreground">{title}</h1>
-      <p className="mt-1 text-muted-foreground">{description}</p>
+      <h1 className="shrink-0 text-2xl font-semibold text-foreground">{title}</h1>
+      <p className="mt-1 shrink-0 text-muted-foreground">{description}</p>
       {saveError ? (
         <div
-          className="mt-4 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-900 dark:text-amber-200"
+          className="mt-4 shrink-0 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-900 dark:text-amber-200"
           role="status"
         >
           {saveError}

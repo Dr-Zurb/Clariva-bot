@@ -51,17 +51,16 @@ jest.mock('../../../../../src/services/service-match-learning-autobook', () => (
   tryApplyLearningPolicyAutobook: jest.fn(async () => ({ applied: false })),
 }));
 
-import {
-  bookingFunnelStage,
-  applyRecordingConsentDetourIfNeeded,
-} from '../../../../../src/workers/dm/stages/booking-funnel';
+import { bookingFunnelStage } from '../../../../../src/workers/dm/stages/booking-funnel';
 import { isBookingFunnelTurn } from '../../../../../src/workers/dm/stages/booking-funnel-predicate';
 import { resolveStage } from '../../../../../src/workers/dm/stage-router';
 import type { DmTurnContext } from '../../../../../src/workers/dm/stage-router';
 import type { Conversation } from '../../../../../src/types/database';
-import { buildRecordingConsentAskMessage } from '../../../../../src/utils/dm-copy';
 import { persistPatientAfterConsent } from '../../../../../src/services/consent-service';
 import { buildBookingPageUrl } from '../../../../../src/services/slot-selection-service';
+import { readConversationState } from '../../../../../src/types/conversation-state-io';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 
 function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
   return {
@@ -79,6 +78,7 @@ function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
     doctorId: 'doctor-1',
     correlationId: 'corr-1',
     text: 'yes',
+    turnLanguage: 'en',
     recentMessages: [],
     intentResult: { intent: 'unknown', confidence: 1 },
     doctorSettings: { timezone: 'Asia/Kolkata', instagram_receptionist_paused: false } as never,
@@ -89,6 +89,7 @@ function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
       intentResult: { intent: 'unknown', confidence: 1 },
       doctorSettings: null,
       text: 'yes',
+      turnLanguage: 'en',
       inCollection: false,
       conversationId: 'conv-1',
       patientId: 'patient-1',
@@ -99,8 +100,8 @@ function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
     justStartingCollection: false,
     signalsFeePricing: false,
     feeIdleRoutedByAnaphora: false,
-    feeComposerOpts: {},
-    bookingFeeComposerOpts: {},
+    feeComposerOpts: { language: 'en' },
+    bookingFeeComposerOpts: { language: 'en' },
     teleconsultCatalogRowCount: 1,
     channelReplyPick: null,
     lastBotAskedForDetails: false,
@@ -119,23 +120,31 @@ describe('bookingFunnelStage', () => {
     jest.clearAllMocks();
   });
 
-  it('recording_consent step → recording_consent_flow', async () => {
+  it('rec-09: persisted recording_consent hydrates to awaiting_slot_selection and sends the booking link', async () => {
+    const fixture = JSON.parse(
+      readFileSync(
+        join(__dirname, '../../../../fixtures/conversation-state/legacy/recording-consent.json'),
+        'utf-8'
+      )
+    ) as Record<string, unknown>;
+    const hydrated = readConversationState(fixture);
+    expect(hydrated.step).toBe('awaiting_slot_selection');
+
     const ctx = minimalTurnCtx({
-      state: {
-        step: 'recording_consent',
-        collectedFields: [],
-        updatedAt: new Date().toISOString(),
-      },
-      text: 'yes',
+      state: hydrated,
+      text: 'ok',
     });
 
     const result = await bookingFunnelStage.handle(ctx);
-    expect(result.branch).toBe('recording_consent_flow');
+    expect(result.branch).toBe('slot_selection');
     expect(result.nextState.step).toBe('awaiting_slot_selection');
-    expect(result.nextState.recordingConsent?.recordingConsentDecision).toBe(true);
+    expect(result.nextState).not.toHaveProperty('recordingConsent');
+    expect(result.reply).toContain('https://example.com/book');
+    expect(result.reply).toContain('audio-recorded as part of the medical record');
+    expect(result.reply).not.toMatch(/are you ok with this consult being recorded/i);
   });
 
-  it('consent granted → recording_consent_injected detour (no prior decision)', async () => {
+  it('consent granted → awaiting_slot_selection with booking link (no recording ask)', async () => {
     const ctx = minimalTurnCtx({
       state: {
         step: 'consent',
@@ -146,12 +155,11 @@ describe('bookingFunnelStage', () => {
     });
 
     const result = await bookingFunnelStage.handle(ctx);
-    expect(result.branch).toBe('recording_consent_injected');
-    expect(result.nextState.step).toBe('recording_consent');
-    expect(result.nextState.lastPromptKind).toBe('recording_consent_ask');
-    expect(result.reply).toBe(
-      buildRecordingConsentAskMessage({ practiceName: 'Test Clinic' })
-    );
+    expect(result.branch).toBe('consent_flow');
+    expect(result.nextState.step).toBe('awaiting_slot_selection');
+    expect(result.reply).toContain('https://example.com/book');
+    expect(result.reply).toContain('audio-recorded as part of the medical record');
+    expect(result.reply).not.toMatch(/are you ok with this consult being recorded/i);
   });
 
   it('ilr-03: consent persist failure → no slot link; stay on consent', async () => {
@@ -175,21 +183,23 @@ describe('bookingFunnelStage', () => {
     expect(buildBookingPageUrl).not.toHaveBeenCalled();
   });
 
-  it('emergency at recording_consent step defers to legacy (emergency gate must still fire)', () => {
+  it('emergency at folded-forward recording_consent (now awaiting_slot_selection) still defers to the emergency gate', () => {
+    const folded = readConversationState({
+      step: 'recording_consent',
+      collectedFields: [],
+      updatedAt: new Date().toISOString(),
+    });
     const ctx = minimalTurnCtx({
-      state: {
-        step: 'recording_consent',
-        collectedFields: [],
-        updatedAt: new Date().toISOString(),
-      },
+      state: folded,
       text: 'chest pain cannot breathe',
       intentResult: { intent: 'emergency', confidence: 1 },
       gateCtx: {
-        state: { step: 'recording_consent', collectedFields: [], updatedAt: new Date().toISOString() },
+        state: folded,
         recentMessages: [],
         intentResult: { intent: 'emergency', confidence: 1 },
         doctorSettings: null,
         text: 'chest pain cannot breathe',
+        turnLanguage: 'en',
         inCollection: false,
         conversationId: 'conv-1',
         patientId: 'patient-1',
@@ -198,23 +208,6 @@ describe('bookingFunnelStage', () => {
     });
     expect(isBookingFunnelTurn(ctx)).toBe(false);
     expect(resolveStage(ctx)).toBe('ai_open_response');
-  });
-
-  it('applyRecordingConsentDetourIfNeeded mirrors persist-sink invariant', () => {
-    const detoured = applyRecordingConsentDetourIfNeeded(
-      {
-        branch: 'consent_flow',
-        reply: 'booking link copy',
-        nextState: {
-          step: 'awaiting_slot_selection',
-          collectedFields: [],
-          updatedAt: new Date().toISOString(),
-        },
-      },
-      { practice_name: 'Clinic X' }
-    );
-    expect(detoured.branch).toBe('recording_consent_injected');
-    expect(detoured.nextState.step).toBe('recording_consent');
   });
 
   it('resolveStage routes funnel steps; fresh book-intent entry stays booking_entry (rcp-08)', () => {

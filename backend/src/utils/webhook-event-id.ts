@@ -49,6 +49,40 @@ export function getInstagramPageId(
 }
 
 /**
+ * Booleans + num_edit for a message_edit-only drop (RBH-11). No text, no mid values.
+ * Used when the controller skips queueing — feeds `logWebhookMessageEditDropped`.
+ */
+export function inspectInstagramMessageEditDrop(payload: unknown): {
+  hasText: boolean;
+  hasSender: boolean;
+  hasMid: boolean;
+  numEdit?: number;
+} | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const p = payload as {
+    entry?: Array<{
+      messaging?: Array<{
+        sender?: { id?: string };
+        message?: unknown;
+        message_edit?: { text?: string; mid?: string; num_edit?: number };
+      }>;
+    }>;
+  };
+  const first = p.entry?.[0]?.messaging?.[0];
+  if (!first || first.message != null || first.message_edit == null) return null;
+  const edit = first.message_edit;
+  const text = typeof edit.text === 'string' ? edit.text.trim() : '';
+  const mid = typeof edit.mid === 'string' ? edit.mid : '';
+  const numEdit = typeof edit.num_edit === 'number' ? edit.num_edit : undefined;
+  return {
+    hasText: text.length > 0,
+    hasSender: typeof first.sender?.id === 'string' && first.sender.id.length > 0,
+    hasMid: mid.length > 0,
+    numEdit,
+  };
+}
+
+/**
  * Extract payload structure for diagnostic logging (no PHI).
  * Returns only key names to identify event type (read, message, message_edit, etc.)
  * without logging any values. Safe for COMPLIANCE.md (no PII/PHI).
@@ -97,7 +131,8 @@ export function isNonActionableInstagramEvent(payload: unknown): boolean {
 export function isInstagramMessageEcho(payload: unknown): boolean {
   if (!payload || typeof payload !== 'object') return false;
   const p = payload as { object?: string; entry?: Array<{ id?: string; messaging?: Array<{ sender?: { id?: string }; message?: { is_echo?: boolean } }> }> };
-  if (p.object !== 'instagram' || !p.entry?.length) return false;
+  // Instagram Login DMs use object=instagram; Facebook Messenger uses object=page (fbm-05).
+  if ((p.object !== 'instagram' && p.object !== 'page') || !p.entry?.length) return false;
   const entry0 = p.entry[0];
   if (!entry0) return false;
   const pageId = entry0.id != null ? String(entry0.id) : null;
@@ -131,8 +166,9 @@ export function extractInstagramMessageForDedup(payload: unknown): {
 } | null {
   if (!payload || typeof payload !== 'object') return null;
   if (isInstagramMessageEcho(payload)) return null;
-  const p = payload as InstagramWebhookPayload;
-  if (p.object !== 'instagram' || !p.entry?.length) return null;
+  const p = payload as { object?: string; entry?: unknown[] };
+  // Shared messaging shape for Instagram Login (object=instagram) and Messenger (object=page).
+  if ((p.object !== 'instagram' && p.object !== 'page') || !p.entry?.length) return null;
   const entry0 = p.entry[0] as Record<string, unknown> | undefined;
   if (!entry0) return null;
   const pageId = entry0.id != null ? String(entry0.id) : null;
@@ -182,6 +218,117 @@ export function getInstagramPageIds(payload: InstagramWebhookPayload): string[] 
 // ============================================================================
 
 /**
+ * Facebook Page feed comment webhook (object=page, field=feed, item=comment).
+ * @see https://developers.facebook.com/docs/graph-api/webhooks/reference/page/
+ */
+export function isFacebookPageCommentPayload(body: unknown): boolean {
+  if (!body || typeof body !== 'object') return false;
+  const p = body as {
+    object?: string;
+    entry?: Array<{
+      changes?: Array<{ field?: string; value?: { item?: string; verb?: string } }>;
+    }>;
+  };
+  if (p.object !== 'page' || !Array.isArray(p.entry)) return false;
+  for (const entry of p.entry) {
+    const changes = entry?.changes;
+    if (!Array.isArray(changes)) continue;
+    for (const c of changes) {
+      if (c?.field !== 'feed') continue;
+      const item = c.value?.item;
+      if (item === 'comment') return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Extract comment_id from Facebook Page feed comment webhook for idempotency.
+ */
+export function extractFacebookCommentEventId(body: unknown): string | null {
+  if (!body || typeof body !== 'object') return null;
+  const p = body as {
+    object?: string;
+    entry?: Array<{
+      changes?: Array<{
+        field?: string;
+        value?: { item?: string; comment_id?: string };
+      }>;
+    }>;
+  };
+  if (p.object !== 'page' || !Array.isArray(p.entry)) return null;
+  for (const entry of p.entry) {
+    const changes = entry?.changes;
+    if (!Array.isArray(changes)) continue;
+    for (const c of changes) {
+      if (c?.field === 'feed' && c.value?.item === 'comment' && c.value.comment_id != null) {
+        return String(c.value.comment_id);
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Parse Facebook Page feed comment payload.
+ * Returns null if not a new (verb=add) comment.
+ */
+export function parseFacebookPageCommentPayload(body: unknown): {
+  commentId: string;
+  commenterUserId: string;
+  commentText: string;
+  postId: string | null;
+  pageId: string | null;
+  verb: string;
+  /** FB often sends display name on from.name (not always a @handle). */
+  commenterUsername: string | null;
+} | null {
+  if (!body || typeof body !== 'object') return null;
+  const p = body as {
+    object?: string;
+    entry?: Array<{
+      id?: string;
+      changes?: Array<{
+        field?: string;
+        value?: {
+          item?: string;
+          verb?: string;
+          comment_id?: string;
+          post_id?: string;
+          message?: string;
+          from?: { id?: string; name?: string };
+          sender_id?: string;
+        };
+      }>;
+    }>;
+  };
+  if (p.object !== 'page' || !Array.isArray(p.entry)) return null;
+  for (const entry of p.entry) {
+    const changes = entry?.changes;
+    if (!Array.isArray(changes)) continue;
+    for (const c of changes) {
+      if (c?.field !== 'feed' || !c.value || c.value.item !== 'comment') continue;
+      const v = c.value;
+      const verb = (v.verb ?? 'add').toLowerCase();
+      const commentId = v.comment_id;
+      const commenterUserId = v.from?.id ?? v.sender_id;
+      if (!commentId || !commenterUserId) continue;
+      const rawName = typeof v.from?.name === 'string' ? v.from.name.trim() : '';
+      return {
+        commentId: String(commentId),
+        commenterUserId: String(commenterUserId),
+        commentText: (v.message ?? '').trim(),
+        postId: v.post_id != null ? String(v.post_id) : null,
+        pageId: entry.id != null ? String(entry.id) : null,
+        verb,
+        commenterUsername: rawName.length > 0 ? rawName : null,
+      };
+    }
+  }
+  return null;
+}
+
+/**
  * Check if payload is an Instagram comment webhook (entry[].changes[] with field "comments" or "live_comments").
  * Comment events use a different structure than DM (entry[].messaging[]).
  */
@@ -229,6 +376,8 @@ export function parseInstagramCommentPayload(body: unknown): {
   commentText: string;
   mediaId: string | null;
   entryId: string | null;
+  /** Public IG handle when Meta includes from.username on the webhook. */
+  commenterUsername: string | null;
 } | null {
   if (!body || typeof body !== 'object') return null;
   const p = body as InstagramCommentWebhookPayload;
@@ -242,12 +391,15 @@ export function parseInstagramCommentPayload(body: unknown): {
       const commentId = v.id;
       const commenterIgId = v.from?.id;
       if (!commentId || !commenterIgId) continue;
+      const rawUser =
+        typeof v.from?.username === 'string' ? v.from.username.trim() : '';
       return {
         commentId: String(commentId),
         commenterIgId: String(commenterIgId),
         commentText: (v.text ?? '').trim(),
         mediaId: v.media?.id != null ? String(v.media.id) : null,
         entryId: entry.id != null ? String(entry.id) : null,
+        commenterUsername: rawUser.length > 0 ? rawUser : null,
       };
     }
   }

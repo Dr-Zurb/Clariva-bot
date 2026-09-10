@@ -1,0 +1,694 @@
+{
+  "_meta": {
+    "purpose": "lang-18 language resolver regression corpus",
+    "note": "Synthetic patient-shaped messages only — never real DMs (PHI). Rows with reviewed=false are excluded from scoring.",
+    "recorded": "2026-08-02",
+    "overallFloor": 0.95
+  },
+  "cases": [
+    {
+      "id": "en-hey-hallo",
+      "text": "hey hallo",
+      "expected": "en",
+      "storedBefore": null,
+      "slice": "english",
+      "reviewed": true,
+      "note": "Original p1 bug opener"
+    },
+    {
+      "id": "en-hi",
+      "text": "hi",
+      "expected": "en",
+      "storedBefore": null,
+      "slice": "english",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "en-hello",
+      "text": "hello",
+      "expected": "en",
+      "storedBefore": null,
+      "slice": "english",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "en-doc-available",
+      "text": "is the doc available tomorrow?",
+      "expected": "en",
+      "storedBefore": null,
+      "slice": "english",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "en-book-appointment",
+      "text": "I want to book an appointment for next week",
+      "expected": "en",
+      "storedBefore": null,
+      "slice": "english",
+      "reviewed": true,
+      "note": "English loanwords must not flip"
+    },
+    {
+      "id": "en-fee-plain",
+      "text": "what is the consultation fee?",
+      "expected": "en",
+      "storedBefore": null,
+      "slice": "english",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "en-thanks",
+      "text": "ok thanks",
+      "expected": "en",
+      "storedBefore": null,
+      "slice": "english",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "en-sticky-on-en",
+      "text": "sounds good, see you then",
+      "expected": "en",
+      "storedBefore": "en",
+      "slice": "english",
+      "reviewed": true,
+      "note": "Explicitly persisted en stays en"
+    },
+    {
+      "id": "en-mid-thread",
+      "text": "can we do video consult?",
+      "expected": "en",
+      "storedBefore": "en",
+      "slice": "english",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "en-cancel",
+      "text": "please cancel my appointment",
+      "expected": "en",
+      "storedBefore": null,
+      "slice": "english",
+      "reviewed": true,
+      "note": ""
+    },
+
+    {
+      "id": "hi-obv-mujhe-chahiye",
+      "text": "mujhe kal appointment chahiye",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "hinglish-obvious",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "hi-obv-bukhar",
+      "text": "mujhe teen din se bukhar hai",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "hinglish-obvious",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "hi-obv-dard",
+      "text": "mere pet mein bohut dard hai",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "hinglish-obvious",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "hi-obv-fee",
+      "text": "doctor ki fees kitni hai bhai",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "hinglish-obvious",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "hi-obv-goli",
+      "text": "yar ek goli batado",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "hinglish-obvious",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "hi-obv-from-en",
+      "text": "mujhe kal appointment chahiye",
+      "expected": "hi-Latn",
+      "storedBefore": "en",
+      "slice": "hinglish-obvious",
+      "reviewed": true,
+      "note": "Strong markers escape established en"
+    },
+    {
+      "id": "hi-obv-ulti",
+      "text": "khoon ki ulti ho rahi hai",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "hinglish-obvious",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "hi-obv-theek",
+      "text": "theek hai mujhe booking chahiye",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "hinglish-obvious",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "hi-obv-kaise",
+      "text": "kaise book karein mujhe chahiye",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "hinglish-obvious",
+      "reviewed": true,
+      "note": "kaise+mujhe+chahiye; English loanwords omitted from markers"
+    },
+    {
+      "id": "hi-obv-tabiyat",
+      "text": "meri tabiyat theek nahi hai",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "hinglish-obvious",
+      "reviewed": true,
+      "note": ""
+    },
+
+    {
+      "id": "hi-sparse-live-miss",
+      "text": "papa behosh padhe hain floor pe",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "hinglish-sparse",
+      "reviewed": true,
+      "note": "2026-08-02 live reproduction"
+    },
+    {
+      "id": "hi-sparse-live-miss-gye",
+      "text": "papa behosh ho gye",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "hinglish-sparse",
+      "reviewed": true,
+      "note": "2026-08-02 compressed spelling miss (gye)"
+    },
+    {
+      "id": "hi-sparse-behosh-gaye",
+      "text": "papa behosh ho gaye hain, mujhe bahut dard hai",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "hinglish-sparse",
+      "reviewed": true,
+      "note": "Shared behosh must not force Punjabi"
+    },
+    {
+      "id": "hi-sparse-single-kitna-null",
+      "text": "kitna?",
+      "expected": "en",
+      "storedBefore": null,
+      "slice": "hinglish-sparse",
+      "reviewed": true,
+      "note": "LANG4-D1: one marker on undecided → render en"
+    },
+    {
+      "id": "hi-sparse-single-kitna-en",
+      "text": "kitna is the fee?",
+      "expected": "en",
+      "storedBefore": "en",
+      "slice": "hinglish-sparse",
+      "reviewed": true,
+      "note": "LANG-D3: one marker does not flip established en"
+    },
+    {
+      "id": "hi-sparse-two-markers",
+      "text": "mujhe dard",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "hinglish-sparse",
+      "reviewed": true,
+      "note": "Exactly two markers = strong"
+    },
+    {
+      "id": "hi-sparse-kuch-batao-sticky",
+      "text": "kuch batao",
+      "expected": "hi-Latn",
+      "storedBefore": "hi-Latn",
+      "slice": "hinglish-sparse",
+      "reviewed": true,
+      "note": "Sticky: weak follow-up keeps hi-Latn"
+    },
+    {
+      "id": "hi-sparse-english-on-hinglish",
+      "text": "ok sounds good what time",
+      "expected": "hi-Latn",
+      "storedBefore": "hi-Latn",
+      "slice": "hinglish-sparse",
+      "reviewed": true,
+      "note": "LANG-D2 no snap-back"
+    },
+    {
+      "id": "hi-sparse-jaldi-madad",
+      "text": "jaldi madad chahiye",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "hinglish-sparse",
+      "reviewed": true,
+      "note": "lang-15 §3.1 markers"
+    },
+    {
+      "id": "hi-sparse-raha-hai",
+      "text": "dard raha hai",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "hinglish-sparse",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "hi-sparse-bachao",
+      "text": "bachao mujhe please",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "hinglish-sparse",
+      "reviewed": true,
+      "note": ""
+    },
+
+    {
+      "id": "pa-menu-tin",
+      "text": "menu tin din to",
+      "expected": "pa-Latn",
+      "storedBefore": null,
+      "slice": "punjabi",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "pa-menu-dard",
+      "text": "menu tin din to dard hai",
+      "expected": "pa-Latn",
+      "storedBefore": null,
+      "slice": "punjabi",
+      "reviewed": true,
+      "note": "Exclusive wins despite Hindi tokens"
+    },
+    {
+      "id": "pa-vich",
+      "text": "meri chhati vich dard",
+      "expected": "pa-Latn",
+      "storedBefore": null,
+      "slice": "punjabi",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "pa-naal",
+      "text": "menu naal problem hai",
+      "expected": "pa-Latn",
+      "storedBefore": null,
+      "slice": "punjabi",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "pa-gurmukhi",
+      "text": "ਮੇਨੂੰ ਬੁਖ਼ਾਰ ਹੈ",
+      "expected": "pa",
+      "storedBefore": null,
+      "slice": "punjabi",
+      "reviewed": true,
+      "note": "Script tier"
+    },
+    {
+      "id": "pa-gurmukhi-from-en",
+      "text": "ਮੇਨੂੰ ਦਰਦ ਹੈ",
+      "expected": "pa",
+      "storedBefore": "en",
+      "slice": "punjabi",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "pa-chhati",
+      "text": "meri chhati dard",
+      "expected": "pa-Latn",
+      "storedBefore": null,
+      "slice": "punjabi",
+      "reviewed": true,
+      "note": "Phrase meri chhati"
+    },
+    {
+      "id": "pa-sticky",
+      "text": "ok thanks",
+      "expected": "pa-Latn",
+      "storedBefore": "pa-Latn",
+      "slice": "punjabi",
+      "reviewed": true,
+      "note": "LANG-D2"
+    },
+
+    {
+      "id": "cont-behosh-hindi-wins",
+      "text": "papa behosh ho gaye hain",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "contention",
+      "reviewed": true,
+      "note": "Shared + Hindi markers → Hindi"
+    },
+    {
+      "id": "cont-menu-exclusive",
+      "text": "menu mujhe dard hai",
+      "expected": "pa-Latn",
+      "storedBefore": null,
+      "slice": "contention",
+      "reviewed": true,
+      "note": "Exclusive overrides higher Hindi count"
+    },
+    {
+      "id": "cont-tie-behosh",
+      "text": "behosh",
+      "expected": "en",
+      "storedBefore": null,
+      "slice": "contention",
+      "reviewed": true,
+      "note": "Tie → hi-Latn weak; undecided renders en (LANG4-D1). Acute emergency lowers the bar separately."
+    },
+    {
+      "id": "cont-meri-tabiyat",
+      "text": "meri tabiyat",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "contention",
+      "reviewed": true,
+      "note": "Shared meri + Hindi tabiyat"
+    },
+    {
+      "id": "cont-mera-dard",
+      "text": "mera sir dard hai",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "contention",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "cont-vich-wins",
+      "text": "vich dard hai mujhe",
+      "expected": "pa-Latn",
+      "storedBefore": null,
+      "slice": "contention",
+      "reviewed": true,
+      "note": ""
+    },
+
+    {
+      "id": "deva-bukhar",
+      "text": "मुझे बुखार है",
+      "expected": "hi",
+      "storedBefore": null,
+      "slice": "devanagari",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "deva-from-en",
+      "text": "मुझे दर्द है",
+      "expected": "hi",
+      "storedBefore": "en",
+      "slice": "devanagari",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "deva-appointment",
+      "text": "मुझे अपॉइंटमेंट चाहिए",
+      "expected": "hi",
+      "storedBefore": null,
+      "slice": "devanagari",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "deva-sticky",
+      "text": "ok thanks",
+      "expected": "hi",
+      "storedBefore": "hi",
+      "slice": "devanagari",
+      "reviewed": true,
+      "note": "LANG-D2"
+    },
+
+    {
+      "id": "gurm-fever",
+      "text": "ਮੇਨੂੰ ਬੁਖ਼ਾਰ ਹੈ",
+      "expected": "pa",
+      "storedBefore": null,
+      "slice": "gurmukhi",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "gurm-from-en",
+      "text": "ਮੇਨੂੰ ਦਰਦ ਹੈ",
+      "expected": "pa",
+      "storedBefore": "en",
+      "slice": "gurmukhi",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "gurm-sticky",
+      "text": "thanks",
+      "expected": "pa",
+      "storedBefore": "pa",
+      "slice": "gurmukhi",
+      "reviewed": true,
+      "note": ""
+    },
+
+    {
+      "id": "other-tamil",
+      "text": "எனக்கு காய்ச்சல்",
+      "expected": "other",
+      "storedBefore": null,
+      "slice": "other-script",
+      "reviewed": true,
+      "note": "LANG-D7"
+    },
+    {
+      "id": "other-bengali",
+      "text": "আমার জ্বর হয়েছে",
+      "expected": "other",
+      "storedBefore": "en",
+      "slice": "other-script",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "other-urdu",
+      "text": "مجھے بخار ہے",
+      "expected": "other",
+      "storedBefore": null,
+      "slice": "other-script",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "other-sticky",
+      "text": "hello",
+      "expected": "other",
+      "storedBefore": "other",
+      "slice": "other-script",
+      "reviewed": true,
+      "note": ""
+    },
+
+    {
+      "id": "fp-doc",
+      "text": "hello how are you doc, blood sugar is high today",
+      "expected": "en",
+      "storedBefore": null,
+      "slice": "false-positive",
+      "reviewed": true,
+      "note": "doc ≠ Hindi"
+    },
+    {
+      "id": "fp-sans",
+      "text": "what font, sans or serif",
+      "expected": "en",
+      "storedBefore": "en",
+      "slice": "false-positive",
+      "reviewed": true,
+      "note": "bare sans ≠ saans"
+    },
+    {
+      "id": "fp-comic-sans",
+      "text": "Use Comic Sans for the poster",
+      "expected": "en",
+      "storedBefore": null,
+      "slice": "false-positive",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "fp-girder",
+      "text": "the girder is safe",
+      "expected": "en",
+      "storedBefore": null,
+      "slice": "false-positive",
+      "reviewed": true,
+      "note": "gir must not match girder"
+    },
+    {
+      "id": "fp-truth",
+      "text": "truth matters most",
+      "expected": "en",
+      "storedBefore": null,
+      "slice": "false-positive",
+      "reviewed": true,
+      "note": "uth must not match truth"
+    },
+    {
+      "id": "fp-bulb",
+      "text": "the bulb is bright",
+      "expected": "en",
+      "storedBefore": null,
+      "slice": "false-positive",
+      "reviewed": true,
+      "note": "bula must not match bulb"
+    },
+    {
+      "id": "fp-appointment-book",
+      "text": "please book appointment with doctor",
+      "expected": "en",
+      "storedBefore": null,
+      "slice": "false-positive",
+      "reviewed": true,
+      "note": "English loanwords omitted from markers"
+    },
+    {
+      "id": "fp-main",
+      "text": "the main issue is scheduling",
+      "expected": "en",
+      "storedBefore": null,
+      "slice": "false-positive",
+      "reviewed": true,
+      "note": "mein must not match main"
+    },
+
+    {
+      "id": "em-en-chest",
+      "text": "chest pain cannot breathe",
+      "expected": "en",
+      "storedBefore": null,
+      "slice": "emergency",
+      "reviewed": true,
+      "note": "English acute — English reply OK"
+    },
+    {
+      "id": "em-hi-saans",
+      "text": "saans nahi aa rahi behosh ho gayi",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "emergency",
+      "reviewed": true,
+      "note": "Must not render English 112"
+    },
+    {
+      "id": "em-hi-ulti",
+      "text": "khoon ki ulti ho rahi hai",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "emergency",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "em-hi-behosh-floor",
+      "text": "papa behosh padhe hain floor pe",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "emergency",
+      "reviewed": true,
+      "note": "Live miss class"
+    },
+    {
+      "id": "em-hi-behosh-gye",
+      "text": "papa behosh ho gye",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "emergency",
+      "reviewed": true,
+      "note": "2026-08-02 screenshot — compressed gye"
+    },
+    {
+      "id": "em-hi-from-en-thread",
+      "text": "saans nahi aa rahi mujhe",
+      "expected": "hi-Latn",
+      "storedBefore": "en",
+      "slice": "emergency",
+      "reviewed": true,
+      "note": "Escape established en for acute Hinglish"
+    },
+    {
+      "id": "em-pa-chhati",
+      "text": "meri chhati vich dard saans nahi",
+      "expected": "pa-Latn",
+      "storedBefore": null,
+      "slice": "emergency",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "em-deva",
+      "text": "सांस नहीं आ रही बेहोश हो गए",
+      "expected": "hi",
+      "storedBefore": null,
+      "slice": "emergency",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "em-hi-bachao",
+      "text": "jaldi bachao madad chahiye",
+      "expected": "hi-Latn",
+      "storedBefore": null,
+      "slice": "emergency",
+      "reviewed": true,
+      "note": ""
+    },
+    {
+      "id": "em-hi-sticky-followup",
+      "text": "kuch batao",
+      "expected": "hi-Latn",
+      "storedBefore": "hi-Latn",
+      "slice": "emergency",
+      "reviewed": true,
+      "note": "Crisis follow-up stays Hinglish"
+    },
+    {
+      "id": "em-en-collapse",
+      "text": "my wife collapsed and I cannot wake her",
+      "expected": "en",
+      "storedBefore": null,
+      "slice": "emergency",
+      "reviewed": true,
+      "note": "English acute stays English"
+    }
+  ]
+}

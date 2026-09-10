@@ -1,10 +1,20 @@
 import {
+  CORE_PLAN_SECTION_IDS,
   PLAN_SECTION_LABELS,
   type PlanSectionId,
 } from "@/lib/cockpit/plan-section-order";
 
-/** Per-doctor hidden section ids (delta set — absent ⇒ visible). */
+/** Per-doctor hidden section ids. Empty stored set ⇒ factory lean default. */
 export type PlanSectionHiddenSet = PlanSectionId[];
+
+/** Visible at factory default. Advice / referral / private notes stay addable. */
+export const CORE_PLAN_DEFAULT_VISIBLE_IDS = [
+  "investigations",
+  "medications",
+  "follow_up",
+] as const;
+
+const CORE_VISIBLE_SET = new Set<string>(CORE_PLAN_DEFAULT_VISIBLE_IDS);
 
 const STATIC_SECTION_ID_SET = new Set<string>(Object.keys(PLAN_SECTION_LABELS));
 
@@ -20,6 +30,41 @@ function toMountableSet(
 
 function toHiddenSet(hiddenIds: readonly string[]): ReadonlySet<string> {
   return new Set(hiddenIds);
+}
+
+export interface DefaultPlanLayout {
+  defaultHidden: PlanSectionId[];
+}
+
+/** Factory default: investigations + medications + follow-up on; the rest addable. */
+export function resolveDefaultPlanLayout(): DefaultPlanLayout {
+  return {
+    defaultHidden: CORE_PLAN_SECTION_IDS.filter((id) => !CORE_VISIBLE_SET.has(id)),
+  };
+}
+
+/**
+ * Layer the doctor override over the factory default. Stored set wins wholesale
+ * when present; otherwise the lean default applies (vitals / V3-D3 analogue).
+ */
+export function resolveEffectivePlanHidden({
+  storedHidden,
+}: {
+  storedHidden: readonly string[];
+}): { hidden: PlanSectionId[] } {
+  const seed = resolveDefaultPlanLayout();
+  const source = storedHidden.length > 0 ? storedHidden : seed.defaultHidden;
+  const seen = new Set<PlanSectionId>();
+  const hidden: PlanSectionId[] = [];
+
+  for (const id of source) {
+    if (!isKnownStaticSectionId(id)) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    hidden.push(id);
+  }
+
+  return { hidden };
 }
 
 /**
@@ -77,7 +122,7 @@ export function serializeHiddenIds(hiddenIds: readonly string[]): string {
   return JSON.stringify(hiddenOverridesToPersist(hiddenIds, []));
 }
 
-/** Load the doctor's stored hidden set. */
+/** Load the doctor's stored hidden set (empty = factory lean default). */
 export async function fetchPlanSectionHidden(
   token: string,
 ): Promise<PlanSectionHiddenSet> {

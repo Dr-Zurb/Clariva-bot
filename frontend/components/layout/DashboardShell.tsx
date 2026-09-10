@@ -1,13 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { Header } from "./Header";
 import { Sidebar } from "./Sidebar";
 import { GlobalCommandPalette } from "./GlobalCommandPalette";
+import { isCockpitAppointmentPath } from "@/lib/dashboard/cockpit-path";
+import { DASHBOARD_SHELL_ID } from "@/lib/dashboard/cockpit-fullscreen";
+import {
+  DashboardLiveFocusProvider,
+  useDashboardLiveFocus,
+} from "./DashboardLiveFocusContext";
 import { useDashboardCounts } from "@/hooks/useDashboardCounts";
 import { useOnboardingStatusQuery } from "@/hooks/queries/useOnboardingStatusQuery";
 import { useVerificationStatusQuery } from "@/hooks/queries/useVerificationStatusQuery";
-import { DashboardPushOptInPrompt } from "@/components/dashboard/DashboardPushOptInPrompt";
 import { NavPerfTracker } from "@/lib/nav-perf/nav-timing";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 
@@ -52,7 +58,9 @@ interface DashboardShellProps {
 export function DashboardShell(props: DashboardShellProps) {
   return (
     <QueryProvider>
-      <DashboardShellInner {...props} />
+      <DashboardLiveFocusProvider>
+        <DashboardShellInner {...props} />
+      </DashboardLiveFocusProvider>
     </QueryProvider>
   );
 }
@@ -67,6 +75,12 @@ function DashboardShellInner({
   // Default false (expanded) avoids SSR/hydration mismatch — real value is
   // read from localStorage in the effect below (one-frame reconcile on mount).
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const { liveFocus } = useDashboardLiveFocus();
+  const pathname = usePathname();
+  const isCockpit = isCockpitAppointmentPath(pathname);
+  // Cockpit + live consult force icon-rail nav without writing localStorage.
+  const effectiveSidebarCollapsed =
+    liveFocus || isCockpit || sidebarCollapsed;
   // task-ui-B4 — Cmd-K palette open state. Lifted here so the header
   // search trigger and the global keyboard listener can both flip it.
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -123,30 +137,36 @@ function DashboardShellInner({
     onboarding?.complete === true && verification?.status === "verified";
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div
+      id={DASHBOARD_SHELL_ID}
+      className="flex h-screen flex-col overflow-hidden"
+      data-live-focus={liveFocus ? "true" : "false"}
+      data-cockpit-focus={isCockpit ? "true" : "false"}
+    >
       <NavPerfTracker />
-      <Header
-        userEmail={userEmail}
-        token={token}
-        isAdmin={isAdmin}
-        onMenuToggle={() => setMobileMenuOpen((prev) => !prev)}
-        onOpenSearch={handleOpenPalette}
-      />
+      {isCockpit ? null : (
+        <Header
+          userEmail={userEmail}
+          token={token}
+          isAdmin={isAdmin}
+          onMenuToggle={() => setMobileMenuOpen((prev) => !prev)}
+          onOpenSearch={handleOpenPalette}
+        />
+      )}
       <div className="flex min-h-0 flex-1">
         <Sidebar
           isMobileOpen={mobileMenuOpen}
           onClose={() => setMobileMenuOpen(false)}
           counts={counts}
-          collapsed={sidebarCollapsed}
+          collapsed={effectiveSidebarCollapsed}
           onToggleCollapse={handleToggleCollapse}
           hideGettingStarted={hideGettingStarted}
         />
         <main
-          className="min-h-0 flex-1 overflow-auto p-4 md:p-6"
+          className="flex min-h-0 flex-1 flex-col overflow-auto p-4 md:p-6"
           id="dashboard-main"
           tabIndex={-1}
         >
-          {token ? <DashboardPushOptInPrompt accessToken={token} /> : null}
           {children}
         </main>
       </div>

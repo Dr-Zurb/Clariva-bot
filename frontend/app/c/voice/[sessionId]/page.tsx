@@ -5,36 +5,50 @@
  *
  * URL shape: `/c/voice/[sessionId]?t=<HMAC-consultation-token>`
  *
- * Flow (task-voice-A6):
+ * Flow (task-voice-A6 + crc-12):
  *   1. Read `sessionId` + `?t=` from the URL.
- *   2. `precall` — `<VoiceConsultPreCall>` (mic + speaker check; no tokens).
- *   3. On Join / Skip → `connecting` — exchange HMAC for Twilio token +
- *      companion JWT; strip `?t=` from the URL.
- *   4. `scheduled` → holding screen, poll every 30s for `live`.
- *   5. `live` → `<VoiceConsultRoom>`.
- *   6. Terminal statuses → end notice.
+ *   2. Probe session status via text-token (no Twilio).
+ *      `scheduled` → holding lobby with `<VoiceConsultPreCall>`.
+ *      Completing the check does not mint a voice token (CRC-D1).
+ *      `live` → late-opener `<VoiceConsultPreLobby>` gate.
+ *   3. On live (Join / Skip, or auto-connect from holding) → `connecting`
+ *      — exchange HMAC for Twilio token + companion JWT; strip `?t=`.
+ *   4. `live` → `<VoiceConsultRoom>`.
+ *   5. Terminal statuses → end notice.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import {
+  getOpdSessionSnapshot,
+  postLobbyHeartbeat,
   requestVoiceSessionToken,
   requestTextSessionToken,
   type VoiceConsultTokenExchangeData,
   type TextConsultSessionStatus,
   type TextConsultTokenExchangeData,
 } from "@/lib/api";
-import { formatDateTime } from "@/lib/format-date";
 import VoiceConsultRoom from "@/components/consultation/VoiceConsultRoom";
 import VoiceConsultPreLobby from "@/components/consultation/VoiceConsultPreLobby";
+import LobbyWaitContext from "@/components/consultation/LobbyWaitContext";
 import { resolveClinicBranding } from "@/lib/clinic/branding";
+import { lobbyPresenceChannelEnabled } from "@/lib/consultation/lobby-reconnect";
+import { useLobbyPresenceChannel } from "@/hooks/useLobbyPresenceChannel";
+import {
+  LobbyReconnectNotice,
+  useLobbyReconnect,
+} from "@/hooks/useLobbyReconnect";
+import {
+  shouldMintVoiceTwilio,
+  shouldSkipVoicePrecallGate,
+  voicePhaseFromSessionStatus,
+} from "@/lib/consultation/voice-lobby-precall";
+import type { PatientOpdSnapshot } from "@/types/opd-session";
 import {
   buildVoiceRejoinCache,
   useVoiceRejoinCache,
   type VoiceRejoinCache,
 } from "@/hooks/useVoiceRejoinCache";
-
-const SCHEDULED_POLL_MS = 30_000;
 
 type Phase =
   | "init"
@@ -72,14 +86,18 @@ function endStateMessage(status: TextConsultSessionStatus): string {
   }
 }
 
-function formatScheduledTime(iso: string): string {
-  return formatDateTime(iso, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+function voiceStubFromText(
+  data: TextConsultTokenExchangeData
+): VoiceConsultTokenExchangeData {
+  return {
+    token: null,
+    roomName: "",
+    expiresAt: null,
+    sessionStatus: data.sessionStatus,
+    scheduledStartAt: data.scheduledStartAt,
+    expectedEndAt: data.expectedEndAt,
+    practiceName: data.practiceName,
+  };
 }
 
 export default function PatientVoiceConsultPage() {
@@ -100,6 +118,12 @@ export default function PatientVoiceConsultPage() {
     practiceName?: string;
     scheduledStartAt?: string;
   } | null>(null);
+  const [lobbyCheckDone, setLobbyCheckDone] = useState(false);
+  const [lobbySnapshot, setLobbySnapshot] = useState<PatientOpdSnapshot | null>(
+    null
+  );
+  const arrivedViaLobbyRef = useRef(false);
+  const connectingRef = useRef(false);
 
   const lastLoggedFailureRef = useRef<string | null>(null);
 
@@ -150,13 +174,13 @@ export default function PatientVoiceConsultPage() {
       }
       return true;
     },
-    [],
+    []
   );
 
   const writeRejoinCache = useCallback(
     (
       voice: VoiceConsultTokenExchangeData,
-      companion: CompanionState | null,
+      companion: CompanionState | null
     ) => {
       if (!voice.token) return;
       const snapshot = buildVoiceRejoinCache({
@@ -166,16 +190,16 @@ export default function PatientVoiceConsultPage() {
         roomName: voice.roomName,
         hmacToken: urlTokenRef.current || undefined,
         supabaseJwt:
-          companion?.status === "ok" ? companion.data.token ?? undefined : undefined,
-        companionCurrentUserId:
           companion?.status === "ok"
-            ? companion.data.currentUserId
+            ? (companion.data.token ?? undefined)
             : undefined,
+        companionCurrentUserId:
+          companion?.status === "ok" ? companion.data.currentUserId : undefined,
         sessionStatus: voice.sessionStatus,
       });
       if (snapshot) rejoinCache.write(snapshot);
     },
-    [rejoinCache, sessionId],
+    [rejoinCache, sessionId]
   );
 
   useEffect(() => {
@@ -201,100 +225,131 @@ export default function PatientVoiceConsultPage() {
       });
       return;
     }
-    setState({ phase: "precall" });
-  }, [sessionId, rejoinCache, restoreFromRejoinCache]);
 
-  // task-voice-B2 — lobby branding + countdown need schedule metadata without
-  // entering the in-call path. Text-token exchange returns the same fields as
-  // the companion channel (practiceName, scheduledStartAt) and matches the
-  // video join-page pattern; voice Twilio tokens are still minted only on Join.
-  useEffect(() => {
-    if (state.phase !== "precall" || !sessionId || !urlTokenRef.current) return;
     let cancelled = false;
     void (async () => {
       try {
-        const res = await requestTextSessionToken(sessionId, urlTokenRef.current);
+        const res = await requestTextSessionToken(
+          sessionId,
+          urlTokenRef.current
+        );
         if (cancelled) return;
         setPrecallLobby({
           practiceName: res.data.practiceName,
           scheduledStartAt: res.data.scheduledStartAt,
         });
+        const entry = voicePhaseFromSessionStatus(res.data.sessionStatus);
+        if (entry === "holding") {
+          arrivedViaLobbyRef.current = true;
+          setState({
+            phase: "holding",
+            voice: voiceStubFromText(res.data),
+          });
+        } else if (entry === "precall") {
+          setState({ phase: "precall" });
+        } else {
+          setState({
+            phase: "ended",
+            voice: voiceStubFromText(res.data),
+          });
+        }
       } catch {
-        if (!cancelled) setPrecallLobby(null);
+        if (!cancelled) setState({ phase: "precall" });
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [state.phase, sessionId]);
+  }, [sessionId, rejoinCache, restoreFromRejoinCache]);
 
-  const exchangeVoice = useCallback(async (): Promise<VoiceConsultTokenExchangeData | null> => {
-    const token = urlTokenRef.current;
-    if (!sessionId || !token) {
-      setState({
-        phase: "error",
-        errorMessage:
-          "This link is invalid or expired. Please ask your doctor to send a new one.",
-      });
-      return null;
-    }
-    try {
-      const res = await requestVoiceSessionToken(sessionId, token);
-      return res.data;
-    } catch (err) {
-      const status = (err as { status?: number }).status;
-      const message =
-        status === 401
-          ? "This link is invalid or expired. Please ask your doctor to send a new one."
-          : status === 404
-            ? "We couldn’t find this consult. Please ask your doctor to send a new link."
-            : "Something went wrong opening the consult. Please try again in a moment.";
-      setState({ phase: "error", errorMessage: message });
-      return null;
-    }
-  }, [sessionId]);
-
-  const exchangeCompanion = useCallback(async (): Promise<CompanionState | null> => {
-    const token = urlTokenRef.current;
-    if (!sessionId || !token) return null;
-    try {
-      const res = await requestTextSessionToken(sessionId, token);
-      lastLoggedFailureRef.current = null;
-      return { status: "ok", data: res.data };
-    } catch (err) {
-      const statusCode = (err as { status?: number }).status;
-      const message = err instanceof Error ? err.message : "Unknown error";
-      const signature = `${statusCode ?? "noStatus"}:${message}`;
-      if (lastLoggedFailureRef.current !== signature) {
-        lastLoggedFailureRef.current = signature;
-        // eslint-disable-next-line no-console
-        console.warn("[companion] exchange failed", { statusCode, message });
+  const exchangeVoice =
+    useCallback(async (): Promise<VoiceConsultTokenExchangeData | null> => {
+      const token = urlTokenRef.current;
+      if (!sessionId || !token) {
+        setState({
+          phase: "error",
+          errorMessage:
+            "This link is invalid or expired. Please ask your doctor to send a new one.",
+        });
+        return null;
       }
-      return { status: "unavailable", error: { message, statusCode } };
-    }
-  }, [sessionId]);
+      try {
+        const res = await requestVoiceSessionToken(sessionId, token);
+        return res.data;
+      } catch (err) {
+        const status = (err as { status?: number }).status;
+        const message =
+          status === 401
+            ? "This link is invalid or expired. Please ask your doctor to send a new one."
+            : status === 404
+              ? "We couldn’t find this consult. Please ask your doctor to send a new link."
+              : "Something went wrong opening the consult. Please try again in a moment.";
+        setState({ phase: "error", errorMessage: message });
+        return null;
+      }
+    }, [sessionId]);
+
+  const exchangeCompanion =
+    useCallback(async (): Promise<CompanionState | null> => {
+      const token = urlTokenRef.current;
+      if (!sessionId || !token) return null;
+      try {
+        const res = await requestTextSessionToken(sessionId, token);
+        lastLoggedFailureRef.current = null;
+        return { status: "ok", data: res.data };
+      } catch (err) {
+        const statusCode = (err as { status?: number }).status;
+        const message = err instanceof Error ? err.message : "Unknown error";
+        const signature = `${statusCode ?? "noStatus"}:${message}`;
+        if (lastLoggedFailureRef.current !== signature) {
+          lastLoggedFailureRef.current = signature;
+          // eslint-disable-next-line no-console
+          console.warn("[companion] exchange failed", { statusCode, message });
+        }
+        return { status: "unavailable", error: { message, statusCode } };
+      }
+    }, [sessionId]);
 
   const routeAfterExchange = useCallback(
-    (voice: VoiceConsultTokenExchangeData, companion: CompanionState | null) => {
+    (
+      voice: VoiceConsultTokenExchangeData,
+      companion: CompanionState | null
+    ) => {
       if (voice.sessionStatus === "live") {
-        setState({ phase: "in-call", voice, companion: companion ?? undefined });
+        setState({
+          phase: "in-call",
+          voice,
+          companion: companion ?? undefined,
+        });
       } else if (voice.sessionStatus === "scheduled") {
-        setState({ phase: "holding", voice, companion: companion ?? undefined });
+        connectingRef.current = false;
+        arrivedViaLobbyRef.current = true;
+        setState({
+          phase: "holding",
+          voice,
+          companion: companion ?? undefined,
+        });
       } else {
+        connectingRef.current = false;
         setState({ phase: "ended", voice });
       }
     },
-    [],
+    []
   );
 
   const proceedToCall = useCallback(() => {
+    if (connectingRef.current) return;
+    connectingRef.current = true;
     setState({ phase: "connecting" });
     void (async () => {
       const [voice, companion] = await Promise.all([
         exchangeVoice(),
         exchangeCompanion(),
       ]);
-      if (!voice) return;
+      if (!voice) {
+        connectingRef.current = false;
+        return;
+      }
 
       writeRejoinCache(voice, companion);
 
@@ -306,26 +361,75 @@ export default function PatientVoiceConsultPage() {
 
       routeAfterExchange(voice, companion);
     })();
-  }, [exchangeVoice, exchangeCompanion, router, sessionId, routeAfterExchange, writeRejoinCache]);
+  }, [
+    exchangeVoice,
+    exchangeCompanion,
+    router,
+    sessionId,
+    routeAfterExchange,
+    writeRejoinCache,
+  ]);
 
-  useEffect(() => {
-    if (state.phase !== "holding") return;
-    const interval = setInterval(() => {
-      void (async () => {
-        const voice = await exchangeVoice();
-        if (!voice) return;
-        if (voice.sessionStatus === "live") {
-          const companion = await exchangeCompanion();
-          setState({ phase: "in-call", voice, companion: companion ?? undefined });
-        } else if (voice.sessionStatus !== "scheduled") {
-          setState({ phase: "ended", voice });
-        } else {
-          setState((prev) => ({ ...prev, voice, phase: "holding" }));
-        }
-      })();
-    }, SCHEDULED_POLL_MS);
-    return () => clearInterval(interval);
-  }, [state.phase, exchangeVoice, exchangeCompanion]);
+  const phaseRef = useRef(state.phase);
+  phaseRef.current = state.phase;
+
+  // crc-17 — heartbeat always; holding poll piggybacks so recovery
+  // pulls the patient in if the doctor started while they were offline.
+  // Does not touch lobbyCheckDone.
+  const lobbyTick = useCallback(async () => {
+    const tok = urlTokenRef.current.trim();
+    if (!tok) throw new Error("missing_token");
+    await postLobbyHeartbeat(tok);
+    if (phaseRef.current !== "holding") return;
+    try {
+      const snap = await getOpdSessionSnapshot(tok);
+      setLobbySnapshot(snap.data.snapshot);
+    } catch {
+      /* snapshot is advisory */
+    }
+    const companion = await exchangeCompanion();
+    if (!companion || companion.status !== "ok") return;
+    const status = companion.data.sessionStatus;
+    if (shouldMintVoiceTwilio(status)) {
+      if (
+        shouldSkipVoicePrecallGate({
+          arrivedViaLobby: arrivedViaLobbyRef.current,
+        })
+      ) {
+        proceedToCall();
+      } else {
+        setState({ phase: "precall" });
+      }
+      return;
+    }
+    if (status !== "scheduled") {
+      setState({
+        phase: "ended",
+        voice: voiceStubFromText(companion.data),
+      });
+      return;
+    }
+    setPrecallLobby({
+      practiceName: companion.data.practiceName,
+      scheduledStartAt: companion.data.scheduledStartAt,
+    });
+    setState((prev) => ({
+      ...prev,
+      phase: "holding",
+      voice: voiceStubFromText(companion.data),
+    }));
+  }, [exchangeCompanion, proceedToCall]);
+
+  const inVoiceLobby = state.phase === "precall" || state.phase === "holding";
+  const { reconnecting, isOnline } = useLobbyReconnect({
+    enabled: inVoiceLobby,
+    onTick: lobbyTick,
+  });
+
+  useLobbyPresenceChannel({
+    consultationToken: urlTokenRef.current,
+    enabled: lobbyPresenceChannelEnabled(inVoiceLobby, isOnline),
+  });
 
   const handlePatientTokenRefresh = useCallback(async (): Promise<string> => {
     const result = await exchangeCompanion();
@@ -335,7 +439,7 @@ export default function PatientVoiceConsultPage() {
     setState((prev) =>
       prev.phase === "in-call" && prev.voice
         ? { ...prev, companion: result }
-        : prev,
+        : prev
     );
     return result.data.token;
   }, [exchangeCompanion]);
@@ -346,7 +450,7 @@ export default function PatientVoiceConsultPage() {
     setState((prev) =>
       prev.voice && prev.phase === "in-call"
         ? { ...prev, companion: result }
-        : prev,
+        : prev
     );
   }, [exchangeCompanion]);
 
@@ -355,7 +459,7 @@ export default function PatientVoiceConsultPage() {
     setState((prev) =>
       prev.voice
         ? { phase: "ended", voice: { ...prev.voice, sessionStatus: "ended" } }
-        : prev,
+        : prev
     );
   }, [rejoinCache]);
 
@@ -389,44 +493,45 @@ export default function PatientVoiceConsultPage() {
       practiceName: precallLobby?.practiceName,
     });
     return (
-      <main className="flex min-h-[100dvh] items-center justify-center bg-gray-50 px-4 py-8">
-        <VoiceConsultPreLobby
-          role="patient"
-          branding={branding}
-          scheduledStartAt={precallLobby?.scheduledStartAt}
-          counterpartyLabel="your doctor"
-          onJoin={proceedToCall}
-          onSkip={proceedToCall}
-        />
-      </main>
+      <>
+        <LobbyReconnectNotice show={reconnecting} />
+        <main className="flex min-h-[100dvh] items-center justify-center bg-gray-50 px-4 py-8">
+          <VoiceConsultPreLobby
+            role="patient"
+            branding={branding}
+            scheduledStartAt={precallLobby?.scheduledStartAt}
+            counterpartyLabel="your doctor"
+            onJoin={proceedToCall}
+            onSkip={proceedToCall}
+          />
+        </main>
+      </>
     );
   }
 
-  if (state.phase === "holding" && state.voice) {
-    const startTimeLabel = formatScheduledTime(state.voice.scheduledStartAt);
-    const practice = state.voice.practiceName?.trim();
+  if (state.phase === "holding") {
+    const branding = resolveClinicBranding({
+      practiceName: state.voice?.practiceName ?? precallLobby?.practiceName,
+    });
     return (
-      <main className="flex min-h-[100dvh] items-center justify-center bg-gray-50 px-4">
-        <div className="max-w-sm rounded-lg border border-gray-200 bg-white p-6 text-center shadow-sm">
-          <p className="text-xs uppercase tracking-wide text-gray-500">
-            {practice ? practice : "Your consult"}
-          </p>
-          <h1 className="mt-1 text-base font-semibold text-gray-900">
-            Your voice consult starts at {startTimeLabel}
-          </h1>
-          <p className="mt-3 text-sm text-gray-600">
-            We’ll open the audio call as soon as the doctor begins the session.
-            You can keep this page open.
-          </p>
-          <p className="mt-4 inline-flex items-center gap-2 text-xs text-gray-500">
-            <span
-              className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-500"
-              aria-hidden
-            />
-            Waiting for the doctor…
-          </p>
-        </div>
-      </main>
+      <>
+        <LobbyReconnectNotice show={reconnecting} />
+        <main className="flex min-h-[100dvh] items-center justify-center bg-gray-50 px-4 py-8">
+          <VoiceConsultPreLobby
+            role="patient"
+            branding={branding}
+            scheduledStartAt={
+              state.voice?.scheduledStartAt ?? precallLobby?.scheduledStartAt
+            }
+            counterpartyLabel="your doctor"
+            holdingMode
+            deviceCheckDone={lobbyCheckDone}
+            contextSlot={<LobbyWaitContext snapshot={lobbySnapshot} />}
+            onJoin={() => setLobbyCheckDone(true)}
+            onSkip={() => setLobbyCheckDone(true)}
+          />
+        </main>
+      </>
     );
   }
 

@@ -254,6 +254,7 @@ describe("lab-test-library (rpt-03)", () => {
         refLow: null,
         refHigh: null,
         refText: null,
+        method: null,
       });
     });
   });

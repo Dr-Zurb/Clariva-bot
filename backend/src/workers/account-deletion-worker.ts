@@ -25,47 +25,56 @@
  *                                   otherwise.
  *
  *   3. `finalizeAccountDeletion` — cron-driven. After the grace
- *                                   cutoff, enumerate artifact prefixes
- *                                   for the patient, write them to
- *                                   `signed_url_revocation` (ON
- *                                   CONFLICT DO NOTHING — the prefix
- *                                   may already be on the list from an
- *                                   earlier support-request), scrub
- *                                   PII from the `patients` row, send
- *                                   the explainer DM, and stamp the
- *                                   audit row with `finalized_at` +
- *                                   `artifact_prefix_count`. Idempotent
- *                                   — re-running after `finalized_at`
- *                                   is set is a no-op.
+ *                                   cutoff, enumerate registry rows,
+ *                                   write revocation prefixes (the
+ *                                   legacy `recordings/patient_<uuid>/`
+ *                                   prefix plus one `twilio-composition:`
+ *                                   prefix per live Composition), destroy
+ *                                   eligible media when
+ *                                   `ARCHIVAL_HARD_DELETE_ENABLED` is
+ *                                   true, scrub PII from the `patients`
+ *                                   row, send the explainer DM, and
+ *                                   stamp the audit row with
+ *                                   `finalized_at` +
+ *                                   `artifact_prefix_count` + `notes`.
+ *                                   Idempotent — re-running after
+ *                                   `finalized_at` is set is a no-op.
+ *                                   Nothing irreversible runs before
+ *                                   this function (the grace window).
  *
  * ## Artifact prefix convention
  *
- * v1 uses a single prefix per patient:
+ * The Supabase-hosted prefix remains:
  *   `recordings/patient_<uuid>/`
  *
- * Plans 04 / 05 / 07 write artifacts under this prefix (session id +
- * artifact type as sub-path). Enumerating at deletion time therefore
- * reduces to "emit this one prefix". Future work (multiple buckets,
- * per-doctor prefixes, etc.) would extend `enumerateArtifactPrefixes`
- * in-place — the worker contract around it stays stable.
+ * rec-32 also writes one `twilio-composition:<CJ…>` prefix per live
+ * Twilio-hosted registry row so `isRevoked`'s SID substring check
+ * covers REC1-D1 URIs. `enumerateArtifactPrefixes` still emits only
+ * the Supabase prefix; the Twilio prefixes come from the erasure plan.
  *
  * ## Failure posture
  *
  * The worker is a multi-step operation against an external system
- * (Supabase storage + DB + DM channel). We do NOT wrap the whole thing
- * in a DB transaction — a failed DM send should not roll back the
- * revocation rows (access-severance is the irreversible commitment;
- * the DM is a courtesy). Instead, each step is ordered by criticality:
+ * (Twilio + Supabase storage + DB + DM channel). We do NOT wrap the
+ * whole thing in a DB transaction — a failed DM send should not roll
+ * back the revocation rows (access-severance is the irreversible
+ * commitment; the DM is a courtesy). Instead, each step is ordered by
+ * criticality:
  *
- *   1. Revocation rows INSERT   (most important — blocks Plan 07 access)
- *   2. PII scrub on patient row (DPDP erasure minimum)
- *   3. Explainer DM             (courtesy notification)
- *   4. Audit row `finalized_at` (marks the work done for the cron)
+ *   1. Revocation rows INSERT     (fastest access block — Plan 07 mint)
+ *   2. Eligible media destroy     (rec-32; gated by the archival flag)
+ *   3. PII scrub on patient row   (DPDP erasure minimum)
+ *   4. Explainer DM               (courtesy notification — tells the
+ *                                  truth about deleted vs deferred)
+ *   5. Audit row `finalized_at`   (marks the work done for the cron)
  *
- * If step 3 fails, we still stamp `finalized_at` so the cron doesn't
- * loop on the same row; the DM failure is logged for manual follow-up.
- * If step 2 fails, we do NOT stamp `finalized_at` — the cron will
- * retry on the next run, and operators can triage via the logged error.
+ * Step 2 sits after revocation so a failed provider call still leaves
+ * access severed, and before the PII scrub so cutoff math can still
+ * read `patients.date_of_birth`. A failed destroy or scrub does NOT
+ * stamp `finalized_at` — the cron retries. Rec-31's Twilio 404-as-
+ * success makes a retry after a successful destroy + failed stamp
+ * harmless. If step 4 fails, we still stamp so the cron doesn't loop;
+ * the DM failure is logged for manual follow-up.
  *
  * @see docs/Work/Daily-plans/April 2026/19-04-2026/Tasks/task-33-account-deletion-revocation-list.md
  */
@@ -78,6 +87,14 @@ import { logAuditEvent } from '../utils/audit-logger';
 import { redactPhiForAI } from '../services/ai-service';
 import { scrubPatientPiiFromLogs } from '../services/account-deletion-pii-scrub';
 import { buildAccountDeletionExplainerDm } from '../utils/dm-copy';
+import {
+  applyPatientErasurePlan,
+  buildPatientErasurePlan,
+  deriveErasureDmOutcome,
+  serializeErasureAuditNotes,
+  type PlanAndMaybeEraseResult,
+} from '../services/recording-erasure-service';
+import { coerceConversationLanguage } from '../services/conversation-service';
 import { sendInstagramMessage } from '../services/instagram-service';
 import { getInstagramAccessTokenForDoctor } from '../services/instagram-connect-service';
 import { sendSms } from '../services/twilio-sms-service';
@@ -175,6 +192,7 @@ async function sendExplainerDm(input: {
   patientId: string;
   finalizedAt: Date;
   correlationId: string;
+  erasure?: PlanAndMaybeEraseResult;
 }): Promise<{ sent: boolean; channel?: 'instagram' | 'sms' | 'email' }> {
   const admin = getSupabaseAdminClient();
   if (!admin) {
@@ -185,28 +203,24 @@ async function sendExplainerDm(input: {
     return { sent: false };
   }
 
-  const message = buildAccountDeletionExplainerDm({
-    citation: LEGAL_RETENTION_CITATION,
-    finalizedAt: input.finalizedAt,
-  });
-
-  // Patient contact: we deliberately read the patient row BEFORE the
-  // scrub on the caller side, so we still have the identifiers here.
-  // But because the worker orders revocation → scrub → DM, by the time
-  // we reach this helper the patient row has already been redacted.
-  // Solution: the caller (finalize) hands us the DM bundle it
-  // captured earlier. To keep the helper's shape simple for v1 we
-  // re-read from conversations (platform_conversation_id is retained)
-  // and skip the other channels entirely. This matches the spec's
-  // "non-urgent informational DM" framing.
   const { data: conv } = await admin
     .from('conversations')
-    .select('doctor_id, platform, platform_conversation_id')
+    .select('doctor_id, platform, platform_conversation_id, language')
     .eq('patient_id', input.patientId)
     .eq('platform', 'instagram')
     .order('updated_at', { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  const message = buildAccountDeletionExplainerDm({
+    language: coerceConversationLanguage(conv?.language),
+    citation: LEGAL_RETENTION_CITATION,
+    finalizedAt: input.finalizedAt,
+    recordingOutcome: input.erasure?.outcome,
+    recordingsHeldUntil: input.erasure?.latestHeldUntil
+      ? new Date(input.erasure.latestHeldUntil)
+      : null,
+  });
 
   const igRecipientId = conv?.platform_conversation_id ?? null;
   const doctorId = conv?.doctor_id ?? null;
@@ -508,10 +522,18 @@ export async function finalizeAccountDeletion(
 
   const prefixes = enumerateArtifactPrefixes(input.patientId);
 
+  // Read-only plan first so Twilio revocation prefixes exist before
+  // any destroy call, and so pediatric cutoff can still see DOB.
+  const plan = await buildPatientErasurePlan({
+    patientId: input.patientId,
+    correlationId: input.correlationId,
+  });
+  const allPrefixes = [...prefixes, ...plan.twilioRevocationPrefixes];
+
   // Step 1: revocation rows. ON CONFLICT DO NOTHING so duplicate prefix
   // rows (support-request earlier, now account-deletion) collapse
   // without failing the worker.
-  for (const prefix of prefixes) {
+  for (const prefix of allPrefixes) {
     const { error: insertErr } = await admin
       .from('signed_url_revocation')
       .upsert(
@@ -530,27 +552,61 @@ export async function finalizeAccountDeletion(
     }
   }
 
-  // Step 2: PII scrub. If this fails we intentionally bail before
+  // Step 2: eligible media destroy. Gated by the archival flag
+  // (REC5-D10). Failure must not stamp finalized_at.
+  const mediaDeleteEnabled = env.ARCHIVAL_HARD_DELETE_ENABLED === true;
+  let deleted = 0;
+  let deletedArtifactIds: string[] = [];
+  if (mediaDeleteEnabled && plan.eligibleNow > 0) {
+    const applied = await applyPatientErasurePlan({
+      plan,
+      correlationId: input.correlationId,
+    });
+    deleted = applied.deleted;
+    deletedArtifactIds = applied.deletedArtifactIds;
+  }
+
+  const erasureAfter: PlanAndMaybeEraseResult = {
+    enumerated: plan.enumerated,
+    deleted,
+    heldBack: plan.heldBack,
+    mediaDeleteEnabled,
+    twilioRevocationPrefixes: plan.twilioRevocationPrefixes,
+    held: plan.held,
+    deletedArtifactIds,
+    latestHeldUntil: plan.latestHeldUntil,
+    outcome: deriveErasureDmOutcome({
+      mediaDeleteEnabled,
+      enumerated: plan.enumerated,
+      deleted,
+      heldBack: plan.heldBack,
+      eligibleNow: plan.eligibleNow,
+    }),
+  };
+
+  // Step 3: PII scrub. If this fails we intentionally bail before
   // stamping `finalized_at` so the cron retries.
   await scrubPatientPiiFromLogs({
     patientId: input.patientId,
     correlationId: input.correlationId,
   });
 
-  // Step 3: explainer DM. Non-fatal.
+  // Step 4: explainer DM. Non-fatal.
   const finalizedAt = new Date();
   const dmResult = await sendExplainerDm({
     patientId: input.patientId,
     finalizedAt,
     correlationId: input.correlationId,
+    erasure: erasureAfter,
   });
 
-  // Step 4: stamp audit.
+  // Step 5: stamp audit.
   const { error: stampErr } = await admin
     .from('account_deletion_audit')
     .update({
       finalized_at: finalizedAt.toISOString(),
-      artifact_prefix_count: prefixes.length,
+      artifact_prefix_count: allPrefixes.length,
+      notes: serializeErasureAuditNotes(erasureAfter),
     })
     .eq('id', audit.id);
 
@@ -573,9 +629,14 @@ export async function finalizeAccountDeletion(
     resourceId: input.patientId,
     status: 'success',
     metadata: {
-      artifact_prefix_count: prefixes.length,
+      artifact_prefix_count: allPrefixes.length,
       dm_sent: dmResult.sent,
       dm_channel: dmResult.channel ?? 'none',
+      erasure_enumerated: erasureAfter.enumerated,
+      erasure_deleted: erasureAfter.deleted,
+      erasure_held_back: erasureAfter.heldBack,
+      erasure_outcome: erasureAfter.outcome,
+      erasure_media_delete_enabled: erasureAfter.mediaDeleteEnabled,
     },
   });
 
@@ -583,13 +644,17 @@ export async function finalizeAccountDeletion(
     {
       correlationId: input.correlationId,
       patientId: input.patientId,
-      artifact_prefix_count: prefixes.length,
+      artifact_prefix_count: allPrefixes.length,
+      erasure_enumerated: erasureAfter.enumerated,
+      erasure_deleted: erasureAfter.deleted,
+      erasure_held_back: erasureAfter.heldBack,
+      erasure_outcome: erasureAfter.outcome,
       dm_sent: dmResult.sent,
     },
     'account_deletion_finalized',
   );
 
-  return { revokedPrefixes: prefixes, executed: true };
+  return { revokedPrefixes: allPrefixes, executed: true };
 }
 
 async function listRevocationsForPatient(

@@ -21,7 +21,10 @@ const OPD_MISSED_STATUSES = new Set(["missed", "skipped", "cancelled"]);
 
 export interface OpdSnapshotState {
   isOpdEnabled: boolean | null;
+  /** First STRIP_MAX active rows — sized for the dashboard strip UI. */
   active: DoctorQueueSessionRow[];
+  /** ALL active rows (waiting/called/in_consultation) — for pipeline consumers. */
+  activeAll: DoctorQueueSessionRow[];
   done: DoctorQueueSessionRow[];
   missed: DoctorQueueSessionRow[];
   totalActive: number;
@@ -54,6 +57,7 @@ export function useOpdSnapshot(token: string, dateOverride?: string): OpdSnapsho
 
     return {
       active: activeAll.slice(0, STRIP_MAX),
+      activeAll,
       done: doneAll,
       missed: missedAll,
       totalActive: activeAll.length,

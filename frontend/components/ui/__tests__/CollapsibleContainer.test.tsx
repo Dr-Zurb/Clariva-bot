@@ -131,10 +131,10 @@ describe("CollapsibleContainer", () => {
     );
 
     const sections = container.querySelectorAll("section");
-    expect(sections[0]?.className).toContain("bg-muted/30");
+    expect(sections[0]?.className).toContain("bg-card");
     expect(sections[0]?.className).toContain("border-border/30");
     expect(sections[0]?.className).not.toContain("border-l-2");
-    expect(sections[0]?.className).not.toContain("shadow-sm");
+    expect(sections[0]?.className).toContain("shadow-cockpit-section");
     expect(sections[1]?.className).toContain("bg-card");
     expect(sections[1]?.className).not.toContain("border-l-2");
     expect(sections[1]?.className).toContain("border-border/60");
@@ -242,8 +242,8 @@ describe("CollapsibleContainer", () => {
 
     const sections = container.querySelectorAll("section");
     expect(sections).toHaveLength(3);
-    // L1 well shell stays translucent; the sticky header row must be opaque.
-    expect(sections[0]?.className).toContain("bg-muted/30");
+    // L1 card shell is bg-card; the sticky header row must be opaque.
+    expect(sections[0]?.className).toContain("bg-card");
 
     for (const section of sections) {
       const header = section.firstElementChild as HTMLElement | null;

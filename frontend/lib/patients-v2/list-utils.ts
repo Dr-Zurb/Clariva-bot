@@ -4,6 +4,24 @@
 
 import { formatLocalIsoDate } from "@/lib/dates";
 
+/**
+ * Display-only title case for patient names on the list.
+ * Does not mutate stored values (PLP-D2).
+ */
+export function formatPatientDisplayName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return "";
+  return trimmed
+    .split(/\s+/)
+    .map((token) => {
+      if (!token) return token;
+      const first = token.charAt(0).toLocaleUpperCase();
+      const rest = token.slice(1).toLocaleLowerCase();
+      return `${first}${rest}`;
+    })
+    .join(" ");
+}
+
 export function formatRelativeDate(iso: string): string {
   const d = new Date(iso);
   const now = Date.now();
@@ -71,21 +89,28 @@ export function exportPatientsCsv(
     last_appointment_date?: string | null;
     age?: number | null;
     gender?: string | null;
+    patient_tags?: string[] | null;
+    patient_tag?: string | null;
   }>,
   filename = "patients-export.csv",
 ): void {
-  const header = ["Name", "MRN", "Phone", "Last visit", "Demographics"];
+  const header = ["Name", "MRN", "Phone", "Last visit", "Demographics", "Tags"];
   const lines = rows.map((p) => {
     const demo = formatTableDemographics(p.age, p.gender);
     const last = p.last_appointment_date
       ? formatLocalIsoDate(new Date(p.last_appointment_date))
       : "";
+    const tags =
+      Array.isArray(p.patient_tags) && p.patient_tags.length > 0
+        ? p.patient_tags.join("; ")
+        : (p.patient_tag?.trim() ?? "");
     const cells = [
       p.name,
       p.medical_record_number ?? "",
       p.phone,
       last,
       demo,
+      tags,
     ].map((c) => `"${String(c).replace(/"/g, '""')}"`);
     return cells.join(",");
   });

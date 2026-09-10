@@ -164,8 +164,9 @@ export default function VideoReplayWarningModal(
               this is part of normal care.
             </li>
             <li>
-              You may receive an SMS code the first time you watch a
-              video in a 30-day window. This is an extra privacy check.
+              You may receive a 6-digit code on WhatsApp (or SMS) the
+              first time you watch a video in a 30-day window. This is
+              an extra privacy check.
             </li>
           </ul>
           <p className="mt-3 text-xs text-gray-500">

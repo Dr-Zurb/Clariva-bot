@@ -32,7 +32,8 @@
 import { Request, Response, NextFunction } from 'express';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from '../config/database';
-import { UnauthorizedError } from '../utils/errors';
+import { isStaffRole } from '../auth/staff-roles';
+import { ForbiddenError, UnauthorizedError } from '../utils/errors';
 import { asyncHandler } from '../utils/async-handler';
 import { logSecurityEvent, logAuditEvent } from '../utils/audit-logger';
 import { verifySupabaseAccessToken } from '../utils/supabase-token-verifier';
@@ -127,6 +128,20 @@ export const authenticateToken = asyncHandler(
 
     // Attach user to request (properly typed via types/express.d.ts)
     req.user = user;
+
+    // DL-2: staff JWTs are denied unless the route opted in via allowStaff.
+    // Must not treat staff as a doctor who owns nothing (fail closed, not empty).
+    if (isStaffRole(user.app_metadata?.role) && req.staffAllowed !== true) {
+      void logSecurityEvent(
+        correlationId,
+        user.id,
+        'failed_auth',
+        'medium',
+        ipAddress,
+        'Staff access is not permitted on this endpoint'
+      );
+      throw new ForbiddenError('Staff access is not permitted on this endpoint');
+    }
 
     // Enqueue successful authentication (np-03 — non-blocking)
     void logAuditEvent({

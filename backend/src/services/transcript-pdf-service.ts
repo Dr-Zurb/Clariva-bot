@@ -28,9 +28,12 @@
  *      (a re-end of a session flips `actual_ended_at` forward, which
  *      is what invalidates the cache). See Decision 4 note #14 in the
  *      task doc.
- *   5. Compose on cache miss. Loads messages + transcripts + session
- *      context, streams via pdfkit through a PassThrough, uploads to
- *      the bucket using the service-role client, then mints.
+ *   5. Compose on cache miss. Loads messages + transcripts + ledger
+ *      gaps (rec-19) + session context, streams via pdfkit through a
+ *      PassThrough, uploads to the bucket using the service-role
+ *      client, then mints. Pause/resume system rows are omitted at
+ *      render only — one gap object per pause. Gap load failure is
+ *      non-fatal and surfaces a visible note.
  *   6. Mint a 15-min signed URL.
  *   7. Write granted audit row (artifact_kind='transcript').
  *   8. Fire mutual notification (fire-and-forget; errors logged, not
@@ -78,10 +81,12 @@ import {
   type ReplayCallerRole,
   type SessionContext,
 } from './recording-access-service';
+import { listRecordingGaps } from './recording-gap-service';
 import {
   composeTranscriptPdfStream,
   type ChatMessageRow,
   type ComposeTranscriptContext,
+  type TranscriptGapRow,
   type VoiceTranscriptSegment,
 } from './transcript-pdf-composer';
 
@@ -413,10 +418,11 @@ async function composeAndUploadPdf(input: ComposeAndUploadInput): Promise<void> 
     );
   }
 
-  const [messages, voiceSegments, composeCtx] = await Promise.all([
+  const [messages, voiceSegments, composeCtx, gapLoad] = await Promise.all([
     loadChatMessages(input.sessionId),
     loadVoiceTranscriptSegments(input.sessionId),
     loadComposeContext(input.session),
+    loadTranscriptGaps(input.sessionId, input.correlationId),
   ]);
 
   // Detect "voice transcription pending" so the composer can render
@@ -448,9 +454,11 @@ async function composeAndUploadPdf(input: ComposeAndUploadInput): Promise<void> 
     context: {
       ...composeCtx,
       voiceTranscriptionPending: pendingVoiceXcript,
+      gapsLoadFailed:            gapLoad.failed,
     },
     messages,
     voiceSegments,
+    gaps: gapLoad.gaps,
     output: pdfStream,
   });
 
@@ -476,6 +484,8 @@ async function composeAndUploadPdf(input: ComposeAndUploadInput): Promise<void> 
       modality:      composeCtx.modality,
       voiceSegments: voiceSegments.length,
       chatMessages:  messages.length,
+      gapCount:      gapLoad.gaps.length,
+      gapsFailed:    gapLoad.failed,
       voicePending:  pendingVoiceXcript,
     },
     'transcript-pdf-service: PDF composed + uploaded',
@@ -517,7 +527,20 @@ async function loadChatMessages(sessionId: string): Promise<ChatMessageRow[]> {
     created_at:           string;
   }>;
 
-  return rows.map((r): ChatMessageRow => {
+  // rec-19 §2: one representation per pause. Pause/resume banners are
+  // omitted at render only — the gap marker carries duration, actor,
+  // and reason code. Rows stay in the table; no other system_event
+  // is filtered.
+  const visible = rows.filter(
+    (r) =>
+      !(
+        r.kind === 'system' &&
+        (r.system_event === 'recording_paused' ||
+          r.system_event === 'recording_resumed')
+      ),
+  );
+
+  return visible.map((r): ChatMessageRow => {
     if (r.kind === 'attachment') {
       return {
         kind:           'attachment',
@@ -553,6 +576,36 @@ function normalizeSenderRole(role: string): 'doctor' | 'patient' | 'system' {
   // (CHECK constraint at the DB level) — fallback to 'patient' makes
   // the attribution lossless for rendering without crashing.
   return 'patient';
+}
+
+/**
+ * rec-19: consume rec-18's pairing. Drop `mediaOffsetMs` — the
+ * transcript is wall-clock ordered. Failure is non-fatal; the composer
+ * draws a visible note instead of a silent gapless PDF.
+ */
+async function loadTranscriptGaps(
+  sessionId: string,
+  correlationId: string,
+): Promise<{ gaps: TranscriptGapRow[]; failed: boolean }> {
+  try {
+    const listed = await listRecordingGaps(sessionId);
+    return {
+      failed: false,
+      gaps: listed.gaps.map((g) => ({
+        wallStartedAt: g.wallStartedAt,
+        durationMs:    g.durationMs,
+        actorRole:     g.actorRole,
+        reasonCode:    g.reasonCode,
+        closedAs:      g.closedAs,
+      })),
+    };
+  } catch {
+    logger.warn(
+      { sessionId, correlationId },
+      'transcript-pdf-service: gap load failed (non-fatal; composing with note)',
+    );
+    return { gaps: [], failed: true };
+  }
 }
 
 async function loadVoiceTranscriptSegments(
@@ -597,7 +650,7 @@ async function loadVoiceTranscriptSegments(
     const baseTimestamp = new Date(row.created_at);
     if (Number.isNaN(baseTimestamp.getTime())) continue;
 
-    if (row.provider === 'openai_whisper') {
+    if (row.provider === 'openai_whisper' || row.provider === 'groq_whisper') {
       // Whisper `verbose_json`: segments array with start/end in seconds.
       const json = row.transcript_json as {
         segments?: Array<{ text?: string; start?: number }>;
@@ -868,11 +921,9 @@ interface TranscriptNotificationInput {
  *   - `doctor`        → notify the patient (IG-DM / SMS) using the
  *                       transcript-downloaded DM copy (Task 32 helper).
  *   - `patient`       → notify the doctor (dashboard event).
- *   - `support_staff` → notify the doctor (dashboard event).
- *
- * Patient is NOT notified for support_staff downloads (same Decision 4
- * doctrine as the audio path: support escalations are internal tooling,
- * surfacing them in patient inbox dilutes the trust model).
+ *   - `support_staff` → notify the doctor (dashboard event) AND the
+ *                       patient with support-staff copy (rec-30 / REC-D24).
+ *                       escalationReason is not forwarded to the patient.
  *
  * Errors logged, never thrown — the audit row is written; a slow
  * Twilio / IG API must not delay the download response.
@@ -902,7 +953,7 @@ async function fireTranscriptNotification(
       );
       return;
     }
-    if (input.callerRole === 'patient' || input.callerRole === 'support_staff') {
+    if (input.callerRole === 'patient') {
       const result = await notifyDoctorOfPatientReplay({
         sessionId:              input.sessionId,
         artifactType:           'transcript',
@@ -910,7 +961,6 @@ async function fireTranscriptNotification(
         recordingAccessAuditId: input.recordingAccessAuditId,
         accessedByRole:         input.callerRole,
         accessedByUserId:       input.callerUserId,
-        ...(input.escalationReason ? { escalationReason: input.escalationReason } : {}),
         correlationId:          input.correlationId,
       });
       logger.info(
@@ -921,6 +971,39 @@ async function fireTranscriptNotification(
           result,
         },
         'transcript-pdf-service: doctor dashboard-event fan-out dispatched',
+      );
+      return;
+    }
+    if (input.callerRole === 'support_staff') {
+      const doctorResult = await notifyDoctorOfPatientReplay({
+        sessionId:              input.sessionId,
+        artifactType:           'transcript',
+        actionKind:             'downloaded',
+        recordingAccessAuditId: input.recordingAccessAuditId,
+        accessedByRole:         'support_staff',
+        accessedByUserId:       input.callerUserId,
+        ...(input.escalationReason ? { escalationReason: input.escalationReason } : {}),
+        correlationId:          input.correlationId,
+      });
+      const patientResult = await notifyPatientOfDoctorReplay({
+        sessionId:              input.sessionId,
+        artifactType:           'transcript',
+        actionKind:             'downloaded',
+        accessedByRole:         'support_staff',
+        recordingAccessAuditId: input.recordingAccessAuditId,
+        correlationId:          input.correlationId,
+      });
+      logger.info(
+        {
+          correlationId: input.correlationId,
+          sessionId: input.sessionId,
+          callerRole: input.callerRole,
+          doctorResult,
+          patientResult: 'skipped' in patientResult
+            ? { skipped: true, reason: patientResult.reason }
+            : { anySent: patientResult.anySent },
+        },
+        'transcript-pdf-service: support-staff download notified doctor and patient',
       );
     }
   } catch (err) {

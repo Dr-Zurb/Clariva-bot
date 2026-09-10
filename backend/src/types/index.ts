@@ -74,6 +74,9 @@ export * from './conversation-state-io';
 // Re-export payment types (e-task-4)
 export * from './payment';
 
+// Desk hisab ledger (not gateway payments)
+export * from './visit-payment';
+
 // Re-export prescription types (Prescription V1)
 export * from './prescription';
 

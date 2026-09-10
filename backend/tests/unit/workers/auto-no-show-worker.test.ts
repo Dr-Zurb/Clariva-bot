@@ -57,6 +57,16 @@ jest.mock('../../../src/services/dashboard-events-service', () => ({
   insertDashboardEvent: (...a: unknown[]) => mockInsertDashboardEvent(...a),
 }));
 
+jest.mock('../../../src/services/billing/usage-ledger-service', () => ({
+  recordBillableConsult: jest.fn(async () => ({
+    recorded: true,
+    duplicate: false,
+    status: 'billable',
+    voidReason: null,
+  })),
+  mapConsultationTypeToModality: (_t: unknown, fallback: string) => fallback,
+}));
+
 import * as database from '../../../src/config/database';
 import {
   runAutoNoShowTick,

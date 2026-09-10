@@ -144,6 +144,109 @@ describe('getInstagramDashboardStatus (RBH-10)', () => {
     expect(r.health.reconnectRecommended).toBe(true);
     expect(from).toHaveBeenCalledWith('doctor_instagram');
   });
+
+  it('probes graph.instagram.com/me and reports ok (not Facebook debug_token)', async () => {
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const statusChain = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      maybeSingle: jest
+        .fn()
+        .mockResolvedValueOnce({
+          data: { instagram_username: 'halo.aid' },
+          error: null,
+        } as never)
+        .mockResolvedValueOnce({
+          data: {
+            instagram_access_token: 'ig-user-tok',
+            instagram_health_checked_at: null,
+            instagram_health_level: null,
+            instagram_health_error_code: null,
+            instagram_token_expires_at: expiresAt,
+            instagram_last_dm_success_at: null,
+          },
+          error: null,
+        } as never),
+    };
+    const updateChain = {
+      update: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockResolvedValue({ error: null } as never),
+    };
+    const from = jest
+      .fn()
+      .mockReturnValueOnce(statusChain)
+      .mockReturnValueOnce(statusChain)
+      .mockReturnValueOnce(updateChain);
+    mockedDb.getSupabaseAdminClient.mockReturnValue({ from } as never);
+    mockedAxios.get.mockResolvedValueOnce({
+      data: { user_id: '17841433414940360', username: 'halo.aid' },
+    } as never);
+
+    const r = await getInstagramDashboardStatus(doctorId, 'corr-health-ok');
+
+    expect(r.connected).toBe(true);
+    expect(r.health.level).toBe('ok');
+    expect(r.health.message).toMatch(/healthy/i);
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      'https://graph.instagram.com/v18.0/me',
+      expect.objectContaining({
+        params: expect.objectContaining({
+          access_token: 'ig-user-tok',
+          fields: 'user_id,username',
+        }),
+      })
+    );
+    expect(mockedAxios.get).not.toHaveBeenCalledWith(
+      expect.stringContaining('debug_token'),
+      expect.anything()
+    );
+  });
+
+  it('marks error when Instagram Graph rejects the token', async () => {
+    const statusChain = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      maybeSingle: jest
+        .fn()
+        .mockResolvedValueOnce({
+          data: { instagram_username: 'halo.aid' },
+          error: null,
+        } as never)
+        .mockResolvedValueOnce({
+          data: {
+            instagram_access_token: 'bad-tok',
+            instagram_health_checked_at: null,
+            instagram_health_level: 'unknown',
+            instagram_health_error_code: null,
+            instagram_token_expires_at: null,
+            instagram_last_dm_success_at: null,
+          },
+          error: null,
+        } as never),
+    };
+    const updateChain = {
+      update: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockResolvedValue({ error: null } as never),
+    };
+    const from = jest
+      .fn()
+      .mockReturnValueOnce(statusChain)
+      .mockReturnValueOnce(statusChain)
+      .mockReturnValueOnce(updateChain);
+    mockedDb.getSupabaseAdminClient.mockReturnValue({ from } as never);
+
+    const axiosErr = Object.assign(new Error('Request failed with status code 400'), {
+      isAxiosError: true,
+      response: { status: 400, data: { error: { code: 190 } } },
+    });
+    mockedAxios.isAxiosError.mockReturnValue(true as never);
+    mockedAxios.get.mockRejectedValueOnce(axiosErr as never);
+
+    const r = await getInstagramDashboardStatus(doctorId, 'corr-health-err');
+
+    expect(r.health.level).toBe('error');
+    expect(r.health.reconnectRecommended).toBe(true);
+  });
 });
 
 function createMockSupabaseDelete() {

@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOnboardingStatusQuery } from "@/hooks/queries/useOnboardingStatusQuery";
+import { useRecordingAttestationQuery } from "@/hooks/queries/useRecordingAttestationQuery";
 import { useVerificationStatusQuery } from "@/hooks/queries/useVerificationStatusQuery";
 
 interface GettingStartedClientProps {
@@ -23,8 +24,9 @@ interface GettingStartedClientProps {
 export function GettingStartedClient({ token }: GettingStartedClientProps) {
   const onboarding = useOnboardingStatusQuery(token);
   const verification = useVerificationStatusQuery(token);
+  const attestation = useRecordingAttestationQuery(token);
 
-  if (onboarding.isLoading || verification.isLoading) {
+  if (onboarding.isLoading || verification.isLoading || attestation.isLoading) {
     return (
       <div className="space-y-3" aria-busy="true">
         <Skeleton className="h-20 w-full" />
@@ -57,7 +59,11 @@ export function GettingStartedClient({ token }: GettingStartedClientProps) {
   }
 
   const verificationStatus = verification.data?.status;
-  const steps = buildGoLiveChecklist(onboarding.data, verificationStatus);
+  const steps = buildGoLiveChecklist(
+    onboarding.data,
+    verificationStatus,
+    attestation.data?.accepted,
+  );
 
   if (isGoLiveComplete(onboarding.data, verificationStatus)) {
     return (

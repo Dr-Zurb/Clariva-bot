@@ -16,6 +16,7 @@ import { handleSupabaseError } from '../utils/db-helpers';
 import { InternalError } from '../utils/errors';
 import { logAuditEvent } from '../utils/audit-logger';
 import { formatStaffReviewResolvedContinueBookingDm } from '../utils/staff-service-review-dm';
+import { getConversationLanguage } from './conversation-service';
 import { findServiceOfferingByKey, getActiveServiceCatalog } from '../utils/service-catalog-helpers';
 import { buildBookingPageUrl } from './slot-selection-service';
 import { getDoctorSettings } from './doctor-settings-service';
@@ -156,7 +157,9 @@ export async function tryApplyLearningPolicyAutobook(params: {
 
   const bookingUrl = buildBookingPageUrl(params.conversationId, params.doctorId);
   const visitLabel = offering.label?.trim() || offering.service_key;
+  const language = await getConversationLanguage(params.conversationId, params.correlationId);
   const replyText = formatStaffReviewResolvedContinueBookingDm(
+    language,
     settings,
     visitLabel,
     bookingUrl,

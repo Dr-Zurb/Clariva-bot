@@ -8,21 +8,36 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
-import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
+import {
+  buildRxPayload,
+  useRxForm,
+} from "@/components/cockpit/rx/RxFormContext";
 import { useRxSafety } from "@/components/cockpit/rx/RxSafetyContext";
 import { usePrescriptionFormShell } from "@/components/cockpit/rx/PrescriptionFormShellContext";
 import { useRegisterRxFormActions } from "@/components/cockpit/rx/RxFormActionsContext";
 import {
   sendPrescriptionToPatient,
-  getDoctorSettings,
+  fetchPrescriptionPdf,
+  reissuePrescription,
 } from "@/lib/api";
+import {
+  needsReissue,
+  sourceWasPrinted,
+  sourceWasSent,
+  type RxReviseLeaveAction,
+} from "@/components/cockpit/rx/rxRevise";
+import type { RevisionReason } from "@/types/prescription";
+import { doctorSettingsQueryOptions } from "@/lib/query/options";
 import type { PatientRxViewModel } from "@/components/ehr/PatientRxView";
+import { sanitizeCustomSubsectionsForOutput } from "@/lib/cockpit/custom-subsections";
 import { resolveFollowUpForOutput } from "@/lib/cockpit/follow-up-format";
 import {
-  referralPartsFromFields,
-  resolveReferralForOutput,
-} from "@/lib/cockpit/plan-quick-picks";
+  formatAllergiesForOutput,
+  formatVitalsForOutput,
+} from "@/lib/cockpit/rx-output-format";
+import { usePatientAllergiesQuery } from "@/hooks/queries/usePatientAllergiesQuery";
 import {
   computePreSendWarnings,
   focusTargetFor,
@@ -37,13 +52,179 @@ import {
   canSendPrescription,
   type CockpitState,
 } from "@/lib/patient-profile/state";
+import { formatDate } from "@/lib/format-date";
+import type { PatientSex } from "@/types/appointment";
+
+/** Identity already on the appointment — preview must not invent sample PHI. */
+export interface RxPreviewPatientIdentity {
+  phone?: string | null;
+  ageYears?: number | null;
+  sex?: PatientSex | null;
+  guardianName?: string | null;
+  guardianRelation?: string | null;
+  mrn?: string | null;
+  visitDate?: string | null;
+}
+
+function formatPreviewAgeYears(age: number | null | undefined): string | null {
+  if (age == null || !Number.isFinite(age)) return null;
+  if (age < 1) return "< 1 y";
+  return `${age} y`;
+}
+
+function pdfBlobForObjectUrl(blob: Blob): Blob {
+  return blob.type === "application/pdf"
+    ? blob
+    : new Blob([blob], { type: "application/pdf" });
+}
+
+async function downloadPdfBlob(
+  blob: Blob,
+  filename = "prescription.pdf"
+): Promise<void> {
+  const objectUrl = URL.createObjectURL(pdfBlobForObjectUrl(blob));
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = filename;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+export async function downloadSignedPdf(
+  signedUrl: string,
+  filename = "prescription.pdf"
+): Promise<void> {
+  try {
+    const res = await fetch(signedUrl);
+    if (!res.ok) throw new Error("Could not download prescription PDF");
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objectUrl;
+    a.download = filename;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objectUrl);
+  } catch {
+    const a = document.createElement("a");
+    a.href = signedUrl;
+    a.download = filename;
+    a.rel = "noopener";
+    a.target = "_blank";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+}
+
+const PRINT_IFRAME_KEEPALIVE_MS = 120_000;
+
+/** Download the signed PDF into a blob URL the iframe can print same-origin. */
+async function fetchPdfObjectUrl(signedUrl: string): Promise<string> {
+  const res = await fetch(signedUrl);
+  if (!res.ok) throw new Error("Could not load prescription PDF");
+  const raw = await res.blob();
+  const blob =
+    raw.type === "application/pdf"
+      ? raw
+      : new Blob([raw], { type: "application/pdf" });
+  return URL.createObjectURL(blob);
+}
+
+function printPdfObjectUrl(objectUrl: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const iframe = document.createElement("iframe");
+    iframe.setAttribute("aria-hidden", "true");
+    iframe.setAttribute("data-rx-print", "1");
+    iframe.title = "Print prescription";
+    iframe.src = objectUrl;
+    // Off-screen but non-zero: a 0×0 PDF iframe makes Chrome dismiss the
+    // system print dialog as soon as it opens.
+    iframe.style.position = "fixed";
+    iframe.style.left = "-10000px";
+    iframe.style.top = "0";
+    iframe.style.width = "800px";
+    iframe.style.height = "600px";
+    iframe.style.border = "0";
+    iframe.style.opacity = "0";
+    iframe.style.pointerEvents = "none";
+
+    let settled = false;
+    let printed = false;
+
+    const cleanup = () => {
+      iframe.remove();
+      URL.revokeObjectURL(objectUrl);
+    };
+
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+
+    const fail = (message: string) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error(message));
+    };
+
+    const triggerPrint = () => {
+      if (printed) return;
+      const win = iframe.contentWindow;
+      if (!win) return;
+      printed = true;
+      try {
+        win.focus();
+        win.print();
+        // Keep the iframe on <body> so client-side next-patient navigation
+        // can run under the system dialog. Do not remove it on afterprint —
+        // Chrome fires that when the dialog opens.
+        window.setTimeout(cleanup, PRINT_IFRAME_KEEPALIVE_MS);
+        succeed();
+      } catch {
+        fail("Could not open the print dialog");
+      }
+    };
+
+    iframe.onload = () => triggerPrint();
+    iframe.onerror = () => fail("Could not load prescription PDF");
+    document.body.appendChild(iframe);
+    // Safari often skips onload for a PDF iframe.
+    window.setTimeout(triggerPrint, 250);
+    window.setTimeout(() => {
+      if (!printed) fail("Could not open the print dialog");
+    }, 2000);
+  });
+}
+
+/** Fetch the signed PDF and open the system print dialog — no extra tab. */
+export async function printSignedPdf(signedUrl: string): Promise<void> {
+  await printPdfObjectUrl(await fetchPdfObjectUrl(signedUrl));
+}
+
+function formatPreviewVisitDate(iso: string | null | undefined): string | null {
+  if (!iso?.trim()) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return formatDate(d);
+}
 
 export interface UseRxCommitActionsArgs {
   appointmentId: string;
   patientId: string | null;
+  patientName?: string | null;
+  patientIdentity?: RxPreviewPatientIdentity | null;
   token: string;
   cockpitState: CockpitState;
-  onFinish?: () => void;
+  /** Fired after send when finishing. Print does not wait for it. */
+  onFinish?: () => void | Promise<void>;
   onSent?: (prescriptionId: string) => void | Promise<void>;
   onSuccess?: () => void;
   /** When false, skip context registration (standalone tests). */
@@ -56,7 +237,16 @@ export interface UseRxCommitActionsResult {
   previewLoading: boolean;
   finishSending: boolean;
   openPreview: () => void;
+  prewarmOnIntent: () => void;
+  sendRx: () => void;
   sendAndFinish: () => void;
+  sendFinishAndPrint: () => void;
+  finishVisit: () => void;
+  printPrescription: () => void;
+  downloadPrescription: () => void;
+  canPrint: boolean;
+  canFinish: boolean;
+  printBusy: boolean;
   previewOpen: boolean;
   previewVM: PatientRxViewModel | null;
   closePreview: () => void;
@@ -66,11 +256,22 @@ export interface UseRxCommitActionsResult {
   onPreSendSendAnyway: () => void;
   commitError: string | null;
   commitSuccess: string | null;
+  revisionReasonOpen: boolean;
+  revisionReasonBusy: boolean;
+  revisionReasonError: string | null;
+  onRevisionReasonCancel: () => void;
+  onRevisionReasonConfirm: (reason: RevisionReason) => void;
+  deliveryPrompt: { resend: boolean; reprint: boolean } | null;
+  onDeliveryPromptDismiss: () => void;
+  onDeliveryPromptResend: () => void;
+  onDeliveryPromptReprint: () => void;
 }
 
 export function useRxCommitActions({
   appointmentId,
   patientId,
+  patientName,
+  patientIdentity,
   token,
   cockpitState,
   onFinish,
@@ -79,7 +280,7 @@ export function useRxCommitActions({
   registerActions = true,
 }: UseRxCommitActionsArgs): UseRxCommitActionsResult {
   const shell = usePrescriptionFormShell();
-  const { state: rxState, autoSave } = useRxForm();
+  const { state: rxState, autoSave, isDirty } = useRxForm();
   const {
     formAllergyMatches,
     isAcked,
@@ -96,79 +297,226 @@ export function useRxCommitActions({
   const { fields } = rxState;
   const medicines = fields.medicines;
   const { flush: autoSaveFlush } = autoSave;
+  const allergyQuery = usePatientAllergiesQuery(token, patientId ?? "");
+  const queryClient = useQueryClient();
 
   const [saving, setSaving] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewVM, setPreviewVM] = useState<PatientRxViewModel | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [preSendWarnings, setPreSendWarnings] = useState<
-    ReadonlyArray<PreSendWarning> | null
-  >(null);
+  const [preSendWarnings, setPreSendWarnings] =
+    useState<ReadonlyArray<PreSendWarning> | null>(null);
   const [commitError, setCommitError] = useState<string | null>(null);
   const [commitSuccess, setCommitSuccess] = useState<string | null>(null);
+  const [printBusy, setPrintBusy] = useState(false);
+  const [revisionReasonOpen, setRevisionReasonOpen] = useState(false);
+  const [revisionReasonBusy, setRevisionReasonBusy] = useState(false);
+  const [revisionReasonError, setRevisionReasonError] = useState<string | null>(
+    null,
+  );
+  const [deliveryPrompt, setDeliveryPrompt] = useState<{
+    resend: boolean;
+    reprint: boolean;
+  } | null>(null);
+  const pendingLeaveRef = useRef<RxReviseLeaveAction | null>(null);
+  const justCreatedRevisionIdRef = useRef<string | null>(null);
+  const deliverySourceRef = useRef<{ sent: boolean; printed: boolean } | null>(
+    null,
+  );
 
   const finishAfterSendRef = useRef(false);
+  const printAfterSendRef = useRef(false);
+  const pdfWarmRef = useRef<{
+    rxId: string;
+    objectUrl: Promise<string>;
+  } | null>(null);
   const doctorMetaRef = useRef<{
     doctorName: string;
     doctorSpecialty: string | null;
     clinicName: string | null;
     clinicAddress: string | null;
     timezone: string;
+    qualifications: string | null;
+    logoUrl: string | null;
+    headerUrl: string | null;
+    footerUrl: string | null;
+    headerHeightMm: number;
+    footerHeightMm: number;
+    letterheadPreset: "classic" | "centred" | "preprinted" | "banner" | null;
+    accentColor: string | null;
+    chromeColor: string | null;
+    patientColor: string | null;
+    logoSize: "small" | "medium" | "large";
+    patientIdentityPreset: "open_letter" | "compact" | "grid";
+    showPatientPhone: boolean;
+    showPatientGuardian: boolean;
+    showPatientMrn: boolean;
+    showPatientAddress: boolean;
+    footerLine: string | null;
+    hideHaloCredit: boolean;
+    backgroundUrl: string | null;
+    backgroundPreset: "none" | "paper" | "cross" | "upload";
+    backgroundOpacity: number;
+    headerFit: "fit" | "fill" | "stretch";
+    footerFit: "fit" | "fill" | "stretch";
+    backgroundFit: "fit" | "fill" | "stretch";
+    headerTextSize: "small" | "medium" | "large";
+    patientTextSize: "small" | "medium" | "large";
+    bodyTextSize: "small" | "medium" | "large";
+    pageSize: "a4" | "a5";
+    preprintMarginTopMm: number;
+    preprintMarginBottomMm: number;
+    pageMarginTopMm: number;
+    pageMarginRightMm: number;
+    pageMarginBottomMm: number;
+    pageMarginLeftMm: number;
   } | null>(null);
+  const doctorMetaLoadRef = useRef<Promise<void> | null>(null);
 
   const canSend = canSendPrescription(cockpitState);
+  const hasRxId = Boolean(
+    shell?.prescription?.id ?? prescriptionIdRef?.current
+  );
+  const canPrint = hasRxId || canSend;
+  const issuedPendingReissue = needsReissue(shell?.prescription, {
+    isDirty,
+    skipId: justCreatedRevisionIdRef.current,
+  });
+  const canFinish =
+    cockpitState !== "terminal" &&
+    ((Boolean(onFinish) && cockpitState !== "ended") || issuedPendingReissue);
 
   const buildPreviewViewModel = useCallback((): PatientRxViewModel => {
     const meta = doctorMetaRef.current;
+    const payload = buildRxPayload(fields);
     return {
       doctorName: meta?.doctorName ?? "Doctor",
       doctorSpecialty: meta?.doctorSpecialty ?? null,
+      qualifications: meta?.qualifications ?? null,
       clinicName: meta?.clinicName ?? null,
       clinicAddress: meta?.clinicAddress ?? null,
-      patientName: "Patient",
-      visitDateLabel: null,
-      cc: fields.cc.trim() || null,
-      hopi: fields.hopi.trim() || null,
-      provisionalDiagnosis: fields.provisionalDiagnosis.trim() || null,
-      investigations: fields.investigationsOrders.trim() || null,
-      advice: fields.advice.trim() || null,
+      logoUrl: meta?.logoUrl ?? null,
+      headerUrl: meta?.headerUrl ?? null,
+      footerUrl: meta?.footerUrl ?? null,
+      headerHeightMm: meta?.headerHeightMm ?? 35,
+      footerHeightMm: meta?.footerHeightMm ?? 20,
+      letterheadPreset: meta?.letterheadPreset ?? null,
+      accentColor: meta?.accentColor ?? null,
+      chromeColor: meta?.chromeColor ?? null,
+      patientColor: meta?.patientColor ?? null,
+      logoSize: meta?.logoSize ?? "medium",
+      patientIdentityPreset: meta?.patientIdentityPreset ?? "open_letter",
+      showPatientPhone: meta?.showPatientPhone !== false,
+      showPatientGuardian: meta?.showPatientGuardian !== false,
+      showPatientMrn: meta?.showPatientMrn !== false,
+      showPatientAddress: meta?.showPatientAddress !== false,
+      footerLine: meta?.footerLine ?? null,
+      hideHaloCredit: meta?.hideHaloCredit === true,
+      backgroundUrl: meta?.backgroundUrl ?? null,
+      backgroundPreset: meta?.backgroundPreset ?? "none",
+      backgroundOpacity: meta?.backgroundOpacity ?? 15,
+      headerFit: meta?.headerFit ?? "stretch",
+      footerFit: meta?.footerFit ?? "stretch",
+      backgroundFit: meta?.backgroundFit ?? "fill",
+      headerTextSize: meta?.headerTextSize ?? "medium",
+      patientTextSize: meta?.patientTextSize ?? "medium",
+      bodyTextSize: meta?.bodyTextSize ?? "medium",
+      pageSize: meta?.pageSize ?? "a4",
+      preprintMarginTopMm: meta?.preprintMarginTopMm ?? 40,
+      preprintMarginBottomMm: meta?.preprintMarginBottomMm ?? 30,
+      pageMarginTopMm: meta?.pageMarginTopMm ?? 12,
+      pageMarginRightMm: meta?.pageMarginRightMm ?? 12,
+      pageMarginBottomMm: meta?.pageMarginBottomMm ?? 12,
+      pageMarginLeftMm: meta?.pageMarginLeftMm ?? 12,
+      patientName: patientName?.trim() || "Patient",
+      visitDateLabel: formatPreviewVisitDate(patientIdentity?.visitDate),
+      patientAge: formatPreviewAgeYears(patientIdentity?.ageYears),
+      patientGender: patientIdentity?.sex ?? null,
+      patientPhone: patientIdentity?.phone?.trim() || null,
+      guardianName: patientIdentity?.guardianName?.trim() || null,
+      guardianRelation: patientIdentity?.guardianRelation?.trim() || null,
+      medicalRecordNumber: patientIdentity?.mrn?.trim() || null,
+      allergies:
+        !patientId || allergyQuery.isFetched
+          ? formatAllergiesForOutput(allergyQuery.data?.allergies, {
+              noKnownAllergies: allergyQuery.data?.noKnownAllergies,
+            })
+          : undefined,
+      cc: payload.cc,
+      hopi: payload.hopi,
+      vitals: formatVitalsForOutput({
+        vitalsBpSystolic: payload.vitalsBpSystolic,
+        vitalsBpDiastolic: payload.vitalsBpDiastolic,
+        vitalsHr: payload.vitalsHr,
+        vitalsTempC: payload.vitalsTempC,
+        vitalsSpo2: payload.vitalsSpo2,
+        vitalsWtKg: payload.vitalsWtKg,
+        vitalsHtCm: payload.vitalsHtCm,
+        vitalsRr: payload.vitalsRr,
+        vitalsPainScore: payload.vitalsPainScore,
+        vitalsGlucoseMgDl: payload.vitalsGlucoseMgDl,
+        vitalsGcsTotal: payload.vitalsGcsTotal,
+        vitalsBpPosture: payload.vitalsBpPosture,
+        vitalsBpLimb: payload.vitalsBpLimb,
+        note: payload.vitalsJson?.sectionNote ?? null,
+      }),
+      examinationFindings: payload.examinationFindings?.trim() || null,
+      socialHistory: payload.socialHistory,
+      provisionalDiagnosis: payload.provisionalDiagnosis,
+      investigations: payload.investigations,
+      advice: payload.advice,
       followUp: resolveFollowUpForOutput(
-        fields.followUp,
-        fields.followUpValue,
-        fields.followUpUnit,
+        payload.followUp,
+        payload.followUpValue,
+        payload.followUpUnit
       ),
       patientEducation: null,
-      referral: resolveReferralForOutput(referralPartsFromFields(fields)),
-      medicines: medicines
-        .filter((m) => m.medicineName.trim())
-        .map((m) => ({
-          medicineName: m.medicineName,
-          dosage: m.dosage || null,
-          route: m.route || null,
-          routeCode: m.routeCode,
-          frequency: m.frequency || null,
-          frequencyCode: m.frequencyCode,
-          duration: m.duration || null,
-          durationValue: m.durationValue,
-          durationUnit: m.durationUnit,
-          instructions: m.instructions || null,
-          doseQty: m.doseQty,
-          doseUnit: m.doseUnit,
-          foodTiming: m.foodTiming,
-        })),
+      referral: payload.referral,
+      customSubsections: sanitizeCustomSubsectionsForOutput(
+        payload.customSubsections
+      ),
+      assessmentCustomSections: sanitizeCustomSubsectionsForOutput(
+        payload.assessmentCustomSections
+      ),
+      planCustomSections: sanitizeCustomSubsectionsForOutput(
+        payload.planCustomSections
+      ),
+      medicines: payload.medicines.map((m) => ({
+        medicineName: m.medicineName,
+        dosage: m.dosage || null,
+        route: m.route || null,
+        routeCode: m.routeCode,
+        frequency: m.frequency || null,
+        frequencyCode: m.frequencyCode,
+        duration: m.duration || null,
+        durationValue: m.durationValue,
+        durationUnit: m.durationUnit,
+        instructions: m.instructions || null,
+        doseQty: m.doseQty,
+        doseUnit: m.doseUnit,
+        foodTiming: m.foodTiming,
+      })),
     };
-  }, [fields, medicines]);
+  }, [
+    fields,
+    patientName,
+    patientIdentity,
+    patientId,
+    allergyQuery.data,
+    allergyQuery.isFetched,
+  ]);
 
-  const openPreview = useCallback(() => {
-    void (async () => {
-      setCommitError(null);
-      if (!doctorMetaRef.current) {
-        setPreviewLoading(true);
+  const ensureDoctorMeta = useCallback(async () => {
+    if (doctorMetaRef.current) return;
+    if (!doctorMetaLoadRef.current) {
+      doctorMetaLoadRef.current = (async () => {
         try {
           const supabase = createClient();
           const [{ data: userResp }, settingsRes] = await Promise.all([
             supabase.auth.getUser(),
-            getDoctorSettings(token).catch(() => null),
+            queryClient
+              .fetchQuery(doctorSettingsQueryOptions(token))
+              .catch(() => null),
           ]);
           const meta =
             (userResp.user?.user_metadata as
@@ -178,9 +526,7 @@ export function useRxCommitActions({
           const rawName =
             (typeof meta.full_name === "string" && meta.full_name.trim()) ||
             (typeof meta.name === "string" && meta.name.trim()) ||
-            (userResp.user?.email
-              ? userResp.user.email.split("@")[0]
-              : "") ||
+            (userResp.user?.email ? userResp.user.email.split("@")[0] : "") ||
             "";
           const doctorName = rawName
             ? rawName.toLowerCase().startsWith("dr")
@@ -194,6 +540,48 @@ export function useRxCommitActions({
             clinicName: settings?.practice_name?.trim() || null,
             clinicAddress: settings?.address_summary?.trim() || null,
             timezone: settings?.timezone || "Asia/Kolkata",
+            qualifications: settings?.qualifications?.trim() || null,
+            logoUrl: settings?.logo_preview_url ?? null,
+            headerUrl: settings?.header_preview_url ?? null,
+            footerUrl: settings?.footer_preview_url ?? null,
+            headerHeightMm: settings?.header_height_mm ?? 35,
+            footerHeightMm: settings?.footer_height_mm ?? 20,
+            letterheadPreset: settings?.letterhead_preset ?? null,
+            accentColor: settings?.letterhead_accent_color ?? null,
+            chromeColor: settings?.letterhead_chrome_color ?? null,
+            patientColor: settings?.letterhead_patient_color ?? null,
+            logoSize: settings?.logo_size ?? "medium",
+            patientIdentityPreset:
+              settings?.patient_identity_preset ?? "open_letter",
+            showPatientPhone: settings?.show_patient_phone !== false,
+            showPatientGuardian: settings?.show_patient_guardian !== false,
+            showPatientMrn: settings?.show_patient_mrn !== false,
+            showPatientAddress: settings?.show_patient_address !== false,
+            footerLine: settings?.letterhead_footer_line ?? null,
+            hideHaloCredit: settings?.hide_halo_credit === true,
+            backgroundPreset: settings?.letterhead_background_preset ?? "none",
+            backgroundOpacity: settings?.letterhead_background_opacity ?? 15,
+            headerFit: settings?.letterhead_header_fit ?? "stretch",
+            footerFit: settings?.letterhead_footer_fit ?? "stretch",
+            backgroundFit: settings?.letterhead_background_fit ?? "fill",
+            headerTextSize: settings?.letterhead_header_text_size ?? "medium",
+            patientTextSize: settings?.letterhead_patient_text_size ?? "medium",
+            bodyTextSize: settings?.letterhead_body_text_size ?? "medium",
+            pageSize: settings?.page_size === "a5" ? "a5" : "a4",
+            preprintMarginTopMm: settings?.preprint_margin_top_mm ?? 40,
+            preprintMarginBottomMm: settings?.preprint_margin_bottom_mm ?? 30,
+            pageMarginTopMm: settings?.page_margin_top_mm ?? 12,
+            pageMarginRightMm: settings?.page_margin_right_mm ?? 12,
+            pageMarginBottomMm: settings?.page_margin_bottom_mm ?? 12,
+            pageMarginLeftMm: settings?.page_margin_left_mm ?? 12,
+            backgroundUrl:
+              settings?.letterhead_background_preset === "paper"
+                ? "/letterhead/bg-paper.png"
+                : settings?.letterhead_background_preset === "cross"
+                  ? "/letterhead/bg-cross.png"
+                  : settings?.letterhead_background_preset === "upload"
+                    ? (settings?.background_preview_url ?? null)
+                    : null,
           };
         } catch {
           doctorMetaRef.current = {
@@ -202,24 +590,221 @@ export function useRxCommitActions({
             clinicName: null,
             clinicAddress: null,
             timezone: "Asia/Kolkata",
+            qualifications: null,
+            logoUrl: null,
+            headerUrl: null,
+            footerUrl: null,
+            headerHeightMm: 35,
+            footerHeightMm: 20,
+            letterheadPreset: null,
+            accentColor: null,
+            chromeColor: null,
+            patientColor: null,
+            logoSize: "medium",
+            patientIdentityPreset: "open_letter",
+            showPatientPhone: true,
+            showPatientGuardian: true,
+            showPatientMrn: true,
+            showPatientAddress: true,
+            footerLine: null,
+            hideHaloCredit: false,
+            backgroundUrl: null,
+            backgroundPreset: "none",
+            backgroundOpacity: 15,
+            headerFit: "stretch",
+            footerFit: "stretch",
+            backgroundFit: "fill",
+            headerTextSize: "medium",
+            patientTextSize: "medium",
+            bodyTextSize: "medium",
+            pageSize: "a4",
+            preprintMarginTopMm: 40,
+            preprintMarginBottomMm: 30,
+            pageMarginTopMm: 12,
+            pageMarginRightMm: 12,
+            pageMarginBottomMm: 12,
+            pageMarginLeftMm: 12,
           };
+        } finally {
+          doctorMetaLoadRef.current = null;
+        }
+      })();
+    }
+    return doctorMetaLoadRef.current;
+  }, [queryClient, token]);
+
+  useEffect(() => {
+    void ensureDoctorMeta();
+  }, [ensureDoctorMeta]);
+
+  const dropPdfWarm = useCallback((revoke: boolean) => {
+    const existing = pdfWarmRef.current;
+    pdfWarmRef.current = null;
+    if (revoke && existing) {
+      void existing.objectUrl
+        .then((url) => URL.revokeObjectURL(url))
+        .catch(() => undefined);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => dropPdfWarm(true);
+  }, [dropPdfWarm]);
+
+  /** Write only when needed so a clean flush does not drop the warmed PDF. */
+  const persistDraftForCommit = useCallback(async () => {
+    if (!prescriptionIdRef?.current) {
+      await autoSaveFlush({ force: true });
+      dropPdfWarm(true);
+      return;
+    }
+    if (!isDirty) return;
+    await autoSaveFlush();
+    dropPdfWarm(true);
+  }, [autoSaveFlush, dropPdfWarm, isDirty, prescriptionIdRef]);
+
+  const requestRevisionIfNeeded = useCallback(
+    (action: RxReviseLeaveAction): boolean => {
+      const skipId = justCreatedRevisionIdRef.current;
+      const currentId =
+        prescriptionIdRef?.current ?? shell?.prescription?.id ?? null;
+      if (skipId && currentId === skipId) return false;
+      if (
+        !needsReissue(shell?.prescription, {
+          isDirty,
+          skipId,
+        })
+      ) {
+        return false;
+      }
+      pendingLeaveRef.current = action;
+      setRevisionReasonError(null);
+      setRevisionReasonOpen(true);
+      return true;
+    },
+    [isDirty, prescriptionIdRef, shell?.prescription],
+  );
+
+  const adoptRevision = useCallback(
+    async (reason: RevisionReason): Promise<string> => {
+      await persistDraftForCommit();
+      const sourceId =
+        shell?.prescription?.id ?? prescriptionIdRef?.current ?? null;
+      if (!sourceId) {
+        throw new Error("No prescription to revise.");
+      }
+      const source = shell?.prescription;
+      if (source) {
+        deliverySourceRef.current = {
+          sent: sourceWasSent(source),
+          printed: sourceWasPrinted(source),
+        };
+      }
+      const result = await reissuePrescription(token, sourceId, reason);
+      const next = result.data.prescription;
+      justCreatedRevisionIdRef.current = next.id;
+      if (prescriptionIdRef) prescriptionIdRef.current = next.id;
+      shell?.setPrescription(next);
+      shell?.setAttachments(next.prescription_attachments ?? []);
+      dropPdfWarm(true);
+      return next.id;
+    },
+    [dropPdfWarm, persistDraftForCommit, prescriptionIdRef, shell, token],
+  );
+
+  const showDeliveryPromptFor = useCallback((action: RxReviseLeaveAction) => {
+    const source = deliverySourceRef.current;
+    if (!source) return;
+    const resend = source.sent && action !== "send";
+    const reprint = source.printed && action !== "print";
+    if (resend || reprint) setDeliveryPrompt({ resend, reprint });
+  }, []);
+
+  const prewarmPdf = useCallback(
+    (rxId: string): Promise<string> => {
+      const existing = pdfWarmRef.current;
+      if (existing?.rxId === rxId) return existing.objectUrl;
+      dropPdfWarm(true);
+      const objectUrl = fetchPrescriptionPdf(token, rxId)
+        .then(({ blob }) => URL.createObjectURL(pdfBlobForObjectUrl(blob)))
+        .catch((err) => {
+          if (pdfWarmRef.current?.rxId === rxId) pdfWarmRef.current = null;
+          throw err;
+        });
+      pdfWarmRef.current = { rxId, objectUrl };
+      return objectUrl;
+    },
+    [dropPdfWarm, token]
+  );
+
+  const takeWarmedPdf = useCallback(
+    (rxId: string): Promise<string> => {
+      const existing = pdfWarmRef.current;
+      if (existing?.rxId === rxId) {
+        pdfWarmRef.current = null;
+        return existing.objectUrl;
+      }
+      return prewarmPdf(rxId).then((url) => {
+        if (pdfWarmRef.current?.rxId === rxId) pdfWarmRef.current = null;
+        return url;
+      });
+    },
+    [prewarmPdf]
+  );
+
+  const openPreview = useCallback(() => {
+    void (async () => {
+      setCommitError(null);
+      if (!doctorMetaRef.current) {
+        setPreviewLoading(true);
+        try {
+          await ensureDoctorMeta();
         } finally {
           setPreviewLoading(false);
         }
       }
       setPreviewVM(buildPreviewViewModel());
       setPreviewOpen(true);
+      void persistDraftForCommit()
+        .then(() => {
+          const rxId = prescriptionIdRef?.current;
+          if (rxId) void prewarmPdf(rxId).catch(() => undefined);
+        })
+        .catch(() => undefined);
     })();
-  }, [token, buildPreviewViewModel]);
+  }, [
+    ensureDoctorMeta,
+    buildPreviewViewModel,
+    persistDraftForCommit,
+    prewarmPdf,
+    prescriptionIdRef,
+  ]);
+
+  const prewarmOnIntent = useCallback(() => {
+    void persistDraftForCommit()
+      .then(() => {
+        const rxId = prescriptionIdRef?.current;
+        if (rxId) void prewarmPdf(rxId).catch(() => undefined);
+      })
+      .catch(() => undefined);
+  }, [persistDraftForCommit, prewarmPdf, prescriptionIdRef]);
 
   const closePreview = useCallback(() => {
     setPreviewOpen(false);
   }, []);
 
+  useEffect(() => {
+    if (!previewOpen || !allergyQuery.isFetched) return;
+    setPreviewVM(buildPreviewViewModel());
+    // Refresh once the chart allergies query lands — do not depend on
+    // buildPreviewViewModel (it changes with form fields and would loop).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewOpen, allergyQuery.isFetched, allergyQuery.data]);
+
   const emitPreSendTelemetryFor = useCallback(
     (
       warnings: ReadonlyArray<PreSendWarning>,
-      outcome: "cancelled" | "edited" | "sent-anyway",
+      outcome: "cancelled" | "edited" | "sent-anyway"
     ): void => {
       const counts: Partial<Record<PreSendWarningKind, number>> = {};
       let ddiSeverity: InteractionRow["severity"] | undefined;
@@ -248,7 +833,7 @@ export function useRxCommitActions({
         occurredAt: new Date().toISOString(),
       });
     },
-    [appointmentId, prescriptionIdRef],
+    [appointmentId, prescriptionIdRef]
   );
 
   const focusEditTarget = useCallback((target: PreSendFocusTarget) => {
@@ -264,23 +849,44 @@ export function useRxCommitActions({
       return;
     }
     const inner = el.querySelector<HTMLElement>(
-      "input, textarea, button, [tabindex]:not([tabindex='-1'])",
+      "input, textarea, button, [tabindex]:not([tabindex='-1'])"
     );
     inner?.focus();
   }, []);
+
+  /**
+   * pf-11 advance gate. Print-only parks on this visit; Send & finish must
+   * clear the flag or a print earlier in the session keeps blocking advance.
+   */
+  const setAdvanceCancelled = useCallback(
+    (cancelled: boolean) => {
+      try {
+        const key = `pf11_cancelled_${appointmentId}`;
+        if (cancelled) sessionStorage.setItem(key, "1");
+        else sessionStorage.removeItem(key);
+      } catch {
+        // private mode / SSR
+      }
+    },
+    [appointmentId]
+  );
 
   const performSaveAndSend = useCallback(async () => {
     setCommitError(null);
     setCommitSuccess(null);
     setSaving(true);
+    const shouldPrint = printAfterSendRef.current;
+    const shouldFinish = finishAfterSendRef.current;
+    printAfterSendRef.current = false;
+    finishAfterSendRef.current = false;
     try {
       try {
-        await autoSaveFlush();
+        await persistDraftForCommit();
       } catch (saveErr) {
         setCommitError(
           saveErr instanceof Error
             ? `Save failed before send: ${saveErr.message}`
-            : "Save failed before send",
+            : "Save failed before send"
         );
         return;
       }
@@ -289,46 +895,77 @@ export function useRxCommitActions({
         setCommitError("Prescription was not saved. Please try again.");
         return;
       }
-      const sendRes = await sendPrescriptionToPatient(token, rxId);
-      const { sent, channels } = sendRes.data;
-      if (sent) {
-        setCommitSuccess(
-          channels?.instagram && channels?.email
-            ? "Prescription saved and sent to patient (DM + email)."
-            : channels?.instagram
-              ? "Prescription saved and sent to patient (DM)."
-              : channels?.email
-                ? "Prescription saved and sent to patient (email)."
-                : "Prescription saved and sent.",
-        );
-      } else {
-        setCommitSuccess(
-          sendRes.data.reason === "no_patient_link"
-            ? "Prescription saved. Could not send (no Instagram link or email for patient)."
-            : "Prescription saved. Send to patient failed.",
-        );
+      // Finishing always re-enables advance; print without finish parks on
+      // this visit so navigation can't unload the print iframe.
+      if (shouldFinish || shouldPrint) setAdvanceCancelled(!shouldFinish);
+
+      if (shouldPrint) {
+        const printJob = takeWarmedPdf(rxId);
+        void printJob
+          .then((objectUrl) => printPdfObjectUrl(objectUrl))
+          .catch((printErr) => {
+            setCommitError(
+              printErr instanceof Error
+                ? printErr.message
+                : "Could not open the print dialog"
+            );
+          });
       }
-      onSuccess?.();
-      if (sent) {
-        try {
-          await onSent?.(rxId);
-        } catch {
-          // Soft failure — Rx already sent.
-        }
-      }
-      if (finishAfterSendRef.current) {
-        finishAfterSendRef.current = false;
-        onFinish?.();
+
+      setCommitSuccess("Sending to patient…");
+      void sendPrescriptionToPatient(token, rxId)
+        .then(async (sendRes) => {
+          const { sent, channels } = sendRes.data;
+          if (sent) {
+            setCommitSuccess(
+              channels?.instagram && channels?.email
+                ? "Prescription saved and sent to patient (DM + email)."
+                : channels?.instagram
+                  ? "Prescription saved and sent to patient (DM)."
+                  : channels?.email
+                    ? "Prescription saved and sent to patient (email)."
+                    : "Prescription saved and sent."
+            );
+          } else {
+            setCommitSuccess(
+              sendRes.data.reason === "no_patient_link"
+                ? "Prescription saved. Could not send (no Instagram link or email for patient)."
+                : "Prescription saved. Send to patient failed."
+            );
+          }
+          onSuccess?.();
+          if (sent) {
+            try {
+              await onSent?.(rxId);
+            } catch {
+              // Soft failure — Rx already sent.
+            }
+          }
+        })
+        .catch((err) => {
+          setCommitError(
+            err instanceof Error ? err.message : "Failed to save and send"
+          );
+        });
+
+      if (shouldFinish) {
+        setPreviewOpen(false);
+        void Promise.resolve(onFinish?.()).catch(() => {
+          // handleFinishVisit already surfaces wrap-up errors.
+        });
       }
     } catch (err) {
-      finishAfterSendRef.current = false;
-      setCommitError(err instanceof Error ? err.message : "Failed to save and send");
+      setCommitError(
+        err instanceof Error ? err.message : "Failed to save and send"
+      );
     } finally {
       setSaving(false);
     }
   }, [
-    autoSaveFlush,
+    persistDraftForCommit,
+    setAdvanceCancelled,
     prescriptionIdRef,
+    takeWarmedPdf,
     token,
     onSuccess,
     onSent,
@@ -375,10 +1012,167 @@ export function useRxCommitActions({
     performSaveAndSend,
   ]);
 
+  const sendRx = useCallback(() => {
+    finishAfterSendRef.current = false;
+    printAfterSendRef.current = false;
+    if (requestRevisionIfNeeded("send")) return;
+    void handleSaveAndSend();
+  }, [handleSaveAndSend, requestRevisionIfNeeded]);
+
   const sendAndFinish = useCallback(() => {
     finishAfterSendRef.current = true;
+    printAfterSendRef.current = false;
+    if (requestRevisionIfNeeded("send")) return;
+    void handleSaveAndSend();
+  }, [handleSaveAndSend, requestRevisionIfNeeded]);
+
+  const sendFinishAndPrint = useCallback(() => {
+    finishAfterSendRef.current = true;
+    printAfterSendRef.current = true;
+    if (requestRevisionIfNeeded("send")) return;
+    void handleSaveAndSend();
+  }, [handleSaveAndSend, requestRevisionIfNeeded]);
+
+  const finishVisit = useCallback(() => {
+    if (requestRevisionIfNeeded("finish")) return;
+    setPreviewOpen(false);
+    setAdvanceCancelled(false);
+    if (cockpitState !== "ended") onFinish?.();
+  }, [cockpitState, onFinish, requestRevisionIfNeeded, setAdvanceCancelled]);
+
+  const downloadPrescription = useCallback(async () => {
+    setCommitError(null);
+    setPrintBusy(true);
+    try {
+      try {
+        await persistDraftForCommit();
+      } catch (saveErr) {
+        setCommitError(
+          saveErr instanceof Error
+            ? `Save failed before download: ${saveErr.message}`
+            : "Save failed before download"
+        );
+        return;
+      }
+      const rxId = shell?.prescription?.id ?? prescriptionIdRef?.current;
+      if (!rxId) {
+        setCommitError("No prescription to download yet.");
+        return;
+      }
+      const { blob, filename } = await fetchPrescriptionPdf(token, rxId);
+      await downloadPdfBlob(blob, filename);
+    } catch (err) {
+      setCommitError(
+        err instanceof Error
+          ? err.message
+          : "Could not download prescription PDF"
+      );
+    } finally {
+      setPrintBusy(false);
+    }
+  }, [persistDraftForCommit, prescriptionIdRef, shell?.prescription?.id, token]);
+
+  const printPrescription = useCallback(async () => {
+    if (requestRevisionIfNeeded("print")) return;
+    setCommitError(null);
+    setPrintBusy(true);
+    try {
+      try {
+        await persistDraftForCommit();
+      } catch (saveErr) {
+        setCommitError(
+          saveErr instanceof Error
+            ? `Save failed before print: ${saveErr.message}`
+            : "Save failed before print"
+        );
+        return;
+      }
+      const rxId = shell?.prescription?.id ?? prescriptionIdRef?.current;
+      if (!rxId) {
+        setCommitError("No prescription to print yet.");
+        return;
+      }
+      setAdvanceCancelled(true);
+      await printPdfObjectUrl(await takeWarmedPdf(rxId));
+    } catch (err) {
+      setCommitError(
+        err instanceof Error ? err.message : "Could not open the print dialog"
+      );
+    } finally {
+      setPrintBusy(false);
+    }
+  }, [
+    persistDraftForCommit,
+    requestRevisionIfNeeded,
+    setAdvanceCancelled,
+    takeWarmedPdf,
+    prescriptionIdRef,
+    shell?.prescription?.id,
+  ]);
+
+  const onRevisionReasonCancel = useCallback(() => {
+    pendingLeaveRef.current = null;
+    setRevisionReasonOpen(false);
+    setRevisionReasonError(null);
+  }, []);
+
+  const onRevisionReasonConfirm = useCallback(
+    (reason: RevisionReason) => {
+      void (async () => {
+        setRevisionReasonBusy(true);
+        setRevisionReasonError(null);
+        const action = pendingLeaveRef.current ?? "finish";
+        try {
+          await adoptRevision(reason);
+          setRevisionReasonOpen(false);
+          pendingLeaveRef.current = null;
+          if (action === "send") {
+            await handleSaveAndSend();
+          } else if (action === "print") {
+            await printPrescription();
+          } else {
+            setPreviewOpen(false);
+            setAdvanceCancelled(false);
+            if (cockpitState !== "ended") onFinish?.();
+          }
+          if (!printAfterSendRef.current) {
+            showDeliveryPromptFor(action);
+          }
+        } catch (err) {
+          setRevisionReasonError(
+            err instanceof Error ? err.message : "Could not create the next version",
+          );
+        } finally {
+          setRevisionReasonBusy(false);
+        }
+      })();
+    },
+    [
+      adoptRevision,
+      cockpitState,
+      handleSaveAndSend,
+      onFinish,
+      printPrescription,
+      setAdvanceCancelled,
+      showDeliveryPromptFor,
+    ],
+  );
+
+  const onDeliveryPromptDismiss = useCallback(() => {
+    setDeliveryPrompt(null);
+  }, []);
+
+  const onDeliveryPromptResend = useCallback(() => {
+    setDeliveryPrompt(null);
+    finishAfterSendRef.current = false;
+    printAfterSendRef.current = false;
     void handleSaveAndSend();
   }, [handleSaveAndSend]);
+
+  const onDeliveryPromptReprint = useCallback(() => {
+    setDeliveryPrompt(null);
+    void printPrescription();
+  }, [printPrescription]);
 
   const onPreSendCancel = useCallback(() => {
     if (preSendWarnings) {
@@ -388,6 +1182,9 @@ export function useRxCommitActions({
   }, [preSendWarnings, emitPreSendTelemetryFor]);
 
   const onPreSendEdit = useCallback(() => {
+    finishAfterSendRef.current = false;
+    printAfterSendRef.current = false;
+    setPreviewOpen(false);
     if (preSendWarnings) {
       emitPreSendTelemetryFor(preSendWarnings, "edited");
       const target = focusTargetFor(preSendWarnings);
@@ -411,8 +1208,6 @@ export function useRxCommitActions({
 
   const register = useRegisterRxFormActions();
 
-  const sendAndFinishRef = useRef(sendAndFinish);
-  sendAndFinishRef.current = sendAndFinish;
   const openPreviewRef = useRef(openPreview);
   openPreviewRef.current = openPreview;
 
@@ -420,19 +1215,20 @@ export function useRxCommitActions({
     if (!registerActions) return;
     register({
       sendAndFinish: () => {
-        sendAndFinishRef.current();
+        openPreviewRef.current();
       },
       sending: saving,
       finishSending: saving && finishAfterSendRef.current,
       openPreview: () => {
         openPreviewRef.current();
       },
+      prewarmPreview: prewarmOnIntent,
       canSend,
     });
     return () => {
       register(null);
     };
-  }, [registerActions, register, saving, canSend]);
+  }, [registerActions, register, saving, canSend, prewarmOnIntent]);
 
   return {
     canSend,
@@ -440,7 +1236,16 @@ export function useRxCommitActions({
     previewLoading,
     finishSending: saving && finishAfterSendRef.current,
     openPreview,
+    prewarmOnIntent,
+    sendRx,
     sendAndFinish,
+    sendFinishAndPrint,
+    finishVisit,
+    printPrescription,
+    downloadPrescription,
+    canPrint,
+    canFinish,
+    printBusy,
     previewOpen,
     previewVM,
     closePreview,
@@ -450,5 +1255,14 @@ export function useRxCommitActions({
     onPreSendSendAnyway,
     commitError,
     commitSuccess,
+    revisionReasonOpen,
+    revisionReasonBusy,
+    revisionReasonError,
+    onRevisionReasonCancel,
+    onRevisionReasonConfirm,
+    deliveryPrompt,
+    onDeliveryPromptDismiss,
+    onDeliveryPromptResend,
+    onDeliveryPromptReprint,
   };
 }

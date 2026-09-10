@@ -64,6 +64,14 @@ describe("back-target (nav-back-01)", () => {
         opdDate: "2026-05-09",
       }),
     ).toBe("/dashboard/appointments/appt-1?from=opd-today&date=2026-05-09");
+    expect(
+      buildCockpitAppointmentPath("appt-1", "patients-v2", {
+        patientId: "pat-9",
+        amendTranscriptSessionId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      }),
+    ).toBe(
+      "/dashboard/appointments/appt-1?from=patients-v2&pid=pat-9&amendTranscript=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    );
   });
 
   it("buildCockpitAppointmentPathFromCurrentOrigin preserves existing params", () => {

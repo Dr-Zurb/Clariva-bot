@@ -9,6 +9,7 @@ import {
 import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import { useAccordionOpenState } from "@/lib/cockpit/accordion-open-state";
 import { SectionReorderLeadingAction } from "@/components/cockpit/rx/subjective/SortableSectionShell";
+import { LastVisitSocialHistoryStrip } from "@/components/cockpit/rx/last-visit/LastVisitParchiStrips";
 import { historyFieldInputId } from "@/lib/cockpit/history-field-chips";
 import {
   auditCClinicalHint,
@@ -112,6 +113,7 @@ import {
   type SocialHistoryDurationUnit,
   type SocialHistoryStructured,
   type SmokingStatus,
+  type TobaccoUseSectionInput,
 } from "@/lib/cockpit/social-history";
 import {
   SICK_CONTACT_CONTEXT_OPTIONS,
@@ -672,9 +674,7 @@ function alcoholDrinksForDisplay(
   return ensureAlcoholDrinkIds(normalized?.drinks ?? []);
 }
 
-function tobaccoProductsForDisplay(
-  section: { status: SmokingStatus; products?: TobaccoProductRow[]; quitYearsAgo?: number; quitYearsUnit?: SocialHistoryDurationUnit },
-): TobaccoProductRow[] {
+function tobaccoProductsForDisplay(section: TobaccoUseSectionInput): TobaccoProductRow[] {
   const products = section.products ?? [];
   const migrated =
     section.status === "ex"
@@ -1124,6 +1124,7 @@ export function SocialHistoryField({
       leadingActions={<SectionReorderLeadingAction sectionId="social_history" />}
       actions={!disabled ? <SubjectiveSectionTemplateButton scope="social_history" /> : undefined}
     >
+        <LastVisitSocialHistoryStrip disabled={disabled} />
         <CollapsibleContainer
           title="Tobacco, alcohol & drugs"
           toggleLabel="Toggle tobacco, alcohol and drugs cluster"

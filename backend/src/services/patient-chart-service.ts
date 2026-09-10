@@ -25,6 +25,7 @@ import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataAccess, logDataModification } from '../utils/audit-logger';
 import { ForbiddenError, InternalError, NotFoundError } from '../utils/errors';
 import type {
+  AllergySectionMeta,
   ConditionMedicationLink,
   ConditionWithMedications,
   CreatePatientAllergyInput,
@@ -121,21 +122,37 @@ export async function listAllergies(
   return (data ?? []) as PatientAllergy[];
 }
 
+const ALLERGY_SECTION_COLUMNS = 'notes, no_known_allergies, no_known_allergies_at';
+
+interface AllergySectionRow {
+  notes?: string | null;
+  no_known_allergies?: boolean | null;
+  no_known_allergies_at?: string | null;
+}
+
+function toAllergySectionMeta(row: AllergySectionRow | null | undefined): AllergySectionMeta {
+  return {
+    notes: row?.notes ?? null,
+    noKnownAllergies: row?.no_known_allergies === true,
+    noKnownAllergiesAt: row?.no_known_allergies_at ?? null,
+  };
+}
+
 export async function getAllergySectionNotes(
   patientId: string,
   correlationId: string,
   userId: string,
-): Promise<string | null> {
+): Promise<AllergySectionMeta> {
   const { data, error } = await admin()
     .from('patient_allergies_section_notes')
-    .select('notes')
+    .select(ALLERGY_SECTION_COLUMNS)
     .eq('doctor_id', userId)
     .eq('patient_id', patientId)
     .maybeSingle();
 
   if (error) handleSupabaseError(error, correlationId);
   await logDataAccess(correlationId, userId, 'patient_allergies_section_notes', patientId);
-  return (data?.notes as string | null | undefined) ?? null;
+  return toAllergySectionMeta(data as AllergySectionRow | null);
 }
 
 export async function upsertAllergySectionNotes(
@@ -143,25 +160,38 @@ export async function upsertAllergySectionNotes(
   input: UpdateAllergySectionNotesInput,
   correlationId: string,
   userId: string,
-): Promise<string | null> {
-  const notes = input.notes?.trim() ? input.notes.trim() : null;
+): Promise<AllergySectionMeta> {
+  // Keys are patched independently: saving notes must not silently drop the
+  // nil-known assertion, and vice versa.
+  const patch: Record<string, unknown> = {};
+  if (input.notes !== undefined) {
+    patch.notes = input.notes?.trim() ? input.notes.trim() : null;
+  }
+  if (input.noKnownAllergies !== undefined) {
+    patch.no_known_allergies = input.noKnownAllergies;
+    patch.no_known_allergies_at = input.noKnownAllergies ? new Date().toISOString() : null;
+  }
 
   const { data: existing, error: existingError } = await admin()
     .from('patient_allergies_section_notes')
-    .select('doctor_id')
+    .select(ALLERGY_SECTION_COLUMNS)
     .eq('doctor_id', userId)
     .eq('patient_id', patientId)
     .maybeSingle();
 
   if (existingError) handleSupabaseError(existingError, correlationId);
 
+  if (Object.keys(patch).length === 0) {
+    return toAllergySectionMeta(existing as AllergySectionRow | null);
+  }
+
   if (existing) {
     const { data, error } = await admin()
       .from('patient_allergies_section_notes')
-      .update({ notes })
+      .update(patch)
       .eq('doctor_id', userId)
       .eq('patient_id', patientId)
-      .select('notes')
+      .select(ALLERGY_SECTION_COLUMNS)
       .single();
 
     if (error || !data) handleSupabaseError(error, correlationId);
@@ -172,13 +202,13 @@ export async function upsertAllergySectionNotes(
       'patient_allergies_section_notes',
       patientId,
     );
-    return (data.notes as string | null) ?? null;
+    return toAllergySectionMeta(data as AllergySectionRow);
   }
 
   const { data, error } = await admin()
     .from('patient_allergies_section_notes')
-    .insert({ doctor_id: userId, patient_id: patientId, notes })
-    .select('notes')
+    .insert({ doctor_id: userId, patient_id: patientId, notes: null, ...patch })
+    .select(ALLERGY_SECTION_COLUMNS)
     .single();
 
   if (error || !data) handleSupabaseError(error, correlationId);
@@ -189,7 +219,27 @@ export async function upsertAllergySectionNotes(
     'patient_allergies_section_notes',
     patientId,
   );
-  return (data.notes as string | null) ?? null;
+  return toAllergySectionMeta(data as AllergySectionRow);
+}
+
+/**
+ * A recorded allergen contradicts a nil-known assertion, so the flag is
+ * retired here rather than relying on every client to do it. Filtered on the
+ * flag so this is a no-op write for the common case.
+ */
+async function clearNoKnownAllergies(
+  patientId: string,
+  correlationId: string,
+  userId: string,
+): Promise<void> {
+  const { error } = await admin()
+    .from('patient_allergies_section_notes')
+    .update({ no_known_allergies: false, no_known_allergies_at: null })
+    .eq('doctor_id', userId)
+    .eq('patient_id', patientId)
+    .eq('no_known_allergies', true);
+
+  if (error) handleSupabaseError(error, correlationId);
 }
 
 export async function createAllergy(
@@ -215,6 +265,7 @@ export async function createAllergy(
 
   if (error || !data) handleSupabaseError(error, correlationId);
   const row = data as PatientAllergy;
+  await clearNoKnownAllergies(patientId, correlationId, userId);
   await logDataModification(correlationId, userId, 'create', 'patient_allergies', row.id);
   return row;
 }

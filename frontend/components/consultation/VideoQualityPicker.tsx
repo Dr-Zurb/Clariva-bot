@@ -277,11 +277,10 @@ export interface QualityVideoConstraints {
 }
 
 /**
- * Map an explicit-resolution `QualityOption` to `MediaTrackConstraints`-shaped
- * fields suitable for `createLocalVideoTrack`. Returns `null` for `'auto'`
- * (let Twilio + the camera negotiate; matches today's `width: 640, height:
- * 480` default — see `<VideoRoom>` for the actual default constraints) and
- * for `'audio-only'` (no video track to create).
+ * Map a `QualityOption` to `MediaTrackConstraints`-shaped fields suitable
+ * for `createLocalVideoTrack`. Returns `null` for `'audio-only'` (no video
+ * track to create). `'auto'` is 720p30 — sharp enough for the Consult pane
+ * without the encode cost of 1080p.
  *
  * Frame-rate clamp at 24fps for 480p — note #4 in the B8 task draft. High
  * fps × low res produces motion smear that hurts intelligibility more than
@@ -297,6 +296,7 @@ export function videoConstraintsForQuality(
         height: { ideal: 1080 },
         frameRate: { ideal: 30 },
       };
+    case "auto":
     case "720p":
       return {
         width: { ideal: 1280 },
@@ -309,7 +309,6 @@ export function videoConstraintsForQuality(
         height: { ideal: 480 },
         frameRate: { ideal: 24 },
       };
-    case "auto":
     case "audio-only":
     default:
       return null;
@@ -330,13 +329,17 @@ export function maxSubscriptionBitrateForQuality(quality: QualityOption): number
     case "1080p":
       return 2_400_000;
     case "720p":
-      return 1_200_000;
+      // Twilio's 720p30 recommendation is ~1.5–2.5 Mbps. 1.2 Mbps was
+      // undershot and looked blocky even on a good link.
+      return 2_000_000;
     case "480p":
-      return 600_000;
+      return 800_000;
     case "audio-only":
       return 0;
     case "auto":
     default:
-      return 2_400_000;
+      // Same as 720p. 100 Mbps Wi-Fi is not the bottleneck — 640×480@24
+      // + a 1.2 Mbps cap is what made Auto look delayed and soft.
+      return 2_000_000;
   }
 }

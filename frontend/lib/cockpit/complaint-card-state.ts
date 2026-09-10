@@ -22,7 +22,9 @@ export function listAssociatedComplaintNames(value: Complaint): string[] {
 }
 
 /** Full associated list for tooltips / aria (UI truncates by width). */
-export function buildComplaintAssociatedSuffix(value: Complaint): string | null {
+export function buildComplaintAssociatedSuffix(
+  value: Complaint
+): string | null {
   const names = listAssociatedComplaintNames(value);
   if (names.length === 0) return null;
   return names.map(formatComplaintDisplayName).join(", ");
@@ -38,23 +40,27 @@ const SEVERITY_LABELS: Record<string, string> = {
 };
 
 export function formatComplaintSeverityLabel(
-  severity: ComplaintSeverity | null | undefined,
+  severity: ComplaintSeverity | null | undefined
 ): string | null {
   if (severity === null || severity === undefined) return null;
   if (typeof severity === "number") return `${severity}/10`;
-  return SEVERITY_LABELS[severity] ?? severity.charAt(0).toUpperCase() + severity.slice(1);
+  return (
+    SEVERITY_LABELS[severity] ??
+    severity.charAt(0).toUpperCase() + severity.slice(1)
+  );
 }
 
 /** Tailwind tone for severity on the collapsed card summary row. */
 export function severitySummaryToneClass(
-  severity: ComplaintSeverity | null | undefined,
+  severity: ComplaintSeverity | null | undefined
 ): string {
   if (severity === "minimal") return "text-muted-foreground";
   if (severity === "mild") return "text-emerald-600";
   if (severity === "moderate") return "text-amber-600";
   if (severity === "severe") return "text-red-600";
   if (severity === "very_severe") return "text-red-700";
-  if (typeof severity === "number") return severitySummaryToneClass(painScoreToSeverityBand(severity));
+  if (typeof severity === "number")
+    return severitySummaryToneClass(painScoreToSeverityBand(severity));
   return "text-muted-foreground";
 }
 
@@ -94,8 +100,15 @@ export function painScoreToSeverityBand(score: number): SeverityBand | null {
 }
 
 /** Representative score for a band (legacy `minimal` treated as mild). */
-export function severityBandToScore(severity: ComplaintSeverity | null | undefined): number | null {
-  if (severity === null || severity === undefined || typeof severity === "number") return null;
+export function severityBandToScore(
+  severity: ComplaintSeverity | null | undefined
+): number | null {
+  if (
+    severity === null ||
+    severity === undefined ||
+    typeof severity === "number"
+  )
+    return null;
   if (severity === "minimal") return SEVERITY_BAND_SCORE.mild;
   return SEVERITY_BAND_SCORE[severity] ?? null;
 }
@@ -103,10 +116,15 @@ export function severityBandToScore(severity: ComplaintSeverity | null | undefin
 /** Whether a numeric score already falls inside a band's range. */
 export function isScoreInSeverityBand(
   score: number | null | undefined,
-  severity: ComplaintSeverity | null | undefined,
+  severity: ComplaintSeverity | null | undefined
 ): boolean {
   if (typeof score !== "number") return false;
-  if (severity === null || severity === undefined || typeof severity === "number") return false;
+  if (
+    severity === null ||
+    severity === undefined ||
+    typeof severity === "number"
+  )
+    return false;
   const band = severity === "minimal" ? "mild" : (severity as SeverityBand);
   const range = SEVERITY_BAND_RANGE[band];
   if (!range) return false;
@@ -114,7 +132,9 @@ export function isScoreInSeverityBand(
 }
 
 /** Tailwind tone for fever grade on the collapsed card summary row. */
-export function feverSummaryToneClass(feverGrade: FeverGrade | null | undefined): string {
+export function feverSummaryToneClass(
+  feverGrade: FeverGrade | null | undefined
+): string {
   if (feverGrade === "mild") return "text-emerald-600";
   if (feverGrade === "moderate") return "text-amber-600";
   if (feverGrade === "high") return "text-red-600";
@@ -122,7 +142,7 @@ export function feverSummaryToneClass(feverGrade: FeverGrade | null | undefined)
   return "text-muted-foreground";
 }
 
-/** Shown on row 1 (duration) / row 2 (severity or fever) / as the notes icon — not in detail text. */
+/** Shown on row 1 (duration) / row 2 (severity or fever) / as the collapsed note — not in detail text. */
 const SUMMARY_EXCLUDED_KEYS = new Set<ComplaintAttributeKey>([
   "duration",
   "severity",
@@ -170,14 +190,16 @@ export interface ComplaintDetailSummary {
  * Row 2 on the collapsed card — severity first, then SOCRATES detail.
  * Duration stays on row 1 (inline).
  */
-export function buildComplaintDetailSummary(value: Complaint): ComplaintDetailSummary {
+export function buildComplaintDetailSummary(
+  value: Complaint
+): ComplaintDetailSummary {
   const painSeverityLabel = formatComplaintSeverityLabel(value.severity);
   const feverLabel = formatFeverDisplaySummary(
     value.temperature,
     value.temperatureUnit ?? "F",
     value.feverGrade,
     value.measuredBy,
-    value.reportedBy,
+    value.reportedBy
   );
   const severityLabel = painSeverityLabel ?? feverLabel;
   const detailText = buildComplaintDetailParts(value).join(" · ");
@@ -195,11 +217,21 @@ export function buildComplaintSummary(value: Complaint): string {
   return buildComplaintDetailSummary(value).fullText;
 }
 
-/** Whether the complaint has free-text notes (shown as an icon on the collapsed card). */
+/** Whether the complaint has free-text notes (shown on the collapsed card). */
 export function complaintHasNotes(value: Complaint): boolean {
   return Boolean(value.notes?.trim());
 }
 
 export function complaintNotesText(value: Complaint): string {
   return value.notes?.trim() ?? "";
+}
+
+/** Longer than one compact line under the complaint name — use the page icon. */
+export const COMPLAINT_NOTE_INLINE_MAX_CHARS = 48;
+
+export function complaintNotePrefersInline(text: string): boolean {
+  const trimmed = text.trim();
+  return (
+    trimmed.length > 0 && trimmed.length <= COMPLAINT_NOTE_INLINE_MAX_CHARS
+  );
 }

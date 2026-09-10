@@ -76,6 +76,10 @@ import { logger } from '../config/logger';
 import { env } from '../config/env';
 import { insertDashboardEvent } from '../services/dashboard-events-service';
 import { logAuditEvent } from '../utils/audit-logger';
+import {
+  mapConsultationTypeToModality,
+  recordBillableConsult,
+} from '../services/billing/usage-ledger-service';
 
 /**
  * Candidate for the auto-no-show flip. Carries the fields needed for the
@@ -729,7 +733,7 @@ async function flipToCompletedFromWrapUp(args: {
     .update({ status: 'completed', updated_at: nowIso })
     .eq('id', args.appointmentId)
     .in('status', ['pending', 'confirmed'])
-    .select('id, doctor_id')
+    .select('id, doctor_id, consultation_type')
     .maybeSingle();
 
   if (updErr) {
@@ -759,7 +763,22 @@ async function flipToCompletedFromWrapUp(args: {
   args.result.wrapUpFlipped += 1;
   args.result.wrapUpIds.push(args.appointmentId);
 
-  const doctorId = (updated as { id: string; doctor_id?: string }).doctor_id;
+  const doctorId = (updated as { id: string; doctor_id?: string; consultation_type?: string }).doctor_id;
+  if (doctorId) {
+    await recordBillableConsult(
+      {
+        appointmentId: args.appointmentId,
+        doctorId,
+        modality: mapConsultationTypeToModality(
+          (updated as { consultation_type?: string }).consultation_type,
+          'video'
+        ),
+        source: 'wrapup_sweep',
+        occurredAt: args.sessionEndedAt,
+      },
+      args.correlationId
+    );
+  }
 
   await safeAudit({
     correlationId: args.correlationId,

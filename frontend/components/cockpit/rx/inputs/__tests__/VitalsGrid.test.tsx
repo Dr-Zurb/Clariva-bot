@@ -2,13 +2,16 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VitalsGrid } from "@/components/cockpit/rx/inputs/VitalsGrid";
+import { RxLockProvider } from "@/components/cockpit/rx/useRxLock";
 import {
   RxFormProvider,
   createEmptyRxFormFields,
   type RxFormFields,
 } from "@/components/cockpit/rx/RxFormContext";
+import { saveVitalsHidden } from "@/lib/cockpit/vitals-visibility";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
+  getAppointmentDeskVitals,
   getDoctorSettings,
   getLastPrescriptionInEpisode,
   getPatientById,
@@ -19,12 +22,15 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual,
-    getDoctorSettings: vi
-      .fn()
-      .mockResolvedValue({ data: { settings: { vitals_hidden: [], vitals_custom: [] } } }),
+    getDoctorSettings: vi.fn().mockResolvedValue({
+      data: { settings: { vitals_hidden: [], vitals_custom: [] } },
+    }),
     getLastPrescriptionInEpisode: vi
       .fn()
       .mockResolvedValue({ data: { prescription: null } }),
+    getAppointmentDeskVitals: vi
+      .fn()
+      .mockResolvedValue({ data: { vitals: null } }),
     getPatientById: vi.fn().mockResolvedValue({
       data: {
         patient: {
@@ -42,12 +48,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 vi.mock("@/hooks/queries/useVitalsTrendsQuery", async () => {
-  const { buildVitalsTrendSeries, indexVitalsTrendSeries } = await import(
-    "@/lib/cockpit/vitals-trends"
-  );
-  const { buildCategoricalVitalTimelines } = await import(
-    "@/lib/cockpit/categorical-vitals-timeline"
-  );
+  const { buildVitalsTrendSeries, indexVitalsTrendSeries } =
+    await import("@/lib/cockpit/vitals-trends");
+  const { buildCategoricalVitalTimelines } =
+    await import("@/lib/cockpit/categorical-vitals-timeline");
   const {
     buildCustomVitalTextTimelines,
     buildCustomVitalTrendSeries,
@@ -70,12 +74,16 @@ vi.mock("@/hooks/queries/useVitalsTrendsQuery", async () => {
   };
 });
 
-vi.mock("@/components/cockpit/rx/objective/PediatricGrowthChartsSection", () => ({
-  PediatricGrowthChartsSection: () => null,
-}));
+vi.mock(
+  "@/components/cockpit/rx/objective/PediatricGrowthChartsSection",
+  () => ({
+    PediatricGrowthChartsSection: () => null,
+  })
+);
 
 vi.mock("@/lib/cockpit/vitals-visibility", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/cockpit/vitals-visibility")>();
+  const actual =
+    await importOriginal<typeof import("@/lib/cockpit/vitals-visibility")>();
   return {
     ...actual,
     fetchVitalsHidden: vi.fn().mockResolvedValue([]),
@@ -84,6 +92,7 @@ vi.mock("@/lib/cockpit/vitals-visibility", async (importOriginal) => {
 });
 
 const mockedGetLast = vi.mocked(getLastPrescriptionInEpisode);
+const mockedGetDesk = vi.mocked(getAppointmentDeskVitals);
 const mockedGetDoctorSettings = vi.mocked(getDoctorSettings);
 
 async function waitForVitalsSettingsLoaded() {
@@ -95,7 +104,9 @@ async function revealVital(menuLabel: string) {
   if (!screen.queryByRole("button", { name: `Show ${menuLabel}` })) {
     fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
   }
-  const showBtn = await screen.findByRole("button", { name: `Show ${menuLabel}` });
+  const showBtn = await screen.findByRole("button", {
+    name: `Show ${menuLabel}`,
+  });
   fireEvent.click(showBtn);
 }
 
@@ -107,7 +118,10 @@ const mockedGetPatient = vi.mocked(getPatientById);
 
 const prescriptionIdRef = { current: null as string | null };
 
-function renderWithProvider(initial?: Partial<RxFormFields>) {
+function renderWithProvider(
+  initial?: Partial<RxFormFields>,
+  lock?: "ended",
+) {
   const initialFields = {
     ...createEmptyRxFormFields(),
     ...initial,
@@ -115,6 +129,8 @@ function renderWithProvider(initial?: Partial<RxFormFields>) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+
+  const grid = <VitalsGrid />;
 
   return render(
     <QueryClientProvider client={queryClient}>
@@ -129,10 +145,14 @@ function renderWithProvider(initial?: Partial<RxFormFields>) {
           prescriptionIdRef={prescriptionIdRef}
           onPrescriptionCreated={() => {}}
         >
-          <VitalsGrid />
+          {lock === "ended" ? (
+            <RxLockProvider cockpitState="ended">{grid}</RxLockProvider>
+          ) : (
+            grid
+          )}
         </RxFormProvider>
       </TooltipProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
 }
 
@@ -140,6 +160,7 @@ describe("VitalsGrid", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedGetLast.mockResolvedValue({ data: { prescription: null } });
+    mockedGetDesk.mockResolvedValue({ data: { vitals: null } });
     mockedGetPatient.mockResolvedValue({
       data: {
         patient: {
@@ -160,63 +181,104 @@ describe("VitalsGrid", () => {
       renderWithProvider();
       await waitForVitalsSettingsLoaded();
       const clusterRow = screen.getByTestId("vitals-cluster-row");
-      expect(clusterRow).toContainElement(screen.getByTestId("bp-readings-block"));
-      expect(clusterRow).toContainElement(screen.getByTestId("glucose-readings-block"));
+      expect(clusterRow).toContainElement(
+        screen.getByTestId("bp-readings-block")
+      );
+      expect(clusterRow).toContainElement(
+        screen.getByTestId("glucose-readings-block")
+      );
       expect(clusterRow).not.toContainElement(
-        screen.getByLabelText(/Pulse Rate \(PR\) in bpm/i),
+        screen.getByLabelText(/Pulse Rate \(PR\) in bpm/i)
       );
     });
 
     it("spans multi-reading BP full width within the cluster row only", async () => {
       renderWithProvider({
         vitalsBpReadings: [
-          { systolic: 120, diastolic: 80, posture: null, limb: null, sequenceLabel: null },
-          { systolic: 118, diastolic: 76, posture: null, limb: null, sequenceLabel: null },
+          {
+            systolic: 120,
+            diastolic: 80,
+            posture: null,
+            limb: null,
+            sequenceLabel: null,
+          },
+          {
+            systolic: 118,
+            diastolic: 76,
+            posture: null,
+            limb: null,
+            sequenceLabel: null,
+          },
         ],
       });
       await waitForVitalsSettingsLoaded();
-      expect(screen.getByTestId("bp-readings-block")).toHaveAttribute("data-bp-grid-span", "full");
+      expect(screen.getByTestId("bp-readings-block")).toHaveAttribute(
+        "data-bp-grid-span",
+        "full"
+      );
     });
 
     it("spans multi-reading glucose full width within the cluster row only", async () => {
       renderWithProvider({
         vitalsGlucoseReadings: [
-          { valueMgDl: 95, timing: "fasting", device: null, sequenceLabel: null, note: null },
-          { valueMgDl: 142, timing: "post_prandial_2h", device: null, sequenceLabel: null, note: null },
+          {
+            valueMgDl: 95,
+            timing: "fasting",
+            device: null,
+            sequenceLabel: null,
+            note: null,
+          },
+          {
+            valueMgDl: 142,
+            timing: "post_prandial_2h",
+            device: null,
+            sequenceLabel: null,
+            note: null,
+          },
         ],
       });
       await waitForVitalsSettingsLoaded();
       expect(screen.getByTestId("glucose-readings-block")).toHaveAttribute(
         "data-glucose-grid-span",
-        "full",
+        "full"
       );
       expect(screen.getByTestId("glucose-reading-row-0")).toBeInTheDocument();
       expect(screen.getByTestId("glucose-reading-row-1")).toBeInTheDocument();
       expect(screen.getByTestId("glucose-readings-block")).toContainElement(
-        screen.getByTestId("glucose-reading-row-1"),
+        screen.getByTestId("glucose-reading-row-1")
       );
-      expect(screen.getByTestId("glucose-reading-context-toggle-0")).toBeInTheDocument();
-      expect(screen.getByTestId("glucose-reading-context-toggle-1")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("glucose-reading-context-toggle-0")
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("glucose-reading-context-toggle-1")
+      ).toBeInTheDocument();
     });
   });
 
   describe("VitalsGrid BMI badge (cpv-03)", () => {
     it("renders BMI badge when both height and weight set", () => {
       renderWithProvider({ vitalsHtCm: 170, vitalsWtKg: 65 });
-      expect(screen.getByTestId("weight-height-derived-row")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("weight-height-derived-row")
+      ).toBeInTheDocument();
       expect(screen.getByText(/BMI 22\.5/)).toBeInTheDocument();
       expect(screen.getByText(/BSA 1\.75/)).toBeInTheDocument();
     });
 
     it("hides BMI badge when height missing", () => {
       renderWithProvider({ vitalsHtCm: null, vitalsWtKg: 65 });
-      expect(screen.queryByTestId("weight-height-derived-row")).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("weight-height-derived-row")
+      ).not.toBeInTheDocument();
       expect(screen.queryByText(/^BMI \d/)).not.toBeInTheDocument();
     });
 
     it("hides BMI badge when weight missing", () => {
       renderWithProvider({ vitalsHtCm: 170, vitalsWtKg: null });
-      expect(screen.queryByTestId("weight-height-derived-row")).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("weight-height-derived-row")
+      ).not.toBeInTheDocument();
       expect(screen.queryByText(/^BMI \d/)).not.toBeInTheDocument();
     });
 
@@ -229,7 +291,9 @@ describe("VitalsGrid", () => {
       renderWithProvider({ vitalsHtCm: 170, vitalsWtKg: 65 });
       fireEvent.click(screen.getByTestId("derived-vitals-help"));
       await waitFor(() => {
-        expect(screen.getByTestId("derived-vitals-help-panel")).toBeInTheDocument();
+        expect(
+          screen.getByTestId("derived-vitals-help-panel")
+        ).toBeInTheDocument();
       });
       expect(screen.getByText("Normal")).toBeInTheDocument();
       expect(screen.getByText("18.5–24.9")).toBeInTheDocument();
@@ -251,7 +315,9 @@ describe("VitalsGrid", () => {
       renderWithProvider({ vitalsWtKg: 70, vitalsHtCm: 175 });
       expect(screen.getByText(/BMI 22\.9/)).toBeInTheDocument();
 
-      const weightInput = screen.getByLabelText(/Weight in kg/i) as HTMLInputElement;
+      const weightInput = screen.getByLabelText(
+        /Weight in kg/i
+      ) as HTMLInputElement;
       fireEvent.change(weightInput, { target: { value: "80" } });
       expect(screen.getByText(/BMI 26\.1/)).toBeInTheDocument();
       expect(screen.getByLabelText(/overweight/i)).toBeInTheDocument();
@@ -266,11 +332,19 @@ describe("VitalsGrid", () => {
   describe("existing 7-input behavior", () => {
     it("renders all 7 numeric inputs", () => {
       renderWithProvider();
-      expect(screen.getByLabelText(/Systolic blood pressure/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/Diastolic blood pressure/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/Pulse Rate \(PR\) in bpm/i)).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/Systolic blood pressure/i)
+      ).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/Diastolic blood pressure/i)
+      ).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/Pulse Rate \(PR\) in bpm/i)
+      ).toBeInTheDocument();
       expect(screen.getByLabelText(/Temperature in °C/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/Oxygen Saturation \(SpO₂\) in %/i)).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/Oxygen Saturation \(SpO₂\) in %/i)
+      ).toBeInTheDocument();
       expect(screen.getByLabelText(/Weight in kg/i)).toBeInTheDocument();
       expect(screen.getByLabelText(/^Height in cm$/i)).toBeInTheDocument();
     });
@@ -281,10 +355,16 @@ describe("VitalsGrid", () => {
       renderWithProvider();
       await revealVital("Oxygen Flow Rate (O₂)");
       await revealVital("Blood Ketones");
-      expect(screen.getByLabelText(/Oxygen Flow Rate \(O₂\) in L\/min/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/Blood Ketones in mmol\/L/i)).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/Oxygen Flow Rate \(O₂\) in L\/min/i)
+      ).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/Blood Ketones in mmol\/L/i)
+      ).toBeInTheDocument();
       expect(screen.getByTestId("vitals-group-core")).toBeInTheDocument();
-      expect(screen.getByTestId("vitals-group-respiratory")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("vitals-group-respiratory")
+      ).toBeInTheDocument();
       expect(screen.getByTestId("vitals-group-metabolic")).toBeInTheDocument();
       expect(screen.getAllByText("Respiratory").length).toBeGreaterThan(0);
       expect(screen.getAllByText("Metabolic").length).toBeGreaterThan(0);
@@ -292,20 +372,62 @@ describe("VitalsGrid", () => {
   });
 
   describe("categorical context vitals (vit-06)", () => {
+    it("hides extras until More is opened", () => {
+      renderWithProvider();
+      expect(
+        screen.queryByTestId("vital-context-vitalsPulseRhythm")
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("vitals-section-note")
+      ).not.toBeInTheDocument();
+      expect(screen.getByTestId("vitals-section-note-add")).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("vital-extras-toggle-vitalsHr"));
+      expect(
+        screen.getByTestId("vital-context-vitalsPulseRhythm")
+      ).toBeInTheDocument();
+    });
+
     it("renders paired context selects inline under HR, Temp, and SpO₂", () => {
       renderWithProvider();
-      expect(screen.getByTestId("vitals-measurement-context-bar")).toBeInTheDocument();
-      expect(screen.getByTestId("vital-context-vitalsPulseRhythm")).toBeInTheDocument();
-      expect(screen.getByTestId("vital-context-vitalsHrSource")).toBeInTheDocument();
-      expect(screen.getByTestId("vital-context-vitalsTempSite")).toBeInTheDocument();
-      expect(screen.getByTestId("vital-context-vitalsTempDevice")).toBeInTheDocument();
-      expect(screen.getByTestId("vital-context-vitalsO2DeliveryMethod")).toBeInTheDocument();
-      expect(screen.getByTestId("vital-context-vitalsSpo2Device")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("vitals-measurement-context-bar")
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("vital-extras-toggle-vitalsHr"));
+      fireEvent.click(screen.getByTestId("vital-extras-toggle-vitalsTempC"));
+      fireEvent.click(screen.getByTestId("vital-extras-toggle-vitalsSpo2"));
+      expect(
+        screen.getByTestId("vital-context-vitalsPulseRhythm")
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("vital-context-vitalsHrSource")
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("vital-context-vitalsTempSite")
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("vital-context-vitalsTempDevice")
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("vital-context-vitalsO2DeliveryMethod")
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("vital-context-vitalsSpo2Device")
+      ).toBeInTheDocument();
+    });
+
+    it("opens extras when a paired context value is already set", () => {
+      renderWithProvider({ vitalsPulseRhythm: "regular" });
+      expect(
+        screen.getByTestId("vital-context-vitalsPulseRhythm")
+      ).toBeInTheDocument();
     });
 
     it("renders glucose timing per reading row in the glucose block", () => {
       renderWithProvider();
-      const timing = screen.getByLabelText(/Glucose measurement timing/i) as HTMLSelectElement;
+      fireEvent.click(screen.getByTestId("glucose-reading-extras-toggle-0"));
+      const timing = screen.getByLabelText(
+        /Glucose measurement timing/i
+      ) as HTMLSelectElement;
       expect(timing).toBeTruthy();
       const values = Array.from(timing.options).map((o) => o.value);
       expect(values).toContain("fasting");
@@ -316,76 +438,138 @@ describe("VitalsGrid", () => {
 
     it("renders measured differently on core vitals", () => {
       renderWithProvider();
-      expect(screen.getByTestId("vital-provenance-trigger-vitalsWtKg")).toBeInTheDocument();
-      expect(screen.getByTestId("vital-provenance-trigger-vitalsTempC")).toBeInTheDocument();
-      expect(screen.getByTestId("vital-provenance-trigger-vitalsSpo2")).toBeInTheDocument();
-      expect(screen.getByTestId("vital-provenance-trigger-vitalsHr")).toBeInTheDocument();
-      expect(screen.getByTestId("vital-provenance-trigger-vitalsRr")).toBeInTheDocument();
-      expect(screen.getByTestId("vital-provenance-trigger-vitalsHtCm")).toBeInTheDocument();
-      expect(screen.getByTestId("glucose-reading-context-toggle-0")).toBeInTheDocument();
+      for (const key of [
+        "vitalsWtKg",
+        "vitalsTempC",
+        "vitalsSpo2",
+        "vitalsHr",
+        "vitalsRr",
+        "vitalsHtCm",
+      ]) {
+        fireEvent.click(screen.getByTestId(`vital-extras-toggle-${key}`));
+      }
+      fireEvent.click(screen.getByTestId("glucose-reading-extras-toggle-0"));
+      expect(
+        screen.getByTestId("vital-provenance-trigger-vitalsWtKg")
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("vital-provenance-trigger-vitalsTempC")
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("vital-provenance-trigger-vitalsSpo2")
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("vital-provenance-trigger-vitalsHr")
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("vital-provenance-trigger-vitalsRr")
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("vital-provenance-trigger-vitalsHtCm")
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("glucose-reading-context-toggle-0")
+      ).toBeInTheDocument();
       expect(screen.getByTestId("glucose-readings-block")).toBeInTheDocument();
     });
 
     it("clears RR low-confidence badge when measured differently is set to clinic staff", async () => {
       renderWithProvider();
-      expect(screen.getByTestId("vital-low-confidence-badge-vitalsRr")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("vital-low-confidence-badge-vitalsRr")
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("vital-extras-toggle-vitalsRr"));
       fireEvent.click(screen.getByTestId("vital-provenance-trigger-vitalsRr"));
-      const measuredBy = await screen.findByLabelText("Vital measured by override");
+      const measuredBy = await screen.findByLabelText(
+        "Vital measured by override"
+      );
       fireEvent.change(measuredBy, { target: { value: "nurse" } });
       await waitFor(() => {
-        expect(screen.queryByTestId("vital-low-confidence-badge-vitalsRr")).not.toBeInTheDocument();
+        expect(
+          screen.queryByTestId("vital-low-confidence-badge-vitalsRr")
+        ).not.toBeInTheDocument();
       });
     });
 
     it("flags patient-measured RR with a low-confidence badge", () => {
       renderWithProvider();
-      expect(screen.getByTestId("vital-low-confidence-badge-vitalsRr")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("vital-low-confidence-badge-vitalsRr")
+      ).toBeInTheDocument();
     });
 
     it("flags patient palpation HR source with a low-confidence badge", () => {
       renderWithProvider({ vitalsHrSource: "palpation" });
-      expect(screen.getByTestId("vital-low-confidence-badge-vitalsHr")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("vital-low-confidence-badge-vitalsHr")
+      ).toBeInTheDocument();
     });
 
     it("flags blank HR source for patient default", () => {
       renderWithProvider();
-      expect(screen.getByTestId("vital-low-confidence-badge-vitalsHr")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("vital-low-confidence-badge-vitalsHr")
+      ).toBeInTheDocument();
     });
 
     it("does not flag oximeter HR source for patient default", () => {
       renderWithProvider({ vitalsHrSource: "oximeter" });
-      expect(screen.queryByTestId("vital-low-confidence-badge-vitalsHr")).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("vital-low-confidence-badge-vitalsHr")
+      ).not.toBeInTheDocument();
     });
 
     it("does not flag RR when measured by clinic staff", () => {
       renderWithProvider({
         vitalsMeasurementContext: { measuredBy: "nurse", setting: "clinic" },
       });
-      expect(screen.queryByTestId("vital-low-confidence-badge-vitalsRr")).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("vital-low-confidence-badge-vitalsRr")
+      ).not.toBeInTheDocument();
     });
 
     it("auto-sums GCS E/V/M into the canonical total when all components are entered", async () => {
       renderWithProvider();
       await revealVital("Glasgow Coma Scale (GCS)");
 
-      fireEvent.change(screen.getByLabelText(/GCS Eye \(E\) in \/4/i), { target: { value: "4" } });
-      fireEvent.change(screen.getByLabelText(/GCS Verbal \(V\) in \/5/i), { target: { value: "5" } });
-      fireEvent.change(screen.getByLabelText(/GCS Motor \(M\) in \/6/i), { target: { value: "6" } });
+      fireEvent.change(screen.getByLabelText(/GCS Eye \(E\) in \/4/i), {
+        target: { value: "4" },
+      });
+      fireEvent.change(screen.getByLabelText(/GCS Verbal \(V\) in \/5/i), {
+        target: { value: "5" },
+      });
+      fireEvent.change(screen.getByLabelText(/GCS Motor \(M\) in \/6/i), {
+        target: { value: "6" },
+      });
 
       await waitFor(() => {
-        expect((screen.getByLabelText(/Glasgow Coma Scale \(GCS\) in \/15/i) as HTMLInputElement).value).toBe("15");
+        expect(
+          (
+            screen.getByLabelText(
+              /Glasgow Coma Scale \(GCS\) in \/15/i
+            ) as HTMLInputElement
+          ).value
+        ).toBe("15");
       });
     });
 
     it("allows total-only GCS entry with empty E/V/M fields in the same card", async () => {
       renderWithProvider();
       await revealVital("Glasgow Coma Scale (GCS)");
-      const total = screen.getByLabelText(/Glasgow Coma Scale \(GCS\) in \/15/i) as HTMLInputElement;
+      const total = screen.getByLabelText(
+        /Glasgow Coma Scale \(GCS\) in \/15/i
+      ) as HTMLInputElement;
       fireEvent.change(total, { target: { value: "14" } });
       expect(total.value).toBe("14");
-      expect(screen.getByLabelText(/GCS Eye \(E\) in \/4/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/GCS Verbal \(V\) in \/5/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/GCS Motor \(M\) in \/6/i)).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/GCS Eye \(E\) in \/4/i)
+      ).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/GCS Verbal \(V\) in \/5/i)
+      ).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/GCS Motor \(M\) in \/6/i)
+      ).toBeInTheDocument();
     });
 
     it("shows on-demand GCS scoring reference without cluttering the card", async () => {
@@ -393,12 +577,16 @@ describe("VitalsGrid", () => {
       await revealVital("Glasgow Coma Scale (GCS)");
 
       expect(screen.getByTestId("gcs-criteria-help")).toBeInTheDocument();
-      expect(screen.getByTestId("gcs-criteria-help-vitalsGcsE")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("gcs-criteria-help-vitalsGcsE")
+      ).toBeInTheDocument();
       expect(screen.queryByText("Spontaneous")).not.toBeInTheDocument();
 
       fireEvent.click(screen.getByTestId("gcs-criteria-help"));
       expect(screen.getByText("Adult GCS reference")).toBeInTheDocument();
-      expect(screen.getByText("Abnormal flexion (decorticate)")).toBeInTheDocument();
+      expect(
+        screen.getByText("Abnormal flexion (decorticate)")
+      ).toBeInTheDocument();
     });
 
     it("renders unified pupils card with L/R size and reactivity", async () => {
@@ -408,11 +596,21 @@ describe("VitalsGrid", () => {
       expect(screen.getByTestId("pupils-section")).toBeInTheDocument();
       expect(screen.getByTestId("pupil-row-l")).toBeInTheDocument();
       expect(screen.getByTestId("pupil-row-r")).toBeInTheDocument();
-      expect(screen.getByLabelText(/Pupil Size \(L\) in mm/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/Pupil Size \(R\) in mm/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/Pupil Reactivity \(L\)/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/Pupil Reactivity \(R\)/i)).toBeInTheDocument();
-      expect(screen.queryByText("Pupil Size (L)", { selector: "label" })).not.toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/Pupil Size \(L\) in mm/i)
+      ).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/Pupil Size \(R\) in mm/i)
+      ).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/Pupil Reactivity \(L\)/i)
+      ).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/Pupil Reactivity \(R\)/i)
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText("Pupil Size (L)", { selector: "label" })
+      ).not.toBeInTheDocument();
     });
   });
 
@@ -420,11 +618,22 @@ describe("VitalsGrid", () => {
     it("renders extended numeric fields and posture/limb after unhiding", async () => {
       renderWithProvider();
       await revealExtendedVitals();
-      expect(screen.getByLabelText(/Respiratory Rate \(RR\) in breaths\/min/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/^Blood glucose value$/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/Glasgow Coma Scale \(GCS\) in \/15/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/Waist Circumference in cm/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/BP measurement posture/i)).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/Respiratory Rate \(RR\) in breaths\/min/i)
+      ).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/^Blood glucose value$/i)
+      ).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/Glasgow Coma Scale \(GCS\) in \/15/i)
+      ).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/Waist Circumference in cm/i)
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("bp-reading-extras-toggle-0"));
+      expect(
+        screen.getByLabelText(/BP measurement posture/i)
+      ).toBeInTheDocument();
       expect(screen.getByLabelText(/BP measurement limb/i)).toBeInTheDocument();
     });
 
@@ -433,14 +642,21 @@ describe("VitalsGrid", () => {
       await revealVital("Head Circumference (HC)");
       await revealVital("Mid-Upper Arm Circumference (MUAC)");
       expect(screen.getByText(/Paediatric vitals/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/Head Circumference \(HC\) in cm/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/Mid-Upper Arm Circumference \(MUAC\) in cm/i)).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/Head Circumference \(HC\) in cm/i)
+      ).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/Mid-Upper Arm Circumference \(MUAC\) in cm/i)
+      ).toBeInTheDocument();
     });
 
     it("posture select is constrained to the allowed set", async () => {
       renderWithProvider();
       await revealExtendedVitals();
-      const posture = screen.getByLabelText(/BP measurement posture/i) as HTMLSelectElement;
+      fireEvent.click(screen.getByTestId("bp-reading-extras-toggle-0"));
+      const posture = screen.getByLabelText(
+        /BP measurement posture/i
+      ) as HTMLSelectElement;
       const values = Array.from(posture.options).map((o) => o.value);
       expect(values).toEqual(["", "sitting", "standing", "supine"]);
       fireEvent.change(posture, { target: { value: "supine" } });
@@ -451,7 +667,9 @@ describe("VitalsGrid", () => {
   describe("unit toggles (display-only; canonical storage)", () => {
     it("flips weight display to lb without changing the stored (BMI) value", () => {
       renderWithProvider({ vitalsHtCm: 170, vitalsWtKg: 70 });
-      const weightInput = screen.getByLabelText(/Weight in kg/i) as HTMLInputElement;
+      const weightInput = screen.getByLabelText(
+        /Weight in kg/i
+      ) as HTMLInputElement;
       expect(weightInput.value).toBe("70");
       expect(screen.getByText(/BMI 24\.2/)).toBeInTheDocument();
 
@@ -459,41 +677,56 @@ describe("VitalsGrid", () => {
       fireEvent.click(lbToggle);
 
       // Display switches to lb; canonical kg (hence BMI) is unchanged.
-      const lbInput = screen.getByLabelText(/Weight in lb/i) as HTMLInputElement;
+      const lbInput = screen.getByLabelText(
+        /Weight in lb/i
+      ) as HTMLInputElement;
       expect(Number(lbInput.value)).toBeCloseTo(154.3, 1);
       expect(screen.getByText(/BMI 24\.2/)).toBeInTheDocument();
     });
 
     it("stores canonical mg/dL when glucose entered, shown converted in mmol/L", async () => {
       renderWithProvider();
-      const glucose = screen.getByLabelText(/^Blood glucose value$/i) as HTMLInputElement;
+      const glucose = screen.getByLabelText(
+        /^Blood glucose value$/i
+      ) as HTMLInputElement;
       fireEvent.change(glucose, { target: { value: "110" } });
 
       const mmolToggle = screen.getByRole("button", { name: "mmol/L" });
       fireEvent.click(mmolToggle);
-      const mmolInput = screen.getByLabelText(/^Blood glucose value$/i) as HTMLInputElement;
+      const mmolInput = screen.getByLabelText(
+        /^Blood glucose value$/i
+      ) as HTMLInputElement;
       expect(Number(mmolInput.value)).toBeCloseTo(6.1, 1);
     });
 
     it("exposes the unit toggle as a labelled, keyboard-operable group", () => {
       renderWithProvider();
-      expect(screen.getByRole("group", { name: /Temperature unit/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole("group", { name: /Temperature unit/i })
+      ).toBeInTheDocument();
       const fToggle = screen.getByRole("button", { name: "°F" });
       expect(fToggle).toHaveAttribute("aria-pressed", "false");
       fireEvent.click(fToggle);
-      expect(screen.getByRole("button", { name: "°F" })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByRole("button", { name: "°F" })).toHaveAttribute(
+        "aria-pressed",
+        "true"
+      );
     });
   });
 
   describe("range flags + derived badges", () => {
     it("flags an out-of-range heart rate", () => {
       renderWithProvider({ vitalsHr: 200 });
-      expect(screen.getByLabelText(/Pulse Rate \(PR\): Above normal/i)).toBeInTheDocument();
+      expect(
+        screen.getByLabelText(/Pulse Rate \(PR\): Above normal/i)
+      ).toBeInTheDocument();
     });
 
     it("does not flag an in-range heart rate", () => {
       renderWithProvider({ vitalsHr: 72 });
-      expect(screen.queryByLabelText(/Pulse Rate \(PR\) (above|below) normal range/i)).not.toBeInTheDocument();
+      expect(
+        screen.queryByLabelText(/Pulse Rate \(PR\) (above|below) normal range/i)
+      ).not.toBeInTheDocument();
     });
 
     it("shows the MAP badge next to BP", () => {
@@ -528,7 +761,9 @@ describe("VitalsGrid", () => {
       expect(await screen.findByText(/prev 72 bpm/i)).toBeInTheDocument();
 
       // The live input stays empty — ghost never overwrites the current entry.
-      const hrInput = screen.getByLabelText(/Pulse Rate \(PR\) in bpm/i) as HTMLInputElement;
+      const hrInput = screen.getByLabelText(
+        /Pulse Rate \(PR\) in bpm/i
+      ) as HTMLInputElement;
       expect(hrInput.value).toBe("");
     });
   });
@@ -536,30 +771,44 @@ describe("VitalsGrid", () => {
   describe("inline sparklines (obj-26)", () => {
     it("does not render sparklines when trend history is empty", () => {
       renderWithProvider();
-      expect(screen.queryByRole("img", { name: /trend/i })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("img", { name: /trend/i })
+      ).not.toBeInTheDocument();
     });
   });
 
   describe("quick-fill chips", () => {
     it("fills an empty heart rate from an inline chip and hides chips when filled", () => {
       renderWithProvider();
-      expect(screen.getByTestId("vital-vitalsHr-quick-fill")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("vital-vitalsHr-quick-fill")
+      ).toBeInTheDocument();
       fireEvent.click(screen.getByTestId("vital-vitalsHr-quick-fill-72"));
 
-      const hrInput = screen.getByLabelText(/Pulse Rate \(PR\) in bpm/i) as HTMLInputElement;
+      const hrInput = screen.getByLabelText(
+        /Pulse Rate \(PR\) in bpm/i
+      ) as HTMLInputElement;
       expect(hrInput.value).toBe("72");
-      expect(screen.queryByTestId("vital-vitalsHr-quick-fill")).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("vital-vitalsHr-quick-fill")
+      ).not.toBeInTheDocument();
     });
 
     it("fills primary BP from a pair chip", () => {
       renderWithProvider();
       fireEvent.click(screen.getByTestId("bp-primary-quick-fill-120-80"));
 
-      const sysInput = screen.getByLabelText(/Systolic blood pressure/i) as HTMLInputElement;
-      const diaInput = screen.getByLabelText(/Diastolic blood pressure/i) as HTMLInputElement;
+      const sysInput = screen.getByLabelText(
+        /Systolic blood pressure/i
+      ) as HTMLInputElement;
+      const diaInput = screen.getByLabelText(
+        /Diastolic blood pressure/i
+      ) as HTMLInputElement;
       expect(sysInput.value).toBe("120");
       expect(diaInput.value).toBe("80");
-      expect(screen.queryByTestId("bp-primary-quick-fill")).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("bp-primary-quick-fill")
+      ).not.toBeInTheDocument();
     });
   });
 
@@ -571,8 +820,12 @@ describe("VitalsGrid", () => {
       expect(screen.getByTestId("vitals-wnl-fill-dialog")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Fill" }));
 
-      const hrInput = screen.getByLabelText(/Pulse Rate \(PR\) in bpm/i) as HTMLInputElement;
-      const sysInput = screen.getByLabelText(/Systolic blood pressure/i) as HTMLInputElement;
+      const hrInput = screen.getByLabelText(
+        /Pulse Rate \(PR\) in bpm/i
+      ) as HTMLInputElement;
+      const sysInput = screen.getByLabelText(
+        /Systolic blood pressure/i
+      ) as HTMLInputElement;
       expect(hrInput.value).toBe("80");
       expect(sysInput.value).toBe("120");
     });
@@ -584,7 +837,15 @@ describe("VitalsGrid", () => {
         vitalsTempC: 37,
         vitalsSpo2: 98,
         vitalsBpReadings: [{ systolic: 120, diastolic: 80 }],
-        vitalsGlucoseReadings: [{ valueMgDl: 110, timing: null, device: null, sequenceLabel: null, note: null }],
+        vitalsGlucoseReadings: [
+          {
+            valueMgDl: 110,
+            timing: null,
+            device: null,
+            sequenceLabel: null,
+            note: null,
+          },
+        ],
       });
       expect(screen.getByTestId("vitals-wnl-fill-trigger")).toBeDisabled();
     });
@@ -605,7 +866,9 @@ describe("VitalsGrid", () => {
       const ghostBtn = await screen.findByTestId("vital-last-visit-vitalsHr");
       fireEvent.click(ghostBtn);
 
-      const hrInput = screen.getByLabelText(/Pulse Rate \(PR\) in bpm/i) as HTMLInputElement;
+      const hrInput = screen.getByLabelText(
+        /Pulse Rate \(PR\) in bpm/i
+      ) as HTMLInputElement;
       expect(hrInput.value).toBe("72");
     });
 
@@ -623,8 +886,179 @@ describe("VitalsGrid", () => {
       const ghostBtn = await screen.findByTestId("glucose-primary-last-visit");
       fireEvent.click(ghostBtn);
 
-      const glucoseInput = screen.getByLabelText(/^Blood glucose value$/i) as HTMLInputElement;
+      const glucoseInput = screen.getByLabelText(
+        /^Blood glucose value$/i
+      ) as HTMLInputElement;
       expect(glucoseInput.value).toBe("108");
+    });
+
+    it("prefers same-visit desk vitals over last-visit ghosts", async () => {
+      mockedGetLast.mockResolvedValue({
+        data: {
+          prescription: {
+            id: "rx-prev",
+            vitals_hr: 60,
+          } as unknown as PrescriptionWithRelations,
+        },
+      });
+      mockedGetDesk.mockResolvedValue({
+        data: {
+          vitals: {
+            id: "v1",
+            doctor_id: "doc",
+            patient_id: "pat-1",
+            appointment_id: "appt-1",
+            bp_systolic: null,
+            bp_diastolic: null,
+            heart_rate: 88,
+            temperature_c: null,
+            spo2: null,
+            weight_kg: null,
+            height_cm: null,
+            bmi: null,
+            note: null,
+            recorded_at: "2026-08-24T04:00:00.000Z",
+            archived_at: null,
+            created_at: "2026-08-24T04:00:00.000Z",
+          },
+        },
+      });
+      renderWithProvider();
+
+      const hrInput = (await screen.findByLabelText(
+        /Pulse Rate \(PR\) in bpm/i
+      )) as HTMLInputElement;
+      await waitFor(() => {
+        expect(hrInput.value).toBe("88");
+      });
+      expect(screen.queryByText(/prev 60 bpm/i)).not.toBeInTheDocument();
+    });
+
+    it("seeds desk BP into empty primary fields", async () => {
+      mockedGetDesk.mockResolvedValue({
+        data: {
+          vitals: {
+            id: "v1",
+            doctor_id: "doc",
+            patient_id: "pat-1",
+            appointment_id: "appt-1",
+            bp_systolic: 123,
+            bp_diastolic: 58,
+            heart_rate: null,
+            temperature_c: null,
+            spo2: null,
+            weight_kg: null,
+            height_cm: null,
+            bmi: null,
+            note: null,
+            recorded_at: "2026-08-24T04:00:00.000Z",
+            archived_at: null,
+            created_at: "2026-08-24T04:00:00.000Z",
+          },
+        },
+      });
+      renderWithProvider();
+
+      const sysInput = (await screen.findByLabelText(
+        /Systolic blood pressure/i
+      )) as HTMLInputElement;
+      const diaInput = screen.getByLabelText(
+        /Diastolic blood pressure/i
+      ) as HTMLInputElement;
+      await waitFor(() => {
+        expect(sysInput.value).toBe("123");
+        expect(diaInput.value).toBe("58");
+      });
+    });
+
+    it("does not overwrite Rx vitals already on the form", async () => {
+      mockedGetDesk.mockResolvedValue({
+        data: {
+          vitals: {
+            id: "v1",
+            doctor_id: "doc",
+            patient_id: "pat-1",
+            appointment_id: "appt-1",
+            bp_systolic: 123,
+            bp_diastolic: 58,
+            heart_rate: 88,
+            temperature_c: null,
+            spo2: null,
+            weight_kg: null,
+            height_cm: null,
+            bmi: null,
+            note: "desk note",
+            recorded_at: "2026-08-24T04:00:00.000Z",
+            archived_at: null,
+            created_at: "2026-08-24T04:00:00.000Z",
+          },
+        },
+      });
+      renderWithProvider({
+        vitalsHr: 72,
+        vitalsSectionNote: "doctor note",
+        vitalsBpSystolic: 120,
+        vitalsBpDiastolic: 80,
+        vitalsBpReadings: [
+          {
+            systolic: 120,
+            diastolic: 80,
+            posture: null,
+            limb: null,
+            sequenceLabel: null,
+            note: null,
+          },
+        ],
+      });
+
+      const hrInput = (await screen.findByLabelText(
+        /Pulse Rate \(PR\) in bpm/i
+      )) as HTMLInputElement;
+      const sysInput = screen.getByLabelText(
+        /Systolic blood pressure/i
+      ) as HTMLInputElement;
+      const note = screen.getByTestId(
+        "vitals-section-note"
+      ) as HTMLTextAreaElement;
+      await waitFor(() => {
+        expect(mockedGetDesk).toHaveBeenCalled();
+      });
+      expect(hrInput.value).toBe("72");
+      expect(sysInput.value).toBe("120");
+      expect(note.value).toBe("doctor note");
+    });
+
+    it("seeds the vitals section note from the same-visit desk note", async () => {
+      mockedGetDesk.mockResolvedValue({
+        data: {
+          vitals: {
+            id: "v1",
+            doctor_id: "doc",
+            patient_id: "pat-1",
+            appointment_id: "appt-1",
+            bp_systolic: null,
+            bp_diastolic: null,
+            heart_rate: 88,
+            temperature_c: null,
+            spo2: null,
+            weight_kg: null,
+            height_cm: null,
+            bmi: null,
+            note: "sitting, post-walk",
+            recorded_at: "2026-08-24T04:00:00.000Z",
+            archived_at: null,
+            created_at: "2026-08-24T04:00:00.000Z",
+          },
+        },
+      });
+      renderWithProvider();
+
+      const note = (await screen.findByTestId(
+        "vitals-section-note"
+      )) as HTMLTextAreaElement;
+      await waitFor(() => {
+        expect(note.value).toBe("sitting, post-walk");
+      });
     });
 
     it("copies previous BP from the ghost chip", async () => {
@@ -642,8 +1076,12 @@ describe("VitalsGrid", () => {
       const ghostBtn = await screen.findByTestId("bp-primary-last-visit");
       fireEvent.click(ghostBtn);
 
-      const sysInput = screen.getByLabelText(/Systolic blood pressure/i) as HTMLInputElement;
-      const diaInput = screen.getByLabelText(/Diastolic blood pressure/i) as HTMLInputElement;
+      const sysInput = screen.getByLabelText(
+        /Systolic blood pressure/i
+      ) as HTMLInputElement;
+      const diaInput = screen.getByLabelText(
+        /Diastolic blood pressure/i
+      ) as HTMLInputElement;
       expect(sysInput.value).toBe("118");
       expect(diaInput.value).toBe("76");
     });
@@ -652,7 +1090,37 @@ describe("VitalsGrid", () => {
   describe("all-trends affordance", () => {
     it("hides the All trends button when no vital has prior history", () => {
       renderWithProvider();
-      expect(screen.queryByTestId("all-vital-trends-trigger")).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("all-vital-trends-trigger")
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("rxl-01 lock", () => {
+    it("disables core vital fields on an ended visit, field by field", async () => {
+      renderWithProvider(undefined, "ended");
+      await waitForVitalsSettingsLoaded();
+
+      expect(screen.getByLabelText(/Pulse Rate \(PR\) in bpm/i)).toBeDisabled();
+      expect(screen.getByLabelText(/Systolic blood pressure/i)).toBeDisabled();
+      expect(screen.getByLabelText(/Diastolic blood pressure/i)).toBeDisabled();
+      expect(screen.getByTestId("vitals-section-note-add")).toBeDisabled();
+      expect(screen.getByTestId("vitals-wnl-fill-trigger")).toBeDisabled();
+    });
+
+    it("still persists a hidden-vital preference on an ended visit", async () => {
+      renderWithProvider(undefined, "ended");
+      await waitForVitalsSettingsLoaded();
+
+      const manage = screen.getByTestId("vitals-manager-trigger");
+      expect(manage).not.toBeDisabled();
+      fireEvent.click(manage);
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Hide Pulse Rate (PR)" }),
+      );
+      await waitFor(() => {
+        expect(saveVitalsHidden).toHaveBeenCalled();
+      });
     });
   });
 });

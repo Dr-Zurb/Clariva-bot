@@ -2,7 +2,6 @@
 
 import { useEffect } from "react";
 import PaneHeader from "@/components/patient-profile/PaneHeader";
-import PreviousRxPopover from "@/components/consultation/cockpit/PreviousRxPopover";
 import RxWorkspace from "@/components/consultation/cockpit/RxWorkspace";
 import { type CockpitState } from "@/lib/patient-profile/state";
 import { trackCockpitPolishPlanPaneDedupLanded } from "@/lib/patient-profile/telemetry";
@@ -57,8 +56,9 @@ export interface RxPaneProps {
 }
 
 /**
- * The Prescription column body. Hosts the Rx workspace, the previous-Rx
- * popover, and the prescription-related actions.
+ * The Prescription column body. Hosts the Rx workspace and the
+ * prescription-related actions. Last-visit chrome lives on the form
+ * strips; browse-all prior Rx is `PreviousRxPlanTrigger` (lvc-12).
  *
  * Extracted from `ConsultationCockpit.tsx`'s inline `RxColumnContent`
  * function in ppr-05. v1 shell (`ConsultationCockpit`) removed by ppr-14;
@@ -102,7 +102,7 @@ export default function RxPane({
   }, []);
 
   const rxWorkspaceBody = (
-    <div className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] px-4 pb-3 pt-0">
+    <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain [overflow-anchor:none] px-4 pb-3 pt-0">
       {/* Match SubjectivePane / ObjectivePane inset when the shell owns the header. */}
       {hideHeader ? <div className="h-3" aria-hidden /> : null}
       <RxWorkspace
@@ -125,27 +125,17 @@ export default function RxPane({
     </div>
   );
 
+  // Shell-owned header: still need an h-full flex column so flex-1 +
+  // overflow-y-auto resolve against the leaf height (stacked splits).
   if (hideHeader) {
-    return rxWorkspaceBody;
+    return (
+      <div className="flex h-full min-h-0 flex-col">{rxWorkspaceBody}</div>
+    );
   }
-
-  const showPreviousRx = state !== "terminal";
 
   return (
     <div className="flex h-full flex-col">
-      <PaneHeader
-        title="Prescription"
-        titleId="cockpit-rx-title"
-        actions={
-          showPreviousRx ? (
-            <PreviousRxPopover
-              appointmentId={appointment.id}
-              patientId={appointment.patient_id ?? null}
-              token={token}
-            />
-          ) : null
-        }
-      />
+      <PaneHeader title="Prescription" titleId="cockpit-rx-title" />
       {rxWorkspaceBody}
     </div>
   );

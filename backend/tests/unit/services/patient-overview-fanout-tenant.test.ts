@@ -142,11 +142,11 @@ describe('np-10 tenant isolation — KPI parallel count path', () => {
 
     const aptScoped = doctorIdCalls.filter(([t]) => t === 'appointments');
     const rxScoped = doctorIdCalls.filter(([t]) => t === 'prescriptions');
-    const problemScoped = doctorIdCalls.filter(([t]) => t === 'patient_problem_list_v');
+    const sessScoped = doctorIdCalls.filter(([t]) => t === 'consultation_sessions');
 
     expect(aptScoped.every(([, id]) => id === DOCTOR_A)).toBe(true);
     expect(rxScoped.every(([, id]) => id === DOCTOR_A)).toBe(true);
-    expect(problemScoped.every(([, id]) => id === DOCTOR_A)).toBe(true);
+    expect(sessScoped.every(([, id]) => id === DOCTOR_A)).toBe(true);
     expect(doctorIdCalls.some(([, id]) => id === DOCTOR_B)).toBe(false);
   });
 });

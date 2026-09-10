@@ -36,6 +36,7 @@ function createSequentialSupabase(
       not: jest.fn().mockReturnThis(),
       in: jest.fn().mockReturnThis(),
       order: jest.fn().mockReturnThis(),
+      range: jest.fn().mockReturnThis(),
     };
     (chain as { then?: unknown }).then = (resolve: (v: unknown) => void) =>
       Promise.resolve(getNext()).then(resolve);
@@ -58,6 +59,7 @@ describe('patient-service listPatientsForDoctor', () => {
       createSequentialSupabase([
         { data: [], error: null },
         { data: [], error: null },
+        { data: [], error: null },
       ]) as never
     );
 
@@ -71,6 +73,7 @@ describe('patient-service listPatientsForDoctor', () => {
     mockedDb.getSupabaseAdminClient.mockReturnValue(
       createSequentialSupabase([
         { data: [{ patient_id: pidRegistered }, { patient_id: pidUnregistered }], error: null },
+        { data: [], error: null },
         { data: [], error: null },
         {
           data: [
@@ -123,6 +126,7 @@ describe('patient-service listPatientsForDoctor', () => {
       createSequentialSupabase([
         { data: [{ patient_id: pidMerged }], error: null },
         { data: [], error: null },
+        { data: [], error: null },
         {
           data: [
             {
@@ -147,6 +151,7 @@ describe('patient-service listPatientsForDoctor', () => {
     mockedDb.getSupabaseAdminClient.mockReturnValue(
       createSequentialSupabase([
         { data: [{ patient_id: pidUnregistered }], error: null },
+        { data: [], error: null },
         { data: [], error: null },
         {
           data: [

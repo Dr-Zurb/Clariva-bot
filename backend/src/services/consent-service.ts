@@ -9,6 +9,17 @@ import { getCollectedData, clearCollectedData } from './collection-service';
 import { updatePatient, findPatientById } from './patient-service';
 import type { UpdatePatient } from '../types';
 import { logConsentEvent } from '../utils/audit-logger';
+import type { ConversationLanguage } from '../utils/conversation-language';
+import {
+  buildConsentDeniedMessage,
+  buildConsentPersistMissingInfoMessage,
+  buildConsentPersistMissingPhoneMessage,
+  buildConsentPersistSuccessMessage,
+  buildConsentRevokeAlreadyRemovedMessage,
+  buildConsentRevokeNoStoredDataMessage,
+  buildConsentRevokeRecordNotFoundMessage,
+  buildConsentRevokeSuccessMessage,
+} from '../utils/dm-copy';
 
 export type ConsentParseResult = 'granted' | 'denied' | 'unclear';
 
@@ -59,14 +70,15 @@ export async function persistPatientAfterConsent(
   conversationId: string,
   patientId: string,
   consentMethod: string,
-  correlationId: string
+  correlationId: string,
+  language: ConversationLanguage
 ): Promise<PersistPatientResult> {
   const collected = await getCollectedData(conversationId);
   if (!collected || (!collected.name && !collected.phone)) {
     await clearCollectedData(conversationId);
     return {
       success: false,
-      reply: "I didn't receive your information. Please start over with 'book appointment' if you'd like to schedule.",
+      reply: buildConsentPersistMissingInfoMessage({ language }),
     };
   }
 
@@ -76,7 +88,7 @@ export async function persistPatientAfterConsent(
     await clearCollectedData(conversationId);
     return {
       success: false,
-      reply: "We need your phone number to complete registration. Please start over with 'book appointment'.",
+      reply: buildConsentPersistMissingPhoneMessage({ language }),
     };
   }
 
@@ -105,7 +117,7 @@ export async function persistPatientAfterConsent(
 
   return {
     success: true,
-    reply: "Thanks! I've saved your details. How can I help you next - would you like to book an appointment or check availability?",
+    reply: buildConsentPersistSuccessMessage({ language }),
   };
 }
 
@@ -115,7 +127,8 @@ export async function persistPatientAfterConsent(
 export async function handleConsentDenied(
   conversationId: string,
   patientId: string,
-  correlationId: string
+  correlationId: string,
+  language: ConversationLanguage
 ): Promise<string> {
   await clearCollectedData(conversationId);
 
@@ -126,7 +139,7 @@ export async function handleConsentDenied(
     method: 'instagram_dm',
   });
 
-  return "No problem. I haven't saved any of your information. Say 'book appointment' anytime if you'd like to try again.";
+  return buildConsentDeniedMessage({ language });
 }
 
 /**
@@ -143,21 +156,22 @@ export async function handleConsentDenied(
 export async function handleRevocation(
   conversationId: string,
   patientId: string,
-  correlationId: string
+  correlationId: string,
+  language: ConversationLanguage
 ): Promise<string> {
   await clearCollectedData(conversationId);
 
   const patient = await findPatientById(patientId, correlationId);
   if (!patient) {
-    return "I couldn't find your record. If you had shared information before, it may already have been removed.";
+    return buildConsentRevokeRecordNotFoundMessage({ language });
   }
 
   if (patient.consent_status === 'revoked') {
-    return "Your data has already been removed. Is there anything else I can help with?";
+    return buildConsentRevokeAlreadyRemovedMessage({ language });
   }
 
   if (patient.consent_status !== 'granted') {
-    return "We don't have any stored personal information to remove. Say 'book appointment' if you'd like to schedule.";
+    return buildConsentRevokeNoStoredDataMessage({ language });
   }
 
   const now = new Date();
@@ -180,5 +194,5 @@ export async function handleRevocation(
     method: 'instagram_dm',
   });
 
-  return "Done. I've removed your personal information from our records. Is there anything else I can help with?";
+  return buildConsentRevokeSuccessMessage({ language });
 }

@@ -238,12 +238,12 @@ function LeafCloseButton({
           aria-label={label}
           onClick={onCloseLeaf}
           className={cn(
-            "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground",
+            "inline-flex h-7 w-7 items-center justify-center rounded-md text-foreground",
             "transition-colors hover:bg-accent hover:text-foreground",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           )}
         >
-          <X className="h-3.5 w-3.5" aria-hidden />
+          <X className="h-3.5 w-3.5 stroke-[2.25]" aria-hidden />
         </button>
       </TooltipTrigger>
       <TooltipContent side="bottom">{tooltip}</TooltipContent>
@@ -500,11 +500,14 @@ export default function PaneTabStripV3({
         <div
           data-pane-tabs-group-id={groupId}
           className={cn(
-            "flex h-10 min-w-0 shrink-0 items-stretch overflow-hidden border-b border-border/60 bg-muted/40",
+            "flex h-10 min-w-0 shrink-0 items-stretch overflow-hidden border-b border-border/60 bg-card",
             className,
           )}
         >
-          <div className="group/tabscroll relative min-w-0 flex-1">
+          <div
+            className="group/tabscroll relative z-10 min-w-0 flex-1 bg-card"
+            data-pane-tab-scroll
+          >
             {scrollHints.canLeft ? (
               <div
                 aria-hidden
@@ -690,7 +693,7 @@ export default function PaneTabStripV3({
           {trailingActions || onCloseLeaf ? (
             <div
               data-testid="pane-tab-strip-trailing-actions"
-              className="flex shrink-0 items-center border-l border-border/40 px-1"
+              className="relative z-0 flex min-w-0 shrink-0 items-center border-l border-border/40 bg-card px-1"
             >
               {trailingActions}
               {onCloseLeaf ? (

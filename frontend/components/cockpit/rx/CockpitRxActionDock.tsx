@@ -8,22 +8,31 @@
 import { PlanActionFooter } from "@/components/cockpit/middle/PlanActionFooter";
 import PrescriptionPatientPreview from "@/components/consultation/PrescriptionPatientPreview";
 import PrescriptionPreSendCheck from "@/components/consultation/PrescriptionPreSendCheck";
-import { useRxCommitActions } from "@/components/cockpit/rx/useRxCommitActions";
+import { RxRevisionReasonDialog } from "@/components/cockpit/rx/RxRevisionReasonDialog";
+import { RxRevisionDeliveryPrompt } from "@/components/cockpit/rx/RxRevisionDeliveryPrompt";
+import {
+  useRxCommitActions,
+  type RxPreviewPatientIdentity,
+} from "@/components/cockpit/rx/useRxCommitActions";
 import type { CockpitState } from "@/lib/patient-profile/state";
 
 export interface CockpitRxActionDockProps {
   appointmentId: string;
   patientId: string | null;
+  patientName?: string | null;
+  patientIdentity?: RxPreviewPatientIdentity | null;
   token: string;
   state: CockpitState;
   finishBusy?: boolean;
-  onFinish?: () => void;
+  onFinish?: () => void | Promise<void>;
   onSent?: (prescriptionId: string) => void | Promise<void>;
 }
 
 export function CockpitRxActionDock({
   appointmentId,
   patientId,
+  patientName,
+  patientIdentity,
   token,
   state,
   finishBusy = false,
@@ -33,11 +42,17 @@ export function CockpitRxActionDock({
   const commit = useRxCommitActions({
     appointmentId,
     patientId,
+    patientName,
+    patientIdentity,
     token,
     cockpitState: state,
     onFinish,
     onSent,
   });
+
+  const handleClosePreview = () => {
+    commit.closePreview();
+  };
 
   if (state === "terminal") {
     return null;
@@ -49,18 +64,32 @@ export function CockpitRxActionDock({
         state={state}
         appointmentId={appointmentId}
         finishBusy={finishBusy}
-        onSendAndFinish={commit.sendAndFinish}
+        onReview={commit.openPreview}
         onPreview={commit.openPreview}
+        onPrewarm={commit.prewarmOnIntent}
         previewLoading={commit.previewLoading}
-        finishSending={commit.finishSending}
         sending={commit.saving}
         commitError={commit.commitError}
         commitSuccess={commit.commitSuccess}
       />
       <PrescriptionPatientPreview
         open={commit.previewOpen}
-        onClose={commit.closePreview}
+        onClose={handleClosePreview}
         viewModel={commit.previewVM}
+        canSend={commit.canSend}
+        canFinish={commit.canFinish}
+        canPrint={commit.canPrint}
+        sending={commit.saving}
+        printBusy={commit.printBusy}
+        finishBusy={finishBusy}
+        commitError={commit.commitError}
+        commitSuccess={commit.commitSuccess}
+        onSendRx={commit.sendRx}
+        onSendAndFinish={commit.sendAndFinish}
+        onSendFinishAndPrint={commit.sendFinishAndPrint}
+        onFinish={commit.finishVisit}
+        onPrint={commit.printPrescription}
+        onDownload={commit.downloadPrescription}
       />
       <PrescriptionPreSendCheck
         open={commit.preSendWarnings !== null}
@@ -69,6 +98,22 @@ export function CockpitRxActionDock({
         onCancel={commit.onPreSendCancel}
         onEdit={commit.onPreSendEdit}
         onSendAnyway={commit.onPreSendSendAnyway}
+      />
+      <RxRevisionReasonDialog
+        open={commit.revisionReasonOpen}
+        busy={commit.revisionReasonBusy}
+        error={commit.revisionReasonError}
+        onCancel={commit.onRevisionReasonCancel}
+        onConfirm={commit.onRevisionReasonConfirm}
+      />
+      <RxRevisionDeliveryPrompt
+        open={commit.deliveryPrompt !== null}
+        canResend={commit.deliveryPrompt?.resend === true}
+        canReprint={commit.deliveryPrompt?.reprint === true}
+        busy={commit.saving || commit.printBusy}
+        onDismiss={commit.onDeliveryPromptDismiss}
+        onResend={commit.onDeliveryPromptResend}
+        onReprint={commit.onDeliveryPromptReprint}
       />
     </>
   );

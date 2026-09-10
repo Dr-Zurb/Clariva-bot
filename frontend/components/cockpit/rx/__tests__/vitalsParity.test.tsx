@@ -14,7 +14,13 @@
  * Synthetic fixtures only — no PHI in logs/snapshots.
  */
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -53,6 +59,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
     getLastPrescriptionInEpisode: vi
       .fn()
       .mockResolvedValue({ data: { prescription: null } }),
+    getAppointmentDeskVitals: vi
+      .fn()
+      .mockResolvedValue({ data: { vitals: null } }),
     getDoctorSettings: (...args: unknown[]) => mockGetDoctorSettings(...args),
     getPatientById: vi.fn().mockResolvedValue({
       data: {
@@ -71,12 +80,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 vi.mock("@/hooks/queries/useVitalsTrendsQuery", async () => {
-  const { buildVitalsTrendSeries, indexVitalsTrendSeries } = await import(
-    "@/lib/cockpit/vitals-trends"
-  );
-  const { buildCategoricalVitalTimelines } = await import(
-    "@/lib/cockpit/categorical-vitals-timeline"
-  );
+  const { buildVitalsTrendSeries, indexVitalsTrendSeries } =
+    await import("@/lib/cockpit/vitals-trends");
+  const { buildCategoricalVitalTimelines } =
+    await import("@/lib/cockpit/categorical-vitals-timeline");
   const {
     buildCustomVitalTextTimelines,
     buildCustomVitalTrendSeries,
@@ -99,9 +106,12 @@ vi.mock("@/hooks/queries/useVitalsTrendsQuery", async () => {
   };
 });
 
-vi.mock("@/components/cockpit/rx/objective/PediatricGrowthChartsSection", () => ({
-  PediatricGrowthChartsSection: () => null,
-}));
+vi.mock(
+  "@/components/cockpit/rx/objective/PediatricGrowthChartsSection",
+  () => ({
+    PediatricGrowthChartsSection: () => null,
+  })
+);
 
 const mockedGetLast = vi.mocked(getLastPrescriptionInEpisode);
 
@@ -114,7 +124,9 @@ async function revealVital(menuLabel: string) {
   if (!screen.queryByRole("button", { name: `Show ${menuLabel}` })) {
     fireEvent.click(screen.getByTestId("vitals-manager-trigger"));
   }
-  fireEvent.click(await screen.findByRole("button", { name: `Show ${menuLabel}` }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: `Show ${menuLabel}` })
+  );
 }
 
 async function revealExtendedVitalsForA11y() {
@@ -164,7 +176,10 @@ describe("obj-08 close-gate · shipped 7-vitals payload parity (P2-D6)", () => {
   });
 
   it("save → reload → re-save is a stable fixed point for the shipped 7", () => {
-    const first = buildRxPayload({ ...createEmptyRxFormFields(), ...SHIPPED_7 });
+    const first = buildRxPayload({
+      ...createEmptyRxFormFields(),
+      ...SHIPPED_7,
+    });
     const reloaded = {
       id: "rx-1",
       appointment_id: "appt-1",
@@ -220,7 +235,9 @@ describe("obj-08 close-gate · range flags + derived determinism (P2-D3)", () =>
 
   it("handles out-of-CHECK-range + missing inputs deterministically (never throws)", () => {
     // Beyond the migration CHECK bound still classifies without throwing.
-    expect(evaluateRange("vitalsBpSystolic", 9999, { ageYears: 30 })).toBe("high");
+    expect(evaluateRange("vitalsBpSystolic", 9999, { ageYears: 30 })).toBe(
+      "high"
+    );
     expect(evaluateRange("vitalsHr", null)).toBeNull();
     // Vitals with no advisory band return null rather than a bogus flag.
     expect(evaluateRange("vitalsWtKg", 70)).toBeNull();
@@ -242,13 +259,20 @@ function VitalsProbe() {
         wt: state.fields.vitalsWtKg,
         temp: state.fields.vitalsTempC,
         ht: state.fields.vitalsHtCm,
-        glucose: state.fields.vitalsGlucoseReadings[0]?.valueMgDl ?? state.fields.vitalsGlucoseMgDl,
+        glucose:
+          state.fields.vitalsGlucoseReadings[0]?.valueMgDl ??
+          state.fields.vitalsGlucoseMgDl,
       })}
     </pre>
   );
 }
 
-function readProbe(): { wt: number | null; temp: number | null; ht: number | null; glucose: number | null } {
+function readProbe(): {
+  wt: number | null;
+  temp: number | null;
+  ht: number | null;
+  glucose: number | null;
+} {
   return JSON.parse(screen.getByTestId("vitals-probe").textContent ?? "{}");
 }
 
@@ -276,7 +300,7 @@ function renderGrid(initial?: Partial<RxFormFields>) {
           <VitalsProbe />
         </RxFormProvider>
       </TooltipProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
 }
 
@@ -293,14 +317,17 @@ describe("obj-08 close-gate · unit round-trip parity (P2-D2)", () => {
     renderGrid();
     await waitForVitalsSettingsLoaded();
     fireEvent.click(screen.getByRole("button", { name: "°F" }));
-    const input = screen.getByLabelText(/Temperature in °F/i) as HTMLInputElement;
+    const input = screen.getByLabelText(
+      /Temperature in °F/i
+    ) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "100.4" } });
 
     expect(readProbe().temp).toBeCloseTo(fToC(100.4), 6); // canonical stored
-    expect(Number((screen.getByLabelText(/Temperature in °F/i) as HTMLInputElement).value)).toBeCloseTo(
-      100.4,
-      1,
-    ); // re-display, no drift
+    expect(
+      Number(
+        (screen.getByLabelText(/Temperature in °F/i) as HTMLInputElement).value
+      )
+    ).toBeCloseTo(100.4, 1); // re-display, no drift
   });
 
   it("weight lb: entered value stores canonical kg and re-displays with no drift", async () => {
@@ -311,10 +338,9 @@ describe("obj-08 close-gate · unit round-trip parity (P2-D2)", () => {
     fireEvent.change(input, { target: { value: "154.3" } });
 
     expect(readProbe().wt).toBeCloseTo(lbToKg(154.3), 6);
-    expect(Number((screen.getByLabelText(/Weight in lb/i) as HTMLInputElement).value)).toBeCloseTo(
-      154.3,
-      1,
-    );
+    expect(
+      Number((screen.getByLabelText(/Weight in lb/i) as HTMLInputElement).value)
+    ).toBeCloseTo(154.3, 1);
   });
 
   it("height ft/in: entered value stores canonical cm and re-displays with no drift", async () => {
@@ -322,28 +348,44 @@ describe("obj-08 close-gate · unit round-trip parity (P2-D2)", () => {
     await waitForVitalsSettingsLoaded();
     const heightGroup = screen.getByRole("group", { name: /Height unit/i });
     fireEvent.click(within(heightGroup).getByRole("button", { name: "ft/in" }));
-    const feetInput = screen.getByLabelText(/^Height feet$/i) as HTMLInputElement;
-    const inchesInput = screen.getByLabelText(/^Height inches$/i) as HTMLInputElement;
+    const feetInput = screen.getByLabelText(
+      /^Height feet$/i
+    ) as HTMLInputElement;
+    const inchesInput = screen.getByLabelText(
+      /^Height inches$/i
+    ) as HTMLInputElement;
     fireEvent.change(feetInput, { target: { value: "5" } });
     fireEvent.change(inchesInput, { target: { value: "7" } });
 
     expect(readProbe().ht).toBeCloseTo(ftInToCm(5, 7), 6);
-    expect(Number((screen.getByLabelText(/^Height feet$/i) as HTMLInputElement).value)).toBe(5);
-    expect(Number((screen.getByLabelText(/^Height inches$/i) as HTMLInputElement).value)).toBe(7);
+    expect(
+      Number(
+        (screen.getByLabelText(/^Height feet$/i) as HTMLInputElement).value
+      )
+    ).toBe(5);
+    expect(
+      Number(
+        (screen.getByLabelText(/^Height inches$/i) as HTMLInputElement).value
+      )
+    ).toBe(7);
   });
 
   it("glucose mmol/L: entered value stores canonical mg/dL and re-displays with no drift", async () => {
     renderGrid();
     await waitForVitalsSettingsLoaded();
     fireEvent.click(screen.getByRole("button", { name: "mmol/L" }));
-    const input = screen.getByLabelText(/^Blood glucose value$/i) as HTMLInputElement;
+    const input = screen.getByLabelText(
+      /^Blood glucose value$/i
+    ) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "6" } });
 
     expect(readProbe().glucose).toBeCloseTo(mmolLToMgDl(6), 6);
-    expect(Number((screen.getByLabelText(/^Blood glucose value$/i) as HTMLInputElement).value)).toBeCloseTo(
-      6,
-      1,
-    );
+    expect(
+      Number(
+        (screen.getByLabelText(/^Blood glucose value$/i) as HTMLInputElement)
+          .value
+      )
+    ).toBeCloseTo(6, 1);
   });
 
   it("toggling units alone never mutates the stored canonical value", async () => {
@@ -379,11 +421,18 @@ describe("obj-08 close-gate · canonical round-trip load → edit (P2-D2)", () =
     await waitForVitalsSettingsLoaded();
 
     // Reflects stored canonical values in the active (canonical) unit.
-    expect((screen.getByLabelText(/^Blood glucose value$/i) as HTMLInputElement).value).toBe("108");
-    expect((screen.getByLabelText(/Temperature in °C/i) as HTMLInputElement).value).toBe("38");
+    expect(
+      (screen.getByLabelText(/^Blood glucose value$/i) as HTMLInputElement)
+        .value
+    ).toBe("108");
+    expect(
+      (screen.getByLabelText(/Temperature in °C/i) as HTMLInputElement).value
+    ).toBe("38");
 
     // Edit → state reflects the new canonical value.
-    fireEvent.change(screen.getByLabelText(/^Blood glucose value$/i), { target: { value: "120" } });
+    fireEvent.change(screen.getByLabelText(/^Blood glucose value$/i), {
+      target: { value: "120" },
+    });
     expect(readProbe().glucose).toBe(120);
   });
 });
@@ -408,14 +457,19 @@ describe("obj-08 close-gate · ghost values read-only (P2-D5)", () => {
     renderGrid();
 
     expect(await screen.findByText(/prev 80 bpm/i)).toBeInTheDocument();
-    expect((screen.getByLabelText(/Pulse Rate \(PR\) in bpm/i) as HTMLInputElement).value).toBe("");
+    expect(
+      (screen.getByLabelText(/Pulse Rate \(PR\) in bpm/i) as HTMLInputElement)
+        .value
+    ).toBe("");
   });
 
   it("renders no ghost text when there is no prior prescription", async () => {
     mockedGetLast.mockResolvedValue({ data: { prescription: null } });
     renderGrid();
     // Allow the async fetch to settle, then assert no ghost captions.
-    expect(await screen.findByLabelText(/Pulse Rate \(PR\) in bpm/i)).toBeInTheDocument();
+    expect(
+      await screen.findByLabelText(/Pulse Rate \(PR\) in bpm/i)
+    ).toBeInTheDocument();
     expect(screen.queryByText(/^prev /i)).not.toBeInTheDocument();
   });
 });
@@ -432,6 +486,7 @@ describe("obj-08 close-gate · grid a11y sweep", () => {
   it("labels every core + extended input", async () => {
     renderGrid();
     await revealExtendedVitalsForA11y();
+    fireEvent.click(screen.getByTestId("bp-reading-extras-toggle-0"));
     for (const label of [
       /Systolic blood pressure/i,
       /Diastolic blood pressure/i,
@@ -454,9 +509,17 @@ describe("obj-08 close-gate · grid a11y sweep", () => {
   it("exposes unit toggles as labelled groups of aria-pressed buttons", async () => {
     renderGrid();
     await waitForVitalsSettingsLoaded();
-    expect(screen.getByRole("group", { name: /Weight unit/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "kg" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "lb" })).toHaveAttribute("aria-pressed", "false");
+    expect(
+      screen.getByRole("group", { name: /Weight unit/i })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "kg" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    expect(screen.getByRole("button", { name: "lb" })).toHaveAttribute(
+      "aria-pressed",
+      "false"
+    );
   });
 
   it("gives range flags and derived badges aria-labels", async () => {
@@ -469,8 +532,12 @@ describe("obj-08 close-gate · grid a11y sweep", () => {
       vitalsWtKg: 70,
     });
     await waitForVitalsSettingsLoaded();
-    expect(screen.getByLabelText(/Pulse Rate \(PR\): Above normal/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Mean arterial pressure/i)).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/Pulse Rate \(PR\): Above normal/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/Mean arterial pressure/i)
+    ).toBeInTheDocument();
     expect(screen.getByTestId("bsa-badge")).toBeInTheDocument();
   });
 
@@ -479,6 +546,8 @@ describe("obj-08 close-gate · grid a11y sweep", () => {
     await revealVital("Head Circumference (HC)");
     const details = container.querySelector("details");
     expect(details).not.toBeNull();
-    expect(details?.querySelector("summary")?.textContent).toMatch(/Paediatric vitals/i);
+    expect(details?.querySelector("summary")?.textContent).toMatch(
+      /Paediatric vitals/i
+    );
   });
 });

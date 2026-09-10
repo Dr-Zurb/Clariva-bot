@@ -30,10 +30,10 @@ const sampleSteps: ChecklistStepView[] = [
   },
   {
     id: "instagram",
-    title: "Connect Instagram",
-    description: "Link IG.",
+    title: "Connect socials",
+    description: "Link IG or Facebook.",
     href: "/dashboard/settings/integrations",
-    cta: "Connect",
+    cta: "Connect socials",
     done: false,
   },
 ];
@@ -44,10 +44,9 @@ describe("OnboardingSteps", () => {
     expect(
       screen.getByRole("link", { name: /get verified/i })
     ).toHaveAttribute("href", "/dashboard/get-verified");
-    expect(screen.getByRole("link", { name: /^connect$/i })).toHaveAttribute(
-      "href",
-      "/dashboard/settings/integrations"
-    );
+    expect(
+      screen.getByRole("link", { name: /^connect socials$/i })
+    ).toHaveAttribute("href", "/dashboard/settings/integrations");
   });
 
   it("shows status label instead of CTA when pending review", () => {

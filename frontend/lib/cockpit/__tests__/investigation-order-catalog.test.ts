@@ -206,7 +206,7 @@ describe("investigation-order-catalog structured derivation (inv-lib-05 / INV-D8
       kind: "panel",
       sourcePanelId: "lft",
     });
-    expect(derived[0]!.members?.length).toBeGreaterThan(0);
+    expect(derived[0]!.members).toEqual([]);
     expect(derived[1]).toMatchObject({
       id: "cxr",
       label: "Chest X-ray",
@@ -232,6 +232,19 @@ describe("investigation-order-catalog structured derivation (inv-lib-05 / INV-D8
     const flat = "LFT; Chest X-ray; Custom order";
     const derived = deriveInvestigationOrdersJson(flat);
     expect(serializeInvestigationOrdersToFlat(derived)).toBe(flat);
+  });
+
+  it("seeds a catalog panel as the package name only", () => {
+    const basket = createPanelBasket("lft")!;
+    expect(basket).toMatchObject({
+      id: "lft",
+      label: "LFT",
+      kind: "panel",
+      sourcePanelId: "lft",
+      members: [],
+    });
+    expect(isBasketCustomized(basket)).toBe(false);
+    expect(serializeInvestigationOrdersToFlat([basket])).toBe("LFT");
   });
 
   it("encodes customized baskets as title + members (INV-D11)", () => {

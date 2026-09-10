@@ -4,9 +4,18 @@ import React, { useEffect, useRef } from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatTimeShort } from "@/lib/format-date";
-import type { SlotSessionRow, SlotStatus } from "@/types/opd-doctor";
+import { useConsultSteppedAway } from "@/hooks/useConsultSteppedAway";
+import type { SlotSessionRow } from "@/types/opd-doctor";
 import type { AddSlotDialogMode } from "./AddSlotDialog";
 import { OpdSlotRowActions } from "./OpdSlotRowActions";
+import { showArrivedChip } from "./shared/opdArrival";
+import {
+  hasSlotTag,
+  isOverflowRow,
+  lifecycleBadgeLabel,
+  lifecycleTone,
+  resolveLifecycle,
+} from "./shared/slotAxes";
 
 export interface OpdSlotMobileCardProps {
   entry: SlotSessionRow;
@@ -25,40 +34,6 @@ export interface OpdSlotMobileCardProps {
   }) => void;
 }
 
-function statusLabel(s: SlotStatus): string {
-  switch (s) {
-    case "upcoming":
-      return "Upcoming";
-    case "grace":
-      return "Grace";
-    case "running_late":
-      return "Late";
-    case "in_consultation":
-      return "In consult";
-    case "completed":
-      return "Done";
-    case "missed":
-      return "Missed";
-    case "cancelled":
-      return "Cancelled";
-    case "overflow":
-      return "Overflow";
-    default:
-      return s;
-  }
-}
-
-function waitSummary(entry: SlotSessionRow): string {
-  if (entry.slotStatus === "running_late") {
-    if (entry.delayMinutes != null && entry.delayMinutes > 0) {
-      return `+${entry.delayMinutes}m`;
-    }
-    return "Late";
-  }
-  if (entry.slotStatus === "in_consultation") return "live";
-  return "";
-}
-
 export function OpdSlotMobileCard({
   entry,
   token,
@@ -72,8 +47,19 @@ export function OpdSlotMobileCard({
   onOverflowOpenChange,
   onOpenAddSlotDialog,
 }: OpdSlotMobileCardProps): JSX.Element {
-  const isInConsult = entry.slotStatus === "in_consultation";
-  const wait = waitSummary(entry);
+  const steppedAway = useConsultSteppedAway(entry.appointmentId);
+  const lifecycle = resolveLifecycle(entry) ?? "scheduled";
+  const tone = lifecycleTone(lifecycle);
+  const lateBand =
+    entry.timing?.band === "late" || entry.slotStatus === "running_late";
+  const badgeLabel =
+    lifecycle === "scheduled" && lateBand
+      ? "Overdue"
+      : lifecycleBadgeLabel(lifecycle);
+  const isInConsult = lifecycle === "in_consult";
+  const isIncomplete = lifecycle === "incomplete";
+  const showAwayChip = steppedAway && (isInConsult || isIncomplete);
+  const overflowTagged = isOverflowRow(entry);
   const earlyInviteActive =
     entry.earlyInviteExpiresAt != null &&
     new Date(entry.earlyInviteExpiresAt).getTime() > Date.now();
@@ -103,6 +89,7 @@ export function OpdSlotMobileCard({
         "border-b border-border last:border-0",
         "hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         isInConsult && "bg-primary/5",
+        isIncomplete && "bg-amber-50/70 dark:bg-amber-950/20",
         dimmed && "opacity-60",
         keyboardFocused && "ring-2 ring-inset ring-primary"
       )}
@@ -110,14 +97,9 @@ export function OpdSlotMobileCard({
       <div
         className={cn(
           "w-1 shrink-0 self-stretch",
-          entry.slotStatus === "running_late" && "bg-amber-500",
-          entry.slotStatus === "in_consultation" && "bg-primary",
-          entry.slotStatus === "completed" && "bg-green-600",
-          entry.slotStatus === "missed" && "bg-destructive",
-          entry.slotStatus === "overflow" && "bg-indigo-500",
-          (entry.slotStatus === "upcoming" || entry.slotStatus === "grace") &&
-            "bg-muted",
-          entry.slotStatus === "cancelled" && "bg-muted-foreground/40"
+          tone.dotClass,
+          lateBand && lifecycle === "scheduled" && "bg-amber-500",
+          overflowTagged && lifecycle === "scheduled" && "bg-indigo-500"
         )}
         aria-hidden
       />
@@ -131,54 +113,57 @@ export function OpdSlotMobileCard({
           <span
             className={cn(
               "rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-              entry.slotStatus === "running_late" &&
-                "bg-amber-100 text-amber-950 dark:bg-amber-950/40 dark:text-amber-100",
-              entry.slotStatus === "in_consultation" &&
-                "bg-primary/15 text-primary",
-              entry.slotStatus === "completed" &&
-                "bg-green-100 text-green-900 dark:bg-green-900/40 dark:text-green-100",
-              entry.slotStatus === "missed" &&
-                "bg-destructive/15 text-destructive",
-              entry.slotStatus === "overflow" &&
-                "bg-indigo-100 text-indigo-950 dark:bg-indigo-950/40 dark:text-indigo-100",
-              (entry.slotStatus === "upcoming" ||
-                entry.slotStatus === "grace") &&
-                "bg-muted text-muted-foreground",
-              entry.slotStatus === "cancelled" && "bg-muted text-muted-foreground"
+              tone.pillClass,
+              lateBand &&
+                lifecycle === "scheduled" &&
+                "bg-amber-100 text-amber-950 dark:bg-amber-950/40 dark:text-amber-100"
             )}
           >
-            {statusLabel(entry.slotStatus)}
+            {badgeLabel}
           </span>
-          {entry.slotStatus === "overflow" && (
+          {overflowTagged && (
             <span className="rounded border border-orange-500/50 bg-orange-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-orange-900 dark:text-orange-200">
               Overflow
             </span>
           )}
-          {earlyInviteActive && (
+          {showAwayChip && (
+            <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-200">
+              Away
+            </span>
+          )}
+          {showArrivedChip(entry) && (
+            <span
+              title="Arrived at the clinic."
+              className="inline-flex shrink-0 rounded border border-emerald-500/50 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900"
+            >
+              Arrived
+            </span>
+          )}
+          {hasSlotTag(entry, "patient_waiting") && (
+            <span
+              title="Patient is in the consult lobby right now."
+              className="inline-flex shrink-0 rounded border border-emerald-500/50 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900"
+            >
+              Waiting
+            </span>
+          )}
+          {hasSlotTag(entry, "patient_stepped_away") && (
+            <span
+              title="Patient checked in earlier but lobby went idle."
+              className="inline-flex shrink-0 rounded border border-stone-400/50 bg-stone-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-stone-700"
+            >
+              Stepped away
+            </span>
+          )}
+          {(earlyInviteActive || hasSlotTag(entry, "early_invited")) && (
             <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[9px] font-medium text-primary">
               Early invite
             </span>
           )}
-          {wait && (
-            <>
-              <span className="text-muted-foreground">·</span>
-              <span
-                className={cn(
-                  "tabular-nums",
-                  entry.slotStatus === "in_consultation" &&
-                    "font-medium text-primary",
-                  entry.slotStatus === "running_late" &&
-                    "font-semibold text-amber-800 dark:text-amber-200"
-                )}
-              >
-                {wait}
-              </span>
-            </>
-          )}
           <span
             className={cn(
               "min-w-0 flex-1 truncate pl-1 text-sm font-medium text-foreground",
-              entry.slotStatus === "cancelled" && "line-through"
+              lifecycle === "cancelled" && "line-through"
             )}
           >
             {entry.patientName}

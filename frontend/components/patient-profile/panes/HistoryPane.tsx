@@ -4,8 +4,10 @@
  * `<HistoryPane>` — past visit (prescription) list for the cockpit History leaf (cce-03).
  *
  * Fetches all prescriptions for the appointment's patient and renders compact
- * cards (most recent first). Tapping a card opens `<VisitDetailSideSheet>` via
- * the shell-scoped `useSideSheet()` primitive (cce-01).
+ * cards (most recent first, one row per note). Notes that share an appointment
+ * are grouped as the same visit. Tapping a card opens a read-only
+ * `<VisitDetailSideSheet>` via the shell-scoped `useSideSheet()` primitive
+ * (cce-01) and does not adopt the note into the live form.
  *
  * Built fresh per DL-2 — do not reuse `PatientVisitsTimeline` or
  * `PreviousRxSection` (different layout; patients-redesign deletion coupling).
@@ -17,11 +19,11 @@
  * @see plan-cockpit-chart-extraction-batch.md § DL-2
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pill } from "lucide-react";
-import { listPrescriptionsByPatient } from "@/lib/api";
-import { formatDate } from "@/lib/format-date";
+import { useCallback, useMemo, useState } from "react";
+import { ArrowUpRight, Pill } from "lucide-react";
+import { formatDate, formatDateTime } from "@/lib/format-date";
 import { useSideSheet } from "@/components/patient-profile/SideSheetHost";
+import { usePatientPrescriptionsQuery } from "@/hooks/queries/usePatientPrescriptionsQuery";
 import VisitDetailSideSheet from "@/components/patient-profile/side-sheets/VisitDetailSideSheet";
 import PaneHeader from "@/components/patient-profile/PaneHeader";
 import { Card, CardContent } from "@/components/ui/card";
@@ -29,6 +31,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { Appointment } from "@/types/appointment";
 import type { PrescriptionWithRelations } from "@/types/prescription";
+import {
+  groupHistoryNotesByAppointment,
+  historyNoteClockIso,
+  historyNoteState,
+  historyNoteVersionLabel,
+  type HistoryNoteState,
+} from "@/components/patient-profile/historyNoteMeta";
 import { PaneCollapseChevron } from "./PaneCollapseChevron";
 
 export interface HistoryPaneProps {
@@ -47,35 +56,13 @@ function truncateCc(text: string | null | undefined): string {
   return `${t.slice(0, CC_MAX)}…`;
 }
 
-function formatRelative(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return iso;
-  const diffMs = Date.now() - then;
-  const sec = Math.round(diffMs / 1000);
-  if (sec < 60) return "just now";
-  const min = Math.round(sec / 60);
-  if (min < 60) return `${min} min ago`;
-  const hr = Math.round(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const day = Math.round(hr / 24);
-  if (day === 1) return "yesterday";
-  if (day < 7) return `${day} days ago`;
-  const wk = Math.round(day / 7);
-  if (wk < 5) return `${wk}w ago`;
-  const mo = Math.round(day / 30);
-  if (mo < 12) return `${mo}mo ago`;
-  const yr = Math.round(day / 365);
-  return `${yr}y ago`;
-}
-
 function medicineCount(rx: PrescriptionWithRelations): number {
   return rx.prescription_medicines?.length ?? 0;
 }
 
-function sortByCreatedDesc(list: PrescriptionWithRelations[]): PrescriptionWithRelations[] {
-  return [...list].sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-  );
+function medicineLabel(count: number): string {
+  if (count === 0) return "No medicines";
+  return `${count} medicine${count === 1 ? "" : "s"}`;
 }
 
 function summarizeHistory(
@@ -84,10 +71,18 @@ function summarizeHistory(
 ): string {
   if (loading || items === null) return "Loading visit history…";
   if (items.length === 0) return "No past visits";
-  if (items.length === 1) {
-    return `Last visit: ${formatDate(items[0].created_at)}`;
+  const groups = groupHistoryNotesByAppointment(items);
+  const latest = formatDate(historyNoteClockIso(items[0]));
+  if (groups.length === 1) {
+    return `Last visit: ${latest}`;
   }
-  return `${items.length} past visits · Last: ${formatDate(items[0].created_at)}`;
+  return `${groups.length} past visits · Last: ${latest}`;
+}
+
+function stateLabel(state: HistoryNoteState): string {
+  if (state === "superseded") return "Superseded";
+  if (state === "closed") return "Closed";
+  return "Draft";
 }
 
 function HistoryCardSkeleton() {
@@ -104,30 +99,35 @@ function HistoryCardSkeleton() {
 
 function VisitHistoryCard({
   rx,
+  showTime,
   onOpen,
 }: {
   rx: PrescriptionWithRelations;
+  showTime: boolean;
   onOpen: (rx: PrescriptionWithRelations) => void;
 }) {
-  const absoluteDate = formatDate(rx.created_at);
-  const relativeDate = formatRelative(rx.created_at);
+  const clockIso = historyNoteClockIso(rx);
+  const absoluteDate = showTime ? formatDateTime(clockIso) : formatDate(clockIso);
   const count = medicineCount(rx);
   const dx = rx.provisional_diagnosis?.trim() || "No working diagnosis";
+  const state = historyNoteState(rx);
+  const version = historyNoteVersionLabel(rx);
 
   const handleOpen = () => onOpen(rx);
 
   return (
     <Card
       className={cn(
-        "cursor-pointer shadow-sm transition-colors",
-        "hover:border-primary/40 hover:bg-muted/30",
+        "cursor-pointer rounded-xl border-border/80 bg-card shadow-sm transition-[border-color,box-shadow,background-color] duration-150",
+        "hover:border-primary/35 hover:bg-muted/20 hover:shadow-md",
         "focus-within:ring-2 focus-within:ring-ring",
+        state === "superseded" && "bg-muted/30",
       )}
       data-testid={`history-visit-card-${rx.id}`}
     >
       <button
         type="button"
-        className="w-full rounded-xl text-left focus:outline-none"
+        className="group w-full rounded-xl text-left focus:outline-none"
         onClick={handleOpen}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -137,25 +137,52 @@ function VisitHistoryCard({
         }}
         aria-label={`Open visit from ${absoluteDate}`}
       >
-        <CardContent className="space-y-1.5 p-3">
-          <div className="flex items-start justify-between gap-2">
+        <CardContent className="p-3">
+          <div className="flex items-center justify-between gap-3">
             <time
               className="text-xs font-medium text-muted-foreground"
-              dateTime={rx.created_at}
+              dateTime={clockIso}
               title={absoluteDate}
             >
-              {relativeDate}
+              {absoluteDate}
             </time>
-            <span
-              className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
-              aria-label={`${count} medicines`}
-            >
-              <Pill className="h-3 w-3" aria-hidden />
-              {count}
-            </span>
+            <div className="flex shrink-0 items-center gap-2 text-muted-foreground">
+              {version ? (
+                <span
+                  className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium"
+                  data-testid={`history-note-version-${rx.id}`}
+                >
+                  {version}
+                </span>
+              ) : null}
+              <span
+                className={cn(
+                  "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium",
+                  state === "draft"
+                    ? "bg-amber-50 text-amber-950"
+                    : "bg-muted",
+                )}
+                data-testid={`history-note-state-${rx.id}`}
+              >
+                {stateLabel(state)}
+              </span>
+              <span
+                className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium"
+                aria-label={medicineLabel(count)}
+              >
+                <Pill className="h-3 w-3" aria-hidden />
+                {medicineLabel(count)}
+              </span>
+              <ArrowUpRight
+                className="h-3.5 w-3.5 text-muted-foreground/50 transition-colors group-hover:text-primary"
+                aria-hidden
+              />
+            </div>
           </div>
-          <p className="line-clamp-2 text-sm text-foreground">{truncateCc(rx.cc)}</p>
-          <p className="truncate text-xs text-muted-foreground">{dx}</p>
+          <p className="mt-2 line-clamp-1 text-sm font-semibold leading-5 text-foreground">
+            {truncateCc(rx.cc)}
+          </p>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">{dx}</p>
         </CardContent>
       </button>
     </Card>
@@ -169,36 +196,19 @@ export default function HistoryPane({
 }: HistoryPaneProps): JSX.Element {
   const { open } = useSideSheet();
   const patientId = appointment.patient_id ?? null;
+  // The ribbon prefetches this query as the visit loads. When history is
+  // opened, its prescription list normally comes straight from that cache.
+  const historyQuery = usePatientPrescriptionsQuery(token, patientId ?? "");
 
   const [collapsed, setCollapsed] = useState(false);
-  const [items, setItems] = useState<PrescriptionWithRelations[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const load = useCallback(async () => {
-    if (!patientId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await listPrescriptionsByPatient(token, patientId);
-      setItems(sortByCreatedDesc(res.data.prescriptions ?? []));
-    } catch (err) {
-      setItems(null);
-      setError(err instanceof Error ? err.message : "Failed to load visit history");
-    } finally {
-      setLoading(false);
-    }
-  }, [patientId, token]);
-
-  useEffect(() => {
-    if (!patientId) {
-      setItems(null);
-      setError(null);
-      setLoading(false);
-      return;
-    }
-    void load();
-  }, [load, patientId]);
+  const items = historyQuery.data ?? null;
+  const error = historyQuery.error
+    ? historyQuery.error instanceof Error
+      ? historyQuery.error.message
+      : "Failed to load visit history"
+    : null;
+  const loading = historyQuery.isLoading;
+  const load = historyQuery.refetch;
 
   const handleOpenVisit = useCallback(
     (rx: PrescriptionWithRelations) => {
@@ -214,6 +224,10 @@ export default function HistoryPane({
   );
 
   const sortedItems = useMemo(() => items ?? [], [items]);
+  const noteGroups = useMemo(
+    () => groupHistoryNotesByAppointment(sortedItems),
+    [sortedItems],
+  );
   const historySummary = useMemo(
     () => summarizeHistory(items, loading || items === null),
     [items, loading],
@@ -249,7 +263,7 @@ export default function HistoryPane({
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-        <div className="flex flex-col gap-2 pb-2">
+        <div className="flex flex-col gap-3 pb-2">
           {loading || items === null ? (
             <>
               <HistoryCardSkeleton />
@@ -262,9 +276,42 @@ export default function HistoryPane({
               No past visits for this patient.
             </p>
           ) : (
-            sortedItems.map((rx) => (
-              <VisitHistoryCard key={rx.id} rx={rx} onOpen={handleOpenVisit} />
-            ))
+            <>
+              {noteGroups.map((group) => {
+                const grouped = group.length > 1;
+                if (!grouped) {
+                  const rx = group[0]!;
+                  return (
+                    <VisitHistoryCard
+                      key={rx.id}
+                      rx={rx}
+                      showTime={false}
+                      onOpen={handleOpenVisit}
+                    />
+                  );
+                }
+                const appointmentId = group[0]?.appointment_id ?? group[0]!.id;
+                return (
+                  <div
+                    key={appointmentId}
+                    className="flex flex-col gap-2"
+                    data-testid={`history-visit-group-${appointmentId}`}
+                  >
+                    <p className="px-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      Same visit · {group.length} notes
+                    </p>
+                    {group.map((rx) => (
+                      <VisitHistoryCard
+                        key={rx.id}
+                        rx={rx}
+                        showTime
+                        onOpen={handleOpenVisit}
+                      />
+                    ))}
+                  </div>
+                );
+              })}
+            </>
           )}
         </div>
       </div>

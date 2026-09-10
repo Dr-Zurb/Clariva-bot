@@ -1,0 +1,11 @@
+{
+  "familyId": "non-text-ack",
+  "builder": "buildNonTextAckMessage",
+  "status": "draft",
+  "phi": false,
+  "notes": "Templates only (LANG6-D3). Review whole family, then copy to approved/ and run locale-arms:apply.",
+  "en": "I can't read images or voice notes yet — could you type your message instead? I'll take it from there.",
+  "hi": "Main abhi images ya voice notes nahi padh sakta — apna message type karke bhejein? Main aage dekh lunga.",
+  "pa": "Main hun images ya voice notes nahi padh sakda — apna message type karke bhejo? Main aage dekh lavanga.",
+  "placeholders": []
+}

@@ -44,6 +44,12 @@ jest.mock('../../../src/services/consultation-session-service', () => {
 
 jest.mock('../../../src/services/notification-service', () => ({
   sendConsultationLinkToPatient: jest.fn().mockResolvedValue(undefined as never),
+  sendConsultationReadyToPatient: jest.fn().mockResolvedValue({
+    anySent: false,
+    channels: [],
+    attemptedAt: new Date().toISOString(),
+    sessionOrPrescriptionId: 'sess',
+  } as never),
 }));
 
 jest.mock('../../../src/utils/consultation-token', () => ({
@@ -199,11 +205,11 @@ describe('appointment-service.startVoiceConsultation (Plan 05 · Task 24)', () =
     );
     expect(result.companion?.sessionId).toBe(sessionId);
 
-    expect(notificationService.sendConsultationLinkToPatient).toHaveBeenCalledWith(
-      appointmentId,
-      result.patientJoinUrl,
+    expect(notificationService.sendConsultationReadyToPatient).toHaveBeenCalledWith({
+      sessionId,
       correlationId,
-    );
+    });
+    expect(notificationService.sendConsultationLinkToPatient).not.toHaveBeenCalled();
   });
 
   it('idempotent rejoin: short-circuits create + synthesises minimal companion ({sessionId, expiresAt}) for chat-panel rehydrate', async () => {

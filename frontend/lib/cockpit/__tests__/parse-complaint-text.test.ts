@@ -127,10 +127,22 @@ describe("parseComplaintText", () => {
       expect(patch.laterality).toBe("Right");
     });
 
-    it("pre-selects side from a mid-phrase body part", () => {
+    it("strips a connector-introduced side word before a body part", () => {
+      const { name, patch } = parseComplaintText("pain in left leg");
+      expect(name).toBe("Pain in leg");
+      expect(patch.laterality).toBe("Left");
+    });
+
+    it("strips a mid-phrase side word after a connector", () => {
       const { name, patch } = parseComplaintText("pain in right shoulder");
-      expect(name).toBe("Pain in right shoulder");
+      expect(name).toBe("Pain in shoulder");
       expect(patch.laterality).toBe("Right");
+    });
+
+    it("leaves a diagnosis-name side word intact when there is no connector", () => {
+      const { name, patch } = parseComplaintText("upper respiratory infection");
+      expect(name).toBe("Upper respiratory infection");
+      expect(patch.laterality).toBeUndefined();
     });
 
     it("maps an abdomen region phrase onto the 9-grid and strips it", () => {
@@ -187,9 +199,9 @@ describe("parseComplaintText", () => {
       expect(patch.duration).toBe("3 days");
     });
 
-    it("keeps a bare leading timing descriptor in the name but pre-selects it", () => {
+    it("strips a bare leading timing descriptor from the name and pre-selects it", () => {
       const { name, patch } = parseComplaintText("night cough");
-      expect(name).toBe("Night cough");
+      expect(name).toBe("Cough");
       expect(patch.timing).toBe("night");
     });
 

@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   startConsultation,
@@ -17,6 +18,7 @@ import {
   startTextConsultation,
   resendConsultationLink,
 } from "@/lib/api";
+import { useRecordingAttestationQuery } from "@/hooks/queries/useRecordingAttestationQuery";
 import type { Appointment, ConsultationModality } from "@/types/appointment";
 import { createClient } from "@/lib/supabase/client";
 import VideoRoom from "./VideoRoom";
@@ -31,6 +33,22 @@ import {
   buildVoiceRejoinCache,
   useVoiceRejoinCache,
 } from "@/hooks/useVoiceRejoinCache";
+import {
+  parseCallStartedAt,
+  storeCallStartedAt,
+} from "@/lib/call/call-started-at";
+
+/** Persist duration anchor as soon as we know the session id. */
+function rememberCallStart(
+  sessionId: string | null | undefined,
+  serverStartedAt?: string | null,
+) {
+  if (!sessionId) return;
+  storeCallStartedAt(
+    sessionId,
+    parseCallStartedAt(serverStartedAt) ?? new Date(),
+  );
+}
 
 /**
  * Top-level surface on the appointment detail page that lands the
@@ -103,6 +121,24 @@ export interface ConsultationLauncherProps {
    * modality dropdown in place of the launcher's 3-button grid.
    */
   hidePrecallUI?: boolean;
+  /**
+   * When `hidePrecallUI` and no session is live yet, show a light
+   * "Connecting…" stage instead of an empty column. Used by the cockpit
+   * `live` path during rehydrate — not by ReadyCard (which owns its own CTA).
+   */
+  showConnectingWhileHidden?: boolean;
+  /**
+   * Fired when the in-memory session crosses into / out of live so hosts
+   * (ReadyCard) can tear down pre-call chrome instead of stacking it on
+   * top of the room.
+   */
+  onLiveChange?: (live: boolean) => void;
+  /**
+   * Fired when `POST /start` (or voice/text equivalent) fails so hosts
+   * that hide the launcher's own error line (`hidePrecallUI`) can still
+   * show it and unlock their CTA.
+   */
+  onStartError?: (message: string | null) => void;
 }
 
 /**
@@ -187,6 +223,9 @@ const ConsultationLauncher = forwardRef<
   token,
   onMarkNoShow,
   hidePrecallUI = false,
+  showConnectingWhileHidden = false,
+  onLiveChange,
+  onStartError,
 }: ConsultationLauncherProps, ref) {
   const router = useRouter();
   const bookedModality = useMemo(
@@ -204,6 +243,13 @@ const ConsultationLauncher = forwardRef<
   const [resendNotice, setResendNotice] = useState<string | null>(null);
   // task-cockpit-fix-5 — hides <PatientJoinLink> once patient connects.
   const [hasRemoteParticipant, setHasRemoteParticipant] = useState(false);
+  /** Cockpit More ▾ → modality-change options (triggerless launcher). */
+  const [modalityLauncherOpen, setModalityLauncherOpen] = useState(false);
+  const [modalityLauncherAvailability, setModalityLauncherAvailability] =
+    useState<{ disabled: boolean; reason: string }>({
+      disabled: true,
+      reason: "Loading…",
+    });
   /** task-voice-A6 — doctor mic check before Twilio room mounts. */
   const [voicePreCallDone, setVoicePreCallDone] = useState(false);
   /** task-voice-B2 — clinic branding for doctor pre-call lobby (cached fetch). */
@@ -226,6 +272,11 @@ const ConsultationLauncher = forwardRef<
   const canStartConsultation =
     (appointment.status === "pending" || appointment.status === "confirmed") &&
     !existingProviderSessionId;
+  const attestation = useRecordingAttestationQuery(token);
+  const needsRecordingAttestation =
+    bookedModality === "video" || bookedModality === "voice"
+      ? attestation.data?.accepted !== true
+      : false;
 
   /**
    * Resolve the doctor's Supabase session into the pair `<TextConsultRoom>`
@@ -279,6 +330,12 @@ const ConsultationLauncher = forwardRef<
     );
     return accessToken;
   }, []);
+
+  const actualStartedAtRef = useRef<string | null>(
+    appointment.consultation_session?.actual_started_at ?? null,
+  );
+  actualStartedAtRef.current =
+    appointment.consultation_session?.actual_started_at ?? null;
 
   const persistDoctorVoiceRejoinCache = useCallback(
     (live: LiveSession, sid: string | null) => {
@@ -349,6 +406,7 @@ const ConsultationLauncher = forwardRef<
         });
         const sid = res.data.companion?.sessionId ?? null;
         setSessionId(sid);
+        rememberCallStart(sid, actualStartedAtRef.current);
         if (bookedModality === "voice") {
           persistDoctorVoiceRejoinCache(
             {
@@ -368,6 +426,9 @@ const ConsultationLauncher = forwardRef<
           try {
             const tokenRes = await getConsultationToken(token, appointment.id);
             if (cancelled) return;
+            if (tokenRes.data.status === "lobby" || !("token" in tokenRes.data)) {
+              return;
+            }
             setLiveSession({
               doctorToken:    tokenRes.data.token,
               roomName:       tokenRes.data.roomName,
@@ -505,7 +566,9 @@ const ConsultationLauncher = forwardRef<
         patientJoinUrl: res.data.patientJoinUrl,
         companion:      res.data.companion,
       });
-      setSessionId(res.data.companion?.sessionId ?? null);
+      const sid = res.data.companion?.sessionId ?? null;
+      setSessionId(sid);
+      rememberCallStart(sid, actualStartedAtRef.current);
     } catch (err) {
       setStartError(err instanceof Error ? err.message : "Failed to start consultation");
     } finally {
@@ -557,6 +620,7 @@ const ConsultationLauncher = forwardRef<
       setLiveSession(live);
       const sid = res.data.companion?.sessionId ?? null;
       setSessionId(sid);
+      rememberCallStart(sid, actualStartedAtRef.current);
       persistDoctorVoiceRejoinCache(live, sid);
     } catch (err) {
       setStartError(err instanceof Error ? err.message : "Failed to start voice consultation");
@@ -637,6 +701,14 @@ const ConsultationLauncher = forwardRef<
     ((bookedModality === "video" || bookedModality === "voice") && !!liveSession) ||
     (bookedModality === "text" && !!textSession);
 
+  useEffect(() => {
+    onLiveChange?.(sessionLive);
+  }, [sessionLive, onLiveChange]);
+
+  useEffect(() => {
+    onStartError?.(startError);
+  }, [startError, onStartError]);
+
   // Expose start(modality) to parent via ref so the cockpit header CTA
   // can trigger the same path as the modality buttons without a
   // document.querySelector hack (task-cockpit-fix-4 / K-H2 lock).
@@ -656,7 +728,11 @@ const ConsultationLauncher = forwardRef<
   return (
     <section
       aria-label="Consultation launcher"
-      className="space-y-4"
+      className={
+        sessionLive
+          ? "flex h-full min-h-0 flex-col"
+          : "space-y-4"
+      }
     >
       {/* Pre-call UI — hidden once a session is live so the header strip and
           modality buttons don't render on top of the live room.
@@ -668,12 +744,25 @@ const ConsultationLauncher = forwardRef<
               appointment date / time and status; we keep this strip compact to
               avoid duplicating that header. Reschedule / cancel actions are
               intentionally out of scope per task-20. */}
-          <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-gray-200 pb-3">
-            <h2 className="text-lg font-semibold text-gray-900">Consultation</h2>
+          <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border pb-3">
+            <h2 className="text-lg font-semibold text-foreground">Consultation</h2>
             <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700">
               Booked as: {MODALITY_META[bookedModality].bookedLabel}
             </span>
           </header>
+
+          {needsRecordingAttestation ? (
+            <p className="text-sm text-muted-foreground">
+              Voice and video consults require the recording attestation.{" "}
+              <Link
+                href="/dashboard/recording-attestation"
+                className="font-medium text-primary underline-offset-4 hover:underline"
+              >
+                Review and accept
+              </Link>
+              .
+            </p>
+          ) : null}
 
           {/* Modality buttons row — 3-column grid that stacks on narrow screens. */}
           <div
@@ -707,7 +796,11 @@ const ConsultationLauncher = forwardRef<
                         : "Cannot start in this state"
                     : starting
                       ? "Starting…"
-                      : null;
+                      : isPrimary &&
+                          (m === "video" || m === "voice") &&
+                          needsRecordingAttestation
+                        ? "Accept the recording attestation to start consults"
+                        : null;
 
               const isDisabled = disabledReason !== null;
 
@@ -721,8 +814,8 @@ const ConsultationLauncher = forwardRef<
                   aria-pressed={isPrimary && sessionLive}
                   className={
                     isPrimary
-                      ? "flex items-center justify-center gap-2 rounded-md bg-green-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-green-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                      : "flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-700 transition hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      ? "flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      : "flex items-center justify-center gap-2 rounded-md border border-border bg-card px-4 py-3 text-sm font-medium text-foreground transition hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                   }
                 >
                   <span aria-hidden="true">{meta.icon}</span>
@@ -755,6 +848,20 @@ const ConsultationLauncher = forwardRef<
         </>
       )}
 
+      {!sessionLive && hidePrecallUI && showConnectingWhileHidden ? (
+        <div
+          data-testid="consultation-connecting"
+          className="flex h-full min-h-[12rem] flex-1 flex-col items-center justify-center gap-2 bg-card px-4 text-center"
+          role="status"
+          aria-live="polite"
+        >
+          <p className="text-sm font-medium text-foreground">Connecting…</p>
+          <p className="text-xs text-muted-foreground">
+            Restoring the consult room
+          </p>
+        </div>
+      ) : null}
+
       {/* Live panel — only mounted once a session exists. Empty state is the
           modality buttons row above; the panel is the post-Start surface.
           Video / voice key off the Twilio-backed `liveSession` record;
@@ -773,34 +880,18 @@ const ConsultationLauncher = forwardRef<
           // still keys off the Twilio room SID in v1; Plan 01's facade
           // migration will unify the two.
           sessionId={bookedModality === "voice" ? sessionId : null}
-          // Plan 09 · Task 54 — doctor-side mid-consult modality
-          // switcher. Gated on `sessionId` presence because the
-          // launcher's `GET /state` call is session-scoped; video
-          // rejoin paths without a companion sessionId fall back to
-          // the pre-Task-54 (no launcher) behaviour until Plan 01's
-          // facade migration plumbs sessionId through video as well.
-          modalitySwitchSlot={
-            sessionId ? (
-              <ModalityChangeLauncher
-                sessionId={sessionId}
-                token={token}
-                userRole="doctor"
-                patientDisplayName={appointment.patient_name ?? undefined}
-              />
-            ) : null
-          }
+          // Cockpit video/voice: Change modality lives in More ▾ (room
+          // prop below). Text still uses modalitySwitchSlot.
+          modalitySwitchSlot={null}
           roomSlot={
-            <div>
+            <div className="flex h-full min-h-0 flex-col bg-card text-foreground">
               {bookedModality === "voice" ? (
                 <>
-                  <h3 className="mb-3 text-base font-semibold text-gray-900">
-                    Voice call
-                  </h3>
                   {resendNotice && (
                     <p
                       role="status"
                       aria-live="polite"
-                      className="mb-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800"
+                      className="mb-2 shrink-0 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800"
                     >
                       {resendNotice}
                     </p>
@@ -818,6 +909,7 @@ const ConsultationLauncher = forwardRef<
                     />
                   ) : null}
                   {voicePreCallDone ? (
+                  <div className="min-h-0 flex-1">
                   <VoiceConsultRoom
                     accessToken={liveSession.doctorToken}
                     roomName={liveSession.roomName}
@@ -827,6 +919,10 @@ const ConsultationLauncher = forwardRef<
                     onResendLink={handleResendLink}
                     onMarkNoShow={onMarkNoShow}
                     mode="cockpit"
+                    sessionStartedAt={
+                      appointment.consultation_session?.actual_started_at ??
+                      null
+                    }
                     /*
                      * Plan 05 · Task 24c — companion text channel is
                      * mandatory on the voice fresh-create path (Plan 06
@@ -855,14 +951,40 @@ const ConsultationLauncher = forwardRef<
                     onRemoteJoined={() => setHasRemoteParticipant(true)}
                     onRemoteLeft={() => setHasRemoteParticipant(false)}
                     rejoined={rejoinedFromCache}
+                    modalityChangeSlot={
+                      sessionId ? (
+                        <ModalityChangeLauncher
+                          sessionId={sessionId}
+                          token={token}
+                          userRole="doctor"
+                          patientDisplayName={
+                            appointment.patient_name ?? undefined
+                          }
+                          triggerVariant="none"
+                          open={modalityLauncherOpen}
+                          onOpenChange={setModalityLauncherOpen}
+                          onAvailabilityChange={setModalityLauncherAvailability}
+                        />
+                      ) : null
+                    }
+                    onRequestChangeModality={
+                      sessionId
+                        ? () => setModalityLauncherOpen(true)
+                        : undefined
+                    }
+                    modalityChangeDisabled={
+                      modalityLauncherAvailability.disabled
+                    }
+                    modalityChangeDisabledReason={
+                      modalityLauncherAvailability.reason
+                    }
                   />
+                  </div>
                   ) : null}
                 </>
               ) : (
                 <>
-                  <h3 className="mb-3 text-base font-semibold text-gray-900">
-                    Video call
-                  </h3>
+                  <div className="min-h-0 flex-1">
                   <VideoRoom
                     accessToken={liveSession.doctorToken}
                     roomName={liveSession.roomName}
@@ -870,6 +992,11 @@ const ConsultationLauncher = forwardRef<
                     onMarkNoShow={onMarkNoShow}
                     role="doctor"
                     mode="cockpit"
+                    sessionStartedAt={
+                      appointment.consultation_session?.actual_started_at ??
+                      null
+                    }
+                    sessionId={sessionId ?? undefined}
                     /*
                      * Plan 06 · Task 38 — thread the companion text channel
                      * into `<VideoRoom>` so it mounts the always-on chat
@@ -934,15 +1061,58 @@ const ConsultationLauncher = forwardRef<
                     }}
                     onRemoteJoined={() => setHasRemoteParticipant(true)}
                     onRemoteLeft={() => setHasRemoteParticipant(false)}
+                    modalityChangeSlot={
+                      sessionId ? (
+                        <ModalityChangeLauncher
+                          sessionId={sessionId}
+                          token={token}
+                          userRole="doctor"
+                          patientDisplayName={
+                            appointment.patient_name ?? undefined
+                          }
+                          triggerVariant="none"
+                          open={modalityLauncherOpen}
+                          onOpenChange={setModalityLauncherOpen}
+                          onAvailabilityChange={setModalityLauncherAvailability}
+                        />
+                      ) : null
+                    }
+                    onRequestChangeModality={
+                      sessionId
+                        ? () => setModalityLauncherOpen(true)
+                        : undefined
+                    }
+                    modalityChangeDisabled={
+                      modalityLauncherAvailability.disabled
+                    }
+                    modalityChangeDisabledReason={
+                      modalityLauncherAvailability.reason
+                    }
                   />
+                  </div>
                 </>
               )}
               {!hasRemoteParticipant && (
-                <div className="mt-4">
-                  <h3 className="mb-2 text-base font-semibold text-gray-900">
+                <div className="shrink-0 border-t border-border px-3 py-2.5">
+                  <p className="mb-1.5 text-xs font-medium text-muted-foreground">
                     Patient join link
-                  </h3>
-                  <PatientJoinLink patientJoinUrl={liveSession.patientJoinUrl} />
+                  </p>
+                  {resendNotice ? (
+                    <p
+                      role="status"
+                      aria-live="polite"
+                      className="mb-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900"
+                    >
+                      {resendNotice}
+                    </p>
+                  ) : null}
+                  <PatientJoinLink
+                    patientJoinUrl={liveSession.patientJoinUrl}
+                    onEmailLink={
+                      sessionId ? () => handleResendLink() : undefined
+                    }
+                    emailBusy={resendBusy}
+                  />
                 </div>
               )}
             </div>
@@ -973,15 +1143,12 @@ const ConsultationLauncher = forwardRef<
             />
           }
           roomSlot={
-            <div>
-              <h3 className="mb-3 text-base font-semibold text-gray-900">
-                Text chat
-              </h3>
+            <div className="flex h-full min-h-0 flex-col">
               {resendNotice && (
                 <p
                   role="status"
                   aria-live="polite"
-                  className="mb-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800"
+                  className="mb-2 shrink-0 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800"
                 >
                   {resendNotice}
                 </p>

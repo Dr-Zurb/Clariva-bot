@@ -96,14 +96,14 @@ export default function PaneFocusButton({
               aria-haspopup="menu"
               aria-pressed={pressed}
               className={cn(
-                "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground",
+                "inline-flex h-7 w-7 items-center justify-center rounded-md text-foreground",
                 "transition-colors hover:bg-accent hover:text-foreground",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 pressed && "bg-accent/80 text-foreground",
                 className,
               )}
             >
-              <Icon className="h-3.5 w-3.5" aria-hidden />
+              <Icon className="h-3.5 w-3.5 stroke-[2.25]" aria-hidden />
             </button>
           </DropdownMenuTrigger>
         </TooltipTrigger>

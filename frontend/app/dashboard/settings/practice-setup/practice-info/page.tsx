@@ -15,7 +15,7 @@ export default function PracticeInfoPage() {
     return (
       <SettingsPageShell
         title="Practice info"
-        description="Practice name, timezone, specialty, and address. Prices and currency are under Pricing."
+        description="Practice name, timezone, specialty, qualifications, and address. Prices and currency are under Pricing."
         isLoading
       />
     );

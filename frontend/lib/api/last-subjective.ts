@@ -1,6 +1,6 @@
 /**
  * Last subjective for carry-forward (subjective-tab · subj-07)
- * GET /api/v1/prescriptions/last-subjective?patientId=&appointmentId=
+ * GET /api/v1/prescriptions/last-subjective?patientId=&appointmentId=&excludePrescriptionId=
  */
 
 import { requireApiBaseUrl } from "@/lib/api-base";
@@ -39,11 +39,15 @@ export async function getLastSubjectiveForPatient(
   token: string,
   patientId: string,
   appointmentId: string,
+  excludePrescriptionId?: string | null,
 ): Promise<ApiSuccess<LastSubjectiveData>> {
   const params = new URLSearchParams({
     patientId,
     appointmentId,
   });
+  if (excludePrescriptionId) {
+    params.set("excludePrescriptionId", excludePrescriptionId);
+  }
 
   const res = await fetch(
     `${requireApiBaseUrl()}/api/v1/prescriptions/last-subjective?${params.toString()}`,

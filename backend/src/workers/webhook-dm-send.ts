@@ -196,7 +196,7 @@ export async function sendInstagramDmWithLocksAndFallback(
     }
   }
 
-  if (doctorId && sendSucceeded) {
+  if (doctorId && sendSucceeded && provider === 'instagram') {
     void recordInstagramLastDmSuccess(doctorId, correlationId);
   }
 

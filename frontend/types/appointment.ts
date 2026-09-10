@@ -64,8 +64,15 @@ export interface Appointment {
    * or patients with unset gender.
    */
   patient_sex: PatientSex | null;
+  patient_guardian_name?: string | null;
+  patient_guardian_relation?: string | null;
+  patient_mrn?: string | null;
   appointment_date: string; // ISO 8601 from API
   status: AppointmentStatus;
+  /** osm-01 — how the visit entered the day. */
+  booking_origin?: "booked" | "walk_in" | "overflow" | "return_after_completed" | "rebooked" | null;
+  /** crc-01 — first arrival stamp (desk or lobby). */
+  patient_checked_in_at?: string | null;
   notes?: string;
   created_at: string;
   updated_at: string;

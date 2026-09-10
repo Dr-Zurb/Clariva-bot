@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   lineHasSigDetails,
   parseMedicineLine,
+  unrecognisedMedicineResidue,
 } from "@/lib/cockpit/medicine-line-parse";
 
 describe("parseMedicineLine", () => {
@@ -360,6 +361,117 @@ describe("parseMedicineLine — bare frequency adverbs", () => {
   });
 });
 
+describe("parseMedicineLine — clinic shorthand (glued freq + form aliases)", () => {
+  it("parses 'tb multivitamin 1od' as tablet + 1 tab OD", () => {
+    const p = parseMedicineLine("tb multivitamin 1od");
+    expect(p).not.toBeNull();
+    expect(p!.medicineName).toBe("multivitamin");
+    expect(p!.form).toBe("tablet");
+    expect(p!.doseQty).toBe(1);
+    expect(p!.doseUnit).toBe("tab");
+    expect(p!.frequencyCode).toBe("OD");
+    expect(p!.dosage).toBe("");
+    expect(p!.instructions).toBe("");
+    expect(p!.routeCode).toBe("oral");
+  });
+
+  it("treats a small bare number before frequency as dose, not strength", () => {
+    const p = parseMedicineLine("multivitamin 1 od");
+    expect(p!.medicineName).toBe("multivitamin");
+    expect(p!.doseQty).toBe(1);
+    expect(p!.doseUnit).toBe("tab");
+    expect(p!.form).toBe("tablet");
+    expect(p!.dosage).toBe("");
+    expect(p!.frequencyCode).toBe("OD");
+  });
+
+  it("parses glued 1bd / 1tds without stealing a trailing strength", () => {
+    const p = parseMedicineLine("tab dolo 650 1bd");
+    expect(p!.medicineName).toBe("dolo");
+    expect(p!.form).toBe("tablet");
+    expect(p!.dosage).toBe("650");
+    expect(p!.doseQty).toBe(1);
+    expect(p!.frequencyCode).toBe("BID");
+    expect(parseMedicineLine("pcm 1tds")!.frequencyCode).toBe("TID");
+    expect(parseMedicineLine("pcm 1tds")!.doseQty).toBe(1);
+  });
+
+  it("parses a half-tablet glued onto frequency", () => {
+    const p = parseMedicineLine("atenolol \u00bdbd");
+    expect(p!.medicineName).toBe("atenolol");
+    expect(p!.doseQty).toBe(0.5);
+    expect(p!.frequencyCode).toBe("BID");
+  });
+
+  it("treats glued 5+ as strength + frequency, not five tablets", () => {
+    const p = parseMedicineLine("amlodipine 5od");
+    expect(p!.medicineName).toBe("amlodipine");
+    expect(p!.dosage).toBe("5");
+    expect(p!.doseQty).toBeNull();
+    expect(p!.frequencyCode).toBe("OD");
+  });
+
+  it("does not treat duration or strength suffixes as glued frequency", () => {
+    expect(parseMedicineLine("amoxicillin 5d")!.frequencyCode).toBeNull();
+    expect(parseMedicineLine("amoxicillin 5d")!.durationValue).toBe(5);
+    expect(parseMedicineLine("amoxicillin 5d")!.durationUnit).toBe("days");
+    expect(parseMedicineLine("paracetamol 500mg")!.dosage).toBe("500 mg");
+    expect(parseMedicineLine("paracetamol 500mg")!.frequencyCode).toBeNull();
+  });
+
+  it("reads tbl/cp/sy/ung form prefixes", () => {
+    expect(parseMedicineLine("tbl dolo 650 od")!.form).toBe("tablet");
+    expect(parseMedicineLine("cp omez 20 od")!.form).toBe("capsule");
+    expect(parseMedicineLine("sy ondem 5 ml bd")!.form).toBe("syrup");
+    expect(parseMedicineLine("ung betamethasone bd")!.form).toBe("ointment");
+  });
+
+  it("reads dotted frequency and route abbreviations", () => {
+    expect(parseMedicineLine("pcm 500mg b.d.")!.frequencyCode).toBe("BID");
+    expect(parseMedicineLine("pcm 500mg o.d.")!.frequencyCode).toBe("OD");
+    expect(parseMedicineLine("pcm 500mg t.d.s.")!.frequencyCode).toBe("TID");
+    expect(parseMedicineLine("pcm 500mg h.s.")!.frequencyCode).toBe("QHS");
+    const inj = parseMedicineLine("b12 i.m. gluteal");
+    expect(inj!.medicineName.toLowerCase()).toBe("b12");
+    expect(inj!.routeCode).toBe("IM");
+    expect(parseMedicineLine("pcm 1b.d.")!.frequencyCode).toBe("BID");
+    expect(parseMedicineLine("pcm 1b.d.")!.doseQty).toBe(1);
+  });
+
+  it("parses glued x5d duration", () => {
+    const p = parseMedicineLine("amoxicillin 500 mg tds x5d");
+    expect(p!.medicineName).toBe("amoxicillin");
+    expect(p!.durationValue).toBe(5);
+    expect(p!.durationUnit).toBe("days");
+    expect(p!.frequencyCode).toBe("TID");
+  });
+
+  it("parses glued syrup concentration 250mg/5ml", () => {
+    const p = parseMedicineLine("syp amox 250mg/5ml bd");
+    expect(p!.medicineName).toBe("amox");
+    expect(p!.form).toBe("syrup");
+    expect(p!.dosage).toBe("250 mg/5ml");
+    expect(p!.frequencyCode).toBe("BID");
+    expect(parseMedicineLine("ondan 4mg/ml bd")!.dosage).toBe("4 mg/ml");
+  });
+
+  it("parses + combo strengths", () => {
+    const glued = parseMedicineLine("amoxiclav 500+125 bd");
+    expect(glued!.medicineName).toBe("amoxiclav");
+    expect(glued!.dosage).toBe("500+125");
+    expect(glued!.frequencyCode).toBe("BID");
+    const spaced = parseMedicineLine("amoxiclav 500 + 125 mg bd");
+    expect(spaced!.medicineName).toBe("amoxiclav");
+    expect(spaced!.dosage).toBe("500+125 mg");
+    expect(spaced!.frequencyCode).toBe("BID");
+  });
+
+  it("defaults spray and solution routes", () => {
+    expect(parseMedicineLine("spray fluticasone bd")!.routeCode).toBe("inhaled");
+    expect(parseMedicineLine("sol sodium chloride 5 ml od")!.routeCode).toBe("oral");
+  });
+});
+
 describe("parseMedicineLine — single-letter form prefixes", () => {
   it("reads 't' as tablet when a name follows", () => {
     const p = parseMedicineLine("t amlo 5 for 10 days");
@@ -494,6 +606,7 @@ describe("lineHasSigDetails", () => {
     expect(lineHasSigDetails("amlodipine 5 mg od")).toBe(true);
     expect(lineHasSigDetails("syp cough syrup 2 spoon")).toBe(true);
     expect(lineHasSigDetails("pcm 1-0-1")).toBe(true);
+    expect(lineHasSigDetails("tb multivitamin 1od")).toBe(true);
   });
 
   it("is true when only a source or intake cue is present", () => {
@@ -504,5 +617,17 @@ describe("lineHasSigDetails", () => {
   it("is true when a past / stop cue is present", () => {
     expect(lineHasSigDetails("amlodipine stopped")).toBe(true);
     expect(lineHasSigDetails("metformin stopped 2 months ago")).toBe(true);
+  });
+});
+
+describe("unrecognisedMedicineResidue", () => {
+  it("is empty on a fully structured line", () => {
+    const p = parseMedicineLine("tb multivitamin 1od");
+    expect(unrecognisedMedicineResidue(p!)).toBe("");
+  });
+
+  it("returns leftover instructions", () => {
+    const p = parseMedicineLine("amlodipine 5 mg od avoid grapefruit");
+    expect(unrecognisedMedicineResidue(p!)).toBe("avoid grapefruit");
   });
 });

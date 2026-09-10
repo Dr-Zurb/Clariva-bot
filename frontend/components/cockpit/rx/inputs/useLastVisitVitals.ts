@@ -1,43 +1,15 @@
 "use client";
 
+import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
-import { getLastPrescriptionInEpisode } from "@/lib/api";
 import type { GhostVitals } from "@/components/cockpit/rx/inputs/VitalsExtended";
-import { vitalsByStorage, type ColumnVitalKey } from "@/lib/cockpit/vitals-schema";
-import type { PrescriptionWithRelations } from "@/types/prescription";
-import { queryKeys } from "@/lib/query/keys";
-import { STALE } from "@/lib/query/stale";
-
-/** Maps each column-backed vital key to its canonical column on a prescription row. */
-const GHOST_COLUMN: Record<ColumnVitalKey, keyof PrescriptionWithRelations> = {
-  vitalsBpSystolic: "vitals_bp_systolic",
-  vitalsBpDiastolic: "vitals_bp_diastolic",
-  vitalsHr: "vitals_hr",
-  vitalsRr: "vitals_rr",
-  vitalsTempC: "vitals_temp_c",
-  vitalsSpo2: "vitals_spo2",
-  vitalsWtKg: "vitals_wt_kg",
-  vitalsHtCm: "vitals_ht_cm",
-  vitalsPainScore: "vitals_pain_score",
-  vitalsGlucoseMgDl: "vitals_glucose_mg_dl",
-  vitalsGcsTotal: "vitals_gcs_total",
-  vitalsHeadCircumferenceCm: "vitals_head_circumference_cm",
-  vitalsMuacCm: "vitals_muac_cm",
-  vitalsWaistCm: "vitals_waist_cm",
-};
-
-function extractGhostVitals(rx: PrescriptionWithRelations): GhostVitals {
-  const ghost: GhostVitals = {};
-  for (const key of vitalsByStorage("column").map((v) => v.key)) {
-    const columnKey = key as ColumnVitalKey;
-    const value = rx[GHOST_COLUMN[columnKey]];
-    if (typeof value === "number" && Number.isFinite(value)) {
-      ghost[key] = value;
-    }
-  }
-  return ghost;
-}
+import { patchEmptyFieldsFromDeskVitals } from "@/lib/cockpit/desk-vitals-seed";
+import { useRxSectionLock } from "@/components/cockpit/rx/useRxLock";
+import {
+  deskVitalsQueryOptions,
+  lastVisitVitalsQueryOptions,
+} from "@/lib/cockpit/desk-vitals-query";
 
 /**
  * Read-only previous-visit vitals (P2-D5), sourced from the episode's last
@@ -50,15 +22,49 @@ export function useLastVisitVitals(): GhostVitals | null {
   // React Query cache (P2-D5): the ghost is a read-only reference, so a pane
   // re-add serves it from cache instead of re-hitting last-in-episode.
   const query = useQuery({
-    queryKey: queryKeys.consult(appointmentId).lastVisitVitals(),
-    queryFn: async (): Promise<GhostVitals | null> => {
-      const res = await getLastPrescriptionInEpisode(token, appointmentId);
-      const rx = res.data.prescription;
-      return rx ? extractGhostVitals(rx) : null;
-    },
+    ...lastVisitVitalsQueryOptions(token, appointmentId),
     enabled: Boolean(token) && Boolean(appointmentId),
-    staleTime: STALE.CLINICAL,
   });
 
   return query.data ?? null;
+}
+
+function useDeskVisitVitalsQuery() {
+  const { token, appointmentId } = useRxForm();
+
+  return useQuery({
+    ...deskVitalsQueryOptions(token, appointmentId),
+    enabled: Boolean(token) && Boolean(appointmentId),
+  });
+}
+
+/** Same-visit front-desk reading. Empty/error → null. Seed writes empty fields only. */
+export function useDeskVisitVitals(): GhostVitals | null {
+  return useDeskVisitVitalsQuery().data?.ghost ?? null;
+}
+
+/** Visit-level desk note. Empty/error → null. */
+export function useDeskVisitVitalsNote(): string | null {
+  return useDeskVisitVitalsQuery().data?.note ?? null;
+}
+
+/**
+ * Seed empty cockpit vitals (numbers + visit note) from the same-visit desk
+ * reading. Last-visit ghosts stay click-to-apply; desk values fill the fields.
+ */
+export function DeskVitalsSectionNoteSeed(): null {
+  const { state, seedFields } = useRxForm();
+  const { contentLocked } = useRxSectionLock();
+  const query = useDeskVisitVitalsQuery();
+
+  useEffect(() => {
+    if (!query.isSuccess) return;
+    if (contentLocked) return;
+    const desk = query.data ?? { ghost: null, note: null };
+    const patch = patchEmptyFieldsFromDeskVitals(state.fields, desk);
+    if (Object.keys(patch).length === 0) return;
+    seedFields(patch);
+  }, [contentLocked, query.data, query.isSuccess, seedFields, state.fields]);
+
+  return null;
 }

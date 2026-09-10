@@ -34,7 +34,7 @@
 
 | What to @-mention | Why |
 |-------------------|-----|
-| **Task file** (`docs/Work/Daily-plans/.../e-task-X.md`) | Defines WHAT to build and acceptance criteria |
+| **Task file** (`docs/Work/Daily-plans/.../task-*.md`) | Defines WHAT to build and acceptance criteria |
 | **Relevant Reference doc** ([`STANDARDS.md`](../../Reference/engineering/development/STANDARDS.md), [`SECURITY.md`](../../Reference/engineering/compliance/SECURITY.md), [`TESTING.md`](../../Reference/engineering/development/TESTING.md), etc.) | Defines HOW (patterns, security, tests) |
 | **Files you're changing** (`backend/src/services/payment-service.ts`) | Shows existing code so the AI can extend, not replace blindly |
 | **Architecture** (`docs/Reference/engineering/architecture/ARCHITECTURE.md`) | Keeps structure consistent |

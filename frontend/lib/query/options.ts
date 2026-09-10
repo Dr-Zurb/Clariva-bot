@@ -9,10 +9,15 @@ import {
   getTelehealthQualityOverview,
   getPrescriptionsForPatient,
   getServiceStaffReviews,
+  getPatientMedicalBackground,
   listPatientAllergies,
   listPatientConditions,
 } from "@/lib/api";
-import type { AllergiesListData } from "@/types/patient-chart";
+import type {
+  AllergiesListData,
+  ConditionWithMedications,
+  MedicalBackgroundGrouped,
+} from "@/types/patient-chart";
 import { getPatientOverview } from "@/lib/api/patients";
 import { listVitalsHistory } from "@/lib/api/patient-chart";
 import { requireApiBaseUrl } from "@/lib/api-base";
@@ -82,7 +87,48 @@ export function patientConditionsQueryOptions(token: string, patientId: string) 
 export type PatientAllergiesQueryData = {
   allergies: NonNullable<AllergiesListData["allergies"]>;
   sectionNotes: string | null;
+  /** Doctor asserted nil-known. False means never asserted (migration 222). */
+  noKnownAllergies: boolean;
 };
+
+function normalizeMedicalBackgroundCondition(
+  row: ConditionWithMedications,
+): ConditionWithMedications {
+  return {
+    ...row,
+    status: row.status ?? "active",
+    diagnosed_ago_value: row.diagnosed_ago_value ?? null,
+    diagnosed_ago_unit: row.diagnosed_ago_unit ?? null,
+    resolved_ago_value: row.resolved_ago_value ?? null,
+    resolved_ago_unit: row.resolved_ago_unit ?? null,
+    on_treatment: row.on_treatment ?? null,
+    acuity: row.acuity ?? null,
+    code: row.code ?? null,
+    code_title: row.code_title ?? null,
+  };
+}
+
+/** Grouped PMH (conditions + chart meds). Same key as Subjective PMH. */
+export function patientMedicalBackgroundQueryOptions(
+  token: string,
+  patientId: string,
+) {
+  return {
+    queryKey: queryKeys.patient(patientId).medicalBackground(),
+    queryFn: async (): Promise<MedicalBackgroundGrouped> => {
+      const res = await getPatientMedicalBackground(token, patientId);
+      const data = res.data.medicalBackground;
+      return {
+        ...data,
+        conditions: data.conditions.map((c) =>
+          normalizeMedicalBackgroundCondition(c),
+        ),
+        notes: data.notes ?? null,
+      };
+    },
+    staleTime: STALE.CLINICAL,
+  } as const;
+}
 
 export function patientAllergiesQueryOptions(token: string, patientId: string) {
   return {
@@ -92,6 +138,7 @@ export function patientAllergiesQueryOptions(token: string, patientId: string) {
       return {
         allergies: res.data.allergies ?? [],
         sectionNotes: res.data.sectionNotes ?? null,
+        noKnownAllergies: res.data.noKnownAllergies === true,
       };
     },
     staleTime: STALE.CLINICAL,

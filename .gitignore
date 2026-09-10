@@ -4,6 +4,10 @@
 .env.*.local
 Clariva-bot render.env
 
+# Local company folder — statutory docs, social drafts, Instagram export, filings.
+# Never push to a remote.
+HaloAid /
+
 # Dependencies
 node_modules/
 
@@ -17,3 +21,4 @@ Thumbs.db
 
 # Logs
 *.log
+docs/Work/capture/logs-*.csv

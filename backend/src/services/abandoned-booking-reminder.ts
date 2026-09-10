@@ -14,6 +14,7 @@ import {
   writeConversationState,
 } from '../types/conversation-state-io';
 import { buildAbandonedBookingReminderMessage } from '../utils/dm-copy';
+import { coerceConversationLanguage } from './conversation-service';
 
 const REMINDER_DELAY_MS = 60 * 60_000; // 1 hour
 
@@ -35,7 +36,7 @@ export async function runAbandonedBookingReminderJob(
   const cutoff = new Date(Date.now() - REMINDER_DELAY_MS).toISOString();
   const { data: rows, error } = await admin
     .from('conversations')
-    .select('id, doctor_id, platform, platform_conversation_id, metadata')
+    .select('id, doctor_id, platform, platform_conversation_id, metadata, language')
     .eq('platform', 'instagram')
     .eq('status', 'active')
     .limit(50);
@@ -63,7 +64,8 @@ export async function runAbandonedBookingReminderJob(
 
     try {
       const bookingUrl = buildBookingPageUrl(row.id, row.doctor_id);
-      const msg = buildAbandonedBookingReminderMessage({ bookingUrl });
+      const language = coerceConversationLanguage(row.language);
+      const msg = buildAbandonedBookingReminderMessage({ bookingUrl, language });
       await sendInstagramMessage(row.platform_conversation_id, msg, correlationId, token);
 
       // Mark reminder sent in metadata.
