@@ -25,9 +25,10 @@ export function useTodaysAppointments(
   const query = useAppointmentsQuery(token);
 
   const appointments = useMemo((): Appointment[] | null => {
-    if (!query.data) return null;
+    const appointments = query.data?.data?.appointments;
+    if (!Array.isArray(appointments)) return null;
     const todayStr = formatDateISO(new Date());
-    return query.data.data.appointments.filter((appt) => {
+    return appointments.filter((appt) => {
       const apptStr = formatDateISO(appt.appointment_date);
       return apptStr === todayStr;
     });

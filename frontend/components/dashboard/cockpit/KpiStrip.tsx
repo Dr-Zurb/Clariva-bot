@@ -61,9 +61,10 @@ export function KpiStrip({ token }: KpiStripProps) {
   const { counts } = useDashboardCounts(token);
 
   const kpi = useMemo(() => {
-    if (!appointmentsQuery.data) return null;
+    const appointments = appointmentsQuery.data?.data?.appointments;
+    if (!Array.isArray(appointments)) return null;
     const today = todayLocalIso();
-    const todayAppts = appointmentsQuery.data.data.appointments.filter((appt) =>
+    const todayAppts = appointments.filter((appt) =>
       (appt.appointment_date ?? "").startsWith(today),
     );
     return {

@@ -51,10 +51,10 @@ export function useDashboardCounts(token: string): {
 
     if (awaitingInitial) return null;
 
-    const opdLive = queueQuery.data
-      ? queueQuery.data.data.entries.filter((entry) =>
-          OPD_ACTIVE_STATUSES.has(entry.queueStatus),
-        ).length
+    const entries = queueQuery.data?.data?.entries;
+    const opdLive = Array.isArray(entries)
+      ? entries.filter((entry) => OPD_ACTIVE_STATUSES.has(entry.queueStatus))
+          .length
       : 0;
 
     return {
