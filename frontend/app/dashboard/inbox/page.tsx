@@ -22,6 +22,25 @@ export const maxDuration = 60;
 
 type SearchParams = Promise<{ filter?: string }> | { filter?: string };
 
+function errorStatus(err: unknown): number {
+  if (err && typeof err === "object" && "status" in err) {
+    const status = (err as { status: unknown }).status;
+    if (typeof status === "number") return status;
+  }
+  return 500;
+}
+
+/** Live `main` API never mounted GET /interactions; treat as an empty inbox. */
+function isMissingInteractionsRoute(err: unknown): boolean {
+  const status = errorStatus(err);
+  const message = err instanceof Error ? err.message.toLowerCase() : "";
+  return (
+    status === 404 ||
+    message.includes("not found") ||
+    message.includes("/api/v1/interactions")
+  );
+}
+
 export default async function InboxPage({
   searchParams,
 }: {
@@ -47,31 +66,43 @@ export default async function InboxPage({
     ReturnType<typeof getDoctorSettings>
   >["data"]["settings"] | null = null;
 
-  try {
-    const [interactionsRes, reviewsRes, settingsRes] = await Promise.all([
-      getInteractions(token, {
-        scope: "signal",
-        dateFrom: bounds.dateFrom,
-        dateTo: bounds.dateTo,
-        limit: 50,
-      }),
-      getServiceStaffReviews(token, "pending"),
-      getDoctorSettings(token),
-    ]);
-    interactions = interactionsRes.data.interactions;
-    counts = interactionsRes.data.counts ?? emptyInteractionStageCounts();
-    nextCursor = interactionsRes.data.nextCursor ?? null;
-    reviews = reviewsRes.data.reviews;
-    settings = settingsRes.data.settings;
-  } catch (err) {
-    const status =
-      err && typeof err === "object" && "status" in err
-        ? (err as { status: number }).status
-        : 500;
-    if (status === 401) redirect("/login");
-    errorMessage =
-      err instanceof Error ? err.message : "Unable to load inbox. Please try again.";
-  }
+  const reviewsSettled = getServiceStaffReviews(token, "pending")
+    .then((res) => {
+      reviews = res.data.reviews;
+    })
+    .catch((err: unknown) => {
+      if (errorStatus(err) === 401) redirect("/login");
+    });
+
+  const settingsSettled = getDoctorSettings(token)
+    .then((res) => {
+      settings = res.data.settings;
+    })
+    .catch((err: unknown) => {
+      if (errorStatus(err) === 401) redirect("/login");
+    });
+
+  const interactionsSettled = getInteractions(token, {
+    scope: "signal",
+    dateFrom: bounds.dateFrom,
+    dateTo: bounds.dateTo,
+    limit: 50,
+  })
+    .then((res) => {
+      interactions = res.data.interactions;
+      counts = res.data.counts ?? emptyInteractionStageCounts();
+      nextCursor = res.data.nextCursor ?? null;
+    })
+    .catch((err: unknown) => {
+      if (errorStatus(err) === 401) redirect("/login");
+      if (isMissingInteractionsRoute(err)) return;
+      errorMessage =
+        err instanceof Error
+          ? err.message
+          : "Unable to load inbox. Please try again.";
+    });
+
+  await Promise.all([reviewsSettled, settingsSettled, interactionsSettled]);
 
   if (errorMessage) {
     return (
