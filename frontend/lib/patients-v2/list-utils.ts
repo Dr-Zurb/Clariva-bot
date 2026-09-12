@@ -8,8 +8,8 @@ import { formatLocalIsoDate } from "@/lib/dates";
  * Display-only title case for patient names on the list.
  * Does not mutate stored values (PLP-D2).
  */
-export function formatPatientDisplayName(name: string): string {
-  const trimmed = name.trim();
+export function formatPatientDisplayName(name: string | null | undefined): string {
+  const trimmed = (name ?? "").trim();
   if (!trimmed) return "";
   return trimmed
     .split(/\s+/)

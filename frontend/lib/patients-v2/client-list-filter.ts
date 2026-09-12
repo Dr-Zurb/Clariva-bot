@@ -93,8 +93,8 @@ function applyClientSearch(
 ): PatientSummary[] {
   const needle = q.toLowerCase();
   return patients.filter((p) => {
-    const nameMatch = p.name.toLowerCase().includes(needle);
-    const phoneMatch = p.phone.includes(q);
+    const nameMatch = (p.name ?? "").toLowerCase().includes(needle);
+    const phoneMatch = (p.phone ?? "").includes(q);
     const mrnMatch = (p.medical_record_number ?? "").toLowerCase().includes(needle);
     const handleMatch = (p.platform_external_id ?? "").toLowerCase().includes(needle);
     return nameMatch || phoneMatch || mrnMatch || handleMatch;
@@ -134,7 +134,9 @@ function applyClientSort(
       );
       break;
     case "name-asc":
-      rows.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+      rows.sort((a, b) =>
+        (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" }),
+      );
       break;
     case "last-visit-desc":
     case undefined:

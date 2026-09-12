@@ -48,7 +48,7 @@ export function usePatientsListQuery(
 
   const rosterIncomplete =
     Boolean(rosterQuery.data) &&
-    (rosterQuery.data?.total ?? 0) > (rosterQuery.data?.patients.length ?? 0);
+    (rosterQuery.data?.total ?? 0) > (rosterQuery.data?.patients?.length ?? 0);
 
   const serverFallbackQuery = useQuery({
     ...patientsListQueryOptions(token, normalized, refreshKey),

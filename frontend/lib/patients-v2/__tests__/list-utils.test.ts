@@ -29,5 +29,7 @@ describe("formatPatientDisplayName", () => {
   it("returns empty for blank input", () => {
     expect(formatPatientDisplayName("")).toBe("");
     expect(formatPatientDisplayName("   ")).toBe("");
+    expect(formatPatientDisplayName(null)).toBe("");
+    expect(formatPatientDisplayName(undefined)).toBe("");
   });
 });
