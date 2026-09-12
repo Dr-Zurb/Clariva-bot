@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveAuthGate } from "@/lib/auth/middleware-gates";
+import { publicRequestOrigin } from "@/lib/auth/public-origin";
 
 /**
  * Next.js middleware: refreshes Supabase session and routes by auth +
@@ -12,19 +13,20 @@ import { resolveAuthGate } from "@/lib/auth/middleware-gates";
  */
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+  const origin = publicRequestOrigin(request);
 
   // Patients tab cutover (2026-05-18): redirect legacy /dashboard/patients[/...] to v2.
   // Removed in pr-14 when v1 routes are deleted (harmless if left longer).
   if (pathname === "/dashboard/patients") {
     return NextResponse.redirect(
-      new URL("/dashboard/patients-v2", request.url),
+      new URL("/dashboard/patients-v2", origin),
       301
     );
   }
   if (pathname.startsWith("/dashboard/patients/")) {
     const rest = pathname.slice("/dashboard/patients".length);
     return NextResponse.redirect(
-      new URL(`/dashboard/patients-v2${rest}`, request.url),
+      new URL(`/dashboard/patients-v2${rest}`, origin),
       301
     );
   }
@@ -55,7 +57,7 @@ export async function middleware(request: NextRequest) {
 
   const gate = resolveAuthGate({ pathname, user });
   if (gate !== "allow") {
-    const redirectUrl = new URL(gate.redirect, request.url);
+    const redirectUrl = new URL(gate.redirect, origin);
     // Preserve return path so Instagram OAuth (and other bounces) can resume
     // after re-auth. Only for login; avoid loops on complete-profile.
     if (gate.redirect === "/login") {

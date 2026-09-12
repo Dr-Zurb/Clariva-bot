@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { destinationAfterAuth } from "@/lib/auth/post-auth";
+import { publicRequestOrigin } from "@/lib/auth/public-origin";
 
 /**
  * OAuth PKCE callback (auth-v2 · av2-02).
@@ -10,7 +11,8 @@ import { destinationAfterAuth } from "@/lib/auth/post-auth";
  * (routing-only; AV2-D3).
  */
 export async function GET(request: NextRequest) {
-  const { searchParams, origin } = new URL(request.url);
+  const { searchParams } = new URL(request.url);
+  const origin = publicRequestOrigin(request);
   const code = searchParams.get("code");
   const next = searchParams.get("next");
 
