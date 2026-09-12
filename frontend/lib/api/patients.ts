@@ -12,6 +12,7 @@
 
 import type { ApiError, ApiSuccess } from "@/lib/api";
 import { requireApiBaseUrl } from "@/lib/api-base";
+import { normalizePatientsKpis } from "@/lib/patients-v2/normalize-kpis";
 import type {
   DuplicateGroupPatient,
   Patient,
@@ -287,7 +288,11 @@ export async function getPatientsKpis(token: string): Promise<PatientsKpis> {
   const res = await fetch(`${requireApiBaseUrl()}/api/v1/patients/kpis`, {
     headers: authHeaders(token),
   });
-  return parseApiEnvelope<PatientsKpis>(res, "Failed to load patient KPIs");
+  const data = await parseApiEnvelope<unknown>(
+    res,
+    "Failed to load patient KPIs",
+  );
+  return normalizePatientsKpis(data);
 }
 
 /**
