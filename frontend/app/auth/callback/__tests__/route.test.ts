@@ -13,9 +13,10 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 import { GET } from "@/app/auth/callback/route";
+import { NextRequest } from "next/server";
 
-function req(url: string) {
-  return new Request(url) as import("next/server").NextRequest;
+function req(url: string, headers?: HeadersInit) {
+  return new NextRequest(url, headers ? { headers } : undefined);
 }
 
 describe("GET /auth/callback", () => {
@@ -71,5 +72,21 @@ describe("GET /auth/callback", () => {
     expect(res.headers.get("location")).toBe(
       "https://app.example/dashboard/getting-started"
     );
+  });
+
+  it("Render internal origin → public dashboard host", async () => {
+    exchangeCodeForSession.mockResolvedValue({ error: null });
+    getUser.mockResolvedValue({
+      data: {
+        user: { user_metadata: { profile_completed: true } },
+      },
+    });
+    const res = await GET(
+      req("http://localhost:10000/auth/callback?code=abc", {
+        "x-forwarded-host": "haloaid.com",
+        "x-forwarded-proto": "https",
+      })
+    );
+    expect(res.headers.get("location")).toBe("https://haloaid.com/dashboard");
   });
 });
