@@ -39,8 +39,8 @@ const TILES: ReadonlyArray<SegmentTileDef> = [
     icon: <CalendarClock aria-hidden />,
     severity: "attention",
     extract: (k) => ({
-      count: k.incomplete_consults.count,
-      delta7d: k.incomplete_consults.delta_7d,
+      count: k.incomplete_consults?.count ?? 0,
+      delta7d: k.incomplete_consults?.delta_7d ?? 0,
     }),
   },
   {
@@ -49,8 +49,8 @@ const TILES: ReadonlyArray<SegmentTileDef> = [
     icon: <AlertCircle aria-hidden />,
     severity: "attention",
     extract: (k) => ({
-      count: k.followup_overdue.count,
-      delta7d: k.followup_overdue.delta_7d,
+      count: k.followup_overdue?.count ?? 0,
+      delta7d: k.followup_overdue?.delta_7d ?? 0,
     }),
   },
   {
@@ -58,7 +58,10 @@ const TILES: ReadonlyArray<SegmentTileDef> = [
     label: "New (30d)",
     icon: <UserPlus aria-hidden />,
     severity: "default",
-    extract: (k) => ({ count: k.new_30d.count, delta7d: k.new_30d.delta_7d }),
+    extract: (k) => ({
+      count: k.new_30d?.count ?? 0,
+      delta7d: k.new_30d?.delta_7d ?? 0,
+    }),
   },
   {
     id: "revisit-30d",
@@ -66,8 +69,8 @@ const TILES: ReadonlyArray<SegmentTileDef> = [
     icon: <RotateCcw aria-hidden />,
     severity: "default",
     extract: (k) => ({
-      count: k.revisits_30d.count,
-      delta7d: k.revisits_30d.delta_7d,
+      count: k.revisits_30d?.count ?? 0,
+      delta7d: k.revisits_30d?.delta_7d ?? 0,
     }),
   },
 ];
@@ -106,7 +109,7 @@ export function PatientsKpiStrip({
         onKeyDown={handleKeyDown}
       >
         {TILES.map((tile, index) => {
-          const extracted = kpis !== null ? tile.extract(kpis) : null;
+          const extracted = kpis != null ? tile.extract(kpis) : null;
           const tileCount = isLoading ? null : isMuted ? 0 : (extracted?.count ?? 0);
           const tileDelta = isLoading ? null : isMuted ? 0 : (extracted?.delta7d ?? 0);
           const isActive = activeSegment === tile.id;
