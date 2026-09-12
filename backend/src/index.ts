@@ -74,13 +74,6 @@ const corsOptions: cors.CorsOptions = {
       'https://haloaid.com',
       'https://www.haloaid.com',
     ];
-    if (env.FRONTEND_URL) {
-      try {
-        allowedOrigins.push(new URL(env.FRONTEND_URL).origin);
-      } catch {
-        // Invalid FRONTEND_URL is already rejected at env boot.
-      }
-    }
 
     // Allow requests with no origin (mobile apps, Postman, etc.)
     if (!origin) {
