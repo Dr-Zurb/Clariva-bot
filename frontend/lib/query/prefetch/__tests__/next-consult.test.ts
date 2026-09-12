@@ -7,9 +7,6 @@ vi.mock("@/lib/api", () => ({
   getAppointmentDeskVitals: vi.fn().mockResolvedValue({
     data: { vitals: { bp_systolic: 120, bp_diastolic: 80, heart_rate: 72 } },
   }),
-  getLastPrescriptionInEpisode: vi.fn().mockResolvedValue({
-    data: { prescription: { id: "rx-1", vitals_hr: 70 } },
-  }),
   listPatientAllergies: vi.fn().mockResolvedValue({
     data: { allergies: [], sectionNotes: null, noKnownAllergies: true },
   }),
@@ -47,8 +44,8 @@ describe("prefetchNextConsultQueries", () => {
       client.getQueryData(queryKeys.consult("appt-next").deskVitals())
     ).toBeTruthy();
     expect(
-      client.getQueryData(queryKeys.consult("appt-next").lastVisitVitals())
-    ).toBeTruthy();
+      client.getQueryData(queryKeys.consult("appt-next").lastVisitSummary())
+    ).toBeDefined();
     expect(
       client.getQueryData(queryKeys.patient("pat-next").allergies())
     ).toEqual({

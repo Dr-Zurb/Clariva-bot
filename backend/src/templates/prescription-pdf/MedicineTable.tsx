@@ -110,14 +110,16 @@ export const MedicineTable: React.FC<MedicineTableProps> = ({
     );
   };
 
+  // Heading + header stay together. Each medicine is its own row so the
+  // first one is not dropped when the page-1 leftover is too small for
+  // a heading+header+row group (react-pdf wrap={false} clips that block).
   return (
     <>
-      <View wrap={false}>
+      <View wrap={false} minPresenceAhead={40}>
         <Text style={headingStyle}>Rx</Text>
         {headerRow}
-        {medicineRow(sorted[0]!, 0)}
       </View>
-      {sorted.slice(1).map((med, i) => medicineRow(med, i + 1))}
+      {sorted.map((med, i) => medicineRow(med, i))}
     </>
   );
 };

@@ -8,7 +8,7 @@
 >
 > **Sibling programs (same dogfood thread, do not merge):** the prescription **edit window** and the **same-day return / interim print** work. Both live in [`plan-rx-lifecycle.md`](plan-rx-lifecycle.md). This program was sequenced first because it is the only one of the three that does not touch attest, the lock, or print. Capture note: [`../capture/notes/2026-09-08-rx-edit-return-last-visit.md`](../capture/notes/2026-09-08-rx-edit-return-last-visit.md).
 >
-> **Status:** Phases 1, 2, and 4 **in tree** 2026-09-08 (not Committed). Phase 3 **Committed** 2026-09-10 — `lvc-12` implemented. `LVC-Q1` settled: medicine strip sits **above** the capture bar so expanded items never sit under the combo list.
+> **Status:** Phases 1, 2, and 4 **in tree** 2026-09-08 (not Committed). Phase 3 **Implemented** 2026-09-11 with residuals — not Shipped. `LVC-Q1` settled: medicine strip sits **above** the capture bar so expanded items never sit under the combo list.
 >
 > **Status legend:** `Drafted` → `Selected` → `Committed` → `Shipped` / `Deferred` / `Killed`.
 >
@@ -45,10 +45,10 @@ After this program ships:
 
 | Surface | Shows | Scope | Affordance | Write path |
 |---|---|---|---|---|
-| `CarryForwardButton` — "Same as last visit" | Subjective only (complaints + 3 histories) | **Patient** | Dropdown, per-field checkboxes, copy-all or pick | Dirty (`SET_COMPLAINTS`, `SET_*_STRUCTURED`) |
+| `CarryForwardButton` — "Same as last visit" | Subjective only (complaints + 3 histories) | **Patient** | Dropdown, per-field checkboxes, copy-all or pick | Dirty — **repointed** 2026-09-11 (`lvc-13`) to `useLastVisitSummary()` |
 | `PreviousRxSideSheet` + `usePriorRxList` | Medicines only | **Patient**, all Rx | Side sheet → pick row → Append/Replace → diff preview → Confirm | Dirty (`SET_MEDICINES` + `fromPrescriptionId`) |
 | `PreviousRxPopover` | Medicines, last 3 | **Patient** | Dropdown chip | ❌ **Retired** 2026-09-10 (`lvc-12`) |
-| "Copy from last visit" (`PrescriptionForm`) | Dx + plan scalars + medicines | **Episode** | Header button + `window.confirm` | Dirty (`setField` + `SET_MEDICINES`) |
+| "Copy from last visit" (`PrescriptionForm`) | Dx + plan scalars + medicines | **Episode** | Header button + `window.confirm` | ❌ **Retired** 2026-09-11 (`lvc-14`) — strips + Repeat last Rx |
 | `ComplaintCard` prior pool | Complaint **attributes** only | **Patient** | ❌ **Removed** 2026-09-08 (dogfood) — "Apply from history" banner | — |
 | Vitals ghosts (`LastVisitVitalGhost`) | Column vitals | **Episode** | Inline grey line below input + placeholder | Dirty (`setField`) |
 
@@ -70,7 +70,7 @@ There is **no** endpoint returning complaints + diagnoses + medicines in one lig
 | Need | Existing |
 |---|---|
 | Grey clickable prior value | `LastVisitVitalGhost.tsx` — styling + a11y label pattern |
-| React Query + prefetch | `lastVisitVitalsQueryOptions`, `queryKeys.consult(appointmentId)`, `STALE.CLINICAL`; `prefetchConsultVitalsQueries` and `prefetchNextConsult` already warm on **OPD queue hover** |
+| React Query + prefetch | `lastVisitSummaryQueryOptions`, `queryKeys.consult(appointmentId)`, `STALE.CLINICAL`; queue-hover warms last-visit-summary (vitals ghosts read it — `lvc-14`) |
 | Medicine append with dedupe + diff | `rx-diff.ts` — `applyMode(current, prior, "append")`, `diffMedicines` (dedupes on `medicineName\|dosage`) |
 | Subjective bulk carry | `buildSubjectiveCarryForwardActions` (`carry-forward-subjective.ts`) |
 | Complaint attribute defaults from history | `ComplaintCard` `priorPool` + `complaint-defaults.ts` |
@@ -128,7 +128,7 @@ Locked in the 2026-09-08 planning thread. Re-opening any of them belongs in a ne
 |---|---|---|---|---|---|
 | 1 | Recall + repeat spine | `lvc-01..07` | A returning patient's note shows one grey last-visit line for complaints and medicines, any single item can be lifted, and **Repeat last Rx** appends last visit's treatment in one keyboard-reachable, single-undo action | **In tree** 2026-09-08 — promote to Daily-plans when dogfood is happy | ⟨promote⟩ |
 | 2 | Remaining sections | `lvc-08..11` | Diagnoses, investigations, advice and follow-up carry the same strip and the same per-item apply vocabulary | **In tree** 2026-09-08 — dogfood vocab: diagnoses **Improving / Stable / Worsening** (acuity); investigations **Repeat**; advice **Add**; follow-up **Use**; strips stay expanded | ⟨promote⟩ |
-| 3 | Consolidation | `lvc-12..15` | Exactly one last-visit fetch and one affordance vocabulary remain; the legacy surfaces are repointed or deleted | **Committed** 2026-09-10 — `lvc-12` in progress | [`../Daily-plans/September 2026/08-09-2026/last-visit-context/p3-consolidation/`](../Daily-plans/September%202026/08-09-2026/last-visit-context/p3-consolidation/) |
+| 3 | Consolidation | `lvc-12..15` | Exactly one last-visit fetch and one affordance vocabulary remain; the legacy surfaces are repointed or deleted | **Implemented** 2026-09-11 — residuals; not Shipped | [`../Daily-plans/September 2026/08-09-2026/last-visit-context/p3-consolidation/`](../Daily-plans/September%202026/08-09-2026/last-visit-context/p3-consolidation/) |
 | 4 | Previous parchi (LVC-DL-11) | `lvc-16..20` | Remaining visit-scoped sections and custom sections show the same strip; the last prescription is readable while filing today | **In tree** 2026-09-08 — objective custom sections skipped (bodies derive into exam, no visit column) | ⟨promote⟩ |
 
 **Prefix:** `lvc`. Number continuously across phases.
@@ -194,16 +194,16 @@ Phase 3 is last because consolidation has no felt benefit and the agent contract
 ## Acceptance gate (program)
 
 - [ ] A returning patient's empty note shows an expanded grey last-visit strip per participating section, with no extra click to open it.
-- [ ] Rendering the strip creates no prescription row, sets no dirty flag, and schedules no autosave. Opening a chart and leaving still writes nothing.
-- [ ] Applying a single item marks the form dirty exactly as typing it would.
+- [x] Rendering the strip creates no prescription row, sets no dirty flag, and schedules no autosave. Opening a chart and leaving still writes nothing. (`lvc-15` re-proved dirty=false on display; lazy mint is RXL-DL-4 / already gated)
+- [x] Applying a single item marks the form dirty exactly as typing it would. (`lvc-15`)
 - [ ] **Repeat last Rx** is reachable without the mouse, appends without discarding typed rows, dedupes, and reverses in one undo.
 - [ ] A repeated complaint arrives with `onset` / `duration` empty and focused; a repeated medicine arrives with its sig intact.
 - [ ] `Enter` in the medicine capture bar cannot commit a ghost, and no ghost is in the capture bar's tab order.
 - [ ] A ghost is distinguishable from a committed row by more than colour, verified with the theme's lowest-contrast setting.
-- [ ] The strip renders nothing on a patient's first visit.
+- [x] The strip renders nothing on a patient's first visit. (`lvc-15` re-proved)
 - [ ] Ghosts are not clickable when the note is content-locked.
-- [ ] Opening a cockpit fires **one** last-visit fetch, served from cache after a queue-hover prefetch.
-- [ ] `PreviousRxPopover`'s dead copy path is gone, and the legacy carry surfaces read the canonical payload.
+- [x] Opening a cockpit fires **one** last-visit fetch, served from cache after a queue-hover prefetch. (`lvc-15`)
+- [x] `PreviousRxPopover`'s dead copy path is gone, and the legacy carry surfaces read the canonical payload. (`lvc-12`…`14`)
 - [ ] No PHI in logs, query keys, or telemetry. Type-check + lint + suites green.
 
 ---
@@ -238,4 +238,4 @@ Phase 3 is last because consolidation has no felt benefit and the agent contract
 ---
 
 **Created:** 2026-09-08.
-**Last Updated:** 2026-09-10 (Phase 3 committed — `lvc-12` retires `PreviousRxPopover`. LVC-Q2 / Q4 locked.)
+**Last Updated:** 2026-09-11 (Phase 3 gated with residuals; not Shipped.)

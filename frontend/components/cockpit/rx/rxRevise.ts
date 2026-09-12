@@ -16,10 +16,8 @@ import {
 } from "@/types/prescription";
 
 export const REVISION_REASON_LABELS: Record<RevisionReason, string> = {
-  dose_correction: "Dose correction",
-  drug_unavailable: "Drug unavailable",
-  clarified_for_pharmacy: "Clarified for pharmacy",
-  added_missed_item: "Added missed item",
+  treatment_change: "Treatment change",
+  item_added: "Item added",
   other: "Other",
 };
 
@@ -65,9 +63,25 @@ export function reviseStripCopy(
 ): string {
   const iso = issuedInstantIso(rx);
   const time = iso ? formatIssuedTime(iso, timezone) : "";
-  const version = nextRevisionVersion(rx);
-  if (!time) return `Changes will create Version ${version}.`;
-  return `Issued ${time}. Changes will create Version ${version}.`;
+  if (!time) return "The next print or send replaces that slip.";
+  return `Issued ${time}. The next print or send replaces that slip.`;
+}
+
+export function reviseDialogReplacesCopy(
+  rx:
+    | Pick<
+        PrescriptionWithRelations,
+        "issued_at" | "attested_at" | "version"
+      >
+    | null
+    | undefined,
+  timezone: string,
+): string {
+  if (!rx) return "Replaces the issued slip.";
+  const iso = issuedInstantIso(rx);
+  const time = iso ? formatIssuedTime(iso, timezone) : "";
+  if (!time) return "Replaces the issued slip.";
+  return `Replaces the one issued at ${time}.`;
 }
 
 export function resolveRxNoteChrome(

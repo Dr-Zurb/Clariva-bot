@@ -217,6 +217,14 @@ export interface UseRxFormProviderSetupArgs {
   existingPrescription?: PrescriptionWithRelations | null;
   /** When true, skip fetch/bootstrap (cockpit shell owns setup via context). */
   disabled?: boolean;
+  /**
+   * Modality + status the caller already holds (the cockpit route fetches the
+   * appointment server-side). Supplying it drops two `GET /appointments/:id`
+   * round-trips from every patient switch — they were the doctor's wait before
+   * the form accepted typing. Read once per appointment, like the fetch it
+   * replaces, so a later status flip cannot re-decide an open note.
+   */
+  appointmentContext?: AppointmentLoadContext | null;
 }
 
 export interface RxFormProviderSetup {
@@ -313,8 +321,11 @@ export function useRxFormProviderSetup({
   token,
   existingPrescription: initialPrescription,
   disabled = false,
+  appointmentContext,
 }: UseRxFormProviderSetupArgs): RxFormProviderSetup {
   const queryClient = useQueryClient();
+  const appointmentContextRef = useRef(appointmentContext ?? null);
+  appointmentContextRef.current = appointmentContext ?? null;
   const [entryMode, setEntryMode] = useState<PrescriptionType>("structured");
   const [prescription, setPrescription] = useState<PrescriptionWithRelations | null>(
     initialPrescription ?? null,
@@ -388,6 +399,13 @@ export function useRxFormProviderSetup({
     }
   }, [appointmentId, queryClient, token]);
 
+  const resolveAppointmentContext =
+    useCallback(async (): Promise<AppointmentLoadContext> => {
+      const supplied = appointmentContextRef.current;
+      if (supplied) return supplied;
+      return loadAppointmentContext(token, appointmentId);
+    }, [appointmentId, token]);
+
   useEffect(() => {
     if (disabled || !token) return;
     let cancelled = false;
@@ -396,7 +414,7 @@ export function useRxFormProviderSetup({
       // from settings after both settle (avoids a second appointment round-trip).
       const [defaults, appt] = await Promise.all([
         loadDoctorSubjectiveDefaults(token),
-        loadAppointmentContext(token, appointmentId),
+        resolveAppointmentContext(),
       ]);
       if (cancelled) return;
       setSubjectiveSectionOrder(defaults.sectionOrder);
@@ -415,7 +433,7 @@ export function useRxFormProviderSetup({
     return () => {
       cancelled = true;
     };
-  }, [disabled, token, appointmentId]);
+  }, [disabled, token, appointmentId, resolveAppointmentContext]);
 
   useEffect(() => {
     if (disabled) return;
@@ -491,7 +509,7 @@ export function useRxFormProviderSetup({
       if (!initialPrescription) setLoading(true);
       try {
         const [appt, desk, listed, defaults] = await Promise.all([
-          loadAppointmentContext(token, appointmentId),
+          resolveAppointmentContext(),
           loadDeskVitals(),
           initialPrescription
             ? Promise.resolve(null)
@@ -520,7 +538,7 @@ export function useRxFormProviderSetup({
       } catch {
         if (cancelled) return;
         const [appt, desk] = await Promise.all([
-          loadAppointmentContext(token, appointmentId),
+          resolveAppointmentContext(),
           loadDeskVitals(),
         ]);
         if (cancelled) return;
@@ -550,6 +568,7 @@ export function useRxFormProviderSetup({
     generateInstanceIds,
     disabled,
     loadDeskVitals,
+    resolveAppointmentContext,
   ]);
 
   // Stable placeholder used during the brief loading window before the draft

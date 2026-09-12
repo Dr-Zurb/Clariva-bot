@@ -131,14 +131,23 @@ function wrapper(shell: RxFormProviderSetup) {
 
 /**
  * Stub the print pipeline: signed-PDF fetch, blob URL, and the iframe's
- * contentWindow. `print()` lands via the component's own fallback timer, so
- * we never patch `document.body.appendChild` (nested spies recurse).
+ * contentWindow. A real browser fires `load` once the PDF viewer is up and the
+ * hook prints on that event; jsdom never loads a blob src, so an observer
+ * fires it here rather than patching `appendChild` (nested spies recurse).
  */
 function installPrintIframe(
   print: ReturnType<typeof vi.fn>,
   objectUrl = "blob:rx"
 ) {
   const afterPrintHandlers: Array<() => void> = [];
+  const loadObserver = new MutationObserver(() => {
+    printIframes().forEach((el) => {
+      if (el.dataset.loadFired === "1") return;
+      el.dataset.loadFired = "1";
+      el.dispatchEvent(new Event("load"));
+    });
+  });
+  loadObserver.observe(document.body, { childList: true });
   const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
     ok: true,
     blob: async () => new Blob(["pdf"], { type: "application/pdf" }),
@@ -166,6 +175,7 @@ function installPrintIframe(
     revokeObjectURL,
     fireAfterPrint: () => afterPrintHandlers.forEach((cb) => cb()),
     restore: () => {
+      loadObserver.disconnect();
       fetchSpy.mockRestore();
       createObjectURL.mockRestore();
       revokeObjectURL.mockRestore();
@@ -587,6 +597,146 @@ describe("useRxCommitActions", () => {
     printStub.restore();
   });
 
+  it("opens the print dialog before wrap-up hands over to the next patient", async () => {
+    const { sendPrescriptionToPatient } = await import("@/lib/api");
+    vi.mocked(sendPrescriptionToPatient).mockResolvedValue({
+      success: true,
+      data: { sent: true, channels: { email: true } },
+      meta: { timestamp: "", requestId: "" },
+    });
+    const print = vi.fn();
+    const printStub = installPrintIframe(print);
+    let iframesAtFinish = -1;
+    const onFinish = vi.fn(() => {
+      iframesAtFinish = printIframes().length;
+    });
+    const fields = createEmptyRxFormFields();
+    fields.medicines[0] = { ...fields.medicines[0]!, medicineName: "Aspirin" };
+
+    const { result } = renderHook(
+      () =>
+        useRxCommitActions({
+          appointmentId: "appt-1",
+          patientId: "pat-1",
+          token: "token",
+          cockpitState: "live",
+          onFinish,
+          registerActions: false,
+        }),
+      { wrapper: wrapper(makeShell(fields)) }
+    );
+
+    await act(async () => {
+      result.current.sendFinishAndPrint();
+    });
+    await waitFor(() => {
+      expect(onFinish).toHaveBeenCalledTimes(1);
+    });
+    // The print frame must already be mounted when wrap-up runs, or the
+    // next-patient jump beats the dialog.
+    expect(iframesAtFinish).toBe(1);
+    await waitFor(() => {
+      expect(print).toHaveBeenCalledTimes(1);
+    });
+    printStub.restore();
+  });
+
+  it("keeps the print PDF alive when the next patient unmounts the cockpit", async () => {
+    const { fetchPrescriptionPdf, sendPrescriptionToPatient } =
+      await import("@/lib/api");
+    vi.mocked(sendPrescriptionToPatient).mockResolvedValue({
+      success: true,
+      data: { sent: true, channels: { email: true } },
+      meta: { timestamp: "", requestId: "" },
+    });
+    let resolvePdf!: (value: { blob: Blob; filename: string }) => void;
+    vi.mocked(fetchPrescriptionPdf).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePdf = resolve;
+        })
+    );
+    let stub!: ReturnType<typeof installPrintIframe>;
+    let revokesBeforePrint = -1;
+    const print = vi.fn(() => {
+      revokesBeforePrint = stub.revokeObjectURL.mock.calls.length;
+    });
+    stub = installPrintIframe(print);
+    const fields = createEmptyRxFormFields();
+    fields.medicines[0] = { ...fields.medicines[0]!, medicineName: "Aspirin" };
+
+    const { result, unmount } = renderHook(
+      () =>
+        useRxCommitActions({
+          appointmentId: "appt-1",
+          patientId: "pat-1",
+          token: "token",
+          cockpitState: "live",
+          onFinish: vi.fn(),
+          registerActions: false,
+        }),
+      { wrapper: wrapper(makeShell(fields)) }
+    );
+
+    await act(async () => {
+      result.current.sendFinishAndPrint();
+    });
+    // The doctor's next patient loads while the PDF is still rendering.
+    unmount();
+    await act(async () => {
+      resolvePdf({
+        blob: new Blob(["pdf"], { type: "application/pdf" }),
+        filename: "prescription-9sep2026-v1.pdf",
+      });
+    });
+
+    await waitFor(() => {
+      expect(print).toHaveBeenCalledTimes(1);
+    });
+    expect(revokesBeforePrint).toBe(0);
+    stub.restore();
+  });
+
+  it("parks on this visit when the print PDF cannot be loaded", async () => {
+    const { fetchPrescriptionPdf, sendPrescriptionToPatient } =
+      await import("@/lib/api");
+    vi.mocked(sendPrescriptionToPatient).mockResolvedValue({
+      success: true,
+      data: { sent: true, channels: { email: true } },
+      meta: { timestamp: "", requestId: "" },
+    });
+    vi.mocked(fetchPrescriptionPdf).mockRejectedValueOnce(
+      new Error("Could not load prescription PDF")
+    );
+    const onFinish = vi.fn();
+    const fields = createEmptyRxFormFields();
+    fields.medicines[0] = { ...fields.medicines[0]!, medicineName: "Aspirin" };
+
+    const { result } = renderHook(
+      () =>
+        useRxCommitActions({
+          appointmentId: "appt-1",
+          patientId: "pat-1",
+          token: "token",
+          cockpitState: "live",
+          onFinish,
+          registerActions: false,
+        }),
+      { wrapper: wrapper(makeShell(fields)) }
+    );
+
+    await act(async () => {
+      result.current.sendFinishAndPrint();
+    });
+
+    await waitFor(() => {
+      expect(result.current.commitError).toBe("Could not load prescription PDF");
+    });
+    // Visit still finishes, but the doctor stays here to retry the printout.
+    expect(onFinish).toHaveBeenCalledTimes(1);
+    expect(sessionStorage.getItem("pf11_cancelled_appt-1")).toBe("1");
+  });
+
   it("finishes the visit without waiting for send", async () => {
     const { sendPrescriptionToPatient } = await import("@/lib/api");
     let resolveSend!: (value: {
@@ -919,14 +1069,14 @@ describe("useRxCommitActions rxl-25", () => {
       result.current.sendRx();
     });
     await act(async () => {
-      result.current.onRevisionReasonConfirm("dose_correction");
+      result.current.onRevisionReasonConfirm("treatment_change");
     });
 
     await waitFor(() => {
       expect(reissuePrescription).toHaveBeenCalledWith(
         "token",
         "rx-1",
-        "dose_correction",
+        "treatment_change",
       );
     });
     await waitFor(() => {

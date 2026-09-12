@@ -49,6 +49,10 @@ export interface PipelineEntry {
   href: string;
   /** Linked patient row, when the visit has one. Used to warm the next cockpit. */
   patientId?: string | null;
+  /** Years from DOB at fetch time; null for walk-ins or unset DOB. */
+  ageYears?: number | null;
+  /** Patient sex as stored on the chart; null when unset. */
+  sex?: string | null;
   /** True when this entry matches `opts.currentAppointmentId` */
   isCurrent: boolean;
   /**
@@ -106,6 +110,8 @@ function mapQueueEntry(
     tokenNumber: row.tokenNumber,
     href: `/dashboard/appointments/${row.appointmentId}`,
     patientId: row.patientId,
+    ageYears: row.age,
+    sex: row.gender,
     isCurrent: row.appointmentId === currentAppointmentId,
     appointmentDate: row.sessionDate ?? null,
     consultationType: "in_clinic",
@@ -125,6 +131,8 @@ function mapAppointment(
     tokenNumber: appt.opd_token_number ?? null,
     href: `/dashboard/appointments/${appt.id}`,
     patientId: appt.patient_id ?? null,
+    ageYears: appt.patient_age,
+    sex: appt.patient_sex,
     isCurrent: appt.id === currentAppointmentId,
     appointmentDate: appt.appointment_date ?? null,
     consultationType: appt.consultation_type ?? null,

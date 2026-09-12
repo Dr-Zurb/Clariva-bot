@@ -87,8 +87,6 @@ export const queryKeys = {
   }),
   consult: (appointmentId: string) => ({
     all: ["consult", appointmentId] as const,
-    lastVisitVitals: () =>
-      [...queryKeys.consult(appointmentId).all, "last-visit-vitals"] as const,
     lastVisitSummary: () =>
       [...queryKeys.consult(appointmentId).all, "last-visit-summary"] as const,
     deskVitals: () =>

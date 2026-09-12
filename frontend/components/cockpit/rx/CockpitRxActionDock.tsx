@@ -8,12 +8,15 @@
 import { PlanActionFooter } from "@/components/cockpit/middle/PlanActionFooter";
 import PrescriptionPatientPreview from "@/components/consultation/PrescriptionPatientPreview";
 import PrescriptionPreSendCheck from "@/components/consultation/PrescriptionPreSendCheck";
+import { usePrescriptionFormShell } from "@/components/cockpit/rx/PrescriptionFormShellContext";
 import { RxRevisionReasonDialog } from "@/components/cockpit/rx/RxRevisionReasonDialog";
 import { RxRevisionDeliveryPrompt } from "@/components/cockpit/rx/RxRevisionDeliveryPrompt";
+import { reviseDialogReplacesCopy } from "@/components/cockpit/rx/rxRevise";
 import {
   useRxCommitActions,
   type RxPreviewPatientIdentity,
 } from "@/components/cockpit/rx/useRxCommitActions";
+import { peekDoctorSettingsShared } from "@/lib/api/doctor-settings-shared";
 import type { CockpitState } from "@/lib/patient-profile/state";
 
 export interface CockpitRxActionDockProps {
@@ -49,6 +52,14 @@ export function CockpitRxActionDock({
     onFinish,
     onSent,
   });
+  const shell = usePrescriptionFormShell();
+  const timezone =
+    peekDoctorSettingsShared(token)?.data.settings.timezone?.trim() ||
+    "Asia/Kolkata";
+  const replacesLine = reviseDialogReplacesCopy(
+    shell?.prescription ?? null,
+    timezone,
+  );
 
   const handleClosePreview = () => {
     commit.closePreview();
@@ -103,6 +114,7 @@ export function CockpitRxActionDock({
         open={commit.revisionReasonOpen}
         busy={commit.revisionReasonBusy}
         error={commit.revisionReasonError}
+        replacesLine={replacesLine}
         onCancel={commit.onRevisionReasonCancel}
         onConfirm={commit.onRevisionReasonConfirm}
       />

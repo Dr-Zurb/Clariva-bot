@@ -8,33 +8,28 @@ import { patchEmptyFieldsFromDeskVitals } from "@/lib/cockpit/desk-vitals-seed";
 import { useRxSectionLock } from "@/components/cockpit/rx/useRxLock";
 import {
   deskVitalsQueryOptions,
-  lastVisitVitalsQueryOptions,
+  ghostVitalsFromLastVisitSummary,
 } from "@/lib/cockpit/desk-vitals-query";
+import { useLastVisitSummary } from "@/hooks/useLastVisitSummary";
 
 /**
- * Read-only previous-visit vitals (P2-D5), sourced from the episode's last
- * prescription. Never writes back into the form — purely a ghost reference.
- * Returns null until loaded, when no prior prescription exists, or on error.
+ * Read-only previous-visit vitals (P2-D5 / lvc-14), sourced from the
+ * canonical last-visit summary. Display writes nothing (LVC-DL-5).
  */
 export function useLastVisitVitals(): GhostVitals | null {
-  const { token, appointmentId } = useRxForm();
-
-  // React Query cache (P2-D5): the ghost is a read-only reference, so a pane
-  // re-add serves it from cache instead of re-hitting last-in-episode.
-  const query = useQuery({
-    ...lastVisitVitalsQueryOptions(token, appointmentId),
-    enabled: Boolean(token) && Boolean(appointmentId),
-  });
-
-  return query.data ?? null;
+  return ghostVitalsFromLastVisitSummary(useLastVisitSummary());
 }
 
 function useDeskVisitVitalsQuery() {
   const { token, appointmentId } = useRxForm();
+  const { contentLocked } = useRxSectionLock();
+  const options = deskVitalsQueryOptions(token, appointmentId);
 
   return useQuery({
-    ...deskVitalsQueryOptions(token, appointmentId),
+    ...options,
     enabled: Boolean(token) && Boolean(appointmentId),
+    // A closed visit never seeds, so stop watching for a late desk reading.
+    refetchInterval: contentLocked ? false : options.refetchInterval,
   });
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useMemo } from "react";
+import { startTransition, useMemo, useState } from "react";
 import type {
   PaneDefinition,
   PaneTreeNode,
@@ -31,6 +31,21 @@ export default function CockpitLeafView({
     node.paneIds && node.paneIds.length > 0 ? node.paneIds : [node.id];
   const activeId = node.activeTabId ?? paneIds[0]!;
   const pane = paneById.get(activeId);
+
+  // A tab body mounts the first time it is activated and then stays mounted,
+  // hidden. Swapping the single body remounted the incoming pane on every tab
+  // click, replaying that pane's fetches (Objective re-reads the patient's
+  // whole prescription history) and dropping its scroll position. Mounting is
+  // still lazy, so opening the cockpit costs exactly what it did before.
+  const [mountedIds, setMountedIds] = useState<string[]>(() => [activeId]);
+  if (!mountedIds.includes(activeId)) {
+    setMountedIds((prev) =>
+      prev.includes(activeId) ? prev : [...prev, activeId]
+    );
+  }
+  const bodyIds = paneIds.filter(
+    (id) => (id === activeId || mountedIds.includes(id)) && paneById.has(id)
+  );
   const paneByIdRecord = useMemo(
     () => Object.fromEntries(paneById.entries()),
     [paneById]
@@ -114,12 +129,16 @@ export default function CockpitLeafView({
           touch-action: pan-x on vertical groups, which blocks trackpad/touch
           vertical scroll unless this leaf body re-enables pan-y.
         */}
-        <div
-          id={`pane-body-${activeId}`}
-          className="absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain touch-pan-y bg-cockpit-pane"
-        >
-          {pane?.render()}
-        </div>
+        {bodyIds.map((paneId) => (
+          <div
+            key={paneId}
+            id={`pane-body-${paneId}`}
+            hidden={paneId !== activeId}
+            className="absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain touch-pan-y bg-cockpit-pane"
+          >
+            {paneById.get(paneId)!.render()}
+          </div>
+        ))}
         <CockpitDropOverlay groupId={node.id} />
       </div>
     </div>

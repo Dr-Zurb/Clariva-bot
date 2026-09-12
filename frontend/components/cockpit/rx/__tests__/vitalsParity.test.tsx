@@ -47,8 +47,9 @@ import {
   computeBsa,
   evaluateRange,
 } from "@/lib/cockpit/vitals-derive";
+import { LastVisitSummaryProvider } from "@/hooks/useLastVisitSummary";
+import type { LastVisitSummary } from "@/lib/api/last-visit-summary";
 import { getLastPrescriptionInEpisode } from "@/lib/api";
-import type { PrescriptionWithRelations } from "@/types/prescription";
 
 const mockGetDoctorSettings = vi.fn();
 
@@ -276,7 +277,10 @@ function readProbe(): {
   return JSON.parse(screen.getByTestId("vitals-probe").textContent ?? "{}");
 }
 
-function renderGrid(initial?: Partial<RxFormFields>) {
+function renderGrid(
+  initial?: Partial<RxFormFields>,
+  lastVisit?: LastVisitSummary | null,
+) {
   mockGetDoctorSettings.mockResolvedValue({
     data: { settings: { vitals_hidden: [] } },
   });
@@ -296,8 +300,10 @@ function renderGrid(initial?: Partial<RxFormFields>) {
           prescriptionIdRef={prescriptionIdRef}
           onPrescriptionCreated={() => {}}
         >
-          <VitalsGrid />
-          <VitalsProbe />
+          <LastVisitSummaryProvider value={lastVisit ?? null}>
+            <VitalsGrid />
+            <VitalsProbe />
+          </LastVisitSummaryProvider>
         </RxFormProvider>
       </TooltipProvider>
     </QueryClientProvider>
@@ -446,15 +452,20 @@ describe("obj-08 close-gate · ghost values read-only (P2-D5)", () => {
   });
 
   it("hydrates last-visit ghosts read-only and never overwrites the live entry", async () => {
-    mockedGetLast.mockResolvedValue({
-      data: {
-        prescription: {
-          id: "rx-prev",
-          vitals_hr: 80,
-        } as unknown as PrescriptionWithRelations,
-      },
+    renderGrid(undefined, {
+      sourcePrescriptionId: "rx-prev",
+      sourceCreatedAt: "2026-08-12T10:00:00.000Z",
+      complaints: [],
+      diagnoses: [],
+      provisionalDiagnosis: null,
+      medicines: [],
+      investigationsOrders: null,
+      advice: null,
+      followUp: null,
+      followUpValue: null,
+      followUpUnit: null,
+      vitals: { vitalsHr: 80 },
     });
-    renderGrid();
 
     expect(await screen.findByText(/prev 80 bpm/i)).toBeInTheDocument();
     expect(
@@ -464,7 +475,6 @@ describe("obj-08 close-gate · ghost values read-only (P2-D5)", () => {
   });
 
   it("renders no ghost text when there is no prior prescription", async () => {
-    mockedGetLast.mockResolvedValue({ data: { prescription: null } });
     renderGrid();
     // Allow the async fetch to settle, then assert no ghost captions.
     expect(

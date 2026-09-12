@@ -6,12 +6,10 @@
 
 export type PrescriptionType = "structured" | "photo" | "both";
 
-/** RXL-Q8 presets persisted on a revision (rxl-22). */
+/** RXL-Q8 presets persisted on a revision (rxl-22). Relocked 2026-09-11. */
 export const REVISION_REASONS = [
-  "dose_correction",
-  "drug_unavailable",
-  "clarified_for_pharmacy",
-  "added_missed_item",
+  "treatment_change",
+  "item_added",
   "other",
 ] as const;
 

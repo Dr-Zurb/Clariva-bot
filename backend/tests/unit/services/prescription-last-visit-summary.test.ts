@@ -125,6 +125,8 @@ describe('getLastVisitSummary', () => {
         ],
         assessment_custom_sections: [],
         plan_custom_sections: [],
+        vitals_hr: 72,
+        vitals_temp_c: 37,
         prescription_medicines: [
           {
             medicine_name: 'Dextromethorphan',
@@ -168,6 +170,7 @@ describe('getLastVisitSummary', () => {
     expect(result?.investigationsOrders).toBe('RBS');
     expect(result?.hopi).toBe('Worse at night');
     expect(result?.familyHistory).toBe('Father — HTN');
+    expect(result?.vitals).toEqual({ vitalsHr: 72, vitalsTempC: 37 });
     expect(result?.examinationFindings).toBe('Chest clear');
     expect(result?.customSubsections).toEqual([
       { id: 'sec-diet', title: 'Diet', body: 'Low salt', children: [] },

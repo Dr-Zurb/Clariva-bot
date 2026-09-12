@@ -1,7 +1,7 @@
 # Task lvc-14: Drop last-in-episode from the cockpit open path
 
 **Program / Phase:** last-visit-context · Phase 3
-**Status:** Drafted
+**Status:** Implemented 2026-09-11
 **Change Type:** Update existing
 
 Two leftover `last-in-episode` readers:

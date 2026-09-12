@@ -7,12 +7,10 @@
 
 export type PrescriptionType = 'structured' | 'photo' | 'both';
 
-/** RXL-Q8 presets persisted on a revision (rxl-22). */
+/** RXL-Q8 presets persisted on a revision (rxl-22). Relocked 2026-09-11. */
 export const REVISION_REASONS = [
-  'dose_correction',
-  'drug_unavailable',
-  'clarified_for_pharmacy',
-  'added_missed_item',
+  'treatment_change',
+  'item_added',
   'other',
 ] as const;
 
@@ -955,8 +953,7 @@ export interface Prescription {
   superseded_by_id: string | null;
   /**
    * Required on a revision at write time (RXL-Q8).
-   * Presets: dose_correction · drug_unavailable · clarified_for_pharmacy ·
-   * added_missed_item · other.
+   * Presets: treatment_change · item_added · other.
    */
   revision_reason: string | null;
   /**
@@ -1153,6 +1150,24 @@ export interface LastVisitMedicine {
   foodTiming: FoodTiming | null;
 }
 
+/** Column vitals on the prior slip (lvc-14). Null when none were recorded. */
+export interface LastVisitVitals {
+  vitalsBpSystolic?: number;
+  vitalsBpDiastolic?: number;
+  vitalsHr?: number;
+  vitalsRr?: number;
+  vitalsTempC?: number;
+  vitalsSpo2?: number;
+  vitalsWtKg?: number;
+  vitalsHtCm?: number;
+  vitalsPainScore?: number;
+  vitalsGlucoseMgDl?: number;
+  vitalsGcsTotal?: number;
+  vitalsHeadCircumferenceCm?: number;
+  vitalsMuacCm?: number;
+  vitalsWaistCm?: number;
+}
+
 export interface LastVisitSummary {
   sourcePrescriptionId: string;
   sourceCreatedAt: string;
@@ -1165,6 +1180,7 @@ export interface LastVisitSummary {
   followUp: string | null;
   followUpValue: number | null;
   followUpUnit: FollowUpUnit | null;
+  vitals: LastVisitVitals | null;
   /** lvc-16 — remaining visit-scoped parchi fields (no new columns). */
   hopi: string | null;
   familyHistory: string | null;

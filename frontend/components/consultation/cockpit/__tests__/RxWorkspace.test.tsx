@@ -261,7 +261,7 @@ describe("RxWorkspace revise strip (rxl-25)", () => {
       </RxFormProvider>,
     );
     expect(screen.getByTestId("rx-revise-strip")).toHaveTextContent(
-      /Issued .*Changes will create Version 2/,
+      /Issued .*The next print or send replaces that slip/,
     );
     expect(screen.queryByTestId("rx-readonly-notice")).not.toBeInTheDocument();
     vi.useRealTimers();

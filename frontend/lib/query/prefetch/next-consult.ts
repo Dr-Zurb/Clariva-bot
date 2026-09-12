@@ -1,8 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import {
-  deskVitalsQueryOptions,
-  lastVisitVitalsQueryOptions,
-} from "@/lib/cockpit/desk-vitals-query";
+import { deskVitalsQueryOptions } from "@/lib/cockpit/desk-vitals-query";
 import { lastVisitSummaryQueryOptions } from "@/lib/cockpit/last-visit-summary-query";
 import {
   patientAllergiesQueryOptions,
@@ -40,10 +37,6 @@ export async function prefetchNextConsultQueries(
     safePrefetch(
       queryClient,
       deskVitalsQueryOptions(token, next.appointmentId)
-    ),
-    safePrefetch(
-      queryClient,
-      lastVisitVitalsQueryOptions(token, next.appointmentId)
     ),
   ];
   if (next.patientId) {

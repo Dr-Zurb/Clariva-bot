@@ -101,8 +101,37 @@ describe('MedicineTable', () => {
     expect(i('Twice daily')).toBeLessThan(i('30 days'));
   });
 
-  it('keeps Rx heading, column header, and the first row in one unbreakable group', () => {
-    const tree = MedicineTable({ medicines: [makeMed()] });
+  it('keeps Rx heading and column header together, then lists every medicine', () => {
+    const tree = MedicineTable({
+      medicines: [
+        makeMed({
+          id: 'med-1',
+          medicine_name: 'Gel antacid',
+          sort_order: 0,
+        }),
+        makeMed({
+          id: 'med-2',
+          medicine_name: 'Calcium carbonate',
+          sort_order: 1,
+        }),
+        makeMed({
+          id: 'med-3',
+          medicine_name: 'Dicyclomine',
+          sort_order: 2,
+        }),
+        makeMed({
+          id: 'med-4',
+          medicine_name: 'Diclofenac',
+          sort_order: 3,
+        }),
+      ],
+    });
+    const texts = collectText(tree);
+    expect(texts).toContain('Gel antacid');
+    expect(texts).toContain('Calcium carbonate');
+    expect(texts).toContain('Dicyclomine');
+    expect(texts).toContain('Diclofenac');
+
     const propsOf = (node: React.ReactNode): Record<string, unknown> | null => {
       if (!React.isValidElement(node)) return null;
       return node.props as Record<string, unknown>;
@@ -113,11 +142,11 @@ describe('MedicineTable', () => {
     );
     const group = children[0];
     expect(propsOf(group)?.wrap).toBe(false);
-    const groupKids = React.Children.toArray(
-      (propsOf(group)?.children as React.ReactNode) ?? null,
-    );
-    const header = groupKids.find((n) => propsOf(n)?.minPresenceAhead === 28);
-    expect(header).toBeTruthy();
-    expect(propsOf(header)?.fixed).toBeUndefined();
+    expect(propsOf(group)?.minPresenceAhead).toBe(40);
+    const groupTexts = collectText(group);
+    expect(groupTexts).toContain('Rx');
+    expect(groupTexts).toContain('Medicine');
+    expect(groupTexts).not.toContain('Gel antacid');
+    expect(children).toHaveLength(5);
   });
 });

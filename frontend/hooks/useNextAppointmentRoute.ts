@@ -45,6 +45,8 @@ const SCHEDULE_CUTOFF_MS = 60 * 60 * 1000;
 
 export interface NextAppointmentRoute {
   appointmentId: string;
+  /** Linked patient row, when the visit has one. Warms the next cockpit's chart. */
+  patientId: string | null;
   /** /dashboard/appointments/{id} */
   url: string;
   /** "Mohit K (#5)" in queue mode · "Mohit K (2:30 PM)" in schedule mode */
@@ -124,6 +126,7 @@ export function useNextAppointmentRoute(opts: {
 
       return {
         appointmentId: found.id,
+        patientId: found.patientId ?? null,
         url: found.href,
         label: buildQueueLabel(found),
         modality: found.consultationType ?? "in_clinic",
@@ -141,6 +144,7 @@ export function useNextAppointmentRoute(opts: {
 
     return {
       appointmentId: found.id,
+      patientId: found.patientId ?? null,
       url: found.href,
       label: buildScheduleLabel(found),
       // Fallback to 'video' — the most common remote modality — when

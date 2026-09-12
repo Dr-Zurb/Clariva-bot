@@ -436,7 +436,7 @@ attested_at             TIMESTAMPTZ NULL  -- Finish stamp (migration 226). Print
 version                 INTEGER NULL      -- Revision number (migration 231 / rxl-21). Advances on re-issue only. Null on drafts and historical rows — no backfill.
 supersedes_id           UUID NULL REFERENCES prescriptions(id) ON DELETE SET NULL
 superseded_by_id        UUID NULL REFERENCES prescriptions(id) ON DELETE SET NULL
-revision_reason         TEXT NULL         -- Required on a revision at write time (RXL-Q8). Null on Version 1 and historical rows.
+revision_reason         TEXT NULL         -- Required on a revision at write time (RXL-Q8). Presets: treatment_change · item_added · other. Null on Version 1 and historical rows.
 issued_at               TIMESTAMPTZ NULL  -- First issued hand-over of this row. Not attested_at, not printed_at.
 printed_at              TIMESTAMPTZ NULL  -- Delivery event; requisition print may set this without attesting.
 created_at              TIMESTAMPTZ NOT NULL DEFAULT now()

@@ -46,6 +46,26 @@ export interface LastVisitSummary {
   diagnoses: DiagnosisRow[];
   provisionalDiagnosis: string | null;
   medicines: LastVisitMedicine[];
+  /** Column vitals from the prior slip (lvc-14). Absent or empty → no ghosts. */
+  vitals?: Partial<
+    Record<
+      | "vitalsBpSystolic"
+      | "vitalsBpDiastolic"
+      | "vitalsHr"
+      | "vitalsRr"
+      | "vitalsTempC"
+      | "vitalsSpo2"
+      | "vitalsWtKg"
+      | "vitalsHtCm"
+      | "vitalsPainScore"
+      | "vitalsGlucoseMgDl"
+      | "vitalsGcsTotal"
+      | "vitalsHeadCircumferenceCm"
+      | "vitalsMuacCm"
+      | "vitalsWaistCm",
+      number
+    >
+  > | null;
   investigationsOrders: string | null;
   advice: string | null;
   followUp: string | null;

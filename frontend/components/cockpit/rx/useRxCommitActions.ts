@@ -123,6 +123,10 @@ export async function downloadSignedPdf(
 }
 
 const PRINT_IFRAME_KEEPALIVE_MS = 120_000;
+/** Safari often never fires onload for a PDF iframe — print blind after this. */
+const PRINT_BLIND_FALLBACK_MS = 1_200;
+const PRINT_POLL_MS = 200;
+const PRINT_DEADLINE_MS = 8_000;
 
 /** Download the signed PDF into a blob URL the iframe can print same-origin. */
 async function fetchPdfObjectUrl(signedUrl: string): Promise<string> {
@@ -156,8 +160,17 @@ function printPdfObjectUrl(objectUrl: string): Promise<void> {
 
     let settled = false;
     let printed = false;
+    let loaded = false;
+    let waited = 0;
+    let poll: number | null = null;
+
+    const stopPolling = () => {
+      if (poll !== null) window.clearInterval(poll);
+      poll = null;
+    };
 
     const cleanup = () => {
+      stopPolling();
       iframe.remove();
       URL.revokeObjectURL(objectUrl);
     };
@@ -165,6 +178,7 @@ function printPdfObjectUrl(objectUrl: string): Promise<void> {
     const succeed = () => {
       if (settled) return;
       settled = true;
+      stopPolling();
       resolve();
     };
 
@@ -193,14 +207,25 @@ function printPdfObjectUrl(objectUrl: string): Promise<void> {
       }
     };
 
-    iframe.onload = () => triggerPrint();
+    iframe.onload = () => {
+      loaded = true;
+      triggerPrint();
+    };
     iframe.onerror = () => fail("Could not load prescription PDF");
     document.body.appendChild(iframe);
-    // Safari often skips onload for a PDF iframe.
-    window.setTimeout(triggerPrint, 250);
-    window.setTimeout(() => {
-      if (!printed) fail("Could not open the print dialog");
-    }, 2000);
+    // Printing before the PDF viewer is up opens no dialog at all, so wait for
+    // the load event and keep retrying instead of taking one blind shot.
+    poll = window.setInterval(() => {
+      if (printed || settled) {
+        stopPolling();
+        return;
+      }
+      waited += PRINT_POLL_MS;
+      if (loaded || waited >= PRINT_BLIND_FALLBACK_MS) triggerPrint();
+      if (!printed && waited >= PRINT_DEADLINE_MS) {
+        fail("Could not open the print dialog");
+      }
+    }, PRINT_POLL_MS);
   });
 }
 
@@ -720,23 +745,35 @@ export function useRxCommitActions({
     if (resend || reprint) setDeliveryPrompt({ resend, reprint });
   }, []);
 
+  const loadPdfObjectUrl = useCallback(
+    (rxId: string): Promise<string> =>
+      fetchPrescriptionPdf(token, rxId).then(({ blob }) =>
+        URL.createObjectURL(pdfBlobForObjectUrl(blob))
+      ),
+    [token]
+  );
+
   const prewarmPdf = useCallback(
     (rxId: string): Promise<string> => {
       const existing = pdfWarmRef.current;
       if (existing?.rxId === rxId) return existing.objectUrl;
       dropPdfWarm(true);
-      const objectUrl = fetchPrescriptionPdf(token, rxId)
-        .then(({ blob }) => URL.createObjectURL(pdfBlobForObjectUrl(blob)))
-        .catch((err) => {
-          if (pdfWarmRef.current?.rxId === rxId) pdfWarmRef.current = null;
-          throw err;
-        });
+      const objectUrl = loadPdfObjectUrl(rxId).catch((err) => {
+        if (pdfWarmRef.current?.rxId === rxId) pdfWarmRef.current = null;
+        throw err;
+      });
       pdfWarmRef.current = { rxId, objectUrl };
       return objectUrl;
     },
-    [dropPdfWarm, token]
+    [dropPdfWarm, loadPdfObjectUrl]
   );
 
+  /**
+   * Hand the PDF to a print job, which owns the object URL from here on. An
+   * unwarmed take must NOT park its fetch in the warm ref: the next patient
+   * unmounts this hook, the cleanup revokes the URL mid-flight, and the print
+   * dialog then never opens.
+   */
   const takeWarmedPdf = useCallback(
     (rxId: string): Promise<string> => {
       const existing = pdfWarmRef.current;
@@ -744,12 +781,10 @@ export function useRxCommitActions({
         pdfWarmRef.current = null;
         return existing.objectUrl;
       }
-      return prewarmPdf(rxId).then((url) => {
-        if (pdfWarmRef.current?.rxId === rxId) pdfWarmRef.current = null;
-        return url;
-      });
+      dropPdfWarm(true);
+      return loadPdfObjectUrl(rxId);
     },
-    [prewarmPdf]
+    [dropPdfWarm, loadPdfObjectUrl]
   );
 
   const openPreview = useCallback(() => {
@@ -899,18 +934,8 @@ export function useRxCommitActions({
       // this visit so navigation can't unload the print iframe.
       if (shouldFinish || shouldPrint) setAdvanceCancelled(!shouldFinish);
 
-      if (shouldPrint) {
-        const printJob = takeWarmedPdf(rxId);
-        void printJob
-          .then((objectUrl) => printPdfObjectUrl(objectUrl))
-          .catch((printErr) => {
-            setCommitError(
-              printErr instanceof Error
-                ? printErr.message
-                : "Could not open the print dialog"
-            );
-          });
-      }
+      // Start the PDF before the send so a cold render is already in flight.
+      const printJob = shouldPrint ? takeWarmedPdf(rxId) : null;
 
       setCommitSuccess("Sending to patient…");
       void sendPrescriptionToPatient(token, rxId)
@@ -947,6 +972,32 @@ export function useRxCommitActions({
             err instanceof Error ? err.message : "Failed to save and send"
           );
         });
+
+      if (printJob) {
+        // Wait for the bytes, not for the dialog: the doctor can hold the
+        // dialog open for a while and wrap-up must not hang behind it. Once the
+        // iframe is in the document the print survives the next-patient jump.
+        try {
+          const objectUrl = await printJob;
+          void printPdfObjectUrl(objectUrl).catch((printErr) => {
+            setAdvanceCancelled(true);
+            setCommitError(
+              printErr instanceof Error
+                ? printErr.message
+                : "Could not open the print dialog"
+            );
+          });
+        } catch (printErr) {
+          // No printout — park on this visit so the error is readable and the
+          // doctor can retry Print instead of landing on the next patient.
+          setAdvanceCancelled(true);
+          setCommitError(
+            printErr instanceof Error
+              ? printErr.message
+              : "Could not load prescription PDF"
+          );
+        }
+      }
 
       if (shouldFinish) {
         setPreviewOpen(false);

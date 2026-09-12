@@ -381,8 +381,8 @@ Add new items **below** this line (or at the top of the list—stay consistent).
 - [x] 2026-09-02 — **Fix leave / resume later appearance.**
 - [x] 2026-09-02 — **Print preview too late.**
 - [ ] 2026-09-07 — **Tab visibility needs improvement — more distinction between tabs** (active vs inactive state hard to tell apart).
-- [ ] 2026-09-07 — **Second editing and re-prescription flow.** Same-day revise shipped (`rxl-19`…`29`). `lvc` Phase 3 in progress (`lvc-12`). Write-up: [`notes/2026-09-08-rx-edit-return-last-visit.md`](notes/2026-09-08-rx-edit-return-last-visit.md).
+- [ ] 2026-09-07 — **Second editing and re-prescription flow.** Same-day revise shipped (`rxl-19`…`29`). `lvc` Phase 3 gated with residuals (`lvc-12`…`15`). Write-up: [`notes/2026-09-08-rx-edit-return-last-visit.md`](notes/2026-09-08-rx-edit-return-last-visit.md).
 - [ ] 2026-09-07 — **Vitals coming late.**
 - [ ] 2026-09-07 — **Front desk: basic history + report uploading.**
 - [ ] 2026-09-07 — **Revisit last-medicines handling.**
-- [ ] 2026-09-08 — **Rx edit window, same-day return, last-visit ghosts.** Same-day revise + Phase 2 gated (`rxl-05`…`29`) with residuals. `lvc` Phase 3 committed (`lvc-12`…`15`). Capture: [`notes/2026-09-08-rx-edit-return-last-visit.md`](notes/2026-09-08-rx-edit-return-last-visit.md).
+- [ ] 2026-09-08 — **Rx edit window, same-day return, last-visit ghosts.** Same-day revise + Phase 2 gated (`rxl-05`…`29`) with residuals. `lvc` Phase 3 gated (`lvc-12`…`15`) with residuals; not Shipped. Capture: [`notes/2026-09-08-rx-edit-return-last-visit.md`](notes/2026-09-08-rx-edit-return-last-visit.md).

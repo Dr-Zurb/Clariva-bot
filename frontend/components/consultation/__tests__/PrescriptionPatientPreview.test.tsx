@@ -165,6 +165,15 @@ describe("PrescriptionPatientPreview", () => {
     expect(model.rx?.planCustomSections?.[0]?.title).toBe("Physio");
   });
 
+  it("uses the live visit date for the generation credit", () => {
+    const model = letterheadPreviewModelFromRx({
+      ...viewModel,
+      visitDateLabel: "10 Sept 2026",
+    });
+
+    expect(model.generatedAtLabel).toBe("10 Sept 2026");
+  });
+
   it("renders peek-only without a commit bar", () => {
     render(
       <PrescriptionPatientPreview

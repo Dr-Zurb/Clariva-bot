@@ -1,7 +1,7 @@
 # Plan: last-visit-context Phase 3 — consolidation
 
 > **Product plan:** [`plan-last-visit-context.md`](../../../../../Product%20plans/plan-last-visit-context.md)
-> **Status:** **Committed** 2026-09-10. `lvc-12` in progress.
+> **Status:** **Implemented** 2026-09-11 with residuals; not Shipped.
 
 One last-visit fetch. One apply vocabulary. Legacy prior-visit surfaces either read `last-visit-summary` or go away.
 
@@ -12,9 +12,9 @@ One last-visit fetch. One apply vocabulary. Legacy prior-visit surfaces either r
 | ID | Title | Size | Model | Status |
 |---|---|---|---|---|
 | [`lvc-12`](./Tasks/task-lvc-12-retire-previous-rx-popover.md) | Retire dead `PreviousRxPopover` (LVC-Q4) | S | current | **Implemented** 2026-09-10 |
-| [`lvc-13`](./Tasks/task-lvc-13-repoint-carry-forward.md) | `CarryForwardButton` reads last-visit-summary | M | current | Drafted |
-| [`lvc-14`](./Tasks/task-lvc-14-drop-last-in-episode-from-cockpit.md) | Vitals ghosts + “Copy from last visit” leave `last-in-episode` | M | current | Drafted |
-| [`lvc-15`](./Tasks/task-lvc-15-phase-3-gate.md) | One-fetch proof + docs | M | current | Drafted |
+| [`lvc-13`](./Tasks/task-lvc-13-repoint-carry-forward.md) | `CarryForwardButton` reads last-visit-summary | M | current | **Implemented** 2026-09-11 |
+| [`lvc-14`](./Tasks/task-lvc-14-drop-last-in-episode-from-cockpit.md) | Vitals ghosts + “Copy from last visit” leave `last-in-episode` | M | current | **Implemented** 2026-09-11 |
+| [`lvc-15`](./Tasks/task-lvc-15-phase-3-gate.md) | One-fetch proof + docs | M | current | **Implemented** 2026-09-11 |
 
 ## Gate (one sentence)
 

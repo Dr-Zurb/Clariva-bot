@@ -90,7 +90,7 @@ After this program ships:
 | **RXL-Q5** | Does visit history show a field-level diff inline, or list revisions with compare on demand? | List revisions with compare on demand. Inline diffs on every history row will bury the clinical content. | Recommended |
 | **RXL-Q6** | Should a same-day revise after a delivery prompt a reprint / resend? | Yes — a prompt, never an automatic resend. Prompt shipped (`rxl-25`). Reprint half is weak because `printed_at` is never written. | Recommended — residual |
 | **RXL-Q7** | Where does the clinic-local day end? | 06:00 next morning in `doctor_settings.timezone` (`getDoctorTimezone`, fallback `Asia/Kolkata`). Implemented in `rxl-23`. Desk "today" stays midnight-to-midnight. | **Locked** 2026-09-10 |
-| **RXL-Q8** | Reason on revise — required? | Required as one-tap presets: dose correction · drug unavailable · clarified for pharmacy · added missed item · other. | **Locked** 2026-09-10 — presets shipped |
+| **RXL-Q8** | Reason on revise — required? | Required as one-tap presets: **treatment change · item added · other**. Statement, not a question. Relocked 2026-09-11 after dogfood: no “why”, no “wrong dose”, no pharmacy row. | **Relocked** 2026-09-11 |
 | **RXL-Q9** | Does a superseded version stay on the patient share link? | Yes, marked superseded. | Recommended — out of program |
 | **RXL-Q10** | Attachments on a cloned version — copy rows or duplicate storage? | Copy rows, share `file_path`. Flag the erasure worker. | Recommended — erasure residual |
 
@@ -173,4 +173,4 @@ Phase 3 detail lives on the [same-day revise batch](../Daily-plans/August%202026
 ---
 
 **Created:** 2026-08-31.
-**Last Updated:** 2026-09-10 (Phase 2 gate `rxl-10` + Phase 3 closed; both residuals, not Shipped)
+**Last Updated:** 2026-09-11 (RXL-Q8 relocked — treatment change / item added / other; no “why”)

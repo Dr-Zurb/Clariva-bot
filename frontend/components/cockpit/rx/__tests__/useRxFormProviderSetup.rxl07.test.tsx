@@ -225,4 +225,33 @@ describe("useRxFormProviderSetup rxl-07 / rxl-24", () => {
     expect(result.current.initialFields?.complaints).toEqual([]);
     expect(createPrescription).not.toHaveBeenCalled();
   });
+
+  it("uses the caller's appointment context instead of re-fetching it", async () => {
+    const closed = rx({ attested_at: "2026-08-31T12:00:00.000Z" });
+    listed.mockResolvedValue({ data: { prescriptions: [closed] } } as never);
+
+    const { result } = renderHook(
+      () =>
+        useRxFormProviderSetup({
+          appointmentId: "appt-1",
+          patientId: "pat-1",
+          token: "token",
+          appointmentContext: {
+            consultationType: "in_clinic",
+            status: "completed",
+          },
+        }),
+      { wrapper: wrapper() },
+    );
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    // The cockpit route already fetched this appointment — two round-trips per
+    // patient switch used to re-fetch it before the form accepted typing.
+    expect(apptById).not.toHaveBeenCalled();
+    expect(result.current.prescription?.id).toBe("rx-closed");
+    expect(result.current.noteClosed).toBe(true);
+  });
 });

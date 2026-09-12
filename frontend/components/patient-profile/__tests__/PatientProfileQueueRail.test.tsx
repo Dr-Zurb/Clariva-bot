@@ -10,7 +10,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import "@testing-library/jest-dom";
 
@@ -447,7 +447,9 @@ describe("CockpitQueueRail", () => {
         nowSlot={<span data-testid="now-slot">NOW</span>}
       />,
     );
-    expect(screen.getByRole("link", { name: /All/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Today's OPD/i }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("cockpit-queue-position")).toHaveTextContent(
       "2 of 3",
     );
@@ -527,7 +529,7 @@ describe("CockpitQueueRail", () => {
     ).toBe("#902");
   });
 
-  it("inline: All stays a link while a consult is live", () => {
+  it("inline: All stays reachable while a consult is live", () => {
     pipelineResult(
       [makeEntry({ id: "appt-2", tokenNumber: 2, isCurrent: true })],
       0,
@@ -542,8 +544,9 @@ describe("CockpitQueueRail", () => {
         nowSlot={<span>NOW</span>}
       />,
     );
-    const all = screen.getByRole("link", { name: /All/ });
-    expect(all).toHaveAttribute("href", expect.stringContaining("/dashboard/opd-today"));
+    expect(
+      screen.getByRole("button", { name: /Today's OPD, 1 of 4/i }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("cockpit-queue-position")).toHaveTextContent(
       "1 of 4",
     );
@@ -570,5 +573,136 @@ describe("CockpitQueueRail", () => {
     pipelineResult(entries, 1, { totalCount: 8 });
     const { container } = renderRail();
     expect(container.firstChild).toMatchSnapshot();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Today's-OPD picker — the doctor must never leave the cockpit to switch
+// ---------------------------------------------------------------------------
+
+describe("CockpitQueueRail today's-OPD picker", () => {
+  const NAMES = [
+    "Ananya Bose",
+    "Priya Sharma",
+    "Rahul Verma",
+    "Imran Qureshi",
+    "Sneha Rao",
+    "Vikram Iyer",
+    "Farah Khan",
+    "Deepak Nair",
+    "Kavya Menon",
+    "Arjun Das",
+    "Meera Pillai",
+    "Zoya Sheikh",
+  ];
+
+  function seedDay(count: number) {
+    const entries = NAMES.slice(0, count).map((label, i) =>
+      makeEntry({
+        id: `appt-${i + 1}`,
+        label,
+        tokenNumber: i + 1,
+        position: i + 1,
+        isCurrent: i === 1,
+        ageYears: 20 + i,
+        sex: i % 2 === 0 ? "female" : "male",
+      }),
+    );
+    pipelineResult(entries, 1, { totalCount: count });
+    return entries;
+  }
+
+  function openPicker() {
+    fireEvent.click(screen.getByRole("button", { name: /Today's OPD/i }));
+    return screen.getByTestId("cockpit-queue-picker");
+  }
+
+  function renderInline() {
+    return renderWithClient(
+      <CockpitQueueRail
+        currentAppointmentId="appt-2"
+        state="live"
+        token="tok"
+        variant="inline"
+        nowSlot={<span>NOW</span>}
+      />,
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("opens today's OPD in place, linking each patient into the cockpit", () => {
+    seedDay(3);
+    renderInline();
+
+    const picker = within(openPicker());
+    const link = picker.getByRole("link", { name: /Rahul Verma/ });
+    expect(link).toHaveAttribute(
+      "href",
+      "/dashboard/appointments/appt-3?from=opd-today&date=2026-08-09",
+    );
+    // The visit already on screen is marked, not offered as a jump target.
+    expect(picker.getByRole("link", { name: /Priya Sharma/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  it("filters by name and by #token", () => {
+    seedDay(4);
+    renderInline();
+
+    const picker = within(openPicker());
+    const search = picker.getByLabelText("Search today's OPD");
+
+    fireEvent.change(search, { target: { value: "rahul" } });
+    expect(picker.getByRole("link", { name: /Rahul Verma/ })).toBeInTheDocument();
+    expect(picker.queryByRole("link", { name: /Ananya Bose/ })).toBeNull();
+
+    fireEvent.change(search, { target: { value: "#4" } });
+    expect(
+      picker.getByRole("link", { name: /Imran Qureshi/ }),
+    ).toBeInTheDocument();
+    expect(picker.queryByRole("link", { name: /Rahul Verma/ })).toBeNull();
+
+    fireEvent.change(search, { target: { value: "nobody" } });
+    expect(picker.getByText(/matches that/i)).toBeInTheDocument();
+  });
+
+  it("scrolls today's full list and shows age and sex with each name", () => {
+    seedDay(12);
+    renderInline();
+
+    const picker = within(openPicker());
+    expect(picker.getAllByRole("link").filter((el) =>
+      /#\d/.test(el.textContent ?? ""),
+    )).toHaveLength(12);
+    expect(picker.getByText("12 patients")).toBeInTheDocument();
+    expect(picker.getByText("21/M")).toBeInTheDocument();
+    expect(picker.getByText("22/F")).toBeInTheDocument();
+    expect(picker.getByRole("link", { name: /Zoya Sheikh/ })).toBeInTheDocument();
+    expect(picker.queryByText(/\+2 more/)).toBeNull();
+    // The full hub stays one click away if the doctor still wants the table.
+    expect(picker.getByRole("link", { name: /Open OPD tab/i })).toHaveAttribute(
+      "href",
+      expect.stringContaining("/dashboard/opd-today"),
+    );
+  });
+
+  it("warms a patient's chart when the doctor points at the row", () => {
+    seedDay(3);
+    renderInline();
+
+    const picker = within(openPicker());
+    vi.mocked(prefetchNextConsult).mockClear();
+    fireEvent.mouseEnter(picker.getByRole("link", { name: /Rahul Verma/ }));
+
+    expect(prefetchNextConsult).toHaveBeenCalledWith(
+      expect.anything(),
+      "tok",
+      expect.objectContaining({ appointmentId: "appt-3" }),
+    );
   });
 });

@@ -1,7 +1,7 @@
 # Task lvc-13: CarryForwardButton reads last-visit-summary
 
 **Program / Phase:** last-visit-context · Phase 3
-**Status:** Drafted
+**Status:** Implemented 2026-09-11
 **Change Type:** Update existing
 
 `CarryForwardButton` currently fetches `GET /prescriptions/last-subjective` on every Subjective mount. That is a second last-visit read (LVC-DL-6).

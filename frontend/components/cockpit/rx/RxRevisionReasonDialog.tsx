@@ -13,6 +13,7 @@ export interface RxRevisionReasonDialogProps {
   open: boolean;
   busy?: boolean;
   error?: string | null;
+  replacesLine?: string;
   onCancel: () => void;
   onConfirm: (reason: RevisionReason, otherNote?: string) => void;
 }
@@ -21,6 +22,7 @@ export function RxRevisionReasonDialog({
   open,
   busy = false,
   error = null,
+  replacesLine = "Replaces the issued slip.",
   onCancel,
   onConfirm,
 }: RxRevisionReasonDialogProps): JSX.Element | null {
@@ -70,13 +72,11 @@ export function RxRevisionReasonDialog({
           id="rx-revision-reason-title"
           className="text-base font-semibold text-foreground"
         >
-          Why are you revising this slip?
+          New slip
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Required before the next version is created. Autosave does not
-          ask.
-        </p>
-        <div className="mt-4 flex flex-col gap-2">
+        <p className="mt-1 text-sm text-muted-foreground">{replacesLine}</p>
+        <p className="mt-4 text-sm font-medium text-foreground">Reason</p>
+        <div className="mt-2 flex flex-col gap-2">
           {REVISION_REASONS.map((value) => (
             <button
               key={value}
@@ -135,7 +135,7 @@ export function RxRevisionReasonDialog({
             }}
             className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >
-            {busy ? "Creating version…" : "Create next version"}
+            {busy ? "Issuing…" : "Issue new slip"}
           </button>
         </div>
       </div>

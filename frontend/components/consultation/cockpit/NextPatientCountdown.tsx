@@ -21,10 +21,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { getDoctorSettings } from "@/lib/api";
 import type { PatientFlowAdvance } from "@/types/doctor-settings";
 import { useNextAppointmentRoute } from "@/hooks/useNextAppointmentRoute";
+import { prefetchNextConsult } from "@/lib/query/prefetch/next-consult";
 import { cn } from "@/lib/utils";
 import { EndOfDayCard } from "./EndOfDayCard";
 
@@ -118,6 +120,7 @@ export function NextPatientCountdown({
   onDone,
 }: NextPatientCountdownProps): JSX.Element | null {
   const router = useRouter();
+  const queryClient = useQueryClient();
 
   // ── Doctor settings: load patient_flow_advance ───────────────────────────
   const [flowAdvance, setFlowAdvance] = useState<PatientFlowAdvance | null>(
@@ -142,6 +145,18 @@ export function NextPatientCountdown({
     currentAppointmentId,
     token,
   });
+
+  // Warm the destination as soon as it is known — the countdown gives us the
+  // whole 5 s, and instant mode still gets its requests in flight before the
+  // push. Without this the next cockpit starts every read cold.
+  useEffect(() => {
+    if (!next) return;
+    router.prefetch(next.url);
+    prefetchNextConsult(queryClient, token, {
+      appointmentId: next.appointmentId,
+      patientId: next.patientId,
+    });
+  }, [next, router, queryClient, token]);
 
   // ── Cancel state (sessionStorage prevents re-trigger on same appt reload) ─
   const [cancelled, setCancelled] = useState(false);

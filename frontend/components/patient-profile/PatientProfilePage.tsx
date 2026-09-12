@@ -456,10 +456,16 @@ export default function PatientProfilePage({
   void rxMedicineCount;
 
   // csf-01: one RxFormProvider per appointment page — sibling panes share form state.
+  // The route already fetched this appointment server-side, so hand the modality
+  // and status over instead of making the setup re-fetch them on every switch.
   const rxFormSetup = useRxFormProviderSetup({
     appointmentId: appt.id,
     patientId: appt.patient_id ?? null,
     token,
+    appointmentContext: {
+      consultationType: appt.consultation_type ?? null,
+      status: appt.status ?? null,
+    },
   });
 
   // Built-in tabs use a portal slot for Consult; test-injected `panesProp`

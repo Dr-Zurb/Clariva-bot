@@ -8,6 +8,8 @@ import {
   createEmptyRxFormFields,
   type RxFormFields,
 } from "@/components/cockpit/rx/RxFormContext";
+import { LastVisitSummaryProvider } from "@/hooks/useLastVisitSummary";
+import type { LastVisitSummary } from "@/lib/api/last-visit-summary";
 import { saveVitalsHidden } from "@/lib/cockpit/vitals-visibility";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
@@ -16,8 +18,6 @@ import {
   getLastPrescriptionInEpisode,
   getPatientById,
 } from "@/lib/api";
-import type { PrescriptionWithRelations } from "@/types/prescription";
-
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
@@ -118,9 +118,29 @@ const mockedGetPatient = vi.mocked(getPatientById);
 
 const prescriptionIdRef = { current: null as string | null };
 
+function lastVisitWithVitals(
+  vitals: NonNullable<LastVisitSummary["vitals"]>
+): LastVisitSummary {
+  return {
+    sourcePrescriptionId: "rx-prev",
+    sourceCreatedAt: "2026-08-12T10:00:00.000Z",
+    complaints: [],
+    diagnoses: [],
+    provisionalDiagnosis: null,
+    medicines: [],
+    investigationsOrders: null,
+    advice: null,
+    followUp: null,
+    followUpValue: null,
+    followUpUnit: null,
+    vitals,
+  };
+}
+
 function renderWithProvider(
   initial?: Partial<RxFormFields>,
   lock?: "ended",
+  lastVisit?: LastVisitSummary | null,
 ) {
   const initialFields = {
     ...createEmptyRxFormFields(),
@@ -145,11 +165,13 @@ function renderWithProvider(
           prescriptionIdRef={prescriptionIdRef}
           onPrescriptionCreated={() => {}}
         >
-          {lock === "ended" ? (
-            <RxLockProvider cockpitState="ended">{grid}</RxLockProvider>
-          ) : (
-            grid
-          )}
+          <LastVisitSummaryProvider value={lastVisit ?? null}>
+            {lock === "ended" ? (
+              <RxLockProvider cockpitState="ended">{grid}</RxLockProvider>
+            ) : (
+              grid
+            )}
+          </LastVisitSummaryProvider>
         </RxFormProvider>
       </TooltipProvider>
     </QueryClientProvider>
@@ -746,18 +768,12 @@ describe("VitalsGrid", () => {
 
   describe("last-visit ghost values (P2-D5)", () => {
     it("renders previous-visit vitals as read-only ghosts without overwriting entry", async () => {
-      mockedGetLast.mockResolvedValue({
-        data: {
-          prescription: {
-            id: "rx-prev",
-            vitals_hr: 72,
-            vitals_temp_c: 37,
-          } as unknown as PrescriptionWithRelations,
-        },
-      });
-      renderWithProvider();
+      renderWithProvider(
+        undefined,
+        undefined,
+        lastVisitWithVitals({ vitalsHr: 72, vitalsTempC: 37 }),
+      );
 
-      // Ghost caption appears once the async fetch resolves.
       expect(await screen.findByText(/prev 72 bpm/i)).toBeInTheDocument();
 
       // The live input stays empty — ghost never overwrites the current entry.
@@ -853,15 +869,11 @@ describe("VitalsGrid", () => {
 
   describe("copy last visit", () => {
     it("copies a previous heart rate when the ghost chip is clicked", async () => {
-      mockedGetLast.mockResolvedValue({
-        data: {
-          prescription: {
-            id: "rx-prev",
-            vitals_hr: 72,
-          } as unknown as PrescriptionWithRelations,
-        },
-      });
-      renderWithProvider();
+      renderWithProvider(
+        undefined,
+        undefined,
+        lastVisitWithVitals({ vitalsHr: 72 }),
+      );
 
       const ghostBtn = await screen.findByTestId("vital-last-visit-vitalsHr");
       fireEvent.click(ghostBtn);
@@ -873,15 +885,11 @@ describe("VitalsGrid", () => {
     });
 
     it("copies previous glucose from the ghost chip", async () => {
-      mockedGetLast.mockResolvedValue({
-        data: {
-          prescription: {
-            id: "rx-prev",
-            vitals_glucose_mg_dl: 108,
-          } as unknown as PrescriptionWithRelations,
-        },
-      });
-      renderWithProvider();
+      renderWithProvider(
+        undefined,
+        undefined,
+        lastVisitWithVitals({ vitalsGlucoseMgDl: 108 }),
+      );
 
       const ghostBtn = await screen.findByTestId("glucose-primary-last-visit");
       fireEvent.click(ghostBtn);
@@ -893,14 +901,6 @@ describe("VitalsGrid", () => {
     });
 
     it("prefers same-visit desk vitals over last-visit ghosts", async () => {
-      mockedGetLast.mockResolvedValue({
-        data: {
-          prescription: {
-            id: "rx-prev",
-            vitals_hr: 60,
-          } as unknown as PrescriptionWithRelations,
-        },
-      });
       mockedGetDesk.mockResolvedValue({
         data: {
           vitals: {
@@ -923,7 +923,11 @@ describe("VitalsGrid", () => {
           },
         },
       });
-      renderWithProvider();
+      renderWithProvider(
+        undefined,
+        undefined,
+        lastVisitWithVitals({ vitalsHr: 60 }),
+      );
 
       const hrInput = (await screen.findByLabelText(
         /Pulse Rate \(PR\) in bpm/i
@@ -1062,16 +1066,14 @@ describe("VitalsGrid", () => {
     });
 
     it("copies previous BP from the ghost chip", async () => {
-      mockedGetLast.mockResolvedValue({
-        data: {
-          prescription: {
-            id: "rx-prev",
-            vitals_bp_systolic: 118,
-            vitals_bp_diastolic: 76,
-          } as unknown as PrescriptionWithRelations,
-        },
-      });
-      renderWithProvider();
+      renderWithProvider(
+        undefined,
+        undefined,
+        lastVisitWithVitals({
+          vitalsBpSystolic: 118,
+          vitalsBpDiastolic: 76,
+        }),
+      );
 
       const ghostBtn = await screen.findByTestId("bp-primary-last-visit");
       fireEvent.click(ghostBtn);

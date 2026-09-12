@@ -4,6 +4,7 @@ import {
   formatIssuedTime,
   needsReissue,
   resolveRxNoteChrome,
+  reviseDialogReplacesCopy,
   reviseStripCopy,
 } from "@/components/cockpit/rx/rxRevise";
 import type { RxLoadClock } from "@/components/cockpit/rx/rxLoadDecision";
@@ -54,9 +55,9 @@ describe("resolveRxNoteChrome", () => {
 });
 
 describe("reviseStripCopy", () => {
-  it("names the issued time and the next version", () => {
+  it("names the issued time without a version number", () => {
     expect(reviseStripCopy(rx(), "Asia/Kolkata")).toBe(
-      "Issued 10:15 AM. Changes will create Version 2.",
+      "Issued 10:15 AM. The next print or send replaces that slip.",
     );
   });
 
@@ -64,6 +65,15 @@ describe("reviseStripCopy", () => {
     expect(reviseStripCopy(rx(), "Asia/Kolkata")).not.toMatch(
       /15-minute|countdown/i,
     );
+  });
+});
+
+describe("reviseDialogReplacesCopy", () => {
+  it("states the issued time without asking why", () => {
+    expect(reviseDialogReplacesCopy(rx(), "Asia/Kolkata")).toBe(
+      "Replaces the one issued at 10:15 AM.",
+    );
+    expect(reviseDialogReplacesCopy(rx(), "Asia/Kolkata")).not.toMatch(/\?/);
   });
 });
 

@@ -18,8 +18,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { useNextAppointmentRoute } from "@/hooks/useNextAppointmentRoute";
+import { prefetchNextConsult } from "@/lib/query/prefetch/next-consult";
 
 /** Match other cockpit toasts — top-right, above the header, not on Done. */
 const TOAST_CLASS =
@@ -37,6 +39,7 @@ export function AdvanceToNextPatient({
   token,
 }: AdvanceToNextPatientProps): JSX.Element | null {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { next, isLoading, isLastInQueue } = useNextAppointmentRoute({
     currentAppointmentId,
     token,
@@ -50,8 +53,16 @@ export function AdvanceToNextPatient({
     if (firedRef.current) return;
     if (!next) return;
     firedRef.current = true;
+    // Warm the route and the next cockpit's reads first. These stay in flight
+    // across the push, so the next patient's queries join them instead of
+    // starting cold — this path had no warm-up at all before.
+    router.prefetch(next.url);
+    prefetchNextConsult(queryClient, token, {
+      appointmentId: next.appointmentId,
+      patientId: next.patientId,
+    });
     router.push(next.url);
-  }, [next, router]);
+  }, [next, router, queryClient, token]);
 
   useEffect(() => {
     if (next || isLoading || !isLastInQueue) return;

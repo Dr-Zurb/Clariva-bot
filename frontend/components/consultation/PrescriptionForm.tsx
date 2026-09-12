@@ -6,8 +6,6 @@ import {
   RxFormProvider,
   useRxForm,
   useOptionalRxForm,
-  medicinesFromPrescription,
-  investigationsFromPrescription,
   EMPTY_RX_MEDICINE,
   type RxFormFields,
   type RxMedicine,
@@ -20,7 +18,6 @@ import {
   registerPrescriptionAttachment,
   sendPrescriptionToPatient,
   createRxTemplate,
-  getLastPrescriptionInEpisode,
   getDoctorSettings,
 } from "@/lib/api";
 import type {
@@ -57,7 +54,6 @@ import {
 import { emitPreSendOutcome } from "@/lib/ehr/telemetry";
 import type { InteractionRow } from "@/lib/api/drug-interactions";
 import type { DrugMasterRow } from "@/types/drug-master";
-import { formatDate } from "@/lib/format-date";
 import {
   canSendPrescription,
   type CockpitState,
@@ -247,8 +243,6 @@ export default function PrescriptionForm(props: PrescriptionFormProps) {
     pageMarginBottomMm: number;
     pageMarginLeftMm: number;
   } | null>(null);
-  const [lastEpisodeRx, setLastEpisodeRx] =
-    useState<PrescriptionWithRelations | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [preSendWarnings, setPreSendWarnings] =
     useState<ReadonlyArray<PreSendWarning> | null>(null);
@@ -305,8 +299,6 @@ export default function PrescriptionForm(props: PrescriptionFormProps) {
       previewLoading={previewLoading}
       setPreviewLoading={setPreviewLoading}
       doctorMetaRef={doctorMetaRef}
-      lastEpisodeRx={lastEpisodeRx}
-      setLastEpisodeRx={setLastEpisodeRx}
       fileInputRef={fileInputRef}
       preSendWarnings={preSendWarnings}
       setPreSendWarnings={setPreSendWarnings}
@@ -400,10 +392,6 @@ type PrescriptionFormBodyProps = PrescriptionFormProps & {
     pageMarginBottomMm: number;
     pageMarginLeftMm: number;
   } | null>;
-  lastEpisodeRx: PrescriptionWithRelations | null;
-  setLastEpisodeRx: React.Dispatch<
-    React.SetStateAction<PrescriptionWithRelations | null>
-  >;
   fileInputRef: React.RefObject<HTMLInputElement>;
   preSendWarnings: ReadonlyArray<PreSendWarning> | null;
   setPreSendWarnings: React.Dispatch<
@@ -450,8 +438,6 @@ function PrescriptionFormBody({
   previewLoading,
   setPreviewLoading,
   doctorMetaRef,
-  lastEpisodeRx,
-  setLastEpisodeRx,
   fileInputRef,
   preSendWarnings,
   setPreSendWarnings,
@@ -854,10 +840,6 @@ function PrescriptionFormBody({
     // exact same snapshot if the form hasn't changed in between.
   };
 
-  // ==========================================================================
-  // EHR Sub-batch B1 / T2.14 â€” "Copy from last visit"
-  // ==========================================================================
-
   // ppd-03 (DL-4 / DL-5): cockpit-lifted entry-mode forces structured for
   // the lifetime of the form. The radio is hidden by the parent branch
   // above; this ensures the underlying state agrees.
@@ -874,85 +856,6 @@ function PrescriptionFormBody({
       medicines.filter((m) => m.medicineName.trim()).length
     );
   }, [medicines, onMedicineCountChange]);
-
-  // Fetch the prior Rx in the same care episode (if any) on mount /
-  // appointment change. The endpoint returns `prescription: null` when
-  // there's no prior visit â€” the CTA hides itself in that case.
-  useEffect(() => {
-    let cancelled = false;
-    getLastPrescriptionInEpisode(token, appointmentId, prescriptionIdRef.current)
-      .then((res) => {
-        if (cancelled) return;
-        setLastEpisodeRx(res.data.prescription);
-      })
-      .catch(() => {
-        // Soft-fail. The CTA simply won't render â€” doctors can still
-        // hand-author the Rx. We don't surface this as a top-level
-        // error to keep the form quiet on episode lookup quirks.
-        if (!cancelled) setLastEpisodeRx(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [appointmentId, token]);
-
-  /**
-   * Apply a prior prescription to the form. Same merge semantics as
-   * <TemplatePicker>'s Apply (template fields win when present;
-   * medicines are wholesale-replaced) â€” keeps the doctor's mental
-   * model consistent across the two surfaces.
-   *
-   * Confirmation prompt is intentionally simple in v1; the spec
-   * mentions a "Pick fieldsâ€¦" chooser as a future enhancement.
-   */
-  const handleCopyFromLastVisit = () => {
-    if (!lastEpisodeRx) return;
-
-    const dateStr = lastEpisodeRx.created_at
-      ? formatDate(lastEpisodeRx.created_at)
-      : "your previous visit";
-    const ok = window.confirm(
-      `Copy diagnosis, plan, and medicines from your last visit on ${dateStr}?`
-    );
-    if (!ok) return;
-
-    if (lastEpisodeRx.cc !== null) setField("cc", lastEpisodeRx.cc ?? "");
-    if (lastEpisodeRx.hopi !== null) setField("hopi", lastEpisodeRx.hopi ?? "");
-    if (lastEpisodeRx.provisional_diagnosis !== null)
-      setField(
-        "provisionalDiagnosis",
-        lastEpisodeRx.provisional_diagnosis ?? ""
-      );
-    const inv = investigationsFromPrescription(lastEpisodeRx);
-    if (inv) setField("investigationsOrders", inv);
-    if (lastEpisodeRx.follow_up !== null)
-      setField("followUp", lastEpisodeRx.follow_up ?? "");
-    {
-      const mergedAdvice = [
-        lastEpisodeRx.advice?.trim() || "",
-        lastEpisodeRx.patient_education?.trim() || "",
-      ]
-        .filter(Boolean)
-        .join("\n");
-      if (mergedAdvice) setField("advice", mergedAdvice);
-    }
-    if (lastEpisodeRx.clinical_notes !== null)
-      setField("clinicalNotes", lastEpisodeRx.clinical_notes ?? "");
-
-    const meds = medicinesFromPrescription(lastEpisodeRx);
-    if ((lastEpisodeRx.prescription_medicines ?? []).length > 0) {
-      dispatch({ type: "SET_MEDICINES", medicines: meds });
-      setMedicineInstanceIds(generateInstanceIds(meds.length));
-    } else {
-      dispatch({
-        type: "SET_MEDICINES",
-        medicines: [{ ...EMPTY_RX_MEDICINE }],
-      });
-      setMedicineInstanceIds(generateInstanceIds(1));
-    }
-
-    setSuccessMessage(`Copied from your last visit (${dateStr}).`);
-  };
 
   /**
    * Internal: actually save + send. Extracted so both the
@@ -1304,34 +1207,20 @@ function PrescriptionFormBody({
 
   return (
     <div className="space-y-4">
-      {/* Header utilities: T2.14 copy-from-last + T2.13 SaveStatus.
-          Legacy "Prescription" title + full-Rx "Templates" button removed —
-          Plan / Subjective / Objective own scoped template entry points. */}
-      {(lastEpisodeRx || !actionsInFooter) && (
+      {/* Header utilities: SaveStatus. Last-visit copy lives on the
+          section strips + Repeat last Rx (lvc-14). */}
+      {!actionsInFooter ? (
         <div className="flex items-center justify-end gap-2">
-          {lastEpisodeRx && (
-            <button
-              type="button"
-              onClick={handleCopyFromLastVisit}
-              disabled={saving}
-              className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
-              title="Copy diagnosis, plan, and medicines from the previous visit in this care episode"
-            >
-              Copy from last visit
-            </button>
-          )}
-          {!actionsInFooter && (
-            <SaveStatus
-              state={autoSaveState}
-              savedAt={autoSavedAt}
-              isPending={autoSavePending}
-              onRetry={() => {
-                void autoSaveRetry();
-              }}
-            />
-          )}
+          <SaveStatus
+            state={autoSaveState}
+            savedAt={autoSavedAt}
+            isPending={autoSavePending}
+            onRetry={() => {
+              void autoSaveRetry();
+            }}
+          />
         </div>
-      )}
+      ) : null}
 
       {/* T2.12 — Templates picker (keyboard / Plan shortcut via onOpenTemplates). */}
       <TemplatePicker

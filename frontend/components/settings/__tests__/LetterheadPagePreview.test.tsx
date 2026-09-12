@@ -370,7 +370,7 @@ describe("LetterheadPagePreview", () => {
     }
   });
 
-  it("keeps the Rx heading and header with the first medicine row", () => {
+  it("keeps the Rx heading with the column header, then lists every medicine", () => {
     render(
       <LetterheadPagePreview
         model={{
@@ -379,11 +379,33 @@ describe("LetterheadPagePreview", () => {
             patientName: "Sneha Kulkarni",
             medicines: [
               {
+                name: "Gel antacid",
+                dose: "2 spoons",
+                route: "Oral",
+                frequency: "",
+                duration: "",
+                instructions: "After food",
+              },
+              {
                 name: "Naproxen 250 mg",
                 dose: "1 tab (250 mg)",
                 route: "Oral",
                 frequency: "Twice daily",
                 duration: "3 days",
+              },
+              {
+                name: "Dicyclomine",
+                dose: "",
+                route: "",
+                frequency: "As needed",
+                duration: "",
+              },
+              {
+                name: "Diclofenac",
+                dose: "",
+                route: "",
+                frequency: "As needed",
+                duration: "",
               },
             ],
           },
@@ -391,11 +413,15 @@ describe("LetterheadPagePreview", () => {
       />,
     );
 
-    const start = screen.getByText("Naproxen 250 mg").closest("[data-rx-start]");
+    const start = screen.getByText("Rx").closest("[data-rx-start]");
     expect(start).toBeTruthy();
-    expect(start?.textContent).toMatch(/Rx/);
     expect(start?.textContent).toMatch(/Medicine/);
     expect(start?.querySelector("thead")).toBeTruthy();
+    expect(start?.textContent).not.toMatch(/Gel antacid/);
+    expect(screen.getByText("Gel antacid")).toBeInTheDocument();
+    expect(screen.getByText("Naproxen 250 mg")).toBeInTheDocument();
+    expect(screen.getByText("Dicyclomine")).toBeInTheDocument();
+    expect(screen.getByText("Diclofenac")).toBeInTheDocument();
   });
 
   it("renders the live visit instead of the settings sample", () => {

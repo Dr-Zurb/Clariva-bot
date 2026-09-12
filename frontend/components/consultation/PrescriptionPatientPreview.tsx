@@ -136,6 +136,7 @@ export function letterheadPreviewModelFromRx(
     patientTextSize: vm.patientTextSize ?? undefined,
     bodyTextSize: vm.bodyTextSize ?? undefined,
     registrationNumber: vm.registrationNumber,
+    generatedAtLabel: vm.visitDateLabel,
     rx: {
       patientName: vm.patientName,
       patientAge: vm.patientAge,

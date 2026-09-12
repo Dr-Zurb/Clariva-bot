@@ -70,7 +70,7 @@ New locks (on the product plan): **RXL-DL-13** revision is a new row · **RXL-DL
 | When | Behaviour |
 |---|---|
 | Same day, not yet finished | Fully editable, no banner. |
-| Same day, finished, doctor reopens | Fully editable, plus a strip: "Issued 10:15 AM. Changes will create Version 2." |
+| Same day, finished, doctor reopens | Fully editable, plus a strip: "Issued 10:15 AM. The next print or send replaces that slip." |
 | Same day, viewing a superseded version | Read-only, marked superseded, reprintable. |
 | Any later day | Past-visit: greyed reference + repeat (`lvc`). |
 

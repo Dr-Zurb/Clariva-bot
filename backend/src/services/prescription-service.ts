@@ -21,6 +21,7 @@ import {
   LastSubjectiveForPatient,
   LastVisitMedicine,
   LastVisitSummary,
+  LastVisitVitals,
   SocialHistoryStructured,
   FamilyHistoryStructured,
   PastSurgicalHistoryStructured,
@@ -488,9 +489,12 @@ export async function listPrescriptionsByAppointment(
     throw new ForbiddenError('Appointment not found');
   }
 
+  // Single round-trip: embed medicines + attachments via FK (np-10 / R-FANOUT).
+  // This read gates the cockpit — the doctor cannot type until it lands — so the
+  // per-prescription fan-out it replaced was paid on every patient switch.
   const { data: prescriptions, error: rxError } = await admin
     .from('prescriptions')
-    .select('*')
+    .select('*, prescription_medicines(*), prescription_attachments(*)')
     .eq('appointment_id', appointmentId)
     .order('created_at', { ascending: false });
 
@@ -498,24 +502,20 @@ export async function listPrescriptionsByAppointment(
     handleSupabaseError(rxError, correlationId);
   }
 
-  const result: PrescriptionWithRelations[] = [];
-  for (const rx of prescriptions || []) {
-    const [medResult, attResult] = await Promise.all([
-      admin
-        .from('prescription_medicines')
-        .select('*')
-        .eq('prescription_id', rx.id)
-        .order('sort_order'),
-      admin.from('prescription_attachments').select('*').eq('prescription_id', rx.id),
-    ]);
-    if (medResult.error) handleSupabaseError(medResult.error, correlationId);
-    if (attResult.error) handleSupabaseError(attResult.error, correlationId);
-    result.push({
-      ...(rx as Prescription),
-      prescription_medicines: (medResult.data || []) as PrescriptionMedicine[],
-      prescription_attachments: (attResult.data || []) as PrescriptionAttachment[],
-    });
-  }
+  type EmbedRow = Prescription & {
+    prescription_medicines: PrescriptionMedicine[] | null;
+    prescription_attachments: PrescriptionAttachment[] | null;
+  };
+
+  const result: PrescriptionWithRelations[] = ((prescriptions ?? []) as EmbedRow[]).map(
+    (row) => ({
+      ...row,
+      prescription_medicines: [...(row.prescription_medicines ?? [])].sort(
+        (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)
+      ),
+      prescription_attachments: row.prescription_attachments ?? [],
+    })
+  );
 
   await logDataAccess(correlationId, userId, 'prescription', undefined);
   return result;
@@ -1041,6 +1041,36 @@ export async function getLastSubjectiveForPatient(
 // Last visit summary (last-visit-context · lvc-01)
 // ============================================================================
 
+const LAST_VISIT_VITAL_COLUMNS: ReadonlyArray<
+  [string, keyof LastVisitVitals]
+> = [
+  ['vitals_bp_systolic', 'vitalsBpSystolic'],
+  ['vitals_bp_diastolic', 'vitalsBpDiastolic'],
+  ['vitals_hr', 'vitalsHr'],
+  ['vitals_rr', 'vitalsRr'],
+  ['vitals_temp_c', 'vitalsTempC'],
+  ['vitals_spo2', 'vitalsSpo2'],
+  ['vitals_wt_kg', 'vitalsWtKg'],
+  ['vitals_ht_cm', 'vitalsHtCm'],
+  ['vitals_pain_score', 'vitalsPainScore'],
+  ['vitals_glucose_mg_dl', 'vitalsGlucoseMgDl'],
+  ['vitals_gcs_total', 'vitalsGcsTotal'],
+  ['vitals_head_circumference_cm', 'vitalsHeadCircumferenceCm'],
+  ['vitals_muac_cm', 'vitalsMuacCm'],
+  ['vitals_waist_cm', 'vitalsWaistCm'],
+];
+
+function mapLastVisitVitals(row: Record<string, unknown>): LastVisitVitals | null {
+  const vitals: LastVisitVitals = {};
+  for (const [column, key] of LAST_VISIT_VITAL_COLUMNS) {
+    const value = row[column];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      vitals[key] = value;
+    }
+  }
+  return Object.keys(vitals).length > 0 ? vitals : null;
+}
+
 function mapLastVisitMedicine(row: PrescriptionMedicine): LastVisitMedicine | null {
   const medicineName = typeof row.medicine_name === 'string' ? row.medicine_name.trim() : '';
   if (!medicineName) return null;
@@ -1120,7 +1150,7 @@ export async function getLastVisitSummary(
   const { data: row, error } = await admin
     .from('prescriptions')
     .select(
-      'id, created_at, complaints, diagnoses_json, provisional_diagnosis, investigations_orders, advice, follow_up, follow_up_value, follow_up_unit, hopi, family_history, family_history_structured, social_history, social_history_structured, past_surgical_history, past_surgical_history_structured, examination_findings, examination_json, assessment_note, clinical_notes, referral, custom_subsections, assessment_custom_sections, plan_custom_sections, prescription_medicines(*)'
+      'id, created_at, complaints, diagnoses_json, provisional_diagnosis, investigations_orders, advice, follow_up, follow_up_value, follow_up_unit, hopi, family_history, family_history_structured, social_history, social_history_structured, past_surgical_history, past_surgical_history_structured, examination_findings, examination_json, assessment_note, clinical_notes, referral, custom_subsections, assessment_custom_sections, plan_custom_sections, vitals_bp_systolic, vitals_bp_diastolic, vitals_hr, vitals_rr, vitals_temp_c, vitals_spo2, vitals_wt_kg, vitals_ht_cm, vitals_pain_score, vitals_glucose_mg_dl, vitals_gcs_total, vitals_head_circumference_cm, vitals_muac_cm, vitals_waist_cm, prescription_medicines(*)'
     )
     .eq('patient_id', patientId)
     .eq('doctor_id', userId)
@@ -1159,6 +1189,20 @@ export async function getLastVisitSummary(
     assessment_custom_sections: LastVisitSummary['assessmentCustomSections'] | null;
     plan_custom_sections: LastVisitSummary['planCustomSections'] | null;
     prescription_medicines: PrescriptionMedicine[] | null;
+    vitals_bp_systolic?: number | null;
+    vitals_bp_diastolic?: number | null;
+    vitals_hr?: number | null;
+    vitals_rr?: number | null;
+    vitals_temp_c?: number | null;
+    vitals_spo2?: number | null;
+    vitals_wt_kg?: number | null;
+    vitals_ht_cm?: number | null;
+    vitals_pain_score?: number | null;
+    vitals_glucose_mg_dl?: number | null;
+    vitals_gcs_total?: number | null;
+    vitals_head_circumference_cm?: number | null;
+    vitals_muac_cm?: number | null;
+    vitals_waist_cm?: number | null;
   };
 
   const namedComplaints = (rx.complaints ?? []).filter(
@@ -1178,6 +1222,7 @@ export async function getLastVisitSummary(
     diagnoses: rx.diagnoses_json ?? [],
     provisionalDiagnosis: rx.provisional_diagnosis,
     medicines,
+    vitals: mapLastVisitVitals(rx as Record<string, unknown>),
     investigationsOrders: rx.investigations_orders,
     advice: rx.advice,
     followUp: rx.follow_up,

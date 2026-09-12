@@ -3,8 +3,8 @@ import { ValidationError } from '../../../src/utils/errors';
 
 describe('validateReissuePrescriptionBody', () => {
   it('accepts a known preset', () => {
-    expect(validateReissuePrescriptionBody({ reason: 'dose_correction' })).toEqual({
-      reason: 'dose_correction',
+    expect(validateReissuePrescriptionBody({ reason: 'treatment_change' })).toEqual({
+      reason: 'treatment_change',
     });
   });
 
@@ -15,6 +15,15 @@ describe('validateReissuePrescriptionBody', () => {
   it('refuses an unknown preset', () => {
     expect(() =>
       validateReissuePrescriptionBody({ reason: 'typo' })
+    ).toThrow(ValidationError);
+  });
+
+  it('refuses the retired 2026-09-10 presets', () => {
+    expect(() =>
+      validateReissuePrescriptionBody({ reason: 'dose_correction' })
+    ).toThrow(ValidationError);
+    expect(() =>
+      validateReissuePrescriptionBody({ reason: 'clarified_for_pharmacy' })
     ).toThrow(ValidationError);
   });
 });

@@ -13,12 +13,19 @@
  * @see docs/Work/Daily-plans/May 2026/09-05-2026/Tasks/task-cp-02-prev-now-next-strip.md
  */
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { prefetchNextConsult } from "@/lib/query/prefetch/next-consult";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { matchesOpdSearch } from "@/components/opd/shared/opdSearchMatcher";
+import { formatDeskAgeSex } from "@/lib/desk/queue";
 import { buildCockpitAppointmentPathFromCurrentOrigin } from "@/lib/cockpit/back-target";
 import { todayLocalIso } from "@/lib/dates";
 import { formatTime as formatClockTime } from "@/lib/format-date";
@@ -224,6 +231,163 @@ function SlotChip({ entry, slot, source, quiet = false }: SlotChipProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Today's-OPD picker — opens from "All" so switching never leaves the cockpit
+// ---------------------------------------------------------------------------
+
+/**
+ * The pipeline entry carries no phone or MRN, so the shared OPD matcher works
+ * on name and token here. Token search (`#7`) falls back to position exactly
+ * like the OPD hub.
+ */
+function pickerMatchable(entry: PipelineEntry) {
+  return {
+    patientName: entry.label ?? "",
+    medicalRecordNumber: null,
+    patientPhone: "",
+    reasonForVisit: null,
+    serviceLabel: null,
+    position: entry.position,
+    ...(entry.tokenNumber != null ? { tokenNumber: entry.tokenNumber } : {}),
+  };
+}
+
+interface QueuePickerProps {
+  entries: PipelineEntry[];
+  source: "queue" | "schedule";
+  currentAppointmentId: string | null;
+  positionLabel: string;
+  viewAllHref: string;
+  token: string;
+}
+
+function QueuePicker({
+  entries,
+  source,
+  currentAppointmentId,
+  positionLabel,
+  viewAllHref,
+  token,
+}: QueuePickerProps) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
+
+  const matches = useMemo(
+    () => entries.filter((entry) => matchesOpdSearch(pickerMatchable(entry), query)),
+    [entries, query]
+  );
+
+  useEffect(() => {
+    if (!open) setQuery("");
+  }, [open]);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Today's OPD, ${positionLabel}`}
+          className="flex items-center gap-1.5 whitespace-nowrap rounded text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          All
+          <span className="tabular-nums" data-testid="cockpit-queue-position">
+            {positionLabel}
+          </span>
+          <ChevronDown className="h-3 w-3 shrink-0" aria-hidden />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-80 p-0"
+        data-testid="cockpit-queue-picker"
+      >
+        <div className="border-b border-border p-2">
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search name or #token"
+            aria-label="Search today's OPD"
+            className="w-full rounded border border-input bg-background px-2 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+        </div>
+        <ul className="max-h-80 overflow-y-auto overscroll-y-contain py-1">
+          {matches.length === 0 ? (
+            <li className="px-3 py-6 text-center text-xs text-muted-foreground">
+              No one in today&apos;s OPD matches that.
+            </li>
+          ) : (
+            matches.map((entry) => {
+              const isCurrent = entry.id === currentAppointmentId;
+              const ageSex = formatDeskAgeSex(entry.ageYears, entry.sex);
+              // Warm the chart on intent so the jump lands ready to type.
+              const warm = () =>
+                prefetchNextConsult(queryClient, token, {
+                  appointmentId: entry.id,
+                  patientId: entry.patientId,
+                });
+              return (
+                <li key={entry.id}>
+                  <Link
+                    href={buildCockpitAppointmentPathFromCurrentOrigin(
+                      entry.id,
+                      searchParams
+                    )}
+                    onClick={() => setOpen(false)}
+                    onMouseEnter={warm}
+                    onFocus={warm}
+                    aria-current={isCurrent ? "page" : undefined}
+                    className={cn(
+                      "flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted focus-visible:outline-none focus-visible:bg-muted",
+                      isCurrent && "bg-muted/60 font-medium"
+                    )}
+                  >
+                    <StatusDot status={entry.status} />
+                    <span className="w-9 shrink-0 tabular-nums text-xs text-muted-foreground">
+                      {tokenLabel(entry, source)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">
+                      {entry.label || "Walk-in"}
+                    </span>
+                    {ageSex !== "—" ? (
+                      <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
+                        {ageSex}
+                      </span>
+                    ) : null}
+                    {isCurrent ? (
+                      <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                        Here
+                      </span>
+                    ) : entry.appointmentDate ? (
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {formatTime(entry.appointmentDate)}
+                      </span>
+                    ) : null}
+                  </Link>
+                </li>
+              );
+            })
+          )}
+        </ul>
+        <div className="flex items-center justify-between gap-2 border-t border-border px-3 py-2">
+          <span aria-live="polite" className="text-xs text-muted-foreground">
+            {matches.length} {matches.length === 1 ? "patient" : "patients"}
+          </span>
+          <Link
+            href={viewAllHref}
+            onClick={() => setOpen(false)}
+            className="rounded text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            Open OPD tab
+          </Link>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Separator
 // ---------------------------------------------------------------------------
 
@@ -277,13 +441,21 @@ export function CockpitQueueRail({
 
   const nextForPrefetch =
     currentIndex !== null ? (entries[currentIndex + 1] ?? null) : null;
+  // Both chips are one click away, so warm both. Prev was cold before, which is
+  // why stepping back always felt slower than stepping forward.
+  const prevForPrefetch =
+    currentIndex !== null && currentIndex > 0
+      ? (entries[currentIndex - 1] ?? null)
+      : null;
   useEffect(() => {
-    if (!nextForPrefetch) return;
-    router.prefetch(nextForPrefetch.href);
-    prefetchNextConsult(queryClient, token, {
-      appointmentId: nextForPrefetch.id,
-      patientId: nextForPrefetch.patientId,
-    });
+    for (const entry of [nextForPrefetch, prevForPrefetch]) {
+      if (!entry) continue;
+      router.prefetch(entry.href);
+      prefetchNextConsult(queryClient, token, {
+        appointmentId: entry.id,
+        patientId: entry.patientId,
+      });
+    }
     // Depend on stable fields — the entry object is new each pipeline memo.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -293,6 +465,9 @@ export function CockpitQueueRail({
     nextForPrefetch?.id,
     nextForPrefetch?.href,
     nextForPrefetch?.patientId,
+    prevForPrefetch?.id,
+    prevForPrefetch?.href,
+    prevForPrefetch?.patientId,
   ]);
 
   // Visibility gates — inline still mounts so the identity title can center.
@@ -328,19 +503,14 @@ export function CockpitQueueRail({
         >
           <div className="flex shrink-0 items-center gap-1.5">
             {showAll ? (
-              <Link
-                href={viewAllHref}
-                className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
-                aria-label={`All, ${positionLabel}`}
-              >
-                All
-                <span
-                  className="tabular-nums"
-                  data-testid="cockpit-queue-position"
-                >
-                  {positionLabel}
-                </span>
-              </Link>
+              <QueuePicker
+                entries={entries}
+                source={source}
+                currentAppointmentId={currentAppointmentId}
+                positionLabel={positionLabel}
+                viewAllHref={viewAllHref}
+                token={token}
+              />
             ) : null}
           </div>
           <div className="grid min-w-0 flex-1 grid-cols-[1fr_auto_1fr] items-center gap-x-10">

@@ -17,23 +17,12 @@ const LastVisitSummaryContext = createContext<LastVisitSummary | null>(null);
  * Live cockpit fetch. Mount once above SOAP so strips share one query (LVC-DL-6).
  * Isolated section tests omit this provider and see `null`.
  */
-export function LastVisitSummaryProvider({
-  children,
-  value,
-}: {
-  children: ReactNode;
-  /** Test / story override — skips the network read when provided. */
-  value?: LastVisitSummary | null;
-}): JSX.Element {
+function LastVisitSummaryLive({ children }: { children: ReactNode }): JSX.Element {
   const rx = useOptionalRxForm();
   const token = rx?.token ?? "";
   const appointmentId = rx?.appointmentId ?? "";
   const patientId = rx?.patientId ?? "";
-  const enabled =
-    value === undefined &&
-    Boolean(token) &&
-    Boolean(appointmentId) &&
-    Boolean(patientId);
+  const enabled = Boolean(token) && Boolean(appointmentId) && Boolean(patientId);
 
   const query = useQuery({
     ...lastVisitSummaryQueryOptions(token, patientId, appointmentId),
@@ -42,9 +31,23 @@ export function LastVisitSummaryProvider({
 
   return createElement(
     LastVisitSummaryContext.Provider,
-    { value: value !== undefined ? value : (query.data ?? null) },
+    { value: query.data ?? null },
     children
   );
+}
+
+export function LastVisitSummaryProvider({
+  children,
+  value,
+}: {
+  children: ReactNode;
+  /** Test / story override — skips the network read when provided. */
+  value?: LastVisitSummary | null;
+}): JSX.Element {
+  if (value !== undefined) {
+    return createElement(LastVisitSummaryContext.Provider, { value }, children);
+  }
+  return createElement(LastVisitSummaryLive, null, children);
 }
 
 export function useLastVisitSummary(): LastVisitSummary | null {

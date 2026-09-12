@@ -1,8 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import {
-  getAppointmentDeskVitals,
-  getLastPrescriptionInEpisode,
-} from "@/lib/api";
+import { getAppointmentDeskVitals } from "@/lib/api";
 import type { GhostVitals } from "@/components/cockpit/rx/inputs/VitalsExtended";
 import type { PatientVitalsReading } from "@/types/patient-chart";
 import type { DeskVitalsSeedPayload } from "@/lib/cockpit/desk-vitals-seed";
@@ -10,8 +7,10 @@ import {
   vitalsByStorage,
   type ColumnVitalKey,
 } from "@/lib/cockpit/vitals-schema";
+import type { LastVisitSummary } from "@/lib/api/last-visit-summary";
 import type { PrescriptionWithRelations } from "@/types/prescription";
 import { queryKeys } from "@/lib/query/keys";
+import { POLL_INTERVAL } from "@/lib/query/polling";
 import { STALE } from "@/lib/query/stale";
 
 /** Maps each column-backed vital key to its canonical column on a prescription row. */
@@ -46,6 +45,21 @@ export function extractLastVisitGhostVitals(
   return ghost;
 }
 
+/** lvc-14 — ghosts come from the canonical last-visit payload, not last-in-episode. */
+export function ghostVitalsFromLastVisitSummary(
+  summary: LastVisitSummary | null | undefined
+): GhostVitals | null {
+  const raw = summary?.vitals;
+  if (!raw) return null;
+  const ghost: GhostVitals = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      ghost[key as keyof GhostVitals] = value;
+    }
+  }
+  return Object.keys(ghost).length > 0 ? ghost : null;
+}
+
 function extractDeskGhost(row: PatientVitalsReading): GhostVitals {
   const ghost: GhostVitals = {};
   if (typeof row.bp_systolic === "number")
@@ -76,16 +90,24 @@ export function deskVitalsSeedFromReading(
   return { ghost: hasGhostValues(ghost) ? ghost : null, note };
 }
 
+/** True once the desk has actually recorded something for this visit. */
+export function hasDeskVitalsReading(
+  payload: DeskVitalsSeedPayload | undefined
+): boolean {
+  return Boolean(payload?.ghost || payload?.note);
+}
+
+/**
+ * Failures reject on purpose. Swallowing them cached "no reading" as a
+ * success, so a blip — or a GET before check-in — left the visit looking
+ * vitals-less until the doctor reloaded the page.
+ */
 export async function fetchDeskVisitVitalsPayload(
   token: string,
   appointmentId: string
 ): Promise<DeskVitalsSeedPayload> {
-  try {
-    const res = await getAppointmentDeskVitals(token, appointmentId);
-    return deskVitalsSeedFromReading(res.data.vitals);
-  } catch {
-    return { ghost: null, note: null };
-  }
+  const res = await getAppointmentDeskVitals(token, appointmentId);
+  return deskVitalsSeedFromReading(res.data.vitals);
 }
 
 export function deskVitalsQueryOptions(token: string, appointmentId: string) {
@@ -94,21 +116,16 @@ export function deskVitalsQueryOptions(token: string, appointmentId: string) {
     queryFn: () => fetchDeskVisitVitalsPayload(token, appointmentId),
     staleTime: STALE.LIVE,
     refetchOnWindowFocus: true,
-  } as const;
-}
-
-export function lastVisitVitalsQueryOptions(
-  token: string,
-  appointmentId: string
-) {
-  return {
-    queryKey: queryKeys.consult(appointmentId).lastVisitVitals(),
-    queryFn: async (): Promise<GhostVitals | null> => {
-      const res = await getLastPrescriptionInEpisode(token, appointmentId);
-      const rx = res.data.prescription;
-      return rx ? extractLastVisitGhostVitals(rx) : null;
-    },
-    staleTime: STALE.CLINICAL,
+    // The desk saves from its own device, so nothing in this tab invalidates
+    // the key. Keep watching until the reading lands, then stop — the cockpit
+    // seeds the first reading and never overwrites the doctor after that.
+    refetchInterval: (query: {
+      state: { data: DeskVitalsSeedPayload | undefined };
+    }): number | false =>
+      hasDeskVitalsReading(query.state.data)
+        ? false
+        : POLL_INTERVAL.DESK_VITALS,
+    refetchIntervalInBackground: false,
   } as const;
 }
 

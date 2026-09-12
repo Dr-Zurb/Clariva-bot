@@ -8,14 +8,12 @@
 
 When the doctor reopens a finished note the same day, the form is fully editable and a strip says so:
 
-> Issued 10:15 AM. Changes will create Version 2.
+> Issued 10:15 AM. The next print or send replaces that slip.
 
-The version advances on **re-issue**, never on autosave. On re-issue after Finish, collect a required reason from one-tap presets (RXL-Q8):
+The version advances on **re-issue**, never on autosave. On re-issue after Finish, collect a required reason from one-tap presets (RXL-Q8, relocked 2026-09-11):
 
-- dose correction
-- drug unavailable
-- clarified for pharmacy
-- added missed item
+- treatment change
+- item added
 - other
 
 **Program / Phase:** rx-lifecycle · Phase 3-B

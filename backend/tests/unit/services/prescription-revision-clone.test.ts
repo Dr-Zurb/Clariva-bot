@@ -198,7 +198,7 @@ function mockReissue(opts: {
     version: nextRevisionVersion(opts.source.version),
     supersedes_id: opts.source.id,
     superseded_by_id: null,
-    revision_reason: 'dose_correction',
+    revision_reason: 'treatment_change',
     sent_to_patient_at: null,
     printed_at: null,
     created_at: '2026-09-09T18:40:00.000Z',
@@ -289,14 +289,14 @@ describe('rxl-22 revision clone builders', () => {
   it('rejects a missing or unknown revision reason', () => {
     expect(() => parseRevisionReason('')).toThrow(ValidationError);
     expect(() => parseRevisionReason('typo')).toThrow(ValidationError);
-    expect(parseRevisionReason('dose_correction')).toBe('dose_correction');
+    expect(parseRevisionReason('treatment_change')).toBe('treatment_change');
   });
 
   it('copies every clinical and visit field and resets revision / delivery stamps', () => {
     const source = sourceRx();
     const issuedAt = '2026-09-09T18:40:00.000Z';
     const insert = buildRevisionParentInsert(source, {
-      reason: 'dose_correction',
+      reason: 'treatment_change',
       issuedAt,
     });
 
@@ -317,7 +317,7 @@ describe('rxl-22 revision clone builders', () => {
     expect(insert.version).toBe(2);
     expect(insert.supersedes_id).toBe(V1_ID);
     expect(insert.superseded_by_id).toBeNull();
-    expect(insert.revision_reason).toBe('dose_correction');
+    expect(insert.revision_reason).toBe('treatment_change');
     expect(insert.issued_at).toBe(issuedAt);
     expect(insert.attested_at).toBe(issuedAt);
     expect(insert.sent_to_patient_at).toBeNull();
@@ -363,7 +363,7 @@ describe('reissuePrescriptionAsRevision', () => {
 
     const result = await reissuePrescriptionAsRevision(
       V1_ID,
-      'dose_correction',
+      'treatment_change',
       CORR,
       DOCTOR_ID
     );
@@ -399,7 +399,7 @@ describe('reissuePrescriptionAsRevision', () => {
   it('refuses a draft (not finished) and an already-superseded row', async () => {
     mockReissue({ source: sourceRx({ attested_at: null }) });
     await expect(
-      reissuePrescriptionAsRevision(V1_ID, 'dose_correction', CORR, DOCTOR_ID)
+      reissuePrescriptionAsRevision(V1_ID, 'treatment_change', CORR, DOCTOR_ID)
     ).rejects.toMatchObject({
       name: 'ConflictError',
       details: { reason: 'not_issued' },
@@ -409,7 +409,7 @@ describe('reissuePrescriptionAsRevision', () => {
       source: sourceRx({ superseded_by_id: V2_ID }),
     });
     await expect(
-      reissuePrescriptionAsRevision(V1_ID, 'dose_correction', CORR, DOCTOR_ID)
+      reissuePrescriptionAsRevision(V1_ID, 'treatment_change', CORR, DOCTOR_ID)
     ).rejects.toMatchObject({
       name: 'ConflictError',
       details: { reason: 'superseded' },
@@ -423,7 +423,7 @@ describe('reissuePrescriptionAsRevision', () => {
     });
 
     await expect(
-      reissuePrescriptionAsRevision(V1_ID, 'dose_correction', CORR, DOCTOR_ID)
+      reissuePrescriptionAsRevision(V1_ID, 'treatment_change', CORR, DOCTOR_ID)
     ).rejects.toBeInstanceOf(ConflictError);
 
     expect(deletes).toContain(V2_ID);
@@ -433,7 +433,7 @@ describe('reissuePrescriptionAsRevision', () => {
   it('does not belong to another doctor', async () => {
     mockReissue({ source: sourceRx({ doctor_id: 'someone-else' }) });
     await expect(
-      reissuePrescriptionAsRevision(V1_ID, 'dose_correction', CORR, DOCTOR_ID)
+      reissuePrescriptionAsRevision(V1_ID, 'treatment_change', CORR, DOCTOR_ID)
     ).rejects.toMatchObject({ name: 'NotFoundError' });
   });
 });

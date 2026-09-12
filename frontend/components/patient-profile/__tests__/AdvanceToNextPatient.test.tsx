@@ -1,12 +1,20 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import { AdvanceToNextPatient } from "@/components/patient-profile/AdvanceToNextPatient";
 
 const push = vi.fn();
+const routerPrefetch = vi.fn();
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push }),
+  useRouter: () => ({ push, prefetch: routerPrefetch }),
+}));
+
+const mockPrefetchNextConsult = vi.fn();
+
+vi.mock("@/lib/query/prefetch/next-consult", () => ({
+  prefetchNextConsult: (...args: unknown[]) => mockPrefetchNextConsult(...args),
 }));
 
 const mockUseNextAppointmentRoute = vi.fn();
@@ -14,6 +22,19 @@ const mockUseNextAppointmentRoute = vi.fn();
 vi.mock("@/hooks/useNextAppointmentRoute", () => ({
   useNextAppointmentRoute: (opts: unknown) => mockUseNextAppointmentRoute(opts),
 }));
+
+function renderAdvance() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const ui = (
+    <QueryClientProvider client={queryClient}>
+      <AdvanceToNextPatient currentAppointmentId="appt-1" token="t" />
+    </QueryClientProvider>
+  );
+  const result = render(ui);
+  return { ...result, rerenderAdvance: () => result.rerender(ui) };
+}
 
 describe("AdvanceToNextPatient", () => {
   beforeEach(() => {
@@ -28,6 +49,7 @@ describe("AdvanceToNextPatient", () => {
     mockUseNextAppointmentRoute.mockReturnValue({
       next: {
         appointmentId: "appt-2",
+        patientId: "pat-2",
         url: "/dashboard/appointments/appt-2",
         label: "Mohit K (#5)",
         modality: "in_clinic",
@@ -38,7 +60,7 @@ describe("AdvanceToNextPatient", () => {
       isLastInQueue: false,
     });
 
-    render(<AdvanceToNextPatient currentAppointmentId="appt-1" token="t" />);
+    renderAdvance();
 
     await waitFor(() => {
       expect(push).toHaveBeenCalledWith("/dashboard/appointments/appt-2");
@@ -51,6 +73,7 @@ describe("AdvanceToNextPatient", () => {
     mockUseNextAppointmentRoute.mockReturnValue({
       next: {
         appointmentId: "appt-2",
+        patientId: "pat-2",
         url: "/dashboard/appointments/appt-2",
         label: "Mohit K (#5)",
         modality: "in_clinic",
@@ -61,7 +84,7 @@ describe("AdvanceToNextPatient", () => {
       isLastInQueue: false,
     });
 
-    render(<AdvanceToNextPatient currentAppointmentId="appt-1" token="t" />);
+    renderAdvance();
     await waitFor(() => {
       expect(push).toHaveBeenCalledTimes(1);
     });
@@ -73,6 +96,7 @@ describe("AdvanceToNextPatient", () => {
     mockUseNextAppointmentRoute.mockReturnValue({
       next: {
         appointmentId: "appt-2",
+        patientId: "pat-2",
         url: "/dashboard/appointments/appt-2",
         label: "Mohit K (#5)",
         modality: "in_clinic",
@@ -83,10 +107,8 @@ describe("AdvanceToNextPatient", () => {
       isLastInQueue: false,
     });
 
-    const { rerender } = render(
-      <AdvanceToNextPatient currentAppointmentId="appt-1" token="t" />
-    );
-    rerender(<AdvanceToNextPatient currentAppointmentId="appt-1" token="t" />);
+    const { rerenderAdvance } = renderAdvance();
+    rerenderAdvance();
 
     await waitFor(() => {
       expect(push).toHaveBeenCalledTimes(1);
@@ -101,7 +123,7 @@ describe("AdvanceToNextPatient", () => {
       isLastInQueue: false,
     });
 
-    render(<AdvanceToNextPatient currentAppointmentId="appt-1" token="t" />);
+    renderAdvance();
 
     expect(push).not.toHaveBeenCalled();
     expect(screen.getByRole("status")).toHaveTextContent(
@@ -117,7 +139,7 @@ describe("AdvanceToNextPatient", () => {
       isLastInQueue: true,
     });
 
-    render(<AdvanceToNextPatient currentAppointmentId="appt-1" token="t" />);
+    renderAdvance();
 
     expect(push).not.toHaveBeenCalled();
     expect(screen.getByRole("status")).toHaveTextContent(
@@ -133,7 +155,7 @@ describe("AdvanceToNextPatient", () => {
       isLastInQueue: false,
     });
 
-    render(<AdvanceToNextPatient currentAppointmentId="appt-1" token="t" />);
+    renderAdvance();
 
     expect(push).not.toHaveBeenCalled();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -148,7 +170,7 @@ describe("AdvanceToNextPatient", () => {
       isLastInQueue: true,
     });
 
-    render(<AdvanceToNextPatient currentAppointmentId="appt-1" token="t" />);
+    renderAdvance();
     expect(screen.getByRole("status")).toHaveTextContent(
       "No more patients in the queue"
     );
@@ -158,5 +180,37 @@ describe("AdvanceToNextPatient", () => {
     });
 
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("warms the next cockpit before pushing to it", async () => {
+    mockUseNextAppointmentRoute.mockReturnValue({
+      next: {
+        appointmentId: "appt-2",
+        patientId: "pat-2",
+        url: "/dashboard/appointments/appt-2",
+        label: "Mohit K (#5)",
+        modality: "in_clinic",
+        positionLabel: "#5 of 12",
+      },
+      isLoading: false,
+      error: null,
+      isLastInQueue: false,
+    });
+
+    renderAdvance();
+
+    await waitFor(() => {
+      expect(push).toHaveBeenCalledTimes(1);
+    });
+    expect(routerPrefetch).toHaveBeenCalledWith("/dashboard/appointments/appt-2");
+    expect(mockPrefetchNextConsult).toHaveBeenCalledWith(
+      expect.anything(),
+      "t",
+      { appointmentId: "appt-2", patientId: "pat-2" }
+    );
+    // In flight before the navigation, so the next patient's reads join them.
+    expect(mockPrefetchNextConsult.mock.invocationCallOrder[0]!).toBeLessThan(
+      push.mock.invocationCallOrder[0]!
+    );
   });
 });
