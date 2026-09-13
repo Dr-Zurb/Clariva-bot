@@ -23,10 +23,13 @@ export function MarketingFooter() {
             className="h-7 w-7"
           />
           <p className="text-sm text-[hsl(var(--halo-ink))]/60">
-            Built for doctors on social media.
+            Turn your audience into your practice.
           </p>
         </div>
-        <nav aria-label="Legal" className="flex flex-wrap items-center gap-x-6 gap-y-2">
+        <nav
+          aria-label="Legal"
+          className="flex flex-wrap items-center gap-x-6 gap-y-2"
+        >
           {LEGAL_LINKS.map((link) => (
             <Link
               key={link.href}
@@ -39,9 +42,20 @@ export function MarketingFooter() {
         </nav>
       </div>
       <div className="border-t border-black/5">
-        <p className="mx-auto max-w-6xl px-4 py-4 text-xs text-[hsl(var(--halo-ink))]/50 sm:px-6">
-          © 2026 Halo Aid. All rights reserved.
-        </p>
+        <div className="mx-auto max-w-6xl space-y-1 px-4 py-4 text-xs leading-relaxed text-[hsl(var(--halo-ink))]/50 sm:px-6">
+          <p>HALO AID PRIVATE LIMITED (CIN U62090PB2026PTC069487)</p>
+          <address className="not-italic">
+            Gali No. 10, Shiv Nagar, Batala, Gurdaspur - 143505, Punjab, India
+            {" · "}
+            <a
+              href="mailto:founder@haloaid.com"
+              className="underline-offset-4 hover:text-[hsl(var(--halo-navy))] hover:underline"
+            >
+              founder@haloaid.com
+            </a>
+          </address>
+          <p>© 2026 Halo Aid. All rights reserved.</p>
+        </div>
       </div>
     </footer>
   );

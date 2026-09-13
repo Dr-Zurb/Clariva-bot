@@ -65,12 +65,25 @@ export function LegalShell({ children, activeHref }: LegalShellProps) {
       </main>
 
       <footer className="border-t border-black/5">
-        <p className="mx-auto max-w-3xl px-4 py-6 text-xs text-muted-foreground sm:px-6">
-          © 2026 Halo Aid.{" "}
-          <Link href="/" className="text-primary underline-offset-4 hover:underline">
-            Back to home
-          </Link>
-        </p>
+        <div className="mx-auto max-w-3xl space-y-1 px-4 py-6 text-xs leading-relaxed text-muted-foreground sm:px-6">
+          <p>HALO AID PRIVATE LIMITED (CIN U62090PB2026PTC069487)</p>
+          <address className="not-italic">
+            Gali No. 10, Shiv Nagar, Batala, Gurdaspur - 143505, Punjab, India
+            {" · "}
+            <a
+              href="mailto:founder@haloaid.com"
+              className="text-primary underline-offset-4 hover:underline"
+            >
+              founder@haloaid.com
+            </a>
+          </address>
+          <p>
+            © 2026 Halo Aid.{" "}
+            <Link href="/" className="text-primary underline-offset-4 hover:underline">
+              Back to home
+            </Link>
+          </p>
+        </div>
       </footer>
     </div>
   );
