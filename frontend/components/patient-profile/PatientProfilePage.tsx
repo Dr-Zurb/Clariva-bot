@@ -17,17 +17,21 @@ import {
 import { getDoctorSettingsShared } from "@/lib/api/doctor-settings-shared";
 import type { Appointment, ConsultationModality } from "@/types/appointment";
 import CockpitHeader from "@/components/patient-profile/PatientProfileHeader";
+import { CockpitLeaveGuard } from "@/components/patient-profile/CockpitLeaveGuard";
 import {
-  CockpitLeaveGuard,
-  type CockpitLeaveExit,
-} from "@/components/patient-profile/CockpitLeaveGuard";
-import { PatientRibbon } from "@/components/patient-profile/PatientRibbon";
+  CockpitContextRow,
+  CockpitContextSurface,
+} from "@/components/patient-profile/CockpitContextRow";
 import { clearConsultSteppedAway } from "@/lib/cockpit/consult-stepped-away";
 import type { ConsultationLauncherHandle } from "@/components/consultation/ConsultationLauncher";
 import { useDashboardLiveFocus } from "@/components/layout/DashboardLiveFocusContext";
+import { RxCommandBar } from "@/components/cockpit/rx/command-bar/RxCommandBar";
 import CommandBar from "@/components/patient-profile/CommandBar";
 import KeyboardHelpHost from "@/components/patient-profile/KeyboardHelpHost";
 import CockpitV3Shell from "@/components/patient-profile/v3/CockpitV3Shell";
+import { cancelStorageKey } from "@/components/consultation/cockpit/NextPatientCountdown";
+import { AdvanceToNextPatient } from "@/components/patient-profile/AdvanceToNextPatient";
+import { isPrintAdvanceHeld } from "@/lib/cockpit/rx-print-advance";
 import {
   ConsultSurfaceHost,
   ConsultSurfaceProvider,
@@ -42,13 +46,22 @@ import {
   TELEMED_VIDEO_LAYOUT_STORAGE_KEY,
   WALKIN_LAYOUT_STORAGE_KEY,
 } from "@/lib/patient-profile/layout";
+import { TELE_LIVE_SEED_ID } from "@/lib/patient-profile/v3/default-layouts";
 import type {
   TelemedVideoContext,
   CockpitTemplate,
 } from "@/lib/patient-profile/templates";
 import { SafetyStickyStrip } from "@/components/cockpit/middle/SafetyStickyStrip";
+import { DeskVitalsSectionNoteSeed } from "@/components/cockpit/rx/inputs/useLastVisitVitals";
+import { LastVisitSummaryProvider } from "@/hooks/useLastVisitSummary";
+import { VisitDescribeFormBar } from "@/components/cockpit/rx/subjective/VisitDescribeBar";
+import { VisitNarrativeAmendmentHost } from "@/components/cockpit/rx/subjective/VisitNarrativeAmendment";
 import { CockpitRxActionDock } from "@/components/cockpit/rx/CockpitRxActionDock";
-import { RxFormProvider } from "@/components/cockpit/rx/RxFormContext";
+import {
+  RxFormProvider,
+  useRxForm,
+} from "@/components/cockpit/rx/RxFormContext";
+import { RxLockProvider } from "@/components/cockpit/rx/useRxLock";
 import { RxSafetyProvider } from "@/components/cockpit/rx/RxSafetyContext";
 import { RxFormActionsBridgeProvider } from "@/components/cockpit/rx/RxFormActionsContext";
 import { PrescriptionFormShellProvider } from "@/components/cockpit/rx/PrescriptionFormShellContext";
@@ -64,6 +77,19 @@ import {
   trackCockpitPolishVisualSystemLanded,
 } from "@/lib/patient-profile/telemetry";
 
+/** Flip locally so wrap-up can navigate before the POST returns. */
+export function markAppointmentFinishedLocally(
+  appointment: Appointment
+): Appointment {
+  const session = appointment.consultation_session;
+  return {
+    ...appointment,
+    status: "completed",
+    consultation_session:
+      session?.status === "live" ? { ...session, status: "ended" } : session,
+  };
+}
+
 interface PatientProfilePageProps {
   appointment: Appointment;
   token: string;
@@ -74,7 +100,7 @@ interface PatientProfilePageProps {
   panes?: PaneDefinition[];
   /**
    * cv2-03: optional layout persistence namespace (distinct per route).
-   * Persisted under `patient-profile/v4-tree-layout::<storageKey>`.
+   * Persisted under `patient-profile/v5-tree-layout::<storageKey>`.
    */
   storageKey?: string;
 }
@@ -106,11 +132,34 @@ export default function PatientProfilePage({
   // ── Finish-visit / start-visit state ──────────────────────────────────────
   const [startBusy, setStartBusy] = useState(false);
   const [finishBusy, setFinishBusy] = useState(false);
+  const finishInFlightRef = useRef(false);
   const [, setFinishError] = useState<string | null>(null);
   const finishErrorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [leaveExit, setLeaveExit] = useState<CockpitLeaveExit | null>(null);
-  const leaveExitRef = useRef<CockpitLeaveExit | null>(null);
-  leaveExitRef.current = leaveExit;
+  /**
+   * Post-finish automove. `ended` flips the template to `review`, which
+   * renders `<EndedConsultBody>` instead of `<EndedCard>` — so pf-11 has no
+   * host in this cockpit. We mount `<AdvanceToNextPatient>` ourselves, but
+   * only for a visit finished in this session; reviewing an old completed
+   * visit must not navigate away.
+   */
+  const [advanceAfterFinish, setAdvanceAfterFinish] = useState(false);
+
+  useEffect(() => {
+    setAdvanceAfterFinish(false);
+  }, [appt.id]);
+
+  const armAdvance = useCallback((appointmentId: string) => {
+    // A Print earlier on this visit parked pf-11; finishing re-enables it
+    // unless a print dialog is still open (navigation closes Chrome's preview).
+    if (!isPrintAdvanceHeld()) {
+      try {
+        sessionStorage.removeItem(cancelStorageKey(appointmentId));
+      } catch {
+        // private mode / SSR
+      }
+    }
+    setAdvanceAfterFinish(true);
+  }, []);
 
   const clearFinishErrorLater = useCallback(() => {
     if (finishErrorTimer.current) clearTimeout(finishErrorTimer.current);
@@ -260,9 +309,10 @@ export default function PatientProfilePage({
   }, []);
 
   const handleFinishVisit = useCallback(async (): Promise<boolean> => {
-    if (finishBusy) return false;
+    if (finishBusy || finishInFlightRef.current) return false;
     if (appt.status === "completed") {
       clearConsultSteppedAway(appt.id);
+      armAdvance(appt.id);
       return true;
     }
     if (appt.status === "cancelled" || appt.status === "no_show") {
@@ -272,24 +322,39 @@ export default function PatientProfilePage({
       clearFinishErrorLater();
       return false;
     }
+    const appointmentId = appt.id;
+    const previous = appt;
+    finishInFlightRef.current = true;
     setFinishError(null);
     setFinishBusy(true);
-    try {
-      const res = await postAppointmentWrapUp(token, appt.id, {});
-      setAppt(res.data.appointment);
-      clearConsultSteppedAway(appt.id);
-      return true;
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to finish visit";
-      setFinishError(message);
-      clearFinishErrorLater();
-      console.error("[PatientProfilePage] Finish visit failed:", err);
-      return false;
-    } finally {
-      setFinishBusy(false);
-    }
-  }, [appt.id, appt.status, finishBusy, token, clearFinishErrorLater]);
+    setAppt((curr) =>
+      curr.id === appointmentId ? markAppointmentFinishedLocally(curr) : curr
+    );
+    clearConsultSteppedAway(appointmentId);
+    armAdvance(appointmentId);
+
+    void postAppointmentWrapUp(token, appointmentId, {})
+      .then((res) => {
+        setAppt((curr) =>
+          curr.id === appointmentId ? res.data.appointment : curr
+        );
+      })
+      .catch((err: unknown) => {
+        setAppt((curr) => (curr.id === appointmentId ? previous : curr));
+        setAdvanceAfterFinish(false);
+        const message =
+          err instanceof Error ? err.message : "Failed to finish visit";
+        setFinishError(message);
+        clearFinishErrorLater();
+        console.error("[PatientProfilePage] Finish visit failed:", err);
+      })
+      .finally(() => {
+        finishInFlightRef.current = false;
+        setFinishBusy(false);
+      });
+
+    return true;
+  }, [appt, finishBusy, token, clearFinishErrorLater, armAdvance]);
 
   // Re-entering the cockpit means the doctor is actively on this visit again.
   useEffect(() => {
@@ -396,70 +461,84 @@ export default function PatientProfilePage({
   void rxMedicineCount;
 
   // csf-01: one RxFormProvider per appointment page — sibling panes share form state.
+  // The route already fetched this appointment server-side, so hand the modality
+  // and status over instead of making the setup re-fetch them on every switch.
   const rxFormSetup = useRxFormProviderSetup({
     appointmentId: appt.id,
     patientId: appt.patient_id ?? null,
     token,
+    appointmentContext: {
+      consultationType: appt.consultation_type ?? null,
+      status: appt.status ?? null,
+    },
   });
 
   // Built-in tabs use a portal slot for Consult; test-injected `panesProp`
   // trees render their own bodies and must not mount the stable host.
   const useStableConsultHost = panesProp == null;
 
+  // `relative` is applied only while advancing so the shell's containing
+  // block is unchanged during normal use.
+  const advanceActive = advanceAfterFinish && state === "ended";
+
   const pageContent = (
-    // `-m-4 md:-m-6` cancels the parent `<DashboardShell>` `p-4 md:p-6`
-    // padding so the patient-profile shell bleeds edge-to-edge — matches
-    // v1 (`ConsultationCockpit.tsx` ~L2103). Without this, v2 renders
-    // visibly inset on every side (parity bug surfaced in ppr-11 QA).
-    //
-    // Height must add the cancelled vertical padding back: `h-full` only spans
-    // `<main>`'s content box, so with negative margins the shell stops short
-    // of the bottom. `calc(100% + padding)` fills `<main>`'s padding box so
-    // the footer sits flush. Requires a definite height chain on ancestors
-    // (DashboardShell row + main both use `min-h-0 flex-1`).
+    // DashboardShell drops main padding/inset on appointment-detail
+    // (`data-cockpit-focus`) so this wrapper is flush — no negative-margin
+    // bleed. `h-full` fills the inset-0 content box. Requires a definite
+    // height chain on ancestors (DashboardShell row + main both use
+    // `min-h-0 flex-1`).
     <ConsultSurfaceProvider>
-      <div className="-m-4 md:-m-6 flex h-[calc(100%_+_2rem)] md:h-[calc(100%_+_3rem)] min-h-0 flex-col overflow-hidden">
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
         {/* Mount keyboard handlers once at the page root. */}
         <CommandBar />
+        <RxCommandBar />
         <KeyboardHelpHost />
         {/* ── Cockpit header (includes CockpitQueueRail internally) ─────────── */}
-        <CockpitHeader
-          appointment={appt}
-          state={state}
-          token={token}
-          onStartConsult={handleStartConsult}
-          onReschedule={handleReschedule}
-          onCancelAppointment={handleCancelAppointment}
-          onMarkNoShow={handleMarkNoShow}
-          onFinishVisit={handleFinishVisit}
-          finishBusy={finishBusy}
-          startBusy={startBusy}
-        />
+        <CockpitContextSurface>
+          <CockpitHeader
+            appointment={appt}
+            state={state}
+            token={token}
+            onStartConsult={handleStartConsult}
+            onReschedule={handleReschedule}
+            onCancelAppointment={handleCancelAppointment}
+            onMarkNoShow={handleMarkNoShow}
+            onFinishVisit={handleFinishVisit}
+            finishBusy={finishBusy}
+            startBusy={startBusy}
+          />
+          <DeskVitalsSectionNoteSeed />
+          <CockpitContextRow appointment={appt} token={token} state={state} />
+        </CockpitContextSurface>
 
-        <CockpitLeaveGuard
+        <CockpitDraftLeaveGuard
           appointmentId={appt.id}
           active={state === "live" || state === "wrap_up"}
-          onLeaveIntent={setLeaveExit}
         />
 
-        {/* ── Patient context ribbon (crb-03) ──────────────────────────────── */}
-        {/* Mounted only for known-patient desktop views. Walk-in (!showChart)
-            skips the ribbon per DL-6/7. Mobile <lg viewport hidden via Tailwind.
-            Hidden during live consult so video + chart get the vertical room. */}
-        {showChart && state !== "live" && (
-          <div className="hidden lg:block">
-            <PatientRibbon appointment={appt} token={token} />
-          </div>
-        )}
-
         {/* ── Cockpit v3 shell — takes remaining vertical space ─────────────── */}
-        <div className="min-h-0 flex-1">
+        <div className={`min-h-0 flex-1${advanceActive ? " relative" : ""}`}>
           <CockpitV3Shell
             panes={v3Panes}
             storageKey={storageKey}
             token={token}
             consultActive={state === "live"}
-            safetyDock={<SafetyStickyStrip appointmentId={appt.id} />}
+            seedLayoutId={
+              appt.consultation_type === "video" ||
+              appt.consultation_type === "voice" ||
+              appt.consultation_type === "text"
+                ? TELE_LIVE_SEED_ID
+                : undefined
+            }
+            safetyDock={
+              <>
+                <VisitNarrativeAmendmentHost token={token} />
+                <SafetyStickyStrip appointmentId={appt.id} />
+              </>
+            }
+            describeSlot={
+              <VisitDescribeFormBar token={token} variant="embedded" />
+            }
             actionDock={
               <CockpitRxActionDock
                 state={state}
@@ -477,12 +556,7 @@ export default function PatientProfilePage({
                 }}
                 token={token}
                 finishBusy={finishBusy}
-                leaveExit={leaveExit}
-                onFinish={() => {
-                  void handleFinishVisit().then((ok) => {
-                    if (ok) leaveExitRef.current?.continueAfterFinish();
-                  });
-                }}
+                onFinish={handleFinishVisit}
                 onSent={handleRxSent}
               />
             }
@@ -499,6 +573,12 @@ export default function PatientProfilePage({
               ) : null
             }
           />
+          {advanceActive ? (
+            <AdvanceToNextPatient
+              currentAppointmentId={appt.id}
+              token={token}
+            />
+          ) : null}
         </div>
       </div>
     </ConsultSurfaceProvider>
@@ -511,19 +591,44 @@ export default function PatientProfilePage({
   const { key: rxProviderKey, ...rxProviderProps } = rxFormSetup.providerProps;
   return (
     <RxFormProvider key={rxProviderKey} {...rxProviderProps}>
-      <RxSafetyProvider token={token} patientId={appt.patient_id ?? null}>
-        <RxFormActionsBridgeProvider>
-          <PrescriptionFormShellProvider value={rxFormSetup}>
-            {/* Side-sheet host — mounted once here, above the v3 shell (which
-                lives inside `pageContent`), so any pane that calls
-                `useSideSheet()` (HistoryPane, PlanSection, Rx favorites /
-                previous-Rx) has a provider. This is the single documented
-                mount point (see SideSheetHost.tsx). */}
-            <SideSheetHost>{pageContent}</SideSheetHost>
-          </PrescriptionFormShellProvider>
-        </RxFormActionsBridgeProvider>
-      </RxSafetyProvider>
+      <LastVisitSummaryProvider>
+        <RxLockProvider
+          cockpitState={state}
+          noteClosed={rxFormSetup.noteClosed}
+        >
+          <RxSafetyProvider token={token} patientId={appt.patient_id ?? null}>
+            <RxFormActionsBridgeProvider>
+              <PrescriptionFormShellProvider value={rxFormSetup}>
+                {/* Side-sheet host — mounted once here, above the v3 shell (which
+                  lives inside `pageContent`), so any pane that calls
+                  `useSideSheet()` (HistoryPane, PlanSection, Rx favorites /
+                  previous-Rx) has a provider. This is the single documented
+                  mount point (see SideSheetHost.tsx). */}
+                <SideSheetHost>{pageContent}</SideSheetHost>
+              </PrescriptionFormShellProvider>
+            </RxFormActionsBridgeProvider>
+          </RxSafetyProvider>
+        </RxLockProvider>
+      </LastVisitSummaryProvider>
     </RxFormProvider>
+  );
+}
+
+/** Flush the Rx draft, then leave. Must render under `RxFormProvider`. */
+function CockpitDraftLeaveGuard({
+  appointmentId,
+  active,
+}: {
+  appointmentId: string;
+  active: boolean;
+}) {
+  const { autoSave } = useRxForm();
+  return (
+    <CockpitLeaveGuard
+      appointmentId={appointmentId}
+      active={active}
+      beforeLeave={autoSave.flush}
+    />
   );
 }
 

@@ -33,6 +33,10 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 vi.mock("@/components/cockpit/rx/inputs/VitalsGrid", () => ({
   VitalsGrid: () => <div data-testid="vitals-grid-stub" />,
 }));
+
+vi.mock("@/components/cockpit/rx/objective/DeskVisitDocumentsStrip", () => ({
+  DeskVisitDocumentsStrip: () => null,
+}));
 import {
   buildObjectiveTemplateApplyActions,
   buildObjectiveTemplateSavePayload,

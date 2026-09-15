@@ -13,11 +13,28 @@
  * @see docs/Work/Daily-plans/May 2026/09-05-2026/Tasks/task-cp-02-prev-now-next-strip.md
  */
 
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { ChevronRight } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
+import { prefetchNextConsult } from "@/lib/query/prefetch/next-consult";
+import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { matchesOpdSearch } from "@/components/opd/shared/opdSearchMatcher";
+import { formatDeskAgeSex } from "@/lib/desk/queue";
 import { buildCockpitAppointmentPathFromCurrentOrigin } from "@/lib/cockpit/back-target";
-import { todayLocalIso } from "@/lib/dates";
+import { formatOpdSessionDateLabel, todayLocalIso } from "@/lib/dates";
+import { formatTime as formatClockTime } from "@/lib/format-date";
 import {
   Tooltip,
   TooltipContent,
@@ -74,17 +91,12 @@ function truncate(s: string, max = 12): string {
 
 function formatTime(iso: string | null | undefined): string {
   if (!iso) return "";
-  return new Date(iso).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatClockTime(iso);
 }
 
 function formatWaited(iso: string | null | undefined): string {
   if (!iso) return "";
-  const diffMin = Math.round(
-    (Date.now() - new Date(iso).getTime()) / 60_000,
-  );
+  const diffMin = Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
   if (diffMin <= 0) return "On time";
   if (diffMin < 60) return `Waited ${diffMin}m`;
   const h = Math.floor(diffMin / 60);
@@ -92,27 +104,38 @@ function formatWaited(iso: string | null | undefined): string {
   return m > 0 ? `Waited ${h}h ${m}m` : `Waited ${h}h`;
 }
 
+/** Same #N the neighbor chips use — queue token when present, else 1-based position. */
+export function pipelineTokenLabel(
+  entry: PipelineEntry,
+  _source: "queue" | "schedule",
+): string {
+  if (entry.tokenNumber != null) {
+    return `#${entry.tokenNumber}`;
+  }
+  return `#${entry.position}`;
+}
+
 function tokenLabel(
   entry: PipelineEntry,
   source: "queue" | "schedule",
 ): string {
-  if (source === "queue" && entry.tokenNumber != null) {
-    return `#${entry.tokenNumber}`;
-  }
-  return `#${entry.position}`;
+  return pipelineTokenLabel(entry, source);
 }
 
 // ---------------------------------------------------------------------------
 // Empty placeholder chip
 // ---------------------------------------------------------------------------
 
-function EmptyPlaceholder() {
+function EmptyPlaceholder({ quiet = false }: { quiet?: boolean }) {
+  if (quiet) {
+    return <span aria-hidden className="inline-block min-w-[4rem]" />;
+  }
   return (
     <span
       aria-hidden
       className={cn(
         "inline-flex items-center rounded border border-dashed px-2 py-1",
-        "border-muted text-muted-foreground/60 text-xs select-none",
+        "border-muted text-muted-foreground/60 text-xs select-none"
       )}
     >
       —
@@ -128,19 +151,23 @@ interface SlotChipProps {
   entry: PipelineEntry;
   slot: "prev" | "now" | "next";
   source: "queue" | "schedule";
+  /** Borderless neighbor chip so the current title stays the focus. */
+  quiet?: boolean;
 }
 
-function SlotChip({ entry, slot, source }: SlotChipProps) {
+function SlotChip({ entry, slot, source, quiet = false }: SlotChipProps) {
   const searchParams = useSearchParams();
   const isNow = slot === "now";
   const token = tokenLabel(entry, source);
   const firstName = truncate(firstNameOf(entry.label), 12);
 
   const innerClass = cn(
-    "inline-flex items-center gap-1.5 rounded border text-xs",
-    isNow
-      ? "cursor-default border-primary bg-primary/5 px-3 py-1.5 font-semibold"
-      : "border-border bg-transparent px-2 py-1 font-normal text-muted-foreground hover:opacity-80 transition-opacity",
+    "inline-flex items-center gap-1.5 rounded text-xs",
+    quiet
+      ? "border-0 bg-transparent px-1 py-0.5 font-normal text-muted-foreground/70 hover:text-foreground"
+      : isNow
+        ? "cursor-default border border-primary bg-primary/5 px-3 py-1.5 font-semibold"
+        : "border border-border bg-transparent px-2 py-1 font-normal text-muted-foreground hover:opacity-80 transition-opacity",
   );
 
   const tooltipBody = (
@@ -159,7 +186,18 @@ function SlotChip({ entry, slot, source }: SlotChipProps) {
     </div>
   );
 
-  const chipInner = (
+  const chipInner = quiet ? (
+    <>
+      {slot === "prev" ? (
+        <ChevronLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      ) : null}
+      <span className="tabular-nums">{token}</span>
+      <span>{firstName}</span>
+      {slot === "next" ? (
+        <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      ) : null}
+    </>
+  ) : (
     <>
       <StatusDot status={entry.status} />
       <span className="tabular-nums">{token}</span>
@@ -182,7 +220,7 @@ function SlotChip({ entry, slot, source }: SlotChipProps) {
           <Link
             href={buildCockpitAppointmentPathFromCurrentOrigin(
               entry.id,
-              searchParams,
+              searchParams
             )}
             aria-label={`${slot === "prev" ? "Previous" : "Next"} patient: ${entry.label}`}
             className={innerClass}
@@ -195,6 +233,181 @@ function SlotChip({ entry, slot, source }: SlotChipProps) {
         {tooltipBody}
       </TooltipContent>
     </Tooltip>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Today's-OPD picker — opens from "All" so switching never leaves the cockpit
+// ---------------------------------------------------------------------------
+
+/**
+ * The pipeline entry carries no phone or MRN, so the shared OPD matcher works
+ * on name and token here. Token search (`#7`) falls back to position exactly
+ * like the OPD hub.
+ */
+function pickerMatchable(entry: PipelineEntry) {
+  return {
+    patientName: entry.label ?? "",
+    medicalRecordNumber: null,
+    patientPhone: "",
+    reasonForVisit: null,
+    serviceLabel: null,
+    position: entry.position,
+    ...(entry.tokenNumber != null ? { tokenNumber: entry.tokenNumber } : {}),
+  };
+}
+
+interface QueuePickerProps {
+  entries: PipelineEntry[];
+  source: "queue" | "schedule";
+  currentAppointmentId: string | null;
+  positionLabel: string;
+  viewAllHref: string;
+  token: string;
+  sessionLabel: string;
+}
+
+function QueuePicker({
+  entries,
+  source,
+  currentAppointmentId,
+  positionLabel,
+  viewAllHref,
+  token,
+  sessionLabel,
+}: QueuePickerProps) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
+
+  const matches = useMemo(
+    () => entries.filter((entry) => matchesOpdSearch(pickerMatchable(entry), query)),
+    [entries, query]
+  );
+
+  useEffect(() => {
+    if (!open) setQuery("");
+  }, [open]);
+
+  // Callback ref: Radix portals the list after `open`, so a layout effect
+  // on `open` often runs before the row exists. Skip while filtering.
+  const attachCurrentRow = useCallback(
+    (node: HTMLLIElement | null) => {
+      if (!node || query.trim()) return;
+      node.scrollIntoView({ block: "center", inline: "nearest" });
+    },
+    [query],
+  );
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`${sessionLabel}, ${positionLabel}`}
+          className="flex items-center gap-1.5 whitespace-nowrap rounded text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          All
+          <span className="tabular-nums" data-testid="cockpit-queue-position">
+            {positionLabel}
+          </span>
+          <ChevronDown className="h-3 w-3 shrink-0" aria-hidden />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-80 p-0"
+        data-testid="cockpit-queue-picker"
+      >
+        <div className="border-b border-border p-2">
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search name or #token"
+            aria-label={`Search ${sessionLabel}`}
+            className="w-full rounded border border-input bg-background px-2 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+        </div>
+        <ul className="max-h-80 overflow-y-auto overscroll-y-contain py-1">
+          {matches.length === 0 ? (
+            <li className="px-3 py-6 text-center text-xs text-muted-foreground">
+              No one in {sessionLabel} matches that.
+            </li>
+          ) : (
+            matches.map((entry) => {
+              const isCurrent = entry.id === currentAppointmentId;
+              const ageSex = formatDeskAgeSex(entry.ageYears, entry.sex);
+              // Warm the chart on intent so the jump lands ready to type.
+              const warm = () =>
+                prefetchNextConsult(queryClient, token, {
+                  appointmentId: entry.id,
+                  patientId: entry.patientId,
+                });
+              return (
+                <li
+                  key={entry.id}
+                  ref={isCurrent ? attachCurrentRow : undefined}
+                >
+                  <Link
+                    href={buildCockpitAppointmentPathFromCurrentOrigin(
+                      entry.id,
+                      searchParams
+                    )}
+                    onClick={() => setOpen(false)}
+                    onMouseEnter={warm}
+                    onFocus={warm}
+                    aria-current={isCurrent ? "page" : undefined}
+                    data-testid={
+                      isCurrent ? "cockpit-queue-picker-current" : undefined
+                    }
+                    className={cn(
+                      "flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted focus-visible:outline-none focus-visible:bg-muted",
+                      isCurrent && "bg-muted/60 font-medium"
+                    )}
+                  >
+                    <StatusDot status={entry.status} />
+                    <span className="w-9 shrink-0 tabular-nums text-xs text-muted-foreground">
+                      {tokenLabel(entry, source)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">
+                      {entry.label || "Walk-in"}
+                    </span>
+                    {ageSex !== "—" ? (
+                      <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
+                        {ageSex}
+                      </span>
+                    ) : null}
+                    {isCurrent ? (
+                      <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                        Here
+                      </span>
+                    ) : entry.appointmentDate ? (
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {formatTime(entry.appointmentDate)}
+                      </span>
+                    ) : null}
+                  </Link>
+                </li>
+              );
+            })
+          )}
+        </ul>
+        <div className="flex items-center justify-between gap-2 border-t border-border px-3 py-2">
+          <span aria-live="polite" className="text-xs text-muted-foreground">
+            {matches.length} {matches.length === 1 ? "patient" : "patients"}
+          </span>
+          <Link
+            href={viewAllHref}
+            onClick={() => setOpen(false)}
+            className="rounded text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            Open OPD tab
+          </Link>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -223,6 +436,20 @@ export interface CockpitQueueRailProps {
   state: CockpitState;
   /** Auth token forwarded to useDoctorDayPipeline. */
   token: string;
+  /**
+   * Visit calendar day (YYYY-MM-DD) when the cockpit URL has no `date`.
+   * URL `?date=` still wins inside the pipeline.
+   */
+  visitDate?: string | null;
+  /** `inline` is the identity-row trio. `rail` is the legacy band. */
+  variant?: "rail" | "inline";
+  /** Current-patient title rendered in the trio center (inline only). */
+  nowSlot?:
+    | ReactNode
+    | ((ctx: {
+        now: PipelineEntry | null;
+        source: "queue" | "schedule";
+      }) => ReactNode);
 }
 
 // ---------------------------------------------------------------------------
@@ -233,13 +460,49 @@ export function CockpitQueueRail({
   currentAppointmentId,
   state,
   token,
+  variant = "rail",
+  nowSlot,
+  visitDate,
 }: CockpitQueueRailProps): JSX.Element | null {
-  const { entries, currentIndex, totalCount, source, isLoading } =
-    useDoctorDayPipeline({ token, currentAppointmentId });
+  const queryClient = useQueryClient();
+  const router = useRouter();
+  const { entries, currentIndex, totalCount, source, isLoading, sessionDate } =
+    useDoctorDayPipeline({ token, currentAppointmentId, sessionDate: visitDate });
 
-  // Visibility gates
+  const nextForPrefetch =
+    currentIndex !== null ? (entries[currentIndex + 1] ?? null) : null;
+  // Both chips are one click away, so warm both. Prev was cold before, which is
+  // why stepping back always felt slower than stepping forward.
+  const prevForPrefetch =
+    currentIndex !== null && currentIndex > 0
+      ? (entries[currentIndex - 1] ?? null)
+      : null;
+  useEffect(() => {
+    for (const entry of [nextForPrefetch, prevForPrefetch]) {
+      if (!entry) continue;
+      router.prefetch(entry.href);
+      prefetchNextConsult(queryClient, token, {
+        appointmentId: entry.id,
+        patientId: entry.patientId,
+      });
+    }
+    // Depend on stable fields — the entry object is new each pipeline memo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    queryClient,
+    router,
+    token,
+    nextForPrefetch?.id,
+    nextForPrefetch?.href,
+    nextForPrefetch?.patientId,
+    prevForPrefetch?.id,
+    prevForPrefetch?.href,
+    prevForPrefetch?.patientId,
+  ]);
+
+  // Visibility gates — inline still mounts so the identity title can center.
   if (state === "terminal") return null;
-  if (!isLoading && entries.length === 0) return null;
+  if (variant !== "inline" && !isLoading && entries.length === 0) return null;
 
   // Three-slot derivation
   const prev =
@@ -250,27 +513,99 @@ export function CockpitQueueRail({
   const next =
     currentIndex !== null ? (entries[currentIndex + 1] ?? null) : null;
 
-  // "View all" links to today's OPD queue
-  const todayIso = todayLocalIso();
-  const viewAllHref = `/dashboard/opd-today?date=${todayIso}`;
+  // "View all" / Open OPD tab stay on the session the doctor opened, not today.
+  const viewAllHref = `/dashboard/opd-today?date=${sessionDate}`;
+  const sessionLabel =
+    sessionDate === todayLocalIso()
+      ? "Today's OPD"
+      : formatOpdSessionDateLabel(sessionDate);
+
+  const positionLabel =
+    currentIndex !== null
+      ? `${currentIndex + 1} of ${totalCount}`
+      : `${totalCount}`;
+
+  if (variant === "inline") {
+    const showAll = !isLoading && totalCount > 0;
+    return (
+      <TooltipProvider delayDuration={300}>
+        <nav
+          aria-label={`${sessionLabel} queue`}
+          data-testid="cockpit-queue-inline"
+          className="flex min-w-0 flex-1 items-center gap-2"
+        >
+          <div className="flex shrink-0 items-center gap-1.5">
+            {showAll ? (
+              <QueuePicker
+                entries={entries}
+                source={source}
+                currentAppointmentId={currentAppointmentId}
+                positionLabel={positionLabel}
+                viewAllHref={viewAllHref}
+                token={token}
+                sessionLabel={sessionLabel}
+              />
+            ) : null}
+          </div>
+          <div className="grid min-w-0 flex-1 grid-cols-[1fr_auto_1fr] items-center gap-x-10">
+            {isLoading ? (
+              <span className="col-start-2 text-xs text-muted-foreground">
+                …
+              </span>
+            ) : (
+              <>
+                <div className="hidden justify-end sm:flex">
+                  {prev ? (
+                    <SlotChip
+                      entry={prev}
+                      slot="prev"
+                      source={source}
+                      quiet
+                    />
+                  ) : (
+                    <EmptyPlaceholder quiet />
+                  )}
+                </div>
+                <div className="justify-self-center px-1">
+                  {typeof nowSlot === "function"
+                    ? nowSlot({ now, source })
+                    : (nowSlot ??
+                      (now ? (
+                        <SlotChip entry={now} slot="now" source={source} />
+                      ) : (
+                        <EmptyPlaceholder quiet />
+                      )))}
+                </div>
+                <div className="hidden justify-start sm:flex">
+                  {next ? (
+                    <SlotChip
+                      entry={next}
+                      slot="next"
+                      source={source}
+                      quiet
+                    />
+                  ) : (
+                    <EmptyPlaceholder quiet />
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </nav>
+      </TooltipProvider>
+    );
+  }
 
   return (
     <TooltipProvider delayDuration={300}>
-      {/* cs-07: Sticky on `<lg` (page-scroll layout) so the rail tracks the
-          cockpit header. On `lg+` the cockpit shell is a fixed-height flex
-          container whose columns scroll independently, so the page itself
-          doesn't scroll — the rail drops back into normal flow via
-          `lg:static`. The inline `top` (var-driven sticky offset) is harmless
-          on `lg:static` because `top` is ignored when position isn't
-          sticky/absolute/fixed/relative. */}
       <div
         className={cn(
           "flex items-center gap-2",
           "sticky lg:static z-20",
           "h-10 shrink-0 border-b border-border bg-background/95 backdrop-blur",
-          "px-4 lg:px-6",
+          "px-4 lg:px-6"
         )}
-        style={{ top: 'var(--cockpit-header-h)' }}
+        style={{ top: "var(--cockpit-header-h)" }}
       >
         {/* Loading state */}
         {isLoading && (
@@ -315,7 +650,7 @@ export function CockpitQueueRail({
             href={viewAllHref}
             className={cn(
               "ml-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground",
-              "hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded",
+              "hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
             )}
           >
             View all ({totalCount})

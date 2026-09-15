@@ -661,7 +661,12 @@ export default function VideoRoom({
   const patientStageBoxRef = useRef<HTMLDivElement>(null);
   const [fullscreenActive, setFullscreenActive] = useState(false);
   const [cockpitPaneWidth, setCockpitPaneWidth] = useState(0);
-  const { fillTabActive, exitFillTab } = useCallStageChrome();
+  const {
+    fillTabActive,
+    exitFillTab,
+    consultStagePinned,
+    pinConsultStage,
+  } = useCallStageChrome();
 
   const openInCallChat = useCallback(() => {
     setShowInCallChat(true);
@@ -1129,11 +1134,15 @@ export default function VideoRoom({
   useEffect(() => {
     if (typeof document === "undefined") return;
     const onFsChange = () => {
-      setFullscreenActive(Boolean(document.fullscreenElement));
+      if (role === "patient") {
+        setFullscreenActive(Boolean(document.fullscreenElement));
+        return;
+      }
+      setFullscreenActive(document.fullscreenElement === stageRef.current);
     };
     document.addEventListener("fullscreenchange", onFsChange);
     return () => document.removeEventListener("fullscreenchange", onFsChange);
-  }, []);
+  }, [role]);
 
   const handleExpandFullscreen = useCallback(() => {
     // Patient phone — fullscreen the document so the portaled chat
@@ -1144,15 +1153,20 @@ export default function VideoRoom({
     }
     const el = stageRef.current;
     if (!el) return;
-    if (document.fullscreenElement) {
+    if (document.fullscreenElement === el) {
       void document.exitFullscreen();
+      return;
+    }
+    if (document.fullscreenElement) {
+      // Cockpit (or another owner) already has document fullscreen — don't steal.
       return;
     }
     void el.requestFullscreen?.();
   }, [role]);
 
   const handleExitExpand = useCallback(() => {
-    if (document.fullscreenElement) {
+    const el = stageRef.current;
+    if (document.fullscreenElement && document.fullscreenElement === el) {
       void document.exitFullscreen();
     }
     if (fillTabActive) {
@@ -5008,6 +5022,12 @@ export default function VideoRoom({
           fullscreenActive={fullscreenActive}
           onExitExpand={
             fillTabActive || fullscreenActive ? handleExitExpand : undefined
+          }
+          consultStagePinned={isCockpit ? consultStagePinned : false}
+          onToggleConsultStagePin={
+            isCockpit
+              ? () => pinConsultStage(!consultStagePinned)
+              : undefined
           }
         />
       ) : null}

@@ -11,12 +11,19 @@
  *   - doctor_settings.opd_mode === 'queue'  → wraps useOpdSnapshot (pf-06)
  *   - anything else / unset                 → wraps useTodaysAppointments
  *
+ * Session day:
+ *   `?date=` from the cockpit URL, else `opts.sessionDate`, else today.
+ *   Past completed visits still belong on that day's list so prev/next work.
+ *
  * @see docs/Work/Daily-plans/May 2026/07-05-2026/Tasks/task-pf-07-doctor-day-pipeline-hook.md
  */
 
 import { useMemo } from "react";
+import { useSearchParams } from "next/navigation";
 import { useOpdSnapshot } from "@/hooks/useOpdSnapshot";
 import { useTodaysAppointments } from "@/components/dashboard/cockpit/useTodaysAppointments";
+import { COCKPIT_DATE_PARAM } from "@/lib/cockpit/back-target";
+import { resolveSessionDate } from "@/lib/dates";
 import type { DoctorQueueSessionRow } from "@/types/opd-doctor";
 import type { Appointment, ConsultationModality } from "@/types/appointment";
 
@@ -43,10 +50,16 @@ export interface PipelineEntry {
     | "no_show";
   /** 1-indexed position within the day's pipeline */
   position: number;
-  /** Token number — queue mode only, null in schedule mode */
+  /** Queue token when the visit has one; null for pure slot visits */
   tokenNumber?: number | null;
   /** Deep-link to the appointment detail page */
   href: string;
+  /** Linked patient row, when the visit has one. Used to warm the next cockpit. */
+  patientId?: string | null;
+  /** Years from DOB at fetch time; null for walk-ins or unset DOB. */
+  ageYears?: number | null;
+  /** Patient sex as stored on the chart; null when unset. */
+  sex?: string | null;
   /** True when this entry matches `opts.currentAppointmentId` */
   isCurrent: boolean;
   /**
@@ -72,11 +85,18 @@ export interface UseDoctorDayPipelineResult {
   source: "queue" | "schedule";
   isLoading: boolean;
   error: Error | null;
+  /** YYYY-MM-DD the pipeline was loaded for (URL `date`, else fallback, else today). */
+  sessionDate: string;
 }
 
 export interface UseDoctorDayPipelineOpts {
   token: string;
   currentAppointmentId?: string | null;
+  /**
+   * Visit calendar day (YYYY-MM-DD) used when `?date=` is absent.
+   * The cockpit URL `date` still wins so OPD navigation stays authoritative.
+   */
+  sessionDate?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -103,6 +123,9 @@ function mapQueueEntry(
     position,
     tokenNumber: row.tokenNumber,
     href: `/dashboard/appointments/${row.appointmentId}`,
+    patientId: row.patientId,
+    ageYears: row.age,
+    sex: row.gender,
     isCurrent: row.appointmentId === currentAppointmentId,
     appointmentDate: row.sessionDate ?? null,
     consultationType: "in_clinic",
@@ -119,8 +142,11 @@ function mapAppointment(
     label: appt.patient_name,
     status: appt.status as PipelineEntry["status"],
     position,
-    tokenNumber: null,
+    tokenNumber: appt.opd_token_number ?? null,
     href: `/dashboard/appointments/${appt.id}`,
+    patientId: appt.patient_id ?? null,
+    ageYears: appt.patient_age,
+    sex: appt.patient_sex,
     isCurrent: appt.id === currentAppointmentId,
     appointmentDate: appt.appointment_date ?? null,
     consultationType: appt.consultation_type ?? null,
@@ -136,11 +162,16 @@ export function useDoctorDayPipeline(
 ): UseDoctorDayPipelineResult {
   const token = opts?.token ?? "";
   const currentAppointmentId = opts?.currentAppointmentId;
+  const searchParams = useSearchParams();
+  const sessionDate = resolveSessionDate(
+    searchParams.get(COCKPIT_DATE_PARAM),
+    opts?.sessionDate,
+  );
 
   // Both hooks are always called — hooks must not be called conditionally.
   // Only one source's output is used in the final result (selected by opd_mode).
-  const opdSnap = useOpdSnapshot(token);
-  const schedule = useTodaysAppointments(token);
+  const opdSnap = useOpdSnapshot(token, sessionDate);
+  const schedule = useTodaysAppointments(token, sessionDate);
 
   // isOpdEnabled: null while settings load; true = queue; false = slot/telemed.
   const settingsLoaded = opdSnap.isOpdEnabled !== null;
@@ -156,8 +187,11 @@ export function useDoctorDayPipeline(
   const queueEntries = useMemo<PipelineEntry[]>(() => {
     if (!isQueueMode) return [];
 
+    // `activeAll`, not `active` — the latter is truncated to STRIP_MAX (5) for
+    // the dashboard strip. On a busy day that slice hid most of the queue from
+    // the rail and made "next patient" resolution return null.
     const allRows = [
-      ...opdSnap.active,
+      ...opdSnap.activeAll,
       ...opdSnap.done,
       ...opdSnap.missed,
     ].sort((a, b) => {
@@ -170,7 +204,7 @@ export function useDoctorDayPipeline(
     );
   }, [
     isQueueMode,
-    opdSnap.active,
+    opdSnap.activeAll,
     opdSnap.done,
     opdSnap.missed,
     currentAppointmentId,
@@ -248,5 +282,6 @@ export function useDoctorDayPipeline(
     source,
     isLoading,
     error,
+    sessionDate,
   };
 }

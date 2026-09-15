@@ -127,7 +127,14 @@ export default function AllergyClashBanner({
   // is rendered once per allergen.
   const groupedByAllergy = new Map<
     string,
-    { allergyId: string; allergen: string; severity: string; reaction: string | null; medicines: string[] }
+    {
+      allergyId: string;
+      allergen: string;
+      severity: string;
+      reaction: string | null;
+      medicines: string[];
+      reportedAtDesk: boolean;
+    }
   >();
   for (const m of unacked) {
     const existing = groupedByAllergy.get(m.allergyId);
@@ -142,10 +149,12 @@ export default function AllergyClashBanner({
         severity: SEVERITY_LABEL[m.severity],
         reaction: m.reaction,
         medicines: m.medicineName ? [m.medicineName] : [],
+        reportedAtDesk: m.reportedAtDesk === true,
       });
     }
   }
   const groups = Array.from(groupedByAllergy.values());
+  const hasDeskReported = groups.some((g) => g.reportedAtDesk);
 
   const handleAcknowledge = () => {
     const keys: string[] = [];
@@ -161,7 +170,11 @@ export default function AllergyClashBanner({
     <div
       role="alert"
       aria-live="polite"
-      className="rounded-md border border-red-300 bg-red-50 p-3 text-red-900"
+      className={
+        hasDeskReported
+          ? "rounded-md border border-amber-400 bg-amber-50 p-3 text-amber-950"
+          : "rounded-md border border-red-300 bg-red-50 p-3 text-red-900"
+      }
       data-testid="allergy-clash-banner"
     >
       <div className="flex items-start gap-2">
@@ -170,8 +183,16 @@ export default function AllergyClashBanner({
         </span>
         <div className="flex-1 space-y-2">
           <p className="text-sm font-semibold">
-            Allergy alert
-            <span className="ml-2 text-xs font-normal text-red-700">
+            {hasDeskReported
+              ? "Reported at desk, not confirmed"
+              : "Allergy alert"}
+            <span
+              className={
+                hasDeskReported
+                  ? "ml-2 text-xs font-normal text-amber-800"
+                  : "ml-2 text-xs font-normal text-red-700"
+              }
+            >
               {unacked.length} {unacked.length === 1 ? "match" : "matches"}
             </span>
           </p>
@@ -180,9 +201,17 @@ export default function AllergyClashBanner({
               <li key={g.allergyId} className="leading-snug">
                 <p>
                   <span className="font-medium">{g.allergen}</span>
-                  <span className="text-xs text-red-700">
+                  <span
+                    className={
+                      hasDeskReported
+                        ? "text-xs text-amber-800"
+                        : "text-xs text-red-700"
+                    }
+                  >
                     {" "}
-                    ({g.severity}
+                    ({g.reportedAtDesk
+                      ? "reported at desk, not confirmed"
+                      : g.severity}
                     {g.reaction ? ` — ${g.reaction}` : ""})
                   </span>
                 </p>

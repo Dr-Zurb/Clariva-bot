@@ -19,6 +19,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { PaneDefinition } from "@/lib/patient-profile/v3/foundation";
 import { useCockpitDndState } from "@/components/patient-profile/v3/CockpitDndContext";
+import {
+  DESTINATION_FLASH_CLASS,
+  useDestinationFlash,
+} from "@/lib/patient-profile/v3/destination-flash";
 import { cn } from "@/lib/utils";
 
 export const VISIBLE_TAB_LIMIT = 4;
@@ -297,6 +301,7 @@ export default function PaneTabStripV3({
   isTabDraggable = () => true,
   trailingActions,
 }: PaneTabStripV3Props): React.JSX.Element | null {
+  const { flashingPaneIds } = useDestinationFlash();
   const visiblePaneIds = paneIds.slice(0, VISIBLE_TAB_LIMIT);
   const overflowPaneIds = paneIds.slice(VISIBLE_TAB_LIMIT);
   // Per-tab × only when the leaf hosts multiple tabs; single-tab leaves use the
@@ -500,12 +505,12 @@ export default function PaneTabStripV3({
         <div
           data-pane-tabs-group-id={groupId}
           className={cn(
-            "flex h-10 min-w-0 shrink-0 items-stretch overflow-hidden border-b border-border/60 bg-muted/40",
+            "flex h-10 min-w-0 shrink-0 items-stretch overflow-hidden border-b border-border/60 bg-card",
             className,
           )}
         >
           <div
-            className="group/tabscroll relative z-10 min-w-0 flex-1 bg-muted/40"
+            className="group/tabscroll relative z-10 min-w-0 flex-1 bg-card"
             data-pane-tab-scroll
           >
             {scrollHints.canLeft ? (
@@ -562,6 +567,9 @@ export default function PaneTabStripV3({
                           aria-selected={isActive}
                           aria-controls={`pane-body-${paneId}`}
                           data-pane-tab-id={paneId}
+                          data-destination-flash={
+                            flashingPaneIds.has(paneId) ? "true" : "false"
+                          }
                           onClick={() => onActivateTab(paneId)}
                           onContextMenu={handleContextMenu(paneId)}
                           className={cn(
@@ -570,6 +578,7 @@ export default function PaneTabStripV3({
                             isActive
                               ? "font-semibold text-foreground shadow ring-border/60"
                               : "font-medium text-muted-foreground shadow-sm ring-border/50 hover:bg-muted/40 hover:text-foreground hover:shadow",
+                            flashingPaneIds.has(paneId) && DESTINATION_FLASH_CLASS,
                           )}
                         >
                           {Icon ? (
@@ -693,7 +702,7 @@ export default function PaneTabStripV3({
           {trailingActions || onCloseLeaf ? (
             <div
               data-testid="pane-tab-strip-trailing-actions"
-              className="relative z-0 flex min-w-0 shrink-0 items-center border-l border-border/40 bg-muted/40 px-1"
+              className="relative z-0 flex min-w-0 shrink-0 items-center border-l border-border/40 bg-card px-1"
             >
               {trailingActions}
               {onCloseLeaf ? (

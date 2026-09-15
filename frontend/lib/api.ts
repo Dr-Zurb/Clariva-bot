@@ -36,6 +36,7 @@ import type {
 import type {
   AllergyData,
   AllergiesListData,
+  AllergySectionNotesData,
   ConditionData,
   ConditionMedicationLinkData,
   ConditionsListData,
@@ -3219,10 +3220,13 @@ export interface LastPrescriptionInEpisodeData {
 
 export async function getLastPrescriptionInEpisode(
   token: string,
-  appointmentId: string
+  appointmentId: string,
+  excludePrescriptionId?: string | null
 ): Promise<ApiSuccess<LastPrescriptionInEpisodeData>> {
+  const params = new URLSearchParams({ appointmentId });
+  if (excludePrescriptionId) params.set("excludePrescriptionId", excludePrescriptionId);
   return request<LastPrescriptionInEpisodeData>(
-    `/api/v1/prescriptions/last-in-episode?appointmentId=${encodeURIComponent(appointmentId)}`,
+    `/api/v1/prescriptions/last-in-episode?${params.toString()}`,
     { token }
   );
 }
@@ -3233,6 +3237,48 @@ export async function getAppointmentDeskVitals(
 ): Promise<ApiSuccess<{ vitals: PatientVitalsReading | null }>> {
   return request<{ vitals: PatientVitalsReading | null }>(
     `/api/v1/appointments/${encodeURIComponent(appointmentId)}/desk-vitals`,
+    { token }
+  );
+}
+
+export async function getAppointmentVisitDocuments(
+  token: string,
+  appointmentId: string
+): Promise<ApiSuccess<{ documents: import("@/types/visit-documents").VisitDocument[] }>> {
+  return request<{ documents: import("@/types/visit-documents").VisitDocument[] }>(
+    `/api/v1/appointments/${encodeURIComponent(appointmentId)}/documents`,
+    { token }
+  );
+}
+
+export async function getAppointmentHistorySubmission(
+  token: string,
+  appointmentId: string
+): Promise<ApiSuccess<import("@/types/patient-history-submissions").HistorySubmissionView>> {
+  return request<import("@/types/patient-history-submissions").HistorySubmissionView>(
+    `/api/v1/appointments/${encodeURIComponent(appointmentId)}/history-submission`,
+    { token }
+  );
+}
+
+export async function getVisitDocumentPageDownloadUrl(
+  token: string,
+  appointmentId: string,
+  documentId: string,
+  pageId: string
+): Promise<ApiSuccess<{ downloadUrl: string }>> {
+  return request<{ downloadUrl: string }>(
+    `/api/v1/appointments/${encodeURIComponent(appointmentId)}/documents/${encodeURIComponent(documentId)}/pages/${encodeURIComponent(pageId)}/download-url`,
+    { token }
+  );
+}
+
+export async function listPatientVisitDocuments(
+  token: string,
+  patientId: string
+): Promise<ApiSuccess<{ documents: import("@/types/visit-documents").VisitDocument[] }>> {
+  return request<{ documents: import("@/types/visit-documents").VisitDocument[] }>(
+    `/api/v1/patients/${encodeURIComponent(patientId)}/chart/visit-documents`,
     { token }
   );
 }
@@ -3391,9 +3437,9 @@ export async function listRecentPrescriptionsByPatient(
  * @see backend/src/services/drug-master-service.ts
  * @see backend/src/routes/api/v1/drug-master.ts
  *
- * Hard-cap on `limit` is enforced server-side at 25 (anything above is
- * silently clamped); below 2 chars the server returns `[]` so the UI
- * dropdown should hide itself rather than fire a request.
+ * Hard-cap on `limit` is enforced server-side at 25 for typed queries
+ * (anything above is silently clamped). Empty `q` returns the full
+ * catalogue for the session cache; a single character still returns `[]`.
  */
 export interface DrugSearchResultsData {
   results: DrugMasterRow[];
@@ -3641,6 +3687,44 @@ export async function getPrescriptionUploadUrl(
 /**
  * Register attachment after upload. Requires auth token.
  */
+/**
+ * Copy a front-desk visit page into this prescription's objective attachments
+ * (DVP-Q3). Requires a doctor auth token. Returns the new attachment.
+ */
+export async function promoteVisitDocumentPageToPrescription(
+  token: string,
+  prescriptionId: string,
+  body: { appointmentId: string; documentId: string; pageId: string }
+): Promise<ApiSuccess<RegisterAttachmentData>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/prescriptions/${encodeURIComponent(prescriptionId)}/attachments/from-visit-page`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<RegisterAttachmentData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<RegisterAttachmentData>;
+}
+
 export async function registerPrescriptionAttachment(
   token: string,
   prescriptionId: string,
@@ -3760,6 +3844,40 @@ export interface PrescriptionPdfUrlData {
 /**
  * Send prescription to patient via DM/email. Requires auth token.
  */
+export async function reissuePrescription(
+  token: string,
+  prescriptionId: string,
+  reason: import("@/types/prescription").RevisionReason
+): Promise<ApiSuccess<PrescriptionData>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/prescriptions/${prescriptionId}/reissue`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ reason }),
+      cache: "no-store",
+    }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<PrescriptionData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<PrescriptionData>;
+}
+
 export async function sendPrescriptionToPatient(
   token: string,
   prescriptionId: string
@@ -3829,6 +3947,49 @@ export async function regeneratePrescriptionPdf(
  * existing prescription (no side effects beyond logging the doctor
  * action). Used by the "Copy share link" kebab item.
  */
+const PRESCRIPTION_PDF_FILENAME_FALLBACK = "prescription.pdf";
+
+export function filenameFromContentDisposition(header: string | null): string {
+  if (!header) return PRESCRIPTION_PDF_FILENAME_FALLBACK;
+  const quoted = /filename="([^"]+)"/i.exec(header);
+  if (quoted?.[1]) return quoted[1];
+  const unquoted = /filename=([^;]+)/i.exec(header);
+  if (unquoted?.[1]) return unquoted[1].trim();
+  return PRESCRIPTION_PDF_FILENAME_FALLBACK;
+}
+
+/**
+ * Doctor print / download — stream PDF bytes from the API (no storage hop).
+ */
+export async function fetchPrescriptionPdf(
+  token: string,
+  prescriptionId: string,
+): Promise<{ blob: Blob; filename: string }> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/prescriptions/${prescriptionId}/pdf`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    },
+  );
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as ApiError | Record<string, never>;
+    const message = isApiError(json)
+      ? json.error.message
+      : "Could not load prescription PDF";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return {
+    blob: await res.blob(),
+    filename: filenameFromContentDisposition(res.headers.get("Content-Disposition")),
+  };
+}
+
 export async function getPrescriptionPdfUrl(
   token: string,
   prescriptionId: string,
@@ -3956,8 +4117,8 @@ export async function updatePatientAllergySectionNotes(
   token: string,
   patientId: string,
   payload: UpdateAllergySectionNotesPayload,
-): Promise<ApiSuccess<{ notes: string | null }>> {
-  return patientChartMutate<{ notes: string | null }>(
+): Promise<ApiSuccess<AllergySectionNotesData>> {
+  return patientChartMutate<AllergySectionNotesData>(
     "PATCH",
     `/api/v1/patients/${encodeURIComponent(patientId)}/chart/allergies/notes`,
     token,
@@ -6091,6 +6252,8 @@ export async function getTelehealthQualityOverview(
 
 export interface OnboardingStatus {
   instagramConnected: boolean;
+  /** Absent on older payloads — treat as required. */
+  instagramRequired?: boolean;
   practiceInfoSet: boolean;
   pricingSet: boolean;
   availabilitySet: boolean;
@@ -6565,6 +6728,7 @@ export interface DoctorClinicStaffItem {
   displayName: string | null;
   role: string;
   status: AdminClinicStaffStatus;
+  capabilities?: string[];
   createdAt: string;
 }
 
@@ -6578,7 +6742,7 @@ export async function listDoctorClinicStaff(
 
 export async function provisionDoctorClinicStaff(
   token: string,
-  body: { email: string; displayName?: string }
+  body: { email: string; displayName?: string; capabilities?: string[] }
 ): Promise<
   ApiSuccess<{
     item: DoctorClinicStaffItem;
@@ -6640,7 +6804,7 @@ export async function deleteDoctorClinicStaff(
 export async function patchDoctorClinicStaff(
   token: string,
   id: string,
-  body: { status?: AdminClinicStaffStatus; displayName?: string }
+  body: { status?: AdminClinicStaffStatus; displayName?: string; capabilities?: string[] }
 ): Promise<ApiSuccess<{ staff: { id: string; status: AdminClinicStaffStatus } }>> {
   const res = await fetch(
     `${requireApiBaseUrl()}/api/v1/clinic-staff/${encodeURIComponent(id)}`,

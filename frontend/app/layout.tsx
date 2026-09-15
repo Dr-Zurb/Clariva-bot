@@ -25,7 +25,7 @@ export const metadata: Metadata = {
     default: "Halo Aid",
     template: "%s · Halo Aid",
   },
-  description: "Digital infrastructure for doctors operating on social media.",
+  description: "Turn your audience into your practice.",
   applicationName: "Halo Aid",
   manifest: "/manifest.json",
   icons: {
@@ -35,7 +35,7 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "Halo Aid",
-    description: "Digital infrastructure for doctors operating on social media.",
+    description: "Turn your audience into your practice.",
     type: "website",
     siteName: "Halo Aid",
     images: [{ url: "/brand/og.svg", width: 1200, height: 630 }],

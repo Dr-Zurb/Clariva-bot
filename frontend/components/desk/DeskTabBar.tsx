@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { CalendarDays, ClipboardPlus } from "lucide-react";
 
 import { useDeskTodayQuery } from "@/hooks/queries/useDeskTodayQuery";
+import { deskNavTodayLabel, deskShowsCheckInNav } from "@/lib/desk/capabilities";
 import { cn } from "@/lib/utils";
 
 const TABS = [
@@ -12,17 +13,29 @@ const TABS = [
   { href: "/desk/today", label: "Today", icon: CalendarDays, exact: true, badge: "waiting" as const },
 ] as const;
 
-export function DeskTabBar({ token }: { token: string }) {
+export function DeskTabBar({
+  token,
+  capabilities,
+}: {
+  token: string;
+  capabilities?: readonly string[];
+}) {
   const pathname = usePathname();
   const { counts } = useDeskTodayQuery(token);
   const waiting = counts.waiting;
+  const todayLabel = deskNavTodayLabel(capabilities);
+  const tabs = TABS.filter(
+    (tab) => tab.href !== "/desk" || deskShowsCheckInNav(capabilities),
+  ).map((tab) =>
+    tab.href === "/desk/today" ? { ...tab, label: todayLabel } : tab
+  );
 
   return (
     <nav
       className="flex shrink-0 border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
-      aria-label="Front desk"
+      aria-label="Staff"
     >
-      {TABS.map((tab) => {
+      {tabs.map((tab) => {
         const isActive = tab.exact
           ? pathname === tab.href
           : pathname === tab.href || pathname.startsWith(`${tab.href}/`);

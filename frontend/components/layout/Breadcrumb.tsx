@@ -16,7 +16,7 @@ const SEGMENTS: Record<string, string> = {
   availability: "Availability",
   "opd-mode": "OPD mode",
   "patient-flow": "Patient flow",
-  "front-desk": "Front desk",
+  "front-desk": "Staff",
   integrations: "Integrations",
   billing: "Billing",
   payments: "Payments",

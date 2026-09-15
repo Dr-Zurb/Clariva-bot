@@ -44,7 +44,22 @@ vi.mock(
 vi.mock(
   "@/components/patient-profile/PatientProfileQueueRail",
   () => ({
-    CockpitQueueRail: () => null,
+    CockpitQueueRail: ({
+      nowSlot,
+    }: {
+      nowSlot?:
+        | React.ReactNode
+        | ((ctx: {
+            now: { tokenNumber: number | null; position: number } | null;
+            source: "queue" | "schedule";
+          }) => React.ReactNode);
+    }) => (
+      <div data-testid="cockpit-queue-inline">
+        {typeof nowSlot === "function"
+          ? nowSlot({ now: null, source: "queue" })
+          : nowSlot}
+      </div>
+    ),
   }),
 );
 
@@ -95,6 +110,12 @@ const DEFAULT_HANDLERS: Pick<
   onFinishVisit: vi.fn(),
   onMarkNoShow: vi.fn(),
 };
+
+function openKebab() {
+  const trigger = screen.getByRole("button", { name: /more options/i });
+  fireEvent.pointerDown(trigger, { button: 0, bubbles: true, cancelable: true });
+  fireEvent.click(trigger);
+}
 
 function renderHeader(
   state: CockpitState,
@@ -372,42 +393,43 @@ describe("CockpitHeader snapshots", () => {
 // CS-04: OPD token chip — behaviour tests
 // ---------------------------------------------------------------------------
 
-describe("OPD token chip", () => {
+describe("OPD token (moved to Visit details · ckd-07)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("renders 'Token #3' chip when opd_queue_event_type='token' and opd_token_number=3", () => {
+  it("shows #N in the identity title, not a Token chip", () => {
     renderHeader("ready", {
       opd_queue_event_type: "token",
       opd_token_number: 3,
     } as any);
-    expect(screen.getByText("Token #3")).toBeInTheDocument();
+    expect(screen.queryByText("Token #3")).not.toBeInTheDocument();
+    expect(screen.getByTestId("cockpit-identity-token")).toHaveTextContent("#3");
+    expect(screen.getByTestId("cockpit-identity-title")).toHaveTextContent(
+      "Ravi Sharma",
+    );
   });
 
-  it("does NOT render any token chip when opd_queue_event_type=null and opd_token_number=null", () => {
+  it("omits the token from the title when the visit has none", () => {
     renderHeader("ready", {
-      opd_queue_event_type: null,
       opd_token_number: null,
     } as any);
-    expect(screen.queryByText(/Token #/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/#\?/)).not.toBeInTheDocument();
+    expect(screen.getByTestId("cockpit-identity-title")).toHaveTextContent(
+      "Ravi Sharma",
+    );
+    expect(screen.getByTestId("cockpit-identity-title").textContent).not.toMatch(
+      /#\d/,
+    );
   });
 
-  it("does NOT render token chip for 'group' event type (suppress — no per-patient token)", () => {
-    renderHeader("ready", {
-      opd_queue_event_type: "group",
-      opd_token_number: 7,
-    } as any);
-    expect(screen.queryByText(/Token #/)).not.toBeInTheDocument();
-  });
-
-  it("renders 'Token #0' chip when opd_token_number=0 (zero is a valid token position)", () => {
+  it("shows the token inside Visit details", () => {
     renderHeader("ready", {
       opd_queue_event_type: "token",
       opd_token_number: 0,
     } as any);
-    expect(screen.getByText("Token #0")).toBeInTheDocument();
+    openKebab();
+    fireEvent.click(screen.getByText("View visit details"));
+    expect(screen.getByRole("dialog")).toHaveTextContent("#0");
   });
 });
 
@@ -430,13 +452,13 @@ describe("Mark no-show kebab item", () => {
   it("appears in the kebab menu when appointment is overdue (ready state)", () => {
     // past appointment → canMarkNoShow=true
     renderHeader("ready", { appointment_date: "2020-01-01T10:00:00Z" } as any);
-    fireEvent.click(screen.getByRole("button", { name: /more options/i }));
+    openKebab();
     expect(screen.getByText("Mark no-show")).toBeInTheDocument();
   });
 
   it("is enabled when appointment is overdue in ready state", () => {
     renderHeader("ready", { appointment_date: "2020-01-01T10:00:00Z" } as any);
-    fireEvent.click(screen.getByRole("button", { name: /more options/i }));
+    openKebab();
     // Radix DropdownMenuItem sets aria-disabled="true" when disabled
     const item = screen.getByText("Mark no-show").closest("[role='menuitem']");
     expect(item).not.toHaveAttribute("aria-disabled", "true");
@@ -444,21 +466,21 @@ describe("Mark no-show kebab item", () => {
 
   it("is disabled when appointment is far in the future (ready state)", () => {
     renderHeader("ready", { appointment_date: "2099-12-31T10:00:00Z" } as any);
-    fireEvent.click(screen.getByRole("button", { name: /more options/i }));
+    openKebab();
     const item = screen.getByText("Mark no-show").closest("[role='menuitem']");
     expect(item).toHaveAttribute("aria-disabled", "true");
   });
 
   it("is always enabled in lobby state regardless of appointment time", () => {
     renderHeader("lobby", { appointment_date: "2099-12-31T10:00:00Z" } as any);
-    fireEvent.click(screen.getByRole("button", { name: /more options/i }));
+    openKebab();
     const item = screen.getByText("Mark no-show").closest("[role='menuitem']");
     expect(item).not.toHaveAttribute("aria-disabled", "true");
   });
 
   it("is always enabled in live state", () => {
     renderHeader("live", { appointment_date: "2099-12-31T10:00:00Z" } as any);
-    fireEvent.click(screen.getByRole("button", { name: /more options/i }));
+    openKebab();
     const item = screen.getByText("Mark no-show").closest("[role='menuitem']");
     expect(item).not.toHaveAttribute("aria-disabled", "true");
   });
@@ -470,14 +492,14 @@ describe("Mark no-show kebab item", () => {
       { appointment_date: "2020-01-01T10:00:00Z" } as any,
       { onMarkNoShow },
     );
-    fireEvent.click(screen.getByRole("button", { name: /more options/i }));
+    openKebab();
     fireEvent.click(screen.getByText("Mark no-show"));
     expect(onMarkNoShow).toHaveBeenCalledTimes(1);
   });
 
   it("shows the 'm' keyboard shortcut hint in the menu item", () => {
     renderHeader("lobby", {});
-    fireEvent.click(screen.getByRole("button", { name: /more options/i }));
+    openKebab();
     // The hint span renders 'm' alongside the label
     const menu = screen.getByRole("menu");
     expect(menu).toHaveTextContent("m");
@@ -538,20 +560,21 @@ describe("in-clinic visit CTAs", () => {
     vi.clearAllMocks();
   });
 
-  it("ready × in_clinic shows Start visit and does not offer tele modalities", () => {
+  it("ready × in_clinic has no Start visit — Done lives on the footer", () => {
     renderHeader("ready", { consultation_type: "in_clinic" });
     expect(
-      screen.getByRole("button", { name: /start visit/i }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: /start visit/i }),
+    ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /choose option/i }),
+      screen.queryByRole("button", { name: /start consult/i }),
     ).not.toBeInTheDocument();
   });
 
-  it("ready × in_clinic Start visit calls onStartConsult('in_clinic')", () => {
-    renderHeader("ready", { consultation_type: "in_clinic" });
-    fireEvent.click(screen.getByRole("button", { name: /start visit/i }));
-    expect(DEFAULT_HANDLERS.onStartConsult).toHaveBeenCalledWith("in_clinic");
+  it("ready × video has no Start consult — Done lives on the footer", () => {
+    renderHeader("ready", { consultation_type: "video" });
+    expect(
+      screen.queryByRole("button", { name: /start consult/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("live × in_clinic has no header finish button", () => {
@@ -569,5 +592,27 @@ describe("in-clinic visit CTAs", () => {
     expect(
       screen.queryByRole("button", { name: /done with patient/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("opens identity details on hover with phone and relative, omitting empty rows", () => {
+    renderHeader("ready", {
+      patient_guardian_name: "Harpreet Singh",
+      patient_guardian_relation: "Son",
+      patient_mrn: "MRN-9",
+      patient_phone: "+91 98765 43210",
+    } as any);
+    fireEvent.mouseEnter(screen.getByTestId("cockpit-identity-title"));
+    const popover = screen.getByTestId("cockpit-identity-popover");
+    expect(popover).toHaveTextContent("Phone");
+    expect(popover).toHaveTextContent("Harpreet Singh · Son");
+    expect(popover).toHaveTextContent("MRN-9");
+    expect(popover).not.toHaveTextContent("#");
+  });
+
+  it("does not own a bottom border (ckd-13 — surface does)", () => {
+    const container = renderHeader("ready");
+    const header = container.querySelector("header");
+    expect(header?.className).not.toMatch(/border-b/);
+    expect(header?.className).not.toMatch(/backdrop-blur/);
   });
 });

@@ -2,7 +2,7 @@ import { AdminPageHeader } from "@/components/admin/AdminPageHeader";
 import { ClinicStaffAdminClient } from "@/components/admin/clinic-staff/ClinicStaffAdminClient";
 import { requireAdminAuth } from "@/lib/auth/server-user";
 
-export const metadata = { title: "Front desk · Admin" };
+export const metadata = { title: "Staff · Admin" };
 
 export default async function AdminClinicStaffPage() {
   const { token } = await requireAdminAuth();
@@ -10,8 +10,8 @@ export default async function AdminClinicStaffPage() {
   return (
     <div>
       <AdminPageHeader
-        title="Front desk staff"
-        description="Many receptionist logins per doctor — only one active. Extra adds start suspended. Delete removes the link."
+        title="Staff"
+        description="Clinic logins per doctor. One active login per job. Extra adds for a taken job start suspended. Delete removes the link."
       />
       <ClinicStaffAdminClient token={token} />
     </div>

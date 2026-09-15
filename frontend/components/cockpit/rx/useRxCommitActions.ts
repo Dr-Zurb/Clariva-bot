@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import {
   buildRxPayload,
@@ -18,12 +19,25 @@ import { usePrescriptionFormShell } from "@/components/cockpit/rx/PrescriptionFo
 import { useRegisterRxFormActions } from "@/components/cockpit/rx/RxFormActionsContext";
 import {
   sendPrescriptionToPatient,
-  getDoctorSettings,
-  getPrescriptionPdfUrl,
+  fetchPrescriptionPdf,
+  reissuePrescription,
 } from "@/lib/api";
+import {
+  needsReissue,
+  sourceWasPrinted,
+  sourceWasSent,
+  type RxReviseLeaveAction,
+} from "@/components/cockpit/rx/rxRevise";
+import type { RevisionReason } from "@/types/prescription";
+import { doctorSettingsQueryOptions } from "@/lib/query/options";
 import type { PatientRxViewModel } from "@/components/ehr/PatientRxView";
 import { sanitizeCustomSubsectionsForOutput } from "@/lib/cockpit/custom-subsections";
 import { resolveFollowUpForOutput } from "@/lib/cockpit/follow-up-format";
+import {
+  formatAllergiesForOutput,
+  formatVitalsForOutput,
+} from "@/lib/cockpit/rx-output-format";
+import { usePatientAllergiesQuery } from "@/hooks/queries/usePatientAllergiesQuery";
 import {
   computePreSendWarnings,
   focusTargetFor,
@@ -40,6 +54,10 @@ import {
 } from "@/lib/patient-profile/state";
 import { formatDate } from "@/lib/format-date";
 import type { PatientSex } from "@/types/appointment";
+import {
+  beginPrintAdvanceHold,
+  endPrintAdvanceHold,
+} from "@/lib/cockpit/rx-print-advance";
 
 /** Identity already on the appointment — preview must not invent sample PHI. */
 export interface RxPreviewPatientIdentity {
@@ -58,9 +76,30 @@ function formatPreviewAgeYears(age: number | null | undefined): string | null {
   return `${age} y`;
 }
 
+function pdfBlobForObjectUrl(blob: Blob): Blob {
+  return blob.type === "application/pdf"
+    ? blob
+    : new Blob([blob], { type: "application/pdf" });
+}
+
+async function downloadPdfBlob(
+  blob: Blob,
+  filename = "prescription.pdf"
+): Promise<void> {
+  const objectUrl = URL.createObjectURL(pdfBlobForObjectUrl(blob));
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = filename;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
 export async function downloadSignedPdf(
   signedUrl: string,
-  filename = "prescription.pdf",
+  filename = "prescription.pdf"
 ): Promise<void> {
   try {
     const res = await fetch(signedUrl);
@@ -87,8 +126,67 @@ export async function downloadSignedPdf(
   }
 }
 
-/** Fetch the signed PDF and open the system print dialog — no extra tab. */
-export async function printSignedPdf(signedUrl: string): Promise<void> {
+const PRINT_IFRAME_KEEPALIVE_MS = 120_000;
+/** Safari often never fires onload for a PDF iframe — print blind after this. */
+const PRINT_BLIND_FALLBACK_MS = 1_200;
+const PRINT_POLL_MS = 200;
+const PRINT_DEADLINE_MS = 8_000;
+
+function isSafariPrintHost(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  return /safari/i.test(ua) && !/chrome|chromium|android/i.test(ua);
+}
+
+function afterNextPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame !== "function") {
+      window.setTimeout(resolve, 0);
+      return;
+    }
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve());
+    });
+  });
+}
+
+function watchPrintDialogClosed(win: Window, onClosed: () => void): void {
+  let closed = false;
+  const done = () => {
+    if (closed) return;
+    closed = true;
+    onClosed();
+  };
+
+  // print() returns only after the dialog closes on Safari.
+  if (isSafariPrintHost()) {
+    done();
+    return;
+  }
+
+  try {
+    const media = win.matchMedia("print");
+    let sawPrint = media.matches;
+    const onChange = (event: MediaQueryListEvent) => {
+      if (event.matches) {
+        sawPrint = true;
+        return;
+      }
+      if (sawPrint) done();
+    };
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", onChange);
+    } else if (typeof media.addListener === "function") {
+      media.addListener(onChange);
+    }
+  } catch {
+    // matchMedia unavailable — AdvanceToNextPatient stays parked until
+    // the doctor clicks Next or the iframe keepalive ends.
+  }
+}
+
+/** Download the signed PDF into a blob URL the iframe can print same-origin. */
+async function fetchPdfObjectUrl(signedUrl: string): Promise<string> {
   const res = await fetch(signedUrl);
   if (!res.ok) throw new Error("Could not load prescription PDF");
   const raw = await res.blob();
@@ -96,53 +194,70 @@ export async function printSignedPdf(signedUrl: string): Promise<void> {
     raw.type === "application/pdf"
       ? raw
       : new Blob([raw], { type: "application/pdf" });
-  const objectUrl = URL.createObjectURL(blob);
+  return URL.createObjectURL(blob);
+}
 
-  await new Promise<void>((resolve, reject) => {
+function printPdfObjectUrl(
+  objectUrl: string,
+  opts?: { onDialogClosed?: () => void }
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
     const iframe = document.createElement("iframe");
     iframe.setAttribute("aria-hidden", "true");
+    iframe.setAttribute("data-rx-print", "1");
     iframe.title = "Print prescription";
     iframe.src = objectUrl;
+    // Off-screen but non-zero: a 0×0 PDF iframe makes Chrome dismiss the
+    // system print dialog as soon as it opens.
     iframe.style.position = "fixed";
-    iframe.style.right = "0";
-    iframe.style.bottom = "0";
-    iframe.style.width = "0";
-    iframe.style.height = "0";
+    iframe.style.left = "-10000px";
+    iframe.style.top = "0";
+    iframe.style.width = "800px";
+    iframe.style.height = "600px";
     iframe.style.border = "0";
     iframe.style.opacity = "0";
     iframe.style.pointerEvents = "none";
 
     let settled = false;
     let printed = false;
+    let loaded = false;
+    let cleaned = false;
+    let waited = 0;
+    let poll: number | null = null;
+    let closedNotified = false;
 
-    const cleanup = () => {
+    const notifyDialogClosed = () => {
+      if (closedNotified) return;
+      closedNotified = true;
+      opts?.onDialogClosed?.();
+    };
+
+    const stopPolling = () => {
+      if (poll !== null) window.clearInterval(poll);
+      poll = null;
+    };
+
+    const cleanup = (notifyClosed: boolean) => {
+      if (cleaned) return;
+      cleaned = true;
+      stopPolling();
       iframe.remove();
       URL.revokeObjectURL(objectUrl);
+      if (notifyClosed) notifyDialogClosed();
     };
 
     const succeed = () => {
       if (settled) return;
       settled = true;
+      stopPolling();
       resolve();
     };
 
     const fail = (message: string) => {
       if (settled) return;
       settled = true;
-      cleanup();
+      cleanup(false);
       reject(new Error(message));
-    };
-
-    const scheduleCleanup = (win: Window) => {
-      let cleaned = false;
-      const finish = () => {
-        if (cleaned) return;
-        cleaned = true;
-        win.removeEventListener("afterprint", finish);
-        cleanup();
-      };
-      win.addEventListener("afterprint", finish);
-      window.setTimeout(finish, 60_000);
     };
 
     const triggerPrint = () => {
@@ -153,22 +268,49 @@ export async function printSignedPdf(signedUrl: string): Promise<void> {
       try {
         win.focus();
         win.print();
-        scheduleCleanup(win);
+        // Keep the iframe on <body> so the dialog stays owned by this
+        // document. Do not remove it on afterprint — Chrome fires that
+        // when the dialog opens.
+        window.setTimeout(() => cleanup(true), PRINT_IFRAME_KEEPALIVE_MS);
+        watchPrintDialogClosed(win, notifyDialogClosed);
         succeed();
       } catch {
         fail("Could not open the print dialog");
       }
     };
 
-    iframe.onload = () => triggerPrint();
+    iframe.onload = () => {
+      loaded = true;
+      // Give the PDF viewer one frame to attach. Printing a blank frame
+      // opens a preview that Chrome then dismisses when the PDF commits.
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(() => triggerPrint());
+        return;
+      }
+      triggerPrint();
+    };
     iframe.onerror = () => fail("Could not load prescription PDF");
     document.body.appendChild(iframe);
-    // Safari often skips onload for a PDF iframe.
-    window.setTimeout(triggerPrint, 250);
-    window.setTimeout(() => {
-      if (!printed) fail("Could not open the print dialog");
-    }, 2000);
+    poll = window.setInterval(() => {
+      if (printed || settled) {
+        stopPolling();
+        return;
+      }
+      waited += PRINT_POLL_MS;
+      if (loaded) triggerPrint();
+      else if (isSafariPrintHost() && waited >= PRINT_BLIND_FALLBACK_MS) {
+        triggerPrint();
+      }
+      if (!printed && waited >= PRINT_DEADLINE_MS) {
+        fail("Could not open the print dialog");
+      }
+    }, PRINT_POLL_MS);
   });
+}
+
+/** Fetch the signed PDF and open the system print dialog — no extra tab. */
+export async function printSignedPdf(signedUrl: string): Promise<void> {
+  await printPdfObjectUrl(await fetchPdfObjectUrl(signedUrl));
 }
 
 function formatPreviewVisitDate(iso: string | null | undefined): string | null {
@@ -185,7 +327,8 @@ export interface UseRxCommitActionsArgs {
   patientIdentity?: RxPreviewPatientIdentity | null;
   token: string;
   cockpitState: CockpitState;
-  onFinish?: () => void;
+  /** Fired after send when finishing. Print does not wait for it. */
+  onFinish?: () => void | Promise<void>;
   onSent?: (prescriptionId: string) => void | Promise<void>;
   onSuccess?: () => void;
   /** When false, skip context registration (standalone tests). */
@@ -198,6 +341,7 @@ export interface UseRxCommitActionsResult {
   previewLoading: boolean;
   finishSending: boolean;
   openPreview: () => void;
+  prewarmOnIntent: () => void;
   sendRx: () => void;
   sendAndFinish: () => void;
   sendFinishAndPrint: () => void;
@@ -216,6 +360,15 @@ export interface UseRxCommitActionsResult {
   onPreSendSendAnyway: () => void;
   commitError: string | null;
   commitSuccess: string | null;
+  revisionReasonOpen: boolean;
+  revisionReasonBusy: boolean;
+  revisionReasonError: string | null;
+  onRevisionReasonCancel: () => void;
+  onRevisionReasonConfirm: (reason: RevisionReason) => void;
+  deliveryPrompt: { resend: boolean; reprint: boolean } | null;
+  onDeliveryPromptDismiss: () => void;
+  onDeliveryPromptResend: () => void;
+  onDeliveryPromptReprint: () => void;
 }
 
 export function useRxCommitActions({
@@ -231,9 +384,10 @@ export function useRxCommitActions({
   registerActions = true,
 }: UseRxCommitActionsArgs): UseRxCommitActionsResult {
   const shell = usePrescriptionFormShell();
-  const { state: rxState, autoSave } = useRxForm();
+  const { state: rxState, autoSave, isDirty } = useRxForm();
   const {
     formAllergyMatches,
+    unacceptedDeskAllergies,
     isAcked,
     ddiInteractions,
     medicineInstanceIds: safetyMedicineInstanceIds,
@@ -248,20 +402,39 @@ export function useRxCommitActions({
   const { fields } = rxState;
   const medicines = fields.medicines;
   const { flush: autoSaveFlush } = autoSave;
+  const allergyQuery = usePatientAllergiesQuery(token, patientId ?? "");
+  const queryClient = useQueryClient();
 
   const [saving, setSaving] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewVM, setPreviewVM] = useState<PatientRxViewModel | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [preSendWarnings, setPreSendWarnings] = useState<
-    ReadonlyArray<PreSendWarning> | null
-  >(null);
+  const [preSendWarnings, setPreSendWarnings] =
+    useState<ReadonlyArray<PreSendWarning> | null>(null);
   const [commitError, setCommitError] = useState<string | null>(null);
   const [commitSuccess, setCommitSuccess] = useState<string | null>(null);
   const [printBusy, setPrintBusy] = useState(false);
+  const [revisionReasonOpen, setRevisionReasonOpen] = useState(false);
+  const [revisionReasonBusy, setRevisionReasonBusy] = useState(false);
+  const [revisionReasonError, setRevisionReasonError] = useState<string | null>(
+    null,
+  );
+  const [deliveryPrompt, setDeliveryPrompt] = useState<{
+    resend: boolean;
+    reprint: boolean;
+  } | null>(null);
+  const pendingLeaveRef = useRef<RxReviseLeaveAction | null>(null);
+  const justCreatedRevisionIdRef = useRef<string | null>(null);
+  const deliverySourceRef = useRef<{ sent: boolean; printed: boolean } | null>(
+    null,
+  );
 
   const finishAfterSendRef = useRef(false);
   const printAfterSendRef = useRef(false);
+  const pdfWarmRef = useRef<{
+    rxId: string;
+    objectUrl: Promise<string>;
+  } | null>(null);
   const doctorMetaRef = useRef<{
     doctorName: string;
     doctorSpecialty: string | null;
@@ -303,16 +476,20 @@ export function useRxCommitActions({
     pageMarginBottomMm: number;
     pageMarginLeftMm: number;
   } | null>(null);
+  const doctorMetaLoadRef = useRef<Promise<void> | null>(null);
 
   const canSend = canSendPrescription(cockpitState);
   const hasRxId = Boolean(
-    shell?.prescription?.id ?? prescriptionIdRef?.current,
+    shell?.prescription?.id ?? prescriptionIdRef?.current
   );
   const canPrint = hasRxId || canSend;
+  const issuedPendingReissue = needsReissue(shell?.prescription, {
+    isDirty,
+    skipId: justCreatedRevisionIdRef.current,
+  });
   const canFinish =
-    Boolean(onFinish) &&
-    cockpitState !== "ended" &&
-    cockpitState !== "terminal";
+    cockpitState !== "terminal" &&
+    ((Boolean(onFinish) && cockpitState !== "ended") || issuedPendingReissue);
 
   const buildPreviewViewModel = useCallback((): PatientRxViewModel => {
     const meta = doctorMetaRef.current;
@@ -364,8 +541,31 @@ export function useRxCommitActions({
       guardianName: patientIdentity?.guardianName?.trim() || null,
       guardianRelation: patientIdentity?.guardianRelation?.trim() || null,
       medicalRecordNumber: patientIdentity?.mrn?.trim() || null,
+      allergies:
+        !patientId || allergyQuery.isFetched
+          ? formatAllergiesForOutput(allergyQuery.data?.allergies, {
+              noKnownAllergies: allergyQuery.data?.noKnownAllergies,
+            })
+          : undefined,
       cc: payload.cc,
       hopi: payload.hopi,
+      vitals: formatVitalsForOutput({
+        vitalsBpSystolic: payload.vitalsBpSystolic,
+        vitalsBpDiastolic: payload.vitalsBpDiastolic,
+        vitalsHr: payload.vitalsHr,
+        vitalsTempC: payload.vitalsTempC,
+        vitalsSpo2: payload.vitalsSpo2,
+        vitalsWtKg: payload.vitalsWtKg,
+        vitalsHtCm: payload.vitalsHtCm,
+        vitalsRr: payload.vitalsRr,
+        vitalsPainScore: payload.vitalsPainScore,
+        vitalsGlucoseMgDl: payload.vitalsGlucoseMgDl,
+        vitalsGcsTotal: payload.vitalsGcsTotal,
+        vitalsBpPosture: payload.vitalsBpPosture,
+        vitalsBpLimb: payload.vitalsBpLimb,
+        note: payload.vitalsJson?.sectionNote ?? null,
+      }),
+      examinationFindings: payload.examinationFindings?.trim() || null,
       socialHistory: payload.socialHistory,
       provisionalDiagnosis: payload.provisionalDiagnosis,
       investigations: payload.investigations,
@@ -373,18 +573,18 @@ export function useRxCommitActions({
       followUp: resolveFollowUpForOutput(
         payload.followUp,
         payload.followUpValue,
-        payload.followUpUnit,
+        payload.followUpUnit
       ),
       patientEducation: null,
       referral: payload.referral,
       customSubsections: sanitizeCustomSubsectionsForOutput(
-        payload.customSubsections,
+        payload.customSubsections
       ),
       assessmentCustomSections: sanitizeCustomSubsectionsForOutput(
-        payload.assessmentCustomSections,
+        payload.assessmentCustomSections
       ),
       planCustomSections: sanitizeCustomSubsectionsForOutput(
-        payload.planCustomSections,
+        payload.planCustomSections
       ),
       medicines: payload.medicines.map((m) => ({
         medicineName: m.medicineName,
@@ -402,18 +602,26 @@ export function useRxCommitActions({
         foodTiming: m.foodTiming,
       })),
     };
-  }, [fields, patientName, patientIdentity]);
+  }, [
+    fields,
+    patientName,
+    patientIdentity,
+    patientId,
+    allergyQuery.data,
+    allergyQuery.isFetched,
+  ]);
 
-  const openPreview = useCallback(() => {
-    void (async () => {
-      setCommitError(null);
-      if (!doctorMetaRef.current) {
-        setPreviewLoading(true);
+  const ensureDoctorMeta = useCallback(async () => {
+    if (doctorMetaRef.current) return;
+    if (!doctorMetaLoadRef.current) {
+      doctorMetaLoadRef.current = (async () => {
         try {
           const supabase = createClient();
           const [{ data: userResp }, settingsRes] = await Promise.all([
             supabase.auth.getUser(),
-            getDoctorSettings(token).catch(() => null),
+            queryClient
+              .fetchQuery(doctorSettingsQueryOptions(token))
+              .catch(() => null),
           ]);
           const meta =
             (userResp.user?.user_metadata as
@@ -423,9 +631,7 @@ export function useRxCommitActions({
           const rawName =
             (typeof meta.full_name === "string" && meta.full_name.trim()) ||
             (typeof meta.name === "string" && meta.name.trim()) ||
-            (userResp.user?.email
-              ? userResp.user.email.split("@")[0]
-              : "") ||
+            (userResp.user?.email ? userResp.user.email.split("@")[0] : "") ||
             "";
           const doctorName = rawName
             ? rawName.toLowerCase().startsWith("dr")
@@ -450,7 +656,8 @@ export function useRxCommitActions({
             chromeColor: settings?.letterhead_chrome_color ?? null,
             patientColor: settings?.letterhead_patient_color ?? null,
             logoSize: settings?.logo_size ?? "medium",
-            patientIdentityPreset: settings?.patient_identity_preset ?? "open_letter",
+            patientIdentityPreset:
+              settings?.patient_identity_preset ?? "open_letter",
             showPatientPhone: settings?.show_patient_phone !== false,
             showPatientGuardian: settings?.show_patient_guardian !== false,
             showPatientMrn: settings?.show_patient_mrn !== false,
@@ -478,7 +685,7 @@ export function useRxCommitActions({
                 : settings?.letterhead_background_preset === "cross"
                   ? "/letterhead/bg-cross.png"
                   : settings?.letterhead_background_preset === "upload"
-                    ? settings?.background_preview_url ?? null
+                    ? (settings?.background_preview_url ?? null)
                     : null,
           };
         } catch {
@@ -524,27 +731,205 @@ export function useRxCommitActions({
             pageMarginLeftMm: 12,
           };
         } finally {
+          doctorMetaLoadRef.current = null;
+        }
+      })();
+    }
+    return doctorMetaLoadRef.current;
+  }, [queryClient, token]);
+
+  useEffect(() => {
+    void ensureDoctorMeta();
+  }, [ensureDoctorMeta]);
+
+  const dropPdfWarm = useCallback((revoke: boolean) => {
+    const existing = pdfWarmRef.current;
+    pdfWarmRef.current = null;
+    if (revoke && existing) {
+      void existing.objectUrl
+        .then((url) => URL.revokeObjectURL(url))
+        .catch(() => undefined);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => dropPdfWarm(true);
+  }, [dropPdfWarm]);
+
+  useEffect(() => {
+    return () => endPrintAdvanceHold();
+  }, [appointmentId]);
+
+  /** Write only when needed so a clean flush does not drop the warmed PDF. */
+  const persistDraftForCommit = useCallback(async () => {
+    if (!prescriptionIdRef?.current) {
+      await autoSaveFlush({ force: true });
+      dropPdfWarm(true);
+      return;
+    }
+    if (!isDirty) return;
+    await autoSaveFlush();
+    dropPdfWarm(true);
+  }, [autoSaveFlush, dropPdfWarm, isDirty, prescriptionIdRef]);
+
+  const requestRevisionIfNeeded = useCallback(
+    (action: RxReviseLeaveAction): boolean => {
+      const skipId = justCreatedRevisionIdRef.current;
+      const currentId =
+        prescriptionIdRef?.current ?? shell?.prescription?.id ?? null;
+      if (skipId && currentId === skipId) return false;
+      if (
+        !needsReissue(shell?.prescription, {
+          isDirty,
+          skipId,
+        })
+      ) {
+        return false;
+      }
+      pendingLeaveRef.current = action;
+      setRevisionReasonError(null);
+      setRevisionReasonOpen(true);
+      return true;
+    },
+    [isDirty, prescriptionIdRef, shell?.prescription],
+  );
+
+  const adoptRevision = useCallback(
+    async (reason: RevisionReason): Promise<string> => {
+      await persistDraftForCommit();
+      const sourceId =
+        shell?.prescription?.id ?? prescriptionIdRef?.current ?? null;
+      if (!sourceId) {
+        throw new Error("No prescription to revise.");
+      }
+      const source = shell?.prescription;
+      if (source) {
+        deliverySourceRef.current = {
+          sent: sourceWasSent(source),
+          printed: sourceWasPrinted(source),
+        };
+      }
+      const result = await reissuePrescription(token, sourceId, reason);
+      const next = result.data.prescription;
+      justCreatedRevisionIdRef.current = next.id;
+      if (prescriptionIdRef) prescriptionIdRef.current = next.id;
+      shell?.setPrescription(next);
+      shell?.setAttachments(next.prescription_attachments ?? []);
+      dropPdfWarm(true);
+      return next.id;
+    },
+    [dropPdfWarm, persistDraftForCommit, prescriptionIdRef, shell, token],
+  );
+
+  const showDeliveryPromptFor = useCallback((action: RxReviseLeaveAction) => {
+    const source = deliverySourceRef.current;
+    if (!source) return;
+    const resend = source.sent && action !== "send";
+    const reprint = source.printed && action !== "print";
+    if (resend || reprint) setDeliveryPrompt({ resend, reprint });
+  }, []);
+
+  const loadPdfObjectUrl = useCallback(
+    (rxId: string): Promise<string> =>
+      fetchPrescriptionPdf(token, rxId).then(({ blob }) =>
+        URL.createObjectURL(pdfBlobForObjectUrl(blob))
+      ),
+    [token]
+  );
+
+  const prewarmPdf = useCallback(
+    (rxId: string): Promise<string> => {
+      const existing = pdfWarmRef.current;
+      if (existing?.rxId === rxId) return existing.objectUrl;
+      dropPdfWarm(true);
+      const objectUrl = loadPdfObjectUrl(rxId).catch((err) => {
+        if (pdfWarmRef.current?.rxId === rxId) pdfWarmRef.current = null;
+        throw err;
+      });
+      pdfWarmRef.current = { rxId, objectUrl };
+      return objectUrl;
+    },
+    [dropPdfWarm, loadPdfObjectUrl]
+  );
+
+  /**
+   * Hand the PDF to a print job, which owns the object URL from here on. An
+   * unwarmed take must NOT park its fetch in the warm ref: the next patient
+   * unmounts this hook, the cleanup revokes the URL mid-flight, and the print
+   * dialog then never opens.
+   */
+  const takeWarmedPdf = useCallback(
+    (rxId: string): Promise<string> => {
+      const existing = pdfWarmRef.current;
+      if (existing?.rxId === rxId) {
+        pdfWarmRef.current = null;
+        return existing.objectUrl;
+      }
+      dropPdfWarm(true);
+      return loadPdfObjectUrl(rxId);
+    },
+    [dropPdfWarm, loadPdfObjectUrl]
+  );
+
+  const openPreview = useCallback(() => {
+    void (async () => {
+      setCommitError(null);
+      if (!doctorMetaRef.current) {
+        setPreviewLoading(true);
+        try {
+          await ensureDoctorMeta();
+        } finally {
           setPreviewLoading(false);
         }
       }
       setPreviewVM(buildPreviewViewModel());
       setPreviewOpen(true);
+      void persistDraftForCommit()
+        .then(() => {
+          const rxId = prescriptionIdRef?.current;
+          if (rxId) void prewarmPdf(rxId).catch(() => undefined);
+        })
+        .catch(() => undefined);
     })();
-  }, [token, buildPreviewViewModel]);
+  }, [
+    ensureDoctorMeta,
+    buildPreviewViewModel,
+    persistDraftForCommit,
+    prewarmPdf,
+    prescriptionIdRef,
+  ]);
+
+  const prewarmOnIntent = useCallback(() => {
+    void persistDraftForCommit()
+      .then(() => {
+        const rxId = prescriptionIdRef?.current;
+        if (rxId) void prewarmPdf(rxId).catch(() => undefined);
+      })
+      .catch(() => undefined);
+  }, [persistDraftForCommit, prewarmPdf, prescriptionIdRef]);
 
   const closePreview = useCallback(() => {
     setPreviewOpen(false);
   }, []);
 
+  useEffect(() => {
+    if (!previewOpen || !allergyQuery.isFetched) return;
+    setPreviewVM(buildPreviewViewModel());
+    // Refresh once the chart allergies query lands — do not depend on
+    // buildPreviewViewModel (it changes with form fields and would loop).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewOpen, allergyQuery.isFetched, allergyQuery.data]);
+
   const emitPreSendTelemetryFor = useCallback(
     (
       warnings: ReadonlyArray<PreSendWarning>,
-      outcome: "cancelled" | "edited" | "sent-anyway",
+      outcome: "cancelled" | "edited" | "sent-anyway"
     ): void => {
       const counts: Partial<Record<PreSendWarningKind, number>> = {};
       let ddiSeverity: InteractionRow["severity"] | undefined;
       for (const w of warnings) {
         switch (w.kind) {
+          case "unacked-desk-allergy":
           case "unacked-allergy":
           case "unacked-ddi":
             counts[w.kind] = (counts[w.kind] ?? 0) + w.count;
@@ -568,7 +953,7 @@ export function useRxCommitActions({
         occurredAt: new Date().toISOString(),
       });
     },
-    [appointmentId, prescriptionIdRef],
+    [appointmentId, prescriptionIdRef]
   );
 
   const focusEditTarget = useCallback((target: PreSendFocusTarget) => {
@@ -584,23 +969,32 @@ export function useRxCommitActions({
       return;
     }
     const inner = el.querySelector<HTMLElement>(
-      "input, textarea, button, [tabindex]:not([tabindex='-1'])",
+      "input, textarea, button, [tabindex]:not([tabindex='-1'])"
     );
     inner?.focus();
   }, []);
 
-  const printSavedPrescription = useCallback(
-    async (rxId: string): Promise<void> => {
+  /**
+   * pf-11 / v3 advance gate. Print parks on this visit so the next-patient
+   * jump cannot unload the iframe (Chrome then hides the system dialog).
+   */
+  const setAdvanceCancelled = useCallback(
+    (cancelled: boolean) => {
       try {
-        sessionStorage.setItem(`pf11_cancelled_${appointmentId}`, "1");
+        const key = `pf11_cancelled_${appointmentId}`;
+        if (cancelled) sessionStorage.setItem(key, "1");
+        else sessionStorage.removeItem(key);
       } catch {
         // private mode / SSR
       }
-      const res = await getPrescriptionPdfUrl(token, rxId);
-      await printSignedPdf(res.data.signedUrl);
     },
-    [appointmentId, token],
+    [appointmentId]
   );
+
+  const releasePrintAdvanceHold = useCallback(() => {
+    endPrintAdvanceHold();
+    setAdvanceCancelled(false);
+  }, [setAdvanceCancelled]);
 
   const performSaveAndSend = useCallback(async () => {
     setCommitError(null);
@@ -612,12 +1006,12 @@ export function useRxCommitActions({
     finishAfterSendRef.current = false;
     try {
       try {
-        await autoSaveFlush();
+        await persistDraftForCommit();
       } catch (saveErr) {
         setCommitError(
           saveErr instanceof Error
             ? `Save failed before send: ${saveErr.message}`
-            : "Save failed before send",
+            : "Save failed before send"
         );
         return;
       }
@@ -626,57 +1020,94 @@ export function useRxCommitActions({
         setCommitError("Prescription was not saved. Please try again.");
         return;
       }
-      const sendRes = await sendPrescriptionToPatient(token, rxId);
-      const { sent, channels } = sendRes.data;
-      if (sent) {
-        setCommitSuccess(
-          channels?.instagram && channels?.email
-            ? "Prescription saved and sent to patient (DM + email)."
-            : channels?.instagram
-              ? "Prescription saved and sent to patient (DM)."
-              : channels?.email
-                ? "Prescription saved and sent to patient (email)."
-                : "Prescription saved and sent.",
-        );
-      } else {
-        setCommitSuccess(
-          sendRes.data.reason === "no_patient_link"
-            ? "Prescription saved. Could not send (no Instagram link or email for patient)."
-            : "Prescription saved. Send to patient failed.",
-        );
-      }
-      onSuccess?.();
-      if (sent) {
-        try {
-          await onSent?.(rxId);
-        } catch {
-          // Soft failure — Rx already sent.
-        }
-      }
+      // Print parks advance even when finishing — navigating away closes
+      // Chrome's system preview. Finish-only still clears a stale park.
       if (shouldPrint) {
+        beginPrintAdvanceHold();
+        setAdvanceCancelled(true);
+      } else if (shouldFinish) {
+        setAdvanceCancelled(false);
+      }
+
+      // Start the PDF before the send so a cold render is already in flight.
+      const printJob = shouldPrint ? takeWarmedPdf(rxId) : null;
+      // Awaited after wrap-up paints — swallow the leftover rejection so a
+      // failed fetch is not an unhandled rejection in that gap.
+      printJob?.catch(() => undefined);
+
+      setCommitSuccess("Sending to patient…");
+      void sendPrescriptionToPatient(token, rxId)
+        .then(async (sendRes) => {
+          const { sent, channels } = sendRes.data;
+          if (sent) {
+            setCommitSuccess(
+              channels?.instagram && channels?.email
+                ? "Prescription saved and sent to patient (DM + email)."
+                : channels?.instagram
+                  ? "Prescription saved and sent to patient (DM)."
+                  : channels?.email
+                    ? "Prescription saved and sent to patient (email)."
+                    : "Prescription saved and sent."
+            );
+          } else {
+            setCommitSuccess(
+              sendRes.data.reason === "no_patient_link"
+                ? "Prescription saved. Could not send (no Instagram link or email for patient)."
+                : "Prescription saved. Send to patient failed."
+            );
+          }
+          onSuccess?.();
+          if (sent) {
+            try {
+              await onSent?.(rxId);
+            } catch {
+              // Soft failure — Rx already sent.
+            }
+          }
+        })
+        .catch((err) => {
+          setCommitError(
+            err instanceof Error ? err.message : "Failed to save and send"
+          );
+        });
+
+      if (shouldFinish) {
+        setPreviewOpen(false);
+        void Promise.resolve(onFinish?.()).catch(() => {
+          // handleFinishVisit already surfaces wrap-up errors.
+        });
+        if (printJob) await afterNextPaint();
+      }
+
+      if (printJob) {
         try {
-          await printSavedPrescription(rxId);
+          const objectUrl = await printJob;
+          await printPdfObjectUrl(objectUrl, {
+            onDialogClosed: releasePrintAdvanceHold,
+          });
         } catch (printErr) {
+          // Stay parked so the error is readable and Print can be retried.
+          setAdvanceCancelled(true);
           setCommitError(
             printErr instanceof Error
               ? printErr.message
-              : "Could not open the print dialog",
+              : "Could not open the print dialog"
           );
         }
       }
-      if (shouldFinish) {
-        setPreviewOpen(false);
-        onFinish?.();
-      }
     } catch (err) {
-      setCommitError(err instanceof Error ? err.message : "Failed to save and send");
+      setCommitError(
+        err instanceof Error ? err.message : "Failed to save and send"
+      );
     } finally {
       setSaving(false);
     }
   }, [
-    autoSaveFlush,
-    printSavedPrescription,
+    persistDraftForCommit,
+    setAdvanceCancelled,
+    releasePrintAdvanceHold,
     prescriptionIdRef,
+    takeWarmedPdf,
     token,
     onSuccess,
     onSent,
@@ -705,6 +1136,7 @@ export function useRxCommitActions({
       medicineInstanceIds,
       ddiInteractions,
       isAcked,
+      unacceptedDeskAllergies,
     });
     if (warnings.length === 0) {
       await performSaveAndSend();
@@ -717,6 +1149,7 @@ export function useRxCommitActions({
     fields,
     attachments.length,
     formAllergyMatches,
+    unacceptedDeskAllergies,
     medicineInstanceIds,
     ddiInteractions,
     isAcked,
@@ -726,37 +1159,42 @@ export function useRxCommitActions({
   const sendRx = useCallback(() => {
     finishAfterSendRef.current = false;
     printAfterSendRef.current = false;
+    if (requestRevisionIfNeeded("send")) return;
     void handleSaveAndSend();
-  }, [handleSaveAndSend]);
+  }, [handleSaveAndSend, requestRevisionIfNeeded]);
 
   const sendAndFinish = useCallback(() => {
     finishAfterSendRef.current = true;
     printAfterSendRef.current = false;
+    if (requestRevisionIfNeeded("send")) return;
     void handleSaveAndSend();
-  }, [handleSaveAndSend]);
+  }, [handleSaveAndSend, requestRevisionIfNeeded]);
 
   const sendFinishAndPrint = useCallback(() => {
     finishAfterSendRef.current = true;
     printAfterSendRef.current = true;
+    if (requestRevisionIfNeeded("send")) return;
     void handleSaveAndSend();
-  }, [handleSaveAndSend]);
+  }, [handleSaveAndSend, requestRevisionIfNeeded]);
 
   const finishVisit = useCallback(() => {
+    if (requestRevisionIfNeeded("finish")) return;
     setPreviewOpen(false);
-    onFinish?.();
-  }, [onFinish]);
+    setAdvanceCancelled(false);
+    if (cockpitState !== "ended") onFinish?.();
+  }, [cockpitState, onFinish, requestRevisionIfNeeded, setAdvanceCancelled]);
 
   const downloadPrescription = useCallback(async () => {
     setCommitError(null);
     setPrintBusy(true);
     try {
       try {
-        await autoSaveFlush();
+        await persistDraftForCommit();
       } catch (saveErr) {
         setCommitError(
           saveErr instanceof Error
             ? `Save failed before download: ${saveErr.message}`
-            : "Save failed before download",
+            : "Save failed before download"
         );
         return;
       }
@@ -765,28 +1203,31 @@ export function useRxCommitActions({
         setCommitError("No prescription to download yet.");
         return;
       }
-      const res = await getPrescriptionPdfUrl(token, rxId);
-      await downloadSignedPdf(res.data.signedUrl);
+      const { blob, filename } = await fetchPrescriptionPdf(token, rxId);
+      await downloadPdfBlob(blob, filename);
     } catch (err) {
       setCommitError(
-        err instanceof Error ? err.message : "Could not download prescription PDF",
+        err instanceof Error
+          ? err.message
+          : "Could not download prescription PDF"
       );
     } finally {
       setPrintBusy(false);
     }
-  }, [autoSaveFlush, prescriptionIdRef, shell?.prescription?.id, token]);
+  }, [persistDraftForCommit, prescriptionIdRef, shell?.prescription?.id, token]);
 
   const printPrescription = useCallback(async () => {
+    if (requestRevisionIfNeeded("print")) return;
     setCommitError(null);
     setPrintBusy(true);
     try {
       try {
-        await autoSaveFlush();
+        await persistDraftForCommit();
       } catch (saveErr) {
         setCommitError(
           saveErr instanceof Error
             ? `Save failed before print: ${saveErr.message}`
-            : "Save failed before print",
+            : "Save failed before print"
         );
         return;
       }
@@ -795,20 +1236,87 @@ export function useRxCommitActions({
         setCommitError("No prescription to print yet.");
         return;
       }
-      await printSavedPrescription(rxId);
+      setAdvanceCancelled(true);
+      await printPdfObjectUrl(await takeWarmedPdf(rxId));
     } catch (err) {
       setCommitError(
-        err instanceof Error ? err.message : "Could not open the print dialog",
+        err instanceof Error ? err.message : "Could not open the print dialog"
       );
     } finally {
       setPrintBusy(false);
     }
   }, [
-    autoSaveFlush,
-    printSavedPrescription,
+    persistDraftForCommit,
+    requestRevisionIfNeeded,
+    setAdvanceCancelled,
+    takeWarmedPdf,
     prescriptionIdRef,
     shell?.prescription?.id,
   ]);
+
+  const onRevisionReasonCancel = useCallback(() => {
+    pendingLeaveRef.current = null;
+    setRevisionReasonOpen(false);
+    setRevisionReasonError(null);
+  }, []);
+
+  const onRevisionReasonConfirm = useCallback(
+    (reason: RevisionReason) => {
+      void (async () => {
+        setRevisionReasonBusy(true);
+        setRevisionReasonError(null);
+        const action = pendingLeaveRef.current ?? "finish";
+        try {
+          await adoptRevision(reason);
+          setRevisionReasonOpen(false);
+          pendingLeaveRef.current = null;
+          if (action === "send") {
+            await handleSaveAndSend();
+          } else if (action === "print") {
+            await printPrescription();
+          } else {
+            setPreviewOpen(false);
+            setAdvanceCancelled(false);
+            if (cockpitState !== "ended") onFinish?.();
+          }
+          if (!printAfterSendRef.current) {
+            showDeliveryPromptFor(action);
+          }
+        } catch (err) {
+          setRevisionReasonError(
+            err instanceof Error ? err.message : "Could not create the next version",
+          );
+        } finally {
+          setRevisionReasonBusy(false);
+        }
+      })();
+    },
+    [
+      adoptRevision,
+      cockpitState,
+      handleSaveAndSend,
+      onFinish,
+      printPrescription,
+      setAdvanceCancelled,
+      showDeliveryPromptFor,
+    ],
+  );
+
+  const onDeliveryPromptDismiss = useCallback(() => {
+    setDeliveryPrompt(null);
+  }, []);
+
+  const onDeliveryPromptResend = useCallback(() => {
+    setDeliveryPrompt(null);
+    finishAfterSendRef.current = false;
+    printAfterSendRef.current = false;
+    void handleSaveAndSend();
+  }, [handleSaveAndSend]);
+
+  const onDeliveryPromptReprint = useCallback(() => {
+    setDeliveryPrompt(null);
+    void printPrescription();
+  }, [printPrescription]);
 
   const onPreSendCancel = useCallback(() => {
     if (preSendWarnings) {
@@ -829,11 +1337,7 @@ export function useRxCommitActions({
       return;
     }
     setPreSendWarnings(null);
-  }, [
-    preSendWarnings,
-    emitPreSendTelemetryFor,
-    focusEditTarget,
-  ]);
+  }, [preSendWarnings, emitPreSendTelemetryFor, focusEditTarget]);
 
   const onPreSendSendAnyway = useCallback(async () => {
     if (preSendWarnings) {
@@ -844,11 +1348,7 @@ export function useRxCommitActions({
     } finally {
       setPreSendWarnings(null);
     }
-  }, [
-    preSendWarnings,
-    emitPreSendTelemetryFor,
-    performSaveAndSend,
-  ]);
+  }, [preSendWarnings, emitPreSendTelemetryFor, performSaveAndSend]);
 
   const register = useRegisterRxFormActions();
 
@@ -866,12 +1366,13 @@ export function useRxCommitActions({
       openPreview: () => {
         openPreviewRef.current();
       },
+      prewarmPreview: prewarmOnIntent,
       canSend,
     });
     return () => {
       register(null);
     };
-  }, [registerActions, register, saving, canSend]);
+  }, [registerActions, register, saving, canSend, prewarmOnIntent]);
 
   return {
     canSend,
@@ -879,6 +1380,7 @@ export function useRxCommitActions({
     previewLoading,
     finishSending: saving && finishAfterSendRef.current,
     openPreview,
+    prewarmOnIntent,
     sendRx,
     sendAndFinish,
     sendFinishAndPrint,
@@ -897,5 +1399,14 @@ export function useRxCommitActions({
     onPreSendSendAnyway,
     commitError,
     commitSuccess,
+    revisionReasonOpen,
+    revisionReasonBusy,
+    revisionReasonError,
+    onRevisionReasonCancel,
+    onRevisionReasonConfirm,
+    deliveryPrompt,
+    onDeliveryPromptDismiss,
+    onDeliveryPromptResend,
+    onDeliveryPromptReprint,
   };
 }

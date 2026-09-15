@@ -41,6 +41,8 @@ export interface ChecklistStepView {
   done: boolean;
   /** When set, show status text instead of a CTA (e.g. pending review). */
   statusLabel?: string;
+  /** Visible but not blocking (Instagram when patients do not message there). */
+  optional?: boolean;
 }
 
 export const ONBOARDING_STEPS: readonly OnboardingStepDef[] = [
@@ -159,14 +161,21 @@ export function buildGoLiveChecklist(
 ): ChecklistStepView[] {
   const verify = verifyStepView(verificationStatus);
   const attestation = recordingAttestationStepView(recordingAttested);
-  const setup = ONBOARDING_STEPS.map((step) => ({
-    id: step.id,
-    title: step.title,
-    description: step.description,
-    href: step.href,
-    cta: step.cta,
-    done: onboarding[step.doneKey],
-  }));
+  const instagramRequired = onboarding.instagramRequired !== false;
+  const setup = ONBOARDING_STEPS.map((step) => {
+    const optional = step.id === "instagram" && !instagramRequired;
+    return {
+      id: step.id,
+      title: optional ? "Connect socials (optional)" : step.title,
+      description: optional
+        ? "Link Instagram or Facebook later if patients start messaging you there."
+        : step.description,
+      href: step.href,
+      cta: step.cta,
+      done: onboarding[step.doneKey],
+      optional,
+    };
+  });
   return [verify, attestation, ...setup];
 }
 
@@ -176,7 +185,7 @@ export function remainingGoLiveSteps(
   recordingAttested?: boolean,
 ): ChecklistStepView[] {
   return buildGoLiveChecklist(onboarding, verificationStatus, recordingAttested).filter(
-    (step) => !step.done,
+    (step) => !step.done && !step.optional,
   );
 }
 

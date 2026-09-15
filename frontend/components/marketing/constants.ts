@@ -35,9 +35,26 @@ export const DEMO_CAL_ORIGIN =
 export const haloPrimaryButton =
   "bg-[hsl(var(--halo-blue))] text-white shadow-sm hover:bg-[hsl(var(--halo-blue))]/90 focus-visible:ring-[hsl(var(--halo-blue))]";
 
+export const CLINICS_HREF = "/clinics";
+
+export type MarketingNavLink = {
+  href: string;
+  label: string;
+};
+
 /** Absolute home anchors so MarketingNav works from `/demo` and other public routes. */
-export const NAV_LINKS = [
+export const NAV_LINKS: readonly MarketingNavLink[] = [
   { href: "/#how-it-works", label: "How it works" },
   { href: "/#features", label: "Features" },
+  { href: "/#what-converts", label: "What converts" },
+  { href: CLINICS_HREF, label: "For clinics" },
   { href: "/pricing", label: "Pricing" },
-] as const;
+];
+
+/** In-page anchors on `/clinics` — never bounce a clinic visitor onto `/#…`. */
+export const CLINIC_NAV_LINKS: readonly MarketingNavLink[] = [
+  { href: "/clinics#how-it-works", label: "How it works" },
+  { href: "/clinics#features", label: "Features" },
+  { href: CLINICS_HREF, label: "For clinics" },
+  { href: "/pricing", label: "Pricing" },
+];

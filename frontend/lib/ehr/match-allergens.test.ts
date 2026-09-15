@@ -385,6 +385,23 @@ describe("matchAllergens — passes through severity + reaction for the banner",
   });
 });
 
+describe("matchAllergens — desk-reported sidecar allergies", () => {
+  it("matches a prescribed medicine against an unaccepted desk allergen", () => {
+    const allergy = {
+      ...makeAllergy("Penicillin"),
+      reportedAtDesk: true as const,
+    };
+    const matches = matchAllergens(
+      [makeMedicine("Penicillin", null)],
+      [allergy],
+      new Map(),
+    );
+    expect(matches).toHaveLength(1);
+    expect(matches[0].reportedAtDesk).toBe(true);
+    expect(matches[0].allergenMatched).toBe("Penicillin");
+  });
+});
+
 describe("matchAllergens — accepts the API row shape directly", () => {
   it("works when callers pass a full PrescriptionMedicine row", () => {
     // The matcher's input is structurally typed; verify a row that

@@ -159,6 +159,11 @@ describe("PaneShowHereButton", () => {
 
     fireEvent.click(screen.getByTestId("pane-show-here-pick-body"));
     expect(onSelect).toHaveBeenCalledWith("body");
+
+    const iconRow = screen.getByTestId("pane-show-here-icon-row");
+    expect(iconRow).toHaveTextContent("O");
+    expect(iconRow).toHaveTextContent("A");
+    expect(iconRow).toHaveTextContent("P");
   });
 
   it("collapsed: ⇄ opens dropdown with ordered picks", () => {

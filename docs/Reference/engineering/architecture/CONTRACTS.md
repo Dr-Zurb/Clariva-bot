@@ -479,9 +479,109 @@ Idempotent if already declined.
 
 ---
 
+## 📋 Dated appointment list — desk visit-prep flags (dvp P3)
+
+**Auth:** Doctor JWT or staff via `allowStaff` + acting doctor (`GET /api/v1/appointments?date=YYYY-MM-DD`).
+
+When `date` is present, each appointment may include presence-only flags (no PHI values):
+
+| Field | Type | Meaning |
+|--------|------|---------|
+| `has_desk_vitals` | boolean | A non-archived `patient_vitals` row exists for this appointment |
+| `has_history_submission` | boolean | A `patient_history_submissions` row exists for this appointment |
+| `visit_document_count` | number | Count of `visit_documents` rows for this appointment |
+| `has_visit_documents` | boolean | `visit_document_count > 0` |
+
+Omitted on non-dated list reads and on single-appointment fetches. If the 233/234 embeds are unavailable the list still returns; flags are omitted and desk dots stay hollow.
+
+---
+
+## 🧪 Desk visit-document lab extract (dvp / migration 236)
+
+**Auth:** Doctor JWT or staff via `staffCapability('internal_labs', 'papers')` + acting doctor. A staff login may write only the document kinds its seats allow (`lab_report` + `us` needs `internal_labs`; everything else needs `papers`).
+
+`GET /api/v1/appointments/:id/documents` includes `extracted_results` on each document (array, default `[]`). Each panel is keyed by `pageId` and holds a LabReport-shaped `report`, confirmed `rows`, `confirmed_at`, and `confirmed_by`.
+
+| Method | Path | Writes | Notes |
+|--------|------|--------|--------|
+| `POST` | `/api/v1/appointments/:id/documents/:documentId/pages/:pageId/extract-lab` | No | Suggestion rows only. Same MIME readers as prescription extract-lab. Rate-limited. |
+| `PUT` | `/api/v1/appointments/:id/documents/:documentId/extracted-results` | Yes | Body `{ panels: […] }`. Merges by `pageId`; does not wipe other pages. |
+
+Desk does not create a prescription. The doctor hydrates confirmed panels into Objective Reports and may still edit.
+
+---
+
+## Desk lab-order projection (dvp Phase 4)
+
+**Auth:** Doctor JWT or staff via `staffCapability('internal_labs')` + acting doctor. A `papers`-only login gets 403 on these routes. Staff never read `/api/v1/prescriptions/*`.
+
+Appointment demographic fields match the desk list (`Appointment` snake_case). Order projection is camelCase.
+
+| Method | Path | Notes |
+|--------|------|--------|
+| `GET` | `/api/v1/appointments/lab-pending` | Register before `/:id`. Doctor-scoped, last 60 days, not date-scoped. Oldest pending first. |
+| `GET` | `/api/v1/appointments/:id/lab-orders` | Latest non-superseded prescription only. Empty when unattested, missing, or no investigation orders. |
+| `PUT` | `/api/v1/appointments/:id/lab-orders` | Body `{ updates: […] }`. Close or reopen attested orders. |
+
+Each order:
+
+```
+{
+  orderId: string;
+  label: string;
+  kind: string;
+  status: 'pending' | 'uploaded' | 'not_done';
+  reasonCode: string | null;
+  reasonNote: string | null;
+  documentId: string | null;
+}
+```
+
+`GET /lab-pending` `data`:
+
+```
+{
+  items: Array<{
+    id: string;
+    patient_id: string | null;
+    patient_name: string;
+    patient_phone: string;
+    patient_mrn: string | null;
+    patient_age: number | null;
+    patient_sex: string | null;
+    appointment_date: string;
+    status: string;
+    patient_checked_in_at: string | null;
+    days_pending: number;
+    report_uploaded: boolean;
+    orders_closed: number;
+    orders_total: number;
+    orders: Array<{
+      orderId: string;
+      label: string;
+      kind: string;
+      status: 'pending' | 'uploaded' | 'not_done';
+      reasonCode: string | null;
+      reasonNote: string | null;
+      documentId: string | null;
+    }>;
+    has_visit_documents: boolean;
+    visit_document_count: number;
+  }>
+}
+```
+
+`GET` / `PUT /:id/lab-orders` `data`: `{ orders: Array<order> }`.
+
+`PUT` body `{ updates: Array<{ orderId, status, documentId?, reasonCode?, reasonNote? }> }`. `uploaded` requires `documentId` on a same-visit in-house `lab_report` or `imaging`. `not_done` requires `reasonCode` (`sample_not_collected` | `patient_refused` | `sample_rejected` | `machine_down` | `done_outside` | `other`); `other` requires `reasonNote`. `pending` deletes the fulfillment row.
+
+Day list (derived): latest attested Rx has ≥1 investigation order. `report_uploaded` is true when every order is `uploaded` or `not_done`. Cancelled appointments are excluded. The mixed-login Labs pending chip hides closed rows; the lab-only date list shows both.
+
+---
+
 ## 📝 Version
 
-**Last Updated:** 2026-05-17  
+**Last Updated:** 2026-09-13  
 **Version:** 1.2.0
 
 ---

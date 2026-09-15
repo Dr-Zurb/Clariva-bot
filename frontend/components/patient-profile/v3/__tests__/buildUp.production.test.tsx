@@ -1,7 +1,9 @@
 /**
  * cv3t-02 — production-path build-up regression.
  *
- * Seeds from `resolveSeedLayout(buildCockpitTabs(ctx))` (Consult on first open;
+ * Seeds from `resolveSeedLayout(buildCockpitTabs(ctx))` (OPD/document on first
+ * open; pass `seedLayoutId="consult"` for the tele tree). Locks the palette +
+ * seed against the nested column-wrapper defect (`render: () => null`
  * the same registry the page mounts), not a hand-rolled flat fixture. Locks the
  * palette + seed against the nested column-wrapper defect (`render: () => null`
  * at top level).
@@ -156,13 +158,14 @@ function productionRegistry(): PaneDefinition[] {
 
 let storageKeyCounter = 0;
 
-function renderProductionShell() {
+function renderProductionShell(seedLayoutId?: "consult" | "document") {
   storageKeyCounter += 1;
   const panes = productionRegistry();
   return render(
     <CockpitV3Shell
       panes={panes}
       storageKey={`test:cv3t-02-buildup:${storageKeyCounter}`}
+      seedLayoutId={seedLayoutId}
     />,
   );
 }
@@ -278,7 +281,7 @@ describe("cv3t-02: production build-up path", () => {
     cleanup();
   });
 
-  it("seeds Consult on first open, lists five real leaf tabs (no column wrappers)", async () => {
+  it("seeds Write on first open, lists five real leaf tabs (no column wrappers)", async () => {
     renderProductionShell();
 
     await waitFor(() => {
@@ -291,15 +294,15 @@ describe("cv3t-02: production build-up path", () => {
       expect(palettePaneIds()).not.toContain(wrapperId);
     }
 
-    expect(screen.getByTestId("pane-body-body")).toBeInTheDocument();
+    expect(screen.getByTestId("pane-plan-body")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Remove Consult" }),
-    ).toHaveAttribute("data-palette-on-canvas", "true");
+      screen.getByRole("button", { name: "Add Consult" }),
+    ).toHaveAttribute("data-palette-on-canvas", "false");
     expect(screen.getByRole("button", { name: "Remove Plan" })).toBeInTheDocument();
   });
 
-  it("Consult seed mounts body and Plan bodies without palette add", async () => {
-    renderProductionShell();
+  it("Consult seed mounts body and Rx bodies without palette add", async () => {
+    renderProductionShell("consult");
 
     await waitFor(() => {
       expect(screen.getByTestId("pane-body-body")).toBeInTheDocument();
@@ -315,7 +318,7 @@ describe("cv3t-02: production build-up path", () => {
     ).toHaveAttribute("data-palette-on-canvas", "true");
   });
 
-  it("reset returns to Consult after hiding a pane", async () => {
+  it("Consult hotkey restores Rx after hiding a pane", async () => {
     renderProductionShell();
 
     await waitFor(() => {
@@ -354,19 +357,16 @@ describe("cv3t-03: build-up parity axis (production registry)", () => {
     cleanup();
   });
 
-  it("every one of the five tabs mounts its real body on Consult seed", async () => {
-    renderProductionShell();
+  it("Call seed mounts Consult and Plan only", async () => {
+    renderProductionShell("consult");
 
     await waitFor(() => {
       expect(screen.getByTestId("cockpit-v3-canvas")).toBeInTheDocument();
     });
 
-    for (const id of COCKPIT_TAB_ORDER) {
-      expect(
-        screen.getByTestId(TAB_BODY_TESTID[id]),
-        `tab "${id}" must mount real content`,
-      ).toBeInTheDocument();
-    }
+    expect(screen.getByTestId(TAB_BODY_TESTID.body)).toBeInTheDocument();
+    expect(screen.getByTestId(TAB_BODY_TESTID.plan)).toBeInTheDocument();
+    expect(screen.queryByTestId(TAB_BODY_TESTID.assessment)).not.toBeInTheDocument();
     expect(screen.queryByTestId("cockpit-v3-empty-state")).not.toBeInTheDocument();
   });
 

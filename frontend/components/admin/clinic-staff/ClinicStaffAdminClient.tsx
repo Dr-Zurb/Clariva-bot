@@ -83,7 +83,7 @@ export function ClinicStaffAdminClient({ token }: { token: string }) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.clinicStaff() });
     },
     onError: (err: unknown) => {
-      setFormError(err instanceof Error ? err.message : "Could not delete receptionist");
+      setFormError(err instanceof Error ? err.message : "Could not delete staff");
     },
   });
 
@@ -97,7 +97,7 @@ export function ClinicStaffAdminClient({ token }: { token: string }) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.clinicStaff() });
     },
     onError: (err: unknown) => {
-      setFormError(err instanceof Error ? err.message : "Could not update receptionist");
+      setFormError(err instanceof Error ? err.message : "Could not update staff");
     },
   });
 
@@ -131,7 +131,7 @@ export function ClinicStaffAdminClient({ token }: { token: string }) {
         onSubmit={onSubmit}
         className="space-y-3 rounded-lg border border-border p-4"
       >
-        <p className="text-sm font-medium text-foreground">Add receptionist</p>
+        <p className="text-sm font-medium text-foreground">Add staff</p>
         <p className="text-xs text-muted-foreground">
           Extra logins start suspended if that doctor already has an active seat.
         </p>
@@ -184,7 +184,7 @@ export function ClinicStaffAdminClient({ token }: { token: string }) {
             <p className="font-medium text-foreground">Temporary password (shown once)</p>
             <p className="mt-1 font-mono text-foreground">{tempPassword}</p>
             <p className="mt-1 text-muted-foreground">
-              Share this with the receptionist. It will not be shown again.
+              Share this with them. It will not be shown again.
             </p>
           </div>
         ) : null}
@@ -219,7 +219,7 @@ export function ClinicStaffAdminClient({ token }: { token: string }) {
           ) : items.length === 0 ? (
             <TableRow>
               <TableCell colSpan={5} className="text-muted-foreground">
-                No front-desk accounts yet.
+                No staff accounts yet.
               </TableCell>
             </TableRow>
           ) : (

@@ -27,15 +27,18 @@ export function Testimonials() {
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="text-3xl font-bold tracking-tight text-[hsl(var(--halo-navy))] sm:text-4xl">
-            Doctors love the calm inbox
+            Built for doctors on social media
           </h2>
           <p className="mt-4 text-lg text-[hsl(var(--halo-ink))]/70">
-            Less chasing messages. More time with patients.
+            Less chasing messages. More patients seen.
           </p>
         </div>
         <div className="mt-14 grid gap-6 md:grid-cols-3">
           {quotes.map((item) => (
-            <Card key={item.name} className="flex flex-col border-black/5 p-6 shadow-sm">
+            <Card
+              key={item.name}
+              className="flex flex-col border-black/5 p-6 shadow-sm"
+            >
               <p className="flex-1 text-[hsl(var(--halo-ink))]/80">
                 &ldquo;{item.quote}&rdquo;
               </p>
@@ -44,16 +47,15 @@ export function Testimonials() {
                   aria-hidden
                   className="flex h-10 w-10 items-center justify-center rounded-full bg-[hsl(var(--halo-blue))]/10 text-sm font-semibold text-[hsl(var(--halo-blue))]"
                 >
-                  {item.name
-                    .split(" ")
-                    .slice(-1)[0]
-                    ?.charAt(0)}
+                  {item.name.split(" ").slice(-1)[0]?.charAt(0)}
                 </span>
                 <div>
                   <p className="text-sm font-semibold text-[hsl(var(--halo-navy))]">
                     {item.name}
                   </p>
-                  <p className="text-xs text-[hsl(var(--halo-ink))]/60">{item.role}</p>
+                  <p className="text-xs text-[hsl(var(--halo-ink))]/60">
+                    {item.role}
+                  </p>
                 </div>
               </div>
             </Card>

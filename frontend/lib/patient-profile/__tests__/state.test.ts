@@ -369,9 +369,9 @@ describe("deriveCockpitState — totality (every status maps to a defined state)
 // ---------------------------------------------------------------------------
 
 describe("canSendPrescription", () => {
-  it("returns true for `live`, `wrap_up`, and `ended`; false otherwise", () => {
-    expect(canSendPrescription("ready")).toBe(false);
-    expect(canSendPrescription("lobby")).toBe(false);
+  it("returns true for every non-terminal cockpit state", () => {
+    expect(canSendPrescription("ready")).toBe(true);
+    expect(canSendPrescription("lobby")).toBe(true);
     expect(canSendPrescription("live")).toBe(true);
     expect(canSendPrescription("wrap_up")).toBe(true);
     expect(canSendPrescription("ended")).toBe(true);
@@ -426,21 +426,10 @@ describe("primaryCtaFor", () => {
     undefined,
   ];
 
-  it("ready → { label: 'Start consult', action: 'start' } (tele + unset)", () => {
+  it("ready → no header CTA (Done on the footer owns commit)", () => {
     for (const m of MODALITIES) {
-      if (m === "in_clinic") continue;
-      expect(primaryCtaFor("ready", m)).toEqual({
-        label: "Start consult",
-        action: "start",
-      });
+      expect(primaryCtaFor("ready", m)).toBeNull();
     }
-  });
-
-  it("ready × in_clinic → { label: 'Start visit', action: 'start' }", () => {
-    expect(primaryCtaFor("ready", "in_clinic")).toEqual({
-      label: "Start visit",
-      action: "start",
-    });
   });
 
   it("lobby → { label: 'Resend join link', action: 'resend' }", () => {

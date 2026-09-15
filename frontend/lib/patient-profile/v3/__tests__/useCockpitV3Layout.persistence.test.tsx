@@ -189,7 +189,7 @@ describe("useCockpitV3Layout persistence (cv3p-02)", () => {
     expect(hasVisibleLeaves(result.current.paneTree)).toBe(false);
   });
 
-  it("writes only the v4-tree-layout key — no legacy v3 key", async () => {
+  it("writes only the v5-tree-layout key — no legacy v3 key", async () => {
     const storageKey = `test:cv3p-02-keys:${crypto.randomUUID()}`;
     const panes = makePanes(["a", "b"]);
     const opts = hookOptsFor(storageKey, panes);

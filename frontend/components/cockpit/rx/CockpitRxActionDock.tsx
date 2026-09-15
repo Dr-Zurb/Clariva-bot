@@ -5,15 +5,18 @@
  * modals. Survives Plan-tab removal (cv3l-05).
  */
 
-import { useEffect } from "react";
 import { PlanActionFooter } from "@/components/cockpit/middle/PlanActionFooter";
 import PrescriptionPatientPreview from "@/components/consultation/PrescriptionPatientPreview";
 import PrescriptionPreSendCheck from "@/components/consultation/PrescriptionPreSendCheck";
+import { usePrescriptionFormShell } from "@/components/cockpit/rx/PrescriptionFormShellContext";
+import { RxRevisionReasonDialog } from "@/components/cockpit/rx/RxRevisionReasonDialog";
+import { RxRevisionDeliveryPrompt } from "@/components/cockpit/rx/RxRevisionDeliveryPrompt";
+import { reviseDialogReplacesCopy } from "@/components/cockpit/rx/rxRevise";
 import {
   useRxCommitActions,
   type RxPreviewPatientIdentity,
 } from "@/components/cockpit/rx/useRxCommitActions";
-import type { CockpitLeaveExit } from "@/components/patient-profile/CockpitLeaveGuard";
+import { peekDoctorSettingsShared } from "@/lib/api/doctor-settings-shared";
 import type { CockpitState } from "@/lib/patient-profile/state";
 
 export interface CockpitRxActionDockProps {
@@ -24,10 +27,8 @@ export interface CockpitRxActionDockProps {
   token: string;
   state: CockpitState;
   finishBusy?: boolean;
-  onFinish?: () => void;
+  onFinish?: () => void | Promise<void>;
   onSent?: (prescriptionId: string) => void | Promise<void>;
-  /** Set while Back / leave is held — preview gets Stay / resume later. */
-  leaveExit?: CockpitLeaveExit | null;
 }
 
 export function CockpitRxActionDock({
@@ -40,7 +41,6 @@ export function CockpitRxActionDock({
   finishBusy = false,
   onFinish,
   onSent,
-  leaveExit = null,
 }: CockpitRxActionDockProps): JSX.Element | null {
   const commit = useRxCommitActions({
     appointmentId,
@@ -52,16 +52,16 @@ export function CockpitRxActionDock({
     onFinish,
     onSent,
   });
-
-  useEffect(() => {
-    if (!leaveExit) return;
-    commit.openPreview();
-  }, [leaveExit, commit.openPreview]);
+  const shell = usePrescriptionFormShell();
+  const timezone =
+    peekDoctorSettingsShared(token)?.data.settings.timezone?.trim() ||
+    "Asia/Kolkata";
+  const replacesLine = reviseDialogReplacesCopy(
+    shell?.prescription ?? null,
+    timezone,
+  );
 
   const handleClosePreview = () => {
-    if (leaveExit) {
-      leaveExit.stay();
-    }
     commit.closePreview();
   };
 
@@ -76,7 +76,7 @@ export function CockpitRxActionDock({
         appointmentId={appointmentId}
         finishBusy={finishBusy}
         onReview={commit.openPreview}
-        onPreview={commit.openPreview}
+        onPrewarm={commit.prewarmOnIntent}
         previewLoading={commit.previewLoading}
         sending={commit.saving}
         commitError={commit.commitError}
@@ -100,22 +100,6 @@ export function CockpitRxActionDock({
         onFinish={commit.finishVisit}
         onPrint={commit.printPrescription}
         onDownload={commit.downloadPrescription}
-        onStay={
-          leaveExit
-            ? () => {
-                leaveExit.stay();
-                commit.closePreview();
-              }
-            : undefined
-        }
-        onResumeLater={
-          leaveExit
-            ? () => {
-                leaveExit.resumeLater();
-                commit.closePreview();
-              }
-            : undefined
-        }
       />
       <PrescriptionPreSendCheck
         open={commit.preSendWarnings !== null}
@@ -124,6 +108,23 @@ export function CockpitRxActionDock({
         onCancel={commit.onPreSendCancel}
         onEdit={commit.onPreSendEdit}
         onSendAnyway={commit.onPreSendSendAnyway}
+      />
+      <RxRevisionReasonDialog
+        open={commit.revisionReasonOpen}
+        busy={commit.revisionReasonBusy}
+        error={commit.revisionReasonError}
+        replacesLine={replacesLine}
+        onCancel={commit.onRevisionReasonCancel}
+        onConfirm={commit.onRevisionReasonConfirm}
+      />
+      <RxRevisionDeliveryPrompt
+        open={commit.deliveryPrompt !== null}
+        canResend={commit.deliveryPrompt?.resend === true}
+        canReprint={commit.deliveryPrompt?.reprint === true}
+        busy={commit.saving || commit.printBusy}
+        onDismiss={commit.onDeliveryPromptDismiss}
+        onResend={commit.onDeliveryPromptResend}
+        onReprint={commit.onDeliveryPromptReprint}
       />
     </>
   );

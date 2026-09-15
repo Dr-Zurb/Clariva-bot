@@ -1,8 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  cancelDeskAppointment,
+  leaveDeskAppointment,
   classifyDeskAccessError,
   DESK_LIVE_SEARCH_PAGE_SIZE,
   DESK_SEARCH_PAGE_SIZE,
+  listDeskLabOrders,
+  listDeskLabPending,
+  mapDeskLabOrder,
+  mapDeskLabPendingItem,
   parseAlreadyOnToday,
   parseDuplicateMatches,
   probeDeskAccess,
@@ -40,7 +46,12 @@ describe("parseDuplicateMatches", () => {
         message: "Possible existing patient",
         details: {
           matches: [
-            { patientId: "p1", name: "Ria", phone: "9814861579", confidence: 1 },
+            {
+              patientId: "p1",
+              name: "Ria",
+              phone: "9814861579",
+              confidence: 1,
+            },
           ],
           confirmRequired: true,
         },
@@ -58,7 +69,9 @@ describe("parseDuplicateMatches", () => {
 
 describe("parseAlreadyOnToday", () => {
   it("reads 409 details for the same-day lock", () => {
-    const err = new Error("This patient already has a visit on that day.") as DeskError;
+    const err = new Error(
+      "This patient already has a visit on that day."
+    ) as DeskError;
     err.status = 409;
     err.body = {
       success: false,
@@ -86,9 +99,76 @@ describe("parseAlreadyOnToday", () => {
     err.status = 409;
     err.body = {
       success: false,
-      error: { code: "ConflictError", message: "This time slot is no longer available" },
+      error: {
+        code: "ConflictError",
+        message: "This time slot is no longer available",
+      },
     };
     expect(parseAlreadyOnToday(err)).toBeNull();
+  });
+});
+
+describe("cancelDeskAppointment", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("POSTs desk-cancel without a payment payload", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "http://api.test");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: {
+          appointment: {
+            id: "apt-1",
+            status: "cancelled",
+            opd_token_number: 4,
+          },
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await cancelDeskAppointment("tok", "apt-1");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "/api/v1/appointments/apt-1/desk-cancel"
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "POST" });
+    expect(String(fetchMock.mock.calls[0]?.[1]?.body)).not.toContain("refund");
+  });
+});
+
+describe("leaveDeskAppointment", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("POSTs desk-left with a return method, never refund", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "http://api.test");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: {
+          appointment: {
+            id: "apt-1",
+            status: "cancelled",
+            opd_token_number: 3,
+          },
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await leaveDeskAppointment("tok", "apt-1", "cash");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "/api/v1/appointments/apt-1/desk-left"
+    );
+    expect(String(fetchMock.mock.calls[0]?.[1]?.body)).toContain("cash");
+    expect(String(fetchMock.mock.calls[0]?.[1]?.body)).not.toContain("refund");
   });
 });
 
@@ -104,14 +184,23 @@ describe("probeDeskAccess", () => {
       ok: true,
       json: async () => ({
         success: true,
-        data: { doctorId: "d1", actorKind: "staff", timezone: "Asia/Kolkata", today: "2026-08-27" },
+        data: {
+          doctorId: "d1",
+          actorKind: "staff",
+          timezone: "Asia/Kolkata",
+          today: "2026-08-27",
+        },
       }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(probeDeskAccess("tok")).resolves.toBe("ok");
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/api/v1/clinic-staff/me");
-    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain("/api/v1/patients");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "/api/v1/clinic-staff/me"
+    );
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain(
+      "/api/v1/patients"
+    );
   });
 });
 
@@ -125,7 +214,10 @@ describe("desk search includeArchived", () => {
     vi.stubEnv("NEXT_PUBLIC_API_URL", "http://api.test");
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ success: true, data: { patients: [], total: 0, page: 1, pageSize: 10 } }),
+      json: async () => ({
+        success: true,
+        data: { patients: [], total: 0, page: 1, pageSize: 10 },
+      }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -145,7 +237,10 @@ describe("desk search includeArchived", () => {
     vi.stubEnv("NEXT_PUBLIC_API_URL", "http://api.test");
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ success: true, data: { patients: [], total: 55, page: 2, pageSize: 13 } }),
+      json: async () => ({
+        success: true,
+        data: { patients: [], total: 55, page: 2, pageSize: 13 },
+      }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -163,7 +258,10 @@ describe("desk search includeArchived", () => {
     vi.stubEnv("NEXT_PUBLIC_API_URL", "http://api.test");
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ success: true, data: { patients: [], total: 0, page: 1, pageSize: 10 } }),
+      json: async () => ({
+        success: true,
+        data: { patients: [], total: 0, page: 1, pageSize: 10 },
+      }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -176,3 +274,188 @@ describe("desk search includeArchived", () => {
   });
 });
 
+describe("mapDeskLabOrder", () => {
+  it("prefers snake_case and still reads camelCase", () => {
+    expect(
+      mapDeskLabOrder({ order_id: "o1", label: "CBC", kind: "blood" })
+    ).toEqual({
+      orderId: "o1",
+      label: "CBC",
+      kind: "blood",
+      status: "pending",
+      reasonCode: null,
+      reasonNote: null,
+      documentId: null,
+    });
+    expect(
+      mapDeskLabOrder({
+        orderId: "o2",
+        label: "USG",
+        kind: "imaging",
+        status: "uploaded",
+        documentId: "doc-1",
+      })
+    ).toEqual({
+      orderId: "o2",
+      label: "USG",
+      kind: "imaging",
+      status: "uploaded",
+      reasonCode: null,
+      reasonNote: null,
+      documentId: "doc-1",
+    });
+  });
+});
+
+describe("mapDeskLabPendingItem", () => {
+  it("maps the live backend pending shape", () => {
+    expect(
+      mapDeskLabPendingItem({
+        id: "apt-1",
+        patient_id: "p1",
+        patient_name: "Ria",
+        patient_phone: "9814861579",
+        patient_mrn: "P-00837",
+        patient_age: 31,
+        patient_sex: "female",
+        appointment_date: "2026-09-01T04:00:00Z",
+        status: "completed",
+        patient_checked_in_at: "2026-09-01T04:10:00Z",
+        days_pending: 3,
+        report_uploaded: true,
+        orders: [{ orderId: "o1", label: "CBC", kind: "blood" }],
+        has_visit_documents: false,
+        visit_document_count: 0,
+      })
+    ).toMatchObject({
+      appointmentId: "apt-1",
+      patientName: "Ria",
+      patientMrn: "P-00837",
+      daysPending: 3,
+      reportUploaded: true,
+      orders: [{ orderId: "o1", label: "CBC", kind: "blood" }],
+    });
+  });
+
+  it("still reads appointment_id when id is absent", () => {
+    expect(
+      mapDeskLabPendingItem({
+        appointment_id: "apt-3",
+        patient_name: "Ria",
+        days_pending: 2,
+        orders: [],
+      })
+    ).toMatchObject({ appointmentId: "apt-3", daysPending: 2 });
+  });
+
+  it("maps the locked camelCase contract", () => {
+    expect(
+      mapDeskLabPendingItem({
+        appointmentId: "apt-2",
+        patientId: null,
+        patientName: "Arjun",
+        patientPhone: null,
+        patientAge: null,
+        patientSex: null,
+        appointmentDate: "2026-09-10T04:00:00Z",
+        status: "confirmed",
+        patientCheckedInAt: null,
+        daysPending: 1,
+        orders: [{ orderId: "o9", label: "Lipid", kind: "blood" }],
+        hasVisitDocuments: true,
+        visitDocumentCount: 1,
+      })
+    ).toMatchObject({
+      appointmentId: "apt-2",
+      patientName: "Arjun",
+      daysPending: 1,
+      hasVisitDocuments: true,
+    });
+  });
+});
+
+describe("listDeskLabOrders", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("maps a 200 empty payload to an empty list", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "http://api.test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: { orders: [] },
+          meta: { timestamp: "2026-09-13T00:00:00Z", requestId: "r1" },
+        }),
+      })
+    );
+    const res = await listDeskLabOrders("tok", "apt-1");
+    expect(res.data.orders).toEqual([]);
+  });
+
+  it("throws on 404 so the desk can show an error", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "http://api.test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        json: async () => ({
+          success: false,
+          error: { code: "NotFoundError", message: "Not found" },
+        }),
+      })
+    );
+    await expect(listDeskLabOrders("tok", "apt-1")).rejects.toMatchObject({
+      message: "Not found",
+      status: 404,
+    });
+  });
+});
+
+describe("listDeskLabPending", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("maps a 200 empty payload to an empty list", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "http://api.test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: { items: [] },
+          meta: { timestamp: "2026-09-13T00:00:00Z", requestId: "r1" },
+        }),
+      })
+    );
+    const res = await listDeskLabPending("tok");
+    expect(res.data.items).toEqual([]);
+  });
+
+  it("throws on 403 so the desk can show an error", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "http://api.test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 403,
+        json: async () => ({
+          success: false,
+          error: { code: "ForbiddenError", message: "Forbidden" },
+        }),
+      })
+    );
+    await expect(listDeskLabPending("tok")).rejects.toMatchObject({
+      message: "Forbidden",
+      status: 403,
+    });
+  });
+});

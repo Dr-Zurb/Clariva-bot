@@ -1,7 +1,7 @@
 {
   "name": "Halo Aid",
   "short_name": "Halo Aid",
-  "description": "Digital infrastructure for doctors operating on social media.",
+  "description": "Turn your audience into your practice.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

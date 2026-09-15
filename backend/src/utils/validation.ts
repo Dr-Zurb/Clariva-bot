@@ -11,6 +11,7 @@
 import { z } from 'zod';
 import { ValidationError } from './errors';
 import { env } from '../config/env';
+import { normalizeTagList } from './patient-tags';
 import {
   serviceCatalogIncomingSchema,
   serviceCatalogTemplatesJsonSchema,
@@ -19,6 +20,7 @@ import {
   AUTO_NO_SHOW_AFTER_MIN_MAX,
   AUTO_NO_SHOW_AFTER_MIN_MIN,
   CATALOG_MODES,
+  SOCIAL_ENQUIRIES_VALUES,
   PATIENT_FLOW_ADVANCE_VALUES,
   COCKPIT_TEMPLATE_OVERRIDE_VALUES,
   CUSTOM_VITAL_GROUPS,
@@ -35,13 +37,20 @@ import {
   INVESTIGATIONS_CUSTOM_ORDER_MEMBER_LABEL_MAX,
   type ModeSchedule,
 } from '../types/doctor-settings';
-import type { PatientListFilters, PatientListSortId, PatientSegmentId } from '../services/patient-list-types';
+import type {
+  PatientListFilters,
+  PatientListSortId,
+  PatientSegmentId,
+} from '../services/patient-list-types';
 import {
   PATIENT_LIST_SORT_IDS,
   PATIENT_SEGMENT_IDS,
   PRESCRIPTION_FOLLOW_UP_VALUE_SUPPORTED,
 } from '../services/patient-list-segment-sql';
-import { PAST_SURGICAL_CATALOG_PROCEDURE_SLUGS } from '../types/prescription';
+import {
+  PAST_SURGICAL_CATALOG_PROCEDURE_SLUGS,
+  REVISION_REASONS,
+} from '../types/prescription';
 import { RX_TEMPLATE_SCOPE_VALUES } from '../types/rx-template';
 import {
   SUBJECTIVE_SECTION_ORDER_MAX,
@@ -109,6 +118,60 @@ function parseDateString(val: string): string | null {
   return null;
 }
 
+export function calendarYmd(now = new Date()): string {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function daysInMonth(year: number, month: number): number {
+  return new Date(year, month, 0).getDate();
+}
+
+/** Subtract whole calendar months from a YYYY-MM-DD date. Clamps the day. */
+export function subtractCalendarMonths(iso: string, months: number): string | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!match || months < 1) return null;
+  let year = Number(match[1]);
+  let month = Number(match[2]) - months;
+  const day = Number(match[3]);
+  while (month <= 0) {
+    month += 12;
+    year -= 1;
+  }
+  const clamped = Math.min(day, daysInMonth(year, month));
+  return `${year}-${String(month).padStart(2, '0')}-${String(clamped).padStart(2, '0')}`;
+}
+
+/** Subtract whole calendar days from a YYYY-MM-DD date. */
+export function subtractCalendarDays(iso: string, days: number): string | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!match || days < 1) return null;
+  const dt = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  dt.setDate(dt.getDate() - days);
+  return calendarYmd(dt);
+}
+
+/**
+ * Whole calendar years from a YYYY-MM-DD date. 0 if under one year.
+ * Null when unparseable, in the future, or older than 130.
+ */
+export function ageYearsFromIsoDate(iso: string, now = new Date()): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!match) return null;
+  const birthY = Number(match[1]);
+  const birthM = Number(match[2]);
+  const birthD = Number(match[3]);
+  const y = now.getFullYear();
+  const m = now.getMonth() + 1;
+  const d = now.getDate();
+  let years = y - birthY;
+  if (m < birthM || (m === birthM && d < birthD)) years -= 1;
+  if (years < 0 || years > 130) return null;
+  return years;
+}
+
 // ============================================================================
 // Zod Schemas (field-level)
 // ============================================================================
@@ -158,8 +221,53 @@ export const patientEmailSchema = z
     const t = s.trim();
     if (!t) return undefined;
     const email = t.toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Please provide a valid email address');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+      throw new Error('Please provide a valid email address');
     return email;
+  });
+
+export const GUARDIAN_RELATIONS = ['father', 'spouse', 'mother', 'son', 'daughter'] as const;
+
+export type GuardianRelation = (typeof GUARDIAN_RELATIONS)[number];
+
+export const optionalGuardianNameSchema = z
+  .string()
+  .max(NAME_MAX_LEN, `Name must be at most ${NAME_MAX_LEN} characters`)
+  .optional()
+  .transform((s) => {
+    const t = (s ?? '').trim();
+    return t === '' ? undefined : t;
+  });
+
+export const optionalGuardianRelationSchema = z.enum(GUARDIAN_RELATIONS).optional();
+
+export const requiredGuardianRelationSchema = z.enum(GUARDIAN_RELATIONS);
+
+export const DESK_GENDERS = ['female', 'male', 'other'] as const;
+
+export type DeskGender = (typeof DESK_GENDERS)[number];
+
+/** Desk registration only. Do not reuse on the DM collection path. */
+export const requiredDeskGenderSchema = z.enum(DESK_GENDERS);
+
+export const optionalPatientPhoneSchema = z
+  .string()
+  .optional()
+  .transform((s) => {
+    const t = (s ?? '').trim();
+    return t === '' ? undefined : t;
+  })
+  .pipe(z.union([patientPhoneSchema, z.undefined()]));
+
+const ADDRESS_MAX_LEN = 300;
+
+export const optionalPatientAddressSchema = z
+  .string()
+  .max(ADDRESS_MAX_LEN, `Address must be at most ${ADDRESS_MAX_LEN} characters`)
+  .optional()
+  .transform((s) => {
+    const t = (s ?? '').trim();
+    return t === '' ? undefined : t;
   });
 
 // ============================================================================
@@ -186,10 +294,7 @@ export const REQUIRED_COLLECTION_FIELDS: readonly PatientCollectionField[] = [
   'reason_for_visit',
 ];
 
-const fieldSchemas: Record<
-  PatientCollectionField,
-  z.ZodType<string | number | undefined>
-> = {
+const fieldSchemas: Record<PatientCollectionField, z.ZodType<string | number | undefined>> = {
   name: patientNameSchema,
   phone: patientPhoneSchema,
   age: patientAgeSchema,
@@ -245,27 +350,21 @@ export const availableSlotsQuerySchema = z.object({
   date: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD')
-    .refine(
-      (val) => {
-        const d = new Date(val + 'T12:00:00Z');
-        const today = new Date();
-        today.setUTCHours(0, 0, 0, 0);
-        const dayStart = new Date(val + 'T00:00:00Z');
-        return !isNaN(d.getTime()) && dayStart >= today;
-      },
-      'date cannot be in the past'
-    )
-    .refine(
-      (val) => {
-        const d = new Date(val + 'T12:00:00Z');
-        const today = new Date();
-        today.setUTCHours(0, 0, 0, 0);
-        const maxDate = new Date(today);
-        maxDate.setUTCDate(maxDate.getUTCDate() + MAX_FUTURE_DAYS);
-        return d <= maxDate;
-      },
-      `date cannot be more than ${MAX_FUTURE_DAYS} days in the future`
-    ),
+    .refine((val) => {
+      const d = new Date(val + 'T12:00:00Z');
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      const dayStart = new Date(val + 'T00:00:00Z');
+      return !isNaN(d.getTime()) && dayStart >= today;
+    }, 'date cannot be in the past')
+    .refine((val) => {
+      const d = new Date(val + 'T12:00:00Z');
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      const maxDate = new Date(today);
+      maxDate.setUTCDate(maxDate.getUTCDate() + MAX_FUTURE_DAYS);
+      return d <= maxDate;
+    }, `date cannot be more than ${MAX_FUTURE_DAYS} days in the future`),
 });
 
 export type AvailableSlotsQuery = z.infer<typeof availableSlotsQuerySchema>;
@@ -297,23 +396,21 @@ export const bookAppointmentSchema = z.object({
   appointmentDate: z
     .string()
     .datetime({ message: 'appointmentDate must be ISO 8601 datetime' })
-    .refine(
-      (val) => new Date(val) >= new Date(),
-      'Cannot book appointments in the past'
-    ),
+    .refine((val) => new Date(val) >= new Date(), 'Cannot book appointments in the past'),
   reasonForVisit: z
     .string()
     .min(1, 'Reason for visit is required')
-    .max(REASON_FOR_VISIT_MAX_LEN, `Reason for visit must be at most ${REASON_FOR_VISIT_MAX_LEN} characters`)
+    .max(
+      REASON_FOR_VISIT_MAX_LEN,
+      `Reason for visit must be at most ${REASON_FOR_VISIT_MAX_LEN} characters`
+    )
     .transform((s) => s.trim()),
   notes: z
     .string()
     .max(NOTES_MAX_LEN, `Notes must be at most ${NOTES_MAX_LEN} characters`)
     .transform((s) => s.trim() || undefined)
     .optional(),
-  consultationType: z
-    .enum(['video', 'in_clinic', 'text', 'voice'])
-    .optional(),
+  consultationType: z.enum(['video', 'in_clinic', 'text', 'voice']).optional(),
   /** SFU-05: matches doctor_settings.service_offerings_json service_key */
   catalogServiceKey: z.string().min(1).max(64).trim().optional(),
   /** SFU-11: matches service_id in catalog */
@@ -329,6 +426,10 @@ export const bookAppointmentSchema = z.object({
   opdEventType: z.enum(['standard', 'return_after_completed']).optional(),
   /** Links overflow / return visit to a prior appointment on the same day. */
   relatedAppointmentId: z.string().uuid('relatedAppointmentId must be a valid UUID').optional(),
+  /** osm-01/04 — how the appointment entered the day (migration 192). */
+  bookingOrigin: z
+    .enum(['booked', 'walk_in', 'overflow', 'return_after_completed', 'rebooked'])
+    .optional(),
 });
 
 export type BookAppointmentInput = z.infer<typeof bookAppointmentSchema>;
@@ -342,12 +443,13 @@ export const doctorCreateAppointmentSchema = z
     patientId: z.string().uuid('patientId must be a valid UUID').optional(),
     patientName: patientNameSchema.optional(),
     patientPhone: patientPhoneSchema.optional(),
-    appointmentDate: z
-      .string()
-      .datetime({ message: 'appointmentDate must be ISO 8601 datetime' }),
+    appointmentDate: z.string().datetime({ message: 'appointmentDate must be ISO 8601 datetime' }),
     reasonForVisit: z
       .string()
-      .max(REASON_FOR_VISIT_MAX_LEN, `Reason for visit must be at most ${REASON_FOR_VISIT_MAX_LEN} characters`)
+      .max(
+        REASON_FOR_VISIT_MAX_LEN,
+        `Reason for visit must be at most ${REASON_FOR_VISIT_MAX_LEN} characters`
+      )
       .transform((s) => s.trim())
       .optional(),
     notes: z
@@ -370,6 +472,12 @@ export const doctorCreateAppointmentSchema = z
     /** OPD slot hub — doctor add-slot / overflow dialog (sl-06). */
     opdEventType: z.enum(['standard', 'return_after_completed']).optional(),
     relatedAppointmentId: z.string().uuid('relatedAppointmentId must be a valid UUID').optional(),
+    /** osm-01/04 — overflow / walk-in provenance (migration 192). */
+    bookingOrigin: z
+      .enum(['booked', 'walk_in', 'overflow', 'return_after_completed', 'rebooked'])
+      .optional(),
+    /** Desk walk-in: stamp arrival in the same request as create. */
+    checkIn: z.boolean().optional(),
   })
   .refine(
     (data) => {
@@ -422,9 +530,13 @@ export function validateGetAppointmentParams(params: unknown): GetAppointmentPar
   return result.data;
 }
 
-/** GET /api/v1/appointments — optional per-patient filter (pr-11). */
+/** GET /api/v1/appointments — optional per-patient filter (pr-11) + session date (P4). */
 export const listAppointmentsQuerySchema = z.object({
   patient_id: z.string().uuid('patient_id must be a valid UUID').optional(),
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD')
+    .optional(),
 });
 
 export type ListAppointmentsQuery = z.infer<typeof listAppointmentsQuerySchema>;
@@ -445,36 +557,112 @@ export function validateListAppointmentsQuery(
   return result.data;
 }
 
-// ============================================================================
-// PATCH Appointment Body (e-task-5 - status, clinical_notes)
-// ============================================================================
-
-const CLINICAL_NOTES_MAX_LEN = 5000;
-
-export const patchAppointmentBodySchema = z
+/** POST /api/v1/appointments/:id/visit-payments — desk hisab collect. */
+export const collectVisitPaymentBodySchema = z
   .object({
-    status: z
-      .enum(['pending', 'confirmed', 'cancelled', 'completed', 'no_show'])
-      .optional(),
-    clinical_notes: z
-      .union([
-        z.string().max(CLINICAL_NOTES_MAX_LEN).transform((s) => (s.trim() === '' ? null : s.trim())),
-        z.null(),
-      ])
-      .optional(),
+    method: z.enum(['cash', 'upi', 'card', 'no_charge']),
+    amountMinor: z.number().int().max(100_000_000).optional(),
+    note: z.string().max(200).optional(),
   })
-  .refine((data) => data.status !== undefined || data.clinical_notes !== undefined, {
-    message: 'At least one field (status or clinical_notes) is required',
+  .superRefine((data, ctx) => {
+    if (data.method === 'no_charge') {
+      if (data.amountMinor !== undefined && data.amountMinor !== 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'No charge must be recorded as zero',
+          path: ['amountMinor'],
+        });
+      }
+      return;
+    }
+    if (data.amountMinor === undefined || data.amountMinor <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'amountMinor must be a positive integer (paise)',
+        path: ['amountMinor'],
+      });
+    }
   });
 
-export type PatchAppointmentBody = z.infer<typeof patchAppointmentBodySchema>;
+export type CollectVisitPaymentBody = z.infer<typeof collectVisitPaymentBodySchema>;
 
-export function validatePatchAppointmentBody(body: unknown): PatchAppointmentBody {
-  const result = patchAppointmentBodySchema.safeParse(body);
+export function validateCollectVisitPaymentBody(body: unknown): CollectVisitPaymentBody {
+  const result = collectVisitPaymentBodySchema.safeParse(body);
   if (!result.success) {
     const first = result.error.issues[0];
-    const message = first?.message ?? 'Invalid request body';
-    throw new ValidationError(message);
+    throw new ValidationError(first?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+/** GET /api/v1/clinic-staff/hisab — day's desk tally. */
+export const deskHisabQuerySchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD'),
+});
+
+export type DeskHisabQuery = z.infer<typeof deskHisabQuerySchema>;
+
+export function validateDeskHisabQuery(
+  query: Record<string, string | string[] | undefined>
+): DeskHisabQuery {
+  const date =
+    typeof query.date === 'string'
+      ? query.date
+      : Array.isArray(query.date)
+        ? query.date[0]
+        : undefined;
+  const result = deskHisabQuerySchema.safeParse({ date });
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid query');
+  }
+  return result.data;
+}
+
+/** POST /api/v1/appointments/:id/desk-cancel — waiting / booked only. */
+export const deskCancelBodySchema = z.object({
+  reason: z.string().max(200).optional(),
+});
+
+export type DeskCancelBody = z.infer<typeof deskCancelBodySchema>;
+
+export function validateDeskCancelBody(body: unknown): DeskCancelBody {
+  const result = deskCancelBodySchema.safeParse(body ?? {});
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+/** POST /api/v1/appointments/:id/desk-left — arrived only. */
+export const deskLeftBodySchema = z.object({
+  returnMethod: z.enum(['cash', 'upi', 'card']).optional(),
+});
+
+export type DeskLeftBody = z.infer<typeof deskLeftBodySchema>;
+
+export function validateDeskLeftBody(body: unknown): DeskLeftBody {
+  const result = deskLeftBodySchema.safeParse(body ?? {});
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+/** POST /api/v1/appointments/:id/desk-reschedule — waiting / booked only. */
+export const deskRescheduleBodySchema = z.object({
+  appointmentDate: z.string().datetime({ message: 'appointmentDate must be ISO 8601 datetime' }),
+});
+
+export type DeskRescheduleBody = z.infer<typeof deskRescheduleBodySchema>;
+
+export function validateDeskRescheduleBody(body: unknown): DeskRescheduleBody {
+  const result = deskRescheduleBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid request body');
   }
   return result.data;
 }
@@ -509,6 +697,41 @@ export function validateRecordingConsentBody(body: unknown): RecordingConsentBod
 }
 
 // ============================================================================
+// PATCH Appointment Body (e-task-5 - status, clinical_notes)
+// ============================================================================
+
+const CLINICAL_NOTES_MAX_LEN = 5000;
+
+export const patchAppointmentBodySchema = z
+  .object({
+    status: z.enum(['pending', 'confirmed', 'cancelled', 'completed', 'no_show']).optional(),
+    clinical_notes: z
+      .union([
+        z
+          .string()
+          .max(CLINICAL_NOTES_MAX_LEN)
+          .transform((s) => (s.trim() === '' ? null : s.trim())),
+        z.null(),
+      ])
+      .optional(),
+  })
+  .refine((data) => data.status !== undefined || data.clinical_notes !== undefined, {
+    message: 'At least one field (status or clinical_notes) is required',
+  });
+
+export type PatchAppointmentBody = z.infer<typeof patchAppointmentBodySchema>;
+
+export function validatePatchAppointmentBody(body: unknown): PatchAppointmentBody {
+  const result = patchAppointmentBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+// ============================================================================
 // Wrap-up Body (pf-02 — Patient seeing flow)
 // ----------------------------------------------------------------------------
 // Body shape for `POST /v1/appointments/:id/wrap-up`. The wrap-up dialog
@@ -530,7 +753,10 @@ const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 export const wrapUpBodySchema = z.object({
   diagnosis_text: z
     .string()
-    .max(DIAGNOSIS_TEXT_MAX_LEN, `diagnosis_text must be at most ${DIAGNOSIS_TEXT_MAX_LEN} characters`)
+    .max(
+      DIAGNOSIS_TEXT_MAX_LEN,
+      `diagnosis_text must be at most ${DIAGNOSIS_TEXT_MAX_LEN} characters`
+    )
     .transform((s) => s.trim() || null)
     .nullable()
     .optional(),
@@ -539,10 +765,16 @@ export const wrapUpBodySchema = z.object({
       z
         .string()
         .min(1, 'diagnosis_tags entries must not be empty')
-        .max(DIAGNOSIS_TAG_MAX_LEN, `diagnosis_tags entries must be at most ${DIAGNOSIS_TAG_MAX_LEN} characters`)
+        .max(
+          DIAGNOSIS_TAG_MAX_LEN,
+          `diagnosis_tags entries must be at most ${DIAGNOSIS_TAG_MAX_LEN} characters`
+        )
         .transform((s) => s.trim())
     )
-    .max(DIAGNOSIS_TAGS_MAX_COUNT, `diagnosis_tags must contain at most ${DIAGNOSIS_TAGS_MAX_COUNT} entries`)
+    .max(
+      DIAGNOSIS_TAGS_MAX_COUNT,
+      `diagnosis_tags must contain at most ${DIAGNOSIS_TAGS_MAX_COUNT} entries`
+    )
     .default([]),
   followup_date: z
     .string()
@@ -621,13 +853,31 @@ export function validateStartConsultationBody(body: unknown): StartConsultationB
   return result.data;
 }
 
+/** rec-11 — accept body is empty; doctor id comes from the JWT only. */
+export const acceptRecordingAttestationBodySchema = z.object({}).strict();
+
+export type AcceptRecordingAttestationBody = z.infer<typeof acceptRecordingAttestationBodySchema>;
+
+export function validateAcceptRecordingAttestationBody(
+  body: unknown
+): AcceptRecordingAttestationBody {
+  const result = acceptRecordingAttestationBodySchema.safeParse(body ?? {});
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
 export const getConsultationTokenQuerySchema = z
   .object({
     appointmentId: z.string().uuid('appointmentId must be a valid UUID').optional(),
     token: z.string().min(1).optional(), // Patient path: required when no auth
   })
   .refine(
-    (data) => data.appointmentId !== undefined || (data.token !== undefined && data.token.length >= 10),
+    (data) =>
+      data.appointmentId !== undefined || (data.token !== undefined && data.token.length >= 10),
     { message: 'Either appointmentId (doctor) or token (patient) is required' }
   );
 
@@ -703,13 +953,10 @@ export const daySlotsQuerySchema = z.object({
   date: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD')
-    .refine(
-      (val) => {
-        const d = new Date(val + 'T12:00:00Z');
-        return !isNaN(d.getTime());
-      },
-      'date must be valid'
-    ),
+    .refine((val) => {
+      const d = new Date(val + 'T12:00:00Z');
+      return !isNaN(d.getTime());
+    }, 'date must be valid'),
 });
 
 export type DaySlotsQuery = z.infer<typeof daySlotsQuerySchema>;
@@ -729,10 +976,7 @@ export const selectSlotBodySchema = z.object({
   slotStart: z
     .string()
     .datetime({ message: 'slotStart must be ISO 8601 datetime' })
-    .refine(
-      (val) => new Date(val) >= new Date(),
-      'Cannot select a slot in the past'
-    ),
+    .refine((val) => new Date(val) >= new Date(), 'Cannot select a slot in the past'),
   /** SFU-07: required when doctor has multi-service catalog (unless already in conversation state). */
   catalogServiceKey: z.string().min(1).max(64).trim().optional(),
   /** SFU-11 */
@@ -781,7 +1025,9 @@ export const sessionTokenQuerySchema = z.object({
 
 export type SessionTokenQuery = z.infer<typeof sessionTokenQuerySchema>;
 
-export function validateSessionTokenQuery(query: Record<string, string | undefined>): SessionTokenQuery {
+export function validateSessionTokenQuery(
+  query: Record<string, string | undefined>
+): SessionTokenQuery {
   const result = sessionTokenQuerySchema.safeParse(query);
   if (!result.success) {
     const first = result.error.issues[0];
@@ -838,11 +1084,7 @@ export function validateOpdSessionQuery(
   const parsed = validateOpdSlotSessionQuery(query);
   const [y, m, d] = parsed.date.split('-').map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d));
-  if (
-    dt.getUTCFullYear() !== y ||
-    dt.getUTCMonth() !== m - 1 ||
-    dt.getUTCDate() !== d
-  ) {
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) {
     throw new ValidationError('date must be a valid calendar date (YYYY-MM-DD)');
   }
   return parsed;
@@ -933,12 +1175,8 @@ export function validateConvertSessionBody(body: unknown): ConvertSessionBody {
     throw new ValidationError(message);
   }
   const [y, m, d] = result.data.date.split('-').map(Number);
-  const dt = new Date(Date.UTC(y!, (m! - 1), d!));
-  if (
-    dt.getUTCFullYear() !== y ||
-    dt.getUTCMonth() !== (m! - 1) ||
-    dt.getUTCDate() !== d
-  ) {
+  const dt = new Date(Date.UTC(y!, m! - 1, d!));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m! - 1 || dt.getUTCDate() !== d) {
     throw new ValidationError('date must be a valid calendar date (YYYY-MM-DD)');
   }
   return result.data;
@@ -964,9 +1202,7 @@ export function validateRequeueQueueEntryBody(body: unknown): RequeueQueueEntryB
 // OPD session overrun (pdm-09)
 // ============================================================================
 
-const sessionDateYmdSchema = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD');
+const sessionDateYmdSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD');
 
 export const opdSessionOverrunQuerySchema = z.object({
   date: sessionDateYmdSchema,
@@ -1057,6 +1293,91 @@ export function validateMergePatientsBody(body: unknown): MergePatientsBody {
   return result.data;
 }
 
+const optionalDeskDobSchema = z
+  .string()
+  .optional()
+  .transform((s) => {
+    const t = (s ?? '').trim();
+    return t === '' ? undefined : t;
+  })
+  .pipe(z.union([patientDobSchema, z.undefined()]));
+
+export const DESK_AGE_UNITS = ['years', 'months', 'days'] as const;
+
+export type DeskAgeUnit = (typeof DESK_AGE_UNITS)[number];
+
+export const DESK_AGE_UNIT_LIMITS = {
+  years: { min: 1, max: 120 },
+  months: { min: 1, max: 36 },
+  days: { min: 1, max: 90 },
+} as const;
+
+/** POST /api/v1/patients — front-desk / doctor manual registration (P2). */
+export const createFrontDeskPatientBodySchema = z
+  .object({
+    name: patientNameSchema,
+    phone: patientPhoneSchema,
+    age: patientAgeSchema.optional(),
+    ageUnit: z.enum(DESK_AGE_UNITS).optional(),
+    dateOfBirth: optionalDeskDobSchema,
+    gender: requiredDeskGenderSchema,
+    email: patientEmailSchema.optional(),
+    guardianName: patientNameSchema,
+    guardianRelation: requiredGuardianRelationSchema,
+    altPhone: optionalPatientPhoneSchema,
+    address: optionalPatientAddressSchema,
+    /** RQ5: proceed even when possible matches exist. Never auto-merge. */
+    confirmNew: z.boolean().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.dateOfBirth) {
+      if (ageYearsFromIsoDate(data.dateOfBirth) == null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Please provide a valid date of birth',
+          path: ['dateOfBirth'],
+        });
+      }
+      return;
+    }
+    if (data.age == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Age or date of birth is required',
+        path: ['age'],
+      });
+      return;
+    }
+    const unit = data.ageUnit ?? 'years';
+    const limits = DESK_AGE_UNIT_LIMITS[unit];
+    if (data.age < limits.min || data.age > limits.max) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Please provide a valid age in ${unit} (${limits.min}–${limits.max})`,
+        path: ['age'],
+      });
+    }
+  });
+
+export type CreateFrontDeskPatientBody = z.infer<typeof createFrontDeskPatientBodySchema>;
+
+export function validateCreateFrontDeskPatientBody(body: unknown): CreateFrontDeskPatientBody {
+  const result = createFrontDeskPatientBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid patient');
+  }
+  return result.data;
+}
+
+/** PATCH /api/v1/patients/:id — full card, same fields as create. */
+export const updateFrontDeskPatientBodySchema = createFrontDeskPatientBodySchema;
+export type UpdateFrontDeskPatientBody = CreateFrontDeskPatientBody;
+
+export function validateUpdateFrontDeskPatientBody(body: unknown): UpdateFrontDeskPatientBody {
+  return validateCreateFrontDeskPatientBody(body);
+}
+
 // ============================================================================
 // Doctor Settings PATCH (e-task-2)
 // ============================================================================
@@ -1082,10 +1403,7 @@ const customSubsectionSchema = z
     // `.default([])` so the inferred output `children` is a non-optional
     // array — aligns with the canonical `CustomSubsection` shape consumed by
     // the prescription create/update service inputs (subj-19 type-parity).
-    children: z
-      .array(customSubsectionChildSchema)
-      .max(CUSTOM_SUBSECTION_CHILDREN_MAX)
-      .default([]),
+    children: z.array(customSubsectionChildSchema).max(CUSTOM_SUBSECTION_CHILDREN_MAX).default([]),
   })
   .strict();
 
@@ -1258,7 +1576,10 @@ const investigationCustomOrderSchema = z
   .object({
     id: z.string().trim().min(1).max(INVESTIGATIONS_CUSTOM_ORDER_ID_MAX),
     label: z.string().trim().min(1).max(INVESTIGATIONS_CUSTOM_ORDER_LABEL_MAX),
-    members: z.array(investigationCustomOrderMemberSchema).max(INVESTIGATIONS_CUSTOM_ORDER_MEMBERS_MAX).optional(),
+    members: z
+      .array(investigationCustomOrderMemberSchema)
+      .max(INVESTIGATIONS_CUSTOM_ORDER_MEMBERS_MAX)
+      .optional(),
     useCount: z.number().int().min(0).max(10_000),
     pinned: z.boolean(),
     updatedAt: z.string().trim().min(1).max(40),
@@ -1301,6 +1622,7 @@ export const patchDoctorSettingsSchema = z
     booking_buffer_minutes: z.number().int().min(0).nullable().optional(),
     welcome_message: z.string().max(1000).trim().nullable().optional(),
     specialty: z.string().max(200).trim().nullable().optional(),
+    social_enquiries: z.enum(SOCIAL_ENQUIRIES_VALUES).optional(),
     address_summary: z.string().max(500).trim().nullable().optional(),
     consultation_types: z.string().max(200).trim().nullable().optional(),
     /** SFU-01 / SFU-11: catalog v1; service_id optional until merge */
@@ -1325,12 +1647,7 @@ export const patchDoctorSettingsSchema = z
      * Optional JSON policy blob (grace minutes, reschedule policy, etc.).
      * Object keys/values are validated loosely here; doctor-settings-service applies business rules.
      */
-    opd_policies: z
-      .union([
-        z.record(z.string(), z.any()),
-        z.null(),
-      ])
-      .optional(),
+    opd_policies: z.union([z.record(z.string(), z.any()), z.null()]).optional(),
     /** RBH-09: Pause Instagram DM + comment automation */
     instagram_receptionist_paused: z.boolean().optional(),
     instagram_receptionist_pause_message: z.string().max(500).trim().nullable().optional(),
@@ -1361,10 +1678,7 @@ export const patchDoctorSettingsSchema = z
      * R-MOD-full (migration 106): global cockpit template pin. `null` clears
      * the override (= auto-select). Vocab mirrors the DB CHECK constraint.
      */
-    cockpit_template_override: z
-      .enum(COCKPIT_TEMPLATE_OVERRIDE_VALUES)
-      .nullable()
-      .optional(),
+    cockpit_template_override: z.enum(COCKPIT_TEMPLATE_OVERRIDE_VALUES).nullable().optional(),
     /** subj-21: per-doctor default custom subjective subsections template. */
     subjective_custom_subsections: subjectiveCustomSubsectionsDefaultSchema.optional(),
     /** subj-24: per-doctor default Subjective-tab section order. */
@@ -1403,8 +1717,58 @@ export const patchDoctorSettingsSchema = z
     vitals_hidden: vitalsHiddenSchema.optional(),
     /** plan-investigations-library: per-doctor custom investigation orders. */
     investigations_custom_orders: investigationsCustomOrdersSchema.optional(),
+    /** clinic-branding-v1: letterhead tokens. Paths are NOT patchable. */
+    qualifications: z.string().max(200).trim().nullable().optional(),
+    letterhead_preset: z.enum(['classic', 'centred', 'preprinted', 'banner']).optional(),
+    letterhead_accent_color: z
+      .string()
+      .regex(/^#[0-9A-Fa-f]{6}$/, 'Accent colour must be #RRGGBB')
+      .nullable()
+      .optional(),
+    letterhead_chrome_color: z
+      .string()
+      .regex(/^#[0-9A-Fa-f]{6}$/, 'Header & footer colour must be #RRGGBB')
+      .nullable()
+      .optional(),
+    letterhead_patient_color: z
+      .string()
+      .regex(/^#[0-9A-Fa-f]{6}$/, 'Patient details colour must be #RRGGBB')
+      .nullable()
+      .optional(),
+    page_size: z.enum(['a4', 'a5']).optional(),
+    preprint_margin_top_mm: z.number().int().min(0).max(80).optional(),
+    preprint_margin_bottom_mm: z.number().int().min(0).max(80).optional(),
+    header_height_mm: z.number().int().min(15).max(80).optional(),
+    footer_height_mm: z.number().int().min(10).max(60).optional(),
+    page_margin_top_mm: z.number().int().min(8).max(32).optional(),
+    page_margin_right_mm: z.number().int().min(8).max(32).optional(),
+    page_margin_bottom_mm: z.number().int().min(8).max(32).optional(),
+    page_margin_left_mm: z.number().int().min(8).max(32).optional(),
+    logo_size: z.enum(['small', 'medium', 'large']).optional(),
+    patient_identity_preset: z.enum(['open_letter', 'compact', 'grid']).optional(),
+    show_patient_phone: z.boolean().optional(),
+    show_patient_guardian: z.boolean().optional(),
+    show_patient_mrn: z.boolean().optional(),
+    show_patient_address: z.boolean().optional(),
+    letterhead_footer_line: z.string().max(200).trim().nullable().optional(),
+    hide_halo_credit: z.boolean().optional(),
+    letterhead_background_preset: z.enum(['none', 'paper', 'cross', 'upload']).optional(),
+    letterhead_background_opacity: z.number().int().min(0).max(40).optional(),
+    letterhead_header_fit: z.enum(['fit', 'fill', 'stretch']).optional(),
+    letterhead_footer_fit: z.enum(['fit', 'fill', 'stretch']).optional(),
+    letterhead_background_fit: z.enum(['fit', 'fill', 'stretch']).optional(),
+    letterhead_header_text_size: z.enum(['small', 'medium', 'large']).optional(),
+    letterhead_patient_text_size: z.enum(['small', 'medium', 'large']).optional(),
+    letterhead_body_text_size: z.enum(['small', 'medium', 'large']).optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (body) => {
+      if (body.header_height_mm == null || body.footer_height_mm == null) return true;
+      return body.header_height_mm + body.footer_height_mm <= 100;
+    },
+    { message: 'Header and footer heights together must be 100 mm or less' }
+  );
 
 export type PatchDoctorSettingsBody = z.infer<typeof patchDoctorSettingsSchema>;
 
@@ -1437,12 +1801,8 @@ export const putAvailabilitySchema = z.object({
     z
       .object({
         day_of_week: z.number().int().min(0).max(6, 'day_of_week must be 0-6 (Sunday-Saturday)'),
-        start_time: z
-          .string()
-          .regex(TIME_REGEX, 'start_time must be HH:MM or HH:MM:SS'),
-        end_time: z
-          .string()
-          .regex(TIME_REGEX, 'end_time must be HH:MM or HH:MM:SS'),
+        start_time: z.string().regex(TIME_REGEX, 'start_time must be HH:MM or HH:MM:SS'),
+        end_time: z.string().regex(TIME_REGEX, 'end_time must be HH:MM or HH:MM:SS'),
       })
       .refine(
         (s) => parseTimeToMinutes(s.start_time) < parseTimeToMinutes(s.end_time),
@@ -1473,7 +1833,10 @@ export const postBlockedTimeSchema = z
     end_time: z.string().datetime({ message: 'end_time must be ISO 8601 datetime' }),
     reason: z.string().max(500).trim().optional(),
   })
-  .refine((s) => new Date(s.start_time) < new Date(s.end_time), 'start_time must be before end_time');
+  .refine(
+    (s) => new Date(s.start_time) < new Date(s.end_time),
+    'start_time must be before end_time'
+  );
 
 export type PostBlockedTimeBody = z.infer<typeof postBlockedTimeSchema>;
 
@@ -1640,7 +2003,10 @@ const examFindingEntrySchema = z
     z.object({
       findingId: z.string().trim().min(1).max(EXAM_FINDING_ID_MAX),
       attributes: z
-        .record(z.string().trim().max(EXAM_FINDING_ATTR_KEY_MAX), z.string().trim().max(EXAM_FINDING_ATTR_VALUE_MAX))
+        .record(
+          z.string().trim().max(EXAM_FINDING_ATTR_KEY_MAX),
+          z.string().trim().max(EXAM_FINDING_ATTR_VALUE_MAX)
+        )
         .optional()
         .nullable(),
     }),
@@ -1649,7 +2015,10 @@ const examFindingEntrySchema = z
     if (typeof entry === 'string') {
       const trimmed = entry.trim();
       if (!trimmed) return null;
-      return { findingId: trimmed.toLowerCase().replace(/[\s-]+/g, '_'), attributes: {} as Record<string, string> };
+      return {
+        findingId: trimmed.toLowerCase().replace(/[\s-]+/g, '_'),
+        attributes: {} as Record<string, string>,
+      };
     }
     const attrs = entry.attributes ?? {};
     const cleaned: Record<string, string> = {};
@@ -1676,7 +2045,7 @@ const examSystemFindingSchema = z
     systemId: f.systemId,
     status: f.status,
     findings: (f.findings ?? []).filter(
-      (entry): entry is { findingId: string; attributes: Record<string, string> } => entry !== null,
+      (entry): entry is { findingId: string; attributes: Record<string, string> } => entry !== null
     ),
     notes: f.notes ?? null,
   }));
@@ -1684,9 +2053,7 @@ const examSystemFindingSchema = z
 const examinationJsonSchema = z
   .array(examSystemFindingSchema.nullable().catch(null))
   .transform((arr) =>
-    arr
-      .filter((f): f is NonNullable<typeof f> => f !== null)
-      .slice(0, EXAM_SYSTEMS_MAX),
+    arr.filter((f): f is NonNullable<typeof f> => f !== null).slice(0, EXAM_SYSTEMS_MAX)
   )
   .optional();
 
@@ -1703,6 +2070,7 @@ const TEST_RESULT_INTERPRETATION_VALUES = ['normal', 'high', 'low', 'abnormal'] 
 // objective-reports / migration 159 — reference-range fields on a result row (rpt-02).
 const TEST_RESULT_REPORT_ID_MAX = 64;
 const TEST_RESULT_REF_TEXT_MAX = 100;
+const TEST_RESULT_METHOD_MAX = 80;
 
 /**
  * Tolerant per-row test-result schema for `test_results_json` (obj-20). Mirrors
@@ -1721,26 +2089,17 @@ const testResultRowSchema = z
     date: z.string().trim().max(TEST_RESULT_DATE_MAX).optional().nullable(),
     // Optional enum: a stale/unknown interpretation collapses to null rather
     // than dropping the whole row (matches the frontend `normalizeTestResults`).
-    interpretation: z
-      .enum(TEST_RESULT_INTERPRETATION_VALUES)
-      .optional()
-      .nullable()
-      .catch(null),
+    interpretation: z.enum(TEST_RESULT_INTERPRETATION_VALUES).optional().nullable().catch(null),
     notes: z.string().max(TEST_RESULT_NOTES_MAX).trim().optional().nullable(),
     // objective-reports / migration 159 (rpt-02) — grouping + reference range.
     // A malformed `reportId` (e.g. non-string) collapses to null (ungrouped)
     // rather than dropping the row; an unknown-but-valid id also stays ungrouped
     // at render time. Numeric range bounds coerce bad input to null.
-    reportId: z
-      .string()
-      .trim()
-      .max(TEST_RESULT_REPORT_ID_MAX)
-      .optional()
-      .nullable()
-      .catch(null),
+    reportId: z.string().trim().max(TEST_RESULT_REPORT_ID_MAX).optional().nullable().catch(null),
     refLow: z.number().finite().optional().nullable().catch(null),
     refHigh: z.number().finite().optional().nullable().catch(null),
     refText: z.string().trim().max(TEST_RESULT_REF_TEXT_MAX).optional().nullable(),
+    method: z.string().trim().max(TEST_RESULT_METHOD_MAX).optional().nullable(),
   })
   .transform((r) => ({
     id: r.id,
@@ -1755,14 +2114,13 @@ const testResultRowSchema = z
     refLow: r.refLow ?? null,
     refHigh: r.refHigh ?? null,
     refText: r.refText || null,
+    method: r.method || null,
   }));
 
 const testResultsJsonSchema = z
   .array(testResultRowSchema.nullable().catch(null))
   .transform((arr) =>
-    arr
-      .filter((r): r is NonNullable<typeof r> => r !== null)
-      .slice(0, TEST_RESULTS_MAX),
+    arr.filter((r): r is NonNullable<typeof r> => r !== null).slice(0, TEST_RESULTS_MAX)
   )
   .optional();
 
@@ -1800,11 +2158,7 @@ const labReportSchema = z
     findings: z.string().max(LAB_REPORT_FINDINGS_MAX).trim().optional().nullable(),
     // Provenance metadata: a stale/unknown value collapses to the safe default
     // rather than dropping the header.
-    entryMethod: z
-      .enum(LAB_REPORT_ENTRY_METHOD_VALUES)
-      .optional()
-      .nullable()
-      .catch('manual'),
+    entryMethod: z.enum(LAB_REPORT_ENTRY_METHOD_VALUES).optional().nullable().catch('manual'),
   })
   .transform((h) => ({
     id: h.id,
@@ -1820,9 +2174,7 @@ const labReportSchema = z
 export const labReportsJsonSchema = z
   .array(labReportSchema.nullable().catch(null))
   .transform((arr) =>
-    arr
-      .filter((h): h is NonNullable<typeof h> => h !== null)
-      .slice(0, LAB_REPORTS_MAX),
+    arr.filter((h): h is NonNullable<typeof h> => h !== null).slice(0, LAB_REPORTS_MAX)
   )
   .optional();
 
@@ -1855,46 +2207,21 @@ const diagnosisRowSchema = z
     id: z.string().trim().min(1).max(DIAGNOSIS_ID_MAX),
     label: z.string().trim().min(1).max(DIAGNOSIS_LABEL_MAX),
     kind: z.enum(DIAGNOSIS_KIND_VALUES).optional().nullable().catch('secondary'),
-    certainty: z
-      .enum(DIAGNOSIS_CERTAINTY_VALUES)
-      .optional()
-      .nullable()
-      .catch('provisional'),
+    certainty: z.enum(DIAGNOSIS_CERTAINTY_VALUES).optional().nullable().catch('provisional'),
     status: z.enum(DIAGNOSIS_STATUS_VALUES).optional().nullable().catch('new'),
     note: z.string().max(DIAGNOSIS_NOTE_MAX).trim().optional().nullable(),
     // Per-diagnosis acuity (replaces dormant visit-level assessment_acuity).
     // Unknown values collapse to null — never drop the diagnosis row.
-    acuity: z
-      .enum(ASSESSMENT_ACUITY_VALUES)
-      .optional()
-      .nullable()
-      .catch(null),
+    acuity: z.enum(ASSESSMENT_ACUITY_VALUES).optional().nullable().catch(null),
     // asmt-04: optional link to patient_chronic_conditions.id. Bad/unknown
     // values collapse to null — never drop the diagnosis row. Writer dormant
     // on Assessment (Known conditions zone owns condition edits).
-    conditionId: z
-      .string()
-      .uuid()
-      .optional()
-      .nullable()
-      .catch(null),
+    conditionId: z.string().uuid().optional().nullable().catch(null),
     // asmt-06: optional ICD-11 code + canonical title from diagnosis_catalog.
     // Additive metadata — bad/unknown values collapse to null, never drop the
     // row; coding is optional (uncoded rows still save, ASMT-D3).
-    code: z
-      .string()
-      .max(DIAGNOSIS_CODE_MAX)
-      .trim()
-      .optional()
-      .nullable()
-      .catch(null),
-    codeTitle: z
-      .string()
-      .max(DIAGNOSIS_CODE_TITLE_MAX)
-      .trim()
-      .optional()
-      .nullable()
-      .catch(null),
+    code: z.string().max(DIAGNOSIS_CODE_MAX).trim().optional().nullable().catch(null),
+    codeTitle: z.string().max(DIAGNOSIS_CODE_TITLE_MAX).trim().optional().nullable().catch(null),
   })
   .transform((r) => ({
     id: r.id,
@@ -1914,9 +2241,7 @@ const diagnosisRowSchema = z
 export const diagnosesJsonSchema = z
   .array(diagnosisRowSchema.nullable().catch(null))
   .transform((arr) => {
-    const kept = arr
-      .filter((r): r is NonNullable<typeof r> => r !== null)
-      .slice(0, DIAGNOSES_MAX);
+    const kept = arr.filter((r): r is NonNullable<typeof r> => r !== null).slice(0, DIAGNOSES_MAX);
     // Enforce at most one primary among committed rows (first wins).
     // Differentials are never demoted to secondary (asmt-05).
     let hasPrimary = false;
@@ -1945,12 +2270,7 @@ export const diagnosesJsonSchema = z
 const INVESTIGATION_ORDER_ID_MAX = 64;
 const INVESTIGATION_ORDER_LABEL_MAX = 200;
 const INVESTIGATION_ORDERS_MAX = 40;
-const INVESTIGATION_ORDER_KIND_VALUES = [
-  'panel',
-  'analyte',
-  'imaging',
-  'custom',
-] as const;
+const INVESTIGATION_ORDER_KIND_VALUES = ['panel', 'analyte', 'imaging', 'custom'] as const;
 
 const investigationOrderMemberSchema = z
   .object({
@@ -1969,18 +2289,10 @@ const INVESTIGATION_URGENCY_VALUES = ['routine', 'urgent'] as const;
 
 const investigationImagingRequisitionSchema = z
   .object({
-    contrast: z
-      .enum(INVESTIGATION_CONTRAST_VALUES)
-      .optional()
-      .nullable()
-      .catch(null),
+    contrast: z.enum(INVESTIGATION_CONTRAST_VALUES).optional().nullable().catch(null),
     site: z.string().trim().max(40).optional().nullable().catch(null),
     indication: z.string().trim().max(200).optional().nullable().catch(null),
-    urgency: z
-      .enum(INVESTIGATION_URGENCY_VALUES)
-      .optional()
-      .nullable()
-      .catch(null),
+    urgency: z.enum(INVESTIGATION_URGENCY_VALUES).optional().nullable().catch(null),
   })
   .transform((r) => {
     const contrast = r.contrast ?? null;
@@ -2068,11 +2380,7 @@ const socialHistoryAuditCSchema = z.object({
   enabled: z.boolean().optional().nullable(),
 });
 
-const socialHistoryAuditFullYesNoSchema = z.union([
-  z.literal(0),
-  z.literal(2),
-  z.literal(4),
-]);
+const socialHistoryAuditFullYesNoSchema = z.union([z.literal(0), z.literal(2), z.literal(4)]);
 
 const socialHistoryAuditFullSchema = z.object({
   unableToStop: socialHistoryAuditCAnswerSchema.optional().nullable(),
@@ -2166,7 +2474,10 @@ const alcoholDrinkRowSchema = z.object({
 const socialHistoryAlcoholSectionSchema = z.object({
   status: z.enum(SOCIAL_HISTORY_STATUS_VALUES).optional().nullable(),
   drinks: z.array(alcoholDrinkRowSchema).max(SOCIAL_HISTORY_TYPES_MAX),
-  types: z.array(z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim()).max(SOCIAL_HISTORY_TYPES_MAX).optional(),
+  types: z
+    .array(z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim())
+    .max(SOCIAL_HISTORY_TYPES_MAX)
+    .optional(),
   unitsPerWeek: z.number().min(0).max(200).optional().nullable(),
   pattern: z.enum(SOCIAL_HISTORY_ALCOHOL_PATTERN_VALUES).optional().nullable(),
   cage: socialHistoryCageSchema.optional().nullable(),
@@ -2228,8 +2539,18 @@ const SOCIAL_HISTORY_CAFFEINE_PHASE_VALUES = ['current', 'past'] as const;
 const SOCIAL_HISTORY_DIET_NOTES_MAX = 200;
 const SOCIAL_HISTORY_DIET_TYPE_OTHER_MAX = 100;
 const SOCIAL_HISTORY_CAFFEINE_SOURCE_OTHER_MAX = 50;
-const SOCIAL_HISTORY_ACTIVITY_LEVEL_VALUES = ['sedentary', 'light', 'moderate', 'vigorous'] as const;
-const SOCIAL_HISTORY_JOB_ACTIVITY_LEVEL_VALUES = ['sedentary', 'light', 'moderate', 'heavy'] as const;
+const SOCIAL_HISTORY_ACTIVITY_LEVEL_VALUES = [
+  'sedentary',
+  'light',
+  'moderate',
+  'vigorous',
+] as const;
+const SOCIAL_HISTORY_JOB_ACTIVITY_LEVEL_VALUES = [
+  'sedentary',
+  'light',
+  'moderate',
+  'heavy',
+] as const;
 const SOCIAL_HISTORY_ACTIVITY_TYPE_VALUES = [
   'walking',
   'yoga',
@@ -2276,13 +2597,7 @@ const SOCIAL_HISTORY_SICK_CONTACT_CONTEXT_VALUES = [
 ] as const;
 const SOCIAL_HISTORY_SICK_CONTACT_NOTES_MAX = 500;
 const SOCIAL_HISTORY_SLEEP_NOTES_MAX = 500;
-const SOCIAL_HISTORY_STRESS_SOURCE_VALUES = [
-  'work',
-  'family',
-  'health',
-  'money',
-  'other',
-] as const;
+const SOCIAL_HISTORY_STRESS_SOURCE_VALUES = ['work', 'family', 'health', 'money', 'other'] as const;
 const SOCIAL_HISTORY_STRESS_NOTES_MAX = 500;
 
 const socialHistorySubstanceItemSchema = z.object({
@@ -2295,10 +2610,7 @@ const socialHistorySubstanceItemSchema = z.object({
   amountUnit: z.string().max(32).trim().optional().nullable(),
   amountUnitOther: z.string().max(64).trim().optional().nullable(),
   frequency: z
-    .union([
-      z.enum(SOCIAL_HISTORY_SUBSTANCE_FREQUENCY_LEGACY_VALUES),
-      z.number().min(0).max(90),
-    ])
+    .union([z.enum(SOCIAL_HISTORY_SUBSTANCE_FREQUENCY_LEGACY_VALUES), z.number().min(0).max(90)])
     .optional()
     .nullable(),
   frequencyUnit: z.enum(SOCIAL_HISTORY_SUBSTANCE_FREQUENCY_UNIT_VALUES).optional().nullable(),
@@ -2310,10 +2622,16 @@ const socialHistorySubstanceItemSchema = z.object({
 
 const socialHistorySubstancesSectionSchema = z.object({
   status: z.enum(SOCIAL_HISTORY_SUBSTANCE_STATUS_VALUES).optional().nullable(),
-  items: z.array(socialHistorySubstanceItemSchema).max(SOCIAL_HISTORY_SUBSTANCE_ITEMS_MAX).optional(),
+  items: z
+    .array(socialHistorySubstanceItemSchema)
+    .max(SOCIAL_HISTORY_SUBSTANCE_ITEMS_MAX)
+    .optional(),
   notes: z.string().max(SOCIAL_HISTORY_SUBSTANCE_NOTES_MAX).trim().optional().nullable(),
   /** @deprecated Legacy flat shape — still accepted for stored rows. */
-  uses: z.array(z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim()).max(SOCIAL_HISTORY_TYPES_MAX).optional(),
+  uses: z
+    .array(z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim())
+    .max(SOCIAL_HISTORY_TYPES_MAX)
+    .optional(),
   route: z.enum(SOCIAL_HISTORY_SUBSTANCE_LEGACY_ROUTE_VALUES).optional().nullable(),
 });
 
@@ -2341,22 +2659,14 @@ const socialHistoryDietSectionSchema = z.object({
 const socialHistoryCaffeineItemSchema = z.object({
   id: z.string().max(64),
   type: z.enum(SOCIAL_HISTORY_CAFFEINE_SOURCE_VALUES).optional().nullable(),
-  typeOther: z
-    .string()
-    .max(SOCIAL_HISTORY_CAFFEINE_SOURCE_OTHER_MAX)
-    .trim()
-    .optional()
-    .nullable(),
+  typeOther: z.string().max(SOCIAL_HISTORY_CAFFEINE_SOURCE_OTHER_MAX).trim().optional().nullable(),
   amount: z.number().min(0).max(999).optional().nullable(),
   amountUnit: z.string().max(32).optional().nullable(),
   amountUnitOther: z.string().max(32).trim().optional().nullable(),
   strength: z.enum(SOCIAL_HISTORY_CAFFEINE_STRENGTH_VALUES).optional().nullable(),
   caffeineMg: z.number().min(0).max(1000).optional().nullable(),
   frequency: z.number().min(0).max(50).optional().nullable(),
-  frequencyUnit: z
-    .enum(SOCIAL_HISTORY_CAFFEINE_FREQUENCY_UNIT_VALUES)
-    .optional()
-    .nullable(),
+  frequencyUnit: z.enum(SOCIAL_HISTORY_CAFFEINE_FREQUENCY_UNIT_VALUES).optional().nullable(),
   years: z.number().min(0).max(100).optional().nullable(),
   yearsUnit: z.enum(SOCIAL_HISTORY_DURATION_UNIT_VALUES).optional().nullable(),
   phase: z.enum(SOCIAL_HISTORY_CAFFEINE_PHASE_VALUES).optional().nullable(),
@@ -2366,10 +2676,7 @@ const socialHistoryCaffeineItemSchema = z.object({
 
 const socialHistoryCaffeineSectionSchema = z.object({
   status: z.enum(SOCIAL_HISTORY_CAFFEINE_STATUS_VALUES).optional().nullable(),
-  items: z
-    .array(socialHistoryCaffeineItemSchema)
-    .max(SOCIAL_HISTORY_CAFFEINE_ITEMS_MAX)
-    .optional(),
+  items: z.array(socialHistoryCaffeineItemSchema).max(SOCIAL_HISTORY_CAFFEINE_ITEMS_MAX).optional(),
   notes: z.string().max(SOCIAL_HISTORY_CAFFEINE_NOTES_MAX).trim().optional().nullable(),
   /** @deprecated Legacy flat shape — still accepted for stored rows. */
   amount: z.number().min(0).max(20).optional().nullable(),
@@ -2381,10 +2688,7 @@ const socialHistoryCaffeineSectionSchema = z.object({
     .optional()
     .nullable(),
   frequency: z.number().min(0).max(14).optional().nullable(),
-  frequencyUnit: z
-    .enum(SOCIAL_HISTORY_CAFFEINE_FREQUENCY_UNIT_VALUES)
-    .optional()
-    .nullable(),
+  frequencyUnit: z.enum(SOCIAL_HISTORY_CAFFEINE_FREQUENCY_UNIT_VALUES).optional().nullable(),
   strength: z.enum(SOCIAL_HISTORY_CAFFEINE_STRENGTH_VALUES).optional().nullable(),
 });
 
@@ -2418,7 +2722,9 @@ const socialHistoryActivitySectionSchema = z.object({
 
 const socialHistoryOccupationSectionSchema = z.object({
   text: z.string().max(SOCIAL_HISTORY_OCCUPATION_TEXT_MAX).trim().optional().nullable(),
-  exposures: z.array(z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim()).max(SOCIAL_HISTORY_EXPOSURES_MAX),
+  exposures: z
+    .array(z.string().max(SOCIAL_HISTORY_TYPE_MAX).trim())
+    .max(SOCIAL_HISTORY_EXPOSURES_MAX),
 });
 
 const socialHistoryLivingSectionSchema = z.object({
@@ -2621,7 +2927,11 @@ const pastSurgicalProcedureEntrySchema = z.object({
 const pastSurgicalHistoryStructuredSchema = z
   .object({
     none: z.boolean().optional().nullable(),
-    procedures: z.array(pastSurgicalProcedureEntrySchema).max(PAST_SURGICAL_PROCEDURES_MAX).optional().nullable(),
+    procedures: z
+      .array(pastSurgicalProcedureEntrySchema)
+      .max(PAST_SURGICAL_PROCEDURES_MAX)
+      .optional()
+      .nullable(),
     notes: z.string().max(PRESCRIPTION_HISTORY_MAX).trim().optional().nullable(),
   })
   .optional()
@@ -2783,10 +3093,7 @@ const vitalsJsonShape = ((): Record<string, z.ZodTypeAny> => {
     'vitalsWaistCm',
   ] as const;
   const vitalProvenanceShape: Record<string, z.ZodTypeAny> = {};
-  for (const key of [
-    ...COLUMN_VITAL_PROVENANCE_KEYS,
-    ...Object.keys(JSON_VITAL_NUMERIC_BOUNDS),
-  ]) {
+  for (const key of [...COLUMN_VITAL_PROVENANCE_KEYS, ...Object.keys(JSON_VITAL_NUMERIC_BOUNDS)]) {
     if (VITAL_PROVENANCE_EXCLUDED.has(key)) continue;
     if (key in vitalProvenanceShape) continue;
     vitalProvenanceShape[key] = vitalProvenanceContextSchema.optional();
@@ -2824,6 +3131,7 @@ const vitalsJsonShape = ((): Record<string, z.ZodTypeAny> => {
     .record(z.string().trim().min(1).max(CUSTOM_VITAL_ID_MAX), z.string().trim().min(1).max(200))
     .optional()
     .nullable();
+  shape.sectionNote = z.string().trim().max(1000).optional().nullable();
   return shape;
 })();
 
@@ -2857,11 +3165,7 @@ const structuredSoapFieldsSchema = {
   examinationFindings: z.string().max(PRESCRIPTION_SOAP_TEXT_MAX).trim().optional().nullable(),
   // objective-tab / migration 150 — structured exam findings (tolerant; obj-01).
   examinationJson: examinationJsonSchema,
-  differentialDiagnosis: z
-    .array(z.string().trim().min(1).max(200))
-    .max(20)
-    .optional()
-    .nullable(),
+  differentialDiagnosis: z.array(z.string().trim().min(1).max(200)).max(20).optional().nullable(),
   // assessment-tab / migration 160 — clinical-impression note + visit acuity.
   // Tolerant: empty/whitespace note → null; an unknown acuity degrades to null
   // (`.catch(null)`) rather than rejecting the whole save (ASMT-D3).
@@ -2872,11 +3176,7 @@ const structuredSoapFieldsSchema = {
     .transform((v) => (v.length > 0 ? v : null))
     .optional()
     .nullable(),
-  assessmentAcuity: z
-    .enum(ASSESSMENT_ACUITY_VALUES)
-    .nullable()
-    .catch(null)
-    .optional(),
+  assessmentAcuity: z.enum(ASSESSMENT_ACUITY_VALUES).nullable().catch(null).optional(),
   // assessment-tab / migration 161 — structured diagnoses (tolerant; asmt-03).
   diagnosesJson: diagnosesJsonSchema,
   // plan-investigations-library / migration 167 — structured orders (tolerant; inv-lib-05).
@@ -2888,16 +3188,17 @@ const structuredSoapFieldsSchema = {
   testResults: z.string().max(PRESCRIPTION_SOAP_TEXT_MAX).trim().optional().nullable(),
   // objective-tab / migration 154 — structured test results (tolerant; obj-20).
   testResultsJson: testResultsJsonSchema,
+  // objective-reports / migration 159 — report headers (tolerant; rpt-02 save-path).
+  labReportsJson: labReportsJsonSchema,
   // assessment-plan-custom-sections / migration 177 — depth-2 custom section trees.
   // Reuse the subjective custom-subsection schema (id/title/body + children).
   assessmentCustomSections: customSubsectionsSchema,
   planCustomSections: customSubsectionsSchema,
 };
 
-function refineFollowUpPairing<T extends { followUpValue?: number | null; followUpUnit?: string | null }>(
-  data: T,
-  ctx: z.RefinementCtx
-): void {
+function refineFollowUpPairing<
+  T extends { followUpValue?: number | null; followUpUnit?: string | null },
+>(data: T, ctx: z.RefinementCtx): void {
   const { followUpValue, followUpUnit } = data;
   if (followUpUnit === 'as_needed' && followUpValue != null) {
     ctx.addIssue({
@@ -2913,11 +3214,7 @@ function refineFollowUpPairing<T extends { followUpValue?: number | null; follow
       path: ['followUpUnit'],
     });
   }
-  if (
-    followUpUnit != null &&
-    followUpUnit !== 'as_needed' &&
-    followUpValue == null
-  ) {
+  if (followUpUnit != null && followUpUnit !== 'as_needed' && followUpValue == null) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: 'followUpValue is required for days, weeks, or months',
@@ -2927,14 +3224,14 @@ function refineFollowUpPairing<T extends { followUpValue?: number | null; follow
 }
 
 /** Prefer `investigationsOrders` over legacy `investigations` when both are sent. */
-function resolveInvestigationsField<T extends {
-  investigations?: string | null;
-  investigationsOrders?: string | null;
-}>(data: T): Omit<T, 'investigationsOrders'> {
+function resolveInvestigationsField<
+  T extends {
+    investigations?: string | null;
+    investigationsOrders?: string | null;
+  },
+>(data: T): Omit<T, 'investigationsOrders'> {
   const resolved =
-    data.investigationsOrders !== undefined
-      ? data.investigationsOrders
-      : data.investigations;
+    data.investigationsOrders !== undefined ? data.investigationsOrders : data.investigations;
   const { investigationsOrders: _drop, investigations: _legacy, ...rest } = data;
   return {
     ...rest,
@@ -2946,6 +3243,59 @@ function resolveInvestigationsField<T extends {
 // 090's CHECK constraints exactly. If the DB enum vocabulary changes,
 // update both files in lockstep.
 const FREQUENCY_CODE_VALUES = ['OD', 'BID', 'TID', 'QID', 'QHS', 'PRN', 'STAT', 'CUSTOM'] as const;
+type RxFrequencyCode = (typeof FREQUENCY_CODE_VALUES)[number];
+const FREQUENCY_CODE_SET = new Set<string>(FREQUENCY_CODE_VALUES);
+/** Labels / interval codes the cockpit may send — map onto migration 090. */
+const FREQUENCY_CODE_ALIASES: Record<string, RxFrequencyCode> = {
+  od: 'OD',
+  qd: 'OD',
+  'once daily': 'OD',
+  'once a day': 'OD',
+  bid: 'BID',
+  bd: 'BID',
+  'twice daily': 'BID',
+  'twice a day': 'BID',
+  tid: 'TID',
+  tds: 'TID',
+  'three times daily': 'TID',
+  'three times a day': 'TID',
+  qid: 'QID',
+  qds: 'QID',
+  'four times daily': 'QID',
+  'four times a day': 'QID',
+  qhs: 'QHS',
+  hs: 'QHS',
+  'at bedtime': 'QHS',
+  bedtime: 'QHS',
+  nightly: 'QHS',
+  nocte: 'QHS',
+  prn: 'PRN',
+  sos: 'PRN',
+  'as needed': 'PRN',
+  stat: 'STAT',
+};
+
+function coerceRxFrequencyCode(value: unknown): RxFrequencyCode | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== 'string') return 'CUSTOM';
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const upper = trimmed.toUpperCase();
+  if (FREQUENCY_CODE_SET.has(upper)) return upper as RxFrequencyCode;
+  const alias = FREQUENCY_CODE_ALIASES[trimmed.toLowerCase()];
+  if (alias) return alias;
+  return 'CUSTOM';
+}
+
+const rxFrequencyCodeSchema = z.preprocess(
+  coerceRxFrequencyCode,
+  z.enum(FREQUENCY_CODE_VALUES).optional().nullable()
+);
+const rxFrequencyCodeRequiredSchema = z.preprocess(
+  coerceRxFrequencyCode,
+  z.enum(FREQUENCY_CODE_VALUES).nullable()
+);
 /** Chart meds only — migration 136 extends patient_medications CHECK. */
 const PATIENT_MED_FREQUENCY_CODE_VALUES = [
   ...FREQUENCY_CODE_VALUES,
@@ -3002,7 +3352,7 @@ const prescriptionMedicineSchema = z.object({
   // EHR Sub-batch B1 / T2.9 — additive structured fields. All optional
   // and nullable so legacy callers (older app versions) still validate.
   drugMasterId: z.string().uuid().optional().nullable(),
-  frequencyCode: z.enum(FREQUENCY_CODE_VALUES).optional().nullable(),
+  frequencyCode: rxFrequencyCodeSchema,
   durationValue: z.number().int().positive().optional().nullable(),
   durationUnit: z.enum(DURATION_UNIT_VALUES).optional().nullable(),
   routeCode: z.enum(ROUTE_CODE_VALUES).optional().nullable(),
@@ -3098,7 +3448,7 @@ const rxTemplateMedicineSchema = z.object({
   instructions: z.string().max(PRESCRIPTION_MEDICINE_FIELD_MAX).trim().optional().nullable(),
   sortOrder: z.number().int().min(0).optional(),
   // T2.9 structured enums — same vocab as prescription_medicines
-  frequencyCode: z.enum(FREQUENCY_CODE_VALUES).optional().nullable(),
+  frequencyCode: rxFrequencyCodeSchema,
   durationValue: z.number().int().positive().optional().nullable(),
   durationUnit: z.enum(DURATION_UNIT_VALUES).optional().nullable(),
   routeCode: z.enum(ROUTE_CODE_VALUES).optional().nullable(),
@@ -3138,17 +3488,13 @@ const rxTemplateCustomSubsectionSchema = z
     id: s.id,
     title: s.title,
     body: s.body ?? null,
-    children: (s.children ?? []).filter(
-      (c): c is NonNullable<typeof c> => c !== null,
-    ),
+    children: (s.children ?? []).filter((c): c is NonNullable<typeof c> => c !== null),
   }));
 
 const rxTemplateCustomSubsectionsSchema = z
   .array(rxTemplateCustomSubsectionSchema.nullable().catch(null))
   .transform((arr) =>
-    arr
-      .filter((s): s is NonNullable<typeof s> => s !== null)
-      .slice(0, CUSTOM_SUBSECTIONS_MAX),
+    arr.filter((s): s is NonNullable<typeof s> => s !== null).slice(0, CUSTOM_SUBSECTIONS_MAX)
   )
   .optional();
 
@@ -3254,10 +3600,7 @@ const rxTemplatePlanSchema = z.object({
 const rxTemplateAssessmentSchema = z.object({
   diagnoses: diagnosesJsonSchema.optional(),
   assessmentNote: z.string().max(5000).trim().optional().nullable(),
-  assessmentAcuity: z
-    .enum(ASSESSMENT_ACUITY_VALUES)
-    .optional()
-    .nullable(),
+  assessmentAcuity: z.enum(ASSESSMENT_ACUITY_VALUES).optional().nullable(),
   knownConditions: z
     .array(
       z.object({
@@ -3266,7 +3609,7 @@ const rxTemplateAssessmentSchema = z.object({
         note: z.string().max(2000).trim().optional().nullable(),
         code: z.string().max(64).trim().optional().nullable(),
         codeTitle: z.string().max(500).trim().optional().nullable(),
-      }),
+      })
     )
     .max(100)
     .optional(),
@@ -3390,6 +3733,23 @@ export function validatePrescriptionParams(params: unknown): PrescriptionParams 
   return result.data;
 }
 
+export const reissuePrescriptionBodySchema = z
+  .object({
+    reason: z.enum(REVISION_REASONS),
+  })
+  .strict();
+
+export type ReissuePrescriptionBody = z.infer<typeof reissuePrescriptionBodySchema>;
+
+export function validateReissuePrescriptionBody(body: unknown): ReissuePrescriptionBody {
+  const result = reissuePrescriptionBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Revision reason is required');
+  }
+  return result.data;
+}
+
 export const listPrescriptionsQuerySchema = z
   .object({
     appointmentId: z.string().uuid().optional(),
@@ -3419,7 +3779,12 @@ export function validateListPrescriptionsQuery(
 // Prescription Attachment Schemas (Prescription V1 - e-task-3)
 // ============================================================================
 
-const ATTACHMENT_ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] as const;
+const ATTACHMENT_ALLOWED_MIME = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'application/pdf',
+] as const;
 const ATTACHMENT_FILENAME_MAX = 200;
 const ATTACHMENT_CAPTION_MAX = 500;
 // objective-tab / P5-D4 (obj-22): context tag carried as a storage path segment, NOT a
@@ -3477,7 +3842,9 @@ export const prescriptionAttachmentParamsSchema = z.object({
 
 export type PrescriptionAttachmentParams = z.infer<typeof prescriptionAttachmentParamsSchema>;
 
-export function validatePrescriptionAttachmentParams(params: unknown): PrescriptionAttachmentParams {
+export function validatePrescriptionAttachmentParams(
+  params: unknown
+): PrescriptionAttachmentParams {
   const result = prescriptionAttachmentParamsSchema.safeParse(params);
   if (!result.success) {
     const first = result.error.issues[0];
@@ -3518,6 +3885,68 @@ export function validatePatientChartParentParams(params: unknown): PatientChartP
   if (!result.success) {
     const first = result.error.issues[0];
     throw new ValidationError(first?.message ?? 'Invalid patient ID');
+  }
+  return result.data;
+}
+
+function firstQueryString(
+  query: unknown
+): Record<string, string | undefined> {
+  if (!query || typeof query !== 'object') return {};
+  const out: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(query as Record<string, unknown>)) {
+    if (typeof value === 'string' && value.length > 0) out[key] = value;
+    else if (Array.isArray(value) && typeof value[0] === 'string' && value[0].length > 0) {
+      out[key] = value[0];
+    }
+  }
+  return out;
+}
+
+export const lastInEpisodeQuerySchema = z.object({
+  appointmentId: z.string().uuid('appointmentId must be a valid UUID'),
+  excludePrescriptionId: z.string().uuid().optional(),
+});
+
+export type LastInEpisodeQuery = z.infer<typeof lastInEpisodeQuerySchema>;
+
+export function validateLastInEpisodeQuery(query: unknown): LastInEpisodeQuery {
+  const result = lastInEpisodeQuerySchema.safeParse(firstQueryString(query));
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid query');
+  }
+  return result.data;
+}
+
+export const lastSubjectiveQuerySchema = z.object({
+  patientId: z.string().uuid('patientId must be a valid UUID'),
+  appointmentId: z.string().uuid('appointmentId must be a valid UUID'),
+  excludePrescriptionId: z.string().uuid().optional(),
+});
+
+export type LastSubjectiveQuery = z.infer<typeof lastSubjectiveQuerySchema>;
+
+export function validateLastSubjectiveQuery(query: unknown): LastSubjectiveQuery {
+  const result = lastSubjectiveQuerySchema.safeParse(firstQueryString(query));
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid query');
+  }
+  return result.data;
+}
+
+export const lastVisitSummaryQuerySchema = z.object({
+  appointmentId: z.string().uuid('appointmentId must be a valid UUID'),
+});
+
+export type LastVisitSummaryQuery = z.infer<typeof lastVisitSummaryQuerySchema>;
+
+export function validateLastVisitSummaryQuery(query: unknown): LastVisitSummaryQuery {
+  const result = lastVisitSummaryQuerySchema.safeParse(query);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid query');
   }
   return result.data;
 }
@@ -3564,7 +3993,9 @@ export const updatePatientAllergyBodySchema = z
     severity: patientAllergySeveritySchema.optional(),
     reaction: z.string().max(PATIENT_CHART_TEXT_MAX).trim().optional().nullable(),
     note: z.string().max(PATIENT_CHART_TEXT_MAX).trim().optional().nullable(),
-    archivedAt: z.union([z.string().datetime({ offset: true }), z.literal('now'), z.null()]).optional(),
+    archivedAt: z
+      .union([z.string().datetime({ offset: true }), z.literal('now'), z.null()])
+      .optional(),
   })
   .strict()
   .refine((data) => Object.keys(data).length > 0, 'At least one field required');
@@ -3646,7 +4077,9 @@ export const updatePatientConditionBodySchema = z
     code: z.string().max(32).trim().optional().nullable(),
     codeTitle: z.string().max(300).trim().optional().nullable(),
     note: z.string().max(PATIENT_CHART_TEXT_MAX).trim().optional().nullable(),
-    archivedAt: z.union([z.string().datetime({ offset: true }), z.literal('now'), z.null()]).optional(),
+    archivedAt: z
+      .union([z.string().datetime({ offset: true }), z.literal('now'), z.null()])
+      .optional(),
   })
   .strict()
   .refine((data) => Object.keys(data).length > 0, 'At least one field required');
@@ -3751,7 +4184,9 @@ export const updatePatientMedicationBodySchema = z
     startedOn: medicationDateSchema,
     stoppedOn: medicationDateSchema,
     note: z.string().max(PATIENT_CHART_TEXT_MAX).trim().optional().nullable(),
-    archivedAt: z.union([z.string().datetime({ offset: true }), z.literal('now'), z.null()]).optional(),
+    archivedAt: z
+      .union([z.string().datetime({ offset: true }), z.literal('now'), z.null()])
+      .optional(),
     ...chartMedicationStructuredFields,
   })
   .strict()
@@ -3787,12 +4222,7 @@ export function validateLinkConditionMedicationBody(body: unknown): LinkConditio
 const PATIENT_MEDICAL_BACKGROUND_NOTES_MAX = 2000;
 
 export const updateMedicalBackgroundNotesBodySchema = z.object({
-  notes: z
-    .string()
-    .max(PATIENT_MEDICAL_BACKGROUND_NOTES_MAX)
-    .trim()
-    .optional()
-    .nullable(),
+  notes: z.string().max(PATIENT_MEDICAL_BACKGROUND_NOTES_MAX).trim().optional().nullable(),
 });
 
 export type UpdateMedicalBackgroundNotesBody = z.infer<
@@ -3800,7 +4230,7 @@ export type UpdateMedicalBackgroundNotesBody = z.infer<
 >;
 
 export function validateUpdateMedicalBackgroundNotesBody(
-  body: unknown,
+  body: unknown
 ): UpdateMedicalBackgroundNotesBody {
   const result = updateMedicalBackgroundNotesBodySchema.safeParse(body);
   if (!result.success) {
@@ -3813,18 +4243,14 @@ export function validateUpdateMedicalBackgroundNotesBody(
 const PATIENT_ALLERGIES_SECTION_NOTES_MAX = 2000;
 
 export const updateAllergySectionNotesBodySchema = z.object({
-  notes: z
-    .string()
-    .max(PATIENT_ALLERGIES_SECTION_NOTES_MAX)
-    .trim()
-    .optional()
-    .nullable(),
+  notes: z.string().max(PATIENT_ALLERGIES_SECTION_NOTES_MAX).trim().optional().nullable(),
+  noKnownAllergies: z.boolean().optional(),
 });
 
 export type UpdateAllergySectionNotesBody = z.infer<typeof updateAllergySectionNotesBodySchema>;
 
 export function validateUpdateAllergySectionNotesBody(
-  body: unknown,
+  body: unknown
 ): UpdateAllergySectionNotesBody {
   const result = updateAllergySectionNotesBodySchema.safeParse(body);
   if (!result.success) {
@@ -3879,6 +4305,255 @@ export function validateCreatePatientVitalsBody(body: unknown): CreatePatientVit
   return result.data;
 }
 
+/** Optional front-desk intake after check-in. At least one vital; BP is a pair. */
+export const deskVitalsBodySchema = z
+  .object({
+    bpSystolic: intInRange(40, 300, 'bpSystolic'),
+    bpDiastolic: intInRange(20, 200, 'bpDiastolic'),
+    heartRate: intInRange(20, 250, 'heartRate'),
+    temperatureC: numInRange(30, 45, 'temperatureC'),
+    spo2: intInRange(50, 100, 'spo2'),
+    weightKg: numInRange(0, 500, 'weightKg'),
+    heightCm: numInRange(0, 300, 'heightCm'),
+    note: z.string().max(1000).nullable().optional(),
+  })
+  .strict()
+  .refine((data) => {
+    const hasVital =
+      data.bpSystolic != null ||
+      data.bpDiastolic != null ||
+      data.heartRate != null ||
+      data.temperatureC != null ||
+      data.spo2 != null ||
+      data.weightKg != null ||
+      data.heightCm != null;
+    const hasNote = typeof data.note === 'string' && data.note.trim().length > 0;
+    return hasVital || hasNote;
+  }, 'Enter at least one vital')
+  .refine((data) => (data.bpSystolic == null) === (data.bpDiastolic == null), {
+    message: 'Blood pressure needs both systolic and diastolic',
+    path: ['bpSystolic'],
+  });
+
+export type DeskVitalsBody = z.infer<typeof deskVitalsBodySchema>;
+
+export function validateDeskVitalsBody(body: unknown): DeskVitalsBody {
+  const result = deskVitalsBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+// ============================================================================
+// Visit documents (desk-visit-prep P1)
+// ============================================================================
+
+const VISIT_DOCUMENT_TYPES = [
+  'lab_report',
+  'imaging',
+  'discharge_summary',
+  'old_prescription',
+  'referral_letter',
+  'other',
+] as const;
+const VISIT_DOCUMENT_ORDERED_BY = ['us', 'outside'] as const;
+const VISIT_ISO_DATE = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'reportDate must be YYYY-MM-DD')
+  .nullable();
+
+export const visitDocumentUploadUrlBodySchema = z.object({
+  filename: z.string().max(200).trim().optional().default('file'),
+  contentType: z
+    .enum(ATTACHMENT_ALLOWED_MIME as unknown as [string, ...string[]])
+    .optional()
+    .default('image/jpeg'),
+});
+
+export type VisitDocumentUploadUrlBody = z.infer<typeof visitDocumentUploadUrlBodySchema>;
+
+export function validateVisitDocumentUploadUrlBody(body: unknown): VisitDocumentUploadUrlBody {
+  const result = visitDocumentUploadUrlBodySchema.safeParse(body);
+  if (!result.success) {
+    throw new ValidationError(result.error.issues[0]?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+export const createVisitDocumentBodySchema = z
+  .object({
+    documentType: z.enum(VISIT_DOCUMENT_TYPES).optional().default('other'),
+    reportDate: VISIT_ISO_DATE.optional(),
+    orderedBy: z.enum(VISIT_DOCUMENT_ORDERED_BY).optional().default('outside'),
+    filePath: z.string().min(1).max(500).trim(),
+    fileType: z.enum(ATTACHMENT_ALLOWED_MIME as unknown as [string, ...string[]]),
+  })
+  .strict();
+
+export type CreateVisitDocumentBody = z.infer<typeof createVisitDocumentBodySchema>;
+
+export function validateCreateVisitDocumentBody(body: unknown): CreateVisitDocumentBody {
+  const result = createVisitDocumentBodySchema.safeParse(body);
+  if (!result.success) {
+    throw new ValidationError(result.error.issues[0]?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+export const addVisitDocumentPageBodySchema = z
+  .object({
+    filePath: z.string().min(1).max(500).trim(),
+    fileType: z.enum(ATTACHMENT_ALLOWED_MIME as unknown as [string, ...string[]]),
+  })
+  .strict();
+
+export type AddVisitDocumentPageBody = z.infer<typeof addVisitDocumentPageBodySchema>;
+
+export function validateAddVisitDocumentPageBody(body: unknown): AddVisitDocumentPageBody {
+  const result = addVisitDocumentPageBodySchema.safeParse(body);
+  if (!result.success) {
+    throw new ValidationError(result.error.issues[0]?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+export const updateVisitDocumentBodySchema = z
+  .object({
+    documentType: z.enum(VISIT_DOCUMENT_TYPES).optional(),
+    reportDate: VISIT_ISO_DATE.optional(),
+    orderedBy: z.enum(VISIT_DOCUMENT_ORDERED_BY).optional(),
+  })
+  .strict();
+
+export type UpdateVisitDocumentBody = z.infer<typeof updateVisitDocumentBodySchema>;
+
+export function validateUpdateVisitDocumentBody(body: unknown): UpdateVisitDocumentBody {
+  const result = updateVisitDocumentBodySchema.safeParse(body);
+  if (!result.success) {
+    throw new ValidationError(result.error.issues[0]?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+export const visitDocumentParamsSchema = z.object({
+  id: z.string().uuid('Invalid appointment ID'),
+  documentId: z.string().uuid('Invalid document ID'),
+});
+
+export type VisitDocumentParams = z.infer<typeof visitDocumentParamsSchema>;
+
+export function validateVisitDocumentParams(params: unknown): VisitDocumentParams {
+  const result = visitDocumentParamsSchema.safeParse(params);
+  if (!result.success) {
+    throw new ValidationError(result.error.issues[0]?.message ?? 'Invalid params');
+  }
+  return result.data;
+}
+
+export const visitDocumentPageParamsSchema = visitDocumentParamsSchema.extend({
+  pageId: z.string().uuid('Invalid page ID'),
+});
+
+export type VisitDocumentPageParams = z.infer<typeof visitDocumentPageParamsSchema>;
+
+export function validateVisitDocumentPageParams(params: unknown): VisitDocumentPageParams {
+  const result = visitDocumentPageParamsSchema.safeParse(params);
+  if (!result.success) {
+    throw new ValidationError(result.error.issues[0]?.message ?? 'Invalid params');
+  }
+  return result.data;
+}
+
+// ============================================================================
+// History submissions (desk-visit-prep P2)
+// ============================================================================
+
+const HISTORY_WHY_TODAY_MAX = 280;
+const HISTORY_LIST_MAX = 20;
+const HISTORY_NOTICE_VERSION_MAX = 40;
+
+const historyAllergyItemSchema = z
+  .object({
+    name: z.string().min(1).max(PATIENT_CHART_ALLERGEN_MAX).trim(),
+    reaction: z.string().max(PATIENT_CHART_TEXT_MAX).trim().optional().nullable(),
+  })
+  .strict();
+
+const historyMedicineItemSchema = z
+  .object({
+    name: z.string().min(1).max(PATIENT_CHART_DRUG_NAME_MAX).trim(),
+    dose: z.string().max(PATIENT_CHART_DOSE_MAX).trim().optional().nullable(),
+  })
+  .strict();
+
+const historyConditionItemSchema = z
+  .object({
+    name: z.string().min(1).max(PATIENT_CHART_CONDITION_MAX).trim(),
+    code: z.string().max(32).trim().optional().nullable(),
+    codeTitle: z.string().max(300).trim().optional().nullable(),
+  })
+  .strict();
+
+function historyNoneOrListSchema<T extends z.ZodTypeAny>(
+  itemSchema: T
+): z.ZodType<{ none: boolean; items: z.infer<T>[] }> {
+  return z
+    .object({
+      none: z.boolean(),
+      items: z.array(itemSchema).max(HISTORY_LIST_MAX).optional().default([]),
+    })
+    .strict()
+    .superRefine((data, ctx) => {
+      if (data.none && data.items.length > 0) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Clear names when marking none' });
+      }
+    });
+}
+
+export const upsertHistorySubmissionBodySchema = z
+  .object({
+    whyToday: z.string().max(HISTORY_WHY_TODAY_MAX).trim().optional().default(''),
+    allergies: historyNoneOrListSchema(historyAllergyItemSchema),
+    medicines: historyNoneOrListSchema(historyMedicineItemSchema),
+    conditions: historyNoneOrListSchema(historyConditionItemSchema),
+    noticeVersion: z.string().max(HISTORY_NOTICE_VERSION_MAX).trim().optional().nullable(),
+  })
+  .strict();
+
+export type UpsertHistorySubmissionBody = z.infer<typeof upsertHistorySubmissionBodySchema>;
+
+export function validateUpsertHistorySubmissionBody(body: unknown): UpsertHistorySubmissionBody {
+  const result = upsertHistorySubmissionBodySchema.safeParse(body);
+  if (!result.success) {
+    throw new ValidationError(result.error.issues[0]?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+export const acceptHistorySubmissionBodySchema = z
+  .object({
+    field: z.enum(['why_today', 'allergies', 'medicines', 'conditions']),
+    index: z.number().int().min(0).max(HISTORY_LIST_MAX - 1).optional(),
+  })
+  .strict()
+  .superRefine((data, ctx) => {
+    if (data.field === 'why_today' && data.index !== undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Why today does not take an index' });
+    }
+  });
+
+export type AcceptHistorySubmissionBody = z.infer<typeof acceptHistorySubmissionBodySchema>;
+
+export function validateAcceptHistorySubmissionBody(body: unknown): AcceptHistorySubmissionBody {
+  const result = acceptHistorySubmissionBodySchema.safeParse(body);
+  if (!result.success) {
+    throw new ValidationError(result.error.issues[0]?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
 export const updatePatientVitalsBodySchema = z
   .object({
     appointmentId: z.string().uuid().nullable().optional(),
@@ -3892,7 +4567,9 @@ export const updatePatientVitalsBodySchema = z
     bmi: numInRange(0, 200, 'bmi'),
     note: z.string().max(PATIENT_CHART_TEXT_MAX).trim().optional().nullable(),
     recordedAt: z.string().datetime({ offset: true }).optional().nullable(),
-    archivedAt: z.union([z.string().datetime({ offset: true }), z.literal('now'), z.null()]).optional(),
+    archivedAt: z
+      .union([z.string().datetime({ offset: true }), z.literal('now'), z.null()])
+      .optional(),
   })
   .strict()
   .refine((data) => Object.keys(data).length > 0, 'At least one field required');
@@ -3974,7 +4651,9 @@ export const confirmServiceStaffReviewBodySchema = z
 
 export type ConfirmServiceStaffReviewBody = z.infer<typeof confirmServiceStaffReviewBodySchema>;
 
-export function validateConfirmServiceStaffReviewBody(body: unknown): ConfirmServiceStaffReviewBody {
+export function validateConfirmServiceStaffReviewBody(
+  body: unknown
+): ConfirmServiceStaffReviewBody {
   const result = confirmServiceStaffReviewBodySchema.safeParse(body ?? {});
   if (!result.success) {
     const first = result.error.issues[0];
@@ -4017,7 +4696,9 @@ export const reassignServiceStaffReviewBodySchema = z
 
 export type ReassignServiceStaffReviewBody = z.infer<typeof reassignServiceStaffReviewBodySchema>;
 
-export function validateReassignServiceStaffReviewBody(body: unknown): ReassignServiceStaffReviewBody {
+export function validateReassignServiceStaffReviewBody(
+  body: unknown
+): ReassignServiceStaffReviewBody {
   const result = reassignServiceStaffReviewBodySchema.safeParse(body);
   if (!result.success) {
     const first = result.error.issues[0];
@@ -4147,7 +4828,11 @@ export function validateModeSchedule(
   }
   const obj = input as Record<string, unknown>;
 
-  if (obj.default_mode !== undefined && obj.default_mode !== 'slot' && obj.default_mode !== 'queue') {
+  if (
+    obj.default_mode !== undefined &&
+    obj.default_mode !== 'slot' &&
+    obj.default_mode !== 'queue'
+  ) {
     return { ok: false, error: 'default_mode must be "slot" or "queue"' };
   }
 
@@ -4287,10 +4972,17 @@ export function hasPatientListQueryParams(
 ): boolean {
   return (
     query.q !== undefined ||
+    query.name !== undefined ||
+    query.guardianName !== undefined ||
+    query.age !== undefined ||
+    query.gender !== undefined ||
     query.segment !== undefined ||
+    query.tag !== undefined ||
     query.sort !== undefined ||
     query.page !== undefined ||
-    query.pageSize !== undefined
+    query.pageSize !== undefined ||
+    query.includeArchived !== undefined ||
+    query.lean !== undefined
   );
 }
 
@@ -4315,9 +5007,24 @@ export function validatePatientListQuery(
     );
   }
 
+  const ageRaw = pick('age');
+  const age =
+    ageRaw === undefined || ageRaw.trim() === ''
+      ? undefined
+      : validateOptionalIntegerInRange(ageRaw, { min: 0, max: 130, default: 0 });
+
   return {
     q: validateOptionalString(pick('q'), { maxLength: 100 }),
+    name: validateOptionalString(pick('name'), { maxLength: 200 }),
+    guardianName: validateOptionalString(pick('guardianName'), { maxLength: 200 }),
+    age,
+    gender: validateOptionalEnum<(typeof DESK_GENDERS)[number]>(
+      pick('gender'),
+      DESK_GENDERS,
+      'invalid_query'
+    ),
     segment,
+    tag: validateOptionalString(pick('tag'), { maxLength: 64 }),
     sort: validateOptionalEnum<PatientListSortId>(
       pick('sort'),
       PATIENT_LIST_SORT_IDS,
@@ -4329,15 +5036,42 @@ export function validatePatientListQuery(
       max: 200,
       default: 50,
     }),
+    includeArchived: pick('includeArchived') === 'true' ? true : undefined,
+    lean: pick('lean') === 'true' ? true : undefined,
   };
 }
 
-const bulkTagPatientsBodySchema = z.object({
-  ids: z.array(z.string().uuid()).min(1).max(200),
-  tag: z.string().max(64).nullable(),
-});
+const bulkTagPatientsBodySchema = z
+  .object({
+    ids: z.array(z.string().uuid()).min(1).max(200),
+    /** Legacy single-tag replace (`null` = clear). */
+    tag: z.string().max(64).nullable().optional(),
+    tags: z.array(z.string().max(64)).max(8).optional(),
+    op: z.enum(['add', 'remove', 'set', 'clear']).optional(),
+  })
+  .superRefine((val, ctx) => {
+    const hasLegacy = val.tag !== undefined;
+    const hasOp = val.op !== undefined;
+    if (!hasLegacy && !hasOp) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Provide tag (legacy) or op',
+      });
+    }
+    if (hasOp && val.op !== 'clear' && (!val.tags || val.tags.length === 0) && !hasLegacy) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'tags required for add/remove/set',
+        path: ['tags'],
+      });
+    }
+  });
 
-export type BulkTagPatientsBody = z.infer<typeof bulkTagPatientsBodySchema>;
+export type BulkTagPatientsBody = {
+  ids: string[];
+  op: 'add' | 'remove' | 'set' | 'clear';
+  tags: string[];
+};
 
 export function validateBulkTagPatientsBody(body: unknown): BulkTagPatientsBody {
   const result = bulkTagPatientsBodySchema.safeParse(body);
@@ -4345,7 +5079,30 @@ export function validateBulkTagPatientsBody(body: unknown): BulkTagPatientsBody 
     const first = result.error.issues[0];
     throw new ValidationError(first?.message ?? 'Invalid bulk-tag body');
   }
-  return result.data;
+  const raw = result.data;
+  // Legacy { tag } → set/clear
+  if (raw.op === undefined) {
+    const legacy = raw.tag?.trim() ? raw.tag.trim() : null;
+    return {
+      ids: raw.ids,
+      op: legacy ? 'set' : 'clear',
+      tags: legacy ? [legacy] : [],
+    };
+  }
+  const fromTags = raw.tags ?? [];
+  const fromLegacy = raw.tag?.trim() ? [raw.tag.trim()] : [];
+  const combined = fromTags.length > 0 ? fromTags : fromLegacy;
+  // Normalize after Zod so whitespace-only tags cannot sneak through as a
+  // non-empty array and become an accidental clear/no-op.
+  const tags = normalizeTagList(combined);
+  if (raw.op !== 'clear' && tags.length === 0) {
+    throw new ValidationError('tags required for add/remove/set');
+  }
+  return {
+    ids: raw.ids,
+    op: raw.op,
+    tags,
+  };
 }
 
 // rx-polish-favorites · rxf-04 — MedicineRowValue-shaped favorite template
@@ -4359,7 +5116,7 @@ export const medicineRowValueSchema = z.object({
   duration: z.string().max(PRESCRIPTION_MEDICINE_FIELD_MAX).trim(),
   instructions: z.string().max(PRESCRIPTION_MEDICINE_FIELD_MAX).trim(),
   drugMasterId: z.string().uuid().nullable(),
-  frequencyCode: z.enum(FREQUENCY_CODE_VALUES).nullable(),
+  frequencyCode: rxFrequencyCodeRequiredSchema,
   durationValue: z.number().int().positive().nullable(),
   durationUnit: z.enum(DURATION_UNIT_VALUES).nullable(),
   routeCode: z.enum(ROUTE_CODE_VALUES).nullable(),
@@ -4372,19 +5129,13 @@ export const medicineRowValueSchema = z.object({
 });
 
 export const createDoctorDrugFavoriteBodySchema = z.object({
-  name: z
-    .string()
-    .min(1, 'Favorite name is required')
-    .max(DOCTOR_DRUG_FAVORITE_NAME_MAX)
-    .trim(),
+  name: z.string().min(1, 'Favorite name is required').max(DOCTOR_DRUG_FAVORITE_NAME_MAX).trim(),
   template: medicineRowValueSchema,
 });
 
 export type CreateDoctorDrugFavoriteBody = z.infer<typeof createDoctorDrugFavoriteBodySchema>;
 
-export function validateCreateDoctorDrugFavoriteBody(
-  body: unknown,
-): CreateDoctorDrugFavoriteBody {
+export function validateCreateDoctorDrugFavoriteBody(body: unknown): CreateDoctorDrugFavoriteBody {
   const result = createDoctorDrugFavoriteBodySchema.safeParse(body);
   if (!result.success) {
     const first = result.error.issues[0];
@@ -4403,9 +5154,7 @@ export const updateDoctorDrugFavoriteBodySchema = z
 
 export type UpdateDoctorDrugFavoriteBody = z.infer<typeof updateDoctorDrugFavoriteBodySchema>;
 
-export function validateUpdateDoctorDrugFavoriteBody(
-  body: unknown,
-): UpdateDoctorDrugFavoriteBody {
+export function validateUpdateDoctorDrugFavoriteBody(body: unknown): UpdateDoctorDrugFavoriteBody {
   const result = updateDoctorDrugFavoriteBodySchema.safeParse(body);
   if (!result.success) {
     const first = result.error.issues[0];
@@ -4420,9 +5169,7 @@ export const doctorDrugFavoriteParamsSchema = z.object({
 
 export type DoctorDrugFavoriteParams = z.infer<typeof doctorDrugFavoriteParamsSchema>;
 
-export function validateDoctorDrugFavoriteParams(
-  params: unknown,
-): DoctorDrugFavoriteParams {
+export function validateDoctorDrugFavoriteParams(params: unknown): DoctorDrugFavoriteParams {
   const result = doctorDrugFavoriteParamsSchema.safeParse(params);
   if (!result.success) {
     const first = result.error.issues[0];
@@ -4452,9 +5199,7 @@ export const createDoctorNoteFavoriteBodySchema = z.object({
 
 export type CreateDoctorNoteFavoriteBody = z.infer<typeof createDoctorNoteFavoriteBodySchema>;
 
-export function validateCreateDoctorNoteFavoriteBody(
-  body: unknown,
-): CreateDoctorNoteFavoriteBody {
+export function validateCreateDoctorNoteFavoriteBody(body: unknown): CreateDoctorNoteFavoriteBody {
   const result = createDoctorNoteFavoriteBodySchema.safeParse(body);
   if (!result.success) {
     const first = result.error.issues[0];
@@ -4465,12 +5210,10 @@ export function validateCreateDoctorNoteFavoriteBody(
 
 export const recordDoctorNoteFavoriteUseBodySchema = createDoctorNoteFavoriteBodySchema;
 
-export type RecordDoctorNoteFavoriteUseBody = z.infer<
-  typeof recordDoctorNoteFavoriteUseBodySchema
->;
+export type RecordDoctorNoteFavoriteUseBody = z.infer<typeof recordDoctorNoteFavoriteUseBodySchema>;
 
 export function validateRecordDoctorNoteFavoriteUseBody(
-  body: unknown,
+  body: unknown
 ): RecordDoctorNoteFavoriteUseBody {
   const result = recordDoctorNoteFavoriteUseBodySchema.safeParse(body);
   if (!result.success) {
@@ -4501,9 +5244,7 @@ export const listDoctorNoteFavoritesQuerySchema = z.object({
 
 export type ListDoctorNoteFavoritesQuery = z.infer<typeof listDoctorNoteFavoritesQuerySchema>;
 
-export function validateListDoctorNoteFavoritesQuery(
-  query: unknown,
-): ListDoctorNoteFavoritesQuery {
+export function validateListDoctorNoteFavoritesQuery(query: unknown): ListDoctorNoteFavoritesQuery {
   const raw = query as Record<string, unknown>;
   const result = listDoctorNoteFavoritesQuerySchema.safeParse({
     fieldKey: typeof raw.fieldKey === 'string' ? raw.fieldKey : undefined,
@@ -4659,21 +5400,239 @@ export const resolveInvestigationRequestSchema = z.object({
   tier: z.enum(['default', 'escalation']).optional(),
 });
 
-export type ResolveInvestigationRequestBody = z.infer<
-  typeof resolveInvestigationRequestSchema
->;
+export type ResolveInvestigationRequestBody = z.infer<typeof resolveInvestigationRequestSchema>;
 
 export function validateResolveInvestigationRequest(
-  body: unknown,
+  body: unknown
 ): ResolveInvestigationRequestBody {
   const result = resolveInvestigationRequestSchema.safeParse(body);
   if (!result.success) {
     const first = result.error.issues[0];
     const where = first ? first.path.join('.') : 'body';
     const why = first?.message ?? 'invalid request';
-    throw new ValidationError(
-      `Invalid investigation-resolve request at ${where}: ${why}`,
-    );
+    throw new ValidationError(`Invalid investigation-resolve request at ${where}: ${why}`);
+  }
+  return result.data;
+}
+
+// ============================================================================
+// Interactions Inbox (ibi-03+)
+// ============================================================================
+
+export const interactionIdParamsSchema = z.object({
+  id: z.string().uuid('Invalid interaction ID'),
+});
+
+export type InteractionIdParams = z.infer<typeof interactionIdParamsSchema>;
+
+export function validateInteractionIdParams(params: unknown): InteractionIdParams {
+  const result = interactionIdParamsSchema.safeParse(params);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid interaction ID');
+  }
+  return result.data;
+}
+
+const interactionFusedStatusSchema = z.enum([
+  'new_lead',
+  'in_conversation',
+  'needs_review',
+  'booking_pending',
+  'booked',
+  'paid',
+  'cancelled',
+  'no_show',
+]);
+
+/** ISO datetime or date-only YYYY-MM-DD (normalized to UTC day bounds in service via FE ISO). */
+const interactionDateBoundSchema = z
+  .string()
+  .min(10)
+  .max(40)
+  .refine(
+    (v) => !Number.isNaN(Date.parse(v)),
+    'dateFrom/dateTo must be a valid ISO date or datetime'
+  );
+
+/** Inbox list: max window / lookback (1 year). */
+export const INTERACTIONS_MAX_RANGE_MS = 365 * 24 * 60 * 60 * 1000;
+const INTERACTIONS_DEFAULT_RANGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+export const listInteractionsQuerySchema = z.object({
+  scope: z.enum(['signal', 'all']).optional().default('signal'),
+  channel: z.enum(['instagram', 'facebook', 'whatsapp']).optional(),
+  /** Single status, or comma-separated multi (ibi-12). */
+  status: z.string().min(1).max(200).optional(),
+  dateFrom: interactionDateBoundSchema.optional(),
+  dateTo: interactionDateBoundSchema.optional(),
+  cursor: z.string().min(1).max(500).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  /** Query string boolean — skip full-window stage scan on polls. */
+  includeCounts: z.enum(['true', 'false']).optional(),
+});
+
+export type ListInteractionsQueryInput = {
+  scope: 'signal' | 'all';
+  channel?: 'instagram' | 'facebook' | 'whatsapp';
+  status?: z.infer<typeof interactionFusedStatusSchema>;
+  statuses?: Array<z.infer<typeof interactionFusedStatusSchema>>;
+  dateFrom: string;
+  dateTo: string;
+  cursor?: string;
+  limit?: number;
+  includeCounts?: boolean;
+};
+
+export function validateListInteractionsQuery(
+  query: Record<string, string | string[] | undefined>
+): ListInteractionsQueryInput {
+  const normalized: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(query)) {
+    normalized[k] = typeof v === 'string' ? v : Array.isArray(v) ? String(v[0]) : undefined;
+  }
+  const result = listInteractionsQuerySchema.safeParse(normalized);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid query');
+  }
+
+  const raw = result.data;
+  let status: ListInteractionsQueryInput['status'];
+  let statuses: ListInteractionsQueryInput['statuses'];
+
+  if (raw.status) {
+    const parts = raw.status
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const parsed: Array<z.infer<typeof interactionFusedStatusSchema>> = [];
+    for (const p of parts) {
+      const one = interactionFusedStatusSchema.safeParse(p);
+      if (!one.success) {
+        throw new ValidationError(`Invalid status: ${p}`);
+      }
+      parsed.push(one.data);
+    }
+    if (parsed.length === 1) {
+      status = parsed[0];
+    } else if (parsed.length > 1) {
+      statuses = parsed;
+    }
+  }
+
+  const now = Date.now();
+  let dateFrom = raw.dateFrom;
+  let dateTo = raw.dateTo;
+
+  if (!dateFrom && !dateTo) {
+    dateTo = new Date(now).toISOString();
+    dateFrom = new Date(now - INTERACTIONS_DEFAULT_RANGE_MS).toISOString();
+  } else if (dateFrom && !dateTo) {
+    dateTo = new Date(now).toISOString();
+  } else if (!dateFrom && dateTo) {
+    throw new ValidationError('dateFrom is required when dateTo is set');
+  }
+
+  const fromMs = Date.parse(dateFrom!);
+  const toMs = Date.parse(dateTo!);
+  if (Number.isNaN(fromMs) || Number.isNaN(toMs)) {
+    throw new ValidationError('dateFrom/dateTo must be a valid ISO date or datetime');
+  }
+  if (toMs < fromMs) {
+    throw new ValidationError('dateTo must be on or after dateFrom');
+  }
+  if (toMs - fromMs > INTERACTIONS_MAX_RANGE_MS) {
+    throw new ValidationError('Date range cannot exceed 365 days');
+  }
+  // Lookback ceiling: Inbox is not an archive (1-day slack for clock/TZ).
+  if (fromMs < now - INTERACTIONS_MAX_RANGE_MS - 24 * 60 * 60 * 1000) {
+    throw new ValidationError('dateFrom cannot be more than 1 year ago');
+  }
+
+  return {
+    scope: raw.scope,
+    channel: raw.channel,
+    status,
+    statuses,
+    dateFrom: dateFrom!,
+    dateTo: dateTo!,
+    cursor: raw.cursor,
+    limit: raw.limit,
+    includeCounts:
+      raw.includeCounts === 'true' ? true : raw.includeCounts === 'false' ? false : undefined,
+  };
+}
+
+export const listInteractionMessagesQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  /** ISO datetime — load messages strictly older than this (scroll-up). */
+  before: interactionDateBoundSchema.optional(),
+});
+
+export type ListInteractionMessagesQueryInput = z.infer<typeof listInteractionMessagesQuerySchema>;
+
+export function validateListInteractionMessagesQuery(
+  query: Record<string, string | string[] | undefined>
+): ListInteractionMessagesQueryInput {
+  const normalized: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(query)) {
+    normalized[k] = typeof v === 'string' ? v : Array.isArray(v) ? String(v[0]) : undefined;
+  }
+  const result = listInteractionMessagesQuerySchema.safeParse(normalized);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    throw new ValidationError(first?.message ?? 'Invalid query');
+  }
+  return result.data;
+}
+
+export const extractVisitNarrativeRequestSchema = z.object({
+  consultationSessionId: z.string().uuid('consultationSessionId must be a valid UUID'),
+});
+
+export type ExtractVisitNarrativeRequestBody = z.infer<typeof extractVisitNarrativeRequestSchema>;
+
+export function validateExtractVisitNarrativeRequest(
+  body: unknown
+): ExtractVisitNarrativeRequestBody {
+  const result = extractVisitNarrativeRequestSchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const where = first ? first.path.join('.') : 'body';
+    const why = first?.message ?? 'invalid request';
+    throw new ValidationError(`Invalid visit-narrative extract request at ${where}: ${why}`);
+  }
+  return result.data;
+}
+
+export const recordVisitNarrativeProvenanceRequestSchema = z
+  .object({
+    consultationSessionId: z.string().uuid('consultationSessionId must be a valid UUID'),
+    transcriptId: z.string().uuid('transcriptId must be a valid UUID'),
+    spanStart: z.number().int().min(0),
+    spanEnd: z.number().int().positive(),
+    targetKind: z.enum(['subjective', 'vitals', 'assessment', 'investigations', 'plan', 'prose']),
+    createdRowId: z.string().uuid().optional(),
+  })
+  .refine((value) => value.spanEnd > value.spanStart, {
+    message: 'spanEnd must be greater than spanStart',
+    path: ['spanEnd'],
+  });
+
+export type RecordVisitNarrativeProvenanceRequestBody = z.infer<
+  typeof recordVisitNarrativeProvenanceRequestSchema
+>;
+
+export function validateRecordVisitNarrativeProvenanceRequest(
+  body: unknown
+): RecordVisitNarrativeProvenanceRequestBody {
+  const result = recordVisitNarrativeProvenanceRequestSchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const where = first ? first.path.join('.') : 'body';
+    const why = first?.message ?? 'invalid request';
+    throw new ValidationError(`Invalid visit-narrative provenance request at ${where}: ${why}`);
   }
   return result.data;
 }

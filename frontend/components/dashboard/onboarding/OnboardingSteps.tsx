@@ -42,6 +42,9 @@ export function OnboardingSteps({ steps }: OnboardingStepsProps) {
                 {step.done ? (
                   <span className="sr-only"> (complete)</span>
                 ) : null}
+                {step.optional && !step.done ? (
+                  <span className="sr-only"> (optional)</span>
+                ) : null}
               </p>
               <p className="mt-0.5 text-sm text-muted-foreground">
                 {step.description}

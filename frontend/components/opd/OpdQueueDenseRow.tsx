@@ -34,7 +34,7 @@ import { getOpdStatusMeta } from "@/lib/consultation/opd-status-meta";
 import { useConsultSteppedAway } from "@/hooks/useConsultSteppedAway";
 import { cn } from "@/lib/utils";
 import type { DoctorQueueSessionRow } from "@/types/opd-doctor";
-import { showArrivedChip } from "./shared/opdArrival";
+import { showQueueLobbyPresence } from "./shared/opdArrival";
 import { OPD_QUEUE_GRID_TEMPLATE } from "./OpdQueueGrid";
 import {
   formatSlotDelta,
@@ -77,16 +77,6 @@ export interface OpdQueueDenseRowProps {
 // Internal color maps
 // Hardcoded to avoid fragile string extraction from badgeClassName.
 // ---------------------------------------------------------------------------
-
-const STATUS_DOT_BG: Record<string, string> = {
-  waiting: "bg-muted-foreground/50",
-  called: "bg-blue-500",
-  in_consultation: "bg-green-500",
-  completed: "bg-green-500",
-  missed: "bg-destructive",
-  skipped: "bg-muted-foreground/40",
-  cancelled: "bg-destructive",
-};
 
 // Thin leading color bar — a slightly more opaque read than the badge tones.
 // in_consultation gets a deeper green so the "this row is happening right now"
@@ -158,6 +148,7 @@ export function OpdQueueDenseRow({
   const statusLabel = isInConsult && steppedAway ? "Incomplete" : meta.label;
   const statusAriaLabel =
     isInConsult && steppedAway ? "Incomplete consult" : meta.label;
+  const lobby = showQueueLobbyPresence(entry.queueStatus, entry.tags);
 
   // ── Next-up only fires when the row is genuinely waiting ──
   const showNextUp = isNextUp && entry.queueStatus === "waiting";
@@ -223,8 +214,6 @@ export function OpdQueueDenseRow({
   const barBg = showNextUp
     ? "bg-primary"
     : (STATUS_BAR_BG[entry.queueStatus] ?? "bg-muted");
-
-  const dotBg = STATUS_DOT_BG[entry.queueStatus] ?? "bg-muted-foreground/40";
 
   // ── Accessibility label ──
   const ariaLabel = `Token #${entry.tokenNumber}, ${entry.patientName}, ${statusAriaLabel}, waited ${waitedMinutes} minutes`;
@@ -319,22 +308,13 @@ export function OpdQueueDenseRow({
           )}
         </div>
 
-        {/* ── Col 4 — Status dot + label ── */}
+        {/* ── Col 4 — Status ── */}
         <div
           className={cn(cellPx, rowPy, "flex items-center gap-1.5 overflow-hidden")}
         >
-          {/* Dot is purely decorative; text label carries the meaning. */}
-          <span
-            aria-hidden
-            className={cn(
-              "inline-block h-2 w-2 shrink-0 rounded-full",
-              isInConsult && steppedAway ? "bg-amber-500" : dotBg,
-              isActiveConsult && "animate-pulse"
-            )}
-          />
           <span
             className={cn(
-              "truncate text-xs",
+              "shrink-0 text-xs",
               isActiveConsult &&
                 "font-semibold text-green-700 dark:text-green-300",
               isInConsult &&
@@ -344,23 +324,15 @@ export function OpdQueueDenseRow({
           >
             {statusLabel}
           </span>
-          {showArrivedChip(entry) && (
-            <span
-              title="Arrived at the clinic."
-              className="inline-flex shrink-0 rounded border border-emerald-500/50 bg-emerald-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-900 dark:text-emerald-200"
-            >
-              Arrived
-            </span>
-          )}
-          {entry.tags?.includes("patient_waiting") && (
+          {lobby === "in_lobby" && (
             <span
               title="Patient is in the consult lobby right now."
               className="inline-flex shrink-0 rounded border border-emerald-500/50 bg-emerald-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-900 dark:text-emerald-200"
             >
-              Waiting
+              In lobby
             </span>
           )}
-          {entry.tags?.includes("patient_stepped_away") && (
+          {lobby === "stepped_away" && (
             <span
               title="Patient checked in earlier but lobby went idle."
               className="inline-flex shrink-0 rounded border border-stone-400/50 bg-stone-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-stone-700 dark:text-stone-300"

@@ -30,6 +30,7 @@ import {
   type OpdMode,
   type PatientFlowAdvance,
   type PayoutSchedule,
+  type SocialEnquiries,
 } from '../types/doctor-settings';
 import type { CustomSubsection } from '../types/prescription';
 import {
@@ -93,14 +94,21 @@ import {
 import { validateOwnership } from '../utils/db-helpers';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataAccess, logDataModification, logAuditEvent } from '../utils/audit-logger';
-import { InternalError, NotFoundError, ValidationError } from '../utils/errors';
+import {
+  DoctorNotVerifiedError,
+  InternalError,
+  NotFoundError,
+  ValidationError,
+} from '../utils/errors';
 import { parseLayoutTreeNode, parsePaneTreeV3 } from '../api/routes/cockpit-layout-presets';
+import { isDoctorVerified } from './doctor-verification-service';
 
 const SELECT_COLUMNS =
   'doctor_id, appointment_fee_minor, appointment_fee_currency, country, ' +
   'practice_name, timezone, slot_interval_minutes, max_advance_booking_days, min_advance_hours, business_hours_summary, ' +
   'cancellation_policy_hours, max_appointments_per_day, booking_buffer_minutes, ' +
-  'welcome_message, specialty, address_summary, consultation_types, service_offerings_json, service_catalog_templates_json, default_notes, ' +
+  'welcome_message, specialty, social_enquiries, address_summary, consultation_types, service_offerings_json, service_catalog_templates_json, default_notes, ' +
+  'payment_collection_mode, ' +
   'payout_schedule, payout_minor, razorpay_linked_account_id, ' +
   'opd_mode, opd_policies, ' +
   'instagram_receptionist_paused, instagram_receptionist_pause_message, ' +
@@ -137,6 +145,19 @@ const SELECT_COLUMNS =
   'vitals_hidden, ' +
   // R-MOD-full (migration 106): global cockpit template pin.
   'cockpit_template_override, ' +
+  // clinic-branding-v1 (migration 211) + Phase 2 (213): letterhead tokens.
+  // Paths are Storage keys — never returned as a public URL.
+  'logo_path, logo_version, qualifications, letterhead_preset, letterhead_accent_color, ' +
+  'letterhead_chrome_color, letterhead_patient_color, ' +
+  'page_size, preprint_margin_top_mm, preprint_margin_bottom_mm, ' +
+  'header_path, header_version, footer_path, footer_version, background_path, background_version, ' +
+  'letterhead_background_preset, letterhead_background_opacity, ' +
+  'letterhead_header_fit, letterhead_footer_fit, letterhead_background_fit, ' +
+  'letterhead_header_text_size, letterhead_patient_text_size, letterhead_body_text_size, ' +
+  'header_height_mm, footer_height_mm, ' +
+  'page_margin_top_mm, page_margin_right_mm, page_margin_bottom_mm, page_margin_left_mm, ' +
+  'logo_size, patient_identity_preset, show_patient_phone, show_patient_guardian, ' +
+  'show_patient_mrn, show_patient_address, letterhead_footer_line, hide_halo_credit, ' +
   'created_at, updated_at';
 
 /** Default values when no row exists (for API GET response). */
@@ -156,6 +177,7 @@ const DEFAULT_SETTINGS: DoctorSettingsRow = {
   booking_buffer_minutes: null,
   welcome_message: null,
   specialty: null,
+  social_enquiries: 'yes',
   address_summary: null,
   consultation_types: null,
   service_offerings_json: null,
@@ -164,6 +186,7 @@ const DEFAULT_SETTINGS: DoctorSettingsRow = {
   payout_schedule: null,
   payout_minor: null,
   razorpay_linked_account_id: null,
+  payment_collection_mode: 'bookings_only',
   opd_mode: 'slot',
   opd_policies: null,
   instagram_receptionist_paused: false,
@@ -203,6 +226,48 @@ const DEFAULT_SETTINGS: DoctorSettingsRow = {
   vitals_hidden: [],
   // R-MOD-full: NULL = auto-select per modality + state.
   cockpit_template_override: null,
+  logo_path: null,
+  logo_version: 0,
+  header_path: null,
+  header_version: 0,
+  footer_path: null,
+  footer_version: 0,
+  background_path: null,
+  background_version: 0,
+  letterhead_background_preset: 'none',
+  letterhead_background_opacity: 15,
+  letterhead_header_fit: 'stretch',
+  letterhead_footer_fit: 'stretch',
+  letterhead_background_fit: 'fill',
+  letterhead_header_text_size: 'medium',
+  letterhead_patient_text_size: 'medium',
+  letterhead_body_text_size: 'medium',
+  header_height_mm: 35,
+  footer_height_mm: 20,
+  qualifications: null,
+  letterhead_preset: 'classic',
+  letterhead_accent_color: null,
+  letterhead_chrome_color: null,
+  letterhead_patient_color: null,
+  page_size: 'a4',
+  preprint_margin_top_mm: 40,
+  preprint_margin_bottom_mm: 30,
+  page_margin_top_mm: 12,
+  page_margin_right_mm: 12,
+  page_margin_bottom_mm: 12,
+  page_margin_left_mm: 12,
+  logo_size: 'medium',
+  patient_identity_preset: 'open_letter',
+  show_patient_phone: true,
+  show_patient_guardian: true,
+  show_patient_mrn: true,
+  show_patient_address: true,
+  letterhead_footer_line: null,
+  hide_halo_credit: false,
+  logo_preview_url: null,
+  header_preview_url: null,
+  footer_preview_url: null,
+  background_preview_url: null,
   created_at: '',
   updated_at: '',
 };
@@ -278,7 +343,8 @@ export async function getDoctorSettingsForUser(
   }
   const row = data as unknown as DoctorSettingsRow;
   const materialized = await ensureSingleFeeCatalogMaterialized(row);
-  return normalizeDoctorSettingsApiRow(materialized);
+  const normalized = normalizeDoctorSettingsApiRow(materialized);
+  return attachBrandingPreviewUrls(normalized, doctorId, correlationId);
 }
 
 /** Valid slot interval range: 1–60 minutes. */
@@ -523,6 +589,33 @@ function normalizeVitalsHiddenInRow(row: DoctorSettingsRow): DoctorSettingsRow {
       raw.filter((id): id is string => typeof id === 'string'),
     ),
   };
+}
+
+async function attachBrandingPreviewUrls(
+  row: DoctorSettingsRow,
+  doctorId: string,
+  correlationId: string
+): Promise<DoctorSettingsRow> {
+  const { signClinicBrandingPath } = await import('./letterhead-service');
+  const [logo, header, footer, background] = await Promise.all([
+    row.logo_path
+      ? signClinicBrandingPath(row.logo_path, correlationId, doctorId, 'logo')
+      : null,
+    row.header_path
+      ? signClinicBrandingPath(row.header_path, correlationId, doctorId, 'header')
+      : null,
+    row.footer_path
+      ? signClinicBrandingPath(row.footer_path, correlationId, doctorId, 'footer')
+      : null,
+    row.background_path
+      ? signClinicBrandingPath(row.background_path, correlationId, doctorId, 'background')
+      : null,
+  ]);
+  row.logo_preview_url = logo;
+  row.header_preview_url = header;
+  row.footer_preview_url = footer;
+  row.background_preview_url = background;
+  return row;
 }
 
 function normalizeDoctorSettingsApiRow(row: DoctorSettingsRow): DoctorSettingsRow {
@@ -894,6 +987,7 @@ export interface UpdateDoctorSettingsPayload {
   booking_buffer_minutes?: number | null;
   welcome_message?: string | null;
   specialty?: string | null;
+  social_enquiries?: SocialEnquiries;
   address_summary?: string | null;
   consultation_types?: string | null;
   /** SFU-01 / SFU-11: structured catalog; merged + normalized before persist. */
@@ -914,9 +1008,9 @@ export interface UpdateDoctorSettingsPayload {
   appointment_fee_minor?: number | null;
   /** Currency code e.g. INR, USD */
   appointment_fee_currency?: string | null;
-  /** When doctor receives payouts (e-task-6). */
+  /** DEPRECATED billing P0 — accepted on PATCH, ignored for money movement. */
   payout_schedule?: PayoutSchedule | null;
-  /** Min amount (paise) before payout; NULL = pay any (e-task-6). */
+  /** DEPRECATED billing P0 — accepted on PATCH, ignored for money movement. */
   payout_minor?: number | null;
   /** OPD scheduling mode (e-task-opd-01). */
   opd_mode?: OpdMode;
@@ -977,6 +1071,37 @@ export interface UpdateDoctorSettingsPayload {
   vitals_hidden?: string[];
   /** plan-investigations-library: per-doctor custom investigation orders. */
   investigations_custom_orders?: DoctorInvestigationCustomOrder[];
+  /** clinic-branding-v1: degrees / qualifications line on the letterhead. */
+  qualifications?: string | null;
+  letterhead_preset?: import('../types/letterhead').LetterheadPreset;
+  letterhead_accent_color?: string | null;
+  letterhead_chrome_color?: string | null;
+  letterhead_patient_color?: string | null;
+  page_size?: import('../types/letterhead').LetterheadPageSize;
+  preprint_margin_top_mm?: number;
+  preprint_margin_bottom_mm?: number;
+  header_height_mm?: number;
+  footer_height_mm?: number;
+  page_margin_top_mm?: number;
+  page_margin_right_mm?: number;
+  page_margin_bottom_mm?: number;
+  page_margin_left_mm?: number;
+  logo_size?: import('../types/letterhead').LetterheadLogoSize;
+  patient_identity_preset?: import('../types/letterhead').PatientIdentityPreset;
+  show_patient_phone?: boolean;
+  show_patient_guardian?: boolean;
+  show_patient_mrn?: boolean;
+  show_patient_address?: boolean;
+  letterhead_footer_line?: string | null;
+  hide_halo_credit?: boolean;
+  letterhead_background_preset?: import('../types/letterhead').LetterheadBackgroundPreset;
+  letterhead_background_opacity?: number;
+  letterhead_header_fit?: import('../types/letterhead').LetterheadImageFit;
+  letterhead_footer_fit?: import('../types/letterhead').LetterheadImageFit;
+  letterhead_background_fit?: import('../types/letterhead').LetterheadImageFit;
+  letterhead_header_text_size?: import('../types/letterhead').LetterheadTextSize;
+  letterhead_patient_text_size?: import('../types/letterhead').LetterheadTextSize;
+  letterhead_body_text_size?: import('../types/letterhead').LetterheadTextSize;
 }
 
 /**
@@ -996,6 +1121,17 @@ export async function updateDoctorSettings(
   correlationId: string
 ): Promise<DoctorSettingsRow> {
   validateOwnership(doctorId, userId);
+
+  // ver-05: unverified doctors cannot unpause the Instagram receptionist
+  // (connected-but-paused must stay paused until license verification clears).
+  if (payload.instagram_receptionist_paused === false) {
+    const verified = await isDoctorVerified(doctorId, correlationId);
+    if (!verified) {
+      throw new DoctorNotVerifiedError(
+        'Verify your medical registration before activating the Instagram receptionist. Open Get verified in the dashboard.'
+      );
+    }
+  }
 
   if (
     payload.slot_interval_minutes !== undefined &&
@@ -1335,6 +1471,7 @@ export async function updateDoctorSettings(
     'booking_buffer_minutes',
     'welcome_message',
     'specialty',
+    'social_enquiries',
     'address_summary',
     'consultation_types',
     'default_notes',
@@ -1369,10 +1506,54 @@ export async function updateDoctorSettings(
     'vitals_custom',
     'vitals_hidden',
     'investigations_custom_orders',
+    'qualifications',
+    'letterhead_preset',
+    'letterhead_accent_color',
+    'letterhead_chrome_color',
+    'letterhead_patient_color',
+    'page_size',
+    'preprint_margin_top_mm',
+    'preprint_margin_bottom_mm',
+    'header_height_mm',
+    'footer_height_mm',
+    'page_margin_top_mm',
+    'page_margin_right_mm',
+    'page_margin_bottom_mm',
+    'page_margin_left_mm',
+    'logo_size',
+    'patient_identity_preset',
+    'show_patient_phone',
+    'show_patient_guardian',
+    'show_patient_mrn',
+    'show_patient_address',
+    'letterhead_footer_line',
+    'hide_halo_credit',
+    'letterhead_background_preset',
+    'letterhead_background_opacity',
+    'letterhead_header_fit',
+    'letterhead_footer_fit',
+    'letterhead_background_fit',
+    'letterhead_header_text_size',
+    'letterhead_patient_text_size',
+    'letterhead_body_text_size',
   ];
   for (const key of allowedKeys) {
     if (key in payload) {
       (updateData as Record<string, unknown>)[key] = (payload as Record<string, unknown>)[key];
+    }
+  }
+
+  if ('header_height_mm' in payload || 'footer_height_mm' in payload) {
+    const { data: heightRow } = await supabase
+      .from('doctor_settings')
+      .select('header_height_mm, footer_height_mm')
+      .eq('doctor_id', doctorId)
+      .maybeSingle();
+    const current = heightRow as { header_height_mm?: number; footer_height_mm?: number } | null;
+    const nextH = payload.header_height_mm ?? current?.header_height_mm ?? 35;
+    const nextF = payload.footer_height_mm ?? current?.footer_height_mm ?? 20;
+    if (nextH + nextF > 100) {
+      throw new ValidationError('Header and footer heights together must be 100 mm or less');
     }
   }
 
@@ -1501,7 +1682,8 @@ export async function updateDoctorSettings(
     });
   }
 
-  return normalizeDoctorSettingsApiRow(result);
+  const normalized = normalizeDoctorSettingsApiRow(result);
+  return attachBrandingPreviewUrls(normalized, doctorId, correlationId);
 }
 
 // ---------------------------------------------------------------------------

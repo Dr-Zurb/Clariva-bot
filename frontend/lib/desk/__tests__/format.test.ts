@@ -1,11 +1,46 @@
 import { describe, expect, it } from "vitest";
-import { formatDeskWeekday, walkInAppointmentIso } from "@/lib/desk/format";
+import {
+  deskVisitYmd,
+  formatDeskWeekday,
+  walkInAppointmentIso,
+  walkInAppointmentIsoOnDay,
+  zonedLocalIso,
+} from "@/lib/desk/format";
+
+describe("deskVisitYmd", () => {
+  it("returns the clinic calendar day", () => {
+    expect(deskVisitYmd("2026-09-13T18:30:00.000Z", "Asia/Kolkata")).toBe(
+      "2026-09-14"
+    );
+    expect(deskVisitYmd("not-a-date", "Asia/Kolkata")).toBeNull();
+  });
+});
 
 describe("formatDeskWeekday", () => {
   it("prints a short weekday date in the clinic timezone", () => {
     const noonUtc = new Date("2026-08-23T06:30:00.000Z");
     expect(formatDeskWeekday("Asia/Kolkata", noonUtc)).toMatch(/Aug/);
     expect(formatDeskWeekday("Asia/Kolkata", noonUtc)).toMatch(/23/);
+  });
+});
+
+describe("zonedLocalIso", () => {
+  it("maps Kolkata noon to 06:30 UTC", () => {
+    expect(zonedLocalIso("2026-09-01", 12, 0, "Asia/Kolkata")).toBe(
+      "2026-09-01T06:30:00.000Z"
+    );
+  });
+});
+
+describe("walkInAppointmentIsoOnDay", () => {
+  it("uses noon on a future clinic day", () => {
+    expect(
+      walkInAppointmentIsoOnDay(
+        "2026-09-02",
+        "Asia/Kolkata",
+        new Date("2026-09-01T06:30:00.000Z")
+      )
+    ).toBe("2026-09-02T06:30:00.000Z");
   });
 });
 

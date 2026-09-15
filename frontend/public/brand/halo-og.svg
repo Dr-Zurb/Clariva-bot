@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" fill="none" role="img" aria-label="Halo Aid — Turn patient DMs into booked consultations">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" fill="none" role="img" aria-label="Halo Aid — Turn your audience into your practice">
   <defs>
     <linearGradient id="ogBg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#1E56E0" />
@@ -26,8 +26,8 @@
   </g>
 
   <!-- Headline -->
-  <text x="92" y="360" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="66" font-weight="700" letter-spacing="-1" fill="#ffffff">Turn patient DMs into</text>
-  <text x="92" y="436" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="66" font-weight="700" letter-spacing="-1" fill="#ffffff">booked consultations.</text>
+  <text x="92" y="360" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="66" font-weight="700" letter-spacing="-1" fill="#ffffff">Turn your audience into</text>
+  <text x="92" y="436" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="66" font-weight="700" letter-spacing="-1" fill="#ffffff">your practice.</text>
 
   <!-- Sub -->
   <text x="94" y="516" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="30" font-weight="500" fill="#EAF2FF">Built for doctors on social media.</text>

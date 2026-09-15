@@ -27,12 +27,15 @@ const baseSafety: RxSafetySurfaceValue = {
   setDrugMasterIndex: vi.fn(),
   ddiInteractions: [],
   formAllergyMatches: [],
+  unacceptedDeskAllergies: [],
   isAcked: () => false,
   onAcknowledge: vi.fn(),
   onAckDdi: vi.fn(),
+  onAckDeskAllergy: vi.fn(),
   visible: false,
   clashesCount: 0,
   ddiCount: 0,
+  deskAllergyCount: 0,
 };
 
 vi.mock("@/components/cockpit/rx/RxSafetyContext", async (importOriginal) => {
@@ -138,7 +141,6 @@ function PrescriptionFormBodyHarness({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewVM, setPreviewVM] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [lastEpisodeRx, setLastEpisodeRx] = useState(null);
   const [preSendWarnings, setPreSendWarnings] = useState(null);
 
   return (
@@ -183,8 +185,6 @@ function PrescriptionFormBodyHarness({
           previewLoading={previewLoading}
           setPreviewLoading={setPreviewLoading}
           doctorMetaRef={doctorMetaRef}
-          lastEpisodeRx={lastEpisodeRx}
-          setLastEpisodeRx={setLastEpisodeRx}
           fileInputRef={fileInputRef}
           preSendWarnings={preSendWarnings}
           setPreSendWarnings={setPreSendWarnings}
@@ -272,9 +272,8 @@ describe("actionsInFooter — suppresses inline commit row", () => {
     expect(
       screen.queryByRole("button", { name: /preview as patient/i }),
     ).toBeNull();
-    expect(
-      screen.getByRole("button", { name: /save as template/i }),
-    ).toBeInTheDocument();
+    expect(screen.queryByText("Copy from last visit")).toBeNull();
+    expect(screen.getByText("Prescription type")).toBeInTheDocument();
   });
 
   it("shows commit-row buttons when actionsInFooter is false and onFinish is set", () => {

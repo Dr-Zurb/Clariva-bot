@@ -21,6 +21,10 @@ vi.mock("@/components/cockpit/rx/inputs/VitalsGrid", () => ({
   VitalsGrid: () => <div data-testid="vitals-grid-stub" />,
 }));
 
+vi.mock("@/components/cockpit/rx/objective/DeskVisitDocumentsStrip", () => ({
+  DeskVisitDocumentsStrip: () => null,
+}));
+
 vi.mock("@/components/cockpit/rx/inputs/ExamSystemList", () => ({
   ExamSystemList: ({ disabled }: { disabled?: boolean }) => (
     <div data-testid="exam-system-list">
@@ -170,7 +174,7 @@ beforeEach(() => {
       settings: {
         objective_section_order: [],
         objective_section_collapsed: {},
-        objective_section_hidden: [],
+        objective_section_hidden: ["__show_all__"],
         specialty: null,
       },
     },
@@ -230,7 +234,7 @@ describe("ObjectiveSection reorder (obj-11)", () => {
         // stale unknown/retired ids + a missing-but-available `exam` + duplicate
         sectionOrder: ["notes", "bogus_section", "legacy_vitals", "vitals", "vitals"] as ObjectiveSectionId[],
         sectionCollapsed: {},
-        sectionHidden: [],
+        sectionHidden: ["__show_all__"],
         customSections: [],
       },
     });
@@ -317,7 +321,7 @@ describe("ObjectiveSection collapse-memory (obj-11)", () => {
       objectiveDefaults: {
         sectionOrder: [],
         sectionCollapsed: { vitals: false, notes: false },
-        sectionHidden: [],
+        sectionHidden: ["__show_all__"],
         customSections: [],
       },
     });

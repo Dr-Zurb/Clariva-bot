@@ -24,7 +24,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { getPalettePaneIcon } from "@/lib/patient-profile/v3/foundation";
+import {
+  getPalettePaneIcon,
+  isSoapPaneId,
+  SOAP_PANE_DISPLAY,
+} from "@/lib/patient-profile/v3/foundation";
 
 export interface CompanionOption {
   id: string;
@@ -196,10 +200,25 @@ export function measureSwapTabGap(
 }
 
 const iconBtnClass =
-  "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground " +
+  "inline-flex h-7 shrink-0 items-center justify-center rounded-md text-muted-foreground " +
   "transition-colors hover:bg-accent hover:text-foreground " +
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring " +
   "disabled:pointer-events-none disabled:opacity-50";
+
+function SwapPaneMark({ paneId }: { paneId: string }) {
+  if (isSoapPaneId(paneId)) {
+    return (
+      <span
+        className="select-none text-xs font-semibold leading-none tracking-tight"
+        aria-hidden
+      >
+        {SOAP_PANE_DISPLAY[paneId].glyph}
+      </span>
+    );
+  }
+  const Icon = getPalettePaneIcon(paneId);
+  return <Icon className="h-4 w-4" aria-hidden />;
+}
 
 export default function PaneShowHereButton({
   currentTitle,
@@ -318,7 +337,7 @@ export default function PaneShowHereButton({
                   disabled={!canPick}
                   className={cn(
                     iconBtnClass,
-                    "text-foreground",
+                    "w-7 text-foreground",
                     "disabled:pointer-events-none disabled:opacity-50",
                   )}
                 >
@@ -337,7 +356,6 @@ export default function PaneShowHereButton({
                 Swap into this slot
               </DropdownMenuLabel>
               {ordered.map((c) => {
-                const Icon = getPalettePaneIcon(c.id);
                 const selected = c.id === selectedId;
                 return (
                   <DropdownMenuItem
@@ -346,7 +364,7 @@ export default function PaneShowHereButton({
                     onSelect={() => onSelect(c.id)}
                     className={cn(selected && "bg-accent")}
                   >
-                    <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                    <SwapPaneMark paneId={c.id} />
                     <span className="flex-1">{c.title}</span>
                     {selected ? (
                       <Check className="h-3.5 w-3.5 opacity-70" aria-hidden />
@@ -371,7 +389,6 @@ export default function PaneShowHereButton({
         )}
       >
         {iconOptions.map((c) => {
-          const Icon = getPalettePaneIcon(c.id);
           const selected = c.id === selectedId;
           const label = `Swap ${c.title} into this slot`;
           return (
@@ -389,10 +406,11 @@ export default function PaneShowHereButton({
                   onClick={() => onSelect(c.id)}
                   className={cn(
                     iconBtnClass,
+                    "w-7",
                     selected && "bg-accent text-foreground",
                   )}
                 >
-                  <Icon className="h-3.5 w-3.5" aria-hidden />
+                  <SwapPaneMark paneId={c.id} />
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom">{c.title}</TooltipContent>

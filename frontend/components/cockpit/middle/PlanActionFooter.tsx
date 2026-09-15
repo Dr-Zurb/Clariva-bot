@@ -12,7 +12,9 @@
 
 import { useEffect } from "react";
 import { SaveStatusPill } from "@/components/cockpit/rx/SaveStatusPill";
+import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import { useRxFormActions } from "@/components/cockpit/rx/RxFormActionsContext";
+import { TreatingDiagnosisControl } from "@/components/patient-profile/TreatingDiagnosisControl";
 import {
   Tooltip,
   TooltipContent,
@@ -27,7 +29,7 @@ export interface PlanActionFooterProps {
   state: CockpitState;
   appointmentId?: string;
   onReview?: () => void;
-  onPreview?: () => void;
+  onPrewarm?: () => void;
   previewLoading?: boolean;
   finishBusy?: boolean;
   sending?: boolean;
@@ -39,7 +41,7 @@ export function PlanActionFooter({
   state,
   appointmentId,
   onReview,
-  onPreview,
+  onPrewarm,
   previewLoading = false,
   finishBusy = false,
   sending,
@@ -47,11 +49,12 @@ export function PlanActionFooter({
   commitSuccess,
 }: PlanActionFooterProps) {
   const registeredActions = useRxFormActions();
+  const { state: rxState } = useRxForm();
   const canSend = canSendPrescription(state);
 
   const handleReview =
     onReview ?? registeredActions?.openPreview ?? registeredActions?.sendAndFinish;
-  const handlePreview = onPreview ?? registeredActions?.openPreview;
+  const handlePrewarm = onPrewarm ?? registeredActions?.prewarmPreview;
   const isSending = sending ?? registeredActions?.sending ?? false;
 
   useEffect(() => {
@@ -99,13 +102,18 @@ export function PlanActionFooter({
         ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        {canSend && handleReview ? (
+        <TooltipProvider delayDuration={300}>
+          <TreatingDiagnosisControl dxValue={rxState.fields.provisionalDiagnosis} />
+        </TooltipProvider>
+        {handleReview ? (
           <TooltipProvider delayDuration={300}>
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
                   type="button"
                   onClick={() => void handleReview()}
+                  onPointerEnter={() => handlePrewarm?.()}
+                  onFocus={() => handlePrewarm?.()}
                   disabled={finishBusy || isSending || previewLoading}
                   className={`${footerBtnClass} bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50`}
                   title="Finish this visit — preview, send, or print"
@@ -117,32 +125,6 @@ export function PlanActionFooter({
                 Done{" "}
                 <kbd className="ml-2 rounded border bg-background/20 px-1.5 py-0.5 text-xs">
                   {modShortcutHint("Enter")}
-                </kbd>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        ) : handlePreview ? (
-          <TooltipProvider delayDuration={300}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => void handlePreview()}
-                  disabled={isSending || previewLoading}
-                  className={
-                    liveQuiet
-                      ? `${footerBtnClass} border border-border bg-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground disabled:opacity-50`
-                      : `${footerBtnClass} border border-primary bg-card text-primary hover:bg-primary/5 disabled:opacity-50`
-                  }
-                  title="See how this prescription will look to the patient"
-                >
-                  {previewLoading ? "Loading…" : "Preview as patient"}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                Preview as patient{" "}
-                <kbd className="ml-2 rounded border bg-background/20 px-1.5 py-0.5 text-xs">
-                  {modShortcutHint("P", { shift: true })}
                 </kbd>
               </TooltipContent>
             </Tooltip>

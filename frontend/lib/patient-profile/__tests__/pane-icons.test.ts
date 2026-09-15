@@ -3,10 +3,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { render } from '@testing-library/react';
+import { createElement } from 'react';
 import {
   PANE_ICONS,
   BODY_VARIANT_ICONS,
   SOAP_INITIAL_ICONS,
+  SOAP_PANE_DISPLAY,
   getPaneIcon,
   getPalettePaneIcon,
   isSoapPaneId,
@@ -37,7 +40,7 @@ describe('pane-icons (cpv-07 B + SOAP initials)', () => {
     expect(PANE_ICONS.objective).toBe(Activity);
   });
 
-  it('palette uses large S/O/A/P initials for SOAP panes only', () => {
+  it('palette uses S O A P glyphs for clinical panes only', () => {
     expect(getPalettePaneIcon('subjective')).toBe(SOAP_INITIAL_ICONS.subjective);
     expect(getPalettePaneIcon('objective')).toBe(SOAP_INITIAL_ICONS.objective);
     expect(getPalettePaneIcon('assessment')).toBe(SOAP_INITIAL_ICONS.assessment);
@@ -45,6 +48,26 @@ describe('pane-icons (cpv-07 B + SOAP initials)', () => {
     expect(getPalettePaneIcon('body')).toBe(Video);
     expect(isSoapPaneId('subjective')).toBe(true);
     expect(isSoapPaneId('body')).toBe(false);
+    expect(SOAP_PANE_DISPLAY.subjective.title).toBe('Subjective');
+    expect(SOAP_PANE_DISPLAY.objective.title).toBe('Objective');
+    expect(SOAP_PANE_DISPLAY.assessment.title).toBe('Assessment');
+    expect(SOAP_PANE_DISPLAY.plan.title).toBe('Plan');
+    expect(SOAP_PANE_DISPLAY.subjective.glyph).toBe('S');
+    expect(SOAP_PANE_DISPLAY.objective.glyph).toBe('O');
+    expect(SOAP_PANE_DISPLAY.assessment.glyph).toBe('A');
+    expect(SOAP_PANE_DISPLAY.plan.glyph).toBe('P');
+
+    const glyphs: Record<string, string> = {
+      subjective: 'S',
+      objective: 'O',
+      assessment: 'A',
+      plan: 'P',
+    };
+    for (const [id, glyph] of Object.entries(glyphs)) {
+      const Icon = SOAP_INITIAL_ICONS[id as keyof typeof SOAP_INITIAL_ICONS];
+      const { container } = render(createElement(Icon));
+      expect(container.querySelector('text')?.textContent).toBe(glyph);
+    }
   });
 
   it('subjective and body=text use distinct icons (csl-02 collision fix)', () => {

@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
   RxFormProvider,
@@ -34,6 +34,15 @@ function renderFooter(
 }
 
 describe("PlanActionFooter", () => {
+  it("shows Treating in the footer", () => {
+    const fields = createEmptyRxFormFields();
+    fields.provisionalDiagnosis = "Viral fever";
+    renderFooter(<PlanActionFooter state="ready" onReview={vi.fn()} />, fields);
+    expect(screen.getByTestId("treating-diagnosis")).toHaveTextContent(
+      /treating: viral fever/i,
+    );
+  });
+
   it("hides entirely in terminal state", () => {
     const { container } = renderFooter(
       <PlanActionFooter state="terminal" onReview={vi.fn()} />,
@@ -53,20 +62,23 @@ describe("PlanActionFooter", () => {
     expect(screen.getByRole("button", { name: /done/i })).toBeInTheDocument();
   });
 
-  it("hides Done when canSendPrescription(state) is false (ready)", () => {
-    renderFooter(<PlanActionFooter state="ready" onReview={vi.fn()} />);
-    expect(
-      screen.queryByRole("button", { name: /done/i }),
-    ).not.toBeInTheDocument();
+  it("prewarms when the pointer enters Done", () => {
+    const onPrewarm = vi.fn();
+    renderFooter(
+      <PlanActionFooter state="live" onReview={vi.fn()} onPrewarm={onPrewarm} />,
+    );
+    fireEvent.pointerEnter(screen.getByRole("button", { name: /done/i }));
+    expect(onPrewarm).toHaveBeenCalledTimes(1);
   });
 
-  it("shows Preview as patient in ready when onPreview is provided", () => {
-    renderFooter(
-      <PlanActionFooter state="ready" onPreview={vi.fn()} />,
-    );
+  it("shows Done before the visit starts (ready)", () => {
+    renderFooter(<PlanActionFooter state="ready" onReview={vi.fn()} />);
     expect(
-      screen.getByRole("button", { name: /preview as patient/i }),
+      screen.getByRole("button", { name: /done/i }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /preview as patient/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("does not keep Print on the footer", () => {
@@ -79,7 +91,7 @@ describe("PlanActionFooter", () => {
   });
 
   it("shows SaveStatus pill when not terminal", () => {
-    renderFooter(<PlanActionFooter state="ready" onPreview={vi.fn()} />);
+    renderFooter(<PlanActionFooter state="ready" onReview={vi.fn()} />);
     expect(screen.getByRole("status")).toHaveTextContent(/saved/i);
   });
 

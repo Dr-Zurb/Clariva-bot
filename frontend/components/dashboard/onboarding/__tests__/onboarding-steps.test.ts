@@ -9,6 +9,7 @@ import {
 
 const incompleteSetup: OnboardingStatus = {
   instagramConnected: false,
+  instagramRequired: true,
   practiceInfoSet: true,
   pricingSet: false,
   availabilitySet: false,
@@ -17,6 +18,16 @@ const incompleteSetup: OnboardingStatus = {
 
 const completeSetup: OnboardingStatus = {
   instagramConnected: true,
+  instagramRequired: true,
+  practiceInfoSet: true,
+  pricingSet: true,
+  availabilitySet: true,
+  complete: true,
+};
+
+const clinicReady: OnboardingStatus = {
+  instagramConnected: false,
+  instagramRequired: false,
   practiceInfoSet: true,
   pricingSet: true,
   availabilitySet: true,
@@ -82,5 +93,18 @@ describe("remainingGoLiveSteps / isGoLiveComplete", () => {
     expect(isGoLiveComplete(completeSetup, "verified")).toBe(true);
     expect(isGoLiveComplete(completeSetup, "unverified")).toBe(false);
     expect(isGoLiveComplete(incompleteSetup, "verified")).toBe(false);
+  });
+
+  it("keeps Instagram visible but not remaining when Not yet", () => {
+    const ig = buildGoLiveChecklist(clinicReady, "verified").find(
+      (s) => s.id === "instagram",
+    );
+    expect(ig?.optional).toBe(true);
+    expect(ig?.done).toBe(false);
+    expect(ig?.title).toBe("Connect socials (optional)");
+    expect(
+      remainingGoLiveSteps(clinicReady, "verified").map((s) => s.id),
+    ).toEqual(["recording_attestation"]);
+    expect(isGoLiveComplete(clinicReady, "verified")).toBe(true);
   });
 });

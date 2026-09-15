@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,11 +12,15 @@ import {
   saveDeskAppointmentVitals,
 } from "@/lib/desk/api";
 import {
+  DESK_VITALS_NOTE_MAX,
   deskVitalsFromReading,
   EMPTY_DESK_VITALS,
   parseDeskVitalsFields,
   type DeskVitalsFields,
 } from "@/lib/desk/vitals";
+import { deskVitalsSeedFromReading } from "@/lib/cockpit/desk-vitals-query";
+import { useDeskSectionOpen } from "@/lib/desk/use-section-open";
+import { queryKeys } from "@/lib/query/keys";
 import { cn } from "@/lib/utils";
 
 const fieldClass = "h-9 rounded-lg bg-background tabular-nums";
@@ -59,6 +64,7 @@ function summaryLine(fields: DeskVitalsFields): string {
   if (fields.spo2) parts.push(`SpO₂ ${fields.spo2}%`);
   if (fields.weightKg) parts.push(`${fields.weightKg} kg`);
   if (fields.heightCm) parts.push(`${fields.heightCm} cm`);
+  if (fields.note.trim()) parts.push(fields.note.trim());
   return parts.join(" · ");
 }
 
@@ -67,17 +73,30 @@ export function DeskVitalsForm({
   appointmentId,
   onFinished,
   skipFetch = false,
+  open: openProp,
+  onOpenChange,
+  saveLabel = "Save vitals",
+  emptySummary = "Skipped",
 }: {
   token: string;
   appointmentId: string;
-  /** After a fresh check-in: Save or Skip returns the desk to empty search. */
+  /** After a fresh check-in: Save or Skip continues the intake sequence. */
   onFinished?: () => void;
   /** Fresh check-in — skip the empty GET so the form opens immediately. */
   skipFetch?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  saveLabel?: string;
+  emptySummary?: string;
 }) {
+  const queryClient = useQueryClient();
+  const { open, setOpen, controlled } = useDeskSectionOpen(openProp, onOpenChange, true);
+  const controlledRef = useRef(controlled);
+  const setOpenRef = useRef(setOpen);
+  controlledRef.current = controlled;
+  setOpenRef.current = setOpen;
   const [fields, setFields] = useState<DeskVitalsFields>(EMPTY_DESK_VITALS);
   const [saved, setSaved] = useState<DeskVitalsFields | null>(null);
-  const [open, setOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -102,14 +121,15 @@ export function DeskVitalsForm({
           const next = deskVitalsFromReading(res.data.vitals);
           setFields(next);
           setSaved(next);
-          setOpen(false);
+          if (!controlledRef.current) setOpenRef.current(false);
         } else {
           setFields(EMPTY_DESK_VITALS);
           setSaved(null);
-          setOpen(true);
+          if (!controlledRef.current) setOpenRef.current(true);
         }
       } catch (err) {
-        if (!cancelled) setError(deskErrorMessage(err, "Could not load vitals"));
+        if (!cancelled)
+          setError(deskErrorMessage(err, "Could not load vitals"));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -117,9 +137,14 @@ export function DeskVitalsForm({
     return () => {
       cancelled = true;
     };
+    // Open state is applied through refs so a parent re-render does not refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setOpen via ref
   }, [token, appointmentId, skipFetch]);
 
-  function patch<K extends keyof DeskVitalsFields>(key: K, value: DeskVitalsFields[K]) {
+  function patch<K extends keyof DeskVitalsFields>(
+    key: K,
+    value: DeskVitalsFields[K]
+  ) {
     setFields((prev) => ({ ...prev, [key]: value }));
   }
 
@@ -132,11 +157,22 @@ export function DeskVitalsForm({
     setSaving(true);
     setError(null);
     try {
-      const res = await saveDeskAppointmentVitals(token, appointmentId, parsed.payload);
+      const res = await saveDeskAppointmentVitals(
+        token,
+        appointmentId,
+        parsed.payload
+      );
       const next = deskVitalsFromReading(res.data.vitals);
       setFields(next);
       setSaved(next);
       setOpen(false);
+      queryClient.setQueryData(
+        queryKeys.consult(appointmentId).deskVitals(),
+        deskVitalsSeedFromReading(res.data.vitals),
+      );
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.consult(appointmentId).deskVitals(),
+      });
       onFinished?.();
     } catch (err) {
       setError(deskErrorMessage(err, "Could not save vitals"));
@@ -157,10 +193,15 @@ export function DeskVitalsForm({
             Vitals
           </p>
           <p className="mt-0.5 truncate text-sm text-foreground">
-            {saved ? summaryLine(saved) : "Skipped"}
+            {saved ? summaryLine(saved) : emptySummary}
           </p>
         </div>
-        <Button type="button" variant="ghost" className="h-8 shrink-0 px-2" onClick={() => setOpen(true)}>
+        <Button
+          type="button"
+          variant="ghost"
+          className="h-8 shrink-0 px-2"
+          onClick={() => setOpen(true)}
+        >
           {saved ? "Edit" : "Add"}
         </Button>
       </div>
@@ -220,6 +261,23 @@ export function DeskVitalsForm({
           className="col-span-2 sm:col-span-1"
         />
       </div>
+      <div className="flex min-w-0 flex-col gap-1">
+        <Label
+          htmlFor="desk-vitals-note"
+          className="text-xs text-muted-foreground"
+        >
+          Note
+        </Label>
+        <textarea
+          id="desk-vitals-note"
+          value={fields.note}
+          onChange={(event) => patch("note", event.target.value)}
+          rows={2}
+          maxLength={DESK_VITALS_NOTE_MAX}
+          placeholder="e.g. sitting, post-walk, refused…"
+          className="min-h-[4.5rem] w-full resize-y rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        />
+      </div>
       {error ? (
         <p role="alert" className="text-sm text-destructive">
           {error}
@@ -247,8 +305,13 @@ export function DeskVitalsForm({
         >
           {saved ? "Cancel" : "Skip"}
         </Button>
-        <Button type="button" className="h-9 px-4" disabled={saving} onClick={() => void onSave()}>
-          {saving ? "Saving…" : "Save vitals"}
+        <Button
+          type="button"
+          className="h-9 px-4"
+          disabled={saving}
+          onClick={() => void onSave()}
+        >
+          {saving ? "Saving…" : saveLabel}
         </Button>
       </div>
     </div>

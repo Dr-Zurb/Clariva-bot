@@ -59,6 +59,12 @@ interface KindConfig {
 }
 
 const KIND_CONFIG: Record<PreSendWarningKind, KindConfig> = {
+  "unacked-desk-allergy": {
+    icon: "⚠️",
+    title: "Reported at desk, not confirmed",
+    rowCls: "border-amber-400 bg-amber-50",
+    titleCls: "text-amber-950",
+  },
   "unacked-allergy": {
     icon: "⚠️",
     title: "Allergy clash",

@@ -41,7 +41,6 @@ import type React from 'react';
 import type { PaneDefinition } from '@/lib/patient-profile/v3/foundation';
 import {
   mapStateToTemplate,
-  canEditPrescriptionDraft,
   type CockpitTemplate,
 } from '@/lib/patient-profile/state';
 import { AssessmentSection } from '@/components/cockpit/rx/sections/AssessmentSection';
@@ -54,6 +53,7 @@ import type {
 import {
   PANE_ICONS,
   BODY_VARIANT_ICONS,
+  SOAP_PANE_DISPLAY,
 } from '@/lib/patient-profile/pane-icons';
 import RxPane from '@/components/patient-profile/panes/RxPane';
 import SubjectivePane from '@/components/patient-profile/panes/SubjectivePane';
@@ -217,7 +217,7 @@ export function buildCockpitTabs(
 
   const assessment: PaneDefinition = {
     id: 'assessment',
-    title: 'Assessment',
+    title: SOAP_PANE_DISPLAY.assessment.title,
     icon: PANE_ICONS.assessment,
     render: () => (
       <div
@@ -227,10 +227,7 @@ export function buildCockpitTabs(
         {/* Match SubjectivePane / ObjectivePane horizontal inset (px-4). */}
         <div className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] px-4 pb-3 pt-0">
           <div className="h-3" aria-hidden />
-          <AssessmentSection
-            heading={null}
-            disabled={!canEditPrescriptionDraft(ctx.state)}
-          />
+          <AssessmentSection heading={null} />
         </div>
       </div>
     ),
@@ -245,7 +242,7 @@ export function buildCockpitTabs(
   // safety / Dx / the "Send Rx & finish" action).
   const plan: PaneDefinition = {
     id: 'plan',
-    title: 'Plan',
+    title: SOAP_PANE_DISPLAY.plan.title,
     icon: PANE_ICONS.plan,
     render: () => (
       <RxPane
@@ -267,12 +264,12 @@ export function buildCockpitTabs(
       />
     ),
     naturalSizePct: 60,
-    minSizePx: 280,
+    minSizePx: 520,
   };
 
   const subjective: PaneDefinition = {
     id: 'subjective',
-    title: 'Subjective',
+    title: SOAP_PANE_DISPLAY.subjective.title,
     icon: PANE_ICONS.subjective,
     render: () => (
       <SubjectivePane
@@ -288,7 +285,7 @@ export function buildCockpitTabs(
 
   const objective: PaneDefinition = {
     id: 'objective',
-    title: 'Objective',
+    title: SOAP_PANE_DISPLAY.objective.title,
     icon: PANE_ICONS.objective,
     render: () => <ObjectivePane appointmentId={appointmentId} hideHeader />,
     naturalSizePct: 50,

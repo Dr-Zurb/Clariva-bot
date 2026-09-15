@@ -7,8 +7,8 @@ import { usePathname } from "next/navigation";
 import {
   ArrowLeft,
   Menu,
-  Headset,
   ShieldCheck,
+  UserRound,
   Users,
 } from "lucide-react";
 
@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 const NAV = [
   { href: "/admin/doctors", label: "Doctors", icon: Users },
   { href: "/admin/verifications", label: "Verifications", icon: ShieldCheck },
-  { href: "/admin/clinic-staff", label: "Front desk", icon: Headset },
+  { href: "/admin/clinic-staff", label: "Staff", icon: UserRound },
 ] as const;
 
 /**

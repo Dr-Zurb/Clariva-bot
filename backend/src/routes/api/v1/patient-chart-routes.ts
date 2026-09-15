@@ -45,6 +45,7 @@ import {
   updateMedicationHandler,
   updateVitalsHandler,
 } from '../../../controllers/patient-chart-controller';
+import { listPatientVisitDocumentsHandler } from '../../../controllers/visit-documents-controller';
 
 const router = Router({ mergeParams: true });
 
@@ -82,5 +83,8 @@ router.get('/problems', listProblemsHandler);
 
 // Investigations & results timeline (sdp-05 — read-only; assembled from prescriptions)
 router.get('/results', listResultsTimelineHandler);
+
+// Desk visit documents (dvp P1 — doctor read for FilesTab)
+router.get('/visit-documents', listPatientVisitDocumentsHandler);
 
 export default router;

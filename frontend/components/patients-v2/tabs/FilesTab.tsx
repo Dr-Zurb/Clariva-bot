@@ -5,8 +5,11 @@ import { ChevronDown, ChevronRight, Download, FileImage, FileText } from "lucide
 import {
   getAppointmentsForPatient,
   getPrescriptionDownloadUrl,
+  getVisitDocumentPageDownloadUrl,
+  listPatientVisitDocuments,
   listPrescriptionsByPatient,
 } from "@/lib/api";
+import { VISIT_DOCUMENT_TYPE_LABEL } from "@/types/visit-documents";
 import { formatDate } from "@/lib/format-date";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,6 +39,7 @@ export type FlatAttachment = PrescriptionAttachment & {
   visitDate: string;
   visitId: string;
   chiefComplaint: string;
+  deskDocumentId?: string;
 };
 
 function fileNameFromPath(path: string): string {
@@ -72,8 +76,11 @@ export function FilesTab({ patientId, token }: FilesTabProps) {
     void Promise.all([
       getAppointmentsForPatient(token, patientId),
       listPrescriptionsByPatient(token, patientId),
+      listPatientVisitDocuments(token, patientId).catch(() => ({
+        data: { documents: [] },
+      })),
     ])
-      .then(([apptRes, rxRes]) => {
+      .then(([apptRes, rxRes, deskRes]) => {
         if (cancelled) return;
         const visits = (apptRes.data.appointments ?? []).sort(
           (a, b) =>
@@ -85,6 +92,12 @@ export function FilesTab({ patientId, token }: FilesTabProps) {
           if (rx.appointment_id && !rxByAppt.has(rx.appointment_id)) {
             rxByAppt.set(rx.appointment_id, rx);
           }
+        }
+        const deskByAppt = new Map<string, typeof deskRes.data.documents>();
+        for (const doc of deskRes.data.documents ?? []) {
+          const list = deskByAppt.get(doc.appointment_id) ?? [];
+          list.push(doc);
+          deskByAppt.set(doc.appointment_id, list);
         }
         const grouped = visits
           .map((visit) => {
@@ -98,6 +111,23 @@ export function FilesTab({ patientId, token }: FilesTabProps) {
                 chiefComplaint: chiefComplaintForVisit(visit),
               }),
             );
+            for (const doc of deskByAppt.get(visit.id) ?? []) {
+              for (const page of doc.pages) {
+                attachments.push({
+                  id: page.id,
+                  prescription_id: "",
+                  file_path: `${VISIT_DOCUMENT_TYPE_LABEL[doc.document_type]} · p${page.page_index + 1}`,
+                  file_type: page.file_type,
+                  caption: null,
+                  uploaded_at: page.created_at,
+                  prescriptionId: "",
+                  visitDate: visit.appointment_date,
+                  visitId: visit.id,
+                  chiefComplaint: chiefComplaintForVisit(visit),
+                  deskDocumentId: doc.id,
+                });
+              }
+            }
             return { visit, attachments };
           })
           .filter((g) => g.attachments.length > 0);
@@ -132,10 +162,17 @@ export function FilesTab({ patientId, token }: FilesTabProps) {
   );
 
   const openAttachment = async (att: FlatAttachment) => {
-    const key = `${att.prescriptionId}-${att.id}`;
+    const key = `${att.prescriptionId || att.deskDocumentId}-${att.id}`;
     setBusyId(key);
     try {
-      const res = await getPrescriptionDownloadUrl(token, att.prescriptionId, att.id);
+      const res = att.deskDocumentId
+        ? await getVisitDocumentPageDownloadUrl(
+            token,
+            att.visitId,
+            att.deskDocumentId,
+            att.id,
+          )
+        : await getPrescriptionDownloadUrl(token, att.prescriptionId, att.id);
       const url = res.data.downloadUrl;
       if (url) window.open(url, "_blank", "noopener,noreferrer");
     } catch {
@@ -219,7 +256,7 @@ export function FilesTab({ patientId, token }: FilesTabProps) {
                 {open ? (
                   <ul className="divide-y border-t">
                     {attachments.map((att) => {
-                      const key = `${att.prescriptionId}-${att.id}`;
+                      const key = `${att.prescriptionId || att.deskDocumentId}-${att.id}`;
                       const isImage = (att.file_type ?? "").startsWith("image/");
                       return (
                         <li key={att.id}>

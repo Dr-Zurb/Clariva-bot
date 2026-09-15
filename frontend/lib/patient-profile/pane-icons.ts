@@ -29,14 +29,23 @@ export function isSoapPaneId(paneId: string): paneId is SoapPaneId {
   return (SOAP_PANE_IDS as readonly string[]).includes(paneId);
 }
 
+/** Display-only titles + palette glyphs. Pane ids stay SOAP internally. */
+export const SOAP_PANE_DISPLAY = {
+  subjective: { title: 'Subjective', glyph: 'S' },
+  objective: { title: 'Objective', glyph: 'O' },
+  assessment: { title: 'Assessment', glyph: 'A' },
+  plan: { title: 'Plan', glyph: 'P' },
+} as const satisfies Record<SoapPaneId, { title: string; glyph: string }>;
+
 /**
- * Bold SOAP letter glyph for the palette strip. Sized to fill most of a 24×24
- * viewBox so it reads as a big initial at `h-5` / `h-6` paint sizes.
+ * Fallback SVG glyph (menus / swap chips). Palette chips render the same
+ * letters as real text so they stay readable at chip size.
  */
 function createSoapInitialIcon(
-  letter: 'S' | 'O' | 'A' | 'P',
+  glyph: string,
 ): ForwardRefExoticComponent<Omit<LucideProps, 'ref'> & RefAttributes<SVGSVGElement>> {
-  const Icon = forwardRef<SVGSVGElement, LucideProps>(function SoapInitialIcon(
+  const fontSize = glyph.length >= 3 ? 13 : glyph.length === 2 ? 16 : 18;
+  const Icon = forwardRef<SVGSVGElement, LucideProps>(function SoapGlyphIcon(
     { className, ...props },
     ref,
   ) {
@@ -59,30 +68,30 @@ function createSoapInitialIcon(
           textAnchor: 'middle',
           dominantBaseline: 'middle',
           fill: 'currentColor',
-          fontSize: '18',
+          fontSize,
           fontWeight: '700',
           fontFamily: 'ui-sans-serif, system-ui, -apple-system, sans-serif',
-          letterSpacing: '-0.02em',
+          letterSpacing: '-0.04em',
         },
-        letter,
+        glyph,
       ),
     );
   });
-  Icon.displayName = `SoapInitial${letter}`;
+  Icon.displayName = `SoapGlyph${glyph.replace(/\W/g, '')}`;
   return Icon;
 }
 
-/** Palette-only SOAP initials (S/O/A/P). Open tab chips use {@link PANE_ICONS}. */
+/** Palette-only clinical glyphs. Open tab chips use {@link PANE_ICONS}. */
 export const SOAP_INITIAL_ICONS = {
-  subjective: createSoapInitialIcon('S'),
-  objective: createSoapInitialIcon('O'),
-  assessment: createSoapInitialIcon('A'),
-  plan: createSoapInitialIcon('P'),
+  subjective: createSoapInitialIcon(SOAP_PANE_DISPLAY.subjective.glyph),
+  objective: createSoapInitialIcon(SOAP_PANE_DISPLAY.objective.glyph),
+  assessment: createSoapInitialIcon(SOAP_PANE_DISPLAY.assessment.glyph),
+  plan: createSoapInitialIcon(SOAP_PANE_DISPLAY.plan.glyph),
 } as const satisfies Record<SoapPaneId, LucideIcon>;
 
 /**
  * Pane icons for open tab chips + section chrome (cpv-07 / DL-9).
- * SOAP panes keep the familiar pictorial glyphs; the palette overlays
+ * Clinical panes keep the familiar pictorial glyphs; the palette overlays
  * {@link SOAP_INITIAL_ICONS} via {@link getPalettePaneIcon}.
  */
 export const PANE_ICONS: Record<string, LucideIcon> = {
@@ -108,7 +117,7 @@ export function getPaneIcon(paneId: string): LucideIcon | undefined {
 }
 
 /**
- * Icon for the cockpit palette strip: SOAP panes use large S/O/A/P initials;
+ * Icon for the cockpit palette strip: clinical panes use S · O · A · P;
  * everything else uses the pane's pictorial icon.
  */
 export function getPalettePaneIcon(

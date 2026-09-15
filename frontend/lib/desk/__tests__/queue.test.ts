@@ -8,8 +8,17 @@ import {
   deskStatusLabel,
   findDeskSameDayVisit,
   formatDeskAgeSex,
+  formatDeskDaysPending,
   formatDeskOpdNumber,
   isDeskSameDayLockVisit,
+  nextDeskQueueToken,
+  canDeskCancelVisit,
+  canDeskLeaveVisit,
+  canDeskMoveVisit,
+  canDeskOpenLabUpload,
+  canDeskOpenVisitPrep,
+  deskLabWaitingBarClass,
+  deskLabWaitingTone,
   isOpenDeskAppointment,
   matchesDeskQueueSearch,
 } from "@/lib/desk/queue";
@@ -21,23 +30,143 @@ describe("isOpenDeskAppointment", () => {
   });
 });
 
+describe("canDeskCancelVisit", () => {
+  it("is only for waiting pending/confirmed", () => {
+    expect(
+      canDeskCancelVisit({ status: "confirmed", patient_checked_in_at: null })
+    ).toBe(true);
+    expect(
+      canDeskCancelVisit({ status: "pending", patient_checked_in_at: null })
+    ).toBe(true);
+    expect(
+      canDeskCancelVisit({
+        status: "confirmed",
+        patient_checked_in_at: "2026-08-30T10:00:00Z",
+      })
+    ).toBe(false);
+    expect(
+      canDeskCancelVisit({ status: "completed", patient_checked_in_at: null })
+    ).toBe(false);
+    expect(
+      canDeskCancelVisit({ status: "cancelled", patient_checked_in_at: null })
+    ).toBe(false);
+    expect(
+      canDeskCancelVisit({ status: "no_show", patient_checked_in_at: null })
+    ).toBe(false);
+    expect(
+      canDeskMoveVisit({ status: "confirmed", patient_checked_in_at: null })
+    ).toBe(true);
+    expect(
+      canDeskMoveVisit({
+        status: "confirmed",
+        patient_checked_in_at: "2026-08-30T10:00:00Z",
+      })
+    ).toBe(false);
+  });
+});
+
+describe("deskLabWaitingTone", () => {
+  it("warms from info to warning to destructive", () => {
+    expect(deskLabWaitingTone(0)).toBe("info");
+    expect(deskLabWaitingTone(2)).toBe("info");
+    expect(deskLabWaitingTone(3)).toBe("warning");
+    expect(deskLabWaitingTone(6)).toBe("warning");
+    expect(deskLabWaitingTone(7)).toBe("destructive");
+    expect(deskLabWaitingBarClass(1)).toBe("bg-primary");
+    expect(deskLabWaitingBarClass(5)).toBe("bg-warning");
+    expect(deskLabWaitingBarClass(11)).toBe("bg-destructive");
+  });
+});
+
+describe("canDeskOpenLabUpload", () => {
+  it("allows any visit that is still on the books", () => {
+    expect(canDeskOpenLabUpload({ status: "completed" })).toBe(true);
+    expect(canDeskOpenLabUpload({ status: "confirmed" })).toBe(true);
+    expect(canDeskOpenLabUpload({ status: "cancelled" })).toBe(false);
+    expect(canDeskOpenLabUpload({ status: "no_show" })).toBe(false);
+  });
+});
+
+describe("canDeskOpenVisitPrep", () => {
+  it("is only for arrived or seen visits", () => {
+    expect(
+      canDeskOpenVisitPrep({
+        status: "confirmed",
+        patient_checked_in_at: "2026-08-30T10:00:00Z",
+      })
+    ).toBe(true);
+    expect(
+      canDeskOpenVisitPrep({
+        status: "completed",
+        patient_checked_in_at: "2026-08-30T10:00:00Z",
+      })
+    ).toBe(true);
+    expect(
+      canDeskOpenVisitPrep({ status: "confirmed", patient_checked_in_at: null })
+    ).toBe(false);
+    expect(
+      canDeskOpenVisitPrep({
+        status: "no_show",
+        patient_checked_in_at: "2026-08-30T10:00:00Z",
+      })
+    ).toBe(false);
+    expect(
+      canDeskOpenVisitPrep({ status: "cancelled", patient_checked_in_at: null })
+    ).toBe(false);
+  });
+});
+
+describe("canDeskLeaveVisit", () => {
+  it("is only for arrived pending/confirmed", () => {
+    expect(
+      canDeskLeaveVisit({
+        status: "confirmed",
+        patient_checked_in_at: "2026-08-30T10:00:00Z",
+      })
+    ).toBe(true);
+    expect(
+      canDeskLeaveVisit({ status: "confirmed", patient_checked_in_at: null })
+    ).toBe(false);
+    expect(
+      canDeskLeaveVisit({
+        status: "completed",
+        patient_checked_in_at: "2026-08-30T10:00:00Z",
+      })
+    ).toBe(false);
+  });
+});
+
 describe("deskQueueBucket", () => {
   it("treats completed as seen even if they arrived", () => {
     expect(
-      deskQueueBucket({ status: "completed", patient_checked_in_at: "2026-08-23T03:00:00Z" })
+      deskQueueBucket({
+        status: "completed",
+        patient_checked_in_at: "2026-08-23T03:00:00Z",
+      })
     ).toBe("seen");
   });
 
   it("treats a checked-in open visit as arrived", () => {
     expect(
-      deskQueueBucket({ status: "confirmed", patient_checked_in_at: "2026-08-23T03:00:00Z" })
+      deskQueueBucket({
+        status: "confirmed",
+        patient_checked_in_at: "2026-08-23T03:00:00Z",
+      })
     ).toBe("arrived");
   });
 
   it("treats everyone else as waiting", () => {
-    expect(deskQueueBucket({ status: "confirmed", patient_checked_in_at: null })).toBe(
-      "waiting"
-    );
+    expect(
+      deskQueueBucket({ status: "confirmed", patient_checked_in_at: null })
+    ).toBe("waiting");
+  });
+});
+
+describe("formatDeskDaysPending", () => {
+  it("singularizes one day", () => {
+    expect(formatDeskDaysPending(1)).toBe("1 day pending");
+    expect(formatDeskDaysPending(0)).toBe("0 days pending");
+    expect(formatDeskDaysPending(3)).toBe("3 days pending");
   });
 });
 
@@ -87,7 +216,7 @@ describe("matchesDeskQueueSearch", () => {
 });
 
 describe("DESK_QUEUE_HEADER", () => {
-  it("reads left to right as #, time, mrn, patient, age/sex, relative, phone, origin, status", () => {
+  it("reads left to right as #, time, mrn, patient, age/sex, relative, phone, origin, status, prep, payment, actions", () => {
     expect(DESK_QUEUE_HEADER.map((col) => col.key)).toEqual([
       "bar",
       "token",
@@ -99,6 +228,9 @@ describe("DESK_QUEUE_HEADER", () => {
       "phone",
       "origin",
       "status",
+      "prep",
+      "payment",
+      "actions",
     ]);
   });
 });
@@ -118,8 +250,17 @@ describe("deskOpdNumber", () => {
   };
 
   it("uses the OPD queue token when present", () => {
-    expect(deskOpdNumber({ ...later, opd_token_number: 7 }, [early, later])).toBe(7);
+    expect(
+      deskOpdNumber({ ...later, opd_token_number: 7 }, [early, later])
+    ).toBe(7);
     expect(formatDeskOpdNumber(7)).toBe("#07");
+  });
+
+  it("uses slot-day position when the same token is on every row", () => {
+    const a = { ...early, opd_token_number: 1 };
+    const b = { ...later, opd_token_number: 1 };
+    expect(deskOpdNumber(a, [a, b])).toBe(1);
+    expect(deskOpdNumber(b, [a, b])).toBe(2);
   });
 
   it("uses slot-day position when there is no token", () => {
@@ -140,6 +281,29 @@ describe("findDeskSameDayVisit", () => {
     expect(findDeskSameDayVisit(rows, "p1")?.id).toBe("b");
     expect(findDeskSameDayVisit(rows, "p2")?.id).toBe("c");
     expect(findDeskSameDayVisit(rows, "p3")).toBeNull();
+  });
+});
+
+describe("nextDeskQueueToken", () => {
+  it("is 1 on an empty day and one after the highest token", () => {
+    expect(nextDeskQueueToken([])).toBe(1);
+    expect(
+      nextDeskQueueToken([
+        { opd_token_number: 3 },
+        { opd_token_number: null },
+        { opd_token_number: 14 },
+      ])
+    ).toBe(15);
+  });
+
+  it("counts people already on the list when tokens were not joined", () => {
+    expect(
+      nextDeskQueueToken([
+        { opd_token_number: null },
+        { opd_token_number: null },
+        { opd_token_number: null },
+      ])
+    ).toBe(4);
   });
 });
 

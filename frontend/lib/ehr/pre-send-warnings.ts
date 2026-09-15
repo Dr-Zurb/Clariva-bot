@@ -18,8 +18,9 @@
  * Warning ordering (clinical severity-first, deterministic):
  *   1. `unacked-allergy`  — red banner items not yet "Acknowledge and continue"d
  *   2. `unacked-ddi`      — DDI chips not yet ✕'d
- *   3. `no-diagnosis`     — empty `provisional_diagnosis`
- *   4. `empty-rx`         — no medicines, no investigations, no patient education
+ *
+ * Completeness prompts (`no-diagnosis`, `empty-rx`) are not emitted — OPD
+ * notes are often partial and that modal blocked Send too often.
  *
  * "Edit Rx" focuses the FIRST warning's `targetId`, so this order is
  * also the focus-priority order. The two known DOM anchors are:
@@ -51,6 +52,7 @@ import { ackKeyForDdi } from "@/components/ehr/InteractionChips";
 
 /** Stable identifiers for the warning-kind enum. PHI-free. */
 export type PreSendWarningKind =
+  | "unacked-desk-allergy"
   | "unacked-allergy"
   | "unacked-ddi"
   | "no-diagnosis"
@@ -64,6 +66,13 @@ export type PreSendFocusTarget = "medicines-section" | "diagnosis";
  *  must NOT be forwarded to telemetry (it may include drug / allergy
  *  text). */
 export type PreSendWarning =
+  | {
+      kind: "unacked-desk-allergy";
+      targetId: PreSendFocusTarget;
+      summary: string;
+      count: number;
+      ids: ReadonlyArray<string>;
+    }
   | {
       kind: "unacked-allergy";
       targetId: PreSendFocusTarget;
@@ -123,6 +132,8 @@ export interface PreSendInputs {
   /** Single source of truth for ack state (parent form's
    *  `useAcknowledgements()`). */
   isAcked: (key: string) => boolean;
+  /** Unaccepted named allergies from the desk sidecar (DVP-DL-4). */
+  unacceptedDeskAllergies?: ReadonlyArray<{ id: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +148,7 @@ const SEVERITY_RANK: Record<InteractionSeverity, number> = {
 };
 
 function highestSeverityIn(
-  rows: ReadonlyArray<InteractionRow>,
+  rows: ReadonlyArray<InteractionRow>
 ): InteractionSeverity {
   let best: InteractionSeverity = "minor";
   let bestRank = 0;
@@ -161,12 +172,12 @@ function highestSeverityIn(
  * modal and sends directly.
  */
 export function computePreSendWarnings(
-  inputs: PreSendInputs,
+  inputs: PreSendInputs
 ): PreSendWarning[] {
   const warnings: PreSendWarning[] = [];
 
-  // 1. Unacked allergy clashes.
   const unackedAllergy = inputs.allergyMatches.filter((m) => {
+    if (m.reportedAtDesk) return false;
     const instanceId = inputs.medicineInstanceIds[m.medicineIndex];
     if (!instanceId) {
       // Defensive: no instance id ⇒ no possible ack key was ever
@@ -189,9 +200,9 @@ export function computePreSendWarnings(
     });
   }
 
-  // 2. Unacked DDI warnings.
+  // 3. Unacked DDI warnings.
   const unackedDdi = inputs.ddiInteractions.filter(
-    (row) => !inputs.isAcked(ackKeyForDdi(row.id)),
+    (row) => !inputs.isAcked(ackKeyForDdi(row.id))
   );
   if (unackedDdi.length > 0) {
     const isOne = unackedDdi.length === 1;
@@ -207,32 +218,6 @@ export function computePreSendWarnings(
     });
   }
 
-  // 3. No diagnosis recorded.
-  if (!inputs.hasDiagnosis) {
-    warnings.push({
-      kind: "no-diagnosis",
-      targetId: "diagnosis",
-      summary: "No provisional diagnosis recorded",
-    });
-  }
-
-  // 4. Empty Rx (no medicines, no investigations, no patient education,
-  //    no attachments). Deliberately permissive — a doctor might send
-  //    pure advice (patient education only) or a photo-only Rx with
-  //    one attachment. We only flag the all-empty case.
-  if (
-    inputs.filledMedicineCount === 0 &&
-    !inputs.hasInvestigations &&
-    !inputs.hasPatientEducation &&
-    !inputs.hasAttachments
-  ) {
-    warnings.push({
-      kind: "empty-rx",
-      targetId: "medicines-section",
-      summary: "Prescription is empty (no medicines, investigations, education, or attachments)",
-    });
-  }
-
   return warnings;
 }
 
@@ -243,7 +228,7 @@ export function computePreSendWarnings(
  * case, but the fallback keeps the UX coherent).
  */
 export function focusTargetFor(
-  warnings: ReadonlyArray<PreSendWarning>,
+  warnings: ReadonlyArray<PreSendWarning>
 ): PreSendFocusTarget {
   return warnings[0]?.targetId ?? "medicines-section";
 }
@@ -255,7 +240,7 @@ export function focusTargetFor(
  * the helper is robust to future expansion).
  */
 export function warningKindsForTelemetry(
-  warnings: ReadonlyArray<PreSendWarning>,
+  warnings: ReadonlyArray<PreSendWarning>
 ): PreSendWarningKind[] {
   const seen = new Set<PreSendWarningKind>();
   const out: PreSendWarningKind[] = [];

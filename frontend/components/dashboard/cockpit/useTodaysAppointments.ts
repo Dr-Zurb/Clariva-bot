@@ -15,24 +15,26 @@ export interface UseTodaysAppointmentsResult {
 }
 
 /**
- * Fetches today's appointments for the authenticated doctor.
+ * Fetches the doctor's appointments for one local calendar day.
  *
  * Shared by C2 (NowNextCard) and C5 (TodaysSchedule) via one query key.
+ * `dateOverride` is YYYY-MM-DD; omit it to keep the dashboard on today.
  */
 export function useTodaysAppointments(
   token: string,
+  dateOverride?: string,
 ): UseTodaysAppointmentsResult {
   const query = useAppointmentsQuery(token);
 
   const appointments = useMemo((): Appointment[] | null => {
     const appointments = query.data?.data?.appointments;
     if (!Array.isArray(appointments)) return null;
-    const todayStr = formatDateISO(new Date());
+    const dayStr = dateOverride ?? formatDateISO(new Date());
     return appointments.filter((appt) => {
       const apptStr = formatDateISO(appt.appointment_date);
-      return apptStr === todayStr;
+      return apptStr === dayStr;
     });
-  }, [query.data]);
+  }, [query.data, dateOverride]);
 
   const refetch = useCallback(() => {
     void query.refetch();

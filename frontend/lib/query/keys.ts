@@ -21,11 +21,15 @@
 export const queryKeys = {
   dashboard: {
     all: ["dashboard"] as const,
-    events: (filters: { unreadOnly?: boolean; limit?: number; cursor?: string }) =>
-      [...queryKeys.dashboard.all, "events", filters] as const,
+    events: (filters: {
+      unreadOnly?: boolean;
+      limit?: number;
+      cursor?: string;
+    }) => [...queryKeys.dashboard.all, "events", filters] as const,
     counts: () => [...queryKeys.dashboard.all, "counts"] as const,
     appointments: () => [...queryKeys.dashboard.all, "appointments"] as const,
-    pendingReviews: () => [...queryKeys.dashboard.all, "pending-reviews"] as const,
+    pendingReviews: () =>
+      [...queryKeys.dashboard.all, "pending-reviews"] as const,
     rxSentToday: () => [...queryKeys.dashboard.all, "rx-sent-today"] as const,
     /** insights-v1 · practice-health overview keyed by ISO date range. */
     practiceHealth: (range: { from: string; to: string }) =>
@@ -68,10 +72,12 @@ export const queryKeys = {
     all: ["patient", patientId] as const,
     overview: () => [...queryKeys.patient(patientId).all, "overview"] as const,
     vitals: () => [...queryKeys.patient(patientId).all, "vitals"] as const,
-    conditions: () => [...queryKeys.patient(patientId).all, "conditions"] as const,
+    conditions: () =>
+      [...queryKeys.patient(patientId).all, "conditions"] as const,
     medicalBackground: () =>
       [...queryKeys.patient(patientId).all, "medical-background"] as const,
-    allergies: () => [...queryKeys.patient(patientId).all, "allergies"] as const,
+    allergies: () =>
+      [...queryKeys.patient(patientId).all, "allergies"] as const,
     prescriptions: () =>
       [...queryKeys.patient(patientId).all, "prescriptions", "recent"] as const,
     vitalsTrends: () =>
@@ -81,9 +87,16 @@ export const queryKeys = {
   }),
   consult: (appointmentId: string) => ({
     all: ["consult", appointmentId] as const,
-    lastVisitVitals: () =>
-      [...queryKeys.consult(appointmentId).all, "last-visit-vitals"] as const,
-    deskVitals: () => [...queryKeys.consult(appointmentId).all, "desk-vitals"] as const,
+    lastVisitSummary: () =>
+      [...queryKeys.consult(appointmentId).all, "last-visit-summary"] as const,
+    deskVitals: () =>
+      [...queryKeys.consult(appointmentId).all, "desk-vitals"] as const,
+    deskDocuments: () =>
+      [...queryKeys.consult(appointmentId).all, "desk-documents"] as const,
+    labOrders: () =>
+      [...queryKeys.consult(appointmentId).all, "lab-orders"] as const,
+    historySubmission: () =>
+      [...queryKeys.consult(appointmentId).all, "history-submission"] as const,
   }),
   clinicStaff: {
     all: ["clinic-staff"] as const,
@@ -93,13 +106,18 @@ export const queryKeys = {
     all: ["opd"] as const,
     queueSession: (dateIso: string) =>
       [...queryKeys.opd.all, "queue-session", dateIso] as const,
-    session: (dateIso: string) => [...queryKeys.opd.all, "session", dateIso] as const,
+    session: (dateIso: string) =>
+      [...queryKeys.opd.all, "session", dateIso] as const,
     doctorSettings: () => [...queryKeys.opd.all, "doctor-settings"] as const,
   },
   /** Front-desk portal — keys are date / context only, never patient names. */
   desk: {
     all: ["desk"] as const,
     context: () => [...queryKeys.desk.all, "context"] as const,
-    today: (dateIso: string) => [...queryKeys.desk.all, "today", dateIso] as const,
+    today: (dateIso: string) =>
+      [...queryKeys.desk.all, "today", dateIso] as const,
+    hisab: (dateIso: string) =>
+      [...queryKeys.desk.all, "hisab", dateIso] as const,
+    labPending: () => [...queryKeys.desk.all, "lab-pending"] as const,
   },
 } as const;

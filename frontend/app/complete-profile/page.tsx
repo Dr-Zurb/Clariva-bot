@@ -5,6 +5,7 @@ import { DoctorNameField } from "@/components/auth/DoctorNameField";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { patchDoctorSettings } from "@/lib/api";
 import {
   formatDoctorDisplayName,
@@ -26,6 +27,9 @@ export default function CompleteProfilePage() {
   const [fullName, setFullName] = useState("");
   const [practiceName, setPracticeName] = useState("");
   const [specialty, setSpecialty] = useState("");
+  const [socialEnquiries, setSocialEnquiries] = useState<"yes" | "not_yet">(
+    "yes",
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -97,15 +101,14 @@ export default function CompleteProfilePage() {
 
       const practice = practiceName.trim();
       const specialtyTrimmed = specialty.trim();
-      if (practice || specialtyTrimmed) {
-        try {
-          await patchDoctorSettings(token, {
-            ...(practice ? { practice_name: practice } : {}),
-            ...(specialtyTrimmed ? { specialty: specialtyTrimmed } : {}),
-          });
-        } catch {
-          // Account + flag already saved; settings can be filled in practice setup.
-        }
+      try {
+        await patchDoctorSettings(token, {
+          ...(practice ? { practice_name: practice } : {}),
+          ...(specialtyTrimmed ? { specialty: specialtyTrimmed } : {}),
+          social_enquiries: socialEnquiries,
+        });
+      } catch {
+        // Account + flag already saved; settings can be filled in practice setup.
       }
 
       router.push("/dashboard/getting-started");
@@ -181,6 +184,36 @@ export default function CompleteProfilePage() {
               placeholder="e.g. Dermatology"
             />
           </div>
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium leading-none">
+              Do patients message you on Instagram or Facebook?
+            </legend>
+            <RadioGroup
+              value={socialEnquiries}
+              onValueChange={(value) => {
+                if (value === "yes" || value === "not_yet") {
+                  setSocialEnquiries(value);
+                }
+              }}
+              disabled={loading}
+              className="gap-3 pt-1"
+            >
+              <label
+                htmlFor="social-enquiries-yes"
+                className="flex cursor-pointer items-start gap-2 text-sm"
+              >
+                <RadioGroupItem value="yes" id="social-enquiries-yes" />
+                <span>Yes</span>
+              </label>
+              <label
+                htmlFor="social-enquiries-not-yet"
+                className="flex cursor-pointer items-start gap-2 text-sm"
+              >
+                <RadioGroupItem value="not_yet" id="social-enquiries-not-yet" />
+                <span>Not yet</span>
+              </label>
+            </RadioGroup>
+          </fieldset>
           {error && (
             <p
               id="profile-error"

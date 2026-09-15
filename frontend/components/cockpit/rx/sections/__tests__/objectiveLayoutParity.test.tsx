@@ -40,6 +40,10 @@ vi.mock("@/components/cockpit/rx/inputs/VitalsGrid", () => ({
   VitalsGrid: () => <div data-testid="vitals-grid-stub" />,
 }));
 
+vi.mock("@/components/cockpit/rx/objective/DeskVisitDocumentsStrip", () => ({
+  DeskVisitDocumentsStrip: () => null,
+}));
+
 vi.mock("@/components/cockpit/rx/inputs/ExamSystemList", () => ({
   ExamSystemList: ({ disabled }: { disabled?: boolean }) => (
     <div data-testid="exam-system-list">
@@ -82,7 +86,13 @@ beforeEach(() => {
   mockPatchDoctorSettings.mockReset();
   mockUpdatePrescription.mockReset();
   mockGetDoctorSettings.mockResolvedValue({
-    data: { settings: { objective_section_order: [], objective_section_collapsed: {} } },
+    data: {
+      settings: {
+        objective_section_order: [],
+        objective_section_collapsed: {},
+        objective_section_hidden: ["__show_all__"],
+      },
+    },
   });
   mockPatchDoctorSettings.mockImplementation(async (_token, payload) => ({
     data: { settings: { ...payload } },
@@ -361,6 +371,7 @@ describe("obj-15 · §2 engine round-trips", () => {
       objectiveDefaults: {
         ...EMPTY_DEFAULTS,
         sectionOrder: [...persistedOrder, "ghost_section"] as ObjectiveSectionId[],
+        sectionHidden: ["__show_all__"] as unknown as ObjectiveSectionId[],
       },
     });
     await waitFor(() => {

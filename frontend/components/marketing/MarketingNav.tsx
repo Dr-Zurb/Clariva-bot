@@ -9,14 +9,21 @@ import {
   NAV_LINKS,
   SIGNUP_HREF,
   haloPrimaryButton,
+  type MarketingNavLink,
 } from "./constants";
 
 /**
  * Public marketing top bar. Sticky + translucent, with the Halo Aid logo,
  * in-page anchor links, and Sign in / Get started CTAs. The mobile menu is a
  * JS-free `<details>` disclosure so the whole nav stays a Server Component.
+ *
+ * Pass `links` on `/clinics` so section anchors stay on that page.
  */
-export function MarketingNav() {
+export function MarketingNav({
+  links = NAV_LINKS,
+}: {
+  links?: readonly MarketingNavLink[];
+}) {
   return (
     <header className="sticky top-0 z-50 border-b border-[hsl(var(--halo-blue))]/10 bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/70">
       <nav
@@ -36,7 +43,7 @@ export function MarketingNav() {
 
         {/* Desktop anchor links */}
         <div className="hidden items-center gap-8 md:flex">
-          {NAV_LINKS.map((link) => (
+          {links.map((link) => (
             <a
               key={link.href}
               href={link.href}
@@ -69,7 +76,7 @@ export function MarketingNav() {
             <Menu className="h-5 w-5" />
           </summary>
           <div className="absolute right-0 mt-2 w-56 rounded-xl border border-black/5 bg-white p-2 shadow-lg">
-            {NAV_LINKS.map((link) => (
+            {links.map((link) => (
               <a
                 key={link.href}
                 href={link.href}

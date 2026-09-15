@@ -14,6 +14,10 @@ vi.mock("@/components/cockpit/rx/inputs/VitalsGrid", () => ({
   VitalsGrid: () => <div data-testid="vitals-grid-stub" />,
 }));
 
+vi.mock("@/components/cockpit/rx/objective/DeskVisitDocumentsStrip", () => ({
+  DeskVisitDocumentsStrip: () => null,
+}));
+
 vi.mock("@/components/cockpit/rx/inputs/ExamSystemList", () => ({
   ExamSystemList: ({ disabled }: { disabled?: boolean }) => (
     <div data-testid="exam-system-list">
@@ -99,27 +103,27 @@ function renderSectionDisabled(ui: ReactElement) {
 }
 
 describe("ObjectiveSection — structured exam (obj-03)", () => {
-  it("renders structured exam cards between vitals and reports", () => {
+  it("renders structured exam cards between vitals and reports", async () => {
     renderSection();
-    expect(screen.getByTestId("exam-system-list")).toBeInTheDocument();
+    expect(await screen.findByTestId("exam-system-list")).toBeInTheDocument();
     expect(screen.getByTestId("exam-mark-all-normal")).toBeInTheDocument();
     expect(screen.getByTestId("test-results-list")).toBeInTheDocument();
   });
 
-  it("renders the Notes free-text section", () => {
+  it("renders the Notes free-text section", async () => {
     const { container } = renderSection();
+    expect(await screen.findByTestId("objective-notes-textarea")).toBeInTheDocument();
     expect(
       container.querySelector('[data-objective-section-id="notes"]'),
     ).not.toBeNull();
     expect(screen.getByText("Notes")).toBeInTheDocument();
-    expect(screen.getByTestId("objective-notes-textarea")).toBeInTheDocument();
   });
 });
 
 describe("ObjectiveSection — R-HISTORY enhancements", () => {
   it("renders Vitals grid + structured exam + notes + reports", async () => {
     renderSection();
-    expect(screen.getByTestId("exam-system-list")).toBeInTheDocument();
+    expect(await screen.findByTestId("exam-system-list")).toBeInTheDocument();
     expect(screen.getByTestId("test-results-list")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Toggle Notes" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Toggle Reports" })).toBeInTheDocument();
@@ -131,8 +135,8 @@ describe("ObjectiveSection — R-HISTORY enhancements", () => {
     );
   });
 
-  it("disables structured exam when disabled prop set", () => {
+  it("disables structured exam when disabled prop set", async () => {
     renderSectionDisabled(<ObjectiveSection disabled />);
-    expect(screen.getByTestId("exam-mark-all-normal")).toBeDisabled();
+    expect(await screen.findByTestId("exam-mark-all-normal")).toBeDisabled();
   });
 });

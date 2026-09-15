@@ -7,9 +7,13 @@ import { ArrowLeft, Check, Pencil, Search, UserPlus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { DeskCancelDialog } from "@/components/desk/DeskCancelDialog";
+import { DeskLeftDialog } from "@/components/desk/DeskLeftDialog";
+import { DeskMovePanel } from "@/components/desk/DeskMovePanel";
 import { DeskPatientFacts } from "@/components/desk/DeskPatientFacts";
+import { DeskPaymentStep } from "@/components/desk/DeskPaymentStep";
 import { DeskSplit } from "@/components/desk/DeskSplit";
-import { DeskVitalsForm } from "@/components/desk/DeskVitalsForm";
+import { DeskPrepPanel } from "@/components/desk/DeskPrepPanel";
 import { cn } from "@/lib/utils";
 import {
   createDeskAppointment,
@@ -35,6 +39,7 @@ import {
   type DeskDuplicateMatch,
   type DeskPatientCard,
 } from "@/lib/desk/api";
+import { hasAnyDeskPrepCapability, hasDeskCapability } from "@/lib/desk/capabilities";
 import { formatDeskDate, walkInAppointmentIso } from "@/lib/desk/format";
 import {
   DESK_SEARCH_FALLBACK_PAGE,
@@ -46,7 +51,11 @@ import {
   deskSearchPageSizeFromHeight,
   deskSearchVisibleEnd,
 } from "@/lib/desk/search-page";
-import { digitsLast10, formatDeskPhone, isCompleteDeskPhone } from "@/lib/desk/phone";
+import {
+  digitsLast10,
+  formatDeskPhone,
+  isCompleteDeskPhone,
+} from "@/lib/desk/phone";
 import {
   DESK_GUARDIAN_RELATIONS,
   formatDeskGuardian,
@@ -69,11 +78,15 @@ import {
 import {
   DESK_MATCH_GRID,
   DESK_MATCH_HEADER,
+  canDeskCancelVisit,
+  canDeskLeaveVisit,
+  canDeskMoveVisit,
   deskOpdNumber,
   deskQueueBucket,
   findDeskSameDayVisit,
   formatDeskAgeSex,
   isDeskSameDayLockVisit,
+  nextDeskQueueToken,
 } from "@/lib/desk/queue";
 import {
   deskFormNameOverridesSearch,
@@ -81,6 +94,7 @@ import {
   deskSearchQuery,
   isSearchableDeskQuery,
 } from "@/lib/desk/search";
+import { deskLastPaidMethod, visitPaymentById } from "@/lib/desk/payment";
 import { queryKeys } from "@/lib/query/keys";
 import { useDeskTodayQuery } from "@/hooks/queries/useDeskTodayQuery";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -120,14 +134,23 @@ function titleCaseDeskName(raw: string): string {
     .trim()
     .split(/\s+/)
     .filter(Boolean)
-    .map((token) => token.charAt(0).toLocaleUpperCase() + token.slice(1).toLocaleLowerCase())
+    .map(
+      (token) =>
+        token.charAt(0).toLocaleUpperCase() + token.slice(1).toLocaleLowerCase()
+    )
     .join(" ");
 }
 
 export function DeskIntakeClient({ token }: { token: string }) {
   const queryClient = useQueryClient();
   const isDesktop = useMediaQuery("(min-width: 1024px)");
-  const { rows: todayRows, loading: todayLoading } = useDeskTodayQuery(token);
+  const {
+    rows: todayRows,
+    hisab,
+    collectMutation,
+    cancelMutation,
+    leaveMutation,
+  } = useDeskTodayQuery(token);
   const [context, setContext] = useState<DeskClinicContext | null>(null);
   const [contextError, setContextError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -151,7 +174,8 @@ export function DeskIntakeClient({ token }: { token: string }) {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [dupes, setDupes] = useState<DeskDuplicateMatch[] | null>(null);
   const [guardianName, setGuardianName] = useState("");
-  const [guardianRelation, setGuardianRelation] = useState<DeskGuardianRelation>("father");
+  const [guardianRelation, setGuardianRelation] =
+    useState<DeskGuardianRelation>("father");
   const [altPhone, setAltPhone] = useState("");
   const [address, setAddress] = useState("");
   const [nameError, setNameError] = useState<string | null>(null);
@@ -181,7 +205,22 @@ export function DeskIntakeClient({ token }: { token: string }) {
   const [booking, setBooking] = useState(false);
   const [bookError, setBookError] = useState<string | null>(null);
   const [showBook, setShowBook] = useState(false);
-  const [vitalsAppointmentId, setVitalsAppointmentId] = useState<string | null>(null);
+  const [showMove, setShowMove] = useState(false);
+  const [vitalsAppointmentId, setVitalsAppointmentId] = useState<string | null>(
+    null
+  );
+  const [historyAppointmentId, setHistoryAppointmentId] = useState<
+    string | null
+  >(null);
+  const [documentsAppointmentId, setDocumentsAppointmentId] = useState<
+    string | null
+  >(null);
+  const [collectAppointmentId, setCollectAppointmentId] = useState<
+    string | null
+  >(null);
+  const [checkingIn, setCheckingIn] = useState(false);
+  const [checkedInToken, setCheckedInToken] = useState<number | null>(null);
+  const arriveJobRef = useRef<Promise<string | null> | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -255,7 +294,9 @@ export function DeskIntakeClient({ token }: { token: string }) {
     );
     setGuardianName(titleCaseDeskName(row.guardian_name ?? ""));
     setGuardianRelation(
-      DESK_GUARDIAN_RELATIONS.some((item) => item.value === row.guardian_relation)
+      DESK_GUARDIAN_RELATIONS.some(
+        (item) => item.value === row.guardian_relation
+      )
         ? (row.guardian_relation as DeskGuardianRelation)
         : "father"
     );
@@ -300,6 +341,12 @@ export function DeskIntakeClient({ token }: { token: string }) {
     setArchiveError(null);
     setShowBook(false);
     setVitalsAppointmentId(null);
+    setHistoryAppointmentId(null);
+    setDocumentsAppointmentId(null);
+    setCollectAppointmentId(null);
+    setCheckingIn(false);
+    setCheckedInToken(null);
+    arriveJobRef.current = null;
     clearFormFields();
   }
 
@@ -311,6 +358,12 @@ export function DeskIntakeClient({ token }: { token: string }) {
     setBookError(null);
     setArchiveError(null);
     setVitalsAppointmentId(null);
+    setHistoryAppointmentId(null);
+    setDocumentsAppointmentId(null);
+    setCollectAppointmentId(null);
+    setCheckingIn(false);
+    setCheckedInToken(null);
+    arriveJobRef.current = null;
   }
 
   function backToResults() {
@@ -320,6 +373,12 @@ export function DeskIntakeClient({ token }: { token: string }) {
     setBookError(null);
     setArchiveError(null);
     setVitalsAppointmentId(null);
+    setHistoryAppointmentId(null);
+    setDocumentsAppointmentId(null);
+    setCollectAppointmentId(null);
+    setCheckingIn(false);
+    setCheckedInToken(null);
+    arriveJobRef.current = null;
   }
 
   async function onSearch(event: React.FormEvent) {
@@ -348,10 +407,16 @@ export function DeskIntakeClient({ token }: { token: string }) {
       setName(titleCaseDeskName(q));
     }
     try {
-      const res = await searchDeskPatients(token, q, includeArchived, undefined, {
-        page: 1,
-        pageSize,
-      });
+      const res = await searchDeskPatients(
+        token,
+        q,
+        includeArchived,
+        undefined,
+        {
+          page: 1,
+          pageSize,
+        }
+      );
       setMatches(res.data.patients.map(summaryToDeskRef));
       setMatchTotal(res.data.total);
       setMatchPage(res.data.page);
@@ -373,10 +438,16 @@ export function DeskIntakeClient({ token }: { token: string }) {
     setSearching(true);
     setSearchError(null);
     try {
-      const res = await searchDeskPatients(token, q, includeArchived, undefined, {
-        page: nextPage,
-        pageSize,
-      });
+      const res = await searchDeskPatients(
+        token,
+        q,
+        includeArchived,
+        undefined,
+        {
+          page: nextPage,
+          pageSize,
+        }
+      );
       setMatches(res.data.patients.map(summaryToDeskRef));
       setMatchTotal(res.data.total);
       setMatchPage(res.data.page);
@@ -412,13 +483,16 @@ export function DeskIntakeClient({ token }: { token: string }) {
     if (missingPhone) setPhoneError("Enter a 10-digit mobile number");
     if (missingAge) {
       setAgeError(
-        ageMode === "dob" ? "Enter a valid date of birth" : DESK_AGE_UNIT_LIMITS[ageMode].error
+        ageMode === "dob"
+          ? "Enter a valid date of birth"
+          : DESK_AGE_UNIT_LIMITS[ageMode].error
       );
     } else setAgeError(null);
     if (missingGuardian) setGuardianError("Relative name is required");
     if (missingRelation) setRelationError("Select a relation");
     if (missingGender) setGenderError("Gender is required");
-    if (altIncomplete) setAltPhoneError("Enter a 10-digit alternate mobile, or leave blank");
+    if (altIncomplete)
+      setAltPhoneError("Enter a 10-digit alternate mobile, or leave blank");
     else setAltPhoneError(null);
     if (
       missingName ||
@@ -436,7 +510,9 @@ export function DeskIntakeClient({ token }: { token: string }) {
     const body: CreateDeskPatientBody = {
       name: trimmed,
       phone: q,
-      ...(ageMode === "dob" ? { dateOfBirth } : { age: ageNum, ageUnit: ageMode }),
+      ...(ageMode === "dob"
+        ? { dateOfBirth }
+        : { age: ageNum, ageUnit: ageMode }),
       gender,
       guardianName: guardian,
       guardianRelation,
@@ -466,7 +542,9 @@ export function DeskIntakeClient({ token }: { token: string }) {
       if (deskErrorStatus(err) === 409) {
         const found = parseDuplicateMatches(err);
         setDupes(found);
-        setSaveError("Possible existing patient. Pick them or create a new record.");
+        setSaveError(
+          "Possible existing patient. Pick them or create a new record."
+        );
       } else {
         setSaveError(deskErrorMessage(err, "Could not register patient"));
       }
@@ -500,7 +578,9 @@ export function DeskIntakeClient({ token }: { token: string }) {
       if (deskErrorStatus(err) === 409) {
         const found = parseDuplicateMatches(err);
         setDupes(found);
-        setSaveError("Possible existing patient. Pick them or keep this record.");
+        setSaveError(
+          "Possible existing patient. Pick them or keep this record."
+        );
       } else {
         setSaveError(deskErrorMessage(err, "Could not update patient"));
       }
@@ -568,7 +648,9 @@ export function DeskIntakeClient({ token }: { token: string }) {
     if (!showBook || !patient || !slotDate || !context) return;
     if (
       slotDate === context.today &&
-      todayRows.some((row) => row.patient_id === patient.id && isDeskSameDayLockVisit(row))
+      todayRows.some(
+        (row) => row.patient_id === patient.id && isDeskSameDayLockVisit(row)
+      )
     ) {
       return;
     }
@@ -584,37 +666,118 @@ export function DeskIntakeClient({ token }: { token: string }) {
   ) {
     void queryClient.invalidateQueries({ queryKey: queryKeys.desk.all });
     if (action === "checked in" && appointmentId) {
-      setVitalsAppointmentId(appointmentId);
+      const canBill = hasDeskCapability(context?.capabilities, "front_desk");
+      const canPrep = hasAnyDeskPrepCapability(context?.capabilities);
+      const payment = visitPaymentById(hisab?.visits, appointmentId);
+      if (canBill && (!payment || payment.status === "due")) {
+        setCollectAppointmentId(appointmentId);
+      } else if (canPrep) {
+        setCheckingIn(false);
+        setVitalsAppointmentId(appointmentId);
+      } else {
+        setCheckingIn(false);
+      }
       setShowBook(false);
       return;
     }
-    setNotice(tokenNo != null ? `${bookedName} ${action} · Token ${tokenNo}` : `${bookedName} ${action}`);
+    setNotice(
+      tokenNo != null
+        ? `${bookedName} ${action} · Token ${tokenNo}`
+        : `${bookedName} ${action}`
+    );
     resetSearch();
   }
 
-  function finishVitalsAfterCheckIn() {
+  function finishDocumentsAfterCheckIn() {
     const bookedName = patient?.name.trim();
-    setNotice(bookedName ? `${bookedName} checked in for today` : "Checked in for today");
+    setNotice(
+      bookedName ? `${bookedName} checked in for today` : "Checked in for today"
+    );
     resetSearch();
   }
 
-  async function markArrived(appointmentId: string) {
-    if (!patient) return;
-    setBooking(true);
-    setBookError(null);
+  async function runArriveJob(existingId?: string): Promise<string | null> {
+    if (!patient) return null;
     try {
-      const arrived = await checkInDeskAppointment(token, appointmentId);
-      finishDeskVisit(
-        patient.name,
-        "checked in",
-        arrived.data.appointment.opd_token_number,
-        arrived.data.appointment.id
-      );
+      if (existingId) {
+        const arrived = await checkInDeskAppointment(token, existingId);
+        setCollectAppointmentId(arrived.data.appointment.id);
+        if (arrived.data.appointment.opd_token_number != null) {
+          setCheckedInToken(arrived.data.appointment.opd_token_number);
+        }
+        void queryClient.invalidateQueries({ queryKey: queryKeys.desk.all });
+        return arrived.data.appointment.id;
+      }
+      const created = await createDeskAppointment(token, {
+        patientId: patient.id,
+        appointmentDate: walkInAppointmentIso(),
+        bookingOrigin: "walk_in",
+        reasonForVisit: "Walk-in",
+        checkIn: true,
+      });
+      setCollectAppointmentId(created.data.appointment.id);
+      if (created.data.appointment.opd_token_number != null) {
+        setCheckedInToken(created.data.appointment.opd_token_number);
+      }
+      void queryClient.invalidateQueries({ queryKey: queryKeys.desk.all });
+      return created.data.appointment.id;
     } catch (err) {
-      setBookError(deskErrorMessage(err, "Could not check in"));
-    } finally {
-      setBooking(false);
+      const lock =
+        deskErrorStatus(err) === 409 ? parseAlreadyOnToday(err) : null;
+      void queryClient.invalidateQueries({ queryKey: queryKeys.desk.all });
+      if (lock && lock.bucket === "waiting") {
+        try {
+          const arrived = await checkInDeskAppointment(
+            token,
+            lock.appointmentId
+          );
+          setCollectAppointmentId(arrived.data.appointment.id);
+          if (arrived.data.appointment.opd_token_number != null) {
+            setCheckedInToken(arrived.data.appointment.opd_token_number);
+          } else if (lock.token != null) {
+            setCheckedInToken(lock.token);
+          }
+          return arrived.data.appointment.id;
+        } catch (checkInErr) {
+          setCheckingIn(false);
+          arriveJobRef.current = null;
+          setBookError(deskErrorMessage(checkInErr, "Could not check in"));
+          return null;
+        }
+      }
+      setCheckingIn(false);
+      arriveJobRef.current = null;
+      if (lock?.bucket === "arrived") {
+        setBookError(
+          lock.token != null
+            ? `Already arrived · Token ${lock.token}`
+            : "Already arrived"
+        );
+      } else if (lock?.bucket === "seen") {
+        setBookError("Seen today");
+      } else if (lock) {
+        setBookError(deskErrorMessage(err, "Already on today's list"));
+      } else {
+        setBookError(deskErrorMessage(err, "Could not check in"));
+      }
+      return null;
     }
+  }
+
+  function startArrive(existingId?: string) {
+    if (!patient || arriveJobRef.current) return;
+    setCheckedInToken(todayToken ?? nextDeskQueueToken(todayRows));
+    setCheckingIn(true);
+    setBookError(null);
+    setShowBook(false);
+    arriveJobRef.current = runArriveJob(existingId);
+  }
+
+  async function ensureArrivedAppointmentId(): Promise<string> {
+    if (collectAppointmentId) return collectAppointmentId;
+    const id = await (arriveJobRef.current ?? Promise.resolve(null));
+    if (!id) throw new Error("Could not check in");
+    return id;
   }
 
   async function book(opts: {
@@ -624,24 +787,39 @@ export function DeskIntakeClient({ token }: { token: string }) {
   }) {
     if (!patient) return;
     setBooking(true);
+    if (opts.arrive) setCheckingIn(true);
     setBookError(null);
     try {
       const created = await createDeskAppointment(token, {
         patientId: patient.id,
         appointmentDate: opts.appointmentDate,
         bookingOrigin: opts.origin,
-        reasonForVisit: opts.origin === "walk_in" ? "Walk-in" : "Front desk booking",
+        reasonForVisit:
+          opts.origin === "walk_in" ? "Walk-in" : "Front desk booking",
         ...(opts.arrive ? { checkIn: true } : {}),
       });
       const appointment = created.data.appointment;
-      const action = opts.arrive ? "checked in" : opts.origin === "walk_in" ? "added" : "booked";
-      finishDeskVisit(patient.name, action, appointment.opd_token_number, appointment.id);
+      const action = opts.arrive
+        ? "checked in"
+        : opts.origin === "walk_in"
+          ? "added"
+          : "booked";
+      finishDeskVisit(
+        patient.name,
+        action,
+        appointment.opd_token_number,
+        appointment.id
+      );
     } catch (err) {
-      const lock = deskErrorStatus(err) === 409 ? parseAlreadyOnToday(err) : null;
+      const lock =
+        deskErrorStatus(err) === 409 ? parseAlreadyOnToday(err) : null;
       void queryClient.invalidateQueries({ queryKey: queryKeys.desk.all });
       if (lock && opts.arrive && lock.bucket === "waiting") {
         try {
-          const arrived = await checkInDeskAppointment(token, lock.appointmentId);
+          const arrived = await checkInDeskAppointment(
+            token,
+            lock.appointmentId
+          );
           finishDeskVisit(
             patient.name,
             "checked in",
@@ -650,13 +828,17 @@ export function DeskIntakeClient({ token }: { token: string }) {
           );
           return;
         } catch (checkInErr) {
+          setCheckingIn(false);
           setBookError(deskErrorMessage(checkInErr, "Could not check in"));
           return;
         }
       }
+      setCheckingIn(false);
       if (lock?.bucket === "arrived") {
         setBookError(
-          lock.token != null ? `Already arrived · Token ${lock.token}` : "Already arrived"
+          lock.token != null
+            ? `Already arrived · Token ${lock.token}`
+            : "Already arrived"
         );
       } else if (lock?.bucket === "seen") {
         setBookError("Seen today");
@@ -725,40 +907,57 @@ export function DeskIntakeClient({ token }: { token: string }) {
     let cancelled = false;
     const abort = new AbortController();
     liveAbortRef.current = abort;
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const [byPhone, byIdentity] = await Promise.all([
-            phoneReady
-              ? searchDeskPatients(token, digitsLast10(phone), includeArchived, abort.signal, {
-                  page,
-                  pageSize,
-                })
-              : Promise.resolve(null),
-            identityReady
-              ? searchDeskIdentity(token, identity, includeArchived, abort.signal, {
-                  page,
-                  pageSize,
-                })
-              : Promise.resolve(null),
-          ]);
-          if (cancelled) return;
-          const merged = mergeDeskPatientIds(
-            (byPhone?.data.patients ?? []).map(summaryToDeskRef),
-            (byIdentity?.data.patients ?? []).map(summaryToDeskRef)
-          );
-          setLiveHits(merged);
-          setLiveTotal(Math.max(byPhone?.data.total ?? 0, byIdentity?.data.total ?? 0));
-          setLivePage(byIdentity?.data.page ?? byPhone?.data.page ?? page);
-        } catch (err) {
-          if (cancelled || isDeskAbortError(err)) return;
-          setLiveHits([]);
-          setLiveTotal(null);
-        } finally {
-          if (!cancelled) setLiveSearching(false);
-        }
-      })();
-    }, keyChanged ? 80 : 0);
+    const timer = window.setTimeout(
+      () => {
+        void (async () => {
+          try {
+            const [byPhone, byIdentity] = await Promise.all([
+              phoneReady
+                ? searchDeskPatients(
+                    token,
+                    digitsLast10(phone),
+                    includeArchived,
+                    abort.signal,
+                    {
+                      page,
+                      pageSize,
+                    }
+                  )
+                : Promise.resolve(null),
+              identityReady
+                ? searchDeskIdentity(
+                    token,
+                    identity,
+                    includeArchived,
+                    abort.signal,
+                    {
+                      page,
+                      pageSize,
+                    }
+                  )
+                : Promise.resolve(null),
+            ]);
+            if (cancelled) return;
+            const merged = mergeDeskPatientIds(
+              (byPhone?.data.patients ?? []).map(summaryToDeskRef),
+              (byIdentity?.data.patients ?? []).map(summaryToDeskRef)
+            );
+            setLiveHits(merged);
+            setLiveTotal(
+              Math.max(byPhone?.data.total ?? 0, byIdentity?.data.total ?? 0)
+            );
+            setLivePage(byIdentity?.data.page ?? byPhone?.data.page ?? page);
+          } catch (err) {
+            if (cancelled || isDeskAbortError(err)) return;
+            setLiveHits([]);
+            setLiveTotal(null);
+          } finally {
+            if (!cancelled) setLiveSearching(false);
+          }
+        })();
+      },
+      keyChanged ? 80 : 0
+    );
     return () => {
       cancelled = true;
       abort.abort();
@@ -797,7 +996,11 @@ export function DeskIntakeClient({ token }: { token: string }) {
         }
       });
       if (measured > 0) rowPx = measured;
-      const next = deskSearchPageSizeFromHeight(el.clientHeight, rowPx, headerPx);
+      const next = deskSearchPageSizeFromHeight(
+        el.clientHeight,
+        rowPx,
+        headerPx
+      );
       setPageSize((prev) => (prev === next ? prev : next));
     };
     apply();
@@ -806,11 +1009,23 @@ export function DeskIntakeClient({ token }: { token: string }) {
     return () => observer.disconnect();
   }, [context, isDesktop, patient, matches?.length, liveHits.length]);
 
-  const activeSearchRef = useRef({ query, includeArchived, hasSearch: matches !== null });
-  activeSearchRef.current = { query, includeArchived, hasSearch: matches !== null };
+  const activeSearchRef = useRef({
+    query,
+    includeArchived,
+    hasSearch: matches !== null,
+  });
+  activeSearchRef.current = {
+    query,
+    includeArchived,
+    hasSearch: matches !== null,
+  };
 
   useEffect(() => {
-    const { query: qRaw, includeArchived: archived, hasSearch } = activeSearchRef.current;
+    const {
+      query: qRaw,
+      includeArchived: archived,
+      hasSearch,
+    } = activeSearchRef.current;
     if (!hasSearch || !isSearchableDeskQuery(qRaw)) return;
     const q = deskSearchQuery(qRaw);
     let cancelled = false;
@@ -845,6 +1060,8 @@ export function DeskIntakeClient({ token }: { token: string }) {
     return <p className="text-sm text-muted-foreground">Loading desk…</p>;
   }
 
+  const canBill = hasDeskCapability(context.capabilities, "front_desk");
+  const canPrep = hasAnyDeskPrepCapability(context.capabilities);
   const lookup = resolveDeskLookup(matches, liveHits);
   const identityHintReady = isDeskIdentitySearchReady({
     name: name.trim(),
@@ -857,7 +1074,7 @@ export function DeskIntakeClient({ token }: { token: string }) {
     <div
       role="status"
       aria-live="polite"
-      className="pointer-events-none fixed bottom-24 right-4 z-50 w-[min(calc(100vw-2rem),22rem)] lg:bottom-6 lg:right-6"
+      className="pointer-events-none fixed top-4 right-4 z-50 w-[min(calc(100vw-2rem),22rem)] lg:top-6 lg:right-6"
     >
       <div className="pointer-events-auto flex animate-slide-in-from-right items-center gap-3 rounded-xl border border-border bg-card px-3.5 py-2.5 shadow-lg ring-1 ring-black/5">
         <span
@@ -896,7 +1113,11 @@ export function DeskIntakeClient({ token }: { token: string }) {
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
           aria-hidden
         >
-          {formMode === "edit" ? <Pencil className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
+          {formMode === "edit" ? (
+            <Pencil className="h-4 w-4" />
+          ) : (
+            <UserPlus className="h-4 w-4" />
+          )}
         </span>
         <div className="min-w-0">
           <p className="text-sm font-semibold text-foreground">
@@ -975,7 +1196,11 @@ export function DeskIntakeClient({ token }: { token: string }) {
                 className={cn(registerFieldClass, "w-24 shrink-0 tabular-nums")}
               />
             )}
-            <div className={choiceTrackClass} role="radiogroup" aria-label="Age unit">
+            <div
+              className={choiceTrackClass}
+              role="radiogroup"
+              aria-label="Age unit"
+            >
               {DESK_AGE_MODE_OPTIONS.map((option) => {
                 const selected = ageMode === option.value;
                 return (
@@ -1008,7 +1233,11 @@ export function DeskIntakeClient({ token }: { token: string }) {
           <Label>
             Gender <span className="text-destructive">*</span>
           </Label>
-          <div className={choiceTrackClass} role="radiogroup" aria-label="Gender">
+          <div
+            className={choiceTrackClass}
+            role="radiogroup"
+            aria-label="Gender"
+          >
             {GENDER_OPTIONS.map((option) => {
               const selected = gender === option.value;
               return (
@@ -1043,7 +1272,8 @@ export function DeskIntakeClient({ token }: { token: string }) {
             value={guardianName}
             onChange={(event) => {
               setGuardianName(event.target.value);
-              if (guardianError && event.target.value.trim()) setGuardianError(null);
+              if (guardianError && event.target.value.trim())
+                setGuardianError(null);
             }}
             onBlur={() => {
               const next = titleCaseDeskName(guardianName);
@@ -1064,7 +1294,11 @@ export function DeskIntakeClient({ token }: { token: string }) {
           <Label>
             Relation <span className="text-destructive">*</span>
           </Label>
-          <div className={choiceTrackClass} role="radiogroup" aria-label="Relation">
+          <div
+            className={choiceTrackClass}
+            role="radiogroup"
+            aria-label="Relation"
+          >
             {DESK_GUARDIAN_RELATIONS.map((option) => {
               const selected = guardianRelation === option.value;
               return (
@@ -1118,7 +1352,8 @@ export function DeskIntakeClient({ token }: { token: string }) {
                 if (phoneError && next.length === 10) setPhoneError(null);
               }}
               onBlur={() => {
-                if (phoneError && isCompleteDeskPhone(phone)) setPhoneError(null);
+                if (phoneError && isCompleteDeskPhone(phone))
+                  setPhoneError(null);
               }}
               aria-invalid={phoneError ? true : undefined}
               className={cn(registerFieldClass, "tabular-nums")}
@@ -1151,7 +1386,10 @@ export function DeskIntakeClient({ token }: { token: string }) {
               onChange={(event) => {
                 const next = event.target.value.replace(/\D/g, "").slice(0, 10);
                 setAltPhone(next);
-                if (altPhoneError && (next.length === 0 || next.length === 10)) {
+                if (
+                  altPhoneError &&
+                  (next.length === 0 || next.length === 10)
+                ) {
                   setAltPhoneError(null);
                 }
               }}
@@ -1170,7 +1408,9 @@ export function DeskIntakeClient({ token }: { token: string }) {
           <Input
             id="desk-address"
             value={address}
-            onChange={(event) => setAddress(event.target.value.slice(0, DESK_ADDRESS_MAX))}
+            onChange={(event) =>
+              setAddress(event.target.value.slice(0, DESK_ADDRESS_MAX))
+            }
             autoComplete="street-address"
             placeholder="Optional"
             className={registerFieldClass}
@@ -1187,7 +1427,13 @@ export function DeskIntakeClient({ token }: { token: string }) {
       <div className="mt-auto flex shrink-0 justify-end border-t border-border/60 px-4 py-2">
         <div className="flex w-fit flex-wrap items-center justify-end gap-2">
           {formMode === "edit" ? (
-            <Button type="button" variant="ghost" className="h-9" disabled={saving} onClick={cancelEdit}>
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-9"
+              disabled={saving}
+              onClick={cancelEdit}
+            >
               Cancel
             </Button>
           ) : null}
@@ -1222,8 +1468,11 @@ export function DeskIntakeClient({ token }: { token: string }) {
   );
 
   const isArchived = Boolean(patient?.archived_at);
-  const canGoBack = (matches !== null && matches.length > 0) || liveHits.length > 0;
-  const todayVisit = patient ? findDeskSameDayVisit(todayRows, patient.id) : null;
+  const canGoBack =
+    (matches !== null && matches.length > 0) || liveHits.length > 0;
+  const todayVisit = patient
+    ? findDeskSameDayVisit(todayRows, patient.id)
+    : null;
   const todayBucket = todayVisit ? deskQueueBucket(todayVisit) : null;
   const todayToken = todayVisit ? deskOpdNumber(todayVisit, todayRows) : null;
   const lockBookToday = Boolean(todayVisit) && slotDate === context.today;
@@ -1241,6 +1490,23 @@ export function DeskIntakeClient({ token }: { token: string }) {
       (todayVisit && (todayBucket === "arrived" || todayBucket === "seen")
         ? todayVisit.id
         : null));
+  const deskHistoryAppointmentId: string | null = isArchived
+    ? null
+    : (historyAppointmentId ??
+      (todayVisit && (todayBucket === "arrived" || todayBucket === "seen")
+        ? todayVisit.id
+        : null));
+  const deskDocumentsAppointmentId: string | null = isArchived
+    ? null
+    : (documentsAppointmentId ??
+      (todayVisit && (todayBucket === "arrived" || todayBucket === "seen")
+        ? todayVisit.id
+        : null));
+  const prepAppointmentId =
+    deskVitalsAppointmentId ?? deskHistoryAppointmentId ?? deskDocumentsAppointmentId;
+  const prepSequence = Boolean(
+    vitalsAppointmentId || historyAppointmentId || documentsAppointmentId
+  );
   const showArrive =
     !isArchived &&
     !deskVitalsAppointmentId &&
@@ -1277,23 +1543,67 @@ export function DeskIntakeClient({ token }: { token: string }) {
           ) : null}
         </div>
 
-        {deskVitalsAppointmentId ? (
+        {canBill && (collectAppointmentId || checkingIn) ? (
           <div className="border-t border-border/60 px-5 py-4">
-            <DeskVitalsForm
-              token={token}
-              appointmentId={deskVitalsAppointmentId}
-              onFinished={vitalsAppointmentId ? finishVitalsAfterCheckIn : undefined}
-              skipFetch={Boolean(vitalsAppointmentId)}
+            <DeskPaymentStep
+              tokenNo={checkedInToken ?? todayToken}
+              suggestedAmountMinor={hisab?.suggestedAmountMinor ?? null}
+              currency={hisab?.currency ?? "INR"}
+              saving={collectMutation.isPending}
+              onRecord={async (input) => {
+                const appointmentId = await ensureArrivedAppointmentId();
+                await collectMutation.mutateAsync({
+                  appointmentId,
+                  ...input,
+                });
+                arriveJobRef.current = null;
+                setCheckingIn(false);
+                if (canPrep) {
+                  setVitalsAppointmentId(appointmentId);
+                }
+                setCollectAppointmentId(null);
+              }}
             />
           </div>
         ) : null}
 
-        {showBook && !isArchived ? (
+        {canPrep && prepAppointmentId && !collectAppointmentId ? (
+          <div className="border-t border-border/60 px-5 py-4">
+            <DeskPrepPanel
+              token={token}
+              appointmentId={prepAppointmentId}
+              sequence={prepSequence}
+              capabilities={context.capabilities}
+              onAdvance={
+                prepSequence ? finishDocumentsAfterCheckIn : undefined
+              }
+            />
+          </div>
+        ) : null}
+
+        {showMove && todayVisit && canDeskMoveVisit(todayVisit) && !isArchived ? (
+          <div className="space-y-3 border-t border-border/60 px-5 py-4">
+            <DeskMovePanel
+              token={token}
+              doctorId={context.doctorId}
+              timezone={context.timezone}
+              today={context.today}
+              appointmentId={todayVisit.id}
+              onMoved={async () => {
+                setShowMove(false);
+                setNotice("Moved");
+                void queryClient.invalidateQueries({ queryKey: queryKeys.desk.all });
+              }}
+            />
+          </div>
+        ) : null}
+
+        {canBill && showBook && !isArchived ? (
           <div className="space-y-3 border-t border-border/60 px-5 py-4">
             {!lockBookToday && slots.length > 0 ? (
               <p className="text-xs text-muted-foreground">
-                We&apos;ll text {formatDeskPhone(patient.phone) || "them"} this time. Walk-ins
-                at the desk are not notified.
+                We&apos;ll text {formatDeskPhone(patient.phone) || "them"} this
+                time. Walk-ins at the desk are not notified.
               </p>
             ) : null}
             <div className="w-fit space-y-1.5">
@@ -1371,79 +1681,153 @@ export function DeskIntakeClient({ token }: { token: string }) {
           </div>
         ) : null}
 
-        <div className={cn("border-t border-border/60 px-5 py-3", isArchived && "max-lg:hidden")}>
-          {isArchived ? (
-            <Button
-              type="button"
-              className="h-10 w-full"
-              disabled={archiving}
-              onClick={() => void restoreSelected()}
-            >
-              {archiving ? "Restoring…" : "Restore"}
-            </Button>
-          ) : (
-            <div className="space-y-2">
-              {todayStatusCopy ? (
-                <p className="text-sm text-muted-foreground">{todayStatusCopy}</p>
-              ) : null}
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-0.5">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="h-8 px-2 text-muted-foreground"
-                    disabled={booking}
-                    onClick={startEdit}
-                  >
-                    Edit
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="h-8 px-2 text-muted-foreground"
-                    disabled={archiving}
-                    onClick={() => void archiveSelected()}
-                  >
-                    {archiving ? "Hiding…" : "Archive"}
-                  </Button>
-                </div>
-                <div className="flex min-w-0 shrink-0 items-center justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-10 shrink-0"
-                    disabled={booking}
-                    onClick={() => setShowBook((open) => !open)}
-                    aria-expanded={showBook}
-                  >
-                    {showBook ? "Hide times" : "Book a time"}
-                  </Button>
-                  {showArrive ? (
+        {collectAppointmentId || checkingIn ? null : (
+          <div
+            className={cn(
+              "border-t border-border/60 px-5 py-3",
+              isArchived && "max-lg:hidden"
+            )}
+          >
+            {isArchived ? (
+              canBill ? (
+              <Button
+                type="button"
+                className="h-10 w-full"
+                disabled={archiving}
+                onClick={() => void restoreSelected()}
+              >
+                {archiving ? "Restoring…" : "Restore"}
+              </Button>
+              ) : null
+            ) : (
+              <div className="space-y-2">
+                {todayStatusCopy ? (
+                  <p className="text-sm text-muted-foreground">
+                    {todayStatusCopy}
+                  </p>
+                ) : null}
+                {canBill ? (
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-0.5">
                     <Button
                       type="button"
-                      className="hidden h-10 shrink-0 lg:inline-flex"
-                      disabled={booking || todayLoading}
-                      onClick={() =>
-                        todayVisit
-                          ? void markArrived(todayVisit.id)
-                          : void book({
-                              appointmentDate: walkInAppointmentIso(),
-                              origin: "walk_in",
-                              arrive: true,
-                            })
-                      }
+                      variant="ghost"
+                      className="h-8 px-2 text-muted-foreground"
+                      disabled={booking}
+                      onClick={startEdit}
                     >
-                    {booking ? "Checking in…" : "Check in"}
+                      Edit
                     </Button>
-                  ) : null}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-8 px-2 text-muted-foreground"
+                      disabled={archiving}
+                      onClick={() => void archiveSelected()}
+                    >
+                      {archiving ? "Hiding…" : "Archive"}
+                    </Button>
+                    {todayVisit && canDeskMoveVisit(todayVisit) ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-8 px-2 text-muted-foreground"
+                        disabled={booking}
+                        onClick={() => {
+                          setShowBook(false);
+                          setShowMove((open) => !open);
+                        }}
+                      >
+                        {showMove ? "Hide move" : "Move"}
+                      </Button>
+                    ) : null}
+                    {todayVisit && canDeskCancelVisit(todayVisit) ? (
+                      <DeskCancelDialog
+                        busy={cancelMutation.isPending}
+                        error={
+                          cancelMutation.error
+                            ? deskErrorMessage(
+                                cancelMutation.error,
+                                "Could not cancel"
+                              )
+                            : null
+                        }
+                        onConfirm={async () => {
+                          await cancelMutation.mutateAsync(todayVisit.id);
+                          setNotice("Removed from today’s list");
+                        }}
+                      />
+                    ) : null}
+                    {todayVisit && canDeskLeaveVisit(todayVisit) ? (
+                      <DeskLeftDialog
+                        paid={
+                          visitPaymentById(hisab?.visits, todayVisit.id)
+                            ?.status === "paid"
+                        }
+                        collectedMinor={
+                          visitPaymentById(hisab?.visits, todayVisit.id)
+                            ?.collectedMinor ?? 0
+                        }
+                        currency={hisab?.currency ?? "INR"}
+                        defaultReturnMethod={deskLastPaidMethod(
+                          visitPaymentById(hisab?.visits, todayVisit.id)
+                            ?.methods
+                        )}
+                        busy={leaveMutation.isPending}
+                        error={
+                          leaveMutation.error
+                            ? deskErrorMessage(
+                                leaveMutation.error,
+                                "Could not mark left"
+                              )
+                            : null
+                        }
+                        onConfirm={async (returnMethod) => {
+                          await leaveMutation.mutateAsync({
+                            id: todayVisit.id,
+                            returnMethod,
+                          });
+                          setCollectAppointmentId(null);
+                          setCheckingIn(false);
+                          setNotice("They left");
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                  <div className="flex min-w-0 shrink-0 items-center justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 shrink-0"
+                      disabled={booking}
+                      onClick={() => {
+                        setShowMove(false);
+                        setShowBook((open) => !open);
+                      }}
+                      aria-expanded={showBook}
+                    >
+                      {showBook ? "Hide times" : "Book a time"}
+                    </Button>
+                    {showArrive ? (
+                      <Button
+                        type="button"
+                        className="hidden h-10 shrink-0 lg:inline-flex"
+                        disabled={booking}
+                        onClick={() => startArrive(todayVisit?.id)}
+                      >
+                        Check in
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
+                ) : null}
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </div>
 
-      {isArchived || showArrive ? (
+      {canBill && (isArchived || (showArrive && !checkingIn && !collectAppointmentId)) ? (
         <div
           className={cn(
             "sticky bottom-0 z-20 -mx-4 mt-2 flex gap-2 border-t border-border bg-background px-4 py-3",
@@ -1460,22 +1844,69 @@ export function DeskIntakeClient({ token }: { token: string }) {
               {archiving ? "Restoring…" : "Restore"}
             </Button>
           ) : (
-            <Button
-              type="button"
-              className="h-11 flex-1 px-5"
-              disabled={booking || todayLoading}
-              onClick={() =>
-                todayVisit
-                  ? void markArrived(todayVisit.id)
-                  : void book({
-                      appointmentDate: walkInAppointmentIso(),
-                      origin: "walk_in",
-                      arrive: true,
-                    })
-              }
-            >
-              {booking ? "Checking in…" : "Check in"}
-            </Button>
+            <>
+              {todayVisit && canDeskCancelVisit(todayVisit) ? (
+                <DeskCancelDialog
+                  busy={cancelMutation.isPending}
+                  triggerClassName="h-11 flex-1 px-5"
+                  error={
+                    cancelMutation.error
+                      ? deskErrorMessage(
+                          cancelMutation.error,
+                          "Could not cancel"
+                        )
+                      : null
+                  }
+                  onConfirm={async () => {
+                    await cancelMutation.mutateAsync(todayVisit.id);
+                    setNotice("Removed from today’s list");
+                  }}
+                />
+              ) : null}
+              {todayVisit && canDeskLeaveVisit(todayVisit) ? (
+                <DeskLeftDialog
+                  paid={
+                    visitPaymentById(hisab?.visits, todayVisit.id)?.status ===
+                    "paid"
+                  }
+                  collectedMinor={
+                    visitPaymentById(hisab?.visits, todayVisit.id)
+                      ?.collectedMinor ?? 0
+                  }
+                  currency={hisab?.currency ?? "INR"}
+                  defaultReturnMethod={deskLastPaidMethod(
+                    visitPaymentById(hisab?.visits, todayVisit.id)?.methods
+                  )}
+                  busy={leaveMutation.isPending}
+                  triggerClassName="h-11 flex-1 px-5"
+                  error={
+                    leaveMutation.error
+                      ? deskErrorMessage(
+                          leaveMutation.error,
+                          "Could not mark left"
+                        )
+                      : null
+                  }
+                  onConfirm={async (returnMethod) => {
+                    await leaveMutation.mutateAsync({
+                      id: todayVisit.id,
+                      returnMethod,
+                    });
+                    setCollectAppointmentId(null);
+                    setCheckingIn(false);
+                    setNotice("They left");
+                  }}
+                />
+              ) : null}
+              <Button
+                type="button"
+                className="h-11 flex-1 px-5"
+                disabled={booking}
+                onClick={() => startArrive(todayVisit?.id)}
+              >
+                Check in
+              </Button>
+            </>
           )}
         </div>
       ) : null}
@@ -1501,61 +1932,70 @@ export function DeskIntakeClient({ token }: { token: string }) {
                 role="columnheader"
                 className="min-w-0 truncate px-2 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
               >
-                {col.srOnly ? <span className="sr-only">{col.label}</span> : col.label}
+                {col.srOnly ? (
+                  <span className="sr-only">{col.label}</span>
+                ) : (
+                  col.label
+                )}
               </div>
             ))}
           </div>
           <div className="min-h-0">
-          {lookup.rows.map((row) => {
-            const guardian = formatDeskGuardian(
-              row.guardian_name,
-              row.guardian_relation,
-              row.gender
-            );
-            return (
-              <button
-                key={row.id}
-                type="button"
-                role="row"
-                className="grid w-full items-center border-b border-border/30 text-left text-sm last:border-b-0 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                style={{ gridTemplateColumns: DESK_MATCH_GRID }}
-                onClick={() => selectPatient(row)}
-              >
-                <span className="self-stretch bg-primary/50" aria-hidden />
-                <span className="px-2 py-2 tabular-nums text-xs text-muted-foreground">
-                  {row.medical_record_number ?? "—"}
-                </span>
-                <span className="flex min-w-0 items-center gap-1.5 px-2 py-2">
-                  <span className="truncate font-medium">{row.name}</span>
-                  {row.archived_at ? (
-                    <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Archived
-                    </span>
-                  ) : todayRows.some(
-                      (visit) => visit.patient_id === row.id && isDeskSameDayLockVisit(visit)
-                    ) ? (
-                    <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-primary">
-                      Today
-                    </span>
-                  ) : null}
-                </span>
-                <span className="px-2 py-2 tabular-nums text-xs text-muted-foreground">
-                  {formatDeskAgeSex(row.age, row.gender)}
-                </span>
-                <span className="min-w-0 px-2 py-2 text-xs text-muted-foreground">
-                  <span className="block truncate">{guardian || "—"}</span>
-                </span>
-                <span className="px-2 py-2 tabular-nums text-xs text-muted-foreground">
-                  {formatDeskPhone(row.phone) || "—"}
-                </span>
-                <span className="px-2 py-2 text-xs text-muted-foreground">
-                  {row.last_appointment_date
-                    ? formatDeskDate(row.last_appointment_date, context.timezone)
-                    : "No visits yet"}
-                </span>
-              </button>
-            );
-          })}
+            {lookup.rows.map((row) => {
+              const guardian = formatDeskGuardian(
+                row.guardian_name,
+                row.guardian_relation,
+                row.gender
+              );
+              return (
+                <button
+                  key={row.id}
+                  type="button"
+                  role="row"
+                  className="grid w-full items-center border-b border-border/30 text-left text-sm last:border-b-0 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  style={{ gridTemplateColumns: DESK_MATCH_GRID }}
+                  onClick={() => selectPatient(row)}
+                >
+                  <span className="self-stretch bg-primary/50" aria-hidden />
+                  <span className="px-2 py-2 tabular-nums text-xs text-muted-foreground">
+                    {row.medical_record_number ?? "—"}
+                  </span>
+                  <span className="flex min-w-0 items-center gap-1.5 px-2 py-2">
+                    <span className="truncate font-medium">{row.name}</span>
+                    {row.archived_at ? (
+                      <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                        Archived
+                      </span>
+                    ) : todayRows.some(
+                        (visit) =>
+                          visit.patient_id === row.id &&
+                          isDeskSameDayLockVisit(visit)
+                      ) ? (
+                      <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-primary">
+                        Today
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="px-2 py-2 tabular-nums text-xs text-muted-foreground">
+                    {formatDeskAgeSex(row.age, row.gender)}
+                  </span>
+                  <span className="min-w-0 px-2 py-2 text-xs text-muted-foreground">
+                    <span className="block truncate">{guardian || "—"}</span>
+                  </span>
+                  <span className="px-2 py-2 tabular-nums text-xs text-muted-foreground">
+                    {formatDeskPhone(row.phone) || "—"}
+                  </span>
+                  <span className="px-2 py-2 text-xs text-muted-foreground">
+                    {row.last_appointment_date
+                      ? formatDeskDate(
+                          row.last_appointment_date,
+                          context.timezone
+                        )
+                      : "No visits yet"}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
         <ul
@@ -1584,7 +2024,9 @@ export function DeskIntakeClient({ token }: { token: string }) {
                           Archived
                         </span>
                       ) : todayRows.some(
-                          (visit) => visit.patient_id === row.id && isDeskSameDayLockVisit(visit)
+                          (visit) =>
+                            visit.patient_id === row.id &&
+                            isDeskSameDayLockVisit(visit)
                         ) ? (
                         <span className="ml-2 text-[10px] font-medium uppercase tracking-wide text-primary">
                           Today
@@ -1592,7 +2034,9 @@ export function DeskIntakeClient({ token }: { token: string }) {
                       ) : null}
                     </p>
                     {guardian ? (
-                      <p className="mt-0.5 truncate text-xs text-muted-foreground">{guardian}</p>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {guardian}
+                      </p>
                     ) : null}
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
                       <span className="text-xs tabular-nums text-muted-foreground">
@@ -1617,10 +2061,15 @@ export function DeskIntakeClient({ token }: { token: string }) {
   const lookupColumn = (
     <div className="flex h-full min-h-0 flex-col">
       {patient ? (
-        <div className="flex min-h-0 flex-1 flex-col overflow-auto">{patientCard}</div>
+        <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+          {patientCard}
+        </div>
       ) : (
         <>
-          <form onSubmit={(event) => void onSearch(event)} className="shrink-0 space-y-2">
+          <form
+            onSubmit={(event) => void onSearch(event)}
+            className="shrink-0 space-y-2"
+          >
             <Label
               htmlFor="desk-search"
               className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
@@ -1667,10 +2116,16 @@ export function DeskIntakeClient({ token }: { token: string }) {
                   const q = deskSearchQuery(query);
                   void (async () => {
                     try {
-                      const res = await searchDeskPatients(token, q, next, undefined, {
-                        page: 1,
-                        pageSize,
-                      });
+                      const res = await searchDeskPatients(
+                        token,
+                        q,
+                        next,
+                        undefined,
+                        {
+                          page: 1,
+                          pageSize,
+                        }
+                      );
                       setMatches(res.data.patients.map(summaryToDeskRef));
                       setMatchTotal(res.data.total);
                       setMatchPage(res.data.page);
@@ -1691,7 +2146,8 @@ export function DeskIntakeClient({ token }: { token: string }) {
                 {(() => {
                   const total = matchTotal ?? lookup.rows.length;
                   const last = deskSearchPageCount(total, pageSize);
-                  const start = total === 0 ? 0 : (matchPage - 1) * pageSize + 1;
+                  const start =
+                    total === 0 ? 0 : (matchPage - 1) * pageSize + 1;
                   const end = deskSearchVisibleEnd(
                     matchPage,
                     pageSize,
@@ -1700,20 +2156,25 @@ export function DeskIntakeClient({ token }: { token: string }) {
                   );
                   const noun = total === 1 ? "patient" : "patients";
                   const count =
-                    last > 1 ? `Showing ${start}–${end} of ${total}` : String(total);
+                    last > 1
+                      ? `Showing ${start}–${end} of ${total}`
+                      : String(total);
                   return `${count} ${noun} `;
                 })()}
                 {deskSearchKind(query) === "phone" ? (
                   <>
                     on{" "}
                     <span className="tabular-nums text-foreground">
-                      {formatDeskPhone(lookup.rows[0]?.phone ?? query) || "this number"}
+                      {formatDeskPhone(lookup.rows[0]?.phone ?? query) ||
+                        "this number"}
                     </span>
                   </>
                 ) : (
                   <>
                     matching{" "}
-                    <span className="text-foreground">{deskSearchQuery(query)}</span>
+                    <span className="text-foreground">
+                      {deskSearchQuery(query)}
+                    </span>
                   </>
                 )}
               </>
@@ -1732,8 +2193,13 @@ export function DeskIntakeClient({ token }: { token: string }) {
                   );
                   const noun = total === 1 ? "patient" : "patients";
                   const count =
-                    last > 1 ? `Showing ${start}–${end} of ${total}` : String(total);
-                  const label = deskSearchQuery(query) || deskSearchQuery(name) || "this name";
+                    last > 1
+                      ? `Showing ${start}–${end} of ${total}`
+                      : String(total);
+                  const label =
+                    deskSearchQuery(query) ||
+                    deskSearchQuery(name) ||
+                    "this name";
                   return (
                     <>
                       {count} {noun} matching{" "}
@@ -1746,8 +2212,10 @@ export function DeskIntakeClient({ token }: { token: string }) {
             {lookup.source === "empty-search" ? (
               <>
                 No patients for{" "}
-                <span className="text-foreground">{deskSearchQuery(query)}</span>. Fill in
-                the form to register.
+                <span className="text-foreground">
+                  {deskSearchQuery(query)}
+                </span>
+                {canBill ? ". Fill in the form to register." : "."}
               </>
             ) : null}
           </p>
@@ -1757,55 +2225,72 @@ export function DeskIntakeClient({ token }: { token: string }) {
               ref={listViewportRef}
               className="min-h-0 flex-1 overflow-hidden max-h-[min(28rem,55vh)] lg:max-h-none"
             >
-            {lookup.source === "idle" ? (
-              <div
-                role="status"
-                className="flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card px-4 py-8 text-center"
-              >
-                {searching || liveSearching ? (
-                  <p className="text-base font-medium text-foreground">Searching…</p>
-                ) : (
-                  <>
+              {lookup.source === "idle" ? (
+                <div
+                  role="status"
+                  className="flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card px-4 py-8 text-center"
+                >
+                  {searching || liveSearching ? (
                     <p className="text-base font-medium text-foreground">
-                      Search a mobile, MRN, or name
+                      Searching…
                     </p>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {isCompleteDeskPhone(phone) || identityHintReady
-                        ? "None yet. Register will create a new record."
-                        : "Or type a name to search. Age and relative narrow the list."}
-                    </p>
-                  </>
-                )}
-              </div>
-            ) : null}
+                  ) : (
+                    <>
+                      <p className="text-base font-medium text-foreground">
+                        Search a mobile, MRN, or name
+                      </p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {isCompleteDeskPhone(phone) || identityHintReady
+                          ? canBill
+                            ? "None yet. Register will create a new record."
+                            : "None yet. Search an arrived patient to prepare the visit."
+                          : "Or type a name to search. Age and relative narrow the list."}
+                      </p>
+                    </>
+                  )}
+                </div>
+              ) : null}
 
-            {resultList}
+              {resultList}
 
-            {dupes && dupes.length > 0 ? (
-              <div className="mt-3 space-y-2 rounded-lg border border-warning/30 bg-warning/5 p-3">
-                <p className="text-xs font-medium text-warning">Possible existing patient</p>
-                <ul className="space-y-2" aria-label="Possible existing patients">
-                  {dupes.map((row) => (
-                    <li key={row.patientId}>
-                      <button
-                        type="button"
-                        className="w-full rounded-lg border border-border bg-card p-3 text-left hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        onClick={() => selectPatient(matchToDeskRef(row))}
-                      >
-                        <p className="text-sm font-medium text-foreground">This is {row.name}</p>
-                        <p className="mt-1 text-sm text-muted-foreground">
-                          {formatDeskPhone(row.phone) || "No mobile"}
-                          {row.medicalRecordNumber ? ` · ${row.medicalRecordNumber}` : ""}
-                          {formatDeskGuardian(row.guardianName, row.guardianRelation, row.gender)
-                            ? ` · ${formatDeskGuardian(row.guardianName, row.guardianRelation, row.gender)}`
-                            : ""}
-                        </p>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
+              {dupes && dupes.length > 0 ? (
+                <div className="mt-3 space-y-2 rounded-lg border border-warning/30 bg-warning/5 p-3">
+                  <p className="text-xs font-medium text-warning">
+                    Possible existing patient
+                  </p>
+                  <ul
+                    className="space-y-2"
+                    aria-label="Possible existing patients"
+                  >
+                    {dupes.map((row) => (
+                      <li key={row.patientId}>
+                        <button
+                          type="button"
+                          className="w-full rounded-lg border border-border bg-card p-3 text-left hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          onClick={() => selectPatient(matchToDeskRef(row))}
+                        >
+                          <p className="text-sm font-medium text-foreground">
+                            This is {row.name}
+                          </p>
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            {formatDeskPhone(row.phone) || "No mobile"}
+                            {row.medicalRecordNumber
+                              ? ` · ${row.medicalRecordNumber}`
+                              : ""}
+                            {formatDeskGuardian(
+                              row.guardianName,
+                              row.guardianRelation,
+                              row.gender
+                            )
+                              ? ` · ${formatDeskGuardian(row.guardianName, row.guardianRelation, row.gender)}`
+                              : ""}
+                          </p>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </div>
             {(() => {
               const paged =
@@ -1824,7 +2309,9 @@ export function DeskIntakeClient({ token }: { token: string }) {
                         busy: liveSearching,
                       }
                     : null;
-              const last = paged ? deskSearchPageCount(paged.total, pageSize) : 1;
+              const last = paged
+                ? deskSearchPageCount(paged.total, pageSize)
+                : 1;
               return (
                 <div className="mt-3 flex h-8 shrink-0 items-center justify-center">
                   {paged && last > 1 ? (
@@ -1846,11 +2333,15 @@ export function DeskIntakeClient({ token }: { token: string }) {
                             <Button
                               key={item}
                               type="button"
-                              variant={item === paged.page ? "default" : "outline"}
+                              variant={
+                                item === paged.page ? "default" : "outline"
+                              }
                               size="sm"
                               className="h-8 min-w-8 px-2 tabular-nums"
                               disabled={paged.busy}
-                              aria-current={item === paged.page ? "page" : undefined}
+                              aria-current={
+                                item === paged.page ? "page" : undefined
+                              }
                               onClick={() => void paged.go(item)}
                             >
                               {item}
@@ -1898,7 +2389,7 @@ export function DeskIntakeClient({ token }: { token: string }) {
     return (
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
         {lookupColumn}
-        {formColumn}
+        {canBill ? formColumn : null}
         {noticeBanner}
       </div>
     );
@@ -1907,8 +2398,18 @@ export function DeskIntakeClient({ token }: { token: string }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <DeskSplit
-        left={formColumn}
-        right={<div className="flex h-full min-h-0 flex-col">{lookupColumn}</div>}
+        left={
+          canBill || formMode === "edit" ? (
+            formColumn
+          ) : (
+            <div className="flex h-full items-start rounded-xl border border-dashed border-border bg-card p-5 text-sm text-muted-foreground">
+              Search an arrived patient to prepare the visit.
+            </div>
+          )
+        }
+        right={
+          <div className="flex h-full min-h-0 flex-col">{lookupColumn}</div>
+        }
       />
       {noticeBanner}
     </div>

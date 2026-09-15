@@ -175,6 +175,56 @@ describe("CockpitPalette", () => {
     expect(screen.getByTestId("cockpit-v3-undo")).toBeDisabled();
     expect(screen.getByTestId("cockpit-v3-redo")).toBeDisabled();
   });
+
+  it("paints clinical palette chips as readable S O A P text", () => {
+    render(
+      <CockpitPalette
+        panes={[
+          makePane("subjective", "Subjective"),
+          makePane("objective", "Objective"),
+          makePane("assessment", "Assessment"),
+          makePane("plan", "Plan"),
+        ]}
+        layout={makeLayout({
+          subjective: { sizePct: 25, hidden: false },
+          objective: { sizePct: 25, hidden: false },
+          assessment: { sizePct: 25, hidden: false },
+          plan: { sizePct: 25, hidden: false },
+        })}
+      />,
+    );
+    const palette = screen.getByTestId("cockpit-v3-palette");
+    expect(palette).toHaveTextContent("S");
+    expect(palette).toHaveTextContent("O");
+    expect(palette).toHaveTextContent("A");
+    expect(palette).toHaveTextContent("P");
+  });
+
+  it("renders describeSlot inside the palette row", () => {
+    render(
+      <CockpitPalette
+        panes={[makePane("a")]}
+        layout={makeLayout({ a: { sizePct: 100, hidden: false } })}
+        describeSlot={<input aria-label="Describe this visit" />}
+      />,
+    );
+    expect(screen.getByTestId("cockpit-v3-palette")).toContainElement(
+      screen.getByLabelText("Describe this visit"),
+    );
+  });
+
+  it("exposes a fullscreen toggle", () => {
+    render(
+      <CockpitPalette
+        panes={[makePane("a")]}
+        layout={makeLayout({ a: { sizePct: 100, hidden: false } })}
+      />,
+    );
+    expect(screen.getByTestId("cockpit-v3-fullscreen")).toHaveAttribute(
+      "aria-label",
+      "Enter fullscreen",
+    );
+  });
 });
 
 function makeEightPanes(): PaneDefinition[] {
@@ -222,10 +272,10 @@ describe("CockpitPalette — layouts switcher (cv3l-02)", () => {
     openLayoutsMenu();
 
     const menu = await screen.findByTestId("cockpit-v3-layouts-menu");
-    expect(within(menu).getByText("Consult")).toBeInTheDocument();
-    expect(within(menu).getByText("Read")).toBeInTheDocument();
-    expect(within(menu).getByText("Document")).toBeInTheDocument();
-    expect(within(menu).getByText("Review")).toBeInTheDocument();
+    expect(within(menu).getByText("Call")).toBeInTheDocument();
+    expect(within(menu).getByText("Notes")).toBeInTheDocument();
+    expect(within(menu).getByText("Write")).toBeInTheDocument();
+    expect(within(menu).getByText("After")).toBeInTheDocument();
     expect(
       screen.getByTestId("cockpit-v3-my-layouts-placeholder"),
     ).toHaveTextContent(/sign in to save/i);

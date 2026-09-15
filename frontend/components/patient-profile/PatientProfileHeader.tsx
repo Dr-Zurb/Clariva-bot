@@ -33,7 +33,6 @@
 import { useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { SplitStartButton } from "@/components/patient-profile/SplitStartButton";
 import {
   Check,
   Copy,
@@ -64,11 +63,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
   primaryCtaFor,
@@ -80,6 +78,7 @@ import type {
   ConsultationModality,
 } from "@/types/appointment";
 import { resendConsultationLink } from "@/lib/api";
+import { formatLocalIsoDate } from "@/lib/dates";
 import { formatDateTime, formatTime } from "@/lib/format-date";
 import {
   appendCockpitOriginFromSearchParams,
@@ -87,7 +86,10 @@ import {
   resolveBackTarget,
 } from "@/lib/cockpit/back-target";
 import { RunningBehindBadge } from "@/components/consultation/cockpit/RunningBehindBadge";
-import { CockpitQueueRail } from "./PatientProfileQueueRail";
+import {
+  CockpitQueueRail,
+  pipelineTokenLabel,
+} from "./PatientProfileQueueRail";
 
 // ---------------------------------------------------------------------------
 // Status badge token mapping (A1 semantic colors)
@@ -119,7 +121,7 @@ export function formatDemographics(
   sex: string | null | undefined,
 ): string | null {
   const ageStr =
-    age != null ? (age < 1 ? "< 1 y" : `${age} y`) : null;
+    age != null ? (age === 0 ? "0 y" : age < 1 ? "< 1 y" : `${age} y`) : null;
   const sexStr = sex ? sex[0].toUpperCase() : null;
   if (!ageStr && !sexStr) return null;
   if (ageStr && sexStr) return `${ageStr} / ${sexStr}`;
@@ -163,6 +165,13 @@ function formatAppointmentDate(iso: string): string {
   return formatDateTime(iso);
 }
 
+function appointmentMrn(appointment: Appointment): string | null {
+  const legacy = (appointment as { medical_record_number?: string | null })
+    .medical_record_number;
+  const mrn = appointment.patient_mrn || legacy || null;
+  return mrn && mrn.trim() ? mrn : null;
+}
+
 function modalityLabel(type: ConsultationModality | null | undefined): string {
   if (type === "text") return "Text";
   if (type === "voice") return "Voice";
@@ -184,12 +193,153 @@ function ModalityIcon({
   return <Video className={cls} aria-hidden />;
 }
 
-/** Row-2 segment separator rendered as · with balanced spacing. */
-function Dot() {
-  return (
-    <span aria-hidden className="mx-1.5 text-muted-foreground/50">
-      ·
+function hashToken(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) return `#${value}`;
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    return `#${value.trim()}`;
+  }
+  return null;
+}
+
+function IdentityTitle({
+  appointment,
+  demographics,
+  copiedPhone,
+  onCopyPhone,
+  displayToken = null,
+}: {
+  appointment: Appointment;
+  demographics: string | null;
+  copiedPhone: boolean;
+  onCopyPhone: () => void;
+  /** `#N` from the appointment or the same label the neighbor chips use. */
+  displayToken?: string | null;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const tokenLabel = displayToken ?? hashToken(appointment.opd_token_number);
+  const guardian = [appointment.patient_guardian_name, appointment.patient_guardian_relation]
+    .filter((part) => part && part.trim())
+    .join(" · ");
+  const mrn = appointmentMrn(appointment);
+  const scheduled = appointment.appointment_date
+    ? formatTime(appointment.appointment_date)
+    : null;
+  const phone = appointment.patient_phone?.trim() || null;
+  const hasDetails = Boolean(phone || guardian || mrn || scheduled);
+
+  const closeIfUnpinned = () => {
+    if (!pinned) setOpen(false);
+  };
+
+  const title = (
+    <span className="inline-flex min-w-0 max-w-full items-baseline gap-2 rounded-md bg-primary/5 px-2.5 py-1">
+      {tokenLabel ? (
+        <span
+          data-testid="cockpit-identity-token"
+          className="shrink-0 text-lg font-semibold tabular-nums leading-none text-foreground"
+        >
+          {tokenLabel}
+        </span>
+      ) : null}
+      <span className="truncate text-lg font-semibold leading-none text-foreground">
+        {appointment.patient_name}
+      </span>
+      {demographics ? (
+        <span className="shrink-0 text-sm font-medium text-muted-foreground">
+          {demographics}
+        </span>
+      ) : null}
     </span>
+  );
+
+  if (!hasDetails) {
+    return (
+      <h1
+        data-testid="cockpit-identity-title"
+        className="min-w-0 max-w-full truncate"
+      >
+        {title}
+      </h1>
+    );
+  }
+
+  return (
+    <h1 className="min-w-0 max-w-full">
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setPinned(false);
+      }}
+    >
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          data-testid="cockpit-identity-title"
+          aria-label={`Patient details for ${appointment.patient_name}`}
+          className="min-w-0 max-w-full rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onMouseEnter={() => setOpen(true)}
+          onMouseLeave={closeIfUnpinned}
+          onClick={() => {
+            setPinned(true);
+            setOpen(true);
+          }}
+        >
+          {title}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="center"
+        className="w-64 p-3"
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={closeIfUnpinned}
+      >
+        <dl className="space-y-2" data-testid="cockpit-identity-popover">
+          {phone ? (
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <dt className="text-xs text-muted-foreground">Phone</dt>
+                <dd className="truncate text-sm font-medium">{phone}</dd>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 shrink-0 p-0"
+                aria-label={copiedPhone ? "Phone copied" : "Copy phone"}
+                onClick={onCopyPhone}
+              >
+                {copiedPhone ? (
+                  <Check className="h-3.5 w-3.5" aria-hidden />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" aria-hidden />
+                )}
+              </Button>
+            </div>
+          ) : null}
+          {guardian ? (
+            <div>
+              <dt className="text-xs text-muted-foreground">Relative</dt>
+              <dd className="text-sm font-medium">{guardian}</dd>
+            </div>
+          ) : null}
+          {mrn ? (
+            <div>
+              <dt className="text-xs text-muted-foreground">MRN</dt>
+              <dd className="text-sm font-medium">{mrn}</dd>
+            </div>
+          ) : null}
+          {scheduled ? (
+            <div>
+              <dt className="text-xs text-muted-foreground">Scheduled</dt>
+              <dd className="text-sm font-medium">{scheduled}</dd>
+            </div>
+          ) : null}
+        </dl>
+      </PopoverContent>
+    </Popover>
+    </h1>
   );
 }
 
@@ -279,7 +429,7 @@ export default function CockpitHeader({
   onMarkNoShow,
   onFinishVisit,
   finishBusy: _finishBusy,
-  startBusy,
+  startBusy: _startBusy,
   nextSlotAt,
 }: CockpitHeaderProps) {
   const [visitDetailsOpen, setVisitDetailsOpen] = useState(false);
@@ -320,9 +470,10 @@ export default function CockpitHeader({
   // CP-D6: backend ships in cp-07 / types in cp-08
   const patientAge = appointment.patient_age;
   const patientSex = appointment.patient_sex;
-  const mrn = (appointment as any).medical_record_number as string | null | undefined;
-
   const demographics = formatDemographics(patientAge, patientSex);
+  const visitDate = appointment.appointment_date
+    ? formatLocalIsoDate(new Date(appointment.appointment_date))
+    : null;
 
   // ---------------------------------------------------------------------------
   // Handlers
@@ -389,54 +540,9 @@ export default function CockpitHeader({
   let primaryCta: React.ReactNode = null;
 
   if (state === "ready") {
-    if (bookedModality === "in_clinic") {
-      primaryCta = (
-        <Button
-          type="button"
-          variant="default"
-          size="sm"
-          onClick={handlePrimaryClick}
-          disabled={startBusy}
-          className="gap-1.5"
-        >
-          {startBusy && (
-            <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden />
-          )}
-          {startBusy ? "Starting…" : (cta?.label ?? "Start visit")}
-        </Button>
-      );
-    } else {
-      const startOptions = [
-        {
-          value: "text" as const,
-          label: "Text",
-          icon: <MessageSquare className="h-3.5 w-3.5" aria-hidden />,
-          disabled: !hasPatientPhone,
-          disabledReason: "Patient phone required for text consult",
-          booked: bookedModality === "text",
-        },
-        {
-          value: "voice" as const,
-          label: "Voice",
-          icon: <Mic className="h-3.5 w-3.5" aria-hidden />,
-          booked: bookedModality === "voice",
-        },
-        {
-          value: "video" as const,
-          label: "Video",
-          icon: <Video className="h-3.5 w-3.5" aria-hidden />,
-          booked: bookedModality === "video",
-        },
-      ];
-      primaryCta = (
-        <SplitStartButton
-          primary={bookedModality}
-          options={startOptions}
-          onAction={onStartConsult}
-          primaryIcon={<ModalityIcon modality={bookedModality} />}
-        />
-      );
-    }
+    // Start consult / Start visit were removed — Done on the footer
+    // is the only commit path, same as a live visit.
+    primaryCta = null;
   } else if (state === "lobby") {
     primaryCta = (
       <Button
@@ -469,20 +575,6 @@ export default function CockpitHeader({
   }
 
   // ---------------------------------------------------------------------------
-  // Row-2 tooltip content — full unabbreviated metadata string
-  // ---------------------------------------------------------------------------
-
-  const row2TooltipText = [
-    mrn && appointment.patient_id ? mrn : null,
-    appointment.patient_phone || null,
-    modalityLabel(appointment.consultation_type),
-    formatTime(appointment.appointment_date),
-    opdEventType === 'token' && typeof opdTokenNumber === 'number' ? `Token #${opdTokenNumber}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
-  // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
 
@@ -496,9 +588,8 @@ export default function CockpitHeader({
       <header
         className={cn(
           "sticky top-0 lg:static z-30",
-          "border-b border-border bg-background/80 backdrop-blur",
-          "px-4 py-2 lg:px-6",
-          "relative min-h-14 flex flex-col justify-center",
+          "px-4 py-1.5 lg:px-6",
+          "relative min-h-10 flex flex-col justify-center",
         )}
       >
         {state === "terminal" ? (
@@ -540,153 +631,58 @@ export default function CockpitHeader({
             </div>
           </div>
         ) : (
-          // ── Active states: two-row identity block ──
-          <div className="flex flex-col gap-0.5">
-            {/*
-              Row 1 — primary: name + demographics chip + CTA.
-              Always `flex justify-between` — the centerSlot is NO LONGER in
-              this row. Instead it is rendered as an absolutely-positioned
-              overlay on the `<header>` (see below), so it is always
-              pixel-perfectly centred in the header band regardless of the
-              height of the two-row block. The previous grid approach centred
-              the icons horizontally but left them in Row 1 of a two-row block,
-              which placed them in the upper half of the header when the two-row
-              block was nearly as tall as the header — ppr-11 follow-up QA
-              confirmed the icons appeared too close to the upper border.
-            */}
-            <div className="flex w-full items-center justify-between gap-4">
-              {/* Left: back arrow + patient name + demographics */}
-              <div className="flex min-w-0 items-center gap-2">
-                <BackLink />
+          <div className="flex w-full items-center gap-2">
+            <BackLink />
 
-                <h1 className="truncate text-base font-semibold leading-none text-foreground">
-                  {appointment.patient_name}
-                </h1>
-
-                {demographics && (
-                  <span className="ml-2 shrink-0 text-sm font-medium text-muted-foreground">
-                    {demographics}
-                  </span>
-                )}
-              </div>
-
-              {/* Right cluster: running-behind indicator + state CTA + layout menu + kebab */}
-              <div className="flex shrink-0 items-center gap-2 ml-auto">
-                <RunningBehindBadge nextSlotAt={nextSlotAt} />
-                {primaryCta}
-                <KebabMenu
+            <CockpitQueueRail
+              currentAppointmentId={appointment.id}
+              state={state}
+              token={token}
+              visitDate={visitDate}
+              variant="inline"
+              nowSlot={({ now, source }) => (
+                <IdentityTitle
                   appointment={appointment}
-                  state={state}
-                  isCompleted={isCompleted}
-                  hasPatientPhone={hasPatientPhone}
-                  hasSession={hasSession}
+                  demographics={demographics}
                   copiedPhone={copiedPhone}
-                  onCancelAppointment={onCancelAppointment}
-                  onReschedule={onReschedule}
                   onCopyPhone={() => void handleCopyPhone()}
-                  onVisitDetails={() => setVisitDetailsOpen(true)}
-                  onMarkNoShow={onMarkNoShow}
-                  canMarkNoShow={canMarkNoShow}
+                  displayToken={now ? pipelineTokenLabel(now, source) : null}
                 />
-              </div>
+              )}
+            />
+
+            {resendNotice ? (
+              <span
+                role="status"
+                aria-live="polite"
+                className="hidden min-w-0 truncate text-xs text-warning lg:inline"
+              >
+                {resendNotice}
+              </span>
+            ) : null}
+
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              <RunningBehindBadge nextSlotAt={nextSlotAt} />
+              {primaryCta}
+              <KebabMenu
+                appointment={appointment}
+                state={state}
+                isCompleted={isCompleted}
+                hasPatientPhone={hasPatientPhone}
+                hasSession={hasSession}
+                copiedPhone={copiedPhone}
+                onCancelAppointment={onCancelAppointment}
+                onReschedule={onReschedule}
+                onCopyPhone={() => void handleCopyPhone()}
+                onVisitDetails={() => setVisitDetailsOpen(true)}
+                onMarkNoShow={onMarkNoShow}
+                canMarkNoShow={canMarkNoShow}
+              />
             </div>
-
-            {/* Row 2 — secondary metadata strip */}
-            {/* The Tooltip surfaces the full unabbreviated string when row 2 is
-                truncated at compressed breakpoints. tabIndex={0} makes it
-                keyboard-focusable for a11y. */}
-            <TooltipProvider delayDuration={400}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <p
-                    tabIndex={0}
-                    className={cn(
-                      "flex min-w-0 items-center overflow-hidden",
-                      "text-xs text-muted-foreground",
-                      "focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:rounded",
-                    )}
-                  >
-                    {/* MRN — all breakpoints; links to patient chart when patient_id present */}
-                    {appointment.patient_id && mrn && (
-                      <Link
-                        href={`/dashboard/patients-v2/${appointment.patient_id}`}
-                        className="shrink-0 hover:text-foreground hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
-                        title="View patient chart"
-                      >
-                        {mrn}
-                      </Link>
-                    )}
-
-                    {/* Phone — md+ only; tel: link for one-tap calling */}
-                    {appointment.patient_phone && (
-                      <span className="hidden md:contents">
-                        <Dot />
-                        <a
-                          href={`tel:${appointment.patient_phone}`}
-                          className="shrink-0 tabular-nums hover:text-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
-                        >
-                          {appointment.patient_phone}
-                        </a>
-                      </span>
-                    )}
-
-                    {/* Modality — md+ (icon-only below lg, icon + label at lg+) */}
-                    <span className="hidden md:contents">
-                      <Dot />
-                      <span className="inline-flex shrink-0 items-center gap-0.5">
-                        <ModalityIcon modality={appointment.consultation_type} />
-                        <span className="hidden lg:inline">
-                          {modalityLabel(appointment.consultation_type)}
-                        </span>
-                      </span>
-                    </span>
-
-                    {/* Scheduled time — md+ */}
-                    <span className="hidden md:contents">
-                      <Dot />
-                      <span className="shrink-0 tabular-nums">
-                        {formatTime(appointment.appointment_date)}
-                      </span>
-                    </span>
-
-                    {/* OPD token — all breakpoints; only for 'token' event type.
-                        'group' events have no meaningful per-patient token — suppress the chip.
-                        typeof guard defends against opd_token_number === 0 being falsy. */}
-                    {opdEventType === 'token' && typeof opdTokenNumber === 'number' && (
-                      <>
-                        <Dot />
-                        <span className="shrink-0 text-xs font-medium text-muted-foreground">
-                          Token #{opdTokenNumber}
-                        </span>
-                      </>
-                    )}
-
-                    {/* Lobby resend notice — status feedback after re-send attempt */}
-                    {resendNotice && (
-                      <span
-                        role="status"
-                        aria-live="polite"
-                        className="ml-2 hidden lg:inline truncate text-warning"
-                      >
-                        {resendNotice}
-                      </span>
-                    )}
-                  </p>
-                </TooltipTrigger>
-                <TooltipContent>{row2TooltipText}</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
           </div>
         )}
 
       </header>
-
-      {/* Queue rail — sticky strip docked directly below this header (pf-08) */}
-      <CockpitQueueRail
-        currentAppointmentId={appointment.id}
-        state={state}
-        token={token}
-      />
 
       {/* Visit details dialog */}
       <Dialog open={visitDetailsOpen} onOpenChange={setVisitDetailsOpen}>
@@ -827,9 +823,23 @@ function KebabMenu({
 // ---------------------------------------------------------------------------
 
 function VisitDetailsBody({ appointment }: { appointment: Appointment }) {
+  const mrn = appointmentMrn(appointment);
+  const tokenNumber =
+    appointment.opd_queue_event_type === "token" &&
+    typeof appointment.opd_token_number === "number"
+      ? `#${appointment.opd_token_number}`
+      : null;
   const rows: { label: string; value: string | null | undefined }[] = [
     { label: "Appointment ID", value: appointment.id },
+    { label: "MRN", value: mrn || "—" },
     { label: "Modality", value: modalityLabel(appointment.consultation_type) },
+    {
+      label: "Scheduled",
+      value: appointment.appointment_date
+        ? formatTime(appointment.appointment_date)
+        : "—",
+    },
+    { label: "Token", value: tokenNumber },
     { label: "Patient phone", value: appointment.patient_phone || "—" },
     { label: "Notes", value: appointment.notes || "—" },
     {

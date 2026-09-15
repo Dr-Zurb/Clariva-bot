@@ -1,9 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { Header } from "./Header";
 import { Sidebar } from "./Sidebar";
 import { GlobalCommandPalette } from "./GlobalCommandPalette";
+import { isCockpitAppointmentPath } from "@/lib/dashboard/cockpit-path";
+import { DASHBOARD_SHELL_ID } from "@/lib/dashboard/cockpit-fullscreen";
 import {
   DashboardLiveFocusProvider,
   useDashboardLiveFocus,
@@ -13,6 +16,7 @@ import { useOnboardingStatusQuery } from "@/hooks/queries/useOnboardingStatusQue
 import { useVerificationStatusQuery } from "@/hooks/queries/useVerificationStatusQuery";
 import { NavPerfTracker } from "@/lib/nav-perf/nav-timing";
 import { QueryProvider } from "@/components/providers/QueryProvider";
+import { cn } from "@/lib/utils";
 
 const SIDEBAR_COLLAPSED_KEY = "clariva.sidebar.collapsed";
 
@@ -73,8 +77,14 @@ function DashboardShellInner({
   // read from localStorage in the effect below (one-frame reconcile on mount).
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { liveFocus } = useDashboardLiveFocus();
-  // Live consult temporarily forces icon-rail nav without writing localStorage.
-  const effectiveSidebarCollapsed = liveFocus || sidebarCollapsed;
+  const pathname = usePathname();
+  const isCockpit = isCockpitAppointmentPath(pathname);
+  // Settings fills this pane and scrolls under the breadcrumb. A second
+  // overflow-y-auto here stacked two scrollbars on long settings pages.
+  const isSettingsPath = pathname.startsWith("/dashboard/settings");
+  // Cockpit + live consult force icon-rail nav without writing localStorage.
+  const effectiveSidebarCollapsed =
+    liveFocus || isCockpit || sidebarCollapsed;
   // task-ui-B4 — Cmd-K palette open state. Lifted here so the header
   // search trigger and the global keyboard listener can both flip it.
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -130,20 +140,36 @@ function DashboardShellInner({
   const hideGettingStarted =
     onboarding?.complete === true && verification?.status === "verified";
 
+  useEffect(() => {
+    const html = document.documentElement;
+    const { overflow: htmlOverflow } = html.style;
+    const { overflow: bodyOverflow } = document.body.style;
+    html.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    return () => {
+      html.style.overflow = htmlOverflow;
+      document.body.style.overflow = bodyOverflow;
+    };
+  }, []);
+
   return (
     <div
-      className="flex h-screen flex-col overflow-hidden"
+      id={DASHBOARD_SHELL_ID}
+      className="flex h-dvh max-h-dvh flex-col overflow-hidden"
       data-live-focus={liveFocus ? "true" : "false"}
+      data-cockpit-focus={isCockpit ? "true" : "false"}
     >
       <NavPerfTracker />
-      <Header
-        userEmail={userEmail}
-        token={token}
-        isAdmin={isAdmin}
-        onMenuToggle={() => setMobileMenuOpen((prev) => !prev)}
-        onOpenSearch={handleOpenPalette}
-      />
-      <div className="flex min-h-0 flex-1">
+      {isCockpit ? null : (
+        <Header
+          userEmail={userEmail}
+          token={token}
+          isAdmin={isAdmin}
+          onMenuToggle={() => setMobileMenuOpen((prev) => !prev)}
+          onOpenSearch={handleOpenPalette}
+        />
+      )}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         <Sidebar
           isMobileOpen={mobileMenuOpen}
           onClose={() => setMobileMenuOpen(false)}
@@ -153,11 +179,26 @@ function DashboardShellInner({
           hideGettingStarted={hideGettingStarted}
         />
         <main
-          className="flex min-h-0 flex-1 flex-col overflow-auto p-4 md:p-6"
+          className={cn(
+            "relative min-h-0 flex-1 overflow-hidden",
+            isCockpit ? "p-0" : "p-4 md:p-6",
+          )}
           id="dashboard-main"
           tabIndex={-1}
         >
-          {children}
+          <div
+            className={cn(
+              "absolute flex min-h-0 flex-col",
+              isCockpit
+                ? "inset-0 overflow-hidden"
+                : cn(
+                    "inset-4 overflow-x-hidden md:inset-6",
+                    isSettingsPath ? "overflow-hidden" : "overflow-y-auto",
+                  ),
+            )}
+          >
+            {children}
+          </div>
         </main>
       </div>
       {/* task-ui-B4 — Cmd-K palette mounted at the shell level so it

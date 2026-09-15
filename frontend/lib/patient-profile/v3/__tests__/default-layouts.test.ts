@@ -5,9 +5,13 @@ import {
 import {
   DEFAULT_LAYOUTS,
   DEFAULT_SEED_ID,
+  TELE_LIVE_SEED_ID,
   getDefaultLayoutTree,
+  resolveSeedLayout,
   type DefaultLayoutId,
 } from "@/lib/patient-profile/v3/default-layouts";
+import { blankLayout } from "@/lib/patient-profile/v3/blankLayout";
+import type { PaneDefinition } from "@/lib/patient-profile/v3/foundation";
 import {
   isValidTreeNode,
   type PaneTreeNode,
@@ -16,31 +20,20 @@ import {
 const PANE_IDS = [...COCKPIT_TAB_ORDER];
 
 const VISIBLE_BY_LAYOUT: Record<DefaultLayoutId, readonly string[]> = {
-  consult: PANE_IDS,
-  read: ["assessment", "subjective", "objective"],
-  document: ["assessment", "subjective", "objective", "plan"],
-  review: PANE_IDS,
+  consult: ["body", "plan"],
+  read: ["subjective", "objective"],
+  document: ["subjective", "plan"],
+  review: ["body", "plan"],
 };
 
 const HIDDEN_BY_LAYOUT: Record<DefaultLayoutId, readonly string[]> = {
-  consult: [],
-  read: ["body", "plan"],
-  document: ["body"],
-  review: [],
+  consult: ["subjective", "objective", "assessment"],
+  read: ["assessment", "body", "plan"],
+  document: ["objective", "assessment", "body"],
+  review: ["subjective", "objective", "assessment"],
 };
 
-const STRUCTURAL_IDS = new Set([
-  "__root__",
-  "col-mid",
-  "col-right",
-  "read-left",
-  "read-right",
-  "doc-left",
-  "doc-mid",
-  "doc-right",
-  "review-mid",
-  "review-right",
-]);
+const STRUCTURAL_IDS = new Set(["__root__"]);
 
 function collectPaneIds(root: PaneTreeNode): string[] {
   const ids: string[] = [];
@@ -132,13 +125,20 @@ function visibleSiblingGroupsSum(root: PaneTreeNode): void {
 }
 
 describe("default-layouts (cv3l-01)", () => {
-  it("exports DEFAULT_SEED_ID consult and four catalogue entries", () => {
-    expect(DEFAULT_SEED_ID).toBe("consult");
+  it("exports DEFAULT_SEED_ID document (Write) and four catalogue entries", () => {
+    expect(DEFAULT_SEED_ID).toBe("document");
+    expect(TELE_LIVE_SEED_ID).toBe("consult");
     expect(DEFAULT_LAYOUTS.map((e) => e.id)).toEqual([
       "consult",
       "read",
       "document",
       "review",
+    ]);
+    expect(DEFAULT_LAYOUTS.map((e) => e.label)).toEqual([
+      "Call",
+      "Notes",
+      "Write",
+      "After",
     ]);
   });
 
@@ -166,12 +166,35 @@ describe("default-layouts (cv3l-01)", () => {
       }
 
       visibleSiblingGroupsSum(tree);
+      expect(visiblePaneIds(tree).length).toBeLessThanOrEqual(2);
     },
   );
 
   it("getDefaultLayoutTree returns the consult seed tree", () => {
     expect(getDefaultLayoutTree("consult")).toBe(
       DEFAULT_LAYOUTS.find((e) => e.id === "consult")!.tree,
+    );
+  });
+
+  it("resolveSeedLayout uses Write/document for the full registry", () => {
+    const panes: PaneDefinition[] = PANE_IDS.map((id) => ({
+      id,
+      title: id,
+      render: () => null,
+    }));
+    expect(resolveSeedLayout(panes).paneTree).toBe(getDefaultLayoutTree("document"));
+    expect(resolveSeedLayout(panes, "consult").paneTree).toBe(
+      getDefaultLayoutTree("consult"),
+    );
+  });
+
+  it("resolveSeedLayout keeps walk-in 2-tab as a blank canvas", () => {
+    const panes: PaneDefinition[] = [
+      { id: "body", title: "Consult", render: () => null },
+      { id: "plan", title: "Plan", render: () => null },
+    ];
+    expect(resolveSeedLayout(panes, "consult").paneTree).toEqual(
+      blankLayout(panes).paneTree,
     );
   });
 });

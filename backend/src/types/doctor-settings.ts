@@ -12,6 +12,10 @@
 
 import type { CustomSubsection } from './prescription';
 import type {
+  LetterheadPageSize,
+  LetterheadPreset,
+} from './letterhead';
+import type {
   ServiceCatalogTemplatesJsonV1,
   ServiceCatalogV1,
 } from '../utils/service-catalog-schema';
@@ -241,6 +245,10 @@ export const COCKPIT_TEMPLATE_OVERRIDE_VALUES = [
 ] as const;
 export type CockpitTemplateOverride = (typeof COCKPIT_TEMPLATE_OVERRIDE_VALUES)[number];
 
+/** clinic-path P2 (migration 232). Keep in sync with the CHECK constraint. */
+export const SOCIAL_ENQUIRIES_VALUES = ['yes', 'not_yet'] as const;
+export type SocialEnquiries = (typeof SOCIAL_ENQUIRIES_VALUES)[number];
+
 export interface DoctorSettingsRow {
   doctor_id: string;
   /**
@@ -267,6 +275,11 @@ export interface DoctorSettingsRow {
   booking_buffer_minutes: number | null;
   welcome_message: string | null;
   specialty: string | null;
+  /**
+   * clinic-path P2 (migration 232): whether patients message this doctor on
+   * Instagram or Facebook. `yes` keeps Instagram required for go-live.
+   */
+  social_enquiries: SocialEnquiries;
   address_summary: string | null;
   consultation_types: string | null;
   /**
@@ -291,6 +304,8 @@ export interface DoctorSettingsRow {
   payout_minor: number | null;
   /** Razorpay Route Linked Account ID for India. Migration 025. */
   razorpay_linked_account_id: string | null;
+  /** billing P2b — bookings_only (default) or prepaid (doctor Razorpay). */
+  payment_collection_mode?: 'bookings_only' | 'prepaid';
   /** OPD: fixed slots vs token queue. Migration 028. Default slot. */
   opd_mode: OpdMode;
   /** Optional JSON policies (grace minutes, caps); keys documented in DB_SCHEMA. Migration 028. */
@@ -440,6 +455,54 @@ export interface DoctorSettingsRow {
    * {@link COCKPIT_TEMPLATE_OVERRIDE_VALUES}.
    */
   cockpit_template_override: CockpitTemplateOverride | null;
+  /**
+   * clinic-branding-v1 / migration 211. Storage object key in
+   * `clinic-branding` (never a URL). Optional so pre-migration rows type-check.
+   */
+  logo_path?: string | null;
+  /** Bumped on every successful logo register; logo-byte cache key. */
+  logo_version?: number;
+  header_path?: string | null;
+  header_version?: number;
+  footer_path?: string | null;
+  footer_version?: number;
+  background_path?: string | null;
+  background_version?: number;
+  letterhead_background_preset?: import('./letterhead').LetterheadBackgroundPreset;
+  letterhead_background_opacity?: number;
+  letterhead_header_fit?: import('./letterhead').LetterheadImageFit;
+  letterhead_footer_fit?: import('./letterhead').LetterheadImageFit;
+  letterhead_background_fit?: import('./letterhead').LetterheadImageFit;
+  letterhead_header_text_size?: import('./letterhead').LetterheadTextSize;
+  letterhead_patient_text_size?: import('./letterhead').LetterheadTextSize;
+  letterhead_body_text_size?: import('./letterhead').LetterheadTextSize;
+  header_height_mm?: number;
+  footer_height_mm?: number;
+  qualifications?: string | null;
+  letterhead_preset?: LetterheadPreset;
+  letterhead_accent_color?: string | null;
+  letterhead_chrome_color?: string | null;
+  letterhead_patient_color?: string | null;
+  page_size?: LetterheadPageSize;
+  preprint_margin_top_mm?: number;
+  preprint_margin_bottom_mm?: number;
+  page_margin_top_mm?: number;
+  page_margin_right_mm?: number;
+  page_margin_bottom_mm?: number;
+  page_margin_left_mm?: number;
+  logo_size?: import('./letterhead').LetterheadLogoSize;
+  patient_identity_preset?: import('./letterhead').PatientIdentityPreset;
+  show_patient_phone?: boolean;
+  show_patient_guardian?: boolean;
+  show_patient_mrn?: boolean;
+  show_patient_address?: boolean;
+  letterhead_footer_line?: string | null;
+  hide_halo_credit?: boolean;
+  /** Computed on GET settings only — 5-min signed preview URL. */
+  logo_preview_url?: string | null;
+  header_preview_url?: string | null;
+  footer_preview_url?: string | null;
+  background_preview_url?: string | null;
   created_at: string;
   updated_at: string;
 }

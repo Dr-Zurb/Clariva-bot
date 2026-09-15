@@ -17,6 +17,7 @@ import {
   createPrescription,
   getLastPrescriptionInEpisode,
   getLastSubjectiveForPatient,
+  getLastVisitSummary,
   getPrescriptionById,
   listPrescriptionsByAppointment,
   listPrescriptionsByPatient,
@@ -29,12 +30,17 @@ import {
   getAttachmentDownloadUrl,
   deleteAttachment,
 } from '../services/prescription-attachment-service';
+import { extractLabPdfFromAttachment } from '../services/lab-pdf-extract-service';
+import { promoteVisitDocumentPageToPrescription } from '../services/visit-documents-service';
 import { sendPrescriptionToPatient } from '../services/notification-service';
-import { forceRegeneratePrescriptionPdf } from '../services/prescription-pdf-service';
+import { getDoctorTimezone } from '../services/doctor-settings-service';
+import { reissuePrescriptionAsRevision } from '../services/prescription-revision-service';
 import {
-  mintRxToken,
-  buildShareUrl,
-} from '../services/prescription-token-service';
+  forceRegeneratePrescriptionPdf,
+  getOrCreateSignedPdfUrl,
+  getPrescriptionPdfBytes,
+} from '../services/prescription-pdf-service';
+import { mintRxToken, buildShareUrl } from '../services/prescription-token-service';
 import { env } from '../config/env';
 import {
   validateCreatePrescriptionBody,
@@ -45,12 +51,14 @@ import {
   validateRegisterAttachmentBody,
   validatePrescriptionAttachmentParams,
   validatePatientChartParentParams,
+  validateLastVisitSummaryQuery,
+  validateLastInEpisodeQuery,
+  validateLastSubjectiveQuery,
+  validateReissuePrescriptionBody,
 } from '../utils/validation';
-import {
-  InternalError,
-  ServiceUnavailableError,
-  UnauthorizedError,
-} from '../utils/errors';
+import { validatePromoteVisitDocumentPageBody } from '../utils/visit-document-promote-validation';
+import { InternalError, ServiceUnavailableError, UnauthorizedError } from '../utils/errors';
+import { prescriptionPdfFilenameFromRow } from '../utils/prescription-pdf-filename';
 
 /**
  * Create prescription
@@ -156,7 +164,15 @@ export const createUploadUrlHandler = asyncHandler(async (req: Request, res: Res
   const { id } = validatePrescriptionParams(req.params);
   const { filename, contentType, category, complaintId } = validateCreateUploadUrlBody(req.body);
 
-  const { path, token } = await createUploadUrl(id, userId, filename, contentType, correlationId, category, complaintId);
+  const { path, token } = await createUploadUrl(
+    id,
+    userId,
+    filename,
+    contentType,
+    correlationId,
+    category,
+    complaintId
+  );
 
   res.status(200).json(successResponse({ path, token }, req));
 });
@@ -176,7 +192,14 @@ export const registerAttachmentHandler = asyncHandler(async (req: Request, res: 
   const { id } = validatePrescriptionParams(req.params);
   const { filePath, fileType, caption } = validateRegisterAttachmentBody(req.body);
 
-  const attachment = await registerAttachment(id, filePath, fileType, caption ?? null, correlationId, userId);
+  const attachment = await registerAttachment(
+    id,
+    filePath,
+    fileType,
+    caption ?? null,
+    correlationId,
+    userId
+  );
 
   res.status(201).json(successResponse({ attachment }, req));
 });
@@ -198,6 +221,66 @@ export const getAttachmentDownloadUrlHandler = asyncHandler(async (req: Request,
   const { downloadUrl } = await getAttachmentDownloadUrl(id, attachmentId, correlationId, userId);
 
   res.status(200).json(successResponse({ downloadUrl }, req));
+});
+
+/**
+ * Extract structured lab rows from an owned report attachment (rpt-05.2 / 05.6).
+ * POST /api/v1/prescriptions/:id/attachments/:attachmentId/extract-lab
+ *
+ * Suggestion-only — nothing is written. The service dispatches on MIME: PDFs
+ * to the deterministic text-layer reader, photos to the gated vision reader.
+ * An unreadable file degrades to empty rows or a typed error (503 when photo
+ * extraction is disabled); the visit stays editable either way.
+ */
+export const extractLabPdfFromAttachmentHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const correlationId = req.correlationId || 'unknown';
+    const userId = req.user?.id;
+
+    if (!userId) {
+      throw new UnauthorizedError('Authentication required');
+    }
+
+    const { id, attachmentId } = validatePrescriptionAttachmentParams(req.params);
+    const result = await extractLabPdfFromAttachment({
+      prescriptionId: id,
+      attachmentId,
+      userId,
+      correlationId,
+    });
+
+    res.status(200).json(successResponse(result, req));
+  }
+);
+
+/**
+ * Copy a front-desk visit page into prescription_attachments (DVP-Q3).
+ * POST /api/v1/prescriptions/:id/attachments/from-visit-page
+ *
+ * Doctor-only. Suggestion extract stays on the existing extract-lab route.
+ */
+export const promoteVisitDocumentPageHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const userId = req.user?.id;
+
+  if (!userId) {
+    throw new UnauthorizedError('Authentication required');
+  }
+
+  const { id } = validatePrescriptionParams(req.params);
+  const { appointmentId, documentId, pageId } = validatePromoteVisitDocumentPageBody(req.body);
+
+  const attachment = await promoteVisitDocumentPageToPrescription(
+    id,
+    appointmentId,
+    documentId,
+    pageId,
+    userId,
+    correlationId,
+    userId
+  );
+
+  res.status(201).json(successResponse({ attachment }, req));
 });
 
 /**
@@ -252,35 +335,60 @@ export const listRecentPrescriptionsByPatientHandler = asyncHandler(
 );
 
 /**
+ * Same-day revise — clone as Version N+1 (rxl-25).
+ * POST /api/v1/prescriptions/:id/reissue
+ */
+export const reissuePrescriptionHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const correlationId = req.correlationId || 'unknown';
+    const userId = req.user?.id;
+    if (!userId) throw new UnauthorizedError('Authentication required');
+
+    const { id } = validatePrescriptionParams(req.params);
+    const { reason } = validateReissuePrescriptionBody(req.body);
+    const prescription = await reissuePrescriptionAsRevision(
+      id,
+      reason,
+      correlationId,
+      userId
+    );
+
+    res.status(201).json(successResponse({ prescription }, req));
+  }
+);
+
+/**
  * Send prescription to patient via DM/email
  * POST /api/v1/prescriptions/:id/send
  */
-export const sendPrescriptionToPatientHandler = asyncHandler(async (req: Request, res: Response) => {
-  const correlationId = req.correlationId || 'unknown';
-  const userId = req.user?.id;
-  if (!userId) throw new UnauthorizedError('Authentication required');
+export const sendPrescriptionToPatientHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const correlationId = req.correlationId || 'unknown';
+    const userId = req.user?.id;
+    if (!userId) throw new UnauthorizedError('Authentication required');
 
-  const { id } = validatePrescriptionParams(req.params);
-  const result = await sendPrescriptionToPatient(id, correlationId, userId as string);
+    const { id } = validatePrescriptionParams(req.params);
+    const result = await sendPrescriptionToPatient(id, correlationId, userId as string);
 
-  res.status(200).json(
-    successResponse(
-      {
-        sent: result.sent,
-        channels: result.channels,
-        reason: result.reason,
-        // T3.17: surface the PDF storage path + public share link in
-        // the API response so the FE toast can offer "Copy share link"
-        // immediately after a successful send (and a partial-failure
-        // toast can still let the doctor recover via WhatsApp/SMS even
-        // when both managed channels failed).
-        pdfStoragePath: result.pdfStoragePath ?? null,
-        publicLink: result.publicLink ?? null,
-      },
-      req
-    )
-  );
-});
+    res.status(200).json(
+      successResponse(
+        {
+          sent: result.sent,
+          channels: result.channels,
+          reason: result.reason,
+          // T3.17: surface the PDF storage path + public share link in
+          // the API response so the FE toast can offer "Copy share link"
+          // immediately after a successful send (and a partial-failure
+          // toast can still let the doctor recover via WhatsApp/SMS even
+          // when both managed channels failed).
+          pdfStoragePath: result.pdfStoragePath ?? null,
+          publicLink: result.publicLink ?? null,
+        },
+        req
+      )
+    );
+  }
+);
 
 /**
  * EHR Sub-batch B2 / T3.19 — "Regenerate PDF" kebab action.
@@ -323,11 +431,64 @@ export const regeneratePrescriptionPdfHandler = asyncHandler(
           generatedAt: result.generatedAt,
           byteCount: result.byteCount,
         },
-        req,
-      ),
+        req
+      )
     );
-  },
+  }
 );
+
+/**
+ * Doctor print — GET /api/v1/prescriptions/:id/pdf-url
+ *
+ * Returns a fresh 24h signed URL for the stored PDF. Generates the
+ * artifact on demand when send never wrote one (partial failure).
+ *
+ * Auth: doctor must own the prescription. Ownership is verified by
+ * `getPrescriptionById` (raises NotFoundError on mismatch).
+ */
+export const getPrescriptionPdfUrlHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const userId = req.user?.id;
+  if (!userId) throw new UnauthorizedError('Authentication required');
+
+  const { id } = validatePrescriptionParams(req.params);
+  const prescription = await getPrescriptionById(id, correlationId, userId);
+  // RXL-Q1 relocked 2026-09-09: print does not attest. Finish / wrap-up does.
+  const result = await getOrCreateSignedPdfUrl(
+    prescription.id,
+    prescription.doctor_id,
+    correlationId
+  );
+
+  res.status(200).json(successResponse({ signedUrl: result.signedUrl }, req));
+});
+
+/**
+ * Doctor print / download — GET /api/v1/prescriptions/:id/pdf
+ *
+ * Streams the PDF bytes directly (no storage signed-URL hop). Same
+ * ownership as `pdf-url`. Print does not attest (RXL-Q1 / rxl-20).
+ * Binary body, not `successResponse` — same pattern as invoice PDFs.
+ */
+export const getPrescriptionPdfHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const userId = req.user?.id;
+  if (!userId) throw new UnauthorizedError('Authentication required');
+
+  const { id } = validatePrescriptionParams(req.params);
+  const prescription = await getPrescriptionById(id, correlationId, userId);
+  const [{ bytes }, timezone] = await Promise.all([
+    getPrescriptionPdfBytes(prescription.id, correlationId),
+    getDoctorTimezone(prescription.doctor_id),
+  ]);
+  const filename = prescriptionPdfFilenameFromRow(prescription, timezone);
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('Content-Length', String(bytes.length));
+  res.status(200).send(bytes);
+});
 
 /**
  * EHR Sub-batch B2 / T3.19 — "Copy share link" kebab action.
@@ -360,9 +521,7 @@ export const createPrescriptionShareLinkHandler = asyncHandler(
     await getPrescriptionById(id, correlationId, userId);
 
     if (!env.APP_BASE_URL) {
-      throw new ServiceUnavailableError(
-        'Share link unavailable: APP_BASE_URL is not configured',
-      );
+      throw new ServiceUnavailableError('Share link unavailable: APP_BASE_URL is not configured');
     }
 
     let token: string;
@@ -373,7 +532,7 @@ export const createPrescriptionShareLinkHandler = asyncHandler(
       // We surface a 503 (operationally not configured) rather than
       // 500 so the FE can render a clear "contact support" toast.
       throw new InternalError(
-        `Share link unavailable: ${err instanceof Error ? err.message : 'token mint failed'}`,
+        `Share link unavailable: ${err instanceof Error ? err.message : 'token mint failed'}`
       );
     }
 
@@ -387,22 +546,21 @@ export const createPrescriptionShareLinkHandler = asyncHandler(
           url,
           expiresAt,
         },
-        req,
-      ),
+        req
+      )
     );
-  },
+  }
 );
 
 /**
  * EHR Sub-batch B1 / T2.14 — "Copy from last visit".
  *
- * GET /api/v1/prescriptions/last-in-episode?appointmentId=:id
+ * GET /api/v1/prescriptions/last-in-episode?appointmentId=:id&excludePrescriptionId=
  *
- * Returns the most recent prescription in the same care episode as
- * `appointmentId`, EXCLUDING the appointment itself. Returns
- * `{ prescription: null }` (200) when no prior Rx exists — the FE
- * uses this to decide whether to show the "Copy from last visit"
- * CTA. Auth: doctor must own `appointmentId`.
+ * Returns the most recent non-superseded prescription in the same care
+ * episode. Optional `excludePrescriptionId` skips the working note
+ * (rxl-08). Returns `{ prescription: null }` (200) when no prior Rx
+ * exists. Auth: doctor must own `appointmentId`.
  */
 export const getLastPrescriptionInEpisodeHandler = asyncHandler(
   async (req: Request, res: Response) => {
@@ -410,31 +568,22 @@ export const getLastPrescriptionInEpisodeHandler = asyncHandler(
     const userId = req.user?.id;
     if (!userId) throw new UnauthorizedError('Authentication required');
 
-    const raw = req.query.appointmentId;
-    const appointmentId = typeof raw === 'string' ? raw : '';
-    // Cheap UUID guard. The service throws NotFoundError on bad ids
-    // anyway, but a 400 here is friendlier to bad clients.
-    if (!/^[0-9a-fA-F-]{36}$/.test(appointmentId)) {
-      res
-        .status(400)
-        .json({ success: false, error: { message: 'appointmentId must be a UUID' } });
-      return;
-    }
-
+    const { appointmentId, excludePrescriptionId } = validateLastInEpisodeQuery(req.query);
     const prescription = await getLastPrescriptionInEpisode(
       appointmentId,
       correlationId,
       userId,
+      excludePrescriptionId
     );
 
     res.status(200).json(successResponse({ prescription }, req));
-  },
+  }
 );
 
 /**
  * subjective-tab · subj-07 — carry-forward subjective from last visit.
  *
- * GET /api/v1/prescriptions/last-subjective?patientId=&appointmentId=
+ * GET /api/v1/prescriptions/last-subjective?patientId=&appointmentId=&excludePrescriptionId=
  */
 export const getLastSubjectiveForPatientHandler = asyncHandler(
   async (req: Request, res: Response) => {
@@ -442,25 +591,38 @@ export const getLastSubjectiveForPatientHandler = asyncHandler(
     const userId = req.user?.id;
     if (!userId) throw new UnauthorizedError('Authentication required');
 
-    const patientId = typeof req.query.patientId === 'string' ? req.query.patientId : '';
-    const appointmentId = typeof req.query.appointmentId === 'string' ? req.query.appointmentId : '';
-    const uuidRe = /^[0-9a-fA-F-]{36}$/;
-
-    if (!uuidRe.test(patientId) || !uuidRe.test(appointmentId)) {
-      res.status(400).json({
-        success: false,
-        error: { message: 'patientId and appointmentId must be UUIDs' },
-      });
-      return;
-    }
+    const { patientId, appointmentId, excludePrescriptionId } =
+      validateLastSubjectiveQuery(req.query);
 
     const subjective = await getLastSubjectiveForPatient(
       patientId,
       appointmentId,
       correlationId,
       userId,
+      excludePrescriptionId
     );
 
     res.status(200).json(successResponse({ subjective }, req));
-  },
+  }
 );
+
+/**
+ * last-visit-context · lvc-01
+ *
+ * GET /api/v1/patients/:patientId/last-visit-summary?appointmentId=
+ *
+ * Patient-scoped last prescription excluding the current appointment.
+ * Returns `{ summary: null }` (200) when there is no prior Rx.
+ */
+export const getLastVisitSummaryHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const userId = req.user?.id;
+  if (!userId) throw new UnauthorizedError('Authentication required');
+
+  const { patientId } = validatePatientChartParentParams(req.params);
+  const { appointmentId } = validateLastVisitSummaryQuery(req.query);
+
+  const summary = await getLastVisitSummary(patientId, appointmentId, correlationId, userId);
+
+  res.status(200).json(successResponse({ summary }, req));
+});
