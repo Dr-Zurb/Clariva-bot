@@ -14,9 +14,9 @@
 
 import { getSupabaseAdminClient } from '../config/database';
 import { selectGatewayByCountry } from '../config/payment';
-import { computePlatformFee } from '../config/platform-fee';
 import { razorpayAdapter } from '../adapters/razorpay-adapter';
 import { paypalAdapter } from '../adapters/paypal-adapter';
+import { getDecryptedGatewayCredentials } from './doctor-gateway-credentials-service';
 import type { CreatePaymentLinkInput, CreatePaymentLinkResult } from '../types/payment';
 import type { IPaymentGateway } from '../adapters/payment-gateway.interface';
 import { handleSupabaseError } from '../utils/db-helpers';
@@ -40,6 +40,15 @@ export async function createPaymentLink(
   correlationId: string
 ): Promise<CreatePaymentLinkResult> {
   const gateway = selectGatewayByCountry(input.doctorCountry);
+  if (gateway !== 'razorpay') {
+    throw new ValidationError('Prepaid bookings currently support Razorpay only');
+  }
+
+  const credentials = await getDecryptedGatewayCredentials(input.doctorId, correlationId);
+  if (!credentials) {
+    throw new ValidationError('Connect your Razorpay account before taking prepaid bookings');
+  }
+
   const adapter = getAdapter(gateway);
 
   const referenceId = input.appointmentId;
@@ -74,7 +83,7 @@ export async function createPaymentLink(
     callbackUrl: input.callbackUrl,
   };
 
-  const result = await adapter.createPaymentLink(adapterInput);
+  const result = await adapter.createPaymentLink(adapterInput, credentials);
 
   const supabase = getSupabaseAdminClient();
   if (!supabase) {
@@ -226,12 +235,8 @@ export async function processPaymentSuccess(
     return undefined;
   }
 
-  // Compute platform fee (INR: 5% or flat; non-INR: 0 for now)
-  const isInr = currency.toUpperCase() === 'INR';
-  const feeResult = isInr
-    ? computePlatformFee(amountMinor, currency)
-    : { platformFeeMinor: 0, gstMinor: 0, doctorAmountMinor: amountMinor };
-
+  // P0: we never take a cut of the patient's payment. Columns stay
+  // populated (0 / full amount) so existing readers do not see NULL.
   const { error: updatePaymentError } = await supabase
     .from('payments')
     .update({
@@ -239,9 +244,9 @@ export async function processPaymentSuccess(
       amount_minor: amountMinor,
       currency,
       status: 'captured',
-      platform_fee_minor: feeResult.platformFeeMinor,
-      gst_minor: feeResult.gstMinor,
-      doctor_amount_minor: feeResult.doctorAmountMinor,
+      platform_fee_minor: 0,
+      gst_minor: 0,
+      doctor_amount_minor: amountMinor,
     })
     .eq('id', payment.id);
 
@@ -271,8 +276,8 @@ export async function processPaymentSuccess(
       paymentId: payment.id,
       appointmentId: payment.appointment_id,
       gateway,
-      platformFeeMinor: feeResult.platformFeeMinor,
-      gstMinor: feeResult.gstMinor,
+      platformFeeMinor: 0,
+      gstMinor: 0,
       correlationId,
     },
     'Payment captured and appointment confirmed'

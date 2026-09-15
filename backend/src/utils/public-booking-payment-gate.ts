@@ -10,21 +10,33 @@ import { getActiveServiceCatalog } from './service-catalog-helpers';
 
 export type BookingPaymentBlockReason =
   | 'staff_review_pending'
-  | 'service_selection_not_finalized';
+  | 'service_selection_not_finalized'
+  | 'doctor_not_verified';
 
 export type PublicBookingPaymentGateResult =
   | { allowed: true }
   | { allowed: false; reason: BookingPaymentBlockReason };
 
+export type PublicBookingPaymentGateOptions = {
+  /** When false, blocks pay/create (ver-05). Omit / true = not applied. */
+  doctorVerified?: boolean;
+};
+
 /**
  * Pure policy check for token-scoped book flow (not reschedule).
+ * - Blocks when the doctor is not license-verified (ver-05).
  * - Blocks while staff service-review gate is active (ARM-05/06).
  * - Blocks multi-service teleconsult catalog pays until `serviceSelectionFinalized` (ARM-03/07).
  */
 export function evaluatePublicBookingPaymentGate(
   state: ConversationState,
-  doctorSettings: DoctorSettingsRow | null
+  doctorSettings: DoctorSettingsRow | null,
+  options?: PublicBookingPaymentGateOptions
 ): PublicBookingPaymentGateResult {
+  if (options?.doctorVerified === false) {
+    return { allowed: false, reason: 'doctor_not_verified' };
+  }
+
   if (isSlotBookingBlockedPendingStaffReview(state)) {
     return { allowed: false, reason: 'staff_review_pending' };
   }

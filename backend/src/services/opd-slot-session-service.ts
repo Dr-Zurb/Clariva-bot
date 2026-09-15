@@ -1,18 +1,29 @@
 /**
- * Doctor OPD slot-mode session snapshot (sl-01).
+ * Doctor OPD slot-mode session snapshot (sl-01 / osm-02).
  * Service role; rows scoped with `.eq('doctor_id', doctorId)` like `listDoctorQueueSession`.
  */
 
 import { getSupabaseAdminClient } from '../config/database';
 import { env } from '../config/env';
-import type { SlotSessionCounts, SlotSessionPayload, SlotSessionRow, SlotStatus } from '../types/opd-slot-session';
+import type { AppointmentBookingOrigin } from '../types/database';
+import type {
+  SlotSessionCounts,
+  SlotSessionPayload,
+  SlotSessionRow,
+  SlotTag,
+  VisitLifecycle,
+} from '../types/opd-slot-session';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { InternalError } from '../utils/errors';
+import {
+  consultationSessionStarted,
+  type IncompleteConsultSessionInput,
+} from '../utils/incomplete-consult';
 import { getActiveServiceCatalog } from '../utils/service-catalog-helpers';
 import { getDoctorSettings } from './doctor-settings-service';
 import { localDayUtcRange } from './opd/opd-queue-service';
 import { getSlotJoinGraceMinutes } from './opd/opd-policy-service';
-import { deriveSlotStatus } from './opd/opd-slot-status';
+import { deriveSlotAxes, toLegacySlotStatus } from './opd/opd-slot-status';
 
 /** Compute integer years from `date_of_birth` (YYYY-MM-DD). Returns null when unparseable / out-of-range. */
 function deriveAgeFromDob(dob: string | null | undefined): number | null {
@@ -35,6 +46,7 @@ function emptyCounts(): SlotSessionCounts {
     upcoming: 0,
     running_late: 0,
     in_consultation: 0,
+    incomplete: 0,
     completed: 0,
     missed: 0,
     cancelled: 0,
@@ -42,58 +54,60 @@ function emptyCounts(): SlotSessionCounts {
   };
 }
 
-function bumpCounts(counts: SlotSessionCounts, slotStatus: SlotStatus): void {
+function bumpCounts(
+  counts: SlotSessionCounts,
+  lifecycle: VisitLifecycle,
+  timingBand: 'early' | 'due' | 'late' | null,
+  tags: readonly SlotTag[]
+): void {
   counts.all += 1;
-  if (slotStatus === 'upcoming' || slotStatus === 'grace') {
-    counts.upcoming += 1;
-  }
-  switch (slotStatus) {
-    case 'running_late':
-      counts.running_late += 1;
+
+  switch (lifecycle) {
+    case 'in_consult':
+      counts.in_consultation += 1;
       break;
-    case 'in_consultation':
+    case 'incomplete':
+      counts.incomplete += 1;
+      // Legacy Incomplete filter still keys on in_consultation until osm-03.
       counts.in_consultation += 1;
       break;
     case 'completed':
       counts.completed += 1;
       break;
-    case 'missed':
+    case 'no_show':
       counts.missed += 1;
       break;
     case 'cancelled':
       counts.cancelled += 1;
       break;
-    case 'overflow':
-      counts.overflow += 1;
+    case 'scheduled':
+      if (timingBand === 'late') counts.running_late += 1;
+      else counts.upcoming += 1;
       break;
     default:
       break;
   }
+
+  if (tags.includes('overflow')) {
+    counts.overflow += 1;
+  }
 }
 
+type SessionRow = IncompleteConsultSessionInput & {
+  appointment_id: string;
+};
+
 /**
- * Per-appointment flag: booked after the latest scheduled instant among strictly
- * older bookings (sl-01 note 5).
+ * Prefer a live session; else any started session for incomplete detection.
  */
-function computeAppendedAfterDayById(
-  rows: { id: string; created_at: string; appointment_date: string }[]
-): Map<string, boolean> {
-  const map = new Map<string, boolean>();
-  for (const apt of rows) {
-    const selfCreated = new Date(apt.created_at).getTime();
-    let maxPeerDateMs = Number.NEGATIVE_INFINITY;
-    for (const peer of rows) {
-      if (peer.id === apt.id) continue;
-      const peerCreated = new Date(peer.created_at).getTime();
-      if (peerCreated < selfCreated) {
-        maxPeerDateMs = Math.max(maxPeerDateMs, new Date(peer.appointment_date).getTime());
-      }
-    }
-    const isAppended =
-      Number.isFinite(maxPeerDateMs) && selfCreated > maxPeerDateMs;
-    map.set(apt.id, isAppended);
-  }
-  return map;
+function pickSessionForAppointment(
+  rows: SessionRow[]
+): IncompleteConsultSessionInput | null {
+  if (rows.length === 0) return null;
+  const live = rows.find((r) => r.status === 'live');
+  if (live) return live;
+  const started = rows.find((r) => consultationSessionStarted(r));
+  return started ?? rows[0] ?? null;
 }
 
 function resolveDurationMinutes(
@@ -102,6 +116,21 @@ function resolveDurationMinutes(
 ): number | null {
   if (consultationType == null || consultationType === '') return null;
   return slotIntervalMinutes;
+}
+
+function parseBookingOrigin(
+  raw: string | null | undefined
+): AppointmentBookingOrigin {
+  switch (raw) {
+    case 'walk_in':
+    case 'overflow':
+    case 'return_after_completed':
+    case 'rebooked':
+    case 'booked':
+      return raw;
+    default:
+      return 'booked';
+  }
 }
 
 /**
@@ -116,7 +145,8 @@ function resolveDurationMinutes(
  *      slot interval, and optional service catalog (single fetch; reused).
  *   2. `appointments` — doctor + local-day UTC range, ordered by `appointment_date`.
  *   3. `patients` — skipped when no `patient_id` on any row; else one `.in('id', …)`.
- *   4. `consultation_sessions` — one `.in('appointment_id', …).eq('status','live')`.
+ *   4. `consultation_sessions` — one `.in('appointment_id', …)` with start markers
+ *      for incomplete / live derivation (osm-02).
  *
  * Catalog label resolution reuses the settings object from step 1 — no extra round-trip.
  */
@@ -150,10 +180,13 @@ export async function listDoctorSlotSession(
     catalog_service_key: string | null;
     episode_id: string | null;
     opd_event_type: 'standard' | 'return_after_completed' | null;
+    booking_origin: string | null;
     notes: string | null;
     opd_session_delay_minutes: number | null;
     opd_early_invite_expires_at: string | null;
     opd_early_invite_response: string | null;
+    patient_checked_in_at: string | null;
+    patient_lobby_last_seen_at: string | null;
     created_at: string;
   };
 
@@ -162,8 +195,9 @@ export async function listDoctorSlotSession(
     .select(
       'id, patient_id, patient_name, patient_phone, appointment_date, status, ' +
         'reason_for_visit, consultation_type, catalog_service_key, ' +
-        'episode_id, opd_event_type, notes, ' +
+        'episode_id, opd_event_type, booking_origin, notes, ' +
         'opd_session_delay_minutes, opd_early_invite_expires_at, opd_early_invite_response, ' +
+        'patient_checked_in_at, patient_lobby_last_seen_at, ' +
         'created_at'
     )
     .eq('doctor_id', doctorId)
@@ -185,14 +219,6 @@ export async function listDoctorSlotSession(
       date: sessionDateYmd,
     };
   }
-
-  const appendedMap = computeAppendedAfterDayById(
-    apts.map((a) => ({
-      id: a.id,
-      created_at: a.created_at,
-      appointment_date: a.appointment_date ?? '',
-    }))
-  );
 
   const aptIds = apts.map((a) => a.id);
 
@@ -223,19 +249,23 @@ export async function listDoctorSlotSession(
     }
   }
 
-  const { data: liveSessions, error: sessErr } = await admin
+  const { data: sessionsRaw, error: sessErr } = await admin
     .from('consultation_sessions')
-    .select('appointment_id')
-    .in('appointment_id', aptIds)
-    .eq('status', 'live');
+    .select(
+      'appointment_id, status, actual_started_at, doctor_joined_at, patient_joined_at'
+    )
+    .in('appointment_id', aptIds);
 
   if (sessErr) {
     handleSupabaseError(sessErr, correlationId);
   }
 
-  const liveByAppointmentId = new Set(
-    (liveSessions ?? []).map((r) => r.appointment_id as string)
-  );
+  const sessionsByAppointmentId = new Map<string, SessionRow[]>();
+  for (const row of (sessionsRaw ?? []) as SessionRow[]) {
+    const list = sessionsByAppointmentId.get(row.appointment_id) ?? [];
+    list.push(row);
+    sessionsByAppointmentId.set(row.appointment_id, list);
+  }
 
   const needsCatalog = apts.some(
     (a) => typeof a.catalog_service_key === 'string' && a.catalog_service_key.length > 0
@@ -279,23 +309,35 @@ export async function listDoctorSlotSession(
     }
 
     const opdEventType = apt.opd_event_type ?? null;
+    const session = pickSessionForAppointment(
+      sessionsByAppointmentId.get(apt.id) ?? []
+    );
 
-    const slotStatus = deriveSlotStatus({
+    const axes = deriveSlotAxes({
       appointmentStatus,
       scheduledAtMs: Number.isFinite(scheduledAtMs) ? scheduledAtMs : nowMs,
       nowMs,
       graceMinutes,
-      consultationLive: liveByAppointmentId.has(apt.id),
+      session,
       opdEventType,
-      isAppendedAfterDay: appendedMap.get(apt.id) ?? false,
+      bookingOrigin: parseBookingOrigin(apt.booking_origin),
+      delayMinutes: apt.opd_session_delay_minutes ?? null,
+      earlyInviteExpiresAt: apt.opd_early_invite_expires_at ?? null,
+      earlyInviteResponse,
+      patientCheckedInAt: apt.patient_checked_in_at ?? null,
+      patientLobbyLastSeenAt: apt.patient_lobby_last_seen_at ?? null,
     });
 
-    bumpCounts(counts, slotStatus);
+    const slotStatus = toLegacySlotStatus(axes.lifecycle, axes.timing, axes.tags);
+    bumpCounts(counts, axes.lifecycle, axes.timing?.band ?? null, axes.tags);
 
     const row: SlotSessionRow = {
       appointmentId: apt.id,
       position,
       slotStatus,
+      lifecycle: axes.lifecycle,
+      timing: axes.timing,
+      tags: axes.tags,
       appointmentStatus,
       scheduledAt: apt.appointment_date
         ? new Date(apt.appointment_date).toISOString()
@@ -325,6 +367,9 @@ export async function listDoctorSlotSession(
 
       patientId: apt.patient_id ?? null,
       patientNote: apt.notes ?? null,
+      patientCheckedInAt: apt.patient_checked_in_at
+        ? new Date(apt.patient_checked_in_at).toISOString()
+        : null,
     };
     entries.push(row);
   }

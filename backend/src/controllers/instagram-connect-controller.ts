@@ -16,18 +16,49 @@ import { asyncHandler } from '../utils/async-handler';
 import { successResponse } from '../utils/response';
 import { logAuditEvent } from '../utils/audit-logger';
 import { env } from '../config/env';
-import { ConflictError, UnauthorizedError } from '../utils/errors';
+import {
+  ConflictError,
+  DoctorNotVerifiedError,
+  UnauthorizedError,
+} from '../utils/errors';
 import {
   createState,
   verifyState,
   buildMetaOAuthUrl,
   exchangeCodeForShortLivedToken,
   exchangeForLongLivedToken,
-  getPageTokenAndInstagramAccount,
+  getInstagramUserInfo,
   saveDoctorInstagram,
+  subscribeInstagramAccountApps,
   disconnectInstagram,
   getInstagramDashboardStatus,
 } from '../services/instagram-connect-service';
+
+import { isDoctorVerified } from '../services/doctor-verification-service';
+import { rewriteOAuthFrontendPathToBridge } from '../utils/oauth-frontend-redirect';
+
+const DOCTOR_VERIFY_FIRST_MESSAGE =
+  'Verify your medical registration before connecting Instagram. Open Get verified in the dashboard.';
+
+/**
+ * Build the browser redirect after Meta OAuth. Prefer INSTAGRAM_FRONTEND_REDIRECT_URI
+ * (usually `/auth/instagram-return`). Legacy `/dashboard/*` targets are rewritten to
+ * the public bridge so SameSite=Lax cookies survive the Meta return.
+ */
+function buildFrontendConnectRedirect(opts: {
+  connected: '0' | '1';
+  error?: string;
+}): string | null {
+  const configured = env.INSTAGRAM_FRONTEND_REDIRECT_URI;
+  if (!configured) return null;
+  const url = new URL(configured);
+  rewriteOAuthFrontendPathToBridge(url, '/auth/instagram-return');
+  url.searchParams.set('connected', opts.connected);
+  if (opts.error) {
+    url.searchParams.set('error', opts.error);
+  }
+  return url.toString();
+}
 
 /**
  * GET /api/v1/settings/instagram/status
@@ -50,10 +81,17 @@ export const statusHandler = asyncHandler(async (req: Request, res: Response) =>
  * Requires auth. Redirects 302 to Meta OAuth dialog.
  */
 export const connectHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
   const userId = req.user?.id;
 
   if (!userId) {
     throw new UnauthorizedError('Authentication required');
+  }
+
+  // ver-05: unverified doctors cannot start OAuth (patient-facing activation).
+  const verified = await isDoctorVerified(userId, correlationId);
+  if (!verified) {
+    throw new DoctorNotVerifiedError(DOCTOR_VERIFY_FIRST_MESSAGE);
   }
 
   const state = createState(userId);
@@ -73,12 +111,12 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
   const stateParam = typeof req.query.state === 'string' ? req.query.state : undefined;
 
   if (!code || !stateParam) {
-    const redirectUri = env.INSTAGRAM_FRONTEND_REDIRECT_URI;
-    if (redirectUri) {
-      const errUrl = new URL(redirectUri);
-      errUrl.searchParams.set('connected', '0');
-      errUrl.searchParams.set('error', 'missing_code_or_state');
-      res.redirect(302, errUrl.toString());
+    const errUrl = buildFrontendConnectRedirect({
+      connected: '0',
+      error: 'missing_code_or_state',
+    });
+    if (errUrl) {
+      res.redirect(302, errUrl);
       return;
     }
     res.status(400).json({
@@ -91,37 +129,64 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
 
   const doctorId = verifyState(stateParam);
 
-  const { accessToken: shortLived } = await exchangeCodeForShortLivedToken(code, correlationId);
-  const longLivedUserToken = await exchangeForLongLivedToken(shortLived, correlationId);
-  const { pageAccessToken, instagramPageId, facebookPageId, instagramUsername } = await getPageTokenAndInstagramAccount(
-    longLivedUserToken,
+  // ver-05 defense-in-depth: block token exchange/save if not verified
+  // (e.g. stale OAuth state minted before the gate).
+  const verified = await isDoctorVerified(doctorId, correlationId);
+  if (!verified) {
+    const errUrl = buildFrontendConnectRedirect({
+      connected: '0',
+      error: 'doctor_not_verified',
+    });
+    if (errUrl) {
+      res.redirect(302, errUrl);
+      return;
+    }
+    throw new DoctorNotVerifiedError(DOCTOR_VERIFY_FIRST_MESSAGE);
+  }
+
+  // Instagram Login (ilr-18): code → short-lived → long-lived IG user token → /me.
+  // No Facebook Page list. facebook_user_id is unavailable on this path (null).
+  const { accessToken: shortLived, userId: exchangeUserId } = await exchangeCodeForShortLivedToken(
+    code,
     correlationId
   );
+  const { accessToken: longLivedToken, expiresIn } = await exchangeForLongLivedToken(
+    shortLived,
+    correlationId
+  );
+  const { userId: meUserId, username } = await getInstagramUserInfo(longLivedToken, correlationId);
+  const instagramAccountId = meUserId || exchangeUserId;
+  const tokenExpiresAt =
+    expiresIn != null ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
 
   try {
     await saveDoctorInstagram(
       doctorId,
       {
-        instagram_page_id: instagramPageId,
-        facebook_page_id: facebookPageId,
-        instagram_access_token: pageAccessToken,
-        instagram_username: instagramUsername ?? null,
+        instagram_page_id: instagramAccountId,
+        facebook_page_id: null,
+        instagram_access_token: longLivedToken,
+        instagram_username: username ?? null,
+        facebook_user_id: null,
+        instagram_token_expires_at: tokenExpiresAt,
       },
       correlationId
     );
   } catch (err) {
     if (err instanceof ConflictError) {
-      const redirectUri = env.INSTAGRAM_FRONTEND_REDIRECT_URI;
-      if (redirectUri) {
-        const errUrl = new URL(redirectUri);
-        errUrl.searchParams.set('connected', '0');
-        errUrl.searchParams.set('error', 'page_already_linked');
-        res.redirect(302, errUrl.toString());
+      const errUrl = buildFrontendConnectRedirect({
+        connected: '0',
+        error: 'page_already_linked',
+      });
+      if (errUrl) {
+        res.redirect(302, errUrl);
         return;
       }
     }
     throw err;
   }
+
+  await subscribeInstagramAccountApps(instagramAccountId, longLivedToken, correlationId);
 
   await logAuditEvent({
     correlationId,
@@ -132,11 +197,9 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
     status: 'success',
   });
 
-  const redirectUri = env.INSTAGRAM_FRONTEND_REDIRECT_URI;
-  if (redirectUri) {
-    const successUrl = new URL(redirectUri);
-    successUrl.searchParams.set('connected', '1');
-    res.redirect(302, successUrl.toString());
+  const successUrl = buildFrontendConnectRedirect({ connected: '1' });
+  if (successUrl) {
+    res.redirect(302, successUrl);
     return;
   }
   res.status(200).json(successResponse({ connected: true }, req));

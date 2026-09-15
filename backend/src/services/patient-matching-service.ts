@@ -18,10 +18,15 @@ export interface PossiblePatientMatch {
   age?: number | null;
   gender?: string | null;
   medicalRecordNumber?: string | null;
+  guardianName?: string | null;
+  guardianRelation?: string | null;
+  altPhone?: string | null;
   confidence: number;
 }
 
 const CONFIDENCE_THRESHOLD = 0.5;
+const IDENTITY_CONFIDENCE_THRESHOLD = 0.7;
+const IDENTITY_AGE_TOLERANCE = 3;
 const MAX_MATCHES = 5;
 
 /**
@@ -86,6 +91,7 @@ function nameSimilarity(inputName: string, dbName: string): number {
  * @param age - Optional; ±2 years boosts confidence
  * @param gender - Optional; exact match boosts confidence
  * @param correlationId - For audit
+ * @param guardianName - Optional; similar guardian name boosts confidence
  * @returns Top matches with confidence >= threshold, sorted by confidence desc
  */
 export async function findPossiblePatientMatches(
@@ -94,7 +100,8 @@ export async function findPossiblePatientMatches(
   name: string,
   age?: number | null,
   gender?: string | null,
-  correlationId?: string
+  correlationId?: string,
+  guardianName?: string | null
 ): Promise<PossiblePatientMatch[]> {
   const admin = getSupabaseAdminClient();
   if (!admin) {
@@ -102,12 +109,15 @@ export async function findPossiblePatientMatches(
   }
 
   const phoneLast10 = normalizePhoneLast10(phone);
-  if (phoneLast10.length < 10) {
+  const inputName = name.trim();
+  if (!inputName) {
     return [];
   }
 
-  const inputName = name.trim();
-  if (!inputName) {
+  const hasPhone = phoneLast10.length >= 10;
+  const inputGuardian = (guardianName ?? '').trim();
+  const hasIdentityHint = age != null || Boolean(inputGuardian);
+  if (!hasPhone && !hasIdentityHint) {
     return [];
   }
 
@@ -138,34 +148,86 @@ export async function findPossiblePatientMatches(
 
   if (patientIds.size === 0) return [];
 
-  // Fetch patients; filter by phone last-10
-  const { data: patients, error: patErr } = await admin
+  // Fetch patients; filter by primary or alt phone last-10
+  let { data: patients, error: patErr } = await admin
     .from('patients')
-    .select('id, name, phone, age, gender, medical_record_number')
+    .select(
+      'id, name, phone, age, gender, medical_record_number, guardian_name, guardian_relation, alt_phone, archived_at'
+    )
     .in('id', Array.from(patientIds));
+
+  if (patErr && /archived_at/i.test(patErr.message ?? '')) {
+    const retry = await admin
+      .from('patients')
+      .select(
+        'id, name, phone, age, gender, medical_record_number, guardian_name, guardian_relation, alt_phone'
+      )
+      .in('id', Array.from(patientIds));
+    patients = retry.data as typeof patients;
+    patErr = retry.error;
+  }
+
+  if (patErr && /guardian_name|alt_phone/i.test(patErr.message ?? '')) {
+    const retry = await admin
+      .from('patients')
+      .select('id, name, phone, age, gender, medical_record_number')
+      .in('id', Array.from(patientIds));
+    patients = retry.data as typeof patients;
+    patErr = retry.error;
+  }
 
   if (patErr) handleSupabaseError(patErr, correlationId ?? '');
 
+  const gNorm = (s: string) =>
+    s.trim().toLowerCase().replace(/^(m|male)$/, 'male').replace(/^(f|female)$/, 'female');
+
   const matches: PossiblePatientMatch[] = [];
-  for (const p of (patients ?? []) as Pick<Patient, 'id' | 'name' | 'phone' | 'age' | 'gender' | 'medical_record_number'>[]) {
+  for (const p of (patients ?? []) as Pick<
+    Patient,
+    | 'id'
+    | 'name'
+    | 'phone'
+    | 'age'
+    | 'gender'
+    | 'medical_record_number'
+    | 'guardian_name'
+    | 'guardian_relation'
+    | 'alt_phone'
+    | 'archived_at'
+  >[]) {
+    if (p.archived_at) continue;
     const pPhoneLast10 = normalizePhoneLast10(p.phone);
-    if (pPhoneLast10 !== phoneLast10) continue;
+    const pAltLast10 = p.alt_phone ? normalizePhoneLast10(p.alt_phone) : '';
+    const phoneHit = hasPhone && (pPhoneLast10 === phoneLast10 || pAltLast10 === phoneLast10);
 
     const nameScore = nameSimilarity(inputName, p.name);
-    let confidence = nameScore;
+    const ageOk = age != null && p.age != null && Math.abs(age - p.age) <= IDENTITY_AGE_TOLERANCE;
+    const guardianScore =
+      inputGuardian && p.guardian_name ? nameSimilarity(inputGuardian, p.guardian_name) : 0;
+    const guardianOk = guardianScore >= 0.7;
+    const genderMismatch = Boolean(
+      gender && p.gender && gNorm(gender) !== gNorm(p.gender)
+    );
 
-    if (age != null && p.age != null) {
-      const ageDiff = Math.abs(age - p.age);
-      if (ageDiff <= 2) confidence += 0.1;
-    }
-    if (gender && p.gender) {
-      const gNorm = (s: string) => s.trim().toLowerCase().replace(/^(m|male)$/, 'male').replace(/^(f|female)$/, 'female');
-      if (gNorm(gender) === gNorm(p.gender)) confidence += 0.05;
+    let confidence = nameScore;
+    let threshold = CONFIDENCE_THRESHOLD;
+
+    if (phoneHit) {
+      if (age != null && p.age != null && Math.abs(age - p.age) <= 2) confidence += 0.1;
+      if (gender && p.gender && !genderMismatch) confidence += 0.05;
+      if (guardianOk) confidence += 0.15;
+    } else if (hasIdentityHint) {
+      if (nameScore < 0.7 || (!ageOk && !guardianOk) || genderMismatch) continue;
+      threshold = IDENTITY_CONFIDENCE_THRESHOLD;
+      if (ageOk) confidence += 0.1;
+      if (guardianOk) confidence += 0.15;
+    } else {
+      continue;
     }
 
     confidence = Math.min(1, confidence);
 
-    if (confidence >= CONFIDENCE_THRESHOLD) {
+    if (confidence >= threshold) {
       matches.push({
         patientId: p.id,
         name: p.name,
@@ -173,6 +235,9 @@ export async function findPossiblePatientMatches(
         age: p.age ?? undefined,
         gender: p.gender ?? undefined,
         medicalRecordNumber: p.medical_record_number,
+        guardianName: p.guardian_name ?? undefined,
+        guardianRelation: p.guardian_relation ?? undefined,
+        altPhone: p.alt_phone ?? undefined,
         confidence,
       });
     }

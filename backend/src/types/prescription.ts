@@ -7,6 +7,15 @@
 
 export type PrescriptionType = 'structured' | 'photo' | 'both';
 
+/** RXL-Q8 presets persisted on a revision (rxl-22). Relocked 2026-09-11. */
+export const REVISION_REASONS = [
+  'treatment_change',
+  'item_added',
+  'other',
+] as const;
+
+export type RevisionReason = (typeof REVISION_REASONS)[number];
+
 /**
  * Structured follow-up unit (cockpit-v2 / migration 103, DL-28).
  *
@@ -37,11 +46,7 @@ export type DiagnosisKind = 'primary' | 'secondary' | 'differential';
  * - differential: `provisional` (Considering) | `excluded` (Ruled out)
  * `rule_out` is deprecated — tolerated on ingest, mapped to `provisional`.
  */
-export type DiagnosisCertainty =
-  | 'provisional'
-  | 'rule_out'
-  | 'confirmed'
-  | 'excluded';
+export type DiagnosisCertainty = 'provisional' | 'rule_out' | 'confirmed' | 'excluded';
 
 /** Visit-relative status for a structured diagnosis row (migration 161). */
 export type DiagnosisStatus = 'new' | 'ongoing' | 'resolved';
@@ -144,11 +149,7 @@ export type BpMeasuredBy = 'patient' | 'caregiver' | 'nurse' | 'physician' | 'ot
 
 /** How BP was measured (device / technique). */
 export type BpMethod =
-  | 'auto_upper_arm'
-  | 'manual_auscultatory'
-  | 'wrist_monitor'
-  | 'wearable'
-  | 'kiosk';
+  'auto_upper_arm' | 'manual_auscultatory' | 'wrist_monitor' | 'wearable' | 'kiosk';
 
 /** Where BP was measured. */
 export type BpSetting = 'home' | 'clinic' | 'hospital' | 'pharmacy' | 'work';
@@ -236,10 +237,7 @@ export type VitalsAvpu = 'alert' | 'voice' | 'pain' | 'unresponsive';
 
 /** Pulse rhythm (categorical vital). */
 export type VitalsPulseRhythm =
-  | 'regular'
-  | 'irregular'
-  | 'irregularly_irregular'
-  | 'regularly_irregular';
+  'regular' | 'irregular' | 'irregularly_irregular' | 'regularly_irregular';
 
 /** Temperature measurement site (categorical vital). */
 export type VitalsTempSite = 'oral' | 'axillary' | 'tympanic' | 'rectal' | 'temporal' | 'forehead';
@@ -311,18 +309,14 @@ export interface VitalsJson {
   vitalProvenance?: Record<string, MeasurementContext> | null;
   /** Optional per-vital notes (scalar vitals + cluster keys + custom ids). */
   vitalNotes?: Record<string, string> | null;
+  /** Visit-level vitals note from desk check-in / cockpit. Printed on the Rx. */
+  sectionNote?: string | null;
 }
 
 /** Severity on a structured complaint card (subjective-tab / migration 116). */
 // `minimal` is retained only for legacy stored cards; the UI offers
 // mild/moderate/severe/very_severe (subj-14 refine).
-export type ComplaintSeverity =
-  | 'minimal'
-  | 'mild'
-  | 'moderate'
-  | 'severe'
-  | 'very_severe'
-  | number;
+export type ComplaintSeverity = 'minimal' | 'mild' | 'moderate' | 'severe' | 'very_severe' | number;
 
 /**
  * One chief-complaint card stored in `prescriptions.complaints` JSONB.
@@ -382,10 +376,7 @@ export interface PrescriptionComplaint {
 }
 
 /** Leaf associated complaint — cannot nest further. */
-export type PrescriptionAssociatedComplaint = Omit<
-  PrescriptionComplaint,
-  'associatedComplaints'
->;
+export type PrescriptionAssociatedComplaint = Omit<PrescriptionComplaint, 'associatedComplaints'>;
 
 /** Per-system exam status (objective-tab / migration 150). */
 export type ExamSystemStatus = 'normal' | 'abnormal';
@@ -442,6 +433,8 @@ export interface TestResultRow {
   refHigh?: number | null;
   /** Non-numeric reference range, e.g. "Negative"/"<200" (migration 159). */
   refText?: string | null;
+  /** Assay / method note (HPLC, enzymatic, …). Optional; not derived into TEXT. */
+  method?: string | null;
 }
 
 /** Report kind for a grouped lab/imaging panel (objective-reports / migration 159). */
@@ -508,12 +501,7 @@ export type FamilyHistoryCondition =
   | 'anemia'
   | 'gout';
 
-export type FamilyHistoryRelativeKey =
-  | 'father'
-  | 'mother'
-  | 'sibling'
-  | 'child'
-  | 'grandparent';
+export type FamilyHistoryRelativeKey = 'father' | 'mother' | 'sibling' | 'child' | 'grandparent';
 
 export interface FamilyHistorySiblingDetail {
   sex?: 'brother' | 'sister' | null;
@@ -794,7 +782,8 @@ export interface SocialHistoryStructured {
     caffeineSource?: 'tea' | 'coffee' | 'energy' | 'other' | null;
     caffeineSourceOther?: string | null;
     caffeineFrequency?: number | null;
-    caffeineFrequencyUnit?: 'day' | 'times_per_day' | 'week' | 'fortnight' | 'month' | 'interval' | 'occasional' | null;
+    caffeineFrequencyUnit?:
+      'day' | 'times_per_day' | 'week' | 'fortnight' | 'month' | 'interval' | 'occasional' | null;
     caffeineCupsPerDay?: number | null;
   } | null;
   caffeine?: {
@@ -810,14 +799,7 @@ export interface SocialHistoryStructured {
       caffeineMg?: number | null;
       frequency?: number | null;
       frequencyUnit?:
-        | 'day'
-        | 'times_per_day'
-        | 'week'
-        | 'fortnight'
-        | 'month'
-        | 'interval'
-        | 'occasional'
-        | null;
+        'day' | 'times_per_day' | 'week' | 'fortnight' | 'month' | 'interval' | 'occasional' | null;
       years?: number | null;
       yearsUnit?: 'years' | 'months' | 'days' | null;
       phase?: 'current' | 'past' | null;
@@ -830,7 +812,8 @@ export interface SocialHistoryStructured {
     source?: 'tea' | 'coffee' | 'energy' | 'other' | null;
     sourceOther?: string | null;
     frequency?: number | null;
-    frequencyUnit?: 'day' | 'times_per_day' | 'week' | 'fortnight' | 'month' | 'interval' | 'occasional' | null;
+    frequencyUnit?:
+      'day' | 'times_per_day' | 'week' | 'fortnight' | 'month' | 'interval' | 'occasional' | null;
     strength?: 'light' | 'regular' | 'strong' | 'custom' | null;
   } | null;
   activity?: {
@@ -838,9 +821,7 @@ export interface SocialHistoryStructured {
     jobActivity?: 'sedentary' | 'light' | 'moderate' | 'heavy' | null;
     daysPerWeek?: number | null;
     minutesPerSession?: number | null;
-    types?: Array<
-      'walking' | 'yoga' | 'gym' | 'sport' | 'household' | 'commute' | 'other'
-    > | null;
+    types?: Array<'walking' | 'yoga' | 'gym' | 'sport' | 'household' | 'commute' | 'other'> | null;
     items?: Array<{
       id: string;
       type?: string | null;
@@ -955,6 +936,33 @@ export interface Prescription {
   patient_education: string | null;
   clinical_notes: string | null;
   sent_to_patient_at: string | null;
+  /**
+   * rx-lifecycle / migration 226 — lock boundary. Set once by the first of
+   * finish / send / print (RXL-Q1). Distinct from `sent_to_patient_at` (digital
+   * send only). Null on drafts and historical rows (no backfill).
+   */
+  attested_at: string | null;
+  /**
+   * rx-lifecycle / migration 231 — revision identity (rxl-21). Null on
+   * drafts and historical rows. Advances on re-issue only (RXL-DL-9).
+   */
+  version: number | null;
+  /** This row replaces that prescription. */
+  supersedes_id: string | null;
+  /** Inverse pointer; the row that replaced this one. */
+  superseded_by_id: string | null;
+  /**
+   * Required on a revision at write time (RXL-Q8).
+   * Presets: treatment_change · item_added · other.
+   */
+  revision_reason: string | null;
+  /**
+   * First time this row left the clinic as an issued copy.
+   * Distinct from attested_at (finish) and printed_at (any print).
+   */
+  issued_at: string | null;
+  /** Delivery event. Requisition print may set this without attesting. */
+  printed_at: string | null;
   created_at: string;
   updated_at: string;
 
@@ -1055,44 +1063,17 @@ export type FrequencyCode =
 
 export type StrengthUnit = 'mg' | 'g' | 'mcg' | 'iu' | 'pct';
 
-export type DurationUnit =
-  | 'days'
-  | 'weeks'
-  | 'months'
-  | 'until-finished'
-  | 'continue';
+export type DurationUnit = 'days' | 'weeks' | 'months' | 'until-finished' | 'continue';
 
 export type RouteCode =
-  | 'oral'
-  | 'IV'
-  | 'IM'
-  | 'SC'
-  | 'topical'
-  | 'inhaled'
-  | 'rectal'
-  | 'nasal'
-  | 'sublingual'
-  | 'other';
+  'oral' | 'IV' | 'IM' | 'SC' | 'topical' | 'inhaled' | 'rectal' | 'nasal' | 'sublingual' | 'other';
 
 /** Per-dose unit (migration 133 — medicine card redesign). */
 export type DoseUnit =
-  | 'tab'
-  | 'cap'
-  | 'ml'
-  | 'spoon'
-  | 'drops'
-  | 'puff'
-  | 'sachet'
-  | 'unit'
-  | 'application';
+  'tab' | 'cap' | 'ml' | 'spoon' | 'drops' | 'puff' | 'sachet' | 'unit' | 'application';
 
 /** Structured food/timing instruction (migration 133). */
-export type FoodTiming =
-  | 'before_food'
-  | 'after_food'
-  | 'with_food'
-  | 'empty_stomach'
-  | 'bedtime';
+export type FoodTiming = 'before_food' | 'after_food' | 'with_food' | 'empty_stomach' | 'bedtime';
 
 export interface PrescriptionMedicine {
   id: string;
@@ -1144,6 +1125,78 @@ export interface LastSubjectiveForPatient {
   socialHistoryStructured: SocialHistoryStructured | null;
   pastSurgicalHistory: string | null;
   pastSurgicalHistoryStructured: PastSurgicalHistoryStructured | null;
+}
+
+/**
+ * lvc-01 — one lightweight last-visit payload for the cockpit strip.
+ * Patient-scoped, excludes the current appointment (LVC-DL-2).
+ * Plan scalars ship now so Phase 2 does not need a second endpoint.
+ */
+export interface LastVisitMedicine {
+  medicineName: string;
+  dosage: string;
+  route: string;
+  frequency: string;
+  duration: string;
+  instructions: string;
+  drugMasterId: string | null;
+  frequencyCode: FrequencyCode | null;
+  durationValue: number | null;
+  durationUnit: DurationUnit | null;
+  routeCode: RouteCode | null;
+  doseQty: number | null;
+  doseUnit: DoseUnit | null;
+  form: string | null;
+  foodTiming: FoodTiming | null;
+}
+
+/** Column vitals on the prior slip (lvc-14). Null when none were recorded. */
+export interface LastVisitVitals {
+  vitalsBpSystolic?: number;
+  vitalsBpDiastolic?: number;
+  vitalsHr?: number;
+  vitalsRr?: number;
+  vitalsTempC?: number;
+  vitalsSpo2?: number;
+  vitalsWtKg?: number;
+  vitalsHtCm?: number;
+  vitalsPainScore?: number;
+  vitalsGlucoseMgDl?: number;
+  vitalsGcsTotal?: number;
+  vitalsHeadCircumferenceCm?: number;
+  vitalsMuacCm?: number;
+  vitalsWaistCm?: number;
+}
+
+export interface LastVisitSummary {
+  sourcePrescriptionId: string;
+  sourceCreatedAt: string;
+  complaints: PrescriptionComplaint[];
+  diagnoses: DiagnosisRow[];
+  provisionalDiagnosis: string | null;
+  medicines: LastVisitMedicine[];
+  investigationsOrders: string | null;
+  advice: string | null;
+  followUp: string | null;
+  followUpValue: number | null;
+  followUpUnit: FollowUpUnit | null;
+  vitals: LastVisitVitals | null;
+  /** lvc-16 — remaining visit-scoped parchi fields (no new columns). */
+  hopi: string | null;
+  familyHistory: string | null;
+  familyHistoryStructured: FamilyHistoryStructured | null;
+  socialHistory: string | null;
+  socialHistoryStructured: SocialHistoryStructured | null;
+  pastSurgicalHistory: string | null;
+  pastSurgicalHistoryStructured: PastSurgicalHistoryStructured | null;
+  examinationFindings: string | null;
+  examinationJson: ExamSystemFinding[];
+  assessmentNote: string | null;
+  clinicalNotes: string | null;
+  referral: string | null;
+  customSubsections: CustomSubsection[];
+  assessmentCustomSections: CustomSubsection[];
+  planCustomSections: CustomSubsection[];
 }
 
 /**
@@ -1262,6 +1315,9 @@ export interface StructuredSoapInput {
   // objective-tab / migration 154 — structured test results. `testResults`
   // TEXT is derived from this on save (OBJ-D2).
   testResultsJson?: TestResultRow[];
+  // objective-reports / migration 159 — lab/imaging report headers. Does NOT
+  // alter derived `testResults` TEXT (OBJ-D2).
+  labReportsJson?: LabReport[];
 
   // assessment-plan-custom-sections / migration 177 — depth-2 custom section trees.
   assessmentCustomSections?: CustomSubsection[];

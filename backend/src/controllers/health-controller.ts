@@ -57,7 +57,7 @@ export const getHealth = asyncHandler(async (_req: Request, res: Response) => {
   // Prepare health data
   const healthData = {
     status: dbConnected ? 'ok' : 'error',
-    message: dbConnected ? 'Clariva Bot API is running' : 'Service unavailable',
+    message: dbConnected ? 'Halo Aid API is running' : 'Service unavailable',
     timestamp: new Date().toISOString(),
     services: {
       database: {
@@ -107,7 +107,7 @@ export const getHealth = asyncHandler(async (_req: Request, res: Response) => {
  */
 export const getRoot = asyncHandler(async (req: Request, res: Response) => {
   const rootData = {
-    message: 'Welcome to Clariva Care AI Receptionist Bot API',
+    message: 'Welcome to Halo Aid AI Receptionist Bot API',
     version: '1.0.0',
     endpoints: {
       health: '/health',

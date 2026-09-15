@@ -12,7 +12,13 @@
  * Locale detection is deterministic (no LLM), same pattern as `safety-messages.ts`.
  */
 
-import { detectSafetyMessageLocale, type SafetyMessageLocale } from './safety-messages';
+import type { SafetyMessageLocale } from './safety-messages';
+import {
+  languageUsesDevanagari,
+  languageUsesGurmukhi,
+  toStaticLocale,
+  type ConversationLanguage,
+} from './conversation-language';
 import { CATALOG_CATCH_ALL_SERVICE_KEY } from './service-catalog-schema';
 import type { ServiceCatalogV1 } from './service-catalog-schema';
 import type { ServiceCatalogMatchConfidence } from '../types/conversation';
@@ -132,12 +138,10 @@ const CLARIFICATION_NUMBERED_BY_LOCALE: Record<
 /** Internal locale key that includes the roman-script splits. */
 type ClarificationCopyLocale = keyof typeof CLARIFICATION_NUMBERED_BY_LOCALE;
 
-function resolveCopyLocale(userText: string): ClarificationCopyLocale {
-  const locale = detectSafetyMessageLocale(userText);
-  const hasDevanagari = /[\u0900-\u097F]/.test(userText);
-  const hasGurmukhi = /[\u0A00-\u0A7F]/.test(userText);
-  if (locale === 'hi') return hasDevanagari ? 'hi' : 'latin-hi';
-  if (locale === 'pa') return hasGurmukhi ? 'pa' : 'latin-pa';
+function resolveCopyLocale(language: ConversationLanguage): ClarificationCopyLocale {
+  const locale = toStaticLocale(language);
+  if (locale === 'hi') return languageUsesDevanagari(language) ? 'hi' : 'latin-hi';
+  if (locale === 'pa') return languageUsesGurmukhi(language) ? 'pa' : 'latin-pa';
   return 'en';
 }
 
@@ -172,8 +176,7 @@ function renderNumberedClarificationMessage(
 }
 
 /**
- * Locale-aware clarification copy. Reuses `detectSafetyMessageLocale` so we stay consistent with
- * every other patient-facing guardrail reply.
+ * Locale-aware clarification copy from turn language (lang-06).
  *
  * **Task 09 extension (2026-04-18):** when `parsedConcerns` contains 2–5 non-empty entries, we
  * render the numbered-list variant instead of the single-sentence ask — the patient can then
@@ -182,7 +185,7 @@ function renderNumberedClarificationMessage(
  * the existing free-text clarification flow still works without regression.
  */
 export function resolveComplaintClarificationMessage(
-  userText: string,
+  language: ConversationLanguage,
   parsedConcerns?: readonly string[],
 ): string {
   // Numbered-list path (Task 09) when the matcher supplied a workable concern list.
@@ -191,15 +194,13 @@ export function resolveComplaintClarificationMessage(
     parsedConcerns.length >= CLARIFICATION_NUMBERED_MIN_ITEMS &&
     parsedConcerns.length <= CLARIFICATION_NUMBERED_MAX_ITEMS
   ) {
-    return renderNumberedClarificationMessage(resolveCopyLocale(userText), parsedConcerns);
+    return renderNumberedClarificationMessage(resolveCopyLocale(language), parsedConcerns);
   }
 
   // Legacy single-sentence path (pre-Task-09 + out-of-range fallback).
-  const locale = detectSafetyMessageLocale(userText);
-  const hasDevanagari = /[\u0900-\u097F]/.test(userText);
-  const hasGurmukhi = /[\u0A00-\u0A7F]/.test(userText);
-  if (locale === 'hi' && !hasDevanagari) return COMPLAINT_CLARIFICATION_LATIN_HI;
-  if (locale === 'pa' && !hasGurmukhi) return COMPLAINT_CLARIFICATION_LATIN_PA;
+  const locale = toStaticLocale(language);
+  if (locale === 'hi' && !languageUsesDevanagari(language)) return COMPLAINT_CLARIFICATION_LATIN_HI;
+  if (locale === 'pa' && !languageUsesGurmukhi(language)) return COMPLAINT_CLARIFICATION_LATIN_PA;
   return COMPLAINT_CLARIFICATION_BY_LOCALE[locale];
 }
 

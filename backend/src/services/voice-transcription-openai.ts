@@ -32,6 +32,7 @@ import { logger } from '../config/logger';
 import {
   TranscriptionPermanentError,
   TranscriptionTransientError,
+  type TranscriptionAudioBytes,
   type TranscriptResult,
 } from '../types/consultation-transcript';
 import { costCentsForDuration } from '../config/voice-transcription-pricing';
@@ -39,9 +40,12 @@ import { costCentsForDuration } from '../config/voice-transcription-pricing';
 export interface TranscribeWithWhisperInput {
   /**
    * HTTP(S) URL to the audio file. For Twilio Compositions this is the
-   * short-lived signed URL returned by the Compositions API.
+   * short-lived signed URL returned by the Compositions API. Supply
+   * exactly one of `audioUrl` or `audioBytes`.
    */
-  audioUrl: string;
+  audioUrl?: string;
+  /** Locally transcoded audio (cost-cut step 7's raw-track path). */
+  audioBytes?: TranscriptionAudioBytes;
   /**
    * Language code as stored on our side (`'en-IN'`, `'en-US'`, `'en-GB'`...).
    * Whisper expects ISO-639-1 (`'en'`) — we strip the region suffix before
@@ -154,17 +158,31 @@ export async function transcribeWithWhisper(
   input: TranscribeWithWhisperInput,
 ): Promise<TranscriptResult> {
   const client = getOpenAiClient(); // may throw TranscriptionPermanentError
-  const { bytes, contentType } = await downloadAudio(
-    input.audioUrl,
-    input.correlationId,
-  );
+
+  let payload: Buffer;
+  let contentType: string;
+  let filename: string;
+
+  if (input.audioBytes) {
+    payload = input.audioBytes.bytes;
+    contentType = input.audioBytes.contentType;
+    filename = input.audioBytes.filename;
+  } else if (input.audioUrl) {
+    const downloaded = await downloadAudio(input.audioUrl, input.correlationId);
+    payload = Buffer.from(downloaded.bytes);
+    contentType = downloaded.contentType;
+    // Twilio audio Compositions land as mp3 today (task note #11); the
+    // extension is advisory — Whisper detects format from magic bytes.
+    filename = 'audio.mp3';
+  } else {
+    throw new TranscriptionPermanentError(
+      'voice-transcription-openai: neither audioUrl nor audioBytes supplied',
+    );
+  }
 
   // The SDK's `toFile` helper normalises any Buffer / Blob / ArrayBuffer
-  // into the multipart-friendly shape Whisper expects. We pass a generic
-  // `audio.mp3` name because Twilio audio Compositions land as mp3 today
-  // (task note #11); the extension is advisory — Whisper detects format
-  // from magic bytes.
-  const file = await OpenAI.toFile(Buffer.from(bytes), 'audio.mp3', {
+  // into the multipart-friendly shape Whisper expects.
+  const file = await OpenAI.toFile(payload, filename, {
     type: contentType,
   });
 

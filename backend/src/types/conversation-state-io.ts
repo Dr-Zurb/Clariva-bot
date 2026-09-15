@@ -12,8 +12,8 @@ import type {
   CancelState,
   ClarificationState,
   ConversationState,
-  RecordingConsentState,
   RescheduleState,
+  SafetyState,
   ServiceMatchState,
   TriageState,
 } from './conversation';
@@ -22,7 +22,7 @@ import {
   BOOKING_LEGACY_FIELD_NAMES,
   CLARIFICATION_LEGACY_FIELD_NAMES,
   normalizePersistedStep,
-  RECORDING_CONSENT_LEGACY_FIELD_NAMES,
+  SAFETY_LEGACY_FIELD_NAMES,
   SERVICE_MATCH_LEGACY_FIELD_NAMES,
   TRIAGE_LEGACY_FIELD_NAMES,
 } from './conversation';
@@ -32,6 +32,16 @@ const LEGACY_CANCEL_PENDING = 'pendingCancelAppointmentIds';
 const LEGACY_RESCHEDULE_APPOINTMENT_ID = 'rescheduleAppointmentId';
 const LEGACY_RESCHEDULE_PENDING = 'pendingRescheduleAppointmentIds';
 
+/**
+ * rec-09 / REC-D3 — retired recording-consent flat keys. No longer hydrated
+ * or serialized; kept here so every write still strips stale blobs.
+ */
+const RECORDING_CONSENT_STALE_FIELD_NAMES = [
+  'recordingConsentDecision',
+  'recordingConsentVersion',
+  'recordingConsentRePitched',
+] as const;
+
 /** All legacy top-level keys stripped on nested write (rcp-19). */
 const LEGACY_FLAT_KEYS_TO_STRIP: readonly string[] = [
   LEGACY_CANCEL_APPOINTMENT_ID,
@@ -39,8 +49,9 @@ const LEGACY_FLAT_KEYS_TO_STRIP: readonly string[] = [
   LEGACY_RESCHEDULE_APPOINTMENT_ID,
   LEGACY_RESCHEDULE_PENDING,
   ...SERVICE_MATCH_LEGACY_FIELD_NAMES,
-  ...RECORDING_CONSENT_LEGACY_FIELD_NAMES,
+  ...RECORDING_CONSENT_STALE_FIELD_NAMES,
   ...TRIAGE_LEGACY_FIELD_NAMES,
+  ...SAFETY_LEGACY_FIELD_NAMES,
   ...CLARIFICATION_LEGACY_FIELD_NAMES,
   ...BOOKING_LEGACY_FIELD_NAMES,
   ...BOOKING_FOR_OTHER_LEGACY_FIELD_NAMES,
@@ -160,8 +171,10 @@ function stripLegacyFlatKeys(out: Record<string, unknown>): void {
   delete out.cancel;
   delete out.reschedule;
   delete out.serviceMatch;
+  // rec-09 / REC-D3 — quiet cleaner of stale recordingConsent blobs.
   delete out.recordingConsent;
   delete out.triage;
+  delete out.safety;
   delete out.clarification;
   delete out.booking;
   delete out.bookingForOther;
@@ -190,12 +203,8 @@ export function readConversationState(metadata: unknown): ConversationState {
   const cancel = readCancelSubState(raw);
   const reschedule = readRescheduleSubState(raw);
   const serviceMatch = readServiceMatchSubState(raw);
-  const recordingConsent = readNamespaceSubState<RecordingConsentState>(
-    raw,
-    'recordingConsent',
-    RECORDING_CONSENT_LEGACY_FIELD_NAMES
-  );
   const triage = readNamespaceSubState<TriageState>(raw, 'triage', TRIAGE_LEGACY_FIELD_NAMES);
+  const safety = readNamespaceSubState<SafetyState>(raw, 'safety', SAFETY_LEGACY_FIELD_NAMES);
   const clarification = readNamespaceSubState<ClarificationState>(
     raw,
     'clarification',
@@ -218,16 +227,20 @@ export function readConversationState(metadata: unknown): ConversationState {
   delete raw.serviceMatch;
   delete raw.recordingConsent;
   delete raw.triage;
+  delete raw.safety;
   delete raw.clarification;
   delete raw.booking;
   delete raw.bookingForOther;
   for (const key of SERVICE_MATCH_LEGACY_FIELD_NAMES) {
     delete raw[key];
   }
-  for (const key of RECORDING_CONSENT_LEGACY_FIELD_NAMES) {
+  for (const key of RECORDING_CONSENT_STALE_FIELD_NAMES) {
     delete raw[key];
   }
   for (const key of TRIAGE_LEGACY_FIELD_NAMES) {
+    delete raw[key];
+  }
+  for (const key of SAFETY_LEGACY_FIELD_NAMES) {
     delete raw[key];
   }
   for (const key of CLARIFICATION_LEGACY_FIELD_NAMES) {
@@ -244,8 +257,8 @@ export function readConversationState(metadata: unknown): ConversationState {
   if (cancel) state.cancel = cancel;
   if (reschedule) state.reschedule = reschedule;
   if (serviceMatch) state.serviceMatch = serviceMatch;
-  if (recordingConsent) state.recordingConsent = recordingConsent;
   if (triage) state.triage = triage;
+  if (safety) state.safety = safety;
   if (clarification) state.clarification = clarification;
   if (booking) state.booking = booking;
   if (bookingForOther) state.bookingForOther = bookingForOther;
@@ -270,8 +283,8 @@ export function writeConversationState(state: ConversationState): Record<string,
     cancel,
     reschedule,
     serviceMatch,
-    recordingConsent,
     triage,
+    safety,
     clarification,
     booking,
     bookingForOther,
@@ -282,8 +295,8 @@ export function writeConversationState(state: ConversationState): Record<string,
   attachNamespaceIfNonempty(out, 'cancel', cancel);
   attachNamespaceIfNonempty(out, 'reschedule', reschedule);
   attachNamespaceIfNonempty(out, 'serviceMatch', serviceMatch);
-  attachNamespaceIfNonempty(out, 'recordingConsent', recordingConsent);
   attachNamespaceIfNonempty(out, 'triage', triage);
+  attachNamespaceIfNonempty(out, 'safety', safety);
   attachNamespaceIfNonempty(out, 'clarification', clarification);
   attachNamespaceIfNonempty(out, 'booking', booking);
   attachNamespaceIfNonempty(out, 'bookingForOther', bookingForOther);

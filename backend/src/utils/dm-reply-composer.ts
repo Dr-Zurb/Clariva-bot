@@ -4,8 +4,14 @@
  */
 
 import type { DoctorSettingsRow } from '../types/doctor-settings';
-import { detectSafetyMessageLocale } from './safety-messages';
 import type { SafetyMessageLocale } from './safety-messages';
+import {
+  languageUsesDevanagari,
+  languageUsesGurmukhi,
+  toStaticLocale,
+  type ConversationLanguage,
+} from './conversation-language';
+import { buildWelcomeBackSegmentMessage } from './dm-copy';
 import {
   type ConsultationFeeAmbiguousStaffReview,
   type ConsultationFeeQuoteMatcherFinalize,
@@ -23,37 +29,33 @@ import { REQUIRED_COLLECTION_FIELDS } from './validation';
 /** Immutable segment kinds (no model-invented rupees inside these). */
 export type DmSegment =
   | { kind: 'fee_body'; markdown: string }
-  | { kind: 'booking_cta'; userText: string }
-  | { kind: 'mid_collection_continue'; userText: string; missingFieldKeys?: PatientCollectionField[] }
-  | { kind: 'welcome_back'; firstName?: string; recencyBucket?: ReturningRecencyBucket }
+  | { kind: 'booking_cta'; language: ConversationLanguage }
+  | {
+      kind: 'mid_collection_continue';
+      language: ConversationLanguage;
+      missingFieldKeys?: PatientCollectionField[];
+    }
+  | {
+      kind: 'welcome_back';
+      language: ConversationLanguage;
+      firstName?: string;
+      recencyBucket?: ReturningRecencyBucket;
+    }
   | { kind: 'markdown'; content: string };
 
 const SEGMENT_GLUE = '\n\n';
 
-function recencySuffixForWelcomeBack(bucket?: ReturningRecencyBucket): string | undefined {
-  switch (bucket) {
-    case 'within_1_month':
-      return 'Great to hear from you again.';
-    case 'within_3_months':
-      return "It's good to hear from you again.";
-    case 'within_1_year':
-      return "It's been a while — good to hear from you.";
-    case 'over_1_year':
-      return "It's been quite a while — glad you're in touch.";
-    default:
-      return undefined;
-  }
-}
-
-/** rcp-21: Deterministic welcome-back opener — first name + coarse recency only (no dates). */
+/** rcp-21 / lang-23: Deterministic welcome-back opener — first name + coarse recency only. */
 export function formatWelcomeBackSegment(opts: {
+  language: ConversationLanguage;
   firstName?: string;
   recencyBucket?: ReturningRecencyBucket;
 }): string {
-  const firstName = opts.firstName?.trim();
-  const greeting = firstName ? `Welcome back, **${firstName}**!` : 'Welcome back!';
-  const recencySuffix = recencySuffixForWelcomeBack(opts.recencyBucket);
-  return recencySuffix ? `${greeting} ${recencySuffix}` : greeting;
+  return buildWelcomeBackSegmentMessage({
+    language: opts.language,
+    firstName: opts.firstName,
+    recencyBucket: opts.recencyBucket,
+  });
 }
 
 /** Join server-owned segments in order (RBH-19). */
@@ -68,16 +70,15 @@ export function composeDmReplySegments(segments: DmSegment[], glue: string = SEG
         if (s.markdown.trim()) parts.push(s.markdown.trim());
         break;
       case 'booking_cta':
-        parts.push(formatFeeBookingCtaForDm(s.userText));
+        parts.push(formatFeeBookingCtaForDm(s.language));
         break;
       case 'mid_collection_continue':
-        parts.push(
-          formatMidCollectionAfterFeeBlock(s.userText, s.missingFieldKeys)
-        );
+        parts.push(formatMidCollectionAfterFeeBlock(s.language, s.missingFieldKeys));
         break;
       case 'welcome_back':
         parts.push(
           formatWelcomeBackSegment({
+            language: s.language,
             firstName: s.firstName,
             recencyBucket: s.recencyBucket,
           })
@@ -103,11 +104,18 @@ export function feeQuoteSettingsFromDoctorRow(
   };
 }
 
+export type FeeComposeLanguageOpts = {
+  /** Turn-resolved reply language (lang-06). Required for localized fee CTA/footer. */
+  language: ConversationLanguage;
+  catalogMatchText?: string;
+  clinicalLedFeeThread?: boolean;
+};
+
 /** Idle user (not in intake): fee block + localized booking CTA. */
 export function composeIdleFeeQuoteDm(
   settings: DoctorSettingsRow | null,
   userText: string,
-  opts?: { catalogMatchText?: string; clinicalLedFeeThread?: boolean }
+  opts: FeeComposeLanguageOpts
 ): string {
   return composeIdleFeeQuoteDmWithMeta(settings, userText, opts).reply;
 }
@@ -116,7 +124,7 @@ export function composeIdleFeeQuoteDm(
 export function composeIdleFeeQuoteDmWithMeta(
   settings: DoctorSettingsRow | null,
   userText: string,
-  opts?: { catalogMatchText?: string; clinicalLedFeeThread?: boolean }
+  opts: FeeComposeLanguageOpts
 ): {
   reply: string;
   feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;
@@ -124,9 +132,10 @@ export function composeIdleFeeQuoteDmWithMeta(
 } {
   const fee = formatConsultationFeesForDmWithMeta(
     feeQuoteSettingsFromDoctorRow(settings),
+    opts.language,
     userText,
-    opts?.catalogMatchText,
-    opts?.clinicalLedFeeThread !== undefined
+    opts.catalogMatchText,
+    opts.clinicalLedFeeThread !== undefined
       ? { clinicalLedFeeThread: opts.clinicalLedFeeThread }
       : undefined
   );
@@ -136,7 +145,7 @@ export function composeIdleFeeQuoteDmWithMeta(
   return {
     reply: composeDmReplySegments([
       { kind: 'fee_body', markdown: fee.markdown },
-      { kind: 'booking_cta', userText },
+      { kind: 'booking_cta', language: opts.language },
     ]),
     feeQuoteMatcherFinalize: fee.feeQuoteMatcherFinalize,
   };
@@ -146,9 +155,7 @@ export function composeIdleFeeQuoteDmWithMeta(
 export async function composeIdleFeeQuoteDmWithMetaAsync(
   settings: DoctorSettingsRow | null,
   userText: string,
-  opts?: {
-    catalogMatchText?: string;
-    clinicalLedFeeThread?: boolean;
+  opts: FeeComposeLanguageOpts & {
     showModalityBreakdown?: boolean;
     llmCatalogNarrow?: {
       correlationId: string;
@@ -162,17 +169,18 @@ export async function composeIdleFeeQuoteDmWithMetaAsync(
   feeAmbiguousStaffReview?: ConsultationFeeAmbiguousStaffReview;
 }> {
   const catalogOpts: ServiceCatalogDmFormatOpts | undefined =
-    opts?.clinicalLedFeeThread !== undefined || opts?.llmCatalogNarrow || opts?.showModalityBreakdown != null
+    opts.clinicalLedFeeThread !== undefined || opts.llmCatalogNarrow || opts.showModalityBreakdown != null
       ? {
-          clinicalLedFeeThread: opts?.clinicalLedFeeThread,
-          showModalityBreakdown: opts?.showModalityBreakdown,
-          llmNarrow: opts?.llmCatalogNarrow,
+          clinicalLedFeeThread: opts.clinicalLedFeeThread,
+          showModalityBreakdown: opts.showModalityBreakdown,
+          llmNarrow: opts.llmCatalogNarrow,
         }
       : undefined;
   const fee = await formatConsultationFeesForDmWithMetaAsync(
     feeQuoteSettingsFromDoctorRow(settings),
+    opts.language,
     userText,
-    opts?.catalogMatchText,
+    opts.catalogMatchText,
     catalogOpts
   );
   if (fee.feeAmbiguousStaffReview) {
@@ -181,7 +189,7 @@ export async function composeIdleFeeQuoteDmWithMetaAsync(
   return {
     reply: composeDmReplySegments([
       { kind: 'fee_body', markdown: fee.markdown },
-      { kind: 'booking_cta', userText },
+      { kind: 'booking_cta', language: opts.language },
     ]),
     feeQuoteMatcherFinalize: fee.feeQuoteMatcherFinalize,
   };
@@ -191,7 +199,7 @@ export async function composeIdleFeeQuoteDmWithMetaAsync(
 export function composeMidCollectionFeeQuoteDm(
   settings: DoctorSettingsRow | null,
   userText: string,
-  opts?: { collectedFields?: string[] | null; catalogMatchText?: string }
+  opts: FeeComposeLanguageOpts & { collectedFields?: string[] | null }
 ): string {
   return composeMidCollectionFeeQuoteDmWithMeta(settings, userText, opts).reply;
 }
@@ -199,11 +207,7 @@ export function composeMidCollectionFeeQuoteDm(
 export function composeMidCollectionFeeQuoteDmWithMeta(
   settings: DoctorSettingsRow | null,
   userText: string,
-  opts?: {
-    collectedFields?: string[] | null;
-    catalogMatchText?: string;
-    clinicalLedFeeThread?: boolean;
-  }
+  opts: FeeComposeLanguageOpts & { collectedFields?: string[] | null }
 ): {
   reply: string;
   feeQuoteMatcherFinalize?: ConsultationFeeQuoteMatcherFinalize;
@@ -211,22 +215,23 @@ export function composeMidCollectionFeeQuoteDmWithMeta(
 } {
   const fee = formatConsultationFeesForDmWithMeta(
     feeQuoteSettingsFromDoctorRow(settings),
+    opts.language,
     userText,
-    opts?.catalogMatchText,
-    opts?.clinicalLedFeeThread !== undefined
+    opts.catalogMatchText,
+    opts.clinicalLedFeeThread !== undefined
       ? { clinicalLedFeeThread: opts.clinicalLedFeeThread }
       : undefined
   );
   if (fee.feeAmbiguousStaffReview) {
     return { reply: fee.markdown.trim(), feeAmbiguousStaffReview: fee.feeAmbiguousStaffReview };
   }
-  const missing = computeMissingCollectionFields(opts?.collectedFields);
+  const missing = computeMissingCollectionFields(opts.collectedFields);
   return {
     reply: composeDmReplySegments([
       { kind: 'fee_body', markdown: fee.markdown },
       {
         kind: 'mid_collection_continue',
-        userText,
+        language: opts.language,
         missingFieldKeys: missing.length > 0 ? missing : undefined,
       },
     ]),
@@ -237,10 +242,8 @@ export function composeMidCollectionFeeQuoteDmWithMeta(
 export async function composeMidCollectionFeeQuoteDmWithMetaAsync(
   settings: DoctorSettingsRow | null,
   userText: string,
-  opts?: {
+  opts: FeeComposeLanguageOpts & {
     collectedFields?: string[] | null;
-    catalogMatchText?: string;
-    clinicalLedFeeThread?: boolean;
     showModalityBreakdown?: boolean;
     llmCatalogNarrow?: {
       correlationId: string;
@@ -254,29 +257,30 @@ export async function composeMidCollectionFeeQuoteDmWithMetaAsync(
   feeAmbiguousStaffReview?: ConsultationFeeAmbiguousStaffReview;
 }> {
   const catalogOpts: ServiceCatalogDmFormatOpts | undefined =
-    opts?.clinicalLedFeeThread !== undefined || opts?.llmCatalogNarrow || opts?.showModalityBreakdown != null
+    opts.clinicalLedFeeThread !== undefined || opts.llmCatalogNarrow || opts.showModalityBreakdown != null
       ? {
-          clinicalLedFeeThread: opts?.clinicalLedFeeThread,
-          showModalityBreakdown: opts?.showModalityBreakdown,
-          llmNarrow: opts?.llmCatalogNarrow,
+          clinicalLedFeeThread: opts.clinicalLedFeeThread,
+          showModalityBreakdown: opts.showModalityBreakdown,
+          llmNarrow: opts.llmCatalogNarrow,
         }
       : undefined;
   const fee = await formatConsultationFeesForDmWithMetaAsync(
     feeQuoteSettingsFromDoctorRow(settings),
+    opts.language,
     userText,
-    opts?.catalogMatchText,
+    opts.catalogMatchText,
     catalogOpts
   );
   if (fee.feeAmbiguousStaffReview) {
     return { reply: fee.markdown.trim(), feeAmbiguousStaffReview: fee.feeAmbiguousStaffReview };
   }
-  const missing = computeMissingCollectionFields(opts?.collectedFields);
+  const missing = computeMissingCollectionFields(opts.collectedFields);
   return {
     reply: composeDmReplySegments([
       { kind: 'fee_body', markdown: fee.markdown },
       {
         kind: 'mid_collection_continue',
-        userText,
+        language: opts.language,
         missingFieldKeys: missing.length > 0 ? missing : undefined,
       },
     ]),
@@ -319,13 +323,12 @@ const FIELD_LABEL_PA_LATIN: Record<PatientCollectionField, string> = {
 };
 
 function localeBucket(
-  userText: string
+  language: ConversationLanguage
 ): { base: SafetyMessageLocale; hasDevanagari: boolean; hasGurmukhi: boolean } {
-  const loc = detectSafetyMessageLocale(userText || '');
   return {
-    base: loc,
-    hasDevanagari: /[\u0900-\u097F]/.test(userText || ''),
-    hasGurmukhi: /[\u0A00-\u0A7F]/.test(userText || ''),
+    base: toStaticLocale(language),
+    hasDevanagari: languageUsesDevanagari(language),
+    hasGurmukhi: languageUsesGurmukhi(language),
   };
 }
 
@@ -358,10 +361,10 @@ function humanizeMissingFields(
  * Footer after fee block when user is mid–booking (RBH-18/19). ASCII `---` separator (RBH-16).
  */
 export function formatMidCollectionAfterFeeBlock(
-  userText: string,
+  language: ConversationLanguage,
   missingFieldKeys?: PatientCollectionField[]
 ): string {
-  const { base, hasDevanagari, hasGurmukhi } = localeBucket(userText);
+  const { base, hasDevanagari, hasGurmukhi } = localeBucket(language);
   const missingLine =
     missingFieldKeys?.length ?
       `\n\n${humanizeMissingFields(missingFieldKeys, base, hasDevanagari, hasGurmukhi)}`

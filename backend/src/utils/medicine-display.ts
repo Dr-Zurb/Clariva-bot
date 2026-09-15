@@ -85,7 +85,7 @@ export function durationUnitTakesValue(unit: DurationUnit | null | undefined): b
  */
 export function formatDurationLegacyLabel(
   value: number | null | undefined,
-  unit: DurationUnit | null | undefined,
+  unit: DurationUnit | null | undefined
 ): string {
   if (!unit) return '';
   const meta = DURATION_UNIT_META[unit];
@@ -142,7 +142,7 @@ const DOSE_UNIT_LABELS: Record<DoseUnit, { singular: string; plural: string }> =
 /** "2 tabs", "1 spoon" — empty string when either piece is missing. */
 export function formatDoseLabel(
   qty: number | null | undefined,
-  unit: DoseUnit | null | undefined,
+  unit: DoseUnit | null | undefined
 ): string {
   if (qty == null || qty <= 0 || !unit) return '';
   const meta = DOSE_UNIT_LABELS[unit];
@@ -187,11 +187,16 @@ export interface MedicineDisplay {
   instructions: string;
 }
 
+const DOSE_SCHEDULE_RE = /^[0-9]+(-[0-9]+)+$/;
+
 export function projectMedicineForDisplay(med: PrescriptionMedicine): MedicineDisplay {
-  // Frequency: structured wins when set + non-CUSTOM (CUSTOM means
-  // doctor wanted free-text; the legacy column carries that text).
+  // Frequency: a stored 1-0-1 pattern wins (Indian dose schedule). Else
+  // structured code label; else free-text.
   let frequency = '';
-  if (med.frequency_code && med.frequency_code !== 'CUSTOM') {
+  const storedSchedule = med.frequency?.trim() ?? '';
+  if (DOSE_SCHEDULE_RE.test(storedSchedule)) {
+    frequency = storedSchedule;
+  } else if (med.frequency_code && med.frequency_code !== 'CUSTOM') {
     frequency = getFrequencyLegacyLabel(med.frequency_code);
   } else if (med.frequency) {
     frequency = med.frequency;
@@ -217,13 +222,12 @@ export function projectMedicineForDisplay(med: PrescriptionMedicine): MedicineDi
 
   // Dose column: "2 tabs (5 mg)" when both structured dose and the
   // strength text are present (migration 133); strength alone otherwise.
-  const doseLabel = formatDoseLabel(med.dose_qty != null ? Number(med.dose_qty) : null, med.dose_unit);
+  const doseLabel = formatDoseLabel(
+    med.dose_qty != null ? Number(med.dose_qty) : null,
+    med.dose_unit
+  );
   const strength = (med.dosage ?? '').trim();
-  const dosage = doseLabel
-    ? strength
-      ? `${doseLabel} (${strength})`
-      : doseLabel
-    : strength;
+  const dosage = doseLabel ? (strength ? `${doseLabel} (${strength})` : doseLabel) : strength;
 
   // Instructions: structured food timing leads; free-text notes follow.
   const foodLabel = getFoodTimingLabel(med.food_timing);

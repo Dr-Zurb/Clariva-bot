@@ -36,8 +36,8 @@ import { DrugSearchResult } from '../types/drug-master';
 const MAX_LIMIT = 25;
 
 // Minimum query length — single chars match too much to be useful and
-// also defeat the trigram index. Keep in lockstep with the frontend
-// debouncer (which only fires when query.length >= 2).
+// also defeat the trigram index. Empty q is the catalogue list (session
+// cache). Keep MIN_QUERY_LEN in lockstep with the frontend filter (2).
 const MIN_QUERY_LEN = 2;
 
 // Defensive upper-bound on the raw query string sent to the DB. Keeps
@@ -69,6 +69,17 @@ export async function searchDrugs(
   }
 
   const query = (rawQuery ?? '').trim().slice(0, MAX_QUERY_LEN);
+  // Empty q = full catalogue for the capture-bar session cache (table is tiny).
+  if (query.length === 0) {
+    const { data, error } = await admin
+      .from('drug_master')
+      .select(
+        'id, generic_name, brand_names, strength, form, route_default, created_at, updated_at'
+      )
+      .order('generic_name', { ascending: true });
+    if (error) handleSupabaseError(error, 'searchDrugs:list-all');
+    return (data ?? []) as DrugSearchResult[];
+  }
   if (query.length < MIN_QUERY_LEN) return [];
 
   const limit = Math.min(Math.max(1, Math.floor(rawLimit) || 10), MAX_LIMIT);

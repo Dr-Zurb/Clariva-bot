@@ -17,6 +17,17 @@ import {
   patchDoctorSettingsHandler,
 } from '../../../../controllers/settings-controller';
 import {
+  createBrandingLogoUploadUrlHandler,
+  deleteBrandingBackgroundHandler,
+  deleteBrandingFooterHandler,
+  deleteBrandingHeaderHandler,
+  deleteBrandingLogoHandler,
+  putBrandingBackgroundHandler,
+  putBrandingFooterHandler,
+  putBrandingHeaderHandler,
+  putBrandingLogoHandler,
+} from '../../../../controllers/branding-controller';
+import {
   getCockpitPresetsForUser,
   putCockpitPresetsForUser,
   deleteCockpitPresetForUser,
@@ -28,50 +39,72 @@ const router = Router();
 router.get('/', authenticateToken, getDoctorSettingsHandler);
 router.patch('/', authenticateToken, patchDoctorSettingsHandler);
 
+router.post('/branding/logo-upload-url', authenticateToken, createBrandingLogoUploadUrlHandler);
+router.post('/branding/logo', authenticateToken, putBrandingLogoHandler);
+router.delete('/branding/logo', authenticateToken, deleteBrandingLogoHandler);
+router.post('/branding/header', authenticateToken, putBrandingHeaderHandler);
+router.delete('/branding/header', authenticateToken, deleteBrandingHeaderHandler);
+router.post('/branding/footer', authenticateToken, putBrandingFooterHandler);
+router.delete('/branding/footer', authenticateToken, deleteBrandingFooterHandler);
+router.post('/branding/background', authenticateToken, putBrandingBackgroundHandler);
+router.delete('/branding/background', authenticateToken, deleteBrandingBackgroundHandler);
+
 // GET /v1/settings/doctor/cockpit-presets
-router.get('/cockpit-presets', authenticateToken, async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const userId = req.user!.id;
-    let presets = await getCockpitPresetsForUser(userId);
-    const kind =
-      typeof req.query.kind === 'string' && req.query.kind.trim().length > 0
-        ? req.query.kind.trim()
-        : undefined;
-    if (kind) {
-      presets = presets.filter((p) => {
-        const layout = p.layout as { kind?: string };
-        return layout?.kind === kind;
-      });
+router.get(
+  '/cockpit-presets',
+  authenticateToken,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const userId = req.user!.id;
+      let presets = await getCockpitPresetsForUser(userId);
+      const kind =
+        typeof req.query.kind === 'string' && req.query.kind.trim().length > 0
+          ? req.query.kind.trim()
+          : undefined;
+      if (kind) {
+        presets = presets.filter((p) => {
+          const layout = p.layout as { kind?: string };
+          return layout?.kind === kind;
+        });
+      }
+      res.json({ presets });
+    } catch (err) {
+      next(err);
     }
-    res.json({ presets });
-  } catch (err) {
-    next(err);
   }
-});
+);
 
 // PUT /v1/settings/doctor/cockpit-presets
 // Body: { presets: CockpitLayoutPreset[] }
-router.put('/cockpit-presets', authenticateToken, async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const userId = req.user!.id;
-    const body = req.body as { presets?: unknown };
-    const presets = await putCockpitPresetsForUser(userId, body.presets as CockpitLayoutPreset[]);
-    res.json({ presets });
-  } catch (err) {
-    next(err);
+router.put(
+  '/cockpit-presets',
+  authenticateToken,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const userId = req.user!.id;
+      const body = req.body as { presets?: unknown };
+      const presets = await putCockpitPresetsForUser(userId, body.presets as CockpitLayoutPreset[]);
+      res.json({ presets });
+    } catch (err) {
+      next(err);
+    }
   }
-});
+);
 
 // DELETE /v1/settings/doctor/cockpit-presets/:presetId
-router.delete('/cockpit-presets/:presetId', authenticateToken, async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const userId = req.user!.id;
-    const { presetId } = req.params;
-    const presets = await deleteCockpitPresetForUser(userId, presetId);
-    res.json({ presets });
-  } catch (err) {
-    next(err);
+router.delete(
+  '/cockpit-presets/:presetId',
+  authenticateToken,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const userId = req.user!.id;
+      const { presetId } = req.params;
+      const presets = await deleteCockpitPresetForUser(userId, presetId);
+      res.json({ presets });
+    } catch (err) {
+      next(err);
+    }
   }
-});
+);
 
 export default router;

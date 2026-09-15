@@ -54,16 +54,10 @@
 
 import { getSupabaseAdminClient } from '../config/database';
 import { logger } from '../config/logger';
-import {
-  InternalError,
-  NotFoundError,
-  ValidationError,
-} from '../utils/errors';
+import { InternalError, NotFoundError, ValidationError } from '../utils/errors';
 import { findSessionById } from './consultation-session-service';
-import {
-  notifyDoctorOfPatientReplay,
-  notifyPatientOfDoctorReplay,
-} from './notification-service';
+import { notifyDoctorOfPatientReplay, notifyPatientOfDoctorReplay } from './notification-service';
+import { ensureCompositionForSession } from './recording-compose-on-demand-service';
 import { getRecordingArtifactsForSession } from './recording-track-service';
 import { resolveRetentionPolicy } from './regulatory-retention-service';
 import {
@@ -88,7 +82,7 @@ export type MintReplayErrorCode =
 export class MintReplayError extends Error {
   constructor(
     public readonly code: MintReplayErrorCode,
-    message: string,
+    message: string
   ) {
     super(message);
     this.name = 'MintReplayError';
@@ -121,44 +115,56 @@ export type ReplayArtifactKind = 'audio' | 'video';
 export type ReplayCallerRole = 'doctor' | 'patient' | 'support_staff';
 
 export interface MintReplayInput {
-  sessionId:        string;
-  artifactKind:     ReplayArtifactKind;
+  sessionId: string;
+  artifactKind: ReplayArtifactKind;
+  /**
+   * rec-29: mint this composition. When omitted, the existing
+   * single-artifact resolver (newest index / Path B / first completed
+   * Twilio row) is used so older callers keep working.
+   */
+  compositionSid?: string;
   /** Caller's user id. Patient: real `consultation_sessions.patient_id`. */
   requestingUserId: string;
-  requestingRole:   ReplayCallerRole;
+  requestingRole: ReplayCallerRole;
   /** Required when role='support_staff'; â‰¥10 chars; persisted in audit metadata. */
   escalationReason?: string;
-  correlationId:    string;
+  correlationId: string;
 }
 
 export interface MintReplayResult {
-  signedUrl:   string;
-  expiresAt:   Date;
+  signedUrl: string;
+  expiresAt: Date;
   /** Twilio Composition SID; surfaced for client-side cache-busting. */
   artifactRef: string;
 }
 
+export interface ReplayCompositionSummary {
+  compositionSid: string;
+  startedAt: Date;
+  durationSeconds: number | null;
+}
+
 export interface ReplayAvailability {
-  available:           boolean;
-  reason?:             MintReplayErrorCode;
+  available: boolean;
+  reason?: MintReplayErrorCode;
   /** Set when available=true for patient callers. */
   selfServeExpiresAt?: Date;
   /**
-   * Plan 08 · Task 44 · Decision 10 LOCKED. `true` when at least one
-   * completed video composition exists for this session. Drives the
-   * "Show video" toggle on `<RecordingReplayPlayer>` — the toggle is
-   * never rendered when this is `false` (or omitted) because there's
-   * nothing to toggle to. Unlike the audio availability signal this
-   * is NOT an auth/policy gate — a patient with `hasVideo=true` may
-   * still be blocked at mint time if the 30-day OTP window has lapsed.
+   * Plan 08 · Task 44 · Decision 10 LOCKED. Derived as
+   * `videoCompositions.length > 0`. Kept so post-call summary and
+   * older clients still compile. The player must read the arrays.
    */
-  hasVideo?:           boolean;
+  hasVideo?: boolean;
+  /** Completed audio legs, `startedAt` ascending. rec-29 / REC5-D4. */
+  audioCompositions?: ReplayCompositionSummary[];
+  /** Completed video legs, `startedAt` ascending. rec-29 / REC5-D4. */
+  videoCompositions?: ReplayCompositionSummary[];
 }
 
 export interface ReplayAvailabilityInput {
-  sessionId:        string;
+  sessionId: string;
   requestingUserId: string;
-  requestingRole:   ReplayCallerRole;
+  requestingRole: ReplayCallerRole;
 }
 
 // ============================================================================
@@ -180,12 +186,12 @@ const DEFAULT_PATIENT_SELF_SERVE_DAYS = 90;
  * reuse `runPolicyChecks` without re-loading the same rows.
  */
 export interface SessionContext {
-  id:               string;
-  doctorId:         string;
-  patientId:        string | null;
-  actualEndedAt:    Date | null;
-  doctorCountry:    string | null;
-  doctorSpecialty:  string | null;
+  id: string;
+  doctorId: string;
+  patientId: string | null;
+  actualEndedAt: Date | null;
+  doctorCountry: string | null;
+  doctorSpecialty: string | null;
 }
 
 async function loadSessionContext(sessionId: string): Promise<SessionContext> {
@@ -196,9 +202,7 @@ async function loadSessionContext(sessionId: string): Promise<SessionContext> {
 
   const admin = getSupabaseAdminClient();
   if (!admin) {
-    throw new InternalError(
-      'recording-access-service: Supabase admin client unavailable',
-    );
+    throw new InternalError('recording-access-service: Supabase admin client unavailable');
   }
 
   // SessionRecord doesn't expose actual_ended_at â€” read it directly.
@@ -209,7 +213,7 @@ async function loadSessionContext(sessionId: string): Promise<SessionContext> {
     .maybeSingle();
   if (sessionErr) {
     throw new InternalError(
-      `recording-access-service: session lookup failed (${sessionErr.message})`,
+      `recording-access-service: session lookup failed (${sessionErr.message})`
     );
   }
   const actualEndedAtIso =
@@ -232,43 +236,51 @@ async function loadSessionContext(sessionId: string): Promise<SessionContext> {
   }
 
   return {
-    id:              session.id,
-    doctorId:        session.doctorId,
-    patientId:       session.patientId,
-    actualEndedAt:   actualEndedAtIso ? new Date(actualEndedAtIso) : null,
+    id: session.id,
+    doctorId: session.doctorId,
+    patientId: session.patientId,
+    actualEndedAt: actualEndedAtIso ? new Date(actualEndedAtIso) : null,
     doctorCountry,
     doctorSpecialty,
   };
 }
 
 // ============================================================================
-// Internal: artifact resolution (audio only in v1)
+// Internal: artifact resolution
 // ============================================================================
+
+/**
+ * REC1-D5 — transitional Path B (`consultation_transcripts`) for audio
+ * replay. Exists because historical voice sessions have a composition
+ * SID on the transcript row and no `recording_artifact_index` row.
+ *
+ * Retirement condition (legible here on purpose): flip to `false` and
+ * delete Path B only after production residue is **zero** ended
+ * sessions with no index row. rec-34 (2026-08-22): residue is **not**
+ * zero — rec-05 historical apply was 0 / 14 (`noCompositions`); live
+ * post-hook count is unmeasured. Path B stays. Do not delete it in p1.
+ */
+export const TRANSCRIPT_AUDIO_FALLBACK_ENABLED = true;
 
 interface ResolvedAudioArtifact {
   compositionSid: string;
-  /** Source row hint for debugging â€” 'index' or 'transcript'. */
+  /** Source row hint for debugging — 'index' or 'transcript'. */
   source: 'index' | 'transcript';
 }
 
 /**
  * Resolve the audio Composition SID for a session. Prefers
- * `recording_artifact_index` (Plan 02 canonical registry); falls back
- * to the latest non-failed `consultation_transcripts.composition_sid`
- * (Plan 05 Task 25's writer). Either path returns a SID that
- * `twilio-compositions.fetchCompositionMetadata` can resolve.
+ * `recording_artifact_index` (REC-D19). Path B
+ * (`consultation_transcripts`) stays until rec-05 backfill + p5
+ * retirement (REC1-D5 / `TRANSCRIPT_AUDIO_FALLBACK_ENABLED`).
  *
  * Returns `null` when no artifact reference exists for the session
  * (caller throws `MintReplayError('artifact_not_found')`).
  */
-async function resolveAudioArtifact(
-  sessionId: string,
-): Promise<ResolvedAudioArtifact | null> {
+async function resolveAudioArtifact(sessionId: string): Promise<ResolvedAudioArtifact | null> {
   const admin = getSupabaseAdminClient();
   if (!admin) {
-    throw new InternalError(
-      'recording-access-service: Supabase admin client unavailable',
-    );
+    throw new InternalError('recording-access-service: Supabase admin client unavailable');
   }
 
   // Path A: recording_artifact_index (canonical when populated).
@@ -280,7 +292,12 @@ async function resolveAudioArtifact(
     .is('hard_deleted_at', null)
     .order('created_at', { ascending: false })
     .limit(1);
-  if (!artifactErr && artifactRows && artifactRows.length > 0) {
+  if (artifactErr) {
+    logger.warn(
+      { sessionId, error: artifactErr.message },
+      'recording-access-service: index audio lookup failed (falling through to transcript)'
+    );
+  } else if (artifactRows && artifactRows.length > 0) {
     const row = artifactRows[0] as {
       storage_uri: string | null;
       hard_deleted_at: string | null;
@@ -292,8 +309,13 @@ async function resolveAudioArtifact(
     }
   }
 
-  // Path B: consultation_transcripts. The canonical Composition SID
-  // lives on the `composition_sid` column for any non-failed row.
+  // Path B: consultation_transcripts. Transitional — see
+  // TRANSCRIPT_AUDIO_FALLBACK_ENABLED. The Composition SID lives on
+  // `composition_sid` for any non-failed row.
+  if (!TRANSCRIPT_AUDIO_FALLBACK_ENABLED) {
+    return null;
+  }
+
   const { data: transcriptRows, error: transcriptErr } = await admin
     .from('consultation_transcripts')
     .select('composition_sid, status, created_at')
@@ -304,17 +326,21 @@ async function resolveAudioArtifact(
   if (transcriptErr) {
     logger.warn(
       { sessionId, error: transcriptErr.message },
-      'recording-access-service: transcript lookup failed (non-fatal)',
+      'recording-access-service: transcript lookup failed (non-fatal)'
     );
   }
   if (transcriptRows && transcriptRows.length > 0) {
     const row = transcriptRows[0] as { composition_sid: string | null };
     const sid = (row.composition_sid ?? '').trim();
     if (sid && sid.startsWith('CJ')) {
-      // Twilio Composition SIDs start with 'CJ'. Room SIDs ('RMâ€¦')
-      // are placeholders the worker hasn't resolved yet â€” those don't
+      // Twilio Composition SIDs start with 'CJ'. Room SIDs ('RM…')
+      // are placeholders the worker hasn't resolved yet — those don't
       // correspond to a real composition and we treat them as
       // "not yet ready".
+      logger.info(
+        { sessionId, compositionSid: sid, source: 'transcript' },
+        'recording-access-service: audio resolved via transcript fallback (REC1-D5 — retire after rec-05 backfill)'
+      );
       return { compositionSid: sid, source: 'transcript' };
     }
   }
@@ -328,29 +354,46 @@ async function resolveAudioArtifact(
 
 interface ResolvedVideoArtifact {
   compositionSid: string;
-  source: 'twilio';
+  source: 'index' | 'twilio';
 }
 
 /**
- * Resolve the VIDEO Composition SID for a session. Unlike audio
- * (which has both a canonical `recording_artifact_index` and a
- * fallback transcript path), video has only one source of truth:
- * the live Twilio Compositions API via
- * `getRecordingArtifactsForSession`. Videos are also
- * lower-volume â€” only doctor-escalated sessions produce them â€”
- * so there's no need to precompute a searchable index yet.
+ * Resolve the VIDEO Composition SID for a session. Prefers
+ * `recording_artifact_index` (`video_composition`, `hard_deleted_at IS
+ * NULL`, newest first). Rec-02 only registers Twilio-`completed`
+ * compositions, so an index hit is already media-ready.
  *
- * Returns the first completed video composition. Non-completed
- * compositions (processing / enqueued) are filtered out so the
- * caller sees `null` rather than a SID that would then fail the
- * Stage 5 `status === 'completed'` check with a confusing error.
- * In-progress sessions are expected to wait until the worker
- * finalises the composition.
+ * When no usable index row exists, falls back to the live Twilio
+ * Compositions API via `getRecordingArtifactsForSession` and keeps
+ * the completed-only filter. A lookup failure still degrades to
+ * `null` rather than throwing into the replay pipeline.
  */
-async function resolveVideoArtifact(
-  sessionId: string,
-): Promise<ResolvedVideoArtifact | null> {
+async function resolveVideoArtifact(sessionId: string): Promise<ResolvedVideoArtifact | null> {
   try {
+    const admin = getSupabaseAdminClient();
+    if (admin) {
+      const { data: artifactRows, error: artifactErr } = await admin
+        .from('recording_artifact_index')
+        .select('storage_uri, hard_deleted_at')
+        .eq('session_id', sessionId)
+        .eq('artifact_kind', 'video_composition')
+        .is('hard_deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (artifactErr) {
+        logger.warn(
+          { sessionId, error: artifactErr.message },
+          'recording-access-service: index video lookup failed (falling through to Twilio)'
+        );
+      } else if (artifactRows && artifactRows.length > 0) {
+        const row = artifactRows[0] as { storage_uri: string | null };
+        const sid = extractCompositionSid(row.storage_uri ?? '');
+        if (sid) {
+          return { compositionSid: sid, source: 'index' };
+        }
+      }
+    }
+
     const { videoCompositions } = await getRecordingArtifactsForSession({ sessionId });
     // Pick the most recent completed video composition. The tracker
     // returns them ordered from Twilio; we filter on status to
@@ -362,7 +405,7 @@ async function resolveVideoArtifact(
     const message = err instanceof Error ? err.message : String(err);
     logger.warn(
       { sessionId, error: message },
-      'recording-access-service: video artifact lookup failed (treating as not found)',
+      'recording-access-service: video artifact lookup failed (treating as not found)'
     );
     return null;
   }
@@ -382,6 +425,89 @@ function extractCompositionSid(storageUri: string): string | null {
   // /compositions/CJxxx... or /audio/CJxxx.mp4
   const match = /(CJ[a-zA-Z0-9]{10,})/.exec(trimmed);
   return match?.[1] ?? null;
+}
+
+function isCompositionSid(value: string): boolean {
+  return /^CJ[A-Za-z0-9]{2,32}$/.test(value.trim());
+}
+
+function toCompositionSummary(ref: {
+  compositionSid: string;
+  startedAt: Date;
+  durationSeconds: number | null;
+}): ReplayCompositionSummary {
+  return {
+    compositionSid: ref.compositionSid,
+    startedAt: ref.startedAt,
+    durationSeconds: ref.durationSeconds,
+  };
+}
+
+/**
+ * Confirm a caller-supplied SID belongs to this session + kind.
+ * Index first, then Path B (audio), then the cached Twilio list.
+ * Never mints a SID from another session.
+ */
+async function resolveSpecifiedArtifact(
+  sessionId: string,
+  artifactKind: ReplayArtifactKind,
+  compositionSid: string,
+): Promise<ResolvedAudioArtifact | ResolvedVideoArtifact | null> {
+  const sid = compositionSid.trim();
+  if (!isCompositionSid(sid)) return null;
+
+  const indexKind =
+    artifactKind === 'video' ? 'video_composition' : 'audio_composition';
+  const admin = getSupabaseAdminClient();
+  if (admin) {
+    const { data: artifactRows, error: artifactErr } = await admin
+      .from('recording_artifact_index')
+      .select('storage_uri, hard_deleted_at')
+      .eq('session_id', sessionId)
+      .eq('artifact_kind', indexKind)
+      .is('hard_deleted_at', null);
+    if (artifactErr) {
+      logger.warn(
+        { sessionId, compositionSid: sid, error: artifactErr.message },
+        'recording-access-service: index membership lookup failed',
+      );
+    } else {
+      for (const raw of artifactRows ?? []) {
+        const row = raw as { storage_uri: string | null };
+        if (extractCompositionSid(row.storage_uri ?? '') === sid) {
+          return {
+            compositionSid: sid,
+            source: 'index',
+          };
+        }
+      }
+    }
+  }
+
+  if (artifactKind === 'audio' && TRANSCRIPT_AUDIO_FALLBACK_ENABLED) {
+    const fallback = await resolveAudioArtifact(sessionId);
+    if (fallback && fallback.compositionSid === sid) {
+      return fallback;
+    }
+  }
+
+  try {
+    const listed = await getRecordingArtifactsForSession({ sessionId });
+    const pool =
+      artifactKind === 'video' ? listed.videoCompositions : listed.audioCompositions;
+    const hit = pool.find((row) => row.compositionSid === sid);
+    if (hit) {
+      return { compositionSid: sid, source: 'twilio' };
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn(
+      { sessionId, compositionSid: sid, error: message },
+      'recording-access-service: Twilio membership lookup failed',
+    );
+  }
+
+  return null;
 }
 
 // ============================================================================
@@ -410,20 +536,15 @@ function extractCompositionSid(storageUri: string): string | null {
  */
 export async function isSessionOrCompositionRevoked(
   sessionId: string,
-  compositionSid: string,
+  compositionSid: string
 ): Promise<boolean> {
   return isRevoked(sessionId, compositionSid);
 }
 
-async function isRevoked(
-  sessionId: string,
-  compositionSid: string,
-): Promise<boolean> {
+async function isRevoked(sessionId: string, compositionSid: string): Promise<boolean> {
   const admin = getSupabaseAdminClient();
   if (!admin) {
-    throw new InternalError(
-      'recording-access-service: Supabase admin client unavailable',
-    );
+    throw new InternalError('recording-access-service: Supabase admin client unavailable');
   }
 
   const compositionUrl = getComputedTwilioMediaUrl(compositionSid);
@@ -441,9 +562,9 @@ async function isRevoked(
   if (error) {
     logger.warn(
       { sessionId, error: error.message },
-      'recording-access-service: revocation lookup failed; treating as not-revoked (fail-open)',
+      'recording-access-service: revocation lookup failed; treating as revoked (fail-closed)'
     );
-    return false;
+    return true;
   }
   const rows = (data ?? []) as { url_prefix: string }[];
   for (const row of rows) {
@@ -465,13 +586,13 @@ async function isRevoked(
 // ============================================================================
 
 interface AuditMetadata {
-  outcome:                  'granted' | 'denied';
-  deny_reason?:             MintReplayErrorCode;
-  escalation_reason?:       string;
-  ttl_seconds?:             number;
-  twilio_status?:           string;
-  url_prefix?:              string;
-  policy_id?:               string;
+  outcome: 'granted' | 'denied';
+  deny_reason?: MintReplayErrorCode;
+  escalation_reason?: string;
+  ttl_seconds?: number;
+  twilio_status?: string;
+  url_prefix?: string;
+  policy_id?: string;
   self_serve_window_ends_at?: string;
 }
 
@@ -484,21 +605,21 @@ interface AuditMetadata {
 type RecordingAccessType = 'audio_only' | 'full_video';
 
 interface AuditRow {
-  session_id:       string;
-  artifact_ref:     string;
-  artifact_kind:    'audio' | 'video';
-  access_type?:     RecordingAccessType;
-  accessed_by:      string;
+  session_id: string;
+  artifact_ref: string;
+  artifact_kind: 'audio' | 'video';
+  access_type?: RecordingAccessType;
+  accessed_by: string;
   accessed_by_role: ReplayCallerRole;
-  metadata:         AuditMetadata;
-  correlation_id:   string | null;
+  metadata: AuditMetadata;
+  correlation_id: string | null;
 }
 
 async function writeAuditRow(row: AuditRow): Promise<string> {
   const admin = getSupabaseAdminClient();
   if (!admin) {
     throw new InternalError(
-      'recording-access-service: Supabase admin client unavailable â€” cannot write audit',
+      'recording-access-service: Supabase admin client unavailable â€” cannot write audit'
     );
   }
   const { data, error } = await admin
@@ -508,7 +629,7 @@ async function writeAuditRow(row: AuditRow): Promise<string> {
     .single();
   if (error || !data) {
     throw new InternalError(
-      `recording-access-service: audit insert failed (${error?.message ?? 'no row returned'})`,
+      `recording-access-service: audit insert failed (${error?.message ?? 'no row returned'})`
     );
   }
   return (data as { id: string }).id;
@@ -519,28 +640,25 @@ async function writeAuditRow(row: AuditRow): Promise<string> {
 // ============================================================================
 
 interface NotifyReplayInput {
-  sessionId:              string;
-  callerRole:             ReplayCallerRole;
-  callerUserId:           string;
-  artifactKind:           ReplayArtifactKind;
+  sessionId: string;
+  callerRole: ReplayCallerRole;
+  callerUserId: string;
+  artifactKind: ReplayArtifactKind;
   recordingAccessAuditId: string;
-  escalationReason?:      string;
-  correlationId:          string;
+  escalationReason?: string;
+  correlationId: string;
 }
 
 /**
  * Fire the Task 30 mutual-replay notification helpers based on caller
  * role. Decision 4 LOCKED routing:
  *
- *   - `'doctor'`         â†’ notify the patient via IG-DM + SMS.
- *   - `'patient'`        â†’ notify the doctor via dashboard event.
- *   - `'support_staff'`  â†’ notify the doctor via dashboard event (the
- *                          doctor is the consent relationship holder per
- *                          Task 29 Notes #11; the patient is NOT
- *                          notified for support-staff replays because
- *                          Decision 4 frames support escalations as
- *                          internal tooling â€” surfacing them in the
- *                          patient inbox would dilute the trust model).
+ *   - `'doctor'`         → notify the patient via IG-DM + SMS.
+ *   - `'patient'`        → notify the doctor via dashboard event.
+ *   - `'support_staff'`  → notify the doctor via dashboard event AND
+ *                          the patient via IG-DM + SMS with support-staff
+ *                          copy (rec-30 / REC-D24). escalationReason is
+ *                          not forwarded to the patient.
  *
  * Both helpers are fire-and-forget â€” exceptions are logged but never
  * propagate (notification failures must not undo a granted mint).
@@ -562,7 +680,7 @@ async function notifyReplayWatcher(input: NotifyReplayInput): Promise<void> {
           sessionId: input.sessionId,
           artifactKind: input.artifactKind,
         },
-        'recording-access-service: replay notification skipped (unsupported artifactKind)',
+        'recording-access-service: replay notification skipped (unsupported artifactKind)'
       );
       return;
     }
@@ -571,10 +689,10 @@ async function notifyReplayWatcher(input: NotifyReplayInput): Promise<void> {
 
     if (input.callerRole === 'doctor') {
       const result = await notifyPatientOfDoctorReplay({
-        sessionId:              input.sessionId,
+        sessionId: input.sessionId,
         artifactType,
         recordingAccessAuditId: input.recordingAccessAuditId,
-        correlationId:          input.correlationId,
+        correlationId: input.correlationId,
       });
       logger.info(
         {
@@ -582,22 +700,24 @@ async function notifyReplayWatcher(input: NotifyReplayInput): Promise<void> {
           sessionId: input.sessionId,
           callerRole: input.callerRole,
           artifactType,
-          result: 'skipped' in result ? { skipped: true, reason: result.reason } : { anySent: result.anySent },
+          result:
+            'skipped' in result
+              ? { skipped: true, reason: result.reason }
+              : { anySent: result.anySent },
         },
-        'recording-access-service: notifyPatientOfDoctorReplay dispatched',
+        'recording-access-service: notifyPatientOfDoctorReplay dispatched'
       );
       return;
     }
 
-    if (input.callerRole === 'patient' || input.callerRole === 'support_staff') {
+    if (input.callerRole === 'patient') {
       const result = await notifyDoctorOfPatientReplay({
-        sessionId:              input.sessionId,
+        sessionId: input.sessionId,
         artifactType,
         recordingAccessAuditId: input.recordingAccessAuditId,
-        accessedByRole:         input.callerRole,
-        accessedByUserId:       input.callerUserId,
-        ...(input.escalationReason ? { escalationReason: input.escalationReason } : {}),
-        correlationId:          input.correlationId,
+        accessedByRole: input.callerRole,
+        accessedByUserId: input.callerUserId,
+        correlationId: input.correlationId,
       });
       logger.info(
         {
@@ -607,15 +727,48 @@ async function notifyReplayWatcher(input: NotifyReplayInput): Promise<void> {
           artifactType,
           result,
         },
-        'recording-access-service: notifyDoctorOfPatientReplay dispatched',
+        'recording-access-service: notifyDoctorOfPatientReplay dispatched'
       );
       return;
+    }
+
+    if (input.callerRole === 'support_staff') {
+      const doctorResult = await notifyDoctorOfPatientReplay({
+        sessionId: input.sessionId,
+        artifactType,
+        recordingAccessAuditId: input.recordingAccessAuditId,
+        accessedByRole: 'support_staff',
+        accessedByUserId: input.callerUserId,
+        ...(input.escalationReason ? { escalationReason: input.escalationReason } : {}),
+        correlationId: input.correlationId,
+      });
+      const patientResult = await notifyPatientOfDoctorReplay({
+        sessionId: input.sessionId,
+        artifactType,
+        recordingAccessAuditId: input.recordingAccessAuditId,
+        accessedByRole: 'support_staff',
+        correlationId: input.correlationId,
+      });
+      logger.info(
+        {
+          correlationId: input.correlationId,
+          sessionId: input.sessionId,
+          callerRole: input.callerRole,
+          artifactType,
+          doctorResult,
+          patientResult:
+            'skipped' in patientResult
+              ? { skipped: true, reason: patientResult.reason }
+              : { anySent: patientResult.anySent },
+        },
+        'recording-access-service: support-staff replay notified doctor and patient'
+      );
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(
       { correlationId: input.correlationId, error: message },
-      'recording-access-service: replay notification threw (ignored â€” non-fatal)',
+      'recording-access-service: replay notification threw (ignored â€” non-fatal)'
     );
   }
 }
@@ -625,8 +778,8 @@ async function notifyReplayWatcher(input: NotifyReplayInput): Promise<void> {
 // ============================================================================
 
 export interface PipelineCheckOutput {
-  session:       SessionContext;
-  policyId?:     string;
+  session: SessionContext;
+  policyId?: string;
   selfServeWindowEndsAt?: Date;
 }
 
@@ -645,9 +798,9 @@ export interface PipelineCheckOutput {
  * the caller.
  */
 export async function runReplayPolicyChecks(input: {
-  sessionId:        string;
+  sessionId: string;
   requestingUserId: string;
-  requestingRole:   ReplayCallerRole;
+  requestingRole: ReplayCallerRole;
   escalationReason?: string;
 }): Promise<PipelineCheckOutput> {
   // Stage 1 â€” AuthZ.
@@ -661,7 +814,7 @@ export async function runReplayPolicyChecks(input: {
   if (!isParticipant) {
     throw new MintReplayError(
       'not_a_participant',
-      'Caller is not a participant of this consultation',
+      'Caller is not a participant of this consultation'
     );
   }
 
@@ -670,12 +823,12 @@ export async function runReplayPolicyChecks(input: {
     const reason = (input.escalationReason ?? '').trim();
     if (reason.length < SUPPORT_ESCALATION_REASON_MIN) {
       throw new ValidationError(
-        `Support-staff replay requires escalationReason â‰¥ ${SUPPORT_ESCALATION_REASON_MIN} chars`,
+        `Support-staff replay requires escalationReason â‰¥ ${SUPPORT_ESCALATION_REASON_MIN} chars`
       );
     }
     if (reason.length > SUPPORT_ESCALATION_REASON_MAX) {
       throw new ValidationError(
-        `Support-staff escalationReason must be â‰¤ ${SUPPORT_ESCALATION_REASON_MAX} chars`,
+        `Support-staff escalationReason must be â‰¤ ${SUPPORT_ESCALATION_REASON_MAX} chars`
       );
     }
   }
@@ -689,23 +842,21 @@ export async function runReplayPolicyChecks(input: {
       // as not-ready rather than not-in-window.
       throw new MintReplayError(
         'artifact_not_ready',
-        'Consultation has not ended; no recording available yet',
+        'Consultation has not ended; no recording available yet'
       );
     }
     const policy = await resolveRetentionPolicy({
       countryCode: session.doctorCountry,
-      specialty:   session.doctorSpecialty,
-      asOf:        session.actualEndedAt,
+      specialty: session.doctorSpecialty,
+      asOf: session.actualEndedAt,
     });
     policyId = policy.policyId;
     const days = policy.patientSelfServeDays || DEFAULT_PATIENT_SELF_SERVE_DAYS;
-    selfServeWindowEndsAt = new Date(
-      session.actualEndedAt.getTime() + days * 24 * 60 * 60 * 1000,
-    );
+    selfServeWindowEndsAt = new Date(session.actualEndedAt.getTime() + days * 24 * 60 * 60 * 1000);
     if (Date.now() > selfServeWindowEndsAt.getTime()) {
       throw new MintReplayError(
         'beyond_self_serve_window',
-        'Patient self-serve replay window has expired; contact support to request access',
+        'Patient self-serve replay window has expired; contact support to request access'
       );
     }
   }
@@ -731,10 +882,14 @@ export async function mintReplayUrl(input: MintReplayInput): Promise<MintReplayR
   }
   if (input.artifactKind !== 'audio' && input.artifactKind !== 'video') {
     throw new ValidationError(
-      `artifactKind '${input.artifactKind}' is not supported (expected 'audio' or 'video')`,
+      `artifactKind '${input.artifactKind}' is not supported (expected 'audio' or 'video')`
     );
   }
   const artifactKind: 'audio' | 'video' = input.artifactKind;
+  const requestedSid = input.compositionSid?.trim();
+  if (requestedSid && !isCompositionSid(requestedSid)) {
+    throw new ValidationError('compositionSid is not a valid Composition SID');
+  }
 
   // Stages 1â€“3 (cheap; no Twilio). Errors here are routed through the
   // shared denial-write helper EXCEPT ValidationError (bad input never
@@ -792,7 +947,7 @@ export async function mintReplayUrl(input: MintReplayInput): Promise<MintReplayR
           patientId: patientIdForWindow,
           lastVerifiedAt: otpState.lastVerifiedAt?.toISOString() ?? null,
         },
-        'recording-access-service: video replay blocked â€” SMS OTP required',
+        'recording-access-service: video replay blocked â€” SMS OTP required'
       );
       // Intentionally NOT auditing this branch. The OTP prompt is
       // a UX gate, not an access denial: until the patient either
@@ -806,10 +961,56 @@ export async function mintReplayUrl(input: MintReplayInput): Promise<MintReplayR
   }
 
   // Stages 4â€“5 â€” revocation + artifact readiness.
-  const artifact =
-    artifactKind === 'video'
+  let artifact = requestedSid
+    ? await resolveSpecifiedArtifact(sessionId, artifactKind, requestedSid)
+    : artifactKind === 'video'
       ? await resolveVideoArtifact(sessionId)
       : await resolveAudioArtifact(sessionId);
+  if (!artifact) {
+    // Cost-cut step 7: with the Composition Hook off, a session can have
+    // raw tracks and no composition. Compose now, tell the caller to come
+    // back, and let the existing composition-status webhook register the
+    // result — the retry then resolves through the normal index path.
+    const composed = await ensureCompositionForSession({
+      sessionId,
+      artifactKind,
+      correlationId,
+    }).catch((err: unknown) => {
+      logger.warn(
+        {
+          correlationId,
+          sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        'recording-access-service: on-demand compose failed — falling back to not-found',
+      );
+      return { state: 'unavailable' as const, reason: 'disabled' as const };
+    });
+
+    if (composed.state === 'pending') {
+      await writeDenialAudit({
+        sessionId,
+        artifactRef: composed.compositionSid,
+        accessedBy: requestingUserId,
+        accessedByRole: input.requestingRole,
+        denyReason: 'artifact_not_ready',
+        escalationReason,
+        correlationId,
+        artifactKind,
+      });
+      throw new MintReplayError(
+        'artifact_not_ready',
+        'This recording is being prepared. Try again in a minute.'
+      );
+    }
+
+    // Twilio has a finished composition the index never learned about —
+    // a dropped status webhook. Self-heal rather than 404.
+    if (composed.state === 'ready') {
+      artifact = { compositionSid: composed.compositionSid, source: 'index' };
+    }
+  }
+
   if (!artifact) {
     const missingCode: MintReplayErrorCode =
       artifactKind === 'video' ? 'no_video_artifact' : 'artifact_not_found';
@@ -827,7 +1028,7 @@ export async function mintReplayUrl(input: MintReplayInput): Promise<MintReplayR
       missingCode,
       artifactKind === 'video'
         ? 'No video recording exists for this consultation'
-        : 'No audio recording exists for this consultation',
+        : 'No audio recording exists for this consultation'
     );
   }
 
@@ -845,7 +1046,7 @@ export async function mintReplayUrl(input: MintReplayInput): Promise<MintReplayR
     });
     throw new MintReplayError(
       'revoked',
-      'This recording has been revoked and is no longer accessible',
+      'This recording has been revoked and is no longer accessible'
     );
   }
 
@@ -866,10 +1067,27 @@ export async function mintReplayUrl(input: MintReplayInput): Promise<MintReplayR
       });
       throw new MintReplayError(
         'artifact_not_found',
-        `${artifactKind === 'video' ? 'Video' : 'Audio'} recording artifact not found at provider`,
+        `${artifactKind === 'video' ? 'Video' : 'Audio'} recording artifact not found at provider`
       );
     }
     throw err;
+  }
+  if (metadata.status === 'deleted') {
+    await writeDenialAudit({
+      sessionId,
+      artifactRef: artifact.compositionSid,
+      accessedBy: requestingUserId,
+      accessedByRole: input.requestingRole,
+      denyReason: 'artifact_not_found',
+      escalationReason,
+      correlationId,
+      twilioStatus: metadata.status,
+      artifactKind,
+    });
+    throw new MintReplayError(
+      'artifact_not_found',
+      'This recording has been deleted at the provider',
+    );
   }
   if (metadata.status !== 'completed') {
     await writeDenialAudit({
@@ -885,17 +1103,17 @@ export async function mintReplayUrl(input: MintReplayInput): Promise<MintReplayR
     });
     throw new MintReplayError(
       'artifact_not_ready',
-      `Recording is still ${metadata.status}; please retry shortly`,
+      `Recording is still ${metadata.status}; please retry shortly`
     );
   }
 
   // Stage 6 â€” write granted audit BEFORE the URL mint (so a process
   // crash mid-mint still leaves a footprint).
   const grantedMetadata: AuditMetadata = {
-    outcome:       'granted',
-    ttl_seconds:   SIGNED_URL_TTL_SEC,
+    outcome: 'granted',
+    ttl_seconds: SIGNED_URL_TTL_SEC,
     twilio_status: metadata.status,
-    url_prefix:    metadata.mediaUrlPrefix,
+    url_prefix: metadata.mediaUrlPrefix,
   };
   if (escalationReason) {
     grantedMetadata.escalation_reason = escalationReason;
@@ -907,20 +1125,20 @@ export async function mintReplayUrl(input: MintReplayInput): Promise<MintReplayR
     grantedMetadata.self_serve_window_ends_at = selfServeWindowEndsAt.toISOString();
   }
   const recordingAccessAuditId = await writeAuditRow({
-    session_id:       sessionId,
-    artifact_ref:     artifact.compositionSid,
-    artifact_kind:    artifactKind,
-    access_type:      artifactKind === 'video' ? 'full_video' : 'audio_only',
-    accessed_by:      requestingUserId,
+    session_id: sessionId,
+    artifact_ref: artifact.compositionSid,
+    artifact_kind: artifactKind,
+    access_type: artifactKind === 'video' ? 'full_video' : 'audio_only',
+    accessed_by: requestingUserId,
     accessed_by_role: input.requestingRole,
-    metadata:         grantedMetadata,
-    correlation_id:   correlationId,
+    metadata: grantedMetadata,
+    correlation_id: correlationId,
   });
 
   // Stage 7 â€” mint.
   const minted = await mintCompositionSignedUrl({
     compositionSid: artifact.compositionSid,
-    ttlSec:         SIGNED_URL_TTL_SEC,
+    ttlSec: SIGNED_URL_TTL_SEC,
   });
 
   // Stage 8 â€” fire mutual notification (fire-and-forget; never throws).
@@ -931,13 +1149,13 @@ export async function mintReplayUrl(input: MintReplayInput): Promise<MintReplayR
   void Promise.resolve().then(() =>
     notifyReplayWatcher({
       sessionId,
-      callerRole:             input.requestingRole,
-      callerUserId:           requestingUserId,
-      artifactKind:           input.artifactKind,
+      callerRole: input.requestingRole,
+      callerUserId: requestingUserId,
+      artifactKind: input.artifactKind,
       recordingAccessAuditId,
       ...(escalationReason ? { escalationReason } : {}),
       correlationId,
-    }),
+    })
   );
 
   // Stage 9 â€” return.
@@ -945,43 +1163,43 @@ export async function mintReplayUrl(input: MintReplayInput): Promise<MintReplayR
     {
       correlationId,
       sessionId,
-      compositionSid:    artifact.compositionSid,
-      requestingRole:    input.requestingRole,
-      ttlSec:            SIGNED_URL_TTL_SEC,
-      artifactSource:    artifact.source,
+      compositionSid: artifact.compositionSid,
+      requestingRole: input.requestingRole,
+      ttlSec: SIGNED_URL_TTL_SEC,
+      artifactSource: artifact.source,
     },
-    'recording-access-service: replay URL minted',
+    'recording-access-service: replay URL minted'
   );
 
   return {
-    signedUrl:   minted.signedUrl,
-    expiresAt:   minted.expiresAt,
+    signedUrl: minted.signedUrl,
+    expiresAt: minted.expiresAt,
     artifactRef: artifact.compositionSid,
   };
 }
 
 interface DenialAuditInput {
-  sessionId:      string;
-  artifactRef:    string;
-  accessedBy:     string;
+  sessionId: string;
+  artifactRef: string;
+  accessedBy: string;
   accessedByRole: ReplayCallerRole;
-  denyReason:     MintReplayErrorCode;
+  denyReason: MintReplayErrorCode;
   escalationReason?: string;
-  correlationId:  string;
-  twilioStatus?:  string;
+  correlationId: string;
+  twilioStatus?: string;
   /**
    * Artifact being denied. Defaults to `'audio'` to preserve the
    * existing caller contract; Plan 08 Task 44's video branch passes
    * `'video'` so denial rows line up with the granted-row's
    * `access_type='full_video'`.
    */
-  artifactKind?:  'audio' | 'video';
+  artifactKind?: 'audio' | 'video';
 }
 
 async function writeDenialAudit(input: DenialAuditInput): Promise<void> {
   try {
     const meta: AuditMetadata = {
-      outcome:     'denied',
+      outcome: 'denied',
       deny_reason: input.denyReason,
     };
     if (input.escalationReason) {
@@ -992,25 +1210,25 @@ async function writeDenialAudit(input: DenialAuditInput): Promise<void> {
     }
     const kind = input.artifactKind ?? 'audio';
     await writeAuditRow({
-      session_id:       input.sessionId,
-      artifact_ref:     input.artifactRef,
-      artifact_kind:    kind,
-      access_type:      kind === 'video' ? 'full_video' : 'audio_only',
-      accessed_by:      input.accessedBy,
+      session_id: input.sessionId,
+      artifact_ref: input.artifactRef,
+      artifact_kind: kind,
+      access_type: kind === 'video' ? 'full_video' : 'audio_only',
+      accessed_by: input.accessedBy,
       accessed_by_role: input.accessedByRole,
-      metadata:         meta,
-      correlation_id:   input.correlationId,
+      metadata: meta,
+      correlation_id: input.correlationId,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(
       {
         correlationId: input.correlationId,
-        sessionId:     input.sessionId,
-        denyReason:    input.denyReason,
-        error:         message,
+        sessionId: input.sessionId,
+        denyReason: input.denyReason,
+        error: message,
       },
-      'recording-access-service: denial audit write FAILED â€” original denial still propagates',
+      'recording-access-service: denial audit write FAILED â€” original denial still propagates'
     );
     // Swallow â€” the original denial is the meaningful signal to the
     // caller. Losing the audit row is bad but not as bad as masking
@@ -1023,7 +1241,7 @@ async function writeDenialAudit(input: DenialAuditInput): Promise<void> {
 // ============================================================================
 
 export async function getReplayAvailability(
-  input: ReplayAvailabilityInput,
+  input: ReplayAvailabilityInput
 ): Promise<ReplayAvailability> {
   const sessionId = input.sessionId?.trim();
   const requestingUserId = input.requestingUserId?.trim();
@@ -1081,24 +1299,42 @@ export async function getReplayAvailability(
     result.selfServeExpiresAt = policyOutput.selfServeWindowEndsAt;
   }
 
-  // Plan 08 · Task 44: surface `hasVideo` so the player can conditionally
-  // render the "Show video" toggle. Best-effort; failure here never
-  // degrades the audio-available signal (we just omit the flag and the
-  // toggle doesn't render, same as a session that genuinely has no
-  // video composition). The lookup lives here rather than in the audit-
-  // writing mint path because `getReplayAvailability` is the mount-
-  // time preflight and the toggle state is derived at first render.
+  // rec-29: report every completed leg. One getRecordingArtifactsForSession
+  // call (60 s cache). Listing failure never flips available=false —
+  // we synthesize the resolved audio SID so older single-artifact tests
+  // and Path B sessions still preflight.
+  let audioCompositions: ReplayCompositionSummary[] = [];
+  let videoCompositions: ReplayCompositionSummary[] = [];
   try {
-    const { videoCompositions } = await getRecordingArtifactsForSession({ sessionId });
-    result.hasVideo = videoCompositions.some((c) => c.status === 'completed');
+    const listed = await getRecordingArtifactsForSession({ sessionId });
+    audioCompositions = listed.audioCompositions
+      .filter((row) => row.status === 'completed')
+      .map(toCompositionSummary);
+    videoCompositions = listed.videoCompositions
+      .filter((row) => row.status === 'completed')
+      .map(toCompositionSummary);
   } catch (err) {
     logger.warn(
       { sessionId, error: err instanceof Error ? err.message : String(err) },
-      'recording-access-service: video compositions lookup failed in availability preflight (treating as no video)',
+      'recording-access-service: composition list failed in availability preflight',
     );
-    result.hasVideo = false;
   }
+  if (
+    audioCompositions.length === 0 ||
+    !audioCompositions.some((row) => row.compositionSid === artifact.compositionSid)
+  ) {
+    audioCompositions = [
+      toCompositionSummary({
+        compositionSid: artifact.compositionSid,
+        startedAt: policyOutput.session.actualEndedAt ?? new Date(0),
+        durationSeconds: metadata.durationSec ?? null,
+      }),
+      ...audioCompositions.filter((row) => row.compositionSid !== artifact.compositionSid),
+    ];
+  }
+  result.audioCompositions = audioCompositions;
+  result.videoCompositions = videoCompositions;
+  result.hasVideo = videoCompositions.length > 0;
 
   return result;
 }
-

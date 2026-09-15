@@ -58,8 +58,8 @@ import type Razorpay from 'razorpay';
 
 import { getSupabaseAdminClient } from '../config/database';
 import { logger } from '../config/logger';
-import { isRazorpayConfigured, razorpayConfig } from '../config/payment';
 import { fetchPendingById } from './modality-pending-requests-queries';
+import { getDecryptedGatewayCredentials } from './doctor-gateway-credentials-service';
 import { updateRazorpayRefundId } from './modality-history-queries';
 import {
   computeDowngradeRefundPaise,
@@ -199,12 +199,7 @@ type RazorpayClient = Pick<Razorpay, 'orders' | 'payments'>;
 let razorpayClientFactory: () => RazorpayClient = defaultRazorpayClientFactory;
 
 function defaultRazorpayClientFactory(): RazorpayClient {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
-  const RazorpaySdk = require('razorpay') as new (opts: any) => RazorpayClient;
-  return new RazorpaySdk({
-    key_id: razorpayConfig.keyId as string,
-    key_secret: razorpayConfig.keySecret as string,
-  });
+  throw new Error('Platform Razorpay keys are not a payment client');
 }
 
 /** Test-only: swap in a fake client factory (orders/payments stubs). */
@@ -214,14 +209,49 @@ export function __setRazorpayClientFactoryForTests(
   razorpayClientFactory = factory ?? defaultRazorpayClientFactory;
 }
 
-function requireRazorpayClient(
+async function requireRazorpayClient(
   op: 'compute_delta' | 'capture_upgrade' | 'auto_refund',
   correlationId: string,
-): RazorpayClient {
-  if (!isRazorpayConfigured()) {
+  doctorId: string | null,
+): Promise<RazorpayClient> {
+  if (razorpayClientFactory !== defaultRazorpayClientFactory) {
+    return razorpayClientFactory();
+  }
+  if (!doctorId) {
     throw new BillingNotConfiguredError(op, correlationId);
   }
-  return razorpayClientFactory();
+  const creds = await getDecryptedGatewayCredentials(doctorId, correlationId);
+  if (!creds) {
+    throw new BillingNotConfiguredError(op, correlationId);
+  }
+  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+  const RazorpaySdk = require('razorpay') as new (opts: any) => RazorpayClient;
+  return new RazorpaySdk({
+    key_id: creds.keyId,
+    key_secret: creds.keySecret,
+  });
+}
+
+async function resolveDoctorIdForModalityRefund(
+  admin: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  input: AutoRefundDowngradeInput
+): Promise<string | null> {
+  if (input.historyRowId) {
+    const { data } = await admin
+      .from('consultation_modality_history')
+      .select('session_id')
+      .eq('id', input.historyRowId)
+      .maybeSingle();
+    if (data?.session_id) {
+      const { data: session } = await admin
+        .from('consultation_sessions')
+        .select('doctor_id')
+        .eq('id', data.session_id)
+        .maybeSingle();
+      if (session?.doctor_id) return session.doctor_id as string;
+    }
+  }
+  return null;
 }
 
 // ----------------------------------------------------------------------------
@@ -366,7 +396,16 @@ async function liveCaptureUpgradePayment(
     };
   }
 
-  const client = requireRazorpayClient('capture_upgrade', input.correlationId);
+  const { data: sessionForDoctor } = await admin
+    .from('consultation_sessions')
+    .select('doctor_id')
+    .eq('id', input.sessionId)
+    .maybeSingle();
+  const client = await requireRazorpayClient(
+    'capture_upgrade',
+    input.correlationId,
+    (sessionForDoctor?.doctor_id as string | undefined) ?? null
+  );
   const receipt = `modality_change:${input.pendingRequestId}`;
   const notes = {
     kind:              'mid_consult_upgrade',
@@ -461,7 +500,8 @@ async function liveAutoRefundDowngrade(
     }
   }
 
-  const client = requireRazorpayClient('auto_refund', input.correlationId);
+  const doctorId = admin ? await resolveDoctorIdForModalityRefund(admin, input) : null;
+  const client = await requireRazorpayClient('auto_refund', input.correlationId, doctorId);
   const attemptNumber = input.attemptNumber ?? 1;
   const idempotencyKeySeed =
     input.historyRowId ??

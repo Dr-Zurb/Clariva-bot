@@ -12,8 +12,8 @@
 import OpenAI from 'openai';
 import { env } from './env';
 
-/** Default model when OPENAI_MODEL is not set (flagship: best quality, cost no issue). */
-const DEFAULT_OPENAI_MODEL = 'gpt-5.2';
+/** Default model when OPENAI_MODEL is not set (reply-tier: gpt-5.6-luna). */
+const DEFAULT_OPENAI_MODEL = 'gpt-5.6-luna';
 
 /** Default max tokens for completion when OPENAI_MAX_TOKENS is not set. */
 const DEFAULT_OPENAI_MAX_TOKENS = 256;
@@ -56,6 +56,26 @@ const DEFAULT_OPENAI_MEDICINE_PARSE_MODEL = 'gpt-4o-mini';
 
 /** Medicine parse can carry several drugs per line, each with many sig fields. */
 const DEFAULT_OPENAI_MEDICINE_PARSE_MAX_TOKENS = 700;
+
+/**
+ * lat-02: Tier-1 default for DM intent / booking-turn classification — bounded
+ * JSON under a small token cap. Mini is sufficient; never inherit the flagship
+ * `OPENAI_MODEL` default.
+ */
+const DEFAULT_OPENAI_INTENT_CLASSIFY_MODEL = 'gpt-4o-mini';
+
+/** Room for small intent JSON (+ topics / fee flags). Matches INTENT_CLASSIFICATION_MAX_COMPLETION_TOKENS. */
+const DEFAULT_OPENAI_INTENT_CLASSIFY_MAX_TOKENS = 160;
+
+/**
+ * rpt-05.6: lab-photo table extraction. Vision-capable and NOT mini — dense
+ * multi-column lab tables are where mini misreads, and the reply-tier
+ * `OPENAI_MODEL` default is not guaranteed to accept image input.
+ */
+const DEFAULT_OPENAI_LAB_VISION_MODEL = 'gpt-4o';
+
+/** A full panel photo can yield ~60 rows of bounded JSON. */
+const DEFAULT_OPENAI_LAB_VISION_MAX_TOKENS = 4000;
 
 /**
  * OpenAI client instance (lazy). Created once when key is present.
@@ -105,13 +125,47 @@ export function getOpenAIConfig(): OpenAIConfig {
   };
 }
 
+/**
+ * GPT-5.6+ explicit prompt cache. Implicit mode writes a breakpoint on the
+ * latest (volatile) message and bills 1.25× for that write. Explicit mode
+ * caches only the block we mark. openai@6.14 types omit these fields; the
+ * Chat Completions API accepts them. Do not send on pre-5.6 models (400).
+ */
+export type ExplicitPromptCacheParams = {
+  prompt_cache_key: string;
+  prompt_cache_options: { mode: 'explicit'; ttl: '30m' };
+};
+
+export function isGpt56Family(model: string): boolean {
+  return model.startsWith('gpt-5.6');
+}
+
+export function replyPromptCacheParams(cacheKey: string): ExplicitPromptCacheParams {
+  return {
+    prompt_cache_key: cacheKey,
+    prompt_cache_options: { mode: 'explicit', ttl: '30m' },
+  };
+}
+
+export function cachedSystemTextPart(text: string): {
+  type: 'text';
+  text: string;
+  prompt_cache_breakpoint: { mode: 'explicit' };
+} {
+  return {
+    type: 'text',
+    text,
+    prompt_cache_breakpoint: { mode: 'explicit' },
+  };
+}
+
 /** Which complaint-parse model tier to use (subj-14). */
 export type ComplaintParseModelTier = 'default' | 'escalation';
 
 /**
  * OpenAI config for complaint free-text parse (subj-14).
  * Separate from {@link getOpenAIConfig} so this small JSON task does not
- * inherit the flagship `OPENAI_MODEL` default (`gpt-5.2`).
+ * inherit the reply-tier `OPENAI_MODEL` default.
  */
 export interface ComplaintParseOpenAIConfig {
   /** Model identifier (for API calls and audit). */
@@ -271,5 +325,67 @@ export function getOpenAIInvestigationResolveConfig(
       env.OPENAI_INVESTIGATION_RESOLVE_MAX_TOKENS ??
       DEFAULT_OPENAI_INVESTIGATION_RESOLVE_MAX_TOKENS,
     tier,
+  };
+}
+
+/**
+ * OpenAI config for DM intent classification and booking-turn classifiers (lat-02).
+ * Separate from {@link getOpenAIConfig} so this small JSON task does not
+ * inherit the reply-tier `OPENAI_MODEL` default.
+ */
+export interface IntentClassifyOpenAIConfig {
+  /** Model identifier (for API calls and audit). */
+  model: string;
+  /** Max completion tokens for the classification JSON. */
+  maxTokens: number;
+}
+
+/**
+ * Returns intent-classification model config.
+ *
+ * Default: `OPENAI_INTENT_CLASSIFY_MODEL` or `gpt-4o-mini`. Never falls through
+ * to the flagship — a mispriced intent call was paying ~2s per DM turn.
+ */
+export function getOpenAIIntentClassifyConfig(): IntentClassifyOpenAIConfig {
+  return {
+    model: env.OPENAI_INTENT_CLASSIFY_MODEL ?? DEFAULT_OPENAI_INTENT_CLASSIFY_MODEL,
+    maxTokens:
+      env.OPENAI_INTENT_CLASSIFY_MAX_TOKENS ?? DEFAULT_OPENAI_INTENT_CLASSIFY_MAX_TOKENS,
+  };
+}
+
+/**
+ * rpt-05.6: whether lab-report PHOTO extraction may call out at all.
+ *
+ * This is a PHI-egress switch, not a feature toggle. A lab-report photo cannot
+ * be redacted before it is sent (the patient's identifiers are printed on it),
+ * so the call is gated on an explicit opt-in that stays off until the
+ * data-processor decision is recorded. Having `OPENAI_API_KEY` set is NOT
+ * sufficient — every other AI feature here sends redacted text and must keep
+ * working without implying consent for images.
+ */
+export function isLabVisionExtractEnabled(): boolean {
+  return env.OPENAI_LAB_VISION_ENABLED === true;
+}
+
+/** rpt-05.6: model config for lab-photo extraction. */
+export interface LabVisionOpenAIConfig {
+  /** Model identifier (for API calls and audit). */
+  model: string;
+  /** Max completion tokens for the extracted-row JSON. */
+  maxTokens: number;
+}
+
+/**
+ * Returns lab-photo extraction model config.
+ *
+ * Default: `OPENAI_LAB_VISION_MODEL` or `gpt-4o`. Unlike the text parses there
+ * is no mini tier — this task reads numbers off a photograph, so the cheap tier
+ * would trade the one thing that must not be wrong.
+ */
+export function getOpenAILabVisionConfig(): LabVisionOpenAIConfig {
+  return {
+    model: env.OPENAI_LAB_VISION_MODEL ?? DEFAULT_OPENAI_LAB_VISION_MODEL,
+    maxTokens: env.OPENAI_LAB_VISION_MAX_TOKENS ?? DEFAULT_OPENAI_LAB_VISION_MAX_TOKENS,
   };
 }

@@ -3,6 +3,24 @@
  * See AI_BOT_BUILDING_PHILOSOPHY.md §4.8 (context before keywords).
  */
 
+import { toStaticLocale, type ConversationLanguage } from './conversation-language';
+import type { StaticMessageLocale } from './conversation-language';
+
+/**
+ * Consent-unclear re-prompt (lang-07). Sync locale table — no LLM translation.
+ * hi/pa arms intentionally English until human-reviewed medical copy lands
+ * (capture inbox: bot-language-policy · consent-unclear hi/pa).
+ */
+const CONSENT_UNCLEAR_BY_LOCALE: Record<StaticMessageLocale, string> = {
+  en: "I didn't catch that — please reply **Yes** to consent and continue, or **No** to cancel.",
+  hi: 'Samajh nahi aaya — consent ke liye **Yes** reply karein aur aage badhein, ya cancel ke liye **No**.',
+  pa: 'Samajh nahi aaya — consent layi **Yes** reply karo te aage vadhho, ya cancel layi **No**.',
+};
+
+export function resolveConsentUnclearMessage(language: ConversationLanguage): string {
+  return CONSENT_UNCLEAR_BY_LOCALE[toStaticLocale(language)];
+}
+
 /** Assistant asked for optional visit notes, not a bare "deny consent" question. */
 export function isOptionalExtrasConsentPrompt(assistantMessage: string | undefined): boolean {
   if (!assistantMessage?.trim()) return false;

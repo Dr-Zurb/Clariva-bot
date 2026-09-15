@@ -12,7 +12,7 @@ import { env } from './env';
 import { logger } from './logger';
 
 const RESEND_API_KEY = env.RESEND_API_KEY?.trim();
-const DEFAULT_FROM = 'Clariva <onboarding@resend.dev>';
+const DEFAULT_FROM = 'Halo Aid <onboarding@resend.dev>';
 
 let resendClient: Resend | null = null;
 if (RESEND_API_KEY) {

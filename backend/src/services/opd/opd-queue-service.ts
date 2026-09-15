@@ -111,17 +111,14 @@ async function getNextTokenNumber(
     .eq('doctor_id', doctorId)
     .eq('session_date', sessionDateYmd)
     .order('token_number', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
 
   if (error) {
     handleSupabaseError(error, correlationId);
   }
 
-  if (data?.token_number != null) {
-    return data.token_number + 1;
-  }
-  return 1;
+  const max = data?.[0]?.token_number;
+  return (typeof max === 'number' ? max : 0) + 1;
 }
 
 /**
@@ -159,7 +156,7 @@ export async function createQueueEntryAfterBooking(
   appointmentDate: Date,
   timezone: string,
   correlationId: string
-): Promise<void> {
+): Promise<number> {
   const admin = getSupabaseAdminClient();
   if (!admin) {
     throw new InternalError('Service role client not available for queue booking');
@@ -180,6 +177,7 @@ export async function createQueueEntryAfterBooking(
   if (error) {
     handleSupabaseError(error, correlationId);
   }
+  return tokenNumber;
 }
 
 /**

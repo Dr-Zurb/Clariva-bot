@@ -16,19 +16,37 @@
 
 import * as React from 'react';
 import { View, Text } from '@react-pdf/renderer';
+import { letterheadTypePt, type LetterheadTextSize } from '../../types/letterhead';
 import { styles } from './styles';
 
 interface SectionBlockProps {
   label: string;
   body: string | null | undefined;
+  accentColor?: string | null;
+  textSize?: LetterheadTextSize;
 }
 
-export const SectionBlock: React.FC<SectionBlockProps> = ({ label, body }) => {
+export const SectionBlock: React.FC<SectionBlockProps> = ({
+  label,
+  body,
+  accentColor,
+  textSize,
+}) => {
   if (!body || !body.trim()) return null;
+  const labelSize = letterheadTypePt('bodyLabel', textSize);
+  const bodySize = letterheadTypePt('bodyText', textSize);
   return (
     <View style={styles.section} wrap={false}>
-      <Text style={styles.sectionLabel}>{label}</Text>
-      <Text style={styles.sectionBody}>{body.trim()}</Text>
+      <Text
+        style={
+          accentColor
+            ? [styles.sectionLabel, { color: accentColor, fontSize: labelSize }]
+            : [styles.sectionLabel, { fontSize: labelSize }]
+        }
+      >
+        {label}
+      </Text>
+      <Text style={[styles.sectionBody, { fontSize: bodySize }]}>{body.trim()}</Text>
     </View>
   );
 };

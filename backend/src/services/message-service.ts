@@ -7,9 +7,19 @@
 
 import { getSupabaseAdminClient } from '../config/database';
 import { Message, InsertMessage } from '../types';
-import { InternalError } from '../utils/errors';
+import { InternalError, NotFoundError } from '../utils/errors';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataModification, logDataAccess } from '../utils/audit-logger';
+
+/** Doctor-facing message row (PHI content; never log). */
+export interface InteractionMessageDto {
+  id: string;
+  conversation_id: string;
+  sender_type: Message['sender_type'];
+  content: string;
+  intent: string | null;
+  created_at: string;
+}
 
 /**
  * Create a message or return existing if already stored (idempotent).
@@ -100,6 +110,92 @@ export async function getConversationMessages(
   await logDataAccess(correlationId, undefined as any, 'message', conversationId);
 
   return (messages || []) as Message[];
+}
+
+export interface DoctorMessagesPage {
+  messages: InteractionMessageDto[];
+  /** True when older messages exist beyond this page (scroll-up / Load older). */
+  hasMoreOlder: boolean;
+}
+
+const DOCTOR_MESSAGES_DEFAULT_LIMIT = 50;
+const DOCTOR_MESSAGES_MAX_LIMIT = 100;
+
+/**
+ * Doctor-scoped conversation messages (ibi-03).
+ * Verifies conversation ownership before reading PHI. Wrong doctor → NotFound (no leak).
+ * Returns the newest `limit` messages (or older page when `before` is set). Ascending for UI.
+ */
+export async function getConversationMessagesForDoctor(
+  doctorId: string,
+  conversationId: string,
+  correlationId: string,
+  opts: { limit?: number; before?: string } = {}
+): Promise<DoctorMessagesPage> {
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const { data: conversation, error: convError } = await supabaseAdmin
+    .from('conversations')
+    .select('id')
+    .eq('id', conversationId)
+    .eq('doctor_id', doctorId)
+    .maybeSingle();
+
+  if (convError) {
+    handleSupabaseError(convError, correlationId);
+  }
+
+  if (!conversation) {
+    throw new NotFoundError('Conversation not found');
+  }
+
+  const limit = Math.min(
+    Math.max(opts.limit ?? DOCTOR_MESSAGES_DEFAULT_LIMIT, 1),
+    DOCTOR_MESSAGES_MAX_LIMIT
+  );
+
+  let q = supabaseAdmin
+    .from('messages')
+    .select('id, conversation_id, sender_type, content, intent, created_at')
+    .eq('conversation_id', conversationId)
+    .order('created_at', { ascending: false })
+    .limit(limit + 1);
+
+  if (opts.before) {
+    q = q.lt('created_at', opts.before);
+  }
+
+  const { data: messages, error } = await q;
+
+  if (error) {
+    handleSupabaseError(error, correlationId);
+  }
+
+  await logDataAccess(correlationId, doctorId, 'message', conversationId);
+
+  const rows = messages || [];
+  const hasMoreOlder = rows.length > limit;
+  const page = hasMoreOlder ? rows.slice(0, limit) : rows;
+  // Newest-first from DB → chronological for the thread UI.
+  page.reverse();
+
+  return {
+    messages: page.map((row) => ({
+      id: row.id as string,
+      conversation_id: row.conversation_id as string,
+      sender_type: row.sender_type as Message['sender_type'],
+      content: row.content as string,
+      intent: (row.intent as string | null) ?? null,
+      created_at:
+        typeof row.created_at === 'string'
+          ? row.created_at
+          : new Date(row.created_at as string | Date).toISOString(),
+    })),
+    hasMoreOlder,
+  };
 }
 
 /**

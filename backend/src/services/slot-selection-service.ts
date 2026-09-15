@@ -9,9 +9,15 @@ import { getSupabaseAdminClient } from '../config/database';
 import { env } from '../config/env';
 import {
   findConversationById,
+  getConversationLanguage,
   getConversationState,
   updateConversationState,
 } from './conversation-service';
+import {
+  buildAppointmentRescheduledConfirmDm,
+  buildDuplicateBookingOnDateMessage,
+  buildSlotSelectedFollowUpDm,
+} from '../utils/dm-copy';
 import { getConnectionStatus } from './instagram-connect-service';
 import { getInstagramAccessTokenForDoctor } from './instagram-connect-service';
 import { sendInstagramMessage } from './instagram-service';
@@ -44,12 +50,14 @@ import {
   updateAppointmentDateForPatient,
 } from './appointment-service';
 import { createPaymentLink } from './payment-service';
-import { captureBookingConsent } from './recording-consent-service';
+import { getDoctorGatewayPublicStatus } from './doctor-gateway-credentials-service';
+import { resolvePayableAmountMinor } from '../utils/prepaid-bookings';
 import { verifyBookingToken, generateBookingToken } from '../utils/booking-token';
 import { sendAppointmentRescheduledToDoctor } from './notification-service';
 import { logger } from '../config/logger';
 import {
   InternalError,
+  DoctorNotVerifiedError,
   NotFoundError,
   ServiceSelectionNotFinalizedPaymentError,
   StaffServiceReviewPendingPaymentError,
@@ -57,6 +65,7 @@ import {
   ValidationError,
 } from '../utils/errors';
 import { evaluatePublicBookingPaymentGate } from '../utils/public-booking-payment-gate';
+import { isDoctorVerified } from './doctor-verification-service';
 import { resolveSessionDayMode } from './opd/opd-mode-service';
 import { getQueueTokenForAppointment } from './opd/opd-queue-service';
 import type { OpdMode } from '../types/doctor-settings';
@@ -532,8 +541,12 @@ export async function processSlotSelection(
 
   const redirectUrl = await getRedirectUrlForDoctor(doctorId);
   const bookingLink = buildBookingPageUrl(conversationId, doctorId);
-  const message =
-    `You selected **${dateStr}**. Continue in chat if you need help, or pick another time here: [Change slot](${bookingLink})`;
+  const language = await getConversationLanguage(conversationId, correlationId);
+  const message = buildSlotSelectedFollowUpDm({
+    language,
+    dateDisplay: dateStr,
+    bookingLink,
+  });
 
   const recipientId = conversation.platform_conversation_id;
   if (!recipientId || conversation.platform !== 'instagram') {
@@ -596,13 +609,19 @@ export async function processSlotSelectionAndPay(
 
   const state = await getConversationState(conversationId, correlationId);
   const doctorSettings = await getDoctorSettings(doctorId);
+  const doctorVerified = await isDoctorVerified(doctorId, correlationId);
 
-  const payGate = evaluatePublicBookingPaymentGate(state, doctorSettings);
+  const payGate = evaluatePublicBookingPaymentGate(state, doctorSettings, {
+    doctorVerified,
+  });
   if (!payGate.allowed) {
     logger.info(
       { correlationId, conversationId, booking_payment_gate_denied: payGate.reason },
       'booking_payment_gate_denied'
     );
+    if (payGate.reason === 'doctor_not_verified') {
+      throw new DoctorNotVerifiedError();
+    }
     if (payGate.reason === 'staff_review_pending') {
       throw new StaffServiceReviewPendingPaymentError();
     }
@@ -642,8 +661,9 @@ export async function processSlotSelectionAndPay(
       day: 'numeric',
       year: 'numeric',
     });
+    const language = await getConversationLanguage(conversationId, correlationId);
     throw new ValidationError(
-      `You already have an appointment on ${dateDisplay}. Please choose another date or contact us if you need multiple visits.`
+      buildDuplicateBookingOnDateMessage({ language, dateDisplay })
     );
   }
 
@@ -686,32 +706,6 @@ export async function processSlotSelectionAndPay(
     undefined
   );
 
-  // Plan 02 · Task 27 — persist recording-consent decision captured during
-  // the IG bot flow (see conversation.ts `recordingConsentDecision`).
-  // Fail-open: we log and continue. The appointment row is still booked,
-  // and the frontend /book page (or the standalone
-  // `POST /:id/recording-consent` route) can still write the value later.
-  if (state.recordingConsent?.recordingConsentDecision !== undefined) {
-    try {
-      await captureBookingConsent({
-        appointmentId: appointment.id,
-        decision: state.recordingConsent?.recordingConsentDecision,
-        consentVersion:
-          state.recordingConsent?.recordingConsentVersion ?? 'v1.0',
-        correlationId,
-      });
-    } catch (err) {
-      logger.warn(
-        {
-          correlationId,
-          appointmentId: appointment.id,
-          error: err instanceof Error ? err.message : String(err),
-        },
-        'recording_consent_persist_on_booking_failed'
-      );
-    }
-  }
-
   const sessionDateYmd = slotStart.slice(0, 10);
   const adminClient = getSupabaseAdminClient();
   const sessionResolved =
@@ -727,7 +721,27 @@ export async function processSlotSelectionAndPay(
     }
   }
 
-  const amountMinor = quotePreview.amountMinor;
+  const collectionMode = doctorSettings?.payment_collection_mode ?? 'bookings_only';
+  const prepaidEnabled = collectionMode === 'prepaid';
+  if (prepaidEnabled) {
+    const gateway = await getDoctorGatewayPublicStatus(doctorId, correlationId);
+    if (!gateway.connected) {
+      throw new ValidationError(
+        'Prepaid bookings require a connected Razorpay account'
+      );
+    }
+    if (!gateway.webhookConfigured) {
+      throw new ValidationError(
+        'Prepaid bookings require a Razorpay webhook secret'
+      );
+    }
+  } else if (quotePreview.amountMinor > 0) {
+    logger.info(
+      { correlationId, appointmentId: appointment.id },
+      'Bookings-only mode — booking without payment link'
+    );
+  }
+  const amountMinor = resolvePayableAmountMinor(quotePreview.amountMinor, prepaidEnabled);
   const currency = quotePreview.currency;
   const doctorCountry = quotePreview.doctorCountry;
 
@@ -886,9 +900,10 @@ export async function processRescheduleSlotSelection(
     const accessToken = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
     if (accessToken) {
       try {
+        const language = await getConversationLanguage(conversationId, correlationId);
         await sendInstagramMessage(
           recipientId,
-          `Your appointment has been rescheduled to **${dateStr}**.`,
+          buildAppointmentRescheduledConfirmDm({ language, dateDisplay: dateStr }),
           correlationId,
           accessToken
         );

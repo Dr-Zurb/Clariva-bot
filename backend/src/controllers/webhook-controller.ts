@@ -6,21 +6,30 @@ import { logger } from '../config/logger';
 import { successResponse } from '../utils/response';
 import {
   verifyInstagramSignature,
+  verifyFacebookSignature,
   isWebhookSecretConfigured,
+  isFacebookWebhookSecretConfigured,
   getWebhookSecretLength,
+  getFacebookWebhookSecretLength,
 } from '../utils/webhook-verification';
 import { verifyRazorpaySignature } from '../utils/razorpay-verification';
+import { verifyDoctorOwnedRazorpayWebhook } from '../services/doctor-gateway-credentials-service';
 import {
   extractInstagramEventId,
+  extractFacebookEventId,
   extractInstagramCommentEventId,
+  extractFacebookCommentEventId,
   extractInstagramMessageForDedup,
   generateFallbackEventId,
   getInstagramPayloadStructure,
+  inspectInstagramMessageEditDrop,
   isInstagramCommentPayload,
+  isFacebookPageCommentPayload,
   isNonActionableInstagramEvent,
   isInstagramMessageEcho,
   isShortFlowWord,
 } from '../utils/webhook-event-id';
+import type { WebhookProvider } from '../types/webhook';
 import {
   isWebhookProcessed,
   markWebhookProcessing,
@@ -29,6 +38,7 @@ import { webhookQueue, tryAcquireInstagramDedupLock } from '../config/queue';
 import { WEBHOOK_JOB_NAME } from '../types/queue';
 import { logAuditEvent, logSecurityEvent } from '../utils/audit-logger';
 import { storeDeadLetterWebhook } from '../services/dead-letter-service';
+import { logWebhookMessageEditDropped } from '../services/webhook-metrics';
 import { razorpayAdapter } from '../adapters/razorpay-adapter';
 import { paypalAdapter } from '../adapters/paypal-adapter';
 
@@ -98,17 +108,22 @@ export const verifyInstagramWebhook = asyncHandler(
       throw new UnauthorizedError('Invalid hub.mode');
     }
 
-    // Check if verify token matches
-    if (!env.INSTAGRAM_WEBHOOK_VERIFY_TOKEN) {
-      logger.error('Instagram webhook verify token not configured in environment');
-      throw new UnauthorizedError('Instagram webhook verify token not configured');
+    // Accept Instagram or Facebook Page verify tokens (same callback URL for Meta apps).
+    const igToken = env.INSTAGRAM_WEBHOOK_VERIFY_TOKEN;
+    const fbToken = env.FACEBOOK_WEBHOOK_VERIFY_TOKEN;
+    if (!igToken && !fbToken) {
+      logger.error('Webhook verify token not configured (INSTAGRAM_ or FACEBOOK_WEBHOOK_VERIFY_TOKEN)');
+      throw new UnauthorizedError('Webhook verify token not configured');
     }
 
-    if (token !== env.INSTAGRAM_WEBHOOK_VERIFY_TOKEN) {
+    const tokenOk =
+      (igToken != null && token === igToken) || (fbToken != null && token === fbToken);
+    if (!tokenOk) {
       logger.warn(
         {
           receivedTokenLength: token?.length,
-          expectedTokenLength: env.INSTAGRAM_WEBHOOK_VERIFY_TOKEN.length,
+          hasInstagramToken: !!igToken,
+          hasFacebookToken: !!fbToken,
           tokensMatch: false,
         },
         'Verify token mismatch'
@@ -189,6 +204,9 @@ export const handleInstagramWebhook = asyncHandler(
         : firstChange?.field === 'comments' || firstChange?.field === 'live_comments'
           ? `comment:${firstChange.field}`
           : 'unknown';
+    const isFacebookPage = payloadBody?.object === 'page';
+    const webhookProvider: WebhookProvider = isFacebookPage ? 'facebook' : 'instagram';
+
     logger.info(
       {
         correlationId,
@@ -196,11 +214,16 @@ export const handleInstagramWebhook = asyncHandler(
         rawBodyLength: rawBody?.length ?? 0,
         payloadType,
         object: payloadBody?.object,
+        webhookProvider,
         entry0Keys: entry0 ? Object.keys(entry0) : [],
         firstChangeField: firstChange?.field,
         hasSignature: !!signature,
-        secretConfigured: isWebhookSecretConfigured(),
-        secretLength: getWebhookSecretLength(),
+        secretConfigured: isFacebookPage
+          ? isFacebookWebhookSecretConfigured()
+          : isWebhookSecretConfigured(),
+        secretLength: isFacebookPage
+          ? getFacebookWebhookSecretLength()
+          : getWebhookSecretLength(),
         contentType: req.headers['content-type'],
       },
       'Webhook signature verification diagnostics'
@@ -216,8 +239,23 @@ export const handleInstagramWebhook = asyncHandler(
       throw new UnauthorizedError('Invalid webhook signature');
     }
 
-    if (!verifyInstagramSignature(signature, rawBody, correlationId)) {
+    const signatureValid = isFacebookPage
+      ? verifyFacebookSignature(signature, rawBody, correlationId)
+      : verifyInstagramSignature(signature, rawBody, correlationId);
+
+    if (!signatureValid) {
       const len = rawBody?.length ?? 0;
+      // fbm-05: Page webhooks reject invalid signatures (no IG-style bypass).
+      if (isFacebookPage) {
+        await logSecurityEvent(
+          correlationId,
+          undefined,
+          'webhook_signature_failed',
+          'high',
+          req.ip
+        );
+        throw new UnauthorizedError('Invalid webhook signature');
+      }
       // 304-byte read/delivery receipts: Meta may sign differently; these are non-actionable.
       // Return 200 to stop retries; no processing needed. Security: attacker could send fake
       // read payload → we return 200 (harmless, no PHI, no processing).
@@ -301,6 +339,95 @@ export const handleInstagramWebhook = asyncHandler(
         );
         throw new UnauthorizedError('Invalid webhook signature');
       }
+    }
+
+    // Early branch: Facebook Page feed comments (object=page, field=feed, item=comment).
+    if (isFacebookPageCommentPayload(req.body)) {
+      const eventId =
+        extractFacebookCommentEventId(req.body) ?? generateFallbackEventId(req.body);
+      try {
+        const existing = await isWebhookProcessed(eventId, 'facebook');
+        if (existing && (existing.status === 'processed' || existing.status === 'pending')) {
+          logger.info(
+            { eventId, correlationId, provider: 'facebook', status: existing.status },
+            'Facebook comment webhook already processed (idempotent)'
+          );
+          res.status(200).json(successResponse({ message: 'OK' }, req));
+          return;
+        }
+      } catch (error) {
+        logger.error(
+          { error, eventId, correlationId, provider: 'facebook' },
+          'Facebook comment idempotency check failed (allowing through)'
+        );
+      }
+      try {
+        await markWebhookProcessing(eventId, 'facebook', correlationId);
+      } catch (error) {
+        logger.error(
+          { error, eventId, correlationId, provider: 'facebook' },
+          'Failed to mark Facebook comment webhook processing'
+        );
+      }
+      let payloadForQueue: unknown = req.body;
+      const rawBodyBuf = (req as { rawBody?: Buffer }).rawBody;
+      if (rawBodyBuf && Buffer.isBuffer(rawBodyBuf)) {
+        try {
+          payloadForQueue = JSON.parse(rawBodyBuf.toString('utf8'));
+        } catch {
+          // keep parsed body
+        }
+      }
+      try {
+        await webhookQueue.add(WEBHOOK_JOB_NAME, {
+          eventId,
+          provider: 'facebook',
+          payload: payloadForQueue as any,
+          correlationId,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (error) {
+        logger.error(
+          { error, eventId, correlationId, provider: 'facebook' },
+          'Facebook comment queue error (storing in dead letter queue)'
+        );
+        try {
+          await storeDeadLetterWebhook(
+            eventId,
+            'facebook',
+            payloadForQueue,
+            `Queue error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            0,
+            correlationId
+          );
+        } catch (dlqError) {
+          logger.error(
+            { error: dlqError, eventId, provider: 'facebook', correlationId },
+            'Failed to store Facebook comment in dead letter queue'
+          );
+        }
+        res.status(200).json(successResponse({ message: 'OK' }, req));
+        return;
+      }
+      logger.info(
+        { correlationId, eventId, provider: 'facebook' },
+        'Facebook Page comment webhook queued for processing'
+      );
+      await logAuditEvent({
+        correlationId,
+        userId: undefined,
+        action: 'webhook_received',
+        resourceType: 'webhook',
+        status: 'success',
+        metadata: {
+          event_id: eventId,
+          provider: 'facebook',
+          type: 'facebook_comment',
+          received_at: new Date().toISOString(),
+        },
+      });
+      res.status(200).json(successResponse({ message: 'OK' }, req));
+      return;
     }
 
     // Early branch: comment webhooks use entry[].changes[] with field "comments"
@@ -403,15 +530,20 @@ export const handleInstagramWebhook = asyncHandler(
       return;
     }
 
-    // Skip queueing message_edit: Meta sends both message + message_edit for the same user message.
-    // Queueing both causes a race: one creates the message, the other hits ConflictError and exits
-    // without sending. If message_edit runs first, we can end up with zero replies. Only process
-    // "message" events so we reliably get one create + one send per user message.
+    // Skip queueing message_edit (RBH-11): Meta often sends both message + message_edit for the
+    // same user send — queueing both races (duplicate create / zero replies). Product policy:
+    // we also do not re-process genuine patient edits; patients should send a new message.
+    // Emit a structured counter so ops can alert if edits arrive with no paired message traffic.
     if (payloadType === 'message_edit') {
-      logger.info(
-        { correlationId, payloadType },
-        'Instagram webhook: message_edit only - returning 200 without queueing (message event will be processed)'
-      );
+      const editMeta = inspectInstagramMessageEditDrop(req.body);
+      logWebhookMessageEditDropped({
+        correlationId,
+        provider: webhookProvider,
+        hasText: editMeta?.hasText ?? false,
+        hasSender: editMeta?.hasSender ?? false,
+        hasMid: editMeta?.hasMid ?? false,
+        numEdit: editMeta?.numEdit,
+      });
       res.status(200).json(successResponse({ message: 'OK' }, req));
       return;
     }
@@ -419,15 +551,17 @@ export const handleInstagramWebhook = asyncHandler(
     // Skip message echo: Meta sends our own sent messages back as "message" webhooks. Processing them causes reply loops.
     if (isInstagramMessageEcho(req.body)) {
       logger.info(
-        { correlationId },
-        'Instagram webhook: message echo (our sent message) - returning 200 without queueing'
+        { correlationId, provider: webhookProvider },
+        'Meta messaging webhook: message echo (our sent message) - returning 200 without queueing'
       );
       res.status(200).json(successResponse({ message: 'OK' }, req));
       return;
     }
 
     // Step 2: Extract event ID (platform-specific or fallback hash) — needed before dedup for short flow words
-    let eventId = extractInstagramEventId(req.body) ?? generateFallbackEventId(req.body);
+    let eventId = isFacebookPage
+      ? (extractFacebookEventId(req.body) ?? generateFallbackEventId(req.body))
+      : (extractInstagramEventId(req.body) ?? generateFallbackEventId(req.body));
 
     // Content-based dedup: Meta sends multiple "message" webhooks with different mids for same user message.
     // For short flow words (yes, no, ok), use eventId so we always queue—users send "yes" twice (confirm then consent).
@@ -442,8 +576,8 @@ export const handleInstagramWebhook = asyncHandler(
       );
       if (!contentAcquired) {
         logger.info(
-          { correlationId, provider: 'instagram', pageId: dedup.pageId },
-          'Instagram webhook: content-based duplicate (same message in window); returning 200'
+          { correlationId, provider: webhookProvider, pageId: dedup.pageId },
+          'Messaging webhook: content-based duplicate (same message in window); returning 200'
         );
         res.status(200).json(successResponse({ message: 'OK' }, req));
         return;
@@ -461,14 +595,21 @@ export const handleInstagramWebhook = asyncHandler(
         ? Object.keys(messaging[0] as object)
         : [];
       logger.debug(
-        { correlationId, entryId, hasMessaging, messagingLength: hasMessaging ? (messaging as unknown[]).length : 0, firstMessagingKeys: firstItemKeys },
-        'Instagram webhook: eventId is entry id (no mid found); payload shape logged for debugging'
+        {
+          correlationId,
+          entryId,
+          provider: webhookProvider,
+          hasMessaging,
+          messagingLength: hasMessaging ? (messaging as unknown[]).length : 0,
+          firstMessagingKeys: firstItemKeys,
+        },
+        'Messaging webhook: eventId is entry id (no mid found); payload shape logged for debugging'
       );
     }
 
     // Step 3: Check idempotency (prevent duplicates)
     try {
-      const existing = await isWebhookProcessed(eventId, 'instagram');
+      const existing = await isWebhookProcessed(eventId, webhookProvider);
 
       if (existing && (existing.status === 'processed' || existing.status === 'pending')) {
         // Already processed or in-flight - return 200 OK (idempotent). Skipping 'pending'
@@ -477,7 +618,7 @@ export const handleInstagramWebhook = asyncHandler(
           {
             eventId,
             correlationId,
-            provider: 'instagram',
+            provider: webhookProvider,
             status: existing.status,
           },
           'Webhook already processed or in-flight (idempotent response)'
@@ -493,7 +634,7 @@ export const handleInstagramWebhook = asyncHandler(
           error,
           eventId,
           correlationId,
-          provider: 'instagram',
+          provider: webhookProvider,
         },
         'Idempotency check failed (allowing webhook through)'
       );
@@ -502,7 +643,7 @@ export const handleInstagramWebhook = asyncHandler(
 
     // Step 4: Mark as processing (prevent race conditions)
     try {
-      await markWebhookProcessing(eventId, 'instagram', correlationId);
+      await markWebhookProcessing(eventId, webhookProvider, correlationId);
     } catch (error) {
       // Fail-open: Log error but allow webhook through
       logger.error(
@@ -510,7 +651,7 @@ export const handleInstagramWebhook = asyncHandler(
           error,
           eventId,
           correlationId,
-          provider: 'instagram',
+          provider: webhookProvider,
         },
         'Failed to mark webhook as processing (allowing webhook through)'
       );
@@ -532,7 +673,7 @@ export const handleInstagramWebhook = asyncHandler(
     try {
       await webhookQueue.add(WEBHOOK_JOB_NAME, {
         eventId,
-        provider: 'instagram',
+        provider: webhookProvider,
         payload: payloadForQueue as any,
         correlationId,
         timestamp: new Date().toISOString(),
@@ -544,7 +685,7 @@ export const handleInstagramWebhook = asyncHandler(
           error,
           eventId,
           correlationId,
-          provider: 'instagram',
+          provider: webhookProvider,
         },
         'Queue error (storing in dead letter queue)'
       );
@@ -552,7 +693,7 @@ export const handleInstagramWebhook = asyncHandler(
       try {
         await storeDeadLetterWebhook(
           eventId,
-          'instagram',
+          webhookProvider,
           payloadForQueue,
           `Queue error: ${error instanceof Error ? error.message : 'Unknown error'}`,
           0, // No retries (failed immediately)
@@ -566,7 +707,7 @@ export const handleInstagramWebhook = asyncHandler(
             error: dlqError,
             eventId,
             correlationId,
-            provider: 'instagram',
+            provider: webhookProvider,
           },
           'Failed to store in dead letter queue (webhook lost)'
         );
@@ -577,13 +718,15 @@ export const handleInstagramWebhook = asyncHandler(
       return;
     }
 
-    // Log so Render/runtime logs show webhook receipt (search for "Instagram webhook queued")
+    // Log so Render/runtime logs show webhook receipt
     logger.info(
-      { correlationId, eventId, provider: 'instagram' },
-      'Instagram webhook queued for processing'
+      { correlationId, eventId, provider: webhookProvider },
+      isFacebookPage
+        ? 'Facebook Page webhook queued for processing'
+        : 'Instagram webhook queued for processing'
     );
     // Audit log (metadata only - NEVER log req.body)
-    // resourceId omitted: eventId is Instagram entry ID (numeric string), audit_logs.resource_id is UUID
+    // resourceId omitted: eventId is Meta mid/entry ID (numeric string), audit_logs.resource_id is UUID
     await logAuditEvent({
       correlationId,
       userId: undefined, // System operation
@@ -592,7 +735,7 @@ export const handleInstagramWebhook = asyncHandler(
       status: 'success',
       metadata: {
         event_id: eventId,
-        provider: 'instagram',
+        provider: webhookProvider,
         received_at: new Date().toISOString(),
       },
     });
@@ -619,7 +762,12 @@ export const handleRazorpayWebhook = asyncHandler(
     const signature = req.headers['x-razorpay-signature'] as string | undefined;
     const rawBody = req.rawBody || Buffer.from(JSON.stringify(req.body));
 
-    if (!verifyRazorpaySignature(signature, rawBody, correlationId)) {
+    const platformOk = verifyRazorpaySignature(signature, rawBody, correlationId);
+    const doctorOk =
+      !platformOk && signature
+        ? await verifyDoctorOwnedRazorpayWebhook(signature, rawBody, correlationId)
+        : false;
+    if (!platformOk && !doctorOk) {
       await logSecurityEvent(
         correlationId,
         undefined,

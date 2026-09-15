@@ -14,10 +14,20 @@
  */
 
 import { Router } from 'express';
-import { getPublicPrescriptionHandler } from '../../../controllers/public-prescription-controller';
+import {
+  getPublicPrescriptionBackgroundHandler,
+  getPublicPrescriptionFooterHandler,
+  getPublicPrescriptionHandler,
+  getPublicPrescriptionHeaderHandler,
+  getPublicPrescriptionLogoHandler,
+} from '../../../controllers/public-prescription-controller';
 
 const router = Router();
 
+router.get('/:id/logo', getPublicPrescriptionLogoHandler);
+router.get('/:id/header', getPublicPrescriptionHeaderHandler);
+router.get('/:id/footer', getPublicPrescriptionFooterHandler);
+router.get('/:id/background', getPublicPrescriptionBackgroundHandler);
 router.get('/:id', getPublicPrescriptionHandler);
 
 export default router;

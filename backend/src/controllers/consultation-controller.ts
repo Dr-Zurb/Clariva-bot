@@ -9,7 +9,9 @@
  */
 
 import { Request, Response } from 'express';
+import { z } from 'zod';
 import { asyncHandler } from '../utils/async-handler';
+import { isRecordingPauseReasonCode } from '../types/consultation-recording-audit';
 import { successResponse, errorResponse } from '../utils/response';
 import {
   startConsultation,
@@ -24,25 +26,30 @@ import {
   markParticipantJoined,
   updateSessionStatus,
 } from '../services/consultation-session-service';
-import { getConsentForSession } from '../services/recording-consent-service';
 import {
   pauseRecording,
   resumeRecording,
+  extendRecordingPause,
   getCurrentRecordingState,
+  resolveRecordingCaller,
   isSessionParticipant,
 } from '../services/recording-pause-service';
+import { listRecordingGaps } from '../services/recording-gap-service';
 import {
   requestVideoEscalation,
   patientResponseToEscalation,
   patientRevokeVideoMidCall,
+  offerVideoRecording,
+  pauseVideoGrant,
+  resumeVideoGrant,
   getVideoEscalationStateForSession,
+  extendVideoGrant,
   isSessionParticipantForRequest,
   AlreadyRecordingVideoError,
   CooldownInProgressError,
   MaxAttemptsReachedError,
   PendingRequestExistsError,
   SessionNotActiveError,
-  type VideoEscalationPresetReason,
 } from '../services/recording-escalation-service';
 import {
   mintReplayUrl,
@@ -77,6 +84,7 @@ import {
   validateStartConsultationBody,
   validateGetConsultationTokenQuery,
 } from '../utils/validation';
+import { assertDoctorRecordingAttestation } from '../services/doctor-recording-attestation-service';
 import {
   ForbiddenError,
   InternalError,
@@ -142,6 +150,7 @@ export const startConsultationHandler = asyncHandler(async (req: Request, res: R
   }
 
   const { appointmentId } = validateStartConsultationBody(req.body);
+  await assertDoctorRecordingAttestation(userId);
   const result = await startConsultation(appointmentId, correlationId, userId);
 
   res.status(200).json(successResponse(result, req));
@@ -163,7 +172,7 @@ export const getConsultationTokenHandler = asyncHandler(async (req: Request, res
     req.query as Record<string, string | string[] | undefined>
   );
 
-  let result: { token: string; roomName: string; sessionId: string };
+  let result: Awaited<ReturnType<typeof getConsultationToken>>;
   if (userId && query.appointmentId) {
     result = await getConsultationToken(query.appointmentId, correlationId, { userId });
   } else if (query.token) {
@@ -1336,6 +1345,7 @@ export const startVoiceConsultationHandler = asyncHandler(
     }
 
     const { appointmentId } = validateStartConsultationBody(req.body);
+    await assertDoctorRecordingAttestation(userId);
     const result = await startVoiceConsultation(appointmentId, correlationId, userId);
 
     res.status(200).json(successResponse(result, req));
@@ -1502,86 +1512,74 @@ export const resendConsultationLinkHandler = asyncHandler(
   },
 );
 
-/**
- * Get recording-consent decision for a session (Plan 02 · Task 27).
- * GET /api/v1/consultation/:sessionId/recording-consent
- *
- * Auth: Requires authenticated doctor. The doctor must own the session
- * (verified indirectly by the RLS-enforced service layer — service-role
- * read here is safe because we check `session.doctorId === req.user.id`
- * before returning).
- *
- * Response: { decision: boolean | null, capturedAt: string | null, version: string | null }
- */
-export const getRecordingConsentForSessionHandler = asyncHandler(
-  async (req: Request, res: Response) => {
-    const userId = req.user?.id;
-    if (!userId) {
-      throw new UnauthorizedError('Authentication required');
-    }
-
-    const sessionId = (req.params as { sessionId?: string }).sessionId?.trim();
-    if (!sessionId) {
-      throw new ValidationError('sessionId path param is required');
-    }
-
-    const session = await findSessionById(sessionId);
-    if (!session) {
-      throw new NotFoundError('Consultation session not found');
-    }
-    if (session.doctorId !== userId) {
-      throw new UnauthorizedError('Not authorized to read this session');
-    }
-
-    const consent = await getConsentForSession({ sessionId });
-
-    res.status(200).json(
-      successResponse(
-        {
-          decision: consent.decision,
-          capturedAt: consent.capturedAt ? consent.capturedAt.toISOString() : null,
-          version: consent.version,
-        },
-        req,
-      ),
-    );
-  },
-);
-
 // ============================================================================
 // Plan 07 · Task 28 — recording pause / resume / inspect (Decision 4 LOCKED)
 // ============================================================================
 
 /**
+ * Dual-bearer extract (rec-17). Same shape as
+ * `mintAttachmentSignedUrlsHandler`: no `authenticateToken`; the
+ * service discriminates scoped consult JWT vs Supabase access token.
+ * A doctor still has to present a valid Supabase JWT.
+ */
+async function requirePatientRecordingCaller(
+  req: Request,
+  sessionId: string,
+): Promise<{ actorId: string }> {
+  const bearerJwt = requireRecordingBearerJwt(req);
+  const caller = await resolveRecordingCaller(sessionId, bearerJwt);
+  if (caller.role !== 'patient') {
+    throw new ForbiddenError('Only the session patient can perform this action');
+  }
+  return caller;
+}
+
+function requireRecordingBearerJwt(req: Request): string {
+  const authHeader = req.header('authorization') || req.header('Authorization');
+  if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
+    throw new UnauthorizedError('Bearer token is required');
+  }
+  const token = authHeader.slice(7).trim();
+  if (!token) {
+    throw new UnauthorizedError('Bearer token is required');
+  }
+  return token;
+}
+
+/**
  * POST /api/v1/consultation/:sessionId/recording/pause
  *
- * Body: { reason: string }  (5..200 chars after trim)
- * Auth: Required; caller MUST be the session's doctor (enforced inside
- *       `pauseRecording` via the `doctorId === session.doctorId` check).
- * Returns 204 on success. Maps `ValidationError` / `ForbiddenError` /
- * `ConflictError` to the standard 400 / 403 / 409 envelopes via the
- * global error middleware.
+ * Body: doctor — `{ reasonCode }` one of the five REC-D14 presets.
+ *       patient — empty; reason is always `patient_request`.
+ * Auth: Bearer JWT (doctor Supabase access token OR patient scoped
+ *       consult JWT). Same URL as the doctor path; doctor credential
+ *       is unchanged. Returns 204 on success.
  */
+export const pauseRecordingBodySchema = z.object({
+  reasonCode: z
+    .string()
+    .refine(isRecordingPauseReasonCode, {
+      message: 'reasonCode must be one of the five preset pause reasons',
+    })
+    .optional(),
+});
+
 export const pauseRecordingHandler = asyncHandler(
   async (req: Request, res: Response) => {
     const correlationId = req.correlationId || 'unknown';
-    const userId = req.user?.id;
-    if (!userId) {
-      throw new UnauthorizedError('Authentication required');
-    }
+    const bearerJwt = requireRecordingBearerJwt(req);
 
     const sessionId = (req.params as { sessionId?: string }).sessionId?.trim();
     if (!sessionId) {
       throw new ValidationError('sessionId path param is required');
     }
 
-    const body = req.body as { reason?: unknown } | undefined;
-    const reason = typeof body?.reason === 'string' ? body.reason : '';
+    const { reasonCode } = pauseRecordingBodySchema.parse(req.body ?? {});
 
     await pauseRecording({
       sessionId,
-      doctorId:      userId,
-      reason,
+      bearerJwt,
+      reasonCode,
       correlationId,
     });
 
@@ -1592,9 +1590,37 @@ export const pauseRecordingHandler = asyncHandler(
 /**
  * POST /api/v1/consultation/:sessionId/recording/resume
  *
- * No body. Same authz model as pause. 204 on success.
+ * No body. Dual-bearer, same as pause. The service refuses a
+ * counterparty resume with a typed error. 204 on success.
  */
 export const resumeRecordingHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const correlationId = req.correlationId || 'unknown';
+    const bearerJwt = requireRecordingBearerJwt(req);
+
+    const sessionId = (req.params as { sessionId?: string }).sessionId?.trim();
+    if (!sessionId) {
+      throw new ValidationError('sessionId path param is required');
+    }
+
+    await resumeRecording({
+      sessionId,
+      bearerJwt,
+      correlationId,
+    });
+
+    res.status(204).send();
+  },
+);
+
+/**
+ * POST /api/v1/consultation/:sessionId/recording/pause/extend
+ *
+ * Doctor-only. Extends an open pause by the single 5-minute bound
+ * exactly once. Empty body. 200 with the new server deadline.
+ * A race with the auto-resume worker is a no-op (the claim wins).
+ */
+export const extendRecordingPauseHandler = asyncHandler(
   async (req: Request, res: Response) => {
     const correlationId = req.correlationId || 'unknown';
     const userId = req.user?.id;
@@ -1607,52 +1633,41 @@ export const resumeRecordingHandler = asyncHandler(
       throw new ValidationError('sessionId path param is required');
     }
 
-    await resumeRecording({
+    const result = await extendRecordingPause({
       sessionId,
-      doctorId:      userId,
+      doctorId: userId,
       correlationId,
     });
 
-    res.status(204).send();
+    res.status(200).json(
+      successResponse(
+        {
+          autoResumeAt: result.autoResumeAt.toISOString(),
+          autoResumeExtensionsUsed: result.autoResumeExtensionsUsed,
+        },
+        req,
+      ),
+    );
   },
 );
 
 /**
  * GET /api/v1/consultation/:sessionId/recording/state
  *
- * Read-only state inspector. Either participant (doctor or patient)
- * can call it — the RecordingPausedIndicator on both sides needs the
- * initial state on mount. RBAC here only rejects non-participants;
- * session-scoped Supabase RLS on the patient side would normally do
- * this, but since we're reading via service-role admin we enforce it
- * directly.
- *
- * Response:
- *   {
- *     sessionId:   string,
- *     paused:      boolean,
- *     pausedAt?:   string (ISO),
- *     pausedBy?:   string,
- *     pauseReason?: string,
- *     resumedAt?:  string (ISO)
- *   }
+ * Read-only state inspector. Dual-bearer (rec-17): a scoped consult
+ * JWT is enough for the patient countdown to rehydrate. Extra
+ * participants are refused. Doctor still presents a Supabase JWT.
  */
 export const getRecordingStateHandler = asyncHandler(
   async (req: Request, res: Response) => {
-    const userId = req.user?.id;
-    if (!userId) {
-      throw new UnauthorizedError('Authentication required');
-    }
+    const bearerJwt = requireRecordingBearerJwt(req);
 
     const sessionId = (req.params as { sessionId?: string }).sessionId?.trim();
     if (!sessionId) {
       throw new ValidationError('sessionId path param is required');
     }
 
-    const { isParticipant } = await isSessionParticipant(sessionId, userId);
-    if (!isParticipant) {
-      throw new ForbiddenError('Not authorized to read this session');
-    }
+    await resolveRecordingCaller(sessionId, bearerJwt);
 
     const state = await getCurrentRecordingState(sessionId);
 
@@ -1663,8 +1678,12 @@ export const getRecordingStateHandler = asyncHandler(
           paused:       state.paused,
           pausedAt:     state.pausedAt ? state.pausedAt.toISOString() : undefined,
           pausedBy:     state.pausedBy,
+          pausedByRole: state.pausedByRole,
           pauseReason:  state.pauseReason,
           resumedAt:    state.resumedAt ? state.resumedAt.toISOString() : undefined,
+          autoResumeAt: state.autoResumeAt ? state.autoResumeAt.toISOString() : undefined,
+          autoResumeExtensionsUsed: state.autoResumeExtensionsUsed,
+          autoResumeBoundMs: state.autoResumeBoundMs,
         },
         req,
       ),
@@ -1883,12 +1902,32 @@ export const mintReplayUrlHandler = asyncHandler(
       );
     }
 
+    const mintQuery = z
+      .object({
+        compositionSid: z
+          .string()
+          .regex(/^CJ[A-Za-z0-9]{2,32}$/, 'compositionSid is not a valid Composition SID')
+          .optional(),
+      })
+      .safeParse({
+        compositionSid:
+          typeof (req.query as { compositionSid?: unknown }).compositionSid === 'string'
+            ? (req.query as { compositionSid: string }).compositionSid.trim()
+            : undefined,
+      });
+    if (!mintQuery.success) {
+      throw new ValidationError(
+        mintQuery.error.issues[0]?.message ?? 'Invalid compositionSid',
+      );
+    }
+
     const caller = await resolveReplayCaller(req, sessionId);
 
     try {
       const result = await mintReplayUrl({
         sessionId,
         artifactKind,
+        compositionSid: mintQuery.data.compositionSid,
         requestingUserId: caller.userId,
         requestingRole:   caller.role,
         correlationId,
@@ -2034,7 +2073,7 @@ export const sendVideoReplayOtpHandler = asyncHandler(
         errorResponse(
           {
             code:       'already_verified',
-            message:    'Patient is inside the 30-day OTP skip window; no SMS needed',
+            message:    'Patient is inside the 30-day OTP skip window; no OTP needed',
             statusCode: 409,
             details: {
               lastVerifiedAt: state.lastVerifiedAt ? state.lastVerifiedAt.toISOString() : null,
@@ -2067,7 +2106,7 @@ export const sendVideoReplayOtpHandler = asyncHandler(
         errorResponse(
           {
             code:       'no_patient_phone_on_file',
-            message:    'Patient has no phone number on file for SMS OTP',
+            message:    'Patient has no phone number on file for OTP',
             statusCode: 403,
           },
           req,
@@ -2215,10 +2254,46 @@ export const getReplayStatusHandler = asyncHandler(
             ? result.selfServeExpiresAt.toISOString()
             : undefined,
           hasVideo:            result.hasVideo ?? false,
+          audioCompositions:   (result.audioCompositions ?? []).map((row) => ({
+            compositionSid: row.compositionSid,
+            startedAt: row.startedAt.toISOString(),
+            durationSeconds: row.durationSeconds,
+          })),
+          videoCompositions:   (result.videoCompositions ?? []).map((row) => ({
+            compositionSid: row.compositionSid,
+            startedAt: row.startedAt.toISOString(),
+            durationSeconds: row.durationSeconds,
+          })),
         },
         req,
       ),
     );
+  },
+);
+
+/**
+ * GET /api/v1/consultation/:sessionId/replay/gaps
+ *
+ * rec-18 — ledger-derived gap list for the replay player. Dual-bearer
+ * via `resolveReplayCaller` (same as status/mint). Both participants
+ * may read. No writes.
+ */
+export const getRecordingGapsHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const sessionId = (req.params as { sessionId?: string }).sessionId?.trim();
+    if (!sessionId) {
+      throw new ValidationError('sessionId path param is required');
+    }
+
+    const caller = await resolveReplayCaller(req, sessionId);
+    const membership = await isSessionParticipant(sessionId, caller.userId);
+    if (!membership.isParticipant) {
+      throw new ForbiddenError('Not authorized to read this session');
+    }
+
+    const result = await listRecordingGaps(sessionId);
+
+    res.status(200).json(successResponse(result, req));
   },
 );
 
@@ -2413,9 +2488,11 @@ export const downloadTranscriptPdfHandler = asyncHandler(
 /**
  * POST /api/v1/consultation/:sessionId/video-escalation/request
  *
- * Doctor-only. Body: `{ presetReasonCode, reason }` (optional informational
- * `doctorId` — must match the bearer JWT if present). Returns
- * `{ requestId, expiresAt, correlationId, attemptsUsed }` on 200.
+ * Doctor-only. Body: `{ presetReasonCode }` (optional informational
+ * `doctorId` — must match the bearer JWT if present). A leftover `reason`
+ * field is ignored — the service writes a server-authored canonical
+ * string so doctor free text never lands in `video_escalation_audit`.
+ * Returns `{ requestId, expiresAt, correlationId, attemptsUsed }` on 200.
  *
  * Error mapping (driven by the AppError subclass thrown by the service;
  * the global error handler already maps `statusCode` for anything not
@@ -2428,6 +2505,17 @@ export const downloadTranscriptPdfHandler = asyncHandler(
  * doctor UI can skip the round-trip to GET /video-escalation-state
  * right after the error.
  */
+const requestVideoEscalationBodySchema = z.object({
+  doctorId: z.string().trim().min(1).optional(),
+  presetReasonCode: z.enum([
+    'visible_symptom',
+    'document_procedure',
+    'patient_request',
+    'other',
+  ]),
+  reason: z.string().optional(),
+});
+
 export const requestVideoEscalationHandler = asyncHandler(
   async (req: Request, res: Response) => {
     const correlationId = req.correlationId || 'unknown';
@@ -2441,28 +2529,16 @@ export const requestVideoEscalationHandler = asyncHandler(
       throw new ValidationError('sessionId path param is required');
     }
 
-    const body = req.body as
-      | {
-          doctorId?:         unknown;
-          presetReasonCode?: unknown;
-          reason?:           unknown;
-        }
-      | undefined;
-    const bodyDoctorId = typeof body?.doctorId === 'string' ? body.doctorId.trim() : '';
-    if (bodyDoctorId && bodyDoctorId !== userId) {
+    const body = requestVideoEscalationBodySchema.parse(req.body ?? {});
+    if (body.doctorId && body.doctorId !== userId) {
       throw new ForbiddenError('doctorId in body does not match authenticated user');
     }
-    const presetReasonCode = typeof body?.presetReasonCode === 'string'
-      ? body.presetReasonCode.trim()
-      : '';
-    const reason = typeof body?.reason === 'string' ? body.reason : '';
 
     try {
       const result = await requestVideoEscalation({
         sessionId,
         doctorId:         userId,
-        presetReasonCode: presetReasonCode as VideoEscalationPresetReason,
-        reason,
+        presetReasonCode: body.presetReasonCode,
         correlationId,
       });
       res.status(200).json(
@@ -2547,29 +2623,26 @@ export const requestVideoEscalationHandler = asyncHandler(
  * `{ accepted: false, reason: 'already_timed_out' }` is more useful
  * than a 409 for error-surface simplicity.
  */
+const respondVideoEscalationBodySchema = z.object({
+  decision: z.enum(['allow', 'decline']),
+});
+
 export const respondVideoEscalationHandler = asyncHandler(
   async (req: Request, res: Response) => {
     const correlationId = req.correlationId || 'unknown';
-    const userId = req.user?.id;
-    if (!userId) {
-      throw new UnauthorizedError('Authentication required');
-    }
+    const bearerJwt = requireRecordingBearerJwt(req);
 
     const requestId = (req.params as { requestId?: string }).requestId?.trim();
     if (!requestId) {
       throw new ValidationError('requestId path param is required');
     }
 
-    const body = req.body as { decision?: unknown } | undefined;
-    const decisionRaw = typeof body?.decision === 'string' ? body.decision.trim() : '';
-    if (decisionRaw !== 'allow' && decisionRaw !== 'decline') {
-      throw new ValidationError('decision must be "allow" or "decline"');
-    }
+    const { decision } = respondVideoEscalationBodySchema.parse(req.body ?? {});
 
     const result = await patientResponseToEscalation({
       requestId,
-      patientId: userId,
-      decision:  decisionRaw,
+      bearerJwt,
+      decision,
       correlationId,
     });
 
@@ -2585,20 +2658,13 @@ export const respondVideoEscalationHandler = asyncHandler(
  */
 export const getVideoEscalationStateHandler = asyncHandler(
   async (req: Request, res: Response) => {
-    const userId = req.user?.id;
-    if (!userId) {
-      throw new UnauthorizedError('Authentication required');
-    }
-
     const sessionId = (req.params as { sessionId?: string }).sessionId?.trim();
     if (!sessionId) {
       throw new ValidationError('sessionId path param is required');
     }
 
-    const { isParticipant } = await isSessionParticipant(sessionId, userId);
-    if (!isParticipant) {
-      throw new ForbiddenError('Not authorized to read this session');
-    }
+    const bearerJwt = requireRecordingBearerJwt(req);
+    await resolveRecordingCaller(sessionId, bearerJwt);
 
     const { state, recent } = await getVideoEscalationStateForSession({ sessionId });
     res.status(200).json(successResponse({ state, recent }, req));
@@ -2614,44 +2680,27 @@ void isSessionParticipantForRequest;
  * POST /api/v1/consultation/:sessionId/video-escalation/revoke
  *
  * Plan 08 · Task 42 · Decision 10 LOCKED — patient-initiated revoke of
- * an in-flight video recording. Patient-only — the service re-checks
- * `session.patient_id` against the bearer JWT.sub even though the
- * standard `authenticateToken` middleware already validated the token.
+ * an in-flight video recording. Dual-bearer (rec-17): scoped consult
+ * JWT or Supabase patient session. No `authenticateToken` — that
+ * middleware cannot resolve `patient:{appointmentId}` subjects.
  *
- * Body: empty (no input required — the session + bearer JWT are
- * enough to locate the active allow row). Returns:
- *   `{ correlationId, status: 'revoked' | 'already_audio_only' }`.
- *
- * Error shapes:
- *   · 401 — bearer token missing / invalid (handled by middleware).
- *   · 403 — caller is not the session patient (`ForbiddenError` from
- *     the service).
- *   · 404 — session id doesn't resolve.
- *   · 5xx — Twilio rule-flip failed (per task-42 Option A: the audit
- *     row is NOT stamped; UI shows "Couldn't stop recording. Try
- *     again.").
- *
- * Why always 200 on both `revoked` and `already_audio_only`: the patient
- * tapping revoke when the recording is already audio-only is a UI
- * correctness concern, not an error. The idempotent shape lets the
- * modal close cleanly on either branch without a second round-trip.
+ * Body: empty. Returns
+ * `{ correlationId, status: 'revoked' | 'already_audio_only' }`.
  */
 export const patientRevokeVideoHandler = asyncHandler(
   async (req: Request, res: Response) => {
     const correlationId = req.correlationId || 'unknown';
-    const userId = req.user?.id;
-    if (!userId) {
-      throw new UnauthorizedError('Authentication required');
-    }
 
     const sessionId = (req.params as { sessionId?: string }).sessionId?.trim();
     if (!sessionId) {
       throw new ValidationError('sessionId path param is required');
     }
 
+    const caller = await requirePatientRecordingCaller(req, sessionId);
+
     const result = await patientRevokeVideoMidCall({
       sessionId,
-      patientId: userId,
+      patientId: caller.actorId,
       correlationId,
     });
 
@@ -2664,6 +2713,106 @@ export const patientRevokeVideoHandler = asyncHandler(
         req,
       ),
     );
+  },
+);
+
+const videoGrantPatientParamsSchema = z.object({
+  sessionId: z.string().min(1),
+});
+
+/**
+ * POST /api/v1/consultation/:sessionId/video-escalation/pause
+ *
+ * rec-24 — patient pauses video on the existing grant. Empty body.
+ */
+export const pauseVideoGrantHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const correlationId = req.correlationId || 'unknown';
+    const { sessionId } = videoGrantPatientParamsSchema.parse(req.params);
+    const caller = await requirePatientRecordingCaller(req, sessionId);
+    const result = await pauseVideoGrant({
+      sessionId,
+      patientId: caller.actorId,
+      correlationId,
+    });
+    res.status(200).json(successResponse(result, req));
+  },
+);
+
+/**
+ * POST /api/v1/consultation/:sessionId/video-escalation/resume
+ *
+ * rec-24 — resume the same grant. No consent, no new row.
+ */
+export const resumeVideoGrantHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const correlationId = req.correlationId || 'unknown';
+    const { sessionId } = videoGrantPatientParamsSchema.parse(req.params);
+    const caller = await requirePatientRecordingCaller(req, sessionId);
+    const result = await resumeVideoGrant({
+      sessionId,
+      patientId: caller.actorId,
+      correlationId,
+    });
+    res.status(200).json(successResponse(result, req));
+  },
+);
+
+const offerVideoRecordingParamsSchema = z.object({
+  sessionId: z.string().min(1),
+});
+
+/**
+ * POST /api/v1/consultation/:sessionId/video-escalation/offer
+ *
+ * rec-25 / REC-D12 — patient offers video without being asked.
+ * Self-consenting: no modal. Empty body. Service re-checks the caller
+ * is the session patient. Returns 200 with
+ * `{ status: 'started' | 'already_recording', ... }`.
+ */
+export const offerVideoRecordingHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const correlationId = req.correlationId || 'unknown';
+    const { sessionId } = offerVideoRecordingParamsSchema.parse(req.params);
+    const caller = await requirePatientRecordingCaller(req, sessionId);
+
+    const result = await offerVideoRecording({
+      sessionId,
+      patientId: caller.actorId,
+      correlationId,
+    });
+
+    res.status(200).json(successResponse(result, req));
+  },
+);
+
+const extendVideoGrantParamsSchema = z.object({
+  sessionId: z.string().min(1),
+});
+
+/**
+ * POST /api/v1/consultation/:sessionId/video-escalation/extend
+ *
+ * rec-22 — doctor spends the single 120s grant extension. Empty body.
+ * Server is the gate (atomic `grant_extended_at IS NULL`).
+ */
+export const extendVideoGrantHandler = asyncHandler(
+  async (req: Request, res: Response) => {
+    const correlationId = req.correlationId || 'unknown';
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new UnauthorizedError('Authentication required');
+    }
+
+    const { sessionId } = extendVideoGrantParamsSchema.parse(req.params);
+
+    const result = await extendVideoGrant({
+      sessionId,
+      doctorId: userId,
+      correlationId,
+    });
+
+    res.status(200).json(successResponse(result, req));
   },
 );
 

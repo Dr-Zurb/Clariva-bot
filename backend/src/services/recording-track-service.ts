@@ -114,7 +114,12 @@ import {
 
 export type StartInitiatedBy = 'system' | 'doctor_revert' | 'patient_revoke';
 export type RevertInitiatedBy = 'doctor' | 'patient' | 'system';
-export type RevertReason = 'doctor_paused' | 'patient_revoked' | 'system_error_fallback';
+export type RevertReason =
+  | 'doctor_paused'
+  | 'patient_paused'
+  | 'patient_revoked'
+  | 'system_error_fallback'
+  | 'grant_expired';
 
 export interface StartAudioOnlyRecordingInput {
   sessionId:      string;
@@ -606,8 +611,10 @@ export async function revertToAudioOnlyRecording(
 
   if (
     input.reason !== 'doctor_paused' &&
+    input.reason !== 'patient_paused' &&
     input.reason !== 'patient_revoked' &&
-    input.reason !== 'system_error_fallback'
+    input.reason !== 'system_error_fallback' &&
+    input.reason !== 'grant_expired'
   ) {
     throw new ValidationError(`Unknown revert reason: ${String(input.reason)}`);
   }

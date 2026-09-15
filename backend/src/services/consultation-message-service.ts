@@ -287,6 +287,8 @@ export type SystemEvent =
   //     carries the tags so the emitter could shift to "visible" additively
   //     later via a UI-side filter; v1 never calls the helpers.
   | 'video_recording_failed_to_start'
+  | 'video_recording_paused'
+  | 'video_recording_resumed'
   | 'video_escalation_declined'
   | 'video_escalation_timed_out'
   // Plan 09 · Task 49 refund-status events (written by the refund
@@ -845,7 +847,7 @@ export async function emitVideoRecordingStarted(
     await emitSystemMessage({
       sessionId,
       event: 'video_recording_started',
-      body: `Video recording started at ${hhmm}.`,
+      body: `Video recording started at ${hhmm}. It will stop on its own after a few minutes.`,
       correlationId: `video_recording_started:${correlationId ?? 'unknown'}`,
       meta: { byRole: 'doctor' },
     });
@@ -916,15 +918,22 @@ export async function emitVideoRecordingStopped(
   sessionId: string,
   correlationId?: string,
   byRole: 'patient' | 'doctor' | 'system' = 'patient',
-  reason: 'patient_revoked' | 'doctor_revert' | 'system_error_fallback' = 'patient_revoked',
+  reason:
+    | 'patient_revoked'
+    | 'doctor_revert'
+    | 'system_error_fallback'
+    | 'grant_expired' = 'patient_revoked',
 ): Promise<void> {
   try {
     const tz = await loadDoctorTzForSession(sessionId);
     const hhmm = formatTimeInDoctorTz(new Date(), tz);
+    const body = reason === 'grant_expired'
+      ? `Video recording ended automatically at ${hhmm}. Audio recording continues.`
+      : `Video recording stopped at ${hhmm}. Audio recording continues.`;
     await emitSystemMessage({
       sessionId,
       event: 'video_recording_stopped',
-      body: `Video recording stopped at ${hhmm}. Audio recording continues.`,
+      body,
       correlationId: `video_recording_stopped:${correlationId ?? 'unknown'}`,
       meta: { byRole, reason },
     });
@@ -935,6 +944,62 @@ export async function emitVideoRecordingStopped(
         error: err instanceof Error ? err.message : String(err),
       },
       'emitVideoRecordingStopped: swallowed error (best-effort; banner dropped)',
+    );
+  }
+}
+
+/**
+ * rec-24 — pause is temporary. Copy must not imply deletion (REC-D10).
+ */
+export async function emitVideoRecordingPaused(
+  sessionId: string,
+  correlationId?: string,
+): Promise<void> {
+  try {
+    const tz = await loadDoctorTzForSession(sessionId);
+    const hhmm = formatTimeInDoctorTz(new Date(), tz);
+    await emitSystemMessage({
+      sessionId,
+      event: 'video_recording_paused',
+      body: `Video recording paused at ${hhmm}. Audio recording continues.`,
+      correlationId: `video_recording_paused:${correlationId ?? 'unknown'}`,
+      meta: { byRole: 'patient' },
+    });
+  } catch (err) {
+    logger.warn(
+      {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      'emitVideoRecordingPaused: swallowed error (best-effort; banner dropped)',
+    );
+  }
+}
+
+/**
+ * rec-24 — resume of the same grant. No second consent.
+ */
+export async function emitVideoRecordingResumed(
+  sessionId: string,
+  correlationId?: string,
+): Promise<void> {
+  try {
+    const tz = await loadDoctorTzForSession(sessionId);
+    const hhmm = formatTimeInDoctorTz(new Date(), tz);
+    await emitSystemMessage({
+      sessionId,
+      event: 'video_recording_resumed',
+      body: `Video recording resumed at ${hhmm}.`,
+      correlationId: `video_recording_resumed:${correlationId ?? 'unknown'}`,
+      meta: { byRole: 'patient' },
+    });
+  } catch (err) {
+    logger.warn(
+      {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      'emitVideoRecordingResumed: swallowed error (best-effort; banner dropped)',
     );
   }
 }

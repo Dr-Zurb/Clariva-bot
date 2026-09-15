@@ -11,17 +11,15 @@ import { getSupabaseAdminClient } from '../config/database';
 import { PrescriptionAttachment } from '../types/prescription';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataModification, logDataAccess } from '../utils/audit-logger';
-import { ForbiddenError, InternalError, NotFoundError } from '../utils/errors';
+import { ForbiddenError, InternalError, NotFoundError, ValidationError } from '../utils/errors';
+import { assertPrescriptionContentWritable } from './prescription-service';
 
 const BUCKET = 'prescription-attachments';
 const DOWNLOAD_EXPIRY_SEC = 300; // 5 min
+/** Matches the Reports scan upload cap (10 MB). */
+export const ATTACHMENT_DOWNLOAD_MAX_BYTES = 10 * 1024 * 1024;
 
-const ALLOWED_MIME = [
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'application/pdf',
-] as const;
+const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] as const;
 
 /**
  * objective-tab / P5-D4 (obj-22) — objective media is the SAME `prescription_attachments`
@@ -99,10 +97,13 @@ export async function createUploadUrl(
   }
 
   if (!ALLOWED_MIME.includes(contentType as (typeof ALLOWED_MIME)[number])) {
-    throw new ForbiddenError('Invalid file type. Allowed: image/jpeg, image/png, image/webp, application/pdf');
+    throw new ForbiddenError(
+      'Invalid file type. Allowed: image/jpeg, image/png, image/webp, application/pdf'
+    );
   }
 
   const { doctorId } = await verifyPrescriptionOwnership(admin, prescriptionId, userId);
+  await assertPrescriptionContentWritable(prescriptionId, userId, correlationId);
 
   const sanitized = sanitizeFilename(filename);
   const ext = sanitized.includes('.') ? '' : getExtensionFromMime(contentType);
@@ -161,10 +162,13 @@ export async function registerAttachment(
   }
 
   if (!ALLOWED_MIME.includes(fileType as (typeof ALLOWED_MIME)[number])) {
-    throw new ForbiddenError('Invalid file type. Allowed: image/jpeg, image/png, image/webp, application/pdf');
+    throw new ForbiddenError(
+      'Invalid file type. Allowed: image/jpeg, image/png, image/webp, application/pdf'
+    );
   }
 
   await verifyPrescriptionOwnership(admin, prescriptionId, userId);
+  await assertPrescriptionContentWritable(prescriptionId, userId, correlationId);
 
   // Ensure filePath matches our pattern (doctor_id/prescription_id/...)
   const parts = filePath.split('/');
@@ -188,7 +192,13 @@ export async function registerAttachment(
   }
 
   const attachment = data as PrescriptionAttachment;
-  await logDataModification(correlationId, userId, 'create', 'prescription_attachment', attachment.id);
+  await logDataModification(
+    correlationId,
+    userId,
+    'create',
+    'prescription_attachment',
+    attachment.id
+  );
   return attachment;
 }
 
@@ -235,6 +245,55 @@ export async function getAttachmentDownloadUrl(
   return { downloadUrl: signed.signedUrl };
 }
 
+/**
+ * Service-role byte download for an owned attachment (rpt-05.2).
+ * Never logs file_path. Used by lab PDF extraction — no signed-URL round trip.
+ */
+export async function downloadAttachmentBytes(
+  prescriptionId: string,
+  attachmentId: string,
+  correlationId: string,
+  userId: string
+): Promise<{ bytes: Buffer; fileType: string | null; attachmentId: string }> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  await verifyPrescriptionOwnership(admin, prescriptionId, userId);
+
+  const { data: att, error: attError } = await admin
+    .from('prescription_attachments')
+    .select('id, prescription_id, file_path, file_type')
+    .eq('id', attachmentId)
+    .eq('prescription_id', prescriptionId)
+    .single();
+
+  if (attError || !att) {
+    throw new NotFoundError('Attachment not found');
+  }
+
+  const { data, error } = await admin.storage.from(BUCKET).download(att.file_path);
+  if (error) {
+    handleSupabaseError(error, correlationId);
+  }
+  if (!data) {
+    throw new InternalError('Failed to read attachment');
+  }
+
+  const bytes = Buffer.from(await data.arrayBuffer());
+  if (bytes.length > ATTACHMENT_DOWNLOAD_MAX_BYTES) {
+    throw new ValidationError('Attachment is too large to extract');
+  }
+
+  await logDataAccess(correlationId, userId, 'prescription_attachment', attachmentId);
+  return {
+    bytes,
+    fileType: typeof att.file_type === 'string' ? att.file_type : null,
+    attachmentId: att.id,
+  };
+}
+
 export interface AdviceHandoutPublicItem {
   id: string;
   file_type: string;
@@ -247,7 +306,7 @@ function adviceHandoutLabelFromPath(filePath: string): string {
   const last = filePath.split('/').pop() ?? '';
   const stripped = last.replace(
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i,
-    '',
+    ''
   );
   return stripped || last || 'Handout';
 }
@@ -259,7 +318,7 @@ function adviceHandoutLabelFromPath(filePath: string): string {
  */
 export async function listAdviceHandoutsForPublicShare(
   prescriptionId: string,
-  correlationId: string,
+  correlationId: string
 ): Promise<AdviceHandoutPublicItem[]> {
   const admin = getSupabaseAdminClient();
   if (!admin) {
@@ -279,7 +338,7 @@ export async function listAdviceHandoutsForPublicShare(
   const rows = (data ?? []).filter((row) =>
     String(row.file_path ?? '')
       .split('/')
-      .includes('advice'),
+      .includes('advice')
   );
 
   const out: AdviceHandoutPublicItem[] = [];
@@ -319,6 +378,7 @@ export async function deleteAttachment(
   }
 
   await verifyPrescriptionOwnership(admin, prescriptionId, userId);
+  await assertPrescriptionContentWritable(prescriptionId, userId, correlationId);
 
   const { data: att, error: attError } = await admin
     .from('prescription_attachments')
@@ -331,6 +391,9 @@ export async function deleteAttachment(
     throw new NotFoundError('Attachment not found');
   }
 
+  // RXL-Q10 / rxl-22: versions may share this file_path. Do not treat a
+  // single-row delete as licence to erase storage until a worker counts
+  // remaining references. Residual — behaviour unchanged here.
   const { error: storageError } = await admin.storage.from(BUCKET).remove([att.file_path]);
   if (storageError) {
     handleSupabaseError(storageError, correlationId);
@@ -346,7 +409,13 @@ export async function deleteAttachment(
     handleSupabaseError(delError, correlationId);
   }
 
-  await logDataModification(correlationId, userId, 'delete', 'prescription_attachment', attachmentId);
+  await logDataModification(
+    correlationId,
+    userId,
+    'delete',
+    'prescription_attachment',
+    attachmentId
+  );
 }
 
 /**
@@ -361,9 +430,7 @@ export async function createAttachmentSignedUrlForDelivery(
   if (!admin) {
     throw new InternalError('Service role client not available');
   }
-  const { data, error } = await admin.storage
-    .from(BUCKET)
-    .createSignedUrl(filePath, expirySec);
+  const { data, error } = await admin.storage.from(BUCKET).createSignedUrl(filePath, expirySec);
   if (error || !data?.signedUrl) {
     throw new InternalError('Failed to create delivery URL');
   }

@@ -9,14 +9,20 @@
 
 import { Router } from 'express';
 import {
+  connectDoctorGatewayHandler,
   createPaymentLinkHandler,
+  getDoctorGatewayHandler,
   getPaymentByIdHandler,
+  patchCollectionModeHandler,
 } from '../../../controllers/payment-controller';
 import { authenticateToken } from '../../../middleware/auth';
 
 const router = Router();
 
 router.post('/create-link', createPaymentLinkHandler);
+router.get('/gateway', authenticateToken, getDoctorGatewayHandler);
+router.put('/gateway', authenticateToken, connectDoctorGatewayHandler);
+router.patch('/collection-mode', authenticateToken, patchCollectionModeHandler);
 router.get('/:id', authenticateToken, getPaymentByIdHandler);
 
 export default router;

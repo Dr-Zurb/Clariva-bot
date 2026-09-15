@@ -64,8 +64,9 @@ const UUID_REGEX =
  *
  *   `'available'`     — composition is ready; player can mount.
  *   `'processing'`    — Twilio composition still encoding; check back later.
- *   `'not-recorded'`  — recording was off (no consent / disabled /
- *                       paused for the entire call).
+ *   `'not-recorded'`  — no recording artifact exists for the session
+ *                       (never captured, or the composition never
+ *                       landed). Not a consent decision.
  *   `'not-available'` — anything else (Plan 07 not shipped on this
  *                       deployment, infra error, etc.). Renders the
  *                       same as not-recorded but logged differently
@@ -208,7 +209,6 @@ interface SessionRow {
   actual_started_at: string | null;
   actual_ended_at: string | null;
   recording_artifact_ref: string | null;
-  recording_consent_at_book: boolean | null;
 }
 
 interface PrescriptionRow {
@@ -249,7 +249,7 @@ export async function getPostCallSummary(
   const { data: sessionRaw, error: sessionErr } = await admin
     .from('consultation_sessions')
     .select(
-      'id, appointment_id, doctor_id, patient_id, modality, status, actual_started_at, actual_ended_at, recording_artifact_ref, recording_consent_at_book',
+      'id, appointment_id, doctor_id, patient_id, modality, status, actual_started_at, actual_ended_at, recording_artifact_ref',
     )
     .eq('id', sessionId)
     .maybeSingle();
@@ -497,20 +497,6 @@ async function resolveRecordingForSession(
   // Text modality has no recording surface.
   if (session.modality === 'text') {
     return { status: 'not-available' };
-  }
-
-  // The session never opted in OR the artifact ref is missing →
-  // shortcut as "not recorded" without bothering Plan 07's preflight.
-  if (
-    session.recording_consent_at_book === false ||
-    !session.recording_artifact_ref
-  ) {
-    // `false` consent is a definitive "not recorded"; missing
-    // artifact ref + null/true consent could be "still being
-    // composed" but reading availability is cheaper than guessing.
-    if (session.recording_consent_at_book === false) {
-      return { status: 'not-recorded' };
-    }
   }
 
   // Plan 07's `getReplayAvailability` requires a requesting user id +

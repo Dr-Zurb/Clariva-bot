@@ -3,6 +3,7 @@
  */
 
 import type { OpdQueueEntryStatus } from './database';
+import type { SlotTag } from './opd-slot-session';
 
 export interface DoctorQueueSessionRow {
   entryId: string;
@@ -32,4 +33,9 @@ export interface DoctorQueueSessionRow {
 
   patientId: string | null;
   patientNote: string | null;
+  /** Desk or lobby arrival stamp (RQ6). Null when not yet arrived. */
+  patientCheckedInAt: string | null;
+
+  /** Lobby presence tags (crc-02). Subset of SlotTag. */
+  tags: SlotTag[];
 }

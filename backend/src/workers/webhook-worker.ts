@@ -33,6 +33,7 @@ import {
 } from '../services/webhook-metrics';
 import type { WebhookJobData } from '../types/queue';
 import { processInstagramCommentWebhook } from './instagram-comment-webhook-handler';
+import { processFacebookCommentWebhook } from './facebook-comment-webhook-handler';
 import { processInstagramDmWebhook } from './instagram-dm-webhook-handler';
 import { handleModalityChangePaymentCapturedHook } from '../controllers/modality-change-controller';
 
@@ -185,6 +186,10 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
   }
 
   if (channelAdapter.surfaceOf(payload) === 'comment') {
+    if (channelAdapter.channel === 'facebook') {
+      await processFacebookCommentWebhook({ eventId, correlationId, provider, payload });
+      return;
+    }
     await processInstagramCommentWebhook({ eventId, correlationId, provider, payload });
     return;
   }

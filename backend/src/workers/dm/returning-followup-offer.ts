@@ -18,6 +18,8 @@ import {
 } from '../../utils/service-catalog-helpers';
 import type { ServiceOfferingV1 } from '../../utils/service-catalog-schema';
 import { env } from '../../config/env';
+import type { ConversationLanguage } from '../../utils/conversation-language';
+import { buildReturningFollowUpConfirmMessage } from '../../utils/dm-copy';
 
 function shouldUseReturningPatientMemory(
   profile: ReturningPatientProfile | undefined
@@ -68,8 +70,11 @@ export function canOfferReturningFollowUpService(
   return resolveReturningFollowUpCatalogOffering(doctorSettings, profile.priorVisits.lastServiceKey) != null;
 }
 
-export function formatReturningFollowUpConfirmMessage(serviceLabel: string): string {
-  return `Is this a **follow-up** for **${serviceLabel}**? Reply **Yes** or **No**.`;
+export function formatReturningFollowUpConfirmMessage(
+  language: ConversationLanguage,
+  serviceLabel: string
+): string {
+  return buildReturningFollowUpConfirmMessage({ language, serviceLabel });
 }
 
 export interface ReturningFollowUpOfferResult {
@@ -84,7 +89,8 @@ export function buildReturningFollowUpOffer(
   state: ConversationState,
   profile: ReturningPatientProfile,
   doctorSettings: DoctorSettingsRow | null,
-  intent: ConversationState['lastIntent']
+  intent: ConversationState['lastIntent'],
+  language: ConversationLanguage
 ): ReturningFollowUpOfferResult | null {
   const offering = resolveReturningFollowUpCatalogOffering(
     doctorSettings,
@@ -117,7 +123,7 @@ export function buildReturningFollowUpOffer(
 
   return {
     state: nextState,
-    replyText: formatReturningFollowUpConfirmMessage(serviceLabel),
+    replyText: formatReturningFollowUpConfirmMessage(language, serviceLabel),
     recalledServiceKey,
     serviceLabel,
   };

@@ -3,11 +3,11 @@
  *
  * Handles Twilio Video room/participant status callbacks.
  * Updates appointment: doctor_joined_at, patient_joined_at (still on
- * `appointments` for payout verification).
+ * `appointments` for verification).
  * Mirrors lifecycle into `consultation_sessions` (actual_started_at,
  * actual_ended_at, status, join timestamps).
  * Marks verified and completed when both joined + duration >= threshold.
- * Triggers per-appointment payout when doctor has payout_schedule='per_appointment'.
+ * Does not move money — doctor payouts are deprecated (billing P0).
  *
  * Identity convention (from e-task-3): doctor-{doctorId}, patient-{appointmentId}
  *
@@ -30,7 +30,6 @@ import { logger } from '../config/logger';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataModification } from '../utils/audit-logger';
 import type { Appointment } from '../types/database';
-import { processPayoutForPayment } from './payout-service';
 import { syncOpdQueueEntryOnAppointmentStatus } from './opd/opd-queue-service';
 import { syncCareEpisodeLifecycleOnAppointmentCompleted } from './care-episode-service';
 import {
@@ -40,9 +39,13 @@ import {
 } from './consultation-session-service';
 import type { Modality } from '../types/consultation-session';
 import { sendPatientJoinedCallPushToDoctor } from './voice-remote-join-push-service';
+import { registerSessionRecordings } from './recording-track-registration-service';
+import {
+  mapConsultationTypeToModality,
+  recordBillableConsult,
+} from './billing/usage-ledger-service';
 
 const MIN_VERIFIED_SEC = env.MIN_VERIFIED_CONSULTATION_SECONDS;
-const DEFAULT_PAYOUT_SCHEDULE = 'weekly';
 
 // ============================================================================
 // Types (Twilio Room Status Callback payload - application/x-www-form-urlencoded)
@@ -370,6 +373,16 @@ export async function handleRoomEnded(
     await updateSessionStatus(resolved.sessionId, 'ended', { actualEndedAt: new Date(endedAt) });
   }
 
+  // First attempt at indexing the room's raw tracks so retention and
+  // DPDP erasure can find the media later. Most tracks are still
+  // finalising at this point; the transcription worker's sweep is what
+  // actually catches them. Never fails the callback.
+  await registerSessionRecordings({
+    sessionId: resolved.sessionId,
+    roomSid:   payload.RoomSid,
+    correlationId,
+  });
+
   await tryMarkVerified(resolved.appointmentId, correlationId);
 }
 
@@ -416,7 +429,7 @@ export async function tryMarkVerified(
   const { data: apt, error: fetchError } = await admin
     .from('appointments')
     .select(
-      'id, doctor_id, doctor_joined_at, patient_joined_at, doctor_left_at, patient_left_at, consultation_duration_seconds, verified_at, status'
+      'id, doctor_id, doctor_joined_at, patient_joined_at, doctor_left_at, patient_left_at, consultation_duration_seconds, verified_at, status, consultation_type'
     )
     .eq('id', appointmentId)
     .single();
@@ -479,34 +492,27 @@ export async function tryMarkVerified(
     return true;
   };
 
-  const triggerPerAppointmentPayout = async (): Promise<void> => {
-    const { data: payment } = await admin
-      .from('payments')
-      .select('id')
-      .eq('appointment_id', appointmentId)
-      .eq('status', 'captured')
-      .or('payout_status.eq.pending,payout_status.is.null')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (!payment?.id) return;
-
-    const { data: settings } = await admin
-      .from('doctor_settings')
-      .select('payout_schedule')
-      .eq('doctor_id', apt.doctor_id)
-      .maybeSingle();
-
-    const schedule = settings?.payout_schedule ?? DEFAULT_PAYOUT_SCHEDULE;
-    if (schedule !== 'per_appointment') return;
-
-    await processPayoutForPayment(payment.id, correlationId);
+  const recordIfPatientJoined = async (): Promise<void> => {
+    if (!apt.patient_joined_at) return;
+    await recordBillableConsult(
+      {
+        appointmentId,
+        doctorId: apt.doctor_id as string,
+        modality: mapConsultationTypeToModality(
+          apt.consultation_type as string | null,
+          'video'
+        ),
+        source: 'verified_overlap',
+        occurredAt: consultationEndedAt,
+      },
+      correlationId
+    );
   };
 
   // Patient no-show: doctor joined, room ended, patient never joined → verify
+  // B2: verified, but not billable — do not record.
   if (!apt.patient_joined_at) {
-    if (await performUpdate()) await triggerPerAppointmentPayout();
+    await performUpdate();
     return;
   }
 
@@ -518,7 +524,8 @@ export async function tryMarkVerified(
 
   // Patient left first: patient_left_at exists AND (!doctor_left_at OR patient_left_at < doctor_left_at)
   if (ptLeft !== null && (docLeft === null || ptLeft < docLeft)) {
-    if (await performUpdate()) await triggerPerAppointmentPayout();
+    const ok = await performUpdate();
+    if (ok) await recordIfPatientJoined();
     return;
   }
 
@@ -526,16 +533,18 @@ export async function tryMarkVerified(
   // Overlap sec = from overlap_start to doctor_left_at
   if (docLeft !== null && (ptLeft === null || docLeft <= ptLeft)) {
     const overlapSec = (docLeft - overlapStart) / 1000;
-    if (overlapSec >= MIN_VERIFIED_SEC && (await performUpdate())) {
-      await triggerPerAppointmentPayout();
+    if (overlapSec >= MIN_VERIFIED_SEC) {
+      const ok = await performUpdate();
+      if (ok) await recordIfPatientJoined();
     }
     return;
   }
 
   // Fallback: left_at missing but both joined and duration >= threshold
   const durationSec = apt.consultation_duration_seconds ?? 0;
-  if (durationSec >= MIN_VERIFIED_SEC && (await performUpdate())) {
-    await triggerPerAppointmentPayout();
+  if (durationSec >= MIN_VERIFIED_SEC) {
+    const ok = await performUpdate();
+    if (ok) await recordIfPatientJoined();
   }
 }
 

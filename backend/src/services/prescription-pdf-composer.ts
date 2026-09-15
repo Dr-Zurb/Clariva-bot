@@ -14,11 +14,31 @@ import type { CustomSubsection, FollowUpUnit, PrescriptionMedicine } from '../ty
 import { sanitizeCustomSubsectionsForOutput } from '../utils/custom-subsections';
 import { resolveAdviceForOutput } from '../utils/advice-format';
 import { resolveFollowUpForOutput } from '../utils/follow-up-format';
+import {
+  formatAllergiesForOutput,
+  type AllergyForOutput,
+} from '../utils/allergy-format';
+import { formatVitalsForOutput } from '../utils/vitals-format';
 
 export interface PrescriptionPdfSourceRow {
   cc: string | null;
   hopi: string | null;
   social_history?: string | null;
+  examination_findings?: string | null;
+  vitals_bp_systolic?: number | null;
+  vitals_bp_diastolic?: number | null;
+  vitals_hr?: number | null;
+  vitals_temp_c?: number | null;
+  vitals_spo2?: number | null;
+  vitals_wt_kg?: number | null;
+  vitals_ht_cm?: number | null;
+  vitals_rr?: number | null;
+  vitals_pain_score?: number | null;
+  vitals_glucose_mg_dl?: number | null;
+  vitals_gcs_total?: number | null;
+  vitals_bp_posture?: string | null;
+  vitals_bp_limb?: string | null;
+  vitals_json?: { sectionNote?: string | null } | null;
   provisional_diagnosis: string | null;
   investigations_orders: string | null;
   follow_up: string | null;
@@ -40,16 +60,47 @@ export interface PrescriptionPdfSourceRow {
   plan_custom_sections?: CustomSubsection[] | null;
 }
 
+export interface PrescriptionPdfBodyExtras {
+  allergies?: AllergyForOutput[];
+  /** Doctor asserted nil-known allergies (migration 222). */
+  noKnownAllergies?: boolean;
+  /** Desk `patient_vitals.note` when the Rx has not stored sectionNote yet. */
+  deskVitalsNote?: string | null;
+}
+
 /** Map a prescription DB row + medicines into the PDF body (plain TEXT fields only). */
 export function mapPrescriptionToPdfBody(
   rx: PrescriptionPdfSourceRow,
   medicines: PrescriptionMedicine[],
+  extras: PrescriptionPdfBodyExtras = {},
 ): PrescriptionPdfData['body'] {
   const socialHistory = rx.social_history?.trim() || null;
   const referral = rx.referral?.trim() || null;
+  const examinationFindings = rx.examination_findings?.trim() || null;
   return {
+    allergies: formatAllergiesForOutput(extras.allergies, {
+      noKnownAllergies: extras.noKnownAllergies,
+    }),
     cc: rx.cc,
     hopi: rx.hopi,
+    vitals: formatVitalsForOutput({
+      vitalsBpSystolic: rx.vitals_bp_systolic,
+      vitalsBpDiastolic: rx.vitals_bp_diastolic,
+      vitalsHr: rx.vitals_hr,
+      vitalsTempC: rx.vitals_temp_c == null ? null : Number(rx.vitals_temp_c),
+      vitalsSpo2: rx.vitals_spo2,
+      vitalsWtKg: rx.vitals_wt_kg == null ? null : Number(rx.vitals_wt_kg),
+      vitalsHtCm: rx.vitals_ht_cm == null ? null : Number(rx.vitals_ht_cm),
+      vitalsRr: rx.vitals_rr,
+      vitalsPainScore: rx.vitals_pain_score,
+      vitalsGlucoseMgDl:
+        rx.vitals_glucose_mg_dl == null ? null : Number(rx.vitals_glucose_mg_dl),
+      vitalsGcsTotal: rx.vitals_gcs_total,
+      vitalsBpPosture: rx.vitals_bp_posture,
+      vitalsBpLimb: rx.vitals_bp_limb,
+      note: rx.vitals_json?.sectionNote?.trim() || extras.deskVitalsNote?.trim() || null,
+    }),
+    examinationFindings,
     socialHistory,
     provisionalDiagnosis: rx.provisional_diagnosis,
     // cockpit-v2 / migration 103: DB column renamed; PDF body field

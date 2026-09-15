@@ -15,7 +15,17 @@ import {
 import { buildReschedulePageUrl } from '../../../services/slot-selection-service';
 import {
   appointmentConsultationTypeToLabel,
+  buildAppointmentPickNotFoundMessage,
   buildCancelChoiceListMessage,
+  buildCancelConfirmFallbackMessage,
+  buildCancelConfirmPromptMessage,
+  buildNumericPickInvalidMessage,
+  buildPostBookingAckMessage,
+  buildRescheduleChoiceListMessage,
+  buildStatusAppointmentLineForPatient,
+  buildStatusSelfOnlyOtherPatientMessage,
+  buildStatusSingleNextAppointmentMessage,
+  buildStatusUpcomingListMessage,
   formatAppointmentChoiceDate,
   type CancelChoiceItem,
 } from '../../../utils/dm-copy';
@@ -23,10 +33,10 @@ import {
   formatRescheduleChoiceLinkDm,
   formatRescheduleLinkDm,
 } from '../../../utils/booking-link-copy';
-import { localizeReply, detectPatientLanguageHint } from '../../../utils/localize-reply';
 import {
   formatAppointmentStatusLine,
   isPostBookingAcknowledgment,
+  resolveNoUpcomingAppointmentsMessage,
 } from '../../../utils/dm-appointment-status';
 import type { ConversationState } from '../../../types/conversation';
 import type { DmHandlerBranch } from '../../../types/dm-instrumentation';
@@ -50,10 +60,22 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
       doctorContext,
       runGenerateResponseWithActions,
       fallbackReply,
+      turnLanguage,
     } = ctx;
     let state = ctx.state;
     let dmRoutingBranch: DmHandlerBranch = 'unknown';
     let replyText: string = fallbackReply;
+
+    const actionCtxBase = {
+      conversationId: conversation.id,
+      doctorId,
+      conversation,
+      state,
+      correlationId,
+      timezone: doctorSettings?.timezone ?? undefined,
+      language: turnLanguage,
+      doctorSettings,
+    };
 
   if (state.step === 'awaiting_cancel_choice') {
         dmRoutingBranch = 'cancel_flow_numeric';
@@ -65,7 +87,10 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
           const chosenId = ids[num - 1]!;
           const appointment = await getAppointmentByIdForWorker(chosenId, correlationId);
           if (!appointment || appointment.doctor_id !== doctorId) {
-            replyText = "That appointment wasn't found. Please try again or say 'cancel appointment' to start over.";
+            replyText = buildAppointmentPickNotFoundMessage({
+              language: turnLanguage,
+              flow: 'cancel',
+            });
             state = { ...state, step: 'responded', updatedAt: new Date().toISOString() };
           } else {
             const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
@@ -73,7 +98,10 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
               ? appointment.appointment_date
               : (appointment.appointment_date as Date).toISOString();
             const dateStr = formatAppointmentStatusLine(iso, '', tz).replace(' ()', '');
-            replyText = `Cancel appointment on ${dateStr}? Reply **Yes** or **No**.`;
+            replyText = buildCancelConfirmPromptMessage({
+              language: turnLanguage,
+              dateDisplay: dateStr,
+            });
             state = {
               ...state,
               step: 'awaiting_cancel_confirmation',
@@ -82,7 +110,10 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
             };
           }
         } else {
-          replyText = `Please reply 1, 2, or ${ids.length}.`;
+          replyText = buildNumericPickInvalidMessage({
+            language: turnLanguage,
+            count: ids.length,
+          });
         }
   } else if (state.step === 'awaiting_cancel_confirmation') {
         dmRoutingBranch = 'cancel_flow_confirm';
@@ -96,12 +127,8 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
         if (state.cancel?.appointmentId && (isYes || isNo)) {
           const action = { type: 'confirm_cancel' as const, confirm: isYes };
           const result = await executeAction(action, {
-            conversationId: conversation.id,
-            doctorId,
-            conversation,
+            ...actionCtxBase,
             state,
-            correlationId,
-            timezone: doctorSettings?.timezone ?? undefined,
           });
           if (result.success && result.replyOverride) {
             executedReply = result.replyOverride;
@@ -127,12 +154,8 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
               const action = parseToolCallToAction(tc);
               if (!action || action.type !== 'confirm_cancel') continue;
               const result = await executeAction(action, {
-                conversationId: conversation.id,
-                doctorId,
-                conversation,
+                ...actionCtxBase,
                 state,
-                correlationId,
-                timezone: doctorSettings?.timezone ?? undefined,
               });
               if (result.success && result.replyOverride) {
                 executedReply = result.replyOverride;
@@ -146,7 +169,9 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
           }
         }
 
-        replyText = executedReply || "Please reply **Yes** to cancel or **No** to keep your appointment.";
+        replyText =
+          executedReply ||
+          buildCancelConfirmFallbackMessage({ language: turnLanguage });
         if (executedStateUpdate) {
           state = { ...state, ...executedStateUpdate };
         }
@@ -160,11 +185,14 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
           const chosenId = ids[num - 1]!;
           const appointment = await getAppointmentByIdForWorker(chosenId, correlationId);
           if (!appointment || appointment.doctor_id !== doctorId) {
-            replyText = "That appointment wasn't found. Please try again or say 'reschedule appointment' to start over.";
+            replyText = buildAppointmentPickNotFoundMessage({
+              language: turnLanguage,
+              flow: 'reschedule',
+            });
             state = { ...state, step: 'responded', updatedAt: new Date().toISOString() };
           } else {
             const url = buildReschedulePageUrl(conversation.id, doctorId, chosenId);
-            replyText = formatRescheduleChoiceLinkDm(url, doctorSettings);
+            replyText = formatRescheduleChoiceLinkDm({ language: turnLanguage, url, doctorSettings });
             state = {
               ...state,
               step: 'awaiting_reschedule_slot',
@@ -173,7 +201,10 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
             };
           }
         } else {
-          replyText = `Please reply 1, 2, or ${ids.length}.`;
+          replyText = buildNumericPickInvalidMessage({
+            language: turnLanguage,
+            count: ids.length,
+          });
         }
   } else if (intentResult.intent === 'check_appointment_status') {
         dmRoutingBranch = 'check_appointment_status';
@@ -195,25 +226,33 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
         const formatWithName = (a: (typeof upcoming)[0], displayStatus: string) => {
           const iso = typeof a.appointment_date === 'string' ? a.appointment_date : a.appointment_date.toISOString();
           const line = formatAppointmentStatusLine(iso, displayStatus, tz);
-          const isForSelf = a.patient_id === conversation.patient_id;
-          return isForSelf ? line : `For **${a.patient_name || 'them'}**: ${line}`;
+          return buildStatusAppointmentLineForPatient({
+            language: turnLanguage,
+            statusLine: line,
+            isForSelf: a.patient_id === conversation.patient_id,
+            patientName: a.patient_name,
+          });
         };
         const hasSelfAppointment = upcoming.some((a) => a.patient_id === conversation.patient_id);
         if (upcoming.length === 0) {
-          replyText = await localizeReply(
-            "You don't have any upcoming appointments. Say 'book appointment' to schedule one.",
-            {}, detectPatientLanguageHint(text), correlationId
-          );
+          replyText = resolveNoUpcomingAppointmentsMessage(turnLanguage);
         } else if (askingForSelfOnly && !hasSelfAppointment) {
           const other = upcoming[0];
           const iso = typeof other.appointment_date === 'string' ? other.appointment_date : other.appointment_date.toISOString();
           const displayStatus = await resolveStatus(other);
           const line = formatAppointmentStatusLine(iso, displayStatus, tz);
-          replyText = `You don't have an appointment for yourself yet. The appointment on ${line} is for **${other.patient_name || 'someone else'}**. Would you like to book one for yourself?`;
+          replyText = buildStatusSelfOnlyOtherPatientMessage({
+            language: turnLanguage,
+            appointmentLine: line,
+            otherPatientName: other.patient_name,
+          });
         } else if (upcoming.length === 1) {
           const a = upcoming[0];
           const displayStatus = await resolveStatus(a);
-          replyText = `Your next appointment is on ${formatWithName(a, displayStatus)}.`;
+          replyText = buildStatusSingleNextAppointmentMessage({
+            language: turnLanguage,
+            appointmentDetail: formatWithName(a, displayStatus),
+          });
         } else {
           const capped = upcoming.slice(0, 10);
           const statusLines: string[] = [];
@@ -222,10 +261,12 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
             const displayStatus = await resolveStatus(a);
             statusLines.push(`${idx + 1}. ${formatWithName(a, displayStatus)}`);
           }
-          replyText = `You have ${upcoming.length} upcoming appointment${upcoming.length > 1 ? 's' : ''}:\n\n${statusLines.join('\n')}`;
-          if (upcoming.length > 10) {
-            replyText += `\n\n(showing first 10)`;
-          }
+          replyText = buildStatusUpcomingListMessage({
+            language: turnLanguage,
+            totalCount: upcoming.length,
+            statusLines,
+            showingFirst10: upcoming.length > 10,
+          });
         }
         state = {
           ...state,
@@ -243,16 +284,16 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
           correlationId
         );
         if (upcoming.length === 0) {
-          replyText = "You don't have any upcoming appointments. Say 'book appointment' to schedule one.";
+          replyText = resolveNoUpcomingAppointmentsMessage(turnLanguage);
           state = { ...state, lastIntent: intentResult.intent, step: 'responded', updatedAt: new Date().toISOString() };
         } else if (upcoming.length === 1) {
           const a = upcoming[0]!;
           const iso = typeof a.appointment_date === 'string' ? a.appointment_date : (a.appointment_date as Date).toISOString();
           const item: CancelChoiceItem = {
             dateDisplay: formatAppointmentChoiceDate(iso, tz),
-            modalityLabel: appointmentConsultationTypeToLabel(a.consultation_type ?? undefined),
+            modalityLabel: appointmentConsultationTypeToLabel(a.consultation_type ?? undefined, turnLanguage),
           };
-          replyText = buildCancelChoiceListMessage({ items: [item] });
+          replyText = buildCancelChoiceListMessage({ language: turnLanguage, items: [item] });
           state = {
             ...state,
             lastIntent: intentResult.intent,
@@ -265,10 +306,10 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
             const iso = typeof a.appointment_date === 'string' ? a.appointment_date : (a.appointment_date as Date).toISOString();
             return {
               dateDisplay: formatAppointmentChoiceDate(iso, tz),
-              modalityLabel: appointmentConsultationTypeToLabel(a.consultation_type ?? undefined),
+              modalityLabel: appointmentConsultationTypeToLabel(a.consultation_type ?? undefined, turnLanguage),
             };
           });
-          replyText = buildCancelChoiceListMessage({ items });
+          replyText = buildCancelChoiceListMessage({ language: turnLanguage, items });
           state = {
             ...state,
             lastIntent: intentResult.intent,
@@ -287,12 +328,12 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
           correlationId
         );
         if (upcoming.length === 0) {
-          replyText = "You don't have any upcoming appointments. Say 'book appointment' to schedule one.";
+          replyText = resolveNoUpcomingAppointmentsMessage(turnLanguage);
           state = { ...state, lastIntent: intentResult.intent, step: 'responded', updatedAt: new Date().toISOString() };
         } else if (upcoming.length === 1) {
           const a = upcoming[0]!;
           const url = buildReschedulePageUrl(conversation.id, doctorId, a.id);
-          replyText = formatRescheduleLinkDm(url, doctorSettings);
+          replyText = formatRescheduleLinkDm({ language: turnLanguage, url, doctorSettings });
           state = {
             ...state,
             lastIntent: intentResult.intent,
@@ -305,7 +346,11 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
             const iso = typeof a.appointment_date === 'string' ? a.appointment_date : (a.appointment_date as Date).toISOString();
             return `${i + 1}) ${formatAppointmentStatusLine(iso, '', tz).replace(' ()', '')}`;
           });
-          replyText = `Which appointment would you like to reschedule?\n\n${lines.join('\n')}\n\nReply 1, 2, or ${upcoming.length}.`;
+          replyText = buildRescheduleChoiceListMessage({
+            language: turnLanguage,
+            lines,
+            count: upcoming.length,
+          });
           state = {
             ...state,
             lastIntent: intentResult.intent,
@@ -319,7 +364,7 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
         isPostBookingAcknowledgment(text, recentMessages)
       ) {
         dmRoutingBranch = 'post_booking_ack';
-        replyText = "Great - you're all set. Let us know if you need anything else.";
+        replyText = buildPostBookingAckMessage({ language: turnLanguage });
                 state = {
           ...state,
           lastIntent: intentResult.intent,

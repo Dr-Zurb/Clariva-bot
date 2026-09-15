@@ -5,21 +5,17 @@
  *
  *   1. Verify the bearer JWT (doctor's Supabase auth JWT OR our
  *      scoped patient JWT) and re-enforce session membership.
- *   2. Validate the live recording-consent gate. Patients MUST have
- *      consented to recording before their own snapshots are accepted;
- *      doctor-initiated snapshots are clinical artifacts and bypass the
- *      gate (flagged for product review at PR time).
- *   3. Validate the inbound JPEG payload (magic bytes + size cap).
- *   4. Upload the JPEG to `consultation-attachments/{sessionId}/snapshots/
+ *   2. Validate the inbound JPEG payload (magic bytes + size cap).
+ *   3. Upload the JPEG to `consultation-attachments/{sessionId}/snapshots/
  *      {snapshotId}.jpg` via the service-role admin client.
- *   5. Insert the matching `consultation_messages` row (kind='attachment',
+ *   4. Insert the matching `consultation_messages` row (kind='attachment',
  *      with the snapshot context written to the new `metadata` JSONB
  *      column from Migration 083). This is the row Migration 084's
  *      patient-side RLS gate keys on for decision §14 visibility.
- *   6. Emit the `'snapshot_taken'` system banner via
+ *   5. Emit the `'snapshot_taken'` system banner via
  *      `emitSnapshotTaken` so both parties see lifecycle visibility,
  *      even when the JPEG itself is hidden from the patient.
- *   7. Mint a 1h signed URL for the JPEG and return it alongside the
+ *   6. Mint a 1h signed URL for the JPEG and return it alongside the
  *      snapshot id.
  *
  * Why a backend-mediated route at all (instead of direct Supabase
@@ -29,9 +25,8 @@
  *     which the storage-api auth layer doesn't reliably honor (same
  *     issue `mintAttachmentSignedUrls` documents at length). Going
  *     through service-role here side-steps the issue.
- *   - The consent + visibility-metadata + system-message wires need to
- *     happen atomically. A frontend upload would race the consent check
- *     against the storage write window.
+ *   - Visibility-metadata + system-message wires need to happen
+ *     atomically with the storage write.
  *   - PHI hygiene: a single backend-owned path makes audit easier and
  *     prevents a future client bug from writing a snapshot row with
  *     spoofed metadata.
@@ -43,7 +38,6 @@
  * @see backend/migrations/084_consultation_messages_snapshot_visibility_rls.sql
  * @see backend/src/services/text-session-supabase.ts (mintAttachmentSignedUrls)
  * @see backend/src/services/consultation-message-service.ts (emitSnapshotTaken)
- * @see backend/src/services/recording-consent-service.ts (getConsentForSession)
  */
 
 import crypto from 'crypto';
@@ -52,13 +46,11 @@ import { getSupabaseAdminClient } from '../config/database';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
 import {
-  ForbiddenError,
   InternalError,
   NotFoundError,
   UnauthorizedError,
   ValidationError,
 } from '../utils/errors';
-import { getConsentForSession } from './recording-consent-service';
 import { emitSnapshotTaken } from './consultation-message-service';
 
 // ============================================================================
@@ -547,10 +539,8 @@ export function validateAnnotations(
  * Failure modes:
  *   - `UnauthorizedError` on JWT problems (bad signature, wrong session,
  *     unknown role).
- *   - `ForbiddenError` when the patient lacks recording consent and is
- *     trying to snapshot.
  *   - `ValidationError` on bad payload (size, magic bytes, dimensions).
- *   - `NotFoundError` when session row is missing post-consent-lookup.
+ *   - `NotFoundError` when session row is missing.
  *   - `InternalError` on storage / DB writes.
  */
 export async function submitSnapshot(
@@ -617,37 +607,7 @@ export async function submitSnapshot(
   const caller = await resolveCallerForSession(sessionId, input.bearerJwt);
 
   // ----------------------------------------------------------------------
-  // 2. Recording-consent gate.
-  //
-  // PATIENT branch — must have consented. `decision === false` blocks;
-  //                   `decision === null` (never asked) ALSO blocks for
-  //                   the snapshot path because a snapshot is a clinical
-  //                   artifact and we need an explicit yes. The patient
-  //                   can change their mind via the existing
-  //                   `POST /:id/recording-consent` route and retry.
-  //
-  // DOCTOR branch — clinical-only snapshots bypass the patient consent
-  //                  gate. Documented in the C3 task file as a flag for
-  //                  product review; the conservative interpretation
-  //                  ("doctor must also see consent === true") would
-  //                  block clinical record-keeping when the patient
-  //                  declined recording but the doctor still needs the
-  //                  visual record. Erring towards the doctor side
-  //                  matches how physical-record notes work today.
-  //                  Tighten in a follow-up if product wants the gate
-  //                  on both sides.
-  // ----------------------------------------------------------------------
-  const consent = await getConsentForSession({ sessionId });
-  if (caller.role === 'patient') {
-    if (consent.decision !== true) {
-      throw new ForbiddenError(
-        'Snapshots require recording consent. Tap the consent banner to enable, then try again.',
-      );
-    }
-  }
-
-  // ----------------------------------------------------------------------
-  // 3. Generate the snapshot id + storage path. The id IS the
+  // 2. Generate the snapshot id + storage path. The id IS the
   //    consultation_messages row id — the chat surface keys on
   //    `id` for dedup with optimistic frontend rows.
   // ----------------------------------------------------------------------

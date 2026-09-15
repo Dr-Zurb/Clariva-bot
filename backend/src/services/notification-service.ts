@@ -19,14 +19,23 @@ import {
 } from './instagram-service';
 import { sendSms } from './twilio-sms-service';
 import { getInstagramAccessTokenForDoctor } from './instagram-connect-service';
+import { getFacebookPageAccessTokenForDoctor } from './facebook-connect-service';
 import { getDoctorSettings } from './doctor-settings-service';
 import { logAuditEvent } from '../utils/audit-logger';
+import type { ConversationLanguage } from '../utils/conversation-language';
+import { getConversationLanguage } from './conversation-service';
 import {
+  buildAppointmentReminder24hDm,
+  buildConsultationCheckinDm,
+  buildConsultationCheckinNudgeDm,
+  buildConsultationStartingNowDm,
   buildConsultationReadyDm,
+  buildDeskBookingConfirmationMessage,
   buildPaymentConfirmationMessage,
   buildPostConsultChatLinkDm,
   buildPrescriptionReadyPingDm,
   buildRecordingReplayedNotificationDm,
+  buildSupportStaffRecordingAccessedNotificationDm,
   buildTranscriptDownloadedNotificationDm,
   type ConsultationModality,
   type PaymentConfirmationModality,
@@ -43,12 +52,16 @@ import { logger } from '../config/logger';
 import { redactPhiForAI } from './ai-service';
 import { createAttachmentSignedUrlForDelivery } from './prescription-attachment-service';
 import { generatePrescriptionPdf } from './prescription-pdf-service';
+import { prescriptionPdfFilenameFromRow } from '../utils/prescription-pdf-filename';
 import { mintRxToken, buildShareUrl } from './prescription-token-service';
 import { incrementDoctorDrugUsageOnSend } from './doctor-drug-usage-service';
 import { serializeCustomSubsections } from '../utils/custom-subsections';
 import { resolveAdviceForOutput } from '../utils/advice-format';
 import { resolveFollowUpForOutput } from '../utils/follow-up-format';
 import type { CustomSubsection, FollowUpUnit } from '../types/prescription';
+import type { PrevisitNotifyStage } from '../utils/previsit-notify-stages';
+
+export type { PrevisitNotifyStage };
 
 // ============================================================================
 // Types
@@ -176,6 +189,52 @@ async function resolveInstagramRecipientForAppointment(
 }
 
 /**
+ * crc-16 — Facebook Page-scoped PSID, mirroring Instagram (per-doctor identity).
+ */
+async function resolveFacebookRecipientForAppointment(
+  admin: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  appointment: AppointmentRecipientContext
+): Promise<string | null> {
+  let recipientId: string | null = null;
+
+  if (appointment.patient_id) {
+    const { data: patient } = await admin
+      .from('patients')
+      .select('id, platform, platform_external_id')
+      .eq('id', appointment.patient_id)
+      .single();
+
+    if (patient?.platform === 'facebook' && patient.platform_external_id) {
+      recipientId = patient.platform_external_id;
+    }
+    if (!recipientId) {
+      const { data: conv } = await admin
+        .from('conversations')
+        .select('platform_conversation_id')
+        .eq('patient_id', appointment.patient_id)
+        .eq('doctor_id', appointment.doctor_id)
+        .eq('platform', 'facebook')
+        .limit(1)
+        .maybeSingle();
+      recipientId = conv?.platform_conversation_id ?? null;
+    }
+  }
+
+  if (!recipientId && appointment.conversation_id) {
+    const { data: conv } = await admin
+      .from('conversations')
+      .select('platform_conversation_id')
+      .eq('id', appointment.conversation_id)
+      .eq('doctor_id', appointment.doctor_id)
+      .eq('platform', 'facebook')
+      .maybeSingle();
+    recipientId = conv?.platform_conversation_id ?? null;
+  }
+
+  return recipientId;
+}
+
+/**
  * rcp-27: Resolve Instagram PSID + phone for patient-scoped notifications (replay DM).
  */
 async function resolveInstagramRecipientForPatient(
@@ -284,7 +343,11 @@ export async function sendPaymentConfirmationToPatient(
     rawConsultationType === 'in_clinic'
       ? rawConsultationType
       : undefined;
+  const language = appointment.conversation_id
+    ? await getConversationLanguage(appointment.conversation_id, correlationId)
+    : 'en';
   const message = buildPaymentConfirmationMessage({
+    language,
     appointmentDateDisplay: dateStr,
     patientMrn: patientMrn?.trim() || undefined,
     modality,
@@ -356,7 +419,7 @@ export async function sendConsultationLinkToPatient(
 
   let phone: string | null = appointment.patient_phone?.trim() ?? null;
   let email: string | null = null;
-  let igRecipientId = await resolveInstagramRecipientForAppointment(admin, appointment);
+  const igRecipientId = await resolveInstagramRecipientForAppointment(admin, appointment);
 
   if (appointment.patient_id) {
     const { data: patient } = await admin
@@ -375,7 +438,16 @@ export async function sendConsultationLinkToPatient(
     ? await getDoctorSettings(appointment.doctor_id)
     : null;
   const practiceName = doctorSettings?.practice_name?.trim() || 'your doctor';
-  const message = `Your video consultation with ${practiceName} is ready. Join here: ${patientJoinUrl}`;
+  // lang-23 §4.1: consolidate legacy one-liner onto localized consultation-ready builder.
+  const language = appointment.conversation_id
+    ? await getConversationLanguage(appointment.conversation_id, correlationId)
+    : 'en';
+  const message = buildConsultationReadyDm({
+    language,
+    modality: 'video',
+    practiceName,
+    joinUrl: patientJoinUrl,
+  });
 
   if (phone) {
     const sent = await sendSms(phone, message, correlationId);
@@ -597,20 +669,21 @@ export async function sendPrescriptionToPatient(
     return { sent: false, reason: 'prescription_not_found' };
   }
 
-  const { data: appointment, error: appError } = await admin
-    .from('appointments')
-    .select('id, patient_id, doctor_id, conversation_id')
-    .eq('id', prescription.appointment_id)
-    .single();
-
-  if (appError || !appointment) {
-    return { sent: false, reason: 'appointment_not_found' };
-  }
-
-  const [medResult, attResult] = await Promise.all([
+  const [appResult, medResult, attResult] = await Promise.all([
+    admin
+      .from('appointments')
+      .select('id, patient_id, doctor_id, conversation_id')
+      .eq('id', prescription.appointment_id)
+      .single(),
     admin.from('prescription_medicines').select('*').eq('prescription_id', prescriptionId).order('sort_order'),
     admin.from('prescription_attachments').select('*').eq('prescription_id', prescriptionId),
   ]);
+
+  if (appResult.error || !appResult.data) {
+    return { sent: false, reason: 'appointment_not_found' };
+  }
+  const appointment = appResult.data;
+
   const medicines = (medResult.data ?? []) as Array<{
     medicine_name: string;
     drug_master_id?: string | null;
@@ -622,21 +695,19 @@ export async function sendPrescriptionToPatient(
   }>;
   const attachments = (attResult.data ?? []) as Array<{ file_path: string; file_type: string | null }>;
 
-  const doctorSettings = await getDoctorSettings(appointment.doctor_id);
+  const [doctorSettings, patientRow, igRecipientId, doctorToken] = await Promise.all([
+    getDoctorSettings(appointment.doctor_id),
+    appointment.patient_id
+      ? admin.from('patients').select('email').eq('id', appointment.patient_id).single()
+      : Promise.resolve({ data: null as { email?: string | null } | null, error: null }),
+    resolvePrescriptionRecipient(admin, appointment),
+    getInstagramAccessTokenForDoctor(appointment.doctor_id, correlationId),
+  ]);
   const practiceName = doctorSettings?.practice_name?.trim() || 'your doctor';
 
   let patientEmail: string | null = null;
-  if (appointment.patient_id) {
-    const { data: patient } = await admin
-      .from('patients')
-      .select('email')
-      .eq('id', appointment.patient_id)
-      .single();
-    if (patient?.email?.trim()) patientEmail = patient.email.trim();
-  }
-
-  const igRecipientId = await resolvePrescriptionRecipient(admin, appointment);
-  const doctorToken = await getInstagramAccessTokenForDoctor(appointment.doctor_id, correlationId);
+  const rawEmail = patientRow.data?.email?.trim();
+  if (rawEmail) patientEmail = rawEmail;
 
   let instagramSent = false;
   let emailSent = false;
@@ -671,6 +742,7 @@ export async function sendPrescriptionToPatient(
     const pdf = await generatePrescriptionPdf(prescriptionId, correlationId);
     pdfStoragePath = pdf.storagePath;
     pdfSignedUrl = pdf.signedUrl;
+    pdfBuffer = pdf.bytes;
   } catch (err) {
     logger.warn(
       { correlationId, prescriptionId, error: err instanceof Error ? err.message : String(err) },
@@ -699,7 +771,7 @@ export async function sendPrescriptionToPatient(
   // ONCE outside the email branch so a single 24h signed URL fetch
   // services both Resend (Buffer attach) and the IG `attachment.payload.url`
   // path (URL passthrough — Meta fetches it server-side, no Buffer needed).
-  if (pdfSignedUrl && patientEmail) {
+  if (pdfSignedUrl && patientEmail && !pdfBuffer) {
     try {
       const res = await fetch(pdfSignedUrl);
       if (!res.ok) {
@@ -826,7 +898,10 @@ export async function sendPrescriptionToPatient(
     const emailAttachments = pdfBuffer
       ? [
           {
-            filename: `prescription-${prescriptionId.slice(-8)}.pdf`,
+            filename: prescriptionPdfFilenameFromRow(
+              prescription,
+              doctorSettings?.timezone
+            ),
             content: pdfBuffer,
             contentType: 'application/pdf',
           },
@@ -850,6 +925,8 @@ export async function sendPrescriptionToPatient(
       .from('prescriptions')
       .update({ sent_to_patient_at: new Date().toISOString() })
       .eq('id', prescriptionId);
+
+    // RXL-Q1 relocked 2026-09-09: send records delivery, it does not attest.
 
     const drugMasterIds = medicines
       .map((m) => m.drug_master_id)
@@ -1106,6 +1183,52 @@ export async function sendCommentLeadToDoctor(
   return sent;
 }
 
+/**
+ * ilr-04: Nudge doctor to reconnect Instagram when token health says so.
+ * No PHI — only generic reconnect guidance + settings link when known.
+ */
+export async function sendInstagramReconnectNudgeToDoctor(
+  doctorId: string,
+  healthMessage: string,
+  correlationId: string
+): Promise<boolean> {
+  const to = await getDoctorEmail(doctorId, correlationId);
+  if (!to) {
+    logger.info(
+      { correlationId, doctorId },
+      'Instagram reconnect nudge email skipped (no doctor email)'
+    );
+    return true;
+  }
+
+  let settingsHint = 'Open your Clariva dashboard → Settings → Integrations → Instagram to reconnect.';
+  const redirect = env.INSTAGRAM_FRONTEND_REDIRECT_URI;
+  if (redirect) {
+    try {
+      const u = new URL(redirect);
+      settingsHint = `Reconnect here: ${u.origin}/dashboard/settings (Integrations → Instagram).`;
+    } catch {
+      // keep generic hint
+    }
+  }
+
+  const safeMessage = (healthMessage || 'Your Instagram connection needs attention.').slice(0, 200);
+  const subject = 'Action needed: reconnect Instagram';
+  const text = `${safeMessage}\n\n${settingsHint}\n\nIf the token expires, patients may stop receiving bot replies and booking links.`;
+
+  const sent = await sendEmail(to, subject, text, correlationId);
+  if (sent) {
+    await auditNotificationSent(
+      correlationId,
+      'instagram_reconnect_nudge_email',
+      'doctor',
+      'doctor',
+      doctorId
+    );
+  }
+  return sent;
+}
+
 // ============================================================================
 // Patient: Urgent-moment fan-out helpers (Plan 01 · Task 16)
 // ----------------------------------------------------------------------------
@@ -1136,15 +1259,27 @@ interface ResolvedPatientChannels {
   email:           string | null;
   igRecipientId:   string | null;
   igDoctorToken:   string | null;
+  fbRecipientId:   string | null;
+  fbDoctorToken:   string | null;
   practiceName:    string;
   patientId:       string | null;
   doctorId:        string;
+  conversationId:  string | null;
+}
+
+async function resolveLanguageForConversation(
+  conversationId: string | null | undefined,
+  correlationId: string
+): Promise<ConversationLanguage> {
+  return conversationId
+    ? await getConversationLanguage(conversationId, correlationId)
+    : 'en';
 }
 
 /**
- * Resolve all three channels (SMS / email / IG DM) for an appointment in
- * one round trip. Kept private — Plans 04/05 should call the public fan-out
- * helpers, not this resolver, so the lookup logic stays consistent.
+ * Resolve SMS / email / IG DM / Facebook Messenger for an appointment.
+ * Kept private — callers use the public fan-out helpers so lookup stays
+ * consistent.
  */
 async function resolvePatientNotificationChannels(
   admin: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
@@ -1163,7 +1298,8 @@ async function resolvePatientNotificationChannels(
 
   let phone: string | null = appointment.patient_phone?.trim() || null;
   let email: string | null = null;
-  let igRecipientId = await resolveInstagramRecipientForAppointment(admin, appointment);
+  const igRecipientId = await resolveInstagramRecipientForAppointment(admin, appointment);
+  const fbRecipientId = await resolveFacebookRecipientForAppointment(admin, appointment);
 
   if (appointment.patient_id) {
     const { data: patient } = await admin
@@ -1186,26 +1322,32 @@ async function resolvePatientNotificationChannels(
   const igDoctorToken = igRecipientId && appointment.doctor_id
     ? await getInstagramAccessTokenForDoctor(appointment.doctor_id, correlationId)
     : null;
+  const fbDoctorToken = fbRecipientId && appointment.doctor_id
+    ? await getFacebookPageAccessTokenForDoctor(appointment.doctor_id, correlationId)
+    : null;
 
   return {
     phone,
     email,
     igRecipientId,
     igDoctorToken,
+    fbRecipientId,
+    fbDoctorToken,
     practiceName,
     patientId:    appointment.patient_id ?? null,
     doctorId:     appointment.doctor_id,
+    conversationId: appointment.conversation_id ?? null,
   };
 }
 
 /**
- * Dispatch the rendered message across all three channels in parallel.
- * Returns one `FanOutChannelOutcome` per channel (always 3 entries when
+ * Dispatch the rendered message across SMS / email / IG / Facebook in parallel.
+ * Returns one `FanOutChannelOutcome` per channel (always 4 entries when
  * called via this helper — caller decides which to drop).
  *
  * `Promise.allSettled` is deliberate: we want every channel to attempt
  * independently. Any channel that errors becomes a `'failed'` outcome; the
- * other two still ship.
+ * others still ship.
  */
 async function dispatchFanOut(params: {
   channels:      ResolvedPatientChannels;
@@ -1238,10 +1380,12 @@ async function dispatchFanOut(params: {
       return { channel: 'email', status: 'skipped', reason: 'no_recipient' };
     }
     try {
+      // DM copy uses light markdown (`**name**`); strip for plain email.
+      const emailBody = message.replace(/\*\*(.+?)\*\*/g, '$1');
       const sent = await sendEmail(
         channels.email,
         emailSubject,
-        message,
+        emailBody,
         correlationId
       );
       return sent
@@ -1281,18 +1425,48 @@ async function dispatchFanOut(params: {
     }
   })();
 
+  const fbTask = (async (): Promise<FanOutChannelOutcome> => {
+    if (!channels.fbRecipientId) {
+      return { channel: 'facebook_dm', status: 'skipped', reason: 'no_recipient' };
+    }
+    try {
+      // Same Graph `/me/messages` helper as IG; Page token selects facebook.com.
+      const resp = await sendInstagramMessage(
+        channels.fbRecipientId,
+        message,
+        correlationId,
+        channels.fbDoctorToken ?? undefined
+      );
+      return {
+        channel:           'facebook_dm',
+        status:            'sent',
+        providerMessageId: resp?.message_id,
+      };
+    } catch (err) {
+      return {
+        channel: 'facebook_dm',
+        status:  'failed',
+        error:   err instanceof Error ? err.message : String(err),
+      };
+    }
+  })();
+
   // `Promise.allSettled` is technically belt-and-suspenders here since each
   // task above already swallows its own errors and returns a typed outcome —
   // but we keep it explicit so any future change that lets a task throw
   // doesn't take down the whole fan-out.
-  const settled = await Promise.allSettled([smsTask, emailTask, igTask]);
+  const settled = await Promise.allSettled([smsTask, emailTask, igTask, fbTask]);
+  const fallbackChannel: FanOutChannelOutcome['channel'][] = [
+    'sms',
+    'email',
+    'instagram_dm',
+    'facebook_dm',
+  ];
   return settled.map((s, i) => {
     if (s.status === 'fulfilled') return s.value;
-    const channel: FanOutChannelOutcome['channel'] =
-      i === 0 ? 'sms' : i === 1 ? 'email' : 'instagram_dm';
     return {
-      channel,
-      status: 'failed',
+      channel: fallbackChannel[i] ?? 'facebook_dm',
+      status: 'failed' as const,
       error:  s.reason instanceof Error ? s.reason.message : String(s.reason),
     };
   });
@@ -1336,8 +1510,8 @@ function logFanOutResult(
  *
  * Reads the `consultation_sessions` row by `sessionId` to get the
  * `(appointmentId, doctorId, modality)` tuple, then mints a fresh patient
- * join token via `getJoinTokenForAppointment` and constructs the URL using
- * `env.CONSULTATION_JOIN_BASE_URL`.
+ * HMAC join token (`generateConsultationToken`) for video/voice URLs.
+ * Text keeps the adapter-supplied `joinToken.url`.
  *
  * Dedup: short-circuits if `consultation_sessions.last_ready_notification_at`
  * is within `env.CONSULTATION_READY_NOTIFY_DEDUP_SECONDS` (default 60s) of
@@ -1428,39 +1602,62 @@ export async function sendConsultationReadyToPatient(input: {
     return baseEmpty();
   }
 
-  // Mint patient join token via the modality-blind facade. Video + text
-  // adapters are registered today; voice throws "ships in Plan 05" — that
-  // throw is the contract until Plan 05 wires its adapter.
+  // Patient-facing join URLs must use the HMAC consultation token
+  // (`payload.sig`, 2 segments) — NOT the Twilio Video JWT from
+  // `getJoinTokenForAppointment` (3-segment JWT). `/consult/join` and
+  // `/c/voice|text/*` verify HMAC via `verifyConsultationToken`; putting
+  // a Twilio JWT in `?token=` yields "Invalid consultation token format".
   //
-  // URL resolution precedence:
-  //   1. Adapter-supplied `joinToken.url` (Plan 04 text adapter populates
-  //      this — the route shape `/c/text/{sessionId}?token=...` embeds
-  //      the session id, which the fan-out helper doesn't have).
-  //   2. Fall back to `${CONSULTATION_JOIN_BASE_URL}?token=${token}` for
-  //      adapters (video) that leave URL composition to the caller.
+  // URL resolution:
+  //   1. Text — adapter `joinToken.url` (embeds `/c/text/{sessionId}?t=HMAC`).
+  //   2. Voice — `${APP_BASE_URL}/c/voice/{sessionId}?t=${HMAC}`.
+  //   3. Video — `${CONSULTATION_JOIN_BASE_URL}?token=${HMAC}` (same as
+  //      the doctor's Copy link from `startConsultation`).
   let patientJoinUrl: string;
   try {
-    const joinToken = await getJoinTokenForAppointment(
-      {
-        appointmentId: session.appointment_id,
-        doctorId:      session.doctor_id,
-        modality:      session.modality as ConsultationModality,
-        role:          'patient',
-      },
-      correlationId
-    );
-    if (joinToken.url) {
-      patientJoinUrl = joinToken.url;
-    } else {
-      const baseUrl = env.CONSULTATION_JOIN_BASE_URL?.trim();
-      if (!baseUrl) {
+    const modality = session.modality as ConsultationModality;
+
+    if (modality === 'text') {
+      const joinToken = await getJoinTokenForAppointment(
+        {
+          appointmentId: session.appointment_id,
+          doctorId:      session.doctor_id,
+          modality,
+          role:          'patient',
+        },
+        correlationId
+      );
+      if (!joinToken.url?.trim()) {
         logger.warn(
-          { correlationId, sessionId, modality: session.modality },
-          'Consultation-ready fan-out skipped (no adapter URL and CONSULTATION_JOIN_BASE_URL unset)'
+          { correlationId, sessionId, modality },
+          'Consultation-ready fan-out skipped (text adapter returned no patient URL)'
         );
         return baseEmpty();
       }
-      patientJoinUrl = `${baseUrl}?token=${joinToken.token}`;
+      patientJoinUrl = joinToken.url;
+    } else {
+      const hmacToken = generateConsultationToken(session.appointment_id);
+      if (modality === 'voice') {
+        const appBase = (env.APP_BASE_URL ?? env.CONSULTATION_JOIN_BASE_URL)?.trim();
+        if (!appBase) {
+          logger.warn(
+            { correlationId, sessionId, modality },
+            'Consultation-ready fan-out skipped (APP_BASE_URL / CONSULTATION_JOIN_BASE_URL unset)'
+          );
+          return baseEmpty();
+        }
+        patientJoinUrl = `${appBase.replace(/\/$/, '')}/c/voice/${sessionId}?t=${hmacToken}`;
+      } else {
+        const baseUrl = env.CONSULTATION_JOIN_BASE_URL?.trim();
+        if (!baseUrl) {
+          logger.warn(
+            { correlationId, sessionId, modality },
+            'Consultation-ready fan-out skipped (CONSULTATION_JOIN_BASE_URL unset)'
+          );
+          return baseEmpty();
+        }
+        patientJoinUrl = `${baseUrl}?token=${hmacToken}`;
+      }
     }
   } catch (err) {
     logger.warn(
@@ -1477,7 +1674,12 @@ export async function sendConsultationReadyToPatient(input: {
 
   let message: string;
   try {
+    const language = await resolveLanguageForConversation(
+      channels.conversationId,
+      correlationId
+    );
     message = buildConsultationReadyDm({
+      language,
       modality:     session.modality as ConsultationModality,
       practiceName: channels.practiceName,
       joinUrl:      patientJoinUrl,
@@ -1495,10 +1697,20 @@ export async function sendConsultationReadyToPatient(input: {
     return baseEmpty();
   }
 
+  // Email subject is deliberately specific (modality + action). The
+  // older generic "Your consult is starting" was easy to miss next to
+  // probes / other Halo Aid mail, and Gmail often parks it under
+  // Promotions when the body is a bare JWT join URL.
+  const modalityLabel =
+    session.modality === 'voice'
+      ? 'voice'
+      : session.modality === 'text'
+        ? 'chat'
+        : 'video';
   const channelOutcomes = await dispatchFanOut({
     channels,
     message,
-    emailSubject:  'Your consult is starting',
+    emailSubject: `Join your ${modalityLabel} consult — Halo Aid`,
     correlationId,
   });
 
@@ -1545,6 +1757,313 @@ export async function sendConsultationReadyToPatient(input: {
     correlationId
   );
   return result;
+}
+
+const PREVISIT_STAMP_COLUMN: Record<PrevisitNotifyStage, string> = {
+  reminder_24h: 'patient_reminder_24h_notified_at',
+  checkin_30: 'patient_checkin_notified_at',
+  nudge_15: 'patient_checkin_nudge_15_notified_at',
+  nudge_5: 'patient_checkin_nudge_5_notified_at',
+  starting_now: 'patient_start_notified_at',
+};
+
+function buildPatientCheckinJoinUrl(input: {
+  appointmentId: string;
+  consultationType: string | null | undefined;
+}): string | null {
+  const hmac = generateConsultationToken(input.appointmentId);
+  const modality = String(input.consultationType ?? '').toLowerCase();
+  const appBase = (env.APP_BASE_URL ?? '').replace(/\/$/, '');
+  const videoBase = env.CONSULTATION_JOIN_BASE_URL?.trim();
+
+  if (modality === 'video' && videoBase) {
+    return `${videoBase}${videoBase.includes('?') ? '&' : '?'}token=${encodeURIComponent(hmac)}`;
+  }
+  if (appBase) {
+    return `${appBase}/my-visit?token=${encodeURIComponent(hmac)}`;
+  }
+  if (videoBase) {
+    return `${videoBase}${videoBase.includes('?') ? '&' : '?'}token=${encodeURIComponent(hmac)}`;
+  }
+  return null;
+}
+
+function formatWhenLabelEn(iso: string | null | undefined): string {
+  if (!iso) return 'your scheduled time';
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return 'your scheduled time';
+  return d.toLocaleString('en-IN', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'Asia/Kolkata',
+  });
+}
+
+/** Whole minutes until appointment_date; null if unparseable. */
+function minutesUntilAppointment(
+  iso: string | null | undefined,
+  nowMs = Date.now()
+): number | null {
+  if (!iso) return null;
+  const startMs = new Date(iso).getTime();
+  if (!Number.isFinite(startMs)) return null;
+  return Math.max(0, Math.round((startMs - nowMs) / 60_000));
+}
+
+/**
+ * Pre-visit ladder fan-out:
+ * - reminder_24h: soft reminder, **no** join link
+ * - checkin_30 / nudge_15 / nudge_5 / starting_now: join/check-in link (no Twilio room)
+ *
+ * Dedup via stage stamp column (stamp before send). Returns true when any channel sent.
+ */
+export async function sendPrevisitNotifyToPatient(input: {
+  appointmentId: string;
+  correlationId: string;
+  stage: PrevisitNotifyStage;
+}): Promise<boolean> {
+  const { appointmentId, correlationId, stage } = input;
+  const stampCol = PREVISIT_STAMP_COLUMN[stage];
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    logger.warn(
+      { correlationId, appointmentId, stage },
+      'Previsit notify skipped (admin client unavailable)'
+    );
+    return false;
+  }
+
+  type AptNotifyRow = {
+    id: string;
+    doctor_id: string;
+    consultation_type: string | null;
+    appointment_date: string | null;
+    conversation_id: string | null;
+    patient_name: string | null;
+    patient_checkin_notified_at: string | null;
+    patient_reminder_24h_notified_at: string | null;
+    patient_checkin_nudge_15_notified_at: string | null;
+    patient_checkin_nudge_5_notified_at: string | null;
+    patient_start_notified_at: string | null;
+    patient_checked_in_at: string | null;
+    patient_lobby_last_seen_at: string | null;
+  };
+
+  const { data: aptRaw, error: aptErr } = await admin
+    .from('appointments')
+    .select(
+      'id, doctor_id, consultation_type, appointment_date, conversation_id, patient_name, ' +
+        'patient_checkin_notified_at, patient_reminder_24h_notified_at, ' +
+        'patient_checkin_nudge_15_notified_at, patient_checkin_nudge_5_notified_at, ' +
+        'patient_start_notified_at, ' +
+        'patient_checked_in_at, patient_lobby_last_seen_at'
+    )
+    .eq('id', appointmentId)
+    .maybeSingle();
+
+  const apt = aptRaw as unknown as AptNotifyRow | null;
+
+  if (aptErr || !apt) {
+    logger.warn(
+      { correlationId, appointmentId, stage, error: aptErr?.message },
+      'Previsit notify skipped (appointment not found)'
+    );
+    return false;
+  }
+
+  const already = (apt as unknown as Record<string, unknown>)[stampCol];
+  if (already) {
+    return false;
+  }
+
+  // Stamp first so concurrent cron ticks do not double-send.
+  const stampedAt = new Date().toISOString();
+  const { data: stamped, error: stampErr } = await admin
+    .from('appointments')
+    .update({ [stampCol]: stampedAt, updated_at: stampedAt })
+    .eq('id', appointmentId)
+    .is(stampCol, null)
+    .select('id')
+    .maybeSingle();
+
+  if (stampErr) {
+    logger.warn(
+      { correlationId, appointmentId, stage, error: stampErr.message },
+      'Previsit notify stamp failed'
+    );
+    return false;
+  }
+  if (!stamped) {
+    return false;
+  }
+
+  const channels = await resolvePatientNotificationChannels(
+    admin,
+    appointmentId,
+    correlationId
+  );
+  if (!channels) {
+    logger.warn(
+      { correlationId, appointmentId, stage },
+      'Previsit notify skipped (channels unresolved)'
+    );
+    return false;
+  }
+
+  let language: ConversationLanguage = 'en';
+  if (apt.conversation_id) {
+    try {
+      language = await getConversationLanguage(
+        apt.conversation_id as string,
+        correlationId
+      );
+    } catch {
+      language = 'en';
+    }
+  }
+
+  const patientName =
+    typeof apt.patient_name === 'string' && apt.patient_name.trim()
+      ? apt.patient_name.trim()
+      : undefined;
+  const firstName = patientName?.split(/\s+/)[0];
+  const appointmentIso =
+    typeof apt.appointment_date === 'string' ? apt.appointment_date : null;
+  const whenLabel = formatWhenLabelEn(appointmentIso);
+  const minutesLeftActual = minutesUntilAppointment(appointmentIso);
+
+  let message: string;
+  let emailSubject: string;
+  try {
+    if (stage === 'reminder_24h') {
+      message = buildAppointmentReminder24hDm({
+        language,
+        practiceName: channels.practiceName,
+        whenLabel,
+        patientName,
+        minutesLeft: minutesLeftActual ?? undefined,
+      });
+      emailSubject = firstName
+        ? `Hi ${firstName} — tomorrow at ${whenLabel} — Halo Aid`
+        : `Reminder: tomorrow at ${whenLabel} — Halo Aid`;
+    } else {
+      const joinUrl = buildPatientCheckinJoinUrl({
+        appointmentId,
+        consultationType:
+          typeof apt.consultation_type === 'string' ? apt.consultation_type : null,
+      });
+      if (!joinUrl) {
+        logger.warn(
+          { correlationId, appointmentId, stage },
+          'Previsit notify skipped (no APP_BASE_URL / JOIN_BASE_URL)'
+        );
+        return false;
+      }
+      if (stage === 'checkin_30') {
+        message = buildConsultationCheckinDm({
+          language,
+          practiceName: channels.practiceName,
+          joinUrl,
+          patientName,
+          whenLabel,
+          minutesLeft: minutesLeftActual ?? undefined,
+        });
+        const leftBits =
+          minutesLeftActual != null ? ` — ~${minutesLeftActual} min left` : '';
+        emailSubject = firstName
+          ? `Hi ${firstName} — check in (${whenLabel}${leftBits}) — Halo Aid`
+          : `Check in for your visit (${whenLabel}${leftBits}) — Halo Aid`;
+      } else if (stage === 'starting_now') {
+        message = buildConsultationStartingNowDm({
+          language,
+          practiceName: channels.practiceName,
+          joinUrl,
+          whenLabel,
+          patientName,
+        });
+        emailSubject = firstName
+          ? `Hi ${firstName} — starting now (${whenLabel}) — Halo Aid`
+          : `Starting now (${whenLabel}) — Halo Aid`;
+      } else {
+        const minutesLeft = stage === 'nudge_5' ? 5 : 15;
+        message = buildConsultationCheckinNudgeDm({
+          language,
+          practiceName: channels.practiceName,
+          joinUrl,
+          minutesLeft,
+          minutesLeftActual: minutesLeftActual ?? undefined,
+          whenLabel,
+          patientName,
+        });
+        const leftLabel =
+          minutesLeftActual != null
+            ? `~${minutesLeftActual} min left`
+            : minutesLeft === 5
+              ? '~5 min left'
+              : '15 min left';
+        emailSubject = firstName
+          ? `Hi ${firstName} — ${leftLabel} (${whenLabel}) — Halo Aid`
+          : `${leftLabel} (${whenLabel}) — Halo Aid`;
+      }
+    }
+  } catch (err) {
+    logger.warn(
+      {
+        correlationId,
+        appointmentId,
+        stage,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      'Previsit notify skipped (copy builder threw)'
+    );
+    return false;
+  }
+
+  const channelOutcomes = await dispatchFanOut({
+    channels,
+    message,
+    emailSubject,
+    correlationId,
+  });
+
+  const anySent = channelOutcomes.some((c) => c.status === 'sent');
+  if (anySent) {
+    await auditNotificationSent(
+      correlationId,
+      `previsit_${stage}_fanout`,
+      'patient',
+      'appointment',
+      appointmentId
+    );
+  }
+
+  logger.info(
+    {
+      correlationId,
+      appointmentId,
+      stage,
+      anySent,
+      channels: channelOutcomes.map((c) => ({ channel: c.channel, status: c.status })),
+    },
+    'Previsit notify fan-out complete'
+  );
+
+  return anySent;
+}
+
+/** @deprecated Prefer sendPrevisitNotifyToPatient({ stage: 'checkin_30' }) */
+export async function sendConsultationCheckinToPatient(input: {
+  appointmentId: string;
+  correlationId: string;
+}): Promise<boolean> {
+  return sendPrevisitNotifyToPatient({
+    ...input,
+    stage: 'checkin_30',
+  });
 }
 
 /**
@@ -1622,7 +2141,12 @@ export async function sendPrescriptionReadyToPatient(input: {
   const viewBase = env.PRESCRIPTION_VIEW_BASE_URL?.trim();
   const viewUrl = viewBase ? `${viewBase.replace(/\/$/, '')}/${prescriptionId}` : undefined;
 
+  const language = await resolveLanguageForConversation(
+    channels.conversationId,
+    correlationId
+  );
   const message = buildPrescriptionReadyPingDm({
+    language,
     practiceName: channels.practiceName,
     viewUrl,
   });
@@ -1717,6 +2241,7 @@ interface ReplayNotificationContext {
   patientDisplayName: string;
   practiceName:       string;
   consultEndedAtIso:  string | null;
+  conversationId:     string | null;
 }
 
 async function loadReplayNotificationContext(
@@ -1726,7 +2251,7 @@ async function loadReplayNotificationContext(
 ): Promise<ReplayNotificationContext | null> {
   const { data: session, error: sessionErr } = await admin
     .from('consultation_sessions')
-    .select('doctor_id, patient_id, actual_ended_at')
+    .select('doctor_id, patient_id, actual_ended_at, appointment_id')
     .eq('id', sessionId)
     .maybeSingle();
   if (sessionErr || !session) {
@@ -1740,7 +2265,19 @@ async function loadReplayNotificationContext(
     doctor_id: string;
     patient_id: string | null;
     actual_ended_at: string | null;
+    appointment_id: string;
   };
+
+  let conversationId: string | null = null;
+  if (sess.appointment_id) {
+    const { data: appointment } = await admin
+      .from('appointments')
+      .select('conversation_id')
+      .eq('id', sess.appointment_id)
+      .maybeSingle();
+    conversationId = (appointment as { conversation_id: string | null } | null)
+      ?.conversation_id ?? null;
+  }
 
   let patientDisplayName = '';
   if (sess.patient_id) {
@@ -1761,6 +2298,7 @@ async function loadReplayNotificationContext(
     patientDisplayName,
     practiceName,
     consultEndedAtIso:  sess.actual_ended_at,
+    conversationId,
   };
 }
 
@@ -1803,6 +2341,44 @@ async function resolveReplayDmChannels(
     : null;
 
   return { phone, igRecipientId, igDoctorToken };
+}
+
+async function recordReplayNotificationSkip(input: {
+  correlationId: string;
+  sessionId: string;
+  recordingAccessAuditId: string;
+  action: 'patient_recording_replay_notification' | 'doctor_recording_replay_notification';
+  reason: string;
+  accessedByRole?: string;
+  artifactType?: string;
+}): Promise<void> {
+  try {
+    await logAuditEvent({
+      correlationId: input.correlationId,
+      action: input.action,
+      resourceType: 'consultation_session',
+      resourceId: input.sessionId,
+      status: 'failure',
+      errorMessage: `replay notification skipped: ${input.reason}`,
+      metadata: {
+        recording_access_audit_id: input.recordingAccessAuditId,
+        skip_reason: input.reason,
+        obligation: 'unfulfilled',
+        ...(input.accessedByRole ? { accessed_by_role: input.accessedByRole } : {}),
+        ...(input.artifactType ? { artifact_type: input.artifactType } : {}),
+      },
+    });
+  } catch (err) {
+    logger.error(
+      {
+        correlationId: input.correlationId,
+        sessionId: input.sessionId,
+        recordingAccessAuditId: input.recordingAccessAuditId,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      'replay-notification: skip audit write failed',
+    );
+  }
 }
 
 export type NotifyPatientOfDoctorReplayResult =
@@ -1852,16 +2428,34 @@ export async function notifyPatientOfDoctorReplay(input: {
    * audio" builder).
    */
   actionKind?:            'reviewed' | 'downloaded';
+  /**
+   * rec-30: support-staff access uses distinct patient copy. Defaults
+   * to `'doctor'` so existing call sites keep the "your doctor reviewed"
+   * body. Never forward `escalationReason` here.
+   */
+  accessedByRole?:        'doctor' | 'support_staff';
 }): Promise<NotifyPatientOfDoctorReplayResult> {
   const { sessionId, artifactType, recordingAccessAuditId, correlationId } = input;
   const actionKind = input.actionKind ?? 'reviewed';
+  const accessedByRole = input.accessedByRole ?? 'doctor';
   const attemptedAt = new Date().toISOString();
 
-  const skipped = (reason: string): { skipped: true; reason: string } => {
+  const skipped = async (reason: string): Promise<{ skipped: true; reason: string }> => {
     logger.info(
       { correlationId, sessionId, recordingAccessAuditId, reason },
       'notifyPatientOfDoctorReplay: skipped',
     );
+    if (reason !== 'already_notified') {
+      await recordReplayNotificationSkip({
+        correlationId,
+        sessionId,
+        recordingAccessAuditId,
+        action: 'patient_recording_replay_notification',
+        reason,
+        accessedByRole,
+        artifactType,
+      });
+    }
     return { skipped: true, reason };
   };
 
@@ -1885,7 +2479,7 @@ export async function notifyPatientOfDoctorReplay(input: {
       .eq('metadata->>recording_access_audit_id', recordingAccessAuditId)
       .limit(1);
     if (existing && existing.length > 0) {
-      return skipped('already_notified');
+      return await skipped('already_notified');
     }
   } catch (err) {
     // Non-fatal — proceed with dispatch. A duplicate DM in the failure
@@ -1898,16 +2492,16 @@ export async function notifyPatientOfDoctorReplay(input: {
 
   const ctx = await loadReplayNotificationContext(admin, sessionId, correlationId);
   if (!ctx) {
-    return skipped('session_not_found');
+    return await skipped('session_not_found');
   }
   if (!ctx.patientId) {
-    return skipped('no_patient_on_session');
+    return await skipped('no_patient_on_session');
   }
   if (!ctx.consultEndedAtIso) {
     // The consult never ended — there's nothing the patient should be
     // notified about replaying. Defensive; mintReplayUrl already gates
     // on actual_ended_at for patient-window checks.
-    return skipped('session_not_ended');
+    return await skipped('session_not_ended');
   }
 
   const channels = await resolveReplayDmChannels(
@@ -1921,6 +2515,7 @@ export async function notifyPatientOfDoctorReplay(input: {
   }
 
   const consultDateLabel = formatConsultDateLabel(ctx.consultEndedAtIso);
+  const language = await resolveLanguageForConversation(ctx.conversationId, correlationId);
   // Task 32 carve-out: a transcript *download* gets its own DM body.
   // Every other combination (audio replay / audio download / transcript
   // review) stays on the single `buildRecordingReplayedNotificationDm`.
@@ -1928,16 +2523,26 @@ export async function notifyPatientOfDoctorReplay(input: {
   // two builders stay independently snapshot-pinned — a future copy edit
   // to the "reviewed" body can't leak into the "downloaded" body.
   const messageBody =
-    artifactType === 'transcript' && actionKind === 'downloaded'
-      ? buildTranscriptDownloadedNotificationDm({
-          practiceName: ctx.practiceName,
-          consultDateLabel,
-        })
-      : buildRecordingReplayedNotificationDm({
+    accessedByRole === 'support_staff'
+      ? buildSupportStaffRecordingAccessedNotificationDm({
+          language,
           practiceName: ctx.practiceName,
           consultDateLabel,
           artifactType,
-        });
+          actionKind,
+        })
+      : artifactType === 'transcript' && actionKind === 'downloaded'
+        ? buildTranscriptDownloadedNotificationDm({
+            language,
+            practiceName: ctx.practiceName,
+            consultDateLabel,
+          })
+        : buildRecordingReplayedNotificationDm({
+            language,
+            practiceName: ctx.practiceName,
+            consultDateLabel,
+            artifactType,
+          });
 
   // Dispatch IG-DM + SMS in parallel. We don't reuse `dispatchFanOut`
   // because that helper hard-codes the three-channel SMS+email+IG shape
@@ -2022,6 +2627,7 @@ export async function notifyPatientOfDoctorReplay(input: {
         recording_access_audit_id: recordingAccessAuditId,
         artifact_type:             artifactType,
         action_kind:               actionKind,
+        accessed_by_role:          accessedByRole,
         any_sent:                  anySent,
         channels: channelOutcomes.map((c) =>
           c.status === 'sent'
@@ -2103,11 +2709,22 @@ export async function notifyDoctorOfPatientReplay(input: {
   } = input;
   const actionKind = input.actionKind ?? 'reviewed';
 
-  const skipped = (reason: string): { skipped: true; reason: string } => {
+  const skipped = async (reason: string): Promise<{ skipped: true; reason: string }> => {
     logger.info(
       { correlationId, sessionId, recordingAccessAuditId, reason },
       'notifyDoctorOfPatientReplay: skipped',
     );
+    if (reason !== 'already_notified') {
+      await recordReplayNotificationSkip({
+        correlationId,
+        sessionId,
+        recordingAccessAuditId,
+        action: 'doctor_recording_replay_notification',
+        reason,
+        accessedByRole,
+        artifactType,
+      });
+    }
     return { skipped: true, reason };
   };
 
@@ -2172,7 +2789,7 @@ export async function notifyDoctorOfPatientReplay(input: {
       { correlationId, sessionId, doctorId: ctx.doctorId, error: message },
       'notifyDoctorOfPatientReplay: insert failed',
     );
-    return { skipped: true, reason: 'insert_failed' };
+    return skipped('insert_failed');
   }
 }
 
@@ -2340,7 +2957,12 @@ export async function sendPostConsultChatHistoryDm(input: {
   const consultDateLabel = formatConsultDateLabel(session.actual_ended_at);
   let messageBody: string;
   try {
+    const language = await resolveLanguageForConversation(
+      channels.conversationId,
+      correlationId
+    );
     messageBody = buildPostConsultChatLinkDm({
+      language,
       practiceName: channels.practiceName,
       joinUrl,
       consultDateLabel,
@@ -2481,6 +3103,148 @@ export async function sendPostConsultChatHistoryDm(input: {
   );
 
   return result;
+}
+
+// ============================================================================
+// Patient: Desk phone pre-booking confirmation (RQ7)
+// ============================================================================
+
+/**
+ * Confirm a front-desk **phone pre-booking** to the patient (SMS / email / DM).
+ * Walk-ins (`booking_origin = walk_in`) are skipped — they are already at the desk.
+ * Never throws; never logs phone, email, name, or MRN.
+ */
+export async function sendDeskBookingConfirmationToPatient(
+  appointmentId: string,
+  correlationId: string
+): Promise<boolean> {
+  try {
+    const admin = getSupabaseAdminClient();
+    if (!admin) {
+      logger.warn(
+        { correlationId, appointmentId },
+        'Desk booking confirmation skipped (admin client unavailable)'
+      );
+      return false;
+    }
+
+    const { data: apt, error: aptErr } = await admin
+      .from('appointments')
+      .select('id, booking_origin, appointment_date, conversation_id, patient_id, doctor_id')
+      .eq('id', appointmentId)
+      .maybeSingle();
+
+    if (aptErr || !apt) {
+      logger.info(
+        { correlationId, appointmentId },
+        'Desk booking confirmation skipped (appointment not found)'
+      );
+      return true;
+    }
+
+    const origin = (apt as { booking_origin?: string | null }).booking_origin;
+    if (origin === 'walk_in') {
+      logger.info(
+        { correlationId, appointmentId },
+        'Desk booking confirmation skipped (walk-in)'
+      );
+      return true;
+    }
+
+    const channels = await resolvePatientNotificationChannels(
+      admin,
+      appointmentId,
+      correlationId
+    );
+    if (!channels) {
+      logger.info(
+        { correlationId, appointmentId },
+        'Desk booking confirmation skipped (no channels)'
+      );
+      return true;
+    }
+
+    let patientMrn: string | undefined;
+    const patientId = (apt as { patient_id?: string | null }).patient_id;
+    if (patientId) {
+      const { data: patient } = await admin
+        .from('patients')
+        .select('medical_record_number')
+        .eq('id', patientId)
+        .maybeSingle();
+      const raw = (patient as { medical_record_number?: string | null } | null)
+        ?.medical_record_number;
+      if (raw?.trim()) {
+        patientMrn = raw.trim();
+      }
+    }
+
+    const doctorSettings = channels.doctorId
+      ? await getDoctorSettings(channels.doctorId)
+      : null;
+    const timezone = doctorSettings?.timezone ?? 'Asia/Kolkata';
+    const rawDate = (apt as { appointment_date?: unknown }).appointment_date;
+    const appointmentIso =
+      typeof rawDate === 'string'
+        ? rawDate
+        : rawDate instanceof Date
+          ? rawDate.toISOString()
+          : '';
+    if (!appointmentIso) {
+      logger.info(
+        { correlationId, appointmentId },
+        'Desk booking confirmation skipped (no appointment date)'
+      );
+      return true;
+    }
+
+    const language = await resolveLanguageForConversation(
+      (apt as { conversation_id?: string | null }).conversation_id,
+      correlationId
+    );
+    const message = buildDeskBookingConfirmationMessage({
+      language,
+      appointmentDateDisplay: formatAppointmentDate(appointmentIso, timezone),
+      patientMrn,
+    });
+
+    const outcomes = await dispatchFanOut({
+      channels,
+      message,
+      emailSubject: 'Your appointment is confirmed',
+      correlationId,
+    });
+    const anySent = outcomes.some((o) => o.status === 'sent');
+    if (anySent) {
+      await auditNotificationSent(
+        correlationId,
+        'desk_booking_confirmation',
+        'patient',
+        'appointment',
+        appointmentId
+      );
+    } else {
+      logger.info(
+        {
+          correlationId,
+          appointmentId,
+          channels: outcomes.map((o) => ({ channel: o.channel, status: o.status })),
+        },
+        'Desk booking confirmation had no successful channel'
+      );
+    }
+    return anySent;
+  } catch (err) {
+    logger.warn(
+      {
+        correlationId,
+        appointmentId,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      'Desk booking confirmation failed'
+    );
+    return false;
+  }
 }
 
 // ============================================================================

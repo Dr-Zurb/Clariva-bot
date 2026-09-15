@@ -1,12 +1,11 @@
 /**
- * rcp-07: Collection → consent → confirm → recording → slot funnel — extracted from legacy decide-chain.
+ * rcp-07: Collection → consent → confirm → slot funnel — extracted from legacy decide-chain.
  */
 
 import { logger } from '../../../config/logger';
 import {
   resolveConsentReplyForBooking,
   resolveConfirmDetailsReplyForBooking,
-  type DoctorContext,
 } from '../../../services/ai-service';
 import {
   getCollectedData,
@@ -31,19 +30,29 @@ import {
   formatBookingLinkDm,
   formatBookingAwaitingFollowUpDm,
 } from '../../../utils/booking-link-copy';
-import { isSkipExtrasReply } from '../../../utils/booking-consent-context';
+import {
+  isSkipExtrasReply,
+  resolveConsentUnclearMessage,
+} from '../../../utils/booking-consent-context';
 import { isSingleFeeMode, logSingleFeeSkip } from '../../../utils/catalog-mode-guard';
 import {
   shouldRequestComplaintClarification,
   resolveComplaintClarificationMessage,
 } from '../../../utils/complaint-clarification';
+import type { ConversationLanguage } from '../../../utils/conversation-language';
 import {
   buildConsentOptionalExtrasMessage,
   buildCorrectionFieldClarifierReply,
   buildIntakeRequestMessage,
-  buildRecordingConsentAskMessage,
-  buildRecordingConsentExplainer,
-  RECORDING_CONSENT_COPY_VERSION,
+  buildBookForOtherSelfNudgeMessage,
+  buildBookForRelationNudgeMessage,
+  buildConsentBookForOtherRetryIntroMessage,
+  buildConsentPersistFailureRetryMessage,
+  buildBookForOtherJustRelationIntroMessage,
+  buildStillNeedDetailsIntroMessage,
+  buildBookForOtherNextIntroMessage,
+  buildPatientMatchConfirmMessage,
+  buildPhoneDisplayFallbackLabel,
 } from '../../../utils/dm-copy';
 import {
   effectiveAskedForConfirm,
@@ -55,7 +64,6 @@ import {
   type ExtractedFields,
   type FieldComplaintField,
 } from '../../../utils/extract-patient-fields';
-import { localizeReply, detectPatientLanguageHint } from '../../../utils/localize-reply';
 import { getActiveServiceCatalog } from '../../../utils/service-catalog-helpers';
 import {
   formatAwaitingStaffServiceConfirmationDm,
@@ -67,7 +75,6 @@ import {
   mergeBooking,
   mergeBookingForOther,
   mergeClarification,
-  mergeRecordingConsent,
   mergeTriage,
   setStage,
   type ConversationState,
@@ -153,7 +160,7 @@ function maybeTriggerComplaintClarification(
   match: ServiceCatalogMatchResult | null,
   doctorSettings: DoctorSettingsRow | null,
   originalReasonText: string | null | undefined,
-  userText: string,
+  language: ConversationLanguage,
   correlationId: string,
   nextReply: string
 ): { state: ConversationState; replyText: string; triggered: boolean } {
@@ -222,7 +229,7 @@ function maybeTriggerComplaintClarification(
 
   return {
     state: nextState,
-    replyText: resolveComplaintClarificationMessage(userText, concernsForState),
+    replyText: resolveComplaintClarificationMessage(language, concernsForState),
     triggered: true,
   };
 }
@@ -231,7 +238,8 @@ function transitionToAwaitingStaffServiceConfirmation(
   base: ConversationState,
   doctorSettings: DoctorSettingsRow | null,
   intent: ConversationState['lastIntent'],
-  patch: Partial<ConversationState>
+  patch: Partial<ConversationState>,
+  language: ConversationLanguage
 ): { state: ConversationState; replyText: string } {
   const merged: ConversationState = {
     ...base,
@@ -242,33 +250,8 @@ function transitionToAwaitingStaffServiceConfirmation(
   };
   return {
     state: merged,
-    replyText: formatAwaitingStaffServiceConfirmationDm(doctorSettings, merged),
+    replyText: formatAwaitingStaffServiceConfirmationDm(language, doctorSettings, merged),
   };
-}
-
-function resolveRecordingConsentReply(text: string): 'yes' | 'no' | 'unclear' {
-  const trimmed = (text ?? '').trim().toLowerCase();
-  if (!trimmed) return 'unclear';
-  const classify = (input: string): 'yes' | 'no' | 'unclear' => {
-    if (/^(no|nope|nah|n)[.!,]?$/.test(input)) return 'no';
-    if (/^(yes|yeah|yep|yup|ok|okay|sure|y)[.!,]?$/.test(input)) return 'yes';
-    if (/\b(i\s*do\s*not|i\s*don'?t|don'?t\s+record|no\s+recording|decline|disagree|refuse|reject)\b/.test(input)) {
-      return 'no';
-    }
-    if (/\b(i\s+agree|agree|i\s+consent|consent|continue\s+without\s+recording)\b/.test(input)) {
-      if (/continue\s+without\s+recording/.test(input)) return 'no';
-      return 'yes';
-    }
-    if (/\b(keep\s+recording\s+on|record\s+it|go\s+ahead|proceed)\b/.test(input)) return 'yes';
-    return 'unclear';
-  };
-  const direct = classify(trimmed);
-  if (direct !== 'unclear') return direct;
-  const collapsed = trimmed.replace(/([a-z])\1+/g, '$1');
-  if (collapsed !== trimmed) {
-    return classify(collapsed);
-  }
-  return 'unclear';
 }
 
 function buildBookingLinkReplyWithFollowUp(
@@ -276,14 +259,15 @@ function buildBookingLinkReplyWithFollowUp(
   conversationId: string,
   doctorId: string,
   doctorSettings: DoctorSettingsRow | null | undefined,
+  language: ConversationLanguage
 ): string {
   const slotLink = buildBookingPageUrl(conversationId, doctorId);
-  const baseSlotMsg = formatBookingLinkDm(slotLink, '', doctorSettings);
+  const baseSlotMsg = formatBookingLinkDm({ language, slotLink, doctorSettings });
   if (state.bookingForOther?.pendingSelfBooking) {
-    return `${baseSlotMsg}\n\nWould you like to book one for yourself now?`;
+    return `${baseSlotMsg}\n\n${buildBookForOtherSelfNudgeMessage({ language })}`;
   }
   if (state.bookingForOther?.pendingOtherBooking?.relation) {
-    return `${baseSlotMsg}\n\nWould you like to book for your ${state.bookingForOther?.pendingOtherBooking.relation} now?`;
+    return `${baseSlotMsg}\n\n${buildBookForRelationNudgeMessage({ language, relation: state.bookingForOther.pendingOtherBooking.relation })}`;
   }
   return baseSlotMsg;
 }
@@ -358,47 +342,6 @@ function isAmbiguousCollectionMessage(text: string, extracted: ExtractedFields):
   return false;
 }
 
-function formatPatientIdHint(_mrn?: string | null): string {
-  return '';
-}
-
-async function getPatientIdHintForSlot(
-  _patientId: string | undefined,
-  _correlationId: string
-): Promise<string> {
-  return '';
-}
-
-export function applyRecordingConsentDetourIfNeeded(
-  result: DmTurnResult,
-  doctorContext: DoctorContext | undefined
-): DmTurnResult {
-  const stateToPersist = result.nextState;
-  if (
-    stateToPersist.step === 'awaiting_slot_selection' &&
-    stateToPersist.recordingConsent?.recordingConsentDecision === undefined
-  ) {
-    return {
-      branch: 'recording_consent_injected',
-      reply: buildRecordingConsentAskMessage({
-        practiceName: doctorContext?.practice_name ?? undefined,
-      }),
-      nextState: mergeBooking(
-        setStage(
-          {
-            ...stateToPersist,
-            lastPromptKind: 'recording_consent_ask',
-            updatedAt: new Date().toISOString(),
-          },
-          'recording_consent'
-        ),
-        { bookingLinkSentAt: undefined, bookingReminderSent: undefined }
-      ),
-    };
-  }
-  return result;
-}
-
 export async function applyLearningPolicyAutobookAfterStage(
   result: DmTurnResult,
   ctx: Pick<DmTurnContext, 'doctorId' | 'correlationId' | 'conversation'>
@@ -463,50 +406,7 @@ export const bookingFunnelStage = {
     let dmRoutingBranch: DmHandlerBranch = 'unknown';
     let replyText: string = fallbackReply;
 
-    if (state.step === 'recording_consent') {
-      dmRoutingBranch = 'recording_consent_flow';
-      const decision = resolveRecordingConsentReply(text);
-      if (decision === 'unclear') {
-        replyText = buildRecordingConsentAskMessage({
-          practiceName: doctorContext?.practice_name ?? undefined,
-        });
-        state = { ...state, updatedAt: new Date().toISOString() };
-      } else if (decision === 'no' && state.recordingConsent?.recordingConsentRePitched !== true) {
-        replyText = buildRecordingConsentExplainer({
-          version: RECORDING_CONSENT_COPY_VERSION,
-          practiceName: doctorContext?.practice_name ?? undefined,
-        });
-        state = mergeRecordingConsent(
-          {
-            ...state,
-            lastPromptKind: 'recording_consent_re_pitch',
-            updatedAt: new Date().toISOString(),
-          },
-          { recordingConsentRePitched: true }
-        );
-      } else {
-        const captured = decision === 'yes';
-        replyText = buildBookingLinkReplyWithFollowUp(
-          state,
-          conversation.id,
-          doctorId,
-          doctorSettings,
-        );
-        state = mergeRecordingConsent(
-          {
-            ...state,
-            step: 'awaiting_slot_selection',
-            lastPromptKind: undefined,
-            updatedAt: new Date().toISOString(),
-          },
-          {
-            recordingConsentDecision: captured,
-            recordingConsentVersion: RECORDING_CONSENT_COPY_VERSION,
-            recordingConsentRePitched: undefined,
-          }
-        );
-      }
-    } else if (state.step === 'consent' || effectiveAskedForConsent(state, recentMessages)) {
+    if (state.step === 'consent' || effectiveAskedForConsent(state, recentMessages)) {
       const CORRECTION_RE = /\b(wait|wrong|not\s+right|change\s+my|correct\s+my|actually\s+it'?s|my\s+name\s+is|my\s+phone\s+is|my\s+number\s+is|update\s+my)\b/i;
       if (CORRECTION_RE.test(text.trim())) {
         dmRoutingBranch = 'consent_correction_back';
@@ -564,12 +464,15 @@ export const bookingFunnelStage = {
                     ? state.bookingForOther?.relation
                     : undefined;
                 replyText = buildIntakeRequestMessage({
+                  language: ctx.turnLanguage,
                   variant: 'retry-not-received',
                   forRelation: knownRelation,
                   missing: ['name', 'age', 'phone', 'reason_for_visit'],
                   intro: knownRelation
                     ? undefined
-                    : "I didn't catch the details for the person you're booking for — could you resend them?",
+                    : buildConsentBookForOtherRetryIntroMessage({
+                        language: ctx.turnLanguage,
+                      }),
                 });
               }
               state = { ...state, updatedAt: new Date().toISOString() };
@@ -601,16 +504,14 @@ export const bookingFunnelStage = {
                   shared,
                   doctorSettings,
                   intentResult.intent,
-                  {}
-                );
+                  {}, ctx.turnLanguage);
                 state = gate.state;
                 replyText = gate.replyText;
               } else {
                 const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-                const mrnHint = formatPatientIdHint(newPatient.medical_record_number);
-                const baseSlotMsg = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
+                const baseSlotMsg = formatBookingLinkDm({ language: ctx.turnLanguage, slotLink, doctorSettings });
                 replyText = shared.bookingForOther?.pendingSelfBooking
-                  ? `${baseSlotMsg}\n\nWould you like to book one for yourself now?`
+                  ? `${baseSlotMsg}\n\n${buildBookForOtherSelfNudgeMessage({ language: ctx.turnLanguage })}`
                   : baseSlotMsg;
                 state = setStage(shared, 'awaiting_slot_selection');
               }
@@ -620,7 +521,8 @@ export const bookingFunnelStage = {
               conversation.id,
               conversation.patient_id,
               'instagram_dm',
-              correlationId
+              correlationId,
+              ctx.turnLanguage
             );
             if (!persistResult.success) {
               const recovered = await tryRecoverAndSetFromMessages(
@@ -635,13 +537,11 @@ export const bookingFunnelStage = {
                   conversation.id,
                   conversation.patient_id,
                   'instagram_dm',
-                  correlationId
+                  correlationId,
+                  ctx.turnLanguage
                 );
               }
             }
-            const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-            const mrnHint = await getPatientIdHintForSlot(conversation.patient_id, correlationId);
-            const baseSlotMsg = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
             const sharedBase: ConversationState = mergeBooking(
               { ...state, lastIntent: intentResult.intent, updatedAt: new Date().toISOString() },
               {
@@ -649,22 +549,28 @@ export const bookingFunnelStage = {
                 extraNotes: extraNotes ?? state.booking?.extraNotes,
               }
             );
+            // ilr-03: never send a slot link or advance to awaiting_slot_selection when
+            // consent/demographics persist failed — patient must retry from consent.
             if (!persistResult.success) {
-              replyText =
-                `I had trouble saving your details - please say 'book appointment' to re-share them if needed. Meanwhile, ${baseSlotMsg}`;
-              state = setStage(sharedBase, 'awaiting_slot_selection');
+              replyText = buildConsentPersistFailureRetryMessage({ language: ctx.turnLanguage });
+              state = {
+                ...sharedBase,
+                step: 'consent',
+                updatedAt: new Date().toISOString(),
+              };
             } else if (isSlotBookingBlockedPendingStaffReview(sharedBase)) {
               const gate = transitionToAwaitingStaffServiceConfirmation(
                 sharedBase,
                 doctorSettings,
                 intentResult.intent,
-                {}
-              );
+                {}, ctx.turnLanguage);
               state = gate.state;
               replyText = gate.replyText;
             } else {
+              const slotLink = buildBookingPageUrl(conversation.id, doctorId);
+              const baseSlotMsg = formatBookingLinkDm({ language: ctx.turnLanguage, slotLink, doctorSettings });
               replyText = sharedBase.bookingForOther?.pendingOtherBooking
-                ? `${baseSlotMsg}\n\nWould you like to book for your ${sharedBase.bookingForOther.pendingOtherBooking.relation} now?`
+                ? `${baseSlotMsg}\n\n${buildBookForRelationNudgeMessage({ language: ctx.turnLanguage, relation: sharedBase.bookingForOther.pendingOtherBooking.relation })}`
                 : baseSlotMsg;
               state = setStage(sharedBase, 'awaiting_slot_selection');
             }
@@ -673,7 +579,8 @@ export const bookingFunnelStage = {
           replyText = await handleConsentDenied(
             conversation.id,
             conversation.patient_id,
-            correlationId
+            correlationId,
+            ctx.turnLanguage
           );
           state = {
             ...state,
@@ -682,12 +589,7 @@ export const bookingFunnelStage = {
             updatedAt: new Date().toISOString(),
           };
         } else {
-          replyText = await localizeReply(
-            "I didn't catch that — please reply **Yes** to consent and continue, or **No** to cancel.",
-            {},
-            detectPatientLanguageHint(text),
-            correlationId
-          );
+          replyText = resolveConsentUnclearMessage(ctx.turnLanguage);
           state = { ...state, step: 'consent', updatedAt: new Date().toISOString() };
         }
       }
@@ -783,10 +685,14 @@ export const bookingFunnelStage = {
             { pendingSelfBooking: false, relation }
           );
           replyText = buildIntakeRequestMessage({
+            language: ctx.turnLanguage,
             variant: 'initial',
             forRelation: relation,
             missing: ['name', 'age', 'phone', 'reason_for_visit'],
-            intro: `Got it, just your **${relation}** then. Please share their details:`,
+            intro: buildBookForOtherJustRelationIntroMessage({
+              language: ctx.turnLanguage,
+              relation,
+            }),
           });
         } else {
           const extracted = extractFieldsFromMessage(text);
@@ -830,7 +736,7 @@ export const bookingFunnelStage = {
             state = extractResult.newState;
             if (extractResult.missingFields.length === 0) {
               const collected = await getCollectedData(conversation.id);
-              replyText = buildConfirmDetailsMessage(collected ?? {});
+              replyText = buildConfirmDetailsMessage({ collected: collected ?? {}, language: ctx.turnLanguage });
             } else {
               const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text, teleconsultCatalogRowCount);
               const aiReply = await runGenerateResponse({
@@ -847,6 +753,7 @@ export const bookingFunnelStage = {
                 aiReply && aiReply.length > 20 && !aiReply.includes("didn't quite get that")
                   ? aiReply
                   : buildIntakeRequestMessage({
+                      language: ctx.turnLanguage,
                       variant: 'still-need',
                       missing: extractResult.missingFields,
                       includeEmail: false,
@@ -887,7 +794,9 @@ export const bookingFunnelStage = {
         }
         const name = collected?.name?.trim() || 'there';
         const phone = collected?.phone?.trim() || '';
-        const phoneDisplay = phone ? `**${phone}**` : 'your number';
+        const phoneDisplay = phone
+          ? `**${phone}**`
+          : buildPhoneDisplayFallbackLabel({ language: ctx.turnLanguage });
 
         const matchName = collected?.name?.trim() ?? '';
         const matchPhone = collected?.phone?.trim() ?? '';
@@ -917,12 +826,8 @@ export const bookingFunnelStage = {
             { pendingMatchPatientIds: ids }
           );
           if (canOfferReturningFollowUpService(returningProfile, state, doctorSettings)) {
-            const followUpOffer = buildReturningFollowUpOffer(
-              state,
-              returningProfile,
-              doctorSettings,
-              intentResult.intent
-            );
+            const followUpOffer = buildReturningFollowUpOffer(state, returningProfile, doctorSettings, intentResult.intent
+            , ctx.turnLanguage);
             if (followUpOffer) {
               state = followUpOffer.state;
               replyText = followUpOffer.replyText;
@@ -941,18 +846,31 @@ export const bookingFunnelStage = {
           const defaultReplyForMatch: string =
             matches.length === 1
               ? state.bookingForOther?.bookingForSomeoneElse
-                ? `We found a record for **${matches[0]!.name}** with this number. Same person? Reply Yes or No.`
-                : `We found an existing record matching your details (**${matches[0]!.name}**). Is this you? Reply Yes or No.`
-              : `We found ${matches.length} records: ${matches
-                  .slice(0, 2)
-                  .map((m, i) => `${i + 1}. ${m.name}${m.age != null ? ` (${m.age})` : ''}`)
-                  .join(', ')}. Which one? Reply 1 or 2, or No for new patient.`;
+                ? buildPatientMatchConfirmMessage({
+                    language: ctx.turnLanguage,
+                    kind: 'other_number',
+                    patientName: matches[0]!.name,
+                  })
+                : buildPatientMatchConfirmMessage({
+                    language: ctx.turnLanguage,
+                    kind: 'self_details',
+                    patientName: matches[0]!.name,
+                  })
+              : buildPatientMatchConfirmMessage({
+                  language: ctx.turnLanguage,
+                  kind: 'multi',
+                  multiCount: matches.length,
+                  multiLines: matches.slice(0, 2).map(
+                    (m, i) =>
+                      `${i + 1}. ${m.name}${m.age != null ? ` (${m.age})` : ''}`
+                  ),
+                });
           const clarifyForMatch = maybeTriggerComplaintClarification(
             state,
             enrichedForMatch.match,
             doctorSettings,
             collected?.reason_for_visit,
-            text,
+            ctx.turnLanguage,
             correlationId,
             defaultReplyForMatch
           );
@@ -980,12 +898,8 @@ export const bookingFunnelStage = {
             }
           );
           if (canOfferReturningFollowUpService(returningProfile, state, doctorSettings)) {
-            const followUpOffer = buildReturningFollowUpOffer(
-              state,
-              returningProfile,
-              doctorSettings,
-              intentResult.intent
-            );
+            const followUpOffer = buildReturningFollowUpOffer(state, returningProfile, doctorSettings, intentResult.intent
+            , ctx.turnLanguage);
             if (followUpOffer) {
               state = followUpOffer.state;
               replyText = followUpOffer.replyText;
@@ -1003,6 +917,7 @@ export const bookingFunnelStage = {
           state = enrichedForConsent.state;
           const resolvedConsentName = collected?.name?.trim() || undefined;
           const defaultReplyForConsent: string = buildConsentOptionalExtrasMessage({
+            language: ctx.turnLanguage,
             patientName: state.bookingForOther?.bookingForSomeoneElse ? undefined : resolvedConsentName,
             phoneDisplay,
             bookingForSomeoneElse: !!state.bookingForOther?.bookingForSomeoneElse,
@@ -1013,7 +928,7 @@ export const bookingFunnelStage = {
             enrichedForConsent.match,
             doctorSettings,
             collected?.reason_for_visit,
-            text,
+            ctx.turnLanguage,
             correlationId,
             defaultReplyForConsent
           );
@@ -1047,9 +962,9 @@ export const bookingFunnelStage = {
           collectedBefore.email === collected?.email;
         if (complaintField && noFieldsChanged) {
           dmRoutingBranch = 'confirm_details_complaint_clarify';
-          replyText = buildCorrectionFieldClarifierReply(complaintField);
+          replyText = buildCorrectionFieldClarifierReply({ field: complaintField, language: ctx.turnLanguage });
         } else if (extractResult.missingFields.length === 0) {
-          replyText = buildConfirmDetailsMessage(collected ?? {});
+          replyText = buildConfirmDetailsMessage({ collected: collected ?? {}, language: ctx.turnLanguage });
         } else {
           const aiContext = await buildAiContextForResponse(conversation.id, state, recentMessages, correlationId, text, teleconsultCatalogRowCount);
           const aiReply = await runGenerateResponse({
@@ -1066,10 +981,13 @@ export const bookingFunnelStage = {
             aiReply && aiReply.length > 20 && !aiReply.includes("didn't quite get that")
               ? aiReply
               : buildIntakeRequestMessage({
+                  language: ctx.turnLanguage,
                   variant: 'still-need',
                   missing: extractResult.missingFields,
                   includeEmail: false,
-                  intro: 'Still need these details:',
+                  intro: buildStillNeedDetailsIntroMessage({
+                    language: ctx.turnLanguage,
+                  }),
                 });
         }
       } else {
@@ -1101,7 +1019,7 @@ export const bookingFunnelStage = {
           new RegExp(`book\\s+(for\\s+)?(my\\s+)?${state.bookingForOther?.pendingOtherBooking.relation}`, 'i').test(trimmed));
       if (wantsOtherBooking) {
         await clearCollectedData(conversation.id);
-        const relation = state.bookingForOther?.pendingOtherBooking!.relation;
+        const relation = state.bookingForOther!.pendingOtherBooking!.relation;
         state = mergeBookingForOther(
           mergeTriage(
             setStage(
@@ -1127,10 +1045,14 @@ export const bookingFunnelStage = {
           }
         );
         replyText = buildIntakeRequestMessage({
+          language: ctx.turnLanguage,
           variant: 'initial',
           forRelation: relation,
           missing: ['name', 'age', 'phone', 'reason_for_visit'],
-          intro: `Got it. I'll help you book for your **${relation}** next. Please share their details:`,
+          intro: buildBookForOtherNextIntroMessage({
+            language: ctx.turnLanguage,
+            relation,
+          }),
         });
       } else if (wantsSelfBooking) {
         await clearCollectedData(conversation.id);
@@ -1164,23 +1086,25 @@ export const bookingFunnelStage = {
           doctorContext,
           context: aiContext,
         });
-      } else if (wantsNewLink) {
+      } else if (wantsNewLink || !state.booking?.bookingLinkSentAt) {
         if (isSlotBookingBlockedPendingStaffReview(state)) {
-          replyText = formatStaffServiceReviewStillPendingDm(doctorSettings);
+          replyText = formatStaffServiceReviewStillPendingDm(ctx.turnLanguage, doctorSettings);
         } else {
-          const patientId = state.bookingForOther?.bookingForPatientId ?? conversation.patient_id;
-          const mrnHint = await getPatientIdHintForSlot(patientId, correlationId);
-          const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-          replyText = formatBookingLinkDm(slotLink, mrnHint, doctorSettings);
+          replyText = buildBookingLinkReplyWithFollowUp(
+            state,
+            conversation.id,
+            doctorId,
+            doctorSettings,
+            ctx.turnLanguage
+          );
         }
         state = { ...state, updatedAt: new Date().toISOString() };
       } else {
-        replyText = formatBookingAwaitingFollowUpDm(doctorSettings);
+        replyText = formatBookingAwaitingFollowUpDm({ language: ctx.turnLanguage, doctorSettings });
         state = { ...state, updatedAt: new Date().toISOString() };
       }
     }
 
-    const result: DmTurnResult = { branch: dmRoutingBranch, reply: replyText, nextState: state };
-    return applyRecordingConsentDetourIfNeeded(result, doctorContext);
+    return { branch: dmRoutingBranch, reply: replyText, nextState: state };
   },
 } as DmStageHandler;

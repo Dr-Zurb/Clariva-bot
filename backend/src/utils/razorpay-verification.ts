@@ -52,6 +52,16 @@ export function verifyRazorpaySignature(
     return false;
   }
 
+  return verifyRazorpaySignatureWithSecret(signature, rawBody, secret, cid);
+}
+
+/** HMAC check against an explicit secret. Never logs the secret. */
+export function verifyRazorpaySignatureWithSecret(
+  signature: string,
+  rawBody: Buffer,
+  secret: string,
+  correlationId: string
+): boolean {
   try {
     const isValid = Razorpay.validateWebhookSignature(
       rawBody.toString('utf8'),
@@ -61,7 +71,7 @@ export function verifyRazorpaySignature(
 
     if (!isValid) {
       logger.warn(
-        { correlationId: cid },
+        { correlationId },
         'Razorpay webhook signature verification failed'
       );
     }
@@ -69,7 +79,7 @@ export function verifyRazorpaySignature(
     return isValid;
   } catch (error) {
     logger.error(
-      { error, correlationId: cid },
+      { error, correlationId },
       'Error during Razorpay webhook signature verification'
     );
     return false;

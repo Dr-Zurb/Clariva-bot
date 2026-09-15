@@ -49,6 +49,17 @@ const envSchema = z.object({
     .optional()
     .transform((v) => (v !== undefined && v !== '' ? parseInt(v, 10) : undefined)),
   /**
+   * lat-02: DM intent / booking-turn classification model (bounded JSON).
+   * Defaults to gpt-4o-mini in `getOpenAIIntentClassifyConfig()` — never the
+   * flagship `OPENAI_MODEL` default.
+   */
+  OPENAI_INTENT_CLASSIFY_MODEL: z.string().optional(),
+  /** lat-02: Max completion tokens for intent-classify JSON; default 160. */
+  OPENAI_INTENT_CLASSIFY_MAX_TOKENS: z
+    .string()
+    .optional()
+    .transform((v) => (v !== undefined && v !== '' ? parseInt(v, 10) : undefined)),
+  /**
    * subj-14: Tier-1 model for complaint free-text parse (bounded JSON slot-fill).
    * Defaults to a mini model in `getOpenAIComplaintParseConfig()` — do not route
    * this through the flagship `OPENAI_MODEL` default.
@@ -104,6 +115,33 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => (v !== undefined && v !== '' ? parseInt(v, 10) : undefined)),
+  /**
+   * rpt-05.6: lab-report PHOTO extraction via a multimodal model.
+   *
+   * **Default OFF, and deliberately so.** Unlike every other AI feature here,
+   * this one cannot redact its input: a lab-report photo carries the patient's
+   * name, age, and UHID printed in the header, so enabling it sends
+   * identifiable PHI to OpenAI. Do not switch this on until the data-processor
+   * decision (zero-retention terms + patient consent language) is recorded.
+   * With this unset, photo extraction returns "unavailable" and the doctor
+   * falls back to manual entry — no image ever leaves the server.
+   */
+  OPENAI_LAB_VISION_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
+  /**
+   * rpt-05.6: vision model for lab-photo extraction. Defaults to a
+   * vision-capable flagship in `getOpenAILabVisionConfig()` — NOT a mini
+   * model. Dense multi-column lab tables are exactly where mini degrades,
+   * and a misread number is the one unacceptable outcome here.
+   */
+  OPENAI_LAB_VISION_MODEL: z.string().optional(),
+  /** rpt-05.6: max completion tokens; a full panel photo can run ~60 rows of JSON. */
+  OPENAI_LAB_VISION_MAX_TOKENS: z
+    .string()
+    .optional()
+    .transform((v) => (v !== undefined && v !== '' ? parseInt(v, 10) : undefined)),
   // e-task-5: Max message pairs (user+assistant) for AI context; trade-off: more context vs token cost
   AI_MAX_HISTORY_PAIRS: z
     .string()
@@ -125,6 +163,13 @@ const envSchema = z.object({
   // Twilio Video (teleconsultation): API Key for access tokens. Create in Twilio Console (US1 region).
   TWILIO_API_KEY_SID: z.string().optional(),
   TWILIO_API_KEY_SECRET: z.string().optional(),
+  // Media server region for Video Group Rooms. Twilio's ACCOUNT default is
+  // us1 (Virginia) — unpinned, an India↔India consult relays every packet
+  // through the US East Coast (~+250 ms each way). 'in1' = Mumbai.
+  // 'gll' = let Twilio pick per-room from the first participant's location.
+  TWILIO_VIDEO_MEDIA_REGION: z
+    .enum(['gll', 'au1', 'br1', 'de1', 'ie1', 'in1', 'jp1', 'sg1', 'us1', 'us2'])
+    .default('in1'),
 
   // Instagram Configuration (optional - only required when Instagram webhook integration is active)
   // Made optional to allow server startup during setup phase
@@ -138,6 +183,17 @@ const envSchema = z.object({
   INSTAGRAM_REDIRECT_URI: z.string().url().optional(),
   // After successful connect, redirect browser here (e.g. https://app.example.com/dashboard/settings/instagram); if unset, callback returns JSON
   INSTAGRAM_FRONTEND_REDIRECT_URI: z.string().url().optional(),
+  // Facebook Page / Messenger connect (fbm-01 / fbm-03) — Halo Aid FB app, NOT Halo Aid-IG
+  FACEBOOK_APP_ID: z.string().optional(),
+  FACEBOOK_APP_SECRET: z.string().optional(),
+  FACEBOOK_REDIRECT_URI: z.string().url().optional(),
+  // Public bridge after Page OAuth (mirror INSTAGRAM_FRONTEND_REDIRECT_URI pattern)
+  FACEBOOK_FRONTEND_REDIRECT_URI: z.string().url().optional(),
+  // Optional; if unset, Page webhook verify may share INSTAGRAM_WEBHOOK_VERIFY_TOKEN (document in fbm-05)
+  FACEBOOK_WEBHOOK_VERIFY_TOKEN: z.string().optional(),
+  // ilr-02: Public frontend base URL for the Meta data-deletion status page
+  // (e.g. https://haloaid.com). Falls back to INSTAGRAM_FRONTEND_REDIRECT_URI's origin when unset.
+  FRONTEND_URL: z.string().url().optional(),
 
   /**
    * rcp-13: Register WhatsApp channel adapter in the webhook registry.
@@ -147,6 +203,17 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => v === 'true' || v === '1'),
+
+  /**
+   * Video-replay OTP via Meta Cloud API authentication template.
+   * Independent of WHATSAPP_ENABLED (inbound receptionist adapter).
+   * All three must be set or send falls back to Twilio SMS.
+   * Do not route this through Twilio's WhatsApp sender.
+   */
+  WHATSAPP_CLOUD_PHONE_NUMBER_ID: z.string().optional(),
+  WHATSAPP_CLOUD_ACCESS_TOKEN: z.string().optional(),
+  WHATSAPP_OTP_TEMPLATE_NAME: z.string().optional(),
+  WHATSAPP_OTP_TEMPLATE_LANGUAGE: z.string().default('en'),
 
   /**
    * rcp-20: Load returning-patient profile on DM turns (doctor-scoped visit memory).
@@ -175,6 +242,18 @@ const envSchema = z.object({
   RAZORPAY_KEY_ID: z.string().optional(),
   RAZORPAY_KEY_SECRET: z.string().optional(),
   RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
+  /**
+   * DEPRECATED billing P2b — prepaid is now per-doctor
+   * `payment_collection_mode`. Kept so existing env files still parse.
+   * Do not read this flag for money movement.
+   */
+  PREPAID_BOOKINGS_ENABLED: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true' || v === '1'),
+  /** Optional GSTIN printed on Halo Aid invoices (P2a). */
+  HALO_AID_GSTIN: z.string().optional(),
+  HALO_AID_LEGAL_NAME: z.string().default('Halo Aid'),
   PAYPAL_CLIENT_ID: z.string().optional(),
   PAYPAL_CLIENT_SECRET: z.string().optional(),
   PAYPAL_WEBHOOK_ID: z.string().optional(),
@@ -221,14 +300,14 @@ const envSchema = z.object({
     .optional(),
   // Teleconsultation (e-task-4 - Twilio status callbacks). Backend base URL (e.g. https://api.onrender.com).
   WEBHOOK_BASE_URL: z.string().url().optional(),
-  // Min consultation duration (seconds) to mark as verified for payout (Consultation Verification v2)
+  // Min consultation duration (seconds) to mark as verified (Consultation Verification v2)
   MIN_VERIFIED_CONSULTATION_SECONDS: z
     .string()
     .default('60')
     .transform((v) => Math.max(60, parseInt(v, 10) || 60)),
 
-  // Platform Fee (monetization - migration 022)
-  // Percent fee when amount >= threshold; flat fee when amount < threshold.
+  // DEPRECATED billing P0 — unused. Kept so existing env files still parse.
+  // Halo Aid never takes a cut of the patient's payment.
   PLATFORM_FEE_PERCENT: z
     .string()
     .default('5')
@@ -437,6 +516,43 @@ const envSchema = z.object({
     .transform((v) => Math.max(1, Math.min(60, parseInt(v, 10) || 5))),
 
   /**
+   * consult-room-checkin / crc-03 — slot-mode check-in DM lead time.
+   * Distinct from CONSULTATION_PRE_PING_LEAD_MINUTES (text session create).
+   * Default 30 min. Does not create Twilio rooms.
+   */
+  CONSULTATION_CHECKIN_LEAD_MINUTES: z
+    .string()
+    .default('30')
+    .transform((v) => Math.max(5, Math.min(180, parseInt(v, 10) || 30))),
+
+  /**
+   * In-process previsit notify ladder (T−24h / T−30 / T−15 / T−5).
+   * When unset, enabled in production only. Set `true` in local `.env`
+   * to exercise emails while building. HTTP `POST /cron/consultation-checkin`
+   * remains available for ops / Render Cron.
+   */
+  PREVISIT_NOTIFY_WORKER_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === '') return undefined;
+      return v === 'true' || v === '1';
+    }),
+
+  /**
+   * Tick interval for the previsit notify worker (ms). Default 60s.
+   * Lower in local `.env` (e.g. 10000) for faster iteration; stamps keep
+   * sends at-most-once per stage.
+   */
+  PREVISIT_NOTIFY_WORKER_INTERVAL_MS: z
+    .string()
+    .default('60000')
+    .transform((v) => {
+      const n = parseInt(v, 10);
+      return Math.max(5_000, Number.isNaN(n) ? 60_000 : n);
+    }),
+
+  /**
    * Plan 04 · Task 18 — text-consult JWT lifetime (minutes after the
    * session's scheduled end). Default 30 min — covers slot overrun + a
    * grace window for the patient to read the final transcript before the
@@ -527,6 +643,24 @@ const envSchema = z.object({
       return Math.max(1, Number.isNaN(n) ? 7 : n);
     }),
 
+  /**
+   * Alerts v2 · alr2-05 (ALR2-D8 / OQ-3 LOCKED: 90 days).
+   *
+   * How long acknowledged `doctor_dashboard_events` rows are kept before
+   * the nightly retention sweep deletes them. Unread rows are never
+   * deleted regardless of age. Floor of 1 day so a mis-set `0` cannot
+   * wipe the entire acknowledged feed in one tick.
+   *
+   * Schedule: `POST /cron/dashboard-events-retention` (daily).
+   */
+  DASHBOARD_EVENTS_RETENTION_DAYS: z
+    .string()
+    .default('90')
+    .transform((v) => {
+      const n = parseInt(v, 10);
+      return Math.max(1, Number.isNaN(n) ? 90 : n);
+    }),
+
   // ==========================================================================
   // Plan 05 · Task 25 — Voice transcription pipeline
   // ==========================================================================
@@ -540,6 +674,13 @@ const envSchema = z.object({
   DEEPGRAM_API_KEY: z.string().optional(),
 
   /**
+   * Groq API key for English STT (whisper-large-v3-turbo). When unset,
+   * enqueue falls back to OpenAI Whisper. Missing key at process time
+   * is a permanent failure for groq_whisper rows.
+   */
+  GROQ_API_KEY: z.string().optional(),
+
+  /**
    * Master kill-switch for the post-consult transcription pipeline. When
    * `false`, `enqueueVoiceTranscription` is a no-op that logs and returns —
    * the voice adapter keeps working, just nothing lands in
@@ -551,6 +692,36 @@ const envSchema = z.object({
     .string()
     .default('true')
     .transform((v) => v !== 'false' && v !== '0'),
+
+  /**
+   * Cost-cut step 7. When true the worker transcribes Twilio's raw `RT…`
+   * tracks — mixed and transcoded locally by `audio-transcode-service` —
+   * instead of waiting for a Composition. That removes the STT path's
+   * dependency on the $0.01/min composition meter, which is the last
+   * thing holding the account-level Composition Hook on.
+   *
+   * Default false: flipping this changes which media every consult is
+   * transcribed from, so it wants a deliberate rollout, not a default.
+   */
+  VOICE_TRANSCRIPTION_USE_RAW_TRACKS: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true' || v === '1'),
+
+  /**
+   * Cost-cut step 7, replay half. When true, a replay request for a
+   * session with raw tracks but no Composition creates one on demand
+   * instead of 404-ing. Turn this on **before** disabling the account
+   * Composition Hook; leaving both on is harmless, because a session
+   * the hook already composed never reaches the on-demand path.
+   *
+   * Default false: this is the switch that can start a billable meter
+   * from a read endpoint, so it should never be on by accident.
+   */
+  RECORDING_COMPOSE_ON_DEMAND: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true' || v === '1'),
 
   /**
    * Worker polling interval in seconds. The worker wakes, pulls up to
@@ -664,6 +835,45 @@ const envSchema = z.object({
     .string()
     .default('false')
     .transform((v) => v === 'true' || v === '1'),
+
+  // ==========================================================================
+  // auth-v2 · ghost-account sweep (Model C)
+  // ==========================================================================
+  /**
+   * Hard-delete kill switch for the ghost-account sweep cron. Auth-v2 is
+   * "one door" — Google / Email OTP create a user on first auth (there is no
+   * separate sign-up), so abandoned attempts (typos, curiosity, half-finished
+   * onboarding) leave harmless-but-untidy `auth.users` rows. This sweep prunes
+   * accounts that never completed onboarding, never engaged verification, and
+   * hold no data.
+   *
+   * When any value other than `'true'`/`'1'` (default `'false'`), the cron runs
+   * in **dry-run**: it identifies candidates and logs them (userId + created_at
+   * only — never email/PII) but deletes nothing. Flip to `'true'` only after
+   * the dry-run output has been observed as sane, mirroring the
+   * `ARCHIVAL_HARD_DELETE_ENABLED` flag-flip ritual.
+   *
+   * The deletion is irreversible (`auth.admin.deleteUser`, FK CASCADE removes
+   * dependent rows), so the flag ships dark.
+   */
+  GHOST_ACCOUNT_SWEEP_ENABLED: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true' || v === '1'),
+
+  /**
+   * Minimum account age (days) before an incomplete account is eligible for the
+   * ghost sweep. A doctor mid-onboarding must never be swept, so this is the
+   * grace window between first auth and cleanup. Floor of 1 day so a mis-set
+   * `0` cannot delete accounts created earlier the same day. Default 7.
+   */
+  GHOST_ACCOUNT_SWEEP_MIN_AGE_DAYS: z
+    .string()
+    .default('7')
+    .transform((v) => {
+      const n = parseInt(v, 10);
+      return Math.max(1, Number.isNaN(n) ? 7 : n);
+    }),
 });
 
 /**

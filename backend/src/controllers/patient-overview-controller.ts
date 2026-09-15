@@ -29,6 +29,7 @@ import { validateGetPatientParams } from '../utils/validation';
 import {
   computePatientsKpis,
   getPatientOverview,
+  getPatientQuickPeek,
 } from '../services/patient-overview-service';
 
 function requireUserId(req: Request): string {
@@ -46,6 +47,10 @@ function requireUserId(req: Request): string {
  * allergies, conditions, vitals, current meds, six-visit strip, recent
  * activity, derived care plan + risk flags).
  *
+ * Query `view=peek` returns a slim hover-card payload (allergies / problems /
+ * conditions / height-weight only) without appointments, prescriptions, or
+ * payments — used by the patients-list quick peek.
+ *
  * 404 if the patient does not exist, OR if the authenticated doctor has no
  * appointment / conversation link to the patient (tenant isolation; we
  * deliberately return 404 — not 403 — to avoid leaking the existence of
@@ -60,8 +65,12 @@ export const getPatientOverviewHandler = asyncHandler(
     const correlationId = req.correlationId || 'unknown';
     const userId = requireUserId(req);
     const { id } = validateGetPatientParams(req.params);
+    const view = typeof req.query.view === 'string' ? req.query.view : undefined;
 
-    const data = await getPatientOverview(id, correlationId, userId);
+    const data =
+      view === 'peek'
+        ? await getPatientQuickPeek(id, correlationId, userId)
+        : await getPatientOverview(id, correlationId, userId);
 
     res.set('Cache-Control', 'private, no-cache');
     res.status(200).json(successResponse(data, req));

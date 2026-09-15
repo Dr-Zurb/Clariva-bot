@@ -14,11 +14,27 @@
  */
 
 import { Request, Response } from 'express';
+import { z } from 'zod';
 import { asyncHandler } from '../utils/async-handler';
 import { successResponse } from '../utils/response';
 import { createPaymentLink as createPaymentLinkService, getPaymentById } from '../services/payment-service';
+import {
+  connectDoctorGateway,
+  getDoctorGatewayPublicStatus,
+  setPaymentCollectionMode,
+} from '../services/doctor-gateway-credentials-service';
 import { validateCreatePaymentLink, validateGetPaymentParams } from '../utils/validation';
 import { UnauthorizedError, NotFoundError } from '../utils/errors';
+
+const connectGatewaySchema = z.object({
+  keyId: z.string().min(8).max(80),
+  keySecret: z.string().min(16).max(200),
+  webhookSecret: z.string().min(8).max(200).optional(),
+});
+
+const collectionModeSchema = z.object({
+  mode: z.enum(['bookings_only', 'prepaid']),
+});
 
 /**
  * Create payment link
@@ -71,4 +87,39 @@ export const getPaymentByIdHandler = asyncHandler(async (req: Request, res: Resp
   }
 
   res.status(200).json(successResponse({ payment }, req));
+});
+
+export const getDoctorGatewayHandler = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user?.id;
+  if (!userId) {
+    throw new UnauthorizedError('Authentication required');
+  }
+  const status = await getDoctorGatewayPublicStatus(userId, req.correlationId ?? '');
+  res.status(200).json(successResponse(status, req));
+});
+
+export const connectDoctorGatewayHandler = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user?.id;
+  if (!userId) {
+    throw new UnauthorizedError('Authentication required');
+  }
+  const { keyId, keySecret, webhookSecret } = connectGatewaySchema.parse(req.body);
+  const status = await connectDoctorGateway(
+    userId,
+    keyId,
+    keySecret,
+    req.correlationId ?? '',
+    webhookSecret
+  );
+  res.status(200).json(successResponse(status, req));
+});
+
+export const patchCollectionModeHandler = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user?.id;
+  if (!userId) {
+    throw new UnauthorizedError('Authentication required');
+  }
+  const { mode } = collectionModeSchema.parse(req.body);
+  const status = await setPaymentCollectionMode(userId, mode, req.correlationId ?? '');
+  res.status(200).json(successResponse(status, req));
 });

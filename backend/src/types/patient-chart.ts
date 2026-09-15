@@ -334,6 +334,15 @@ export interface UpdateMedicalBackgroundNotesInput {
 
 export interface UpdateAllergySectionNotesInput {
   notes?: string | null;
+  noKnownAllergies?: boolean;
+}
+
+/** Section-level allergy state (migrations 158, 222). */
+export interface AllergySectionMeta {
+  notes: string | null;
+  /** Doctor asserted nil-known. False means never asserted, not a negative finding. */
+  noKnownAllergies: boolean;
+  noKnownAllergiesAt: string | null;
 }
 
 export interface LinkConditionMedicationInput {

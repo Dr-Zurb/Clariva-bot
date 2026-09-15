@@ -32,10 +32,6 @@ export type ConversationLastPromptKind =
   | 'consent'
   /** Consent step but last bot line was optional-extras ("say Yes to continue") — RBH-07 / philosophy §4.8. */
   | 'consent_optional_extras'
-  /** Plan 02 · Task 27 — bot asked "OK to record?" (pre-re-pitch). */
-  | 'recording_consent_ask'
-  /** Plan 02 · Task 27 — bot sent the soft re-pitch after a first decline. */
-  | 'recording_consent_re_pitch'
   | 'confirm_details'
   | 'match_pick'
   | 'cancel_confirm'
@@ -70,7 +66,6 @@ export function conversationLastPromptKindForStep(
   if (step === 'collecting_all' || step.startsWith('collecting_')) return 'collect_details';
   if (step === 'confirm_details') return 'confirm_details';
   if (step === 'consent') return 'consent';
-  if (step === 'recording_consent') return 'recording_consent_ask';
   if (step === 'awaiting_match_confirmation') return 'match_pick';
   if (step === 'awaiting_cancel_confirmation') return 'cancel_confirm';
   if (step === 'awaiting_staff_service_confirmation') return 'staff_service_pending';
@@ -142,16 +137,6 @@ export type PatientCollectionStep =
   | 'awaiting_reschedule_choice'
   | 'awaiting_reschedule_slot'
   | 'consent'
-  /**
-   * Plan 02 · Task 27 · Decision 4 LOCKED.
-   * Step after `consent` (schedule-this-appointment) and before
-   * `awaiting_date_time` / `awaiting_slot_selection`. Handler asks
-   * "are you OK with this consult being recorded?" and accepts one
-   * soft re-pitch before persisting the answer to
-   * `recordingConsent` (the appointment row doesn't exist yet; copied onto
-   * `appointments.recording_consent_*` in `processSlotSelectionAndPay`).
-   */
-  | 'recording_consent'
   | 'awaiting_date_time'
   | 'awaiting_slot_selection'
   /** ARM-05: Matcher medium/low — clinic must confirm service before slot link. */
@@ -164,10 +149,12 @@ export type PatientCollectionStep =
 /** Lifecycle discriminant (rcp-18/19): closed union; idle / non-gating turns use `responded`. */
 export type ConversationStage = PatientCollectionStep | 'responded';
 
-/** RBH-06 deprecated on-disk values — normalized to `awaiting_slot_selection` on read. */
+/** RBH-06 + rec-09 deprecated on-disk values — normalized to `awaiting_slot_selection` on read. */
 export const DEPRECATED_SLOT_STEP_ALIASES = {
   confirming_slot: 'awaiting_slot_selection',
   selecting_slot: 'awaiting_slot_selection',
+  /** rec-09 / REC2-D6 — mid-funnel recording-consent rows fold forward. */
+  recording_consent: 'awaiting_slot_selection',
 } as const satisfies Record<string, ConversationStage>;
 
 const CONVERSATION_STAGE_SET = new Set<string>([
@@ -185,7 +172,6 @@ const CONVERSATION_STAGE_SET = new Set<string>([
   'awaiting_reschedule_choice',
   'awaiting_reschedule_slot',
   'consent',
-  'recording_consent',
   'awaiting_date_time',
   'awaiting_slot_selection',
   'awaiting_staff_service_confirmation',
@@ -281,19 +267,6 @@ export function mergeServiceMatch(
   return { ...state, serviceMatch: merged };
 }
 
-/** rcp-17: recording consent cluster (in-memory; legacy flat keys on disk). */
-export type RecordingConsentState = {
-  recordingConsentDecision?: boolean;
-  recordingConsentVersion?: string;
-  recordingConsentRePitched?: boolean;
-};
-
-export const RECORDING_CONSENT_LEGACY_FIELD_NAMES = [
-  'recordingConsentDecision',
-  'recordingConsentVersion',
-  'recordingConsentRePitched',
-] as const satisfies readonly (keyof RecordingConsentState)[];
-
 /** rcp-17: idle medical deflection / fee triage (in-memory; legacy flat keys on disk). */
 export type TriageState = {
   lastMedicalDeflectionAt?: string;
@@ -308,6 +281,20 @@ export const TRIAGE_LEGACY_FIELD_NAMES = [
   'postMedicalConsultFeeAckSent',
   'activeFlow',
 ] as const satisfies readonly (keyof TriageState)[];
+
+/**
+ * Open emergency crisis window (ISO timestamps only — ARM-03).
+ * Open while `escalatedAt` is set and `clearedAt` is absent or older than `escalatedAt`.
+ */
+export type SafetyState = {
+  escalatedAt?: string;
+  clearedAt?: string;
+};
+
+export const SAFETY_LEGACY_FIELD_NAMES = [
+  'escalatedAt',
+  'clearedAt',
+] as const satisfies readonly (keyof SafetyState)[];
 
 /** rcp-17: mixed-complaints clarification (in-memory; legacy flat keys on disk). */
 export type ClarificationState = {
@@ -335,8 +322,8 @@ export const CLARIFICATION_LEGACY_FIELD_NAMES = [
 ] as const satisfies readonly (keyof ClarificationState)[];
 
 type ConversationNamespaceKey =
-  | 'recordingConsent'
   | 'triage'
+  | 'safety'
   | 'clarification'
   | 'booking'
   | 'bookingForOther';
@@ -364,15 +351,12 @@ function mergeNamespacePatch<NS extends Record<string, unknown>>(
   return { ...state, [namespaceKey]: merged };
 }
 
-export function mergeRecordingConsent(
-  state: ConversationState,
-  patch: Partial<RecordingConsentState>
-): ConversationState {
-  return mergeNamespacePatch(state, 'recordingConsent', RECORDING_CONSENT_LEGACY_FIELD_NAMES, patch);
-}
-
 export function mergeTriage(state: ConversationState, patch: Partial<TriageState>): ConversationState {
   return mergeNamespacePatch(state, 'triage', TRIAGE_LEGACY_FIELD_NAMES, patch);
+}
+
+export function mergeSafety(state: ConversationState, patch: Partial<SafetyState>): ConversationState {
+  return mergeNamespacePatch(state, 'safety', SAFETY_LEGACY_FIELD_NAMES, patch);
 }
 
 export function mergeClarification(
@@ -490,10 +474,10 @@ export interface ConversationState {
   cancel?: CancelState;
   /** rcp-15: Reschedule flow — appointment pick + slot link. */
   reschedule?: RescheduleState;
-  /** rcp-17: Recording consent stash until appointment row exists. */
-  recordingConsent?: RecordingConsentState;
   /** rcp-17: Idle medical deflection / fee triage. */
   triage?: TriageState;
+  /** Open emergency crisis window (persisted; survives message-history window). */
+  safety?: SafetyState;
   /** rcp-17: Mixed-complaints clarification. */
   clarification?: ClarificationState;
 }
@@ -510,6 +494,19 @@ export function isRecentMedicalDeflectionWindow(
   const t = Date.parse(raw);
   if (Number.isNaN(t)) return false;
   return nowMs - t <= MEDICAL_DEFLECTION_CONTEXT_TTL_MS;
+}
+
+/** True when a 112 escalation is active and has not been cleared by positive stability. */
+export function isOpenEmergencyCrisis(state: ConversationState): boolean {
+  const escalatedRaw = state.safety?.escalatedAt;
+  if (!escalatedRaw) return false;
+  const escalatedAt = Date.parse(escalatedRaw);
+  if (Number.isNaN(escalatedAt)) return false;
+  const clearedRaw = state.safety?.clearedAt;
+  if (!clearedRaw) return true;
+  const clearedAt = Date.parse(clearedRaw);
+  if (Number.isNaN(clearedAt)) return true;
+  return clearedAt < escalatedAt;
 }
 
 /** ARM-05: Block booking/slot CTAs until staff resolves (ARM-06/07) or high-confidence path finalized. */

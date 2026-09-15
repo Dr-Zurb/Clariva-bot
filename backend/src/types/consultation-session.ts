@@ -64,12 +64,6 @@ export interface CreateSessionInput {
   modality: Modality;
   scheduledStartAt: Date;
   expectedEndAt: Date;
-  /**
-   * Plan 02 (Task 27) ships the source-of-truth column on `appointments`
-   * and threads it through here. Until then this is always `undefined` and
-   * the facade persists `NULL`.
-   */
-  recordingConsentAtBook?: boolean;
 }
 
 /**

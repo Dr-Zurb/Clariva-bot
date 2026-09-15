@@ -33,6 +33,7 @@ import {
   narrowSlotPageBookingHintsToCatalog,
 } from '../utils/slot-page-booking-hints';
 import { evaluatePublicBookingPaymentGate } from '../utils/public-booking-payment-gate';
+import { isDoctorVerified } from '../services/doctor-verification-service';
 
 /**
  * GET /api/v1/bookings/day-slots?token=X&date=YYYY-MM-DD
@@ -106,7 +107,7 @@ export const getSlotPageInfoHandler = asyncHandler(async (req: Request, res: Res
 
   const doctorSettings = await getDoctorSettings(doctorId);
   const convState = await getConversationState(conversationId, correlationId);
-  const practiceName = doctorSettings?.practice_name?.trim() || 'Clariva Care';
+  const practiceName = doctorSettings?.practice_name?.trim() || 'Halo Aid';
   const mode = appointmentId ? ('reschedule' as const) : ('book' as const);
   const timezone = doctorSettings?.timezone ?? 'Asia/Kolkata';
   const todayYmd = new Intl.DateTimeFormat('en-CA', {
@@ -136,9 +137,13 @@ export const getSlotPageInfoHandler = asyncHandler(async (req: Request, res: Res
       ? narrowSlotPageBookingHintsToCatalog(bookingHintsRaw, allowedKeys)
       : {};
 
+  const doctorVerified =
+    mode === 'book' ? await isDoctorVerified(doctorId, correlationId) : true;
   const bookingGate =
     mode === 'book'
-      ? evaluatePublicBookingPaymentGate(convState, doctorSettings)
+      ? evaluatePublicBookingPaymentGate(convState, doctorSettings, {
+          doctorVerified,
+        })
       : ({ allowed: true as const });
   const bookingAllowed = bookingGate.allowed;
   const bookingBlockedReason = bookingGate.allowed ? undefined : bookingGate.reason;

@@ -20,8 +20,14 @@ import { sendInstagramOutbound } from './send';
 export const instagramChannelAdapter: ChannelAdapter = {
   channel: 'instagram',
 
-  matches(provider: WebhookProvider, _payload: unknown): boolean {
-    return provider === 'instagram';
+  matches(provider: WebhookProvider, payload: unknown): boolean {
+    if (provider !== 'instagram') return false;
+    const obj =
+      payload && typeof payload === 'object'
+        ? (payload as { object?: string }).object
+        : undefined;
+    // object=page is Facebook Messenger (facebook adapter).
+    return obj !== 'page';
   },
 
   surfaceOf(payload: unknown): Surface {

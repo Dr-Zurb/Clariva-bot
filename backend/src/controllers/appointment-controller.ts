@@ -18,6 +18,7 @@ import { successResponse } from '../utils/response';
 import { getAvailableSlots } from '../services/availability-service';
 import {
   bookAppointment,
+  checkInAppointment,
   getAppointmentById,
   getRecentDiagnosisTags,
   listAppointmentsForDoctor,
@@ -32,15 +33,12 @@ import {
   validateListAppointmentsQuery,
   validatePatchAppointmentBody,
   validateRecentDiagnosesQuery,
-  validateRecordingConsentBody,
   validateWrapUpBody,
 } from '../utils/validation';
-import { NotFoundError, UnauthorizedError } from '../utils/errors';
-import { getPatientForDoctor } from '../services/patient-service';
-import { captureBookingConsent } from '../services/recording-consent-service';
-import { verifyBookingToken } from '../utils/booking-token';
-import { getSupabaseAdminClient } from '../config/database';
-import { logger } from '../config/logger';
+import { UnauthorizedError, ValidationError } from '../utils/errors';
+import { requireResolvedDoctor } from '../middleware/resolve-acting-doctor';
+import { getDeskPatientForBooking, getPatientForDoctor } from '../services/patient-service';
+import { sendDeskBookingConfirmationToPatient } from '../services/notification-service';
 
 /**
  * Get available slots
@@ -90,19 +88,21 @@ export const bookAppointmentHandler = asyncHandler(async (req: Request, res: Res
  */
 export const createAppointmentHandler = asyncHandler(async (req: Request, res: Response) => {
   const correlationId = req.correlationId || 'unknown';
-  const userId = req.user?.id;
-
-  if (!userId) {
-    throw new UnauthorizedError('Authentication required');
-  }
+  const { doctorId, actorId } = requireResolvedDoctor(req);
 
   const data = validateDoctorCreateAppointment(req.body);
-  const doctorId = userId;
+
+  if (req.actorKind === 'staff') {
+    if (data.walkin || !data.patientId) {
+      throw new ValidationError('Desk bookings require a registered patient');
+    }
+  }
 
   let patientName: string;
   let patientPhone: string;
   let patientId: string | undefined;
   let notes: string | undefined = data.notes;
+  let skipMrn = false;
 
   if (data.walkin) {
     // pf-16: walk-in fast path — no patient row required.
@@ -114,14 +114,35 @@ export const createAppointmentHandler = asyncHandler(async (req: Request, res: R
       notes = notes ? `[Walk-in: ${nameHint}] ${notes}` : `Walk-in: ${nameHint}`;
     }
   } else if (data.patientId) {
-    const patient = await getPatientForDoctor(data.patientId, doctorId, correlationId);
-    patientName = patient.name;
-    patientPhone = patient.phone;
-    patientId = data.patientId;
+    if (req.actorKind === 'staff') {
+      const patient = await getDeskPatientForBooking(
+        data.patientId,
+        doctorId,
+        correlationId,
+        actorId
+      );
+      patientName = patient.name;
+      patientPhone = patient.phone;
+      patientId = data.patientId;
+      skipMrn = Boolean(patient.medical_record_number);
+    } else {
+      const patient = await getPatientForDoctor(data.patientId, doctorId, correlationId);
+      patientName = patient.name;
+      patientPhone = patient.phone;
+      patientId = data.patientId;
+    }
   } else {
     patientName = data.patientName!;
     patientPhone = data.patientPhone!;
   }
+
+  const bookingOrigin =
+    data.bookingOrigin ??
+    (data.walkin
+      ? 'walk_in'
+      : data.opdEventType === 'return_after_completed'
+        ? 'return_after_completed'
+        : 'booked');
 
   const bookData = {
     doctorId,
@@ -132,13 +153,26 @@ export const createAppointmentHandler = asyncHandler(async (req: Request, res: R
     reasonForVisit: data.reasonForVisit ?? (data.walkin ? 'Walk-in' : 'Not provided'),
     notes,
     // Walk-ins are always confirmed and free (doctor controls the flow).
-    freeOfCost: data.walkin ? true : data.freeOfCost,
-    ...(data.consultationType && { consultationType: data.consultationType }),
+    freeOfCost: req.actorKind === 'staff' ? true : data.walkin ? true : data.freeOfCost,
+    bookingOrigin,
+    ...(data.consultationType
+      ? { consultationType: data.consultationType }
+      : req.actorKind === 'staff'
+        ? { consultationType: 'in_clinic' as const }
+        : {}),
     ...(data.opdEventType && { opdEventType: data.opdEventType }),
     ...(data.relatedAppointmentId && { relatedAppointmentId: data.relatedAppointmentId }),
+    ...(data.checkIn ? { checkIn: true } : {}),
+    ...(skipMrn ? { skipMrn: true } : {}),
   };
 
-  const appointment = await bookAppointment(bookData, correlationId, userId);
+  const actingFor =
+    actorId !== doctorId ? { actingForDoctorId: doctorId } : undefined;
+  const appointment = await bookAppointment(bookData, correlationId, actorId, actingFor);
+
+  if (req.actorKind === 'staff' && bookingOrigin === 'booked') {
+    await sendDeskBookingConfirmationToPatient(appointment.id, correlationId);
+  }
 
   res.status(201).json(successResponse({ appointment }, req));
 });
@@ -152,19 +186,16 @@ export const createAppointmentHandler = asyncHandler(async (req: Request, res: R
  */
 export const listAppointmentsHandler = asyncHandler(async (req: Request, res: Response) => {
   const correlationId = req.correlationId || 'unknown';
-  const userId = req.user?.id;
-
-  if (!userId) {
-    throw new UnauthorizedError('Authentication required');
-  }
+  const { doctorId, actorId } = requireResolvedDoctor(req);
 
   const query = validateListAppointmentsQuery(
     req.query as Record<string, string | string[] | undefined>
   );
   const appointments = await listAppointmentsForDoctor(
-    userId,
+    doctorId,
     correlationId,
-    query.patient_id
+    { patientId: query.patient_id, date: query.date },
+    actorId
   );
 
   res.status(200).json(successResponse({ appointments }, req));
@@ -213,82 +244,18 @@ export const patchAppointmentByIdHandler = asyncHandler(async (req: Request, res
 });
 
 /**
- * Record recording-consent decision for an appointment (Plan 02 · Task 27).
- * POST /api/v1/appointments/:id/recording-consent
+ * Stamp arrival (receptionist-portal P4).
+ * POST /api/v1/appointments/:id/check-in
  *
- * Body: { decision: boolean, consentVersion: string, bookingToken?: string }
- * Auth: Either (a) authenticated doctor who owns the appointment, OR
- *       (b) valid booking token whose conversation owns the appointment
- *           (public /book page flow — patients are not logged in).
- *
- * Response: 204 No Content.
+ * Auth: doctor or opted-in staff (allowStaff + resolveActingDoctor).
+ * Idempotent. Does not expose or write clinical_notes.
  */
-export const postRecordingConsentHandler = asyncHandler(async (req: Request, res: Response) => {
+export const checkInAppointmentHandler = asyncHandler(async (req: Request, res: Response) => {
   const correlationId = req.correlationId || 'unknown';
-  const { id: appointmentId } = validateGetAppointmentParams(req.params);
-  const { decision, consentVersion, bookingToken } = validateRecordingConsentBody(req.body);
-
-  const admin = getSupabaseAdminClient();
-  if (!admin) {
-    throw new UnauthorizedError('Recording consent capture not available');
-  }
-
-  const { data: apptRow, error: apptErr } = await admin
-    .from('appointments')
-    .select('id, doctor_id, conversation_id')
-    .eq('id', appointmentId)
-    .maybeSingle();
-
-  if (apptErr) {
-    logger.error(
-      { correlationId, appointmentId, error: apptErr.message },
-      'recording_consent_appointment_lookup_failed'
-    );
-    throw new NotFoundError('Appointment not found');
-  }
-  if (!apptRow) {
-    throw new NotFoundError('Appointment not found');
-  }
-
-  const authedUserId = req.user?.id;
-  let authorized = false;
-
-  if (authedUserId && apptRow.doctor_id === authedUserId) {
-    authorized = true;
-  } else if (bookingToken) {
-    try {
-      const verified = verifyBookingToken(bookingToken);
-      if (
-        apptRow.conversation_id &&
-        verified.conversationId === apptRow.conversation_id &&
-        verified.doctorId === apptRow.doctor_id
-      ) {
-        authorized = true;
-      }
-    } catch (err) {
-      logger.warn(
-        {
-          correlationId,
-          appointmentId,
-          error: err instanceof Error ? err.message : String(err),
-        },
-        'recording_consent_booking_token_rejected'
-      );
-    }
-  }
-
-  if (!authorized) {
-    throw new UnauthorizedError('Not authorized to set consent for this appointment');
-  }
-
-  await captureBookingConsent({
-    appointmentId,
-    decision,
-    consentVersion,
-    correlationId,
-  });
-
-  res.status(204).send();
+  const { doctorId, actorId } = requireResolvedDoctor(req);
+  const { id } = validateGetAppointmentParams(req.params);
+  const appointment = await checkInAppointment(id, doctorId, correlationId, actorId);
+  res.status(200).json(successResponse({ appointment }, req));
 });
 
 /**

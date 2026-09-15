@@ -12,14 +12,16 @@
  * @see e-task-4-payment-integration.md
  */
 
-import axios from 'axios';
 import crypto from 'crypto';
-import { paypalConfig, isPayPalConfigured } from '../config/payment';
 import { verifyPayPalWebhook } from '../utils/paypal-verification';
+import { ForbiddenError } from '../utils/errors';
 import type {
   IPaymentGateway,
   AdapterCreatePaymentLinkInput,
   AdapterCreatePaymentLinkResult,
+  AdapterRefundInput,
+  AdapterRefundResult,
+  GatewayCredentials,
   ParsedPaymentSuccess,
 } from './payment-gateway.interface';
 import type { PayPalWebhookPayload } from '../types/payment';
@@ -31,80 +33,18 @@ import type { PayPalWebhookPayload } from '../types/payment';
 export class PayPalAdapter implements IPaymentGateway {
   readonly gateway = 'paypal' as const;
 
-  private async getAccessToken(): Promise<string> {
-    if (!isPayPalConfigured()) {
-      throw new Error('PayPal is not configured (PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET)');
-    }
-
-    const auth = Buffer.from(
-      `${paypalConfig.clientId}:${paypalConfig.clientSecret}`
-    ).toString('base64');
-
-    const { data } = await axios.post<{ access_token: string }>(
-      `${paypalConfig.baseUrl}/v1/oauth2/token`,
-      'grant_type=client_credentials',
-      {
-        headers: {
-          Authorization: `Basic ${auth}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        timeout: 10000,
-      }
-    );
-
-    return data.access_token;
+  async createPaymentLink(
+    _input: AdapterCreatePaymentLinkInput,
+    _credentials: GatewayCredentials
+  ): Promise<AdapterCreatePaymentLinkResult> {
+    throw new ForbiddenError('Prepaid bookings currently support Razorpay only');
   }
 
-  async createPaymentLink(
-    input: AdapterCreatePaymentLinkInput
-  ): Promise<AdapterCreatePaymentLinkResult> {
-    const accessToken = await this.getAccessToken();
-
-    const amountValue = (input.amountMinor / 100).toFixed(2);
-
-    const orderPayload = {
-      intent: 'CAPTURE',
-      purchase_units: [
-        {
-          reference_id: input.referenceId,
-          description: input.description,
-          amount: {
-            currency_code: input.currency,
-            value: amountValue,
-          },
-        },
-      ],
-    };
-
-    const { data } = await axios.post<{
-      id?: string;
-      status?: string;
-      links?: Array<{ href: string; rel: string }>;
-    }>(
-      `${paypalConfig.baseUrl}/v2/checkout/orders`,
-      orderPayload,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 10000,
-      }
-    );
-
-    const orderId = data.id;
-    if (!orderId) {
-      throw new Error('PayPal order creation failed - no order ID returned');
-    }
-
-    const approveLink = data.links?.find((l) => l.rel === 'approve')?.href;
-    const url = approveLink ?? `${paypalConfig.baseUrl}/checkoutnow?token=${orderId}`;
-
-    return {
-      url,
-      gatewayOrderId: orderId,
-      expiresAt: undefined,
-    };
+  async refund(
+    _input: AdapterRefundInput,
+    _credentials: GatewayCredentials
+  ): Promise<AdapterRefundResult> {
+    throw new ForbiddenError('Prepaid bookings currently support Razorpay only');
   }
 
   async verifyWebhook(

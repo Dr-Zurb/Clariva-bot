@@ -12,7 +12,7 @@
  * flagged consults so the Nova-2 model can code-switch between Hindi and
  * English on Hinglish speech. `selectProvider` only ever routes Hindi /
  * Hinglish here, so the mapping is:
- *   'hi' | 'hi-IN' → model param 'nova-2', language param 'multi'
+ *   'hi' | 'hi-IN' → model param 'nova-3' (default), language param 'multi'
  *   anything else  → should never reach this client (router bug if it did);
  *                    we still send it with language passed through verbatim
  *                    and let Deepgram's own validation fail.
@@ -33,17 +33,25 @@ import { logger } from '../config/logger';
 import {
   TranscriptionPermanentError,
   TranscriptionTransientError,
+  type TranscriptionAudioBytes,
   type TranscriptResult,
 } from '../types/consultation-transcript';
 import { costCentsForDuration } from '../config/voice-transcription-pricing';
 
 const DEEPGRAM_ENDPOINT = 'https://api.deepgram.com/v1/listen';
 
+export type DeepgramListenModel = 'nova-2' | 'nova-3';
+
 export interface TranscribeWithDeepgramInput {
-  audioUrl: string;
+  /** Supply exactly one of `audioUrl` or `audioBytes`. */
+  audioUrl?: string;
+  /** Locally transcoded audio (cost-cut step 7's raw-track path). */
+  audioBytes?: TranscriptionAudioBytes;
   /** See module JSDoc for the mapping. */
   languageCode: string;
   correlationId: string;
+  /** Default nova-3 (cost-cut step 6). nova-2 is for in-flight / QA rows. */
+  model?: DeepgramListenModel;
 }
 
 /**
@@ -104,14 +112,33 @@ export async function transcribeWithDeepgram(
     );
   }
 
+  const model: DeepgramListenModel = input.model ?? 'nova-3';
+  const provider = model === 'nova-2' ? 'deepgram_nova_2' : 'deepgram_nova_3';
   const languageParam = deepgramLanguageParam(input.languageCode);
   const qs = new URLSearchParams({
-    model: 'nova-2',
+    model,
     language: languageParam,
     punctuate: 'true',
     smart_format: 'true',
   });
   const url = `${DEEPGRAM_ENDPOINT}?${qs.toString()}`;
+
+  // Deepgram takes either a JSON body naming a fetchable URL, or the raw
+  // media as the body with its own content type. Step 7's mixed tracks
+  // only exist as local bytes, so they use the latter.
+  let contentType: string;
+  let body: RequestInit['body'];
+  if (input.audioBytes) {
+    contentType = input.audioBytes.contentType;
+    body = input.audioBytes.bytes;
+  } else if (input.audioUrl) {
+    contentType = 'application/json';
+    body = JSON.stringify({ url: input.audioUrl });
+  } else {
+    throw new TranscriptionPermanentError(
+      'voice-transcription-deepgram: neither audioUrl nor audioBytes supplied',
+    );
+  }
 
   let res: Response;
   try {
@@ -119,9 +146,9 @@ export async function transcribeWithDeepgram(
       method: 'POST',
       headers: {
         Authorization: `Token ${env.DEEPGRAM_API_KEY}`,
-        'Content-Type': 'application/json',
+        'Content-Type': contentType,
       },
-      body: JSON.stringify({ url: input.audioUrl }),
+      body,
     });
   } catch (err) {
     throw new TranscriptionTransientError(
@@ -168,11 +195,11 @@ export async function transcribeWithDeepgram(
   }
 
   return {
-    provider: 'deepgram_nova_2',
+    provider,
     languageCode: input.languageCode,
     transcriptJson: json,
     transcriptText,
     durationSeconds,
-    costUsdCents: costCentsForDuration('deepgram_nova_2', durationSeconds),
+    costUsdCents: costCentsForDuration(provider, durationSeconds),
   };
 }

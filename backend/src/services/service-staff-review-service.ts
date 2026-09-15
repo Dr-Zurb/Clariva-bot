@@ -7,7 +7,10 @@
 
 import { getSupabaseAdminClient } from '../config/database';
 import { logger } from '../config/logger';
-import { formatStaffReviewResolvedContinueBookingDm } from '../utils/staff-service-review-dm';
+import {
+  formatStaffReviewResolvedContinueBookingDm,
+  formatStaffServiceReviewSlaTimeoutDm,
+} from '../utils/staff-service-review-dm';
 import {
   applyFinalCatalogServiceSelection,
   applyStaffReviewGateCancellationToConversationState,
@@ -18,6 +21,7 @@ import {
 import { readConversationState } from '../types/conversation-state-io';
 import {
   findConversationById,
+  getConversationLanguage,
   getConversationState,
   updateConversationState,
 } from './conversation-service';
@@ -432,7 +436,9 @@ export async function sendInstagramBookingLinkAfterStaffReviewResolution(params:
   const offering = catalog ? findServiceOfferingByKey(catalog, params.finalCatalogServiceKey) : null;
   const visitLabel = offering?.label?.trim() || params.finalCatalogServiceKey;
   const bookingUrl = buildBookingPageUrl(params.conversationId, params.doctorId);
+  const language = await getConversationLanguage(params.conversationId, params.correlationId);
   const text = formatStaffReviewResolvedContinueBookingDm(
+    language,
     settings,
     visitLabel,
     bookingUrl,
@@ -804,7 +810,8 @@ export async function runStaffReviewTimeoutJob(correlationId: string): Promise<S
     if (!token) { notifyFailedNoToken++; continue; }
 
     try {
-      const ack = "Our team hasn't responded to your booking review yet — we're following up now. You can also try again later or ask to book.";
+      const language = await getConversationLanguage(r.conversation_id, correlationId);
+      const ack = formatStaffServiceReviewSlaTimeoutDm(language);
       await sendInstagramMessage(conv.platform_conversation_id, ack, correlationId, token);
       notifySent++;
     } catch (e) {

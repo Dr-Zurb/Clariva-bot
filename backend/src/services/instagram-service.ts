@@ -16,6 +16,7 @@
  */
 
 import axios, { AxiosError } from 'axios';
+import { createHash } from 'crypto';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { logAuditEvent, logSecurityEvent } from '../utils/audit-logger';
@@ -33,6 +34,7 @@ import type {
   InstagramSendMessageResponse,
   InstagramApiError,
 } from '../types/instagram';
+import { DM_COPY_ENGLISH_ONLY_EXCEPTIONS } from '../utils/dm-copy';
 
 // ============================================================================
 // Configuration
@@ -45,6 +47,42 @@ import type {
  */
 const INSTAGRAM_GRAPH_BASE = 'https://graph.instagram.com/v18.0';
 const FACEBOOK_GRAPH_BASE = 'https://graph.facebook.com/v18.0';
+
+/**
+ * lat-03: Preferred Graph host per token (memoized). This app connects doctors via
+ * Instagram Login, so the default first hop is graph.instagram.com — not
+ * graph.facebook.com (which always 190s for IG Login tokens).
+ * Fallback to the other host on 190 remains; a successful fallback updates the memo.
+ */
+type GraphHostKind = 'instagram' | 'facebook';
+
+const graphHostByTokenKey = new Map<string, GraphHostKind>();
+
+function tokenHostKey(token: string): string {
+  return createHash('sha256').update(token).digest('hex').slice(0, 16);
+}
+
+function graphBaseForHost(host: GraphHostKind): string {
+  return host === 'instagram' ? INSTAGRAM_GRAPH_BASE : FACEBOOK_GRAPH_BASE;
+}
+
+function otherHost(host: GraphHostKind): GraphHostKind {
+  return host === 'instagram' ? 'facebook' : 'instagram';
+}
+
+/** @internal Exported for unit tests (lat-03). */
+export function clearGraphHostMemoForTests(): void {
+  graphHostByTokenKey.clear();
+}
+
+/** Preferred host for this token; defaults to Instagram Login host. */
+function preferredGraphHost(token: string): GraphHostKind {
+  return graphHostByTokenKey.get(tokenHostKey(token)) ?? 'instagram';
+}
+
+function rememberGraphHost(token: string, host: GraphHostKind): void {
+  graphHostByTokenKey.set(tokenHostKey(token), host);
+}
 
 /**
  * Retry configuration
@@ -271,12 +309,141 @@ export async function getSenderFromMostRecentConversation(
   }
 }
 
-/** Public reply text for comment outreach (fixed, no solicitation per COMMENTS_MANAGEMENT_PLAN). */
-export const COMMENT_PUBLIC_REPLY_TEXT = 'Check your DM for more information.';
+/** Public reply text for comment outreach — English forever (lang-23 exception list). */
+export const COMMENT_PUBLIC_REPLY_TEXT =
+  DM_COPY_ENGLISH_ONLY_EXCEPTIONS.COMMENT_PUBLIC_REPLY.text;
+
+/**
+ * Resolve public username / display name for a comment author (Inbox identity).
+ * Prefers IG Comment `from.username` / `username`; falls back across Graph hosts.
+ * Never throws — returns null on failure (outreach must not block).
+ */
+export async function fetchCommentAuthorUsername(
+  commentId: string,
+  accessToken: string,
+  correlationId: string
+): Promise<string | null> {
+  if (!commentId?.trim() || !accessToken?.trim()) return null;
+  const token = accessToken.trim();
+  const path = `/${encodeURIComponent(commentId.trim())}`;
+  const params = {
+    fields: 'from{username,name,id},username',
+    access_token: token,
+  };
+
+  const tryGet = async (base: string): Promise<string | null> => {
+    const res = await axios.get<{
+      username?: string;
+      from?: { username?: string; name?: string };
+    }>(`${base}${path}`, { params, timeout: 10000 });
+    const fromUser = res.data?.from?.username?.trim();
+    if (fromUser) return fromUser;
+    const top = res.data?.username?.trim();
+    if (top) return top;
+    const name = res.data?.from?.name?.trim();
+    return name || null;
+  };
+
+  try {
+    try {
+      return await tryGet(FACEBOOK_GRAPH_BASE);
+    } catch (fbErr) {
+      const status = axios.isAxiosError(fbErr) ? fbErr.response?.status : undefined;
+      const metaCode = axios.isAxiosError(fbErr)
+        ? (fbErr.response?.data as { error?: { code?: number } } | undefined)?.error?.code
+        : undefined;
+      if (status !== 400 && status !== 401 && metaCode !== 190) {
+        logger.debug(
+          { correlationId, commentId, status, metaCode },
+          'Comment author username: graph.facebook.com failed'
+        );
+        return null;
+      }
+      return await tryGet(INSTAGRAM_GRAPH_BASE);
+    }
+  } catch (err) {
+    logger.debug(
+      {
+        correlationId,
+        commentId,
+        status: axios.isAxiosError(err) ? err.response?.status : undefined,
+      },
+      'Comment author username lookup failed'
+    );
+    return null;
+  }
+}
+
+export type MessengerUserProfile = {
+  /** @handle when available; otherwise display name (may contain spaces — not linkable). */
+  username: string | null;
+  /** Temporary CDN URL from Meta (expires in a few days). */
+  profilePic: string | null;
+};
+
+/**
+ * Instagram / Messenger user profile for an IGSID/PSID (Inbox identity + avatar).
+ * Best-effort; fields null when unavailable.
+ */
+export async function fetchMessengerUserProfile(
+  igsid: string,
+  accessToken: string,
+  correlationId: string
+): Promise<MessengerUserProfile> {
+  const empty: MessengerUserProfile = { username: null, profilePic: null };
+  if (!igsid?.trim() || !accessToken?.trim()) return empty;
+  const token = accessToken.trim();
+  const path = `/${encodeURIComponent(igsid.trim())}`;
+  const tryGet = async (base: string): Promise<MessengerUserProfile> => {
+    const res = await axios.get<{
+      username?: string;
+      name?: string;
+      profile_pic?: string;
+    }>(`${base}${path}`, {
+      params: { fields: 'username,name,profile_pic', access_token: token },
+      timeout: 10000,
+    });
+    const username =
+      res.data?.username?.trim() || res.data?.name?.trim() || null;
+    const profilePic = res.data?.profile_pic?.trim() || null;
+    return { username, profilePic };
+  };
+  try {
+    try {
+      return await tryGet(FACEBOOK_GRAPH_BASE);
+    } catch {
+      return await tryGet(INSTAGRAM_GRAPH_BASE);
+    }
+  } catch (err) {
+    logger.debug(
+      {
+        correlationId,
+        status: axios.isAxiosError(err) ? err.response?.status : undefined,
+      },
+      'Messenger user profile lookup failed'
+    );
+    return empty;
+  }
+}
+
+/**
+ * Instagram Messaging user profile username (IGSID) for Inbox identity.
+ * Best-effort; null when unavailable.
+ */
+export async function fetchMessengerUserUsername(
+  igsid: string,
+  accessToken: string,
+  correlationId: string
+): Promise<string | null> {
+  const profile = await fetchMessengerUserProfile(igsid, accessToken, correlationId);
+  return profile.username;
+}
 
 /**
  * Reply to an Instagram comment (public reply).
  * POST /{ig-comment-id}/replies per Instagram Graph API.
+ *
+ * lat-03: Same host preference + fallback as DM send (Instagram Login first).
  *
  * @param commentId - Instagram comment ID (from webhook value.id)
  * @param message - Reply text (use COMMENT_PUBLIC_REPLY_TEXT for outreach)
@@ -295,17 +462,47 @@ export async function replyToInstagramComment(
   }
 
   const token = accessToken.trim();
-  const url = `${FACEBOOK_GRAPH_BASE}/${encodeURIComponent(commentId)}/replies`;
+  const trimmedMessage = message.trim();
+  const path = `/${encodeURIComponent(commentId)}/replies`;
+
+  const postReply = (base: string) =>
+    axios.post<{ id?: string }>(`${base}${path}`, null, {
+      params: { message: trimmedMessage, access_token: token },
+      timeout: 15000,
+    });
+
+  const metaErrorFrom = (err: unknown): { status?: number; metaCode?: number; metaMessage?: string } => {
+    if (!axios.isAxiosError(err)) return {};
+    const data = err.response?.data as { error?: { code?: number; message?: string } } | undefined;
+    return {
+      status: err.response?.status,
+      metaCode: data?.error?.code,
+      metaMessage: data?.error?.message,
+    };
+  };
 
   try {
-    const res = await axios.post<{ id?: string }>(
-      url,
-      null,
-      {
-        params: { message: message.trim(), access_token: token },
-        timeout: 15000,
+    let res: Awaited<ReturnType<typeof postReply>>;
+    const primary = preferredGraphHost(token);
+    const secondary = otherHost(primary);
+    try {
+      res = await postReply(graphBaseForHost(primary));
+      rememberGraphHost(token, primary);
+    } catch (primaryErr) {
+      const { status, metaCode } = metaErrorFrom(primaryErr);
+      // Wrong-host tokens fail with 400/401/190; retry the other Graph host.
+      const tryAlternate =
+        status === 400 || status === 401 || metaCode === 190;
+      if (!tryAlternate) {
+        throw primaryErr;
       }
-    );
+      logger.debug(
+        { correlationId, commentId, status, metaCode, primaryHost: primary, fallbackHost: secondary },
+        'Comment reply: preferred Graph host failed; trying alternate'
+      );
+      res = await postReply(graphBaseForHost(secondary));
+      rememberGraphHost(token, secondary);
+    }
 
     const replyId = res.data?.id;
     if (replyId) {
@@ -321,13 +518,11 @@ export async function replyToInstagramComment(
     }
     return null;
   } catch (err) {
-    const status = axios.isAxiosError(err) ? err.response?.status : undefined;
-    const code = (err as AxiosError)?.response?.data as { error?: { code?: number } } | undefined;
-    const metaCode = code?.error?.code;
+    const { status, metaCode, metaMessage } = metaErrorFrom(err);
 
     if (status === 403 || status === 404 || metaCode === 100) {
       logger.warn(
-        { correlationId, commentId, status, metaCode },
+        { correlationId, commentId, status, metaCode, metaMessage },
         'Comment reply failed (user blocked, comment deleted, or permission denied)'
       );
       return null;
@@ -343,6 +538,8 @@ export async function replyToInstagramComment(
         correlationId,
         commentId,
         status,
+        metaCode,
+        metaMessage,
         message: err instanceof Error ? err.message : String(err),
       },
       'Comment reply failed'
@@ -674,8 +871,10 @@ async function sendWithRetry(
  * Make Instagram API call
  *
  * Performs the actual HTTP request to Instagram Graph API.
- * Tries graph.facebook.com first (Page token - Messenger Platform); on 401/190
- * falls back to graph.instagram.com (Instagram user token - backward compat).
+ * lat-03: Prefer the last-known-good host for this token (default:
+ * graph.instagram.com for Instagram Login). On code 190, try the other host
+ * and remember which one succeeded — so we never pay a guaranteed-fail hop
+ * on every subsequent send.
  *
  * @param token - Access token (never logged)
  */
@@ -690,29 +889,41 @@ async function sendMessageAPI(
     messaging_type: 'RESPONSE',
     message: { text: message },
   };
+  const trimmed = token.trim();
   const opts = {
-    headers: { Authorization: `Bearer ${token.trim()}` },
+    headers: { Authorization: `Bearer ${trimmed}` },
     timeout: 10000,
   };
 
+  const primary = preferredGraphHost(trimmed);
+  const secondary = otherHost(primary);
+
   try {
     const response = await axios.post<InstagramSendMessageResponse>(
-      `${FACEBOOK_GRAPH_BASE}/me/messages`,
+      `${graphBaseForHost(primary)}/me/messages`,
       payload,
       opts
     );
+    rememberGraphHost(trimmed, primary);
     return response.data;
   } catch (error) {
+    const status = axios.isAxiosError(error) ? error.response?.status : undefined;
     const errData = axios.isAxiosError(error) ? error.response?.data : undefined;
     const code = (errData as { error?: { code?: number } })?.error?.code;
-    if (code === 190) {
-      logger.debug({ correlationId }, 'Page token invalid for graph.facebook.com; trying graph.instagram.com');
+    // Match comment-reply host fallback: wrong-host tokens often return 400/401/190.
+    const tryAlternate = status === 400 || status === 401 || code === 190;
+    if (tryAlternate) {
+      logger.debug(
+        { correlationId, primaryHost: primary, fallbackHost: secondary, status, metaCode: code },
+        'Graph host rejected token; trying alternate host'
+      );
       try {
         const fallback = await axios.post<InstagramSendMessageResponse>(
-          `${INSTAGRAM_GRAPH_BASE}/me/messages`,
+          `${graphBaseForHost(secondary)}/me/messages`,
           payload,
           opts
         );
+        rememberGraphHost(trimmed, secondary);
         return fallback.data;
       } catch {
         throw mapInstagramError(error, correlationId);

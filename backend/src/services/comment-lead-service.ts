@@ -13,16 +13,23 @@
 import { getSupabaseAdminClient } from '../config/database';
 import { logger } from '../config/logger';
 import { handleSupabaseError } from '../utils/db-helpers';
+import { setPatientPlatformUsernameIfEmpty } from './patient-service';
 import type { CommentIntent } from '../types/ai';
+
+export type CommentLeadPlatform = 'instagram' | 'facebook';
 
 export interface CreateCommentLeadInput {
   doctorId: string;
   commentId: string;
+  /** Platform-scoped commenter id (IGSID or FB user id). */
   commenterIgId: string;
   commentText: string;
   mediaId: string | null;
   intent: CommentIntent;
   confidence: number;
+  platform?: CommentLeadPlatform;
+  /** Public IG username or FB display name when known. */
+  commenterUsername?: string | null;
   publicReplySent?: boolean;
   dmSent?: boolean;
 }
@@ -39,6 +46,8 @@ export interface CommentLeadRow {
   public_reply_sent: boolean;
   dm_sent: boolean;
   conversation_id: string | null;
+  platform?: CommentLeadPlatform;
+  commenter_username?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -59,14 +68,20 @@ export async function createCommentLead(
 
   const { data: existing } = await supabase
     .from('comment_leads')
-    .select('id, dm_sent, public_reply_sent')
+    .select('id, dm_sent, public_reply_sent, commenter_username')
     .eq('comment_id', input.commentId)
     .maybeSingle();
 
   if (existing) {
     const updates: Record<string, unknown> = {};
     if (input.dmSent === true && !existing.dm_sent) updates.dm_sent = true;
-    if (input.publicReplySent === true && !existing.public_reply_sent) updates.public_reply_sent = true;
+    if (input.publicReplySent === true && !existing.public_reply_sent) {
+      updates.public_reply_sent = true;
+    }
+    const nextUser = input.commenterUsername?.trim();
+    if (nextUser && !existing.commenter_username) {
+      updates.commenter_username = nextUser;
+    }
     if (Object.keys(updates).length > 0) {
       const { data: updated, error } = await supabase
         .from('comment_leads')
@@ -94,6 +109,8 @@ export async function createCommentLead(
       media_id: input.mediaId,
       intent: input.intent,
       confidence: input.confidence,
+      platform: input.platform ?? 'instagram',
+      commenter_username: input.commenterUsername?.trim() || null,
       public_reply_sent: input.publicReplySent ?? false,
       dm_sent: input.dmSent ?? false,
     })
@@ -117,24 +134,91 @@ export async function createCommentLead(
   return data as CommentLeadRow;
 }
 
+export interface LinkCommentLeadToConversationInput {
+  /** Platform-scoped commenter id (IGSID or FB PSID). */
+  commenterIgId: string;
+  conversationId: string;
+  doctorId: string;
+  platform: CommentLeadPlatform;
+  correlationId: string;
+}
+
 /**
- * Link comment lead to conversation when commenter DMs.
+ * Link unlinked comment lead(s) for this doctor + platform + commenter to a conversation.
+ * Best-effort: logs and returns on failure so the DM booking funnel is never blocked.
+ * Idempotent when already linked (no rows match `conversation_id IS NULL`).
  */
 export async function linkCommentLeadToConversation(
-  commenterIgId: string,
-  conversationId: string,
-  correlationId: string
-): Promise<void> {
+  input: LinkCommentLeadToConversationInput
+): Promise<{ linked: boolean; count: number }> {
+  const { commenterIgId, conversationId, doctorId, platform, correlationId } = input;
   const supabase = getSupabaseAdminClient();
-  if (!supabase) return;
+  if (!supabase) {
+    return { linked: false, count: 0 };
+  }
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('comment_leads')
     .update({ conversation_id: conversationId })
+    .eq('doctor_id', doctorId)
+    .eq('platform', platform)
     .eq('commenter_ig_id', commenterIgId)
-    .is('conversation_id', null);
+    .is('conversation_id', null)
+    .select('id, commenter_username');
 
   if (error) {
-    handleSupabaseError(error, correlationId);
+    // Soft-fail: never throw into the DM turn path.
+    logger.warn(
+      { correlationId, platform, errCode: error.code },
+      'Comment lead link failed (best-effort)'
+    );
+    return { linked: false, count: 0 };
   }
+
+  const count = data?.length ?? 0;
+  if (count > 0) {
+    logger.info(
+      { correlationId, platform, count },
+      'Comment lead(s) linked to conversation'
+    );
+    const username = (data as Array<{ commenter_username?: string | null }>).find(
+      (r) => r.commenter_username?.trim()
+    )?.commenter_username;
+    if (username) {
+      const { data: conv } = await supabase
+        .from('conversations')
+        .select('patient_id')
+        .eq('id', conversationId)
+        .eq('doctor_id', doctorId)
+        .maybeSingle();
+      const patientId = (conv as { patient_id?: string | null } | null)?.patient_id;
+      if (patientId) {
+        await setPatientPlatformUsernameIfEmpty(patientId, username, correlationId);
+      }
+    }
+  }
+  return { linked: count > 0, count };
+}
+
+/**
+ * After a DM conversation is resolved, stitch any unlinked comment lead for this sender.
+ * No-ops for channels without comment leads (e.g. WhatsApp).
+ */
+export async function maybeLinkCommentLeadAfterDm(input: {
+  doctorId: string;
+  channel: string;
+  senderId: string;
+  conversationId: string;
+  correlationId: string;
+}): Promise<{ linked: boolean; count: number }> {
+  if (input.channel !== 'instagram' && input.channel !== 'facebook') {
+    return { linked: false, count: 0 };
+  }
+  return linkCommentLeadToConversation({
+    commenterIgId: input.senderId,
+    conversationId: input.conversationId,
+    doctorId: input.doctorId,
+    platform: input.channel,
+    correlationId: input.correlationId,
+  });
 }

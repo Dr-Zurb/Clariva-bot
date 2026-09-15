@@ -79,11 +79,21 @@ export const listAllergiesHandler = asyncHandler(async (req: Request, res: Respo
   const userId = requireUserId(req);
   const { patientId } = validatePatientChartParentParams(req.params);
 
-  const [allergies, sectionNotes] = await Promise.all([
+  const [allergies, section] = await Promise.all([
     listAllergies(patientId, correlationId, userId),
     getAllergySectionNotes(patientId, correlationId, userId),
   ]);
-  res.status(200).json(successResponse({ allergies, sectionNotes }, req));
+  res.status(200).json(
+    successResponse(
+      {
+        allergies,
+        sectionNotes: section.notes,
+        noKnownAllergies: section.noKnownAllergies,
+        noKnownAllergiesAt: section.noKnownAllergiesAt,
+      },
+      req,
+    ),
+  );
 });
 
 export const updateAllergySectionNotesHandler = asyncHandler(
@@ -93,8 +103,17 @@ export const updateAllergySectionNotesHandler = asyncHandler(
     const { patientId } = validatePatientChartParentParams(req.params);
     const body = validateUpdateAllergySectionNotesBody(req.body);
 
-    const notes = await upsertAllergySectionNotes(patientId, body, correlationId, userId);
-    res.status(200).json(successResponse({ notes }, req));
+    const section = await upsertAllergySectionNotes(patientId, body, correlationId, userId);
+    res.status(200).json(
+      successResponse(
+        {
+          notes: section.notes,
+          noKnownAllergies: section.noKnownAllergies,
+          noKnownAllergiesAt: section.noKnownAllergiesAt,
+        },
+        req,
+      ),
+    );
   },
 );
 

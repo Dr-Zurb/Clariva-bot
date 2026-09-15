@@ -36,14 +36,14 @@
  *
  * @see backend/migrations/074_video_replay_otp_attempts_and_dashboard_event_widen.sql
  * @see backend/migrations/070_video_escalation_audit_and_otp_window.sql (video_otp_window)
- * @see backend/src/services/twilio-sms-service.ts (sendSms)
+ * @see backend/src/services/video-replay-otp-delivery.ts
  */
 
 import { createHash, randomBytes, randomInt } from 'crypto';
 import { getSupabaseAdminClient } from '../config/database';
 import { logger } from '../config/logger';
 import { InternalError, ValidationError } from '../utils/errors';
-import { sendSms } from './twilio-sms-service';
+import { deliverVideoReplayOtpCode } from './video-replay-otp-delivery';
 
 // ============================================================================
 // Constants
@@ -139,13 +139,6 @@ function requireAdmin(): NonNullable<ReturnType<typeof getSupabaseAdminClient>> 
   return admin;
 }
 
-function buildOtpSmsBody(code: string): string {
-  return (
-    `Your Clariva video replay code is ${code}. Valid for 5 minutes. ` +
-    `If you didn't request this, ignore this SMS.`
-  );
-}
-
 // ============================================================================
 // Public: isVideoOtpRequired
 // ============================================================================
@@ -205,18 +198,17 @@ export async function isVideoOtpRequired(
 // ============================================================================
 
 /**
- * Generate a fresh 6-digit OTP, hash + persist, send via Twilio SMS.
+ * Generate a fresh 6-digit OTP, hash + persist, send via WhatsApp
+ * auth template when Cloud API is configured, otherwise Twilio SMS.
  *
  * Rate-limited to 3 sends per patient per hour. Over the limit throws
  * `VideoOtpRateLimitError` with `retryAfterSeconds` set to the time
  * until the oldest of the last 3 sends ages out of the 1-hour window
  * (so the caller can surface a concrete "try again in Xm" hint).
  *
- * SMS delivery failure throws `VideoOtpSmsUnavailableError` — the row
- * is NOT inserted in that case (no point storing an OTP the patient
- * will never receive). Twilio's `sendSms` returning `false` (no-op
- * because SMS isn't configured, or the provider rejected the request)
- * both map to this error.
+ * Delivery failure throws `VideoOtpSmsUnavailableError` — the row is
+ * marked consumed so it cannot be brute-forced. A `false` return from
+ * WhatsApp (and Twilio fallback) maps to this error.
  */
 export async function sendVideoReplayOtp(
   input: SendVideoReplayOtpInput,
@@ -277,8 +269,8 @@ export async function sendVideoReplayOtp(
   const codeHash = hashOtpCode(code, salt);
   const expiresAt = new Date(Date.now() + OTP_TTL_MS);
 
-  // Persist BEFORE sending the SMS so we never ship a code whose
-  // verify path would fail (patient enters the code; lookup misses).
+  // Persist BEFORE sending so we never ship a code whose verify
+  // path would fail (patient enters the code; lookup misses).
   const { data: inserted, error: insertErr } = await admin
     .from('video_replay_otp_attempts')
     .insert({
@@ -303,8 +295,8 @@ export async function sendVideoReplayOtp(
 
   const otpId = (inserted as { id: string }).id;
 
-  const sent = await sendSms(phone, buildOtpSmsBody(code), correlationId);
-  if (!sent) {
+  const delivery = await deliverVideoReplayOtpCode(phone, code, correlationId);
+  if (!delivery.sent) {
     // Best-effort: mark the row consumed so it can't be used (the
     // patient will never know the code; but leaving it active would
     // let an attacker who guesses the id brute-force the code).
@@ -313,14 +305,21 @@ export async function sendVideoReplayOtp(
       .update({ consumed_at: new Date().toISOString() })
       .eq('id', otpId);
     logger.warn(
-      { correlationId, patientId, otpId },
-      'video-replay-otp-service: SMS send returned false; marked OTP row consumed',
+      { correlationId, patientId, otpId, channel: delivery.channel },
+      'video-replay-otp-service: OTP send returned false; marked OTP row consumed',
     );
     throw new VideoOtpSmsUnavailableError();
   }
 
   logger.info(
-    { correlationId, patientId, otpId, expiresAt: expiresAt.toISOString() },
+    {
+      correlationId,
+      patientId,
+      otpId,
+      channel: delivery.channel,
+      fallbackFromWhatsapp: delivery.fallbackFromWhatsapp,
+      expiresAt: expiresAt.toISOString(),
+    },
     'video-replay-otp-service: OTP sent',
   );
 

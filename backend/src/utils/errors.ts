@@ -16,11 +16,20 @@
 export class AppError extends Error {
   public readonly statusCode: number;
   public readonly isOperational: boolean;
+  public readonly details?: Record<string, unknown>;
 
-  constructor(message: string, statusCode: number = 500, isOperational: boolean = true) {
+  constructor(
+    message: string,
+    statusCode: number = 500,
+    isOperational: boolean = true,
+    details?: Record<string, unknown>
+  ) {
     super(message);
     this.statusCode = statusCode;
     this.isOperational = isOperational;
+    if (details) {
+      this.details = details;
+    }
 
     // Maintains proper stack trace for where our error was thrown (only available on V8)
     if (Error.captureStackTrace) {
@@ -90,12 +99,37 @@ export class ServiceSelectionNotFinalizedPaymentError extends ForbiddenError {
 }
 
 /**
+ * doctor-verification-v1 · ver-05: doctor has not completed license verification.
+ * Patient-facing booking uses the default message; doctor-facing paths pass a
+ * custom message (e.g. IG connect / unpause receptionist).
+ */
+export class DoctorNotVerifiedError extends ForbiddenError {
+  constructor(
+    message: string = 'This clinic is not yet accepting bookings. Please try again later.'
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * rec-11 / REC-D4: doctor has not accepted the active recording-attestation
+ * version. Doctor-facing start-consult paths only — never a patient join.
+ */
+export class DoctorRecordingAttestationRequiredError extends ForbiddenError {
+  constructor(
+    message: string = 'Accept the recording attestation before starting a consult. Open Dashboard → Recording attestation.'
+  ) {
+    super(message);
+  }
+}
+
+/**
  * Conflict error (409)
  * Used when there's a conflict with the current state
  */
 export class ConflictError extends AppError {
-  constructor(message: string = 'Conflict') {
-    super(message, 409);
+  constructor(message: string = 'Conflict', details?: Record<string, unknown>) {
+    super(message, 409, true, details);
   }
 }
 
@@ -194,6 +228,7 @@ export function formatError(
   message: string;
   statusCode?: number;
   stack?: string;
+  details?: Record<string, unknown>;
 } {
   const isAppError = error instanceof AppError;
   const statusCode = isAppError ? error.statusCode : 500;
@@ -205,11 +240,16 @@ export function formatError(
     message: string;
     statusCode?: number;
     stack?: string;
+    details?: Record<string, unknown>;
   } = {
     error: code,
     message: error.message || 'An unexpected error occurred',
     statusCode,
   };
+
+  if (isAppError && error.details) {
+    formatted.details = error.details;
+  }
 
   if (includeStack && error.stack) {
     formatted.stack = error.stack;

@@ -13,6 +13,20 @@
  */
 
 import type { PaymentGateway } from '../types/payment';
+import type { GatewayCredentials } from '../types/gateway-credentials';
+
+export type { GatewayCredentials };
+
+export interface AdapterRefundInput {
+  gatewayPaymentId: string;
+  amountMinor: number;
+  idempotencyKey: string;
+  notes?: Record<string, string>;
+}
+
+export interface AdapterRefundResult {
+  gatewayRefundId: string;
+}
 
 // ============================================================================
 // Create Payment Link
@@ -94,8 +108,14 @@ export interface IPaymentGateway {
    * Returns URL for customer to complete payment.
    */
   createPaymentLink(
-    input: AdapterCreatePaymentLinkInput
+    input: AdapterCreatePaymentLinkInput,
+    credentials: GatewayCredentials
   ): Promise<AdapterCreatePaymentLinkResult>;
+
+  refund(
+    input: AdapterRefundInput,
+    credentials: GatewayCredentials
+  ): Promise<AdapterRefundResult>;
 
   /**
    * Verify webhook signature. MUST use raw request body.

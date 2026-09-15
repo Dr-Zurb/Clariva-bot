@@ -61,9 +61,16 @@ import {
   processVoiceTranscription,
   type ProcessVoiceTranscriptionInput,
 } from '../services/voice-transcription-service';
+import { mixTracksToFlac } from '../services/audio-transcode-service';
+import {
+  listRecordingsForRoom,
+  mintRecordingSignedUrl,
+  type RoomRecordingSummary,
+} from '../services/twilio-recordings';
 import {
   TranscriptionPermanentError,
   TranscriptionTransientError,
+  type TranscriptionAudioBytes,
   type TranscriptProvider,
 } from '../types/consultation-transcript';
 
@@ -130,9 +137,9 @@ export interface ResolvedComposition {
  * worker treats that as "composition not yet ready" and the row stays
  * queued (same failure mode as the real Twilio path).
  *
- * TODO(Task 25 v2): once Plan 02 / Plan 05 ship a Composition-finalized
- * webhook that writes to `recording_artifact_index`, prefer reading from
- * that table here and keep the Twilio SDK path as the fallback.
+ * rec-01 ships POST /webhooks/twilio/composition-status →
+ * `registerFinalisedComposition`. Prefer reading `recording_artifact_index`
+ * here in a later task; this poll stays as the REC-D21 / REC1-D4 fallback.
  */
 let resolveCompositionImpl: (
   roomSid: string,
@@ -200,6 +207,102 @@ export async function resolveComposition(
   correlationId: string,
 ): Promise<ResolvedComposition | null> {
   return resolveCompositionImpl(roomSid, correlationId);
+}
+
+// ============================================================================
+// Raw-track resolution (cost-cut step 7)
+// ============================================================================
+
+/**
+ * A room's raw `RT…` audio tracks, known to be finalised. `null` while
+ * Twilio is still processing — same contract as `resolveComposition`,
+ * so the row simply stays queued.
+ *
+ * Deliberately holds no media. Downloading and mixing happens after the
+ * row is claimed, so two workers racing the same row cannot both pay
+ * for the transfer.
+ */
+export interface ResolvedRawTracks {
+  /** No composition exists on this path; the room SID stands in. */
+  roomSid:                string;
+  tracks:                 RoomRecordingSummary[];
+  twilioDurationSeconds?: number;
+}
+
+/**
+ * Find a room's completed audio tracks.
+ *
+ * Also doubles as the reliable half of the registration sweep: tracks
+ * are usually still `processing` when `room-ended` fires, whereas this
+ * runs on the worker's polling cadence with backoff, so it is the call
+ * that actually indexes them for retention and erasure.
+ */
+export async function resolveRawTracks(
+  sessionId: string,
+  roomSid: string,
+  correlationId: string,
+): Promise<ResolvedRawTracks | null> {
+  // Lazily imported for the same reason as the Twilio SDK above: the
+  // artifact writer transitively pulls in the notification and PDF
+  // stack, which a transcription worker has no use for at boot.
+  const { registerSessionRecordings } = await import(
+    '../services/recording-track-registration-service'
+  );
+  await registerSessionRecordings({ sessionId, roomSid, correlationId });
+
+  const recordings = await listRecordingsForRoom(roomSid);
+  const tracks = recordings.filter(
+    (r) => r.type === 'audio' && r.status === 'completed',
+  );
+
+  if (tracks.length === 0) {
+    logger.debug(
+      {
+        correlationId,
+        roomSid,
+        candidateStates: recordings.map((r) => `${r.type}:${r.status}`),
+      },
+      'voice-transcription-worker: no completed audio tracks yet',
+    );
+    return null;
+  }
+
+  // Twilio reports per-track duration; the consult is as long as its
+  // longest track, not the sum of them.
+  const durations = tracks
+    .map((r) => r.durationSeconds)
+    .filter((d): d is number => typeof d === 'number' && d > 0);
+
+  return {
+    roomSid,
+    tracks,
+    ...(durations.length > 0 ? { twilioDurationSeconds: Math.max(...durations) } : {}),
+  };
+}
+
+/**
+ * Mint short-TTL media URLs for the resolved tracks and mix them into
+ * one vendor-ready file. Runs only for a claimed row.
+ */
+export async function mixResolvedTracks(
+  resolved: ResolvedRawTracks,
+  correlationId: string,
+): Promise<TranscriptionAudioBytes> {
+  const tracks = await Promise.all(
+    resolved.tracks.map(async (r) => ({
+      signedUrl: (await mintRecordingSignedUrl({ recordingSid: r.recordingSid }))
+        .signedUrl,
+      offsetMs:     r.offsetMs,
+      recordingSid: r.recordingSid,
+    })),
+  );
+
+  const mixed = await mixTracksToFlac({ correlationId, tracks });
+  return {
+    bytes:       mixed.bytes,
+    contentType: mixed.contentType,
+    filename:    mixed.filename,
+  };
 }
 
 // ============================================================================
@@ -295,6 +398,7 @@ export async function runVoiceTranscriptionJob(
   logger.info(
     {
       correlationId,
+      useRawTracks: env.VOICE_TRANSCRIPTION_USE_RAW_TRACKS,
       polled: result.polled,
       processed: result.processed,
       failed: result.failed,
@@ -333,6 +437,7 @@ async function processOneRow(
     rowId: row.id,
     consultationSessionId: row.consultation_session_id,
     provider: row.provider,
+    useRawTracks: env.VOICE_TRANSCRIPTION_USE_RAW_TRACKS,
   };
 
   // 1. Backoff — skip if the retry window hasn't elapsed.
@@ -342,23 +447,30 @@ async function processOneRow(
     return;
   }
 
-  // 2. Resolve the audio Composition. `composition_sid` on the row is
-  //    the room SID placeholder until the Composition is finalised.
-  const resolved = await resolveComposition(row.composition_sid, correlationId).catch(
-    (err: unknown) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.warn(
-        { ...rowCtx, error: msg },
-        'voice-transcription-worker: composition lookup threw, treating as not-ready',
-      );
-      return null;
-    },
-  );
+  // 2. Resolve the audio. `composition_sid` on the row is the room SID
+  //    placeholder until the Composition is finalised — and stays the
+  //    room SID for good on the raw-track path, where no composition is
+  //    ever created.
+  const useRawTracks = env.VOICE_TRANSCRIPTION_USE_RAW_TRACKS;
+  const resolved = await (useRawTracks
+    ? resolveRawTracks(row.consultation_session_id, row.composition_sid, correlationId)
+    : resolveComposition(row.composition_sid, correlationId)
+  ).catch((err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn(
+      { ...rowCtx, useRawTracks, error: msg },
+      'voice-transcription-worker: audio lookup threw, treating as not-ready',
+    );
+    return null;
+  });
 
   if (!resolved) {
     result.notYetReady += 1;
     return;
   }
+
+  const resolvedCompositionSid =
+    'compositionSid' in resolved ? resolved.compositionSid : resolved.roomSid;
 
   // 3. Flip to `'processing'` atomically on the `queued` predicate.
   //    Concurrent worker runs only let one actually claim the row.
@@ -367,7 +479,7 @@ async function processOneRow(
     .update({
       status: 'processing',
       started_at: now.toISOString(),
-      composition_sid: resolved.compositionSid,
+      composition_sid: resolvedCompositionSid,
     })
     .eq('id', row.id)
     .eq('status', 'queued')
@@ -389,16 +501,21 @@ async function processOneRow(
     return;
   }
 
-  // 4. Run the transcription.
-  const processInput: ProcessVoiceTranscriptionInput = {
-    consultationSessionId: row.consultation_session_id,
-    audioUrl: resolved.audioUrl,
-    languageCode: row.language_code,
-    provider: row.provider,
-    correlationId,
-  };
-
+  // 4. Run the transcription. On the raw-track path the mix happens
+  //    here, inside the try, so an undecodable track lands in the same
+  //    permanent-vs-transient handling as a vendor error rather than
+  //    looping forever as "not ready".
   try {
+    const processInput: ProcessVoiceTranscriptionInput = {
+      consultationSessionId: row.consultation_session_id,
+      languageCode: row.language_code,
+      provider: row.provider,
+      correlationId,
+      ...('compositionSid' in resolved
+        ? { audioUrl: resolved.audioUrl }
+        : { audioBytes: await mixResolvedTracks(resolved, correlationId) }),
+    };
+
     const out = await processVoiceTranscription(processInput);
 
     // 5a. Success — persist transcript fields, flip to 'completed',

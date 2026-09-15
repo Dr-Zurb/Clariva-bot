@@ -5,6 +5,7 @@
 
 import { buildBookingPageUrl } from '../../services/slot-selection-service';
 import { formatBookingLinkDm } from '../../utils/booking-link-copy';
+import type { ConversationLanguage } from '../../utils/conversation-language';
 import { formatAwaitingStaffServiceConfirmationDm } from '../../utils/staff-service-review-dm';
 import {
   isSlotBookingBlockedPendingStaffReview,
@@ -68,12 +69,13 @@ export interface ApplyReadyPatientBookingPathInput {
   doctorId: string;
   doctorSettings: DoctorSettingsRow | null;
   patient: Patient | null | undefined;
+  language: ConversationLanguage;
 }
 
 export function applyReadyPatientBookingPath(
   input: ApplyReadyPatientBookingPathInput
 ): { state: ConversationState; replyText: string } {
-  const { state, intent, conversationId, doctorId, doctorSettings, patient } = input;
+  const { state, intent, conversationId, doctorId, doctorSettings, language } = input;
 
   if (isSlotBookingBlockedPendingStaffReview(state)) {
     const merged: ConversationState = {
@@ -87,12 +89,15 @@ export function applyReadyPatientBookingPath(
         mergeBooking(merged, { consultationType: state.booking?.consultationType }),
         { activeFlow: undefined }
       ),
-      replyText: formatAwaitingStaffServiceConfirmationDm(doctorSettings, merged),
+      replyText: formatAwaitingStaffServiceConfirmationDm(
+        language,
+        doctorSettings,
+        merged
+      ),
     };
   }
 
   const slotLink = buildBookingPageUrl(conversationId, doctorId);
-  const mrnHint = formatPatientIdHint(patient?.medical_record_number);
   return {
     state: mergeTriage(
       mergeBooking(
@@ -108,10 +113,6 @@ export function applyReadyPatientBookingPath(
       ),
       { activeFlow: undefined }
     ),
-    replyText: formatBookingLinkDm(slotLink, mrnHint, doctorSettings),
+    replyText: formatBookingLinkDm({ language, slotLink, doctorSettings }),
   };
-}
-
-function formatPatientIdHint(_mrn?: string | null): string {
-  return '';
 }

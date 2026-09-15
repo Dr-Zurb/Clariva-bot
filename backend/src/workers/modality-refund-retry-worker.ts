@@ -57,10 +57,12 @@ import { getSupabaseAdminClient } from '../config/database';
 import { logger } from '../config/logger';
 import { getModalityBillingService } from '../services/modality-billing-service';
 import { emitSystemMessage } from '../services/consultation-message-service';
+import { getConversationLanguage } from '../services/conversation-service';
 import {
   buildRefundFailedDm,
   buildRefundProcessingDm,
 } from '../utils/dm-copy';
+import type { ConversationLanguage } from '../utils/conversation-language';
 
 // ============================================================================
 // Constants
@@ -456,17 +458,47 @@ async function sentinelAsStuck(
   );
 }
 
+async function resolveRefundDmLanguage(
+  sessionId: string,
+  correlationId: string,
+): Promise<ConversationLanguage> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) return 'en';
+
+  const { data: session } = await admin
+    .from('consultation_sessions')
+    .select('appointment_id')
+    .eq('id', sessionId)
+    .maybeSingle();
+
+  const appointmentId = (session as { appointment_id?: string } | null)?.appointment_id;
+  if (!appointmentId) return 'en';
+
+  const { data: appointment } = await admin
+    .from('appointments')
+    .select('conversation_id')
+    .eq('id', appointmentId)
+    .maybeSingle();
+
+  const conversationId = (appointment as { conversation_id?: string | null } | null)
+    ?.conversation_id;
+  return conversationId
+    ? await getConversationLanguage(conversationId, correlationId)
+    : 'en';
+}
+
 async function emitRefundProcessingDm(
   sessionId: string,
   amountPaise: number,
   correlationId: string,
 ): Promise<void> {
   const amountInr = Math.round(amountPaise / 100);
+  const language = await resolveRefundDmLanguage(sessionId, correlationId);
   try {
     await emitSystemMessage({
       sessionId,
       event: 'modality_refund_processing',
-      body: buildRefundProcessingDm({ amountInr, expectedDays: 3 }),
+      body: buildRefundProcessingDm({ language, amountInr, expectedDays: 3 }),
       correlationId: `${correlationId}::refund_processing`,
       meta: { amountPaise, kind: 'refund_processing' },
     });
@@ -485,11 +517,12 @@ async function emitRefundFailedDm(
   correlationId: string,
 ): Promise<void> {
   const amountInr = Math.round(amountPaise / 100);
+  const language = await resolveRefundDmLanguage(sessionId, correlationId);
   try {
     await emitSystemMessage({
       sessionId,
       event: 'modality_refund_failed',
-      body: buildRefundFailedDm({ amountInr }),
+      body: buildRefundFailedDm({ language, amountInr }),
       correlationId: `${correlationId}::refund_failed`,
       meta: { amountPaise, kind: 'refund_failed' },
     });

@@ -5,8 +5,11 @@
 import { env } from '../../config/env';
 import { registerChannelAdapter } from './registry';
 import { instagramChannelAdapter } from './instagram';
+import { facebookChannelAdapter } from './facebook';
 import { whatsappChannelAdapter } from './whatsapp';
 
+// Facebook before Instagram so object=page payloads match the FB adapter first.
+registerChannelAdapter(facebookChannelAdapter);
 registerChannelAdapter(instagramChannelAdapter);
 
 if (env.WHATSAPP_ENABLED) {
@@ -32,4 +35,5 @@ export type {
 } from './types';
 export { NotImplementedError } from './types';
 export { instagramChannelAdapter } from './instagram';
+export { facebookChannelAdapter } from './facebook';
 export { whatsappChannelAdapter } from './whatsapp';

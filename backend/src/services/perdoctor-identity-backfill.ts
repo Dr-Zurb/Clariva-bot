@@ -34,6 +34,7 @@ export interface PlatformPatientRow {
   consent_method?: string | null;
   medical_record_number?: string | null;
   patient_tag?: string | null;
+  patient_tags?: string[] | null;
 }
 
 export interface ConsentFields {
@@ -217,6 +218,7 @@ export function buildCloneInsertPayload(
     platform_external_id: source.platform_external_id,
     medical_record_number: source.medical_record_number ?? null,
     patient_tag: source.patient_tag ?? null,
+    patient_tags: source.patient_tags ?? [],
     ...consent,
   };
 }
@@ -244,7 +246,7 @@ export async function runPerDoctorIdentityBackfill(options: {
   const { data: patients, error: patErr } = await admin
     .from('patients')
     .select(
-      'id, doctor_id, platform, platform_external_id, name, phone, age, gender, email, date_of_birth, consent_status, consent_granted_at, consent_revoked_at, consent_method, medical_record_number, patient_tag'
+      'id, doctor_id, platform, platform_external_id, name, phone, age, gender, email, date_of_birth, consent_status, consent_granted_at, consent_revoked_at, consent_method, medical_record_number, patient_tag, patient_tags'
     )
     .not('platform', 'is', null);
 

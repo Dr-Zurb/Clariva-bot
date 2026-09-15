@@ -64,7 +64,12 @@ import {
 import { listPrescriptionsByPatient } from './prescription-service';
 import { listAppointmentsForPatient } from './appointment-service';
 import { findPatientByIdWithAdmin } from './patient-service';
-import { listPossibleDuplicates } from './patient-matching-service';
+import {
+  INCOMPLETE_CONSULT_LOOKBACK_DAYS,
+  consultationSessionStarted,
+  isIncompleteConsult,
+} from '../utils/incomplete-consult';
+import { classifyVisitSegment } from '../utils/visit-segment';
 import type {
   PatientAllergy,
   PatientChronicCondition,
@@ -163,12 +168,27 @@ export interface PatientOverviewData {
   six_visit_strip: PatientSixVisitStripEntry[];
 }
 
+/** Hover-card payload — subset of overview without appointments/Rx/payments. */
+export interface PatientQuickPeekData {
+  patient: { id: string; name: string };
+  snapshot: {
+    blood_group: string | null;
+    height_cm: number | null;
+    weight_kg: number | null;
+  };
+  active_problems: ProblemListItem[];
+  allergies: PatientAllergy[];
+  chronic_conditions: PatientChronicCondition[];
+}
+
 export interface PatientsKpis {
-  active_90d: { count: number; delta_7d: number };
+  /** Session started; appointment never completed (PKD-D2). */
+  incomplete_consults: { count: number; delta_7d: number };
+  /** First completed visit in rolling 30d (PKD-D3). */
   new_30d: { count: number; delta_7d: number };
   followup_overdue: { count: number; delta_7d: number };
-  open_episodes: { count: number; delta_7d: number };
-  possible_duplicates: { count: number; delta_7d: number };
+  /** Completed visit in 30d + prior completed visit (PKD-D4). */
+  revisits_30d: { count: number; delta_7d: number };
   cache_ttl_seconds: number;
 }
 
@@ -177,6 +197,8 @@ export interface PatientsKpis {
 // ============================================================================
 
 const VITALS_LOOKBACK_LIMIT = 200;
+/** Enough recent readings to resolve latest height/weight for the hover peek. */
+const PEEK_VITALS_LIMIT = 20;
 const VITALS_TREND_CAP_PER_METRIC = 30;
 const PRESCRIPTIONS_LOOKBACK_LIMIT = 50;
 const APPOINTMENTS_LOOKBACK_LIMIT = 100;
@@ -659,6 +681,72 @@ export async function getPatientOverview(
     care_plan: carePlan,
     risk_flags: riskFlags,
     six_visit_strip: sixVisitStrip,
+  };
+}
+
+/**
+ * Lightweight hover-card composition for the patients list.
+ *
+ * Same tenant gate as {@link getPatientOverview}, but only loads allergies,
+ * chronic conditions, problems, and a short vitals window — skips
+ * prescriptions, appointments, payments, care-plan, and risk derivation.
+ */
+export async function getPatientQuickPeek(
+  patientId: string,
+  correlationId: string,
+  userId: string
+): Promise<PatientQuickPeekData> {
+  const admin = adminOrThrow();
+
+  const [
+    patient,
+    { data: aptCheck, error: aptErr },
+    { data: convCheck, error: convErr },
+  ] = await Promise.all([
+    findPatientByIdWithAdmin(patientId, correlationId),
+    admin
+      .from('appointments')
+      .select('id')
+      .eq('doctor_id', userId)
+      .eq('patient_id', patientId)
+      .limit(1)
+      .maybeSingle(),
+    admin
+      .from('conversations')
+      .select('id')
+      .eq('doctor_id', userId)
+      .eq('patient_id', patientId)
+      .limit(1)
+      .maybeSingle(),
+  ]);
+  if (!patient) {
+    throw new NotFoundError('Patient not found');
+  }
+  if (aptErr) handleSupabaseError(aptErr, correlationId);
+  if (convErr) handleSupabaseError(convErr, correlationId);
+  if (!aptCheck && !convCheck) {
+    throw new NotFoundError('Patient not found');
+  }
+
+  const [allergies, chronicConditions, problems, vitalsRecent] = await Promise.all([
+    listAllergies(patientId, correlationId, userId),
+    listChronicConditions(patientId, correlationId, userId),
+    getProblemList(patientId, correlationId, userId),
+    listVitals(patientId, correlationId, userId, PEEK_VITALS_LIMIT),
+  ]);
+
+  await logDataAccess(correlationId, userId, 'patient_quick_peek', patientId);
+
+  return {
+    patient: { id: patient.id, name: patient.name },
+    snapshot: {
+      blood_group: null,
+      height_cm: latestVitalValue(vitalsRecent, 'height_cm'),
+      weight_kg: latestVitalValue(vitalsRecent, 'weight_kg'),
+    },
+    active_problems: problems,
+    allergies,
+    chronic_conditions: chronicConditions.filter((c) => (c.status ?? 'active') === 'active'),
   };
 }
 
@@ -1155,96 +1243,119 @@ export async function computePatientsKpis(
 
   const admin = adminOrThrow();
   const now7dAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
-  const now30dAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
-  const now90dAgo = new Date(now - 90 * 24 * 60 * 60 * 1000);
-  const now7dIso = now7dAgo.toISOString();
-  const now30dIso = now30dAgo.toISOString();
+  const lookbackIso = new Date(
+    now - INCOMPLETE_CONSULT_LOOKBACK_DAYS * 24 * 60 * 60 * 1000
+  ).toISOString();
 
-  // np-10: parallel fetch wave — minimal columns; new-patient counts via head/count.
   const [
     { data: aptRows, error: aptErr },
-    linkedPatientIds,
     { data: rxRows, error: rxErr },
-    { data: problemRows, error: problemErr },
-    duplicateGroups,
+    { data: sessionRows, error: sessErr },
   ] = await Promise.all([
     admin
       .from('appointments')
-      .select('patient_id, appointment_date')
+      .select('patient_id, appointment_date, status')
       .eq('doctor_id', userId)
       .not('patient_id', 'is', null),
-    fetchLinkedPatientIdSet(userId, correlationId),
     admin
       .from('prescriptions')
       .select('patient_id, created_at, follow_up_value, follow_up_unit')
       .eq('doctor_id', userId)
       .not('follow_up_value', 'is', null),
     admin
-      .from('patient_problem_list_v')
-      .select('patient_id, episode_status, since_date')
+      .from('consultation_sessions')
+      .select(
+        'patient_id, appointment_id, status, actual_started_at, doctor_joined_at, patient_joined_at, scheduled_start_at'
+      )
       .eq('doctor_id', userId)
-      .eq('source', 'episode'),
-    listPossibleDuplicates(userId, correlationId).then((r) => r.groups),
+      .gte('scheduled_start_at', lookbackIso)
+      .not('patient_id', 'is', null),
   ]);
   if (aptErr) handleSupabaseError(aptErr, correlationId);
   if (rxErr) handleSupabaseError(rxErr, correlationId);
-  if (problemErr) handleSupabaseError(problemErr, correlationId);
+  if (sessErr) handleSupabaseError(sessErr, correlationId);
 
-  // ----------------------------------------------------------------------
-  // active_90d: patients with a last appointment in the last 90 days.
-  // delta_7d: patients with a last appointment in the last 7 days.
-  // (Requires per-patient max — minimal apt row set retained.)
-  // ----------------------------------------------------------------------
-  const latestAptByPatient = new Map<string, number>();
-  for (const row of aptRows ?? []) {
-    const r = row as { patient_id: string; appointment_date: string };
-    const ts = new Date(r.appointment_date).getTime();
-    if (Number.isNaN(ts)) continue;
-    const existing = latestAptByPatient.get(r.patient_id);
-    if (existing == null || ts > existing) {
-      latestAptByPatient.set(r.patient_id, ts);
+  type AptRow = { patient_id: string; appointment_date: string; status: string };
+  const aptStatusById = new Map<string, string>();
+  // appointments query lacks id — rebuild incomplete via session.appointment_id join.
+  // Fetch appointment id+status for started sessions only (second small query).
+  const startedSessions = (
+    (sessionRows ?? []) as Array<{
+      patient_id: string;
+      appointment_id: string;
+      status: string;
+      actual_started_at: string | null;
+      doctor_joined_at: string | null;
+      patient_joined_at: string | null;
+      scheduled_start_at: string | null;
+    }>
+  ).filter((s) => consultationSessionStarted(s));
+
+  const startedAptIds = [...new Set(startedSessions.map((s) => s.appointment_id))];
+  if (startedAptIds.length > 0) {
+    const { data: startedApts, error: startedAptErr } = await admin
+      .from('appointments')
+      .select('id, status')
+      .in('id', startedAptIds);
+    if (startedAptErr) handleSupabaseError(startedAptErr, correlationId);
+    for (const row of startedApts ?? []) {
+      const r = row as { id: string; status: string };
+      aptStatusById.set(r.id, r.status);
     }
   }
-  let active90d = 0;
-  let active7d = 0;
-  for (const ts of latestAptByPatient.values()) {
-    if (ts >= now90dAgo.getTime()) active90d += 1;
-    if (ts >= now7dAgo.getTime()) active7d += 1;
+
+  const incompletePatients = new Set<string>();
+  const incompletePatients7d = new Set<string>();
+  for (const s of startedSessions) {
+    const aptStatus = aptStatusById.get(s.appointment_id);
+    if (aptStatus == null) continue;
+    if (!isIncompleteConsult({ session: s, appointmentStatus: aptStatus })) continue;
+    incompletePatients.add(s.patient_id);
+    const startTs = s.actual_started_at
+      ? new Date(s.actual_started_at).getTime()
+      : s.scheduled_start_at
+        ? new Date(s.scheduled_start_at).getTime()
+        : NaN;
+    if (!Number.isNaN(startTs) && startTs >= now7dAgo.getTime()) {
+      incompletePatients7d.add(s.patient_id);
+    }
   }
 
   // ----------------------------------------------------------------------
-  // new_30d / new_7d: DB-side count (PostgREST head/count — NP-Q8).
+  // new_30d / revisits_30d — completed visits only (PKD-D3 / PKD-D4).
   // ----------------------------------------------------------------------
+  const completedByPatient = new Map<string, number[]>();
+  for (const row of aptRows ?? []) {
+    const r = row as AptRow;
+    if (r.status !== 'completed') continue;
+    const ts = new Date(r.appointment_date).getTime();
+    if (Number.isNaN(ts)) continue;
+    const list = completedByPatient.get(r.patient_id) ?? [];
+    list.push(ts);
+    completedByPatient.set(r.patient_id, list);
+  }
   let new30d = 0;
   let new7d = 0;
-  if (linkedPatientIds.size > 0) {
-    const linkedIds = Array.from(linkedPatientIds);
-    const [{ count: count30, error: err30 }, { count: count7, error: err7 }] =
-      await Promise.all([
-        admin
-          .from('patients')
-          .select('*', { count: 'exact', head: true })
-          .in('id', linkedIds)
-          .gte('created_at', now30dIso),
-        admin
-          .from('patients')
-          .select('*', { count: 'exact', head: true })
-          .in('id', linkedIds)
-          .gte('created_at', now7dIso),
-      ]);
-    if (err30) handleSupabaseError(err30, correlationId);
-    if (err7) handleSupabaseError(err7, correlationId);
-    new30d = count30 ?? 0;
-    new7d = count7 ?? 0;
+  let revisits30d = 0;
+  let revisits7d = 0;
+  const window7dMs = 7 * 24 * 60 * 60 * 1000;
+  for (const times of completedByPatient.values()) {
+    const kind = classifyVisitSegment(times, now);
+    if (kind === 'new-30d') {
+      new30d += 1;
+      if (classifyVisitSegment(times, now, window7dMs) === 'new-30d') new7d += 1;
+    } else if (kind === 'revisit-30d') {
+      revisits30d += 1;
+      const inLast7 = times.some((t) => t >= now - window7dMs && t <= now);
+      if (inLast7) revisits7d += 1;
+    }
   }
 
   // ----------------------------------------------------------------------
   // followup_overdue: same predicate as the `at-risk-followup` segment.
-  // Uses shared aptRows + minimal rxRows (cross-row logic stays in TS).
   // ----------------------------------------------------------------------
   const followupOverduePatients = new Set<string>();
   const followupOverduePatients7d = new Set<string>();
-  // Map from patient_id → array of {createdAt} for the inflow check.
   for (const row of (rxRows ?? []) as Array<{
     patient_id: string | null;
     created_at: string;
@@ -1258,7 +1369,6 @@ export async function computePatientsKpis(
     if (Number.isNaN(prescribedAt.getTime())) continue;
     const followUpDate = new Date(prescribedAt.getTime() + days * 24 * 60 * 60 * 1000);
     if (followUpDate.getTime() >= now) continue;
-    // Check whether the patient has a later qualifying appointment.
     let hasLater = false;
     for (const apt of aptRows ?? []) {
       const a = apt as { patient_id: string; appointment_date: string };
@@ -1271,50 +1381,22 @@ export async function computePatientsKpis(
     }
     if (hasLater) continue;
     followupOverduePatients.add(row.patient_id);
-    // Inflow: derived follow-up date crossed into the past within the last 7d.
     if (followUpDate.getTime() >= now7dAgo.getTime()) {
       followupOverduePatients7d.add(row.patient_id);
     }
   }
 
-  // ----------------------------------------------------------------------
-  // open_episodes: distinct patient_ids with episode rows not closed.
-  // Minimal column fetch (distinct semantics require patient_id set in TS).
-  // ----------------------------------------------------------------------
-  const openEpisodePatients = new Set<string>();
-  const openEpisodePatients7d = new Set<string>();
-  for (const row of (problemRows ?? []) as Array<{
-    patient_id: string;
-    episode_status: string | null;
-    since_date: string | null;
-  }>) {
-    if (row.episode_status === 'closed') continue;
-    openEpisodePatients.add(row.patient_id);
-    if (row.since_date) {
-      const ts = new Date(row.since_date).getTime();
-      if (!Number.isNaN(ts) && ts >= now7dAgo.getTime()) {
-        openEpisodePatients7d.add(row.patient_id);
-      }
-    }
-  }
-
-  // ----------------------------------------------------------------------
-  // possible_duplicates: count of duplicate GROUPS (not patients).
-  // (Fetched in parallel wave above.)
-  // ----------------------------------------------------------------------
-
   const result: PatientsKpis = {
-    active_90d: { count: active90d, delta_7d: active7d },
+    incomplete_consults: {
+      count: incompletePatients.size,
+      delta_7d: incompletePatients7d.size,
+    },
     new_30d: { count: new30d, delta_7d: new7d },
     followup_overdue: {
       count: followupOverduePatients.size,
       delta_7d: followupOverduePatients7d.size,
     },
-    open_episodes: {
-      count: openEpisodePatients.size,
-      delta_7d: openEpisodePatients7d.size,
-    },
-    possible_duplicates: { count: duplicateGroups.length, delta_7d: 0 },
+    revisits_30d: { count: revisits30d, delta_7d: revisits7d },
     cache_ttl_seconds: KPI_CACHE_TTL_SECONDS,
   };
 
@@ -1324,36 +1406,6 @@ export async function computePatientsKpis(
   });
 
   return { data: result, fromCache: false };
-}
-
-async function fetchLinkedPatientIdSet(
-  doctorId: string,
-  correlationId: string
-): Promise<Set<string>> {
-  const admin = adminOrThrow();
-  const ids = new Set<string>();
-  const [{ data: aptRows, error: aptErr }, { data: convRows, error: convErr }] =
-    await Promise.all([
-      admin
-        .from('appointments')
-        .select('patient_id')
-        .eq('doctor_id', doctorId)
-        .not('patient_id', 'is', null),
-      admin
-        .from('conversations')
-        .select('patient_id')
-        .eq('doctor_id', doctorId),
-    ]);
-  if (aptErr) handleSupabaseError(aptErr, correlationId);
-  if (convErr) handleSupabaseError(convErr, correlationId);
-  for (const row of aptRows ?? []) {
-    const pid = (row as { patient_id: string | null }).patient_id;
-    if (pid) ids.add(pid);
-  }
-  for (const row of convRows ?? []) {
-    ids.add((row as { patient_id: string }).patient_id);
-  }
-  return ids;
 }
 
 // Re-export for unit tests that need to inspect the cache window.

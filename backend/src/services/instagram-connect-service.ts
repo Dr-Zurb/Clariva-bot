@@ -29,30 +29,19 @@ import type { InstagramConnectStatePayload } from '../types/instagram-connect';
 import type { InsertDoctorInstagram } from '../types/database';
 
 // ============================================================================
-// Constants (Facebook Login / Page-linked path - e-task-1 Week 3)
+// Constants (Instagram API with Instagram Login — ilr-18 / e-task-13)
 // ============================================================================
-// Uses Facebook OAuth to obtain Page access token; Instagram must be linked to Page.
-// Goal: test whether Messenger Platform webhook includes sender/recipient for real DMs.
+// Doctor authorizes with Instagram credentials (no Facebook Page / Business Suite).
+// Webhooks resolve on the Instagram professional account id stored in instagram_page_id.
 
-const FACEBOOK_OAUTH_AUTHORIZE = 'https://www.facebook.com/v18.0/dialog/oauth';
-const FACEBOOK_OAUTH_ACCESS_TOKEN = 'https://graph.facebook.com/v18.0/oauth/access_token';
-const FACEBOOK_GRAPH_BASE = 'https://graph.facebook.com/v18.0';
-/** Scopes for Page-linked Instagram (Messenger Platform).
- * pages_show_list + business_management: required for me/accounts to return Pages (incl. business-owned).
- * pages_read_engagement: required for GET /{page-id}?fields=instagram_business_account (Meta error #100).
- * instagram_basic: required for /{page-id}/instagram_accounts fallback.
- * pages_manage_metadata, pages_messaging, instagram_manage_messages: for Page token and Instagram DMs.
- * instagram_manage_comments: required for POST /{comment-id}/replies (public reply to comments).
- * Note: ads_management omitted to avoid App Review; Pages linked via Business Manager may need it later. */
-const FACEBOOK_SCOPES = [
-  'pages_show_list',
-  'business_management',
-  'pages_read_engagement',
-  'instagram_basic',
-  'pages_manage_metadata',
-  'pages_messaging',
-  'instagram_manage_messages',
-  'instagram_manage_comments',
+const INSTAGRAM_OAUTH_AUTHORIZE = 'https://www.instagram.com/oauth/authorize';
+const INSTAGRAM_OAUTH_ACCESS_TOKEN = 'https://api.instagram.com/oauth/access_token';
+const INSTAGRAM_GRAPH_BASE = 'https://graph.instagram.com';
+/** Business Login for Instagram scopes (messages + comments; no content_publish for MVP). */
+const INSTAGRAM_BUSINESS_SCOPES = [
+  'instagram_business_basic',
+  'instagram_business_manage_messages',
+  'instagram_business_manage_comments',
 ];
 const META_HTTP_TIMEOUT_MS = 10000;
 
@@ -213,7 +202,8 @@ export async function getConnectionStatus(
 }
 
 // ============================================================================
-// Connection health (RBH-10) — Meta debug_token, 5-minute cache, no PHI in API
+// Connection health (RBH-10) — Instagram Graph /me probe, 5-minute cache, no PHI in API
+// Instagram Login user tokens are not valid for Facebook Graph debug_token.
 // ============================================================================
 
 const HEALTH_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -229,6 +219,14 @@ export interface InstagramHealthSummary {
   message: string;
   reconnectRecommended: boolean;
 }
+
+type InstagramHealthProbeSummary = {
+  level: 'ok' | 'warning' | 'error' | 'unknown';
+  errorCode: string | null;
+  tokenExpiresAt: string | null;
+  message: string;
+  reconnectRecommended: boolean;
+};
 
 function notConnectedHealth(): InstagramHealthSummary {
   return {
@@ -250,117 +248,111 @@ interface DoctorInstagramHealthRow {
   instagram_last_dm_success_at: string | null;
 }
 
-interface MetaDebugTokenData {
-  app_id?: string;
-  is_valid?: boolean;
-  expires_at?: number;
-  data_access_expires_at?: number;
-  error?: { code?: number; subcode?: number; message?: string };
-}
+type InstagramTokenProbe = {
+  ok: boolean;
+  /** Transient / network / 5xx — show unknown, do not nudge reconnect */
+  requestFailed: boolean;
+  /** Token rejected by Instagram Graph — reconnect */
+  invalidToken: boolean;
+  errorCode: string | null;
+};
 
-async function fetchMetaDebugToken(
-  inputToken: string,
+/**
+ * Probe an Instagram Login user token via graph.instagram.com/me.
+ * (Facebook debug_token returns 400 for these tokens.)
+ */
+async function probeInstagramUserToken(
+  accessToken: string,
   correlationId: string
-): Promise<{ data: MetaDebugTokenData | null; requestFailed: boolean }> {
-  const appId = env.INSTAGRAM_APP_ID;
-  const appSecret = env.INSTAGRAM_APP_SECRET;
-  if (!appId || !appSecret) {
-    logger.warn({ correlationId }, 'Instagram health: app id/secret not configured');
-    return { data: null, requestFailed: false };
-  }
-  const appAccessToken = `${appId}|${appSecret}`;
-  const url = `${FACEBOOK_GRAPH_BASE}/debug_token`;
+): Promise<InstagramTokenProbe> {
   try {
-    const res = await axios.get<{ data?: MetaDebugTokenData }>(url, {
+    const res = await axios.get<{
+      user_id?: string | number;
+      id?: string | number;
+      data?: Array<{ user_id?: string | number; id?: string | number }>;
+    }>(`${INSTAGRAM_GRAPH_BASE}/v18.0/me`, {
       params: {
-        input_token: inputToken,
-        access_token: appAccessToken,
+        fields: 'user_id,username',
+        access_token: accessToken,
       },
       timeout: META_HTTP_TIMEOUT_MS,
     });
-    return { data: res.data?.data ?? null, requestFailed: false };
+    const row = res.data?.data?.[0] ?? res.data;
+    const rawId = row?.user_id ?? row?.id;
+    if (rawId == null || String(rawId).length === 0) {
+      logger.warn({ correlationId }, 'Instagram health: /me missing user_id');
+      return { ok: false, requestFailed: true, invalidToken: false, errorCode: null };
+    }
+    return { ok: true, requestFailed: false, invalidToken: false, errorCode: null };
   } catch (err: unknown) {
     const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+    const graphCode = axios.isAxiosError(err)
+      ? (err.response?.data as { error?: { code?: number } } | undefined)?.error?.code
+      : undefined;
+    const invalidToken =
+      status === 401 ||
+      status === 403 ||
+      status === 400 ||
+      graphCode === 190 ||
+      graphCode === 102;
     logger.warn(
-      { correlationId, status, message: axios.isAxiosError(err) ? err.message : 'debug_token failed' },
-      'Instagram health: Meta debug_token request failed'
+      {
+        correlationId,
+        status,
+        graphCode: graphCode ?? null,
+        message: axios.isAxiosError(err) ? err.message : '/me probe failed',
+      },
+      'Instagram health: Instagram Graph /me probe failed'
     );
-    return { data: null, requestFailed: true };
+    return {
+      ok: false,
+      requestFailed: !invalidToken,
+      invalidToken,
+      errorCode: graphCode != null ? String(graphCode) : status != null ? String(status) : null,
+    };
   }
 }
 
-function summarizeHealthFromMetaAndRow(
-  debug: MetaDebugTokenData | null,
+function summarizeHealthFromProbe(
+  probe: InstagramTokenProbe,
   lastDmSuccessAt: string | null,
-  requestFailed: boolean
-): {
-  level: 'ok' | 'warning' | 'error' | 'unknown';
-  errorCode: string | null;
-  tokenExpiresAt: string | null;
-  message: string;
-  reconnectRecommended: boolean;
-} {
-  if (requestFailed) {
+  storedExpiresAt: string | null
+): InstagramHealthProbeSummary {
+  if (probe.requestFailed) {
     return {
       level: 'unknown',
-      errorCode: null,
-      tokenExpiresAt: null,
+      errorCode: probe.errorCode,
+      tokenExpiresAt: storedExpiresAt,
       message:
         "We couldn't verify your Instagram token with Meta right now. If patients can't reach the bot, try reconnecting.",
       reconnectRecommended: false,
     };
   }
-  if (!debug) {
-    return {
-      level: 'unknown',
-      errorCode: null,
-      tokenExpiresAt: null,
-      message:
-        'Could not read token details from Meta. Check server configuration or try reconnecting.',
-      reconnectRecommended: false,
-    };
-  }
-  if (debug.error?.code != null) {
+  if (probe.invalidToken || !probe.ok) {
     return {
       level: 'error',
-      errorCode: String(debug.error.code),
-      tokenExpiresAt: null,
-      message: 'Instagram reported a problem with your access token. Reconnect your account.',
-      reconnectRecommended: true,
-    };
-  }
-  if (debug.is_valid === false) {
-    return {
-      level: 'error',
-      errorCode: null,
-      tokenExpiresAt: null,
+      errorCode: probe.errorCode,
+      tokenExpiresAt: storedExpiresAt,
       message: 'Your Instagram access token is no longer valid. Reconnect your account.',
       reconnectRecommended: true,
     };
   }
-  if (debug.is_valid !== true) {
-    return {
-      level: 'unknown',
-      errorCode: null,
-      tokenExpiresAt: null,
-      message: 'Meta returned an unexpected token status. Try reconnecting if problems continue.',
-      reconnectRecommended: false,
-    };
-  }
 
-  let tokenExpiresAt: string | null = null;
-  let expMs: number | null = null;
-  if (typeof debug.expires_at === 'number' && debug.expires_at > 0) {
-    expMs = debug.expires_at * 1000;
-    tokenExpiresAt = new Date(expMs).toISOString();
-  }
   const now = Date.now();
+  let expMs: number | null = null;
+  if (storedExpiresAt) {
+    const parsed = new Date(storedExpiresAt).getTime();
+    if (!Number.isNaN(parsed)) expMs = parsed;
+  }
   if (expMs != null && expMs < now + TOKEN_EXPIRY_WARN_MS) {
     return {
       level: 'warning',
       errorCode: null,
-      tokenExpiresAt,
-      message: 'Your Instagram access token expires soon. Reconnect to avoid interruptions.',
+      tokenExpiresAt: storedExpiresAt,
+      message:
+        expMs < now
+          ? 'Your Instagram access token has expired. Reconnect your account.'
+          : 'Your Instagram access token expires soon. Reconnect to avoid interruptions.',
       reconnectRecommended: true,
     };
   }
@@ -371,7 +363,7 @@ function summarizeHealthFromMetaAndRow(
       return {
         level: 'warning',
         errorCode: null,
-        tokenExpiresAt,
+        tokenExpiresAt: storedExpiresAt,
         message:
           'No automated DM reply has been recorded recently. If something seems off, reconnect or check Meta / inbox.',
         reconnectRecommended: false,
@@ -382,7 +374,7 @@ function summarizeHealthFromMetaAndRow(
   return {
     level: 'ok',
     errorCode: null,
-    tokenExpiresAt,
+    tokenExpiresAt: storedExpiresAt,
     message: 'Instagram connection looks healthy.',
     reconnectRecommended: false,
   };
@@ -390,7 +382,7 @@ function summarizeHealthFromMetaAndRow(
 
 async function persistInstagramHealth(
   doctorId: string,
-  summary: ReturnType<typeof summarizeHealthFromMetaAndRow>,
+  summary: InstagramHealthProbeSummary,
   tokenExpiresAtIso: string | null,
   correlationId: string
 ): Promise<void> {
@@ -443,7 +435,7 @@ function summaryFromCachedRow(row: DoctorInstagramHealthRow): InstagramHealthSum
 }
 
 /**
- * Connection + health for dashboard (Meta debug_token, cached 5 minutes).
+ * Connection + health for dashboard (Instagram Graph /me, cached 5 minutes).
  */
 export async function getInstagramDashboardStatus(
   doctorId: string,
@@ -494,27 +486,24 @@ export async function getInstagramDashboardStatus(
   const checkedMs = row.instagram_health_checked_at
     ? new Date(row.instagram_health_checked_at).getTime()
     : 0;
+  // Do not serve cached `unknown` — re-probe so a transient Meta blip can clear.
   const cacheFresh =
-    checkedMs > 0 && Date.now() - checkedMs < HEALTH_CACHE_TTL_MS && !!row.instagram_health_level;
+    checkedMs > 0 &&
+    Date.now() - checkedMs < HEALTH_CACHE_TTL_MS &&
+    !!row.instagram_health_level &&
+    row.instagram_health_level !== 'unknown';
 
   if (cacheFresh) {
     return { ...basic, health: summaryFromCachedRow(row) };
   }
 
-  const { data: debugData, requestFailed } = await fetchMetaDebugToken(
-    row.instagram_access_token,
-    correlationId
-  );
-  const summary = summarizeHealthFromMetaAndRow(
-    debugData,
+  const probe = await probeInstagramUserToken(row.instagram_access_token, correlationId);
+  const summary = summarizeHealthFromProbe(
+    probe,
     row.instagram_last_dm_success_at,
-    requestFailed
+    row.instagram_token_expires_at
   );
-  const tokenExpiresIso =
-    summary.tokenExpiresAt ??
-    (typeof debugData?.expires_at === 'number' && debugData.expires_at > 0
-      ? new Date(debugData.expires_at * 1000).toISOString()
-      : null);
+  const tokenExpiresIso = summary.tokenExpiresAt ?? row.instagram_token_expires_at;
 
   await persistInstagramHealth(doctorId, summary, tokenExpiresIso, correlationId);
 
@@ -528,6 +517,92 @@ export async function getInstagramDashboardStatus(
       message: summary.message,
       reconnectRecommended: summary.reconnectRecommended,
     },
+  };
+}
+
+/**
+ * Force-refresh Instagram token health (ilr-04 + ilr-19).
+ * 1) If stored expiry is within the warn window (or missing/past), attempt
+ *    `ig_refresh_token` and persist the new token.
+ * 2) Re-check via Instagram Graph /me (bypasses 5-min cache).
+ * Returns null if not connected / no token.
+ */
+export async function forceRefreshInstagramHealth(
+  doctorId: string,
+  correlationId: string
+): Promise<InstagramHealthSummary | null> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) {
+    throw new InternalError('Service role client not available for Instagram health refresh');
+  }
+
+  const { data, error } = await supabase
+    .from('doctor_instagram')
+    .select(
+      'instagram_access_token, instagram_last_dm_success_at, instagram_token_expires_at'
+    )
+    .eq('doctor_id', doctorId)
+    .maybeSingle();
+
+  if (error) handleSupabaseError(error, correlationId);
+
+  const row = data as Pick<
+    DoctorInstagramHealthRow,
+    'instagram_access_token' | 'instagram_last_dm_success_at' | 'instagram_token_expires_at'
+  > | null;
+  if (!row?.instagram_access_token) {
+    return null;
+  }
+
+  let accessToken = row.instagram_access_token;
+  let storedExpiresAt = row.instagram_token_expires_at;
+  const expiresMs = storedExpiresAt ? new Date(storedExpiresAt).getTime() : null;
+  const needsRefresh =
+    expiresMs == null ||
+    Number.isNaN(expiresMs) ||
+    expiresMs < Date.now() + TOKEN_EXPIRY_WARN_MS;
+
+  if (needsRefresh) {
+    const refreshed = await refreshInstagramLongLivedToken(accessToken, correlationId);
+    if (refreshed) {
+      accessToken = refreshed.accessToken;
+      const newExpiresIso =
+        refreshed.expiresIn != null
+          ? new Date(Date.now() + refreshed.expiresIn * 1000).toISOString()
+          : null;
+      if (newExpiresIso) storedExpiresAt = newExpiresIso;
+      const { error: updateErr } = await supabase
+        .from('doctor_instagram')
+        .update({
+          instagram_access_token: accessToken,
+          ...(newExpiresIso ? { instagram_token_expires_at: newExpiresIso } : {}),
+        })
+        .eq('doctor_id', doctorId);
+      if (updateErr) {
+        logger.warn({ correlationId, doctorId }, 'Instagram: failed to persist refreshed token');
+      } else {
+        logger.info({ correlationId, doctorId }, 'Instagram long-lived token refreshed');
+      }
+    }
+  }
+
+  const probe = await probeInstagramUserToken(accessToken, correlationId);
+  const summary = summarizeHealthFromProbe(
+    probe,
+    row.instagram_last_dm_success_at,
+    storedExpiresAt
+  );
+  const tokenExpiresIso = summary.tokenExpiresAt ?? storedExpiresAt;
+
+  await persistInstagramHealth(doctorId, summary, tokenExpiresIso, correlationId);
+
+  return {
+    level: summary.level,
+    checkedAt: new Date().toISOString(),
+    tokenExpiresAt: tokenExpiresIso,
+    lastDmSuccessAt: row.instagram_last_dm_success_at,
+    message: summary.message,
+    reconnectRecommended: summary.reconnectRecommended,
   };
 }
 
@@ -560,7 +635,7 @@ export async function recordInstagramLastDmSuccess(doctorId: string, correlation
 export function createState(doctorId: string): string {
   const secret = env.INSTAGRAM_APP_SECRET;
   if (!secret) {
-    throw new InternalError('Facebook OAuth not configured');
+    throw new InternalError('Instagram OAuth not configured');
   }
   const nonce = crypto.randomBytes(16).toString('hex');
   const payload: InstagramConnectStatePayload = { n: nonce, d: doctorId };
@@ -585,7 +660,7 @@ export function verifyState(state: string): string {
   }
   const secret = env.INSTAGRAM_APP_SECRET;
   if (!secret) {
-    throw new InternalError('Facebook OAuth not configured');
+    throw new InternalError('Instagram OAuth not configured');
   }
   const parts = state.split('.');
   if (parts.length !== 2) {
@@ -615,12 +690,11 @@ export function verifyState(state: string): string {
 }
 
 // ============================================================================
-// OAuth URL and token exchange
+// OAuth URL and token exchange (Instagram Login — ilr-18)
 // ============================================================================
 
 /**
- * Build Facebook OAuth URL for redirect (connect start).
- * Uses Facebook Login (facebook.com/dialog/oauth) for Page-linked Instagram.
+ * Build Instagram Business Login OAuth URL for redirect (connect start).
  *
  * @param state - Signed state from createState(doctorId)
  * @returns Full URL to redirect the user to
@@ -629,42 +703,40 @@ export function buildMetaOAuthUrl(state: string): string {
   const appId = env.INSTAGRAM_APP_ID;
   const redirectUri = env.INSTAGRAM_REDIRECT_URI;
   if (!appId || !redirectUri) {
-    throw new InternalError('Facebook OAuth not configured (missing app id or redirect URI)');
+    throw new InternalError('Instagram OAuth not configured (missing app id or redirect URI)');
   }
   const params = new URLSearchParams({
     client_id: appId,
     redirect_uri: redirectUri,
-    scope: FACEBOOK_SCOPES.join(','),
+    scope: INSTAGRAM_BUSINESS_SCOPES.join(','),
     state,
     response_type: 'code',
   });
-  return `${FACEBOOK_OAUTH_AUTHORIZE}?${params.toString()}`;
+  return `${INSTAGRAM_OAUTH_AUTHORIZE}?${params.toString()}`;
 }
 
 export interface ExchangeCodeResult {
   accessToken: string;
+  /** Instagram professional account id from the short-lived exchange. */
   userId: string;
 }
 
-/** Facebook OAuth token response */
-interface FacebookTokenResponse {
-  access_token?: string;
-  token_type?: string;
-  expires_in?: number;
+export interface LongLivedTokenResult {
+  accessToken: string;
+  /** Seconds until expiry when Meta returns expires_in (~60 days). */
+  expiresIn: number | null;
 }
 
-/** Facebook Page with Instagram Business Account */
-interface FacebookPageWithIg {
-  id: string;
-  access_token: string;
-  instagram_business_account?: { id: string; username?: string };
+export interface InstagramUserInfo {
+  userId: string;
+  username: string | null;
 }
 
 /**
- * Exchange authorization code for short-lived user access token.
- * Facebook OAuth: GET graph.facebook.com/oauth/access_token.
+ * Exchange authorization code for a short-lived Instagram user access token.
+ * POST api.instagram.com/oauth/access_token (form body).
  *
- * @param code - Authorization code from Facebook callback
+ * @param code - Authorization code from Instagram callback (may include trailing #_)
  * @param correlationId - For logs only (no code in logs)
  */
 export async function exchangeCodeForShortLivedToken(
@@ -675,239 +747,171 @@ export async function exchangeCodeForShortLivedToken(
   const appSecret = env.INSTAGRAM_APP_SECRET;
   const redirectUri = env.INSTAGRAM_REDIRECT_URI;
   if (!appId || !appSecret || !redirectUri) {
-    throw new InternalError('Facebook OAuth not configured');
+    throw new InternalError('Instagram OAuth not configured');
   }
-  const params = new URLSearchParams({
+  // Meta sometimes appends #_ to the code; strip before exchange.
+  const cleanCode = code.replace(/#_$/, '');
+  const body = new URLSearchParams({
     client_id: appId,
     client_secret: appSecret,
+    grant_type: 'authorization_code',
     redirect_uri: redirectUri,
-    code,
+    code: cleanCode,
   });
   try {
-    const res = await axios.get<FacebookTokenResponse>(
-      `${FACEBOOK_OAUTH_ACCESS_TOKEN}?${params.toString()}`,
-      { timeout: META_HTTP_TIMEOUT_MS }
-    );
-    const token = res.data?.access_token;
-    if (!token) {
-      logger.warn({ correlationId }, 'Facebook token response missing access_token');
-      throw new UnauthorizedError('Failed to get access token from Facebook');
+    const res = await axios.post(INSTAGRAM_OAUTH_ACCESS_TOKEN, body.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      timeout: META_HTTP_TIMEOUT_MS,
+    });
+    const payload = res.data as {
+      access_token?: string;
+      user_id?: string | number;
+      data?: Array<{ access_token?: string; user_id?: string | number }>;
+    };
+    const row = payload.data?.[0];
+    const token = row?.access_token ?? payload.access_token;
+    const rawUserId = row?.user_id ?? payload.user_id;
+    const userId = rawUserId != null ? String(rawUserId) : '';
+    if (!token || !userId) {
+      logger.warn({ correlationId }, 'Instagram token response missing access_token or user_id');
+      throw new UnauthorizedError('Failed to get access token from Instagram');
     }
-    const userId = await getFacebookUserId(token, correlationId);
     return { accessToken: token, userId };
   } catch (err: unknown) {
+    if (err instanceof UnauthorizedError) throw err;
     const status = axios.isAxiosError(err) ? err.response?.status : undefined;
     logger.warn(
       { correlationId, status, message: axios.isAxiosError(err) ? err.message : 'Token exchange failed' },
-      'Facebook code exchange failed'
+      'Instagram code exchange failed'
     );
     throw new UnauthorizedError('Failed to exchange code for access token');
   }
 }
 
-async function getFacebookUserId(accessToken: string, _correlationId: string): Promise<string> {
-  const res = await axios.get<{ id?: string }>(`${FACEBOOK_GRAPH_BASE}/me`, {
-    params: { fields: 'id', access_token: accessToken },
-    timeout: META_HTTP_TIMEOUT_MS,
-  });
-  const id = res.data?.id;
-  if (!id) {
-    throw new UnauthorizedError('Could not get Facebook user ID');
-  }
-  return id;
-}
-
 /**
- * Exchange short-lived user token for long-lived (≈60 days).
- * Facebook: GET graph.facebook.com/oauth/access_token with grant_type=fb_exchange_token.
+ * Exchange short-lived Instagram user token for long-lived (≈60 days).
+ * GET graph.instagram.com/access_token?grant_type=ig_exchange_token
  */
 export async function exchangeForLongLivedToken(
   shortLivedToken: string,
   correlationId: string
-): Promise<string> {
-  const appId = env.INSTAGRAM_APP_ID;
+): Promise<LongLivedTokenResult> {
   const appSecret = env.INSTAGRAM_APP_SECRET;
-  if (!appId || !appSecret) {
-    throw new InternalError('Facebook OAuth not configured');
+  if (!appSecret) {
+    throw new InternalError('Instagram OAuth not configured');
   }
-  const params = new URLSearchParams({
-    grant_type: 'fb_exchange_token',
-    client_id: appId,
-    client_secret: appSecret,
-    fb_exchange_token: shortLivedToken,
-  });
   try {
-    const res = await axios.get<FacebookTokenResponse>(
-      `${FACEBOOK_OAUTH_ACCESS_TOKEN}?${params.toString()}`,
-      { timeout: META_HTTP_TIMEOUT_MS }
-    );
+    const res = await axios.get<{
+      access_token?: string;
+      expires_in?: number;
+    }>(`${INSTAGRAM_GRAPH_BASE}/access_token`, {
+      params: {
+        grant_type: 'ig_exchange_token',
+        client_secret: appSecret,
+        access_token: shortLivedToken,
+      },
+      timeout: META_HTTP_TIMEOUT_MS,
+    });
     const token = res.data?.access_token;
     if (!token) {
-      logger.warn({ correlationId }, 'Facebook long-lived response missing access_token');
-      throw new UnauthorizedError('Failed to get long-lived token from Facebook');
+      logger.warn({ correlationId }, 'Instagram long-lived response missing access_token');
+      throw new UnauthorizedError('Failed to get long-lived token from Instagram');
     }
-    return token;
+    const expiresIn =
+      typeof res.data?.expires_in === 'number' && res.data.expires_in > 0
+        ? res.data.expires_in
+        : null;
+    return { accessToken: token, expiresIn };
   } catch (err: unknown) {
+    if (err instanceof UnauthorizedError) throw err;
     logger.warn(
       { correlationId, message: axios.isAxiosError(err) ? err.message : 'Long-lived exchange failed' },
-      'Facebook long-lived token exchange failed'
+      'Instagram long-lived token exchange failed'
     );
     throw new UnauthorizedError('Failed to get long-lived access token');
   }
 }
 
 /**
- * Fetch user's Pages and get Page token + Instagram Business Account.
- * Returns first Page that has instagram_business_account linked.
- * Fallback: if me/accounts omits instagram_business_account (Business Manager linking),
- * query each Page separately with its token.
- *
- * @param userAccessToken - Long-lived user access token
- * @param correlationId - For logs only
+ * Refresh a valid long-lived Instagram user token (extends ~60 days).
+ * GET graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token
+ * Returns null on failure (caller should nudge reconnect). Never logs the token.
  */
-export async function getPageTokenAndInstagramAccount(
-  userAccessToken: string,
+export async function refreshInstagramLongLivedToken(
+  longLivedToken: string,
   correlationId: string
-): Promise<{
-  pageAccessToken: string;
-  instagramPageId: string;
-  facebookPageId: string;
-  instagramUsername: string | null;
-}> {
-  const url = `${FACEBOOK_GRAPH_BASE}/me/accounts`;
-  const params = {
-    fields: 'id,access_token,instagram_business_account{id,username}',
-    access_token: userAccessToken,
-  };
+): Promise<LongLivedTokenResult | null> {
   try {
-    const res = await axios.get<{ data?: FacebookPageWithIg[] }>(url, {
-      params,
+    const res = await axios.get<{
+      access_token?: string;
+      expires_in?: number;
+    }>(`${INSTAGRAM_GRAPH_BASE}/refresh_access_token`, {
+      params: {
+        grant_type: 'ig_refresh_token',
+        access_token: longLivedToken,
+      },
       timeout: META_HTTP_TIMEOUT_MS,
     });
-    const pages = res.data?.data ?? [];
-    const pageIds = pages.map((p) => p.id).filter(Boolean);
-    logger.info(
-      { correlationId, pageCount: pages.length, pageIds },
-      'Facebook me/accounts: pages returned'
-    );
-
-    // First pass: use instagram_business_account from me/accounts if present
-    for (const page of pages) {
-      const ig = page.instagram_business_account;
-      if (ig?.id && page.access_token && page.id) {
-        return {
-          pageAccessToken: page.access_token,
-          instagramPageId: ig.id,
-          facebookPageId: page.id,
-          instagramUsername: ig.username ?? null,
-        };
-      }
+    const token = res.data?.access_token;
+    if (!token) {
+      logger.warn({ correlationId }, 'Instagram token refresh missing access_token');
+      return null;
     }
-
-    // Fallback: me/accounts sometimes omits instagram_business_account for Business-linked assets.
-    // Try Page token first (can work with ads_management); then user token (needs pages_read_engagement).
-    for (const page of pages) {
-      if (!page.access_token || !page.id) continue;
-      const tokensToTry = [page.access_token, userAccessToken];
-      for (const token of tokensToTry) {
-        try {
-          const pageRes = await axios.get<{ instagram_business_account?: { id: string; username?: string } }>(
-            `${FACEBOOK_GRAPH_BASE}/${page.id}`,
-            {
-              params: {
-                fields: 'instagram_business_account',
-                access_token: token,
-              },
-              timeout: META_HTTP_TIMEOUT_MS,
-            }
-          );
-          const ig = pageRes.data?.instagram_business_account;
-          if (ig?.id && page.id) {
-            logger.info(
-              { correlationId, pageId: page.id },
-              'Resolved Instagram via Page lookup fallback (me/accounts omitted it)'
-            );
-            return {
-              pageAccessToken: page.access_token,
-              instagramPageId: ig.id,
-              facebookPageId: page.id,
-              instagramUsername: ig.username ?? null,
-            };
-          }
-          // instagram_business_account empty (common with Business Manager linking).
-          // Try /{page-id}/instagram_accounts - requires instagram_basic. Try both tokens.
-          const tokensForIgAccounts = [page.access_token, userAccessToken];
-          for (const igToken of tokensForIgAccounts) {
-            try {
-              const igAccountsRes = await axios.get<{ data?: Array<{ id: string; username?: string }> }>(
-                `${FACEBOOK_GRAPH_BASE}/${page.id}/instagram_accounts`,
-                {
-                  params: { fields: 'id,username', access_token: igToken },
-                  timeout: META_HTTP_TIMEOUT_MS,
-                }
-              );
-              const firstIg = igAccountsRes.data?.data?.[0];
-              if (firstIg?.id && page.id) {
-                logger.info(
-                  { correlationId, pageId: page.id },
-                  'Resolved Instagram via instagram_accounts fallback (Business Manager linking)'
-                );
-                return {
-                  pageAccessToken: page.access_token,
-                  instagramPageId: firstIg.id,
-                  facebookPageId: page.id,
-                  instagramUsername: firstIg.username ?? null,
-                };
-              }
-              const count = igAccountsRes.data?.data?.length ?? 0;
-              logger.info(
-                { correlationId, pageId: page.id, igAccountCount: count },
-                'instagram_accounts returned empty or no matching account'
-              );
-              break; // Don't retry with other token if we got a response
-            } catch (igAccErr: unknown) {
-              const status = axios.isAxiosError(igAccErr) ? igAccErr.response?.status : undefined;
-              const metaBody = axios.isAxiosError(igAccErr) ? igAccErr.response?.data : undefined;
-              logger.warn(
-                { correlationId, pageId: page.id, status, metaBody },
-                'instagram_accounts fallback failed'
-              );
-              if (igToken === tokensForIgAccounts[tokensForIgAccounts.length - 1]) break;
-            }
-          }
-          logger.debug(
-            { correlationId, pageId: page.id, hasIg: !!ig },
-            'Page lookup: no instagram_business_account'
-          );
-          break; // Got response but no ig; try next page
-        } catch (pageErr: unknown) {
-          const status = axios.isAxiosError(pageErr) ? pageErr.response?.status : undefined;
-          const errMsg = axios.isAxiosError(pageErr) ? pageErr.message : String(pageErr);
-          const metaBody = axios.isAxiosError(pageErr) ? pageErr.response?.data : undefined;
-          const usedPageToken = token === page.access_token;
-          logger.warn(
-            { correlationId, pageId: page.id, status, message: errMsg, metaBody, usedPageToken },
-            'Page lookup for instagram_business_account failed'
-          );
-          if (token === tokensToTry[tokensToTry.length - 1]) break;
-        }
-      }
-    }
-
+    const expiresIn =
+      typeof res.data?.expires_in === 'number' && res.data.expires_in > 0
+        ? res.data.expires_in
+        : null;
+    return { accessToken: token, expiresIn };
+  } catch (err: unknown) {
+    const status = axios.isAxiosError(err) ? err.response?.status : undefined;
     logger.warn(
-      { correlationId, pageCount: pages.length },
-      'No Facebook Page with linked Instagram Business Account found'
+      { correlationId, status, message: axios.isAxiosError(err) ? err.message : 'refresh failed' },
+      'Instagram token refresh failed'
     );
-    throw new UnauthorizedError(
-      'No Facebook Page with linked Instagram account found. Please link your Instagram Professional account to a Facebook Page in Meta Business Settings.'
-    );
+    return null;
+  }
+}
+
+/**
+ * Fetch Instagram professional account id + username for a user token.
+ * GET graph.instagram.com/me?fields=user_id,username
+ */
+export async function getInstagramUserInfo(
+  accessToken: string,
+  correlationId: string
+): Promise<InstagramUserInfo> {
+  try {
+    const res = await axios.get<{
+      user_id?: string | number;
+      id?: string | number;
+      username?: string;
+      data?: Array<{ user_id?: string | number; id?: string | number; username?: string }>;
+    }>(`${INSTAGRAM_GRAPH_BASE}/v18.0/me`, {
+      params: {
+        fields: 'user_id,username',
+        access_token: accessToken,
+      },
+      timeout: META_HTTP_TIMEOUT_MS,
+    });
+    const row = res.data?.data?.[0] ?? res.data;
+    const rawId = row?.user_id ?? row?.id;
+    const userId = rawId != null ? String(rawId) : '';
+    if (!userId) {
+      logger.warn({ correlationId }, 'Instagram /me missing user_id');
+      throw new UnauthorizedError('Could not get Instagram account id');
+    }
+    const username =
+      typeof row?.username === 'string' && row.username.trim().length > 0
+        ? row.username.trim()
+        : null;
+    return { userId, username };
   } catch (err: unknown) {
     if (err instanceof UnauthorizedError) throw err;
     logger.warn(
-      { correlationId, message: axios.isAxiosError(err) ? err.message : 'Pages request failed' },
-      'Could not fetch Facebook Pages'
+      { correlationId, message: axios.isAxiosError(err) ? err.message : '/me failed' },
+      'Instagram /me request failed'
     );
-    throw new UnauthorizedError('Failed to get Page and Instagram account from Facebook');
+    throw new UnauthorizedError('Failed to get Instagram account info');
   }
 }
 
@@ -975,15 +979,64 @@ export async function getInstagramAccessTokenForDoctor(
   return token.length > 0 ? token : null;
 }
 
+/**
+ * Enable webhook delivery for an Instagram professional account (Instagram Login).
+ * Best-effort: logs warning on failure (doctor still connected).
+ *
+ * @see https://developers.facebook.com/docs/instagram-platform/webhooks/
+ */
+export async function subscribeInstagramAccountApps(
+  instagramAccountId: string,
+  accessToken: string,
+  correlationId: string
+): Promise<void> {
+  try {
+    await axios.post(
+      `${INSTAGRAM_GRAPH_BASE}/v18.0/${encodeURIComponent(instagramAccountId)}/subscribed_apps`,
+      null,
+      {
+        params: {
+          subscribed_fields: 'messages,comments,messaging_postbacks,message_reactions',
+          access_token: accessToken,
+        },
+        timeout: META_HTTP_TIMEOUT_MS,
+      }
+    );
+    logger.info(
+      { correlationId, pageId: instagramAccountId },
+      'Instagram account subscribed_apps ok'
+    );
+  } catch (err: unknown) {
+    logger.warn(
+      {
+        correlationId,
+        pageId: instagramAccountId,
+        message: axios.isAxiosError(err) ? err.message : 'subscribed_apps failed',
+        status: axios.isAxiosError(err) ? err.response?.status : undefined,
+      },
+      'Instagram account subscribed_apps failed'
+    );
+  }
+}
+
 // ============================================================================
 // Persist connection (upsert doctor_instagram)
 // ============================================================================
 
 export interface SaveDoctorInstagramInput {
+  /** Instagram professional account id (webhook entry.id). */
   instagram_page_id: string;
   facebook_page_id?: string | null;
   instagram_access_token: string;
   instagram_username?: string | null;
+  /**
+   * ilr-02: Facebook app-scoped user id. Instagram Login does not provide one —
+   * leave null; Meta data-deletion for IG-login connections is incomplete until
+   * Meta provides a mappable identifier (document in ilr-17/18).
+   */
+  facebook_user_id?: string | null;
+  /** ISO expiry from long-lived / refresh exchange when known. */
+  instagram_token_expires_at?: string | null;
 }
 
 /**
@@ -1010,10 +1063,11 @@ export async function saveDoctorInstagram(
     facebook_page_id: input.facebook_page_id ?? null,
     instagram_access_token: input.instagram_access_token.trim(),
     instagram_username: input.instagram_username ?? null,
+    facebook_user_id: input.facebook_user_id ?? null,
     instagram_health_checked_at: null,
     instagram_health_level: null,
     instagram_health_error_code: null,
-    instagram_token_expires_at: null,
+    instagram_token_expires_at: input.instagram_token_expires_at ?? null,
   };
 
   const { error } = await supabase

@@ -1,30 +1,17 @@
 /**
- * Best-effort appointment refund primitive (pdm-09 — session overrun cancel_refund).
- *
- * Idempotent: no-ops when there is no captured payment or Razorpay is not configured.
+ * Best-effort appointment refund (P2.5).
+ * Always uses the doctor's own Razorpay credentials — never the platform account.
+ * Failures are swallowed so cancel can still proceed.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type Razorpay from 'razorpay';
+import { razorpayAdapter } from '../adapters/razorpay-adapter';
 import { logger } from '../config/logger';
-import { isRazorpayConfigured, razorpayConfig } from '../config/payment';
+import { getDecryptedGatewayCredentials } from './doctor-gateway-credentials-service';
 
 export interface RefundAppointmentOptions {
   reason: string;
   correlationId?: string;
-}
-
-let razorpayClient: Razorpay | null = null;
-
-async function getRazorpayClient(): Promise<Razorpay | null> {
-  if (!isRazorpayConfigured()) return null;
-  if (razorpayClient) return razorpayClient;
-  const RazorpaySdk = (await import('razorpay')).default;
-  razorpayClient = new RazorpaySdk({
-    key_id: razorpayConfig.keyId!,
-    key_secret: razorpayConfig.keySecret!,
-  });
-  return razorpayClient;
 }
 
 /**
@@ -60,10 +47,6 @@ export async function refundAppointment(
     return;
   }
 
-  if (payment.status === 'refunded') {
-    return;
-  }
-
   if (payment.gateway !== 'razorpay' || !payment.gateway_payment_id) {
     logger.info(
       { appointmentId, gateway: payment.gateway, correlationId },
@@ -72,37 +55,66 @@ export async function refundAppointment(
     return;
   }
 
-  const client = await getRazorpayClient();
-  if (!client) {
-    logger.warn({ appointmentId, correlationId }, 'refundAppointment: Razorpay not configured — skip');
+  const { data: appointment, error: aptError } = await supabase
+    .from('appointments')
+    .select('doctor_id')
+    .eq('id', appointmentId)
+    .maybeSingle();
+
+  if (aptError || !appointment?.doctor_id) {
+    logger.warn(
+      { appointmentId, correlationId },
+      'refundAppointment: doctor lookup failed — skip'
+    );
+    return;
+  }
+
+  let credentials;
+  try {
+    credentials = await getDecryptedGatewayCredentials(appointment.doctor_id as string, correlationId);
+  } catch {
+    logger.warn({ appointmentId, correlationId }, 'refundAppointment: credentials load failed — skip');
+    return;
+  }
+
+  if (!credentials) {
+    logger.warn(
+      { appointmentId, correlationId },
+      'refundAppointment: doctor gateway not connected — skip'
+    );
     return;
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const refund = (await (client.payments as any).refund(payment.gateway_payment_id, {
-      amount: payment.amount_minor,
-      speed: 'normal',
-      notes: { reason: options.reason, appointment_id: appointmentId, correlation_id: correlationId },
-    })) as { id?: string };
+    const refund = await razorpayAdapter.refund(
+      {
+        gatewayPaymentId: payment.gateway_payment_id as string,
+        amountMinor: payment.amount_minor as number,
+        idempotencyKey: `refund-${payment.id}`,
+        notes: {
+          reason: options.reason,
+          appointment_id: appointmentId,
+          correlation_id: correlationId,
+        },
+      },
+      credentials
+    );
 
-    if (refund?.id) {
-      await supabase
-        .from('payments')
-        .update({ status: 'refunded' })
-        .eq('id', payment.id)
-        .eq('status', 'captured');
-    }
+    await supabase
+      .from('payments')
+      .update({ status: 'refunded' })
+      .eq('id', payment.id)
+      .eq('status', 'captured');
 
     logger.info(
       {
-        event: 'opd_overrun.refunded',
+        event: 'payment.refunded',
         appointmentId,
         paymentId: payment.id,
-        refundId: refund?.id,
+        refundId: refund.gatewayRefundId,
         correlationId,
       },
-      'opd_overrun.refunded'
+      'payment.refunded'
     );
   } catch (err) {
     logger.warn(

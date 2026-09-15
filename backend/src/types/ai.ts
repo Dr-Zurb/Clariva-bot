@@ -141,6 +141,19 @@ export interface IntentDetectionResult {
    * Set by classifier when assistant asked "anything else" before fee; mutually exclusive with fee_thread_continuation in merge.
    */
   reason_first_done_adding?: boolean;
+  /**
+   * lang-17 / LANG4-D4: language the patient is writing in.
+   * Optional — absent on deterministic short-circuits and parse failures.
+   * Ratchet may adopt non-`en` values only on undecided threads; never moves toward English.
+   */
+  language?:
+    | 'en'
+    | 'hi'
+    | 'hi-Latn'
+    | 'pa'
+    | 'pa-Latn'
+    | 'other'
+    | 'unknown';
 }
 
 // ============================================================================

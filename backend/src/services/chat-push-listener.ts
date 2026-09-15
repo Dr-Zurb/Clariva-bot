@@ -14,6 +14,7 @@ import { getSupabaseAdminClient } from '../config/database';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { sendPushToSession } from './push-notification-service';
+import { recordAsyncReplyForSession } from './billing/usage-ledger-service';
 
 const CHANNEL_NAME = 'chat-push-listener';
 const PUSH_BODY_MAX_LEN = 80;
@@ -81,6 +82,10 @@ async function handleMessageInsert(row: ConsultationMessageRow): Promise<void> {
 
   const sessionId = row.session_id;
   const senderRole = row.sender_role;
+
+  if (senderRole === 'doctor' && row.kind === 'text') {
+    void recordAsyncReplyForSession(sessionId, `chat-push:${sessionId}`);
+  }
 
   let sessionDoctorName: string | undefined;
   if (senderRole === 'doctor') {

@@ -7,6 +7,7 @@
  */
 
 import { getSupabaseAdminClient } from '../config/database';
+import { logger } from '../config/logger';
 import {
   Conversation,
   InsertConversation,
@@ -18,6 +19,89 @@ import {
 import { InternalError } from '../utils/errors';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataModification } from '../utils/audit-logger';
+import type { ConversationLanguage } from '../utils/conversation-language';
+
+const CONVERSATION_LANGUAGE_CODES: ReadonlySet<string> = new Set([
+  'en',
+  'hi',
+  'hi-Latn',
+  'pa',
+  'pa-Latn',
+  'other',
+]);
+
+/**
+ * Coerce a stored / raw language value to a valid ConversationLanguage.
+ * Invalid or nullish → `'en'` (LANG-D1 / LANG3-D3).
+ */
+export function coerceConversationLanguage(raw: unknown): ConversationLanguage {
+  if (typeof raw === 'string' && CONVERSATION_LANGUAGE_CODES.has(raw)) {
+    return raw as ConversationLanguage;
+  }
+  return 'en';
+}
+
+/**
+ * Read sticky reply language for out-of-band DMs (lang-11).
+ * Never throws — missing row / NULL / invalid → `'en'` + WARN.
+ */
+export async function getConversationLanguage(
+  conversationId: string,
+  correlationId: string
+): Promise<ConversationLanguage> {
+  try {
+    const supabaseAdmin = getSupabaseAdminClient();
+    if (!supabaseAdmin) {
+      logger.warn(
+        { correlationId, conversationId },
+        'getConversationLanguage: admin client unavailable; defaulting to en'
+      );
+      return 'en';
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('conversations')
+      .select('language')
+      .eq('id', conversationId)
+      .maybeSingle();
+
+    if (error) {
+      logger.warn(
+        { correlationId, conversationId, err: error },
+        'getConversationLanguage: query failed; defaulting to en'
+      );
+      return 'en';
+    }
+    if (!data) {
+      logger.warn(
+        { correlationId, conversationId },
+        'getConversationLanguage: conversation missing; defaulting to en'
+      );
+      return 'en';
+    }
+
+    const coerced = coerceConversationLanguage(
+      (data as { language?: unknown }).language
+    );
+    if (
+      (data as { language?: unknown }).language != null &&
+      coerced === 'en' &&
+      (data as { language?: unknown }).language !== 'en'
+    ) {
+      logger.warn(
+        { correlationId, conversationId },
+        'getConversationLanguage: invalid stored language; defaulting to en'
+      );
+    }
+    return coerced;
+  } catch (err) {
+    logger.warn(
+      { correlationId, conversationId, err },
+      'getConversationLanguage: unexpected failure; defaulting to en'
+    );
+    return 'en';
+  }
+}
 
 /**
  * RBH-06: Map legacy slot steps to `awaiting_slot_selection` (in-memory + caller may persist).
@@ -299,17 +383,20 @@ export async function getConversationState(
 }
 
 /**
- * Update conversation state (metadata only; no PHI).
+ * Update conversation state (metadata; optional language — lang-03).
+ * Language is a locale code, not PHI. Pass `language` only when it changed.
  *
  * @param conversationId - Conversation ID
  * @param state - New state to merge/store
  * @param correlationId - Request correlation ID
+ * @param options - Optional `{ language }` to persist with the same write
  * @returns Updated conversation
  */
 export async function updateConversationState(
   conversationId: string,
   state: ConversationState,
-  correlationId: string
+  correlationId: string,
+  options?: { language?: ConversationLanguage }
 ): Promise<Conversation> {
   const supabaseAdmin = getSupabaseAdminClient();
   if (!supabaseAdmin) {
@@ -321,9 +408,17 @@ export async function updateConversationState(
     updatedAt: new Date().toISOString(),
   };
 
+  const updatePayload: {
+    metadata: typeof metadata;
+    language?: ConversationLanguage;
+  } = { metadata };
+  if (options?.language !== undefined) {
+    updatePayload.language = options.language;
+  }
+
   const { data: updated, error } = await supabaseAdmin
     .from('conversations')
-    .update({ metadata })
+    .update(updatePayload)
     .eq('id', conversationId)
     .select()
     .single();
@@ -332,13 +427,16 @@ export async function updateConversationState(
     handleSupabaseError(error, correlationId);
   }
 
+  const changedFields =
+    options?.language !== undefined ? ['metadata', 'language'] : ['metadata'];
+
   await logDataModification(
     correlationId,
     undefined as any,
     'update',
     'conversation',
     conversationId,
-    ['metadata']
+    changedFields
   );
 
   return updated as Conversation;

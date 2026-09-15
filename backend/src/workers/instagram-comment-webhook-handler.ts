@@ -10,6 +10,7 @@ import {
   sendInstagramMessage,
   replyToInstagramComment,
   COMMENT_PUBLIC_REPLY_TEXT,
+  fetchCommentAuthorUsername,
 } from '../services/instagram-service';
 import {
   getInstagramAccessTokenForDoctor,
@@ -20,10 +21,11 @@ import { classifyCommentIntent, isPossiblyMedicalComment } from '../services/ai-
 import { parseInstagramCommentPayload } from '../utils/webhook-event-id';
 import { resolveDoctorIdFromComment } from '../services/comment-media-service';
 import { createCommentLead } from '../services/comment-lead-service';
+import { resolveCommentOutreachLanguage } from '../services/comment-outreach-language';
 import { sendCommentLeadToDoctor } from '../services/notification-service';
 import { logWebhookCommentPipeline } from '../services/webhook-metrics';
+import { buildCommentProactiveDmMessage } from '../utils/dm-copy';
 import type { CommentIntent } from '../types/ai';
-import type { DoctorSettingsRow } from '../types/doctor-settings';
 import type { WebhookProvider } from '../types/webhook';
 
 /** e-task-7: High-intent comment intents (reply + DM per COMMENTS_MANAGEMENT_PLAN). */
@@ -37,43 +39,6 @@ const HIGH_INTENT_COMMENT: Set<CommentIntent> = new Set([
 
 /** e-task-7: Skip intents (no storage, no outreach). */
 const SKIP_INTENT_COMMENT: Set<CommentIntent> = new Set(['spam', 'joke', 'unrelated', 'vulgar']);
-
-/** e-task-7: Build proactive DM by intent per COMMENTS_MANAGEMENT_PLAN. */
-function buildCommentDMMessage(
-  intent: CommentIntent,
-  settings: DoctorSettingsRow | null
-): string {
-  const practiceName = settings?.practice_name?.trim() || 'Our practice';
-  const specialty = settings?.specialty?.trim() || '';
-  const address = settings?.address_summary?.trim() || '';
-  const detailsBlock = `\n\n${practiceName}${specialty ? ` - ${specialty}` : ''}${address ? `. ${address}` : ''}`;
-
-  const templates: Record<string, { ack: string; cta: string }> = {
-    book_appointment: {
-      ack: 'You expressed interest in booking.',
-      cta: "Reply here if you'd like to schedule.",
-    },
-    check_availability: {
-      ack: 'You asked about availability.',
-      cta: "Reply here if you'd like to schedule a consultation.",
-    },
-    pricing_inquiry: {
-      ack: 'You asked about pricing.',
-      cta: "Reply here if you'd like more details.",
-    },
-    general_inquiry: {
-      ack: 'You had a question.',
-      cta: "Reply here if you'd like to connect.",
-    },
-    medical_query: {
-      ack: 'Our doctor may be able to help with your query.',
-      cta: "If you'd like to schedule a consultation, reply here.",
-    },
-  };
-
-  const t = templates[intent] ?? templates.general_inquiry;
-  return `${t.ack}${detailsBlock}\n\n${t.cta}`;
-}
 
 export interface ProcessInstagramCommentWebhookParams {
   eventId: string;
@@ -106,7 +71,9 @@ export async function processInstagramCommentWebhook(
     return;
   }
 
-  const { commentId, commenterIgId, commentText, mediaId, entryId } = parsed;
+  const { commentId, commenterIgId, commentText, mediaId, entryId, commenterUsername } =
+    parsed;
+  let resolvedUsername = commenterUsername;
   const doctorId = entryId
     ? await resolveDoctorIdFromComment(entryId, mediaId, correlationId)
     : null;
@@ -200,6 +167,19 @@ export async function processInstagramCommentWebhook(
   let publicReplySent = false;
   let commentDoctorTokenPresent = false;
 
+  // Resolve @username before/with outreach token (webhook often already has it).
+  const doctorTokenEarly = await getInstagramAccessTokenForDoctor(
+    doctorId,
+    correlationId
+  );
+  if (!resolvedUsername && doctorTokenEarly) {
+    resolvedUsername = await fetchCommentAuthorUsername(
+      commentId,
+      doctorTokenEarly,
+      correlationId
+    );
+  }
+
   await createCommentLead(
     {
       doctorId,
@@ -209,6 +189,7 @@ export async function processInstagramCommentWebhook(
       mediaId,
       intent,
       confidence: intentResult.confidence,
+      commenterUsername: resolvedUsername,
       publicReplySent: false,
       dmSent: false,
     },
@@ -218,10 +199,25 @@ export async function processInstagramCommentWebhook(
   const receptionistPaused = settings?.instagram_receptionist_paused === true;
 
   if (isHighIntent && !receptionistPaused) {
-    const doctorToken = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
+    const doctorToken =
+      doctorTokenEarly ??
+      (await getInstagramAccessTokenForDoctor(doctorId, correlationId));
     commentDoctorTokenPresent = !!doctorToken;
     if (doctorToken) {
-      const dmMessage = buildCommentDMMessage(intent, settings);
+      // LANG5-D6: language from linked conversation only — never from comment text.
+      const language = await resolveCommentOutreachLanguage(
+        doctorId,
+        'instagram',
+        commenterIgId,
+        correlationId
+      );
+      const dmMessage = buildCommentProactiveDmMessage({
+        language,
+        intent,
+        practiceName: settings?.practice_name ?? undefined,
+        specialty: settings?.specialty ?? undefined,
+        addressSummary: settings?.address_summary ?? undefined,
+      });
       try {
         await sendInstagramMessage(commenterIgId, dmMessage, correlationId, doctorToken);
         dmSent = true;
@@ -265,6 +261,7 @@ export async function processInstagramCommentWebhook(
             mediaId,
             intent,
             confidence: intentResult.confidence,
+            commenterUsername: resolvedUsername,
             publicReplySent,
             dmSent,
           },

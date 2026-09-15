@@ -1,13 +1,16 @@
 /**
  * RBH-13: Structured consultation / fee copy for Instagram DM (no invented amounts).
  * Supports plain text from doctor_settings.consultation_types or optional compact JSON.
- * Localized intro/footer via detectSafetyMessageLocale(userText). Falls back to appointment_fee_minor (INR) when no ₹ in consultation_types.
+ * Localized intro/footer via turn-resolved language (lang-06). Falls back to appointment_fee_minor (INR) when no ₹ in consultation_types.
  */
 
+import type { SafetyMessageLocale } from './safety-messages';
 import {
-  type SafetyMessageLocale,
-  detectSafetyMessageLocale,
-} from './safety-messages';
+  languageUsesDevanagari,
+  languageUsesGurmukhi,
+  toStaticLocale,
+  type ConversationLanguage,
+} from './conversation-language';
 import type {
   FollowUpPolicyV1,
   ServiceCatalogV1,
@@ -670,11 +673,19 @@ function truncateIfNeededDm(text: string, maxLen: number, locale: SafetyMessageL
 export function formatServiceCatalogForDm(
   catalog: ServiceCatalogV1,
   settings: ConsultationFeesDmSettings,
+  language: ConversationLanguage,
   userText: string = '',
   catalogMatchText?: string,
   opts?: { clinicalLedFeeThread?: boolean }
 ): string {
-  return formatServiceCatalogForDmWithMeta(catalog, settings, userText, catalogMatchText, opts).markdown;
+  return formatServiceCatalogForDmWithMeta(
+    catalog,
+    settings,
+    language,
+    userText,
+    catalogMatchText,
+    opts
+  ).markdown;
 }
 
 /** Options for teleconsult fee catalog DM; `llmNarrow` is used only by the async formatter. */
@@ -692,7 +703,7 @@ type PickCatalogForFeeDmResult = ReturnType<typeof pickCatalogServicesForFeeDm>;
 
 function buildServiceCatalogFeeDmResultFromPick(
   settings: ConsultationFeesDmSettings,
-  userText: string,
+  language: ConversationLanguage,
   pick: PickCatalogForFeeDmResult,
   opts?: { clinicalLedFeeThread?: boolean; showModalityBreakdown?: boolean }
 ): {
@@ -701,9 +712,9 @@ function buildServiceCatalogFeeDmResultFromPick(
   feeAmbiguousStaffReview?: ConsultationFeeAmbiguousStaffReview;
 } {
   const practiceName = settings.practice_name?.trim() || 'the practice';
-  const locale = detectSafetyMessageLocale(userText || '');
-  const hasDevanagari = /[\u0900-\u097F]/.test(userText || '');
-  const hasGurmukhi = /[\u0A00-\u0A7F]/.test(userText || '');
+  const locale = toStaticLocale(language);
+  const hasDevanagari = languageUsesDevanagari(language);
+  const hasGurmukhi = languageUsesGurmukhi(language);
   const hoursSummary = settings.business_hours_summary?.trim() ?? '';
   const hoursSuffix = formatHoursHintLine(locale, hoursSummary, hasDevanagari, hasGurmukhi);
   const cur = settings.appointment_fee_currency;
@@ -837,6 +848,7 @@ function buildServiceCatalogFeeDmResultFromPick(
 export function formatServiceCatalogForDmWithMeta(
   catalog: ServiceCatalogV1,
   settings: ConsultationFeesDmSettings,
+  language: ConversationLanguage,
   userText: string = '',
   catalogMatchText?: string,
   opts?: { clinicalLedFeeThread?: boolean; showModalityBreakdown?: boolean }
@@ -846,7 +858,7 @@ export function formatServiceCatalogForDmWithMeta(
   feeAmbiguousStaffReview?: ConsultationFeeAmbiguousStaffReview;
 } {
   const pick = pickCatalogServicesForFeeDm(catalog, userText, catalogMatchText, opts);
-  return buildServiceCatalogFeeDmResultFromPick(settings, userText, pick, opts);
+  return buildServiceCatalogFeeDmResultFromPick(settings, language, pick, opts);
 }
 
 /**
@@ -856,6 +868,7 @@ export function formatServiceCatalogForDmWithMeta(
 export async function formatServiceCatalogForDmWithMetaAsync(
   catalog: ServiceCatalogV1,
   settings: ConsultationFeesDmSettings,
+  language: ConversationLanguage,
   userText: string = '',
   catalogMatchText?: string,
   opts?: ServiceCatalogDmFormatOpts
@@ -912,7 +925,7 @@ export async function formatServiceCatalogForDmWithMetaAsync(
     }
   }
 
-  return buildServiceCatalogFeeDmResultFromPick(settings, userText, pick, opts);
+  return buildServiceCatalogFeeDmResultFromPick(settings, language, pick, opts);
 }
 
 /**
@@ -1208,12 +1221,12 @@ function appendMinorFeeLine(
 }
 
 /**
- * Booking CTA after fee block — matches user locale when possible.
+ * Booking CTA after fee block — locale from turn language (lang-06).
  */
-export function formatFeeBookingCtaForDm(userText: string): string {
-  const locale = detectSafetyMessageLocale(userText || '');
-  const hasDevanagari = /[\u0900-\u097F]/.test(userText || '');
-  const hasGurmukhi = /[\u0A00-\u0A7F]/.test(userText || '');
+export function formatFeeBookingCtaForDm(language: ConversationLanguage): string {
+  const locale = toStaticLocale(language);
+  const hasDevanagari = languageUsesDevanagari(language);
+  const hasGurmukhi = languageUsesGurmukhi(language);
 
   if (locale === 'hi' && !hasDevanagari) {
     return 'Jab aap **appointment book** karna chahein, yahan **book appointment** likhein—hum aage help karenge.';
@@ -1242,15 +1255,23 @@ export interface ConsultationFeeDmWithMeta {
  */
 export function formatConsultationFeesForDm(
   settings: ConsultationFeesDmSettings,
+  language: ConversationLanguage,
   userText: string = '',
   catalogMatchText?: string,
   catalogOpts?: { clinicalLedFeeThread?: boolean }
 ): string {
-  return formatConsultationFeesForDmWithMeta(settings, userText, catalogMatchText, catalogOpts).markdown;
+  return formatConsultationFeesForDmWithMeta(
+    settings,
+    language,
+    userText,
+    catalogMatchText,
+    catalogOpts
+  ).markdown;
 }
 
 export function formatConsultationFeesForDmWithMeta(
   settings: ConsultationFeesDmSettings,
+  language: ConversationLanguage,
   userText: string = '',
   catalogMatchText?: string,
   catalogOpts?: { clinicalLedFeeThread?: boolean }
@@ -1268,6 +1289,7 @@ export function formatConsultationFeesForDmWithMeta(
         const catMeta = formatServiceCatalogForDmWithMeta(
           catalog,
           settings,
+          language,
           userText,
           catalogMatchText,
           catalogOpts
@@ -1282,9 +1304,9 @@ export function formatConsultationFeesForDmWithMeta(
   }
 
   const raw = settings.consultation_types?.trim();
-  const locale = detectSafetyMessageLocale(userText || '');
-  const hasDevanagari = /[\u0900-\u097F]/.test(userText || '');
-  const hasGurmukhi = /[\u0A00-\u0A7F]/.test(userText || '');
+  const locale = toStaticLocale(language);
+  const hasDevanagari = languageUsesDevanagari(language);
+  const hasGurmukhi = languageUsesGurmukhi(language);
 
   const hoursSuffix = formatHoursHintLine(
     locale,
@@ -1372,6 +1394,7 @@ export function formatConsultationFeesForDmWithMeta(
  */
 export async function formatConsultationFeesForDmWithMetaAsync(
   settings: ConsultationFeesDmSettings,
+  language: ConversationLanguage,
   userText: string = '',
   catalogMatchText?: string,
   catalogOpts?: ServiceCatalogDmFormatOpts
@@ -1385,6 +1408,7 @@ export async function formatConsultationFeesForDmWithMetaAsync(
         const catMeta = await formatServiceCatalogForDmWithMetaAsync(
           catalog,
           settings,
+          language,
           userText,
           catalogMatchText,
           catalogOpts
@@ -1397,7 +1421,13 @@ export async function formatConsultationFeesForDmWithMetaAsync(
       }
     }
   }
-  return formatConsultationFeesForDmWithMeta(settings, userText, catalogMatchText, catalogOpts);
+  return formatConsultationFeesForDmWithMeta(
+    settings,
+    language,
+    userText,
+    catalogMatchText,
+    catalogOpts
+  );
 }
 
 /**

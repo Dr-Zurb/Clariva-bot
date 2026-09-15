@@ -24,6 +24,8 @@ import {
   getSessionSnapshotHandler,
   acceptEarlyJoinHandler,
   declineEarlyJoinHandler,
+  lobbyHeartbeatHandler,
+  lobbyPresenceTokenHandler,
 } from '../../../controllers/opd-session-controller';
 import { publicSessionLimiter } from '../../../middleware/rate-limiters';
 
@@ -38,5 +40,7 @@ router.get('/slot-page-info', getSlotPageInfoHandler);
 router.get('/session/snapshot', publicSessionLimiter, getSessionSnapshotHandler);
 router.post('/session/early-join/accept', publicSessionLimiter, acceptEarlyJoinHandler);
 router.post('/session/early-join/decline', publicSessionLimiter, declineEarlyJoinHandler);
+router.post('/session/lobby-heartbeat', publicSessionLimiter, lobbyHeartbeatHandler);
+router.post('/session/lobby-presence-token', publicSessionLimiter, lobbyPresenceTokenHandler);
 
 export default router;

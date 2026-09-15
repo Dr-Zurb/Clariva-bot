@@ -68,7 +68,7 @@ async function insertBatch(batch: InsertAuditLog[]): Promise<void> {
   if (!supabaseAdmin) {
     logger.error(
       { count: batch.length },
-      'Service role client not available - cannot flush audit log batch',
+      'Service role client not available - cannot flush audit log batch'
     );
     return;
   }
@@ -145,7 +145,7 @@ export function resetAuditLogQueueForTests(): void {
 
 /**
  * List of PHI field names that must never appear in audit log metadata
- * 
+ *
  * These fields contain Protected Health Information (PHI) and must be
  * excluded from audit logs per compliance requirements.
  */
@@ -160,7 +160,7 @@ const PHI_FIELDS = [
 
 /**
  * Validate that metadata does not contain PHI fields
- * 
+ *
  * @param metadata - Metadata object to validate
  * @throws InternalError if PHI fields are detected
  */
@@ -186,6 +186,17 @@ function validateNoPHI(metadata?: Record<string, unknown>): void {
         'Audit logs must not contain PHI per compliance requirements.'
     );
   }
+}
+
+/** Merge staff-acting-for-doctor provenance without mutating the caller's object. */
+function mergeOnBehalfOfMetadata(
+  metadata: Record<string, unknown> | undefined,
+  onBehalfOfDoctorId: string | undefined
+): Record<string, unknown> | undefined {
+  if (!onBehalfOfDoctorId) {
+    return metadata;
+  }
+  return { ...(metadata ?? {}), on_behalf_of_doctor_id: onBehalfOfDoctorId };
 }
 
 // ============================================================================
@@ -227,6 +238,8 @@ export async function logAuditEvent(params: {
   status: AuditLogStatus;
   errorMessage?: string;
   metadata?: Record<string, unknown>;
+  /** When staff act for a doctor, stamped into metadata (DL-6). */
+  onBehalfOfDoctorId?: string;
 }): Promise<void> {
   // Validate correlation ID is provided
   if (!params.correlationId) {
@@ -234,13 +247,15 @@ export async function logAuditEvent(params: {
     return; // Don't throw - audit logging shouldn't break main flow
   }
 
+  const metadata = mergeOnBehalfOfMetadata(params.metadata, params.onBehalfOfDoctorId);
+
   // Validate no PHI in metadata (MUST run before enqueue — np-03 safety gate)
   try {
-    validateNoPHI(params.metadata);
+    validateNoPHI(metadata);
   } catch (error) {
     // Log error but don't throw - audit logging shouldn't break main flow
     logger.error(
-      { error, correlationId: params.correlationId, metadata: params.metadata },
+      { error, correlationId: params.correlationId, metadata },
       'PHI detected in audit log metadata - audit log not created'
     );
     return;
@@ -258,7 +273,8 @@ export async function logAuditEvent(params: {
 
   // resource_id must be UUID - omit if not valid (e.g. Instagram message_id, Meta eventId)
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const resourceId = params.resourceId && uuidRegex.test(params.resourceId) ? params.resourceId : undefined;
+  const resourceId =
+    params.resourceId && uuidRegex.test(params.resourceId) ? params.resourceId : undefined;
 
   // Prepare audit log data
   const auditLogData: InsertAuditLog = {
@@ -269,7 +285,7 @@ export async function logAuditEvent(params: {
     resource_id: resourceId,
     status: params.status,
     error_message: params.errorMessage || undefined,
-    metadata: params.metadata || undefined,
+    metadata: metadata || undefined,
   };
 
   try {
@@ -288,9 +304,9 @@ export async function logAuditEvent(params: {
 
 /**
  * Log data access event
- * 
+ *
  * Use this function when reading PHI or sensitive data.
- * 
+ *
  * @param correlationId - Request correlation ID
  * @param userId - User who accessed the data
  * @param resourceType - Type of resource accessed (e.g., 'appointment', 'patient')
@@ -300,7 +316,8 @@ export async function logDataAccess(
   correlationId: string,
   userId: string,
   resourceType: string,
-  resourceId?: string
+  resourceId?: string,
+  onBehalfOfDoctorId?: string
 ): Promise<void> {
   await logAuditEvent({
     correlationId,
@@ -309,14 +326,15 @@ export async function logDataAccess(
     resourceType,
     resourceId,
     status: 'success',
+    onBehalfOfDoctorId,
   });
 }
 
 /**
  * Log data modification event
- * 
+ *
  * Use this function when creating, updating, or deleting data.
- * 
+ *
  * @param correlationId - Request correlation ID
  * @param userId - User who performed the modification
  * @param action - Modification action ('create', 'update', or 'delete')
@@ -330,7 +348,8 @@ export async function logDataModification(
   action: 'create' | 'update' | 'delete',
   resourceType: string,
   resourceId: string,
-  changedFields?: string[]
+  changedFields?: string[],
+  onBehalfOfDoctorId?: string
 ): Promise<void> {
   await logAuditEvent({
     correlationId,
@@ -340,14 +359,15 @@ export async function logDataModification(
     resourceId,
     status: 'success',
     metadata: changedFields ? { changedFields } : undefined,
+    onBehalfOfDoctorId,
   });
 }
 
 /**
  * Log AI interaction event
- * 
+ *
  * Use this function when sending data to AI services or receiving AI responses.
- * 
+ *
  * @param correlationId - Request correlation ID
  * @param userId - User who initiated the AI interaction
  * @param conversationId - ID of the conversation
@@ -383,7 +403,7 @@ export async function logAIIntraction(
  * Metadata only: model, tokens, redactionApplied. No raw prompt/response with PHI (COMPLIANCE.md G).
  *
  * @param correlationId - Request correlation ID (required)
- * @param model - AI model used (e.g. gpt-5.2)
+ * @param model - AI model used (e.g. gpt-5.6-luna)
  * @param redactionApplied - Whether PHI was redacted before sending to AI
  * @param status - 'success' or 'failure'
  * @param resourceId - Optional resource ID (e.g. conversation ID)
@@ -499,7 +519,7 @@ export async function logConsentEvent(params: {
  * Log security event
  *
  * Use this function for failed authentication, rate limiting, suspicious activity, etc.
- * 
+ *
  * @param correlationId - Request correlation ID
  * @param userId - User associated with the event (optional)
  * @param eventType - Type of security event (e.g., 'failed_auth', 'rate_limit_exceeded')
