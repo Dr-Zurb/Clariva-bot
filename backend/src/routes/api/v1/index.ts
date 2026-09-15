@@ -30,6 +30,7 @@ import complaintMasterRoutes from './complaint-master';
 import medicinesRoutes from './medicines';
 import noteFavoritesRoutes from './note-favorites';
 import pushRoutes from './push';
+import authRoutes from './auth';
 
 const router = Router();
 
@@ -43,6 +44,10 @@ const router = Router();
 // Health check endpoint (versioned)
 // GET /api/v1/health
 router.use('/health', healthRoutes);
+
+// Public auth helpers (auth-password · AP-D17)
+// POST /api/v1/auth/email-status
+router.use('/auth', authRoutes);
 
 // Appointment endpoints
 // GET /api/v1/appointments/available-slots

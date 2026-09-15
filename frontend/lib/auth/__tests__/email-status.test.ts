@@ -81,4 +81,23 @@ describe("checkEmailStatus", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.message).toMatch(/too many/i);
   });
+
+  it("marks a missing email-status route as unavailable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        json: async () => ({
+          success: false,
+          error: { code: "NotFoundError", message: "Route not found" },
+        }),
+      })
+    );
+    await expect(checkEmailStatus("doc@example.com")).resolves.toEqual({
+      ok: false,
+      unavailable: true,
+      message: "Could not verify email. Please try again.",
+    });
+  });
 });

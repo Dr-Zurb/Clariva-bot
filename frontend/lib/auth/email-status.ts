@@ -10,7 +10,7 @@ import { requireApiBaseUrl } from "@/lib/api-base";
 
 export type EmailStatusResult =
   | { ok: true; exists: boolean; confirmed: boolean }
-  | { ok: false; message: string };
+  | { ok: false; message: string; unavailable?: boolean };
 
 /**
  * Returns whether an account already exists for this email, and whether it is
@@ -47,6 +47,16 @@ export async function checkEmailStatus(
         return {
           ok: false,
           message: "Too many requests. Wait a moment and try again.",
+        };
+      }
+      // Older production backends do not mount this route yet. Callers that
+      // can continue without preflight (password sign-in / signup OTP) should
+      // check `unavailable` instead of blocking the doctor.
+      if (res.status === 404) {
+        return {
+          ok: false,
+          unavailable: true,
+          message: "Could not verify email. Please try again.",
         };
       }
       return {
